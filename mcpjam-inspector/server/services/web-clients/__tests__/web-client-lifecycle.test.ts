@@ -3,6 +3,8 @@
  * same admission a CLI runtime passes, no box, and no spend on MCPJam's key.
  */
 import { describe, expect, it } from "vitest";
+import { bundledHostCompatCatalog, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
+import { WEB_CLIENT_TEMPLATE_IDS, webClientVendorForRuntime } from "@/shared/web-clients";
 import { checkHarnessRuntimeAvailable } from "../../../utils/harness/harness-availability";
 import {
   checkEvalHarnessAdmission,
@@ -76,6 +78,37 @@ describe.each(HOSTS)("$harness in the existing lifecycle", ({ harness, modelId, 
       ok: false,
       kind: "tool-approval",
     });
+  });
+
+  it("runs the catalog template's sentinel model", () => {
+    const sentinel = `${harness}/default`;
+    expect(
+      checkHarnessRuntimeAvailable({
+        harnessId: harness,
+        surface: "evals",
+        requireToolApproval: false,
+        hasSelectedMcpServers: true,
+        model: { id: sentinel },
+      }),
+    ).toEqual({ ok: true });
+  });
+
+  it("runs its catalog template as the catalog saves it", () => {
+    const vendor = webClientVendorForRuntime(harness)!;
+    const template = getCatalogTemplate(bundledHostCompatCatalog(), WEB_CLIENT_TEMPLATE_IDS[vendor]);
+    expect(template).toMatchObject({ harness, modelId: `${harness}/default` });
+    // The Playground applies the template's own approval switch, so a
+    // template that asks for approval the runtime can't give is refused.
+    expect(
+      checkHarnessRuntimeAvailable({
+        mcpClient: "harness",
+        harnessId: harness,
+        surface: "playground",
+        requireToolApproval: template?.requireToolApproval === true,
+        hasSelectedMcpServers: true,
+        model: { id: template?.modelId ?? "" },
+      }),
+    ).toEqual({ ok: true });
   });
 
   it("refuses another vendor's model and the study and guest surfaces", () => {

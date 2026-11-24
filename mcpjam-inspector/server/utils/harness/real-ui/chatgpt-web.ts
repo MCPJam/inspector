@@ -48,6 +48,7 @@ const USER_MESSAGE = '[data-message-author-role="user"]';
 const ASSISTANT = '[data-message-author-role="assistant"]';
 const CHAT_PATH = /^\/c\/([0-9a-f-]{36})$/;
 const CHALLENGE = 'iframe[src*="arkoselabs"], iframe[src*="challenges.cloudflare.com"]';
+const PLUGINS_PANEL = "role=dialog";
 const PLAN_LIMIT =
   /you(?:'|’)ve (?:reached|hit) (?:the|your) .*(?:limit|cap)|usage cap/i;
 
@@ -62,9 +63,9 @@ async function session(driver: PageDriver): Promise<Record<string, unknown>> {
   return record(await readVendorJson(driver, `${ORIGIN}/api/auth/session`));
 }
 
-async function openPlusMenuItem(driver: PageDriver, ctx: StepContext, item: string) {
+async function openPlusMenuItem(driver: PageDriver, ctx: StepContext, item: string, step: RealUiStep) {
   await driver.click(PLUS);
-  await waitVisible(driver, role("menuitem", item), ctx, `the ${item} menu item`, "enable_connector");
+  await waitVisible(driver, role("menuitem", item), ctx, `the ${item} menu item`, step);
   await driver.click(role("menuitem", item));
 }
 
@@ -107,28 +108,42 @@ export const chatgptWebPageModule: RealUiPageModule = {
 
   async ensureConnector(driver, connector, ctx) {
     requirePlaywrightSelectors(driver, "connector", "chatgpt.com");
+    // Plugins, then +, then "Add custom MCP server": the walkthrough's path.
+    // A server already added under this name is reused, never added twice.
     await driver.navigate(`${ORIGIN}/`);
     await waitVisible(driver, COMPOSER, ctx, "the chat composer", "connector");
-    await driver.click(PLUS);
-    const existing = role("menuitemcheckbox", connector.name);
+    await openPlusMenuItem(driver, ctx, "Plugins", "connector");
+    const existing = `${PLUGINS_PANEL} >> text="${cssString(connector.name)}"`;
+    const add = `${PLUGINS_PANEL} >> role=button[name=/^(\\+|Add)$/]`;
     await driver.waitFor(
       async () =>
         (await driver.readText(existing)) !== undefined ||
-        (await driver.readText(role("menuitem", "Add custom MCP server"))) !== undefined,
-      { timeoutMs: ctx.timeoutMs, signal: ctx.signal, what: "the composer's tools menu" },
+        (await driver.readText(add)) !== undefined,
+      { timeoutMs: ctx.timeoutMs, signal: ctx.signal, what: "the plugins list" },
     );
     if ((await driver.readText(existing)) !== undefined) {
+      const shown = (await driver.readText(`${PLUGINS_PANEL} >> text="${cssString(connector.url)}"`)) !== undefined;
       await driver.press("Escape");
-      return;
+      if (shown) return;
+      throw new RealUiError({
+        kind: "connector_failed",
+        step: "connector",
+        message: `ChatGPT has a server named ${connector.name} with a different address. Remove it in ChatGPT, then run again.`,
+      });
     }
+    await driver.click(add);
+    await waitVisible(driver, role("menuitem", "Add custom MCP server"), ctx, "the add server item", "connector");
     await driver.click(role("menuitem", "Add custom MCP server"));
-    const dialog = "role=dialog";
+    // The form opens over the Plugins panel, a dialog too, so the form is the
+    // dialog with the URL field; the panel's own Add button never matches.
+    const dialog = 'role=dialog >> internal:has="role=textbox[name=/url/i]"';
     await waitVisible(driver, dialog, ctx, "the add server form", "connector");
     await driver.type(`${dialog} >> role=textbox[name=/name/i]`, connector.name);
     await driver.type(`${dialog} >> role=textbox[name=/url/i]`, connector.url);
     await driver.click(`${dialog} >> role=button[name=/^(Create|Add|Connect)$/]`);
     await driver.waitFor(
       async () => {
+        // MCPJam's own sign-in page asks for consent: a person's step.
         const blocked = await commonBlocker(driver, { challengeSelectors: [CHALLENGE], step: "connector" });
         if (blocked) throw new RealUiError(blocked);
         return (await driver.readText(dialog)) === undefined;
@@ -147,7 +162,7 @@ export const chatgptWebPageModule: RealUiPageModule = {
 
   async enableConnector(driver, name, ctx) {
     const toggle = role("menuitemcheckbox", name);
-    await openPlusMenuItem(driver, ctx, "More");
+    await openPlusMenuItem(driver, ctx, "More", "enable_connector");
     await waitVisible(driver, toggle, ctx, "the server in the tools menu", "enable_connector");
     if ((await driver.readText(`${toggle}[checked=true]`)) === undefined) {
       await driver.click(toggle);
