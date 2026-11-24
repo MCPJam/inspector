@@ -5,7 +5,17 @@ vi.mock("@/lib/session-token", () => ({
   authFetch: (...args: unknown[]) => authFetch(...args),
 }));
 
-import { ClimbsApiError, isClimbsApiError, startClimb } from "../climbs-api";
+import {
+  ClimbsApiError,
+  continueClimb,
+  forgetMockChanges,
+  getClimb,
+  isClimbsApiError,
+  listClimbs,
+  mockChangesBetween,
+  startClimb,
+  stopClimb,
+} from "../climbs-api";
 
 const params = {
   projectId: "p 1",
@@ -32,7 +42,10 @@ function lastCall() {
 
 const failure = (run: Promise<unknown>) => run.catch((error) => error) as Promise<ClimbsApiError>;
 
-beforeEach(() => authFetch.mockReset());
+beforeEach(() => {
+  authFetch.mockReset();
+  forgetMockChanges();
+});
 afterEach(() => vi.clearAllMocks());
 
 describe("climbs api: start", () => {
@@ -91,5 +104,69 @@ describe("climbs api: start", () => {
     const error = await failure(startClimb(params));
     expect(error.kind).toBe("requestFailed");
     expect(error.status).toBe(502);
+  });
+});
+
+describe("climbs api: reads and the rest", () => {
+  it("lists a suite's climbs", async () => {
+    respond({ items: [{ climbId: "c1", suiteId: "s1", state: "ready" }] });
+    expect(await listClimbs({ projectId: "p", suiteId: "s1" })).toEqual([
+      { climbId: "c1", suiteId: "s1", state: "ready" },
+    ]);
+    const { url } = lastCall();
+    expect(url.pathname).toBe("/api/v1/projects/p/climbs");
+    expect(url.searchParams.get("suiteId")).toBe("s1");
+  });
+
+  it("reads one climb", async () => {
+    respond({ climbId: "c1", state: "running", rounds: [] });
+    expect((await getClimb({ projectId: "p", climbId: "c1" })).state).toBe("running");
+    expect(lastCall().url.pathname).toBe("/api/v1/projects/p/climbs/c1");
+  });
+
+  it("resumes a paused climb", async () => {
+    respond({ resumed: true, stepDue: true });
+    await expect(continueClimb({ projectId: "p", climbId: "c1" })).resolves.toEqual({
+      resumed: true,
+      stepDue: true,
+    });
+    const { url, init } = lastCall();
+    expect(init.method).toBe("POST");
+    expect(url.pathname).toBe("/api/v1/projects/p/climbs/c1/continue");
+  });
+
+  it("stops a climb", async () => {
+    respond({ climbId: "c1", state: "stopped", prompt: "p", kept: [] });
+    expect((await stopClimb({ projectId: "p", climbId: "c1" })).state).toBe("stopped");
+    expect(lastCall().url.pathname).toBe("/api/v1/projects/p/climbs/c1/stop");
+  });
+
+  it("reads what one mock version changed, once", async () => {
+    authFetch.mockImplementation(async () =>
+      new Response(JSON.stringify({ id: "m", changes: [{ summary: "Hid the tool" }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const params = { projectId: "p", mockId: "m 1", version: 3, sinceVersion: 2 };
+    const [first, second] = await Promise.all([mockChangesBetween(params), mockChangesBetween(params)]);
+    expect(first).toEqual([{ summary: "Hid the tool" }]);
+    expect(second).toBe(first);
+    expect(authFetch).toHaveBeenCalledTimes(1);
+    const { url } = lastCall();
+    expect(url.pathname).toBe("/api/v1/projects/p/mock-servers/m%201");
+    expect(url.searchParams.get("version")).toBe("3");
+    expect(url.searchParams.get("since")).toBe("2");
+  });
+
+  it("does not keep a failed read of a mock's changes", async () => {
+    respond({ code: "NOT_FOUND", message: "Mock not found" }, 404);
+    await expect(
+      mockChangesBetween({ projectId: "p", mockId: "m", version: 3, sinceVersion: 2 }),
+    ).rejects.toMatchObject({ kind: "notFound" });
+    respond({ id: "m", changes: [] });
+    await expect(
+      mockChangesBetween({ projectId: "p", mockId: "m", version: 3, sinceVersion: 2 }),
+    ).resolves.toEqual([]);
   });
 });

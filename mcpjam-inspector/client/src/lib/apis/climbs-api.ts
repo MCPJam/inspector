@@ -18,6 +18,9 @@ import {
   PlatformApiClient,
   isPlatformApiError,
   type PlatformClimbLaunch,
+  type PlatformClimbListItem,
+  type PlatformClimbStopped,
+  type PlatformMockChange,
 } from "@mcpjam/sdk/platform";
 import type {
   Climb,
@@ -82,6 +85,14 @@ class ClimbsScreenClient extends PlatformApiClient {
       { body, declareLaunch: true },
       options,
     );
+  }
+
+  resume(
+    params: { projectId: string; climbId: string },
+    options?: RequestOptions,
+  ): Promise<{ resumed: boolean; stepDue: boolean }> {
+    const climb = `${encodeURIComponent(params.projectId)}/climbs/${encodeURIComponent(params.climbId)}`;
+    return this.request("POST", `/projects/${climb}/continue`, { body: {} }, options);
   }
 }
 
@@ -161,6 +172,70 @@ export type StartClimbParams = {
 };
 
 export type StartedClimb = Climb & { launch: PlatformClimbLaunch };
+
+export async function listClimbs(
+  params: { projectId: string; suiteId: string; limit?: number },
+  signal?: AbortSignal,
+): Promise<PlatformClimbListItem[]> {
+  const page = await call(() => client().listClimbs(params, { signal }), signal);
+  return page.items;
+}
+
+export function getClimb(
+  params: { projectId: string; climbId: string },
+  signal?: AbortSignal,
+): Promise<Climb> {
+  return call(() => client().getClimb(params, { signal }), signal);
+}
+
+/** Resumes a paused climb from the last settled round. */
+export function continueClimb(
+  params: { projectId: string; climbId: string },
+  signal?: AbortSignal,
+): Promise<{ resumed: boolean; stepDue: boolean }> {
+  return call(() => client().resume(params, { signal }), signal);
+}
+
+/**
+ * Stops a climb for good, cancelling a round in flight. Stopping twice is
+ * safe, so a stopped climb's summary and prompt are read the same way.
+ */
+export function stopClimb(
+  params: { projectId: string; climbId: string },
+  signal?: AbortSignal,
+): Promise<PlatformClimbStopped> {
+  return call(() => client().stopClimb(params, { signal }), signal);
+}
+
+const changeCache = new Map<string, Promise<PlatformMockChange[]>>();
+
+/**
+ * What a mock version changed since an earlier one of the same mock. A saved
+ * version never changes, so each answer is kept for the page's life.
+ */
+export function mockChangesBetween(params: {
+  projectId: string;
+  mockId: string;
+  version: number;
+  sinceVersion: number;
+}): Promise<PlatformMockChange[]> {
+  const key = `${params.projectId}:${params.mockId}:${params.sinceVersion}:${params.version}`;
+  const known = changeCache.get(key);
+  if (known) return known;
+  // Readers share this promise, so it is tied to no one reader's signal.
+  const read = call(async () => {
+    const mock = await client().getMockServer(params);
+    return mock.changes ?? [];
+  });
+  changeCache.set(key, read);
+  // A failed read is not kept, so the next render asks again.
+  read.catch(() => changeCache.delete(key));
+  return read;
+}
+
+export function forgetMockChanges(): void {
+  changeCache.clear();
+}
 
 /** Starts a climb and its baseline. SPENDS credits: the baseline runs every case twice in each environment. */
 export function startClimb(
