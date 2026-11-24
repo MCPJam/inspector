@@ -27,7 +27,6 @@ import {
   MessagesSquare,
   Globe,
   Radio,
-  Zap,
   ClipboardCheck,
 } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
@@ -137,7 +136,6 @@ export const SIDEBAR_RESOLVED_FLAG_KEYS = [
   "home-page-enabled",
   "project-environments-enabled",
   "unified-sessions-enabled",
-  "evaluate-enabled",
   WEBMCP_INSPECTOR_FEATURE_FLAG,
   EVENTS_FEATURE_FLAG,
 ] as const;
@@ -251,16 +249,6 @@ export const navigationSections: NavSection[] = [
         icon: MessageCircle,
       },
       {
-        // Agent runs fired by MCP Events on MCPJam's hosted runner. Sits next
-        // to Playground because it is the unattended version of the same
-        // thing: a model with the project's servers, reacting to an event
-        // instead of a message.
-        title: "Triggers",
-        url: "/triggers",
-        icon: Zap,
-        featureFlag: EVENTS_FEATURE_FLAG,
-      },
-      {
         title: "Environments",
         url: "/environments",
         icon: Layers,
@@ -272,13 +260,6 @@ export const navigationSections: NavSection[] = [
     id: "measure",
     label: "Measure",
     items: [
-      {
-        title: "Evaluate (Legacy)",
-        url: "/evals",
-        featureFlag: "evaluate-enabled",
-        icon: FlaskConical,
-        billingFeature: "evals",
-      },
       {
         title: "Evaluate",
         url: "/evaluate",
@@ -381,6 +362,7 @@ export const navigationSections: NavSection[] = [
         title: "Events",
         url: "/events",
         icon: Radio,
+        badge: "New",
         featureFlag: EVENTS_FEATURE_FLAG,
       },
       {
@@ -390,7 +372,6 @@ export const navigationSections: NavSection[] = [
         title: "WebMCP",
         url: "/webmcp",
         icon: Globe,
-        badge: "New",
         featureFlag: WEBMCP_INSPECTOR_FEATURE_FLAG,
       },
     ],
@@ -507,7 +488,6 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
    * gone with the old layout.
    */
   onSwitchOrganization?: (organizationId: string) => void;
-  onProjectShared?: (sharedProjectId: string, sourceProjectId?: string) => void;
   billingGateDenied?: Partial<Record<BillingFeatureName, boolean>>;
   billingGateEnforcementActive?: boolean;
   isCreateProjectDisabled?: boolean;
@@ -546,7 +526,6 @@ export function MCPSidebar({
   const unifiedSessionsEnabled = useFeatureFlagEnabled(
     "unified-sessions-enabled",
   );
-  const evaluateEnabled = useFeatureFlagEnabled("evaluate-enabled");
   const eventsEnabled = useEventsEnabledState();
   const webmcpInspectorEnabled = useWebmcpInspectorEnabledState();
   const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
@@ -659,9 +638,6 @@ export function MCPSidebar({
       // `SessionsRoute` renders a "needs a project" empty state without one.
       "unified-sessions-enabled":
         unifiedSessionsEnabled === true && isAuthenticated,
-      // Project-scoped like the rows above: every screen behind it needs a
-      // project to resolve suites against.
-      "evaluate-enabled": evaluateEnabled === true && isAuthenticated,
       // Hosted: the backend's availability answer, flag and readiness both.
       // Local: the local Browser rollout, which local guests may be in too.
       [WEBMCP_INSPECTOR_FEATURE_FLAG]: webmcpInspectorEnabled === true,
@@ -674,7 +650,6 @@ export function MCPSidebar({
       readinessEnabled,
       projectEnvironmentsEnabled,
       unifiedSessionsEnabled,
-      evaluateEnabled,
       webmcpInspectorEnabled,
       eventsEnabled,
       isAuthenticated,
@@ -918,9 +893,14 @@ export function MCPSidebar({
           {isAuthenticated && user && activeOrganizationId ? (
             <SidebarCredits
               organizationId={activeOrganizationId}
-              onExplorePlans={() =>
+              onOpenBilling={() =>
                 appNavigate(
                   buildOrganizationPath(activeOrganizationId, "billing"),
+                )
+              }
+              onExplorePlans={() =>
+                appNavigate(
+                  buildOrganizationPath(activeOrganizationId, "plans"),
                 )
               }
             />

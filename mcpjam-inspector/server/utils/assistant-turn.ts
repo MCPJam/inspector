@@ -40,6 +40,7 @@ import {
 import type { ChatOrigin, PersistedTurnTrace } from "./chat-ingestion.js";
 import { runHarnessTurn } from "./harness/run-harness-turn.js";
 import { getHarnessAdapter } from "./harness/registry.js";
+import { harnessSkillOptions } from "./harness/harness-skill-options.js";
 import {
   harnessModelPurposeForSourceType,
   harnessModelRefusal,
@@ -273,9 +274,10 @@ export interface RunAssistantTurnOptions
   journeyRunId?: MCPJamHandlerOptions["journeyRunId"];
   hostId?: MCPJamHandlerOptions["hostId"];
 
-  /** Pinned harness skills (eval runs, swarm targets). Pass-through to
-   *  `runHarnessTurn`: when set (even empty) it delivers exactly these. */
-  pinnedHarnessSkills?: MCPJamHandlerOptions["pinnedHarnessSkills"];
+  /** The turn's skill plan. Pass-through to `runHarnessTurn`, which carries it
+   *  out. */
+  skillPlan?: MCPJamHandlerOptions["skillPlan"];
+
 
   /**
    * The disposable box this session already owns (B-isolation phase 6).
@@ -285,6 +287,8 @@ export interface RunAssistantTurnOptions
    * personal path unchanged.
    */
   harnessSandboxBinding?: MCPJamHandlerOptions["harnessSandboxBinding"];
+  /** Web clients: the eval run's owner and frozen accounts. */
+  webClientRun?: MCPJamHandlerOptions["webClientRun"];
 
   /**
    * MCPJam's SERVER-EXECUTED built-ins (`web_search`, …) for the harness path.
@@ -297,12 +301,9 @@ export interface RunAssistantTurnOptions
    */
   builtInTools?: MCPJamHandlerOptions["builtInTools"];
 
-  /** The skills this turn's environment resolved to, the set carrying their
-   *  supporting files, and whether the turn is live. Pass-through to
-   *  `runHarnessTurn`; see `harness/skill-delivery.ts`. */
-  runtimeSkillsOverride?: MCPJamHandlerOptions["runtimeSkillsOverride"];
+  /** The turn's capability set, for its plugins' origins and versions.
+   *  Pass-through to `runHarnessTurn`. */
   effectiveCapabilities?: MCPJamHandlerOptions["effectiveCapabilities"];
-  liveTurn?: MCPJamHandlerOptions["liveTurn"];
 
   /**
    * The Project Environment this turn resolved — the GRANT BOUNDARY for project
@@ -536,11 +537,8 @@ function buildHandlerOptions(
     onBoxSkillsWritten: opts.onBoxSkillsWritten,
     ...(opts.journeyRunId ? { journeyRunId: opts.journeyRunId } : {}),
     ...(opts.hostId ? { hostId: opts.hostId } : {}),
-    // Pinned harness skills: presence (even an EMPTY array) is semantic — an
-    // empty authoritative set means "run skill-less", never "keep the box's".
-    ...(opts.pinnedHarnessSkills !== undefined
-      ? { pinnedHarnessSkills: opts.pinnedHarnessSkills }
-      : {}),
+    ...harnessSkillOptions(opts),
+    ...(opts.webClientRun ? { webClientRun: opts.webClientRun } : {}),
     // The attempt's own disposable box. Absent ⇒ the harness reserves the
     // personal computer, exactly as before.
     ...(opts.harnessSandboxBinding
@@ -549,15 +547,6 @@ function buildHandlerOptions(
     // Server-executed built-ins forwarded SEPARATELY so the harness path can
     // hand them to HarnessAgent (mirrors `routes/mcp/chat-v2.ts`).
     ...(opts.builtInTools ? { builtInTools: opts.builtInTools } : {}),
-    // Environment skills: presence is semantic, as for pinned. An empty set
-    // means "this environment delivers no skills", never "use the project's".
-    ...(opts.runtimeSkillsOverride !== undefined
-      ? { runtimeSkillsOverride: opts.runtimeSkillsOverride }
-      : {}),
-    ...(opts.effectiveCapabilities
-      ? { effectiveCapabilities: opts.effectiveCapabilities }
-      : {}),
-    ...(opts.liveTurn ? { liveTurn: true } : {}),
     // The turn's grant boundary for project secrets. Harness-relevant: the
     // external-account credential check asks whether a BROKERED secret is
     // selected into THIS environment, and an absent id means "no grant" rather

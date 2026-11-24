@@ -2845,19 +2845,17 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "clientCapabilities": {
       "elicitation": {
         "form": {},
-        "url": {},
       },
-      "extensions": {
-        "io.modelcontextprotocol/tasks": {},
+      "roots": {
+        "listChanged": true,
       },
-      "roots": {},
     },
     "computer": {
       "kind": "personal",
     },
     "connectionDefaults": {
       "headers": {},
-      "requestTimeout": 10000,
+      "requestTimeout": 300000,
     },
     "harness": "claude-code",
     "hostCapabilitiesOverride": {},
@@ -2869,7 +2867,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "description": "Anthropic's agentic coding tool",
           "name": "claude-code",
           "title": "Claude Code",
-          "version": "2.1.312",
+          "version": "2.1.290",
           "websiteUrl": "https://claude.com/claude-code",
         },
         "supportedProtocolVersions": [
@@ -2890,7 +2888,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "modelId": "anthropic/claude-haiku-5.5",
     "optionalServerIds": [],
     "progressiveToolDiscovery": true,
-    "requireToolApproval": false,
+    "requireToolApproval": true,
     "respectToolVisibility": true,
     "serverConnectionOverrides": undefined,
     "serverIds": [],
@@ -2904,19 +2902,17 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "clientCapabilities": {
       "elicitation": {
         "form": {},
-        "url": {},
       },
-      "extensions": {
-        "io.modelcontextprotocol/tasks": {},
+      "roots": {
+        "listChanged": true,
       },
-      "roots": {},
     },
     "computer": {
       "kind": "personal",
     },
     "connectionDefaults": {
       "headers": {},
-      "requestTimeout": 10000,
+      "requestTimeout": 300000,
     },
     "harness": "claude-code",
     "hostCapabilitiesOverride": {},
@@ -2928,7 +2924,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "description": "Anthropic's agentic coding tool",
           "name": "claude-code",
           "title": "Claude Code",
-          "version": "2.1.312",
+          "version": "2.1.290",
           "websiteUrl": "https://claude.com/claude-code",
         },
         "supportedProtocolVersions": [
@@ -2949,7 +2945,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "modelId": "anthropic/claude-haiku-5.5",
     "optionalServerIds": [],
     "progressiveToolDiscovery": true,
-    "requireToolApproval": false,
+    "requireToolApproval": true,
     "respectToolVisibility": true,
     "serverConnectionOverrides": undefined,
     "serverIds": [],
@@ -4449,7 +4445,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     },
     "connectionDefaults": {
       "headers": {},
-      "requestTimeout": 10000,
+      "requestTimeout": 300000,
     },
     "harness": "codex",
     "hostCapabilitiesOverride": {},
@@ -4489,7 +4485,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "clientInfo": {
           "name": "codex-mcp-client",
           "title": "Codex",
-          "version": "0.168.0",
+          "version": "0.163.0",
         },
         "supportedProtocolVersions": [
           "2025-06-18",
@@ -4505,7 +4501,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "modelId": "openai/gpt-6-luna",
     "optionalServerIds": [],
     "progressiveToolDiscovery": true,
-    "requireToolApproval": false,
+    "requireToolApproval": true,
     "respectToolVisibility": true,
     "serverConnectionOverrides": undefined,
     "serverIds": [],
@@ -4527,7 +4523,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     },
     "connectionDefaults": {
       "headers": {},
-      "requestTimeout": 10000,
+      "requestTimeout": 300000,
     },
     "harness": "codex",
     "hostCapabilitiesOverride": {},
@@ -4567,7 +4563,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "clientInfo": {
           "name": "codex-mcp-client",
           "title": "Codex",
-          "version": "0.168.0",
+          "version": "0.163.0",
         },
         "supportedProtocolVersions": [
           "2025-06-18",
@@ -4583,7 +4579,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "modelId": "openai/gpt-6-luna",
     "optionalServerIds": [],
     "progressiveToolDiscovery": true,
-    "requireToolApproval": false,
+    "requireToolApproval": true,
     "respectToolVisibility": true,
     "serverConnectionOverrides": undefined,
     "serverIds": [],
@@ -4952,7 +4948,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
-    "clientCapabilities": {},
+    "clientCapabilities": {
+      "sampling": {},
+    },
     "computer": {
       "kind": "personal",
     },
@@ -4991,6 +4989,12 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "widgetDisplayModeRequests": "accept",
         },
       },
+      "initialize": {
+        "clientInfo": {
+          "name": "copilot-cli",
+          "version": "1.0.92",
+        },
+      },
       "paginationTraversal": "full",
       "profileVersion": 1,
       "toolListChanged": {
@@ -5011,7 +5015,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
-    "clientCapabilities": {},
+    "clientCapabilities": {
+      "sampling": {},
+    },
     "computer": {
       "kind": "personal",
     },
@@ -5048,6 +5054,12 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "toolInputPartial": false,
           "updateModelContext": false,
           "widgetDisplayModeRequests": "accept",
+        },
+      },
+      "initialize": {
+        "clientInfo": {
+          "name": "copilot-cli",
+          "version": "1.0.92",
         },
       },
       "paginationTraversal": "full",
@@ -5338,7 +5350,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
-    "clientCapabilities": {},
+    "clientCapabilities": {
+      "elicitation": {
+        "form": {},
+      },
+    },
     "computer": {
       "kind": "personal",
     },
@@ -5351,13 +5367,19 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "hostContext": {},
     "hostStyle": "cursor-cli",
     "mcpProfile": {
+      "initialize": {
+        "clientInfo": {
+          "name": "Cursor",
+          "version": "1.0.0",
+        },
+      },
       "profileVersion": 1,
       "versionNegotiation": "legacy-first",
     },
     "modelId": "cursor/auto",
     "optionalServerIds": [],
     "progressiveToolDiscovery": false,
-    "requireToolApproval": false,
+    "requireToolApproval": true,
     "respectToolVisibility": false,
     "serverConnectionOverrides": undefined,
     "serverIds": [],
@@ -5368,7 +5390,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
-    "clientCapabilities": {},
+    "clientCapabilities": {
+      "elicitation": {
+        "form": {},
+      },
+    },
     "computer": {
       "kind": "personal",
     },
@@ -5381,13 +5407,19 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "hostContext": {},
     "hostStyle": "cursor-cli",
     "mcpProfile": {
+      "initialize": {
+        "clientInfo": {
+          "name": "Cursor",
+          "version": "1.0.0",
+        },
+      },
       "profileVersion": 1,
       "versionNegotiation": "legacy-first",
     },
     "modelId": "cursor/auto",
     "optionalServerIds": [],
     "progressiveToolDiscovery": false,
-    "requireToolApproval": false,
+    "requireToolApproval": true,
     "respectToolVisibility": false,
     "serverConnectionOverrides": undefined,
     "serverIds": [],
@@ -7506,6 +7538,64 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "optionalServerIds": [],
     "progressiveToolDiscovery": false,
     "requireToolApproval": false,
+    "respectToolVisibility": true,
+    "serverConnectionOverrides": undefined,
+    "serverIds": [],
+    "systemPrompt": "",
+    "temperature": 1,
+  },
+  "opencode/dark": {
+    "browserProfileId": undefined,
+    "builtInToolIds": [],
+    "chatUiOverride": undefined,
+    "clientCapabilities": {},
+    "computer": {
+      "kind": "personal",
+    },
+    "connectionDefaults": {
+      "headers": {},
+      "requestTimeout": 300000,
+    },
+    "harness": "opencode",
+    "hostCapabilitiesOverride": {},
+    "hostContext": {},
+    "hostStyle": "opencode",
+    "mcpProfile": {
+      "profileVersion": 1,
+    },
+    "modelId": "anthropic/claude-haiku-4.5",
+    "optionalServerIds": [],
+    "progressiveToolDiscovery": true,
+    "requireToolApproval": true,
+    "respectToolVisibility": true,
+    "serverConnectionOverrides": undefined,
+    "serverIds": [],
+    "systemPrompt": "",
+    "temperature": 1,
+  },
+  "opencode/light": {
+    "browserProfileId": undefined,
+    "builtInToolIds": [],
+    "chatUiOverride": undefined,
+    "clientCapabilities": {},
+    "computer": {
+      "kind": "personal",
+    },
+    "connectionDefaults": {
+      "headers": {},
+      "requestTimeout": 300000,
+    },
+    "harness": "opencode",
+    "hostCapabilitiesOverride": {},
+    "hostContext": {},
+    "hostStyle": "opencode",
+    "mcpProfile": {
+      "profileVersion": 1,
+    },
+    "modelId": "anthropic/claude-haiku-4.5",
+    "optionalServerIds": [],
+    "progressiveToolDiscovery": true,
+    "requireToolApproval": true,
     "respectToolVisibility": true,
     "serverConnectionOverrides": undefined,
     "serverIds": [],

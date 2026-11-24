@@ -1,3 +1,4 @@
+import type { WebClientRunContext } from "../services/web-clients/web-client-run.js";
 import type { TurnAuthorization } from "../services/turn-authorization.js";
 import { finishPendingPersist } from "./completed-turn-finalization.js";
 import { WIDGET_TOOL_VERBS } from "../services/widget-tool-verbs.js";
@@ -55,6 +56,7 @@ import {
   readModelOutputImage,
   renameToolNamePart,
   renameToolNamesInMessages,
+  type ErrorOrigin,
   type NormalizedError,
 } from "@mcpjam/sdk";
 import {
@@ -71,13 +73,12 @@ import { runHarnessTurn } from "./harness/run-harness-turn.js";
 import type { TrustedHarnessSandboxBinding } from "./harness/resolve-sandbox.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import type { ExecutionScope } from "./execution-scope.js";
-import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
-import type { RuntimeSkill } from "./harness/runtime-skills.js";
 import {
   httpStatusOrUndefined,
   type InfraFailureEvidence,
 } from "./infra-failure-evidence.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
+import type { TurnSkills } from "../services/environments/turn-skills.js";
 import type { HarnessMcpProxyStrategy } from "./harness/harness-proxy-strategy.js";
 import type { HarnessPolicyBlockRecord } from "./harness/harness-proxy-policy-enforcement.js";
 import type { BoxSkillsResult } from "./harness/box-skills-writer.js";
@@ -113,6 +114,7 @@ import {
   type MrtrEngineResume,
 } from "./mrtr-hosted-chat.js";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
+import { SYNTHETIC_SESSION_APPROVAL_DENIAL } from "@/shared/tool-approval";
 import { PLATFORM_STREAM_PATH } from "@/shared/mcpjam-agent-model";
 import {
   DEFAULT_TURN_MAX_STEPS,
@@ -179,14 +181,6 @@ export {
   UNVERIFIED_APPROVAL_RESULT,
   USED_APPROVAL_RESULT,
 };
-
-/**
- * The result an unattended turn (`approvalMode: "auto-deny"`) gives a call
- * that needed approval. Shared with the swarm runner, so the model reads one
- * answer whichever engine ran the turn.
- */
-export const SYNTHETIC_SESSION_APPROVAL_DENIAL =
-  "approval-denied (synthetic session)";
 
 let warnedLegacyUnsignedApproval = false;
 
@@ -340,6 +334,7 @@ import {
   isMcpjamOwnedEmptyStep,
   type EmptyStepFacts,
 } from "./empty-step-failure.js";
+import { omitCallCost, readCallCostFromFinishChunk } from "./backend-call-cost.js";
 import {
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
@@ -654,6 +649,19 @@ export interface MCPJamEngineErrorEvent {
    * error and go through the normal describer.
    */
   normalized?: NormalizedError;
+  /**
+   * The origin the turn's failure reporter based its capture decision on
+   * (`RouteFailureReport.origin`, promotion included). Absent ⇒ not reported
+   * (an aborted turn, or an emitter that does not report), or classified from
+   * the message alone (the harness catch): a consumer must treat that as
+   * unrecorded.
+   */
+  reportedOrigin?: ErrorOrigin;
+  /**
+   * Whether that reporter sent this failure to Sentry
+   * (`RouteFailureReport.captured`). Absent ⇒ not reported.
+   */
+  reportedCaptured?: boolean;
 }
 
 /**
@@ -1057,6 +1065,8 @@ export interface MCPJamHandlerOptions {
     sessionIdx?: number;
   };
   authHeader?: string;
+  /** Web clients: the eval run's owner and frozen accounts (`webClientRunOfEvalRun`). */
+  webClientRun?: WebClientRunContext;
   scenarioId?: string;
   accessVersion?: number;
   projectId?: string;
@@ -1073,41 +1083,23 @@ export interface MCPJamHandlerOptions {
   journeyRunId?: string;
   hostId?: string;
   /**
-   * Pinned harness skills (eval runs and swarm targets). When set — even
-   * EMPTY — the harness turn delivers exactly these pinned artifacts; its
-   * `skillsHash` derives from the pinned artifact fingerprints. HARNESS-ONLY:
-   * the emulated engine receives pinned skills via prepareChatV2's `skills`
-   * plan instead (which it refuses on a harness turn — the two paths are
-   * deliberately disjoint).
+   * The turn's skill plan, which a harness turn carries out: what its box
+   * writer plans from, its supporting files, its captured MCP-server skills
+   * and whether its servers' own skills may be offered. A turn with no plan
+   * leaves the box as it is.
    */
-  pinnedHarnessSkills?: PinnedSkillArtifact[];
-  /**
-   * The skills THIS turn's environment resolved to. When set — even EMPTY —
-   * the harness turn delivers exactly these. Ranks BELOW `pinnedHarnessSkills`
-   * (a pinned run's reproducibility outranks a live environment resolution);
-   * see `harness/skill-delivery.ts` for the single place that precedence is
-   * written down. With neither, the turn leaves the box's skills as they are.
-   */
-  runtimeSkillsOverride?: RuntimeSkill[];
+  skillPlan?: TurnSkills;
   /**
    * The turn's resolved `EffectiveCapabilitySet` (INS-3), harness side (INS-7).
-   * Set alongside `runtimeSkillsOverride` for an environment turn; it carries
-   * what the flat skill list structurally cannot — per-skill SUPPORTING FILES
-   * (the only source that includes a plugin skill's, since the project-wide file
-   * query excludes `plugin_component` rows) and the pinned plugin VERSIONS,
-   * which fold into the harness runtime fingerprint so a plugin change
-   * invalidates an incompatible resumed sandbox.
+   * Set for an environment turn; it carries the plugins' server origins and the
+   * pinned plugin VERSIONS, which fold into the harness runtime fingerprint so a
+   * plugin change invalidates an incompatible resumed sandbox. The turn's skills
+   * and their supporting files come from `skillPlan`.
    *
    * Delivery input only. Nothing derived from it is persisted as a pin: every
    * launch re-resolves the environment, so a recorded version is provenance.
    */
   effectiveCapabilities?: EffectiveCapabilitySet;
-  /**
-   * A client's or a study's turn: its servers are connected now, so their own
-   * MCP-server skills may be offered beside its skills. Unset for a named
-   * environment, whose server skills were captured with it.
-   */
-  liveTurn?: boolean;
   /**
    * The Project Environment this turn resolved — the GRANT BOUNDARY for project
    * secrets, and the ONLY thing the harness turn needs to fetch them.
@@ -1965,7 +1957,7 @@ function createClientFinishChunk(
     (finishChunk
       ? readUsageFromFinishChunk(finishChunk)
       : { inputTokens: 0, outputTokens: 0, totalTokens: 0 });
-  const metadata = source?.messageMetadata;
+  const metadata = omitCallCost(source?.messageMetadata);
   const messageMetadata =
     metadata &&
     typeof metadata === "object" &&
@@ -4422,6 +4414,12 @@ async function processOneStep(ctx: StepContext): Promise<{
       promptIndex: traceTurn.promptIndex,
       stepIndex,
       normalized,
+      ...(backendReport
+        ? {
+            reportedOrigin: backendReport.origin,
+            reportedCaptured: backendReport.captured,
+          }
+        : {}),
       // A response is in hand, so this is unambiguously the model's leg —
       // no flag needed to know it.
       phase: "stream",
@@ -4505,6 +4503,7 @@ async function processOneStep(ctx: StepContext): Promise<{
   const harnessSpanMeta = {
     provider,
     finishReason: readFinishReasonFromChunk(finishChunk),
+    cost: readCallCostFromFinishChunk(finishChunk),
     ttfcMs:
       typeof firstChunkAt === "number"
         ? Math.max(0, firstChunkAt - llmStartAbs)
@@ -4931,6 +4930,32 @@ async function processOneStep(ctx: StepContext): Promise<{
         isMrtrSuspendSignalShape(error) ||
         isScopeStepUpSuspendSignal(error)
       ) {
+        // The provider call finished before the tool paused, so it keeps its
+        // llm span and cost: the finish chunk below carries no cost, and the
+        // span is the only place the call is counted.
+        pushBackendStepSuccessSpans(
+          traceTurn.turnSpans,
+          traceTurn.turnStartedAt,
+          traceTurn.promptIndex,
+          stepIndex,
+          stepStartAbs,
+          { startAbs: llmStartAbs, endAbs: llmEndAbs },
+          {
+            startAbs: toolsStartAbs,
+            endAbs: Date.now(),
+            pushAggregateSpan: false,
+          },
+          {
+            modelId,
+            inputTokens: stepUsage?.inputTokens,
+            outputTokens: stepUsage?.outputTokens,
+            totalTokens: stepUsage?.totalTokens,
+            messageStartIndex: stepMessageStartIndex,
+            messageEndIndex: stepMessageEndIndex,
+            status: "ok",
+            ...harnessSpanMeta,
+          },
+        );
         emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
         if (finishChunk) {
           writer.write(createClientFinishChunk(finishChunk, traceTurn, "stop"));
@@ -4938,6 +4963,19 @@ async function processOneStep(ctx: StepContext): Promise<{
         return { shouldContinue: false, didEmitFinish: !!finishChunk };
       }
       const failAbs = Date.now();
+      // A failure after this step's spans were recorded replaces them, so the
+      // provider call keeps one llm span and is counted once.
+      // In place: the traced tools hold this array.
+      for (let i = traceTurn.turnSpans.length - 1; i >= 0; i--) {
+        const span = traceTurn.turnSpans[i]!;
+        if (
+          (span.category === "step" || span.category === "llm") &&
+          span.promptIndex === traceTurn.promptIndex &&
+          span.stepIndex === stepIndex
+        ) {
+          traceTurn.turnSpans.splice(i, 1);
+        }
+      }
       pushBackendStepToolFailureSpans(
         traceTurn.turnSpans,
         traceTurn.turnStartedAt,
@@ -4955,6 +4993,7 @@ async function processOneStep(ctx: StepContext): Promise<{
           messageStartIndex: stepMessageStartIndex,
           messageEndIndex: stepMessageEndIndex,
           pushAggregateSpan: false,
+          cost: harnessSpanMeta.cost,
         },
       );
       setStepSpanMessageRanges(
@@ -5022,6 +5061,12 @@ async function processOneStep(ctx: StepContext): Promise<{
         promptIndex: traceTurn.promptIndex,
         stepIndex,
         normalized: stepNormalized,
+        ...(stepReport
+          ? {
+              reportedOrigin: stepReport.origin,
+              reportedCaptured: stepReport.captured,
+            }
+          : {}),
         // The enclosing `try` opens on tool wrapping and execution, which is
         // reached only after the stream responded. Nothing pre-request can
         // land here.
@@ -5221,6 +5266,12 @@ async function processOneStep(ctx: StepContext): Promise<{
       promptIndex: traceTurn.promptIndex,
       stepIndex,
       normalized: emptyStepNormalized,
+      ...(emptyStepReport
+        ? {
+            reportedOrigin: emptyStepReport.origin,
+            reportedCaptured: emptyStepReport.captured,
+          }
+        : {}),
       // A response was streamed in full; only its content was missing. Never
       // `setup` — the model leg unambiguously ran.
       phase: "stream",
@@ -6109,6 +6160,8 @@ export async function runChatEngineLoop(
           rawText: errorText,
           promptIndex: traceTurn.promptIndex,
           normalized: loopNormalized,
+          reportedOrigin: loopReport.origin,
+          reportedCaptured: loopReport.captured,
           // The only one of this file's three emitters that can fire on
           // either side of the handover. See `modelInvoked`.
           phase: modelInvoked ? "stream" : "setup",

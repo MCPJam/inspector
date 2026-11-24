@@ -555,12 +555,16 @@ describe("web routes — chat-v2 hosted mode", () => {
         surface: "preview",
         modelId: "openai/gpt-5-mini",
         modelSource: "mcpjam",
-      })
+      }),
+      expect.anything(),
     );
     // Non-direct flows must NOT send hostConfig — backend skips with
     // missing_field, which is the desired behavior for scenario/serverShare.
     const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
     expect(persistArgs.hostConfig).toBeUndefined();
+    // The request context, so a failed save is logged as a typed event.
+    const persistContext = persistChatSessionToConvexMock.mock.calls[0][1];
+    expect(persistContext.req.raw).toBeInstanceOf(Request);
   });
 
   it("validates a pageTools snapshot and forwards it, so a hosted turn can offer a page's own tools", async () => {
@@ -1020,6 +1024,41 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 
+  it("asks a signed-out visitor to sign in before a share link's harness turn", async () => {
+    const { app, token } = createWebTestApp();
+    // The backend's answer when the link's client runs a harness that a
+    // signed-in guest would get.
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
+      ok: false,
+      status: 401,
+      code: "SCENARIO_SIGN_IN_REQUIRED",
+      error: "Sign in to preview this scenario.",
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        scenarioId: "cbx_1",
+        accessVersion: 1,
+        chatSessionId: "chat-cb-sign-in",
+        messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
+        model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
+      },
+      token
+    );
+
+    // `details.code` is what the share-link page reads to replace the chat
+    // with its sign-in prompt (`classifyScenarioAccessError`).
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({
+      details: { code: "SCENARIO_SIGN_IN_REQUIRED" },
+    });
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
   it("a scenario session ignores a stray hostId (scenario path wins)", async () => {
     const { app, token } = createWebTestApp();
 
@@ -1261,7 +1300,8 @@ describe("web routes — chat-v2 hosted mode", () => {
           // resolvedTemperature from prepareChatV2Mock default (0.7)
           temperature: 0.7,
         }),
-      })
+      }),
+      expect.anything(),
     );
     const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
     expect(
@@ -1307,7 +1347,8 @@ describe("web routes — chat-v2 hosted mode", () => {
         resumeConfig: expect.objectContaining({
           modelVisibleMcpToolResults: resolvedImagePolicyMatcher(false),
         }),
-      })
+      }),
+      expect.anything(),
     );
   });
 

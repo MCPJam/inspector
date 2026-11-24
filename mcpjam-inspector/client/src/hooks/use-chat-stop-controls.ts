@@ -1,4 +1,10 @@
-import { useCallback, type Dispatch, type SetStateAction } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import type { MultiModelCardSummary } from "@/components/chat-v2/model-compare-card-header";
 import { useEscapeToStopChat } from "./use-escape-to-stop-chat";
 
@@ -105,4 +111,30 @@ export function useChatStopControls({
     isStreamingActive,
     stopActiveChat,
   };
+}
+
+/**
+ * The compare-card side of `stopActiveChat`: runs the card's `stop` once per
+ * Stop press. `stopRequestId` is the shared counter that Stop increments and
+ * a new chat resets to 0. A card's `stop` changes identity whenever its chat
+ * status or messages change, so a changed `stop` alone must not run it again
+ * — that stopped every later turn after one Stop. The card starts from the
+ * counter's value at mount, so a card added after a Stop does not stop itself.
+ */
+export function useCompareStopRequest(
+  stopRequestId: number,
+  stop: () => void,
+) {
+  const handledStopRequestIdRef = useRef(stopRequestId);
+
+  useEffect(() => {
+    if (stopRequestId === handledStopRequestIdRef.current) {
+      return;
+    }
+
+    handledStopRequestIdRef.current = stopRequestId;
+    if (stopRequestId > 0) {
+      stop();
+    }
+  }, [stop, stopRequestId]);
 }

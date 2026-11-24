@@ -5,6 +5,7 @@
  * mapping.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { convexToJson } from "convex/values";
 
 vi.mock("@/lib/config", () => ({ HOSTED_MODE: false }));
 
@@ -313,7 +314,20 @@ describe("hosted registry helpers", () => {
     expect(a?.hash).toBe(b?.hash);
     expect(a).toMatchObject({
       delivery: ["poll"],
-      payloadSchema: { type: "object" },
+      payloadSchema: '{"type":"object"}',
     });
+  });
+  it("preserves JSON Schema reserved keys through Convex serialization", async () => {
+    const schema = {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      $defs: { message: { type: "string" } },
+      type: "object",
+      properties: { message: { $ref: "#/$defs/message" } },
+    };
+    const descriptor = await buildHostedEventDescriptor({ name: "ping", delivery: ["webhook"], payloadSchema: schema });
+    expect(typeof descriptor?.payloadSchema).toBe("string");
+    if (typeof descriptor?.payloadSchema !== "string") throw new Error("Schema was not encoded");
+    expect(JSON.parse(descriptor.payloadSchema)).toEqual(schema);
+    expect(() => convexToJson({ payloadSchema: descriptor.payloadSchema })).not.toThrow();
   });
 });

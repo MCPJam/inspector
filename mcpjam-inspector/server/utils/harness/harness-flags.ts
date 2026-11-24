@@ -88,3 +88,14 @@ export function harnessKeepAgentThroughPause(): boolean {
 export function harnessQuietClaudeStartup(): boolean {
   return process.env.MCPJAM_HARNESS_QUIET_CLAUDE_STARTUP === "true";
 }
+
+/**
+ * A broker-prepared attach reads the box and its egress policy together
+ * instead of one after the other. Both checks still pass before anything runs
+ * in the box. Off unless `MCPJAM_HARNESS_PARALLEL_ATTACH=1`; read per call.
+ */
+export function attachInParallel(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env.MCPJAM_HARNESS_PARALLEL_ATTACH === "1";
+}

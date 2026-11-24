@@ -327,20 +327,33 @@ async function reviewerFor(
   options: ExecuteHostedReadinessOptions,
   signIn: ReviewerSignInOutcome | undefined,
 ): Promise<ReadinessReviewerAccount> {
-  if (signIn?.kind !== "connected") return options.reviewer ?? NO_REVIEWER_ACCOUNT;
+  if (signIn?.kind !== "connected")
+    return options.reviewer ?? NO_REVIEWER_ACCOUNT;
   const known = options.reviewer;
-  if (known && "accountId" in known && known.accountId === signIn.reviewerAccountId) {
+  if (
+    known &&
+    "accountId" in known &&
+    known.accountId === signIn.reviewerAccountId
+  ) {
     return known;
   }
   return options.authorizeReviewer
     ? options.authorizeReviewer(signIn.reviewerAccountId)
-    : { missing: "MCPJam could not use the reviewer account this run connected. Run again." };
+    : {
+        missing:
+          "MCPJam could not use the reviewer account this run connected. Run again.",
+      };
 }
 
 /**
- * How a connected attempt ends once the run graded with it: failed when the
- * identity check named another account or tenant, passed otherwise, saying
- * who signed in and whether the identity was checked.
+ * How a connected attempt ends once the run graded with it, saying who signed
+ * in and what the identity check found.
+ *
+ * FAILS CLOSED. It passes when the check confirmed the reviewer, or when the
+ * submission named no identity tool to check with. A check that was asked
+ * for and could not be made (the tool erred, its result lacked the field, the
+ * reviewer's session failed, or its settings are unusable) fails, like one
+ * that named another account or tenant: neither shows who MCPJam signed in as.
  */
 export function attemptEnding(
   signIn: Extract<ReviewerSignInOutcome, { kind: "connected" }>,
@@ -351,17 +364,29 @@ export function attemptEnding(
       ? "A person signed in as the reviewer through the handoff link"
       : "MCPJam signed in as the reviewer from a clean browser";
   const why = (identity?.reason ?? "").replace(/[.\s]*$/, "");
-  if (identity?.outcome === "wrong-account" || identity?.outcome === "wrong-tenant") {
-    const what = identity.outcome === "wrong-account" ? "account" : "organization";
+  if (
+    identity?.outcome === "wrong-account" ||
+    identity?.outcome === "wrong-tenant"
+  ) {
+    const what =
+      identity.outcome === "wrong-account" ? "account" : "organization";
     return {
       outcome: "failed",
       detail: `${who}, but the identity check found a different ${what} than the submission names${why ? `: ${why}` : ""}. Check the reviewer credentials and tenant, then start a new attempt.`,
     };
   }
+  if (identity?.outcome !== "verified" && !identity?.notAsked) {
+    return {
+      outcome: "failed",
+      detail: `${who}, but MCPJam could not confirm who it signed in as${why ? `: ${why}` : ""}. Fix the identity tool settings under Reviewer check, then start a new attempt.`,
+    };
+  }
   const checked =
     identity?.outcome === "verified"
-      ? "the identity check confirmed the reviewer"
-      : `the identity was not checked${why ? ` (${why})` : ""}`;
+      ? identity.expected?.identity
+        ? "the identity check confirmed the reviewer"
+        : "the organization check passed; account identity was not checked"
+      : "the submission names no identity tool, so the identity was not checked";
   return {
     outcome: "passed",
     detail: `${who}, connected the reviewer account and graded the submission; ${checked}.`,

@@ -64,6 +64,8 @@ import {
   gateToolsToAdvertisedSubset,
   type PrepareAdvertisedTools,
 } from "./advertised-tools";
+import type { StepCallPricer } from "./call-cost/direct-call-pricer.js";
+import type { TurnModelCall } from "./call-cost/local-usage-cost.js";
 
 /**
  * Stream parts that mean the model has produced something — the subset AI
@@ -110,6 +112,8 @@ export interface DirectChatTurnTraceTurn {
     ReturnType<typeof createAiSdkEvalTraceContext>
   >["recordedSpans"];
   turnUsage: LiveChatTraceUsage | undefined;
+  /** Each provider request the turn made, in step order. */
+  turnCalls: TurnModelCall[];
 }
 
 export interface DirectChatTurnRequestPayloadInfo {
@@ -193,6 +197,8 @@ export interface DirectChatTurnPersistEvent {
   usage?: LiveChatTraceUsage;
   finishReason?: string;
   turnTrace: PersistedTurnTrace;
+  /** Each provider request, for a writeback that records one row per call. */
+  calls: TurnModelCall[];
 }
 
 export interface DirectChatTurnTraceEvents {
@@ -437,6 +443,12 @@ export interface RunDirectChatTurnOptions {
    * observability; chat currently omits.
    */
   experimentalTelemetry?: Parameters<typeof streamText>[0]["experimental_telemetry"];
+  /**
+   * Prices each step's one provider call for its llm span. Set for personal
+   * keys, which only this machine can price; org calls are priced by the
+   * backend, which holds the org's rates.
+   */
+  priceStepCall?: StepCallPricer;
 }
 
 export interface RunDirectChatTurnHandle {
@@ -607,6 +619,7 @@ export function runDirectChatTurn(
     shouldPauseAfterStep,
     suspendedToolCallIds,
     transformStepMessages,
+    priceStepCall,
   } = options;
   const resolvedMaxSteps =
     typeof maxSteps === "number" && Number.isFinite(maxSteps) && maxSteps > 0
@@ -631,6 +644,7 @@ export function runDirectChatTurn(
     turnStartedAt,
     turnSpans: [],
     turnUsage: undefined,
+    turnCalls: [],
   };
   const traceContext = createAiSdkEvalTraceContext(traceAnchor);
   const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
@@ -939,7 +953,25 @@ export function runDirectChatTurn(
           ? step.response.timestamp.toISOString()
           : undefined;
 
-      emitAiSdkOnStepFinish(traceContext, Date.now(), {
+      // Read before pricing so a slow rate lookup never stretches the span.
+      // No pricer, no await: unpriced routes settle the step as before.
+      const stepFinishedAt = Date.now();
+      traceTurn.turnCalls.push({
+        callId: `${traceTurn.turnId}:${currentStepIndex}`,
+        stepIndex: currentStepIndex,
+        ...(stepUsage ? { usage: stepUsage } : {}),
+        ...(step?.finishReason
+          ? { finishReason: String(step.finishReason) }
+          : {}),
+        finishedAt: stepFinishedAt,
+      });
+      const cost = priceStepCall
+        ? await priceStepCall({
+            usage: step.usage,
+            providerMetadata: step.providerMetadata,
+          })
+        : undefined;
+      emitAiSdkOnStepFinish(traceContext, stepFinishedAt, {
         modelId,
         inputTokens: stepUsage?.inputTokens,
         outputTokens: stepUsage?.outputTokens,
@@ -951,6 +983,7 @@ export function runDirectChatTurn(
         responseId: step?.response?.id,
         responseTimestamp,
         ttfcMs,
+        cost,
       });
 
       setToolSpanMessageRangesFromResults(
@@ -1121,6 +1154,7 @@ export function runDirectChatTurn(
             ),
           usage: traceTurn.turnUsage,
           finishReason: event.finishReason,
+          calls: [...traceTurn.turnCalls],
           turnTrace: {
             turnId: traceTurn.turnId,
             promptIndex: traceTurn.promptIndex,

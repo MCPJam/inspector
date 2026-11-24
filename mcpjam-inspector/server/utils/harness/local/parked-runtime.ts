@@ -283,7 +283,7 @@ async function adoptParkedRuntime(
         "the pending action will not run.",
     );
   }
-  const permissionMode = args.scope !== "unattended" || args.requireToolApproval
+  const permissionMode = args.scope !== "unattended" || args.requireToolApproval || args.holdNativeCommands
     ? ("allow-reads" as const)
     : plan.permissionMode;
   if (permissionMode !== live.prepared.permissionMode) {

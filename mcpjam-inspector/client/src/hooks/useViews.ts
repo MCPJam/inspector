@@ -2,6 +2,7 @@ import { useCallback, useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useArtifactQuery } from "@/lib/artifact-urls";
+import { indexProjectServersByName } from "@/lib/project-servers-by-name";
 import { shouldQueryProjectId, type RemoteServer } from "./useProjects";
 import { useConvexBlobUpload } from "./use-convex-blob-upload";
 
@@ -235,11 +236,14 @@ export function useProjectServers({
   const serversByName = useMemo(() => {
     if (!servers) return new Map<string, string>();
     const map = new Map<string, string>();
-    for (const server of servers) {
-      map.set(server.name, server._id);
+    for (const [name, server] of indexProjectServersByName(
+      servers,
+      queryProjectId,
+    )) {
+      map.set(name, server._id);
     }
     return map;
-  }, [servers]);
+  }, [servers, queryProjectId]);
 
   // Create a map for reverse lookup by ID
   const serversById = useMemo(() => {

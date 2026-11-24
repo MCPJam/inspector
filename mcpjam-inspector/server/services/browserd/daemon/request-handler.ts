@@ -292,8 +292,11 @@ export interface BrowserdHandlerDeps {
    * status before asking never gets there.
    */
   recorder?: Pick<VideoRecorder, "start" | "stop" | "status">;
-  /** Export the persistent profile while the queue is drained. */
-  profileExport?: () => Promise<Uint8Array>;
+  /**
+   * Export the persistent profile while the queue is drained, first clearing
+   * the cookies and site storage of each origin in `excludeOrigins`.
+   */
+  profileExport?: (options: { excludeOrigins: readonly string[] }) => Promise<Uint8Array>;
   /** Serves workspace ports on this box's loopback; hosted daemons only. */
   preview?: Pick<WorkspacePreviewRelay, "grant">;
 }
@@ -650,7 +653,7 @@ export class BrowserdRequestHandler {
       if (req.method !== "POST") {
         return { status: 405, headers: { allow: "POST" } };
       }
-      return this.handleProfileExport();
+      return this.handleProfileExport(req);
     }
 
     // Human input, which does NOT travel with the frames.
@@ -1008,7 +1011,7 @@ export class BrowserdRequestHandler {
     return { status: 200, body: { viewport, bootId: this.bootId } };
   }
 
-  private async handleProfileExport(): Promise<DaemonResponse> {
+  private async handleProfileExport(req: DaemonRequest): Promise<DaemonResponse> {
     if (!this.profileExport) {
       // A daemon built without an export capability is not BUSY. `main.ts`
       // wires `profileExport` for persistent contexts only, so on an ephemeral
@@ -1016,6 +1019,12 @@ export class BrowserdRequestHandler {
       // for a state that can never arrive. 501, exactly as `/v1/trace` answers
       // for a daemon that keeps no ledger.
       return { status: 501, body: { error: "profile_export_unavailable" } };
+    }
+    const excludeOrigins = parseExcludeOrigins(req.body);
+    if (!excludeOrigins) {
+      // Refused rather than ignored: an exclusion the caller asked for and
+      // didn't get would leave that site's session in the archive.
+      return { status: 400, body: { error: "invalid_exclude_origins", bootId: this.bootId } };
     }
     if (!this.queue.isIdle?.()) {
       return { status: 409, body: { error: "profile_busy" } };
@@ -1031,7 +1040,7 @@ export class BrowserdRequestHandler {
       return { status: 423, body: { error: "lease_held" } };
     }
     try {
-      const archive = await this.profileExport();
+      const archive = await this.profileExport({ excludeOrigins });
       return {
         status: 200,
         body: archive,
@@ -2183,4 +2192,36 @@ function isValidCommand(value: unknown): value is BrowserCommand {
     (candidate.tabId === undefined || typeof candidate.tabId === "string") &&
     (candidate.holder === undefined || typeof candidate.holder === "string")
   );
+}
+
+/**
+ * The origins a profile export must leave out: `[]` for a bare request, and
+ * `undefined` when the body names anything that isn't an http(s) origin.
+ */
+export function parseExcludeOrigins(body: string | undefined): string[] | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body || "{}");
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+  const raw = (parsed as { excludeOrigins?: unknown }).excludeOrigins;
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw) || raw.length > 16) return undefined;
+  const origins: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string") return undefined;
+    let url: URL;
+    try {
+      url = new URL(entry);
+    } catch {
+      return undefined;
+    }
+    if ((url.protocol !== "https:" && url.protocol !== "http:") || url.origin !== entry) {
+      return undefined;
+    }
+    origins.push(entry);
+  }
+  return origins;
 }

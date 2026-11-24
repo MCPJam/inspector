@@ -279,6 +279,10 @@ const PLAIN_TOOLS = [
   "backtest_eval_run",
   "backtest_eval_run_judge",
   "request_eval_run_judge",
+  // The run page's Analyze button as three tools: receipts, no widget view.
+  "build_eval_run_findings",
+  "request_eval_run_insights",
+  "cancel_eval_run_insights",
   // The description-rewrite experiment: agent-oriented payloads (a diff and
   // two arm counts), no widget view.
   "propose_eval_description_rewrite",
@@ -593,6 +597,9 @@ describe("platform tool registration", () => {
       "backtest_eval_run",
       "backtest_eval_run_judge",
       "request_eval_run_judge",
+      "build_eval_run_findings",
+      "request_eval_run_insights",
+      "cancel_eval_run_insights",
       "list_project_environments",
       "get_project_environment",
       "resolve_project_environment",
@@ -789,8 +796,11 @@ describe("platform tool registration", () => {
       "connect_project_server",
       "install_registry_server",
       "request_eval_run_judge",
+      "request_eval_run_insights",
+      "build_eval_run_findings",
       "request_study_insights",
       "request_swarm_run_insights",
+      "cancel_eval_run_insights",
       "cancel_study_insights",
       "cancel_swarm_run_insights",
       "upsert_study_member",

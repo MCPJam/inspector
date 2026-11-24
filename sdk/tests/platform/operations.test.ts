@@ -2550,6 +2550,9 @@ describe("operation catalog consistency", () => {
       draft: { assertions: { mode: "replace", list: [] } },
     },
     request_eval_run_judge: { project: "p", runId: "r" },
+    request_eval_run_insights: { project: "p", runId: "r" },
+    cancel_eval_run_insights: { project: "p", runId: "r" },
+    build_eval_run_findings: { project: "p", runId: "r" },
     list_eval_github_repos: {},
     connect_eval_github_repo: {
       suite: "s",
@@ -2856,6 +2859,11 @@ describe("operation catalog consistency", () => {
       "backtest_eval_run",
       "backtest_eval_run_judge",
       "request_eval_run_judge",
+      // The run page's Analyze button: build findings, request the analysis,
+      // cancel it. Each changes the run's analysis state.
+      "request_eval_run_insights",
+      "cancel_eval_run_insights",
+      "build_eval_run_findings",
       // Description-rewrite experiment. Propose spends a small model budget
       // to draft the rewrite; start launches two replay arms and spends
       // eval-iteration credits. `get_eval_description_experiment` stays a
@@ -3049,15 +3057,18 @@ describe("server live operations", () => {
     );
   });
 
-  it("rejects stdio servers deterministically before any live call", async () => {
+  it("diagnoses a stdio server as unreachable before any live call", async () => {
     const { client, fetchMock } = makeClient();
 
-    await expect(
-      diagnoseServerOperation.execute(
-        { project: "new", server: "Docs" },
-        { client }
-      )
-    ).rejects.toThrow(/stdio servers are not supported/);
+    const result = await diagnoseServerOperation.execute(
+      { project: "new", server: "Docs" },
+      { client }
+    );
+
+    expect(result.report.status).toBe("error");
+    expect(result.report.error).toMatchObject({
+      details: { refusalReason: "hosted_stdio_unsupported" },
+    });
     expect(callsTo(fetchMock, "/doctor")).toHaveLength(0);
   });
 
