@@ -3,10 +3,11 @@
  * project and account that opened it. Another person's id, or the opener's
  * id sent for another account, finds no browser: nothing is read from it or
  * exported, and the route says to start the sign-in again. A browser closes
- * once its save is over, or two hours after it opened. Only a backend that
- * says the person manages the project's web accounts opens one: a backend
- * without that check is refused like a member. The backend, the hosted
- * browser and the person's session are fixtures; the routes and the
+ * once its save is over, when its sign-in page fails to open, or two hours
+ * after it opened. Only a backend that says the person manages the project's
+ * web accounts opens one: a backend without that check is refused like a
+ * member. The backend, the hosted browser and the person's session are
+ * fixtures; the routes and the
  * claude.ai page module are real. Evidence: fixture.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -21,7 +22,8 @@ const fixture = vi.hoisted(() => ({
   /** The backend's answer to the manage check. */
   manage: (async () => ({ allowed: true })) as () => Promise<unknown>,
   open: vi.fn(),
-  close: vi.fn(async () => undefined),
+  /** Closes the hosted session, as the bearer it is given names the person. */
+  close: vi.fn(async (_bearer?: string) => undefined),
   exportProfile: vi.fn(async () => new Uint8Array([1, 2, 3])),
   saveWebAccountProfile: vi.fn(async () => ({
     ok: true as const,
@@ -82,6 +84,7 @@ vi.mock("../hosted-browser.js", () => ({
 }));
 
 import { createDefaultWebAccountRoutes } from "../account-routes-default";
+import { forgetSignInBrowsers } from "../sign-in-browsers";
 
 /** A claude.ai page signed in as team@example.com. */
 function claudePage(): PageDriver {
@@ -141,9 +144,13 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  forgetSignInBrowsers();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
+
+/** The browser's hosted session closed as the person who opened it. */
+const CLOSED = ["Bearer user_a"];
 
 describe("a sign-in browser on the deployed account routes", () => {
   it("saves the profile for the person and account that opened it", async () => {
@@ -164,6 +171,34 @@ describe("a sign-in browser on the deployed account routes", () => {
       accountEmail: "team@example.com",
     });
     expect(fixture.exportProfile).toHaveBeenCalledTimes(1);
+    expect(fixture.close.mock.calls).toEqual([CLOSED]);
+    const again = await post(app, "user_a", "/accounts/acct-1/save-profile", {
+      projectId: "p1",
+      browserSessionId: "browser-session-1",
+    });
+    expect(again.status).toBe(409);
+    expect(await again.json()).toEqual(GONE);
+  });
+
+  it("closes a browser whose sign-in page failed to open, since nobody gets its id", async () => {
+    fixture.page = {
+      ...claudePage(),
+      navigate: async () => {
+        throw new Error("The browser went away.");
+      },
+    };
+    const app = createDefaultWebAccountRoutes();
+    const started = await post(app, "user_a", "/accounts/acct-1/sign-in", {
+      projectId: "p1",
+    });
+    expect(started.status).toBe(500);
+    expect(fixture.close.mock.calls).toEqual([CLOSED]);
+    const saved = await post(app, "user_a", "/accounts/acct-1/save-profile", {
+      projectId: "p1",
+      browserSessionId: "browser-session-1",
+    });
+    expect(saved.status).toBe(409);
+    expect(fixture.exportProfile).not.toHaveBeenCalled();
   });
 
   it("refuses its id from another person or for another account, and exports nothing", async () => {

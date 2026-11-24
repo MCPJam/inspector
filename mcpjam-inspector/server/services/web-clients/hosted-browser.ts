@@ -209,10 +209,11 @@ export type WebClientHostedBrowser = {
   /** The browser's profile as an archive, for save-profile. */
   exportProfile(): Promise<Uint8Array>;
   /**
-   * Closes the hosted session. It never throws: it runs once the outcome is
-   * known, and a session that won't close is logged rather than changing it.
+   * Closes the hosted session, as the person `bearer` names, or else the one
+   * that opened it. It never throws: it runs once the outcome is known, and a
+   * session that won't close is logged rather than changing it.
    */
-  close(): Promise<void>;
+  close(bearer?: string): Promise<void>;
 };
 
 async function closeHostedSession(args: { bearer: string; projectId: string; sessionId: string }): Promise<void> {
@@ -294,7 +295,8 @@ export async function openWebClientHostedBrowser(args: {
     policy,
     signal,
   });
-  const close = () => closeHostedSession({ bearer, projectId: args.projectId, sessionId: browser.browserSessionId });
+  const close = (closer = bearer) =>
+    closeHostedSession({ bearer: closer, projectId: args.projectId, sessionId: browser.browserSessionId });
   // The session exists from here: one that never boots is closed, not left
   // open with nobody to close it, and the caller hears why it didn't boot.
   const handle = await provisionConversationBrowser({

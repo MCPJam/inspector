@@ -158,6 +158,7 @@ export function createHostedWebClientEnvironment(
   const restoredVersions = new Map<string, number>();
   return {
     publicBaseUrl: deps.publicBaseUrl,
+    actor: deps.actor,
     journal: deps.journal ?? createMemorySendJournal(),
 
     async resolveAccount({ projectId, vendor }) {

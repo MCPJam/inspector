@@ -22,7 +22,10 @@ import {
   type WebClientTurnInput,
   type WebClientTurnResult,
 } from "../run-web-client-turn.js";
-import type { WebClientEnvironment } from "../web-client-environment.js";
+import type {
+  WebClientEnvironment,
+  WebRunActor,
+} from "../web-client-environment.js";
 import { accountBrowserOver } from "./account-browser.js";
 import type { PendingStep, WebReconnectBackend } from "./backend.js";
 import type { WebActor } from "./convex-backend.js";
@@ -56,9 +59,50 @@ export type RecoverableWebTurnResult = WebClientTurnResult & {
   stop?: WebRunStop;
 };
 
+/** Where a handback finds the browser a person signed the account in with. */
+export type HandbackBrowsers = Pick<
+  WebClientEnvironment,
+  "openBrowser" | "pageModule"
+>;
+
+/**
+ * Thrown by `openBrowser` when the browser a handback names was opened for
+ * another web account. Nothing is saved or resumed, and the same browser can
+ * never hand this account back, so the person signs this account in instead.
+ */
+export class SignInBrowserAccountMismatchError extends Error {
+  constructor() {
+    super(
+      "The browser you signed in with belongs to another account. Open this account's sign-in page, then finish.",
+    );
+    this.name = "SignInBrowserAccountMismatchError";
+  }
+}
+
+/**
+ * Thrown by a hosted Inspector's handback environment when the handback names
+ * no sign-in browser. Hosted, the handback reads the browser the person signed
+ * in with; a local Inspector reads this machine's own profile and needs none.
+ */
+export class SignInBrowserNotNamedError extends Error {
+  constructor() {
+    super(
+      "The handback didn't say which browser you signed in with. Open this account's sign-in page, then finish.",
+    );
+    this.name = "SignInBrowserNotNamedError";
+  }
+}
+
 export type WebRecoverySetup = {
-  /** The reconnect backend, acting for the run's person. */
-  backendFor(run: { projectId: string; runId: string }): WebReconnectBackend;
+  /**
+   * The reconnect backend, acting for the run's person. Undefined when the
+   * turn names nobody to act as: the turn then runs without recovery.
+   */
+  backendFor(run: {
+    projectId: string;
+    runId: string;
+    actor?: WebRunActor;
+  }): WebReconnectBackend | undefined;
   ledger: LedgerReader;
   signInMethodFor?: WebRecoveryDeps["signInMethodFor"];
   /** How long a paused turn waits for the handback. */
@@ -66,13 +110,15 @@ export type WebRecoverySetup = {
   /** How often a paused turn reads its request, for a handback elsewhere. */
   pollMs?: number;
   /**
-   * The environment whose `openBrowser` gives the browser a person signed the
-   * account in with, for a handback. Hosted, their sign-in browser.
+   * Where `openBrowser` gives the browser a person signed the account in
+   * with, for a handback: hosted, the sign-in browser the reconnect page
+   * names. Undefined when this server holds no such browser.
    */
   handbackEnvironment?(handback: {
     actor: WebActor;
     projectId: string;
-  }): Promise<WebClientEnvironment | undefined>;
+    browserSessionId?: string;
+  }): Promise<HandbackBrowsers | undefined>;
 };
 
 let configured: WebRecoverySetup | undefined;
@@ -132,9 +178,16 @@ export async function runRecoverableWebTurn(
   ) => void,
 ): Promise<RecoverableWebTurnResult> {
   const vendor = webClientVendorForRuntime(input.runtimeId);
-  if (!setup || !vendor) return runWebClientTurn(input);
   const { projectId, runId, environment } = input;
-  const backend = setup.backendFor({ projectId, runId });
+  const backend =
+    setup && vendor
+      ? setup.backendFor({
+          projectId,
+          runId,
+          ...(environment.actor ? { actor: environment.actor } : {}),
+        })
+      : undefined;
+  if (!setup || !vendor || !backend) return runWebClientTurn(input);
   const coordinator = createWebRecoveryCoordinator({
     backend,
     ledger: setup.ledger,
