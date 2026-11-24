@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -59,9 +59,13 @@ vi.mock("@mcpjam/design-system/dropdown-menu", () => ({
       {children}
     </button>
   ),
-  DropdownMenuContent: ({ children }: { children: ReactNode }) => (
-    <div>{children}</div>
-  ),
+  DropdownMenuContent: ({
+    children,
+    onClick,
+  }: {
+    children: ReactNode;
+    onClick?: (e: MouseEvent) => void;
+  }) => <div onClick={onClick}>{children}</div>,
   DropdownMenuItem: ({
     children,
     onClick,
@@ -379,6 +383,25 @@ describe("ChatHistoryRow", () => {
 
     await user.click(screen.getByText("Promote to test case", { exact: true }));
     expect(onConvertToTestCase).toHaveBeenCalledWith(session);
+  });
+
+  it("does not open the session when a menu item is chosen", async () => {
+    const onSelect = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ChatHistoryRow
+        session={sessionStub({ status: "active" })}
+        isActive={false}
+        isAuthenticated
+        isStreaming={false}
+        onSelect={onSelect}
+        actions={actions}
+      />
+    );
+
+    await user.click(screen.getByText("Archive", { exact: true }));
+    expect(actions.archive).toHaveBeenCalled();
+    expect(onSelect).not.toHaveBeenCalled();
   });
 
   it("keeps the timestamp and the row menu trigger rendered together", () => {
