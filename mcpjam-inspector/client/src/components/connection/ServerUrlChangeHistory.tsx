@@ -13,8 +13,12 @@
  */
 
 import { useQuery } from "convex/react";
+import { describeError } from "@mcpjam/sdk/browser";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { isConvexQueryNotServed } from "@/lib/convex-error";
+import { credentialOriginOf } from "@/lib/credential-origin";
+import type { ServerWithName } from "@/state/app-types";
+import type { ServerAuth } from "./server-auth";
 
 /**
  * Exported so the test can build the exact message the client sees, and so a
@@ -48,14 +52,11 @@ interface ServerUrlChangeEvent {
   } | null;
 }
 
-/**
- * Backend category names, in words. Unknown keys fall through unchanged rather
- * than being dropped: a kind added on the backend should still be visible here
- * before anyone remembers to update this map.
- */
+/** Credential names as they appear in Config. */
 const CLEARED_KIND_LABELS: Record<string, string> = {
   env: "environment variables",
   headers: "request headers",
+  bearer_token: "bearer token",
   legacy_env: "environment variables",
   legacy_headers: "request headers",
   client_secret: "OAuth client secret",
@@ -63,9 +64,25 @@ const CLEARED_KIND_LABELS: Record<string, string> = {
   oauth_tokens: "OAuth tokens",
 };
 
+const credentialList = new Intl.ListFormat("en");
+
 interface ServerUrlChangeHistoryProps {
   /** The canonical server document id, or null when it is not resolved yet. */
   serverId: string | null;
+  recovery?: {
+    server: ServerWithName;
+    auth: ServerAuth;
+  };
+}
+
+function clearedCredentialLabels(event: ServerUrlChangeEvent): string[] {
+  const kinds = event.metadata?.clearedKinds;
+  if (!Array.isArray(kinds)) return [];
+  return [...new Set(kinds.map((kind) =>
+    Object.hasOwn(CLEARED_KIND_LABELS, kind)
+      ? CLEARED_KIND_LABELS[kind]
+      : "other credentials"
+  ))];
 }
 
 function formatWhen(timestamp: number): string {
@@ -96,9 +113,8 @@ export function isServerUrlHistoryUnavailable(error: Error): boolean {
   return isConvexQueryNotServed(error, SERVER_URL_CHANGES_QUERY);
 }
 
-export function ServerUrlChangeHistory({
-  serverId,
-}: ServerUrlChangeHistoryProps) {
+export function ServerUrlChangeHistory(props: ServerUrlChangeHistoryProps) {
+  const { serverId } = props;
   return (
     // KEYED by the server: a boundary that has caught stays in its fallback
     // for the life of the element, so without the key one failure would hide
@@ -113,7 +129,7 @@ export function ServerUrlChangeHistory({
       fallback={null}
       isExpectedError={isServerUrlHistoryUnavailable}
     >
-      <ServerUrlChangeHistoryPanel serverId={serverId} />
+      <ServerUrlChangeHistoryPanel {...props} />
     </ErrorBoundary>
   );
 }
@@ -175,8 +191,58 @@ function DestinationChange({ event }: { event: ServerUrlChangeEvent }) {
   );
 }
 
+export function ServerCredentialRecovery({
+  serverId,
+  server,
+  auth,
+}: {
+  serverId: string | null;
+  server: ServerWithName;
+  auth: ServerAuth;
+}) {
+  if (!serverId || server.connectionStatus !== "failed") return null;
+  const error = server.lastNormalizedError ??
+    (server.lastError ? describeError(server.lastError) : null);
+  if (
+    error?.slug !== "auth/http_401" &&
+    error?.slug !== "auth/consent_required" &&
+    error?.slug !== "oauth/no_bearer_challenge"
+  ) return null;
+  return <ServerUrlChangeHistory serverId={serverId} recovery={{ server, auth }} />;
+}
+
+function recoveryMessage(
+  changes: ServerUrlChangeEvent[],
+  { server, auth }: NonNullable<ServerUrlChangeHistoryProps["recovery"]>
+): string | null {
+  const origin = credentialOriginOf(server.config.url?.toString());
+  if (!origin) return null;
+  // Match the latest address change. A path edit keeps credentials bound to
+  // the same origin, so it doesn't supersede a credential clear.
+  const latestChange = changes.find(({ action, metadata }) =>
+    action === CREDENTIALS_CLEARED_ACTION ||
+    metadata?.viaTransportFlip ||
+    metadata?.previousOrigin !== metadata?.nextOrigin
+  );
+  if (
+    latestChange?.metadata?.nextOrigin !== origin ||
+    !latestChange.metadata.clearedOnOriginChange
+  ) return null;
+
+  const missing = clearedCredentialLabels(latestChange).filter((label) =>
+    (label === "request headers" && !auth.headers) ||
+    (label === "bearer token" && !auth.bearer && auth.method === "bearer") ||
+    (label === "OAuth client secret" && !server.hasClientSecret &&
+      (auth.method === "oauth" || auth.method === "xaa"))
+  );
+  return missing.length > 0
+    ? `Re-enter the ${credentialList.format(missing)} to reconnect.`
+    : null;
+}
+
 function ServerUrlChangeHistoryPanel({
   serverId,
+  recovery,
 }: ServerUrlChangeHistoryProps) {
   const events = useQuery(
     SERVER_URL_CHANGES_QUERY as never,
@@ -195,9 +261,18 @@ function ServerUrlChangeHistoryPanel({
   const changes = events.filter(isRenderableEvent);
   if (changes.length === 0) return null;
 
+  if (recovery) {
+    const message = recoveryMessage(changes, recovery);
+    return message ? (
+      <p role="status" className="mb-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
+        {message}
+      </p>
+    ) : null;
+  }
+
   return (
     <div className="space-y-2 pt-2">
-      <p className="text-xs font-medium">Destination history</p>
+      <h3 className="text-sm font-medium">Server address changes</h3>
       <ul className="space-y-1.5">
         {changes.map((event) => {
           // The clear event exists only because something was cleared; the url
@@ -205,11 +280,7 @@ function ServerUrlChangeHistoryPanel({
           const cleared =
             event.action === CREDENTIALS_CLEARED_ACTION ||
             event.metadata?.clearedOnOriginChange === true;
-          const clearedKindLabels = Array.isArray(event.metadata?.clearedKinds)
-            ? event.metadata.clearedKinds
-                .map((kind) => CLEARED_KIND_LABELS[kind] ?? kind)
-                .filter((label, index, all) => all.indexOf(label) === index)
-            : [];
+          const clearedKindLabels = clearedCredentialLabels(event);
           return (
             <li
               key={event.id}
@@ -224,11 +295,9 @@ function ServerUrlChangeHistoryPanel({
               </div>
               {cleared && (
                 <div className="mt-1 text-warning">
-                  Saved credentials were cleared and need re-entering
-                  {clearedKindLabels.length > 0
-                    ? `: ${clearedKindLabels.join(", ")}`
-                    : ""}
-                  .
+                  Cleared {clearedKindLabels.length > 0
+                    ? credentialList.format(clearedKindLabels)
+                    : "saved credentials"}.
                 </div>
               )}
             </li>

@@ -2,8 +2,10 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
+  type RefObject,
 } from "react";
 import { toast } from "@/lib/toast";
 import { reportCaught } from "@/lib/error-reporting";
@@ -19,6 +21,7 @@ import {
   type ListToolsResultWithMetadata,
 } from "@/lib/apis/mcp-tools-api";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
+import { credentialClearAcknowledgementKey } from "@/lib/credential-origin";
 import {
   isMCPApp,
   isOpenAIApp,
@@ -159,7 +162,7 @@ export interface ServerDetailController {
     toggleDisabled: boolean;
     connect: (options?: ServerReconnectOptions) => Promise<void>;
     disconnect: () => void;
-    /** The connect switch: off disconnects, on reconnects. */
+    /** Guides the user to save first when the configuration has edits. */
     toggle: (connected: boolean) => void;
   };
   form: {
@@ -170,7 +173,11 @@ export interface ServerDetailController {
     saveBlocked: boolean;
     /** A connected server with no edits offers Reconnect instead of Save. */
     offersReconnect: boolean;
-    save: () => Promise<void>;
+    saveButtonRef: RefObject<HTMLButtonElement | null>;
+    saveHint: string | null;
+    isCredentialConfirmationOpen: boolean;
+    confirmCredentialClear: () => void;
+    dismissCredentialConfirmation: () => void;
     /** The configuration form's submit handler. */
     submit: (event: FormEvent<HTMLFormElement>) => void;
   };
@@ -346,6 +353,17 @@ export function useServerDetailController({
   // only exist for project-scoped (hosted) servers — hidden in local mode.
   // Both surfaces key off `showHistory`, so this is the single gate.
   const showHistory = isUserReady && Boolean(projectId && serverId);
+  const showSettings = settings.available || settings.failed;
+  const visibleTabs = SERVER_DETAIL_TAB_DEFS.filter((tab) => {
+    if (tab.id === "settings") return showSettings;
+    if (tab.id === "authorization") return showAuthorization;
+    if (tab.id === "history") return showHistory;
+    return true;
+  });
+  // The canvas shows Config as a fallback for an unavailable deep-linked tab.
+  const showsConfiguration =
+    activeTab === "configuration" ||
+    !visibleTabs.some((tab) => tab.id === activeTab);
 
   /** The wire-version pin's reconnect, in flight like a user-initiated one. */
   const reconnectForProtocolPin = useCallback(async () => {
@@ -370,6 +388,36 @@ export function useServerDetailController({
     organizationId,
     isSignedIn,
   });
+  const saveButtonRef = useRef<HTMLButtonElement>(null);
+  const [saveHint, setSaveHint] = useState<string | null>(null);
+  const [confirmationTarget, setConfirmationTarget] = useState<string | null>(
+    null
+  );
+  const pendingClear = formState.pendingCredentialClear;
+  const pendingTarget = pendingClear
+    ? JSON.stringify([
+        hostedServerId ?? server.name,
+        credentialClearAcknowledgementKey(pendingClear),
+        formState.url,
+        formState.commandInput,
+      ])
+    : null;
+  const isCredentialConfirmationOpen =
+    isOpen &&
+    showsConfiguration &&
+    confirmationTarget !== null &&
+    confirmationTarget === pendingTarget;
+  useEffect(() => {
+    if (!isOpen || !showsConfiguration || confirmationTarget !== pendingTarget) {
+      setConfirmationTarget(null);
+    }
+  }, [isOpen, showsConfiguration, confirmationTarget, pendingTarget]);
+  useEffect(() => {
+    if (!isOpen || !formState.hasChanges) setSaveHint(null);
+    else if (showsConfiguration && saveHint) {
+      saveButtonRef.current?.focus();
+    }
+  }, [isOpen, showsConfiguration, formState.hasChanges, saveHint]);
   const trimmedName = formState.name.trim();
   const isDuplicateServerName =
     trimmedName !== "" &&
@@ -497,6 +545,16 @@ export function useServerDetailController({
   };
 
   const toggleConnection = (connected: boolean) => {
+    if (formState.hasChanges) {
+      setSaveHint(
+        connected
+          ? "Save your changes to connect."
+          : "Save your changes before disconnecting."
+      );
+      if (activeTab === "configuration") saveButtonRef.current?.focus();
+      else selectTab("configuration");
+      return;
+    }
     if (!connected) {
       handleDisconnect();
       return;
@@ -517,36 +575,33 @@ export function useServerDetailController({
     onClose();
   };
 
-  /**
-   * The single condition that decides whether this configuration may be saved.
-   *
-   * One list read by both the Save button's `disabled` and the form's submit
-   * handler, because Enter in any configuration input submits the form. It
-   * covers MJ-003's credential-clear acknowledgement, which is there so a
-   * destructive save cannot happen without one, as well as the duplicate-name
-   * check, the auth-configuration block, and the in-flight reconnect guard.
-   */
   const saveBlocked =
     isDuplicateServerName ||
     isSaving ||
     isReconnecting ||
     (!formState.hasChanges && !isConnected) ||
-    formState.authConfigurationBlocksSubmit ||
-    formState.credentialClearBlocksSubmit;
+    formState.authConfigurationBlocksSubmit;
 
-  const handleConfigurationSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (activeTab !== "configuration" || saveBlocked) return;
+  const requestSave = () => {
+    if (saveBlocked) return;
+    setSaveHint(null);
+    if (pendingTarget !== null) {
+      setConfirmationTarget(pendingTarget);
+      return;
+    }
     void handleSave();
   };
 
-  const showSettings = settings.available || settings.failed;
-  const visibleTabs = SERVER_DETAIL_TAB_DEFS.filter((tab) => {
-    if (tab.id === "settings") return showSettings;
-    if (tab.id === "authorization") return showAuthorization;
-    if (tab.id === "history") return showHistory;
-    return true;
-  });
+  const confirmCredentialClear = () => {
+    if (!isCredentialConfirmationOpen || saveBlocked) return;
+    setConfirmationTarget(null);
+    void handleSave();
+  };
+
+  const handleConfigurationSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (showsConfiguration) requestSave();
+  };
 
   return {
     server,
@@ -569,6 +624,7 @@ export function useServerDetailController({
       statusLabel: connectionStatusLabel,
       indicatorClassName,
       toggleDisabled:
+        isSaving ||
         isReconnecting ||
         server.connectionStatus === "connecting" ||
         server.connectionStatus === "oauth-flow",
@@ -582,7 +638,11 @@ export function useServerDetailController({
       isSaving,
       saveBlocked,
       offersReconnect: isConnected && !formState.hasChanges,
-      save: handleSave,
+      saveButtonRef,
+      saveHint: formState.hasChanges ? saveHint : null,
+      isCredentialConfirmationOpen,
+      confirmCredentialClear,
+      dismissCredentialConfirmation: () => setConfirmationTarget(null),
       submit: handleConfigurationSubmit,
     },
     protocol,

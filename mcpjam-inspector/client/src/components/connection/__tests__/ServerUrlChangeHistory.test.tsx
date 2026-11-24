@@ -17,9 +17,11 @@ vi.mock("@/lib/error-reporting", () => ({
 
 import {
   SERVER_URL_CHANGES_QUERY,
+  ServerCredentialRecovery,
   ServerUrlChangeHistory,
   isServerUrlHistoryUnavailable,
 } from "../ServerUrlChangeHistory";
+import { createServer } from "@/test/factories";
 
 // The exact string `convex/react` throws from render in PRODUCTION: the
 // server redacts "Could not find public function" to "Server Error", so the
@@ -45,7 +47,7 @@ const urlChange = {
     nextOrigin: "https://new.example.com",
     clearedOnOriginChange: true,
     viaTransportFlip: false,
-    clearedKinds: ["headers", "legacy_headers"],
+    clearedKinds: ["headers", "legacy_headers", "bearer_token"],
   },
 };
 
@@ -125,13 +127,13 @@ describe("ServerUrlChangeHistory", () => {
       throw PROD_DARK_SHIP;
     });
     const { rerender } = render(<ServerUrlChangeHistory serverId="srv_1" />);
-    expect(screen.queryByText("Destination history")).not.toBeInTheDocument();
+    expect(screen.queryByText("Server address changes")).not.toBeInTheDocument();
 
     useQueryMock.mockReset();
     useQueryMock.mockReturnValue([urlChange]);
     rerender(<ServerUrlChangeHistory serverId="srv_2" />);
 
-    expect(screen.getByText("Destination history")).toBeInTheDocument();
+    expect(screen.getByText("Server address changes")).toBeInTheDocument();
   });
 
   it("renders one row per edit when the backend answers", () => {
@@ -148,7 +150,7 @@ describe("ServerUrlChangeHistory", () => {
     // Duplicate labels collapse, and the clear that accompanies a url repoint
     // does not get a second row — one edit, one row.
     expect(
-      screen.getByText(/Saved credentials were cleared.*request headers\./)
+      screen.getByText("Cleared request headers and bearer token.")
     ).toBeInTheDocument();
     expect(screen.getAllByRole("listitem")).toHaveLength(1);
   });
@@ -179,7 +181,7 @@ describe("ServerUrlChangeHistory", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        /Saved credentials were cleared.*environment variables\./
+        "Cleared environment variables."
       )
     ).toBeInTheDocument();
     // No origins to show, and none invented.
@@ -221,6 +223,41 @@ describe("ServerUrlChangeHistory", () => {
 
     expect(useQueryMock).toHaveBeenCalledWith(SERVER_URL_CHANGES_QUERY, "skip");
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("offers recovery for credentials cleared at the current address", () => {
+    useQueryMock.mockReturnValue([urlChange]);
+    const server = createServer({
+      config: { url: "https://new.example.com/mcp" },
+      connectionStatus: "failed",
+      lastError: "HTTP 401 Unauthorized",
+    });
+    const auth = { method: "bearer", bearer: null, headers: null } as const;
+    const { rerender } = render(
+      <ServerCredentialRecovery serverId="srv_1" server={server} auth={auth} />
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Re-enter the request headers and bearer token to reconnect."
+    );
+
+    rerender(
+      <ServerCredentialRecovery
+        serverId="srv_1"
+        server={server}
+        auth={{ ...auth, bearer: { kind: "stored" }, headers: { kind: "stored" } }}
+      />
+    );
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+    rerender(
+      <ServerCredentialRecovery
+        serverId="srv_1"
+        server={{ ...server, lastError: "HTTP 503 Service Unavailable" }}
+        auth={auth}
+      />
+    );
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 });
 

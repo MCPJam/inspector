@@ -1,4 +1,4 @@
-import type { FormEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { FocusTabBar } from "@/components/canvas-kit/FocusTabBar";
 import type { ServerDetailController } from "@/components/connection/hooks/use-server-detail-controller";
 import {
@@ -42,15 +42,6 @@ export function ServerCanvasSidePanel({
     ? tabs.active
     : "configuration";
   const label = tabs.visible.find((tab) => tab.id === shown);
-  // The controller saves only from its active tab; when Config is shown in
-  // place of a tab this server lacks, save from here instead.
-  const submit =
-    shown === tabs.active
-      ? controller.form.submit
-      : (event: FormEvent<HTMLFormElement>) => {
-          event.preventDefault();
-          if (!controller.form.saveBlocked) void controller.form.save();
-        };
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-background">
       <div className="shrink-0 border-b border-border px-3">
@@ -63,7 +54,7 @@ export function ServerCanvasSidePanel({
         {detail}
         <div role="tabpanel" aria-label={label?.ariaLabel ?? label?.label}>
           <form
-            onSubmit={submit}
+            onSubmit={controller.form.submit}
             hidden={shown !== "configuration"}
             className={bodyClass}
           >

@@ -340,7 +340,7 @@ function ProjectServerDetailModal({
                   visibility: isConfigurationTab ? "visible" : "hidden",
                 }}
               >
-                <ServerConfigSaveButton controller={controller} />
+                <ServerConfigSaveButton controller={controller} portalled={false} />
               </DialogFooter>
 
               {controller.settings.showBody && (

@@ -1071,6 +1071,72 @@ describe("ServerDetailModal", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it("keeps the draft when Connect points users to Save & Connect", async () => {
+    const user = userEvent.setup();
+    const onReconnect = vi.fn();
+    const onSubmit = vi.fn();
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={createServer({ connectionStatus: "disconnected" })}
+        onReconnect={onReconnect}
+        onSubmit={onSubmit}
+      />
+    );
+
+    const url = screen.getByDisplayValue("https://example.com/mcp");
+    fireEvent.change(url, { target: { value: "https://new.example.com/mcp" } });
+    await user.click(screen.getByRole("switch", { name: "Connect" }));
+
+    expect(url).toHaveValue("https://new.example.com/mcp");
+    expect(screen.getByText("Save your changes to connect.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save & Connect" })).toHaveFocus();
+    expect(onReconnect).not.toHaveBeenCalled();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("requires confirmation beside Save & Connect on click and Enter", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue({ ok: true, serverName: "test-server" });
+    render(<ServerDetailModal {...defaultProps} onSubmit={onSubmit} />);
+
+    const url = screen.getByDisplayValue("https://example.com/mcp");
+    fireEvent.change(url, { target: { value: "https://first.example.com/mcp" } });
+    await user.click(screen.getByRole("button", { name: "Save & Connect" }));
+    const popover = screen.getByRole("dialog", { name: "Save the new server URL?" });
+    expect(onSubmit).not.toHaveBeenCalled();
+    await user.click(within(popover).getByRole("button", { name: "Keep editing" }));
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(url).toHaveValue("https://first.example.com/mcp");
+
+    fireEvent.change(url, { target: { value: "https://second.example.com/mcp" } });
+    url.focus();
+    await user.keyboard("{Enter}");
+    expect(onSubmit).not.toHaveBeenCalled();
+    const reopened = screen.getByRole("dialog", { name: "Save the new server URL?" });
+    await user.click(within(reopened).getByRole("button", { name: "Save & Connect" }));
+    expect(onSubmit).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ url: "https://second.example.com/mcp" }),
+      "test-server"
+    );
+  });
+
+  it("saves a path-only URL edit directly", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue({ ok: true, serverName: "test-server" });
+    render(<ServerDetailModal {...defaultProps} onSubmit={onSubmit} />);
+
+    fireEvent.change(screen.getByDisplayValue("https://example.com/mcp"), {
+      target: { value: "https://example.com/mcp/v2" },
+    });
+    await user.click(screen.getByRole("button", { name: "Save & Connect" }));
+
+    expect(onSubmit).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ url: "https://example.com/mcp/v2" }),
+      "test-server"
+    );
+  });
+
   it("does not submit when Enter is pressed in tools metadata", async () => {
     const onSubmit = vi.fn().mockResolvedValue({
       ok: true,

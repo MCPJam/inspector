@@ -1393,8 +1393,7 @@ describe("useServerForm", () => {
 /**
  * MJ-003 — the form has to say, before the save, that this edit will destroy
  * the row's stored credentials. `credential-origin.test.ts` pins the rules;
- * these pin that the hook feeds them the right values and gates Save on the
- * acknowledgement.
+ * these pin that the hook feeds them the right values.
  */
 describe("useServerForm credential-clear warning", () => {
   const httpServer = {
@@ -1420,7 +1419,7 @@ describe("useServerForm credential-clear warning", () => {
     enabled: true,
   } as any;
 
-  it("warns and blocks Save on a cross-origin URL edit", async () => {
+  it("reports a credential clear on a cross-origin URL edit", async () => {
     const { result } = renderHook(() => useServerForm(httpServer));
     await waitFor(() => {
       expect(result.current.url).toBe("https://owner.example.com/mcp");
@@ -1434,10 +1433,9 @@ describe("useServerForm credential-clear warning", () => {
       kind: "url-origin",
       nextOrigin: "https://elsewhere.example.com",
     });
-    expect(result.current.credentialClearBlocksSubmit).toBe(true);
   });
 
-  it("requires acknowledgment when another member's OAuth tokens are absent from runtime state", async () => {
+  it("reports a credential clear when another member's OAuth tokens are absent from runtime state", async () => {
     const server = {
       ...httpServer,
       hasHeaders: false,
@@ -1447,10 +1445,10 @@ describe("useServerForm credential-clear warning", () => {
     const { result } = renderHook(() => useServerForm(server));
     await waitFor(() => expect(result.current.url).toBe(httpServer.config.url));
     act(() => result.current.setUrl("https://elsewhere.example.com/mcp"));
-    expect(result.current.credentialClearBlocksSubmit).toBe(true);
+    expect(result.current.pendingCredentialClear?.kind).toBe("url-origin");
   });
 
-  it("warns and blocks Save on a stdio command swap", async () => {
+  it("reports a credential clear on a stdio command swap", async () => {
     // The vector the form was silent about: the row's env secret goes to
     // whatever process this command names, and the backend clears it.
     const { result } = renderHook(() => useServerForm(stdioServer));
@@ -1469,7 +1467,6 @@ describe("useServerForm credential-clear warning", () => {
       previousCommand: "npx -y @modelcontextprotocol/server-everything",
       nextCommand: "node exfiltrate.js",
     });
-    expect(result.current.credentialClearBlocksSubmit).toBe(true);
   });
 
   it("stays silent on an edit that keeps the destination", async () => {
@@ -1485,28 +1482,6 @@ describe("useServerForm credential-clear warning", () => {
     });
 
     expect(result.current.pendingCredentialClear).toBeNull();
-    expect(result.current.credentialClearBlocksSubmit).toBe(false);
-  });
-
-  it("releases Save once the destination is acknowledged, and re-arms on a new one", async () => {
-    const { result } = renderHook(() => useServerForm(httpServer));
-    await waitFor(() => {
-      expect(result.current.url).toBe("https://owner.example.com/mcp");
-    });
-
-    act(() => {
-      result.current.setUrl("https://one.example.com/mcp");
-    });
-    act(() => {
-      result.current.acknowledgeCredentialClear("url:https://one.example.com");
-    });
-    expect(result.current.credentialClearBlocksSubmit).toBe(false);
-
-    // Consent was for one destination. Typing another is a new decision.
-    act(() => {
-      result.current.setUrl("https://two.example.com/mcp");
-    });
-    expect(result.current.credentialClearBlocksSubmit).toBe(true);
   });
 
   const spacedStdioServer = {
@@ -1544,7 +1519,6 @@ describe("useServerForm credential-clear warning", () => {
     });
 
     expect(result.current.pendingCredentialClear).toBeNull();
-    expect(result.current.credentialClearBlocksSubmit).toBe(false);
   });
 });
 
