@@ -24,6 +24,7 @@ import { createMemorySendJournal } from "../../utils/harness/real-ui/drive-turn.
 import { RealUiError } from "../../utils/harness/real-ui/page-module.js";
 import { createPlaywrightDriver } from "../../utils/harness/real-ui/playwright-driver.js";
 import { localWebConnectors, type LocalConnectorRegistry } from "./local-connectors.js";
+import { pause } from "./run-web-client-turn.js";
 import type {
   WebClientEnvironment,
   WebClientEnvironmentFactory,
@@ -59,6 +60,13 @@ const launchPersistent: LaunchLocalBrowser = async (profileDir, options) => {
 
 /** Profiles a turn in this process has open: one browser per profile at a time. */
 const openProfiles = new Set<string>();
+/**
+ * How long a caller that brings no deadline of its own waits for another
+ * turn's browser on the same profile: compared runs and panes take turns. A
+ * turn brings one, shared with its wait for a busy connector.
+ */
+const PROFILE_WAIT_MS = 10 * 60_000;
+const PROFILE_POLL_MS = 1_000;
 /**
  * Chromium refusing a profile another process has open, such as another
  * Inspector's turn or the tracer's sign-in window. Playwright's launch error
@@ -119,6 +127,8 @@ export function createLocalWebClientEnvironment(deps: {
   headless: boolean;
   registry?: LocalConnectorRegistry;
   launch?: LaunchLocalBrowser;
+  profileWaitMs?: number;
+  profilePollMs?: number;
 }): WebClientEnvironment {
   const registry = deps.registry ?? localWebConnectors;
   const name = WEB_CLIENT_DISPLAY_NAMES[deps.vendor];
@@ -144,13 +154,26 @@ export function createLocalWebClientEnvironment(deps: {
       return { connectorId };
     },
 
-    async openBrowser({ sites }) {
-      if (openProfiles.has(deps.profileDir)) {
-        throw new RealUiError({
-          kind: "turn_running",
-          step: "connector",
-          message: `Another turn is using this machine's ${name} browser.`,
-        });
+    async openBrowser({ sites, signal, waitUntil }) {
+      const deadline =
+        waitUntil ?? Date.now() + (deps.profileWaitMs ?? PROFILE_WAIT_MS);
+      const poll = deps.profilePollMs ?? PROFILE_POLL_MS;
+      for (let waited = false; ; waited = true) {
+        // A stopped run launches nothing, even once the profile frees.
+        signal?.throwIfAborted();
+        const expired = Date.now() >= deadline;
+        // A profile free at the first look is taken whatever the budget; one
+        // that frees while the turn waits, only within it.
+        if (!openProfiles.has(deps.profileDir) && !(waited && expired)) break;
+        if (expired) {
+          throw new RealUiError({
+            kind: "turn_running",
+            step: "connector",
+            message: `Another turn is using this machine's ${name} browser.`,
+          });
+        }
+        // A pause never runs past the deadline.
+        await pause(Math.min(poll, Math.max(0, deadline - Date.now())), signal);
       }
       openProfiles.add(deps.profileDir);
       let launched: Awaited<ReturnType<LaunchLocalBrowser>> | undefined;

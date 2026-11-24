@@ -203,6 +203,7 @@ export async function runWebClientHarnessTurn(
       serverIds: options.selectedServers ?? [],
       prompt: lastUserText(messages),
       runId,
+      ...(options.evalIterationId ? { iterationId: options.evalIterationId } : {}),
       approval: {
         requireToolApproval: options.requireToolApproval === true,
         answer: approvalAnswerOf(options.approvalMode),
