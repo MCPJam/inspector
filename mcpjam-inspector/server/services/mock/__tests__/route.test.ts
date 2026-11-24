@@ -206,6 +206,52 @@ describe("refusals", () => {
     expect(JSON.stringify(body)).not.toMatch(/real1|proj1|bearer-ann|grant-for/);
   });
 
+  it("answer 503 with a retry hint at the HTTP door while mocks are paused", async () => {
+    const response = await serveMock(
+      new Request("https://mock.mcpjam.invalid/mock1", { method: "POST", body: "{}" }),
+      "mock1",
+      {
+        kind: "http",
+        bearerToken: "bearer-ann",
+        caller: { authMethod: "workos_api_key", workosUserId: "ann" },
+        profile,
+      } as MockDoor,
+      {
+        open: stub.open,
+        resolve: vi.fn(async () => {
+          throw new MockRefusal("paused");
+        }),
+      },
+    );
+    expect(response.status).toBe(503);
+    expect(response.headers.get("retry-after")).toBe("60");
+    const body = await response.json();
+    expect(body).toMatchObject({ error: { data: { mockCode: "mock_serving_paused" } } });
+    expect(body.error.message).toContain("paused mock servers");
+    expect(stub.opens).toBe(0);
+  });
+
+  it("give a dialer an error it can show while mocks are paused", async () => {
+    const response = await serveMock(
+      new Request("https://mock.mcpjam.invalid/mock1", { method: "POST", body: "{}" }),
+      "mock1",
+      inProcess("ann"),
+      {
+        open: stub.open,
+        resolve: vi.fn(async () => {
+          throw new MockRefusal("paused");
+        }),
+      },
+    );
+    expect(response.status).toBe(503);
+    expect(response.headers.get("retry-after")).toBe("60");
+    const body = await response.json();
+    expect(body.error.message).toBe(
+      "MCPJam has paused mock servers. Try again in a few minutes; your own servers are not affected.",
+    );
+    expect(stub.opens).toBe(0);
+  });
+
   it("turn an unexpected failure into a generic unavailable answer", async () => {
     const response = await serveMock(
       new Request("https://mock.mcpjam.invalid/mock1", { method: "POST", body: "{}" }),

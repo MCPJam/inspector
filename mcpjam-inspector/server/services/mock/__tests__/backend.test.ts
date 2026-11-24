@@ -134,6 +134,18 @@ describe("resolveMock", () => {
     await expect(ask()).resolves.toMatchObject({ version: 3 });
   });
 
+  it("answers paused while the backend has paused mocks, and does not remember it", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(json(503, { code: "MOCK_SERVING_PAUSED", message: "paused" }))
+      .mockResolvedValueOnce(json(200, answer));
+    const ask = () =>
+      resolveMock({ mockId: "m1", caller, bearerToken: "k" }, { fetch: fetchMock as never });
+    await expect(ask()).rejects.toMatchObject({ kind: "paused" });
+    // Resuming is seen on the very next ask: nothing held the refusal back.
+    await expect(ask()).resolves.toMatchObject({ version: 3 });
+  });
+
   it("refuses an answer whose definition this build cannot read", async () => {
     const fetchMock = vi.fn(async () =>
       json(200, { ...answer, definition: { tools: { echo: { nonsense: true } } } }),

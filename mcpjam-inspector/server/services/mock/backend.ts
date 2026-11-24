@@ -54,6 +54,11 @@ const KIND_BY_BACKEND_CODE: Record<string, MockRefusalKind> = {
   MOCK_GRANT_CALLER_MISMATCH: "forbidden",
   MOCK_NOT_FOUND: "not_found",
   MOCK_VERSION_NOT_FOUND: "not_found",
+  // The operator switch. Not in REMEMBERED: the pause is about every caller and
+  // is short, so it is never held past the call. A pause still reaches a caller
+  // only after the 60 s answer cache above lets go of its last good answer,
+  // which is accepted: no extra cache or poll for it.
+  MOCK_SERVING_PAUSED: "paused",
 };
 const KIND_BY_STATUS: Record<number, MockRefusalKind> = {
   401: "unauthorized",
