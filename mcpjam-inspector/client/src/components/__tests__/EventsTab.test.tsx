@@ -266,9 +266,12 @@ describe("EventsTab (local)", () => {
     const repo = await screen.findByPlaceholderText("Enter repo");
     fireEvent.change(repo, { target: { value: "octo/hello" } });
     expect(screen.getByRole("radio", { name: /Poll/ })).toBeChecked();
-    fireEvent.change(screen.getByLabelText("Maximum event age in ms (optional)"), {
-      target: { value: "60000" },
-    });
+    fireEvent.change(
+      screen.getByLabelText("Maximum event age in ms (optional)"),
+      {
+        target: { value: "60000" },
+      },
+    );
     fireEvent.click(screen.getByRole("checkbox", { name: /No expiry/ }));
     fireEvent.click(screen.getByRole("button", { name: /Subscribe/ }));
 
@@ -321,7 +324,7 @@ describe("EventsTab (local)", () => {
     );
 
     expect(await screen.findByTestId("events-host-label")).toHaveTextContent(
-      "Receiving as ChatGPT",
+      "Client: ChatGPT",
     );
     expect(screen.queryByRole("radio", { name: /Poll/ })).toBeNull();
     expect(screen.queryByRole("radio", { name: /Push/ })).toBeNull();
@@ -595,8 +598,13 @@ describe("EventsTab (local)", () => {
   it("pauses a subscription through the local route", async () => {
     mockLoadEventsCatalog.mockResolvedValue(catalog([issueCreated]));
     mockListLocal.mockResolvedValue([subscriptionView()]);
+    // A desired-state change bumps the generation, as the runtime does.
     mockSetLocalState.mockResolvedValue(
-      subscriptionView({ desiredState: "paused", observedState: "paused" }),
+      subscriptionView({
+        generation: 3,
+        desiredState: "paused",
+        observedState: "paused",
+      }),
     );
     renderTab();
 
@@ -608,5 +616,207 @@ describe("EventsTab (local)", () => {
     expect(
       await within(card).findByRole("button", { name: /Resume/ }),
     ).toBeInTheDocument();
+  });
+
+  it("names why the server terminated a subscription, for draft and Beta codes", async () => {
+    mockLoadEventsCatalog.mockResolvedValue(catalog([issueCreated]));
+    renderTab();
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+
+    const terminated = (message: string) => ({
+      kind: "terminated",
+      message,
+      at: Date.now(),
+      retryable: false,
+    });
+    emitFrame({
+      type: "snapshot",
+      nextAfter: 0,
+      subscriptions: [
+        subscriptionView({
+          observedState: "terminated",
+          lastError: terminated("Forbidden"),
+        }),
+        subscriptionView({
+          id: "esub_2",
+          mode: "push",
+          observedState: "terminated",
+          lastError: terminated("Unsupported"),
+        }),
+        subscriptionView({
+          id: "esub_3",
+          mode: "poll",
+          observedState: "terminated",
+          lastError: terminated("NotFound"),
+        }),
+      ],
+    });
+    const entry = (
+      seq: number,
+      logicalSubscriptionId: string,
+      error: { code: number; message: string; data?: unknown },
+    ) =>
+      emitFrame({
+        type: "entry",
+        entry: {
+          seq,
+          kind: "terminated",
+          origin: "webhook",
+          namespace: "live",
+          logicalSubscriptionId,
+          receivedAt: Date.now(),
+          error,
+        },
+      });
+    entry(1, "esub_1", {
+      code: -32024,
+      message: "Forbidden",
+      data: { reason: "Access revoked" },
+    });
+    entry(2, "esub_2", {
+      code: -32026,
+      message: "Unsupported",
+      data: { feature: "payloadSchema", reason: "schema_changed" },
+    });
+    entry(3, "esub_3", {
+      code: -32011,
+      message: "NotFound",
+      data: { kind: "event" },
+    });
+
+    const card = (id: string) => screen.getByTestId(`subscription-${id}`);
+    const reasonOf = (id: string) =>
+      within(card(id)).getByTestId("subscription-termination");
+    await waitFor(() =>
+      expect(reasonOf("esub_1")).toHaveTextContent("Access revoked"),
+    );
+    expect(reasonOf("esub_2")).toHaveTextContent(
+      "Schema changed. Refresh the event types, then subscribe again.",
+    );
+    expect(reasonOf("esub_3")).toHaveTextContent("Event type removed");
+    expect(
+      screen.getAllByTestId("termination-reason").map((row) => row.textContent),
+    ).toEqual(
+      expect.arrayContaining([expect.stringContaining("Access revoked")]),
+    );
+    // Each mode ends in its own words: only webhook unsubscribes.
+    expect(
+      within(card("esub_1")).getByRole("button", { name: /Unsubscribe/ }),
+    ).toBeInTheDocument();
+    expect(
+      within(card("esub_2")).getByRole("button", { name: /Close stream/ }),
+    ).toBeInTheDocument();
+    expect(
+      within(card("esub_3")).getByRole("button", { name: /Stop polling/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows webhook delivery status, and a server that can't replay", async () => {
+    mockLoadEventsCatalog.mockResolvedValue(catalog([issueCreated]));
+    mockListLocal.mockResolvedValue([
+      subscriptionView({
+        lastCursor: null,
+        deliveryStatus: {
+          active: false,
+          lastDeliveryAt: "2026-02-19T15:45:00Z",
+          lastError: "http_4xx",
+          failedSince: "2026-02-19T15:50:00Z",
+        },
+      }),
+      subscriptionView({
+        id: "esub_2",
+        deliveryStatus: {
+          active: true,
+          lastError: null,
+          throttled: true,
+          retryAfterMs: 60000,
+        },
+      }),
+    ]);
+    renderTab();
+
+    const suspended = await screen.findByTestId("subscription-esub_1");
+    expect(within(suspended).getByTestId("delivery-state")).toHaveTextContent(
+      "Suspended after repeated failures",
+    );
+    expect(within(suspended).getByText("http_4xx")).toBeInTheDocument();
+    expect(
+      within(suspended).getByText("null (replay not supported)"),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("subscription-esub_2")).getByTestId(
+        "delivery-state",
+      ),
+    ).toHaveTextContent("Throttled, for about 60s");
+  });
+
+  it("reads the catalog again when the server says its event types changed, keeping the draft", async () => {
+    mockLoadEventsCatalog.mockResolvedValue(catalog([issueCreated]));
+    renderTab();
+
+    fireEvent.change(await screen.findByPlaceholderText("Enter repo"), {
+      target: { value: "octo/hello" },
+    });
+    expect(mockLoadEventsCatalog).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      useTrafficLogStore.getState().addMcpServerLog({
+        serverId: SERVER,
+        direction: "RECEIVE",
+        method: "notifications/events/list_changed",
+        timestamp: new Date().toISOString(),
+        payload: {
+          jsonrpc: "2.0",
+          method: "notifications/events/list_changed",
+        },
+      });
+    });
+
+    await waitFor(() => expect(mockLoadEventsCatalog).toHaveBeenCalledTimes(2));
+    expect(screen.getByPlaceholderText("Enter repo")).toHaveValue("octo/hello");
+  });
+
+  it("keeps the newer streamed state when an action's response arrives late", async () => {
+    mockLoadEventsCatalog.mockResolvedValue(catalog([issueCreated]));
+    mockListLocal.mockResolvedValue([subscriptionView({ generation: 2 })]);
+    let respond: (view: EventsSubscriptionView) => void = () => undefined;
+    mockSetLocalState.mockImplementation(
+      () =>
+        new Promise<EventsSubscriptionView>((resolve) => {
+          respond = resolve;
+        }),
+    );
+    renderTab();
+
+    const card = await screen.findByTestId("subscription-esub_1");
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    fireEvent.click(within(card).getByRole("button", { name: /Pause/ }));
+    await waitFor(() => expect(mockSetLocalState).toHaveBeenCalled());
+
+    // The stream reports the pause before the request returns...
+    emitFrame({
+      type: "subscription",
+      subscription: subscriptionView({
+        generation: 3,
+        desiredState: "paused",
+        observedState: "paused",
+      }),
+    });
+    expect(within(card).getByTestId("observed-state")).toHaveTextContent(
+      "Paused",
+    );
+    // ...and the response, as of when the request was handled, is older.
+    await act(async () => {
+      respond(
+        subscriptionView({
+          generation: 3,
+          desiredState: "paused",
+          observedState: "active",
+        }),
+      );
+    });
+    expect(within(card).getByTestId("observed-state")).toHaveTextContent(
+      "Paused",
+    );
   });
 });
