@@ -345,6 +345,8 @@ export const ANALYTICS_EVENTS = {
   evaluate_tour_skipped: { source: "client" },
   evaluate_tour_step_viewed: { source: "client" },
   events_tab_viewed: { source: "client" },
+  local_webhook_receiver_selected: { source: "client" },
+  local_webhook_receiver_failed: { source: "client" },
   export_server_clicked: { source: "client" },
   generate_tests_button_clicked: { source: "client" },
   // The Swarms / User Testing gate (REEV-6). `guest_feature_preview_shown`

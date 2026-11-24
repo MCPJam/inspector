@@ -93,7 +93,7 @@ export function CallbackField({
             onCheckedChange={(checked) => form.setAcknowledged(checked === true)}
           />
           <Label htmlFor={`${id}-http`} className="text-xs">
-            Allow plain HTTP for local development (non-conformant)
+            Allow plain HTTP for local development. Some servers require HTTPS.
           </Label>
         </div>
       ) : null}

@@ -87,7 +87,7 @@ export function PlaygroundEventsPane() {
                 <p className="text-xs text-muted-foreground">
                   {binding.serverName} · {status}
                   {binding.subscription && hasInsecureLocalReceiver(binding.subscription) ? (
-                    <span className="ml-2 text-warning">Non-conformant HTTP</span>
+                    <span className="ml-2 text-warning">Plain HTTP</span>
                   ) : null}
                 </p>
                 <div className="flex flex-wrap gap-1">

@@ -147,7 +147,7 @@ function SubscriptionCard({
         </span>
         {desiredDiffers ? <span className="text-[10px] text-muted-foreground">Requested: {subscription.desiredState}</span> : null}
         {hasInsecureLocalReceiver(subscription) ? (
-          <span className="text-[10px] text-warning" title="Uses plain HTTP for local development.">Non-conformant HTTP</span>
+          <span className="text-[10px] text-warning" title="Uses plain HTTP for local development.">Plain HTTP</span>
         ) : null}
       </CollapsibleTrigger>
 

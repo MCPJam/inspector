@@ -504,7 +504,7 @@ describe("EventsTab (local)", () => {
     await screen.findByRole("tabpanel", { name: "Subscriptions" });
     await openWorkspaceView("Subscriptions");
     const card = await screen.findByTestId("subscription-esub_1");
-    expect(within(card).getByText("Non-conformant HTTP")).toBeInTheDocument();
+    expect(within(card).getByText("Plain HTTP")).toBeInTheDocument();
   });
 
   it("validates Custom URL and sends the explicit no-expiry choice", async () => {

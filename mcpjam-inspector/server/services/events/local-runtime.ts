@@ -53,7 +53,6 @@ import type {
 } from "@/shared/events-api";
 import { localEventsServerSegment } from "@/shared/local-events-hooks";
 import { logger } from "../../utils/logger.js";
-import { getSystemLogger } from "../../utils/request-logger.js";
 import {
   localWebhookFailureKind,
   resolveWebhookReceiver,
@@ -72,7 +71,6 @@ export const LOCAL_EVENTS_PROJECT_ID = "local";
 export const LOCAL_CREDENTIAL_OWNER = "local";
 /** `setTimeout`'s ceiling; a longer delay overflows to ~0. */
 const MAX_TIMER_MS = 2_147_483_647;
-const telemetry = getSystemLogger("events-local");
 
 export class LocalEventsError extends Error {
   constructor(
@@ -235,6 +233,7 @@ export class LocalEventsRuntime {
     const slotId = local.record.slotId;
     return subscriptionView(local.record, {
       locality: "local",
+      receiverKind: local.receiver?.kind,
       callbackVerifiedAt: slotId ? this.inbox.slotState(slotId)?.verifiedAt : undefined,
       lastWebhookAt: local.lastWebhookAt,
       host: local.host,
@@ -375,7 +374,6 @@ export class LocalEventsRuntime {
       argumentsHash,
     };
     this.subscriptions.set(record.id, local);
-    if (receiver) telemetry.event("events.local_webhook.receiver_selected", { receiverKind: receiver.kind });
     if (record.mode === "push") this.startPush(local);
     this.publish(local);
     this.kick();
@@ -635,12 +633,6 @@ export class LocalEventsRuntime {
           const kind = localWebhookFailureKind(next.lastError.kind, current.receiver.insecure);
           if (kind.startsWith("callback_")) {
             next.lastError = { ...next.lastError, kind, message: "Couldn't deliver webhook events." };
-            if (snapshot.lastError?.kind !== kind) {
-              telemetry.event("events.local_webhook.receiver_failed", {
-                receiverKind: current.receiver.kind,
-                failureCategory: kind,
-              });
-            }
           }
         }
         current.record = next;
