@@ -1,9 +1,12 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exportBrowserProfileArchive } from "../../profile-archive";
-import { prepareBrowserProfile } from "../prepare-browser-profile";
+import {
+  prepareBrowserProfile,
+  withProfileClaim,
+} from "../prepare-browser-profile";
 import { readBrowserdConfig } from "../config";
 
 const dirs: string[] = [];
@@ -118,6 +121,36 @@ describe("prepareBrowserProfile", () => {
     await expect(readFile(join(userDataDir, "Default", "Cookies"))).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(join(recordDir, "run.mp4"), "utf8")).toBe("an earlier run's video");
   });
+
+  it.runIf(process.platform === "linux")(
+    "lets one boot at a time start a browser on a profile",
+    async () => {
+      const { userDataDir } = await fixture();
+      let holding!: () => void;
+      const held = new Promise<void>((resolve) => (holding = resolve));
+      let release!: () => void;
+      const first = withProfileClaim(userDataDir, () => {
+        holding();
+        return new Promise<void>((resolve) => (release = resolve));
+      });
+      await held;
+      // A second boot on this profile stops before it empties anything.
+      const second = vi.fn(async () => "second");
+      await expect(withProfileClaim(userDataDir, second)).rejects.toThrow(
+        /^profile_in_use/,
+      );
+      expect(second).not.toHaveBeenCalled();
+      // Another profile is another claim.
+      await expect(
+        withProfileClaim(`${userDataDir}-other`, async () => "other"),
+      ).resolves.toBe("other");
+      release();
+      await first;
+      await expect(
+        withProfileClaim(userDataDir, async () => "after"),
+      ).resolves.toBe("after");
+    },
+  );
 
   it("keeps an earlier boot's profile when a fresh one isn't asked for", async () => {
     const { userDataDir } = await fixture();
