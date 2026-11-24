@@ -470,6 +470,34 @@ describe("local events routes", () => {
     await call("POST", `/subscriptions/${id}/state`, { desiredState: "removed" });
   });
 
+  it("routes a server named like a URL dot segment without confusing similarly named servers", async () => {
+    const serverId = "..";
+    await manager.connectToServer(serverId, { url: fixture.url });
+    try {
+      const created = await call("POST", "/subscriptions", {
+        serverId,
+        eventName: "comment.created",
+        arguments: { document_id: "doc_dot" },
+        mode: "webhook",
+        host: null,
+        overrides: ["insecure-local-receiver"],
+      });
+      expect(created.status).toBe(200);
+      const id = created.body.subscription.id;
+      await vi.waitFor(async () => {
+        const list = await call("GET", "/subscriptions");
+        const subscription = list.body.subscriptions.find((row: { id: string }) => row.id === id);
+        expect(subscription).toMatchObject({
+          callbackUrl: expect.stringContaining("/hooks/~../i/"),
+          callbackVerifiedAt: expect.any(Number),
+        });
+      });
+      await call("POST", `/subscriptions/${id}/state`, { desiredState: "removed" });
+    } finally {
+      await manager.disconnectServer(serverId);
+    }
+  });
+
   it.each([
     {
       serverId: "beta-auth",

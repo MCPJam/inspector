@@ -496,7 +496,7 @@ export function createLocalEventsRouter(options: LocalEventsRouterOptions = {}):
     const body = await readBoundedBody(c.req.raw, MAX_DELIVERY_BODY_BYTES);
     if (!body) return c.json({ error: "body_too_large" }, 413);
     const result = await runtimeFor(c.mcpClientManager).receive({
-      serverId: c.req.param("serverId"),
+      serverSegment: c.req.param("serverId"),
       inboxId: c.req.param("inboxId"),
       slotId: c.req.param("slotId"),
       headers: c.req.raw.headers,

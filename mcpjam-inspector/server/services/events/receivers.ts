@@ -1,4 +1,5 @@
 import { checkCallbackUrl, type ReceiverChoice } from "@mcpjam/sdk/events";
+import { localEventsServerSegment } from "@/shared/local-events-hooks";
 
 export interface LocalWebhookReceiver {
   callbackBase: string;
@@ -26,7 +27,7 @@ export function resolveWebhookReceiver(
   const prefix = checked.url.href.replace(/\/+$/, "");
   return {
     receiver: {
-      callbackBase: `${prefix}/${encodeURIComponent(serverId)}`,
+      callbackBase: `${prefix}/${encodeURIComponent(localEventsServerSegment(serverId))}`,
       insecure: checked.insecure,
       kind: choice.kind,
     },

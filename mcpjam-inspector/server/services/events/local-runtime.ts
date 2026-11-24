@@ -51,6 +51,7 @@ import type {
   EventsHostView,
   EventsSubscriptionView,
 } from "@/shared/events-api";
+import { localEventsServerSegment } from "@/shared/local-events-hooks";
 import { logger } from "../../utils/logger.js";
 import {
   localWebhookFailureKind,
@@ -493,7 +494,7 @@ export class LocalEventsRuntime {
    * C3 acceptance table. New rejections are broadcast as frames.
    */
   async receive(args: {
-    serverId: string;
+    serverSegment: string;
     inboxId: string;
     slotId: string;
     headers: Headers;
@@ -501,7 +502,7 @@ export class LocalEventsRuntime {
   }): Promise<ReceiveResult> {
     const slot = args.inboxId === this.inbox.inboxId ? this.inbox.slotState(args.slotId) : undefined;
     const local = slot && this.subscriptions.get(slot.logicalSubscriptionId);
-    if (!local || local.record.serverId !== args.serverId) {
+    if (!local || localEventsServerSegment(local.record.serverId) !== args.serverSegment) {
       return { status: 404, body: { error: "unknown_slot" } };
     }
     const before = this.inbox.rejections.length;
