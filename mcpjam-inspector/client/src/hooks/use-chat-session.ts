@@ -2,6 +2,7 @@ import { useCursorModels } from "./use-cursor-models";
 import { isRuntimeAccountModel } from "@/shared/model-provider";
 import { reportCaught } from "@/lib/error-reporting";
 import { useHarnessApprovalStop } from "./use-harness-approval-stop";
+import { isWebClientRuntimeId } from "@/shared/web-clients";
 import { isHarness } from "@mcpjam/sdk/host-config/internal";
 import { createTurnAuthorizationRenewal } from "@/lib/turn-authorization-renewal";
 import { createPersistReceiptRecovery } from "@/lib/persist-receipt-recovery";
@@ -426,10 +427,10 @@ const SANDBOX_NOTICE_MESSAGES: Record<SandboxNoticeReason, string> = {
 // local to avoid coupling the hook to the registry's `__internal` export.
 const APP_TOOL_ALIAS_REGEX = /^app_[a-z0-9]{8}$/i;
 
-function resolveSystemPrompt(value: string | null | undefined): string {
+function resolveSystemPrompt(value: string | null | undefined, fallback: string): string {
   return typeof value === "string" && value.trim().length > 0
     ? value
-    : DEFAULT_SYSTEM_PROMPT;
+    : fallback;
 }
 
 function getOrgProviderKeyForModel(model: ModelDefinition): string | null {
@@ -2209,9 +2210,9 @@ export function useChatSession(
   appToolsRegistryRef.current = appToolsRegistry;
   const appState = useMaybeSharedAppState();
   const initialModelId = executionConfig?.modelId;
-  const initialSystemPrompt = resolveSystemPrompt(
-    executionConfig?.systemPrompt,
-  );
+  const defaultSystemPrompt = isWebClientRuntimeId(harnessModelTarget?.harnessId)
+    ? ""
+    : DEFAULT_SYSTEM_PROMPT;
   const initialTemperature = executionConfig?.temperature ?? 0.7;
   const initialRequireToolApproval =
     executionConfig?.requireToolApproval ?? false;
@@ -2257,10 +2258,8 @@ export function useChatSession(
   const authIsMemberRef = useRef(false);
   const [isSessionBootstrapComplete, setIsSessionBootstrapComplete] =
     useState(false);
-  const [systemPrompt, setSystemPromptState] = useState(initialSystemPrompt);
-  const setSystemPrompt = useCallback((prompt: string) => {
-    setSystemPromptState(resolveSystemPrompt(prompt));
-  }, []);
+  const [configuredSystemPrompt, setSystemPrompt] = useState(executionConfig?.systemPrompt ?? "");
+  const systemPrompt = resolveSystemPrompt(configuredSystemPrompt, defaultSystemPrompt);
   const [temperatureOverride, setTemperatureOverride] = useState<number | undefined>(undefined);
   /**
    * The scenario whose transcript this surface may resume across a refresh, or
@@ -6450,7 +6449,7 @@ export function useChatSession(
   const executionRespectToolVisibility = executionConfig?.respectToolVisibility;
   useEffect(() => {
     if (!isExecutionConfigControlled) return;
-    setSystemPrompt(executionSystemPrompt ?? DEFAULT_SYSTEM_PROMPT);
+    setSystemPrompt(executionSystemPrompt ?? "");
   }, [isExecutionConfigControlled, executionSystemPrompt, setSystemPrompt]);
 
   useEffect(() => {

@@ -264,7 +264,17 @@ async function main(): Promise<void> {
     ...(recorder ? { recorder } : {}),
     ...(config.contextMode === "persistent"
       ? {
-          profileExport: async () => {
+          profileExport: async ({ excludeOrigins }) => {
+            // Cleared in the live browser, before the close: Chromium keeps a
+            // site's data across several stores and formats, and only the
+            // browser can remove all of it. An exclusion it can't honor stops
+            // the export rather than archive that site's session.
+            if (excludeOrigins.length > 0) {
+              if (!context.clearOriginData) {
+                throw new Error("profile_exclusions_unavailable");
+              }
+              await context.clearOriginData(excludeOrigins);
+            }
             // Closing Chromium flushes cookies/LevelDB before the archive is read.
             // The handler holds the export lease until the bytes are complete.
             await context.close();

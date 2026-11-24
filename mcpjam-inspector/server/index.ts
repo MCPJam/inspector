@@ -577,7 +577,7 @@ app.use("/api/*", sentryRequestIdentityMiddleware);
 app.use("/api/*", requestLogContextMiddleware);
 
 // API Routes
-mountWebClientRuntime(app, { hosted: HOSTED_MODE });
+mountWebClientRuntime(app);
 if (!HOSTED_MODE) {
   app.route("/api/apps", appsRoutes);
   app.route("/api/mcp", mcpRoutes);

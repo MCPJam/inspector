@@ -200,6 +200,21 @@ describe("Convex reconnect backend", () => {
     });
   });
 
+  it("passes on the backend's answer that the account was signed in again since the run's restore", async () => {
+    const { calls, service } = stubService({ reportWebSignInRequired: { reloadProfile: true } });
+    const backend = createConvexWebReconnectBackend(ACTOR, { service, route: stubRoute(null).route });
+    expect(
+      await backend.reportWebSignInRequired({
+        webAccountId: ACCOUNT,
+        runId: "run-1",
+        pendingStep: STEP,
+        reason: "signed_out",
+        restoredProfileVersion: 2,
+      }),
+    ).toEqual({ reloadProfile: true });
+    expect(calls[0]?.command).toMatchObject({ action: "reportWebSignInRequired", restoredProfileVersion: 2 });
+  });
+
   it("saves a profile as ciphertext under the key the backend issued", async () => {
     const dataKey = randomBytes(32);
     const { calls, service } = stubService({
@@ -262,7 +277,8 @@ describe("Convex reconnect backend", () => {
   });
 
   it.each([
-    ["CONFLICT", "handbackWebReconnect", "wrong_identity"],
+    // The request reads cancelled after the conflict: it was cancelled meanwhile.
+    ["CONFLICT", "handbackWebReconnect", "cancelled"],
     ["NOT_FOUND", "handbackWebReconnect", "not_found"],
     ["WEB_ACCOUNT_NEEDS_SIGN_IN", "profile-key", "not_signed_in"],
     ["NOT_FOUND", "listWebReconnectRequests", "not_found"],
@@ -270,8 +286,17 @@ describe("Convex reconnect backend", () => {
     "answers a handback refused with %s from %s as %s",
     async (code, refusedBy, outcome) => {
       const refusal = new WebBackendRefusal(code);
+      let reads = 0;
       const { service } = stubService({
-        listWebReconnectRequests: [OPEN_REQUEST],
+        // Open when the handback reads it, cancelled on any read after that.
+        get listWebReconnectRequests() {
+          reads += 1;
+          return [
+            reads === 1
+              ? OPEN_REQUEST
+              : { ...OPEN_REQUEST, status: "cancelled" },
+          ];
+        },
         listWebAccounts: [ACCOUNT_VIEW],
         saveWebAccountProfile: { ok: true, profileVersion: 4 },
         handbackWebReconnect: { status: "resolved", resumableRunIds: [] },
@@ -301,6 +326,37 @@ describe("Convex reconnect backend", () => {
       ).toEqual({ status: outcome });
     },
   );
+
+  it("keeps the status of a refusal whose body isn't JSON", async () => {
+    const badGateway = () =>
+      new Response("<html><body>502 Bad Gateway</body></html>", {
+        status: 502,
+        headers: { "content-type": "text/html" },
+      });
+    const save = (fetchImpl: typeof fetch) =>
+      createConvexWebReconnectBackend(ACTOR, {
+        service: stubService({}).service,
+        route: {
+          convexHttpUrl: "https://routes.example.test",
+          serviceToken: SERVICE_TOKEN,
+          fetchImpl,
+        },
+      }).saveWebAccountProfile({
+        webAccountId: ACCOUNT,
+        expectedProfileVersion: 3,
+        profile: PROFILE,
+      });
+    // The profile-key route is behind a proxy that fails.
+    await expect(save(async () => badGateway())).rejects.toThrow("HTTP 502");
+    // The key is issued, then storage fails.
+    const issued =
+      stubRoute(profileKey(randomBytes(32))).route.fetchImpl ?? fetch;
+    const storageDown: typeof fetch = async (input, init) =>
+      String(input).endsWith("/upload") ? badGateway() : issued(input, init);
+    await expect(save(storageDown)).rejects.toThrow(
+      "The encrypted profile was not uploaded: HTTP 502.",
+    );
+  });
 
   it("passes other refusals and network failures on unchanged", async () => {
     const handback = (service: WebClientService) =>

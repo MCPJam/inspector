@@ -1,10 +1,11 @@
 /**
  * Before a step is sent again, after a restart or a lost reply, the ledger
  * says whether its tool calls already reached the upstream server. Resending a
- * prompt makes the vendor's model call its tools again, so a call the upstream
- * answered is taken from the record instead, and a call forwarded with no
- * answer may have run: the step stops and says so rather than risk running the
- * tool twice.
+ * prompt makes the vendor's model call its tools again. When the upstream
+ * answered every call, the vendor's model has the results and the step's
+ * reply is read from the vendor's conversation instead. A call forwarded with
+ * no answer may have run: the step stops and says so rather than risk running
+ * the tool twice.
  */
 import type { LedgerEntry, LedgerMatch } from "../tool-call-ledger.js";
 import type { PendingStep } from "./backend.js";
@@ -31,7 +32,12 @@ export type ReconcileInput = {
 export type ReconcileOutcome =
   /** No call reached the upstream since the step started, so sending is safe. */
   | { status: "send" }
-  /** The upstream answered every call. The step is taken from these records. */
+  /**
+   * The upstream answered every call, so the step is not sent again: its
+   * reply is read from the vendor's conversation. The ledger keeps only a
+   * hash of each result, so these records say only that the calls were
+   * answered.
+   */
   | { status: "reconciled"; calls: LedgerEntry[] }
   /** These calls were forwarded and never answered. They may have run. */
   | { status: "ambiguous_execution"; calls: LedgerEntry[] };
@@ -46,6 +52,22 @@ function upstreamAnswered(entry: LedgerEntry): boolean {
     entry.upstreamStatus !== undefined &&
     !GATEWAY_STATUSES.has(entry.upstreamStatus)
   );
+}
+
+/**
+ * The reads share no snapshot, so a call that settles between them comes
+ * back answered from one and still forwarded from the other. A call settles
+ * once, so the answered row is the newer one, whichever read it came from.
+ */
+function dedupeKeepingAnswered(entries: LedgerEntry[]): LedgerEntry[] {
+  const byId = new Map<string, LedgerEntry>();
+  for (const entry of entries) {
+    const seen = byId.get(entry.id);
+    if (!seen || (!upstreamAnswered(seen) && upstreamAnswered(entry))) {
+      byId.set(entry.id, entry);
+    }
+  }
+  return [...byId.values()];
 }
 
 export async function reconcileWithLedger(
@@ -66,14 +88,7 @@ export async function reconcileWithLedger(
     // The step's own turn too, so clock skew between replicas can't hide a call.
     ...(step.turnId ? [ledger.forTurn(step.turnId)] : []),
   ]);
-  const calls = [
-    ...new Map(
-      found
-        .flat()
-        .filter(belongsToStep)
-        .map((entry) => [entry.id, entry]),
-    ).values(),
-  ];
+  const calls = dedupeKeepingAnswered(found.flat().filter(belongsToStep));
   if (calls.length === 0) return { status: "send" };
   const unanswered = calls.filter((entry) => !upstreamAnswered(entry));
   if (unanswered.length > 0) {

@@ -368,9 +368,12 @@ function classifyServerNotification(
       out.add("request-control.progress");
       return;
     case "notifications/cancelled":
-      out.add("request-control.cancellation");
+      // On 2026-07-28 a server may send this only to end a
+      // subscriptions/listen stream; earlier revisions let either side
+      // cancel its own request.
       if (request?.method === "subscriptions/listen")
         out.add("subscriptions.stream-end");
+      else if (era !== "modern") out.add("request-control.cancellation");
       return;
     case "notifications/message":
       out.add("request-control.log-messages");

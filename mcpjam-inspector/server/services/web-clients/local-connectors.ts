@@ -29,7 +29,7 @@ import {
 export function createLocalConnectorRegistry() {
   const entries = new Map<
     string,
-    { connector: WebConnector; upstream: UpstreamTarget }
+    { connector: WebConnector; upstream: UpstreamTarget; flagSubject?: string }
   >();
   const resolver: WebConnectorResolver = {
     async resolve(connectorId) {
@@ -47,11 +47,23 @@ export function createLocalConnectorRegistry() {
   return {
     resolver,
     has: (connectorId: string) => entries.has(connectorId),
-    register(input: {
-      upstreamUrl: string;
-      headers?: Record<string, string>;
-      serverId?: string;
-    }): WebConnector {
+    /**
+     * `web-clients-enabled` as it is now for whoever registered the
+     * connector, so turning the flag off stops one already registered.
+     */
+    async enabled(connectorId: string): Promise<boolean> {
+      const entry = entries.get(connectorId);
+      return entry !== undefined && (await webClientsEnabledFor(entry.flagSubject));
+    },
+    register(
+      input: {
+        upstreamUrl: string;
+        headers?: Record<string, string>;
+        serverId?: string;
+      },
+      /** The signed-in person whose flag allowed it; without one, the flag file's. */
+      flagSubject?: string,
+    ): WebConnector {
       const connector: WebConnector = {
         connectorId: randomBytes(24).toString("base64url"),
         projectId: "local",
@@ -62,8 +74,19 @@ export function createLocalConnectorRegistry() {
       entries.set(connector.connectorId, {
         connector,
         upstream: { url: input.upstreamUrl, headers: input.headers ?? {} },
+        ...(flagSubject ? { flagSubject } : {}),
       });
       return connector;
+    },
+    /**
+     * Replaces a connector's upstream headers, so a refreshed token reaches
+     * the connector the vendor's app already saved. False once it is gone.
+     */
+    setHeaders(connectorId: string, headers: Record<string, string>): boolean {
+      const entry = entries.get(connectorId);
+      if (!entry) return false;
+      entry.upstream = { ...entry.upstream, headers };
+      return true;
     },
     remove: (connectorId: string) => entries.delete(connectorId),
     list: () =>
@@ -106,13 +129,16 @@ async function readJson(c: Context): Promise<unknown> {
   }
 }
 
-/** The flag for the signed-in person when the request names one, else the flag file. */
-async function flagOn(c: Context): Promise<boolean> {
+/** The signed-in person a request names, whose flag applies to it. */
+async function flagSubject(c: Context): Promise<string | undefined> {
   const token = /^Bearer\s+(\S+)/i.exec(c.req.header("authorization") ?? "")?.[1];
   const identity = token ? await verifiedFlagSubject(token) : undefined;
-  return webClientsEnabledFor(
-    identity?.kind === "id" ? identity.distinctId : undefined,
-  );
+  return identity?.kind === "id" ? identity.distinctId : undefined;
+}
+
+/** The flag for the signed-in person when the request names one, else the flag file. */
+async function flagOn(c: Context): Promise<boolean> {
+  return webClientsEnabledFor(await flagSubject(c));
 }
 
 /**
@@ -154,7 +180,7 @@ export function createLocalConnectorRoutes(
         { error: "Send { upstreamUrl, headers?, serverId? } with an http or https URL." },
         400,
       );
-    const connector = registry.register(parsed.data);
+    const connector = registry.register(parsed.data, await flagSubject(c));
     return c.json(
       {
         connectorId: connector.connectorId,
@@ -165,6 +191,9 @@ export function createLocalConnectorRoutes(
   });
   app.delete("/:connectorId", (c) => {
     const connectorId = c.req.param("connectorId");
+    // The runtime opens its turns in the same store, so only a connector
+    // registered here has its turn closed here.
+    if (!registry.has(connectorId)) return unknown(c);
     const window = turns.active(connectorId);
     if (window) turns.close(window.turnId);
     return registry.remove(connectorId) ? c.body(null, 204) : unknown(c);
@@ -172,7 +201,9 @@ export function createLocalConnectorRoutes(
   app.post("/:connectorId/turn", async (c) => {
     const connectorId = c.req.param("connectorId");
     if (!registry.has(connectorId)) return unknown(c);
-    const parsed = turnRequest.safeParse((await readJson(c)) ?? {});
+    // Never read as `{}`: a cut-off `allowTools` would open a turn that
+    // allows every tool.
+    const parsed = turnRequest.safeParse(await readJson(c));
     if (!parsed.success)
       return c.json({ error: "Send { allowTools?: string[] }." }, 400);
     const allowTools = parsed.data.allowTools;
@@ -196,7 +227,9 @@ export function createLocalConnectorRoutes(
     }
   });
   app.delete("/:connectorId/turn", (c) => {
-    const window = turns.active(c.req.param("connectorId"));
+    const connectorId = c.req.param("connectorId");
+    if (!registry.has(connectorId)) return unknown(c);
+    const window = turns.active(connectorId);
     if (window) turns.close(window.turnId);
     return c.body(null, 204);
   });

@@ -9,6 +9,7 @@ import type { Hono } from "hono";
 
 export type Received = {
   method: string;
+  url: string;
   headers: IncomingHttpHeaders;
   body: Buffer;
 };
@@ -67,10 +68,13 @@ const sse = (value: unknown) => `event: message\ndata: ${JSON.stringify(value)}\
 
 /**
  * Answers JSON, except `tools/call` for `stream` (SSE with a progress
- * notification first) and `cut` (SSE that ends before the answer).
+ * notification first) and `cut` (SSE that ends before the answer), and
+ * `/redirect/<status>`, which sends any request on to `/mcp` (or to
+ * `hooks.redirectTo`).
  */
 export async function startFixtureServer() {
   const received: Received[] = [];
+  const hooks: { onRedirect?: () => void; redirectTo?: string } = {};
   /** The raw bytes of the last SSE answer, to compare with what the vendor read. */
   let lastStream = "";
   const server = createServer((req, res) => {
@@ -78,9 +82,24 @@ export async function startFixtureServer() {
     req.on("data", (chunk: Buffer) => chunks.push(chunk));
     req.on("end", () => {
       const body = Buffer.concat(chunks);
-      received.push({ method: req.method ?? "", headers: req.headers, body });
+      received.push({
+        method: req.method ?? "",
+        url: req.url ?? "",
+        headers: req.headers,
+        body,
+      });
       for (const [name, value] of Object.entries(UPSTREAM_NOISE))
         res.setHeader(name, value);
+      const redirect = /^\/redirect\/(30[12378])$/.exec(req.url ?? "");
+      if (redirect) {
+        hooks.onRedirect?.();
+        res
+          .writeHead(Number(redirect[1]), {
+            location: hooks.redirectTo ?? "/mcp",
+          })
+          .end();
+        return;
+      }
       if (req.method !== "POST") {
         res.writeHead(405).end();
         return;
@@ -129,7 +148,10 @@ export async function startFixtureServer() {
   const { port } = server.address() as AddressInfo;
   return {
     url: `http://127.0.0.1:${port}/mcp`,
+    redirectUrl: (status: number) =>
+      `http://127.0.0.1:${port}/redirect/${status}`,
     received,
+    hooks,
     lastStream: () => lastStream,
     close: () =>
       new Promise<void>((resolve, reject) =>
@@ -143,11 +165,18 @@ export const ORIGIN = "https://inspector.example.test";
 /** claude.ai's MCP client, as the spike saw it: its own user agent and session, a bearer when it has one. */
 export function vendorClient(
   app: Hono,
-  options: { path: string; token?: string; protocolVersion?: string },
+  options: {
+    path: string;
+    token?: string;
+    protocolVersion?: string;
+    /** The scheme and Host the request names; the Inspector's own by default. */
+    origin?: string;
+  },
 ) {
   let sessionId: string | undefined;
   const post = async (body: unknown, headers: Record<string, string> = {}) => {
-    const response = await app.request(`${ORIGIN}${options.path}`, {
+    const url = `${options.origin ?? ORIGIN}${options.path}`;
+    const response = await app.request(url, {
       method: "POST",
       headers: {
         accept: "application/json, text/event-stream",
@@ -181,6 +210,6 @@ export function vendorClient(
     listTools: () => post({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
     /** Raw text, so the test can check the bytes the server received. */
     callToolRaw: (id: number, name: string, message: string) =>
-      `{"jsonrpc":"2.0", "id":${id},"method":"tools/call","params":{"name":"${name}","arguments":{"message":"${message}"},"_meta":{"progressToken":${id},"claudecode/toolUseId":"toolu_${id}"}}}`,
+      `{"jsonrpc":"2.0", "id":${id},"method":"tools/call","params":{"name":${JSON.stringify(name)},"arguments":{"message":${JSON.stringify(message)}},"_meta":{"progressToken":${id},"claudecode/toolUseId":"toolu_${id}"}}}`,
   };
 }

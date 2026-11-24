@@ -7,7 +7,10 @@ import {
   webClientService,
   type WebClientService,
 } from "../backend-connector-resolver.js";
-import { createStaticConnectorResolver } from "../connectors.js";
+import {
+  createStaticConnectorResolver,
+  type WebConnector,
+} from "../connectors.js";
 import {
   createWebConnectorEndpoint,
   mountWebConnectorEndpoint,
@@ -18,6 +21,12 @@ import {
 } from "../tool-call-ledger.js";
 import { createInMemoryTurnWindowStore } from "../turn-windows.js";
 import { startFixtureServer, vendorClient } from "./forwarding-fixtures.js";
+
+const authorize = vi.hoisted(() => vi.fn());
+vi.mock("../../../routes/web/auth.js", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  createAuthorizedManager: authorize,
+}));
 
 const ROW = {
   connectorId: "5f0c1d2e3a4b5c6d7e8f9a0b1c2d3e4f",
@@ -67,6 +76,15 @@ describe("backend connector resolver", () => {
     });
     expect(await resolver.resolve("nope")).toBeUndefined();
     expect(await resolver.resolve("nope")).toBeUndefined();
+    expect(service.read).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps no unknown id longer than a connector id, so anonymous callers can't fill the cache with long ones", async () => {
+    const { service } = stubService({ read: () => null });
+    const resolver = createBackendConnectorResolver(service);
+    const long = "x".repeat(4096);
+    expect(await resolver.resolve(long)).toBeUndefined();
+    expect(await resolver.resolve(long)).toBeUndefined();
     expect(service.read).toHaveBeenCalledTimes(2);
   });
 
@@ -197,6 +215,98 @@ describe("backend connector resolver", () => {
   });
 });
 
+describe("backend connector upstream", () => {
+  const baseFetch = vi.fn<typeof fetch>();
+  const disconnectAllServers = vi.fn(async () => {});
+  /** The acting-as authorization's answer: the project server's config. */
+  function authorizeWith(config: Record<string, unknown>) {
+    authorize.mockResolvedValue({
+      manager: { disconnectAllServers },
+      authorizedServerConfigs: { [ROW.serverId]: config },
+    });
+  }
+  const upstream = (connector: WebConnector, userId?: string) =>
+    createBackendConnectorResolver(stubService({}).service).upstream(
+      connector,
+      { userId },
+    );
+
+  afterEach(() => {
+    authorize.mockReset();
+    disconnectAllServers.mockClear();
+  });
+
+  it("forwards as the token's user, through the server's egress-guarded fetch and credential", async () => {
+    const refresh = vi.fn(async () => ({ accessToken: "fresh-token" }));
+    authorizeWith({
+      url: new URL("https://upstream.example.com/mcp"),
+      requestInit: { headers: { "x-api-key": "server-key" } },
+      accessToken: "server-token",
+      baseFetch,
+      onUnauthorized: refresh,
+    });
+    const target = await upstream(ROW, "user_01");
+
+    expect(authorize).toHaveBeenCalledWith(
+      {
+        authMethod: "workos_api_key",
+        workosUserId: "user_01",
+        mcpjamOrganizationId: ROW.organizationId,
+      },
+      "",
+      ROW.projectId,
+      [ROW.serverId],
+      expect.any(Number),
+      undefined,
+      undefined,
+      expect.objectContaining({ lazyConnect: true }),
+    );
+    expect(target).toMatchObject({
+      url: "https://upstream.example.com/mcp",
+      headers: {
+        "x-api-key": "server-key",
+        authorization: "Bearer server-token",
+      },
+    });
+    expect(target.fetch).toBe(baseFetch);
+    expect(await target.onUnauthorized?.()).toBe("fresh-token");
+    expect(refresh).toHaveBeenCalledWith({
+      serverId: ROW.serverId,
+      error: expect.any(Error),
+    });
+    await target.release?.();
+    expect(disconnectAllServers).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [
+      "has no egress-guarded fetch",
+      { url: "https://upstream.example.com/mcp" },
+    ],
+    [
+      "prefers SSE",
+      { url: "https://upstream.example.com/sse", preferSSE: true, baseFetch },
+    ],
+  ])(
+    "refuses a server that %s and releases its manager",
+    async (_label, config) => {
+      authorizeWith(config);
+      await expect(upstream(ROW, "user_01")).rejects.toThrow(
+        "The project's server has no Streamable HTTP endpoint.",
+      );
+      expect(disconnectAllServers).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("refuses a request with no signed-in user, which is every capability connector's", async () => {
+    const capability = { ...ROW, auth: "capability" as const };
+    await expect(upstream(capability)).rejects.toThrow(
+      "A backend connector forwards only for a signed-in user.",
+    );
+    expect(authorize).not.toHaveBeenCalled();
+  });
+});
+
 describe("durable ledger write-through", () => {
   let fixture: Awaited<ReturnType<typeof startFixtureServer>>;
   beforeAll(async () => {
@@ -232,7 +342,7 @@ describe("durable ledger write-through", () => {
     });
     fixture.received.length = 0;
     const vendor = vendorClient(app, { path: `/mcp/${connector.connectorId}` });
-    return { ...stub, ledger, window, vendor };
+    return { ...stub, ledger, turns, window, vendor };
   }
   const callsReceived = () =>
     fixture.received.filter((request) =>
@@ -290,6 +400,66 @@ describe("durable ledger write-through", () => {
     });
     expect(fixture.received).toHaveLength(0);
     expect(ledger.forTurn(window.turnId)).toHaveLength(0);
+  });
+
+  it("holds a batch whose second call can't be recorded, and settles the first call's record as an error", async () => {
+    let records = 0;
+    const { applied, ledger, window, vendor } = setup((command) => {
+      if (command.action !== "recordWebToolCallForwarded") return { settled: true };
+      records += 1;
+      if (records === 2) throw new Error("backend down");
+      return { id: "ledger_3", state: "forwarded" };
+    });
+    const batch = `[${vendor.callToolRaw(6, "echo", "g")},${vendor.callToolRaw(7, "echo", "h")},{"jsonrpc":"2.0","id":8,"method":"tools/list"}]`;
+    const answers = await (await vendor.post(batch)).json();
+    const refused = (id: number, message: string) => ({
+      jsonrpc: "2.0",
+      id,
+      error: { code: -32000, message },
+    });
+    const notRecorded =
+      "MCPJam could not record this tool call, so it was not sent. Send the prompt again.";
+    expect(answers).toEqual([
+      refused(6, notRecorded),
+      refused(7, notRecorded),
+      refused(
+        8,
+        "This request was not sent because a tool call in the same batch was refused. Send it again on its own.",
+      ),
+    ]);
+    expect(fixture.received).toHaveLength(0);
+    expect(ledger.forTurn(window.turnId)).toHaveLength(0);
+    await vi.waitFor(() =>
+      expect(applied.filter((command) => command.action === "settleWebToolCall")).toStrictEqual([
+        { action: "settleWebToolCall", id: "ledger_3", state: "error" },
+      ]),
+    );
+  });
+
+  it("refuses a call whose turn closed while it was recorded, and settles its record as an error", async () => {
+    let closeTurn = () => {};
+    const { applied, ledger, turns, window, vendor } = setup((command) => {
+      if (command.action !== "recordWebToolCallForwarded") return { settled: true };
+      // The run ends its turn while the record is being written.
+      closeTurn();
+      return { id: "ledger_4", state: "forwarded" };
+    });
+    closeTurn = () => turns.close(window.turnId);
+    const answer = await (await vendor.post(vendor.callToolRaw(9, "echo", "i"))).json();
+    expect(answer).toEqual({
+      jsonrpc: "2.0",
+      id: 9,
+      error: {
+        code: -32000,
+        message:
+          "No MCPJam run is using this connector, so the tool call was not sent. Start a run in MCPJam, then send the prompt again.",
+      },
+    });
+    expect(fixture.received).toHaveLength(0);
+    expect(ledger.forTurn(window.turnId)).toHaveLength(0);
+    await vi.waitFor(() =>
+      expect(applied[1]).toStrictEqual({ action: "settleWebToolCall", id: "ledger_4", state: "error" }),
+    );
   });
 
   it("answers the vendor even when the durable settle fails", async () => {

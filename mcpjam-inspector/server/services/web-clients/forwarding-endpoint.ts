@@ -28,6 +28,7 @@ import {
   nativeRequestHeaders,
   nativeResponseHeaders,
 } from "../../utils/harness/forwarding/native-wire.js";
+import { configuredInspectorPublicUrl } from "../../utils/inspector-public-url.js";
 import { logger } from "../../utils/logger.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 import type {
@@ -37,6 +38,7 @@ import type {
 } from "./connectors.js";
 import {
   authkitAuthorizationServers,
+  connectorOriginAllowed,
   verifyAuthKitBearer,
   webClientsEnabledFor,
 } from "./endpoint-auth.js";
@@ -49,11 +51,15 @@ import {
 import {
   answerId,
   bodyKind,
+  discardBody,
+  fetchWhileTurnOpen,
+  followedRedirect,
   isRecord,
   isRequest,
   observeBody,
   parseRpcBody,
   readBodyBytes,
+  TurnClosedError,
   type RpcBody,
   type RpcId,
   type RpcMessage,
@@ -114,6 +120,10 @@ const COPY = {
     "MCPJam could not check this tool call, so it was not sent. Send the prompt again.",
   notRecorded:
     "MCPJam could not record this tool call, so it was not sent. Send the prompt again.",
+  unknownOutcome:
+    "MCPJam could not tell whether this project's MCP server ran this tool call. Check what the tool did before you send the prompt again.",
+  roundedNumber:
+    "This tool call has a number MCPJam can't check exactly, so it was not sent. Send the number as a string instead.",
   noToolName:
     "This tool call names no tool, so it was not sent. Send it again with a tool name.",
   batchHeld:
@@ -136,6 +146,8 @@ const COPY = {
     "Your MCPJam account can't use this connector's project. Ask a project admin to add you, then connect again.",
   notFound:
     "No MCPJam connector has this URL. Copy the connector URL from MCPJam again.",
+  origin:
+    "This connector does not accept requests from this web page. Connect to it from Claude or ChatGPT instead.",
   method: "This endpoint answers GET, POST and DELETE.",
 } as const;
 
@@ -152,15 +164,12 @@ function observe(action: () => void): void {
   }
 }
 
-/** The edge or tunnel terminates TLS, so only the scheme comes from a forwarded header. */
-function publicOrigin(request: Request): string {
-  const url = new URL(request.url);
-  const proto = request.headers
-    .get("x-forwarded-proto")
-    ?.split(",")[0]
-    ?.trim();
-  if (proto === "https" || proto === "http") url.protocol = `${proto}:`;
-  return url.origin;
+/** Connector URLs' origin as configured, never the Host header: the caller picks that. */
+function publicOrigin(): string | undefined {
+  const configured = configuredInspectorPublicUrl();
+  if (!configured || !URL.canParse(configured)) return undefined;
+  const url = new URL(configured);
+  return /^https?:$/.test(url.protocol) ? url.origin : undefined;
 }
 
 function bearerToken(header: string | undefined): string | undefined {
@@ -248,9 +257,11 @@ function refuseUnread(error: NativeWireError): Response {
       ? [413, -32600, COPY.tooLarge]
       : error.code === "header_mismatch"
         ? [400, -32020, COPY.headerMismatch]
-        : error.code === "invalid_json"
-          ? [400, -32700, COPY.invalid]
-          : [400, -32600, COPY.invalid];
+        : error.code === "rounded_number"
+          ? [400, -32602, COPY.roundedNumber]
+          : error.code === "invalid_json"
+            ? [400, -32700, COPY.invalid]
+            : [400, -32600, COPY.invalid];
   return Response.json(
     { jsonrpc: "2.0", id: null, error: { code, message } },
     { status },
@@ -286,15 +297,14 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
       webClientsEnabledFor(context.userId));
   const app = new Hono();
   const notFound = (c: Context) => c.json({ error: COPY.notFound }, 404);
-  const resourceOf = (origin: string, connectorId: string) =>
-    `${origin}${webConnectorPath(connectorId)}`;
 
   /** RFC 9728 protected-resource metadata, with MCPJam's AuthKit as the authorization server. */
-  const metadata = async (c: Context, resource: string) => {
+  const metadata = async (c: Context, path: string) => {
+    const origin = publicOrigin();
     const servers = await authorizationServers();
-    if (servers.length === 0) return notFound(c);
+    if (!origin || servers.length === 0) return notFound(c);
     return c.json({
-      resource,
+      resource: `${origin}${path}`,
       authorization_servers: servers,
       bearer_methods_supported: ["header"],
     });
@@ -309,14 +319,14 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
     if (!connector) return notFound(c);
     if (connector.auth !== "oauth")
       return (await isEnabled(connector, {})) ? { connector } : notFound(c);
-    const origin = publicOrigin(c.req.raw);
+    const origin = publicOrigin();
+    // No token's audience can be checked without it, so no OAuth connector is served.
+    if (!origin) return notFound(c);
     const token = bearerToken(c.req.header("authorization"));
+    const resource = `${origin}${webConnectorPath(connectorId)}`;
     const verified = token
       ? await verifyBearer(token, {
-          audiences: [
-            resourceOf(origin, connectorId),
-            `${origin}${WEB_CONNECTOR_PATH_PREFIX}`,
-          ],
+          audiences: [resource, `${origin}${WEB_CONNECTOR_PATH_PREFIX}`],
         })
       : undefined;
     if (!verified) {
@@ -338,6 +348,7 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
     connectorId: string,
     window: TurnWindow | undefined,
     call: RpcRequest,
+    userId: string | undefined,
   ): Promise<string | undefined> => {
     if (!window) return COPY.noTurn;
     const params = paramsOf(call);
@@ -352,11 +363,12 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
         toolName: params.name,
         arguments: params.arguments,
         ...(toolUseId ? { toolUseId } : {}),
+        ...(userId ? { userId } : {}),
       });
     } catch (error) {
-      logger.warn("[web-clients] the tool approval check failed", {
-        connector: connectorTag(connectorId),
-        message: error instanceof Error ? error.message : String(error),
+      reportRouteFailure("Web connector tool approval failed", error, {
+        source: SOURCE,
+        hop: "mcpjam_internal",
       });
       return COPY.approvalFailed;
     }
@@ -367,10 +379,12 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
       : COPY.noTurn;
   };
 
+  /** `turnOpen` is set when the request carries tool calls, which go only under their turn. */
   const send = async (
     target: UpstreamTarget,
     request: Request,
     bytes: Uint8Array<ArrayBuffer> | undefined,
+    turnOpen: (() => boolean) | undefined,
   ): Promise<Response> => {
     const fetchUpstream = target.fetch ?? deps.fetchUpstream ?? fetch;
     // The vendor's `authorization` is never among the headers passed on.
@@ -380,15 +394,35 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
       headers,
       body: bytes,
       signal: request.signal,
-      redirect: "follow",
     };
-    const response = await fetchUpstream(target.url, init);
-    if (response.status !== 401 || !target.onUnauthorized) return response;
-    await response.body?.cancel();
-    const token = await target.onUnauthorized();
+    // Redirects are followed hop by hop: a tool call goes on only while its
+    // turn is open, and the server's own headers stay with its origin.
+    const own = Object.keys(target.headers);
+    const sendOnce = () =>
+      fetchWhileTurnOpen(fetchUpstream, target.url, init, turnOpen, own);
+    const response = await sendOnce();
+    // Only a 401 to the request itself says it never ran. Behind a redirect
+    // the server took it first, so sending it again could run a tool twice.
+    if (
+      response.status !== 401 ||
+      !target.onUnauthorized ||
+      followedRedirect(response, target.url)
+    )
+      return response;
+    await discardBody(response);
+    // A failed refresh leaves the call unsent, as a missing token does.
+    const token = await target.onUnauthorized().catch((error: unknown) => {
+      reportRouteFailure("Web connector token refresh failed", error, {
+        source: SOURCE,
+        hop: "mcpjam_internal",
+      });
+      return undefined;
+    });
     if (!token) return new Response(null, { status: 401 });
+    // The refresh can outlast the turn that approved the call.
+    if (turnOpen && !turnOpen()) throw new TurnClosedError(401, false);
     headers.set("authorization", `Bearer ${token}`);
-    return fetchUpstream(target.url, init);
+    return sendOnce();
   };
 
   const forward = async (args: {
@@ -425,7 +459,7 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
 
     const refusals = new Map<RpcId, string>();
     for (const call of body.messages.filter(isToolCall)) {
-      const reason = await decide(connectorId, window, call);
+      const reason = await decide(connectorId, window, call, args.userId);
       if (reason) refusals.set(call.id, reason);
     }
     if (refusals.size > 0)
@@ -448,8 +482,18 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
       return answerAll(body, () => COPY.noUpstream, REFUSED, 502, frame);
     }
 
-    type Pending = { entryId: string; durableId?: string };
     type Outcome = Parameters<ToolCallLedger["settle"]>[1];
+    const outcomeOf = (
+      state: Exclude<LedgerState, "forwarded">,
+      upstreamStatus?: number,
+      resultHash?: string,
+    ): Outcome => ({
+      state,
+      ...(upstreamStatus ? { upstreamStatus } : {}),
+      ...(resultHash ? { resultHash } : {}),
+    });
+    /** A call sent on and not settled yet, with the answer seen for it if the ledger refused that. */
+    type Pending = { entryId: string; durableId?: string; seen?: Outcome };
     const warn = (what: string, error: unknown) =>
       logger.warn(`[web-clients] ${what}`, {
         connector: connectorTag(connectorId),
@@ -468,6 +512,31 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
           ?.settle(durableId, outcome)
           .catch((error: unknown) => warn("a call was not settled durably", error));
     };
+    const pending = new Map<RpcId, Pending>();
+    /** Whether the ledger here took the outcome. */
+    const settle = (call: Pending, outcome: Outcome): boolean => {
+      let recorded = true;
+      try {
+        ledger.settle(call.entryId, outcome);
+      } catch (error) {
+        recorded = false;
+        warn("a forwarded call could not be settled", error);
+      }
+      // The durable copy keeps its first outcome, so it is sent only that one.
+      settleDurable(call.durableId, outcome);
+      call.durableId = undefined;
+      return recorded;
+    };
+    let finished = false;
+    const finish = (state: "lost" | "error", upstreamStatus?: number) => {
+      if (finished) return;
+      finished = true;
+      // An answer the ledger refused earlier is offered again before "lost".
+      for (const call of pending.values())
+        settle(call, call.seen ?? outcomeOf(state, upstreamStatus));
+      pending.clear();
+      void release();
+    };
 
     // Recorded before anything is sent, so a call lost mid-flight stays on
     // record as uncertain, and recovery after a restart reads the durable copy.
@@ -481,10 +550,29 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
         jsonrpcId: call.id,
         toolName: String(params.name),
         ...(toolUseId ? { toolUseId } : {}),
+        ...(args.userId ? { userId: args.userId } : {}),
         argsHash: hashPayload(params.arguments ?? {}),
       };
     });
+    const callIds = new Set(calls.map((call) => call.jsonrpcId));
     const durableIds: Array<string | undefined> = [];
+    // Recorded but never sent: each record gets the error the vendor gets.
+    const refuseCalls = (reason: string) => {
+      const settling = new Set(
+        Array.from(pending.values(), (call) => call.durableId),
+      );
+      finish("error");
+      for (const durableId of durableIds)
+        if (!settling.has(durableId))
+          settleDurable(durableId, { state: "error" });
+      return answerAll(
+        body,
+        (id) => (callIds.has(id) ? reason : COPY.batchHeld),
+        REFUSED,
+        200,
+        frame,
+      );
+    };
     try {
       for (const call of calls)
         durableIds.push(await deps.durableLedger?.record(call));
@@ -493,70 +581,90 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
         source: SOURCE,
         hop: "mcpjam_internal",
       });
-      // Recorded but never sent: the record gets the error the vendor gets.
-      for (const durableId of durableIds)
-        settleDurable(durableId, { state: "error" });
-      void release();
-      const callIds = new Set(calls.map((call) => call.jsonrpcId));
-      return answerAll(
-        body,
-        (id) => (callIds.has(id) ? COPY.notRecorded : COPY.batchHeld),
-        REFUSED,
-        200,
-        frame,
-      );
+      return refuseCalls(COPY.notRecorded);
     }
-    const pending = new Map<RpcId, Pending>();
-    calls.forEach((call, index) => {
-      const durableId = durableIds[index];
-      const entry = ledger.forwarded({ ...call, ...(durableId ? { durableId } : {}) });
-      pending.set(call.jsonrpcId, { entryId: entry.id, durableId });
-    });
-    const settle = (
-      call: Pending,
-      state: Exclude<LedgerState, "forwarded">,
-      upstreamStatus?: number,
-      resultHash?: string,
-    ) => {
-      const outcome: Outcome = {
-        state,
-        ...(upstreamStatus ? { upstreamStatus } : {}),
-        ...(resultHash ? { resultHash } : {}),
-      };
-      try {
-        ledger.settle(call.entryId, outcome);
-      } catch (error) {
-        warn("a forwarded call could not be settled", error);
-      }
-      settleDurable(call.durableId, outcome);
-    };
-    let finished = false;
-    const finish = (state: "lost" | "error", upstreamStatus?: number) => {
-      if (finished) return;
-      finished = true;
-      for (const call of pending.values()) settle(call, state, upstreamStatus);
-      pending.clear();
-      void release();
-    };
+    // A call goes only under the turn that approved it, which can end while
+    // the server is resolved, the calls are recorded or a credential is
+    // refreshed. A recovery that read the ledger after the close may not
+    // have seen these calls and may send its own, so these are not sent.
+    const approvedTurnOpen = () =>
+      calls.length === 0 ||
+      turns.active(connectorId)?.turnId === window?.turnId;
+    if (!approvedTurnOpen()) return refuseCalls(COPY.noTurn);
+    try {
+      calls.forEach((call, index) => {
+        const durableId = durableIds[index];
+        const entry = ledger.forwarded({
+          ...call,
+          ...(durableId ? { durableId } : {}),
+        });
+        pending.set(call.jsonrpcId, { entryId: entry.id, durableId });
+      });
+    } catch (error) {
+      reportRouteFailure("Web connector call could not be recorded", error, {
+        source: SOURCE,
+        hop: "mcpjam_internal",
+      });
+      return refuseCalls(COPY.notRecorded);
+    }
 
     let response: Response;
     try {
-      response = await send(target, request, args.bytes);
+      response = await send(
+        target,
+        request,
+        args.bytes,
+        calls.length > 0 ? approvedTurnOpen : undefined,
+      );
     } catch (error) {
+      if (error instanceof TurnClosedError) {
+        // Behind a redirect the server took the call first, so it may have run.
+        const unsure = error.afterRedirect;
+        finish(unsure ? "lost" : "error", error.upstreamStatus);
+        return answerAll(
+          body,
+          (id) =>
+            !callIds.has(id)
+              ? COPY.batchHeld
+              : unsure
+                ? COPY.unknownOutcome
+                : COPY.noTurn,
+          REFUSED,
+          200,
+          frame,
+        );
+      }
       finish("lost");
       reportRouteFailure("Web connector upstream did not answer", error, {
         source: SOURCE,
         hop: "user_server_hop",
       });
-      return answerAll(body, () => COPY.unreachable, REFUSED, 502, frame);
+      return answerAll(
+        body,
+        (id) => (callIds.has(id) ? COPY.unknownOutcome : COPY.unreachable),
+        REFUSED,
+        502,
+        frame,
+      );
     }
     if (response.status === 401) {
       // The vendor holds MCPJam's credential, not the server's, so a
       // challenge from the server is not one it could answer; passing it on
-      // would send the vendor to re-authorize somewhere else.
-      await response.body?.cancel();
-      finish("error", 401);
-      return answerAll(body, () => COPY.upstreamRefused, REFUSED, 502, frame);
+      // would send the vendor to re-authorize somewhere else. Behind a
+      // redirect the server took the request first, so a call may have run.
+      const unsure = followedRedirect(response, target.url);
+      await discardBody(response);
+      finish(unsure ? "lost" : "error", 401);
+      return answerAll(
+        body,
+        (id) =>
+          unsure && callIds.has(id)
+            ? COPY.unknownOutcome
+            : COPY.upstreamRefused,
+        REFUSED,
+        502,
+        frame,
+      );
     }
     const status = response.status;
     const headers = nativeResponseHeaders(response.headers);
@@ -573,14 +681,14 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
         const call = id === undefined ? undefined : pending.get(id);
         if (id === undefined || call === undefined || !isRecord(message))
           return;
-        pending.delete(id);
         const failed = "error" in message;
-        settle(
-          call,
+        call.seen ??= outcomeOf(
           failed ? "error" : "result",
           status,
           hashPayload(failed ? message.error : message.result),
         );
+        // Only once the ledger took it: the exchange's end offers it again.
+        if (settle(call, call.seen)) pending.delete(id);
       },
       onEnd: () => finish("lost", status),
     });
@@ -601,17 +709,20 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
       const connectorId = c.req.param("connectorId");
       const connector = await deps.resolver.resolve(connectorId);
       if (connector?.auth !== "oauth") return notFound(c);
-      return metadata(c, resourceOf(publicOrigin(c.req.raw), connectorId));
+      return metadata(c, webConnectorPath(connectorId));
     },
   );
   // A client that misses the document above falls back to this one, which
   // can't name one connector: it names the `/mcp` family, and `admit`
   // accepts a token for the family on every connector its user may use.
   app.get("/.well-known/oauth-protected-resource", (c) =>
-    metadata(c, `${publicOrigin(c.req.raw)}${WEB_CONNECTOR_PATH_PREFIX}`),
+    metadata(c, WEB_CONNECTOR_PATH_PREFIX),
   );
 
   app.all(`${WEB_CONNECTOR_PATH_PREFIX}/:connectorId`, async (c) => {
+    // The global origin check never sees these requests.
+    if (!connectorOriginAllowed(c.req.header("origin")))
+      return c.json({ error: COPY.origin }, 403);
     const admitted = await admit(c, c.req.param("connectorId"));
     if (admitted instanceof Response) return admitted;
     const request = c.req.raw;

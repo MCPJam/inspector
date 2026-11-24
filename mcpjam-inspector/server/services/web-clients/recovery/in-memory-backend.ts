@@ -7,6 +7,8 @@
 import { randomUUID } from "node:crypto";
 import { logger } from "../../../utils/logger.js";
 import {
+  identityOf,
+  sameWebIdentity,
   WebBackendRefusal,
   type ClaimedRun,
   type SignInReason,
@@ -64,6 +66,14 @@ export function createInMemoryWebReconnectBackend(
     },
     async reportWebSignInRequired({ webAccountId, runId, ...report }) {
       const account = accountById(webAccountId);
+      const { restoredProfileVersion } = report;
+      if (
+        account.status === "ready" &&
+        restoredProfileVersion !== undefined &&
+        account.profileVersion > restoredProfileVersion
+      ) {
+        return { reloadProfile: true };
+      }
       account.status = "needs_sign_in";
       let request = [...requests.values()].find(
         (one) => one.webAccountId === webAccountId && one.status === "open",
@@ -102,19 +112,20 @@ export function createInMemoryWebReconnectBackend(
         throw new WebBackendRefusal("CONFLICT", "The request was cancelled.");
       }
       if (request.status === "open") {
-        // The backend checks the email only; the coordinator checks the rest.
+        // A recorded seat refuses any other, workspace included; an account
+        // with none records this one.
         const email = verifiedAccountEmail.trim();
-        const known = account.accountEmail?.toLowerCase();
-        if (known && known !== email.toLowerCase()) {
+        const workspace = rest.verifiedWorkspace?.trim();
+        const known = identityOf(account);
+        const verified = { accountEmail: email, workspaceName: workspace };
+        if (known && !sameWebIdentity(known, verified)) {
           throw new WebBackendRefusal("CONFLICT", "Another seat signed in.");
         }
         request.status = "resolved";
         request.resolvedAt = Date.now();
         account.status = "ready";
         account.accountEmail = email;
-        if (rest.verifiedWorkspace) {
-          account.workspaceName = rest.verifiedWorkspace.trim();
-        }
+        if (workspace) account.workspaceName = workspace;
         for (const run of request.runs) {
           if (run.status === "waiting") run.status = "resumable";
         }

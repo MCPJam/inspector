@@ -11,6 +11,10 @@
  * Every one is a failure of the run, never of the project's server: nothing
  * about the server was measured when the page could not be driven.
  */
+import type {
+  PendingStep,
+  SignInReason,
+} from "../../../services/web-clients/recovery/backend.js";
 import type { PageDriver } from "./page-driver.js";
 
 export type RealUiStep =
@@ -22,22 +26,18 @@ export type RealUiStep =
   | "reply"
   | "read_conversation";
 
-/** Why a person has to act before the run can continue. */
-export type NeedsSignInReason =
-  | "signed_out"
-  /** A "Verify you are human" check or similar. Never answered by MCPJam. */
-  | "human_check"
-  | "password"
-  | "mfa"
-  | "consent"
-  /** Signed in, but not as the account the project saved. */
-  | "wrong_account";
-
 /**
- * The step a run was on, kept for each step so a stopped run can be resumed
- * from it once a person has finished signing in.
+ * Why a person has to act before the run can continue: the reasons recovery
+ * records. A `human_check` ("Verify you are human" or similar) is never
+ * answered by MCPJam, and `wrong_account` is signed in, but not as the
+ * account the project saved.
  */
-export type PendingStep = { stepId: RealUiStep; startedAt: string; turnId?: string };
+export type NeedsSignInReason = SignInReason;
+
+// The step a run was on, kept for each step so a stopped run can be resumed
+// from it once a person has finished signing in. Recovery stores it as given;
+// a page turn's `stepId` is a `RealUiStep`.
+export type { PendingStep };
 
 export type RealUiFailure =
   | {
@@ -51,6 +51,10 @@ export type RealUiFailure =
         | "plan_limit"
         /** An expected control is missing: the site changed under the module. */
         | "page_changed"
+        /**
+         * The run's connector can't be used as it is: another address, another
+         * connector under its name, or an approval MCPJam can't tie to it.
+         */
         | "connector_failed"
         /** The prompt may have been sent; it is never sent a second time. */
         | "send_ambiguous"
@@ -122,12 +126,14 @@ export interface RealUiPageModule {
   blocker(driver: PageDriver): Promise<RealUiFailure | undefined>;
   /**
    * The connector named `name` exists, points at `url` and is connected.
-   * A broken one is removed and added again, never reconnected.
+   * A broken one is removed and added again, never reconnected. Room for it
+   * is never made by removing one named in `keep`, the turn's own.
    */
   ensureConnector(
     driver: PageDriver,
     connector: { name: string; url: string },
     ctx: StepContext,
+    keep?: readonly string[],
   ): Promise<void>;
   openNewChat(driver: PageDriver, ctx: StepContext): Promise<void>;
   enableConnector(driver: PageDriver, name: string, ctx: StepContext): Promise<void>;
@@ -137,14 +143,19 @@ export interface RealUiPageModule {
     prompt: string,
     ctx: StepContext,
   ): Promise<{ conversationUrl?: string }>;
-  /** After a restart: the chat that already holds this prompt, if any. */
+  /**
+   * After a restart: the chat that already holds this prompt, if any. Only a
+   * chat the site created at or after `since`, when the send began, counts:
+   * an earlier one with the same prompt is another turn's.
+   */
   findSent(
     driver: PageDriver,
     prompt: string,
     ctx: StepContext,
+    since: string,
   ): Promise<{ conversationUrl: string } | undefined>;
-  /** Answers the app's own tool approval prompt; true when it answered one. */
-  answerApproval(driver: PageDriver): Promise<boolean>;
+  /** Answers the app's own tool approval prompt for one of the run's connectors; true when it did. */
+  answerApproval(driver: PageDriver, connectorNames: readonly string[]): Promise<boolean>;
   /** Each positive sign the reply has finished; done only when all hold. */
   replySignals(
     driver: PageDriver,
@@ -213,6 +224,73 @@ export async function commonBlocker(
     };
   }
   return undefined;
+}
+
+/**
+ * Waits for `selector` to show. A sign-in, human check or code prompt in its
+ * way stops the wait at once as `needs_sign_in`: the account needs a person,
+ * and the page did not change.
+ */
+export async function waitVisibleUnlessBlocked(
+  driver: PageDriver,
+  selector: string,
+  ctx: StepContext,
+  wait: { what: string; step: RealUiStep; challengeSelectors: readonly string[] },
+): Promise<void> {
+  await driver.waitFor(
+    async () => {
+      if ((await driver.readText(selector)) !== undefined) return true;
+      const blocked = await commonBlocker(driver, { challengeSelectors: wait.challengeSelectors, step: wait.step });
+      if (blocked) throw new RealUiError(blocked);
+      return false;
+    },
+    { timeoutMs: ctx.timeoutMs, signal: ctx.signal, what: wait.what },
+  );
+}
+
+/**
+ * Stops a module written in Playwright's selectors on a driver whose reads
+ * take CSS only, before its first such read: each one there would refuse.
+ */
+export function requirePlaywrightSelectors(driver: PageDriver, step: RealUiStep, site: string): void {
+  if (driver.playwrightSelectors) return;
+  throw new RealUiError({
+    kind: "driver",
+    step,
+    message: `MCPJam can't use ${site} in the hosted browser yet. Run this client from the local app.`,
+  });
+}
+
+/**
+ * Answers the app's approval prompt for one of the run's own connectors: the
+ * first of `answers` in a dialog that names one. Always allow is granted to
+ * the run's connectors only (decision E3), so an approval prompt anywhere
+ * else on the page, for another connector or in a dialog naming none of the
+ * run's, stops the turn unanswered rather than grant it on the account.
+ */
+export async function answerRunApproval(
+  driver: PageDriver,
+  prompt: { site: string; connectorNames: readonly string[]; answers: readonly string[] },
+): Promise<boolean> {
+  const button = (answer: string) => `role=button[name="${cssString(answer)}"]`;
+  for (const name of prompt.connectorNames) {
+    const dialog = `:is(dialog, [role="dialog"], [role="alertdialog"]):has-text("${cssString(name)}")`;
+    for (const answer of prompt.answers) {
+      const scoped = `${dialog} >> ${button(answer)}`;
+      if ((await driver.readText(scoped)) === undefined) continue;
+      await driver.click(scoped);
+      return true;
+    }
+  }
+  for (const answer of prompt.answers) {
+    if ((await driver.readText(button(answer))) === undefined) continue;
+    throw new RealUiError({
+      kind: "connector_failed",
+      step: "reply",
+      message: `${prompt.site} asked to approve a tool MCPJam can't tie to this run's connector, so it was left unanswered. Turn off this account's other connectors in ${prompt.site}, then run again.`,
+    });
+  }
+  return false;
 }
 
 /** Escapes text for use inside a CSS attribute selector's quotes. */

@@ -12,7 +12,9 @@
  *    run's hosted browser by `openHostedBrowser`. The profile's key and
  *    download URL are handed over and never logged.
  *  - Outcome: a verified run marks the account verified; a sign-in step
- *    marks it as needing sign-in and reports the step so recovery can resume.
+ *    marks it as needing sign-in and reports the step so recovery can resume,
+ *    naming the profile the run restored: an account signed in again since
+ *    is left as it is.
  */
 import { z } from "zod";
 import {
@@ -63,6 +65,8 @@ const profileAnswer = z.object({
   sha256: z.string(),
   savedAt: z.number(),
 });
+/** The backend's refusal: `{ error: { code, message? } }`. */
+const refusalAnswer = z.object({ error: z.object({ code: z.string() }) });
 
 /** `POST /internal/v1/web-accounts/profile-for-run`. */
 export function createProfileForRunClient(options: {
@@ -95,14 +99,33 @@ export function createProfileForRunClient(options: {
       },
     );
     if (!response.ok) {
-      throw needsSignIn(
-        "signed_out",
-        "sign_in_check",
-        "The saved browser session for this account could not be loaded.",
-      );
+      // Only the backend saying the account has no usable saved sign-in is
+      // about the account. An outage or any other refusal is the run's, and
+      // must not mark a signed-in account as signed out.
+      if ((await refusalCode(response)) === "WEB_ACCOUNT_NEEDS_SIGN_IN") {
+        throw needsSignIn(
+          "signed_out",
+          "sign_in_check",
+          "The saved browser session for this account could not be loaded.",
+        );
+      }
+      throw new RealUiError({
+        kind: "driver",
+        step: "sign_in_check",
+        message: "MCPJam could not load the saved browser session for this account.",
+      });
     }
     return profileAnswer.parse(await response.json());
   };
+}
+
+async function refusalCode(response: Response): Promise<string | undefined> {
+  try {
+    return refusalAnswer.safeParse(await response.json()).data?.error.code;
+  } catch {
+    // A body that isn't JSON is not one of the backend's refusals.
+    return undefined;
+  }
 }
 
 export type HostedWebClientDeps = {
@@ -131,6 +154,8 @@ export type HostedWebClientDeps = {
 export function createHostedWebClientEnvironment(
   deps: HostedWebClientDeps,
 ): WebClientEnvironment {
+  // The profile version each account's browser restored, for its outcome.
+  const restoredVersions = new Map<string, number>();
   return {
     publicBaseUrl: deps.publicBaseUrl,
     actor: deps.actor,
@@ -147,8 +172,13 @@ export function createHostedWebClientEnvironment(
             .find((row) => row !== undefined)
         : (rows.find((row) => row.isDefault) ?? (rows.length === 1 ? rows[0] : undefined));
       if (!chosen && deps.runWebAccountIds?.length) {
+        // An eval run's accounts are its suite's choice. A swarm's are the
+        // project's signed-in accounts, and it has no suite to choose in.
+        const nextStep = deps.iterationId
+          ? "Choose an account for the suite"
+          : "Ask an admin to sign one in from the client's Browser settings";
         throw new WebAccountUnavailableError(
-          `The ${WEB_CLIENT_DISPLAY_NAMES[vendor]} accounts this run uses were removed from the project. Choose an account for the suite, then run again.`,
+          `The ${WEB_CLIENT_DISPLAY_NAMES[vendor]} accounts this run uses were removed from the project. ${nextStep}, then run again.`,
         );
       }
       if (!chosen) throw noAccount(vendor);
@@ -179,15 +209,27 @@ export function createHostedWebClientEnvironment(
         runId: deps.runId,
         venue: "hosted",
       });
+      restoredVersions.set(webAccountId, profile.profileVersion);
       return deps.openHostedBrowser({ profile, sites });
     },
+
+    restoredProfileVersion: (webAccountId) => restoredVersions.get(webAccountId),
 
     turnGate: {
       async open(window) {
         const answer = openAnswer.safeParse(
           await deps.service.apply({ action: "openWebTurnWindow", ...window, ...deps.actor }),
         );
-        if (!answer.success || answer.data.ok) return;
+        // A reply this build can't read opened nothing it knows of, so the
+        // turn stops rather than run without its window.
+        if (!answer.success) {
+          throw new RealUiError({
+            kind: "driver",
+            step: "connector",
+            message: "MCPJam couldn't confirm the connector was ready for this turn.",
+          });
+        }
+        if (answer.data.ok) return;
         throw new RealUiError(
           answer.data.reason === "turn_running"
             ? {
@@ -220,10 +262,13 @@ export function createHostedWebClientEnvironment(
         return;
       }
       if (outcome.failure.kind !== "needs_sign_in") return;
+      const restored = restoredVersions.get(outcome.webAccountId);
+      const version = restored === undefined ? {} : { restoredProfileVersion: restored };
       await deps.service.apply({
         action: "markWebAccountNeedsSignIn",
         webAccountId: outcome.webAccountId,
         reason: outcome.failure.reason,
+        ...version,
         ...deps.actor,
       });
       await deps.service.apply({
@@ -233,6 +278,7 @@ export function createHostedWebClientEnvironment(
         ...(deps.iterationId ? { iterationId: deps.iterationId } : {}),
         pendingStep: JSON.stringify(outcome.pendingStep ?? { stepId: outcome.failure.step }),
         reason: outcome.failure.reason,
+        ...version,
         ...deps.actor,
       });
     },

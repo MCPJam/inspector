@@ -19,6 +19,9 @@ import { list, readVendorJson, record, text } from "./vendor-json.js";
 
 export const FIXTURE_PAGE_MODULE_VERSION = "fixture-1";
 
+/** Text as a page renders it: trimmed, with each run of whitespace as one space. */
+const collapse = (value: string) => value.replace(/\s+/g, " ").trim();
+
 export function createFixtureWebPageModule(baseUrl: string): RealUiPageModule {
   const origin = new URL(baseUrl).origin;
   const visible = async (driver: PageDriver, selector: string, ctx: StepContext, what: string) =>
@@ -54,10 +57,27 @@ export function createFixtureWebPageModule(baseUrl: string): RealUiPageModule {
 
     async ensureConnector(driver, connector, ctx) {
       await driver.navigate(`${origin}/connectors`);
-      await visible(driver, '[data-testid="connector-add"]', ctx, "the connector list");
+      // A human check that shows up after sign-in takes the list's place:
+      // a person's to answer, not a page that changed.
+      await driver.waitFor(
+        async () => {
+          const add = await driver.readText('[data-testid="connector-add"]');
+          if (add !== undefined) return true;
+          const blocked = await this.blocker(driver);
+          if (blocked) throw new RealUiError({ ...blocked, step: "connector" });
+          return false;
+        },
+        {
+          timeoutMs: ctx.timeoutMs,
+          signal: ctx.signal,
+          what: "the connector list",
+        },
+      );
       const shown = await driver.readText(row(connector.name));
       if (shown !== undefined) {
-        if (shown.includes(connector.url)) return;
+        // The row's own URL, exactly: `/mcp` must not keep `/mcp-old`.
+        const same = `${row(connector.name)}[data-url="${cssString(connector.url)}"]`;
+        if ((await driver.readText(same)) !== undefined) return;
         await driver.click(`${row(connector.name)} [data-testid="connector-remove"]`);
         await driver.waitFor(async () => (await driver.readText(row(connector.name))) === undefined, {
           timeoutMs: ctx.timeoutMs,
@@ -94,7 +114,10 @@ export function createFixtureWebPageModule(baseUrl: string): RealUiPageModule {
         async () => {
           const url = new URL(await driver.url());
           if (!url.pathname.startsWith("/chat/")) return false;
-          if ((await driver.readText('[data-testid="user-message"]')) !== prompt) return false;
+          // The page shows the prompt as rendered text, trimmed and with runs
+          // of spaces collapsed; the send happened all the same.
+          const shown = await driver.readText('[data-testid="user-message"]');
+          if (shown === undefined || collapse(shown) !== collapse(prompt)) return false;
           conversationUrl = `${url.origin}${url.pathname}`;
           return true;
         },
@@ -103,10 +126,11 @@ export function createFixtureWebPageModule(baseUrl: string): RealUiPageModule {
       return { conversationUrl };
     },
 
-    async findSent(driver, prompt) {
+    async findSent(driver, prompt, _ctx, since) {
       for (const chat of list(await readVendorJson(driver, `${origin}/api/chats`))) {
         const id = text(record(chat).id);
-        if (!id) continue;
+        const created = Date.parse(text(record(chat).createdAt) ?? "");
+        if (!id || !(created >= Date.parse(since))) continue;
         const saved = await this.readConversation(driver, `${origin}/chat/${id}`, {
           timeoutMs: 5_000,
         });

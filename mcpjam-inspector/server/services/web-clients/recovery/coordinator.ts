@@ -51,7 +51,11 @@ export function classifyRunFailure(failure: RunFailure): "browser" | "account" {
 export type AccountBrowser = {
   /** Who the vendor's page shows as signed in, or undefined for no one. */
   verifyAccount(): Promise<WebIdentity | undefined>;
-  /** The browser's profile archive, to save. Never logged. */
+  /**
+   * The browser's profile archive, to save. Never logged. A profile is
+   * copied only once its browser has stopped, so nothing reads the page
+   * after a capture.
+   */
   captureProfile(): Promise<Uint8Array>;
 };
 
@@ -79,8 +83,11 @@ export const NO_SIGN_IN_METHOD: SignInMethod = {
 export type WebRecoveryDeps = {
   backend: WebReconnectBackend;
   ledger: LedgerReader;
-  /** Starts a paused run at its pending step; returns once it is under way. */
-  resumeRun(runId: string, pendingStep: PendingStep): Promise<void>;
+  /**
+   * Starts a claimed run at its pending step; returns once it is under way.
+   * False when no turn of the run waits here to carry it on.
+   */
+  resumeRun(run: ClaimedRun): Promise<boolean>;
   /** The sign-in method the connection authorized; `none` when omitted. */
   signInMethodFor?(account: {
     projectId: string;
@@ -111,7 +118,14 @@ export type NeedsSignInOutcome =
   /** A person is needed. Stop this execution; `resumeRun` carries it on. */
   | { status: "paused"; requestId: string };
 
-export type ResumedRun = ClaimedRun & { status: "resumed" | "failed" };
+/**
+ * `not_waiting`: no turn here took the run, so it isn't counted as resumed. A
+ * turn waiting on another replica resumes when it next reads its request; a
+ * turn that stopped waiting is sent again by a person.
+ */
+export type ResumedRun = ClaimedRun & {
+  status: "resumed" | "not_waiting" | "failed";
+};
 
 export type HandbackOutcome =
   | { status: "not_found" | "not_signed_in" | "cancelled" }
@@ -145,16 +159,14 @@ export interface WebRecoveryCoordinator {
 
 /** The backend's refusals a handback answers with an outcome. */
 const HANDBACK_REFUSALS: Partial<
-  Record<string, "not_found" | "not_signed_in" | "wrong_identity">
+  Record<string, "not_found" | "not_signed_in">
 > = {
   NOT_FOUND: "not_found",
   WEB_ACCOUNT_NEEDS_SIGN_IN: "not_signed_in",
-  // An open request it found is refused only for another seat's email.
-  CONFLICT: "wrong_identity",
 };
 
 type VerifiedSession =
-  | { status: "saved"; identity: WebIdentity }
+  | { status: "saved"; identity: WebIdentity; profileVersion: number }
   | { status: "not_signed_in" }
   | { status: "wrong_identity"; expected?: WebIdentity; observed: WebIdentity };
 
@@ -163,8 +175,11 @@ export function createWebRecoveryCoordinator(
 ): WebRecoveryCoordinator {
   const { backend } = deps;
   const signInMethodFor = deps.signInMethodFor ?? (() => NO_SIGN_IN_METHOD);
-  /** One sign-in attempt per account at a time in this process. */
-  const attempts = new Map<string, Promise<boolean>>();
+  /**
+   * One sign-in attempt per account at a time in this process, with the
+   * profile version it saved, or undefined when it saved none.
+   */
+  const attempts = new Map<string, Promise<number | undefined>>();
 
   async function findAccount(projectId: string, webAccountId: string) {
     const accounts = await backend.listWebAccounts({ projectId });
@@ -176,11 +191,15 @@ export function createWebRecoveryCoordinator(
   async function resumeWaiting(webAccountId: string): Promise<ResumedRun[]> {
     const claimed = await backend.claimResumableWebRuns({ webAccountId });
     const started = await Promise.allSettled(
-      claimed.map((run) => deps.resumeRun(run.runId, run.pendingStep)),
+      // Async, so a resumeRun that throws before it returns a promise fails
+      // only its own run: the backend has already claimed all of them.
+      claimed.map(async (run) => deps.resumeRun(run)),
     );
     return claimed.map((run, index): ResumedRun => {
       const result = started[index];
-      if (result.status === "fulfilled") return { ...run, status: "resumed" };
+      if (result.status === "fulfilled") {
+        return { ...run, status: result.value ? "resumed" : "not_waiting" };
+      }
       // A claimed run is never handed out again, so a person must send it again.
       logger.error(
         "[web-recovery] A claimed run did not resume",
@@ -203,7 +222,8 @@ export function createWebRecoveryCoordinator(
     if (!observed) return { status: "not_signed_in" };
     const expected = identityOf(account);
     // Another seat's session saved here would run the project's account as someone else.
-    if (!expected || !sameWebIdentity(expected, observed)) {
+    // A new account has no seat to compare yet: handing it back records this one.
+    if (expected && !sameWebIdentity(expected, observed)) {
       return { status: "wrong_identity", expected, observed };
     }
     const saved = await backend.saveWebAccountProfile({
@@ -213,25 +233,30 @@ export function createWebRecoveryCoordinator(
       ...(savedFromRunId ? { savedFromRunId } : {}),
     });
     if (!saved.ok) {
-      // Only verified sign-ins save, so the newer profile is this seat's too.
+      // Only verified sign-ins save, so the newer profile is this seat's too,
+      // unless the account had no seat yet and another seat's first sign-in won.
       logger.info("[web-recovery] Kept a newer saved profile", {
         webAccountId: account.webAccountId,
       });
     }
-    return { status: "saved", identity: observed };
+    return {
+      status: "saved",
+      identity: observed,
+      profileVersion: saved.profileVersion,
+    };
   }
 
   async function attemptSignIn(
     method: SignInMethod,
     report: AccountFailureReport & { reason: SignInReason },
     account: WebAccountRecord,
-  ): Promise<boolean> {
+  ): Promise<number | undefined> {
     const { projectId, webAccountId, reason, browser, runId } = report;
     try {
       const context = { projectId, webAccountId, reason, browser };
-      if ((await method.signIn(context)) !== "signed_in") return false;
+      if ((await method.signIn(context)) !== "signed_in") return undefined;
       const session = await saveVerifiedSession(account, browser, runId);
-      if (session.status === "saved") return true;
+      if (session.status === "saved") return session.profileVersion;
       logger.warn("[web-recovery] The sign-in method's session was refused", {
         method: method.id,
         outcome: session.status,
@@ -241,7 +266,7 @@ export function createWebRecoveryCoordinator(
         method: method.id,
       });
     }
-    return false;
+    return undefined;
   }
 
   /** Whether this run, another run's browser, or no one signed in. */
@@ -256,12 +281,20 @@ export function createWebRecoveryCoordinator(
     });
     if (method.id === NO_SIGN_IN_METHOD.id) return "needs_person";
     const running = attempts.get(webAccountId);
-    if (running) return (await running) ? "elsewhere" : "needs_person";
+    if (running) {
+      const saved = await running;
+      if (saved === undefined) return "needs_person";
+      // A run reloads only a profile newer than the one it failed on. When
+      // the attempt saved none newer, the run makes its own attempt.
+      const restored = report.restoredProfileVersion;
+      if (restored === undefined || saved > restored) return "elsewhere";
+      return signInWithoutPerson(report, account);
+    }
     const attempt = attemptSignIn(method, report, account).finally(() =>
       attempts.delete(webAccountId),
     );
     attempts.set(webAccountId, attempt);
-    return (await attempt) ? "here" : "needs_person";
+    return (await attempt) === undefined ? "needs_person" : "here";
   }
 
   async function reportNeedsSignIn(
@@ -283,14 +316,19 @@ export function createWebRecoveryCoordinator(
       if (signedIn === "here") return { status: "signed_in" };
       if (signedIn === "elsewhere") return { status: "reload_profile" };
     }
-    const { requestId } = await backend.reportWebSignInRequired({
+    const reported = await backend.reportWebSignInRequired({
       webAccountId,
       runId,
       ...(iterationId ? { iterationId } : {}),
       pendingStep: report.pendingStep,
       reason,
+      ...(report.restoredProfileVersion !== undefined
+        ? { restoredProfileVersion: report.restoredProfileVersion }
+        : {}),
     });
-    return { status: "paused", requestId };
+    // A handback can land between the read above and this report.
+    if ("reloadProfile" in reported) return { status: "reload_profile" };
+    return { status: "paused", requestId: reported.requestId };
   }
 
   async function handback(input: HandbackInput): Promise<HandbackOutcome> {
@@ -309,19 +347,40 @@ export function createWebRecoveryCoordinator(
         logger.warn("[web-recovery] Handback refused for another seat", {
           requestId,
         });
-        await backend.markWebAccountNeedsSignIn({
-          webAccountId: account.webAccountId,
-          reason: "wrong_account",
-        });
+        // Checking this browser can outlast a valid handback of the same
+        // request, and the account that one made ready stays ready.
+        const still = (
+          await backend.listWebReconnectRequests({ projectId })
+        ).find((one) => one.requestId === requestId);
+        if (still?.status === "open") {
+          await backend.markWebAccountNeedsSignIn({
+            webAccountId: account.webAccountId,
+            reason: "wrong_account",
+          });
+        }
       }
       if (session.status !== "saved") return session;
       const { accountEmail, workspaceName } = session.identity;
-      // The backend marks the account ready and its waiting runs resumable.
-      await backend.handbackWebReconnect({
-        requestId,
-        verifiedAccountEmail: accountEmail,
-        ...(workspaceName ? { verifiedWorkspace: workspaceName } : {}),
-      });
+      try {
+        // The backend marks the account ready and its waiting runs resumable.
+        await backend.handbackWebReconnect({
+          requestId,
+          verifiedAccountEmail: accountEmail,
+          ...(workspaceName ? { verifiedWorkspace: workspaceName } : {}),
+        });
+      } catch (error) {
+        // A conflict is a request cancelled since it was read, or another
+        // seat recorded since the account was read: one with no seat takes
+        // the first one verified for it.
+        if (error instanceof WebBackendRefusal && error.code === "CONFLICT") {
+          const latest = (
+            await backend.listWebReconnectRequests({ projectId })
+          ).find((one) => one.requestId === requestId);
+          if (latest?.status === "cancelled") return { status: "cancelled" };
+          return { status: "wrong_identity", observed: session.identity };
+        }
+        throw error;
+      }
     }
     // A repeated handback, or one retried after a restart, finds the request
     // resolved and resumes only what still waits.

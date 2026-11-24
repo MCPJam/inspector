@@ -14,8 +14,9 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { isOutsideRepository } from "../server/utils/outside-repository";
 
 /** Generated files the server code imports come from these build steps. */
 const SETUP =
@@ -53,7 +54,7 @@ async function main() {
   // The same folder a local Inspector's web clients open (localWebClientProfileDir).
   const profiles = process.env.MCPJAM_WEB_CLIENTS_PROFILE_DIR?.trim() || join(homedir(), ".mcpjam", "web-clients");
   const profile = resolve(values.profile ?? join(profiles, `${vendor}-profile`));
-  if (!relative(resolve(".."), profile).startsWith("..")) {
+  if (!isOutsideRepository(profile)) {
     fail("Keep the browser profile outside the repository. Pass --profile with a folder in your home directory.");
   }
   if (values["sign-in"]) {
@@ -175,17 +176,9 @@ async function main() {
     };
     process.stdout.write(`${JSON.stringify(evidence, null, 2)}\n`);
   } catch (error) {
-    if (error instanceof RealUiError && error.failure.kind === "needs_sign_in") {
-      process.stdout.write(
-        `Needs sign-in: ${error.failure.message} Run this command with --sign-in, finish signing in to claude.ai in the window it opens, close it, then run the tracer again.\n`,
-      );
-      exitCode = 2;
-    } else if (error instanceof RealUiError) {
-      process.stdout.write(`The tracer stopped at ${error.failure.step}: ${error.failure.message}\n`);
-      exitCode = 1;
-    } else {
-      throw error;
-    }
+    if (!(error instanceof RealUiError)) throw error;
+    process.stdout.write(stoppedLine(error.failure, { url: connectorUrl, id: connectorId }));
+    exitCode = error.failure.kind === "needs_sign_in" ? 2 : 1;
   } finally {
     webClientTurnWindows.close(window.turnId);
     await context.close();
@@ -195,4 +188,22 @@ async function main() {
   process.exit(exitCode);
 }
 
-void main();
+/**
+ * What the tracer prints when the turn stops. A driver error can quote what
+ * was typed, such as the connector URL, and the connector id in it is the
+ * credential.
+ */
+export function stoppedLine(
+  failure: { kind: string; step: string; message: string },
+  connector: { url: string; id: string },
+): string {
+  const message = failure.message
+    .replaceAll(connector.url, "<connector URL>")
+    .replaceAll(connector.id, "<connector id>");
+  return failure.kind === "needs_sign_in"
+    ? `Needs sign-in: ${message} Run this command with --sign-in, finish signing in to claude.ai in the window it opens, close it, then run the tracer again.\n`
+    : `The tracer stopped at ${failure.step}: ${message}\n`;
+}
+
+// A test imports this file for `stoppedLine`; only the command runs the tracer.
+if (process.argv[1]?.endsWith("web-clients-local-tracer.ts")) void main();

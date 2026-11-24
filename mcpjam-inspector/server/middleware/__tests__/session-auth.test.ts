@@ -258,13 +258,18 @@ describe("sessionAuthMiddleware", () => {
 
   describe("unprotected prefixes", () => {
     it("lets hosted web account routes check their own bearer", async () => {
-      for (const path of [
-        "/api/web-clients/accounts/acc_1/sign-in",
+      const res = await app.request("/api/web-clients/accounts/acc_1/sign-in", {
+        method: "POST",
+      });
+      expect(res.status).toBe(200);
+    });
+
+    it("lets the handback route check its own bearer", async () => {
+      const res = await app.request(
         "/api/web-clients/reconnect/req_1/handback",
-      ]) {
-        const res = await app.request(path, { method: "POST" });
-        expect(res.status, path).toBe(200);
-      }
+        { method: "POST" },
+      );
+      expect(res.status).toBe(200);
     });
 
     it("keeps the local Inspector's connector routes behind the session token", async () => {
@@ -452,6 +457,15 @@ describe("scrubTokenFromUrl", () => {
       "<-- GET /bench/results/SENTINEL_hex?x=1",
       "<-- GET /bench/results/[redacted]?x=1",
     ],
+    [
+      "<-- POST /api/web-clients/local-connectors/SENTINEL_conn/turn",
+      "<-- POST /api/web-clients/local-connectors/[redacted]/turn",
+    ],
+    [
+      "--> DELETE /api/web-clients/local-connectors/SENTINEL_conn 204 1ms",
+      "--> DELETE /api/web-clients/local-connectors/[redacted] 204 1ms",
+    ],
+    ["<-- POST /mcp/SENTINEL_conn", "<-- POST /mcp/[redacted]"],
     [
       "<-- GET /files/a.png?X-Amz-Signature=SENTINEL_sig&X-Amz-Credential=SENTINEL_cred",
       "<-- GET /files/a.png?X-Amz-Signature=[redacted]&X-Amz-Credential=[redacted]",

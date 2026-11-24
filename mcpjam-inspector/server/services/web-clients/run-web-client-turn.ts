@@ -13,7 +13,11 @@
  * measured. Each turn opens a new chat, so an eval iteration never inherits
  * the last one's conversation.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  decideToolPolicyFromSnapshot,
+  type ToolPolicySnapshot,
+} from "@mcpjam/sdk/contract";
 import {
   SYNTHETIC_SESSION_APPROVAL_DENIAL,
   type TurnApprovalPolicy,
@@ -25,8 +29,15 @@ import {
   type WebClientRuntimeId,
   type WebConnectorAuth,
 } from "@/shared/web-clients";
+import {
+  HARNESS_POLICY_BLOCK_TEXT_PREFIX,
+  type HarnessPolicyBlockRecord,
+} from "../../utils/harness/harness-proxy-policy-enforcement.js";
 import { chatgptWebPageModule } from "../../utils/harness/real-ui/chatgpt-web.js";
-import { claudeWebPageModule } from "../../utils/harness/real-ui/claude-web.js";
+import {
+  MCPJAM_CONNECTOR_PREFIX,
+  claudeWebPageModule,
+} from "../../utils/harness/real-ui/claude-web.js";
 import {
   driveRealUiTurn,
   type RealUiTurnResult,
@@ -49,7 +60,7 @@ import {
   type ToolCallRequest,
   type TurnWindowStore,
 } from "./turn-windows.js";
-import type { WebClientEnvironment } from "./web-client-environment.js";
+import type { WebClientEnvironment, WebTurnOutcome } from "./web-client-environment.js";
 import { matchWebToolCalls, type WebToolCall } from "./web-client-trace.js";
 
 /** The approval this turn applies, from the turn's policy (`turnApprovalPolicy`). */
@@ -57,8 +68,12 @@ export type WebTurnApproval = {
   /** The host's switch as the turn's origin applies it (`appliedToolApproval`). */
   requireToolApproval: boolean;
   answer: TurnApprovalPolicy["answer"];
-  /** Asks the person, where the turn has one to ask. */
-  askPerson?: (call: ToolCallRequest) => Promise<ApprovalDecision>;
+};
+
+/** The run's sealed tool policy by server id (`harnessToolPolicy`), and where its refusals go. */
+export type WebTurnToolPolicy = {
+  snapshots: Readonly<Record<string, ToolPolicySnapshot>>;
+  onBlock?: (block: HarnessPolicyBlockRecord) => void;
 };
 
 export type WebClientTurnInput = {
@@ -71,6 +86,7 @@ export type WebClientTurnInput = {
   iterationId?: string;
   turnId?: string;
   approval: WebTurnApproval;
+  toolPolicy?: WebTurnToolPolicy;
   environment: WebClientEnvironment;
   connectorAuth?: WebConnectorAuth;
   signal?: AbortSignal;
@@ -80,7 +96,10 @@ export type WebClientTurnInput = {
   pageModule?: RealUiPageModule;
   stepTimeoutMs?: number;
   replyTimeoutMs?: number;
-  /** How long the turn waits for a connector another turn is using. */
+  /**
+   * How long the turn waits, in all, for a connector and then a local
+   * browser profile another turn is using.
+   */
   connectorWaitMs?: number;
   connectorPollMs?: number;
 };
@@ -101,7 +120,11 @@ function connectorBusy(error: unknown): boolean {
   );
 }
 
-function pause(ms: number, signal?: AbortSignal): Promise<void> {
+/**
+ * Waits `ms`, or less once `signal` stops the run. It never rejects, so the
+ * caller checks the signal after.
+ */
+export function pause(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     if (signal?.aborted) return resolve();
     const timer = setTimeout(resolve, ms);
@@ -143,17 +166,48 @@ const PAGE_MODULES: Record<WebClientRuntimeId, RealUiPageModule> = {
   "chatgpt-web": chatgptWebPageModule,
 };
 
-/** The turn's approval gate as the forwarding endpoint calls it. */
+/** A call on a connector the turn can't place under a server has no decision. */
+const NO_DECISION: ToolPolicySnapshot = { mode: "default", denied: {}, known: [], unknownTool: "deny" };
+
+/**
+ * The turn's approval gate as the forwarding endpoint calls it. The run's
+ * tool policy decides first, whatever the switch says, by the lookup the
+ * harness proxy makes, and a refusal reads as the proxy's does.
+ */
 export function webTurnApprover(
   approval: WebTurnApproval,
+  policy?: WebTurnToolPolicy & { serverOf: (connectorId: string) => string | undefined },
 ): (call: ToolCallRequest) => Promise<ApprovalDecision> {
   return async (call) => {
+    if (policy) {
+      const serverId = policy.serverOf(call.connectorId);
+      const snapshot =
+        serverId === undefined
+          ? NO_DECISION
+          : Object.hasOwn(policy.snapshots, serverId)
+            ? policy.snapshots[serverId]
+            : undefined;
+      const decided = snapshot && decideToolPolicyFromSnapshot({ snapshot, toolName: call.toolName });
+      if (decided && !decided.allowed) {
+        policy.onBlock?.({
+          toolName: call.toolName,
+          reason: decided.reason,
+          classification: decided.classification,
+          at: Date.now(),
+          // The grade leaves a refused call out by this id. ChatGPT sends
+          // none, so the refusal names the call, and the transcript's call
+          // takes the same id (`matchWebToolCalls`).
+          toolCallId: call.toolUseId ?? `web-blocked-${randomUUID()}`,
+          ...(serverId ? { serverId } : {}),
+        });
+        return { allow: false, reason: `${HARNESS_POLICY_BLOCK_TEXT_PREFIX}${decided.reason}` };
+      }
+    }
     // An MCP server's tools sit at the `setting` floor: the switch decides.
     if (!approval.requireToolApproval) return { allow: true };
     if (approval.answer === "deny") {
       return { allow: false, reason: SYNTHETIC_SESSION_APPROVAL_DENIAL };
     }
-    if (approval.askPerson) return approval.askPerson(call);
     return {
       allow: false,
       reason: "This tool call needs a person's approval, and nobody can answer during this run.",
@@ -161,9 +215,35 @@ export function webTurnApprover(
   };
 }
 
-/** MCPJam's own name for the connector it adds, so it never touches another. */
+/**
+ * MCPJam's own name for the connector it adds, so it never touches another.
+ * The vendors find a connector by name, so a short hash keeps two servers
+ * whose names start alike apart, and the name stays within 31 characters.
+ */
 export function webConnectorName(serverId: string): string {
-  return `MCPJam ${serverId.slice(0, 24)}`;
+  const hash = createHash("sha256").update(serverId).digest("hex").slice(0, 8);
+  return [MCPJAM_CONNECTOR_PREFIX, serverId.slice(0, 15).trim(), hash].filter(Boolean).join(" ");
+}
+
+/**
+ * Takes the turn's connector URLs and ids out of a failure. A capability
+ * connector's id is its credential, and a browser error quotes the value it
+ * was typing. In place, so a caller that branches on the error's type still
+ * can, and in the stack too, which loggers print.
+ */
+function redactConnectors(error: unknown, connectorIds: Iterable<string>, publicBaseUrl: string): void {
+  if (!(error instanceof Error)) return;
+  const marks: Array<[secret: string, mark: string]> = [];
+  for (const id of connectorIds) {
+    const path = webConnectorPath(id);
+    if (URL.canParse(path, publicBaseUrl)) marks.push([new URL(path, publicBaseUrl).href, "[connector URL]"]);
+    marks.push([encodeURIComponent(id), "[connector id]"], [id, "[connector id]"]);
+  }
+  const redact = (text: string) =>
+    marks.reduce((out, [secret, mark]) => (secret ? out.split(secret).join(mark) : out), text);
+  error.message = redact(error.message);
+  if (typeof error.stack === "string") error.stack = redact(error.stack);
+  if (error instanceof RealUiError) error.failure.message = redact(error.failure.message);
 }
 
 export async function runWebClientTurn(
@@ -181,11 +261,13 @@ export async function runWebClientTurn(
   const opened: string[] = [];
   let browser: Awaited<ReturnType<WebClientEnvironment["openBrowser"]>> | undefined;
   let webAccountId: string | undefined;
+  const blocked: HarnessPolicyBlockRecord[] = [];
   const wireCalls = (conversation: Parameters<typeof matchWebToolCalls>[0]["conversation"]) =>
     matchWebToolCalls({
       wire: ledger.forTurn(turnId),
       conversation,
       serverOfConnector: (connectorId) => serverOfConnector.get(connectorId),
+      blocked,
     });
   try {
     const account = await env.resolveAccount({ projectId: input.projectId, vendor });
@@ -204,10 +286,28 @@ export async function runWebClientTurn(
         url: new URL(webConnectorPath(connectorId), env.publicBaseUrl).href,
       });
     }
-    await openWindows(webTurnApprover(input.approval));
+    // One deadline for both waits, so a busy local profile never adds its own
+    // wait to a busy connector's.
+    const waitUntil = Date.now() + (input.connectorWaitMs ?? CONNECTOR_WAIT_MS);
+    await openWindows(
+      webTurnApprover(
+        input.approval,
+        input.toolPolicy && {
+          ...input.toolPolicy,
+          serverOf: (id) => serverOfConnector.get(id),
+          onBlock: (block) => {
+            blocked.push(block);
+            input.toolPolicy?.onBlock?.(block);
+          },
+        },
+      ),
+      waitUntil,
+    );
     browser = await env.openBrowser({
       webAccountId: account.webAccountId,
       sites: module.sites.length ? module.sites : WEB_CLIENT_SITES[vendor],
+      ...(input.signal ? { signal: input.signal } : {}),
+      waitUntil,
     });
     const page = await driveRealUiTurn({
       module,
@@ -222,7 +322,7 @@ export async function runWebClientTurn(
       ...(input.signal ? { signal: input.signal } : {}),
     });
     await closeAll();
-    await env.onOutcome?.({ ok: true, webAccountId: account.webAccountId, account: page.account });
+    await report({ ok: true, webAccountId: account.webAccountId, account: page.account });
     return {
       ok: true,
       turnId,
@@ -232,20 +332,29 @@ export async function runWebClientTurn(
       toolCalls: wireCalls(page.conversation.toolCalls),
     };
   } catch (error) {
+    // A Stop goes up as the run's own cancellation: no page failed, and an
+    // abort's message is read-only, so redacting it would throw instead.
+    if (input.signal?.aborted && error === input.signal.reason) throw error;
+    redactConnectors(error, serverOfConnector.keys(), env.publicBaseUrl);
     if (!(error instanceof RealUiError)) throw error;
     logger.warn("[web-clients] turn stopped", {
       runtimeId: input.runtimeId,
       kind: error.failure.kind,
       step: error.failure.step,
     });
-    await closeAll();
-    if (webAccountId) {
-      await env.onOutcome?.({
-        ok: false,
-        webAccountId,
-        failure: error.failure,
-        ...(error.pendingStep ? { pendingStep: error.pendingStep } : {}),
-      });
+    try {
+      await closeAll();
+    } finally {
+      // A durable close that fails is retried below; the account still
+      // hears how the turn ended.
+      if (webAccountId) {
+        await report({
+          ok: false,
+          webAccountId,
+          failure: error.failure,
+          ...(error.pendingStep ? { pendingStep: error.pendingStep } : {}),
+        });
+      }
     }
     return {
       ok: false,
@@ -267,10 +376,14 @@ export async function runWebClientTurn(
    * Taking them in one order, and never holding one while waiting, means two
    * turns can't each wait on the other.
    */
-  async function openWindows(approve: ReturnType<typeof webTurnApprover>) {
-    const deadline = Date.now() + (input.connectorWaitMs ?? CONNECTOR_WAIT_MS);
+  async function openWindows(
+    approve: ReturnType<typeof webTurnApprover>,
+    deadline: number,
+  ) {
     const connectorIds = [...serverOfConnector.keys()].sort();
     for (;;) {
+      // A stopped run takes no connector, so it opens no browser either.
+      input.signal?.throwIfAborted();
       try {
         for (const connectorId of connectorIds) {
           windows.open({ connectorId, runId: input.runId, turnId, approve });
@@ -281,7 +394,7 @@ export async function runWebClientTurn(
       } catch (error) {
         if (!connectorBusy(error)) throw error;
         await closeWindows();
-        if (Date.now() >= deadline || input.signal?.aborted) {
+        if (Date.now() >= deadline) {
           throw new RealUiError({
             kind: "turn_running",
             step: "connector",
@@ -293,19 +406,68 @@ export async function runWebClientTurn(
     }
   }
 
+  /**
+   * A durable close that fails stays pending, so the next call retries it.
+   * It never throws: the turn's own result or error stands.
+   */
   async function closeWindows() {
-    const closing = opened.splice(0);
-    for (const connectorId of closing) {
+    for (const connectorId of opened) {
       if (windows.active(connectorId)?.turnId === turnId) windows.close(turnId);
     }
-    if (closing.length > 0) await env.turnGate?.close(turnId);
+    try {
+      if (opened.length > 0) await env.turnGate?.close(turnId);
+      opened.length = 0;
+    } catch (error) {
+      // Failing a turn that already ran would lose its evidence and make a
+      // caller send the prompt again, and a window nobody closes lapses on
+      // the backend.
+      logger.warn("[web-clients] the turn's durable window did not close", {
+        runtimeId: input.runtimeId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
-  /** Closes this turn's windows and browser once, whichever way it ended. */
+  /** Closes this turn's windows and browser, whichever way it ended; the browser closes either way. */
   async function closeAll() {
-    await closeWindows();
     const open = browser;
     browser = undefined;
-    await open?.close();
+    try {
+      await closeWindows();
+    } finally {
+      await closeBrowser(open);
+    }
+  }
+
+  /**
+   * Records how the turn ended on the account. The turn's result is the
+   * evidence, so a report that fails is logged and never replaces it.
+   */
+  async function report(outcome: WebTurnOutcome) {
+    try {
+      await env.onOutcome?.(outcome);
+    } catch (error) {
+      logger.warn("[web-clients] the turn's outcome could not be recorded on the account", {
+        runtimeId: input.runtimeId,
+        ok: outcome.ok,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * The turn's result is the evidence, so a browser that won't close is
+   * logged and never thrown in its place.
+   */
+  async function closeBrowser(open: typeof browser) {
+    try {
+      await open?.close();
+    } catch (error) {
+      redactConnectors(error, serverOfConnector.keys(), env.publicBaseUrl);
+      logger.warn("[web-clients] the turn's browser did not close", {
+        runtimeId: input.runtimeId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }

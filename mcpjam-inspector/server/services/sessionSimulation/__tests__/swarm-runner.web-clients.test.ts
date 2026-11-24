@@ -31,6 +31,13 @@ vi.mock("../../web-clients/backend-connector-resolver.js", async () => ({
   )),
   webClientService: () => ({ read: (command: unknown) => readAccountsMock(command), apply: vi.fn() }),
 }));
+// A hosted server, where a swarm takes the project's accounts.
+vi.mock("../../web-clients/web-client-environment.js", async () => ({
+  ...(await vi.importActual<
+    typeof import("../../web-clients/web-client-environment.js")
+  >("../../web-clients/web-client-environment.js")),
+  webClientTurnsRunHosted: () => true,
+}));
 vi.mock("../../web-clients/hosted-web-client-runtime.js", async () => ({
   ...(await vi.importActual<typeof import("../../web-clients/hosted-web-client-runtime.js")>(
     "../../web-clients/hosted-web-client-runtime.js",
@@ -147,6 +154,42 @@ describe("a web client swarm's accounts", () => {
         errorCode: "web_account_unavailable",
         errorMessage: "ChatGPT web needs sign-in. Sign in again, then send again.",
       }),
+    );
+  });
+
+  it("leaves another runner's attempt alone when no account is left before this runner's claim", async () => {
+    accounts("acct-1");
+    const sessions = heldSessions();
+    // A duplicate runner already claimed host-2's attempt, so a claim here replays.
+    reportAttemptMock.mockImplementation(async (_url: string, _bearer: string, report: any) => ({
+      ok: true,
+      applied: !(report.hostId === "host-2" && report.status === "running"),
+    }));
+    const run = startJourneyRun(opts(["host-1", "host-2"]));
+    await settle();
+    sessions[0]!.adapter.runtime.webClientRun.onAccountLost("ChatGPT web needs sign-in. Sign in again, then send again.");
+    sessions[0]!.end();
+    await run;
+    const host2 = reportAttemptMock.mock.calls.map((call) => call[2]).filter((report) => report.hostId === "host-2");
+    expect(host2.map((report) => report.status)).toEqual(["running"]);
+  });
+
+  it("still ends this runner's own attempt when its session fails after the claim", async () => {
+    accounts("acct-1");
+    runSyntheticHostSessionMock.mockRejectedValue(new Error("the session broke"));
+    // The sweep's re-claim of the attempt this runner holds replays, like any repeat claim.
+    const claimed = new Set<string>();
+    reportAttemptMock.mockImplementation(async (_url: string, _bearer: string, report: any) => {
+      const key = `${report.hostId}:${report.sessionIdx}`;
+      const first = report.status !== "running" || !claimed.has(key);
+      if (report.status === "running") claimed.add(key);
+      return { ok: true, applied: first };
+    });
+    await startJourneyRun(opts(["host-1"]));
+    expect(reportAttemptMock).toHaveBeenCalledWith(
+      "https://convex.site",
+      "token",
+      expect.objectContaining({ hostId: "host-1", sessionIdx: 0, status: "failed", errorCode: "host_worker_failed" }),
     );
   });
 });

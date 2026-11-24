@@ -31,7 +31,9 @@ import {
   unknownResult,
 } from "../browserd/agent-contract-mapper.js";
 import type { SessionClient } from "../browserd/browser-session.js";
+import type { BrowserdCommandResponse } from "../browserd/browserd-codec.js";
 import { toContractResult } from "../browserd/local/agent-door.js";
+import type { BrowserAction } from "../browserd/protocol.js";
 import { BrowserSessionService } from "../browserd/session-service.js";
 import { logger } from "../../utils/logger.js";
 import {
@@ -53,12 +55,80 @@ export function webClientBrowserPolicy(
   return { mode: "allowlist", originAllowlist: [...new Set([...WEB_CLIENT_SITES[vendor], ...mcpjamSignIn])] };
 }
 
+/** Whether the session's daemon announces `feature`, or `undefined` when it didn't say. */
+async function daemonAnnounces(
+  client: Pick<SessionClient, "status">,
+  feature: string,
+): Promise<boolean | undefined> {
+  try {
+    const status = await client.status();
+    return status.kind === "ok" ? (status.features ?? []).includes(feature) : undefined;
+  } catch (error) {
+    logger.warn("[web-clients] hosted browser status unreadable", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
+}
+
+/**
+ * Whether the session's daemon reads one element's text, or `undefined` when
+ * it didn't say. An older daemon answers that read with the whole page's
+ * text, which a page module would take for the element's.
+ */
+function daemonReadsElements(client: Pick<SessionClient, "status">): Promise<boolean | undefined> {
+  return daemonAnnounces(client, "element-text");
+}
+
 /** One command to the session's daemon, answered in the public contract. */
 export function sessionBrowserTransport(args: {
-  handle: { client: Pick<SessionClient, "sendCommand">; bootId: string };
+  handle: { client: Pick<SessionClient, "sendCommand" | "status">; bootId: string };
   sessionId: string;
   policy: BrowserAgentSessionPolicy;
 }): BrowserCommandTransport {
+  let readsElements: boolean | undefined;
+  const toDaemon = (commandId: string, action: BrowserAction) =>
+    args.handle.client.sendCommand(
+      {
+        commandId,
+        // The page modules locate elements by selector. Coordinate actions still
+        // need a fixed viewport because their target carries no dimensions.
+        responsiveViewport: !(action.kind === "act" && action.target && "coordinates" in action.target),
+        source: "agent",
+        sessionId: args.sessionId,
+        actor: { kind: "agent", id: "web-client-runtime" },
+        action,
+      },
+      args.handle.bootId,
+    );
+  /**
+   * Refuses a command unless the page is on the vendor's sites right now.
+   * The daemon keeps no allowlist, and a page can leave the sites between
+   * commands (a link, a redirect, a person in the pane), so this asks the
+   * page where it is; a page it can't place counts as off them.
+   */
+  const unlessOnSites = async (commandId: string): Promise<BrowserAgentResult | undefined> => {
+    let where: BrowserdCommandResponse | undefined;
+    try {
+      where = await toDaemon(randomUUID(), { kind: "observe", mode: "url" });
+    } catch (error) {
+      logger.warn("[web-clients] hosted browser page check lost", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    // A person holding the browser stops the command as it stopped the check.
+    if (where?.status === "lease_blocked") {
+      return toContractResult({ response: where, commandId, policy: args.policy }).result;
+    }
+    const output = where?.status === "ok" && where.result.ok ? where.result.output : undefined;
+    const url = (output as { url?: unknown } | undefined)?.url;
+    if (typeof url === "string" && urlOnSites(url, args.policy.originAllowlist ?? [])) return undefined;
+    return refusedResult({
+      commandId,
+      code: "origin_not_allowed",
+      message: "The browser couldn't confirm the page is on the vendor's sites, so nothing was sent to it.",
+    });
+  };
   return async (command: BrowserAgentCommand): Promise<BrowserAgentResult> => {
     const commandId = randomUUID();
     const mapped = toDaemonAction(command);
@@ -73,17 +143,25 @@ export function sessionBrowserTransport(args: {
         message: "This browser may only open the vendor's own sites.",
       });
     }
-    try {
-      const response = await args.handle.client.sendCommand(
-        {
+    if (command.op === "observe" && command.mode === "text" && command.rootSelector !== undefined) {
+      readsElements ??= await daemonReadsElements(args.handle.client);
+      if (!readsElements) {
+        return refusedResult({
           commandId,
-          source: "agent",
-          sessionId: args.sessionId,
-          actor: { kind: "agent", id: "web-client-runtime" },
-          action: mapped.action,
-        },
-        args.handle.bootId,
-      );
+          code: "unsupported_target",
+          message: "This hosted browser can't read the page yet. Close its browser pane and run again in a minute.",
+        });
+      }
+    }
+    // Anything that could change the page (typing, a key, a click) waits for
+    // the page to be seen on the sites. Reading goes ahead, since the result
+    // withholds a page off them, and a navigate to a site is the way back.
+    if (command.op !== "observe" && command.op !== "navigate") {
+      const refused = await unlessOnSites(commandId);
+      if (refused) return refused;
+    }
+    try {
+      const response = await toDaemon(commandId, mapped.action);
       return toContractResult({ response, commandId, policy: args.policy }).result;
     } catch (error) {
       // The command may have reached the page: it is never retried here.
@@ -96,6 +174,32 @@ export function sessionBrowserTransport(args: {
   };
 }
 
+/**
+ * A web account's browser profile, archived with the vendor's sites only.
+ *
+ * The policy lets the vendor send a person to MCPJam's sign-in page to allow
+ * a connector, which leaves an MCPJam session in the browser. A saved profile
+ * boots every member's runs, so every other site the policy admits is cleared
+ * from the archive, and a daemon that can't clear them saves nothing.
+ */
+export async function exportWebAccountProfile(args: {
+  client: Pick<SessionClient, "exportProfile" | "status">;
+  policy: BrowserAgentSessionPolicy;
+  vendor: WebClientVendor;
+}): Promise<Uint8Array> {
+  const { client } = args;
+  if (!client.exportProfile) {
+    throw new Error("This hosted browser can't export its profile. Start a new sign-in, then save again.");
+  }
+  const excludeOrigins = (args.policy.originAllowlist ?? []).filter(
+    (origin) => !urlOnSites(origin, WEB_CLIENT_SITES[args.vendor]),
+  );
+  if (excludeOrigins.length > 0 && !(await daemonAnnounces(client, "profile-export-exclusions"))) {
+    throw new Error("This hosted browser can't save the account yet. Start a new sign-in, then save again.");
+  }
+  return client.exportProfile({ excludeOrigins });
+}
+
 export type WebClientHostedBrowser = {
   /** The durable session the Playground's hosted browser pane attaches to. */
   browserSessionId: string;
@@ -104,7 +208,27 @@ export type WebClientHostedBrowser = {
   driver: PageDriver;
   /** The browser's profile as an archive, for save-profile. */
   exportProfile(): Promise<Uint8Array>;
+  /**
+   * Closes the hosted session, as the person `bearer` names, or else the one
+   * that opened it. It never throws: it runs once the outcome is known, and a
+   * session that won't close is logged rather than changing it.
+   */
+  close(bearer?: string): Promise<void>;
 };
+
+async function closeHostedSession(args: { bearer: string; projectId: string; sessionId: string }): Promise<void> {
+  try {
+    await new BrowserSessionService().agentRequest("close", {
+      bearer: args.bearer,
+      projectId: args.projectId,
+      body: { sessionId: args.sessionId },
+    });
+  } catch (error) {
+    logger.warn("[web-clients] a hosted browser did not close", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
 
 /**
  * A chat to own the browser when the caller has none (sign-in, an eval
@@ -171,6 +295,10 @@ export async function openWebClientHostedBrowser(args: {
     policy,
     signal,
   });
+  const close = (closer = bearer) =>
+    closeHostedSession({ bearer: closer, projectId: args.projectId, sessionId: browser.browserSessionId });
+  // The session exists from here: one that never boots is closed, not left
+  // open with nobody to close it, and the caller hears why it didn't boot.
   const handle = await provisionConversationBrowser({
     bearer,
     projectId: args.projectId,
@@ -178,6 +306,9 @@ export async function openWebClientHostedBrowser(args: {
     // The account's own session, or a blank profile: never the person's.
     ownProfile: args.profileArchive ? { archive: args.profileArchive } : {},
     signal,
+  }).catch(async (error: unknown) => {
+    await close();
+    throw error;
   });
   const transport = sessionBrowserTransport({
     handle,
@@ -188,11 +319,8 @@ export async function openWebClientHostedBrowser(args: {
     browserSessionId: browser.browserSessionId,
     chatSessionId,
     driver: createHostedPageDriver(transport, { sites: WEB_CLIENT_SITES[args.vendor] }),
-    async exportProfile() {
-      if (!handle.client.exportProfile) {
-        throw new Error("This hosted browser can't export its profile. Start a new sign-in, then save again.");
-      }
-      return handle.client.exportProfile();
-    },
+    exportProfile: () =>
+      exportWebAccountProfile({ client: handle.client, policy, vendor: args.vendor }),
+    close,
   };
 }

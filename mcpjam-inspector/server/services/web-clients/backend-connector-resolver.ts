@@ -33,6 +33,8 @@ const UPSTREAM_TIMEOUT_MS = 300_000;
 /** How long an unknown id is answered without asking the backend again. */
 const UNKNOWN_TTL_MS = 30_000;
 const MAX_UNKNOWN = 10_000;
+/** Room for the backend's ids (32 hex characters); a longer unknown id is not kept. */
+const MAX_KEPT_ID_LENGTH = 64;
 /** Refusals that say this user may not use the connector, not that the check failed. */
 const NOT_ALLOWED = new Set([
   "UNKNOWN_ACTOR",
@@ -86,7 +88,7 @@ export function webClientService(
 }
 
 /** The `code` of a backend refusal, or undefined for any other failure. */
-function refusalCode(error: unknown): string | undefined {
+export function refusalCode(error: unknown): string | undefined {
   if (
     !(error instanceof ConvexError) &&
     (error as Error | undefined)?.name !== "ConvexError"
@@ -135,8 +137,15 @@ export function createBackendConnectorResolver(
         row = null;
       }
       if (row) return row;
-      if (unknownUntil.size >= MAX_UNKNOWN) unknownUntil.clear();
-      unknownUntil.set(connectorId, now + UNKNOWN_TTL_MS);
+      // Anyone can send any id before any check, so a long one is not kept,
+      // and a full cache drops its oldest id rather than every other one.
+      if (connectorId.length <= MAX_KEPT_ID_LENGTH) {
+        if (unknownUntil.size >= MAX_UNKNOWN) {
+          const oldest = unknownUntil.keys().next().value;
+          if (oldest !== undefined) unknownUntil.delete(oldest);
+        }
+        unknownUntil.set(connectorId, now + UNKNOWN_TTL_MS);
+      }
       return undefined;
     },
     /** `userId` is the WorkOS user id the vendor's AuthKit token names. */

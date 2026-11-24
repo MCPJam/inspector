@@ -13,6 +13,7 @@ import { startFixtureVendor } from "../../../test/support/web-clients/fixture-ve
 import { startStandInEndpoint } from "../../../test/support/web-clients/stand-in-endpoint";
 import { createFixtureWebPageModule } from "../../../utils/harness/real-ui/fixture-web";
 import { createPlaywrightDriver } from "../../../utils/harness/real-ui/playwright-driver";
+import type { PageDriver } from "../../../utils/harness/real-ui/page-driver";
 import type { WebClientService } from "../backend-connector-resolver";
 import {
   createHostedWebClientEnvironment,
@@ -44,6 +45,7 @@ function recordedService(accounts = ACCOUNTS) {
     calls.push({ kind, command });
     if (command.action === "listWebAccounts") return accounts;
     if (command.action === "ensureWebConnector") return { connectorId: `conn-${String(command.serverId)}` };
+    if (command.action === "openWebTurnWindow") return { ok: true, window: {} };
     return null;
   };
   const service: WebClientService = {
@@ -80,10 +82,23 @@ describe("the hosted environment's backend calls", () => {
         vendor: "claude",
       }),
     ).toEqual({ webAccountId: "acct-other" });
-    // A run whose frozen accounts are all gone stops; it never moves to the default.
+    // A run whose frozen accounts are all gone, or are another vendor's, stops; it never moves to the default.
+    for (const id of ["acct-removed", "acct-gpt"]) {
+      await expect(
+        environment(service, { runWebAccountIds: [id] }).resolveAccount({ projectId: "p", vendor: "claude" }),
+      ).rejects.toThrow(
+        "The Claude web accounts this run uses were removed from the project. Choose an account for the suite, then run again.",
+      );
+    }
+    // A swarm's turn names no eval iteration, and a swarm has no suite.
     await expect(
-      environment(service, { runWebAccountIds: ["acct-removed"] }).resolveAccount({ projectId: "p", vendor: "claude" }),
-    ).rejects.toThrow("Claude web accounts this run uses were removed");
+      environment(service, {
+        runWebAccountIds: ["acct-removed"],
+        iterationId: undefined,
+      }).resolveAccount({ projectId: "p", vendor: "claude" }),
+    ).rejects.toThrow(
+      "The Claude web accounts this run uses were removed from the project. Ask an admin to sign one in from the client's Browser settings, then run again.",
+    );
     expect(await environment(service).resolveAccount({ projectId: "p", vendor: "claude" })).toEqual({
       webAccountId: "acct-default",
       accountEmail: "runner@example.com",
@@ -135,11 +150,48 @@ describe("the hosted environment's backend calls", () => {
     const refusing = createProfileForRunClient({
       convexHttpUrl: "https://backend.example",
       serviceToken: "service-token",
-      fetchImpl: async () => new Response("{}", { status: 403 }),
+      fetchImpl: async () => Response.json({ error: { code: "WEB_ACCOUNT_NEEDS_SIGN_IN" } }, { status: 409 }),
     });
     await expect(
       refusing({ actor: { actorUserId: "u1" }, webAccountId: "a", runId: "r", venue: "hosted" }),
     ).rejects.toMatchObject({ failure: { kind: "needs_sign_in" } });
+  });
+
+  it("fails the run and leaves the account alone when the profile service fails", async () => {
+    const answers: Array<[number, string]> = [
+      [503, "Service Unavailable"],
+      [500, JSON.stringify({ error: { code: "ERROR" } })],
+      [401, JSON.stringify({ error: { code: "UNAUTHORIZED" } })],
+      [403, JSON.stringify({ error: { code: "FORBIDDEN" } })],
+    ];
+    for (const [status, body] of answers) {
+      const { service, calls } = recordedService();
+      const result = await runWebClientTurn({
+        runtimeId: "claude-web",
+        projectId: "project-1",
+        serverIds: ["orders"],
+        prompt: "say hello",
+        runId: "run-1",
+        approval: { requireToolApproval: false, answer: "deny" },
+        environment: environment(service, {
+          profileForRun: createProfileForRunClient({
+            convexHttpUrl: "https://backend.example",
+            serviceToken: "service-token",
+            fetchImpl: async () => new Response(body, { status }),
+          }),
+        }),
+        turnWindows: createInMemoryTurnWindowStore(),
+        ledger: createInMemoryToolCallLedger(),
+      });
+      expect(result).toMatchObject({ ok: false, infrastructure: true, failure: { kind: "driver", step: "sign_in_check" } });
+      // Nothing marks the account as needing sign-in.
+      expect(calls.map((call) => call.command.action)).toEqual([
+        "listWebAccounts",
+        "ensureWebConnector",
+        "openWebTurnWindow",
+        "closeWebTurnWindow",
+      ]);
+    }
   });
 });
 
@@ -215,6 +267,16 @@ describe("a hosted turn's outcome on the account", { timeout: 90_000 }, () => {
     });
   });
 
+  it("tells recovery which profile version the account's browser restored", async () => {
+    const { service } = recordedService();
+    const env = environment(service, {
+      openHostedBrowser: async () => ({ driver: {} as PageDriver, close: async () => {} }),
+    });
+    expect(env.restoredProfileVersion?.("acct-default")).toBeUndefined();
+    await env.openBrowser({ webAccountId: "acct-default", sites: [] });
+    expect(env.restoredProfileVersion?.("acct-default")).toBe(3);
+  });
+
   it("marks the account as needing sign-in and reports the pending step", async () => {
     const { result, calls } = await hostedTurn(true);
     expect(result).toMatchObject({ ok: false, failure: { kind: "needs_sign_in", reason: "human_check" } });
@@ -229,5 +291,7 @@ describe("a hosted turn's outcome on the account", { timeout: 90_000 }, () => {
     const report = calls.at(-1)!.command;
     expect(report).toMatchObject({ webAccountId: "acct-default", runId: "run-1", iterationId: "iteration-1", reason: "human_check" });
     expect(JSON.parse(String(report.pendingStep))).toMatchObject({ stepId: "sign_in_check" });
+    // Both name the profile the run restored, so an account signed in again since stays as it is.
+    expect(calls.slice(-2).map((call) => call.command.restoredProfileVersion)).toEqual([3, 3]);
   });
 });

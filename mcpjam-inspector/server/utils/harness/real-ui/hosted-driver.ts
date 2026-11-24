@@ -19,6 +19,7 @@ import {
   assertOnSites,
   pollUntil,
   type PageDriver,
+  type PageDriverErrorCode,
 } from "./page-driver.js";
 
 /** Sends one command; the caller supplies the session and its credentials. */
@@ -27,6 +28,17 @@ export type BrowserCommandTransport = (
 ) => Promise<BrowserAgentResult>;
 
 type Executed = Extract<BrowserAgentResult, { status: "executed" }>;
+
+/**
+ * The driver's code for a command that was refused or a read that failed. A
+ * person holding the browser gets its own code because the turn can wait for
+ * them; anything else is a plain failure, never an element that is absent.
+ */
+function failureCode(code: string | undefined): PageDriverErrorCode {
+  if (code === "origin_not_allowed") return "site_blocked";
+  if (code === "lease_held" || code === "lease_parked") return "person_has_browser";
+  return "failed";
+}
 
 export function createHostedPageDriver(
   send: BrowserCommandTransport,
@@ -41,9 +53,7 @@ export function createHostedPageDriver(
       );
     }
     if (result.status === "refused") {
-      const code =
-        result.refusal.code === "origin_not_allowed" ? "site_blocked" : "failed";
-      throw new PageDriverError(code, result.refusal.message);
+      throw new PageDriverError(failureCode(result.refusal.code), result.refusal.message);
     }
     return result;
   };
@@ -70,6 +80,8 @@ export function createHostedPageDriver(
   return {
     kind: "hosted",
     canEvaluate: false,
+    // Reads and acts find their element with Playwright's engine in the browser.
+    playwrightSelectors: true,
     async navigate(url) {
       assertOnSites(url, options.sites);
       const result = await run({ op: "navigate", url, observeAfter: "none" });
@@ -90,20 +102,27 @@ export function createHostedPageDriver(
     waitFor: pollUntil,
     click: (selector) => act("click", selector),
     type: (selector, text) => act("type", selector, text),
-    press: (key, selector) => act("press", selector, key),
-    async readText(selector) {
-      // The accessibility tree scoped to the element is the closest the API
-      // has to an element's text: its names are the text a person sees.
-      const result = await run({
-        op: "observe",
-        mode: "a11y",
-        rootSelector: selector,
-        filter: "all",
-      });
-      if (!result.ok) return undefined;
-      return result.page?.pageContent.a11y?.trim();
+    async press(key, selector) {
+      // The browser presses where focus is and takes no selector for a key,
+      // so a key meant for one element is refused rather than sent to another.
+      if (selector) {
+        throw new PageDriverError("unsupported", `The hosted browser can't press ${key} on ${selector}.`);
+      }
+      await act("press", undefined, key);
     },
-    async readPageText() {
+    async readText(selector) {
+      // The element's `innerText`, found by Playwright's engine in the
+      // browser: the same element and text the Playwright driver reads.
+      const result = await run({ op: "observe", mode: "text", rootSelector: selector });
+      if (result.ok) return result.page?.pageContent.text?.trim();
+      if (result.error?.code === "unknown_selector") return undefined;
+      // Anything else is a read that failed, never an element that is absent.
+      throw new PageDriverError(
+        failureCode(result.error?.code),
+        result.error?.message ?? "The browser could not read the page.",
+      );
+    },
+    async pageText() {
       const result = await run({ op: "observe", mode: "text" });
       return result.ok ? (result.page?.pageContent.text ?? "") : "";
     },

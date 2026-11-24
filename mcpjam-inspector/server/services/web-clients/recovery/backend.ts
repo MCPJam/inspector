@@ -23,8 +23,10 @@ export type PendingStep = {
   /** The runtime's own name for the step, such as the prompt's index. */
   stepId: string;
   /**
-   * When the step first started, as `toISOString()` writes it: the ledger
-   * compares it as text. Calls forwarded earlier are not this step's.
+   * When the step first started, as `toISOString()` writes it. Calls
+   * forwarded earlier are not this step's. The ledger here and the backend's
+   * `findWebToolCalls` both parse it and compare it as a time. One that
+   * doesn't parse bounds nothing here but matches no call there.
    */
   startedAt: string;
   /** The turn the step opened on its connector, once it got that far. */
@@ -107,6 +109,11 @@ export interface WebReconnectBackend {
    * opening one when there is none. The report that opens it gets
    * `shouldNotify: true`, and the backend sends that request's one notice. A
    * run that reports again keeps its first place and step.
+   *
+   * When the account is ready on a newer profile than the one the run
+   * restored, it was signed in again after the run read it: the report
+   * changes nothing and answers `reloadProfile`. The backend compares in the
+   * same mutation that writes, so a handback that lands first wins.
    */
   reportWebSignInRequired(args: {
     webAccountId: string;
@@ -114,7 +121,10 @@ export interface WebReconnectBackend {
     iterationId?: string;
     pendingStep: PendingStep;
     reason: SignInReason;
-  }): Promise<{ requestId: string; shouldNotify: boolean }>;
+    restoredProfileVersion?: number;
+  }): Promise<
+    { requestId: string; shouldNotify: boolean } | { reloadProfile: true }
+  >;
   /**
    * Marks the account ready and the request's runs resumable. Idempotent.
    * Refuses another seat or a cancelled request (`CONFLICT`).

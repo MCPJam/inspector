@@ -17,6 +17,7 @@
 import type { ModelMessage } from "ai";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { LedgerEntry } from "./tool-call-ledger.js";
+import type { HarnessPolicyBlockRecord } from "../../utils/harness/harness-proxy-policy-enforcement.js";
 import type {
   ConversationToolCall,
   SavedConversation,
@@ -33,6 +34,8 @@ export type WebToolCall = {
   match: WebToolCallMatch;
   toolUseId?: string;
   ledgerEntryId?: string;
+  /** The id the run's tool policy refused a call under, when the vendor gave it none. */
+  policyBlockId?: string;
   serverId?: string;
   state?: LedgerEntry["state"];
   forwardedAt?: string;
@@ -44,6 +47,11 @@ export function matchWebToolCalls(args: {
   wire: readonly LedgerEntry[];
   conversation: readonly ConversationToolCall[];
   serverOfConnector: (connectorId: string) => string | undefined;
+  /** The calls the run's tool policy refused, which never reach the wire. */
+  blocked?: readonly Pick<
+    HarnessPolicyBlockRecord,
+    "toolName" | "toolCallId"
+  >[];
 }): WebToolCall[] {
   const byTime = (a: { at?: string }, b: { at?: string }) =>
     (a.at ?? "").localeCompare(b.at ?? "");
@@ -75,24 +83,51 @@ export function matchWebToolCalls(args: {
       ...(entry.settledAt ? { settledAt: entry.settledAt } : {}),
     });
   }
+  // A refused call that carries no id (ChatGPT's) takes the one its refusal
+  // was recorded under, by tool and in order, so the grade leaves it out by
+  // that id as it does a refused call that carries the vendor's own.
+  const refusedAs = new Map<ConversationToolCall, string>();
+  for (const block of args.blocked ?? []) {
+    if (
+      !block.toolCallId ||
+      narrated.some((call) => call.toolUseId === block.toolCallId)
+    )
+      continue;
+    const partner = narrated.find(
+      (call) =>
+        !paired.has(call) &&
+        !refusedAs.has(call) &&
+        !call.toolUseId &&
+        call.toolName === block.toolName,
+    );
+    if (partner) refusedAs.set(partner, block.toolCallId);
+  }
   for (const call of narrated) {
     if (paired.has(call)) continue;
+    const policyBlockId = refusedAs.get(call);
     calls.push({
       toolName: call.toolName,
       match: "narration-only",
       ...(call.toolUseId ? { toolUseId: call.toolUseId } : {}),
+      ...(policyBlockId ? { policyBlockId } : {}),
     });
   }
   return calls;
 }
 
-const callId = (call: WebToolCall, index: number) =>
-  call.toolUseId ?? call.ledgerEntryId ?? `web-call-${index}`;
+// A call with no id of its own is named within its turn: the transcript keeps
+// every turn's calls, and two turns' first calls must not share a name.
+const callId = (call: WebToolCall, index: number, turnId: string) =>
+  call.toolUseId ??
+  call.ledgerEntryId ??
+  call.policyBlockId ??
+  `web-call-${turnId}-${index}`;
 
 /** The assistant's turn as the transcript stores it. */
 export function webTurnMessages(
   conversation: SavedConversation,
   calls: readonly WebToolCall[],
+  turnId: string,
 ): ModelMessage[] {
   return [
     {
@@ -100,7 +135,7 @@ export function webTurnMessages(
       content: [
         ...calls.map((call, index) => ({
           type: "tool-call" as const,
-          toolCallId: callId(call, index),
+          toolCallId: callId(call, index, turnId),
           toolName: call.toolName,
           input: {},
           // Where the call came from, kept beside it so a reader can tell a
@@ -118,17 +153,28 @@ export function webTurnMessages(
   ];
 }
 
-/** One step span for the turn and one tool span per call. */
+/**
+ * One step span for the turn and one tool span per call. A turn whose page
+ * stopped (`failed`) keeps the calls that reached the server on an errored
+ * step.
+ */
 export function webTurnSpans(args: {
   calls: readonly WebToolCall[];
+  turnId: string;
   startedAt: number;
   endedAt: number;
   promptIndex: number;
   modelId: string;
+  failed?: boolean;
 }): EvalTraceSpan[] {
   const offset = (iso: string | undefined, fallback: number) =>
     iso ? Math.max(0, Date.parse(iso) - args.startedAt) : fallback;
   const total = args.endedAt - args.startedAt;
+  // The turn's, not one call's: while any call is unsettled, a call the wire
+  // never showed may simply not have been seen yet.
+  const evidenceStatus = args.calls.some((call) => call.state === "forwarded")
+    ? "incomplete"
+    : "complete";
   const step: EvalTraceSpan = {
     id: "web-step-0",
     name: "Web client turn",
@@ -137,7 +183,7 @@ export function webTurnSpans(args: {
     endMs: total,
     promptIndex: args.promptIndex,
     stepIndex: 0,
-    status: "ok",
+    status: args.failed ? "error" : "ok",
     modelId: args.modelId,
   };
   return [
@@ -156,14 +202,14 @@ export function webTurnSpans(args: {
         promptIndex: args.promptIndex,
         stepIndex: 0,
         status: failed ? "error" : "ok",
-        toolCallId: callId(call, index),
+        toolCallId: callId(call, index, args.turnId),
         toolName: call.toolName,
         toolOrigin: "mcp",
         ...(call.serverId ? { serverId: call.serverId } : {}),
         outputSource: onWire ? (call.match === "wire-only" ? "reconstructed" : "evidence") : "narration",
         wireCorroborated: onWire,
         ...(call.ledgerEntryId ? { evidenceRequestId: call.ledgerEntryId } : {}),
-        evidenceStatus: "complete",
+        evidenceStatus,
       };
     }),
   ];
