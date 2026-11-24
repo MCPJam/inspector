@@ -72,21 +72,9 @@ const stageAnalytics = vi.hoisted(() => ({
   },
 }));
 const flagEnabled = vi.hoisted(() => ({ current: false }));
-const descriptionExperimentFlag = vi.hoisted(() => ({ current: false }));
 // Retained as input to the improve prompt, not as a bottom-page section.
 const serverQuality = vi.hoisted(() => ({
   current: { result: null as unknown },
-}));
-const descriptionExperiment = vi.hoisted(() => ({
-  calls: [] as Array<{ enabled?: boolean }>,
-  current: {
-    status: "idle" as string,
-    experiment: null as unknown,
-    error: null,
-    propose: () => Promise.resolve(),
-    start: () => Promise.resolve(),
-    refetch: () => {},
-  },
 }));
 const compareState = vi.hoisted(() => ({
   current: {
@@ -101,16 +89,7 @@ vi.mock("../use-eval-run-compare", () => ({
 }));
 
 vi.mock("posthog-js/react", () => ({
-  useFeatureFlagEnabled: (flag: string) =>
-    flag === "description-experiments-enabled"
-      ? descriptionExperimentFlag.current
-      : flagEnabled.current,
-}));
-vi.mock("../use-eval-description-experiment", () => ({
-  useEvalDescriptionExperiment: (args: { enabled?: boolean }) => {
-    descriptionExperiment.calls.push(args);
-    return descriptionExperiment.current;
-  },
+  useFeatureFlagEnabled: () => flagEnabled.current,
 }));
 vi.mock("@/hooks/use-eval-run-stage-analytics", () => ({
   useEvalRunStageAnalytics: () => ({
@@ -228,17 +207,7 @@ afterEach(() => {
     error: null,
   };
   flagEnabled.current = false;
-  descriptionExperimentFlag.current = false;
   serverQuality.current = { result: null };
-  descriptionExperiment.calls = [];
-  descriptionExperiment.current = {
-    status: "idle",
-    experiment: null,
-    error: null,
-    propose: () => Promise.resolve(),
-    start: () => Promise.resolve(),
-    refetch: () => {},
-  };
   compareState.current = { status: "disabled", dto: null, errorKind: null };
   detailState.current = {
     ...detailState.current,
@@ -532,45 +501,8 @@ describe("EvaluateRunContent", () => {
     expect(screen.queryByTestId("run-verdict-open-trace")).toBeNull();
   });
 
-  it("does not query or render a description experiment when the flag is off", () => {
-    detailState.current = {
-      ...detailState.current,
-      status: "ready",
-      summary: summary(),
-      diagnostics: [DIAGNOSTIC],
-    };
-    renderContent({
-      run: {
-        ...RUN,
-        toolSnapshot: {
-          servers: [{ tools: [{ name: "export_to_excalidraw" }] }],
-        },
-      } as EvalSuiteRun,
-    });
-    expect(descriptionExperiment.calls.at(-1)?.enabled).toBe(false);
-    expect(screen.queryByTestId("description-experiment-card")).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: /Propose a description rewrite/ }),
-    ).toBeNull();
-  });
-
-  it("keeps the description-experiment card without the retired advisory section", () => {
-    descriptionExperimentFlag.current = true;
+  it("renders without the retired advisory section", () => {
     serverQuality.current = { result: {} };
-    descriptionExperiment.current = {
-      status: "ready",
-      experiment: {
-        id: "exp_1",
-        suiteId: "suite_1",
-        sourceRunId: "run_1",
-        toolName: "get_user",
-        status: "proposed",
-      },
-      error: null,
-      propose: () => Promise.resolve(),
-      start: () => Promise.resolve(),
-      refetch: () => {},
-    };
     detailState.current = {
       ...detailState.current,
       status: "ready",
@@ -578,9 +510,6 @@ describe("EvaluateRunContent", () => {
       diagnostics: [DIAGNOSTIC],
     };
     renderContent();
-    expect(descriptionExperiment.calls.at(-1)?.enabled).toBe(true);
-    const card = screen.getByTestId("description-experiment-card");
-    expect(card).toBeInTheDocument();
     expect(screen.queryByTestId("run-advisory-section")).toBeNull();
   });
 });

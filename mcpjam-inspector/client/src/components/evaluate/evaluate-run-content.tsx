@@ -25,7 +25,6 @@ import { runTargetKey, targetKeySuffix } from "@/lib/eval-target-key";
 import { copyToClipboard } from "@/lib/clipboard";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
-import { useDescriptionExperimentEnabled } from "@/hooks/useDescriptionExperimentEnabled";
 import { evalRunDecisionRevision } from "@/lib/evals/eval-decision-summary-store";
 import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 
@@ -39,8 +38,6 @@ import {
 import { useEvalRunCompare } from "./use-eval-run-compare";
 import { UnifiedFindingsSection } from "./unified-findings-section";
 import { RunResultsMatrix } from "./run-results-matrix";
-import { RunDescriptionExperimentCard } from "./run-description-experiment-card";
-import { useEvalDescriptionExperiment } from "./use-eval-description-experiment";
 import {
   buildEvaluateImprovePrompt,
   buildStageFixPrompt,
@@ -235,13 +232,6 @@ export function SingleRunContent({
     projectId ?? undefined,
   );
 
-  const descriptionExperimentEnabled = useDescriptionExperimentEnabled();
-  const descriptionExperiment = useEvalDescriptionExperiment({
-    projectId,
-    sourceRunId: run._id,
-    revision: evalRunDecisionRevision(run),
-    enabled: descriptionExperimentEnabled && active,
-  });
   // What changed since the previous run. One read, no store: the answer is not
   // shared with another surface and a cache would be more machinery than it is
   // worth.
@@ -467,19 +457,6 @@ export function SingleRunContent({
           hostNamesById={hostNamesById}
         />
       </div>
-
-      {descriptionExperimentEnabled && descriptionExperiment.experiment ? (
-        <RunDescriptionExperimentCard
-          experiment={descriptionExperiment.experiment}
-          onStart={() => {
-            void descriptionExperiment.start();
-          }}
-          starting={
-            descriptionExperiment.status === "loading" &&
-            descriptionExperiment.experiment.status === "proposed"
-          }
-        />
-      ) : null}
     </div>
   );
 }

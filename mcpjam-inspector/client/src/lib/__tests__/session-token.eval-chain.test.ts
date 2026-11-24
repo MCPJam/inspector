@@ -71,9 +71,6 @@ describe("authFetch bearer on the eval chain routes", () => {
     // cancel ships no bearer and the user watches a run they stopped keep
     // spending.
     "/api/v1/projects/proj_1/eval-runs/run_1/cancel",
-    "/api/v1/projects/proj_1/eval-description-experiments/exp_1",
-    "/api/v1/projects/proj_1/eval-runs/run_1/description-experiments",
-    "/api/v1/projects/proj_1/eval-description-experiments/exp_1/start",
   ]) {
     it(`attaches the bearer to ${path}`, async () => {
       await sessionToken.authFetch(path, { method: "GET" });

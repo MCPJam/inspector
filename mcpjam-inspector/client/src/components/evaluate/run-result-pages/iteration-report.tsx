@@ -16,7 +16,7 @@ import { IterationReportScorecard } from "../case-scorecard/iteration-report-sub
 import { authoredForTrial } from "../case-scorecard/trial-authored";
 import type { RunResultsMatrixData } from "../run-results-matrix-model";
 import type { TrialChainDisplay } from "../case-scorecard/trial-chain-state";
-import { readRunExecutionEngine } from "../description-experiment-model";
+import { readRunExecutionEngine } from "../run-execution-engine";
 import { outcomeLabel } from "./outcome";
 import { modeForTab, tabForMode } from "./iteration-tab";
 

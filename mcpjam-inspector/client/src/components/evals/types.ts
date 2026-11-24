@@ -1066,20 +1066,6 @@ export type EvalSuiteRun = {
      */
     executionEngine?: string;
     executionVenue?: "hosted" | "local";
-    /**
-     * This run is the REWRITE arm of a description experiment. The catalog
-     * snapshot stays the original; this marker is the only record of the
-     * rewrite the model actually saw.
-     */
-    toolDescriptionOverride?: {
-      toolName: string;
-      serverId?: string;
-      description: string;
-      proposalHash: string;
-      experimentId: string;
-      /** Absent on rows written before the hash was recorded. */
-      originalDescriptionHash?: string;
-    };
   };
   /**
    * Which engine executed the run. Sibling of `configSnapshot.executionEngine`

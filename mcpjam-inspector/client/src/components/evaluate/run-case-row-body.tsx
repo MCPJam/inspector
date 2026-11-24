@@ -11,7 +11,6 @@
  * reader to check, an unmeasured one says plainly that nothing about the server
  * was established. Neither renders as an instruction to change server code.
  */
-import { useCallback, useRef, useState } from "react";
 import { Copy } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
@@ -64,64 +63,14 @@ async function copyPrompt(text: string) {
   }
 }
 
-export type DescriptionExperimentProposeProps = {
-  catalogToolNames: ReadonlySet<string>;
-  engineSupported: boolean;
-  /** May return the request's promise; the row holds every button until it settles. */
-  onPropose: (toolName: string) => void | Promise<void>;
-  /** The hook has a request out. Every propose button is held until it settles. */
-  requestPending?: boolean;
-  busyToolName?: string | null;
-};
-
-/**
- * One proposal at a time per row. The page-level `requestPending` arrives a
- * render later than the click that caused it, so the row keeps its own lock
- * as well: the ref refuses a second click in the same tick, the state holds
- * the buttons until the request settles.
- */
-function useProposeLock(
-  onPropose: DescriptionExperimentProposeProps["onPropose"] | undefined,
-): { pending: boolean; propose: (toolName: string) => void } {
-  const lockRef = useRef(false);
-  const [pending, setPending] = useState(false);
-  const propose = useCallback(
-    (toolName: string) => {
-      if (!onPropose || lockRef.current) return;
-      lockRef.current = true;
-      setPending(true);
-      const release = () => {
-        lockRef.current = false;
-        setPending(false);
-      };
-      let result: void | Promise<void>;
-      try {
-        result = onPropose(toolName);
-      } catch (error) {
-        release();
-        throw error;
-      }
-      if (result && typeof result.then === "function") {
-        void result.then(release, release);
-      } else {
-        release();
-      }
-    },
-    [onPropose],
-  );
-  return { pending, propose };
-}
-
 function FailureGroup({
   row,
   group,
   iterations,
-  descriptionExperiment,
 }: {
   row: EvaluateCaseRow;
   group: CaseFailureGroup;
   iterations: readonly EvalIteration[];
-  descriptionExperiment?: DescriptionExperimentProposeProps;
 }) {
   const diagnostic: EvalRunDecisionDiagnostic | null = group.representative;
   const iteration = iterations.find(
@@ -148,11 +97,6 @@ function FailureGroup({
     else remaining.splice(at, 1);
   }
   const missingSet = new Set(missing);
-  const proposeTools = descriptionExperiment
-    ? [...new Set(missing)].filter((name) =>
-        descriptionExperiment.catalogToolNames.has(name),
-      )
-    : [];
 
   // The contract's own sentence, or nothing. A reason it deliberately leaves
   // without a remedy gets no block here rather than a manufactured one.
@@ -243,40 +187,6 @@ function FailureGroup({
           </Button>
         </div>
       ) : null}
-
-      {proposeTools.length > 0 ? (
-        <div className="flex flex-col gap-2 border-t border-border/40 px-3.5 py-3">
-          {proposeTools.map((toolName) => {
-            const disabled = !descriptionExperiment!.engineSupported;
-            const busy =
-              descriptionExperiment!.busyToolName === toolName ||
-              descriptionExperiment!.requestPending === true;
-            return (
-              <div key={toolName} className="flex flex-col items-start gap-1">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8"
-                  disabled={disabled || busy}
-                  title={
-                    disabled ? "Not available for harness runs yet" : undefined
-                  }
-                  data-testid={`description-experiment-propose-${toolName}`}
-                  onClick={() => descriptionExperiment!.onPropose(toolName)}
-                >
-                  Propose a description rewrite for `{toolName}`
-                </Button>
-                {disabled ? (
-                  <span className="text-[12px] text-muted-foreground">
-                    Not available for harness runs yet
-                  </span>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      ) : null}
     </section>
   );
 }
@@ -359,7 +269,6 @@ export function RunCaseRowBody({
   routeFacts,
   catalogState,
   computedHere,
-  descriptionExperiment,
   onOpenIteration,
   onEditCase,
 }: {
@@ -369,24 +278,12 @@ export function RunCaseRowBody({
   routeFacts?: readonly EvalRunRouteFactsCase[];
   catalogState?: EvalRunRouteFacts["catalogState"];
   computedHere?: boolean;
-  descriptionExperiment?: DescriptionExperimentProposeProps;
   onOpenIteration?: (target: {
     testCaseId: string;
     iterationId: string;
   }) => void;
   onEditCase?: (testCaseId: string) => void;
 }) {
-  const proposeLock = useProposeLock(descriptionExperiment?.onPropose);
-  const proposeProps: DescriptionExperimentProposeProps | undefined =
-    descriptionExperiment
-      ? {
-          ...descriptionExperiment,
-          onPropose: proposeLock.propose,
-          requestPending:
-            descriptionExperiment.requestPending === true ||
-            proposeLock.pending,
-        }
-      : undefined;
   const nudges: string[] = [];
   if (row.iterations.total === 1) {
     // One observation says nothing about consistency, and the fix for a flaky
@@ -422,7 +319,6 @@ export function RunCaseRowBody({
             row={row}
             group={group}
             iterations={iterations}
-            {...(proposeProps ? { descriptionExperiment: proposeProps } : {})}
           />
         ))
       )}

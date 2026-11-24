@@ -7,7 +7,7 @@
  * recommendation.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { EvalRunDecisionDiagnostic } from "@mcpjam/sdk/contract";
 
@@ -279,131 +279,6 @@ describe("RunCaseRowBody", () => {
     expect(screen.getByTestId("route-facts-section")).toBeInTheDocument();
     expect(screen.getByText("Routes")).toBeInTheDocument();
     expect(screen.queryByTestId("route-facts-variant")).toBeNull();
-  });
-
-  it("offers a propose button for a missing catalog tool when the engine is emulated", () => {
-    render(
-      <RunCaseRowBody
-        row={row()}
-        iterations={ITERATIONS}
-        descriptionExperiment={{
-          catalogToolNames: new Set(["export_to_excalidraw", "create_view"]),
-          engineSupported: true,
-          onPropose: vi.fn(),
-        }}
-      />,
-    );
-    expect(
-      screen.getByRole("button", {
-        name: "Propose a description rewrite for `export_to_excalidraw`",
-      }),
-    ).toBeEnabled();
-  });
-
-  it("disables the propose button on a harness engine", () => {
-    render(
-      <RunCaseRowBody
-        row={row()}
-        iterations={ITERATIONS}
-        descriptionExperiment={{
-          catalogToolNames: new Set(["export_to_excalidraw"]),
-          engineSupported: false,
-          onPropose: vi.fn(),
-        }}
-      />,
-    );
-    const button = screen.getByRole("button", {
-      name: "Propose a description rewrite for `export_to_excalidraw`",
-    });
-    expect(button).toBeDisabled();
-    expect(button).toHaveAttribute(
-      "title",
-      "Not available for harness runs yet",
-    );
-    expect(
-      screen.getByText("Not available for harness runs yet"),
-    ).toBeInTheDocument();
-  });
-
-  it("dispatches one proposal for rapid clicks and holds the button until it settles", async () => {
-    const user = userEvent.setup();
-    let resolve!: () => void;
-    const onPropose = vi.fn(
-      () =>
-        new Promise<void>((res) => {
-          resolve = res;
-        }),
-    );
-    render(
-      <RunCaseRowBody
-        row={row()}
-        iterations={ITERATIONS}
-        descriptionExperiment={{
-          catalogToolNames: new Set(["export_to_excalidraw"]),
-          engineSupported: true,
-          onPropose,
-        }}
-      />,
-    );
-    const button = screen.getByRole("button", {
-      name: "Propose a description rewrite for `export_to_excalidraw`",
-    });
-    await user.tripleClick(button);
-    expect(onPropose).toHaveBeenCalledTimes(1);
-    expect(button).toBeDisabled();
-    // No harness note: the hold is about the request, not the engine.
-    expect(screen.queryByText("Not available for harness runs yet")).toBeNull();
-
-    await act(async () => {
-      resolve();
-      await Promise.resolve();
-    });
-    expect(button).toBeEnabled();
-  });
-
-  it("holds every propose button while the hook has a request out", () => {
-    render(
-      <RunCaseRowBody
-        row={row()}
-        iterations={ITERATIONS}
-        descriptionExperiment={{
-          catalogToolNames: new Set(["export_to_excalidraw"]),
-          engineSupported: true,
-          onPropose: vi.fn(),
-          requestPending: true,
-        }}
-      />,
-    );
-    const button = screen.getByRole("button", {
-      name: "Propose a description rewrite for `export_to_excalidraw`",
-    });
-    expect(button).toBeDisabled();
-    expect(button).not.toHaveAttribute("title");
-    expect(screen.queryByText("Not available for harness runs yet")).toBeNull();
-  });
-
-  it("does not offer a propose button when the missing tool is not in the snapshot", () => {
-    render(
-      <RunCaseRowBody
-        row={row()}
-        iterations={ITERATIONS}
-        descriptionExperiment={{
-          catalogToolNames: new Set(["create_view"]),
-          engineSupported: true,
-          onPropose: vi.fn(),
-        }}
-      />,
-    );
-    expect(
-      screen.queryByRole("button", { name: /Propose a description rewrite/ }),
-    ).toBeNull();
-  });
-
-  it("does not offer a propose button when the flag did not pass the prop", () => {
-    render(<RunCaseRowBody row={row()} iterations={ITERATIONS} />);
-    expect(
-      screen.queryByRole("button", { name: /Propose a description rewrite/ }),
-    ).toBeNull();
   });
 
   it("explains a case that passed only on its threshold", () => {

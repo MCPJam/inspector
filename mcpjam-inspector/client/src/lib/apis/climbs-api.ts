@@ -6,8 +6,7 @@
  * `PlatformApiClient` already speaks every climb route with typed parameters,
  * so this wraps it rather than hand-rolling a second `fetch`. The transport
  * strips the client's own `Authorization` header so `authFetch` stays the one
- * owner of the bearer (the same shim `eval-description-experiment-api.ts`
- * uses).
+ * owner of the bearer.
  *
  * A refusal keeps its kind apart: the flag being off, a climb that is not
  * there, a request the backend refused (its message already says what failed

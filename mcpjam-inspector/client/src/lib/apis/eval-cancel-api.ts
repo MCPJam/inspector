@@ -71,7 +71,7 @@ function client(): PlatformApiClient {
 /**
  * A deployment that predates this route, as opposed to a run that is not there.
  *
- * Same rule as `eval-description-experiment-api.ts`: a BARE 404
+ * A BARE 404
  * (`codeSource === "status"`) is a router with no such path, while an
  * enveloped 404 is the route itself reporting a fact about the run. The caller
  * falls back to the Convex mutation on the first and reports the second.

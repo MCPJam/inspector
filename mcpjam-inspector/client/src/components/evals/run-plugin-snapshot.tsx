@@ -18,7 +18,6 @@
  * an edit changes content under an unchanged name.
  */
 import { shortBundleHash } from "@/components/plugins/plugin-presentation";
-import { RunDescriptionOverrideDisclosure } from "../evaluate/run-description-override-disclosure";
 import { runDetailMetaLabelClass } from "./run-detail-typography";
 
 export type RunPluginVersionRef = {
@@ -31,11 +30,9 @@ export type RunPluginVersionRef = {
 export function RunPluginSnapshot({
   pluginVersions,
   skillsExcluded,
-  toolDescriptionOverride,
 }: {
   pluginVersions?: RunPluginVersionRef[];
   skillsExcluded?: boolean;
-  toolDescriptionOverride?: { toolName: string };
 }) {
   const versions = pluginVersions ?? [];
   // Absence is semantic: a run with no pinned plugins should say nothing, not
@@ -45,7 +42,7 @@ export function RunPluginSnapshot({
   // about plugins, and the common "without skills" arm pins no plugins at all —
   // so returning early on an empty plugin list used to hide the badge in
   // exactly the case it exists for.
-  if (versions.length === 0 && !skillsExcluded && !toolDescriptionOverride) {
+  if (versions.length === 0 && !skillsExcluded) {
     return null;
   }
 
@@ -79,11 +76,6 @@ export function RunPluginSnapshot({
             </span>
           ) : null}
         </div>
-      ) : null}
-      {toolDescriptionOverride ? (
-        <RunDescriptionOverrideDisclosure
-          toolName={toolDescriptionOverride.toolName}
-        />
       ) : null}
     </>
   );
