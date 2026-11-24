@@ -1,0 +1,380 @@
+# mcpjam command map
+
+Generated from `mcpjam --help` by `npm run map:commands -w @mcpjam/cli`. Do not edit it by hand: `cli/tests/command-map.test.ts` fails when it is stale.
+
+`[contacts MCPJam]` marks a command that accepts `--api-url`; every command under it contacts MCPJam too. `[contacts MCPJam with --upload]` marks a command that uploads only when asked. `--help` cannot show the commands that declare MCPJam use in code (`declareMcpjamUse` in `cli/src/commands/`), so an unmarked command can still contact MCPJam.
+
+## Local MCP testing
+
+- `mcpjam test <file>` [contacts MCPJam]: Run a suite file locally against your MCP servers (BYOK or MCPJam-hosted inference). Results are never uploaded.
+- `mcpjam server`: Inspect MCP server connectivity and capabilities
+  - `mcpjam server probe`: Probe an HTTP MCP server without using the full client connect flow
+  - `mcpjam server doctor`: Run a stateless diagnostic sweep against an MCP server
+  - `mcpjam server info`: Get initialization info for an MCP server
+  - `mcpjam server validate`: Connect to a server and verify the debugger surface works
+  - `mcpjam server ping`: Ping an MCP server
+  - `mcpjam server capabilities`: Get resolved server capabilities
+  - `mcpjam server export`: Export server tools, resources, prompts, and capabilities
+  - `mcpjam server diff`: Compare a server snapshot baseline against a live or file snapshot
+- `mcpjam tools`: List and invoke MCP server tools
+  - `mcpjam tools list`: List tools exposed by an MCP server
+  - `mcpjam tools call`: Call an MCP tool
+- `mcpjam resources`: List and read MCP resources
+  - `mcpjam resources list`: List resources exposed by an MCP server
+  - `mcpjam resources read`: Read a resource from an MCP server
+  - `mcpjam resources templates`: List resource templates exposed by an MCP server
+- `mcpjam skills`: Inspect the Agent Skills an MCP server serves (SEP-2640). For your project's Cloud Skills, see `mcpjam cloud skills`.
+  - `mcpjam skills list`: List the skills a server serves, including ones it advertises that cannot be verified
+  - `mcpjam skills get`: Fetch one skill by uri and verify it against its manifest, frontmatter and identity
+  - `mcpjam skills read`: Read one of a skill's supporting files, verified against that skill's manifest
+- `mcpjam subscriptions`: Open a long-lived MCP subscription and stream its notifications (2026-07-28 subscriptions/listen, with a legacy fallback)
+  - `mcpjam subscriptions listen`: Open a subscription, print the acknowledgement, and stream notifications as NDJSON on stdout until the stream closes or Ctrl-C
+- `mcpjam compat`: Check whether an MCP server's tools and widgets work on each AI host (Claude, ChatGPT, Cursor, Copilot, Codex, Goose, …)
+- `mcpjam prompts`: List and fetch MCP prompts
+  - `mcpjam prompts list`: List prompts exposed by an MCP server
+  - `mcpjam prompts get`: Get a named prompt from an MCP server
+- `mcpjam apps`: Validate MCP Apps metadata and resource wiring
+  - `mcpjam apps conformance` [contacts MCPJam with --upload]: Run MCP Apps server conformance checks
+  - `mcpjam apps render` [contacts MCPJam]: Render an MCP App tool result headlessly via the local Inspector (screenshot + verdict)
+  - `mcpjam apps session`: Interactive headless widget sessions via the local Inspector. `action` drives by pixel coordinate; `snapshot` + `step` drive by role/name/testId, which is what a caller that cannot see the screenshot needs.
+    - `mcpjam apps session start` [contacts MCPJam]: Render a widget and keep it mounted for stepping
+    - `mcpjam apps session action`: Drive a Computer-Use action on a session's mounted widget
+    - `mcpjam apps session snapshot`: Read the mounted widget as an accessibility tree plus addressable controls. A read: it refreshes the session TTL but does not spend the widget's interaction budget.
+    - `mcpjam apps session step`: Drive one semantic step, addressed by role/name/testId rather than by coordinate. Pass the step as JSON, e.g. --step '{"kind":"click","target":{"role":{"role":"button","name":"Submit"}}}'. Use `apps session snapshot` to find the targets.
+    - `mcpjam apps session close`: Close a widget session and dispose its browser
+  - `mcpjam apps conformance-suite`: Run MCP Apps conformance runs from a JSON config file
+- `mcpjam tasks`: Create, inspect and drive MCP Tasks (legacy 2025-11-25 and SEP-2663), and validate a server's tasks wire behavior
+  - `mcpjam tasks capabilities`: Report the tasks wire this connection resolves to and which task verbs it carries. Always exits 0 — branch on `.wire`.
+  - `mcpjam tasks list`: List tasks the server is tracking (legacy wire only)
+  - `mcpjam tasks get`: Read one task's current state
+  - `mcpjam tasks result`: Read a completed task's result (legacy wire only — extension results are inline on `tasks get`)
+  - `mcpjam tasks cancel`: Request cancellation of a task
+  - `mcpjam tasks update`: Answer a task's `input_required` requests (extension wire only)
+  - `mcpjam tasks watch`: Poll a task until it reaches a terminal status. Exit codes: 0 completed (including a tool-level isError result), 6 input_required, 7 timed out, 130 interrupted, 1 otherwise. The host tasks policy is not consulted — this is a debugging affordance, like the Inspector's Tools tab.
+  - `mcpjam tasks conformance` [contacts MCPJam with --upload]: Run MCP Tasks conformance checks
+- `mcpjam events`: List, poll, watch, subscribe to and conformance-check MCP Events (triggers, draft@28ec35e)
+  - `mcpjam events list`: Report the server's events capability and every event type it offers (events/list, all pages). Exits 2 when the server did not declare capabilities.events, unless --force.
+  - `mcpjam events poll <name>`: Send one events/poll and print the result. A null cursor (the default) starts from now: it returns no events, only the cursor to poll from next.
+  - `mcpjam events watch <name>`: Stream an event as NDJSON on stdout until Ctrl-C, --duration or --max-events, then unsubscribe. Modes: push (events/stream), poll (events/poll loop) or webhook (a local receiver behind --public-url). Default: webhook when a receiver flag (--public-url, --listen, --insecure-local-receiver) is given, else push when the event offers it, else poll.
+  - `mcpjam events subscribe <name>`: Send one events/subscribe for a webhook receiver you run yourself, and print the result. The secret is generated unless --secret-file already holds one, and is written only to --secret-file (0600) — never printed.
+  - `mcpjam events unsubscribe <name>`: Send events/unsubscribe for a webhook subscription and print {"outcome": "removed" | "already-gone"}
+  - `mcpjam events conformance`: Run the profile-aware MCP Events conformance checks (MUST fails, SHOULD warns). Result JSON on stdout, a table on stderr. Exit 0 passed, 1 failed, 3 incomplete.
+- `mcpjam oauth`: Run MCP OAuth login, proxy, and conformance flows
+  - `mcpjam oauth login`: Run an OAuth login flow against an HTTP MCP server
+  - `mcpjam oauth conformance` [contacts MCPJam with --upload]: Run OAuth conformance against an HTTP MCP server
+  - `mcpjam oauth conformance-suite`: Run a matrix of OAuth conformance flows from a JSON config file
+  - `mcpjam oauth metadata`: Fetch OAuth metadata from a URL
+  - `mcpjam oauth proxy`: Proxy an OAuth request through the SSRF-hardened transport
+  - `mcpjam oauth debug-proxy`: Proxy an OAuth debug request through the SSRF-hardened transport
+- `mcpjam xaa`: Run the Cross-App Access (ID-JAG) debugger against an MCP server
+  - `mcpjam xaa run`: Self-issue an ID-JAG, redeem it at the target authorization server (RFC 7523), and call the MCP server with the resulting access token
+- `mcpjam protocol`: MCP protocol inspection and conformance checks
+  - `mcpjam protocol conformance` [contacts MCPJam with --upload]: Run MCP protocol conformance checks against an HTTP server
+  - `mcpjam protocol conformance-suite`: Run a matrix of MCP protocol conformance checks from a JSON config file
+- `mcpjam conformance`: Run MCPJam conformance suites and optionally upload results
+  - `mcpjam conformance run` [contacts MCPJam with --upload]: Run Protocol, Apps, and Tasks (default). OAuth is opt-in via --suite oauth.
+- `mcpjam readiness`: Grade a server or plugin against a publisher's directory
+  - `mcpjam readiness check`: Grade locally, without a MCPJam account (free)
+    - `mcpjam readiness check claude <url>`: Grade an MCP server against Anthropic's connector directory
+    - `mcpjam readiness check openai [url]`: Grade a server or plugin against OpenAI's app directory
+    - `mcpjam readiness check muse <url>`: Grade an MCP server against Meta's Muse connector guidelines
+  - `mcpjam readiness start`: Start a hosted readiness run against a saved server
+    - `mcpjam readiness start claude` [contacts MCPJam]: Grade a saved server against Anthropic's directory
+    - `mcpjam readiness start openai` [contacts MCPJam]: Grade a saved server against OpenAI's directory
+    - `mcpjam readiness start muse` [contacts MCPJam]: Grade a saved server against Meta's Muse guidelines
+  - `mcpjam readiness status` [contacts MCPJam]: Read one hosted readiness run
+  - `mcpjam readiness list` [contacts MCPJam]: List hosted readiness runs, newest first
+  - `mcpjam readiness cancel` [contacts MCPJam]: Stop a hosted readiness run that is still going
+  - `mcpjam readiness resume` [contacts MCPJam]: Run again a hosted run that stopped on the server. Only the person who started it can.
+  - `mcpjam readiness report` [contacts MCPJam]: Read a finished hosted run's findings
+  - `mcpjam readiness flows [flow]` [contacts MCPJam]: List the directory forms MCPJam can rehearse, or show one
+  - `mcpjam readiness submission`: Rehearse a directory submission for a saved server
+    - `mcpjam readiness submission create` [contacts MCPJam]: Start a rehearsal of a directory's form for a saved server
+    - `mcpjam readiness submission list` [contacts MCPJam]: List a project's submissions, newest first
+    - `mcpjam readiness submission get <submission>` [contacts MCPJam]: Read a submission: its answers, who set them, and the portal's checks
+    - `mcpjam readiness submission set <submission>` [contacts MCPJam]: Save answers to a submission
+    - `mcpjam readiness submission delete <submission>` [contacts MCPJam]: Delete a submission and its answers. This cannot be undone.
+    - `mcpjam readiness submission run <submission>` [contacts MCPJam]: Grade a submission's server and answers on the platform
+    - `mcpjam readiness submission results <submission>` [contacts MCPJam]: Read a submission's results by the portal's steps, and exit with its verdict
+    - `mcpjam readiness submission gate <submission>` [contacts MCPJam]: Choose which checks fail the submission's runs. Check ids are in its results.
+    - `mcpjam readiness submission handoff <submission>` [contacts MCPJam]: Where the submission stands and what to do next, from its id alone
+    - `mcpjam readiness submission findings <submission>` [contacts MCPJam]: List the submission's stored findings, newest first, a page at a time
+    - `mcpjam readiness submission finding <submission> <checkId>` [contacts MCPJam]: Read one check's stored result, with the observation behind it
+    - `mcpjam readiness submission export <submission>` [contacts MCPJam]: Export the pack the team receives, byte for byte as the API serves it
+    - `mcpjam readiness submission events <submission>` [contacts MCPJam]: List what was recorded about the submission outside MCPJam, newest first
+    - `mcpjam readiness submission status <submission>` [contacts MCPJam]: Record where the directory has the submission, as seen or as told
+    - `mcpjam readiness submission snapshot <submission>` [contacts MCPJam]: Record which server revision one copy of the catalog holds
+    - `mcpjam readiness submission import-finding <submission>` [contacts MCPJam]: Keep what the directory said about the submission, verbatim
+    - `mcpjam readiness submission plan`: Draft, read and save the test plan whose tool calls a submission's runs make
+      - `mcpjam readiness submission plan show <submission>` [contacts MCPJam]: Read the saved test plan, and what keeps it from running
+      - `mcpjam readiness submission plan draft <submission>` [contacts MCPJam]: Draft a plan that calls every tool the server lists. Saves nothing.
+      - `mcpjam readiness submission plan save <submission>` [contacts MCPJam]: Save a plan file as the submission's next revision
+      - `mcpjam readiness submission plan results <submission>` [contacts MCPJam]: Read what a run's test plan calls showed, tool by tool
+    - `mcpjam readiness submission evals`: Link, import, read and export the eval suite that holds a submission's test cases
+      - `mcpjam readiness submission evals show <submission>` [contacts MCPJam]: Read the linked suite and run, and each case's result in that run
+      - `mcpjam readiness submission evals link <submission>` [contacts MCPJam]: Link the eval suite that holds the submission's test cases, or the run that last ran them
+      - `mcpjam readiness submission evals unlink <submission>` [contacts MCPJam]: Unlink the submission's eval suite and its run
+      - `mcpjam readiness submission evals import <submission>` [contacts MCPJam]: Import the test cases of the submission's ChatGPT plugin version into its linked suite
+      - `mcpjam readiness submission evals export <submission>` [contacts MCPJam]: Export the linked suite's cases in the shape ChatGPT's form takes, byte for byte
+  - `mcpjam readiness reviewer`: Rehearse a directory reviewer's sign-in to a submission's server
+    - `mcpjam readiness reviewer start <submission>` [contacts MCPJam]: Sign in as the reviewer with credentials saved as project secrets
+    - `mcpjam readiness reviewer status <submission>` [contacts MCPJam]: List a submission's sign-in attempts, newest first, or show one
+    - `mcpjam readiness reviewer resume <submission>` [contacts MCPJam]: Continue an attempt waiting for a person, in a new run
+    - `mcpjam readiness reviewer handoff <submission>` [contacts MCPJam]: Create a single-use link to finish a paused reviewer sign-in
+    - `mcpjam readiness reviewer cancel <submission>` [contacts MCPJam]: Stop an attempt that is running or waiting for a person
+
+## MCPJam Cloud
+
+- `mcpjam cloud` [contacts MCPJam]: MCPJam Cloud account commands (login, projects, evals, tunnels). Local MCP testing stays at the top level — `mcpjam oauth login` is MCP OAuth; `mcpjam cloud login` is your MCPJam account.
+  - `mcpjam cloud login`: Log in to MCPJam Cloud. Opens your browser for OAuth and stores the session locally.
+  - `mcpjam cloud logout`: Remove the stored MCPJam Cloud login.
+  - `mcpjam cloud whoami`: Show the MCPJam Cloud account behind the current credentials.
+  - `mcpjam cloud status`: Show how this CLI would authenticate and which Cloud project it would use, without calling the network.
+  - `mcpjam cloud link [project]`: Pin this directory to a Cloud project by writing .mcpjam/project.json. The file contains no secrets and is committed by default; per-developer setups may gitignore it.
+  - `mcpjam cloud organizations` (alias: orgs): Inspect the MCPJam organizations you belong to
+    - `mcpjam cloud organizations list`: List your organizations and their ids (an sk_ key sees only its own)
+  - `mcpjam cloud projects`: Operate the MCP servers saved in your hosted MCPJam projects
+    - `mcpjam cloud projects list`: List the projects you can access
+    - `mcpjam cloud projects create`: Create a hosted MCPJam project
+    - `mcpjam cloud projects update`: Update project metadata
+    - `mcpjam cloud projects delete`: Delete a project and its project-owned resources
+    - `mcpjam cloud projects capabilities`: Show what you may do in a project: your role, which betas the organization has, your plan's limits, and a can-block of booleans. Ask this before scripting anything that authors, launches or publishes.
+    - `mcpjam cloud projects servers`: List and manage the servers saved in a project
+      - `mcpjam cloud projects servers create` (alias: add): Create a saved MCP server
+      - `mcpjam cloud projects servers get`: Get one saved MCP server
+      - `mcpjam cloud projects servers revisions`: List a saved server's stored revisions, newest first: captures of its tools and server info
+      - `mcpjam cloud projects servers revision`: Read one stored revision of a saved server: its tools and server info
+      - `mcpjam cloud projects servers revision-diff`: Compare two stored revisions of a saved server: tools added, removed and changed, and server info changes
+      - `mcpjam cloud projects servers update`: Update one saved MCP server
+      - `mcpjam cloud projects servers delete` (alias: remove): Delete one saved MCP server
+      - `mcpjam cloud projects servers connect`: Connect an MCP server URL to a project, authorizing in a browser if needed
+      - `mcpjam cloud projects servers connect-status`: Check a connection request started by `server connect`
+      - `mcpjam cloud projects servers connect-cancel`: Cancel a pending connection request started by `server connect`
+    - `mcpjam cloud projects status`: Health-check every server in a project (hosted doctor per server)
+  - `mcpjam cloud sessions`: List Playground chat sessions, or search conversations across Playground, user testing, evals and swarms.
+    - `mcpjam cloud sessions list`: List Playground chat sessions, newest first (one project; pass --all-projects to include every accessible project)
+    - `mcpjam cloud sessions search`: Search a project's sessions by relevance. Searches titles and opening messages by default; pass --scope transcripts to search what was actually said inside the conversations. Every result carries a link you can open.
+    - `mcpjam cloud sessions browser`: Drive the same hosted browser as an API Playground session. Uses metered desktop time.
+      - `mcpjam cloud sessions browser open`: Open the session browser, or create a session with one when --session is omitted
+      - `mcpjam cloud sessions browser navigate <url>`: Load a URL in the session browser
+      - `mcpjam cloud sessions browser act`: Run one action (click, type, scroll, ...) on the page
+      - `mcpjam cloud sessions browser invoke <toolKey>`: Call a tool the current page exposes
+      - `mcpjam cloud sessions browser note <text>`: Add a note to the session's browser history
+      - `mcpjam cloud sessions browser close`: Close the session browser
+      - `mcpjam cloud sessions browser observe`: Capture the page, a screenshot by default (wakes the desktop)
+      - `mcpjam cloud sessions browser trace`: List the commands run in the session browser
+      - `mcpjam cloud sessions browser artifact`: Get the screenshot URL for one command (needs --command-id)
+    - `mcpjam cloud sessions send`: Send one message to a project's MCP servers and print the reply plus the raw tool calls, latency and token usage. SPENDS model credits. Omit --session to start a conversation; pass the sessionId it returns to continue one.
+    - `mcpjam cloud sessions show`: Print a session's metadata and a window of its raw messages. Message indices are ABSOLUTE transcript positions — the same ones `sessions trace` spans reference.
+    - `mcpjam cloud sessions trace`: Print a session's per-turn execution spans: per-tool-call latency, token usage, and indices into the transcript. Returns the LATEST turn by default — page older turns with --after-turn, or use --no-spans for cheap summaries.
+  - `mcpjam cloud tunnel [target...]`: Expose a local MCP server through an MCPJam tunnel and register it as a server in your project
+  - `mcpjam cloud eval`: Author and run eval suites in your hosted MCPJam projects
+    - `mcpjam cloud eval create`: Create a runnable eval suite from authored test cases (does not run it)
+    - `mcpjam cloud eval list`: List the eval suites saved in a project
+    - `mcpjam cloud eval runs`: List a suite's run history, newest first
+    - `mcpjam cloud eval revisions`: List a suite's settings history, newest first
+    - `mcpjam cloud eval run`: Start an eval run of an existing suite, or upload a versioned suite file and run it. The upload-and-launch has a 120s deadline overall, not per request (raise it with the global --timeout <ms>); --wait-timeout bounds the RUN instead.
+    - `mcpjam cloud eval status`: Get the status and summary of an eval run
+    - `mcpjam cloud eval stage-analytics`: Read the user-value chain funnel for one run (--run) or a suite's runs as a trend series (--suite)
+    - `mcpjam cloud eval route-facts`: Read the tool routes a run's trials took — which paths were used, and which expected tools were missing or substituted
+    - `mcpjam cloud eval server-facts`: Read the server a run was taken against — tool surface, catalog size, annotation coverage, tool-metadata signals, and what connect and discovery observed
+    - `mcpjam cloud eval description-experiment`: Propose, start, or read a two-arm tool-description rewrite experiment
+      - `mcpjam cloud eval description-experiment propose`: Draft a rewritten tool description from a finished run's failed trials. Included with MCPJam; no customer credits consumed; subject to MCPJam's daily analysis budget. Poll `description-experiment get` rather than re-proposing.
+      - `mcpjam cloud eval description-experiment start`: Launch the two-arm experiment (original + rewrite). Spends eval-iteration credits; poll `description-experiment get`.
+      - `mcpjam cloud eval description-experiment get`: Read one description-experiment document, including its report when materialised
+    - `mcpjam cloud eval cancel`: Cancel an in-flight eval run (no-op if already cancelled; errors if it already finished)
+    - `mcpjam cloud eval rerun <run-id>`: Rerun a finished eval run's failed cases as a new run. The platform picks the cases: any with a trial that did not complete and pass (cancelled and skipped trials do not count)
+    - `mcpjam cloud eval judge-backtest`: Preview draft grading instructions on recorded evidence (uses credits)
+    - `mcpjam cloud eval backtest`: Preview assertion changes on stored evidence without changing results
+    - `mcpjam cloud eval judge`: Grade a finished eval run with LLM as Judge (SPENDS your model budget)
+    - `mcpjam cloud eval github`: Run an eval suite on a GitHub repository's pull requests (GitHub checks)
+      - `mcpjam cloud eval github list`: List the repositories running an eval suite on their pull requests
+      - `mcpjam cloud eval github connect`: Run this suite on every pull request to a repository (affects everyone who opens one)
+    - `mcpjam cloud eval checks`: Deprecated alias for `cloud eval github` — a repository's GitHub checks, not a case's grading checks
+      - `mcpjam cloud eval checks list`: List the repositories running an eval suite on their pull requests [deprecated: use `mcpjam cloud eval github`]
+      - `mcpjam cloud eval checks connect`: Run this suite on every pull request to a repository (affects everyone who opens one) [deprecated: use `mcpjam cloud eval github`]
+    - `mcpjam cloud eval iterations`: List per-iteration results for an eval run (pass/fail, tool calls, tokens, latency)
+    - `mcpjam cloud eval gate`: Apply a pass/fail policy to a finished eval run and set an exit code (0 pass or waived, 1 eval failure, 2 usage, 3 incomplete)
+      - `mcpjam cloud eval gate waive`: Override a FAILING run's gate until an expiry you name. Does not make the run pass: the run keeps its result, and the waiver is named in every report and check.
+      - `mcpjam cloud eval gate unwaive`: Revoke a gate waiver, putting the gate and the GitHub Check Run back. Idempotent.
+    - `mcpjam cloud eval compare`: Compare a finished eval run against a baseline and set an exit code (0 pass, 1 regression, 2 usage, 3 incomplete)
+    - `mcpjam cloud eval validate`: Validate a local eval suite file offline — no auth, no network unless --project is passed (0 valid, 1 contract-invalid or unresolved reference, 2 unreadable/oversize/malformed)
+    - `mcpjam cloud eval export`: Write a hosted eval suite to a local suite file, refusing anything it cannot represent losslessly
+    - `mcpjam cloud eval pull`: LEGACY: materialize a hosted eval suite into a corpus lock for @mcpjam/vitest — new work should use `eval export` (0 clean, 1 drift under --frozen, 2 usage, 3 incomplete)
+    - `mcpjam cloud eval trace`: Fetch the full trace for one eval iteration (large: full message history + spans)
+    - `mcpjam cloud eval steps`: Per-authored-step results for one eval iteration: status (ok/fail/skipped/pending), reason, and evidence (screenshot/video URLs). The fastest way to see WHICH step failed and why.
+    - `mcpjam cloud eval screenshot`: Show the widget screenshot(s) an eval iteration rendered — inline when the terminal supports it, otherwise the image URL
+    - `mcpjam cloud eval video`: Get the replay recording an eval iteration made — prints the URL, or downloads it with --out. A local widget run records a .webm; an unattended run on a hosted browser records an .mp4
+    - `mcpjam cloud eval get`: Show an eval suite's full settings
+    - `mcpjam cloud eval update`: Edit an eval suite's settings (only the flags you pass change)
+    - `mcpjam cloud eval delete`: Permanently delete an eval suite (and its cases and runs)
+    - `mcpjam cloud eval schedule`: Enable or disable scheduled runs for a suite
+    - `mcpjam cloud eval environments`: Attach or detach the project environments an eval suite runs against
+      - `mcpjam cloud eval environments set`: Replace the suite's attached environments (this sets the whole list)
+      - `mcpjam cloud eval environments clear`: Detach every environment, reverting the suite to its saved server selection
+    - `mcpjam cloud eval cases`: List, author, and edit an eval suite's test cases
+      - `mcpjam cloud eval cases list`: List a suite's test cases
+      - `mcpjam cloud eval cases get`: Show one test case
+      - `mcpjam cloud eval cases run`: Run a single case as a persisted, fully-queryable run (inspect it with `eval iterations` / `eval steps` like any run)
+      - `mcpjam cloud eval cases create`: Add a test case to a suite (definition via --file/--json)
+      - `mcpjam cloud eval cases update`: Edit a test case (definition via --file/--json)
+      - `mcpjam cloud eval cases delete`: Permanently delete a test case
+      - `mcpjam cloud eval cases generate`: AI-generate test cases from the suite's tools (included with MCPJam; no customer credits consumed; counts against the organization's daily generation quota)
+      - `mcpjam cloud eval cases import`: Turn any text document — markdown, JSON, CSV, notes — into test cases with MCPJam's AI and add them to the suite
+    - `mcpjam cloud eval request-insights`: Start the findings analysis of a finished run, the one the app's run page runs. Returns immediately as pending; poll `eval status`. Included with MCPJam (no credits); it counts against the daily insight quota shared with goal, study and user-testing insights. Most finished runs are analyzed automatically, so check `eval status` first.
+    - `mcpjam cloud eval cancel-insights`: Stop a running analysis. The recovery path for a run stuck pending, which cannot be re-requested even with --force.
+    - `mcpjam cloud eval build-findings`: Build a settled run's findings from its recorded evidence, so `request-insights` has something to explain. No model call and no quota. On a run never analyzed, a finished build starts the analysis automatically.
+  - `mcpjam cloud clients` (alias: hosts): List, create, and manage the clients in your hosted MCPJam projects
+    - `mcpjam cloud clients templates`: List the built-in templates usable with `clients create --template`
+    - `mcpjam cloud clients list`: List the clients saved in a project
+    - `mcpjam cloud clients get`: Show one client's full settings, its configId (the token every edit takes), and what a config edit would affect
+    - `mcpjam cloud clients create`: Create a client from a built-in template (--template) or a full config (--file/--json)
+    - `mcpjam cloud clients update`: Edit a client's name and/or its config. Use --set/--unset for named fields, or --file/--json to replace the whole config
+    - `mcpjam cloud clients delete`: Permanently delete a client from a project
+    - `mcpjam cloud clients servers`: Replace a client's required and optional server attachments (servers you omit are detached)
+    - `mcpjam cloud clients duplicate`: Duplicate a client's current config into a new client
+  - `mcpjam cloud environments`: List, create, and manage the project environments (host + servers + pinned skills/plugins) in your hosted MCPJam projects
+    - `mcpjam cloud environments list`: List the project environments in a project
+    - `mcpjam cloud environments get`: Show one environment's settings and its current revision (pass that revision to update/archive/restore)
+    - `mcpjam cloud environments resolve`: Preview what an environment resolves to right now: host config, closed server set, and pinned plugin versions
+    - `mcpjam cloud environments create`: Create a project environment (requires project admin). Body fields may be supplied via --file/--json
+    - `mcpjam cloud environments ensure-adhoc`: Get or create an UNNAMED environment for a composed stack. Deduplicated by content: the same stack always returns the same environment
+    - `mcpjam cloud environments name`: Promote an UNNAMED (ad-hoc) environment to a named one, in place — the same id every existing run points at
+    - `mcpjam cloud environments update`: Edit an environment. Only the fields you pass change; use --clear-model, or --file/--json with a null value, to clear serverAttachmentId, modelId, skillSelection, secretSelection, pluginVersionIds, or sandboxImageId
+    - `mcpjam cloud environments archive`: Archive an environment (reversible; frees its name for a new one)
+    - `mcpjam cloud environments restore`: Restore an archived environment. Plugin pins whose version no longer exists are dropped — check the returned pluginVersionIds
+  - `mcpjam cloud secrets`: Store and manage the project credentials a workflow needs (stripe, gh, psql). Write-only: no command prints a value.
+    - `mcpjam cloud secrets list`: List the project's secrets — metadata only. Shows the project-shared ones plus your own personal ones.
+    - `mcpjam cloud secrets show`: Show one secret's metadata: delivery mode, host binding, sharing, last delivery. Never its value.
+    - `mcpjam cloud secrets set`: Create a secret. The value comes from --value-file, --value-env, or stdin — never a positional argument.
+    - `mcpjam cloud secrets update`: Rotate a secret's value and/or change how it is delivered. A rotation reaches NEW RUNS ONLY — a session already running keeps the value it was given.
+    - `mcpjam cloud secrets rm`: Delete a secret. HARD: the row and the encrypted value both go, and MCPJam stops delivering it. Not blocked when an environment still selects it — deletion never waits on cleanup. This does NOT revoke the credential at the provider that issued it, and runs already in flight keep the value they were handed.
+  - `mcpjam cloud server-accounts`: Manage the accounts a saved server signs in with. Write-only: no command prints a token.
+    - `mcpjam cloud server-accounts list`: List a saved server's accounts: id, name, whether runs use it by default, whether it needs reconnecting, and whether it is a shared or uploaded account whose token is never revealed
+    - `mcpjam cloud server-accounts show`: Show one of a saved server's accounts, by ID or name. Never its token
+    - `mcpjam cloud server-accounts set`: Upload an access token to an account. A name no account has creates the account; otherwise its token is replaced and its ID stays. The token is never revealed. Hosted runs use it. On a shared server, members' local apps use it once a project admin allows local runs; on your own server, only your local app does
+    - `mcpjam cloud server-accounts rename`: Rename an account
+    - `mcpjam cloud server-accounts default`: Make an account the default. Runs with no saved account choice sign in as the default, so set it before you start a run
+    - `mcpjam cloud server-accounts delete`: Delete an account and its stored token, and ask the token's issuer to revoke it where it supports that. The default account can't be deleted while other accounts exist: make another account the default first
+  - `mcpjam cloud images`: List, build, and manage custom Computer sandbox images (blueprints) in your hosted MCPJam projects
+    - `mcpjam cloud images list`: List the sandbox images in a project
+    - `mcpjam cloud images get`: Show one sandbox image's blueprint and latest build status
+    - `mcpjam cloud images create`: Create a sandbox image from a blueprint YAML file (--file, or - for stdin)
+    - `mcpjam cloud images validate`: Lint a blueprint YAML file with the MCPJam Cloud image linter without saving it (--file, or - for stdin)
+    - `mcpjam cloud images edit`: Edit a sandbox image's name and/or blueprint
+    - `mcpjam cloud images build`: Build the sandbox image (async — poll `images logs` for status)
+    - `mcpjam cloud images logs`: Show a sandbox image's builds (newest first) with their log preview
+    - `mcpjam cloud images use`: Boot your computer from this sandbox image (rebuilds it — installed files are wiped)
+    - `mcpjam cloud images reset`: Reset your computer to its current image (wipes mutable state)
+    - `mcpjam cloud images promote`: Share a personal-draft sandbox image with the whole project (admin only)
+    - `mcpjam cloud images delete`: Permanently delete a sandbox image from a project
+  - `mcpjam cloud skills`: List and read the Cloud Skills in your hosted MCPJam projects (read-only; authoring lives in the app)
+    - `mcpjam cloud skills list`: List the skills visible to you in a project, with the IDs that --compose-skill and --skill take
+    - `mcpjam cloud skills get`: Show one skill, including its SKILL.md body
+  - `mcpjam cloud conformance`: Hosted conformance runs on saved servers: start, poll, read failures
+    - `mcpjam cloud conformance run`: Start a hosted run on a saved server with its saved conformance settings
+    - `mcpjam cloud conformance runs`: List hosted conformance runs, newest first
+    - `mcpjam cloud conformance status`: Read one hosted conformance run: status, outcome and score
+    - `mcpjam cloud conformance report`: Page through a run's failing checks, 50 at a time
+    - `mcpjam cloud conformance check`: Read one check of a run in full, with its stored evidence
+  - `mcpjam cloud trace-destinations` (alias: traces): Stream an organization's traces to an OTLP/HTTP endpoint (Coralogix, Honeycomb, Grafana, a collector). Header values are write-only: no command prints one.
+    - `mcpjam cloud trace-destinations list`: List the organization's destinations — endpoint, sources, redaction setting and delivery health. Header names only, never their values.
+    - `mcpjam cloud trace-destinations show`: Show one destination in full, including delivery health: the last HTTP status the vendor answered with, sessions and spans delivered, and how many are still queued.
+    - `mcpjam cloud trace-destinations create`: Create a destination and start streaming. Header values come from --header-env or --header-file; --header takes one inline for scripting.
+    - `mcpjam cloud trace-destinations update`: Edit a destination. Any header flag REPLACES the whole header set; passing none leaves the stored headers alone.
+    - `mcpjam cloud trace-destinations rm`: Delete a destination. Streaming stops and anything queued is discarded — but traces ALREADY DELIVERED stay in the vendor's system, and nothing here can retract them.
+    - `mcpjam cloud trace-destinations test`: Send one synthetic span, to prove the endpoint and credentials work. Returns as soon as the send is SCHEDULED — read the outcome from `show` a moment later.
+    - `mcpjam cloud trace-destinations pause`: Stop delivering without deleting. NOTHING IS QUEUED while paused: the window becomes a gap, not a backlog, and only `backfill` can fill it.
+    - `mcpjam cloud trace-destinations resume`: Start delivering again. Fix what caused an automatic pause first — `show` reports the reason — or it will pause again. Reports `pausedSince` so the gap can be sized.
+    - `mcpjam cloud trace-destinations backfill`: Replay a window of history — for the gap a pause left, or to seed a new destination. Queues every eligible session in the window, so a wide window is a lot of vendor ingest.
+    - `mcpjam cloud trace-destinations backfills`: The 20 most recent backfills for a destination, newest first, with how many sessions each scanned and queued.
+  - `mcpjam cloud goals` (alias: journeys): List goals and inspect their runs (the Swarms product) in your hosted MCPJam projects
+    - `mcpjam cloud goals list`: List the goals in a project
+    - `mcpjam cloud goals runs`: List a goal's runs, newest first
+    - `mcpjam cloud goals status`: Show one run's status, target rollups, and per-session attempts. Poll this after launching; `status` leaves 'running' once every attempt has settled. A run someone stopped reports 'failed' with canceled: true.
+    - `mcpjam cloud goals run`: Launch a goal. Returns as soon as the run exists — poll `goals status` for progress.
+    - `mcpjam cloud goals cancel`: Stop a running goal run. Idempotent — cancelling an already-cancelled run succeeds; a run that finished on its own conflicts instead.
+    - `mcpjam cloud goals sessions`: List the chat sessions a run produced, with readiness and goal scores
+    - `mcpjam cloud goals get`: Show one goal in full. Read this before launching if you want to know what a run will cost: it produces targets x iterations conversations.
+    - `mcpjam cloud goals create`: Author a goal: a persona, a task, and the environments to pursue it against. Creating does NOT run it — `goals run` does, and that is the call that spends.
+    - `mcpjam cloud goals update`: Edit a goal. --iterations and --max-turns must be given together (they are one config upstream). A run already in flight keeps the config it launched with.
+    - `mcpjam cloud goals archive`: Take a goal off the roster. Its runs, sessions and scorecards stay readable — the evidence for past decisions is not deleted with the goal that produced it.
+    - `mcpjam cloud goals generate`: Draft candidate goals for a persona with a model. The persona is passed BY VALUE and does not have to exist yet, because the create flow drafts both before saving either. SAVES NOTHING; included with MCPJam (no customer credits consumed) and counts against the organization's daily generation quota.
+    - `mcpjam cloud goals overview`: The project's recent runs with their rubric findings and goal-completion trend — the roll-up the Swarms page shows. Rates are over GRADED sessions; passRate null means nothing has been graded, not that everything failed.
+    - `mcpjam cloud goals scorecard`: Per-criterion pass/fail counts for one run. Deterministic — no model involved — so this is the first thing to read when explaining a failure. failedGradingCount is grading that BROKE; do not add it to failCount.
+    - `mcpjam cloud goals findings`: Criteria that keep failing across swarm runs, with how long each has been failing.
+    - `mcpjam cloud goals dismiss-finding`: Mark a finding as not worth acting on. Its lifecycle keeps updating underneath, so undismissing later shows honest current state.
+    - `mcpjam cloud goals undismiss-finding`: Bring a dismissed finding back into the active list.
+    - `mcpjam cloud goals insights`: The model's analysis of a whole swarm run, if one has been requested. Not-found means nobody asked for it, which is different from asked-and-still-working.
+    - `mcpjam cloud goals request-insights`: Ask a model to analyze a whole swarm run. Returns immediately as pending; poll `goals insights`. Included with MCPJam — no credits are consumed; it counts against a daily insight quota shared with study, user-testing and eval run insights. Read the scorecards first — they cost no quota and usually explain the failure.
+    - `mcpjam cloud goals cancel-insights`: Stop an in-flight insights generation. The recovery path for a swarm run stuck pending — without it the only way forward is --force, which takes another slice of the daily insight quota.
+  - `mcpjam cloud personas`: The reusable synthetic characters Swarms goals run as. A persona carries a name, a role and behavioural notes; the task lives on each goal.
+    - `mcpjam cloud personas list`: List the project's personas.
+    - `mcpjam cloud personas get`: Show one persona in full, including its notes.
+    - `mcpjam cloud personas create`: Create a persona. Pass --idempotency-key when scripting: the server replays it BEFORE uniquifying the slug, so a retry without one leaves a second near-identical persona rather than the one you already made.
+    - `mcpjam cloud personas update`: Edit a persona. Finished runs keep the persona they ran as — editing does not rewrite history.
+    - `mcpjam cloud personas delete`: Take a persona off the roster. SOFT: finished runs and sessions keep resolving it, so history stays readable, but it cannot be used for new goals and a second delete answers not-found.
+    - `mcpjam cloud personas generate`: Draft candidate personas with a model, grounded in what the project's servers do. SAVES NOTHING — pipe what you want into `personas create`. Included with MCPJam; no customer credits consumed; counts against the organization's daily generation quota.
+  - `mcpjam cloud swarms`: Swarm containers group goals authored together and hold their shared execution config. A goal does not need one, but a project authored through the app will have them.
+    - `mcpjam cloud swarms list`: List the project's swarm containers.
+    - `mcpjam cloud swarms get`: Show one swarm container.
+    - `mcpjam cloud swarms create`: Create a container to author goals under. Runs nothing.
+    - `mcpjam cloud swarms update`: Edit a swarm container. --iterations and --max-turns must be given together.
+    - `mcpjam cloud swarms archive`: Take a container off the roster. Goals authored under it keep working — the reference is authoring provenance, not ownership.
+  - `mcpjam cloud studies` (alias: scenarios): Publish project environments as studies, read what testers did, and control who can reach them
+    - `mcpjam cloud studies get`: One study's full read — model, system prompt, tool-approval policy, resolved servers, the environment it publishes — plus its actionable-insights envelope: findings aggregated over the latest analyzed window, with exemplar evidence. Only actionTarget mcp_server with actionability ready authorizes proposing a server change.
+    - `mcpjam cloud studies sessions`: List the sessions real visitors had with a study: counts, feedback, device and segment, with a first-message preview. Summaries only — use `session` for a transcript.
+    - `mcpjam cloud studies session`: Read one session's conversation, paged. These are real people talking to your product; prefer `metrics` or `findings` when you want the pattern rather than the words.
+    - `mcpjam cloud studies metrics`: Aggregate metrics across a study's sessions.
+    - `mcpjam cloud studies usage`: Usage rates by visitor and device. Check `scan.truncated` before quoting any rate: true means it was computed over the most recent sessions, not all of them.
+    - `mcpjam cloud studies findings`: Problems detected across a study's sessions, tracked over time.
+    - `mcpjam cloud studies signals`: The study's live analysis window, and the windowId its insights are keyed by.
+    - `mcpjam cloud studies insights`: The model's analysis of one window, if one has been requested. Not-found means nobody asked, which is different from asked-and-working.
+    - `mcpjam cloud studies request-insights`: Ask a model to analyze the current window. Returns pending; poll `insights`. Included with MCPJam — no credits are consumed; it counts against a daily insight quota shared with swarm insights. A 409 means the window has not been mined yet — wait rather than retrying in a loop.
+    - `mcpjam cloud studies cancel-insights`: Stop an in-flight generation. The recovery path for a window stuck pending — without it the only way forward is --force, which takes another slice of the daily insight quota.
+    - `mcpjam cloud studies dismiss-finding`: Mark a finding as not worth acting on. Its lifecycle keeps updating underneath.
+    - `mcpjam cloud studies undismiss-finding`: Bring a dismissed finding back into the active list.
+    - `mcpjam cloud studies update`: Rename a study, or change who may open its share link. --mode must be used ON ITS OWN: identity and exposure are separate operations upstream, and mixing them could leave the study live in a mode you did not ask for.
+    - `mcpjam cloud studies guest-execution`: Set what anonymous visitors may run on your account, and how much. A FULL REPLACEMENT: every flag is required, because these caps only mean something as a set and raising one while leaving a stale sibling produces a combination nobody chose.
+    - `mcpjam cloud studies rotate-link`: Mint a new share link and invalidate the old one. IMMEDIATE AND IRREVERSIBLE: everyone holding the old URL loses access and every live session on it dies. This is what you do when a link has leaked.
+    - `mcpjam cloud studies invite`: Grant one person access by email. Upsert, so re-inviting an existing member is not an error.
+    - `mcpjam cloud studies remove-member`: Revoke one person's access.
+    - `mcpjam cloud studies rebind`: Point a study at a different environment, KEEPING its link, members and session history. The alternative — unpublish and republish — mints a new link, which means re-sharing it with everyone.
+    - `mcpjam cloud studies list`: List the studies published from a project
+    - `mcpjam cloud studies publish`: Publish an environment as a study and print its share link. Idempotent — re-publishing returns the existing study, with created: false. --name, --description and --mode apply at CREATE TIME, in the same call; on a re-publish they are ignored and the result says overridesIgnored: true (use `studies update` to change an existing study).
+    - `mcpjam cloud studies unpublish`: Take an environment's study down, invalidating its share link and any live guest sessions. Idempotent.
+  - `mcpjam cloud feedback`: Send feedback about MCPJam itself (a bug, a missing capability, something confusing) to the MCPJam team. Your text is sent to the MCPJam team, outside your organization, and stored for 180 days. Requires a signed-in account.
+- `mcpjam registry`: Search MCP directories and curated cards, then install into a Cloud project
+  - `mcpjam registry sources` [contacts MCPJam]: List directory source ids. Sources are data, not an enum — pass one to `registry search --source`.
+  - `mcpjam registry search [q]` [contacts MCPJam]: Search scraped MCP directories. Prefer a matching curated card from `registry servers --scope global` when one exists.
+  - `mcpjam registry show <id-or-name>` [contacts MCPJam]: Show one directory row by name or catalog id. Prints the freshness pin for `registry install`.
+  - `mcpjam registry servers` [contacts MCPJam]: List curated global cards and the project's organization registry cards
+  - `mcpjam registry connections` [contacts MCPJam]: List directory and card installs already in a Cloud project
+  - `mcpjam registry install <id>` [contacts MCPJam]: Install a directory row into a Cloud project. Pass --card to install a curated/org card instead. This is not a live connection.
+  - `mcpjam registry uninstall <registryServerId>` [contacts MCPJam]: Remove a curated/org card install. Directory uninstall is `cloud projects servers remove`.
+
+## CLI
+
+- `mcpjam inspector`: Start or attach to the local MCPJam Inspector
+  - `mcpjam inspector open`: Start or attach to the local Inspector and open the UI
+  - `mcpjam inspector start`: Start the local Inspector in the background without opening a browser
+  - `mcpjam inspector stop`: Stop the local Inspector if it is running
+- `mcpjam browser`: Drive a local or cloud browser and read its session trace
+  - `mcpjam browser consent`: Validate and store the Browser capability granted in the Inspector
+  - `mcpjam browser open` [contacts MCPJam]: Open (or attach to) this project's browser session
+  - `mcpjam browser sessions` [contacts MCPJam]: List browser sessions
+  - `mcpjam browser observe` [contacts MCPJam]: Look at the page
+  - `mcpjam browser navigate <url>` [contacts MCPJam]: Go to a URL, returning the page it landed on
+  - `mcpjam browser act` [contacts MCPJam]: Click, type, press, scroll, hover, drag, select, or move tabs
+  - `mcpjam browser back` [contacts MCPJam]: back the current browser tab
+  - `mcpjam browser forward` [contacts MCPJam]: forward the current browser tab
+  - `mcpjam browser reload` [contacts MCPJam]: reload the current browser tab
+  - `mcpjam browser invoke <toolKey>` [contacts MCPJam]: Invoke a WebMCP tool listed by observe --mode page_tools
+  - `mcpjam browser note <text>` [contacts MCPJam]: Write a marker into the session trace
+  - `mcpjam browser trace` [contacts MCPJam]: Read this session's command history
+  - `mcpjam browser close` [contacts MCPJam]: Leave the session; --terminate closes the browser too
+- `mcpjam mcp`: Run MCPJam as an MCP server over stdio, so MCP clients (Claude Desktop, Claude Code, Cursor, ...) can connect to, exercise, and debug other MCP servers
+- `mcpjam telemetry`: Inspect and configure anonymous CLI telemetry
+  - `mcpjam telemetry status`: Show the current telemetry status
+  - `mcpjam telemetry disable`: Disable anonymous CLI telemetry
+  - `mcpjam telemetry enable`: Enable anonymous CLI telemetry
