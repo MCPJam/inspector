@@ -254,6 +254,7 @@ function openSection(name: RegExp | string) {
 
 describe("EventsTab (local)", () => {
   beforeEach(() => {
+    localStorage.clear();
     vi.clearAllMocks();
     FakeEventSource.instances = [];
     Object.assign(globalThis, { EventSource: FakeEventSource });
@@ -413,7 +414,7 @@ describe("EventsTab (local)", () => {
     });
     fireEvent.click(
       screen.getByRole("checkbox", {
-        name: /Receive webhooks on this machine/,
+        name: /Allow plain HTTP for local development/,
       }),
     );
     fireEvent.click(subscribeButton());
@@ -484,7 +485,7 @@ describe("EventsTab (local)", () => {
 
     fireEvent.click(
       screen.getByRole("checkbox", {
-        name: /Receive webhooks on this machine/,
+        name: /Allow plain HTTP for local development/,
       }),
     );
     expect(subscribe).toBeEnabled();
@@ -494,6 +495,8 @@ describe("EventsTab (local)", () => {
       expect(mockCreateLocal).toHaveBeenCalledWith(
         expect.objectContaining({
           mode: "webhook",
+          receiver: { kind: "local" },
+          ttlMs: 600_000,
           overrides: ["insecure-local-receiver"],
         }),
       ),
@@ -501,7 +504,59 @@ describe("EventsTab (local)", () => {
     await screen.findByRole("tabpanel", { name: "Subscriptions" });
     await openWorkspaceView("Subscriptions");
     const card = await screen.findByTestId("subscription-esub_1");
-    expect(within(card).getByText("Development override")).toBeInTheDocument();
+    expect(within(card).getByText("Non-conformant HTTP")).toBeInTheDocument();
+  });
+
+  it("validates Custom URL and sends the explicit no-expiry choice", async () => {
+    mockLoadEventsCatalog.mockResolvedValue(
+      catalog([{ ...issueCreated, delivery: ["webhook"] }], {
+        localCallbackBase: "http://127.0.0.1:6274/api/mcp/events/hooks",
+      }),
+    );
+    mockCreateLocal.mockResolvedValue(subscriptionView());
+    renderTab();
+
+    await openEventType("issue.created");
+    fireEvent.click(await screen.findByRole("radio", { name: "Custom URL" }));
+    const input = screen.getByLabelText("Callback URL");
+    expect(subscribeButton()).toBeDisabled();
+    fireEvent.change(input, { target: { value: "https://proxy.example/hooks?" } });
+    expect(screen.getByText("Remove the query string or fragment from the callback URL.")).toBeVisible();
+    expect(subscribeButton()).toBeDisabled();
+
+    fireEvent.change(input, { target: { value: "http://proxy.example/hooks" } });
+    expect(subscribeButton()).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /Allow plain HTTP/ })).toBeVisible();
+
+    fireEvent.change(input, { target: { value: "https://proxy.example/hooks" } });
+    expect(screen.queryByRole("checkbox", { name: /Allow plain HTTP/ })).toBeNull();
+    expect(screen.getByText("https://proxy.example/hooks/* → http://127.0.0.1:6274/api/mcp/events/hooks/*")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
+    expect(screen.getByPlaceholderText("10 minutes")).toBeVisible();
+    fireEvent.click(screen.getByRole("checkbox", { name: "No expiry" }));
+    expect(screen.getByText("The server can keep sending events after MCPJam closes.")).toBeVisible();
+    fireEvent.change(screen.getByPlaceholderText("Enter repo"), { target: { value: "octo/hello" } });
+    fireEvent.click(subscribeButton());
+    await waitFor(() => expect(mockCreateLocal).toHaveBeenCalledWith(expect.objectContaining({
+      receiver: { kind: "custom", baseUrl: "https://proxy.example/hooks" },
+      ttlMs: null,
+    })));
+    expect(mockCreateLocal.mock.calls[0]?.[0]).not.toHaveProperty("overrides");
+  });
+
+  it("moves from waiting to verified to receiving on local subscription frames", async () => {
+    mockLoadEventsCatalog.mockResolvedValue(catalog([issueCreated]));
+    mockListLocal.mockResolvedValue([subscriptionView()]);
+    renderTab();
+
+    await screen.findByTestId("events-activity");
+    await openWorkspaceView("Subscriptions");
+    const headline = await screen.findByTestId("webhook-reachability");
+    expect(headline).toHaveTextContent("Waiting for the first delivery");
+    emitFrame({ type: "subscription", subscription: subscriptionView({ callbackVerifiedAt: Date.now() }) });
+    expect(headline).toHaveTextContent("Server reached MCPJam");
+    emitFrame({ type: "subscription", subscription: subscriptionView({ lastWebhookAt: Date.now() }) });
+    expect(headline).toHaveTextContent("Receiving webhook events");
   });
 
   it("renders stream frames: snapshot, simulated entry with flags, rejection", async () => {
@@ -521,7 +576,7 @@ describe("EventsTab (local)", () => {
         subscriptionView({
           conflictingServerSubscriptionId: "srv-sub-other",
           lastError: {
-            kind: "delivery_failed",
+            kind: "callback_http_5xx",
             message: "Callback returned 500",
             at: Date.now(),
             retryable: true,
@@ -532,7 +587,7 @@ describe("EventsTab (local)", () => {
     await openWorkspaceView("Subscriptions");
     const card = await screen.findByTestId("subscription-esub_1");
     expect(within(card).getByText("srv-sub-other")).toBeInTheDocument();
-    expect(within(card).getByText(/Callback returned 500/)).toBeInTheDocument();
+    expect(within(card).getByText(/The receiver returned an error/)).toBeInTheDocument();
     expect(within(card).getByTestId("observed-state")).toHaveTextContent(
       "Active",
     );
@@ -930,19 +985,17 @@ describe("EventsTab (local)", () => {
     await screen.findByTestId("events-activity");
     await openWorkspaceView("Subscriptions");
     const suspended = await screen.findByTestId("subscription-esub_1");
-    expect(within(suspended).getByTestId("delivery-state")).toHaveTextContent(
-      "Suspended after repeated failures",
+    expect(within(suspended).getByText(/The receiver refused a delivery/)).toHaveTextContent(
+      "The server suspended delivery.",
     );
-    expect(within(suspended).getByText("http_4xx")).toBeInTheDocument();
+    expect(within(suspended).queryByText("Delivering")).toBeNull();
     expect(
       within(suspended).getByText("null (replay not supported)"),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("select-subscription-esub_2"));
     expect(
-      within(screen.getByTestId("subscription-esub_2")).getByTestId(
-        "delivery-state",
-      ),
-    ).toHaveTextContent("Throttled, for about 60s");
+      within(screen.getByTestId("subscription-esub_2")).getByText(/The server slowed webhook delivery/),
+    ).toBeInTheDocument();
 
     await openEventType("issue.created");
     expect(screen.getByTestId("replay-unsupported")).toBeInTheDocument();

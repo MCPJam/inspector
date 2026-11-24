@@ -539,6 +539,8 @@ export type RequestEventMap = {
 };
 
 export type SystemEventMap = {
+  "events.local_webhook.receiver_selected": { receiverKind: "local" | "custom" };
+  "events.local_webhook.receiver_failed": { receiverKind: "local" | "custom"; failureCategory: string };
   telemetry_canary: Record<string, never>;
   "server.shutdown.drain": import("./log-events/shutdown-drain.js").ShutdownDrainEvent;
   /** One per start: `web` runs no claim loops; `worker` and `all` do. */

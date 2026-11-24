@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  checkCallbackUrl,
+  DEFAULT_LOCAL_WEBHOOK_TTL_MS,
+  type ReceiverChoice,
+} from "@mcpjam/sdk/browser";
+import { useCallbackPreference } from "./use-callback-preference";
+import {
   buildParametersFromFields,
   generateFormFieldsFromSchema,
   type FormField,
@@ -17,6 +23,7 @@ export interface SubscribeFormValue {
   ttlMs?: number | null;
   /** Local webhook only: the user acknowledged the development receiver. */
   insecureLocalReceiver?: boolean;
+  receiver?: ReceiverChoice;
 }
 
 export interface SubscribeForm {
@@ -30,7 +37,13 @@ export interface SubscribeForm {
   setRawJson: (value: string) => void;
   mode: EventsDeliveryModeView | null;
   setMode: (mode: EventsDeliveryModeView) => void;
-  /** A local webhook needs the development-receiver acknowledgement. */
+  receiverKind: ReceiverChoice["kind"];
+  setReceiverKind: (kind: ReceiverChoice["kind"]) => void;
+  customCallbackUrl: string;
+  setCustomCallbackUrl: (value: string) => void;
+  callbackUrl?: string;
+  callbackUrlError: string | null;
+  /** HTTP callbacks need explicit consent for each subscription. */
   needsAcknowledgement: boolean;
   acknowledged: boolean;
   setAcknowledged: (value: boolean) => void;
@@ -73,6 +86,8 @@ export function useSubscribeForm({
   modes,
   blockedReason,
   hosted,
+  projectId,
+  serverId,
   busy,
   onSubscribe,
 }: {
@@ -80,6 +95,8 @@ export function useSubscribeForm({
   modes: EventsDeliveryModeView[];
   blockedReason: string | null;
   hosted: boolean;
+  projectId?: string | null;
+  serverId?: string;
   busy: boolean;
   onSubscribe: (value: SubscribeFormValue) => void | Promise<void>;
 }): SubscribeForm {
@@ -87,6 +104,8 @@ export function useSubscribeForm({
   const [rawMode, setRawMode] = useState(false);
   const [rawJson, setRawJson] = useState("{}");
   const [mode, setMode] = useState<EventsDeliveryModeView | null>(null);
+  const callback = useCallbackPreference(projectId, hosted ? undefined : serverId);
+  const { draft } = callback;
   const [acknowledged, setAcknowledged] = useState(false);
   const [maxAgeMs, setMaxAgeMs] = useState("");
   const [ttlMs, setTtlMs] = useState("");
@@ -110,19 +129,28 @@ export function useSubscribeForm({
     setTtlMs("");
     setNoExpiry(false);
     setFormError(null);
-  }, [eventName]);
+  }, [eventName, projectId, serverId]);
 
   useEffect(() => {
     if (mode === null || !modes.includes(mode)) setMode(modes[0] ?? null);
   }, [modes, mode]);
 
-  const needsAcknowledgement = !hosted && mode === "webhook";
+  const localWebhook = !hosted && mode === "webhook";
+  const custom = localWebhook && draft.kind === "custom";
+  const checked = custom ? checkCallbackUrl(draft.url) : undefined;
+  const receiver: ReceiverChoice | undefined = localWebhook
+    ? custom
+      ? checked?.ok ? { kind: "custom", baseUrl: checked.url.href } : undefined
+      : { kind: "local" }
+    : undefined;
+  const needsAcknowledgement = localWebhook && (!custom || checked?.ok === true && checked.insecure);
   const canSubmit =
     event !== undefined &&
     mode !== null &&
     modes.includes(mode) &&
     blockedReason === null &&
     !busy &&
+    (!localWebhook || receiver !== undefined) &&
     (!needsAcknowledgement || acknowledged);
 
   const onFieldChange = (name: string, value: unknown) => {
@@ -182,6 +210,8 @@ export function useSubscribeForm({
       setFormError(ttl.error);
       return;
     }
+    const effectiveTtl = "value" in ttl ? ttl.value : localWebhook ? DEFAULT_LOCAL_WEBHOOK_TTL_MS : undefined;
+    if (receiver) callback.remember(receiver);
     setFormError(null);
     submitting.current = true;
     void Promise.resolve(
@@ -189,9 +219,8 @@ export function useSubscribeForm({
         arguments: args,
         mode,
         ...(maxAge.value !== undefined ? { maxAgeMs: maxAge.value } : {}),
-        ...("value" in ttl && ttl.value !== undefined
-          ? { ttlMs: ttl.value }
-          : {}),
+        ...(effectiveTtl !== undefined ? { ttlMs: effectiveTtl } : {}),
+        ...(receiver ? { receiver } : {}),
         ...(needsAcknowledgement ? { insecureLocalReceiver: true } : {}),
       }),
     ).finally(() => {
@@ -209,6 +238,22 @@ export function useSubscribeForm({
     setRawJson,
     mode,
     setMode,
+    receiverKind: draft.kind,
+    setReceiverKind: (kind) => {
+      callback.setDraft({ ...draft, kind });
+      const previous = checkCallbackUrl(draft.url);
+      callback.remember(kind === "local"
+        ? { kind }
+        : { kind, baseUrl: previous.ok ? previous.url.href : "" });
+      setAcknowledged(false);
+    },
+    customCallbackUrl: draft.url,
+    setCustomCallbackUrl: (url) => {
+      callback.setDraft({ ...draft, url });
+      setAcknowledged(false);
+    },
+    callbackUrl: checked?.ok ? checked.url.href : undefined,
+    callbackUrlError: draft.url.trim() && checked && !checked.ok ? checked.reason : null,
     needsAcknowledgement,
     acknowledged,
     setAcknowledged,

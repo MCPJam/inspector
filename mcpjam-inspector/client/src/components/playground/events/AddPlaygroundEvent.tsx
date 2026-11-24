@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import {
+  SubscribeAdvanced,
   SubscribeDelivery,
   SubscribeParameters,
 } from "@/components/events/SubscribeForm";
@@ -182,6 +183,8 @@ function ConfigureEvent({
     modes: availability?.modes ?? [],
     blockedReason: blocked,
     hosted: runtime.hosted,
+    projectId: runtime.projectId,
+    serverId: server.serverName,
     busy,
     onSubscribe: async (value) => {
       if (!instructions.trim()) {
@@ -221,7 +224,7 @@ function ConfigureEvent({
         />
       </div>
       <details
-        open={form.needsAcknowledgement || !!blocked}
+        open={form.mode === "webhook" || !!blocked}
         className="text-xs"
       >
         <summary className="cursor-pointer py-2 text-muted-foreground">
@@ -235,6 +238,7 @@ function ConfigureEvent({
           hostName={runtime.host?.name ?? "Current client"}
           hosted={runtime.hosted}
           replayUnsupported={false}
+          localCallbackBase={server.catalog?.localCallbackBase}
         />
         {blocked ? (
           <p role="alert" className="py-2 text-destructive">
@@ -242,6 +246,12 @@ function ConfigureEvent({
           </p>
         ) : null}
       </details>
+      {!runtime.hosted && form.mode === "webhook" ? (
+        <details className="text-xs">
+          <summary className="cursor-pointer py-2 text-muted-foreground">Advanced settings</summary>
+          <SubscribeAdvanced form={form} eventName={event.name} hosted={false} />
+        </details>
+      ) : null}
       <details className="text-xs">
         <summary className="cursor-pointer py-2 text-muted-foreground">
           Schemas and metadata

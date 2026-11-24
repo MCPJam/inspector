@@ -13,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 import { copyToClipboard } from "@/lib/clipboard";
+import { ReachabilityHeader } from "./ReachabilityHeader";
 import { BUILT_IN_EVENTS_HOST_NAME } from "./use-events-host";
 import type {
   EventsSlotStateResponse,
@@ -121,6 +122,7 @@ function SubscriptionCard({
   const deliveryStatus = readDeliveryStatus(subscription.deliveryStatus);
   const deliveryNeedsAttention = deliveryStatus?.suspended || deliveryStatus?.throttled || Boolean(deliveryStatus?.lastError);
   const isWebhook = subscription.mode === "webhook";
+  const localWebhook = isWebhook && !hosted;
   const desiredDiffers =
     subscription.desiredState !== subscription.observedState &&
     !(
@@ -145,7 +147,7 @@ function SubscriptionCard({
         </span>
         {desiredDiffers ? <span className="text-[10px] text-muted-foreground">Requested: {subscription.desiredState}</span> : null}
         {hasInsecureLocalReceiver(subscription) ? (
-          <span className="text-[10px] text-warning" title="Uses the local development receiver over plain HTTP.">Development override</span>
+          <span className="text-[10px] text-warning" title="Uses plain HTTP for local development.">Non-conformant HTTP</span>
         ) : null}
       </CollapsibleTrigger>
 
@@ -179,7 +181,7 @@ function SubscriptionCard({
           <span className="font-medium">{termination.label}</span>
           {termination.hint ? `. ${termination.hint}` : ""}
         </p>
-      ) : subscription.lastError ? (
+      ) : subscription.lastError && !localWebhook ? (
         <p className="mx-3 mb-3 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-[11px] text-destructive">
           <span className="font-mono">{subscription.lastError.kind}</span>:{" "}
           {subscription.lastError.message}
@@ -190,7 +192,8 @@ function SubscriptionCard({
         </p>
       ) : null}
 
-      {isWebhook && deliveryNeedsAttention ? (
+      {localWebhook && !termination ? <ReachabilityHeader subscription={subscription} /> : null}
+      {hosted && isWebhook && deliveryNeedsAttention ? (
         <dl className="mx-3 mb-3 grid gap-2 rounded-md border border-warning/40 bg-warning/10 p-2 sm:grid-cols-2">
           <DeliveryStatusFields value={subscription.deliveryStatus} />
         </dl>
@@ -245,7 +248,7 @@ function SubscriptionCard({
             {formatTime(subscription.lastGapAt)}
           </Field>
         ) : null}
-        {isWebhook && !deliveryNeedsAttention ? (
+        {hosted && isWebhook && !deliveryNeedsAttention ? (
           <DeliveryStatusFields value={subscription.deliveryStatus} />
         ) : null}
       </dl>
@@ -260,7 +263,7 @@ function SubscriptionCard({
           </pre>
         </details>
       ) : null}
-      {subscription.deliveryStatus !== undefined ? (
+      {hosted && subscription.deliveryStatus !== undefined ? (
         <details className="text-[11px]">
           <summary className="cursor-pointer text-muted-foreground">
             Delivery status

@@ -23,6 +23,7 @@ export function EventSubscribePanel({
   blockedReason,
   blockedAction,
   replayUnsupported,
+  localCallbackBase,
 }: {
   event: EventDescriptorView;
   form: SubscribeForm;
@@ -32,6 +33,7 @@ export function EventSubscribePanel({
   blockedReason: string | null;
   blockedAction?: { label: string; onClick: () => void };
   replayUnsupported: boolean;
+  localCallbackBase?: string;
 }) {
   return (
     <div data-testid="event-subscribe-panel">
@@ -66,13 +68,14 @@ export function EventSubscribePanel({
               hostName={hostName}
               hosted={hosted}
               replayUnsupported={replayUnsupported}
+              localCallbackBase={localCallbackBase}
             />
           </AccordionContent>
         </AccordionItem>
         <AccordionItem value="advanced">
           <AccordionTrigger>Advanced settings</AccordionTrigger>
           <AccordionContent>
-            <SubscribeAdvanced form={form} eventName={event.name} />
+            <SubscribeAdvanced form={form} eventName={event.name} hosted={hosted} />
           </AccordionContent>
         </AccordionItem>
       </Accordion>
