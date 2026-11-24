@@ -21,7 +21,10 @@ import {
 import type { BrowserdLeaseState, BrowserdStatus } from "../browserd-client";
 import { HandoffLease } from "../daemon/lease";
 import { BROWSERD_PROTOCOL_VERSION } from "../protocol";
-import { BrowserProtocolMismatchError } from "../browser-session";
+import {
+  BrowserProtocolMismatchError,
+  FreshProfileRefusedError,
+} from "../browser-session";
 import { logger } from "../../../utils/logger.js";
 import type {
   BrowserSessionLookup,
@@ -1485,6 +1488,57 @@ describe("ensureBrowserSession — sandbox target", () => {
       false,
     );
     expect(f.boot).toHaveBeenCalled();
+  });
+
+  it("refuses another session's running browser when a fresh profile is asked for", async () => {
+    // That browser holds whatever profile it booted with: handing it over
+    // would give a web account someone else's sign-ins.
+    const status = async () => ({
+      kind: "ok" as const,
+      bootId: SANDBOX_SESSION.bootId,
+      protocolVersion: BROWSERD_PROTOCOL_VERSION,
+    });
+    const f = makeFakes({ lookups: [liveSandboxLookup()], status });
+    await expect(
+      ensureBrowserSession(f.deps, { ...SANDBOX_ARGS, freshProfile: true }),
+    ).rejects.toBeInstanceOf(FreshProfileRefusedError);
+    expect(f.boot).not.toHaveBeenCalled();
+    // One that appears while connecting is refused too, and left running.
+    const raced = makeFakes({
+      lookups: [
+        { reachable: true, session: null },
+        liveSandboxLookup({ bootId: "boot-winner" }),
+      ],
+      status: async () => ({
+        kind: "ok",
+        bootId: "boot-winner",
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+      }),
+    });
+    await expect(
+      ensureBrowserSession(raced.deps, { ...SANDBOX_ARGS, freshProfile: true }),
+    ).rejects.toBeInstanceOf(FreshProfileRefusedError);
+    expect(raced.sandbox.killBrowserd).not.toHaveBeenCalled();
+    expect(raced.boot).not.toHaveBeenCalled();
+    // So is one whose record wins after our own fresh boot: ours is stopped,
+    // and theirs is not adopted.
+    const lost = makeFakes({
+      lookups: [
+        { reachable: true, session: null },
+        { reachable: true, session: null },
+        liveSandboxLookup({ bootId: "boot-winner" }),
+      ],
+      recordResult: { status: "conflict" },
+      status: async () => ({
+        kind: "ok",
+        bootId: "boot-winner",
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+      }),
+    });
+    await expect(
+      ensureBrowserSession(lost.deps, { ...SANDBOX_ARGS, freshProfile: true }),
+    ).rejects.toBeInstanceOf(FreshProfileRefusedError);
+    expect(lost.bootHandle.stop).toHaveBeenCalled();
   });
 
   it("adopts a winner that appeared while we were connecting, WITHOUT killing it", async () => {
