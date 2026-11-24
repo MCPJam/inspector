@@ -8,7 +8,9 @@
  * they are local: a static connector set, a Playwright browser on a
  * persistent profile, a tunnel URL. The turn reads only this interface.
  */
+import type { MCPClientManager } from "@mcpjam/sdk";
 import type { WebClientVendor, WebConnectorAuth } from "@/shared/web-clients";
+import { HOSTED_MODE } from "../../config.js";
 import type { SendJournal } from "../../utils/harness/real-ui/drive-turn.js";
 import type { PageDriver } from "../../utils/harness/real-ui/page-driver.js";
 import type {
@@ -80,12 +82,24 @@ export type WebTurnContext = {
   actor?: { actorExternalId: string } | { actorUserId: string };
   /** The run's frozen accounts, in the order this turn tries them. */
   runWebAccountIds?: readonly string[];
+  /** How this Inspector reaches each server, for a local connector. */
+  mcpClientManager?: Pick<MCPClientManager, "getServerConfig">;
 };
 
 /** Hosted runs build their environment per turn: who to act as, which chat. */
 export type WebClientEnvironmentFactory = (
   turn: WebTurnContext,
 ) => Promise<WebClientEnvironment>;
+
+/**
+ * Whether this server's turns run hosted, on the backend's accounts, rather
+ * than on this machine's profiles. The mount sets up the environment by it
+ * and a swarm takes its accounts by it, so a swarm session always holds the
+ * account its turns run on, whatever credentials the server also has.
+ */
+export function webClientTurnsRunHosted(): boolean {
+  return HOSTED_MODE;
+}
 
 let configured: WebClientEnvironment | WebClientEnvironmentFactory | undefined;
 
