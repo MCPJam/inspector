@@ -273,6 +273,8 @@ describe("EventsTab (local)", () => {
     expect(screen.queryByTestId("event-type-detail")).toBeNull();
     expect(screen.getByRole("tab", { name: /Events/ })).toHaveTextContent("2");
     expect(screen.getByRole("button", { name: /^Subscribe/ })).toBeDisabled();
+    // The declared capability is one disclosure away.
+    openSection(/Server capability/);
     expect(
       screen.getByText("capabilities.events declared"),
     ).toBeInTheDocument();
@@ -551,6 +553,7 @@ describe("EventsTab (local)", () => {
         bodyBytes: 120,
       },
     });
+    openSection(/Rejected deliveries/);
     const rejections = await screen.findByTestId("rejections");
     expect(within(rejections).getByText("bad_signature")).toBeInTheDocument();
     expect(
@@ -607,6 +610,10 @@ describe("EventsTab (local)", () => {
     renderTab();
 
     await screen.findByTestId("subscription-esub_1");
+    openSection(/Simulate an event/);
+    expect(screen.getByTestId("simulate-warning")).toHaveTextContent(
+      "Matching triggers still run",
+    );
     const panel = await screen.findByTestId("simulate-panel");
     // Prefilled from the payload schema's defaults.
     await waitFor(() =>
@@ -689,6 +696,69 @@ describe("EventsTab (local)", () => {
       name: /issue\.created/,
     });
     await waitFor(() => expect(row).toHaveFocus());
+  });
+
+  it("lists subscriptions and received events in their tabs and scopes the activity to the selection", async () => {
+    mockLoadEventsCatalog.mockResolvedValue(catalog([issueCreated]));
+    mockListLocal.mockResolvedValue([
+      subscriptionView(),
+      subscriptionView({
+        id: "esub_2",
+        eventName: "issue.closed",
+        mode: "poll",
+        desiredState: "paused",
+        observedState: "paused",
+      }),
+    ]);
+    renderTab();
+
+    await screen.findByTestId("subscription-esub_2");
+    // The count is active subscriptions, not every row.
+    const subscriptionsTab = screen.getByRole("tab", { name: /Subscriptions/ });
+    expect(subscriptionsTab).toHaveTextContent("Subscriptions1");
+    fireEvent.click(subscriptionsTab);
+    fireEvent.click(
+      within(screen.getByTestId("subscription-list")).getByRole("button", {
+        name: /issue\.closed/,
+      }),
+    );
+    expect(screen.queryByTestId("subscription-esub_1")).toBeNull();
+    // Ending a poll subscription stops polling; it is not an unsubscribe.
+    expect(
+      within(screen.getByTestId("subscription-esub_2")).getByRole("button", {
+        name: /Stop polling/,
+      }),
+    ).toBeInTheDocument();
+
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    emitFrame({
+      type: "entry",
+      entry: {
+        seq: 4,
+        kind: "event",
+        origin: "webhook",
+        namespace: "live",
+        logicalSubscriptionId: "esub_1",
+        eventId: "evt_4",
+        name: "issue.created",
+        receivedAt: Date.now(),
+        data: { title: "x" },
+      },
+    });
+    const receivedTab = screen.getByRole("tab", { name: /Received/ });
+    await waitFor(() => expect(receivedTab).toHaveTextContent("Received1"));
+    fireEvent.click(receivedTab);
+    fireEvent.click(
+      within(screen.getByTestId("received-list")).getByRole("button", {
+        name: /issue\.created/,
+      }),
+    );
+    const activity = screen.getByTestId("events-activity");
+    expect(within(activity).getByText("evt_4")).toBeInTheDocument();
+    const owner = within(activity).getByTestId("subscription-esub_1");
+    expect(
+      within(owner).getByRole("button", { name: /Unsubscribe/ }),
+    ).toBeInTheDocument();
   });
 
   it("names why the server terminated a subscription, for draft and Beta codes", async () => {

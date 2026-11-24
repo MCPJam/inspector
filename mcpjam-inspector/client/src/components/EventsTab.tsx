@@ -15,8 +15,6 @@ import {
   type MCPServerConfig,
 } from "@mcpjam/sdk/browser";
 import { Button } from "@mcpjam/design-system/button";
-import { Badge } from "@mcpjam/design-system/badge";
-import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { AlertCircle, Loader2, Radio, RefreshCw } from "lucide-react";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
 import { EmptyState } from "./ui/empty-state";
@@ -49,15 +47,10 @@ import type {
   EventsSubscriptionView,
 } from "@/shared/events-api";
 import { CapabilityPanel } from "./events/CapabilityPanel";
-
-import {
-  SubscriptionsPanel,
-  type SubscriptionAction,
-} from "./events/SubscriptionsPanel";
-import { SimulatePanel } from "./events/SimulatePanel";
-import { EventsFeedPanel, RejectionsPanel } from "./events/EventsFeedPanel";
-import { DraftHeader, Section } from "./events/EventsTabSections";
-import { EventsSidebar } from "./events/EventsSidebar";
+import type { SubscriptionAction } from "./events/SubscriptionsPanel";
+import { DraftHeader } from "./events/EventsTabSections";
+import { EventsSidebar, type EventsPaneTab } from "./events/EventsSidebar";
+import { EventsActivity, type ActivityScope } from "./events/EventsActivity";
 import { useEventsHost } from "./events/use-events-host";
 import { useEventsCatalog } from "./events/use-events-catalog";
 import { useEventsFeed } from "./events/use-events-feed";
@@ -67,11 +60,9 @@ import {
   type SubscribeFormValue,
 } from "./events/use-subscribe-form";
 import {
-  describeTermination,
   errorMessage,
   logicalIdOf,
   replayUnsupported,
-  type TerminationReason,
 } from "./events/event-utils";
 
 interface EventsTabProps {
@@ -130,6 +121,11 @@ export function EventsTab({
     Map<string, EventsSubscriptionView>
   >(() => new Map());
   const [registryError, setRegistryError] = useState<string | null>(null);
+  const [paneTab, setPaneTab] = useState<EventsPaneTab>("events");
+  const [selectedSubscriptionId, setSelectedSubscriptionId] = useState<
+    string | null
+  >(null);
+  const [selectedEntrySeq, setSelectedEntrySeq] = useState<number | null>(null);
   const navigate = useAppNavigate();
 
   // ── catalog ─────────────────────────────────────────────────────────────
@@ -146,6 +142,12 @@ export function EventsTab({
   const declared =
     catalogState === "ready" && catalog?.support.declared === true;
   useEventsListChanged(declared ? serverName : undefined, retryCatalog);
+
+  // A different server starts from its own lists.
+  useEffect(() => {
+    setSelectedSubscriptionId(null);
+    setSelectedEntrySeq(null);
+  }, [serverName]);
 
   // ── registry ────────────────────────────────────────────────────────────
   // The hosted server id comes from the API context, which fills in after
@@ -326,27 +328,6 @@ export function EventsTab({
     },
     [subscriptionsByLogicalId],
   );
-
-  // The latest `terminated` signal per subscription says why it ended.
-  const terminations = useMemo(() => {
-    const byLogicalId = new Map<string, TerminationReason>();
-    for (const entry of visibleEntries) {
-      if (entry.kind === "terminated") {
-        byLogicalId.set(
-          entry.logicalSubscriptionId,
-          describeTermination(entry.error),
-        );
-      }
-    }
-    return byLogicalId;
-  }, [visibleEntries]);
-  const terminationFor = (subscription: EventsSubscriptionView) =>
-    subscription.observedState === "terminated"
-      ? (terminations.get(logicalIdOf(subscription)) ?? {
-          label: "Terminated",
-          hint: subscription.lastError?.message,
-        })
-      : null;
 
   const rejections = useMemo<EventsRejectionView[]>(() => {
     if (!hosted) return feed.rejections;
@@ -536,7 +517,7 @@ export function EventsTab({
     }
   };
 
-  // ── left pane ───────────────────────────────────────────────────────────
+  // ── left-pane selection ────────────────────────────────────────────────
   const form = useSubscribeForm({
     event: selectedEvent,
     modes: selectedAvailability?.modes ?? [],
@@ -568,6 +549,15 @@ export function EventsTab({
       ),
     [serverSubscriptions],
   );
+
+  const scope: ActivityScope =
+    paneTab === "events" && selectedEventName
+      ? { kind: "eventType", name: selectedEventName }
+      : paneTab === "subscriptions" && selectedSubscriptionId
+        ? { kind: "subscription", id: selectedSubscriptionId }
+        : paneTab === "received" && selectedEntrySeq !== null
+          ? { kind: "entry", seq: selectedEntrySeq }
+          : { kind: "server" };
 
   // ── render ──────────────────────────────────────────────────────────────
   if (!hasServer) {
@@ -633,8 +623,17 @@ export function EventsTab({
     );
   }
 
+  const hostedRegistryNotice =
+    hosted && !projectId
+      ? "Open a project to manage its subscriptions."
+      : hosted && !hostedServerId
+        ? "Add this server to the project to subscribe to its events."
+        : null;
+
   const sidebarContent = (
     <EventsSidebar
+      tab={paneTab}
+      onTabChange={setPaneTab}
       catalog={catalog}
       loadingMore={loadingMore}
       onLoadMore={loadMoreEvents}
@@ -650,126 +649,79 @@ export function EventsTab({
       blockedReason={blockedReason}
       blockedAction={blockedAction}
       replayUnsupportedFor={replayUnsupportedFor}
+      subscriptions={serverSubscriptions}
+      activeSubscriptionCount={
+        serverSubscriptions.filter(
+          (subscription) => subscription.observedState === "active",
+        ).length
+      }
+      selectedSubscriptionId={selectedSubscriptionId}
+      onSelectSubscription={setSelectedSubscriptionId}
+      entries={visibleEntries}
+      selectedEntrySeq={selectedEntrySeq}
+      onSelectEntry={setSelectedEntrySeq}
+      labelForEntry={labelForEntry}
     />
   );
 
-
-  const hostedRegistryNotice =
-    hosted && !projectId
-      ? "Open a project to manage its subscriptions."
-      : hosted && !hostedServerId
-        ? "Add this server to the project to subscribe to its events."
-        : null;
-
   const centerContent = (
-    <ScrollArea className="h-full">
-      <div className="pb-16">
-        <DraftHeader>
-          <span
-            className="text-[11px] text-muted-foreground"
-            title="The client MCPJam subscribes as"
-            data-testid="events-host-label"
-          >
-            Client: {hostName}
-          </span>
-        </DraftHeader>
-        {hostedRegistryNotice ? (
-          <p className="mx-5 mt-4 rounded-md border border-warning/40 bg-warning/10 p-2 text-xs text-foreground">
-            {hostedRegistryNotice}
-          </p>
-        ) : null}
-
-
-        <Section
-          title="Subscriptions"
-          description={
-            hosted
-              ? "This server's subscriptions in this project. MCPJam refreshes each one automatically."
-              : "This server's subscriptions on this machine."
-          }
-        >
-          {registryError ? (
-            <p className="text-xs text-destructive">{registryError}</p>
-          ) : null}
-          {hosted && projectId && hostedRows === undefined ? (
-            <p className="text-xs text-muted-foreground">Loading…</p>
-          ) : (
-            <SubscriptionsPanel
-              subscriptions={serverSubscriptions}
-              hosted={hosted}
-              busyId={busySubscriptionId}
-              slotStates={slotStates}
-              emptyText="No subscriptions on this server yet. Pick an event type to subscribe."
-              terminationFor={terminationFor}
-              onAction={(subscription, action) =>
-                void handleSubscriptionAction(subscription, action)
-              }
-            />
-          )}
-        </Section>
-
-        <Section
-          title="Simulate an event"
-          description={
-            <>
-              Delivered in the <code className="font-mono">simulation</code>{" "}
-              namespace: it runs triggers but can never collide with or suppress
-              a live event.
-            </>
-          }
-        >
-          <SimulatePanel
-            subscriptions={serverSubscriptions.filter(
-              (subscription) => subscription.desiredState !== "removed",
-            )}
-            events={catalog.events}
-            busy={simulating}
-            onSimulate={handleSimulate}
-          />
-        </Section>
-
-        <Section
-          title="Received"
-          description="Newest first. Event data comes from the server's upstream; treat it as untrusted."
-          actions={
-            <Badge variant="outline" className="text-[10px]">
-              {hosted ? "Hosted inbox" : "Local inbox"}
-            </Badge>
-          }
-        >
-          <EventsFeedPanel
-            entries={visibleEntries}
-            gaps={feed.gaps}
-            status={feed.status}
-            error={feed.error}
-            labelFor={labelForEntry}
-          />
-        </Section>
-
-        <Section
-          title="Rejected deliveries"
-          description={
-            hosted
-              ? "Recorded per webhook slot (reason, headers, size; never the body or signature). Use Check inbox on a subscription to load them."
-              : "Deliveries the local receiver refused (reason, headers, size; never the body or signature)."
-          }
-        >
-          <RejectionsPanel rejections={rejections} />
-        </Section>
-
-        <Section title="Server capability">
-          <CapabilityPanel catalog={catalog} />
-        </Section>
-      </div>
-    </ScrollArea>
+    <EventsActivity
+      scope={scope}
+      hostName={hostName}
+      hosted={hosted}
+      notice={hostedRegistryNotice}
+      registryError={registryError}
+      subscriptionsLoading={Boolean(
+        hosted && projectId && hostedRows === undefined,
+      )}
+      subscriptions={serverSubscriptions}
+      busySubscriptionId={busySubscriptionId}
+      slotStates={slotStates}
+      onSubscriptionAction={(subscription, action) =>
+        void handleSubscriptionAction(subscription, action)
+      }
+      entries={visibleEntries}
+      gaps={feed.gaps}
+      feedStatus={feed.status}
+      feedError={feed.error}
+      labelForEntry={labelForEntry}
+      events={catalog.events}
+      simulating={simulating}
+      onSimulate={handleSimulate}
+      rejections={rejections}
+      catalog={catalog}
+    />
   );
+
+  // On a phone, an event type keeps its form in the left pane (as a tool
+  // does); a subscription or a received event opens the middle pane.
+  const mobileNavigation =
+    paneTab === "subscriptions" && selectedSubscriptionId
+      ? {
+          selectionKey: `subscription:${selectedSubscriptionId}`,
+          selectionPanel: "content" as const,
+          onBack: () => setSelectedSubscriptionId(null),
+          contentLabel: "Activity",
+        }
+      : paneTab === "received" && selectedEntrySeq !== null
+        ? {
+            selectionKey: `entry:${selectedEntrySeq}`,
+            selectionPanel: "content" as const,
+            onBack: () => setSelectedEntrySeq(null),
+            contentLabel: "Activity",
+          }
+        : {
+            selectionKey:
+              paneTab === "events" && selectedEventName
+                ? `event:${selectedEventName}`
+                : "",
+            contentLabel: "Activity",
+          };
 
   return (
     <ThreePanelLayout
       id="events"
-      mobileNavigation={{
-        selectionKey: selectedEventName ? `event:${selectedEventName}` : "",
-      }}
+      mobileNavigation={mobileNavigation}
       sidebar={sidebarContent}
       content={centerContent}
       sidebarVisible={isSidebarVisible}
