@@ -45,6 +45,54 @@ describe("prepareBrowserProfile", () => {
     },
   );
 
+  it("starts a fresh profile from an empty directory, keeping recordings", async () => {
+    const { archivePath, userDataDir } = await fixture();
+    const earlier = async () => {
+      await mkdir(join(userDataDir, "Default", "Local Storage"), { recursive: true });
+      await writeFile(join(userDataDir, "Default", "Login Data"), "someone else's sign-ins");
+      await writeFile(join(userDataDir, "Default", "Local Storage", "000003.log"), "their storage");
+      await mkdir(join(userDataDir, "recordings"), { recursive: true });
+      await writeFile(join(userDataDir, "recordings", "run.mp4"), "an earlier run's video");
+    };
+    const env = {
+      MCPJAM_BROWSERD_USER_DATA_DIR: userDataDir,
+      MCPJAM_BROWSERD_TOKEN: "test-token",
+      MCPJAM_BROWSERD_FRESH_PROFILE: "1",
+    };
+
+    // With the account's archive: only the archive's files remain.
+    await earlier();
+    expect(
+      await prepareBrowserProfile(
+        readBrowserdConfig({ ...env, MCPJAM_BROWSERD_PROFILE_ARCHIVE: archivePath }),
+      ),
+    ).toBe(true);
+    expect(await readFile(join(userDataDir, "Default", "Cookies"), "utf8")).toBe("signed-in cookies");
+    await expect(readFile(join(userDataDir, "Default", "Login Data"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      readFile(join(userDataDir, "Default", "Local Storage", "000003.log")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
+    // Without one: a blank profile.
+    await earlier();
+    expect(await prepareBrowserProfile(readBrowserdConfig(env))).toBe(false);
+    await expect(readFile(join(userDataDir, "Default", "Cookies"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(userDataDir, "Default", "Login Data"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(join(userDataDir, "recordings", "run.mp4"), "utf8")).toBe("an earlier run's video");
+  });
+
+  it("keeps an earlier boot's profile when a fresh one isn't asked for", async () => {
+    const { userDataDir } = await fixture();
+    await mkdir(join(userDataDir, "Default"), { recursive: true });
+    await writeFile(join(userDataDir, "Default", "Login Data"), "the person's sign-ins");
+    expect(
+      await prepareBrowserProfile(
+        readBrowserdConfig({ MCPJAM_BROWSERD_USER_DATA_DIR: userDataDir, MCPJAM_BROWSERD_TOKEN: "test-token" }),
+      ),
+    ).toBe(false);
+    expect(await readFile(join(userDataDir, "Default", "Login Data"), "utf8")).toBe("the person's sign-ins");
+  });
+
   it("does nothing without an archive", async () => {
     expect(await prepareBrowserProfile({ userDataDir: "/unused" })).toBe(false);
   });

@@ -335,6 +335,11 @@ export interface EnsureBrowserSessionArgs {
   logicalSessionId?: string;
   /** Saved profile bytes to apply only if this ensure has to boot a daemon. */
   profileArchive?: Uint8Array;
+  /**
+   * If this ensure has to boot a daemon, start it from an empty profile (then
+   * `profileArchive`, if any), not whatever an earlier boot left on the box.
+   */
+  freshProfile?: boolean;
   signal?: AbortSignal;
 }
 
@@ -1505,6 +1510,7 @@ async function bootAndPublish<THandle>(
     sandbox: SessionSandbox;
     contextMode: BrowserContextMode;
     profileArchive?: Uint8Array;
+    freshProfile?: boolean;
     networkPolicy?: "public";
     /** Re-read the store for THIS target and verify what comes back. */
     reuseAgain: () => Promise<THandle | null>;
@@ -1537,6 +1543,7 @@ async function bootAndPublish<THandle>(
       ...(args.profileArchive
         ? { profileArchivePath: BROWSERD_PROFILE_ARCHIVE_PATH }
         : {}),
+      ...(args.freshProfile ? { freshProfile: true } : {}),
       ...(args.networkPolicy ? { networkPolicy: args.networkPolicy } : {}),
       // Applied to BOTH targets: a per-run desktop box has a display for the
       // same reason a computer does, and `hostedDisplayEnv` already keeps the
@@ -1616,6 +1623,7 @@ async function ensureOnSandbox(
     | "signal"
     | "logicalSessionId"
     | "profileArchive"
+    | "freshProfile"
     | "expectedExistingBootId"
     | "networkPolicy"
   > &
@@ -1808,6 +1816,7 @@ async function ensureOnSandbox(
         contextMode,
         diagnostics,
         ...(args.profileArchive ? { profileArchive: args.profileArchive } : {}),
+        ...(args.freshProfile ? { freshProfile: true } : {}),
         ...(args.networkPolicy ? { networkPolicy: args.networkPolicy } : {}),
         reuseAgain,
         publish: async (booted) => {
@@ -1902,7 +1911,11 @@ async function ensureOnComputer(
   // function cannot accidentally reserve anything.
   args: Pick<
     EnsureBrowserSessionArgs,
-    "signal" | "logicalSessionId" | "profileArchive" | "expectedExistingBootId"
+    | "signal"
+    | "logicalSessionId"
+    | "profileArchive"
+    | "freshProfile"
+    | "expectedExistingBootId"
   > &
     Partial<Pick<EnsureBrowserSessionArgs, "bearer" | "projectId">>,
 ): Promise<ComputerHostedBrowserSessionHandle> {
@@ -2129,6 +2142,7 @@ async function ensureOnComputer(
         contextMode,
         diagnostics,
         ...(args.profileArchive ? { profileArchive: args.profileArchive } : {}),
+        ...(args.freshProfile ? { freshProfile: true } : {}),
         reuseAgain: async () =>
           tryReuse(
             deps,
