@@ -352,3 +352,15 @@ describe("era blindness", () => {
     expect(verified.frontmatter.name).toBe(skill.frontmatter.name);
   });
 });
+
+describe("the climb skill", () => {
+  it("is served, and says what never to read", async () => {
+    const { buildSkillsBundle, WORKER_SKILL_ROOTS } = await import("../scripts/generate-skills-bundle.mjs");
+    expect(WORKER_SKILL_ROOTS).toContain("skills/climb-an-mcp-server");
+    const bundle = buildSkillsBundle(["skills/climb-an-mcp-server"]);
+    const text = JSON.stringify(bundle);
+    expect(text).toContain("climb-an-mcp-server");
+    expect(text).toContain("Never open a validation run");
+    expect(text).toContain("Never read their prompts");
+  });
+});

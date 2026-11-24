@@ -90,6 +90,9 @@ export const WORKER_SKILL_ROOTS = [
   // looks for reference material.
   "skills/user-value-chain-glossary",
   "skills/mcpjam-eval-import",
+  // How to run a climb with the climb tools this server exposes: the method,
+  // and what never to read (validation transcripts, confirmation cases).
+  "skills/climb-an-mcp-server",
   "sdk/skills/create-mcp-eval",
   "sdk/skills/explore-to-sdk-evals",
 ];
