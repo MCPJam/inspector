@@ -29,7 +29,7 @@
  *   paginated inside `RunSessionsView` (per expanded run) and there is no
  *   top-level "selected session"; an agent tool couldn't resolve one without a
  *   large lift of run/session state that would diverge the snapshot from the
- *   multi-card view. The human uses the in-view "Promote to test case" button.
+ *   multi-card view. The human uses the in-view "Save as test case" button.
  * - **Host CRUD is OUT of v1.** Journeys attach existing project hosts; create
  *   / edit / delete hosts live on Connect. The snapshot still surfaces host
  *   TARGETS (names) via the journey→hosts mapping.
