@@ -155,7 +155,7 @@
               {
                 "group": "Enterprise admin",
                 "icon": "building-2",
-                "pages": ["hosted/sso", "hosted/network"]
+                "pages": ["hosted/sso", "hosted/entra-id", "hosted/network"]
               },
               "inspector/telemetry-privacy"
             ]
