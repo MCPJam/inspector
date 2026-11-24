@@ -106,8 +106,8 @@ export function PausedPaneOverlay({
  * A hosted pane that can show its desktop paused.
  *
  * While paused the overlay covers it, and a key press wakes the desktop
- * instead of reaching the pane. While awake, `onInput` hears every press and
- * click on its way through.
+ * instead of reaching the pane. While awake, `onInput` hears every press,
+ * click and scroll on its way through.
  */
 export function PausablePane({
   state,
@@ -130,6 +130,7 @@ export function PausablePane({
     <div
       className={cn("relative", className)}
       onPointerDownCapture={state === "awake" ? onInput : undefined}
+      onWheelCapture={state === "awake" ? onInput : undefined}
       onKeyDownCapture={(event) => {
         if (state === "awake") {
           onInput?.();

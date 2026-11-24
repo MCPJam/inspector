@@ -62,6 +62,15 @@ export const ANALYTICS_EVENTS = {
   // `run_source` saying where the run came from. Hosted server runs go
   // through the SDK, so the app has no `_server` twin.
   conformance_run_triggered: { source: "client" },
+  conformance_tab_viewed: { source: "client" },
+  // A UI run this page saw finish; outcome is passed | failed | incomplete.
+  conformance_run_completed: { source: "client" },
+  // --- GitHub star ask (github-star-prompt.ts), once per browser ---
+  github_star_prompt_shown: { source: "client" },
+  github_star_prompt_clicked: { source: "client" },
+  github_star_prompt_dismissed: { source: "client" },
+  // The Star button itself; location is header | settings.
+  github_star_button_clicked: { source: "client" },
 
   // --- Public API agent surface (server-authoritative; no client twin) ---
   api_agent_turn_completed: { source: "server" },
@@ -184,6 +193,9 @@ export const ANALYTICS_EVENTS = {
   app_builder_tab_viewed: { source: "client" },
   app_builder_tool_executed: { source: "client" },
   app_launched: { source: "client" },
+  // Sent before any actor is known; see the strict catalog entries.
+  app_startup_started: { source: "client" },
+  app_startup_blocked: { source: "client" },
   cancel_button_clicked: { source: "client" },
   chat_attachment_button_clicked: { source: "client" },
   chat_cleared: { source: "client" },
@@ -429,6 +441,7 @@ export const ANALYTICS_EVENTS = {
    */
   oauth_callback_no_session_recovery: { source: "client" },
   oauth_debugger_error_boundary: { source: "client" },
+  oauth_flow_completed: { source: "client" },
   oauth_flow_tab_next_step_button_clicked: { source: "client" },
   oauth_flow_tab_viewed: { source: "client" },
   ollama_running: { source: "client" },
@@ -448,6 +461,12 @@ export const ANALYTICS_EVENTS = {
   first_run_onboarding_connection_started: { source: "client" },
   first_run_onboarding_connection_succeeded: { source: "client" },
   first_run_onboarding_connection_failed: { source: "client" },
+  // Home setup checklist (BA-10): `step`, `action`, `variant`, optional
+  // `error_slug`, `already_done`, `rest`, and `agent` on onboard_agent copied.
+  // Connect actions include `demo_started` for the Excalidraw demo server.
+  home_checklist_step: { source: "client" },
+  // `outcome` completed | skipped, `done_count`, `already_done`.
+  home_checklist_finished: { source: "client" },
   first_run_onboarding_connection_cancelled: { source: "client" },
   first_run_onboarding_setup_later_clicked: { source: "client" },
   first_run_onboarding_playground_opened: { source: "client" },

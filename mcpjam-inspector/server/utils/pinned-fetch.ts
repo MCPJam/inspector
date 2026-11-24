@@ -34,6 +34,7 @@ import {
   OAuthProxyError,
 } from "@mcpjam/sdk/oauth/node";
 import { HOSTED_MODE } from "../config.js";
+import { withDefaultUserAgent } from "./outbound-user-agent.js";
 import {
   BlockedEgressTargetError,
   EgressResolutionError,
@@ -534,8 +535,7 @@ export function createStreamingPinnedFetch(
 ): typeof fetch {
   const hosted = options.hosted ?? HOSTED_MODE;
   if (!hosted) {
-    return ((...args: Parameters<typeof fetch>) =>
-      fetch(...args)) as typeof fetch;
+    return withDefaultUserAgent();
   }
 
   const streamingFetch = createPinnedStreamingFetch({

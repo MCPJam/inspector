@@ -79,6 +79,7 @@ import { createSuiteFromPayload } from "./evals/create-suite-from-payload";
 import { useEnvironmentCapabilities } from "@/hooks/use-environment-capabilities";
 import { ConnectedSuitesOverview as SuitesOverview } from "./evaluate/suites-overview";
 import { SuiteListRunReview } from "./evaluate/suite-list-run-review";
+import { useRunSuiteOnArrival } from "./evals/use-run-suite-on-arrival";
 import { ProjectRunsTable } from "./evals/project-runs-table";
 import { stripTimestampSuffix } from "./evals/suite-overview-presentation";
 import { draftTestCaseId, isDraftTestCaseId } from "./evals/draft-test-case";
@@ -421,7 +422,7 @@ function EvaluateTabContent({
       return;
     }
     // Missing from the overview is not yet proof the suite is gone — not
-    // until the suite's OWN query has answered. "Promote to test case" into a
+    // until the suite's OWN query has answered. "Save as test case" into a
     // NEW suite creates it in an action, whose result can reach this client
     // before the overview subscription's update does; and the promote dialog
     // holds that same subscription (same args), so this page can mount on a
@@ -657,6 +658,10 @@ function EvaluateTabContent({
   useEffect(() => {
     if (route.type === "run-detail") setRunReviewSuiteId(null);
   }, [route.type]);
+  useRunSuiteOnArrival(
+    route.type === "list" && visibleSuites.length > 0,
+    setRunReviewSuiteId,
+  );
   const handleSelectSuite = useCallback((suiteId: string) => {
     navigatePlaygroundEvalsRoute({ type: "suite-overview", suiteId });
   }, []);

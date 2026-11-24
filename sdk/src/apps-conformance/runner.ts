@@ -215,7 +215,7 @@ export class MCPAppsConformanceTest {
           }
 
           signal?.throwIfAborted();
-          const { checks, readiness, discovery } = gradeMCPApps({
+          const { checks, readiness, passedAdvice, discovery } = gradeMCPApps({
             tools,
             toolsError,
             resources,
@@ -248,6 +248,7 @@ export class MCPAppsConformanceTest {
               : {}),
             checks,
             ...(readiness.length > 0 ? { readiness } : {}),
+            ...(passedAdvice.length > 0 ? { passedAdvice } : {}),
             summary: buildSummary(checks),
             durationMs: Date.now() - startedAt,
             categorySummary: summarizeChecks(checks),

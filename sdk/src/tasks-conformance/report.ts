@@ -103,6 +103,17 @@ export function mergeTasksConformanceResults(
         !readiness.some((other) => other.id === r.id) &&
         all.findIndex((other) => other.id === r.id) === i
     );
+  // A matrix run can pass advice on one group and miss it on another; the
+  // miss wins, so a pass is listed only where no group warned or went
+  // unchecked.
+  const passedAdvice = results
+    .flatMap((r) => r.passedAdvice ?? [])
+    .filter(
+      (r, i, all) =>
+        !readiness.some((other) => other.id === r.id) &&
+        !uncheckedAdvice.some((other) => other.id === r.id) &&
+        all.findIndex((other) => other.id === r.id) === i
+    );
   const observed =
     results.find((r) => r.discovery.protocolVersion) ?? results[0];
   const discovery = observed?.discovery ?? {
@@ -155,5 +166,6 @@ export function mergeTasksConformanceResults(
     },
     ...(readiness.length ? { readiness } : {}),
     ...(uncheckedAdvice.length ? { uncheckedAdvice } : {}),
+    ...(passedAdvice.length ? { passedAdvice } : {}),
   };
 }

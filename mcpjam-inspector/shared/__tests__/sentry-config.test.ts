@@ -1048,4 +1048,17 @@ describe("credentials (shared/credential-urls.ts) on every Sentry hook", () => {
       "GET /api/web/projects",
     );
   });
+
+  it("a web connector's request on the server", () => {
+    const out = scrubSentryCredentials({
+      transaction: `POST /mcp/${SECRET}`,
+      request: { url: `https://tunnel.example.com/mcp/${SECRET}` },
+      breadcrumbs: [{ message: "GET /api/mcp/servers 200" }],
+    });
+    expect(JSON.stringify(out)).not.toContain(SECRET);
+    expect(out?.breadcrumbs[0]?.message).toBe("GET /api/mcp/servers 200");
+    expect(sentryTransactionTemplate(`POST /mcp/${SECRET}`)).toBe(
+      "POST /mcp/:connectorId",
+    );
+  });
 });

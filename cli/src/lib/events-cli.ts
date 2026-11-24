@@ -1,5 +1,5 @@
 /**
- * Shared plumbing for `mcpjam events` (MCP Events, draft@28ec35e).
+ * Shared plumbing for `mcpjam events`.
  *
  * The protocol lives in the SDK: `@mcpjam/sdk/events` owns the wire schemas,
  * the coordinator (every lifecycle transition), the profiles and the in-memory
@@ -14,7 +14,7 @@
  *   anyway, because a misbehaving server can quote a secret back inside an
  *   error message, and that sentence is exactly what a CLI prints.
  * - **Advertise = enforce.** `events/*` is not sent to a server that did not
- *   declare `capabilities.events` unless `--force` says so (the SDK's
+ *   declare the selected Events capability unless `--force` says so (the SDK's
  *   `allowUndeclared`), and the refusal is a usage-class exit (2).
  */
 
@@ -29,10 +29,12 @@ import {
   type MCPServerConfig,
 } from "@mcpjam/sdk";
 import {
+  BETA_PROFILE_ID,
   CHATGPT_2026_09_30_PROFILE_ID,
   CHATGPT_PROFILE_ID,
   DRAFT_PROFILE_ID,
   getEventsProfile,
+  hasEventsProfileCapability,
   type EventsProfile,
   type EventsProfileId,
 } from "@mcpjam/sdk/events";
@@ -41,6 +43,8 @@ import { parseJsonRecord } from "./server-config.js";
 
 /** The short `--profile` names and the dated profile ids they select. */
 export const EVENTS_PROFILE_ALIASES: Readonly<Record<string, EventsProfileId>> = {
+  beta: BETA_PROFILE_ID,
+  [BETA_PROFILE_ID]: BETA_PROFILE_ID,
   draft: DRAFT_PROFILE_ID,
   chatgpt: CHATGPT_PROFILE_ID,
   [DRAFT_PROFILE_ID]: DRAFT_PROFILE_ID,
@@ -53,7 +57,7 @@ export function parseEventsProfile(value: string | undefined): EventsProfile {
   const id = EVENTS_PROFILE_ALIASES[key];
   if (!id) {
     throw usageError(
-      `Unknown --profile "${key}". Use "draft" (${DRAFT_PROFILE_ID}) or "chatgpt" (${CHATGPT_PROFILE_ID}).`,
+      `Unknown --profile "${key}". Use "beta" (${BETA_PROFILE_ID}), "draft" (${DRAFT_PROFILE_ID}) or "chatgpt" (${CHATGPT_PROFILE_ID}).`,
     );
   }
   return getEventsProfile(id);
@@ -110,9 +114,10 @@ export function applyEventsProtocolVersion(
 export function eventsNotDeclaredError(
   support: EventsSupport,
   serverLabel: string,
+  placement = "capabilities.events",
 ): CliError {
   const reason = support.handshakeObserved
-    ? "the server did not declare `capabilities.events` in its handshake"
+    ? `the server did not declare \`${placement}\` in its handshake`
     : "the server's handshake was not observed on this connection, so its events capability is unknown";
   return cliError(
     "EVENTS_NOT_DECLARED",
@@ -130,13 +135,14 @@ export function eventsNotDeclaredError(
 export function assertEventsDeclaredOrForced(
   manager: MCPClientManager,
   serverId: string,
-  args: { force?: boolean; serverLabel: string; warn: (message: string) => void },
+  args: { profile: EventsProfile; force?: boolean; serverLabel: string; warn: (message: string) => void },
 ): EventsSupport {
   const support = manager.getEventsSupport(serverId);
-  if (!support.declared) {
-    if (!args.force) throw eventsNotDeclaredError(support, args.serverLabel);
+  if (!hasEventsProfileCapability(support, args.profile.id)) {
+    const placement = args.profile.capabilityPlacement.value;
+    if (!args.force) throw eventsNotDeclaredError(support, args.serverLabel, placement);
     args.warn(
-      "Warning: the server did not declare `capabilities.events`; sending events/* anyway because of --force.",
+      `Warning: the server did not declare \`${placement}\`; sending events/* anyway because of --force.`,
     );
   }
   return support;
@@ -180,7 +186,7 @@ export async function listAllServerEvents(
 
 /**
  * Map an SDK/server failure from an `events/*` request onto a CLI error: the
- * draft's error codes (`-32011`…`-32015`) get a stable `EVENTS_*` code, the
+ * negotiated profile's errors get a stable `EVENTS_*` code, the
  * manager's own "not declared" refusal is exit 2, and every message is
  * scrubbed of secrets. Anything else is left for `normalizeCliError`.
  */
@@ -233,7 +239,7 @@ export interface CallbackUrlCheck {
 }
 
 /**
- * The draft makes `https` a MUST for callback URLs. Plain http is accepted
+ * MCP Events makes `https` a MUST for callback URLs. Plain http is accepted
  * only behind an explicit flag, and only ever as a labelled development mode.
  */
 export function checkCallbackUrl(
@@ -252,7 +258,7 @@ export function checkCallbackUrl(
   }
   if (!args.allowInsecure) {
     throw usageError(
-      `${args.flag} must be https:// — the MCP Events draft requires https callback URLs. ` +
+      `${args.flag} must be https:// — MCP Events requires HTTPS callback URLs. ` +
         `Pass ${args.insecureFlag} to use plain http for local development (NON-CONFORMANT; never a conformance pass).`,
     );
   }
@@ -262,7 +268,7 @@ export function checkCallbackUrl(
 export function insecureModeWarning(flag: string, url: string): string {
   return (
     `WARNING: ${flag} is a NON-CONFORMANT development mode. The callback URL ${url} is plain http; ` +
-    "the MCP Events draft requires https, so a conformant server must refuse it. " +
+    "MCP Events requires HTTPS, so a conformant server must refuse it. " +
     "Results from this mode never count as a conformance pass."
   );
 }
