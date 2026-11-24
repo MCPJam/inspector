@@ -179,6 +179,24 @@ export function EventsTab({
     });
   }, []);
 
+  // An action's response is the subscription as it was when the request was
+  // handled. The stream has often delivered a newer state for the same
+  // generation by then, so a response only lands when it is newer.
+  const upsertFromResponse = useCallback(
+    (subscription: EventsSubscriptionView) => {
+      setLocalSubscriptions((previous) => {
+        const current = previous.get(subscription.id);
+        if (current && current.generation >= subscription.generation) {
+          return previous;
+        }
+        const next = new Map(previous);
+        next.set(subscription.id, subscription);
+        return next;
+      });
+    },
+    [],
+  );
+
   useEffect(() => {
     if (hosted || !serverName || !declared) return;
     let cancelled = false;
@@ -423,7 +441,7 @@ export function EventsTab({
               ? { overrides: ["insecure-local-receiver" as const] }
               : {}),
           });
-          upsertLocal([subscription]);
+          upsertFromResponse(subscription);
         },
       });
       toast.success(`Subscribed to ${event.name}`);
@@ -450,12 +468,12 @@ export function EventsTab({
               });
             },
             local: async () => {
-              upsertLocal([
+              upsertFromResponse(
                 await setLocalEventSubscriptionState(
                   subscription.id,
                   action.desiredState,
                 ),
-              ]);
+              );
             },
           });
           break;
@@ -465,9 +483,9 @@ export function EventsTab({
               await requestHostedRotation({ subscriptionId: subscription.id });
             },
             local: async () => {
-              upsertLocal([
+              upsertFromResponse(
                 await rotateLocalEventSubscriptionSecret(subscription.id),
-              ]);
+              );
             },
           });
           toast.success("Secret rotation requested");

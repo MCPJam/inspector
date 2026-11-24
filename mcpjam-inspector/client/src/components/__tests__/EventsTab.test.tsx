@@ -266,9 +266,12 @@ describe("EventsTab (local)", () => {
     const repo = await screen.findByPlaceholderText("Enter repo");
     fireEvent.change(repo, { target: { value: "octo/hello" } });
     expect(screen.getByRole("radio", { name: /Poll/ })).toBeChecked();
-    fireEvent.change(screen.getByLabelText("Maximum event age in ms (optional)"), {
-      target: { value: "60000" },
-    });
+    fireEvent.change(
+      screen.getByLabelText("Maximum event age in ms (optional)"),
+      {
+        target: { value: "60000" },
+      },
+    );
     fireEvent.click(screen.getByRole("checkbox", { name: /No expiry/ }));
     fireEvent.click(screen.getByRole("button", { name: /Subscribe/ }));
 
@@ -595,8 +598,13 @@ describe("EventsTab (local)", () => {
   it("pauses a subscription through the local route", async () => {
     mockLoadEventsCatalog.mockResolvedValue(catalog([issueCreated]));
     mockListLocal.mockResolvedValue([subscriptionView()]);
+    // A desired-state change bumps the generation, as the runtime does.
     mockSetLocalState.mockResolvedValue(
-      subscriptionView({ desiredState: "paused", observedState: "paused" }),
+      subscriptionView({
+        generation: 3,
+        desiredState: "paused",
+        observedState: "paused",
+      }),
     );
     renderTab();
 
@@ -766,5 +774,49 @@ describe("EventsTab (local)", () => {
 
     await waitFor(() => expect(mockLoadEventsCatalog).toHaveBeenCalledTimes(2));
     expect(screen.getByPlaceholderText("Enter repo")).toHaveValue("octo/hello");
+  });
+
+  it("keeps the newer streamed state when an action's response arrives late", async () => {
+    mockLoadEventsCatalog.mockResolvedValue(catalog([issueCreated]));
+    mockListLocal.mockResolvedValue([subscriptionView({ generation: 2 })]);
+    let respond: (view: EventsSubscriptionView) => void = () => undefined;
+    mockSetLocalState.mockImplementation(
+      () =>
+        new Promise<EventsSubscriptionView>((resolve) => {
+          respond = resolve;
+        }),
+    );
+    renderTab();
+
+    const card = await screen.findByTestId("subscription-esub_1");
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    fireEvent.click(within(card).getByRole("button", { name: /Pause/ }));
+    await waitFor(() => expect(mockSetLocalState).toHaveBeenCalled());
+
+    // The stream reports the pause before the request returns...
+    emitFrame({
+      type: "subscription",
+      subscription: subscriptionView({
+        generation: 3,
+        desiredState: "paused",
+        observedState: "paused",
+      }),
+    });
+    expect(within(card).getByTestId("observed-state")).toHaveTextContent(
+      "Paused",
+    );
+    // ...and the response, as of when the request was handled, is older.
+    await act(async () => {
+      respond(
+        subscriptionView({
+          generation: 3,
+          desiredState: "paused",
+          observedState: "active",
+        }),
+      );
+    });
+    expect(within(card).getByTestId("observed-state")).toHaveTextContent(
+      "Paused",
+    );
   });
 });

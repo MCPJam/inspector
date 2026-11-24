@@ -212,9 +212,11 @@ function SubscriptionCard({
         <Field label="Server subscription id">
           {subscription.serverSubscriptionId ?? "none yet"}
         </Field>
-        <Field label="Refresh before">
-          {formatCountdown(subscription.refreshBefore, now)}
-        </Field>
+        {isWebhook ? (
+          <Field label="Refresh before">
+            {formatCountdown(subscription.refreshBefore, now)}
+          </Field>
+        ) : null}
         <Field label="cursor">
           {replayUnsupported(subscription)
             ? "null (replay not supported)"
