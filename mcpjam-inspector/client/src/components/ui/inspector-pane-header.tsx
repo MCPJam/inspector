@@ -13,6 +13,8 @@ export interface InspectorPaneTab<T extends string> {
 /**
  * The header row of an inspector left pane (Tools, Events): tabs on the
  * left, small icon actions beside them, and one primary action on the right.
+ * In a narrow pane the tabs scroll sideways, so the actions stay in view and
+ * the row never makes the pane wider than it is.
  *
  * It owns layout and tab semantics only. Each caller supplies its own
  * actions, so running, saving and subscribing stay with the pane that knows
@@ -62,11 +64,11 @@ export function InspectorPaneHeader<T extends string>({
 
   return (
     <div className="border-b border-border flex-shrink-0">
-      <div className="px-2 py-2 flex items-center gap-2">
+      <div className="px-2 py-2 flex min-w-0 items-center gap-2">
         <div
           role="tablist"
           aria-label={ariaLabel}
-          className="flex items-center gap-1.5"
+          className="flex min-w-0 items-center gap-1.5 overflow-x-auto [scrollbar-width:none]"
           onKeyDown={onKeyDown}
         >
           {tabs.map((tab) => {
@@ -84,7 +86,7 @@ export function InspectorPaneHeader<T extends string>({
                 tabIndex={selected ? 0 : -1}
                 onClick={() => onTabChange(tab.id)}
                 className={cn(
-                  "px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer",
+                  "shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer",
                   selected
                     ? "bg-primary/10 text-primary"
                     : "text-muted-foreground hover:text-foreground",
@@ -105,12 +107,14 @@ export function InspectorPaneHeader<T extends string>({
         </div>
 
         {secondaryActions ? (
-          <div className="flex items-center gap-0.5 text-muted-foreground/80">
+          <div className="flex shrink-0 items-center gap-0.5 text-muted-foreground/80">
             {secondaryActions}
           </div>
         ) : null}
 
-        {primaryAction ? <div className="ml-auto">{primaryAction}</div> : null}
+        {primaryAction ? (
+          <div className="ml-auto shrink-0">{primaryAction}</div>
+        ) : null}
       </div>
     </div>
   );
