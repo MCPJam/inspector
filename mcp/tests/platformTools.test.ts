@@ -855,6 +855,18 @@ describe("platform tool registration", () => {
       expect(annotationsOf(name)?.openWorldHint, name).toBe(true);
     }
 
+    // Climbs: the reads stay inside MCPJam; the operations that launch paid runs
+    // against the real server, and the stop that cancels a round, are not additive.
+    for (const name of ["get_climb", "list_climbs", "get_climb_round"]) {
+      expect(annotationsOf(name), name).toMatchObject({ readOnlyHint: true });
+    }
+    for (const name of ["start_climb", "submit_climb_round", "stop_climb"]) {
+      expect(annotationsOf(name), name).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+      expect(annotationsOf(name)?.openWorldHint, name).toBe(true);
+    }
+    expect(annotationsOf("update_climb")).toMatchObject({ readOnlyHint: false });
+    expect(annotationsOf("set_climb_round_decision")).toMatchObject({ readOnlyHint: false });
+
     // Server accounts: the reads stay inside MCPJam; the delete asks the
     // token's issuer to revoke it, and a second delete answers not found.
     for (const name of ["list_server_accounts", "get_server_account"]) {
