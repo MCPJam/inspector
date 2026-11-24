@@ -114,6 +114,8 @@ const PINNED_HOSTED_CRITERION_IDS: Record<string, string> = {
   "toolNeverCalled — namespaced": "toolNeverCalled-0405b542932e",
   "firstToolWas — minimal (Phase 2 NEW)": "firstToolWas-3f689e7534ff",
   "firstToolWas — namespaced": "firstToolWas-faa3941fa463",
+  "inputAnswered — minimal (any question)": "inputAnswered-0b70817a1fef",
+  "inputAnswered — server, tool, message and reply": "inputAnswered-15ae3854db37",
   "responseContains — caseSensitive true (2)": "responseContains-9a40ccf7b841",
   "responseMatches — minimal regex (2)": "responseMatches-fab1d18c0181",
   "responseMatches — character class regex": "responseMatches-5f159fe0cbd8",

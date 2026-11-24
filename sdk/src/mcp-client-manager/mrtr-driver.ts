@@ -382,11 +382,15 @@ function buildRetryParams(
  */
 export function validateInputRequests(
   inputRequests: InputRequests,
-  supportedModes: readonly ElicitationMode[] = SUPPORTED_ELICITATION_MODES
+  supportedModes: readonly ElicitationMode[] = SUPPORTED_ELICITATION_MODES,
+  allowSampling = false
 ): void {
   for (const key of Object.keys(inputRequests)) {
     const req = inputRequests[key] as { method?: string; params?: Record<string, unknown> };
     const method = req?.method;
+    // Sampling is let through only when this connection declared it and has an
+    // answerer; roots never are.
+    if (method === "sampling/createMessage" && allowSampling) continue;
     if (method === "roots/list" || method === "sampling/createMessage") {
       throw new MrtrUndeclaredInputError(
         method,
@@ -502,6 +506,13 @@ export function initInputRequiredState(args: {
  * local-pending window (input collection) is the caller's concern. On abort the
  * caller's `AbortError` propagates — it is never converted to a decline.
  */
+/**
+ * Whether an embedded `sampling/createMessage` may be handed to the collector.
+ * False unless the connection declared sampling and something answers it, so a
+ * server that embeds one anyway is still refused on the result.
+ */
+export type MrtrAllowSampling = boolean | (() => boolean);
+
 export async function executeInputRequiredLeg<TResult = unknown>(args: {
   sender: MrtrLegSender<TResult>;
   state: MrtrOperationState;
@@ -510,6 +521,7 @@ export async function executeInputRequiredLeg<TResult = unknown>(args: {
   validateContent?: ElicitationContentValidator;
   selectFormSchema?: ElicitationFormSchemaSelector;
   supportedElicitationModes?: MrtrSupportedModes;
+  allowSampling?: MrtrAllowSampling;
 }): Promise<MrtrLegResult<TResult>> {
   const {
     sender,
@@ -573,7 +585,13 @@ export async function executeInputRequiredLeg<TResult = unknown>(args: {
       ? supportedElicitationModes()
       : supportedElicitationModes;
   // Validate the ENTIRE map before returning (no UI is shown for a bad round).
-  validateInputRequests(inputRequests, resolvedModes);
+  validateInputRequests(
+    inputRequests,
+    resolvedModes,
+    typeof args.allowSampling === "function"
+      ? args.allowSampling()
+      : args.allowSampling
+  );
 
   const nextState: MrtrOperationState = {
     opId: state.opId,
@@ -605,6 +623,7 @@ export function resumeInputRequiredOperation<TResult = unknown>(
     validateContent?: ElicitationContentValidator;
     selectFormSchema?: ElicitationFormSchemaSelector;
     supportedElicitationModes?: MrtrSupportedModes;
+    allowSampling?: MrtrAllowSampling;
   }
 ): Promise<MrtrLegResult<TResult>> {
   const sender =
@@ -622,6 +641,7 @@ export function resumeInputRequiredOperation<TResult = unknown>(
     validateContent: config?.validateContent,
     selectFormSchema: config?.selectFormSchema,
     supportedElicitationModes: config?.supportedElicitationModes,
+    allowSampling: config?.allowSampling,
   });
 }
 
@@ -654,6 +674,7 @@ export interface RunInputRequiredOptions<TResult = unknown> {
    *  `requestedSchema`. */
   selectFormSchema?: ElicitationFormSchemaSelector;
   supportedElicitationModes?: MrtrSupportedModes;
+  allowSampling?: MrtrAllowSampling;
   /** MCPJam-owned round cap; defaults to {@link DEFAULT_MAX_MRTR_ROUNDS}. */
   maxRounds?: number;
   /** Abort signal for both the wire-active and local-pending windows. */
@@ -701,6 +722,7 @@ export async function runInputRequiredOperation<TResult = unknown>(
     state,
     signal: options.signal,
     supportedElicitationModes: options.supportedElicitationModes,
+    allowSampling: options.allowSampling,
   });
 
   while (leg.status === "input_required") {
@@ -725,6 +747,7 @@ export async function runInputRequiredOperation<TResult = unknown>(
       validateContent: options.validateContent,
       selectFormSchema: options.selectFormSchema,
       supportedElicitationModes: options.supportedElicitationModes,
+      allowSampling: options.allowSampling,
     });
   }
 

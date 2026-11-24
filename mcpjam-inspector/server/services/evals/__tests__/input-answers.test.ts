@@ -20,6 +20,7 @@ import {
   loadInputAnswers,
   loadPinnedInputAnswers,
   withToolCallScope,
+  type ModelRequestAnswerer,
 } from "../input-answers.js";
 
 const answers: InputAnswer[] = [
@@ -319,7 +320,9 @@ describe.each(["2025-06-18", "2026-07-28"])(
 
     it("declines when no reply was set and says so", async () => {
       const { result, resolver } = await run([]);
-      expect(result.content).toEqual([{ type: "text", text: "decline {{steps.sure.content.sure}}" }]);
+      expect(result.content).toEqual([
+        { type: "text", text: "decline {{steps.sure.content.sure}}" },
+      ]);
       expect(resolver.exchanges[0]).toMatchObject({
         action: "decline",
         note: expect.stringContaining("no reply was set"),
@@ -327,3 +330,155 @@ describe.each(["2025-06-18", "2026-07-28"])(
     });
   },
 );
+
+const asksModel = resolvedMock({
+  baseServerId: undefined,
+  definition: {
+    tools: {
+      summarize: {
+        inputSchema: {
+          type: "object",
+          properties: { file: { type: "string" } },
+        },
+        answer: {
+          from: "saved",
+          cases: [
+            {
+              steps: [
+                {
+                  kind: "sample",
+                  id: "gist",
+                  prompt: "Summarize {{input.file}} in one line.",
+                  systemPrompt: "You are terse.",
+                  maxTokens: 40,
+                },
+              ],
+              result: {
+                content: [{ type: "text", text: "gist: {{steps.gist.text}}" }],
+              },
+            },
+          ],
+        },
+      },
+    },
+  },
+});
+
+describe.each(["2025-06-18", "2026-07-28"])(
+  "a request for the model from a mock, answered by the iteration's model (revision %s)",
+  (version) => {
+    let stub: ReturnType<typeof stubRealServer>;
+    beforeEach(() => {
+      stub = stubRealServer();
+    });
+    afterEach(async () => {
+      await mockConnectionPool.clear();
+    });
+
+    async function run(answerModel?: ModelRequestAnswerer) {
+      const resolver = createInputAnswerResolver({ answers: [] });
+      const sessions = createMockSessionMap();
+      const deps = {
+        open: stub.open,
+        resolve: vi.fn(async () => asksModel),
+        sessions,
+      };
+      // Registered before connect, as `createAuthorizedManager` does.
+      const manager = new MCPClientManager();
+      manager.setElicitationCallback(resolver.elicitationCallback);
+      manager.setSamplingCallback(resolver.samplingCallback);
+      manager.setMrtrInputCollector("mock", resolver.collectorFor("mock"));
+      await manager.connectToServer("mock", {
+        url: "https://mock.mcpjam.invalid/mock1",
+        mcpProtocolVersion: version,
+        baseFetch: (input, init) =>
+          serveMock(new Request(input as string, init), "mock1", door, deps),
+      } as never);
+      try {
+        const result = (await withToolCallScope(
+          { tool: "summarize", answerModel },
+          () => manager.executeTool("mock", "summarize", { file: "notes.md" }),
+        )) as { content: Array<{ text: string }> };
+        return { result, resolver };
+      } finally {
+        await manager.disconnectAllServers();
+        await sessions.closeAll();
+      }
+    }
+
+    it("sends the server's words to the run's model and gives its text back", async () => {
+      const asked: unknown[] = [];
+      const { result, resolver } = await run(async (request) => {
+        asked.push(request);
+        return { text: "It is about cats.", model: "iteration-model" };
+      });
+      expect(result.content).toEqual([
+        { type: "text", text: "gist: It is about cats." },
+      ]);
+      expect(asked).toEqual([
+        expect.objectContaining({
+          system: "You are terse.",
+          prompt: "Summarize notes.md in one line.",
+        }),
+      ]);
+      expect(resolver.exchanges).toEqual([
+        expect.objectContaining({
+          kind: "model_request",
+          tool: "summarize",
+          action: "answered",
+          content: { text: "It is about cats.", model: "iteration-model" },
+        }),
+      ]);
+    });
+
+    it("says the run has no model to give when the call runs under none", async () => {
+      const outcome = await run(undefined).then(
+        (done) => ({ done }),
+        (error: Error) => ({ error }),
+      );
+      if (version === "2026-07-28") {
+        // The collector refuses, so the call fails with the words.
+        expect(outcome).toMatchObject({
+          error: { message: expect.stringContaining("has none to give") },
+        });
+      } else {
+        // The server SDK's session shim turns the client's refusal into a tool error.
+        expect(outcome).toMatchObject({ done: { result: { isError: true } } });
+      }
+    });
+  },
+);
+
+describe("the iteration's model", () => {
+  it("is asked as the person who runs the eval, with the iteration's model and not MCPJam's own", async () => {
+    const ask = vi.fn(async () => ({ text: "ok", model: "iter-model" }));
+    const hostedModelCaller = vi.fn(() => ask);
+    vi.resetModules();
+    vi.doMock("../../mock/model-call.js", () => ({ hostedModelCaller }));
+    const { iterationModelAnswerer } =
+      await import("../iteration-model-answer.js");
+    const definition = { id: "iter-model", provider: "anthropic" } as never;
+    const answer = iterationModelAnswerer({
+      bearer: "Bearer tok-1",
+      projectId: "proj1",
+      definition,
+      modelId: "iter-model",
+    });
+    expect(await answer({ prompt: "Hi" })).toEqual({
+      text: "ok",
+      model: "iter-model",
+    });
+    expect(hostedModelCaller).toHaveBeenCalledWith({
+      bearerToken: "tok-1",
+      projectId: "proj1",
+      model: { definition, id: "iter-model" },
+    });
+    expect(ask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: "Hi",
+        system: expect.stringContaining("MCP server"),
+      }),
+    );
+    vi.doUnmock("../../mock/model-call.js");
+  });
+});

@@ -928,6 +928,49 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                 kind: { not: {} },
                                 type: {
                                   type: "string",
+                                  const: "inputAnswered",
+                                },
+                                server: { type: "string", minLength: 1 },
+                                tool: { type: "string", minLength: 1 },
+                                message: { type: "string", minLength: 1 },
+                                action: {
+                                  type: "string",
+                                  enum: [
+                                    "accept",
+                                    "decline",
+                                    "cancel",
+                                    "answered",
+                                  ],
+                                },
+                                content: {
+                                  type: "object",
+                                  propertyNames: { type: "string" },
+                                  additionalProperties: {
+                                    anyOf: [
+                                      { type: "string" },
+                                      { type: "number" },
+                                      { type: "boolean" },
+                                      {
+                                        type: "array",
+                                        items: { type: "string" },
+                                      },
+                                    ],
+                                  },
+                                },
+                                role: {
+                                  type: "string",
+                                  enum: ["gating", "advisory", "required"],
+                                },
+                                severity: { type: "string", const: "warn" },
+                              },
+                              required: ["type"],
+                            },
+                            {
+                              type: "object",
+                              properties: {
+                                kind: { not: {} },
+                                type: {
+                                  type: "string",
                                   const: "responseMatches",
                                 },
                                 pattern: { type: "string", minLength: 1 },
@@ -1645,6 +1688,37 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "needle"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "inputAnswered" },
+                    server: { type: "string", minLength: 1 },
+                    tool: { type: "string", minLength: 1 },
+                    message: { type: "string", minLength: 1 },
+                    action: {
+                      type: "string",
+                      enum: ["accept", "decline", "cancel", "answered"],
+                    },
+                    content: {
+                      type: "object",
+                      propertyNames: { type: "string" },
+                      additionalProperties: {
+                        anyOf: [
+                          { type: "string" },
+                          { type: "number" },
+                          { type: "boolean" },
+                          { type: "array", items: { type: "string" } },
+                        ],
+                      },
+                    },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
                 },
                 {
                   type: "object",

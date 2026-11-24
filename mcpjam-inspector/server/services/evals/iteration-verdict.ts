@@ -68,6 +68,8 @@ export interface EvalIterationVerdictInput {
   trace: FinalizeTrace;
   usage: TranscriptArgs["usage"];
   renderObservations: TranscriptArgs["renderObservations"];
+  /** What servers asked during the iteration, and the replies given; the caller reads them from the iteration. */
+  inputExchanges?: TranscriptArgs["inputExchanges"];
   /** Pinned tool errors threaded into the case-predicate transcript. */
   toolErrors?: ToolErrorRecord[];
   /**
@@ -164,6 +166,8 @@ export function buildEvalIterationVerdict(
           toolCalls: evaluation.toolsCalled,
           usage: input.usage,
           renderObservations: input.renderObservations,
+          // What servers asked during this iteration, and what the run answered.
+          ...(input.inputExchanges ? { inputExchanges: input.inputExchanges } : {}),
           // Pinned turns have no trace; thread their tool errors explicitly.
           ...(input.toolErrors !== undefined
             ? { toolErrors: input.toolErrors }

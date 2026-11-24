@@ -1,4 +1,5 @@
 import { withToolCallScope } from "./input-answers.js";
+import type { ModelRequestAnswerer } from "./input-answers.js";
 import { exchangeSpan } from "../../../shared/eval-input-exchange.js";
 import { toolOrigin } from "@/shared/tool-origin";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
@@ -89,6 +90,8 @@ export type AiSdkEvalTraceContext = {
   prepareStepEverCalled: boolean;
   lastStepClosedEndAt: number;
   recordedResponseMessageCount: number;
+  /** Answers a server's request for the iteration's model; set by the turn that knows the model. */
+  answerModelRequest?: ModelRequestAnswerer;
 };
 
 type BackendStepToolPhase = {
@@ -298,6 +301,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
             {
               tool: name,
               serverId,
+              answerModel: ctx.answerModelRequest,
               record: (exchange) => {
                 const at = Date.now();
                 ctx.recordedSpans.push(

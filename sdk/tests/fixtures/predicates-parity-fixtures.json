@@ -985,6 +985,25 @@
         "role": "advisory",
         "severity": "warn"
       }
+    },
+    {
+      "label": "inputAnswered — minimal (any question)",
+      "value": {
+        "type": "inputAnswered"
+      }
+    },
+    {
+      "label": "inputAnswered — server, tool, message and reply",
+      "value": {
+        "type": "inputAnswered",
+        "server": "files",
+        "tool": "cleanup",
+        "message": "Delete",
+        "action": "accept",
+        "content": {
+          "sure": true
+        }
+      }
     }
   ],
   "reject": [
@@ -2176,6 +2195,20 @@
         "path": "/a~2"
       },
       "why": "every \"~\" in path must be followed by 0 or 1"
+    },
+    {
+      "label": "inputAnswered — empty message",
+      "value": {
+        "type": "inputAnswered",
+        "message": ""
+      }
+    },
+    {
+      "label": "inputAnswered — action that is not one of the four",
+      "value": {
+        "type": "inputAnswered",
+        "action": "maybe"
+      }
     }
   ]
 }

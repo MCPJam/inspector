@@ -31627,6 +31627,7 @@
                     "fullPageHasContinuation",
                     "responseCloseTo",
                     "responseContains",
+                    "inputAnswered",
                     "responseMatches",
                     "finalAssistantMessageNonEmpty",
                     "tokenBudgetUnder",

@@ -10,6 +10,7 @@ import type {
   ClientOptions,
   ElicitRequest,
   ElicitResult,
+  CreateMessageResult,
   ListTasksResult as BaseListTasksResult,
   RequestOptions,
   SSEClientTransportOptions,
@@ -914,6 +915,19 @@ export type ElicitationCallbackRequest = {
 /**
  * Global callback for handling elicitation requests
  */
+/**
+ * Answers a server's request for the client's model (`sampling/createMessage`),
+ * on revisions before 2026-07-28 as a request to the client and on 2026-07-28
+ * as a request embedded in an `input_required` result. Registering one makes
+ * the connection declare `sampling`.
+ */
+export type SamplingCallback = (request: {
+  serverId: string;
+  /** The request as the server sent it: `messages`, `maxTokens`, `systemPrompt`, and the rest. */
+  params: Record<string, unknown>;
+  signal?: AbortSignal;
+}) => Promise<CreateMessageResult>;
+
 export type ElicitationCallback = (
   request: ElicitationCallbackRequest
 ) => Promise<ElicitResult> | ElicitResult;

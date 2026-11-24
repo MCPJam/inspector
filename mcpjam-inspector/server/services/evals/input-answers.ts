@@ -8,6 +8,7 @@ import {
   type InputAnswer,
 } from "@mcpjam/sdk/contract";
 import type {
+  SamplingCallback,
   ElicitationCallback,
   ElicitationCallbackRequest,
   MrtrInputCollector,
@@ -28,14 +29,41 @@ import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
  * declined and the exchange says no reply was set.
  */
 
+/**
+ * Asks the iteration's own model, as the person who runs the eval, and says
+ * which model answered. It is the run's model, never one the server chose.
+ */
+export type ModelRequestAnswerer = (request: {
+  system?: string;
+  prompt: string;
+  signal?: AbortSignal;
+}) => Promise<{ text: string; model: string }>;
+
 /** The tool call a question belongs to, and where to record the exchange. */
 export interface ToolCallScope {
   tool: string;
   serverId?: string;
   record?: (exchange: InputExchange) => void;
+  /** The model the iteration runs on, when the runner could build an answerer for it. */
+  answerModel?: ModelRequestAnswerer;
 }
 
 const toolCallScope = new AsyncLocalStorage<ToolCallScope>();
+const iterationExchanges = new AsyncLocalStorage<InputExchange[]>();
+
+/**
+ * Runs one iteration so every exchange asked during it is collected, for the
+ * checks that read them. Connections are per run and carry no iteration, so
+ * the iteration's own async chain is what tells them apart.
+ */
+export function runWithIterationExchanges<T>(run: () => T): T {
+  return iterationExchanges.run([], run);
+}
+
+/** The exchanges of the iteration this code is running in; empty outside one. */
+export function currentIterationExchanges(): readonly InputExchange[] {
+  return iterationExchanges.getStore() ?? [];
+}
 
 /**
  * Runs a tool call so a question asked during it knows which tool asked. The
@@ -55,6 +83,8 @@ export interface InputAnswerResolver {
   readonly elicitationCallback: ElicitationCallback;
   /** 2026-07-28: the collector for one server's `input_required` results. */
   collectorFor(serverId: string): MrtrInputCollector;
+  /** Revisions before 2026-07-28: answers a server's request for the run's model. */
+  readonly samplingCallback: SamplingCallback;
   /** Tasks: the same answers, for the task driver's input slot. */
   readonly taskHandlers: TaskInputHandlers;
   /** Names the connection's servers once they are authorized, so a reply can fit on `server`. */
@@ -109,8 +139,50 @@ export function createInputAnswerResolver(
       }),
     };
     exchanges.push(exchange);
+    iterationExchanges.getStore()?.push(exchange);
     scope?.record?.(exchange);
     return reply;
+  }
+
+  /**
+   * A server's request for the model, answered by the iteration's model when
+   * the call it came in is running under one. Recorded as an exchange, so the
+   * trace shows the request and the answer under the tool call.
+   */
+  async function answerModelRequest(
+    serverId: string | undefined,
+    params: Record<string, unknown>,
+    tool?: string,
+    signal?: AbortSignal
+  ): Promise<Record<string, unknown>> {
+    const scope = toolCallScope.getStore();
+    if (!scope?.answerModel) {
+      throw new Error(
+        "A server asked for the run's model, and this run has none to give it. Run the case with a model selected."
+      );
+    }
+    const { system, prompt } = modelRequestWords(params);
+    const { text, model } = await scope.answerModel({ system, prompt, signal });
+    const server =
+      serverId !== undefined ? (names[serverId] ?? serverId) : undefined;
+    const asking = tool ?? scope.tool;
+    const exchange: InputExchange = {
+      kind: "model_request",
+      ...(server !== undefined && { server }),
+      ...(asking !== undefined && { tool: asking }),
+      message: prompt,
+      action: "answered",
+      content: { text, model },
+    };
+    exchanges.push(exchange);
+    iterationExchanges.getStore()?.push(exchange);
+    scope.record?.(exchange);
+    return {
+      role: "assistant",
+      content: { type: "text", text },
+      model,
+      stopReason: "endTurn",
+    };
   }
 
   const elicitationCallback: ElicitationCallback = (
@@ -126,9 +198,11 @@ export function createInputAnswerResolver(
     answers: options.answers,
     exchanges,
     elicitationCallback,
+    samplingCallback: ({ serverId, params, signal }) =>
+      answerModelRequest(serverId, params, undefined, signal) as never,
     collectorFor:
       (serverId) =>
-      async ({ state, inputRequests }) => {
+      async ({ state, inputRequests, signal }) => {
         const tool =
           state.method === "tools/call" &&
           typeof state.originalParams.name === "string"
@@ -137,6 +211,15 @@ export function createInputAnswerResolver(
         const responses: Record<string, Reply> = {};
         for (const [key, request] of Object.entries(inputRequests)) {
           const params = (request.params ?? {}) as Record<string, unknown>;
+          if (request.method === "sampling/createMessage") {
+            responses[key] = (await answerModelRequest(
+              serverId,
+              params,
+              tool,
+              signal
+            )) as never;
+            continue;
+          }
           responses[key] = answer({
             serverId,
             message: typeof params.message === "string" ? params.message : "",
@@ -157,6 +240,31 @@ export function createInputAnswerResolver(
           mode: params.mode === "url" ? "url" : "form",
         }),
     },
+  };
+}
+
+/** The words a server's request for the model asks, as a system prompt and one prompt. */
+function modelRequestWords(params: Record<string, unknown>): {
+  system?: string;
+  prompt: string;
+} {
+  const messages = Array.isArray(params.messages) ? params.messages : [];
+  const lines = messages.flatMap((message) => {
+    const content = (message as { content?: unknown })?.content;
+    const blocks = Array.isArray(content) ? content : [content];
+    return blocks.flatMap((block) =>
+      block &&
+      typeof block === "object" &&
+      (block as { type?: unknown }).type === "text"
+        ? [String((block as { text?: unknown }).text ?? "")]
+        : []
+    );
+  });
+  return {
+    ...(typeof params.systemPrompt === "string" && {
+      system: params.systemPrompt,
+    }),
+    prompt: lines.join("\n\n"),
   };
 }
 

@@ -329,6 +329,33 @@ describe("undeclared methods and modes (Decision 8)", () => {
   });
 });
 
+describe("an embedded request for the client's model", () => {
+  const sample = {
+    s: {
+      method: "sampling/createMessage",
+      params: { messages: [], maxTokens: 10 },
+    },
+  } as never;
+
+  it("is refused on the result unless the connection can answer it", () => {
+    expect(() => validateInputRequests(sample)).toThrow(/undeclared/);
+    expect(() => validateInputRequests(sample, undefined, false)).toThrow(
+      /sampling\/createMessage/,
+    );
+  });
+
+  it("is let through when sampling is declared and answered, and roots never are", () => {
+    expect(() => validateInputRequests(sample, undefined, true)).not.toThrow();
+    expect(() =>
+      validateInputRequests(
+        { r: { method: "roots/list" } } as never,
+        undefined,
+        true,
+      ),
+    ).toThrow(/roots\/list/);
+  });
+});
+
 describe("hostile / prototype-polluting server keys", () => {
   it("keeps __proto__ / constructor as plain own keys and never pollutes Object.prototype", async () => {
     // Build the map the way a transport's JSON.parse would deliver a hostile

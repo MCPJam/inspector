@@ -63,6 +63,7 @@ import {
 } from "@modelcontextprotocol/client";
 // beta.4 moved the Node stdio client transport to the `/stdio` subpath.
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { applySamplingHandler, withSamplingCapability } from "./sampling.js";
 import {
   wrapFetchForHttpErrors,
   authChallengeOperationKey,
@@ -99,6 +100,7 @@ import type {
   ListToolsResult,
   ElicitationHandler,
   ElicitationCallback,
+  SamplingCallback,
   ElicitResult,
   ProgressHandler,
   RpcLogger,
@@ -2340,6 +2342,13 @@ export class MCPClientManager {
     this.mrtrFormSchemaSelectors.delete(serverId);
   }
 
+  private samplingCallback?: SamplingCallback;
+
+  /** Answers a server's request for the client's model, on every server; set it before connect, as the connection declares `sampling` only with one. */
+  setSamplingCallback(callback: SamplingCallback | undefined): void {
+    this.samplingCallback = callback;
+  }
+
   /**
    * Sets a global elicitation callback for all servers.
    */
@@ -3231,6 +3240,13 @@ export class MCPClientManager {
           declaredElicitation as DeclaredElicitationCapability
         );
       }
+
+      applySamplingHandler(
+        client,
+        serverId,
+        clientCapabilities as Record<string, unknown>,
+        this.samplingCallback
+      );
 
       for (const binding of this.extensionRequestHandlers.get(serverId) ?? []) {
         client.setRequestHandler(
@@ -4475,6 +4491,17 @@ export class MCPClientManager {
     config: MCPServerConfig,
     era?: "modern"
   ): ClientCapabilityOptions {
+    return withSamplingCapability(
+      this.buildElicitationCapabilities(serverId, config, era),
+      this.samplingCallback
+    ) as ClientCapabilityOptions;
+  }
+
+  private buildElicitationCapabilities(
+    serverId: string,
+    config: MCPServerConfig,
+    era?: "modern"
+  ): ClientCapabilityOptions {
     // Advertise `elicitation` when EITHER a legacy elicitation handler OR a
     // modern MRTR input collector is registered — a 2026-07-28 server checks
     // the request's declared client capabilities before it will embed an
@@ -5111,6 +5138,7 @@ export class MCPClientManager {
       validateContent: this.mrtrElicitationContentValidator,
       selectFormSchema: this.mrtrFormSchemaSelectors.get(serverId),
       supportedElicitationModes: this.mrtrSupportedElicitationModes(serverId),
+      allowSampling: () => this.samplingCallback !== undefined,
       validateResponse: (result) =>
         this.validateToolOutputSchema(serverId, callParams.name, result),
       requestOptions: baseOptions,
@@ -5151,6 +5179,7 @@ export class MCPClientManager {
       validateContent: this.mrtrElicitationContentValidator,
       selectFormSchema: this.mrtrFormSchemaSelectors.get(serverId),
       supportedElicitationModes: this.mrtrSupportedElicitationModes(serverId),
+      allowSampling: () => this.samplingCallback !== undefined,
       requestOptions: options,
       maxRounds: this.mrtrMaxRounds,
       signal: options?.signal,
@@ -5197,6 +5226,7 @@ export class MCPClientManager {
       validateContent: this.mrtrElicitationContentValidator,
       selectFormSchema: this.mrtrFormSchemaSelectors.get(serverId),
       supportedElicitationModes: this.mrtrSupportedElicitationModes(serverId),
+      allowSampling: () => this.samplingCallback !== undefined,
       requestOptions: options,
       maxRounds: this.mrtrMaxRounds,
       signal: options?.signal,

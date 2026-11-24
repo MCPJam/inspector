@@ -964,3 +964,93 @@ describe("onlyToolsCalled", () => {
     }
   );
 });
+
+describe("inputAnswered", () => {
+  const exchanges: IterationTranscript["inputExchanges"] = [
+    {
+      kind: "question",
+      server: "files",
+      tool: "cleanup",
+      message: "Delete /tmp/x?",
+      action: "accept",
+      content: { sure: true },
+    },
+    {
+      kind: "question",
+      server: "web",
+      message: "Sign in to continue",
+      action: "decline",
+    },
+    {
+      kind: "model_request",
+      server: "files",
+      tool: "summarize",
+      message: "Summarize the file",
+      action: "answered",
+    },
+  ];
+  const run = (predicate: Predicate, over: Partial<IterationTranscript> = {}) =>
+    evaluatePredicate(
+      transcript({ inputExchanges: exchanges, ...over }),
+      predicate
+    );
+
+  it("passes when a question fits every field stated, reply included", () => {
+    expect(
+      run({
+        type: "inputAnswered",
+        server: "files",
+        tool: "cleanup",
+        message: "Delete",
+        action: "accept",
+        content: { sure: true },
+      }).passed
+    ).toBe(true);
+    expect(run({ type: "inputAnswered" }).passed).toBe(true);
+    expect(
+      run({ type: "inputAnswered", tool: "summarize", action: "answered" })
+        .passed
+    ).toBe(true);
+  });
+
+  it("fails and says which part did not fit: no such question, or the reply was different", () => {
+    const none = run({
+      type: "inputAnswered",
+      server: "files",
+      message: "Format",
+    });
+    expect(none.passed).toBe(false);
+    expect(none.reason).toContain("no question was asked");
+    const other = run({
+      type: "inputAnswered",
+      message: "Sign in",
+      action: "accept",
+    });
+    expect(other.passed).toBe(false);
+    expect(other.reason).toContain('the reply was "decline", not "accept"');
+    expect(
+      run({ type: "inputAnswered", tool: "cleanup", content: { sure: false } })
+        .passed
+    ).toBe(false);
+  });
+
+  it("fails closed where no exchange was recorded", () => {
+    const result = evaluatePredicate(transcript(), { type: "inputAnswered" });
+    expect(result.passed).toBe(false);
+    expect(result.reason).toContain("no question from a server was recorded");
+  });
+
+  it("is not a tool call: the tool predicates do not see an exchange", () => {
+    const withExchange = transcript({ inputExchanges: exchanges });
+    const never = evaluatePredicate(withExchange, {
+      type: "toolNeverCalled",
+      toolName: "cleanup",
+    });
+    expect(never.passed).toBe(true);
+    const only = evaluatePredicate(withExchange, {
+      type: "onlyToolsCalled",
+      toolNames: [],
+    });
+    expect(only.passed).toBe(true);
+  });
+});

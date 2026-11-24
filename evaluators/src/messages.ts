@@ -269,6 +269,7 @@ export function runMessageEvaluators(
           "responseContains",
           "responseMatches",
           "responseNotContains",
+          "inputAnswered",
           "noEndingQuestion",
           "turnCountUnder",
           "tokenBudgetUnder",

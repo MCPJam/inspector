@@ -38,6 +38,7 @@ export type {
   ElicitationHandler,
   ElicitationCallback,
   ElicitationCallbackRequest,
+  SamplingCallback,
   ElicitResult,
   ProgressHandler,
   ProgressEvent,

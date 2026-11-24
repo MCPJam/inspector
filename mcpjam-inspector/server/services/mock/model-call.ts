@@ -7,6 +7,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { MCPClientManager } from "@mcpjam/sdk";
+import type { ModelDefinition } from "../../../shared/types.js";
 import { MockAnswerError } from "@mcpjam/sdk/mocks";
 import {
   MCPJAM_AGENT_MODEL,
@@ -45,12 +46,19 @@ function textOf(messages: Array<{ role: string; content: unknown }>): string {
 export function hostedModelCaller(args: {
   bearerToken: string;
   projectId: string;
+  /**
+   * Ask this model instead of MCPJam's own: an eval answering a server's
+   * request for the iteration's model. It is asked as the caller on the same
+   * rail, so the call is metered like any hosted step. A model MCPJam does not
+   * host is refused: a call it cannot count is not made.
+   */
+  model?: { definition: ModelDefinition; id: string };
 }): ModelCaller {
   const authHeader = `Bearer ${args.bearerToken}`;
   return async ({ system, prompt, signal }) => {
     const chatSessionId = randomUUID();
     const resolved = await resolveTurnRuntime({
-      modelDefinition: MCPJAM_AGENT_MODEL_DEFINITION,
+      modelDefinition: args.model?.definition ?? MCPJAM_AGENT_MODEL_DEFINITION,
       projectId: args.projectId,
       authHeader,
       sourceType: "direct",
@@ -60,7 +68,9 @@ export function hostedModelCaller(args: {
     });
     if (resolved.runtime.kind !== "hosted") {
       throw new MockAnswerError(
-        "A model answer needs MCPJam's hosted models, and this deployment does not have them.",
+        args.model
+          ? "A server asked for the run's model, and this run's model is not one MCPJam hosts, so MCPJam cannot ask it and count the call. Run the case on a hosted model."
+          : "A model answer needs MCPJam's hosted models, and this deployment does not have them.",
       );
     }
     let engineError: { message: string } | undefined;
@@ -70,7 +80,7 @@ export function hostedModelCaller(args: {
       persistMode: "caller",
       approvalMode: "auto-deny",
       messages: [{ role: "user", content: prompt }],
-      modelDefinition: MCPJAM_AGENT_MODEL_DEFINITION,
+      modelDefinition: args.model?.definition ?? MCPJAM_AGENT_MODEL_DEFINITION,
       systemPrompt: system,
       tools: {},
       mcpClientManager: new MCPClientManager(),
@@ -94,6 +104,6 @@ export function hostedModelCaller(args: {
         "The model that answers this mock did not reply. Try the call again.",
       );
     }
-    return { text, model: MCPJAM_AGENT_MODEL };
+    return { text, model: args.model?.id ?? MCPJAM_AGENT_MODEL };
   };
 }

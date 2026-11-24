@@ -1061,6 +1061,49 @@ export function evaluatePredicate(
           );
     }
 
+    case "inputAnswered": {
+      const exchanges = transcript.inputExchanges;
+      if (!exchanges || exchanges.length === 0) {
+        return fail(
+          predicate,
+          "no question from a server was recorded for this iteration"
+        );
+      }
+      const asked = exchanges.filter(
+        (e) =>
+          (predicate.server === undefined || e.server === predicate.server) &&
+          (predicate.tool === undefined || e.tool === predicate.tool) &&
+          (predicate.message === undefined ||
+            e.message.includes(predicate.message))
+      );
+      const label =
+        [
+          predicate.server && `server "${predicate.server}"`,
+          predicate.tool && `tool "${predicate.tool}"`,
+          predicate.message && `message containing "${predicate.message}"`,
+        ]
+          .filter(Boolean)
+          .join(", ") || "any question";
+      if (asked.length === 0) {
+        return fail(predicate, `no question was asked by ${label}`);
+      }
+      const fits = asked.find(
+        (e) =>
+          (predicate.action === undefined || e.action === predicate.action) &&
+          Object.entries(predicate.content ?? {}).every(
+            ([key, value]) =>
+              JSON.stringify(e.content?.[key]) === JSON.stringify(value)
+          )
+      );
+      return fits
+        ? pass(predicate, `${label} was asked and answered "${fits.action}"`)
+        : fail(
+            predicate,
+            `${label} was asked, but the reply was "${asked[0]!.action}"` +
+              (predicate.action ? `, not "${predicate.action}"` : "")
+          );
+    }
+
     case "responseMatches": {
       const message = resolveFinalMessage(transcript);
       // `new RegExp(undefined)` does not throw — it builds an empty regex that

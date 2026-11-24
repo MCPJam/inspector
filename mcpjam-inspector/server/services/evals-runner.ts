@@ -106,7 +106,11 @@ import {
   type ToolTaskSeamOptions,
 } from "@mcpjam/sdk";
 import { resolveToolTaskSeam } from "../utils/task-seam.js";
-import { inputAnswerResolverOf } from "./evals/input-answers.js";
+import {
+  currentIterationExchanges,
+  inputAnswerResolverOf,
+  runWithIterationExchanges,
+} from "./evals/input-answers.js";
 import { mcpToolOptionsFor } from "../utils/mcp-tool-options.js";
 import {
   createLlmModel,
@@ -3091,7 +3095,9 @@ export async function runIterationUnderBudget<T>(args: {
   // Started ONCE and held. Racing `args.run(...)` again would launch a second
   // iteration of the same trial — a second model call, a second sandbox, a
   // second set of rows — which is the opposite of what a timeout is for.
-  const running = args.run(handle.signal, Date.now() + args.unitTimeoutMs).then(
+  const running = runWithIterationExchanges(() =>
+    args.run(handle.signal, Date.now() + args.unitTimeoutMs),
+  ).then(
     (value) => ({ kind: "settled" as const, value }),
     (error) => ({ kind: "threw" as const, error }),
   );
@@ -5811,6 +5817,7 @@ const runLocalIteration = async ({
       renderObservations: summarizeRenderObservations(
         browser.widgetRenderObservations,
       ),
+      inputExchanges: [...currentIterationExchanges()],
       toolErrors: acc.pinnedToolErrors,
       iterationError: acc.iterationError,
       failOnToolError,
@@ -7679,6 +7686,7 @@ const runHostedIterationWithBrowser = async (
     renderObservations: summarizeRenderObservations(
       browser.widgetRenderObservations,
     ),
+    inputExchanges: [...currentIterationExchanges()],
     toolErrors: pinnedToolErrors,
     iterationError,
     failOnToolError,

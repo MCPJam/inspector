@@ -113,6 +113,22 @@ export type Predicate = (
       normalizeWhitespace?: boolean;
     }
   | { type: "responseContains"; needle: string; caseSensitive?: boolean }
+  /**
+   * A server asked a question (or asked for the client's model) during the
+   * iteration, and the run answered. Passes when some exchange fits every field
+   * stated here: `server` and `tool` exactly, `message` as contained text,
+   * `action` as the reply's action, and each `content` entry as an equal value
+   * in the reply. Reads the iteration's `inputExchanges`, so it fails closed
+   * where none were recorded. Case-level only: a turn slice carries none.
+   */
+  | {
+      type: "inputAnswered";
+      server?: string;
+      tool?: string;
+      message?: string;
+      action?: "accept" | "decline" | "cancel" | "answered";
+      content?: Record<string, string | number | boolean | string[]>;
+    }
   /** The final assistant message matches the regular expression `pattern` (regex source, no flags). */
   | { type: "responseMatches"; pattern: string }
   /** No tool produced an error (neither MCP `isError: true` nor a JSON-RPC/transport failure). */
@@ -644,6 +660,20 @@ export const predicateUnion = z.discriminatedUnion("type", [
     ...checkPolicyShape,
   }),
   z.object({
+    type: z.literal("inputAnswered"),
+    server: z.string().min(1).optional(),
+    tool: z.string().min(1).optional(),
+    message: z.string().min(1).optional(),
+    action: z.enum(["accept", "decline", "cancel", "answered"]).optional(),
+    content: z
+      .record(
+        z.string(),
+        z.union([z.string(), z.number(), z.boolean(), z.array(z.string())])
+      )
+      .optional(),
+    ...checkPolicyShape,
+  }),
+  z.object({
     type: z.literal("responseMatches"),
     pattern: z
       .string()
@@ -1037,6 +1067,16 @@ export type TranscriptToolDeclaration = TranscriptToolInventoryEntry & {
 
 export type TranscriptCaptureState = "complete" | "partial" | "absent";
 
+/** One question a server asked and the reply the run gave (see `inputAnswered`). */
+export type InputExchangeSummary = {
+  kind: "question" | "model_request";
+  server?: string;
+  tool?: string;
+  message: string;
+  action: "accept" | "decline" | "cancel" | "answered";
+  content?: Record<string, unknown>;
+};
+
 export type TranscriptCapture = {
   toolResults: TranscriptCaptureState;
   toolCallTimings: TranscriptCaptureState;
@@ -1073,6 +1113,12 @@ export type IterationTranscript = {
    * `usage` and `tokenBudgetUnder`.
    */
   turnCount?: number;
+  /**
+   * The questions servers asked during the iteration and what the run answered,
+   * in order. Absent ⇒ `inputAnswered` fails closed. Not tool calls: no tool
+   * predicate reads them.
+   */
+  inputExchanges?: InputExchangeSummary[];
   /** Observed tool results, in call order. See {@link capture}. */
   toolResults?: TranscriptToolResult[];
   /** Observed per-call durations. See {@link capture}. */

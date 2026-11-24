@@ -130,6 +130,7 @@ export const ASSERTION_STAGE: Record<AssertionKind, UserValueStage> = {
   // ── User value: did the person get what they asked for ──────────────────
   responseCloseTo: "userValue",
   responseContains: "userValue",
+  inputAnswered: "response",
   responseMatches: "userValue",
   finalAssistantMessageNonEmpty: "userValue",
   tokenBudgetUnder: "userValue",

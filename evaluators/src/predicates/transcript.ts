@@ -11,6 +11,7 @@
 import { extractToolErrors } from "../eval-tool-execution.js";
 import type { EvalTraceInput } from "../eval-reporting-types.js";
 import type {
+  InputExchangeSummary,
   IterationTranscript,
   RenderObservationSummary,
   ToolErrorRecord,
@@ -102,6 +103,8 @@ export interface BuildTranscriptInput {
   finalAssistantMessage?: string;
   /** Widget render observation summaries, when the runner captured any. */
   renderObservations?: RenderObservationSummary[];
+  /** Questions servers asked during the iteration, and the replies given. */
+  inputExchanges?: InputExchangeSummary[];
   /**
    * Tool errors the runner observed outside the trace. A model-free pinned
    * tool call has no trace for `extractToolErrors` to read, so its failures
@@ -261,6 +264,9 @@ export function buildIterationTranscript(
     toolErrors,
     ...(finalAssistantMessage !== undefined ? { finalAssistantMessage } : {}),
     ...(input.usage ? { usage: input.usage } : {}),
+    ...(input.inputExchanges && input.inputExchanges.length > 0
+      ? { inputExchanges: input.inputExchanges }
+      : {}),
     ...(input.renderObservations && input.renderObservations.length > 0
       ? { renderObservations: input.renderObservations }
       : {}),

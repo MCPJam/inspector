@@ -61,6 +61,7 @@ export const PREDICATE_KIND_LABELS: Record<PredicateKind, string> = {
   onlyToolsCalled: "Only these tools may be called",
   firstToolWas: "First tool called was…",
   responseContains: "Response contains…",
+  inputAnswered: "A question was asked and answered…",
   responseCloseTo: "Response close to…",
   responseMatches: "Response matches regex…",
   noToolErrors: "No tool errors",
@@ -286,6 +287,8 @@ export function blankPredicate(kind: PredicateKind): Predicate {
       return { type: "responseCloseTo", reference: "", maxDistance: 0.1 };
     case "responseContains":
       return { type: "responseContains", needle: "" };
+    case "inputAnswered":
+      return { type: "inputAnswered" };
     case "responseMatches":
       return { type: "responseMatches", pattern: "" };
     case "noToolErrors":
@@ -418,6 +421,8 @@ export function formatCriterion(
       return `Response distance ≤ ${num(predicate.maxDistance)} from reference`;
     case "responseContains":
       return `Response contains "${predicate.needle}"`;
+    case "inputAnswered":
+      return `A question${predicate.message ? ` containing "${predicate.message}"` : ""} was asked${predicate.action ? ` and answered "${predicate.action}"` : ""}`;
     case "responseMatches":
       return `Response matches /${predicate.pattern}/`;
     case "tokenBudgetUnder":

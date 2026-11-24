@@ -2391,7 +2391,8 @@
     {
       "__kind": "suiteFile",
       "__label": "reply with content that is not accepted",
-      "__why": "Content is the form a person filled in, so it rides only with accept. A decline that carries content is a mistake the file should say so about, not run with.",
+      "__why": "Content is the form a person filled in, so it rides only with accept. A decline that carries content is a mistake the file should say so about, not run with. The JSON Schema cannot state this, so only the validators refuse it.",
+      "__structural": false,
       "schemaVersion": "1",
       "mode": "agentWorkflow",
       "reportingMode": "standard",
@@ -2432,8 +2433,7 @@
             }
           ]
         }
-      ],
-      "__structural": true
+      ]
     },
     {
       "__kind": "suiteFile",

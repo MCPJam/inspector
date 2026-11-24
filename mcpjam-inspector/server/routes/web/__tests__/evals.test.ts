@@ -27,6 +27,7 @@ const {
   generateNegativeEvalTestsWithManagerMock,
   managerConfigsMock,
   disconnectAllServersMock,
+  inputAnswersForMock,
   delegatedBearer,
 } = vi.hoisted(() => ({
   // Set by a test to stand in for the delegated JWT an `sk_` key exchanges to.
@@ -40,6 +41,7 @@ const {
   generateNegativeEvalTestsWithManagerMock: vi.fn(),
   managerConfigsMock: vi.fn(),
   disconnectAllServersMock: vi.fn().mockResolvedValue(undefined),
+  inputAnswersForMock: vi.fn(),
 }));
 
 vi.mock("@mcpjam/sdk", async () => {
@@ -52,6 +54,7 @@ vi.mock("@mcpjam/sdk", async () => {
       return {
         disconnectAllServers: disconnectAllServersMock,
         setElicitationCallback: vi.fn(),
+        setSamplingCallback: vi.fn(),
         setMrtrInputCollector: vi.fn(),
       };
     }),
@@ -104,8 +107,10 @@ vi.mock("../../../services/evals/input-answers.js", async () => {
   >("../../../services/evals/input-answers.js");
   return {
     ...actual,
-    inputAnswerResolverFor: async () =>
-      actual.createInputAnswerResolver({ answers: [] }),
+    inputAnswerResolverFor: (...args: unknown[]) => {
+      inputAnswersForMock(...args);
+      return Promise.resolve(actual.createInputAnswerResolver({ answers: [] }));
+    },
   };
 });
 vi.mock("../../../services/evals/route-helpers.js", async () => {
@@ -842,6 +847,11 @@ describe("web routes — evals", () => {
         serverNames: ["server-1"],
         convexAuthToken: token,
       }),
+    );
+    // The replies are read before the connection that declares the capability.
+    expect(inputAnswersForMock).toHaveBeenCalledTimes(1);
+    expect(inputAnswersForMock.mock.invocationCallOrder[0]).toBeLessThan(
+      managerConfigsMock.mock.invocationCallOrder[0]!,
     );
     await flushPromises();
   });

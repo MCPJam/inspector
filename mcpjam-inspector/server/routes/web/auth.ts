@@ -3109,6 +3109,8 @@ export async function createAuthorizedManager(
     manager.setElicitationCallback(options.elicitationCallback);
   } else if (options?.inputAnswers) {
     manager.setElicitationCallback(options.inputAnswers.elicitationCallback);
+    // A server may ask for the run's model too; declared at connect like the rest.
+    manager.setSamplingCallback(options.inputAnswers.samplingCallback);
     registerInputAnswerResolver(manager, options.inputAnswers);
   }
   if (options?.inputAnswers && !options.mrtrInputCollectorForServer) {

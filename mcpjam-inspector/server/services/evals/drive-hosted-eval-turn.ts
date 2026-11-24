@@ -38,6 +38,7 @@ import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { ModelDefinition } from "@/shared/types";
+import { iterationModelAnswerer } from "./iteration-model-answer.js";
 import type { EvalToolChoice } from "@/shared/tool-choice";
 import { appliedToolApproval, engineApprovalMode } from "@/shared/tool-approval";
 import type { ScriptedWidgetCheck } from "@/shared/scripted-steps";
@@ -558,6 +559,15 @@ export async function driveHostedEvalTurn(
   // tools ride the same wrap so `computer` / `finish_widget` executions
   // land as tool spans in the trace UI like every other local tool.
   const traceCtx = createAiSdkEvalTraceContext(params.runStartedAt);
+  // A server that asks for the model is answered by the model this turn runs on.
+  if (params.projectId) {
+    traceCtx.answerModelRequest = iterationModelAnswerer({
+      bearer: params.evalAuthContext.token,
+      projectId: params.projectId,
+      definition: params.modelDefinition,
+      modelId: params.modelId,
+    });
+  }
   const mergedTools = {
     ...prepared.allTools,
     ...browser.computerWidgetTools,

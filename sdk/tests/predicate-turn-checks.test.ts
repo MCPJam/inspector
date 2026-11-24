@@ -146,6 +146,7 @@ describe("TURN_SCOPABLE_PREDICATE_KINDS", () => {
       toolResultMatchesSchema: "a turn slice carries no results",
       toolResultSizeUnder: "a turn slice carries no results",
       toolErrorNamesInput: "a turn slice carries no tool inventory",
+      inputAnswered: "a turn slice carries no input exchanges",
       fullPageHasContinuation: "a turn slice carries no results",
       argumentsMatchToolSchema: "a turn slice carries no tool inventory",
       noDeprecatedToolCalled: "a turn slice carries no tool inventory",
