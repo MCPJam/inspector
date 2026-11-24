@@ -174,6 +174,9 @@ QA profile or member sign-in is unavailable, report which checks are blocked.
 
 ## Evidence a UI pull request attaches
 
+The driver's `record` and `compare` commands capture all of this and write
+the PR section for it; the `pr-evidence` skill has the commands.
+
 - Before and after screenshots of the changed screen, light and dark.
 - The driver's text output for the after `open`, showing `RESULT ok`, or
   each remaining ISSUE line with why it is not caused by this change.

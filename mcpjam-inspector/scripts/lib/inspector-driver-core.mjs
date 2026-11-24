@@ -469,6 +469,192 @@ export function artifactSlug(label) {
   );
 }
 
+// ── evidence ──────────────────────────────────────────────────────────────
+
+/** `record` captures both themes unless `--theme` picks one. */
+export const EVIDENCE_THEMES = ["light", "dark"];
+
+function commitLine(commit) {
+  if (!commit) {
+    return "Commit: not captured. The instance came from --base-url, so the driver cannot tell which code it served.";
+  }
+  return commit.dirty
+    ? `Commit: \`${commit.sha}\` plus uncommitted changes. Not a reviewable state: commit, then record again.`
+    : `Commit: \`${commit.sha}\``;
+}
+
+function placeholder(name) {
+  return name ? `[attach ${name}]` : "not captured";
+}
+
+function findingLines(prefix, run) {
+  if (!run) return [`- ${prefix}: not captured`];
+  const lines = [`- ${prefix}: ${run.result}`];
+  for (const entry of run.issues)
+    lines.push(`  - ${entryLine("ISSUE", entry).trim()}`);
+  for (const entry of run.warnings.slice(0, MAX_WARNING_LINES)) {
+    lines.push(`  - ${entryLine("WARN", entry).trim()}`);
+  }
+  if (run.warnings.length > MAX_WARNING_LINES) {
+    lines.push(
+      `  - ${run.warnings.length - MAX_WARNING_LINES} more warnings in the JSON report`,
+    );
+  }
+  return lines;
+}
+
+function artifactLines(folder, evidence) {
+  const lines = [];
+  const at = (name) => `\`${folder ? `${folder}/` : ""}${name}\``;
+  for (const run of evidence.runs) {
+    const { theme, artifacts } = run;
+    lines.push(
+      `- ${at(artifacts.screenshot)}: the page after the last step, ${theme} theme.`,
+      artifacts.video
+        ? `- ${at(artifacts.video)}: recording of the whole run, ${theme} theme.`
+        : `- ${theme} recording: not captured.`,
+      `- ${at(artifacts.aria)}: ARIA snapshot of the final page, ${theme} theme.`,
+      `- ${at(artifacts.report)}: full JSON report, ${theme} theme.`,
+    );
+    for (const shot of artifacts.steps) {
+      lines.push(`- ${at(shot)}: screenshot a step asked for, ${theme} theme.`);
+    }
+  }
+  return lines;
+}
+
+function runFor(evidence, theme) {
+  return evidence.runs.find((run) => run.theme === theme) ?? null;
+}
+
+function stepList(evidence) {
+  return evidence.steps.map((step, i) => `${i + 1}. ${step}`);
+}
+
+/**
+ * The `evidence.md` for one `record`: ready to paste under the PR template's
+ * "Screenshots and recordings", with file names where the images go. A theme
+ * or artifact the run did not produce says "not captured" instead of
+ * disappearing, so a reviewer sees the gap.
+ */
+export function formatEvidence(evidence) {
+  const row = (theme) => {
+    const run = runFor(evidence, theme);
+    return `| ${theme} | ${placeholder(run?.artifacts.screenshot)} | ${placeholder(run?.artifacts.video)} |`;
+  };
+  return [
+    "## Screenshots and recordings",
+    "",
+    commitLine(evidence.commit),
+    "",
+    `Captured ${evidence.capturedAt} by the inspector driver, ${evidence.settings.browser} Chromium at ${evidence.viewport}.`,
+    "",
+    "| Theme | Final screenshot | Recording |",
+    "| --- | --- | --- |",
+    ...EVIDENCE_THEMES.map(row),
+    "",
+    "### Steps",
+    "",
+    ...stepList(evidence),
+    "",
+    "### Console and network",
+    "",
+    ...EVIDENCE_THEMES.flatMap((theme) =>
+      findingLines(theme, runFor(evidence, theme)),
+    ),
+    "",
+    "### Artifacts",
+    "",
+    ...artifactLines(null, evidence),
+    "",
+  ].join("\n");
+}
+
+/**
+ * A before/after pair only means something when both ran the same steps
+ * under the same settings. Steps compare by their recorded fields, not the
+ * display text, which two different steps can share. Returns the themes both
+ * sides captured.
+ */
+export function assertComparable(before, after) {
+  const problems = [];
+  if (before.viewport !== after.viewport) {
+    problems.push(`viewport ${before.viewport} vs ${after.viewport}`);
+  }
+  for (const key of ["browser", "fresh"]) {
+    if (before.settings?.[key] !== after.settings?.[key]) {
+      problems.push(
+        `${key} ${before.settings?.[key]} vs ${after.settings?.[key]}`,
+      );
+    }
+  }
+  if (
+    !before.canonicalSteps ||
+    JSON.stringify(before.canonicalSteps) !==
+      JSON.stringify(after.canonicalSteps)
+  ) {
+    problems.push("the steps differ");
+  }
+  const themes = EVIDENCE_THEMES.filter(
+    (theme) => runFor(before, theme) && runFor(after, theme),
+  );
+  if (themes.length === 0) problems.push("no theme was captured on both");
+  if (problems.length > 0) {
+    throw new Error(
+      `before and after are not the same run (${problems.join("; ")}). Record both with the same steps file and options.`,
+    );
+  }
+  return themes;
+}
+
+/** The `evidence.md` that sets a `before` and an `after` record side by side. */
+export function formatComparison(before, after) {
+  const themes = assertComparable(before, after);
+  const cell = (evidence, folder, theme, key) => {
+    const name = runFor(evidence, theme)?.artifacts[key];
+    return placeholder(name && `${folder}/${name}`);
+  };
+  const table = (key) =>
+    themes.map(
+      (theme) =>
+        `| ${theme} | ${cell(before, "before", theme, key)} | ${cell(after, "after", theme, key)} |`,
+    );
+  return [
+    "## Screenshots and recordings",
+    "",
+    `Before. ${commitLine(before.commit)} Captured ${before.capturedAt}.`,
+    "",
+    `After. ${commitLine(after.commit)} Captured ${after.capturedAt}.`,
+    "",
+    `Same steps on both, ${after.settings.browser} Chromium at ${after.viewport}.`,
+    "",
+    "| Theme | Before | After |",
+    "| --- | --- | --- |",
+    ...table("screenshot"),
+    "",
+    "| Recording | Before | After |",
+    "| --- | --- | --- |",
+    ...table("video"),
+    "",
+    "### Steps",
+    "",
+    ...stepList(after),
+    "",
+    "### Console and network",
+    "",
+    ...themes.flatMap((theme) => [
+      ...findingLines(`before, ${theme}`, runFor(before, theme)),
+      ...findingLines(`after, ${theme}`, runFor(after, theme)),
+    ]),
+    "",
+    "### Artifacts",
+    "",
+    ...artifactLines("before", before),
+    ...artifactLines("after", after),
+    "",
+  ].join("\n");
+}
+
 // ── processes ─────────────────────────────────────────────────────────────
 
 /**

@@ -4,10 +4,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   artifactSlug,
+  assertComparable,
   classifyIssues,
   describeStep,
   displayPath,
   findAllowRule,
+  formatComparison,
+  formatEvidence,
   formatPageReport,
   formatSweepLine,
   isFailingKind,
@@ -452,6 +455,182 @@ test("paths shorten the project id and slugs are file-safe", () => {
   assert.equal(displayPath(null), null);
   assert.equal(artifactSlug("Step 2: Add server!"), "step-2-add-server");
   assert.equal(artifactSlug("///"), "page");
+});
+
+function themedRun(theme, overrides = {}) {
+  return {
+    theme,
+    ok: true,
+    result: "RESULT ok issues=0 warnings=0 allowed=1",
+    issues: [],
+    warnings: [],
+    artifacts: {
+      screenshot: `${theme}-final.png`,
+      video: `${theme}.webm`,
+      aria: `${theme}-final.aria.yml`,
+      report: `${theme}-final.json`,
+      steps: [],
+    },
+    ...overrides,
+  };
+}
+
+function evidenceOf(overrides = {}) {
+  return {
+    capturedAt: "2026-11-20T10:00:00.000Z",
+    commit: { sha: "abc123", dirty: false },
+    viewport: "1440x900",
+    settings: { browser: "headless", fresh: false },
+    steps: ["goto servers", "click testid=add"],
+    canonicalSteps: [
+      { action: "goto", target: "servers" },
+      { action: "click", target: "testid=add" },
+    ],
+    runs: [themedRun("light"), themedRun("dark")],
+    ...overrides,
+  };
+}
+
+test("evidence names the commit, viewport, steps and every artifact", () => {
+  const text = formatEvidence(evidenceOf());
+  assert.match(text, /^## Screenshots and recordings$/m);
+  assert.match(text, /^Commit: `abc123`$/m);
+  assert.match(text, /headless Chromium at 1440x900/);
+  assert.match(
+    text,
+    /^\| dark \| \[attach dark-final\.png\] \| \[attach dark\.webm\] \|$/m,
+  );
+  assert.match(text, /^1\. goto servers\n2\. click testid=add$/m);
+  assert.match(text, /^- light: RESULT ok issues=0/m);
+  for (const name of [
+    "light.webm",
+    "dark-final.aria.yml",
+    "light-final.json",
+  ]) {
+    assert.match(
+      text,
+      new RegExp(`^- \`${name.replace(/\./g, "\\.")}\`: `, "m"),
+    );
+  }
+});
+
+test("evidence says not captured instead of leaving a gap", () => {
+  const text = formatEvidence(
+    evidenceOf({ commit: null, runs: [themedRun("dark")] }),
+  );
+  assert.match(text, /^Commit: not captured\. /m);
+  assert.match(text, /^\| light \| not captured \| not captured \|$/m);
+  assert.match(text, /^- light: not captured$/m);
+});
+
+test("evidence flags uncommitted changes and lists each finding", () => {
+  const text = formatEvidence(
+    evidenceOf({
+      commit: { sha: "abc123", dirty: true },
+      runs: [
+        themedRun("light", {
+          ok: false,
+          result: "RESULT fail issues=1 warnings=0 allowed=0",
+          issues: [{ kind: "http-500", text: "GET /api/x", count: 2 }],
+        }),
+      ],
+    }),
+  );
+  assert.match(text, /`abc123` plus uncommitted changes\. Not a reviewable/);
+  assert.match(text, /^ {2}- ISSUE {3}http-500 {8}GET \/api\/x \(x2\)$/m);
+});
+
+test("a before/after pair puts each side's file in its own column", () => {
+  const before = evidenceOf({ commit: { sha: "base1", dirty: false } });
+  const text = formatComparison(before, evidenceOf());
+  assert.match(
+    text,
+    /^\| light \| \[attach before\/light-final\.png\] \| \[attach after\/light-final\.png\] \|$/m,
+  );
+  assert.match(
+    text,
+    /^\| dark \| \[attach before\/dark\.webm\] \| \[attach after\/dark\.webm\] \|$/m,
+  );
+  assert.match(text, /^Before\. Commit: `base1`/m);
+  assert.match(text, /^After\. Commit: `abc123`/m);
+  assert.match(text, /^- after, dark: RESULT ok/m);
+  assert.match(text, /^- `before\/light\.webm`: recording/m);
+});
+
+test("a before/after pair refuses runs with different steps or viewports", () => {
+  assert.throws(
+    () =>
+      assertComparable(
+        evidenceOf(),
+        evidenceOf({ canonicalSteps: [{ action: "goto", target: "hosts" }] }),
+      ),
+    /not the same run \(the steps differ\)/,
+  );
+  assert.throws(
+    () => formatComparison(evidenceOf({ viewport: "800x600" }), evidenceOf()),
+    /viewport 800x600 vs 1440x900/,
+  );
+});
+
+test("steps whose display text collides still compare as different", () => {
+  // "waitFor text=hidden" (visible) and "waitFor text" with state hidden.
+  const visible = { action: "waitFor", target: "text=hidden" };
+  const hidden = { action: "waitFor", target: "text", state: "hidden" };
+  assert.equal(
+    describeStep(visible),
+    describeStep({ ...hidden, target: "text=hidden", state: undefined }),
+  );
+  const as = (step) =>
+    evidenceOf({ steps: ["waitFor text hidden"], canonicalSteps: [step] });
+  assert.throws(
+    () => assertComparable(as(visible), as(hidden)),
+    /the steps differ/,
+  );
+});
+
+test("a before/after pair needs the same options and a shared theme", () => {
+  assert.throws(
+    () =>
+      assertComparable(
+        evidenceOf({ settings: { browser: "headed", fresh: false } }),
+        evidenceOf(),
+      ),
+    /browser headed vs headless/,
+  );
+  assert.throws(
+    () =>
+      assertComparable(
+        evidenceOf({ settings: { browser: "headless", fresh: true } }),
+        evidenceOf(),
+      ),
+    /fresh true vs false/,
+  );
+  assert.throws(
+    () =>
+      assertComparable(
+        evidenceOf({ runs: [themedRun("light")] }),
+        evidenceOf({ runs: [themedRun("dark")] }),
+      ),
+    /no theme was captured on both/,
+  );
+  const text = formatComparison(
+    evidenceOf({ runs: [themedRun("dark")] }),
+    evidenceOf(),
+  );
+  assert.doesNotMatch(text, /^\| light \|/m);
+  assert.match(text, /^\| dark \|/m);
+});
+
+test("evidence names the browser mode it actually ran", () => {
+  const settings = { browser: "headed", fresh: false };
+  assert.match(
+    formatEvidence(evidenceOf({ settings })),
+    /headed Chromium at 1440x900/,
+  );
+  assert.match(
+    formatComparison(evidenceOf({ settings }), evidenceOf({ settings })),
+    /Same steps on both, headed Chromium/,
+  );
 });
 
 test("npm runs through its JS entry point when one can be found", () => {
