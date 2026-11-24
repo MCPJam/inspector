@@ -615,6 +615,7 @@ describe("infra evidence reaches the turn outcome untouched", () => {
       throw new WebClientRunError(
         { kind: "driver", step: "read_conversation", message: "The chat could not be read." },
         "Claude web stopped before the reply finished.",
+        undefined,
         { turnId: "turn-1", promptIndex: 0, startedAt: 0, endedAt: 1, spans: [sent], finishReason: "error", modelId: "m" },
       );
     });
