@@ -8,7 +8,6 @@ import {
   attachRecordedAuthChallenge,
 } from "./auth-challenge-isolation.js";
 import { connectionErrorMessage } from "./connection-error-message.js";
-import { z } from "zod";
 import { ToolDeclarationCapture } from "./tool-declaration-capture.js";
 import {
   EventsCapabilityCapture,
