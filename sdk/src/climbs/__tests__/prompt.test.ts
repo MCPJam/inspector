@@ -57,8 +57,8 @@ describe("climbPrompt", () => {
       serverName: "Echo",
       kept: [round(1), round(2, { changes: [], code: { serverId: "srv_2", serverName: "Echo (fast branch)" } }), round(3, { changes: [], code: { serverId: "srv_3" } })],
     });
-    expect(prompt).toContain("2. Round 2\n- Ran Echo (fast branch), a saved server that runs your own code. Keep that code: merge the branch it runs.");
-    expect(prompt).toContain("3. Round 3\n- Ran the saved server srv_3, a saved server that runs your own code.");
+    expect(prompt).toContain("2. Round 2\n- Ran Echo (fast branch), which runs your own code. That code is the change: keep it by merging the branch the server runs.");
+    expect(prompt).toContain("3. Round 3\n- Ran saved server srv_3, which runs your own code.");
     expect(prompt).toContain("1. Round 1\n- Changed the description");
     expect(prompt).toContain("For mock edits, it checks the server's listing");
     expect(prompt).toContain("For a code change, it runs the server alone and sets its numbers beside the ones the climb recorded.");

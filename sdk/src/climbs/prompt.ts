@@ -27,8 +27,8 @@ function describeField(change: MockChange, detail: MockFieldChange): string {
 
 /** A code round has no edits to list: the code the saved server runs is the change. */
 function describeCode(code: CodeRound): string {
-  const name = code.serverName ?? `the saved server ${code.serverId}`;
-  return `- Ran ${name}, a saved server that runs your own code. Keep that code: merge the branch it runs. The climb's rule kept it, so the code is the change.`;
+  const name = code.serverName ?? `saved server ${code.serverId}`;
+  return `- Ran ${name}, which runs your own code. That code is the change: keep it by merging the branch the server runs.`;
 }
 
 function describeChange(change: MockChange): string {
