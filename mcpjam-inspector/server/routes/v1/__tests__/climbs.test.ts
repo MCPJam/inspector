@@ -11,7 +11,13 @@ import { Hono } from "hono";
 import { getFunctionName } from "convex/server";
 import { ConvexError } from "convex/values";
 
-const mocks = vi.hoisted(() => ({ guest: vi.fn(), query: vi.fn(), mutation: vi.fn(), action: vi.fn(), draining: false }));
+const mocks = vi.hoisted(() => ({ guest: vi.fn(), query: vi.fn(), mutation: vi.fn(), action: vi.fn(), draining: false, runHere: vi.fn(), startJob: vi.fn() }));
+
+// The local job reads the person's session, which these requests do not carry: what the routes owe it is the call.
+vi.mock("../../../services/climbs/local-picker-job.js", async () => ({
+  ...(await vi.importActual<typeof import("../../../services/climbs/local-picker-job.js")>("../../../services/climbs/local-picker-job.js")),
+  pickerJobFor: mocks.runHere,
+}));
 
 vi.mock("../../../services/lifecycle/drain.js", async () => {
   const actual = await vi.importActual<typeof import("../../../services/lifecycle/drain.js")>("../../../services/lifecycle/drain.js");
@@ -94,6 +100,7 @@ const refusal = (code: string, message: string, extra: object = {}) => new Conve
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.runHere.mockResolvedValue(mocks.startJob);
   vi.stubEnv("CONVEX_URL", "https://convex.example.com");
   vi.stubEnv("CONVEX_HTTP_URL", "https://convex-http.example.com");
   mocks.guest.mockResolvedValue({ valid: false });
@@ -591,5 +598,126 @@ describe("verifications", () => {
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ details: { code: "CLIMB_VERIFY_TARGET_IS_MOCK" } });
     expect((await request("POST", VERIFY, { sha: "abc" })).status).toBe(400);
+  });
+});
+
+describe("MCPJam as the picker", () => {
+  const withModel = { ...startBody, picker: "mcpjam", pickerModel: "anthropic/claude-haiku-4.5" };
+
+  beforeEach(() => {
+    mutations["climbs:startClimb"] = (args) => climbRow({ picker: args.picker, pickerModel: args.pickerModel, stepRunner: args.stepRunner });
+  });
+
+  it("starts a climb MCPJam picks for, with the model, and lets the server decide where its steps run", async () => {
+    const res = await request("POST", CLIMBS, { ...withModel, stepRunner: "hosted" });
+    // A client does not choose the runner: a step parked where nothing runs it would wait for no one.
+    expect(res.status).toBe(400);
+    const ok = await request("POST", CLIMBS, withModel);
+    expect(ok.status).toBe(201);
+    expect(calls(mocks.mutation, "climbs:startClimb")[0]).toMatchObject({ picker: "mcpjam", pickerModel: "anthropic/claude-haiku-4.5", stepRunner: "local" });
+  });
+
+  it("starts the local job for the new climb, and not for another picker", async () => {
+    await request("POST", CLIMBS, withModel);
+    expect(mocks.runHere).toHaveBeenCalledWith(expect.anything(), PROJECT);
+    expect(mocks.startJob).toHaveBeenCalledWith(CLIMB);
+    mocks.runHere.mockClear();
+    await request("POST", CLIMBS, { ...startBody, picker: "agent" });
+    expect(mocks.runHere).not.toHaveBeenCalled();
+    expect(calls(mocks.mutation, "climbs:startClimb")[1]).not.toHaveProperty("stepRunner");
+  });
+
+  it.each([
+    ["no model", { ...startBody, picker: "mcpjam" }],
+    ["a model with another picker", { ...startBody, picker: "agent", pickerModel: "m" }],
+    ["a model with no picker", { ...startBody, pickerModel: "m" }],
+  ])("refuses %s before anything is made", async (_label, body) => {
+    const res = await request("POST", CLIMBS, body);
+    expect(res.status).toBe(400);
+    expect(mocks.mutation).not.toHaveBeenCalled();
+  });
+
+  it("marks a round as MCPJam's from the step's headers, and sends the surface as mcpjam", async () => {
+    queries["climbRounds:planClimbRound"] = () => ({ allowed: true, candidateCaseIds: ["case_1"], remeasureBest: null });
+    queries["mockServers:getMock"] = () => ({ version: 3, definitionJson: JSON.stringify({ tools: { search: { description: "Search." } } }) });
+    queries["projectEnvironments:resolveEnvironmentForLaunch"] = () => ({
+      environmentRef: { environmentId: "env_a", name: "Staging", revision: 1 },
+      hostId: "host_plain",
+      selectedServerIds: ["s_real"],
+      servers: [{ serverId: "s_real", name: "Echo" }],
+    });
+    queries["hosts:getHost"] = () => ({ config: { hostStyle: "mcpjam" } });
+    mutations["climbRounds:beginClimbRound"] = () => ({ roundNumber: 2, unitKey: "round:2", remeasureBest: false, groups: [] });
+    const res = await request("POST", `${CLIMBS}/${CLIMB}/rounds`, { serverId: "s_candidate" }, { "x-mcpjam-picker-step": "4", "x-mcpjam-picker-chat-session": "chat_1" });
+    expect(res.status).toBe(202);
+    expect(calls(mocks.mutation, "climbRounds:beginClimbRound")[0]).toMatchObject({
+      submittedVia: "mcpjam",
+      pickerStep: { generation: 4, chatSessionId: "chat_1" },
+    });
+  });
+
+  it("lets a step that was cut off submit its round's key again while the round runs, and refuses a person's second round", async () => {
+    queries["climbRounds:planClimbRound"] = () => ({
+      allowed: false,
+      refusal: { code: "CLIMB_ROUND_IN_FLIGHT", message: "Round 2 is still running." },
+      candidateCaseIds: [],
+      remeasureBest: null,
+    });
+    queries["mockServers:getMock"] = () => ({ version: 3, definitionJson: JSON.stringify({ tools: { search: { description: "Search." } } }) });
+    queries["projectEnvironments:resolveEnvironmentForLaunch"] = () => ({
+      environmentRef: { environmentId: "env_a", name: "Staging", revision: 1 },
+      hostId: "host_plain",
+      selectedServerIds: ["s_real"],
+      servers: [{ serverId: "s_real", name: "Echo" }],
+    });
+    queries["hosts:getHost"] = () => ({ config: { hostStyle: "mcpjam" } });
+    mutations["climbRounds:beginClimbRound"] = () => ({ roundNumber: 2, unitKey: "round:2", replayed: true, remeasureBest: false, groups: [] });
+    const person = await request("POST", `${CLIMBS}/${CLIMB}/rounds`, { serverId: "s_candidate" });
+    expect(person.status).toBe(409);
+    expect(calls(mocks.mutation, "climbRounds:beginClimbRound")).toEqual([]);
+    const resumed = await request("POST", `${CLIMBS}/${CLIMB}/rounds`, { serverId: "s_candidate", idempotencyKey: "k" }, { "x-mcpjam-picker-step": "4" });
+    expect(resumed.status).toBe(202);
+    expect(await resumed.json()).toMatchObject({ roundNumber: 2, replayed: true });
+  });
+});
+
+describe("continue", () => {
+  const CONTINUE = `${CLIMBS}/${CLIMB}/continue`;
+
+  it("clears the pause as the caller and answers whether a step is due", async () => {
+    queries["climbs:getClimb"] = () => climbRow({ state: "ready", picker: "mcpjam", stepRunner: "hosted", paused: { at: 1, code: "attempts_exhausted", reason: "Three attempts failed." } });
+    mutations["climbSteps:continueClimb"] = () => ({ resumed: true, stepDue: true });
+    const res = await request("POST", CONTINUE);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ climbId: CLIMB, suiteId: SUITE, resumed: true, stepDue: true });
+    expect(calls(mocks.mutation, "climbSteps:continueClimb")).toEqual([{ climbId: CLIMB }]);
+    // A hosted climb's steps run on a worker; nothing starts here.
+    expect(mocks.runHere).not.toHaveBeenCalled();
+  });
+
+  it("starts the local job again for a climb whose steps run here", async () => {
+    queries["climbs:getClimb"] = () => climbRow({ state: "ready", picker: "mcpjam", stepRunner: "local", paused: { at: 1, code: "inspector_stopped", reason: "The Inspector stopped." } });
+    mutations["climbSteps:continueClimb"] = () => ({ resumed: true, stepDue: true });
+    await request("POST", CONTINUE);
+    expect(mocks.runHere).toHaveBeenCalledWith(expect.anything(), PROJECT);
+    expect(mocks.startJob).toHaveBeenCalledWith(CLIMB);
+  });
+
+  it("answers a climb that is not paused by its code, and starts nothing", async () => {
+    queries["climbs:getClimb"] = () => climbRow({ state: "ready", picker: "mcpjam", stepRunner: "local" });
+    mutations["climbSteps:continueClimb"] = () => {
+      throw refusal("CLIMB_NOT_PAUSED", "This climb is not paused. Read it with get_climb.");
+    };
+    const res = await request("POST", CONTINUE);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ details: { code: "CLIMB_NOT_PAUSED" } });
+    expect(mocks.startJob).not.toHaveBeenCalled();
+  });
+
+  it("does not find a climb of another project", async () => {
+    queries["climbs:getClimb"] = () => climbRow({ projectId: "other" });
+    const res = await request("POST", CONTINUE);
+    expect(res.status).toBe(404);
+    expect(mocks.mutation).not.toHaveBeenCalled();
   });
 });

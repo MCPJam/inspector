@@ -22,6 +22,8 @@ import { submitRound } from "../../services/climbs/submit-round.js";
 import { submittedViaOf } from "../../services/climbs/surface.js";
 import { readRound } from "../../services/climbs/wait-round.js";
 import { MAX_ROUND_WAIT_SECONDS } from "@mcpjam/sdk/platform";
+import { readPickerStep } from "../../services/climbs/picker-headers.js";
+import { pickerJobFor, stepRunnerFor } from "../../services/climbs/local-picker-job.js";
 import { readAnyIdempotencyKey } from "../../utils/idempotency.js";
 import { randomUUID } from "node:crypto";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
@@ -55,7 +57,10 @@ const startBody = z
     roundLimit: z.number().int().min(1).max(100),
     creditLimit: z.number().positive(),
     environmentIds: z.array(id).min(1).max(10).optional(),
-    picker: z.enum(["person", "agent"]).optional(),
+    picker: z.enum(["person", "agent", "mcpjam"]).optional(),
+    // The model MCPJam picks with; the backend refuses it for any other picker. Where the steps run is not
+    // the caller's to say (see `stepRunnerFor`).
+    pickerModel: z.string().trim().min(1).max(200).optional(),
     measure: measure.optional(),
     minImprovementBps: z.number().int().min(1).max(10_000).optional(),
     targetBps: z.number().int().min(1).max(9_999).optional(),
@@ -63,7 +68,11 @@ const startBody = z
     groupLists: groupLists.optional(),
     seed: z.number().int().optional(),
   })
-  .refine((body) => !(body.groupSizes && body.groupLists), { message: "Give groupSizes or groupLists, not both." });
+  .refine((body) => !(body.groupSizes && body.groupLists), { message: "Give groupSizes or groupLists, not both." })
+  .refine((body) => (body.picker === "mcpjam") === (body.pickerModel !== undefined), {
+    message: "Give pickerModel with picker mcpjam, and only then.",
+    path: ["pickerModel"],
+  });
 
 const updateBody = z.strictObject({
   measure: measure.optional(),
@@ -159,7 +168,10 @@ climbs.post("/projects/:projectId/climbs", async (c) => {
   const body = parseWithSchema(startBody, await readJsonObjectBody(c));
   const deps = await climbDepsFor(c);
   try {
-    const started = await startClimb(deps, projectId, body);
+    const stepRunner = body.picker === "mcpjam" ? stepRunnerFor() : undefined;
+    const startJob = stepRunner === "local" ? await pickerJobFor(c, projectId) : undefined;
+    const started = await startClimb(deps, projectId, { ...body, ...(stepRunner ? { stepRunner } : {}) });
+    startJob?.(started.climbId);
     return v1Resource(c, started, 201);
   } catch (error) {
     throw error instanceof WebRouteError ? error : translateClimbWriteError(error);
@@ -206,13 +218,14 @@ climbs.post("/projects/:projectId/climbs/:climbId/rounds", async (c) => {
   const body = parseWithSchema(submitBody, await readJsonObjectBody(c));
   const deps = await climbDepsFor(c);
   const climb = await readClimb(deps, projectId, c.req.param("climbId") ?? "");
+  const pickerStep = readPickerStep(c);
   try {
     const submitted = await submitRound(deps, projectId, climb, {
       serverId: body.serverId,
       serverVersion: body.serverVersion,
       // The header wins, like every launch route; a call with neither gets a key of its own.
       idempotencyKey: readAnyIdempotencyKey(c) ?? body.idempotencyKey ?? randomUUID(),
-      submittedVia: submittedViaOf(readLaunchContext(c)),
+      ...(pickerStep ? { pickerStep, submittedVia: "mcpjam" as const } : { submittedVia: submittedViaOf(readLaunchContext(c)) }),
     });
     return v1Resource(c, submitted, 202);
   } catch (error) {
@@ -247,6 +260,23 @@ climbs.post("/projects/:projectId/climbs/:climbId/rounds/:roundNumber/decision",
       ...body,
     });
     return v1Resource(c, { climbId: climb.climbId, suiteId: climb.suiteId, ...result });
+  } catch (error) {
+    throw translateClimbWriteError(error);
+  }
+});
+
+// POST /v1/projects/:projectId/climbs/:climbId/continue: resume a paused climb. Its next step is due again.
+climbs.post("/projects/:projectId/climbs/:climbId/continue", async (c) => {
+  const projectId = projectIdOf(c);
+  await readJsonObjectBody(c);
+  const deps = await climbDepsFor(c);
+  const climb = await readClimb(deps, projectId, c.req.param("climbId") ?? "");
+  try {
+    // A local climb's steps run here and nowhere else, so the job that ended with the pause starts again.
+    const startJob = climb.stepRunner === "local" ? await pickerJobFor(c, projectId) : undefined;
+    const resumed: { resumed: true; stepDue: boolean } = await deps.convex.mutation(climbFns.continue, { climbId: climb.climbId });
+    startJob?.(climb.climbId);
+    return v1Resource(c, { climbId: climb.climbId, suiteId: climb.suiteId, ...resumed });
   } catch (error) {
     throw translateClimbWriteError(error);
   }
