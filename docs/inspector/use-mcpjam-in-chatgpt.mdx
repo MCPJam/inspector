@@ -67,7 +67,7 @@ Send `Show the MCP servers in [project name]`, replacing `[project name]` with a
 If you already have an eval run, send `Summarize my latest eval run` to get its verdict and the cases that failed.
 
 <Note>
-  Some requests change project data or use MCPJam credits. Before it launches an eval run, the plugin shows the estimated cost. The final charge may differ from the estimate.
+  Some requests change project data or use your organization's MCPJam credits or provider keys. Before the first eval run in a chat, ChatGPT asks you to confirm which suite runs and how many cases it has. A run can't be undone once it starts.
 </Note>
 
 ## What the plugin includes
@@ -76,7 +76,7 @@ The plugin bundles one app, which connects ChatGPT to your MCPJam account, and s
 
 | Skill | Use it to |
 | --- | --- |
-| `run-mcpjam-evals` | Check the estimated cost of a run, launch it, wait for a verdict and find the step that failed. |
+| `run-mcpjam-evals` | Confirm a run before it spends credits, launch it, wait for a verdict and find the step that failed. |
 | `drive-mcpjam-playground` | Debug an MCP server in a hosted Playground session. |
 | `mcpjam-eval-import` | Turn promptfoo, pytest, Jest or CSV tests into an MCPJam suite file. |
 | `create-mcp-eval` | Write eval tests with `@mcpjam/sdk` for Jest or Vitest. |
