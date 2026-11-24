@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
-import { Badge } from "@mcpjam/design-system/badge";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@mcpjam/design-system/collapsible";
 import { cn } from "@mcpjam/design-system/cn";
 import {
   AlertTriangle,
   Copy,
+  ChevronRight,
   KeyRound,
   Pause,
   Play,
@@ -115,6 +116,8 @@ function SubscriptionCard({
   onAction: (action: SubscriptionAction) => void;
 }) {
   const removed = subscription.desiredState === "removed";
+  const deliveryStatus = readDeliveryStatus(subscription.deliveryStatus);
+  const deliveryNeedsAttention = deliveryStatus?.suspended || deliveryStatus?.throttled || Boolean(deliveryStatus?.lastError);
   const isWebhook = subscription.mode === "webhook";
   const desiredDiffers =
     subscription.desiredState !== subscription.observedState &&
@@ -124,51 +127,28 @@ function SubscriptionCard({
     );
 
   return (
+    <Collapsible asChild>
     <li
-      className="space-y-3 rounded-md border border-border bg-card p-3"
+      className="rounded-md border border-border bg-card"
       data-testid={`subscription-${subscription.id}`}
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-mono text-xs font-semibold text-foreground">
-          {subscription.eventName}
-        </span>
-        <Badge variant="outline" className="font-mono text-[10px]">
-          {subscription.mode}
-        </Badge>
-        <Badge
-          variant="outline"
-          className="text-[10px]"
-          title="The client this subscription receives events as"
-          data-testid="subscription-host"
-        >
-          {subscription.host?.name ?? BUILT_IN_EVENTS_HOST_NAME}
-        </Badge>
-        <span
-          className={cn(
-            "rounded-sm border px-1.5 py-0.5 text-[10px] font-medium",
-            observedStateTone(subscription.observedState),
-          )}
-          data-testid="observed-state"
-        >
+      <CollapsibleTrigger className="group flex w-full items-center gap-2 p-3 text-left">
+        <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
+        <div className="min-w-0 flex-1">
+          <span className="block truncate font-mono text-xs font-semibold">{subscription.eventName}</span>
+          <span className="text-[11px] text-muted-foreground">{subscription.mode}</span>
+        </div>
+        <span className={cn("rounded-sm border px-1.5 py-0.5 text-[10px] font-medium", observedStateTone(subscription.observedState))} data-testid="observed-state">
           {observedStateLabel(subscription.observedState)}
         </span>
-        {desiredDiffers ? (
-          <span className="text-[10px] text-muted-foreground">
-            desired: {subscription.desiredState}
-          </span>
-        ) : null}
+        {desiredDiffers ? <span className="text-[10px] text-muted-foreground">Requested: {subscription.desiredState}</span> : null}
         {hasInsecureLocalReceiver(subscription) ? (
-          <span
-            className="rounded-sm border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-foreground"
-            title="Uses the local development receiver (plain http). Never a conformance pass."
-          >
-            Development override
-          </span>
+          <span className="text-[10px] text-warning" title="Uses the local development receiver over plain HTTP.">Development override</span>
         ) : null}
-      </div>
+      </CollapsibleTrigger>
 
       {subscription.conflictingServerSubscriptionId ? (
-        <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-[11px] text-foreground">
+        <div className="mx-3 mb-3 flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-[11px] text-foreground">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-warning" />
           <p>
             The server sent events under a different subscription ID,{" "}
@@ -191,14 +171,14 @@ function SubscriptionCard({
 
       {termination ? (
         <p
-          className="rounded-md border border-warning/40 bg-warning/10 p-2 text-[11px] text-foreground"
+          className="mx-3 mb-3 rounded-md border border-warning/40 bg-warning/10 p-2 text-[11px] text-foreground"
           data-testid="subscription-termination"
         >
           <span className="font-medium">{termination.label}</span>
           {termination.hint ? `. ${termination.hint}` : ""}
         </p>
       ) : subscription.lastError ? (
-        <p className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-[11px] text-destructive">
+        <p className="mx-3 mb-3 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-[11px] text-destructive">
           <span className="font-mono">{subscription.lastError.kind}</span>:{" "}
           {subscription.lastError.message}
           {subscription.lastError.retryable ? " (will retry)" : ""}
@@ -208,7 +188,14 @@ function SubscriptionCard({
         </p>
       ) : null}
 
+      {isWebhook && deliveryNeedsAttention ? (
+        <dl className="mx-3 mb-3 grid gap-2 rounded-md border border-warning/40 bg-warning/10 p-2 sm:grid-cols-2">
+          <DeliveryStatusFields value={subscription.deliveryStatus} />
+        </dl>
+      ) : null}
+      <CollapsibleContent className="space-y-3 border-t border-border p-3">
       <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <Field label="Client"><span data-testid="subscription-host">{subscription.host?.name ?? BUILT_IN_EVENTS_HOST_NAME}</span></Field>
         <Field label="Server subscription id">
           {subscription.serverSubscriptionId ?? "none yet"}
         </Field>
@@ -256,7 +243,7 @@ function SubscriptionCard({
             {formatTime(subscription.lastGapAt)}
           </Field>
         ) : null}
-        {isWebhook ? (
+        {isWebhook && !deliveryNeedsAttention ? (
           <DeliveryStatusFields value={subscription.deliveryStatus} />
         ) : null}
       </dl>
@@ -381,7 +368,9 @@ function SubscriptionCard({
           </Button>
         </div>
       ) : null}
+    </CollapsibleContent>
     </li>
+    </Collapsible>
   );
 }
 

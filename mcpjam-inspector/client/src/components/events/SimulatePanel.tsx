@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@mcpjam/design-system/select";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
-import { FlaskConical, Loader2 } from "lucide-react";
+import { Zap, Loader2 } from "lucide-react";
 import type {
   EventDescriptorView,
   EventsSimulateRequest,
@@ -59,8 +60,7 @@ export function SimulatePanel({
   if (subscriptions.length === 0) {
     return (
       <p className="text-xs text-muted-foreground">
-        Subscribe to an event first; a simulated event is delivered to one of
-        this server's subscriptions.
+        Subscribe to an event to trigger a test delivery in MCPJam.
       </p>
     );
   }
@@ -100,18 +100,16 @@ export function SimulatePanel({
           <Label htmlFor="simulate-subscription" className="text-xs">
             Subscription
           </Label>
-          <select
-            id="simulate-subscription"
-            value={selected?.id ?? ""}
-            onChange={(e) => setSubscriptionId(e.target.value)}
-            className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground"
-          >
-            {subscriptions.map((subscription) => (
-              <option key={subscription.id} value={subscription.id}>
-                {subscription.eventName} ({subscription.mode})
-              </option>
-            ))}
-          </select>
+          <Select value={selected?.id ?? ""} onValueChange={setSubscriptionId} disabled={busy}>
+            <SelectTrigger id="simulate-subscription" className="h-8 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {subscriptions.map((subscription) => (
+                <SelectItem key={subscription.id} value={subscription.id}>
+                  {subscription.eventName} ({subscription.mode})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div className="space-y-1">
           <Label htmlFor="simulate-event-id" className="text-xs">
@@ -154,9 +152,9 @@ export function SimulatePanel({
         {busy ? (
           <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
         ) : (
-          <FlaskConical className="mr-1.5 h-3.5 w-3.5" />
+          <Zap className="mr-1.5 h-3.5 w-3.5" />
         )}
-        Send simulated event
+        Trigger event
       </Button>
     </div>
   );
