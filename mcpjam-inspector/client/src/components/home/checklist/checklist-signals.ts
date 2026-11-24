@@ -19,12 +19,15 @@ export interface ChecklistSignals {
 /** Steps the user has done in this project; finished runs count, failures included. */
 export function computeChecklistSignals({
   hasServer,
+  hasPlaygroundChat,
   progress,
   userId,
   conformanceRuns,
   suites,
 }: {
   hasServer: boolean;
+  /** The user has a Playground conversation in this project, from before the checklist too. */
+  hasPlaygroundChat: boolean;
   progress: ChecklistProgress;
   userId: string | null;
   conformanceRuns: ConformanceRunListItem[];
@@ -62,7 +65,7 @@ export function computeChecklistSignals({
   return {
     done: {
       connect: hasServer,
-      chat: progress.chat === true,
+      chat: progress.chat === true || hasPlaygroundChat,
       onboard_agent: progress.agent === true || progress.skippedAgent === true,
       check_server: run !== null,
       create_eval: ran !== null,

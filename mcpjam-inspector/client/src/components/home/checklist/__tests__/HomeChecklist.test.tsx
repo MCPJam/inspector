@@ -7,6 +7,7 @@ vi.mock("@/lib/app-navigation", () => ({
   useAppNavigate: () => vi.fn(),
   routePaths: { playground: "/playground", conformance: "/conformance" },
   buildConformanceRunPath: (id: string) => `/conformance/runs/${id}`,
+  buildConformanceSetupPath: () => "/conformance?setup=1",
   buildEvaluatePath: () => "/evaluate",
 }));
 vi.mock("@/hooks/use-soft-query", () => ({ useSoftQuery: () => ({ data: [] }) }));

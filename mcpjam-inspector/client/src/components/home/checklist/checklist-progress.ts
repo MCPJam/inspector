@@ -10,6 +10,8 @@ export interface ChecklistProgress {
   finished?: boolean;
   /** Steps already sent as `completed`, so each is counted once. */
   reported?: string[];
+  /** The done count Home last showed, so the bar grows from it on return. */
+  shown?: number;
 }
 
 const PREFIX = "mcpjam.home-checklist.v1";
