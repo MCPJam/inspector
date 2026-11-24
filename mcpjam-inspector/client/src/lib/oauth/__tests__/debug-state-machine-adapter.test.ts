@@ -280,8 +280,6 @@ describe("Inspector OAuth debug proxy failures", () => {
   // PLB-522: a hop in front of the route answered with an HTML page. The
   // route itself only ever answers JSON, so its markup is never the reason.
   describe("an HTML page in place of the proxy's answer", () => {
-    const NEXT_STEP =
-      "Retry, and if it keeps happening, check for a firewall or sign-in page on your network.";
     const page = (head: string) =>
       `<!DOCTYPE html>\n\n<html lang="en">\n<head>\n    <base href="/login/">\n    <meta charset="utf-8">\n    ${head}\n</head>\n<body><form>Sign in</form></body>\n</html>`;
     const failWith = (body: string, status = 503, statusText = "") =>
@@ -290,15 +288,17 @@ describe("Inspector OAuth debug proxy failures", () => {
       );
     const message = () =>
       createDebugRequestExecutor()(request).catch((e: Error) => e.message);
+    const summary = (status: number, named = "") =>
+      `Backend debug proxy error: ${status} : An HTML page${named} answered instead of MCPJam's server`;
+    const expectStart = (text: string, prefix: string) =>
+      expect(text.slice(0, prefix.length)).toBe(prefix);
 
     // The INSPECTOR-CLIENT-2W5 head; its title is reconstructed (prod kept `<title>Web`).
     it("names a sign-in page by its title instead of quoting it", async () => {
       failWith(page("<title>Web Login</title>"));
 
       const text = await message();
-      expect(text).toBe(
-        `Backend debug proxy error: 503 : An HTML page ("Web Login") answered instead of MCPJam's server. ${NEXT_STEP}`,
-      );
+      expectStart(text, summary(503, ' ("Web Login")'));
       expect(text).not.toContain("<");
     });
 
@@ -309,9 +309,23 @@ describe("Inspector OAuth debug proxy failures", () => {
         524,
       );
 
-      expect(await message()).toBe(
-        `Backend debug proxy error: 524 : An HTML page ("app.mcpjam.com | 524: A timeout occurred") answered instead of MCPJam's server. ${NEXT_STEP}`,
+      expectStart(
+        await message(),
+        summary(524, ' ("app.mcpjam.com | 524: A timeout occurred")'),
       );
+    });
+
+    // 2W5's page came from the user's network and 2T9's from MCPJam's own
+    // edge, so the advice must not send the reader to check only their own.
+    it("gives advice that fits a gateway page and MCPJam's own edge", async () => {
+      failWith(page("<title>Web Login</title>"));
+
+      const text = await message();
+      expect(text).toContain(
+        "something between your browser and MCPJam stopped the request",
+      );
+      expect(text).toContain("contact your network admin or MCPJam support");
+      expect(text).not.toContain("on your network");
     });
 
     it.each([
@@ -321,9 +335,7 @@ describe("Inspector OAuth debug proxy failures", () => {
     ])("leaves the title out when the page has %s", async (_label, body) => {
       failWith(body);
 
-      expect(await message()).toBe(
-        `Backend debug proxy error: 503 : An HTML page answered instead of MCPJam's server. ${NEXT_STEP}`,
-      );
+      expectStart(await message(), `${summary(503)},`);
     });
 
     it("puts a long title on one line and cuts it at 80 characters", async () => {

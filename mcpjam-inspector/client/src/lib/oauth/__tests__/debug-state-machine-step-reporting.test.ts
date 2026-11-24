@@ -155,9 +155,12 @@ describe("OAuth debugger step-failure reporting", () => {
       proxyStatus: 503,
       step: "request_without_token",
     });
-    expect(options.extra.finding).toBe(
-      'Failed to request MCP server: Backend debug proxy error: 503 : An HTML page ("Web Login") answered instead of MCPJam\'s server. Retry, and if it keeps happening,',
-    );
+    const finding: string = options.extra.finding;
+    const groupedBy =
+      'Failed to request MCP server: Backend debug proxy error: 503 : An HTML page ("Web Login") answered instead of MCPJam\'s server';
+    expect(finding.slice(0, groupedBy.length)).toBe(groupedBy);
+    expect(finding).not.toContain("<");
+    expect(finding.length).toBeLessThanOrEqual(160);
   });
 
   it("omits tokens embedded in the request path from diagnostics", async () => {

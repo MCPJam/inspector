@@ -122,7 +122,9 @@ const MAX_PAGE_TITLE_CHARS = 80;
 /**
  * An HTML page in place of the route's JSON: a network gateway's sign-in page
  * (INSPECTOR-CLIENT-2W5) or a CDN's error page (2T9). Its markup is no reason,
- * but its title says who answered. A title holding markup is left out.
+ * but its title says who answered. A title holding markup is left out. The
+ * page can come from the reader's network or from MCPJam's own edge, so the
+ * advice covers both.
  */
 function describeHtmlPage(html: string): string {
   const title = errorPageTitle(html)?.replace(/\s+/g, " ").trim();
@@ -130,7 +132,7 @@ function describeHtmlPage(html: string): string {
     title && !/[<>]/.test(title)
       ? ` ("${title.slice(0, MAX_PAGE_TITLE_CHARS).trimEnd()}")`
       : "";
-  return `An HTML page${named} answered instead of MCPJam's server. Retry, and if it keeps happening, check for a firewall or sign-in page on your network.`;
+  return `An HTML page${named} answered instead of MCPJam's server, so something between your browser and MCPJam stopped the request. Retry, and if it keeps happening, contact your network admin or MCPJam support.`;
 }
 
 /**
