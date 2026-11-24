@@ -242,7 +242,18 @@ describe("ServerUrlChangeHistory", () => {
     );
 
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Re-enter the request headers and bearer token to reconnect."
+      "Re-enter the request headers and bearer token if required by the server."
+    );
+
+    rerender(
+      <ServerCredentialRecovery
+        serverId="srv_1"
+        server={{ ...server, lastError: "HTTP 403 Forbidden: IP is not allowed" }}
+        auth={auth}
+      />
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Re-enter the request headers and bearer token if required by the server."
     );
 
     rerender(

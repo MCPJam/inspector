@@ -72,6 +72,7 @@ interface ServerUrlChangeHistoryProps {
   recovery?: {
     server: ServerWithName;
     auth: ServerAuth;
+    isForbidden: boolean;
   };
 }
 
@@ -203,18 +204,28 @@ export function ServerCredentialRecovery({
   if (!serverId || server.connectionStatus !== "failed") return null;
   const error = server.lastNormalizedError ??
     (server.lastError ? describeError(server.lastError) : null);
+  const isForbidden = error?.slug === "auth/http_403";
   if (
     error?.slug !== "auth/http_401" &&
-    error?.slug !== "auth/http_403" &&
     error?.slug !== "auth/consent_required" &&
-    error?.slug !== "oauth/no_bearer_challenge"
+    error?.slug !== "oauth/no_bearer_challenge" &&
+    !isForbidden
   ) return null;
-  return <ServerUrlChangeHistory serverId={serverId} recovery={{ server, auth }} />;
+  return (
+    <ServerUrlChangeHistory
+      serverId={serverId}
+      recovery={{ server, auth, isForbidden }}
+    />
+  );
 }
 
 function recoveryMessage(
   changes: ServerUrlChangeEvent[],
-  { server, auth }: NonNullable<ServerUrlChangeHistoryProps["recovery"]>
+  {
+    server,
+    auth,
+    isForbidden,
+  }: NonNullable<ServerUrlChangeHistoryProps["recovery"]>
 ): string | null {
   const origin = credentialOriginOf(server.config.url?.toString());
   if (!origin) return null;
@@ -239,9 +250,12 @@ function recoveryMessage(
     (label === "bearer token" && !auth.bearer && auth.method === "bearer") ||
     (label === "OAuth client secret" && !server.hasClientSecret && usesClientSecret)
   );
-  return missing.length > 0
-    ? `Re-enter the ${credentialList.format(missing)} to reconnect.`
-    : null;
+  if (missing.length === 0) return null;
+  const credentials = credentialList.format(missing);
+  // A 403 can also come from an access policy such as an IP allowlist.
+  return isForbidden
+    ? `Re-enter the ${credentials} if required by the server.`
+    : `Re-enter the ${credentials} to reconnect.`;
 }
 
 function ServerUrlChangeHistoryPanel({
