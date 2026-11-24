@@ -177,8 +177,7 @@ describe("harness MCP proxy tool policy", () => {
       expect(mockManager.executeTool).toHaveBeenCalledTimes(1);
     });
 
-    it("with per-turn reuse, reuses the connection and none of the live checks", async () => {
-      vi.stubEnv("MCPJAM_HARNESS_MCP_TURN_CACHE", "1");
+    it("reuses the turn's connection and none of the live checks", async () => {
       const checks = vi.mocked(fetch);
       const first = credential("first");
       expect((await call(first, "read_file")).status).toBe(200);
@@ -193,8 +192,7 @@ describe("harness MCP proxy tool policy", () => {
       expect(mockManager.executeTool).toHaveBeenCalledTimes(2);
     });
 
-    it("with per-turn reuse, never runs a call whose turn ended after its first check", async () => {
-      vi.stubEnv("MCPJAM_HARNESS_MCP_TURN_CACHE", "1");
+    it("never runs a call on a reused connection whose turn ended after its first check", async () => {
       const first = credential("first");
       expect((await call(first, "read_file")).status).toBe(200);
       const authority = vi.mocked(fetch).getMockImplementation()!;
@@ -208,8 +206,7 @@ describe("harness MCP proxy tool policy", () => {
       expect(mockManager.executeTool).toHaveBeenCalledTimes(1);
     });
 
-    it("with per-turn reuse, builds the connection again after a call fails", async () => {
-      vi.stubEnv("MCPJAM_HARNESS_MCP_TURN_CACHE", "1");
+    it("builds the turn's connection again after a call fails", async () => {
       const first = credential("first");
       mockManager.executeTool.mockRejectedValueOnce(new Error("Session not found"));
       const failed = await call(first, "read_file");

@@ -91,8 +91,7 @@ async function prepareTurn(
   app.post("/", async (c) => {
     if (m.guestId) c.set("guestId", m.guestId);
     const resources = new TurnResources(() => {});
-    // As the route books it with MCPJAM_HARNESS_BOX_FIRST=1: right after
-    // setup, by the same plan.
+    // As the managed turn books it: right after setup, by the same plan.
     const plan = playgroundBoxPlan({
       c,
       bearerToken: "bearer",

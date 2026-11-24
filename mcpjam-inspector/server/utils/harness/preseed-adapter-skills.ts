@@ -257,19 +257,6 @@ export async function clearAdapterSkills(args: {
 }
 
 /**
- * `MCPJAM_HARNESS_SEED_SKILLS_MANIFEST=1` (read per call): a turn with no
- * skills, on a box with no adapter manifest, gets the empty manifest in one
- * command before its runtime starts. The adapter's own write at dispatch then
- * finds it and only reads, instead of five calls (mkdir, a pending manifest
- * and a complete one, each written and moved) after the prompt is sent.
- */
-export function seedSkillsManifestEnabled(
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return env.MCPJAM_HARNESS_SEED_SKILLS_MANIFEST === "1";
-}
-
-/**
  * What the adapter's own `writeSkills` leaves on a box for a turn with no
  * skills, byte for byte (VERSION LOCKSTEP above: the test runs this package's
  * `writeSkills` on an empty box and compares).

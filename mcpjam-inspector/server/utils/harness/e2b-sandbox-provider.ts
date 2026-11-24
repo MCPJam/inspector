@@ -49,7 +49,7 @@ import { closeModelProxyConnections } from "./model-proxy-connections.js";
 import { readAheadRuntime } from "./runtime-read-ahead.js";
 import {
   bridgeReapSchedule,
-  readAheadToAwait,
+  readAheadInBackground,
   sandboxHomeLookup,
 } from "./startup-overlap.js";
 import { HarnessInfraSetupError } from "./harness-provider-error.js";
@@ -61,8 +61,7 @@ export interface E2BHarnessSandboxProviderOptions {
   connectionPreparedByBroker?: () => boolean;
   /**
    * True when no turn has used this box yet: no bridge can be running there,
-   * so with `MCPJAM_HARNESS_SKIP_FIRST_REAP` the first bridge spawn skips the
-   * reap.
+   * so the first bridge spawn skips the reap.
    */
   unusedBox?: () => boolean;
   /**
@@ -392,16 +391,18 @@ export function createE2BHarnessSandboxProvider(
           connectSignal,
         );
       }
-      // Preparation must finish before exposing the session. The read-only
-      // hint and proxy socket cleanup are independent of the package guard.
-      const preparation = await Promise.allSettled([
-        ...readAheadToAwait(
-          readAheadRuntime(
-            runInBox,
-            { harnessId: opts.harnessId, resuming },
-            connectSignal,
-          ),
+      // The read-only page-cache hint warms the runtime on its own; the
+      // session doesn't wait for it.
+      readAheadInBackground(
+        readAheadRuntime(
+          runInBox,
+          { harnessId: opts.harnessId, resuming },
+          connectSignal,
         ),
+      );
+      // Preparation must finish before exposing the session. Proxy socket
+      // cleanup is independent of the package guard.
+      const preparation = await Promise.allSettled([
         ...(opts.skipPnpmGuard
           ? []
           : [

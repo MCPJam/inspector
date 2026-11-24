@@ -4,7 +4,6 @@ import {
   harnessKeepAgentThroughPause,
   harnessPrepareBoxEnabled,
   harnessPrepareBoxSwitchedOn,
-  harnessQuietClaudeStartup,
   hostedWarmAgentEnabled,
 } from "../harness-flags.js";
 
@@ -84,14 +83,4 @@ it.each([undefined, "", "1", "TRUE", "false"])("keeps API warm reuse off unless 
 it("turns API warm reuse on when set to true", () => {
   vi.stubEnv("MCPJAM_HARNESS_API_WARM", "true");
   expect(harnessApiWarmEnabled()).toBe(true);
-});
-
-it.each([undefined, "", "1", "TRUE", "false"])("keeps Claude Code's start-up traffic unless switched on (%s)", (value) => {
-  vi.stubEnv("MCPJAM_HARNESS_QUIET_CLAUDE_STARTUP", value);
-  expect(harnessQuietClaudeStartup()).toBe(false);
-});
-
-it("quiets Claude Code's start-up only when the switch reads exactly true", () => {
-  vi.stubEnv("MCPJAM_HARNESS_QUIET_CLAUDE_STARTUP", "true");
-  expect(harnessQuietClaudeStartup()).toBe(true);
 });

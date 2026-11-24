@@ -556,15 +556,9 @@ describe("Claude Code's quiet start on hosted boxes", () => {
   });
   afterEach(() => vi.unstubAllEnvs());
 
-  it("asks a hosted runtime for a quiet start when switched on", async () => {
-    vi.stubEnv("MCPJAM_HARNESS_QUIET_CLAUDE_STARTUP", "true");
+  it("asks a hosted runtime for a quiet start", async () => {
     await runHarnessTurn(baseOptions({ sourceType: "direct" }) as never, "none");
     expect(createHarnessArgs()?.quietStartup).toBe(true);
-  });
-
-  it("asks for nothing while the switch is off", async () => {
-    await runHarnessTurn(baseOptions({ sourceType: "direct" }) as never, "none");
-    expect(createHarnessArgs()).not.toHaveProperty("quietStartup");
   });
 });
 

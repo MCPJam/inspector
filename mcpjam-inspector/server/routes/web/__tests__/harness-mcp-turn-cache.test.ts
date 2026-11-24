@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import {
   discardTurnManager,
-  harnessMcpTurnCacheEnabled,
   resetHarnessMcpTurnCache,
   withTurnManager,
 } from "../harness-mcp-turn-cache.js";
@@ -118,10 +117,5 @@ describe("withTurnManager", () => {
     await withTurnManager("turn-1", create, async () => undefined);
     await withTurnManager("turn-2", create, async () => undefined);
     expect(create).toHaveBeenCalledTimes(2);
-  });
-
-  it("is off unless switched on", () => {
-    expect(harnessMcpTurnCacheEnabled({})).toBe(false);
-    expect(harnessMcpTurnCacheEnabled({ MCPJAM_HARNESS_MCP_TURN_CACHE: "1" })).toBe(true);
   });
 });

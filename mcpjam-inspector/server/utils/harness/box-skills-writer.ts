@@ -26,7 +26,6 @@ import {
   clearAdapterSkills,
   handOffLegacySkillDirs,
   preseedAdapterSkills,
-  seedSkillsManifestEnabled,
   type PreseedSession,
 } from "./preseed-adapter-skills.js";
 import {
@@ -184,8 +183,10 @@ export async function writeBoxSkills(args: {
   /** The computer row whose upload quota downloads count against. */
   computerId?: string;
   /**
-   * A hosted box, where the seed switch gives a missing adapter manifest its
-   * empty one. A local session's command translator refuses the seed command.
+   * A hosted box, where a turn with no skills gives a missing adapter manifest
+   * its empty one in one command before the runtime starts, so the adapter's
+   * own write at dispatch only reads. A local session's command translator
+   * refuses the seed command.
    */
   hostedBox?: boolean;
   signal?: AbortSignal;
@@ -210,8 +211,7 @@ export async function writeBoxSkills(args: {
   }
   const skillsBase = boxSkillsFolder(descriptor, args.home);
   if (plan.deliver.length === 0) {
-    const seed = args.hostedBox === true && seedSkillsManifestEnabled();
-    await clearSkillsFolder(session, skillsBase, signal, seed);
+    await clearSkillsFolder(session, skillsBase, signal, args.hostedBox === true);
     return result;
   }
   if (signal?.aborted) return result;

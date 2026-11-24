@@ -1,6 +1,5 @@
 /**
- * Per-turn reuse on the harness MCP proxy, on only with
- * `MCPJAM_HARNESS_MCP_TURN_CACHE=1` (read per call).
+ * Per-turn reuse on the harness MCP proxy.
  *
  * A harness client opens its MCP connection with a burst of discovery requests
  * (handshake, lists), each of which would otherwise rebuild an authorized
@@ -18,10 +17,6 @@
  */
 import type { MCPClientManager } from "@mcpjam/sdk";
 import { logger } from "../../utils/logger.js";
-
-export function harnessMcpTurnCacheEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.MCPJAM_HARNESS_MCP_TURN_CACHE === "1";
-}
 
 const MANAGER_IDLE_MS = 20_000;
 const MAX_ENTRIES = 200;

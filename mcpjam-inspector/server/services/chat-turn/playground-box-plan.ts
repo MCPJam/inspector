@@ -10,9 +10,9 @@ type ManagedSetup = Extract<
 
 /**
  * The Playground box a hosted harness turn takes, as far as setup decides it:
- * why it needs one (or `null`) and the booking's arguments. The route starts the
- * booking from this right after setup when `MCPJAM_HARNESS_BOX_FIRST=1`; the
- * tools stage uses it otherwise.
+ * why it needs one (or `null`) and the booking's arguments. The managed turn
+ * starts the booking from this right after setup; the tools stage uses it when
+ * it is called without that booking.
  */
 export function playgroundBoxPlan(args: {
   c: Context;
@@ -54,9 +54,4 @@ export function playgroundBoxPlan(args: {
       timing,
     },
   };
-}
-
-/** `MCPJAM_HARNESS_BOX_FIRST=1`: book the Playground box right after setup; read per call. */
-export function harnessBoxFirstEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.MCPJAM_HARNESS_BOX_FIRST === "1";
 }
