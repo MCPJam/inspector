@@ -20,11 +20,13 @@ import {
   type PlatformClimbLaunch,
   type PlatformClimbListItem,
   type PlatformClimbStopped,
+  type PlatformClimbVerdict,
   type PlatformMockChange,
 } from "@mcpjam/sdk/platform";
 import type {
   Climb,
   ClimbPicker,
+  ClimbRoundDetail,
 } from "@/components/climbs/climb-types";
 import { authFetch } from "@/lib/session-token";
 
@@ -205,6 +207,28 @@ export function stopClimb(
   signal?: AbortSignal,
 ): Promise<PlatformClimbStopped> {
   return call(() => client().stopClimb(params, { signal }), signal);
+}
+
+/** One round in full: its verdict, the reasons, and each environment's numbers. */
+export function getClimbRound(
+  params: { projectId: string; climbId: string; roundNumber: number },
+  signal?: AbortSignal,
+): Promise<ClimbRoundDetail> {
+  return call(() => client().getClimbRound(params, { signal }), signal);
+}
+
+/** Overrules a settled round. The backend records who did and the reason. */
+export function decideRound(
+  params: {
+    projectId: string;
+    climbId: string;
+    roundNumber: number;
+    decision: Exclude<PlatformClimbVerdict, "not_decided">;
+    reason: string;
+  },
+  signal?: AbortSignal,
+): Promise<unknown> {
+  return call(() => client().setClimbRoundDecision(params, { signal }), signal);
 }
 
 const changeCache = new Map<string, Promise<PlatformMockChange[]>>();

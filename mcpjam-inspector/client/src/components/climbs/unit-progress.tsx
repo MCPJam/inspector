@@ -1,17 +1,6 @@
-import { makeFunctionReference } from "convex/server";
 import { useQuery } from "convex/react";
 import { Progress } from "@mcpjam/design-system/progress";
-
-const runGroupsQuery = makeFunctionReference<"query">("climbs:getClimbRunGroups");
-const runQuery = makeFunctionReference<"query">("testSuites:getTestSuiteRun");
-
-type RunGroup = {
-  unitKey: string;
-  role: string;
-  runGroupId: string;
-  environmentIds: string[];
-  launchedRunIds: string[];
-};
+import { runGroupsQuery, runQuery, type RunGroup } from "./climb-queries";
 
 type RunDoc = {
   status?: string;

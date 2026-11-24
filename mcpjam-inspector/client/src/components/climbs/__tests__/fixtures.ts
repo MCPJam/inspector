@@ -54,3 +54,27 @@ export function makeClimb(overrides: Partial<Climb> = {}): Climb {
     ...overrides,
   };
 }
+
+import type { ClimbRoundDetail } from "../climb-types";
+
+const rate = (best: number, candidate: number, move: "better" | "worse" | "none") => ({
+  passRate: { bestBps: best, candidateBps: candidate, deltaBps: candidate - best, noiseBps: 560, move },
+});
+
+export function makeRoundDetail(overrides: Partial<ClimbRoundDetail> = {}): ClimbRoundDetail {
+  return {
+    ...makeRound(),
+    estimatedCredits: 120,
+    remeasuredBest: false,
+    againstBest: {},
+    validation: "unchanged",
+    failedSteeringCaseKeys: [],
+    environments: [
+      { environmentId: "env_a", candidateLost: 0, bestLost: 0, measureRecorded: true, steering: rate(7800, 9400, "better"), validation: rate(8300, 8300, "none") },
+      { environmentId: "env_b", candidateLost: 2, bestLost: 0, measureRecorded: true, steering: rate(10000, 10000, "none"), validation: rate(10000, 10000, "none") },
+    ],
+    environmentsWithoutMeasure: [],
+    reasons: ["measure_better_on_steering"],
+    ...overrides,
+  };
+}
