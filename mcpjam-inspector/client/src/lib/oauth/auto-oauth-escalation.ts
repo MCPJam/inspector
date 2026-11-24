@@ -1,4 +1,4 @@
-import { toast } from "@/lib/toast";
+import { create } from "zustand";
 
 /**
  * Session-scoped lifecycle for Auto's OAuth escalation (spec: clients SHOULD
@@ -91,36 +91,40 @@ export const autoOAuthEscalation = {
   },
 };
 
-/**
- * Confirm-before-redirect for Auto's OAuth escalation: the user picked
- * "Auto", not "OAuth", so a surprise `window.location.assign` mid-connect
- * reads as a bug. Uses the app's persistent-toast pattern (same shape as the
- * connect-failure "Open XAA Debugger" action) rather than a blocking modal.
- * Resolves exactly once; dismissal counts as "not now".
- */
-export function confirmAutoOAuthEscalation(
-  serverName: string,
-): Promise<boolean> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const settle = (value: boolean) => {
-      if (!settled) {
-        settled = true;
-        resolve(value);
-      }
-    };
-    toast(`Authorize "${serverName}"?`, {
-      duration: Infinity,
-      action: {
-        label: "Continue",
-        onClick: () => settle(true),
-      },
-      cancel: {
-        label: "Not now",
-        onClick: () => settle(false),
-      },
-      onDismiss: () => settle(false),
-      onAutoClose: () => settle(false),
-    });
-  });
+interface AuthorizationPrompt {
+  id: number;
+  serverName: string;
+  resolve: (confirmed: boolean) => void;
+}
+
+interface AuthorizationPromptState {
+  queue: AuthorizationPrompt[];
+  request: (serverName: string) => Promise<boolean>;
+  settle: (id: number, confirmed: boolean) => void;
+}
+
+let promptSequence = 0;
+
+export const useAutoOAuthAuthorizationStore = create<AuthorizationPromptState>(
+  (set, get) => ({
+    queue: [],
+    request: (serverName) =>
+      new Promise<boolean>((resolve) => {
+        set(({ queue }) => ({
+          queue: [...queue, { id: ++promptSequence, serverName, resolve }],
+        }));
+      }),
+    settle: (id, confirmed) => {
+      const [prompt, ...queue] = get().queue;
+      // A dialog's close event may follow its confirm click.
+      if (prompt?.id !== id) return;
+      set({ queue });
+      prompt.resolve(confirmed);
+    },
+  }),
+);
+
+/** Ask before redirecting a connection configured with Auto authentication. */
+export function confirmAutoOAuthEscalation(serverName: string): Promise<boolean> {
+  return useAutoOAuthAuthorizationStore.getState().request(serverName);
 }
