@@ -11,6 +11,7 @@ vi.mock("@/lib/apis/climbs-api", () => ({
   stopClimb: (...a: unknown[]) => stopClimb(...a),
   mockChangesBetween: async () => [],
 }));
+vi.mock("../use-mock-servers", () => ({ useMockServers: () => ({ mocks: new Map(), real: [], loading: false }) }));
 vi.mock("../ready-view", () => ({ ReadyView: () => <div>ready view</div> }));
 vi.mock("../new-round", () => ({
   NewRound: ({ onSubmitted }: { onSubmitted: (n: number) => void }) => (

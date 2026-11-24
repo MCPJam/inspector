@@ -14,6 +14,7 @@ import type { Selection } from "./rounds-rail";
 import { RunningView } from "./running-view";
 import { StoppedSummary } from "./stopped-summary";
 import { useAsyncRead } from "./use-async-read";
+import { useMockServers } from "./use-mock-servers";
 import { useRoundChanges } from "./use-round-changes";
 
 const POLL_MS = 5_000;
@@ -58,7 +59,9 @@ export function ClimbScreen({
     pollMs: (climb) => (stillMoving(climb) ? POLL_MS : null),
   });
   const climb = read.data;
-  const changes = useRoundChanges(projectId, climb);
+  // A round that ran a saved server that is no mock is a code round; the project's servers say which.
+  const { real, loading: serversLoading } = useMockServers(projectId, true);
+  const changes = useRoundChanges(projectId, climb, { real, loading: serversLoading });
   const [selection, setSelection] = useState<Selection | null>(null);
   const [optionId, setOptionId] = useState<string | undefined>();
   const [mockOpen, setMockOpen] = useState(false);

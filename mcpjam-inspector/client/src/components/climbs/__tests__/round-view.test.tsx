@@ -65,6 +65,23 @@ describe("RoundView", () => {
     expect(screen.getByText(/Measures pass rate/)).toBeInTheDocument();
   });
 
+  it("shows a code round as one line in its title and in the change, with no empty list", async () => {
+    getClimbRound.mockResolvedValue(makeRoundDetail());
+    render(
+      <RoundView
+        climb={makeClimb({ state: "running", rounds: [makeRound({ serverId: "srv_branch" })] })}
+        roundNumber={1}
+        changes={{ 1: { code: { serverId: "srv_branch", serverName: "Echo (fast branch)" } } }}
+        labels={labels}
+        onChanged={vi.fn()}
+      />,
+    );
+    expect(await screen.findByRole("heading", { name: "Ran Echo (fast branch): your own code" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "The change" }));
+    expect(screen.getByText(/the code that server runs/)).toBeInTheDocument();
+    expect(screen.queryByText("This round submitted the best so far unchanged.")).not.toBeInTheDocument();
+  });
+
   it("says who overruled the round and why, under its title", async () => {
     show(makeRound({ verdict: "reverted", standing: "kept", overruled: { to: "kept", by: "Casey", reason: "It reads better.", at: 1 } }));
     expect(await screen.findByText("Overruled by Casey: It reads better.")).toBeInTheDocument();

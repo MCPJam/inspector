@@ -74,11 +74,12 @@ const versionOf = (version: string | undefined): number | null => {
  * baseline's first version. Null when the round ran another server, where a
  * comparison of versions would mean nothing.
  */
-export function startingVersion(climb: Climb, round: ClimbRoundSummary): number | null {
+export function startingVersion(climb: Climb, round: ClimbRoundSummary, isCode: (round: ClimbRoundSummary) => boolean = () => false): number | null {
   const own = versionOf(round.serverVersion);
   if (own === null) return null;
   const before = keptRounds(climb)
-    .filter((candidate) => candidate.number < round.number)
+    // A kept code round is no mock to compare versions with, so the best a mock round started from is the last kept mock.
+    .filter((candidate) => candidate.number < round.number && !isCode(candidate))
     .at(-1);
   if (!before) return own > 1 ? 1 : null;
   if (before.serverId !== round.serverId) return null;
@@ -86,8 +87,22 @@ export function startingVersion(climb: Climb, round: ClimbRoundSummary): number 
   return since !== null && since < own ? since : null;
 }
 
+/** A round that ran a saved server that is no mock: its change is that server's code. */
+export type CodeChange = { code: { serverId: string; serverName?: string } };
+
+/** What a round changed: a mock's change list, `null` when it could not be read, or a code round. */
+export type RoundChange = PlatformMockChange[] | null | CodeChange;
+
+export const isCodeChange = (change: RoundChange | undefined): change is CodeChange =>
+  change !== null && change !== undefined && !Array.isArray(change);
+
+/** The one line a code round shows where a mock round lists its changes. */
+export const codeLine = ({ code }: CodeChange): string =>
+  code.serverName ? `Ran ${code.serverName}: your own code` : "Ran a saved server: your own code";
+
 /** One line for the rail: the first change, and how many more came with it. */
-export function changeTitle(changes: readonly PlatformMockChange[] | null | undefined, round: number): string {
+export function changeTitle(changes: RoundChange | undefined, round: number): string {
+  if (isCodeChange(changes)) return codeLine(changes);
   const first = changes?.[0];
   if (!first) return `Round ${round}`;
   const more = (changes?.length ?? 1) - 1;

@@ -1,10 +1,17 @@
-import type { PlatformMockChange } from "@mcpjam/sdk/platform";
+import { codeLine, isCodeChange, type RoundChange } from "./round-model";
 
 const show = (value: unknown): string =>
   value === undefined ? "Not set" : typeof value === "string" ? value : JSON.stringify(value);
 
-/** What the round changed on the mock, as before and after. */
-export function ChangeDisclosure({ changes }: { changes: PlatformMockChange[] | null | undefined }) {
+/** What the round changed on the mock, as before and after, or the one line a code round shows. */
+export function ChangeDisclosure({ changes }: { changes: RoundChange | undefined }) {
+  if (isCodeChange(changes)) {
+    return (
+      <p className="text-sm">
+        {codeLine(changes)}. This round's change is the code that server runs, so there is no before and after to show.
+      </p>
+    );
+  }
   if (changes === undefined) {
     return <p className="text-sm text-muted-foreground">Loading the change.</p>;
   }

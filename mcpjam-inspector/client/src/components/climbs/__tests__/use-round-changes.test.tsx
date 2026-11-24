@@ -35,6 +35,26 @@ describe("useRoundChanges", () => {
     });
   });
 
+  it("records a round that ran a saved server as a code round, and reads nothing for it", async () => {
+    mockChangesBetween.mockReset();
+    mockChangesBetween.mockImplementation(async ({ version }: { version: number }) => [{ summary: `v${version}` }]);
+    const climb = makeClimb({
+      rounds: [makeRound({ number: 1, serverId: "srv_branch", serverVersion: undefined }), makeRound({ number: 2, serverVersion: "3", standing: "reverted" })],
+    });
+    const servers = { real: [{ id: "srv_branch", name: "Echo (fast branch)" }], loading: false };
+    const { result } = renderHook(() => useRoundChanges("proj_1", climb, servers));
+    expect(result.current[1]).toEqual({ code: { serverId: "srv_branch", serverName: "Echo (fast branch)" } });
+    await waitFor(() => expect(result.current[2]).toEqual([{ summary: "v3" }]));
+    expect(mockChangesBetween).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads nothing while the project's servers are still loading", () => {
+    mockChangesBetween.mockClear();
+    const climb = makeClimb({ rounds: [makeRound({ number: 1, serverVersion: "3" })] });
+    renderHook(() => useRoundChanges("proj_1", climb, { real: [], loading: true }));
+    expect(mockChangesBetween).not.toHaveBeenCalled();
+  });
+
   it("asks for nothing when the climb has no rounds", () => {
     mockChangesBetween.mockClear();
     renderHook(() => useRoundChanges("proj_1", makeClimb()));

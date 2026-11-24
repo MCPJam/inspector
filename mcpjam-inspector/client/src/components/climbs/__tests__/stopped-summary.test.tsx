@@ -66,6 +66,12 @@ describe("StoppedSummary", () => {
     expect(screen.getByText("Change 1: Hide 4 deprecated parameters")).toBeInTheDocument();
   });
 
+  it("lists a kept code round as one line, not an empty change", async () => {
+    stopClimb.mockResolvedValue(stoppedResult());
+    show({ changes: { 1: { code: { serverId: "srv_branch", serverName: "Echo (fast branch)" } }, 2: [change("Rewrote list_projects")] } });
+    expect(await screen.findByRole("region", { name: "Validation cases went up too" })).toHaveTextContent("Ran Echo (fast branch): your own code");
+  });
+
   it("says why it stopped, and plainly when someone stopped it", async () => {
     stopClimb.mockResolvedValue(stoppedResult(makeSummary({ stoppedBecause: "the round limit was reached" })));
     show({}, { stopReason: "round_limit" });
