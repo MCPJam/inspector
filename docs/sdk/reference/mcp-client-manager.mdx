@@ -42,6 +42,7 @@ For subprocess-based MCP servers.
 | `clientInfo` | `{ name?: string; version?: string } & Record<string, unknown>` | No | Override the MCP `initialize.params.clientInfo` sent to this server. Useful for testing how servers respond to different client identities. |
 | `supportedProtocolVersions` | `string[]` | No | Ordered list of MCP protocol versions to advertise. The first entry is proposed in `initialize.params.protocolVersion`; the full list is the accept-set. |
 | `firstPageOnly` | `boolean` | No | When `true`, simulates a client that reads only the first page of paginated list results (`tools/list`, `resources/list`, `resources/templates/list`, `prompts/list`) and stops. Tools beyond page one are invisible to the client, and `Mcp-Param-*` header mirroring is limited to page-one tools. Applies on every transport (stdio, Streamable HTTP, SSE). Explicit-cursor requests (manual paging in the inspector) are left untouched. |
+| `supportsMrtr` | `boolean` | No | When `false`, simulates a client that never implemented the 2026 MRTR (`resultType: "input_required"`) pattern. On a modern (`2026-07-28`) connection, `elicitation` is removed from the advertised capabilities and MRTR retry rounds are not driven — an `input_required` result surfaces as `UNSUPPORTED_RESULT_TYPE` instead of looping. Has no effect on legacy (`2025-11-25`) connections, where elicitation is server-initiated and fulfilled by a different bridge. Defaults to `true` (MRTR enabled). |
 
 ```typescript
 {
@@ -77,6 +78,7 @@ For remote MCP servers via SSE or Streamable HTTP.
 | `supportedProtocolVersions` | `string[]` | No | Ordered list of MCP protocol versions to advertise. The first entry is proposed in `initialize.params.protocolVersion`; the full list is the accept-set. |
 | `onUnauthorized` | `UnauthorizedRefreshHandler` | No | 401 recovery hook. Called once when an operation fails with HTTP 401; return a new `accessToken` and the SDK rebuilds the transport and retries. Not invoked for 403, or when `refreshToken`/`authProvider` is set. |
 | `firstPageOnly` | `boolean` | No | When `true`, simulates a client that reads only the first page of paginated list results (`tools/list`, `resources/list`, `resources/templates/list`, `prompts/list`) and stops. Tools beyond page one are invisible to the client, and `Mcp-Param-*` header mirroring is limited to page-one tools. Applies on every transport (stdio, Streamable HTTP, SSE). Explicit-cursor requests (manual paging in the inspector) are left untouched. |
+| `supportsMrtr` | `boolean` | No | When `false`, simulates a client that never implemented the 2026 MRTR (`resultType: "input_required"`) pattern. On a modern (`2026-07-28`) connection, `elicitation` is removed from the advertised capabilities and MRTR retry rounds are not driven — an `input_required` result surfaces as `UNSUPPORTED_RESULT_TYPE` instead of looping. Has no effect on legacy (`2025-11-25`) connections, where elicitation is server-initiated and fulfilled by a different bridge. Defaults to `true` (MRTR enabled). |
 
 ```typescript
 {
