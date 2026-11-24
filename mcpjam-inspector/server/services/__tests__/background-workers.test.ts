@@ -33,6 +33,9 @@ vi.mock("../bench-worker", () => ({
 vi.mock("../production-checks-worker", () => ({
   startProductionChecksWorker: () => loops.handle("production-checks"),
 }));
+vi.mock("../climb-worker", () => ({
+  startClimbWorker: () => loops.handle("climbs"),
+}));
 vi.mock("../local-doorbell-worker", () => ({
   localDoorbellIntervalMs: () => doorbell.intervalMs,
   startLocalDoorbell: () => loops.handle("local-doorbell"),
@@ -48,6 +51,7 @@ const ALL_LOOPS = [
   "github-checks",
   "bench",
   "production-checks",
+  "climbs",
 ];
 
 beforeEach(() => {
@@ -70,7 +74,7 @@ describe("startBackgroundWorkers", () => {
       finished = true;
     });
 
-    // A busy loop no longer holds the others' stop back: all four stopped
+    // A busy loop no longer holds the others' stop back: every loop stopped
     // claiming while every job is still running.
     expect(loops.stopped).toEqual(ALL_LOOPS);
     await Promise.resolve();

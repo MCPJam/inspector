@@ -25,6 +25,7 @@ import {
   startBenchWorker,
   type BenchWorkerHandle,
 } from "./bench-worker";
+import { startClimbWorker, type ClimbWorkerHandle } from "./climb-worker";
 import {
   localDoorbellIntervalMs,
   startLocalDoorbell,
@@ -89,6 +90,14 @@ export function startBackgroundWorkers(
   const productionChecksWorker: ProductionChecksWorkerHandle =
     startProductionChecksWorker();
 
+  // MCPJam's climb steps: claim a step the backend marked due, run one picker
+  // turn and the round it submits as the person who started the climb. Started
+  // unconditionally and flagless like production scoring: it self-gates on the
+  // service credential (a non-peer deployment gets an inert handle), and the
+  // backend's `climbs` flag leaves it nothing to claim, or a 404 that parks it
+  // on a slow poll.
+  const climbWorker: ClimbWorkerHandle = startClimbWorker();
+
   // Local doorbell: runs the agent-turn and chat-stage passes on a timer for
   // an Inspector the backend can't reach, such as one on a laptop against a
   // disposable agent backend. Env-gated by MCPJAM_LOCAL_DOORBELL_MS.
@@ -103,6 +112,7 @@ export function startBackgroundWorkers(
         githubChecksWorker?.stop(),
         benchWorker?.stop(),
         productionChecksWorker.stop(),
+        climbWorker.stop(),
         localDoorbell?.stop(),
       ]);
     },

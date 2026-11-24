@@ -1,8 +1,9 @@
 # Running the claim loops in a worker deployment
 
-A hosted inspector server does two jobs: it serves HTTP, and it runs four
+A hosted inspector server does two jobs: it serves HTTP, and it runs five
 claim loops that poll Convex for work and execute it in-process (scheduled
-eval runs, GitHub PR checks, Connector Bench runs and production scoring).
+eval runs, GitHub PR checks, Connector Bench runs, production scoring and
+MCPJam's climb steps).
 `MCPJAM_PROCESS_ROLE` splits them, so a deploy of the web tier no longer
 interrupts a claimed job, and the worker can drain for as long as its jobs
 need.
@@ -43,8 +44,8 @@ needs no public domain; point its healthcheck at `/health`.
   browser and harness execution on, which hosted mode forces off.
 - The loop flags, moved from the web service: `SCHEDULED_EVALS_WORKER_ENABLED=1`,
   `GITHUB_CHECKS_WORKER_ENABLED=1` with `GITHUB_CHECKS_E2B_TEMPLATE_ID`, and
-  `BENCH_WORKER_ENABLED=1`. Production scoring has no flag and runs on every
-  worker that holds the service credential.
+  `BENCH_WORKER_ENABLED=1`. Production scoring and MCPJam's climb steps have no flag
+  and run on every worker that holds the service credential.
 - The same `CONVEX_URL`, `CONVEX_HTTP_URL`, `INSPECTOR_SERVICE_TOKEN` and
   `E2B_API_KEY` as the web service, against the same Convex deployment. The
   worker seals harness proxy policies that the web tier unseals, so both must
@@ -86,6 +87,7 @@ falling back to OAuth. Whether a loop applies that policy:
 | --- | --- | --- |
 | Scheduled eval runs | Applied, from the host the run executes under: the pinned environment's host, else the suite's own. If those settings cannot be read, that window's run stops instead of falling back to the default host, which has no policy | An API launch of the same suite applies it, and a monitor should take the auth path a real run takes. Without it, an unconfigured `auto` server would connect through the discover path instead, with the schedule creator's own OAuth grant if they have one. |
 | GitHub PR checks | Not applied | The one server is a throwaway row the check creates for the PR build, with no client registration. The policy could only refuse it, and registering it would hand a customer's client credentials to the PR's code. |
+| MCPJam's climb steps | Not applied | The picker reads the climbed server's read-only tools as the person who started the climb, over the connection a saved server has. The rounds it submits launch through the same grouped launch every run uses, which applies each environment's own host. |
 | Connector Bench runs | Not applied | Cleanup connects after every cell, under no cell's host, and has to reach what the cells created, so every connection uses the measured server's own auth settings. |
 
 ## Rollout
