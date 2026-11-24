@@ -12,6 +12,7 @@ import {
   webAccountName,
   webAccountReconnectPath,
   webClientSite,
+  pickableHosts,
   webClientVendorOfHost,
 } from "../clients";
 
@@ -30,6 +31,34 @@ describe("web accounts helpers", () => {
     expect(webClientVendorOfHost({ runtime: "claude-code" })).toBeUndefined();
     expect(webClientVendorOfHost({ runtime: null })).toBeUndefined();
     expect(webClientVendorOfHost({})).toBeUndefined();
+  });
+
+  it("leaves web clients out of every picker while the flag is off", () => {
+    const hosts = [
+      { hostId: "web", runtime: "chatgpt-web" },
+      { hostId: "code", runtime: "claude-code" },
+      { hostId: "plain" },
+    ];
+    expect(pickableHosts(hosts, false).map((h) => h.hostId)).toEqual([
+      "code",
+      "plain",
+    ]);
+    expect(pickableHosts(hosts, true).map((h) => h.hostId)).toEqual([
+      "web",
+      "code",
+      "plain",
+    ]);
+  });
+
+  it("keeps a web client already picked, in place, while the flag is off", () => {
+    const hosts = [
+      { hostId: "code", runtime: "claude-code" },
+      { hostId: "web", runtime: "chatgpt-web" },
+      { hostId: "web-2", runtime: "claude-web" },
+    ];
+    expect(
+      pickableHosts(hosts, false, ["web", null]).map((h) => h.hostId),
+    ).toEqual(["code", "web"]);
   });
 
   it("names each vendor's site", () => {
