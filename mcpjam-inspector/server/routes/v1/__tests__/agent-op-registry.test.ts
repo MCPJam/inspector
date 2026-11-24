@@ -213,6 +213,10 @@ describe("agent op registry", () => {
         "undismiss_study_finding",
         "cancel_study_insights",
         "cancel_eval_run_insights",
+        // A mock server and its versions: saved, free, and undone by saving
+        // the version before. The backend holds the tier and the flag.
+        "create_mock_server",
+        "update_mock_server",
       ].sort(),
     );
   });

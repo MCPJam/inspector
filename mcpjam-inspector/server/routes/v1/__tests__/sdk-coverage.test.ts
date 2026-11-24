@@ -140,6 +140,11 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "getServerRevision",
   "get /projects/{projectId}/servers/{serverId}/revisions/{revisionNumber}/diff":
     "diffServerRevisions",
+  // Mock servers: create, save a version, read one.
+  "post /projects/{projectId}/mock-servers": "createMockServer",
+  "post /projects/{projectId}/mock-servers/{mockId}/versions":
+    "saveMockServerVersion",
+  "get /projects/{projectId}/mock-servers/{mockId}": "getMockServer",
   // Server accounts. Write-only tokens: no method returns one.
   "get /projects/{projectId}/servers/{serverId}/accounts": "listServerAccounts",
   "get /projects/{projectId}/servers/{serverId}/accounts/{account}":

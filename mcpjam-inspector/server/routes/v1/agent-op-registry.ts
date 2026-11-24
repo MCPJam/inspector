@@ -152,6 +152,9 @@ import {
   listServerRevisionsOperation,
   getServerRevisionOperation,
   diffServerRevisionsOperation,
+  createMockServerOperation,
+  updateMockServerOperation,
+  getMockServerOperation,
   listServerAccountsOperation,
   getServerAccountOperation,
   readServerResourceOperation,
@@ -1765,6 +1768,9 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   { operation: listServerRevisionsOperation, tier: "direct" },
   { operation: getServerRevisionOperation, tier: "direct" },
   { operation: diffServerRevisionsOperation, tier: "direct" },
+  { operation: createMockServerOperation, tier: "direct" },
+  { operation: updateMockServerOperation, tier: "direct" },
+  { operation: getMockServerOperation, tier: "direct" },
   // Account metadata only, structurally without a token, like the secrets
   // reads; the three writes are in EXCLUDED_FROM_AGENT.
   { operation: listServerAccountsOperation, tier: "direct" },

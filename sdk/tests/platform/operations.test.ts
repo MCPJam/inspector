@@ -2392,6 +2392,9 @@ describe("operation catalog consistency", () => {
     list_server_revisions: { server: "s" },
     get_server_revision: { server: "s", revisionNumber: 2 },
     diff_server_revisions: { server: "s", revisionNumber: 2 },
+    create_mock_server: { name: "m", definition: {} },
+    update_mock_server: { mock: "m", definition: {}, expectedVersion: 1 },
+    get_mock_server: { mock: "m" },
     list_server_accounts: { server: "s" },
     get_server_account: { server: "s", account: "test-automation-1" },
     upload_server_account_tokens: {
@@ -3005,6 +3008,9 @@ describe("operation catalog consistency", () => {
       // is not a visible waiver.
       "waive_eval_gate",
       "revoke_eval_gate_waiver",
+      // A mock is saved and versioned: writes, reversible and free (`risk: "none"`).
+      "create_mock_server",
+      "update_mock_server",
       // Stores a report and sends its text to the MCPJam team — a write, and
       // `risk: "exposure"` because the text leaves the caller's organization.
       "send_feedback",

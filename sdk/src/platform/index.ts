@@ -23,6 +23,10 @@ export {
   type SwarmFundingChange,
 } from "./errors.js";
 
+// Mock servers: operations and wire shapes (defined in their own modules).
+export * from "./mock-operations.js";
+export type * from "./mock-types.js";
+
 export {
   OPERATION_FEATURES,
   PLATFORM_FEATURES,

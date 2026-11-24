@@ -670,6 +670,14 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Skill IDs are load-bearing on the agent catalog, not in in-app chat: the /skills surface lists the same rows with each one's pinnability inline, which is the half of the answer an id alone leaves out. Available on REST/CLI/MCP.",
   get_project_skill:
     "Paired with the list above; /skills renders the SKILL.md body next to the aggregateHash that says which version it is, and the body is mutable so that pairing is the point.",
+
+  // Mock servers: chat gets them with the screen that shows the change list.
+  create_mock_server:
+    "Saves a definition that changes what every client sees from a server; chat gets it with the change-list screen. Available on the API, the CLI, MCP and the agent.",
+  update_mock_server:
+    "Saves a new version of a mock; chat gets it with the change-list screen. Available on the API, the CLI, MCP and the agent.",
+  get_mock_server:
+    "Dials the real server to show its values beside the definition; chat gets it with the mock screen. Available on the API, the CLI, MCP and the agent.",
 };
 
 const OPERATIONS_BY_ID = new Map(

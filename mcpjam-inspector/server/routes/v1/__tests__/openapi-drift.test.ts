@@ -117,6 +117,17 @@ const KNOWN_UNDOCUMENTED = new Set([
   // the gated capability. Same posture as the harness capability probe above.
   // Document it when the browser exposure gate opens.
   "get /built-in-tools/{builtInToolId}/definitions",
+  // Mock servers. Creating and saving one is decided per organization (the
+  // `climbs-enabled` flag), and `docs/README.md` is explicit that such a
+  // feature is not documented until the flag comes off ("a feature that is
+  // enforced per organization must not be documented until the flag comes
+  // off", and its routes are "kept out of reference/openapi.json and listed in
+  // the Inspector's KNOWN_UNDOCUMENTED baseline"). The read goes with them:
+  // it describes the gated definition. The SDK client carries the surface in
+  // the meantime. Document all three when the flag comes off.
+  "post /projects/{projectId}/mock-servers",
+  "post /projects/{projectId}/mock-servers/{mockId}/versions",
+  "get /projects/{projectId}/mock-servers/{mockId}",
   // Unified share control plane — REST ships in I2; OpenAPI + SDK in I5.
   "get /projects/{projectId}/shares/{resourceType}/{resourceId}",
   "patch /projects/{projectId}/shares/{resourceType}/{resourceId}",

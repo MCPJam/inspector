@@ -47,6 +47,7 @@ export const PLATFORM_FEATURE_KEYS = [
   "automatic-paid-slack",
   "trace-destinations",
   "description-experiments",
+  "climbs",
   "conformance",
   "directory-readiness",
   "unified-sessions",
@@ -78,6 +79,7 @@ export const PLATFORM_FEATURES: Readonly<Record<PlatformFeatureKey, string>> = {
   "automatic-paid-slack": "Automatic Slack onboarding",
   "trace-destinations": "Trace destinations",
   "description-experiments": "Description experiments",
+  climbs: "Climbs and mock servers",
   conformance: "Conformance",
   "directory-readiness": "Directory readiness",
   "unified-sessions": "The unified sessions feed",
@@ -333,6 +335,10 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   list_server_revisions: null,
   get_server_revision: null,
   diff_server_revisions: null,
+  // Creating and saving a mock is behind `climbs`; reading one stays open.
+  create_mock_server: "climbs",
+  update_mock_server: "climbs",
+  get_mock_server: null,
   // Not hidden by `multi-account-connections`: a first account needs no
   // feature, and the backend refuses a second one where the feature is off.
   list_server_accounts: null,

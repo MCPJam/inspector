@@ -124,12 +124,15 @@ export async function runV1ServerOp<S extends z.ZodTypeAny, T>(
   options?: Pick<
     NonNullable<Parameters<typeof runEphemeralConnection>[4]>,
     "timeoutMs"
-  >,
+  > & {
+    /** The body to connect with, for a route whose path does not name the server. */
+    body?: Record<string, unknown>;
+  },
 ): Promise<Response> {
   const collector = HOSTED_MODE ? createHostedRpcLogCollector(null) : undefined;
   let result: T;
   try {
-    const rawBody = await synthesizeServerBody(c);
+    const rawBody = options?.body ?? (await synthesizeServerBody(c));
     result = await runEphemeralConnection(
       c,
       rawBody,
