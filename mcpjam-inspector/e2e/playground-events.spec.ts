@@ -243,6 +243,7 @@ test("demo events reach the Playground agent through real delivery and test inje
     await expect(
       rules.getByRole("heading", { name: "Run history", exact: true }),
     ).toBeVisible();
+    await expect(rules).toContainText("No runs yet.");
     await rules
       .locator("summary")
       .filter({ hasText: /^Instructions$/ })
