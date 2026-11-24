@@ -1,3 +1,4 @@
+import { PlaygroundEventsProvider } from "./events/PlaygroundEventsProvider";
 import { LocalBrowserOnboarding } from "@/components/browser/LocalBrowserOnboarding";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -49,6 +50,7 @@ import {
   MIN_BROWSER_PANEL_SIZE,
   useBrowserWorkspaceStore,
 } from "@/stores/browser-workspace-store";
+import { useWebClientPaneOpening } from "@/components/web-clients/WebClientPane";
 import { PlaygroundCenter } from "./PlaygroundCenter";
 import { PlaygroundPreviewedClientSync } from "./PlaygroundPreviewedClientSync";
 import { PlaygroundLeftRail } from "./PlaygroundLeftRail";
@@ -71,6 +73,7 @@ const FOCUSABLE_SELECTOR =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 interface PlaygroundTabProps {
+  activeHostId?: string | null;
   activeProjectId?: string | null;
   /**
    * Shared (Convex) project id for the active project, when synced. Used as
@@ -339,18 +342,30 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   // TRI-STATE, kept as one: `undefined` is "PostHog has not answered", which
   // is not the same as "no" and must not close a panel on its own.
   const workspaceState = useBrowserWorkspaceEnabledState();
+  // Claude web and ChatGPT web are a vendor's page, so the pane is the client.
+  const webClientVendor = useWebClientPaneOpening({
+    hostConfig: effectiveHostConfig,
+    hostId: previewedHostId,
+    conversationId,
+    signedIn: isConvexAuthenticated,
+  });
+  const webClientPane = webClientVendor !== undefined;
+  // A web client's pane skips the workspace flag, but not the backend's
+  // hosted-browser availability: its page still runs in a hosted browser.
   const canBrowseResolved =
-    workspaceState !== undefined && browsersEnabled !== undefined;
+    browsersEnabled !== undefined &&
+    (webClientPane || workspaceState !== undefined);
   const canBrowse =
-    workspaceState === true &&
     browsersEnabled === true &&
-    browserPanelAvailable({
-      sessionHasBrowser,
-      hostHasBrowser: !!browserToolIds?.includes("browser"),
-      selectedEngine: browserEngine.selectedEngine,
-      isAuthenticated: isConvexAuthenticated,
-      localBrowserRunning,
-    });
+    (webClientPane ||
+      (workspaceState === true &&
+        browserPanelAvailable({
+          sessionHasBrowser,
+          hostHasBrowser: !!browserToolIds?.includes("browser"),
+          selectedEngine: browserEngine.selectedEngine,
+          isAuthenticated: isConvexAuthenticated,
+          localBrowserRunning,
+        })));
   const showBrowser = browserOpen && canBrowse;
 
   // The browser takes its room from the Sessions rail, ONCE. Doing it on every
@@ -479,14 +494,21 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
       !railShouldOpenForBrowse({
         conversationId,
         revealConversationId: browseRevealId,
-        workspacePanelVisible: workspaceState === true,
+        // A web client's pane shows even with the workspace flag off.
+        workspacePanelVisible: workspaceState === true || webClientPane,
       })
     ) {
       return;
     }
     pendingRailReveal.current = true;
     setIsRightRailVisible(true);
-  }, [browseRevealSeq, browseRevealId, conversationId, workspaceState]);
+  }, [
+    browseRevealSeq,
+    browseRevealId,
+    conversationId,
+    workspaceState,
+    webClientPane,
+  ]);
 
   useEffect(() => {
     if (!isRightRailVisible || !pendingRailReveal.current) return;
@@ -506,6 +528,11 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
 
   return (
     <PlaygroundStateProvider value={playgroundState}>
+      <PlaygroundEventsProvider
+        projectId={projectScope}
+        hostId={previewedHostId ?? props.activeHostId ?? null}
+        host={effectiveHostConfig}
+      >
       <HostStyledShell
         hostSnapshot={{
           hostStyle,
@@ -672,6 +699,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                   // metered box awake.
                   visible={showBrowser}
                   onClose={closeBrowser}
+                  webClientVendor={webClientVendor}
                 />
               </ResizablePanel>
             </>
@@ -760,6 +788,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
         </div>
         </ExtensionWorkspaceProvider>
       </HostStyledShell>
+      </PlaygroundEventsProvider>
     </PlaygroundStateProvider>
   );
 }

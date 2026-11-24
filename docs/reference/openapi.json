@@ -23407,7 +23407,7 @@
           },
           "harness": {
             "type": ["string", "null"],
-            "enum": ["claude-code", "codex", "copilot-cli", "cursor", "opencode", null],
+            "enum": ["claude-code", "codex", "copilot-cli", "cursor", "opencode", "claude-web", "chatgpt-web", null],
             "description": "Execution runtime selector. Send `null` to clear this field back to absent. Setting one requires access to that runtime; clearing never does."
           },
           "computer": {

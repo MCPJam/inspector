@@ -72,6 +72,10 @@ import {
   isAppOnlyTool,
 } from "./mcp-client-manager/tool-converters.js";
 import { mcpCallToolResultToModelOutput } from "./mcp-client-manager/model-output.js";
+import {
+  projectToolResultByRule,
+  structuredContentRuleOf,
+} from "./mcp-client-manager/tool-result-rule.js";
 import { assertCallToolResult } from "./mcp-client-manager/result-guards.js";
 import { buildMcpAppWidgetSnapshot } from "./widget-snapshots.js";
 import { injectOpenAICompat } from "./widget-helpers.js";
@@ -241,13 +245,20 @@ function convertToToolSet(
         const result = await tool.execute(args as Record<string, unknown>);
         return assertCallToolResult(result, `Tool "${tool.name}" result`);
       },
-      toModelOutput: ({ output }) =>
-        (mcpCallToolResultToModelOutput(output as CallToolResult, {
+      toModelOutput: ({ output }) => {
+        const rule = structuredContentRuleOf(options.modelVisibleMcpToolResults);
+        if (rule) {
+          return projectToolResultByRule(output as CallToolResult, rule, {
+            modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
+          });
+        }
+        return (mcpCallToolResultToModelOutput(output as CallToolResult, {
           modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
         }) ?? {
           type: "json" as const,
           value: output as any,
-        }) as any,
+        }) as any;
+      },
     });
 
     // Preserve _serverId like getToolsForAiSdk() does
