@@ -264,12 +264,12 @@ describe("sessionAuthMiddleware", () => {
       expect(res.status).toBe(200);
     });
 
-    it("keeps reconnect paths behind the session token until a route there checks its own bearer", async () => {
+    it("lets the handback route check its own bearer", async () => {
       const res = await app.request(
         "/api/web-clients/reconnect/req_1/handback",
         { method: "POST" },
       );
-      expect(res.status).toBe(401);
+      expect(res.status).toBe(200);
     });
 
     it("keeps the local Inspector's connector routes behind the session token", async () => {

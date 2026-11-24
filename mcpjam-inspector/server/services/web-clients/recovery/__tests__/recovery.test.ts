@@ -153,11 +153,12 @@ function startProcess(
     backend,
     ledger: world.ledger,
     ...(method ? { signInMethodFor: () => method } : {}),
-    resumeRun: async (runId, pendingStep) => {
+    resumeRun: async ({ runId, pendingStep }) => {
       const run = runOf(world, runId);
       run.log.push(`resume ${pendingStep.stepId}`);
       run.restoredProfileVersion = (await accountOf(world)).profileVersion;
       world.inFlight.push(execute(world, coordinator, run, pendingStep, true));
+      return true;
     },
   });
   return coordinator;
@@ -410,7 +411,7 @@ describe("web account recovery", () => {
     await coordinator.handback({
       projectId: PROJECT,
       requestId: request?.requestId ?? "",
-      browser: browserSignedInAs(SEAT),
+      browserFor: () => browserSignedInAs(SEAT),
     });
     await settle(world);
     // A run that restored the expired profile before the handback reaches a
@@ -444,7 +445,7 @@ describe("web account recovery", () => {
       coordinator.handback({
         projectId: PROJECT,
         requestId: request?.requestId ?? "",
-        browser: browserSignedInAs(SEAT),
+        browserFor: () => browserSignedInAs(SEAT),
       });
 
     const outcomes = [...(await Promise.all([handback(), handback()]))];
@@ -493,7 +494,7 @@ describe("web account recovery", () => {
         coordinator.handback({
           projectId: PROJECT,
           requestId: request?.requestId ?? "",
-          browser: browserSignedInAs(SEAT),
+          browserFor: () => browserSignedInAs(SEAT),
         });
       await expect(handback(first)).rejects.toThrow("process stopped");
       expect(runOf(world, "run-1").log).toEqual(PAUSED);
@@ -544,7 +545,7 @@ describe("web account recovery", () => {
       await coordinator.handback({
         projectId: PROJECT,
         requestId,
-        browser: intruder,
+        browserFor: () => intruder,
       }),
     ).toEqual({
       status: "wrong_identity",
@@ -556,21 +557,21 @@ describe("web account recovery", () => {
       await coordinator.handback({
         projectId: PROJECT,
         requestId,
-        browser: browserSignedInAs(otherWorkspace),
+        browserFor: () => browserSignedInAs(otherWorkspace),
       }),
     ).toMatchObject({ status: "wrong_identity" });
     expect(
       await coordinator.handback({
         projectId: PROJECT,
         requestId,
-        browser: browserSignedInAs(undefined),
+        browserFor: () => browserSignedInAs(undefined),
       }),
     ).toEqual({ status: "not_signed_in" });
     expect(
       await coordinator.handback({
         projectId: PROJECT,
         requestId: "no-such-request",
-        browser: browserSignedInAs(SEAT),
+        browserFor: () => browserSignedInAs(SEAT),
       }),
     ).toEqual({ status: "not_found" });
 
@@ -591,7 +592,7 @@ describe("web account recovery", () => {
     const accepted = await coordinator.handback({
       projectId: PROJECT,
       requestId,
-      browser: browserSignedInAs(SEAT),
+      browserFor: () => browserSignedInAs(SEAT),
     });
     await settle(world);
     expect(accepted).toMatchObject({ status: "resumed" });
@@ -619,7 +620,7 @@ describe("web account recovery", () => {
     const accepted = await coordinator.handback({
       projectId: PROJECT,
       requestId: request?.requestId ?? "",
-      browser: browserSignedInAs(SEAT),
+      browserFor: () => browserSignedInAs(SEAT),
     });
     await settle(world);
     expect(accepted).toMatchObject({ status: "resumed" });
@@ -637,7 +638,7 @@ describe("web account recovery", () => {
       await coordinator.handback({
         projectId: PROJECT,
         requestId: next?.requestId ?? "",
-        browser: browserSignedInAs(OTHER_SEAT),
+        browserFor: () => browserSignedInAs(OTHER_SEAT),
       }),
     ).toEqual({
       status: "wrong_identity",
@@ -681,7 +682,7 @@ describe("web account recovery", () => {
       await coordinator.handback({
         projectId: PROJECT,
         requestId: request?.requestId ?? "",
-        browser: browserSignedInAs(SEAT),
+        browserFor: () => browserSignedInAs(SEAT),
       }),
     ).toEqual({ status: "wrong_identity", observed: SEAT });
     expect((await requestsOf(world))[0]?.status).toBe("open");
@@ -747,10 +748,10 @@ describe("web account recovery", () => {
       backend: world.backend,
       ledger: world.ledger,
       // Not async, so its throw comes before any promise.
-      resumeRun: (runId) => {
+      resumeRun: ({ runId }) => {
         if (runId === "run-1") throw new Error("resume refused");
         started.push(runId);
-        return Promise.resolve();
+        return Promise.resolve(true);
       },
     });
 
@@ -784,7 +785,7 @@ describe("web account recovery", () => {
     const refused = coordinator.handback({
       projectId: PROJECT,
       requestId,
-      browser: slowIntruder,
+      browserFor: () => slowIntruder,
     });
     await vi.waitFor(() =>
       expect(slowIntruder.verifyAccount).toHaveBeenCalled(),
@@ -792,7 +793,7 @@ describe("web account recovery", () => {
     const accepted = await coordinator.handback({
       projectId: PROJECT,
       requestId,
-      browser: browserSignedInAs(SEAT),
+      browserFor: () => browserSignedInAs(SEAT),
     });
     finishCheck();
     expect(await refused).toMatchObject({ status: "wrong_identity" });
@@ -820,7 +821,7 @@ describe("web account recovery", () => {
         await coordinator.handback({
           projectId: PROJECT,
           requestId: request?.requestId ?? "",
-          browser: browserSignedInAs(SEAT),
+          browserFor: () => browserSignedInAs(SEAT),
         });
         return world.backend.reportWebSignInRequired(args);
       },
@@ -984,6 +985,19 @@ describe("a tool call runs once across recovery", () => {
       toolUseId: "toolu_this",
     });
     expect(verdict.status).toBe(expected);
+  });
+
+  it("refuses a step with no turn and no connector to read", async () => {
+    const ledger = createInMemoryToolCallLedger();
+    const step = { stepId: "step-1", startedAt: new Date().toISOString() };
+
+    // Nothing could show a forwarded call, so nothing may be sent again.
+    await expect(
+      reconcileWithLedger(ledger, { runId: "run-1", step }),
+    ).rejects.toThrow("can't be checked against the ledger");
+    await expect(
+      reconcileWithLedger(ledger, { runId: "run-1", connectorIds: [], step }),
+    ).rejects.toThrow("can't be checked against the ledger");
   });
 
   it.each(["turn", "connector"] as const)(
