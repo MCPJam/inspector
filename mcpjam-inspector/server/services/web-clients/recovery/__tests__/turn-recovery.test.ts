@@ -11,6 +11,7 @@ const ran = vi.hoisted(() =>
 vi.mock("../../run-web-client-turn.js", () => ({ runWebClientTurn: ran }));
 
 import type { WebClientTurnInput } from "../../run-web-client-turn.js";
+import { createInMemoryWebReconnectBackend } from "../in-memory-backend.js";
 import {
   runRecoverableWebTurn,
   type WebRecoverySetup,
@@ -51,5 +52,50 @@ describe("runRecoverableWebTurn", () => {
     expect(ran).toHaveBeenCalledTimes(1);
     expect(ran).toHaveBeenCalledWith(input);
     expect(result).toEqual({ ok: false, turnId: "turn-1" });
+  });
+
+  it("names the eval iteration on the sign-in request it opens", async () => {
+    ran.mockResolvedValueOnce({
+      ok: false,
+      turnId: "turn-1",
+      startedAt: Date.UTC(2026, 10, 20, 10),
+      failure: {
+        kind: "needs_sign_in",
+        reason: "signed_out",
+        step: "sign_in_check",
+        message: "Signed out.",
+      },
+    } as never);
+    const backend = createInMemoryWebReconnectBackend([
+      {
+        webAccountId: "web-account-1",
+        projectId: "project-1",
+        vendor: "chatgpt",
+        status: "ready",
+        profileVersion: 1,
+      },
+    ]);
+    const report = vi.spyOn(backend, "reportWebSignInRequired");
+    const input = {
+      ...turn({ actorExternalId: "user_admin" }),
+      iterationId: "iteration-7",
+      environment: {
+        actor: { actorExternalId: "user_admin" },
+        resolveAccount: async () => ({ webAccountId: "web-account-1" }),
+      },
+    } as unknown as WebClientTurnInput;
+    const result = await runRecoverableWebTurn(input, {
+      backendFor: () => backend,
+      ledger,
+      maxPauseMs: 30,
+      pollMs: 10,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      stop: { kind: "paused_for_person" },
+    });
+    expect(report).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: "run-1", iterationId: "iteration-7" }),
+    );
   });
 });

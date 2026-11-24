@@ -13,8 +13,11 @@ import {
   createLocalWebClientEnvironmentFactory,
   localWebClientProfileDir,
 } from "../local-web-client-environment";
+import { runWebClientTurn } from "../run-web-client-turn";
 import { REPOSITORY_ROOT } from "../../../utils/outside-repository";
 import { mountWebClientRuntime } from "../runtime-mount";
+import { createInMemoryToolCallLedger } from "../tool-call-ledger";
+import { createInMemoryTurnWindowStore } from "../turn-windows";
 import { setWebClientEnvironment, webClientEnvironmentFor } from "../web-client-environment";
 
 afterEach(() => {
@@ -146,7 +149,7 @@ describe("a local web client environment", () => {
   it("opens one browser per profile at a time and frees it on close or a failed launch", async () => {
     const close = vi.fn(async () => {});
     const launch = vi.fn(async () => ({ page: chromiumPage(), close }));
-    const env = environment({ launch });
+    const env = environment({ launch, profileWaitMs: 60, profilePollMs: 10 });
     const sites = ["https://chatgpt.com"];
     const browser = await env.openBrowser({ webAccountId: "local:chatgpt", sites });
     expect(launch).toHaveBeenCalledWith("/profiles/chatgpt-profile", { headless: true });
@@ -159,6 +162,124 @@ describe("a local web client environment", () => {
     await expect(env.openBrowser({ webAccountId: "local:chatgpt", sites })).rejects.toThrow("Chromium is not installed");
     await (await env.openBrowser({ webAccountId: "local:chatgpt", sites })).close();
   });
+
+  it("lets a second turn on the same profile wait for the first browser to close", async () => {
+    const launch = vi.fn(async () => ({ page: chromiumPage(), close: async () => {} }));
+    const env = environment({ launch, profilePollMs: 10 });
+    const sites = ["https://chatgpt.com"];
+    const first = await env.openBrowser({ webAccountId: "local:chatgpt", sites });
+    const second = env.openBrowser({ webAccountId: "local:chatgpt", sites });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(launch).toHaveBeenCalledTimes(1);
+    await first.close();
+    await (await second).close();
+    expect(launch).toHaveBeenCalledTimes(2);
+  });
+
+  it("doesn't take a profile that frees after the wait's deadline", async () => {
+    const launch = vi.fn(async () => ({ page: chromiumPage(), close: async () => {} }));
+    // The poll is longer than the whole budget.
+    const env = environment({
+      launch,
+      profileDir: "/profiles/late-free",
+      profileWaitMs: 50,
+      profilePollMs: 1_000,
+    });
+    const sites = ["https://chatgpt.com"];
+    const first = await env.openBrowser({ webAccountId: "local:chatgpt", sites });
+    const second = env.openBrowser({ webAccountId: "local:chatgpt", sites });
+    const freed = new Promise((resolve) => setTimeout(resolve, 80)).then(() => first.close());
+
+    await expect(second).rejects.toMatchObject({ failure: { kind: "turn_running" } });
+    await freed;
+    expect(launch).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops waiting for the profile when the run stops, and launches nothing once it frees", async () => {
+    const launch = vi.fn(async () => ({
+      page: chromiumPage(),
+      close: async () => {},
+    }));
+    const env = environment({
+      launch,
+      profileDir: "/profiles/stopped-run",
+      profilePollMs: 10,
+    });
+    const sites = ["https://chatgpt.com"];
+    const first = await env.openBrowser({
+      webAccountId: "local:chatgpt",
+      sites,
+    });
+    const stop = new AbortController();
+    const second = env.openBrowser({
+      webAccountId: "local:chatgpt",
+      sites,
+      signal: stop.signal,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    stop.abort();
+    await first.close();
+    await expect(second).rejects.toBe(stop.signal.reason);
+    expect(launch).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives a turn one deadline for a busy connector and then a busy profile", async () => {
+    const launch = vi.fn(async () => ({
+      page: chromiumPage(),
+      close: async () => {},
+    }));
+    // On its own, the wait for this busy profile would last 10 seconds.
+    const env = environment({
+      launch,
+      profileDir: "/profiles/one-deadline",
+      profileWaitMs: 10_000,
+      profilePollMs: 10,
+    });
+    const sites = ["https://chatgpt.com"];
+    const held = await env.openBrowser({
+      webAccountId: "local:chatgpt",
+      sites,
+    });
+    // Another run holds the connector for the first 100ms of the turn's second.
+    const windows = createInMemoryTurnWindowStore();
+    windows.open({
+      connectorId: "conn-orders",
+      runId: "run-0",
+      turnId: "other-turn",
+      approve: async () => ({ allow: true }),
+    });
+    setTimeout(() => windows.close("other-turn"), 100);
+    const startedAt = Date.now();
+    const result = await runWebClientTurn({
+      runtimeId: "chatgpt-web",
+      projectId: "p",
+      serverIds: ["orders"],
+      prompt: "say hello",
+      runId: "run-1",
+      approval: { requireToolApproval: false, answer: "deny" },
+      environment: {
+        ...env,
+        ensureConnector: async () => ({ connectorId: "conn-orders" }),
+      },
+      turnWindows: windows,
+      ledger: createInMemoryToolCallLedger(),
+      connectorWaitMs: 1_000,
+      connectorPollMs: 10,
+    });
+    const waited = Date.now() - startedAt;
+    expect(result).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "turn_running",
+        message: "Another turn is using this machine's ChatGPT web browser.",
+      },
+    });
+    expect(waited).toBeGreaterThanOrEqual(1_000);
+    expect(waited).toBeLessThan(5_000);
+    expect(windows.active("conn-orders")).toBeUndefined();
+    expect(launch).toHaveBeenCalledTimes(1);
+    await held.close();
+  }, 30_000);
 
   it("closes a browser it couldn't drive before freeing its profile", async () => {
     const sites = ["https://chatgpt.com"];
@@ -173,7 +294,8 @@ describe("a local web client environment", () => {
     const page = chromiumPage(async () => {
       throw new Error("The page could not be routed.");
     });
-    const env = environment({ launch: vi.fn(async () => ({ page, close })) });
+    // A turn that finds the profile in use stops at once rather than waiting.
+    const env = environment({ launch: vi.fn(async () => ({ page, close })), profileWaitMs: 0 });
     await expect(env.openBrowser({ webAccountId: "local:chatgpt", sites })).rejects.toThrow("The page could not be routed.");
     expect(close).toHaveBeenCalledTimes(1);
     expect(openedWhileClosing).toMatchObject({ failure: { kind: "turn_running" } });
