@@ -271,23 +271,25 @@ export const localBashRunner: BashRunner = async ({
     // Timeout and abort share one teardown. `close` waits for every holder of
     // the output pipes, and a descendant the kill could not reach keeps them
     // open, so the deadline releases the streams and returns regardless.
+    // Terminating the spawned PID directly is the Windows fallback for a bash
+    // the reaper cannot see, such as a non-MSYS bash.exe, and for a reaper
+    // still running at the deadline.
+    const killRoot = () => {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+      }
+    };
     const teardown = () => {
       if (tornDown || settled) return;
       tornDown = true;
       deadlineTimer = setTimeout(() => {
+        if (windows) killRoot();
         child.stdout?.destroy();
         child.stderr?.destroy();
         settle(() => resolvePromise({ stdout, stderr, exitCode: 124 }));
       }, TEARDOWN_DEADLINE_MS);
       deadlineTimer.unref?.();
       if (windows) {
-        // Terminating the spawned PID directly is the fallback for a bash
-        // the reaper cannot see, such as a non-MSYS bash.exe.
-        const killRoot = () => {
-          if (child.exitCode === null && child.signalCode === null) {
-            child.kill("SIGKILL");
-          }
-        };
         spawnMsysReaper(bashPath, commandId, commandEnv)
           .once("exit", killRoot)
           .once("error", killRoot);
