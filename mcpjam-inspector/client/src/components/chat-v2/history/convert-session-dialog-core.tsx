@@ -743,12 +743,12 @@ function ConvertSessionDialogCoreInner({
         added.length > 0
       ) {
         toast.success(
-          `Saved as a test case. Added ${added.join(
+          `Saved as test case. Added ${added.join(
             ", ",
           )} to the suite.`,
         );
       } else {
-        toast.success("Saved as a test case.");
+        toast.success("Saved as test case");
       }
       onOpenChange(false);
       onImported({ suiteId: result.suiteId, testCaseId: result.testCaseId });
@@ -760,7 +760,7 @@ function ConvertSessionDialogCoreInner({
       // upgrade wording.
       toast.error(
         getPromotionBlockedCopy(error) ??
-          getBillingErrorMessage(error, "Failed to promote session"),
+          getBillingErrorMessage(error, "Failed to save as test case"),
       );
     } finally {
       setIsSubmitting(false);
@@ -808,8 +808,8 @@ function ConvertSessionDialogCoreInner({
       <AlertTriangle className="h-4 w-4" />
       <AlertTitle>Import unavailable</AlertTitle>
       <AlertDescription>
-        This session is not linked to a shared project yet, so it cannot be
-        promoted to a suite-backed test case.
+        This session is not linked to a shared project yet, so it can't be
+        saved as a test case.
       </AlertDescription>
     </Alert>
   ) : null;

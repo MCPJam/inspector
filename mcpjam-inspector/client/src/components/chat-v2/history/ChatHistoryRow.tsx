@@ -4,7 +4,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import { Input } from "@mcpjam/design-system/input";
@@ -371,7 +370,6 @@ export function ChatHistoryRow({
                 <DropdownMenuItem onClick={() => onConvertToTestCase(session)}>
                   Save as test case
                 </DropdownMenuItem>
-                <DropdownMenuSeparator />
               </>
             ) : null}
             <DropdownMenuItem
@@ -394,7 +392,6 @@ export function ChatHistoryRow({
 
             {canManageProjectSharing && (
               <>
-                <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={async () =>
                     session.directVisibility === "project"
@@ -413,7 +410,6 @@ export function ChatHistoryRow({
               </>
             )}
 
-            <DropdownMenuSeparator />
             <DropdownMenuItem
               onClick={async () =>
                 session.status === "active"
