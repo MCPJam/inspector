@@ -3439,6 +3439,118 @@ describe("PlaygroundMain", () => {
     });
   });
 
+  describe("conflict detach and the conversation URL", () => {
+    const ORIGINAL_CONVERSATION_ID = "original-chat-session";
+    const USER_MESSAGE = {
+      id: "u1",
+      role: "user",
+      parts: [{ type: "text", text: "Hello" }],
+    };
+
+    afterEach(() => {
+      window.history.replaceState({}, "", "/");
+      invalidateChatHistoryPrefetch();
+    });
+
+    // A turn on the original thread whose save comes back as a conflict. No
+    // thread is opened, so `onConflict` arrives through the no-baseline branch;
+    // every detach path shares `detachHistorySession`, so the branch does not
+    // matter here.
+    const streamTurnThatConflicts = () => {
+      window.history.replaceState(
+        {},
+        "",
+        `/playground?conversation=${ORIGINAL_CONVERSATION_ID}`,
+      );
+      mockUseChatSession.chatSessionId = ORIGINAL_CONVERSATION_ID;
+      mockUseChatSession.messages = [USER_MESSAGE];
+      mockUseChatSession.status = "streaming";
+      mockUseChatSession.isStreaming = true;
+      mockUseChatSession.consumePersistReceipt.mockReturnValueOnce({
+        outcome: "conflict",
+        chatSessionId: ORIGINAL_CONVERSATION_ID,
+        turnId: "turn-1",
+        currentVersion: 5,
+      });
+    };
+
+    const finishTurnAndDetach = async (rerenderPlayground: () => void) => {
+      mockUseChatSession.status = "ready";
+      mockUseChatSession.isStreaming = false;
+      rerenderPlayground();
+      await waitFor(() => {
+        expect(mockUseChatSession.detachToLocalFork).toHaveBeenCalled();
+      });
+      await act(async () => {
+        rerenderPlayground();
+      });
+    };
+
+    it("does not reopen the conflicted thread from the URL over the fork", async () => {
+      // Regression. A conflict detaches the thread and moves the transcript to
+      // a fork with a new session id, which hydrates from an empty transcript.
+      // For that moment both restore guards are down (no active thread, no
+      // messages), and with `?conversation=` still naming the old thread the
+      // restore fetched it and loaded it over the fork: the user's reply
+      // vanished seconds after the notice said it stayed.
+      streamTurnThatConflicts();
+      // The fork stays in its hydration window (new id, no transcript) until
+      // the assertions below, so clearing the param only once the fork
+      // resolves would be too late.
+      let settleFork = () => {};
+      mockUseChatSession.detachToLocalFork.mockImplementationOnce(() => {
+        mockUseChatSession.chatSessionId = "forked-session";
+        mockUseChatSession.messages = [];
+        return new Promise<{ chatSessionId: string }>((resolve) => {
+          settleFork = () => resolve({ chatSessionId: "forked-session" });
+        });
+      });
+
+      const { rerender } = render(
+        <PlaygroundMain {...defaultProps} syncConversationToUrl />,
+      );
+      const rerenderPlayground = () =>
+        rerender(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
+      // Guard against a vacuous pass: the param has to be there to be dropped.
+      expect(window.location.search).toContain(ORIGINAL_CONVERSATION_ID);
+
+      await finishTurnAndDetach(rerenderPlayground);
+
+      expect(mockGetChatHistoryDetail).not.toHaveBeenCalledWith(
+        expect.objectContaining({ chatSessionId: ORIGINAL_CONVERSATION_ID }),
+      );
+      expect(window.location.search).not.toContain(ORIGINAL_CONVERSATION_ID);
+
+      // Once the fork is live with its transcript, the address names it.
+      await act(async () => {
+        settleFork();
+      });
+      mockUseChatSession.messages = [USER_MESSAGE];
+      await act(async () => {
+        rerenderPlayground();
+      });
+      await waitFor(() => {
+        expect(window.location.search).toContain("forked-session");
+      });
+    });
+
+    it("leaves the address alone on a surface without URL sync", async () => {
+      // The eval preview renders the Playground with URL sync off and meets
+      // conflicts by design. A detach there must not drop a param that the
+      // surface never wrote.
+      streamTurnThatConflicts();
+
+      const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+      await finishTurnAndDetach(() =>
+        rerender(<PlaygroundMain {...defaultProps} />),
+      );
+
+      expect(window.location.search).toBe(
+        `?conversation=${ORIGINAL_CONVERSATION_ID}`,
+      );
+    });
+  });
+
   describe("Escape shortcut", () => {
     it("stops an active single-model chat when Escape is pressed", () => {
       mockUseChatSession.isStreaming = true;

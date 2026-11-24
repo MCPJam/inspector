@@ -3860,6 +3860,11 @@ export function PlaygroundMain({
     (toastMessage: string, opts?: { silent?: boolean }) => {
       resumedThreadSendBaselineRef.current = null;
       cancelPendingHistorySelection();
+      // The fork re-mints the session id with an empty transcript, so with no
+      // active thread the URL restore effect would reopen
+      // `?conversation=<old id>` over it. Clear the param first, as
+      // `onBeforeBranch` does.
+      clearConversationUrlRef.current();
       setPendingDirectVisibility("private");
       setLoadedThreadOwnerUserId(null);
 
@@ -4176,6 +4181,8 @@ export function PlaygroundMain({
     [multiModelSessions.sendInColumn, restoreModelContext, sendMessage],
   );
   const { clearOpenedColumn } = multiModelSessions;
+  const { openFromHistory: openMultiModelSessionFromHistory } =
+    multiModelSessions;
   const recoveryReads = useRecoveryColumnReads(comparisonRecovery);
   // What a compare column needs to restore its chat and to save its place.
   const multiModelColumnProps = (columnKey: string) => ({
@@ -4199,7 +4206,7 @@ export function PlaygroundMain({
         historySelectionRequestIdRef.current === selectionRequestId;
       // Holds sends while a session may be reopening; a restore clears it.
       setLoadingHistorySessionId(session._id);
-      const opened = await multiModelSessions.openFromHistory(
+      const opened = await openMultiModelSessionFromHistory(
         session,
         siblings,
         isCurrentSelection,
@@ -4272,7 +4279,7 @@ export function PlaygroundMain({
       isStreaming,
       loadHistorySession,
       restoreHistoryServerSelection,
-      multiModelSessions.openFromHistory,
+      openMultiModelSessionFromHistory,
     ],
   );
 
@@ -4321,7 +4328,7 @@ export function PlaygroundMain({
           detail.session.resumeConfig?.selectedServers,
         );
         // A saved column reopened by its link branches on send, as from Sessions.
-        void multiModelSessions.openFromHistory(detail.session, undefined, () => true);
+        void openMultiModelSessionFromHistory(detail.session, undefined, () => true);
         adoptRestoredConversationTarget(detail.session);
         // `loadHistorySession` skips the model when the catalog hasn't loaded
         // yet; remember it so the effect below can apply it on arrival.
@@ -4380,7 +4387,7 @@ export function PlaygroundMain({
       adoptRestoredConversationTarget,
       convexProjectId,
       loadHistorySession,
-      multiModelSessions.openFromHistory,
+      openMultiModelSessionFromHistory,
       restoreHistoryServerSelection,
     ],
   );

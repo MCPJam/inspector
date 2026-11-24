@@ -20,7 +20,9 @@ export interface MultiModelGroupActions {
 
 function refuseShare(): Promise<void> {
   return Promise.reject(
-    new Error("A multi-model session can't be shared to a project."),
+    new Error(
+      "Couldn't share this multi-model session to a project. Open a single-model session to share it.",
+    ),
   );
 }
 
