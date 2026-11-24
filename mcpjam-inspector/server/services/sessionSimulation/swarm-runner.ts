@@ -1,7 +1,7 @@
 import { assertNativeDiscovery } from "../../utils/harness/native-discovery.js";
 import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch.js";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
-import { readTasksPolicy } from "@mcpjam/sdk";
+import { describeError, originOf, readTasksPolicy } from "@mcpjam/sdk";
 import { resolveBrowserHostCapabilities } from "../../utils/browser-host-capabilities.js";
 import { harnessDisplayName } from "@/shared/harness-model-support";
 import { orgKeyHarnessName } from "@/shared/org-key-surfaces";
@@ -336,7 +336,13 @@ function targetSessionIdentity(target: PinnedHostExecutionSpec): {
  * `serverIds`. Host-aware (unlike the scenario {@link SimulationManagerFactory})
  * so a single fan-out run can connect different servers per host.
  */
-export type JourneyManagerFactory = (host: PinnedHostExecutionSpec) => Promise<{
+export type JourneyManagerFactory = (
+  host: PinnedHostExecutionSpec,
+  hooks?: {
+    /** Called once the factory starts waiting on the host's MCP servers. */
+    onConnecting?: () => void;
+  },
+) => Promise<{
   manager: Awaited<ReturnType<SimulationManagerFactory>>["manager"];
   connectedServerIds: string[];
   connectedServerNames?: string[];
@@ -2234,9 +2240,28 @@ async function runJourneyFanOut(
         return;
       }
       logEvent("target.worker_failed", { runId, hostId, targetId, sessionIdx });
+      const failureContext = {
+        runId,
+        hostId,
+        targetId,
+        sessionIdx,
+        setupReason:
+          err instanceof SwarmSetupError ? err.partial.reason : undefined,
+      };
       // No web account left is the accounts' state, not a fault here.
       const webAccountFailure =
         err instanceof WebAccountUnavailableError ? err.message : undefined;
+      // A setup stopped by the user's own server or its configuration (a
+      // refused connection, an unknown host) is theirs to fix; it fails the
+      // target the same way but is not an MCPJam error to page on. The origin
+      // is trusted only for a failure from the target's servers: the same
+      // refused connection from a Convex lookup, or a 401 on a credential
+      // MCPJam pays for in the model call, is ours.
+      const described =
+        err instanceof SwarmSetupError && err.fromTargetServer
+          ? describeError(err.cause)
+          : undefined;
+      const causeOrigin = described ? originOf(described) : undefined;
       if (webAccountFailure) {
         logger.warn("[swarm.runner] no web account left for this target; finalizing its attempts", {
           runId,
@@ -2244,18 +2269,21 @@ async function runJourneyFanOut(
           targetId,
           sessionIdx,
         });
+      } else if (
+        causeOrigin === "user_server" ||
+        causeOrigin === "user_config"
+      ) {
+        // The slug keeps a wrong downgrade findable in Axiom once it is off
+        // Sentry.
+        logger.warn(
+          "[swarm.runner] target worker failed; finalizing its attempts",
+          { ...failureContext, slug: described?.slug },
+        );
       } else {
         logger.error(
           "[swarm.runner] target worker failed; finalizing its attempts",
           err,
-          {
-            runId,
-            hostId,
-            targetId,
-            sessionIdx,
-            setupReason:
-              err instanceof SwarmSetupError ? err.partial.reason : undefined,
-          },
+          failureContext,
         );
       }
       // Finalize this target's not-yet-terminal attempts `[sessionIdx..N)`: the
