@@ -44,6 +44,12 @@ vi.mock("@/components/ui-playground/hooks/use-playground-state", () => ({
   PlaygroundStateProvider: ({ children }: { children?: ReactNode }) => children,
 }));
 
+// Event subscriptions have their own provider tests; layout tests do not mount
+// the Playground state or Convex providers that the events runtime consumes.
+vi.mock("../events/PlaygroundEventsProvider", () => ({
+  PlaygroundEventsProvider: ({ children }: { children?: ReactNode }) => children,
+}));
+
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: false }),
