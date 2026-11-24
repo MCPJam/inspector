@@ -579,8 +579,12 @@ export type EvalRunProvenance =
   | {
       source?: "ui" | "api" | "schedule" | "github_check";
       benchmarkRunId?: never;
+      climbId?: never;
     }
-  | { source: "benchmark"; benchmarkRunId: string };
+  | { source: "benchmark"; benchmarkRunId: string; climbId?: never }
+  // A climb's run is hidden from the suite's history the way a benchmark's is,
+  // so the backend wants the climb it belongs to and a group it registered.
+  | { source: "climb"; climbId: string; benchmarkRunId?: never };
 
 export const startSuiteRunWithRecorder = async ({
   convexClient,
@@ -609,6 +613,9 @@ export const startSuiteRunWithRecorder = async ({
   expectedEnvironmentServerIds,
   source,
   benchmarkRunId,
+  climbId,
+  serverReplacements,
+  mockPins,
   idempotencyKey,
   sourceHash,
   skillsOverride,
@@ -653,6 +660,18 @@ export const startSuiteRunWithRecorder = async ({
     serverName: string;
     projectServerId: string;
   }>;
+  /**
+   * A climb's run: swap one server of the environment, by name, for another
+   * (a mock). The run keeps the real server's name in its bindings.
+   */
+  serverReplacements?: Array<{
+    serverName: string;
+    replacementServerId: string;
+    replacementVersion?: string;
+    realListingHash: string;
+  }>;
+  /** The mock versions this run dialed, with the hash authorize returned. */
+  mockPins?: Array<{ serverId: string; version: number; contentHash: string }>;
   toolSnapshot?: ServerToolSnapshot;
   toolSnapshotDebug?: Record<string, unknown>;
   /**
@@ -833,6 +852,9 @@ export const startSuiteRunWithRecorder = async ({
       // every benchmark child at the mutation — after the claim was already
       // leased and the MCP session already opened.
       ...(benchmarkRunId ? { benchmarkRunId } : {}),
+      ...(climbId ? { climbId } : {}),
+      ...(serverReplacements?.length ? { serverReplacements } : {}),
+      ...(mockPins?.length ? { mockPins } : {}),
       ...(idempotencyKey ? { idempotencyKey } : {}),
       ...(sourceHash ? { sourceHash } : {}),
       ...(skillsOverride ? { skillsOverride } : {}),

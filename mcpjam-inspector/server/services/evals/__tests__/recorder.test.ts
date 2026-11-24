@@ -49,6 +49,36 @@ describe("startSuiteRunWithRecorder", () => {
     );
   });
 
+  it("forwards a climb's run: its source, climb, the server it replaces and the mock versions", async () => {
+    const action = vi.fn().mockResolvedValue(undefined);
+    const mutation = vi.fn().mockResolvedValue({ runId: "run-1", testCases: [] });
+    const serverReplacements = [
+      { serverName: "Echo", replacementServerId: "s_mock", replacementVersion: "2", realListingHash: "h" },
+    ];
+    const mockPins = [{ serverId: "s_mock", version: 2, contentHash: "c2" }];
+
+    await startSuiteRunWithRecorder({
+      convexClient: { mutation, action } as any,
+      suiteId: "suite-1",
+      source: "climb",
+      climbId: "climb-1",
+      serverReplacements,
+      mockPins,
+    });
+    expect(mutation.mock.calls[0][1]).toMatchObject({
+      source: "climb",
+      climbId: "climb-1",
+      serverReplacements,
+      mockPins,
+    });
+
+    mutation.mockClear();
+    await startSuiteRunWithRecorder({ convexClient: { mutation, action } as any, suiteId: "suite-1" });
+    for (const key of ["climbId", "serverReplacements", "mockPins"]) {
+      expect(mutation.mock.calls[0][1]).not.toHaveProperty(key);
+    }
+  });
+
   it("forwards the run's accounts, and starts without them on a backend that predates them", async () => {
     const action = vi.fn().mockResolvedValue(undefined);
     const accountsAtRun = [{ serverId: "asana", connectionIds: ["dummy"] }];

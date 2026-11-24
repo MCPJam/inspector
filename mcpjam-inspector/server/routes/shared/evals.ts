@@ -73,6 +73,7 @@ import {
 } from "@/shared/probe-config";
 import { deriveItemIdempotencyKey } from "../../utils/idempotency.js";
 import type { LaunchContext } from "../../utils/launch-context.js";
+import type { MockPin, ServerReplacement } from "../../services/climbs/replacement.js";
 import {
   createEvalCasesInBatches,
   partialResultOf,
@@ -700,6 +701,9 @@ type RunEvalsWithManagerRequest = RunEvalsRequest & {
    * a CLI run, an Actions job and an MCP agent as one indistinguishable `API`.
    */
   launchContext?: LaunchContext;
+  /** A climb's run: the server it replaces by name, and the mock versions it opens. */
+  serverReplacements?: ServerReplacement[];
+  mockPins?: MockPin[];
 } & EvalRunProvenance;
 
 export type GithubCheckServerOverride = Array<{
@@ -2463,6 +2467,8 @@ export async function prepareEvalRun(
     extraHeaders,
     benchmarkWriteGuard,
     launchContext,
+    serverReplacements,
+    mockPins,
   } = request;
 
   /**
@@ -2475,7 +2481,9 @@ export async function prepareEvalRun(
   const provenance: EvalRunProvenance =
     request.source === "benchmark"
       ? { source: "benchmark", benchmarkRunId: request.benchmarkRunId }
-      : { source: request.source };
+      : request.source === "climb"
+        ? { source: "climb", climbId: request.climbId }
+        : { source: request.source };
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
     throw new WebRouteError(
@@ -2765,6 +2773,7 @@ export async function prepareEvalRun(
     runGroupId,
     environmentId,
     ...(githubCheckServerOverride ? { githubCheckServerOverride } : {}),
+    ...(serverReplacements?.length ? { serverReplacements, mockPins } : {}),
     // All three preconditions come from the SAME resolution the tool snapshot
     // was captured against. The revision alone is not enough: an environment
     // pins a `hostId` and optionally an attachment, both dereferenced live, so

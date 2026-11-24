@@ -132,6 +132,7 @@ import {
   getServerRevisionOperation,
   listServerRevisionsOperation,
 } from "./server-revision-operations.js";
+import { replacementsBody, serverReplacementsInput } from "./run-replacements.js";
 import {
   createMockServerOperation,
   getMockServerOperation,
@@ -4190,6 +4191,7 @@ const runEvalSuiteInput = z
         "PERSISTS A NEW HOST-CONFIG SNAPSHOT ON THE SUITE, changing what every future run of it uses — not just this one. Without it a rerun leaves the snapshot frozen, which is what stops newly connected servers from silently contaminating an existing suite. Single-target runs only; rejected with any multi-target launch, where last-writer-wins on a frozen snapshot is never what was meant."
       ),
     compose: composeRunTargetInput.optional(),
+    serverReplacements: serverReplacementsInput,
     ...RUN_KNOB_FIELDS,
   })
   .superRefine((input, ctx) => {
@@ -4622,7 +4624,10 @@ export const runEvalSuiteOperation: PlatformOperation<
       );
     }
 
-    const knobs = runKnobBody(input, caseIds);
+    const knobs = {
+      ...runKnobBody(input, caseIds),
+      ...(await replacementsBody(client, project, input.serverReplacements, signal)),
+    };
     const projectInfo = toSelectedProjectInfo(project);
     const suiteInfo = { id: suite.id, name: suite.name };
 

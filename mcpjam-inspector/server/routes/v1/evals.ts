@@ -109,6 +109,14 @@ import {
   readLaunchContext,
   type LaunchContext,
 } from "../../utils/launch-context.js";
+import {
+  climbLaunchShape,
+  climbRunRule,
+  resolveReplacementLaunch,
+  type ReplacementLaunch,
+  type ReplacementSpec,
+} from "../../services/climbs/replacement.js";
+import { replacementSpec } from "../../services/climbs/listing.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import {
   HOSTED_MODE,
@@ -691,6 +699,7 @@ const createEvalRunSchema = RunEvalsRequestSchema.omit({
     // disjoint — a body can only satisfy one. Normalized to the internal shape
     // before `prepareEvalRun`, so nothing downstream learns there were two.
     matchOptionsOverride: matchOptionsInputSchema.optional(),
+    ...climbLaunchShape,
   })
   // STRICT on the object, before the refinements: ZodEffects has no `.strict()`.
   // An unknown key is a 400, not a silently-dropped field on a spend route.
@@ -698,6 +707,7 @@ const createEvalRunSchema = RunEvalsRequestSchema.omit({
   .refine((body) => body.suiteId || (body.tests?.length ?? 0) > 0, {
     message: "Provide suiteId (rerun) and/or inline tests",
   })
+  .refine(...climbRunRule)
   .refine((body) => !body.hosts || !body.suiteId, {
     message:
       "hosts is only supported when creating an inline suite; update an existing suite's hosts first.",
@@ -4376,6 +4386,7 @@ async function launchEvalRun(params: {
    * `utils/launch-context.ts`.
    */
   launchContext?: LaunchContext;
+  replacementLaunch?: ReplacementLaunch;
   onSettled: () => void;
 }): Promise<LaunchedEvalRun> {
   const {
@@ -4432,6 +4443,7 @@ async function launchEvalRun(params: {
       // Eval setup has no iteration sandbox and cannot reserve a personal Computer.
       pluginComputerRuntime: false,
       ...(connectionIdSets ? { connectionIdSets } : {}),
+      ...(params.replacementLaunch ? { mockVersions: params.replacementLaunch.mockVersions } : {}),
       serverNames,
       // The issuer makes per-server XAA servers mint instead of failing with
       // 'Missing XAA issuer'. The enterprise policy now comes from the run's
@@ -4491,7 +4503,16 @@ async function launchEvalRun(params: {
       // STAMPED, and deliberately unchanged. Everything that reaches this
       // route is an API call, whatever it calls itself; `launchContext` below
       // carries the caller's own claim as a separate, clearly-labelled field.
-      source: "api",
+      // Except a climb's run, which the backend hides and registers first.
+      ...(params.replacementLaunch?.climbId
+        ? { source: "climb" as const, climbId: params.replacementLaunch.climbId }
+        : { source: "api" as const }),
+      ...(params.replacementLaunch
+        ? {
+            serverReplacements: params.replacementLaunch.replacements,
+            mockPins: params.replacementLaunch.mockPins,
+          }
+        : {}),
       ...(params.launchContext ? { launchContext: params.launchContext } : {}),
       // Reuse this exact resolution (and its revision) rather than letting
       // the shared path resolve again — the run must be pinned to the
@@ -4566,11 +4587,14 @@ async function resolveLaunchServers(params: {
   requestedServerIds: string[];
   requestedServerNames: string[] | undefined;
   ephemeralEnvironment?: boolean;
+  /** Servers of the environment this launch replaces by name, and the climb it is for. */
+  replacements?: ReplacementSpec;
 }): Promise<{
   environmentId: string | undefined;
   environmentLaunch: ResolvedEnvironmentForLaunch | undefined;
   serverIds: string[];
   serverNames: string[] | undefined;
+  replacementLaunch?: ReplacementLaunch;
 }> {
   const { convexAuthToken, projectId, suiteId, namedHostId } = params;
 
@@ -4638,6 +4662,20 @@ async function resolveLaunchServers(params: {
     serverNames = selection.serverNames;
   }
 
+  if (params.replacements) {
+    const swapped = await resolveReplacementLaunch(
+      createConvexClient(convexAuthToken),
+      environmentLaunch,
+      params.replacements,
+    );
+    return {
+      environmentId,
+      environmentLaunch: swapped.environment,
+      serverIds: swapped.serverIds,
+      serverNames: swapped.serverNames,
+      replacementLaunch: swapped.launch,
+    };
+  }
   return { environmentId, environmentLaunch, serverIds, serverNames };
 }
 
@@ -4726,7 +4764,7 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
   // same swap `runEphemeralConnection` does for the synchronous routes.
   const convexAuthToken = await getConvexBearerForRequest(c);
 
-  const { environmentId, environmentLaunch, serverIds, serverNames } =
+  const { environmentId, environmentLaunch, serverIds, serverNames, replacementLaunch } =
     await resolveLaunchServers({
       convexAuthToken,
       projectId,
@@ -4739,6 +4777,7 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
       ...(body.ephemeralEnvironment === true
         ? { ephemeralEnvironment: true }
         : {}),
+      ...(body.serverReplacements ? { replacements: replacementSpec(c, projectId, body) } : {}),
     });
 
   // Resolve all inline attachments before authoring, including server picks.
@@ -4828,6 +4867,7 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
       hostConfig: runHostConfig,
       hostAttachments,
       launchContext: readLaunchContext(c),
+      replacementLaunch,
       body,
       suiteRerun,
       environmentId,
@@ -4909,6 +4949,7 @@ const createEvalRunGroupSchema = z
     passCriteria: passCriteriaSchema.optional(),
     idempotencyKey: z.string().min(1).max(256).optional(),
     ephemeralEnvironment: z.boolean().optional(),
+    ...climbLaunchShape,
     /**
      * Per-run approval of `approximated` imported cases, by hosted case id.
      *
@@ -4934,7 +4975,8 @@ const createEvalRunGroupSchema = z
   // (`serverIds`, `refreshSnapshot`) are exactly the ones a caller is most
   // likely to try. Stripping them would answer 202 while silently discarding
   // the knob the caller asked for.
-  .strict();
+  .strict()
+  .refine(...climbRunRule);
 
 /**
  * Deterministic group id for a keyed launch.
@@ -5128,6 +5170,7 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
       ...(body.ephemeralEnvironment === true
         ? { ephemeralEnvironment: true }
         : {}),
+      ...(body.serverReplacements ? { replacements: replacementSpec(c, projectId, body) } : {}),
     });
     // The host config THIS target executes under. An environment pins its own
     // host, so an environment target must be judged on that host's config —
@@ -5211,6 +5254,7 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
         vocabulary: vocabularyOf(c),
         hostConfig,
         launchContext,
+        replacementLaunch: servers.replacementLaunch,
         body: {
           suiteId: body.suiteId,
           tests: [],

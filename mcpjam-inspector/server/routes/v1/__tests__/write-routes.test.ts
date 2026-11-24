@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { getFunctionName } from "convex/server";
 
 // Covers the v1 WRITE surface: tools/call + prompts/get schema validation,
 // the async eval-run POST (mocked prepare/execute seam), the eval read
@@ -142,7 +143,9 @@ const SUITE_DOC = {
 function mockConvexQueries(
   handlers: Record<string, (args: any) => unknown> = {}
 ): void {
-  convexQueryMock.mockImplementation(async (fn: string, args: any) => {
+  convexQueryMock.mockImplementation(async (ref: string | object, args: any) => {
+    // A function reference (`makeFunctionReference`) names itself.
+    const fn = typeof ref === "string" ? ref : getFunctionName(ref as never);
     if (Object.prototype.hasOwnProperty.call(handlers, fn)) {
       return handlers[fn]!(args);
     }
@@ -2738,6 +2741,110 @@ describe("v1 write routes", () => {
       } finally {
         vi.unstubAllEnvs();
       }
+    });
+
+    describe("a climb's launch (serverReplacements)", () => {
+      const ENV1 = "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+      const climbSuiteQueries = (extra: Record<string, (args: any) => unknown> = {}) =>
+        mockConvexQueries({
+          "testSuites:getTestSuite": () => ({ ...SUITE_DOC, environmentIds: [ENV1] }),
+          "projectEnvironments:resolveEnvironmentForLaunch": () => ({
+            environmentRef: { environmentId: ENV1, name: "Staging", revision: 1 },
+            hostId: "hostplainxxxxxxxxxxxxxxxxxxxxxx",
+            selectedServerIds: ["s_real", "s_docs"],
+            servers: [
+              { serverId: "s_real", name: "Echo" },
+              { serverId: "s_docs", name: "Docs" },
+            ],
+          }),
+          "hostConfigsV2:getSuiteConfig": () => ({ hostStyle: "mcpjam" }),
+          "hosts:getHost": () => ({ config: { hostStyle: "mcpjam" } }),
+          "mockServers:getMock": (args: any) => ({ contentHash: `hash-v${args.version}`, version: args.version }),
+          ...extra,
+        });
+      const climbBody = (over: Record<string, unknown> = {}) => ({
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        targets: [{ environmentId: ENV1 }],
+        idempotencyKey: "climb:c1:baseline:1:baseline_a",
+        climbId: "climb1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        serverReplacements: [
+          {
+            serverName: "echo",
+            replacementServerId: "s_mock",
+            replacementVersion: "2",
+            realListingHash: "listing-hash",
+          },
+        ],
+        ...over,
+      });
+      const post = (body: Record<string, unknown>) =>
+        request(makeApp(), "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups", body);
+
+      it("connects the replacement in the real server's place and runs it as a climb run", async () => {
+        climbSuiteQueries();
+        const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+
+        const res = await post(climbBody());
+
+        expect(res.status).toBe(202);
+        const managerArgs = createAuthorizedManagerMock.mock.calls[0]!;
+        // The manager holds the mock under the real server's name.
+        expect(managerArgs[3]).toEqual(["s_mock", "s_docs"]);
+        expect(managerArgs[7]).toMatchObject({ serverNames: ["Echo", "Docs"], mockVersions: { s_mock: 2 } });
+        const run = prepareEvalRunMock.mock.calls[0]![1];
+        expect(run).toMatchObject({
+          source: "climb",
+          climbId: "climb1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          environmentId: ENV1,
+          serverReplacements: [
+            {
+              serverName: "echo",
+              replacementServerId: "s_mock",
+              replacementVersion: "2",
+              realListingHash: "listing-hash",
+            },
+          ],
+          mockPins: [{ serverId: "s_mock", version: 2, contentHash: "hash-v2" }],
+        });
+        // The id the backend registered is the one the route derives from the key.
+        expect(run.runGroupId).toMatch(/^[0-9a-f]{32}$/);
+        // The stored set the backend compares is still the environment's own.
+        expect(run.resolvedEnvironment.selectedServerIds).toEqual(["s_real", "s_docs"]);
+        await drain(releaseGates, disconnectAllServers, 1);
+      });
+
+      it("refuses a server the environment does not have, before connecting anything", async () => {
+        climbSuiteQueries();
+        mockPendingLaunches();
+        const res = await post(
+          climbBody({ serverReplacements: [{ serverName: "Missing", replacementServerId: "s_mock", realListingHash: "h" }] })
+        );
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as any;
+        expect(body.message).toContain('"Missing"');
+        expect(body.details.reason).toBe("REPLACEMENT_SERVER_NOT_IN_ENVIRONMENT");
+        expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+        expect(prepareEvalRunMock).not.toHaveBeenCalled();
+      });
+
+      it("refuses a climb id with no replacement", async () => {
+        climbSuiteQueries();
+        mockPendingLaunches();
+        const res = await post(climbBody({ serverReplacements: undefined }));
+        expect(res.status).toBe(400);
+        expect(((await res.json()) as any).message).toContain("serverReplacements");
+        expect(prepareEvalRunMock).not.toHaveBeenCalled();
+      });
+
+      it("launches a replacement without a climb as an ordinary api run", async () => {
+        climbSuiteQueries();
+        const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+        const res = await post(climbBody({ climbId: undefined }));
+        expect(res.status).toBe(202);
+        expect(prepareEvalRunMock.mock.calls[0]![1]).toMatchObject({ source: "api" });
+        expect(prepareEvalRunMock.mock.calls[0]![1].climbId).toBeUndefined();
+        await drain(releaseGates, disconnectAllServers, 1);
+      });
     });
 
     it("REJECTS a knob this route does not carry instead of dropping it", async () => {
