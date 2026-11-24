@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   recipients: vi.fn(),
   assign: vi.fn(),
   hasPro: vi.fn(() => true),
+  navigate: vi.fn(),
 }));
 
 vi.mock("@/lib/analytics", () => ({ track: mocks.track }));
@@ -32,6 +33,10 @@ vi.mock("@/lib/app-signin-return-path", () => ({
 }));
 vi.mock("@/lib/permalink-signin-return", () => ({
   permalinkSignInOptions: () => ({ state: "return" }),
+}));
+vi.mock("@/lib/app-navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/app-navigation")>()),
+  useAppNavigate: () => mocks.navigate,
 }));
 vi.mock("@/lib/pricing-catalog", () => ({ canCheckoutPlan: () => true }));
 vi.mock("@/hooks/useOrganizationBilling", () => ({
@@ -129,7 +134,9 @@ describe("SidebarUpgradePrompt", () => {
 
     const card = screen.getByTestId("sidebar-prompt-guest_signup");
     expect(card).toHaveTextContent("Create a free account");
-    expect(card).toHaveTextContent("200 credits a day, plus every testing tool");
+    expect(card).toHaveTextContent(
+      "Get 200 credits a day, plus every testing tool we offer",
+    );
     expect(mocks.track).toHaveBeenCalledWith(
       "sidebar_prompt_shown",
       expect.objectContaining({ prompt: "guest_signup", page: "/servers" }),
@@ -201,11 +208,11 @@ describe("SidebarUpgradePrompt", () => {
     expect(screen.queryByTestId("sidebar-prompt-owner_request")).toBeNull();
   });
 
-  it("opens the Pro confirm dialog in place for a Free owner", async () => {
+  it("opens the Plans page with the Pro confirm dialog for a Free owner", async () => {
     renderPrompt({ isGuest: false, organizationId: "org-1" });
 
     const card = screen.getByTestId("sidebar-prompt-pro_upgrade");
-    expect(card).toHaveTextContent("Credits roll over, top up anytime");
+    expect(card).toHaveTextContent("No daily credit limit, add more anytime");
     fireEvent.click(card);
 
     expect(mocks.track).toHaveBeenCalledWith(
@@ -217,6 +224,7 @@ describe("SidebarUpgradePrompt", () => {
         page: "/servers",
       }),
     );
+    expect(mocks.navigate).toHaveBeenCalledWith("/organizations/org-1/plans");
     expect(screen.getByTestId("plan-confirm-dialog")).toHaveAttribute(
       "data-plan",
       "pro",

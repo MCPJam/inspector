@@ -4,6 +4,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { track } from "@/lib/analytics";
 
@@ -16,17 +17,17 @@ const PROMPT_COPY: Record<
 > = {
   guest_signup: {
     title: "Create a free account",
-    description: "200 credits a day, plus every testing tool",
+    description: "Get 200 credits a day, plus every testing tool we offer",
     icon: UserPlus,
   },
   pro_upgrade: {
     title: "Upgrade to Pro",
-    description: "Credits roll over, top up anytime",
+    description: "No daily credit limit, add more anytime",
     icon: Gem,
   },
   owner_request: {
     title: "Ask an owner to upgrade",
-    description: "Credits roll over, top up anytime",
+    description: "No daily credit limit, add more anytime",
     icon: Mail,
   },
 };
@@ -63,6 +64,8 @@ export function SidebarPromptCard({
   disabled?: boolean;
 }) {
   const { title, description, icon: Icon } = PROMPT_COPY[kind];
+  const { isMobile, state } = useSidebar();
+  const expanded = isMobile || state === "expanded";
   return (
     <SidebarMenu>
       <SidebarMenuItem>
@@ -73,7 +76,7 @@ export function SidebarPromptCard({
           disabled={disabled}
           onClick={onClick}
           data-testid={`sidebar-prompt-${kind}`}
-          className="h-auto gap-3 rounded-lg border border-border bg-card py-2 text-card-foreground hover:border-primary hover:bg-card hover:text-card-foreground group-data-[collapsible=icon]:border-transparent group-data-[collapsible=icon]:bg-transparent"
+          className="h-auto gap-3 rounded-lg border border-border bg-card py-2 text-card-foreground hover:border-primary hover:bg-card hover:text-card-foreground group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:border-transparent group-data-[collapsible=icon]:bg-transparent"
         >
           <span className="grid min-w-0 flex-1 text-left leading-tight group-data-[collapsible=icon]:hidden">
             <span className="truncate text-sm font-medium">{title}</span>
@@ -81,7 +84,10 @@ export function SidebarPromptCard({
               {description}
             </span>
           </span>
-          <Icon className="size-4 shrink-0 text-primary" />
+          <Icon
+            className="size-4 shrink-0 text-primary"
+            data-chrome-icon={expanded ? "" : undefined}
+          />
         </SidebarMenuButton>
       </SidebarMenuItem>
     </SidebarMenu>

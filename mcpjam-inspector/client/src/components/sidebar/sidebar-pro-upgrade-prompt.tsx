@@ -3,6 +3,7 @@ import { PlanChangeConfirmDialog } from "@/components/organization/PlanChangeCon
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import { useUpgradeCheckout } from "@/hooks/use-upgrade-checkout";
 import { track } from "@/lib/analytics";
+import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
 import { canCheckoutPlan } from "@/lib/pricing-catalog";
 import {
   SidebarPromptCard,
@@ -13,9 +14,10 @@ import {
 const LOCATION = "sidebar_prompt";
 
 /**
- * Free org, billing rights: opens the Plans page's confirm dialog in place,
- * so checkout is one step away. Stripe returns to this page and the app-wide
- * upgrade return flow shows the paid-plan toast once billing settles.
+ * Free org, billing rights: opens the Plans page with the confirm dialog on
+ * top, so closing it leaves the plan comparison in view. Stripe returns to the
+ * Plans page and the app-wide upgrade return flow shows the paid-plan toast
+ * once billing settles.
  */
 export function SidebarProUpgradePrompt({
   organizationId,
@@ -29,6 +31,7 @@ export function SidebarProUpgradePrompt({
   });
   const { planCatalog } = useOrganizationBilling(organizationId);
   const [open, setOpen] = useState(false);
+  const navigate = useAppNavigate();
   const entry = planCatalog?.plans.pro;
   const canBuyPro = (["monthly", "annual"] as const).some((interval) =>
     canCheckoutPlan(planCatalog, "pro", interval),
@@ -59,6 +62,7 @@ export function SidebarProUpgradePrompt({
             ...context,
             billing_interval: upgrade.interval,
           });
+          navigate(buildOrganizationPath(organizationId, "plans"));
           setOpen(true);
         }}
       />
