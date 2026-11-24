@@ -16,7 +16,7 @@ const PROMPT_COPY: Record<
 > = {
   guest_signup: {
     title: "Create a free account",
-    description: "200 credits a day, all features",
+    description: "200 credits a day, every testing tool",
     icon: UserPlus,
   },
   pro_upgrade: {
