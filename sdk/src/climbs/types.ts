@@ -144,12 +144,19 @@ export type RealServerView = {
   }>;
 };
 
-export type TriedChange = { round: number; verdict: PlatformClimbVerdict; changes: MockChange[] };
+/**
+ * Set on a round that ran a saved server that is not a mock: the change is that
+ * server's code, so there is no mock change list (`changes` is empty).
+ */
+export type CodeRound = { serverId: string; serverName?: string };
+
+export type TriedChange = { round: number; verdict: PlatformClimbVerdict; changes: MockChange[]; code?: CodeRound };
 
 export type KeptRound = {
   number: number;
   validation?: "better" | "unchanged";
   overruled: boolean;
-  /** The round's change list: what it changed against the best before it. */
+  /** The round's change list: what it changed against the best before it. Empty for a code round. */
   changes: MockChange[];
+  code?: CodeRound;
 };

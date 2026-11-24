@@ -38,13 +38,36 @@ describe("loadRoundChanges", () => {
     ]);
   });
 
-  it("leaves out a round that is still running and a server that is not a mock", async () => {
-    const notAMock = fakeConvex({
-      "mockServers:getMock": () => {
-        throw Object.assign(new Error("x"), { data: { code: "MOCK_NOT_FOUND" } });
-      },
+  const notFound = () => {
+    throw Object.assign(new Error("x"), { data: { code: "MOCK_NOT_FOUND" } });
+  };
+  const withCode = () =>
+    fakeConvex({
+      "mockServers:getMock": (args) => (args.mockId === "code" ? notFound() : { definitionJson: JSON.stringify(definitions[args.mockId] ?? {}) }),
     }).convex;
-    expect(await loadRoundChanges(notAMock, { best: undefined, rounds: [round(1, "plain", "kept")] as never })).toEqual([]);
+
+  it("keeps a round that ran a saved server's code, kept, reverted or not decided, with no changes", async () => {
+    const changes = await loadRoundChanges(withCode(), {
+      best: undefined,
+      rounds: [round(1, "code", "kept"), round(2, "code", "reverted"), round(3, "code", "not_decided")] as never,
+    });
+    expect(changes).toEqual([
+      { round: 1, verdict: "kept", standing: "kept", changes: [], code: { serverId: "code" } },
+      { round: 2, verdict: "reverted", standing: "reverted", changes: [], code: { serverId: "code" } },
+      { round: 3, verdict: "not_decided", standing: "not_decided", changes: [], code: { serverId: "code" } },
+    ]);
+  });
+
+  it("does not let a kept code round change what a later mock round is diffed against", async () => {
+    const changes = await loadRoundChanges(withCode(), {
+      best: undefined,
+      rounds: [round(1, "m1", "kept"), round(2, "code", "kept"), round(3, "m2", "kept")] as never,
+    });
+    expect(changes[2]!.changes.map((change) => `${change.kind} ${change.name}`)).toEqual(["added fetch"]);
+  });
+
+  it("leaves out a round that is still running", async () => {
+    expect(await loadRoundChanges(withCode(), { best: undefined, rounds: [round(1, "code", "kept", { status: "running" })] as never })).toEqual([]);
     expect(await loadRoundChanges(convex(), { best: undefined, rounds: [round(1, "m1", "kept", { status: "running" })] as never })).toEqual([]);
   });
 
@@ -64,5 +87,10 @@ describe("keptRoundsOf", () => {
       { number: 1, validation: "better", overruled: false, changes: changes[0]!.changes },
       { number: 7, overruled: true, changes: [] },
     ]);
+  });
+
+  it("carries a code round's server", () => {
+    const rounds = [{ round: 2, verdict: "kept" as const, standing: "kept" as const, changes: [], code: { serverId: "code" } }];
+    expect(keptRoundsOf(rounds, [{ number: 2, overruled: false }])).toEqual([{ number: 2, overruled: false, changes: [], code: { serverId: "code" } }]);
   });
 });

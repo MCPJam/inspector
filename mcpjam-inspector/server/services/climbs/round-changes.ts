@@ -2,7 +2,8 @@
  * What each round changed, from the mock versions the rounds ran. A round's
  * change list is the difference between its definition and the best before it,
  * so a kept round's list is what the coding agent has to apply and a reverted
- * one is what was tried. Definitions are read once each, as the caller.
+ * one is what was tried. A round that ran a saved server that is not a mock
+ * carries `code` and no changes. Definitions are read once each, as the caller.
  */
 import type { ConvexHttpClient } from "convex/browser";
 import { diffMockDefinitions, type MockDefinition } from "@mcpjam/sdk/mocks";
@@ -46,7 +47,11 @@ export async function loadRoundChanges(
     const standing = standingOf(round);
     if (!standing) continue;
     const definition = await definitionOf(convex, round.serverId, round.serverVersion);
-    if (!definition) continue;
+    if (!definition) {
+      // A saved server that runs the agent's own code: the code is the change, and it is no mock to diff later rounds against.
+      changes.push({ round: round.number, verdict: round.verdict ?? standing, standing, changes: [], code: { serverId: round.serverId } });
+      continue;
+    }
     changes.push({ round: round.number, verdict: round.verdict ?? standing, standing, changes: diffMockDefinitions(best, definition) });
     if (standing === "kept") best = definition;
   }
@@ -69,5 +74,6 @@ export function keptRoundsOf(
     ...(round.validation ? { validation: round.validation } : {}),
     overruled: round.overruled,
     changes: byNumber.get(round.number)?.changes ?? [],
+    ...(byNumber.get(round.number)?.code ? { code: byNumber.get(round.number)!.code } : {}),
   }));
 }

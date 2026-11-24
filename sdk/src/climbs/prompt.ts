@@ -7,7 +7,7 @@
  */
 import { describePlace } from "../mocks/change-kinds.js";
 import type { MockChange, MockFieldChange } from "../mocks/change-list.js";
-import type { KeptRound } from "./types.js";
+import type { CodeRound, KeptRound } from "./types.js";
 
 const MAX_VALUE_CHARS = 4_000;
 
@@ -23,6 +23,12 @@ function describeField(change: MockChange, detail: MockFieldChange): string {
     `  Was: ${show(detail.before)}`,
     `  Now: ${show(detail.after)}`,
   ].join("\n");
+}
+
+/** A code round has no edits to list: the code the saved server runs is the change. */
+function describeCode(code: CodeRound): string {
+  const name = code.serverName ?? `the saved server ${code.serverId}`;
+  return `- Ran ${name}, a saved server that runs your own code. Keep that code: merge the branch it runs. The climb's rule kept it, so the code is the change.`;
 }
 
 function describeChange(change: MockChange): string {
@@ -49,14 +55,22 @@ export function climbPrompt(input: { serverName: string; kept: readonly KeptRoun
   });
   const sections = ordered.map((round, index) => {
     const header = `${index + 1}. Round ${round.number}${standing(round) ? ` (${standing(round)})` : ""}`;
-    return [header, ...round.changes.map(describeChange)].join("\n");
+    return [header, ...(round.code ? [describeCode(round.code)] : round.changes.map(describeChange))].join("\n");
   });
+  const hasCode = kept.some((round) => round.code);
+  const hasMock = kept.some((round) => !round.code);
   return [
-    `Apply these changes to the code of ${serverName}. Each was measured on a mock that put it in front of the server, and kept by the climb's rule. Make each edit so the server lists or serves exactly what "Now" says, keeping everything else as it is.`,
+    `Bring these changes into the code of ${serverName}. Each was kept by the climb's rule. A round that ran a mock lists edits to make: make each so the server lists or serves exactly what "Now" says, keeping everything else as it is. A round that ran a saved server with its own code is code to keep: merge the branch that server runs.`,
     "Changes that also helped on validation cases come first.",
     "",
     sections.join("\n\n"),
     "",
-    "When the edits are in and the server runs the new code, commit them and call verify_climb with the commit. It checks the server's listing against these changes, then runs the server beside a mock that puts the old values back.",
+    [
+      "When the changes are in and the server runs the new code, commit them and call verify_climb with the commit.",
+      hasMock ? "For mock edits, it checks the server's listing against them, then runs the server beside a mock that puts the old values back." : undefined,
+      hasCode ? "For a code change, it runs the server alone and sets its numbers beside the ones the climb recorded." : undefined,
+    ]
+      .filter(Boolean)
+      .join(" "),
   ].join("\n");
 }
