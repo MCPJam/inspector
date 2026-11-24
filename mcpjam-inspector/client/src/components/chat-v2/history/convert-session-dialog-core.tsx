@@ -165,7 +165,7 @@ export function DestinationCard({
 }
 
 /**
- * Presentational/submit core of "Promote to test case". Owns the suite
+ * Presentational/submit core of "Save as test case". Owns the suite
  * pickers and the `importChatSessionToTestCase` call; per-source adapters
  * (`ConvertChatSessionDialog` for direct history, `ConvertPromotableSessionDialog`
  * for swarm runs) own fetching the summary/detail inputs.
@@ -743,12 +743,12 @@ function ConvertSessionDialogCoreInner({
         added.length > 0
       ) {
         toast.success(
-          `Session promoted to a test case. Added ${added.join(
+          `Saved as a test case. Added ${added.join(
             ", ",
           )} to the suite.`,
         );
       } else {
-        toast.success("Session promoted to a test case");
+        toast.success("Saved as a test case.");
       }
       onOpenChange(false);
       onImported({ suiteId: result.suiteId, testCaseId: result.testCaseId });
@@ -1048,7 +1048,7 @@ function ConvertSessionDialogCoreInner({
       <DialogContent className="flex max-h-[90vh] flex-col gap-0 sm:max-w-xl border-border/50 p-0 shadow-sm">
         <div className="px-6 pt-6">
           <DialogHeader className="space-y-1.5 pr-10">
-            <DialogTitle>Promote to test case</DialogTitle>
+            <DialogTitle>Save as test case</DialogTitle>
             <DialogDescription className="text-sm text-muted-foreground">
               Turn this session into a reusable case.
             </DialogDescription>
@@ -1213,7 +1213,7 @@ function ConvertSessionDialogCoreInner({
             {isSubmitting ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : null}
-            Promote to test case
+            Save as test case
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1242,7 +1242,7 @@ export function ConvertSessionDialogCore(props: ConvertSessionDialogCoreProps) {
           <DialogContent className="gap-0 sm:max-w-xl border-border/50 p-0 shadow-sm">
             <div className="px-6 pt-6">
               <DialogHeader className="space-y-1.5 pr-10">
-                <DialogTitle>Promote to test case</DialogTitle>
+                <DialogTitle>Save as test case</DialogTitle>
                 <DialogDescription className="text-sm text-muted-foreground">
                   Turn this session into a reusable case.
                 </DialogDescription>

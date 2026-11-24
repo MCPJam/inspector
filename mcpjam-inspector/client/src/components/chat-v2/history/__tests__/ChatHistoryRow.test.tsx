@@ -357,14 +357,14 @@ describe("ChatHistoryRow", () => {
     );
 
     const promote = screen.getByTestId("chat-history-promote-to-test-case");
-    expect(promote).toHaveAttribute("aria-label", "Promote to test case");
+    expect(promote).toHaveAttribute("aria-label", "Save as test case");
 
     await user.click(promote);
     expect(onConvertToTestCase).toHaveBeenCalledTimes(1);
     expect(onConvertToTestCase).toHaveBeenCalledWith(session);
   });
 
-  it("offers Promote to test case in the row menu", async () => {
+  it("offers Save as test case in the row menu", async () => {
     const onConvertToTestCase = vi.fn();
     const user = userEvent.setup();
     const session = sessionStub({ status: "active" });
@@ -381,7 +381,7 @@ describe("ChatHistoryRow", () => {
       />
     );
 
-    await user.click(screen.getByText("Promote to test case", { exact: true }));
+    await user.click(screen.getByText("Save as test case", { exact: true }));
     expect(onConvertToTestCase).toHaveBeenCalledWith(session);
   });
 

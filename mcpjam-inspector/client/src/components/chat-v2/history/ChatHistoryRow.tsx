@@ -335,7 +335,7 @@ export function ChatHistoryRow({
                   type="button"
                   data-testid="chat-history-promote-to-test-case"
                   disabled={isStreaming}
-                  aria-label="Promote to test case"
+                  aria-label="Save as test case"
                   className={ROW_ICON_BUTTON_CLASS}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -346,7 +346,7 @@ export function ChatHistoryRow({
                 </button>
               </span>
             </TooltipTrigger>
-            <TooltipContent side="right">Promote to test case</TooltipContent>
+            <TooltipContent side="right">Save as test case</TooltipContent>
           </Tooltip>
         ) : null}
         <span className="chat-history-time w-7 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground">
@@ -369,7 +369,7 @@ export function ChatHistoryRow({
             {canConvertToTestCase && onConvertToTestCase ? (
               <>
                 <DropdownMenuItem onClick={() => onConvertToTestCase(session)}>
-                  Promote to test case
+                  Save as test case
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
               </>
