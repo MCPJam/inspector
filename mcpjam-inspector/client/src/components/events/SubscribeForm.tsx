@@ -157,8 +157,8 @@ export function SubscribeDelivery({
           className="text-[11px] text-muted-foreground"
           data-testid="replay-unsupported"
         >
-          The server returns cursor: null for this event type, so events missed
-          while a subscription is down can't be replayed.
+          This event type can't replay events missed while a subscription is
+          down.
         </p>
       ) : null}
       {form.needsAcknowledgement ? (
@@ -235,8 +235,8 @@ export function SubscribeAdvanced({
             className="h-8 text-xs"
           />
           <p className="text-[11px] text-muted-foreground">
-            Suggested lifetime. The server grants refreshBefore, and MCPJam
-            refreshes before it.
+            Suggested lifetime. The server decides when the subscription
+            expires, and MCPJam refreshes it before then.
           </p>
           <div className="flex items-center gap-2 pt-1">
             <Checkbox
@@ -248,7 +248,7 @@ export function SubscribeAdvanced({
               htmlFor={`${idPrefix}-no-expiry`}
               className="text-[11px] text-muted-foreground"
             >
-              No expiry (ttlMs: null)
+              No expiry
             </Label>
           </div>
         </div>
