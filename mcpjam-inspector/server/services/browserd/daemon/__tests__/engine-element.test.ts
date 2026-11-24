@@ -62,4 +62,29 @@ describe("one element by Playwright's selector engine", { timeout: 60_000 }, () 
     expect(await elementNodeId(locate, cdp, "role=alertdialog")).toBeNull();
     expect(await page.locator("[data-mcpjam-element]").count()).toBe(0);
   });
+
+  it("finds an element inside an open shadow root, as Playwright's engine does", async () => {
+    await page.evaluate(() => {
+      const host = document.createElement("div");
+      host.id = "widget";
+      document.body.append(host);
+      host.attachShadow({ mode: "open" }).innerHTML =
+        '<div role="dialog" aria-label="Inside"><p>In the shadow</p></div>';
+    });
+    // The node CDP's own full tree has for it, walked through shadow roots.
+    type TreeNode = { backendNodeId: number; attributes?: string[]; children?: TreeNode[]; shadowRoots?: TreeNode[] };
+    const { root } = (await cdp.send("DOM.getDocument", { depth: -1, pierce: true })) as { root: TreeNode };
+    const find = (node: TreeNode): TreeNode | undefined =>
+      node.attributes?.includes("Inside")
+        ? node
+        : [...(node.children ?? []), ...(node.shadowRoots ?? [])].map(find).find(Boolean);
+    const inside = find(root);
+    expect(inside).toBeDefined();
+    expect(await elementNodeId(locate, cdp, 'role=dialog[name="Inside"]')).toBe(inside?.backendNodeId);
+    expect(
+      await page.evaluate(() =>
+        document.getElementById("widget")?.shadowRoot?.querySelector("[data-mcpjam-element]"),
+      ),
+    ).toBeNull();
+  });
 });
