@@ -23,6 +23,13 @@ const { mockManager } = vi.hoisted(() => ({
   },
 }));
 
+// The replies an eval iteration pinned are read from the backend per request.
+const loadPinned = vi.hoisted(() => vi.fn(async () => [] as unknown[]));
+vi.mock("../../../services/evals/input-answers.js", async () => ({
+  ...(await vi.importActual<object>("../../../services/evals/input-answers.js")),
+  loadPinnedInputAnswers: loadPinned,
+}));
+
 vi.mock("../auth", () => ({
   createAuthorizedManager: vi.fn().mockResolvedValue({ manager: mockManager }),
   withManager: async (
@@ -128,9 +135,13 @@ describe("/api/web/harness-mcp", () => {
     });
     expect((await post("srv-a", { "X-MCPJam-Proxy-Token": scoped })).status).toBe(200);
     expect(vi.mocked(createAuthorizedManager).mock.lastCall?.[7]).toMatchObject({ mockRunKey: "run-77" });
+    // The iteration's pinned replies are read per request and handed to the connection.
+    expect(loadPinned).toHaveBeenCalledWith({ runId: "run-77", iterationId: "iter-1" });
+    expect(vi.mocked(createAuthorizedManager).mock.lastCall?.[7]).toHaveProperty("inputAnswers");
     // Playground traffic carries no run.
     expect((await post("srv-a", { "X-MCPJam-Proxy-Token": webToken("srv-a") })).status).toBe(200);
     expect(vi.mocked(createAuthorizedManager).mock.lastCall?.[7]).not.toHaveProperty("mockRunKey");
+    expect(vi.mocked(createAuthorizedManager).mock.lastCall?.[7]).not.toHaveProperty("inputAnswers");
   });
   it("401s without a token (token IS the auth here)", async () => {
     expect((await post("srv-a")).status).toBe(401);

@@ -174,7 +174,7 @@ type EvidenceTransportResponse = {
 };
 
 export type HarnessEvidenceTransport = (
-  path: "start" | "settle",
+  path: "start" | "settle" | "input-answers",
   body: Record<string, unknown>,
   init: { signal?: AbortSignal },
 ) => Promise<EvidenceTransportResponse>;

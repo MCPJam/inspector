@@ -106,6 +106,7 @@ import {
   type ToolTaskSeamOptions,
 } from "@mcpjam/sdk";
 import { resolveToolTaskSeam } from "../utils/task-seam.js";
+import { inputAnswerResolverOf } from "./evals/input-answers.js";
 import { mcpToolOptionsFor } from "../utils/mcp-tool-options.js";
 import {
   createLlmModel,
@@ -4188,6 +4189,7 @@ export const runEvalSuiteWithAiSdk = async ({
     }
   };
 
+  const evalInputAnswers = inputAnswerResolverOf(mcpClientManager);
   const evalTasksSeam = resolveToolTaskSeam({
     tasksPolicy: readTasksPolicy(
       (suiteHostConfig ?? undefined) as Parameters<typeof readTasksPolicy>[0],
@@ -4195,7 +4197,19 @@ export const runEvalSuiteWithAiSdk = async ({
     surface: "eval",
     // Driver `timeoutMs` stays at its default — the task drive nests under
     // the run timeout, which aborts through this same signal.
-    await: { signal: abortController.signal },
+    await: {
+      signal: abortController.signal,
+      // A task that asks gets the case's replies, through the same resolver
+      // the connection's callback and collector use.
+      ...(evalInputAnswers
+        ? {
+            input: {
+              declaredCapabilities: { elicitation: { form: {}, url: {} } },
+              handlers: evalInputAnswers.taskHandlers,
+            },
+          }
+        : {}),
+    },
   });
 
   const runSetupStartedAt = Date.now();

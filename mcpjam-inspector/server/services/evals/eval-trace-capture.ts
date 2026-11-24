@@ -1,3 +1,5 @@
+import { withToolCallScope } from "./input-answers.js";
+import { exchangeSpan } from "../../../shared/eval-input-exchange.js";
 import { toolOrigin } from "@/shared/tool-origin";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
@@ -287,8 +289,31 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
         let policyBlocked = false;
         let mcpErrorCode: number | undefined;
         let authChallenge: ToolAuthChallengeFinding | undefined;
+        // A question a server asks during this call is recorded under it. The
+        // record is a step span with no tool identity, so no reader counts it
+        // as a tool call.
+        let asked = 0;
         try {
-          const result = await origExecute(input, options);
+          const result = await withToolCallScope(
+            {
+              tool: name,
+              serverId,
+              record: (exchange) => {
+                const at = Date.now();
+                ctx.recordedSpans.push(
+                  exchangeSpan(exchange, {
+                    id: `ask-${toolCallId}-${asked++}`,
+                    parentId: `tool-${toolCallId}`,
+                    promptIndex: resolvedPromptIndex,
+                    stepIndex: stepNumber,
+                    serverId,
+                    ...createOffsetInterval(ctx.runStartedAt, at, at),
+                  }),
+                );
+              },
+            },
+            () => origExecute(input, options),
+          );
           policyBlocked = isToolPolicyBlockResult(result);
           if (policyBlocked) return result;
           if (isCallToolResultError(result)) {

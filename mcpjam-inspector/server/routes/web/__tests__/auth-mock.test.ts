@@ -27,6 +27,10 @@ import { scrubDeliveredSecrets } from "../../../../shared/delivered-secret-regis
 import { registerMockInProcessHandler } from "../../../services/mock/registry.js";
 import { createAuthorizedManager } from "../auth.js";
 import { bindMockRun } from "../../../utils/mock-run.js";
+import {
+  createInputAnswerResolver,
+  inputAnswerResolverOf,
+} from "../../../services/evals/input-answers.js";
 
 const NOW = 1_800_000_000_000;
 const GRANT = "grant-token-aaaaaaaaaaaa";
@@ -164,6 +168,33 @@ for (const mode of ["local", "hosted"] as const) {
       bindMockRun(lastManager, "run-9");
       await configs.mock1.baseFetch!(configs.mock1.url, { method: "POST", body: "{}" });
       expect(doors[0]?.runKey).toBe("token-run");
+    });
+
+    it("registers an eval's replies with the connection, and names each server for them", async () => {
+      const resolver = createInputAnswerResolver({
+        answers: [{ server: "Echo mock", action: "accept" }],
+      });
+      const { manager } = await createAuthorizedManager(
+        { authMethod: "authkit_jwt", workosUserId: "ann", mcpjamOrganizationId: "org1" },
+        "ann-bearer",
+        "proj1",
+        ["mock1", "plain"],
+        9_000,
+        undefined,
+        undefined,
+        { lazyConnect: true, mockVersions: { mock1: 5 }, inputAnswers: resolver },
+      );
+      // Registered before the first await past the manager's construction, so
+      // the capability is declared at connect.
+      expect(inputAnswerResolverOf(manager)).toBe(resolver);
+      const reply = await resolver.elicitationCallback({
+        requestId: "r",
+        message: "Anything?",
+        schema: {},
+        serverId: "mock1",
+      });
+      expect(reply).toEqual({ action: "accept" });
+      expect(resolver.exchanges[0]).toMatchObject({ server: "Echo mock", replyIndex: 0 });
     });
 
     it("asks authorize for the caller's pin, and again for the same pin when it re-mints", async () => {

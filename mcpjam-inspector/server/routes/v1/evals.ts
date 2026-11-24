@@ -1,3 +1,4 @@
+import { inputAnswerResolverFor } from "../../services/evals/input-answers.js";
 import { logLegacyEvalRequest } from "../../services/evals/legacy-eval-telemetry.js";
 import { loadSuiteConnectionIdSets } from "../../services/evals/suite-account-choices.js";
 import {
@@ -4433,6 +4434,11 @@ async function launchEvalRun(params: {
     createConvexClients(convexAuthToken).convexClient,
     { suiteId: body.suiteId },
   );
+  // Loaded before connect: the capability to be asked is declared there.
+  const inputAnswers = await inputAnswerResolverFor(
+    createConvexClients(convexAuthToken).convexClient,
+    { suiteId: body.suiteId },
+  );
   const { manager } = await createAuthorizedManager(
     params.callerContext,
     convexAuthToken,
@@ -4445,6 +4451,7 @@ async function launchEvalRun(params: {
       // Eval setup has no iteration sandbox and cannot reserve a personal Computer.
       pluginComputerRuntime: false,
       ...(connectionIdSets ? { connectionIdSets } : {}),
+      inputAnswers,
       ...(params.replacementLaunch ? { mockVersions: params.replacementLaunch.mockVersions } : {}),
       serverNames,
       // The issuer makes per-server XAA servers mint instead of failing with

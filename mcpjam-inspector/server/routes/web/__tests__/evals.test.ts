@@ -51,6 +51,8 @@ vi.mock("@mcpjam/sdk", async () => {
       managerConfigsMock(configs);
       return {
         disconnectAllServers: disconnectAllServersMock,
+        setElicitationCallback: vi.fn(),
+        setMrtrInputCollector: vi.fn(),
       };
     }),
   };
@@ -95,6 +97,17 @@ vi.mock("../../../services/evals/compat-runtime.js", () => ({
 // …and the read client it takes. There is no Convex in this suite, so the real
 // one throws "CONVEX_URL is not set" before the route reaches anything it is
 // actually asserting.
+// Replies are read from Convex before connect; there is none in this suite.
+vi.mock("../../../services/evals/input-answers.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../services/evals/input-answers.js")
+  >("../../../services/evals/input-answers.js");
+  return {
+    ...actual,
+    inputAnswerResolverFor: async () =>
+      actual.createInputAnswerResolver({ answers: [] }),
+  };
+});
 vi.mock("../../../services/evals/route-helpers.js", async () => {
   const actual = await vi.importActual<
     typeof import("../../../services/evals/route-helpers.js")
