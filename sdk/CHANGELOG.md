@@ -1,5 +1,19 @@
 # `@mcpjam/sdk` changelog
 
+## 10.15.0
+
+### Minor Changes
+
+- [#8148](https://github.com/MCPJam/inspector/pull/8148) [`0a552fd`](https://github.com/MCPJam/inspector/commit/0a552fd1d3d4fedd2e8800564bd41d898723fce3) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Progressive discovery accepts a valid early call to an eligible MCP tool when the host enables unloaded calls. The provider sees its definition after loading. New VS Code profiles require loading first.
+
+### Patch Changes
+
+- [#8151](https://github.com/MCPJam/inspector/pull/8151) [`dfc98e8`](https://github.com/MCPJam/inspector/commit/dfc98e832667b200a45237800782cc7789e035e2) Thanks [@chelojimenez](https://github.com/chelojimenez)! - On Node 26, MCP connections and conformance runs from the SDK, the CLI and the local Inspector use HTTP/1.1 by default, as they do on Node 24. Node 26's `fetch` switched to HTTP/2, where a request cancelled as it starts could crash the process about four seconds later with `socket idle timeout`, for example during a conformance run against a Python-SDK server. Other requests keep Node's default, and a `fetch` you pass in is used as given.
+
+- [#8147](https://github.com/MCPJam/inspector/pull/8147) [`e3f78ba`](https://github.com/MCPJam/inspector/commit/e3f78bab5ef62f59b89193cad5ace843223a884a) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Evaluations keep pre-dispatch refusals in the trace and exclude them from executed calls and MCP errors. A retry that reaches the server counts on its own.
+- Updated dependencies [[`e3f78ba`](https://github.com/MCPJam/inspector/commit/e3f78bab5ef62f59b89193cad5ace843223a884a)]:
+  - @mcpjam/evaluators@0.7.1
+
 ## 10.14.0
 
 ### Minor Changes
