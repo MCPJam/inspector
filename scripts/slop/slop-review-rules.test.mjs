@@ -86,6 +86,10 @@ describe("review rules", () => {
       spawns('this.child = cp.spawn("x");\nthis.child.on("exit", f);\n'),
       1,
     );
+    assert.equal(
+      spawns('const child = spawn("x");\nchild.on("exit", f).on("close", g);\n'),
+      1,
+    );
   });
 
   it("does not count a child with an error listener, or one handed elsewhere", () => {
@@ -102,6 +106,10 @@ describe("review rules", () => {
       0,
     );
     assert.equal(spawns('const child = spawn("x").on("error", reject);\n'), 0);
+    assert.equal(
+      spawns('const child = spawn("x");\nchild.on("exit", f).on("error", g);\n'),
+      0,
+    );
     assert.equal(
       spawns('this.child = spawn("x");\nthis.child?.on("error", f);\n'),
       0,

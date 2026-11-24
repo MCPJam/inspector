@@ -172,6 +172,22 @@ function scopeOf({ target, declaration }) {
   return node;
 }
 
+/**
+ * The emitter a listener call is made on. `on` and its kin return the
+ * emitter, so in `child.on("exit", f).on("error", g)` both are on `child`.
+ */
+function listenedTo(expression) {
+  const ts = typescript();
+  while (
+    ts.isCallExpression(expression) &&
+    ts.isPropertyAccessExpression(expression.expression) &&
+    LISTEN.has(expression.expression.name.text)
+  ) {
+    expression = expression.expression.expression;
+  }
+  return expression;
+}
+
 /** `name.on("error", ...)` or a kin, or `once(name, "error")`, under `scope`. */
 function listensForError(scope, name, tree) {
   const ts = typescript();
@@ -183,7 +199,7 @@ function listensForError(scope, name, tree) {
     found =
       (ts.isPropertyAccessExpression(callee) &&
         LISTEN.has(callee.name.text) &&
-        textOf(callee.expression, tree) === name &&
+        textOf(listenedTo(callee.expression), tree) === name &&
         isErrorEvent(first)) ||
       (ts.isIdentifier(callee) &&
         ["once", "on"].includes(callee.text) &&
