@@ -233,6 +233,7 @@ export class LocalEventsRuntime {
     const slotId = local.record.slotId;
     return subscriptionView(local.record, {
       locality: "local",
+      receiverKind: local.receiver?.kind,
       callbackVerifiedAt: slotId ? this.inbox.slotState(slotId)?.verifiedAt : undefined,
       lastWebhookAt: local.lastWebhookAt,
       host: local.host,

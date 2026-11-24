@@ -132,6 +132,7 @@ export interface EventsSubscriptionView {
   refreshBefore?: number | null;
   lastCursor?: string | null;
   callbackUrl?: string;
+  receiverKind?: ReceiverChoice["kind"];
   callbackVerifiedAt?: number;
   lastWebhookAt?: number;
   serverSubscriptionId?: string;

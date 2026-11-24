@@ -6,6 +6,11 @@ import {
   EXTENSION_OPERATION_PROPERTIES,
 } from "./extension-operation-event";
 
+import {
+  LOCAL_WEBHOOK_FAILURE_CATEGORIES,
+  LOCAL_WEBHOOK_RECEIVER_KINDS,
+} from "./local-webhook-telemetry";
+
 export const TELEMETRY_POLICY_HEADER = "x-mcpjam-telemetry-policy";
 
 /** A closed catalog, not a sanitizer: unlisted events and properties do not leave. */
@@ -87,6 +92,13 @@ const CATALOG: Readonly<Record<string, Readonly<Record<string, Rule>>>> = {
     ],
     run_source: ["ui"],
   },
+  local_webhook_receiver_selected: {
+    receiver_kind: LOCAL_WEBHOOK_RECEIVER_KINDS,
+  },
+  local_webhook_receiver_failed: {
+    receiver_kind: LOCAL_WEBHOOK_RECEIVER_KINDS,
+    failure_category: LOCAL_WEBHOOK_FAILURE_CATEGORIES,
+  },
   conformance_tab_viewed: { location: ["conformance_tab"] },
   conformance_run_completed: {
     location: ["conformance_tab"],
@@ -113,6 +125,8 @@ const CATALOG: Readonly<Record<string, Readonly<Record<string, Rule>>>> = {
 const OUTCOME_EVENTS: ReadonlySet<string> = new Set([
   "extension_launch_completed",
   "extension_operation_completed",
+  "local_webhook_receiver_selected",
+  "local_webhook_receiver_failed",
 ]);
 
 export function telemetryRouteTemplate(value: unknown): string {

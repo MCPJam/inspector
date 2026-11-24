@@ -289,7 +289,7 @@ describe("EventsTab (hosted)", () => {
     fireEvent.click(screen.getByRole("radio", { name: /Webhook/ }));
     expect(
       screen.queryByRole("checkbox", {
-        name: /Receive webhooks on this machine/,
+        name: /Allow plain HTTP for local development/,
       }),
     ).toBeNull();
     fireEvent.click(subscribeButton());
