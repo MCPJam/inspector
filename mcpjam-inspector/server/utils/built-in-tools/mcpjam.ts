@@ -188,6 +188,9 @@ import {
   installRegistryDirectoryServerOperation,
   installRegistryServerOperation,
   uninstallRegistryServerOperation,
+  createMockServerOperation,
+  updateMockServerOperation,
+  getMockServerOperation,
   type PlatformApiClient,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
@@ -388,6 +391,12 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   installRegistryDirectoryServerOperation,
   installRegistryServerOperation,
   uninstallRegistryServerOperation,
+
+  // Mock servers. Saving one asks first, like every write here; reading one
+  // dials the real server, so it follows the workspace approval setting.
+  getMockServerOperation,
+  createMockServerOperation,
+  updateMockServerOperation,
 ];
 
 /**
@@ -671,14 +680,6 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   get_project_skill:
     "Paired with the list above; /skills renders the SKILL.md body next to the aggregateHash that says which version it is, and the body is mutable so that pairing is the point.",
 
-  // Mock servers: chat gets them with the screen that shows the change list.
-  create_mock_server:
-    "Saves a definition that changes what every client sees from a server; chat gets it with the change-list screen. Available on the API, the CLI, MCP and the agent.",
-  update_mock_server:
-    "Saves a new version of a mock; chat gets it with the change-list screen. Available on the API, the CLI, MCP and the agent.",
-  get_mock_server:
-    "Dials the real server to show its values beside the definition; chat gets it with the mock screen. Available on the API, the CLI, MCP and the agent.",
-
   // Climbs: chat gets them with the screens, which come after the product gate.
   start_climb:
     "Launches the baseline's paid runs and opens a loop of rounds; chat gets climbs with their screens. Available on the API, the CLI and MCP.",
@@ -736,6 +737,7 @@ const CONNECTION_OPENING_IDS = new Set([
   getServerPromptOperation.name,
   listServerResourcesOperation.name,
   readServerResourceOperation.name,
+  getMockServerOperation.name,
   // Skills over MCP opens the same ephemeral connection as the primitives
   // above, so it follows the same setting for the same reason.
   listServerSkillsOperation.name,
@@ -921,6 +923,19 @@ export interface McpjamToolOptions {
    * writes always ask and pure reads never do.
    */
   requireToolApproval?: boolean;
+  /**
+   * For a job with nobody to approve (a climb's picker step). `operations` are
+   * built beyond the workspace set, and `allow` stands where approval would:
+   * it answers undefined to let a call run, or the reason it may not, which the
+   * model reads as the tool's result. No call pauses for a person.
+   */
+  unattended?: {
+    operations?: ReadonlyArray<PlatformOperation<any, unknown>>;
+    allow: (
+      id: string,
+      input: Record<string, unknown>,
+    ) => Promise<string | undefined>;
+  };
 }
 
 // Cap on serialized result size before it reaches model context. Doctor
@@ -978,19 +993,24 @@ export function buildMcpjamTool(
   id: string,
   opts: McpjamToolOptions,
 ): ToolSet[string] | null {
-  const operation = OPERATIONS_BY_ID.get(id);
+  const operation =
+    OPERATIONS_BY_ID.get(id) ??
+    opts.unattended?.operations?.find((candidate) => candidate.name === id);
   if (!operation) return null;
 
   // Floors (see `workspaceApprovalFloor`): writes always ask;
   // connection-opening reads follow the workspace approval setting; reads of
-  // the user's own workspace never ask.
-  const needsApproval = workspaceToolNeedsApproval(
-    id,
-    opts.requireToolApproval === true,
-  );
+  // the user's own workspace never ask. An unattended job has no one to ask:
+  // its `allow` rule decides each call instead (see `McpjamToolOptions`).
+  const needsApproval = opts.unattended
+    ? false
+    : workspaceToolNeedsApproval(id, opts.requireToolApproval === true);
   // FAILS CLOSED by not existing: a tool that pauses, on a deployment that
   // cannot sign approvals, is neither advertised nor run.
-  if (!isWorkspaceToolOfferable(id, opts.requireToolApproval === true)) {
+  if (
+    !opts.unattended &&
+    !isWorkspaceToolOfferable(id, opts.requireToolApproval === true)
+  ) {
     return null;
   }
 
@@ -1029,6 +1049,8 @@ export function buildMcpjamTool(
       }
 
       try {
+        const refusal = await opts.unattended?.allow(id, clamped);
+        if (refusal) return { error: refusal };
         const result = await operation.execute(clamped, {
           client: opts.client,
           signal: abortSignal,

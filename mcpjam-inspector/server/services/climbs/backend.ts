@@ -25,6 +25,10 @@ export const climbFns = {
   recordRunLaunch: mutation("climbSettle:recordClimbRunLaunch"),
   settleUnit: mutation("climbSettle:settleClimbUnit"),
   stop: mutation("climbRounds:stopClimb"),
+  continue: mutation("climbSteps:continueClimb"),
+  stepStarted: mutation("climbSteps:markClimbStepStarted"),
+  stepFinished: mutation("climbSteps:markClimbStepFinished"),
+  stepSpend: mutation("climbPickerSpend:markClimbStepSpend"),
   planRound: query("climbRounds:planClimbRound"),
   beginRound: mutation("climbRounds:beginClimbRound"),
   getRound: query("climbRounds:getClimbRound"),
@@ -43,6 +47,7 @@ export const climbFns = {
 
 /** What a refusal's code means for the HTTP answer. A code not listed here is the caller's input. */
 const CONFLICTS = new Set([
+  "LEASE_LOST",
   "CLIMB_BASELINE_DONE",
   "CLIMB_BUSY",
   "CLIMB_CASE_ALREADY_RUN",
@@ -52,6 +57,7 @@ const CONFLICTS = new Set([
   "CLIMB_DRAFT_IN_PROGRESS",
   "CLIMB_MEASURE_LOCKED",
   "CLIMB_MEASURE_NOT_RECORDED",
+  "CLIMB_NOT_PAUSED",
   "CLIMB_NOT_READY",
   "CLIMB_NOT_STOPPED",
   "CLIMB_NOTHING_TO_CONFIRM",
@@ -72,7 +78,8 @@ const NOT_FOUND = new Set(["CLIMB_NOT_FOUND", "CLIMB_ROUND_NOT_FOUND", "CLIMB_SE
 function climbRefusal(error: unknown): WebRouteError | undefined {
   const data = convexErrorData(error);
   const code = typeof data?.code === "string" ? data.code : "";
-  if (!code.startsWith("CLIMB_")) return undefined;
+  // LEASE_LOST is a step's own refusal: the lease it held was taken over or ran out.
+  if (!code.startsWith("CLIMB_") && code !== "LEASE_LOST") return undefined;
   const { code: _code, message, ...extra } = data as Record<string, unknown>;
   const text = typeof message === "string" && message.trim() ? message : "The climb request was refused.";
   const details = { code, ...extra };

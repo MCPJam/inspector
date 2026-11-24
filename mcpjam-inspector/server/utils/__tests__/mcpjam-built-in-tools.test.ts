@@ -288,6 +288,10 @@ describe("workspace tool catalog", () => {
       "install_registry_directory_server",
       "install_registry_server",
       "uninstall_registry_server",
+      // Mock servers: the change-list screen is the mock sheet now, so chat has them (saving asks first).
+      "get_mock_server",
+      "create_mock_server",
+      "update_mock_server",
     ]);
     for (const id of MCPJAM_TOOL_IDS) expect(isMcpjamToolId(id)).toBe(true);
     expect(isMcpjamToolId("web_search")).toBe(false);
@@ -827,5 +831,46 @@ describe("approval floors (MJ-008)", () => {
         .needsApproval,
     ).toBe(false);
     expect(calls).toEqual([]);
+  });
+});
+
+describe("an unattended job's rule in place of approval", () => {
+  const climbOperations = ALL_OPERATIONS.filter((op) => ["get_climb", "submit_climb_round"].includes(op.name));
+  const unattended = (allow: (id: string, input: Record<string, unknown>) => Promise<string | undefined>) => ({
+    operations: climbOperations,
+    allow,
+  });
+
+  it("builds a write that would ask, with no pause, and runs it when the rule lets it", async () => {
+    const { client, calls } = makeClient({
+      "GET /api/v1/projects": () => ({ json: PROJECTS_PAGE }),
+      "POST /api/v1/projects/proj_1/mock-servers": () => ({ status: 201, json: { id: "m1", name: "m", version: 1 } }),
+    });
+    const allow = vi.fn(async () => undefined);
+    const built = buildMcpjamTool("create_mock_server", { ...toolOpts, client, unattended: unattended(allow) }) as { needsApproval?: boolean };
+    expect(built.needsApproval).toBe(false);
+    await execTool(built as never, { name: "m", definition: {} });
+    expect(allow).toHaveBeenCalledWith("create_mock_server", expect.objectContaining({ name: "m", project: "proj_1" }));
+    expect(calls.some((call) => call.method === "POST")).toBe(true);
+  });
+
+  it("answers the rule's reason as the result, and makes no call, when the rule refuses", async () => {
+    const { client, calls } = makeClient({});
+    const built = buildMcpjamTool("update_mock_server", { ...toolOpts, client, unattended: unattended(async () => "No rounds are left.") });
+    expect(await execTool(built!, { mock: "m", patch: {}, expectedVersion: 1 })).toEqual({ error: "No rounds are left." });
+    expect(calls).toEqual([]);
+  });
+
+  it("builds an operation the workspace does not offer only when the job names it", () => {
+    const { client } = makeClient({});
+    expect(buildMcpjamTool("submit_climb_round", { ...toolOpts, client })).toBeNull();
+    expect(buildMcpjamTool("submit_climb_round", { ...toolOpts, client, unattended: unattended(async () => undefined) })).not.toBeNull();
+    expect(isMcpjamToolId("submit_climb_round")).toBe(false);
+  });
+
+  it("keeps the mock operations in the in-app chat with their floors: saving asks, reading follows the setting", () => {
+    expect(workspaceApprovalFloor("create_mock_server")).toBe("always");
+    expect(workspaceApprovalFloor("update_mock_server")).toBe("always");
+    expect(workspaceApprovalFloor("get_mock_server")).toBe("setting");
   });
 });

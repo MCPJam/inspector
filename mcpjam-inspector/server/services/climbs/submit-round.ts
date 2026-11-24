@@ -38,6 +38,8 @@ export type SubmitRoundArgs = {
   serverVersion?: string;
   idempotencyKey: string;
   submittedVia: PlatformClimbSubmittedVia;
+  /** Only MCPJam's own step sends this: the held lease, and the transcript to link. */
+  pickerStep?: { generation: number; chatSessionId?: string };
 };
 
 export async function submitRound(
@@ -49,7 +51,10 @@ export async function submitRound(
   const { convex } = deps;
   const { climbId } = climb;
   const plan: RoundPlan = await convex.query(climbFns.planRound, { climbId });
-  if (!plan.allowed && plan.refusal) {
+  // A round that is running refuses a new key but replays its own: a step cut off after it registered its
+  // round resubmits the same key. The backend decides, so for MCPJam's step this one refusal is let through to it.
+  const replayMayFollow = args.pickerStep !== undefined && plan.refusal?.code === "CLIMB_ROUND_IN_FLIGHT";
+  if (!plan.allowed && plan.refusal && !replayMayFollow) {
     // The same refusal a caller gets from the backend itself, so every surface reads one set of codes.
     throw translateClimbWriteError(
       new ConvexError({ code: plan.refusal.code, message: plan.refusal.message, ...plan.refusal.extra }),
@@ -73,6 +78,7 @@ export async function submitRound(
     idempotencyKey: args.idempotencyKey,
     estimatedCreditsPerGroup: estimate.creditsPerGroup,
     submittedVia: args.submittedVia,
+    ...(args.pickerStep ? { pickerStep: args.pickerStep } : {}),
   });
   // A repeat of a key that already launched has nothing left to start; a group that
   // was registered and never launched (the first call died between the two) still does.
