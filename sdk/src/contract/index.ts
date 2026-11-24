@@ -1213,3 +1213,18 @@ export * from "./eval-authoring.js";
 export * from "./eval-authoring-review.js";
 export * from "./swarm-finding.js";
 export * from "./eval-lifecycle.js";
+
+export {
+  inputAnswerResult,
+  inputAnswerSchema,
+  inputAnswersSchema,
+  matchInputAnswer,
+  MAX_INPUT_ANSWERS,
+  MAX_INPUT_ANSWER_CONTENT_CHARS,
+  MAX_INPUT_ANSWER_MESSAGE_CHARS,
+} from "./input-answers.js";
+export type {
+  InputAnswer,
+  InputQuestion,
+  MatchedInputAnswer,
+} from "./input-answers.js";

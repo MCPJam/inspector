@@ -67,6 +67,7 @@ import {
   resolveEvalGradingValidityPolicy,
 } from "./contract/grading-policy.js";
 import type { EvalValidityCoverage } from "./contract/verdict-policy.js";
+import type { InputAnswer } from "./contract/input-answers.js";
 
 // ── the input cap ────────────────────────────────────────────────────────────
 
@@ -175,6 +176,8 @@ export type ResolvedEvalSuiteFileCase = {
   suppressedSuiteStandardCheckIds?: string[];
   expectedOutput?: string;
   isNegativeTest: boolean;
+  /** What the run answers when a server asks a question. */
+  inputAnswers?: InputAnswer[];
   /** Resolved from `cases[].model`, else `defaults.model`. */
   model: string;
   /** Resolved from `defaults.provider`; cases cannot override it. */
@@ -680,6 +683,9 @@ function resolveCase(
       ? {}
       : { expectedOutput: authoredCase.expectedOutput }),
     isNegativeTest: authoredCase.isNegativeTest ?? false,
+    ...(authoredCase.inputAnswers === undefined
+      ? {}
+      : { inputAnswers: authoredCase.inputAnswers }),
     model: authoredCase.model ?? defaults.model,
     ...(defaults.provider === undefined ? {} : { provider: defaults.provider }),
     iterations: authoredCase.iterations ?? defaults.iterations,
@@ -769,6 +775,7 @@ const CASE_KEY_ORDER = [
   "repetitions",
   "passThreshold",
   "isNegativeTest",
+  "inputAnswers",
   "expectedOutput",
   "steps",
   "checks",
@@ -790,6 +797,7 @@ const CASE_KEY_ORDER_V2 = [
   "iterations",
   "passThreshold",
   "isNegativeTest",
+  "inputAnswers",
   "expectedOutput",
   "steps",
   "assertions",
