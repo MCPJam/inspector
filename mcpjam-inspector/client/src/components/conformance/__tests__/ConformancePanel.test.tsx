@@ -1647,7 +1647,7 @@ describe("ConformanceTab", () => {
 
     const card = screen.getByRole("list", { name: "Servers" });
     expect(card).toHaveTextContent("alpha");
-    expect(card).toHaveTextContent("· Protocol Auto");
+    expect(card).toHaveTextContent("Protocol · Auto");
     expect(card).toHaveTextContent(/Last run/);
     expect(
       within(card).getByRole("img", { name: "100%. 22 passed of 22" }),
@@ -1665,6 +1665,42 @@ describe("ConformanceTab", () => {
     await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
     expect(mockRunTasks).not.toHaveBeenCalled();
     expect(mockStartOAuth).not.toHaveBeenCalled();
+  });
+
+  it("runs the protocol revision chosen on an Overview card with saved checks", async () => {
+    const user = userEvent.setup();
+    setupSuccessfulRunMocks();
+    const server = createHttpServer({ name: "alpha" });
+    const load = vi.fn(async () => ({
+      selection: { protocol: ["ping" as const], apps: [], tasks: [], oauth: false },
+      inputs: {},
+    }));
+    render(
+      <ConformanceTab
+        server={server}
+        servers={[server]}
+        onSelectServer={vi.fn()}
+        lastRuns={{ alpha: createRunListItem("srv_a") }}
+        onViewRun={vi.fn()}
+        onLoadServerDefaults={load}
+      />,
+    );
+    await user.click(
+      screen.getByRole("combobox", { name: "Protocol version for alpha" }),
+    );
+    await user.click(screen.getByRole("option", { name: "2025-03-26" }));
+    await user.click(screen.getByRole("button", { name: "Run alpha" }));
+
+    expect(load).toHaveBeenCalledWith("alpha");
+    await waitFor(() =>
+      expect(mockRunProtocol).toHaveBeenCalledWith(
+        "alpha",
+        expect.objectContaining({
+          checkIds: ["ping"],
+          protocolVersion: "2025-03-26",
+        }),
+      ),
+    );
   });
 
   it("shows a server's logo on its card, and initials without one", () => {
@@ -1691,7 +1727,7 @@ describe("ConformanceTab", () => {
       "src",
       "https://example.test/alpha.png",
     );
-    expect(alphaCard).toHaveTextContent("Protocol 2025-11-25");
+    expect(alphaCard).toHaveTextContent("Protocol · 2025-11-25");
     expect(betaCard!.querySelector("img")).toBeNull();
     expect(betaCard).toHaveTextContent("Be");
   });

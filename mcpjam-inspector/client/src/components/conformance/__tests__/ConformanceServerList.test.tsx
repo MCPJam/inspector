@@ -1,7 +1,11 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { ConformanceRunListItem } from "../ConformanceHistory";
 import { ConformanceServerList } from "../ConformanceServerList";
+
+const { useQuery } = vi.hoisted(() => ({ useQuery: vi.fn() }));
+vi.mock("convex/react", () => ({ useQuery }));
 
 vi.mock("@/lib/artifact-urls", () => ({
   useArtifactQuery: () => ({
@@ -60,6 +64,78 @@ function run(): ConformanceRunListItem {
 }
 
 describe("ConformanceServerList", () => {
+  it("shows each card's selected revision and runs that revision when it has no history", async () => {
+    const user = userEvent.setup();
+    const onRun = vi.fn();
+    const onViewRun = vi.fn();
+    const newest = run();
+    const older = {
+      ...newest,
+      _id: "run_older",
+      protocolVersion: "2025-03-26",
+      score: 42,
+    };
+    const beta = {
+      ...newest,
+      _id: "run_beta",
+      targetKey: "server:srv_2",
+      serverId: "srv_2",
+    };
+    const runs = [
+      { serverName: "draw", run: newest },
+      { serverName: "echo", run: beta },
+    ];
+    useQuery.mockImplementation((_query, args) => {
+      if (args === "skip" || args.protocolVersion === "2025-06-18")
+        return undefined;
+      return { page: [older] };
+    });
+    const props = { runs, onRun, onViewRun };
+    const { rerender } = render(<ConformanceServerList {...props} />);
+    const [draw, echo] = screen.getAllByRole("listitem");
+    const picker = within(draw).getByRole("combobox", {
+      name: "Protocol version for draw",
+    });
+    expect(picker).toHaveTextContent(`Protocol · ${newest.protocolVersion}`);
+    await user.click(within(draw).getByRole("button", { name: "View last run" }));
+    expect(onViewRun).toHaveBeenLastCalledWith(newest._id);
+
+    await user.click(picker);
+    await user.click(screen.getByRole("option", { name: "2025-03-26" }));
+    expect(useQuery).toHaveBeenCalledWith(expect.anything(), {
+      projectId: newest.projectId,
+      targetKey: newest.targetKey,
+      protocolVersion: "2025-03-26",
+      paginationOpts: { numItems: 1, cursor: null },
+    });
+    expect(within(draw).getByText("42%")).toBeInTheDocument();
+    expect(within(echo).getByRole("combobox")).toHaveTextContent("2025-11-25");
+    await user.click(within(draw).getByRole("button", { name: "View last run" }));
+    expect(onViewRun).toHaveBeenLastCalledWith(older._id);
+
+    await user.click(picker);
+    await user.click(screen.getByRole("option", { name: "2025-06-18" }));
+    expect(within(draw).getByRole("status")).toHaveTextContent(
+      "Loading latest run",
+    );
+    expect(
+      within(draw).queryByRole("button", { name: "View last run" }),
+    ).toBeNull();
+    useQuery.mockImplementation((_query, args) =>
+      args === "skip" ? undefined : { page: [] },
+    );
+    rerender(<ConformanceServerList {...props} />);
+    expect(within(draw).getByRole("status")).toHaveTextContent(
+      "No runs for this protocol version yet.",
+    );
+    await user.click(within(draw).getByRole("button", { name: "Run draw" }));
+    expect(onRun).toHaveBeenCalledWith("draw", "2025-06-18");
+    expect(
+      within(echo).getByRole("button", { name: "View last run" }),
+    ).toBeVisible();
+    useQuery.mockReset();
+  });
+
   it("shows scored suites as fractions and leaves out a suite that did not run", () => {
     render(
       <ConformanceServerList

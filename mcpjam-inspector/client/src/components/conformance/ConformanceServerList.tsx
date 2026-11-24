@@ -4,8 +4,22 @@
  */
 
 import { useEffect, useState } from "react";
+import { useQuery } from "convex/react";
+import { makeFunctionReference } from "convex/server";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+} from "@mcpjam/design-system/select";
+import {
+  isKnownProtocolVersion,
+  MCP_PROTOCOL_VERSIONS,
+  type McpProtocolVersion,
+} from "@mcpjam/sdk/browser";
+import type { ProtocolVersionPin } from "@/hooks/use-conformance-run";
 import { useArtifactQuery } from "@/lib/artifact-urls";
 import { type ConformanceRunListItem } from "./ConformanceHistory";
 import { RunResultRing } from "./RunResultRing";
@@ -14,6 +28,18 @@ import { SUITE_COPY, ServerAvatar } from "./conformance-ui";
 const SUITES = ["protocol", "apps", "tasks", "oauth"] as const;
 /** Four text-sm rows plus the gaps between them. */
 const SUITE_STACK = "min-h-[6.875rem]";
+const PROTOCOL_VERSIONS = [...MCP_PROTOCOL_VERSIONS].reverse();
+
+const listRuns = makeFunctionReference<
+  "query",
+  {
+    projectId: string;
+    targetKey: string;
+    protocolVersion: McpProtocolVersion;
+    paginationOpts: { numItems: number; cursor: null };
+  },
+  { page: ConformanceRunListItem[] }
+>("conformanceRuns:listRuns");
 
 type SuiteReport = {
   suiteKind: string;
@@ -89,7 +115,7 @@ function SuiteMeter({
 
 function ServerCard({
   serverName,
-  run,
+  run: latestRun,
   iconUrl,
   onViewRun,
   onRun,
@@ -100,14 +126,33 @@ function ServerCard({
   run: ConformanceRunListItem;
   iconUrl?: string;
   onViewRun: (runId: string) => void;
-  onRun: (serverName: string) => void;
+  onRun: (serverName: string, version: ProtocolVersionPin) => void;
   disabled: boolean;
   /** This card's Run was pressed and its run is being set up. */
   starting: boolean;
 }) {
+  const [selection, setSelection] = useState<McpProtocolVersion | null>(null);
+  const latestVersion = latestRun.protocolVersion;
+  const selectedVersion = selection ?? latestVersion;
+  const knownLatest = latestVersion && isKnownProtocolVersion(latestVersion);
+  const pin = selection ?? (knownLatest ? latestVersion : "auto");
+  const showLatest = selection === null || selection === latestVersion;
+  const byVersion = useQuery(
+    listRuns,
+    !showLatest
+      ? {
+          projectId: latestRun.projectId,
+          targetKey: latestRun.targetKey,
+          protocolVersion: selection,
+          paginationOpts: { numItems: 1, cursor: null },
+        }
+      : "skip",
+  );
+  const run = showLatest ? latestRun : byVersion?.page[0];
+  const loading = !showLatest && byVersion === undefined;
   const detail = useArtifactQuery<{ reports?: SuiteReport[] } | null>(
     "conformanceRuns:getRun",
-    { runId: run._id },
+    run ? { runId: run._id } : "skip",
   );
   const reports = new Map(
     (detail?.reports ?? []).map((report) => [report.suiteKind, report]),
@@ -116,7 +161,7 @@ function ServerCard({
     const report = reports.get(kind);
     return suiteRan(report) ? [report] : [];
   });
-  const percent = run.score == null ? "—" : `${Math.round(run.score)}%`;
+  const percent = run?.score == null ? "—" : `${Math.round(run.score)}%`;
   // Query updates do not tick with the clock, so "Last run 2m ago" would go
   // stale on an open page without this.
   const [now, setNow] = useState(() => Date.now());
@@ -127,47 +172,80 @@ function ServerCard({
 
   return (
     <li className="flex h-full flex-col gap-4 rounded-lg bg-popover px-5 py-4 text-popover-foreground shadow-sm">
-      <div className="flex min-w-0 items-center gap-3">
-        <ServerAvatar name={serverName} iconUrl={iconUrl} className="size-9" />
-        <div className="flex min-w-0 items-baseline gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+        <div className="flex min-w-0 items-center gap-3">
+          <ServerAvatar name={serverName} iconUrl={iconUrl} className="size-9" />
           <span className="truncate text-[15px] font-semibold">
             {serverName}
           </span>
-          <span className="shrink-0 text-sm text-muted-foreground">
-            · Protocol {run.protocolVersion ?? "Auto"}
-          </span>
         </div>
-      </div>
-      <div className="mb-2 flex items-center gap-5">
-        <div className="flex w-[88px] shrink-0 items-center justify-center">
-          <RunResultRing run={run} size={88} label={percent} animate />
-        </div>
-        <div
-          className={`flex ${SUITE_STACK} min-w-0 flex-1 flex-col justify-center gap-2.5`}
-          role="group"
-          aria-label={`${serverName} suites`}
+        <Select
+          value={pin}
+          onValueChange={(value) =>
+            setSelection(isKnownProtocolVersion(value) ? value : null)
+          }
         >
-          {suites.map((report) => (
-            <SuiteMeter key={report.suiteKind} report={report} />
-          ))}
-        </div>
+          <SelectTrigger
+            size="sm"
+            aria-label={`Protocol version for ${serverName}`}
+          >
+            <span>Protocol · {selectedVersion ?? "Auto"}</span>
+          </SelectTrigger>
+          <SelectContent>
+            {!knownLatest && (
+              <SelectItem value="auto">{latestVersion ?? "Auto"}</SelectItem>
+            )}
+            {PROTOCOL_VERSIONS.map((version) => (
+              <SelectItem key={version} value={version}>
+                {version}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
-      <div className="mt-auto flex items-center justify-between gap-3">
+      {run ? (
+        <div key={run._id} className="mb-2 flex items-center gap-5">
+          <div className="flex w-[88px] shrink-0 items-center justify-center">
+            <RunResultRing run={run} size={88} label={percent} animate />
+          </div>
+          <div
+            className={`flex ${SUITE_STACK} min-w-0 flex-1 flex-col justify-center gap-2.5`}
+            role="group"
+            aria-label={`${serverName} suites`}
+          >
+            {suites.map((report) => (
+              <SuiteMeter key={report.suiteKind} report={report} />
+            ))}
+          </div>
+        </div>
+      ) : (
+        <p
+          role="status"
+          className={`mb-2 flex ${SUITE_STACK} items-center justify-center text-center text-sm text-muted-foreground`}
+        >
+          {loading
+            ? "Loading latest run…"
+            : "No runs for this protocol version yet."}
+        </p>
+      )}
+      <div className="mt-auto flex flex-wrap items-center justify-between gap-3">
         <span className="text-sm text-muted-foreground">
-          {lastRunLabel(run.createdAt, now)}
+          {run && lastRunLabel(run.createdAt, now)}
         </span>
         <div className="flex shrink-0 items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onViewRun(run._id)}
-          >
-            View last run
-          </Button>
+          {run && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onViewRun(run._id)}
+            >
+              View last run
+            </Button>
+          )}
           <Button
             size="sm"
             disabled={disabled || starting}
-            onClick={() => onRun(serverName)}
+            onClick={() => onRun(serverName, pin)}
             aria-label={
               starting ? `Starting ${serverName}` : `Run ${serverName}`
             }
@@ -205,7 +283,7 @@ export function ConformanceServerList({
   /** Each server's logo URL, by name; initials where there is none. */
   serverIcons?: Record<string, string>;
   onViewRun: (runId: string) => void;
-  onRun: (serverName: string) => void;
+  onRun: (serverName: string, version: ProtocolVersionPin) => void;
   /** A run is connecting, or the saved defaults are still loading. */
   disabled?: boolean;
   /** The server whose saved defaults could not be loaded. */
@@ -224,7 +302,7 @@ export function ConformanceServerList({
     >
       {runs.map(({ serverName, run }) => (
         <ServerCard
-          key={serverName}
+          key={`${run.projectId}/${run.targetKey}`}
           serverName={serverName}
           run={run}
           iconUrl={serverIcons?.[serverName]}

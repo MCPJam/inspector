@@ -479,10 +479,10 @@ export function ConformanceTab({
     loadingDefaults ||
     selectionIsReconnecting ||
     connectingServer !== null;
-  const runServer = (serverName: string) => {
+  const runServer = (serverName: string, version: ProtocolVersionPin) => {
     setRunFrom("overview");
-    if (onLoadServerDefaults) void requestDefaults(serverName, "auto");
-    else startRun(serverName, "auto", defaultsFor(serverName) ?? {});
+    if (onLoadServerDefaults) void requestDefaults(serverName, version);
+    else startRun(serverName, version, defaultsFor(serverName) ?? {});
   };
   const home =
     recentServers.length > 0 && onViewRun ? (
