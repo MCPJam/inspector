@@ -5,11 +5,15 @@
  * rule on the call, so it holds whatever ids the model tries: the run must be
  * one the climb launched, and the iteration's case must be a steering case. A
  * backend that cannot say which runs the climb launched refuses every read,
- * because the fence cannot be checked without it.
+ * because the fence cannot be checked without it. The backend checks the same
+ * rule again on the read itself (`pickerTraceRefusal`), so a call that gets
+ * past this one is still held.
  */
 import type { ConvexHttpClient } from "convex/browser";
 import type { PlatformApiClient, PlatformClimb } from "@mcpjam/sdk/platform";
-import { climbFns } from "./backend.js";
+import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
+import { convexErrorData } from "../../routes/v1/convex-errors.js";
+import { climbFns, translateClimbReadError } from "./backend.js";
 import { readRunGroups } from "./run-groups.js";
 
 const PAGE = 100;
@@ -45,4 +49,17 @@ export function createTraceFence(deps: TraceFenceDeps): (input: Record<string, u
     }
     return REFUSAL;
   };
+}
+
+/**
+ * The backend's refusal of a step's trace read, or undefined for any other
+ * error. The fence's own sentence, so the model reads the same answer
+ * whichever check held. A lost lease keeps the backend's sentence: the step
+ * has to stop.
+ */
+export function pickerTraceRefusal(error: unknown): WebRouteError | undefined {
+  const code = convexErrorData(error)?.code;
+  if (code === "CLIMB_TRACE_NOT_STEERING") return new WebRouteError(403, ErrorCode.FORBIDDEN, REFUSAL, { code });
+  if (code === "LEASE_LOST") return translateClimbReadError(error);
+  return undefined;
 }

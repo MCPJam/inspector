@@ -112,7 +112,7 @@ export async function runPickerStep(
 /** Launches again a round a cut-off step had registered: the same key replays it, and nothing is charged twice. */
 async function resumeRound(claim: StepClaim, getBearer: () => Promise<string>): Promise<number> {
   const resume = claim.resumeRound!;
-  const client = buildPickerPlatformClient(getBearer, { generation: claim.generation });
+  const client = buildPickerPlatformClient(getBearer, { climbId: claim.climbId, generation: claim.generation });
   const submitted = await client.submitClimbRound({
     projectId: claim.projectId,
     climbId: claim.climbId,
@@ -170,7 +170,7 @@ async function takeTurn(
 
   const client = buildPickerPlatformClient(
     getBearer,
-    { generation: claim.generation, ...(linked?.sessionDocId ? { chatSessionId: linked.sessionDocId } : {}) },
+    { climbId, generation: claim.generation, ...(linked?.sessionDocId ? { chatSessionId: linked.sessionDocId } : {}) },
     `climb-step:${climbId}:${claim.generation}`,
   );
   const connection = await ports.connect({ projectId, bearer, serverId: climb.serverId });

@@ -108,7 +108,7 @@ describe("a step that submits a round", () => {
     expect(persisted[1]).toMatchObject({ chatSessionId: `climb-step-${CLIMB}-3`, expectedVersion: 1 });
     expect(persisted[1]!.sessionMessages).toHaveLength(2);
     // The round the turn submits names the held lease and the stored session.
-    expect(hoisted.marks).toEqual([{ generation: 3, chatSessionId: "chatDoc1", roundKey: `climb-step:${CLIMB}:3` }]);
+    expect(hoisted.marks).toEqual([{ climbId: CLIMB, generation: 3, chatSessionId: "chatDoc1", roundKey: `climb-step:${CLIMB}:3` }]);
   });
 
   it("still submits when the transcript could not be stored first, and the round simply has no link", async () => {
@@ -117,7 +117,7 @@ describe("a step that submits a round", () => {
       persist: () => ({ outcome: "failed", failureKind: "timeout" }),
     });
     expect(await runPickerStep(claim(), lease, bearer, { ports })).toEqual({ kind: "done", submittedRound: 2 });
-    expect(hoisted.marks).toEqual([{ generation: 3, roundKey: `climb-step:${CLIMB}:3` }]);
+    expect(hoisted.marks).toEqual([{ climbId: CLIMB, generation: 3, roundKey: `climb-step:${CLIMB}:3` }]);
   });
 
   it("reports what the turn cost, from the prices on its own calls", async () => {
@@ -207,7 +207,7 @@ describe("a step resumed after a cut-off", () => {
     expect(await runPickerStep(claim({ resumeRound: resume }), lease, bearer, { ports })).toEqual({ kind: "done", submittedRound: 2 });
     expect(hoisted.client.submitClimbRound).toHaveBeenCalledWith({ projectId: "proj1", climbId: CLIMB, serverId: "s_cand", serverVersion: "3", idempotencyKey: "climb:c:round:2" });
     expect(runTurn).not.toHaveBeenCalled();
-    expect(hoisted.marks).toEqual([{ generation: 3 }]);
+    expect(hoisted.marks).toEqual([{ climbId: CLIMB, generation: 3 }]);
   });
 });
 

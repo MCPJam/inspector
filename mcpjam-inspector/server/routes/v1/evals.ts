@@ -117,6 +117,8 @@ import {
   type ReplacementSpec,
 } from "../../services/climbs/replacement.js";
 import { replacementSpec } from "../../services/climbs/listing.js";
+import { readPickerTraceStep } from "../../services/climbs/picker-headers.js";
+import { pickerTraceRefusal } from "../../services/climbs/trace-fence.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import {
   HOSTED_MODE,
@@ -6587,6 +6589,8 @@ evals.get(
     const projectId = c.req.param("projectId");
     const runId = evalIdParam(c, "runId", "Eval run");
     const iterationId = evalIdParam(c, "iterationId", "Eval iteration");
+    // MCPJam's climb step reads only its steering cases; the backend checks.
+    const pickerStep = readPickerTraceStep(c);
     // Held rather than inlined: the same bearer authorizes the read AND names
     // the human in the audit row below (see services/eval-trace-access-audit).
     const convexAuthToken = await getConvexBearerForRequest(c);
@@ -6613,12 +6617,16 @@ evals.get(
       scopeVerified = true;
       trace = await convex.action("testSuites:getTestIterationBlob" as any, {
         iterationId,
+        ...(pickerStep ? { pickerStep } : {}),
       });
     } catch (error) {
-      throw translateConvexReadError(error, {
-        ...scopedEvalReadOptions("Eval iteration not found"),
-        redactedIsRefusal: !scopeVerified,
-      });
+      throw (
+        pickerTraceRefusal(error) ??
+        translateConvexReadError(error, {
+          ...scopedEvalReadOptions("Eval iteration not found"),
+          redactedIsRefusal: !scopeVerified,
+        })
+      );
     }
     if (trace === null || trace === undefined) {
       throw new WebRouteError(
