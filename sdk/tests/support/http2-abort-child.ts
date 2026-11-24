@@ -10,6 +10,10 @@
  *   must still negotiate HTTP/2: the process-wide dispatcher is untouched.
  * - `runConformance`: the CLI's entry point with its defaults (protocol, apps
  *   and tasks; auto-detected version), then the idle wait.
+ * - `oauthAuto`: the same entry point running only the OAuth suite with the
+ *   CLI's default `registrationStrategy: "auto"`, whose registration probe
+ *   dials the MCP server before the suite starts. Headless, so nothing opens
+ *   a browser.
  *
  * The test bundles this file with esbuild and runs it: `<bundle> <origin> <mode>`.
  */
@@ -47,6 +51,23 @@ if (mode === "runConformance") {
   await runConformance({
     server: { url: `${origin}/mcp` },
     protocol: { checkTimeout: 2_000 },
+    __suppressTelemetry: true,
+  });
+  await outliveIdleReaper();
+}
+
+if (mode === "oauthAuto") {
+  await runConformance({
+    server: { url: `${origin}/mcp` },
+    suites: ["oauth"],
+    oauth: {
+      serverUrl: `${origin}/mcp`,
+      protocolVersion: "2025-11-25",
+      registrationStrategy: "auto",
+      auth: { mode: "headless" },
+      allowPrivateNetwork: true,
+      stepTimeout: 2_000,
+    },
     __suppressTelemetry: true,
   });
   await outliveIdleReaper();

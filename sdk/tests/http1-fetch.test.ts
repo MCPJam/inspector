@@ -208,7 +208,7 @@ describe.runIf(fetchNegotiatesHttp2())(
 
     function runChild(
       origin: string,
-      mode: "plain" | "http1Fetch" | "runConformance"
+      mode: "plain" | "http1Fetch" | "runConformance" | "oauthAuto"
     ): Promise<{ code: number | null; stderr: string }> {
       const childProcess = spawn(process.execPath, [child, origin, mode], {
         env: { ...process.env, NODE_EXTRA_CA_CERTS: caFile },
@@ -265,6 +265,21 @@ describe.runIf(fetchNegotiatesHttp2())(
         expect(code).toBe(0);
         expect(versions.length).toBeGreaterThan(0);
         expect(new Set(versions)).toEqual(new Set(["1.1"]));
+      } finally {
+        await server.close();
+      }
+    }, 60_000);
+
+    it("the OAuth suite's automatic registration probe dials HTTP/1.1 too", async () => {
+      const server = await startServer();
+      try {
+        const { code, stderr } = await runChild(server.origin, "oauthAuto");
+        const probes = server.versionsFor("/mcp");
+
+        expect(stderr).not.toContain("socket idle timeout");
+        expect(code).toBe(0);
+        expect(probes.length).toBeGreaterThan(0);
+        expect(new Set(server.versionsFor("/"))).toEqual(new Set(["1.1"]));
       } finally {
         await server.close();
       }
