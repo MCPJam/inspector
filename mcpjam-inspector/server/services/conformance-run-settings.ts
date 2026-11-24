@@ -112,6 +112,8 @@ export async function suiteConfigsForRun(
   server: HttpServerConfig,
   protocolVersion: McpProtocolVersion | undefined,
   signal?: AbortSignal,
+  /** A mock's in-process dispatch, in place of the network transport. */
+  baseFetch?: typeof fetch,
 ) {
   if (settings.source !== "saved")
     return {
@@ -121,7 +123,7 @@ export async function suiteConfigsForRun(
   const connection = await checkConformanceConnection(
     server,
     protocolVersion ?? "auto",
-    { signal },
+    { signal, baseFetch },
   );
   const pin =
     connection.status === "ready"

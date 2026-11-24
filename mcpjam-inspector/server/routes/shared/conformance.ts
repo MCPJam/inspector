@@ -163,6 +163,8 @@ export interface ResolvedHttpConfig extends ConformanceDeadlineInput {
   customHeaders?: Record<string, string>;
   /** The connection's delivered credentials, held to their origins. */
   credentialBinding?: CredentialHeaderBinding;
+  /** A mock's in-process dispatch; it stands in for the pinned network transport. */
+  baseFetch?: typeof fetch;
   /** Pin the run to one protocol version; absent ⇒ adopt the negotiated one. */
   protocolVersion?: McpProtocolVersion;
   /** Run only these checks; absent ⇒ every check the revision has. */
@@ -213,7 +215,8 @@ export async function runProtocolConformance(
     // belong in this change") was taken up by the runner, and then by every
     // hosted connection factory when the gap it left became MJ-001.
     fetchFn: deadlineFetch(
-      createConformanceFetch("MCP server", input.credentialBinding),
+      input.baseFetch ??
+        createConformanceFetch("MCP server", input.credentialBinding),
       signal,
     ),
     // The browser counts the whole run once; a suite request must not.

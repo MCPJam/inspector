@@ -38,6 +38,7 @@ import {
 import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 import { checkConformanceConnection } from "../shared/conformance-connection.js";
 import { deliveredCredentialBinding } from "../../utils/delivered-oauth-credential.js";
+import { mockIdFromPlaceholderUrl } from "../../../shared/mock-address.js";
 
 const conformance = new Hono();
 
@@ -68,6 +69,10 @@ function toHttpResolved(config: HttpServerConfig) {
       | Record<string, string>
       | undefined,
     credentialBinding: deliveredCredentialBinding(config),
+    // A mock's address resolves nowhere: its own in-process dispatch is the transport.
+    ...(config.baseFetch && mockIdFromPlaceholderUrl(String(config.url))
+      ? { baseFetch: config.baseFetch }
+      : {}),
   };
 }
 
@@ -118,7 +123,7 @@ conformance.post("/connection-check", async (c) => {
             .credentialHeaderNames,
         },
         parsed.data.protocolVersion,
-      { requestStartedAt, signal: c.req.raw.signal, runTimeoutSeconds: parsed.data.runTimeoutSeconds, remainingRunTimeoutMs: parsed.data.remainingRunTimeoutMs },
+      { requestStartedAt, signal: c.req.raw.signal, runTimeoutSeconds: parsed.data.runTimeoutSeconds, remainingRunTimeoutMs: parsed.data.remainingRunTimeoutMs, baseFetch: http.baseFetch },
       ),
     );
   } catch (error) {
@@ -370,6 +375,18 @@ conformance.post("/oauth/start", async (c) => {
 
     assertHttpSupported("oauth", resolved.config);
     const http = toHttpResolved(resolved.config as HttpServerConfig);
+
+    if (http.baseFetch) {
+      return c.json(
+        {
+          success: false,
+          error:
+            "OAuth conformance cannot test a mock server, which has no sign-in of its own. Run the OAuth checks on the real server.",
+          code: "featureNotSupported",
+        },
+        400,
+      );
+    }
 
     if (!callbackOrigin) {
       return c.json(

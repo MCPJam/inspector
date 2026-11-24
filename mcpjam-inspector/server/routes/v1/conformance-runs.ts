@@ -12,6 +12,7 @@ import { z } from "zod";
 import { MCP_PROTOCOL_VERSIONS } from "@mcpjam/sdk";
 import { ConvexHttpClient } from "convex/browser";
 import { authorizeServer, parseWithSchema } from "../web/auth.js";
+import { mockDialForRequest } from "../web/mock-dial.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { requireProjectIdArg } from "./convex-id-param.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
@@ -179,6 +180,9 @@ conformanceRuns.post(
       projectId,
       serverId,
       authorized,
+      ...(authorized.serverConfig.mock
+        ? { mockDial: mockDialForRequest(c, convexAuthToken, projectId, serverId) }
+        : {}),
       suites: body.suites,
       // The header wins, in the order the eval launch routes read it.
       idempotencyKey: readAnyIdempotencyKey(c) ?? body.idempotencyKey,

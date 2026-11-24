@@ -122,6 +122,7 @@ import {
   BlockedEgressTargetError,
   EgressResolutionError,
 } from "../../../utils/hosted-egress-guard.js";
+import { registerMockInProcessHandler } from "../../../services/mock/registry.js";
 import v1Routes from "../index.js";
 
 function makeApp(): Hono {
@@ -323,6 +324,42 @@ describe("v1 persisted conformance runs", () => {
       );
       expect(res.status).toBe(400);
       expect(executePersistedConformanceRunMock).not.toHaveBeenCalled();
+    });
+
+    it("starts a run on a mock through the route in process, judging no address", async () => {
+      const reached: Array<{ mockId: string; grant: string; bearer: string }> = [];
+      registerMockInProcessHandler(async (mockId, _request, context) => {
+        reached.push({ mockId, grant: context.grant, bearer: context.bearerToken });
+        return Response.json({ ok: true });
+      });
+      authorizeServerMock.mockResolvedValue({
+        ...HTTP_SERVER,
+        oauthAccessToken: "mock-grant-token-aaaa",
+        serverConfig: {
+          transportType: "http",
+          url: "https://mock.mcpjam.invalid/mock1",
+          mock: {
+            mockId: "mock1",
+            version: 1,
+            contentHash: "h".repeat(64),
+            grantExpiresAt: Date.now() + 3_600_000,
+          },
+        },
+      });
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/mock1/conformance-runs",
+        { body: {} },
+      );
+      expect(res.status).toBe(202);
+      expect(assertAllowedHostedTargetUrlMock).not.toHaveBeenCalled();
+      const { server } = executePersistedConformanceRunMock.mock.calls[0]![0];
+      // The suites' connection and their raw probes both reach the route in this process.
+      await server.baseFetch("https://mock.mcpjam.invalid/mock1", { method: "POST" });
+      await server.fetchFn("https://mock.mcpjam.invalid/mock1", { method: "POST" });
+      expect(reached).toHaveLength(2);
+      expect(reached.every((hit) => hit.mockId === "mock1" && hit.grant === "mock-grant-token-aaaa")).toBe(true);
+      expect(reached[0]!.bearer).toBe("tok");
     });
 
     it("refuses a blocked saved-server target", async () => {

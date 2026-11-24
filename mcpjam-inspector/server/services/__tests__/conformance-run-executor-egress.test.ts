@@ -342,4 +342,17 @@ describe("persistedConformanceTargetRefusal", () => {
       "The inspector could not establish a connection to this server.",
     );
   });
+
+  it("does not judge a mock's placeholder, which resolves nowhere and is served in process", async () => {
+    const { persistedConformanceTargetRefusal, setEgressHostResolverForTests } =
+      await loadHosted();
+    setEgressHostResolverForTests(async () => {
+      throw new Error("ENOTFOUND mock.mcpjam.invalid");
+    });
+    await expect(
+      persistedConformanceTargetRefusal({
+        url: "https://mock.mcpjam.invalid/mock1",
+      }),
+    ).resolves.toBeNull();
+  });
 });

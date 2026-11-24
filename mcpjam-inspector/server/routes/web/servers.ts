@@ -17,7 +17,6 @@ import {
   withEphemeralConnection,
   handleRoute,
   authorizeServer,
-  callerContextFromHono,
   assertBearerToken,
   readJsonBody,
   parseWithSchema,
@@ -57,6 +56,7 @@ import {
 import { projectHostedConnectFailureLogs } from "../../utils/hosted-connect-failure.js";
 import { ErrorCode, WebRouteError } from "./errors.js";
 import { resolveEffectiveAuthMethod } from "../../utils/effective-auth.js";
+import { mockDialForRequest } from "./mock-dial.js";
 import { mockIdFromPlaceholderUrl } from "../../../shared/mock-address.js";
 
 const servers = new Hono();
@@ -411,17 +411,7 @@ export async function runHostedDoctor(
     undefined,
     // A mock's id: the doctor tests it as the server it is, served in process.
     auth.serverConfig.mock
-      ? {
-          caller: callerContextFromHono(c),
-          bearerToken,
-          projectId: body.projectId,
-          reauthorize: () =>
-            authorizeServer(c, bearerToken, body.projectId, body.serverId, {
-              accessScope: body.accessScope,
-              scenarioId: body.scenarioId,
-              accessVersion: body.accessVersion,
-            }),
-        }
+      ? mockDialForRequest(c, bearerToken, body.projectId, body.serverId, body)
       : undefined,
   );
 

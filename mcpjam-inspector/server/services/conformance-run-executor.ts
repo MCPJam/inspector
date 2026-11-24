@@ -29,6 +29,7 @@ import {
   EgressResolutionError,
   assertAllowedHostedTargetUrl,
 } from "../utils/hosted-egress-guard.js";
+import { mockIdFromPlaceholderUrl } from "../../shared/mock-address.js";
 import { createConformanceFetch } from "../routes/shared/conformance.js";
 import {
   deadlineFetch,
@@ -439,6 +440,9 @@ export async function persistedConformanceTargetRefusal(
 ): Promise<string | null> {
   const url = (server as { url?: string | URL }).url;
   if (url === undefined) return null;
+  // A mock's placeholder resolves nowhere and is served in process: the
+  // transport on its config is the only way to it.
+  if (mockIdFromPlaceholderUrl(url)) return null;
   try {
     await assertAllowedHostedTargetUrl(String(url), "Server URL");
     return null;

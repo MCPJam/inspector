@@ -21,7 +21,7 @@ import { isProtocolVersionPinFailure } from "../../../shared/protocol-version-pi
 export async function checkConformanceConnection(
   config: HttpServerConfig,
   protocolVersion: ConformanceProtocolSelection,
-  budget: ConformanceDeadlineInput = {},
+  budget: ConformanceDeadlineInput & { baseFetch?: typeof fetch } = {},
 ): Promise<ConformanceConnectionResult> {
   try {
     return await runWithinConformanceDeadline(budget, async (signal) => withEphemeralClient(
@@ -33,7 +33,9 @@ export async function checkConformanceConnection(
           protocolVersion === "auto" ? undefined : [protocolVersion],
         timeout: WEB_CONNECT_TIMEOUT_MS,
         baseFetch: deadlineFetch(
-          createConformanceFetch("MCP server", deliveredCredentialBinding(config)),
+          // A mock's in-process dispatch stands in for the network transport.
+          budget.baseFetch ??
+            createConformanceFetch("MCP server", deliveredCredentialBinding(config)),
           signal,
         ),
       },

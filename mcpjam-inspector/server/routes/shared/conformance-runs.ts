@@ -17,6 +17,7 @@ import type { McpProtocolVersion } from "@mcpjam/sdk";
 import type { RunLauncher } from "../../utils/launch-context.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { toHttpConfig } from "../web/auth.js";
+import type { MockDial } from "../../utils/mock-servers.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
   BlockedEgressTargetError,
@@ -72,7 +73,7 @@ export interface AuthorizedConformanceServer {
     url?: string;
     headers?: Record<string, string>;
     useOAuth?: boolean;
-    /** Present for a mock's id, which has no address a suite can dial. */
+    /** Present for a mock's id: served in process, never dialed at its address. */
     mock?: object;
   };
   oauthAccessToken?: string | null;
@@ -83,6 +84,8 @@ export interface StartHostedConformanceRunInput {
   projectId: string;
   serverId: string;
   authorized: AuthorizedConformanceServer;
+  /** The caller's own context, for a mock's id: what serves it in process. */
+  mockDial?: MockDial;
   suites?: HostedConformanceSuite[];
   idempotencyKey?: string;
   protocolVersion?: McpProtocolVersion;
@@ -212,24 +215,28 @@ export async function startHostedConformanceRun(
       };
     }
   }
-  if (config.mock) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.FEATURE_NOT_SUPPORTED,
-      "Conformance runs cannot test a mock server yet. Run them on the real server.",
-    );
-  }
-  await assertConformanceTarget(config.url, "Server URL");
+  // A mock has no address to judge: its placeholder resolves nowhere and the
+  // suites dial it through the in-process dispatch below.
+  if (!config.mock) await assertConformanceTarget(config.url, "Server URL");
 
   const httpConfig = toHttpConfig(
     input.authorized as never,
     WEB_CALL_TIMEOUT_MS,
     input.authorized.oauthAccessToken ?? undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    input.mockDial,
   );
+  // A mock's own dispatch is the transport for the probes and the connection.
+  const transport = config.mock
+    ? httpConfig.baseFetch
+    : createConformanceFetch("MCP server");
   const server = {
     ...httpConfig,
-    fetchFn: createConformanceFetch("MCP server"),
-    baseFetch: createConformanceFetch("MCP server"),
+    fetchFn: transport,
+    baseFetch: config.mock ? transport : createConformanceFetch("MCP server"),
   };
   const settings = await readConformanceRunSettings(convex, {
     projectId: input.projectId,
@@ -244,6 +251,8 @@ export async function startHostedConformanceRun(
     settings,
     server,
     input.protocolVersion,
+    undefined,
+    config.mock ? httpConfig.baseFetch : undefined,
   );
   const requestedSuites = suitesKeptBySettings(
     input.suites && input.suites.length > 0 ? input.suites : DEFAULT_SUITES,

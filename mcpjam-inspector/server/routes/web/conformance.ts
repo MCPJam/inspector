@@ -40,6 +40,7 @@ import {
   conformanceProbeFields,
 } from "../shared/conformance-probes";
 import { authorizeServer, toHttpConfig } from "./auth.js";
+import { mockDialForRequest } from "./mock-dial.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
   BlockedEgressTargetError,
@@ -118,6 +119,8 @@ async function resolveHostedHttpConfig(
   serverUrl: string;
   accessToken?: string;
   customHeaders?: Record<string, string>;
+  /** Set for a mock: the in-process dispatch every suite request goes through. */
+  baseFetch?: typeof fetch;
 }> {
   const wsBody = parseWithSchema(projectServerSchema, body);
   const auth = await authorizeServer(
@@ -148,13 +151,26 @@ async function resolveHostedHttpConfig(
     );
   }
 
-  // A mock has no address a conformance suite can dial: it is served in process.
+  // A mock has no address to dial: its placeholder resolves nowhere, so the
+  // suites run through the same in-process dispatch the doctor uses, and the
+  // egress check has nothing to judge.
   if (auth.serverConfig.mock) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.FEATURE_NOT_SUPPORTED,
-      "Conformance runs cannot test a mock server yet. Run them on the real server."
+    const dispatched = toHttpConfig(
+      auth,
+      WEB_CALL_TIMEOUT_MS,
+      auth.oauthAccessToken ?? undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockDialForRequest(c, bearerToken, wsBody.projectId, wsBody.serverId, wsBody)
     );
+    return {
+      serverUrl: auth.serverConfig.url,
+      accessToken: undefined,
+      customHeaders: undefined,
+      baseFetch: dispatched.baseFetch,
+    };
   }
 
   const oauthToken = options.withLogin
@@ -205,13 +221,20 @@ async function resolveHostedServerConfig(
     auth,
     WEB_CALL_TIMEOUT_MS,
     auth.oauthAccessToken ?? undefined,
-    wsBody.clientCapabilities as Record<string, unknown> | undefined
+    wsBody.clientCapabilities as Record<string, unknown> | undefined,
+    undefined,
+    undefined,
+    undefined,
+    // A mock's id: served in process, so there is no address to judge below.
+    auth.serverConfig.mock
+      ? mockDialForRequest(c, bearerToken, wsBody.projectId, wsBody.serverId, wsBody)
+      : undefined
   );
 
   // Apps/Tasks accept any transport, so there may be no URL to judge (a stdio
   // config never leaves the box). Guard the ones that do.
   const url = (httpConfig as { url?: unknown }).url;
-  if (typeof url === "string" && url) {
+  if (typeof url === "string" && url && !auth.serverConfig.mock) {
     await assertConformanceTarget(url, "Server URL");
   }
 
@@ -291,7 +314,7 @@ conformanceWeb.post("/connection-check", async (c) =>
         requestInit: { headers: resolved.customHeaders },
       },
       parsed.protocolVersion,
-      { requestStartedAt, signal: c.req.raw.signal, runTimeoutSeconds: parsed.runTimeoutSeconds, remainingRunTimeoutMs: parsed.remainingRunTimeoutMs },
+      { requestStartedAt, signal: c.req.raw.signal, runTimeoutSeconds: parsed.runTimeoutSeconds, remainingRunTimeoutMs: parsed.remainingRunTimeoutMs, baseFetch: resolved.baseFetch },
     );
   }),
 );
@@ -517,6 +540,17 @@ conformanceWeb.post("/oauth/start", async (c) =>
       withLogin: false,
     });
     const parsed = parseWithSchema(oauthStartSchema, body);
+
+    // The suite follows addresses a server's own documents name, and a mock is
+    // reachable only through its in-process door, so it cannot grade a sign-in
+    // flow. A mock holds no sign-in of its own to grade.
+    if (resolved.baseFetch) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.FEATURE_NOT_SUPPORTED,
+        "OAuth conformance cannot test a mock server, which has no sign-in of its own. Run the OAuth checks on the real server."
+      );
+    }
 
     if (!parsed.callbackOrigin) {
       throw new WebRouteError(
