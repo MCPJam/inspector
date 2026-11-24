@@ -896,6 +896,7 @@ export class HostRunner implements HostExecutor {
     // Every completed step's response messages, in order. AI SDK 7's
     // `step.response.messages` holds only that step's, so they accumulate here.
     const rejected = new Set<string>();
+    const malformedToolCalls: { toolName: string; input: string }[] = [];
     const completedStepMessages: ModelMessage[] = [];
     let partialInputTokens = 0;
     let partialOutputTokens = 0;
@@ -1040,6 +1041,11 @@ export class HostRunner implements HostExecutor {
           partialOutputTokens += stepResult.usage?.outputTokens ?? 0;
           lastCompletedStepText = stepResult.text ?? "";
           collectRejectedToolCalls(rejected, stepResult.toolCalls);
+          for (const call of stepResult.toolCalls) {
+            if (rejected.has(call.toolCallId) && typeof call.input === "string") {
+              malformedToolCalls.push({ toolName: call.toolName, input: call.input });
+            }
+          }
           completedStepMessages.push(...markRejectedCalls(stepResult.response?.messages ?? [], rejected));
           const blocked = this.policyBlockedToolCallIds?.();
           completedToolCalls.push(
@@ -1100,6 +1106,7 @@ export class HostRunner implements HostExecutor {
         messages,
         text: result.text,
         toolCalls,
+        malformedToolCalls,
         usage: {
           inputTokens,
           outputTokens,
@@ -1151,6 +1158,7 @@ export class HostRunner implements HostExecutor {
         messages: partialMessages,
         text: lastCompletedStepText,
         toolCalls: partialToolCalls,
+        malformedToolCalls,
         usage: {
           inputTokens: partialInputTokens,
           outputTokens: partialOutputTokens,
