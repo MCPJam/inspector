@@ -144,6 +144,8 @@ function checkTheme(theme) {
 
 function writeReport(outDir, slug, report) {
   const path = join(outDir, `${slug}.json`);
+  // The Stop hook's reminder counts only reports from its own checkout.
+  report.checkout = INSPECTOR_DIR;
   writeFileSync(path, JSON.stringify(report, null, 2));
   return path;
 }

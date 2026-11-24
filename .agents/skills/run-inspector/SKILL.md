@@ -172,6 +172,13 @@ QA profile or member sign-in is unavailable, report which checks are blocked.
 4. For a change that touches shared chrome (sidebar, routing, layout, auth),
    `sweep` and compare its failures with a sweep on `main`.
 
+The Stop hook asks once for this when a turn changed UI source (`client/src/`,
+`design-system/src/` or `chat-ui/src/`, deletions included) and no passing
+report this checkout's driver wrote under `~/.mcpjam/driver/runs/` is newer.
+It cannot tell whether that report covers the changed screen, so say which
+screen you opened. If the app cannot start, say so in your reply instead of
+skipping the step silently.
+
 ## Evidence a UI pull request attaches
 
 - Before and after screenshots of the changed screen, light and dark.

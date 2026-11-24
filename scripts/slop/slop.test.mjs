@@ -6,6 +6,7 @@ import {
   mkdirSync,
   realpathSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1070,5 +1071,108 @@ describe("hooks in a worktree", async () => {
     assert.equal(hook({ hook_event_name: "Stop", cwd: wt }), 0);
     writeFileSync(join(wt, "sdk/src/a.ts"), "export const a = b as any;\n");
     assert.equal(hook({ hook_event_name: "Stop", cwd: wt }), 2);
+  });
+});
+
+describe("ui change needs a driver run", async () => {
+  const { isUiSource, newestReport, checkEvidence } = await import(
+    "./ui-driver-run.mjs"
+  );
+  const client = (name) => `mcpjam-inspector/client/src/${name}`;
+
+  it("counts client and UI package source, not tests or other packages", () => {
+    for (const path of [
+      client("App.tsx"),
+      client("lib/format.ts"),
+      "design-system/src/button.tsx",
+      "chat-ui/src/message.tsx",
+    ]) {
+      assert.equal(isUiSource(path), true, path);
+    }
+    for (const path of [
+      client("components/__tests__/A.test.tsx"),
+      client("lib/a.test.ts"),
+      client("lib/a.spec.tsx"),
+      client("test/factories.ts"),
+      client("test/mocks/servers.ts"),
+      "mcpjam-inspector/server/routes/a.ts",
+      "mcpjam-inspector/client/vite.config.ts",
+      "design-system/scripts/sync.mjs",
+    ]) {
+      assert.equal(isUiSource(path), false, path);
+    }
+  });
+
+  it("counts only passing reports this checkout's driver wrote", () => {
+    const runs = mkdtempSync(join(tmpdir(), "slop-driver-"));
+    const checkout = join(runs, "checkout", "mcpjam-inspector");
+    const clean = { issues: [], warnings: [], allowed: [] };
+    const report = (path, seconds, body) => {
+      writeFileSync(path, JSON.stringify(body));
+      utimesSync(path, seconds, seconds);
+    };
+    try {
+      assert.equal(newestReport(join(runs, "missing"), checkout), 0);
+      mkdirSync(join(runs, "a"));
+      mkdirSync(join(runs, "b"));
+      report(join(runs, "a", "servers.json"), 1000, {
+        checkout,
+        classified: clean,
+      });
+      report(join(runs, "b", "hosts.json"), 2000, {
+        checkout: join(runs, "other", "mcpjam-inspector"),
+        classified: clean,
+      });
+      report(join(runs, "b", "tools.json"), 3000, {
+        checkout,
+        classified: { ...clean, issues: [{ kind: "page-error" }] },
+      });
+      report(join(runs, "b", "legacy.json"), 4000, { classified: clean });
+      writeFileSync(join(runs, "b", "hosts.png"), "");
+      utimesSync(join(runs, "b", "hosts.png"), 5000, 5000);
+      assert.equal(newestReport(runs, checkout), 1_000_000);
+      // Reports no newer than the change are not read at all.
+      assert.equal(newestReport(runs, checkout, 1_000_000), 0);
+      // Not a folder: unreadable, so the caller passes instead of reminding.
+      assert.throws(() =>
+        newestReport(join(runs, "a", "servers.json"), checkout),
+      );
+    } finally {
+      rmSync(runs, { recursive: true, force: true });
+    }
+  });
+
+  it("reminds when no report is newer than the change", () => {
+    const changed = [{ path: client("App.tsx"), mtimeMs: 2000 }];
+    assert.equal(checkEvidence(changed, 3000, ""), null);
+    const result = checkEvidence(changed, 1000, "");
+    assert.match(result.message, /client\/src\/App\.tsx/);
+    assert.match(
+      result.message,
+      /no passing inspector driver run from this checkout has happened since/,
+    );
+    assert.match(
+      result.message,
+      /node mcpjam-inspector\/scripts\/inspector-driver\.mjs open <surface>/,
+    );
+    assert.equal(checkEvidence([], 0, ""), null);
+  });
+
+  it("names five files and counts the rest", () => {
+    const changed = Array.from({ length: 7 }, (_, i) => ({
+      path: client(`f${i}.tsx`),
+      mtimeMs: 10,
+    }));
+    const { message } = checkEvidence(changed, 0, "");
+    assert.match(message, /f4\.tsx\n {2}and 2 more/);
+    assert.doesNotMatch(message, /f5\.tsx/);
+  });
+
+  it("reminds once per change set", () => {
+    const changed = [{ path: client("App.tsx"), mtimeMs: 2000 }];
+    const first = checkEvidence(changed, 0, "");
+    assert.equal(checkEvidence(changed, 0, first.key), null);
+    const edited = [{ path: client("App.tsx"), mtimeMs: 2500 }];
+    assert.notEqual(checkEvidence(edited, 0, first.key), null);
   });
 });
