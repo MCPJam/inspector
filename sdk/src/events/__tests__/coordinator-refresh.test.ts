@@ -11,10 +11,14 @@ const HOUR = 60 * MINUTE;
 /**
  * Drives the coordinator the way the runtimes do: apply the patch, wait until
  * `nextActionAt`, step again for two grant lengths. Every grant lasts
- * `grantMs`, and the server is unreachable for `outageMs` from the first
- * refresh attempt.
+ * `grantMs`, the server is unreachable for `outageMs` from the first refresh
+ * attempt, and each successful response takes `responseDelayMs` to arrive.
  */
-async function driveWebhook(outageMs: number, grantMs = HOUR) {
+async function driveWebhook(
+  outageMs: number,
+  grantMs = HOUR,
+  responseDelayMs = 0
+) {
   let now = 0;
   let outageStart: number | undefined;
   const attempts: Array<{ at: number; ok: boolean }> = [];
@@ -24,11 +28,9 @@ async function driveWebhook(outageMs: number, grantMs = HOUR) {
       const down = outageStart !== undefined && now < outageStart + outageMs;
       attempts.push({ at: now, ok: !down });
       if (down) throw new Error("fetch failed: ECONNRESET");
-      return {
-        id: "srv_sub",
-        refreshBefore: new Date(now + grantMs).toISOString(),
-        cursor: null,
-      };
+      const refreshBefore = new Date(now + grantMs).toISOString();
+      now += responseDelayMs;
+      return { id: "srv_sub", refreshBefore, cursor: null };
     },
   } as unknown as EventsRpcPort;
   const inbox = new MemoryEventInbox({ publicOrigin: "https://h" });
@@ -64,7 +66,7 @@ async function driveWebhook(outageMs: number, grantMs = HOUR) {
     };
     if (attempts[attempts.length - 1]!.ok) grantedUntil = record.refreshBefore!;
     if (outcome.nextActionAt >= grantedUntil) lapsed = true;
-    now = outcome.nextActionAt;
+    now = Math.max(now, outcome.nextActionAt);
   }
   return { attempts, lapsed };
 }
@@ -81,6 +83,18 @@ describe("webhook refresh before refreshBefore", () => {
     expect(lapsed).toBe(false);
     expect(attempts.length).toBeGreaterThan(2);
     expect(attempts.every((attempt) => attempt.ok)).toBe(true);
+  });
+
+  it("refreshes a 60 s grant twice per grant, even when responses take 2 s", async () => {
+    // Before the fix the 60 s lead covered the whole grant, so each refresh
+    // was due 1 s after its step started. A 2 s response made the next one
+    // due on arrival: 60 subscribe calls in two grants.
+    const { attempts, lapsed } = await driveWebhook(0, MINUTE, 2_000);
+    expect(lapsed).toBe(false);
+    expect(attempts.every((attempt) => attempt.ok)).toBe(true);
+    expect(attempts.map((attempt) => attempt.at)).toEqual([
+      0, 30_000, 60_000, 90_000,
+    ]);
   });
 
   it("keeps retrying before refreshBefore through an outage that ends in time", async () => {

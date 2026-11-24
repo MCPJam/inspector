@@ -133,8 +133,10 @@ export function computeSlotAllocationKey(args: {
 /**
  * When to refresh a webhook grant: `max(60 s, 10% of the remaining grant)`
  * before `refreshBefore`, never in the past, and on the health-check cadence
- * for a no-expiry grant. The 1 s floor shrinks to half the remaining grant
- * for a grant shorter than 2 s, so the refresh still lands before it expires.
+ * for a no-expiry grant. The lead is capped at half the remaining grant, so a
+ * grant of 2 min or less is refreshed at its midpoint instead of about once a
+ * second. The 1 s floor shrinks to half the remaining grant for a grant
+ * shorter than 2 s, so the refresh still lands before it expires.
  */
 export function computeRefreshAt(args: {
   now: number;
@@ -146,7 +148,10 @@ export function computeRefreshAt(args: {
   }
   const remaining = args.refreshBefore - args.now;
   if (remaining <= 0) return args.now;
-  const lead = Math.max(60_000, Math.floor(remaining * 0.1));
+  const lead = Math.min(
+    Math.max(60_000, Math.floor(remaining * 0.1)),
+    Math.ceil(remaining / 2)
+  );
   const floor = Math.min(1_000, Math.floor(remaining / 2));
   return Math.max(args.now + floor, args.refreshBefore - lead);
 }
