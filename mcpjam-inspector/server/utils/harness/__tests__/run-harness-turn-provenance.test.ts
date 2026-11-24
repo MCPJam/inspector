@@ -171,6 +171,7 @@ async function browserMessageFrom(chunks: any[]): Promise<UIMessage> {
 
 describe("runHarnessTurn history provenance (MJ-009)", () => {
   beforeEach(() => {
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
     harnessState.streamParts = [
       { type: "text-delta", delta: "Created " },
       { type: "text-delta", delta: "notes.txt." },

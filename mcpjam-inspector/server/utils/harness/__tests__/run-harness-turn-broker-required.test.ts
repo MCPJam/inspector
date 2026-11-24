@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 
-// COMP-23 regression: broker delivery is the ONLY credential path, so a
-// harness turn never reaches for the retired raw-key endpoint
-// (/web/harness/model-credential), whether it succeeds or fails.
+// COMP-23 regression: broker delivery is the ONLY credential path. With the
+// kill switch off (MCPJAM_HARNESS_BROKER_DELIVERY=false) a harness turn must
+// fail closed with an honest error — and under NO configuration may the turn
+// reach for the retired raw-key endpoint (/web/harness/model-credential).
 
 const harnessState = vi.hoisted(() => ({
   /** Thrown by the runtime's stream, once the model was handed the turn. */
@@ -166,7 +167,34 @@ function modelCredentialCalls() {
 }
 
 describe("runHarnessTurn broker-required (COMP-23)", () => {
+  it("fails closed with an honest error when broker delivery is killed — no broker start, no raw-key fetch", async () => {
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "false");
+    const onEngineError = vi.fn();
+    const result = await runHarnessTurn(
+      baseOptions({ onEngineError }) as never,
+      "none"
+    );
+
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    const err = onEngineError.mock.calls[0]![0] as {
+      message: string;
+      reportedCaptured?: boolean;
+    };
+    expect(err.message).toMatch(/broker credential delivery/i);
+    expect(err.message).toMatch(/MCPJAM_HARNESS_BROKER_DELIVERY/);
+    // Our setup bug, yet the reporter cannot classify it and does not page.
+    // The event says so, so the eval driver still captures it
+    // (INSPECTOR-HONO-70).
+    expect(err.reportedCaptured).toBe(false);
+    expect(failedTurnNeedsCapture(err)).toBe(true);
+    // Fail-closed means NO credential of any kind was pursued:
+    expect(startHarnessModelBroker).not.toHaveBeenCalled();
+    expect(modelCredentialCalls()).toHaveLength(0);
+    expect(result.aborted).toBe(false);
+  });
+
   it("a successful broker turn never contacts the retired /web/harness/model-credential endpoint", async () => {
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
     const onEngineError = vi.fn();
     await runHarnessTurn(baseOptions({ onEngineError }) as never, "none");
 
@@ -175,10 +203,20 @@ describe("runHarnessTurn broker-required (COMP-23)", () => {
     expect(modelCredentialCalls()).toHaveLength(0);
   });
 
+  it("broker delivery defaults ON when the env var is unset", async () => {
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "");
+    delete process.env.MCPJAM_HARNESS_BROKER_DELIVERY;
+    const onEngineError = vi.fn();
+    await runHarnessTurn(baseOptions({ onEngineError }) as never, "none");
+
+    expect(onEngineError).not.toHaveBeenCalled();
+    expect(startHarnessModelBroker).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("runHarnessTurn failure verdict for the eval driver", () => {
   it("leaves a mid-turn failure the reporter blamed on the user to the driver's capture", async () => {
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
     // From the message alone this reads as the user's. It may be our broker.
     harnessState.streamError = new Error("connect ECONNREFUSED 10.0.0.5:443");
     const reports: RouteFailureReport[] = [];
@@ -231,30 +269,21 @@ describe("runHarnessTurn reasoning effort backstop (refuse, never drop)", () => 
   ])(
     "refuses %s an adapter has not verified — no broker start, no spend",
     async (_label, extra) => {
+      vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
       const onEngineError = vi.fn();
-      const result = await runHarnessTurn(
+      await runHarnessTurn(
         baseOptions({ onEngineError, ...extra }) as never,
         "none"
       );
       expect(onEngineError).toHaveBeenCalledTimes(1);
-      const err = onEngineError.mock.calls[0]![0] as {
-        message: string;
-        reportedCaptured?: boolean;
-      };
+      const err = onEngineError.mock.calls[0]![0] as { message: string };
       expect(err.message).toMatch(/does not support.*reasoning effort/);
-      // A setup failure the reporter cannot classify does not page, and the
-      // event says so, so the eval driver still captures it
-      // (INSPECTOR-HONO-70).
-      expect(err.reportedCaptured).toBe(false);
-      expect(failedTurnNeedsCapture(err)).toBe(true);
-      // Refused before any credential of any kind was pursued.
       expect(startHarnessModelBroker).not.toHaveBeenCalled();
-      expect(modelCredentialCalls()).toHaveLength(0);
-      expect(result.aborted).toBe(false);
     }
   );
 
   it("control: no effort still starts the broker", async () => {
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
     const onEngineError = vi.fn();
     await runHarnessTurn(baseOptions({ onEngineError }) as never, "none");
     expect(onEngineError).not.toHaveBeenCalled();

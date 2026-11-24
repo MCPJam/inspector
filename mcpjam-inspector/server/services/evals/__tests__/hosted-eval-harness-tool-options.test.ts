@@ -234,6 +234,7 @@ const HARNESS_PARAMS = {
 
 describe("hosted eval on a host-executed harness builds MCP tools under the HOST's policies", () => {
   beforeEach(() => {
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
     // The harness arm is gated on the model being MCPJam-provided; without a
     // seeded catalog `runAssistantTurn` would surface a fallback to the
     // emulated engine and the projection would never run.

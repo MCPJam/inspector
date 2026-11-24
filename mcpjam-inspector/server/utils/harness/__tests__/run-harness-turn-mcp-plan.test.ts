@@ -286,6 +286,7 @@ function retainedLogs() {
 }
 
 beforeEach(() => {
+  vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
   vi.stubEnv("HARNESS_NATIVE_FORWARDING", "true");
   vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "x".repeat(48));
   adapterDelivery.value = "harness";

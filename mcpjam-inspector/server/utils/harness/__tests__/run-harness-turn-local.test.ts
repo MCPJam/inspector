@@ -323,6 +323,7 @@ describe("runHarnessTurn local continuity", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
     harnessState.streamParts = [{ type: "finish", finishReason: "stop" }];
     harnessState.continuations = [];
     harnessState.stateExists = true;

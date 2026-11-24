@@ -238,6 +238,7 @@ async function sendCommand(agent: Record<string, unknown>) {
 }
 
 beforeEach(() => {
+  vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
   agentConstruction.last = undefined;
   runtime.submitToolApproval.mockClear();
   hostBash.execute.mockClear();

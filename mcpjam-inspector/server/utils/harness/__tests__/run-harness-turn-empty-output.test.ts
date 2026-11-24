@@ -146,6 +146,7 @@ describe("runHarnessTurn empty output projection", () => {
   beforeEach(() => {
     // Broker delivery is default-ON; pin it so the test doesn't depend on the
     // default (the turn hard-fails without it since COMP-23).
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
     harnessState.streamParts = [];
     harnessState.finalText = "";
     harnessState.session.stop.mockClear();

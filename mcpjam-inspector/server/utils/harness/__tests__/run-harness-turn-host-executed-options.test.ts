@@ -243,6 +243,7 @@ describe("runHarnessTurn forwards host tool-construction options", () => {
   });
 
   beforeEach(() => {
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
     adapterDelivery.value = "mcpjam";
     projectSpy.mockClear();
     harnessState.continuations = [];
@@ -550,6 +551,7 @@ describe("Claude Code's quiet start on hosted boxes", () => {
       | undefined;
   };
   beforeEach(() => {
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
     vi.mocked(getHarnessAdapter).mockClear();
   });
   afterEach(() => vi.unstubAllEnvs());
@@ -575,6 +577,7 @@ describe("the hosted command sandbox under Tool Approval", () => {
   };
 
   beforeEach(() => {
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
     adapterDelivery.value = "mcpjam";
     vi.mocked(getHarnessAdapter).mockClear();
   });
@@ -646,6 +649,7 @@ it.each(["claude-code", "codex"] as const)("hands %s the turn's Browser reason a
 
 describe("enrolled Claude forwarding admission", () => {
   beforeEach(() => {
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
     vi.stubEnv("HARNESS_NATIVE_FORWARDING", "true");
     forwarding.allowed = true;
     forwarding.admission.mockReset().mockReturnValue({ delivery: "native", gaps: [] });
@@ -719,6 +723,7 @@ describe("enrolled Claude forwarding admission", () => {
 
 
 it("keeps retained App presentation separate from saved model history", async () => {
+  vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
   adapterDelivery.value = "mcpjam";
   const raw = { content: [{ type: "text", text: "visible" }], _meta: { private: "WIDGET_PRIVATE_SENTINEL" }, structuredContent: { privateValue: 7 } };
   const projected = { type: "text", value: "visible" };

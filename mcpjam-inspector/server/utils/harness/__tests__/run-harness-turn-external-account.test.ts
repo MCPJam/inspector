@@ -404,6 +404,14 @@ describe("runHarnessTurn — external-account (org key)", () => {
     expect(releaseHarnessBoxReservation).not.toHaveBeenCalled();
   });
 
+  it("runs with broker delivery killed — it has no broker to disable", async () => {
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "false");
+    const onEngineError = vi.fn();
+    await runHarnessTurn(baseOptions({ onEngineError }) as never, "none");
+    expect(onEngineError).not.toHaveBeenCalled();
+    expect(registryState.createHarness).toHaveBeenCalledTimes(1);
+  });
+
   it("fails the turn on an entitlement wall instead of persisting it as an answer", async () => {
     harnessState.finalText = EXTERNAL_ACCOUNT_PLAN_WALL_TEXTS[0]!;
     const onEngineError = vi.fn();

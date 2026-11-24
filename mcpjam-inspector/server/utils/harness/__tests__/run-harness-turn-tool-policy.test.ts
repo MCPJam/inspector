@@ -196,6 +196,7 @@ function options(overrides: Record<string, unknown> = {}) {
 
 describe("runHarnessTurn tool-policy accounting", () => {
   beforeEach(() => {
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
     // Policied hosted runs refuse without a usable seal secret.
     vi.stubEnv(
       "COMPUTERS_TERMINAL_TOKEN_SECRET",
@@ -309,6 +310,7 @@ describe("dotted MCP tool names on Claude Code", () => {
   });
 
   beforeEach(() => {
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
     vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "test-harness-proxy-secret-32-chars");
     harnessState.finalText = "";
   });
@@ -371,6 +373,7 @@ describe("harness provenance", () => {
   beforeEach(() => {
     harnessState.fileChangeToolName = undefined;
     harnessState.finalText = "";
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
     vi.stubEnv(
       "COMPUTERS_TERMINAL_TOKEN_SECRET",
       "test-harness-proxy-secret-32-chars",

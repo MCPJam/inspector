@@ -12,12 +12,16 @@ export { harnessToolApprovalRefusalReason } from "./harness-tool-approval";
  *
  * Rules are driven by the adapter's declared CAPABILITIES (requiresComputer,
  * approval surfaces, MCP support), not hardcoded per-harness — so a new harness
- * gets the right gates for free. Only the cheap synchronous checks live here.
- * The backend broker/proxy flags (a network call away) stay in-turn
- * fail-closed backstops, as do expensive runtime failures (computer wake, E2B
- * connect).
+ * gets the right gates for free. Only the cheap synchronous checks live here —
+ * including the inspector-side BROKER DELIVERY kill switch (an env read). Broker
+ * delivery has been the only credential path since COMP-23, and this switch is
+ * the only emergency stop for brokered runs: the backend's broker and proxy
+ * flags were removed (mcpjam-backend `docs/harness-broker-rollout.md`).
+ * Expensive runtime failures (computer wake, E2B connect) stay in-turn
+ * fail-closed backstops.
  */
 import { isComputersDataPlaneConfigured } from "../computers/control-plane-client.js";
+import { HOSTED_MODE } from "../../config.js";
 import { cloudExecutionContact } from "./harness-box.js";
 import {
   getCanonicalModelId,
@@ -25,6 +29,7 @@ import {
 } from "@/shared/types";
 import { isRuntimeAccountModel } from "@/shared/model-provider";
 import { isHostedModelDefinition } from "../../services/hosted-model-catalog.js";
+import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
 import {
   MODEL_REASONING_EFFORTS,
   type ModelReasoningEffort,
@@ -464,6 +469,7 @@ export function harnessReasoningEffortRefusalReason(args: {
 export type HarnessUnavailableKind =
   /** The runtime's descriptor declares it does not run on this surface. */
   | "surface-unsupported"
+  | "broker-disabled"
   | "enterprise-policy"
   | "computers-unconfigured"
   | "tool-approval"
@@ -485,14 +491,16 @@ export type HarnessUnavailableKind =
  *
  * 422 when the turn itself is the problem — its host's settings, its model,
  * its approval gate: the request is well-formed and retrying it changes
- * nothing. 503 for the OPERATOR state, this server not configured as a
- * computers data plane: the request is fine, the server is not ready for it,
- * and it will work once an operator fixes that.
+ * nothing. 503 for the two OPERATOR states — broker delivery switched off, or
+ * this server not configured as a computers data plane: the request is fine,
+ * the server is not ready for it, and it will work once an operator fixes that.
  */
 export function harnessUnavailableHttpStatus(
   kind: HarnessUnavailableKind,
 ): 422 | 503 {
-  return kind === "computers-unconfigured" ? 503 : 422;
+  return kind === "broker-disabled" || kind === "computers-unconfigured"
+    ? 503
+    : 422;
 }
 
 export type HarnessAvailability =
@@ -621,6 +629,27 @@ export function checkHarnessRuntimeAvailable(args: {
       : undefined);
   if (surfaceRefusal) {
     return { ok: false, kind: "surface-unsupported", reason: surfaceRefusal };
+  }
+
+  // Does MCPJam supply this runtime's model credential, or does the runtime
+  // authenticate on the CUSTOMER's own provider account? Three checks below
+  // apply only to the former, and each would be actively wrong for the latter
+  // (see `HarnessModelAccess`): the broker kill switch, "MCPJam-provided models
+  // only", and per-runtime model support.
+  const brokered = adapter.modelAccess !== "external-account";
+
+  // Broker delivery is the ONLY credential path for a BROKERED harness
+  // (COMP-23) — with the kill switch off, no such turn can obtain model access,
+  // so fail here with one clear pre-stream error instead of a raw mid-turn
+  // throw. An external-account harness has no broker to disable: refusing it
+  // for this would be switching off a path it never uses.
+  if (brokered && !harnessBrokerDeliveryEnabled()) {
+    return {
+      ok: false,
+      kind: "broker-disabled",
+      reason:
+        `${name} can’t access the credentials needed to use this model. ${cloudExecutionContact()}${HOSTED_MODE ? "" : " to check the model credentials"}. You can also switch clients.`,
+    };
   }
 
   if (args.xaaEnterprisePolicyOn) {

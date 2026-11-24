@@ -263,6 +263,7 @@ function streamedPrompt(): Array<{ type: string; text?: string }> {
 }
 
 beforeEach(() => {
+  vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => new Response("{}", { status: 200 })),

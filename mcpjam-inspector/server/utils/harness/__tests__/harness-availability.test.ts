@@ -25,6 +25,7 @@ const ENV_KEYS = [
   "INSPECTOR_SERVICE_TOKEN",
   "COMPUTERS_TERMINAL_TOKEN_SECRET",
   "E2B_API_KEY",
+  "MCPJAM_HARNESS_BROKER_DELIVERY",
 ] as const;
 
 const saved: Record<string, string | undefined> = {};
@@ -334,12 +335,34 @@ describe("checkHarnessRuntimeAvailable", () => {
     ).toEqual({ ok: true });
   });
 
-  describe("external-account harnesses skip the model gates", () => {
-    // Two checks below are about a model MCPJam hosts. An external-account
-    // runtime has none: Cursor authenticates on the customer's own Cursor
-    // account and its adapter passes NO model, so Cursor Auto picks one.
-    // Applying the brokered rules would refuse every Cursor host — its own
-    // seeded model is the deliberately-not-hosted `cursor/auto` sentinel.
+  // COMP-23: broker delivery is the ONLY credential path. The kill switch must
+  // surface as a pre-stream unavailability (named flag in the reason), and the
+  // default (unset) must be ON.
+  it("fails closed when broker delivery is killed (MCPJAM_HARNESS_BROKER_DELIVERY=false)", () => {
+    setFullyAvailable();
+    process.env.MCPJAM_HARNESS_BROKER_DELIVERY = "false";
+    const r = checkHarnessRuntimeAvailable(args());
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/can’t access the credentials/);
+  });
+
+  it.each(["unset", "true"] as const)(
+    "broker delivery %s ⇒ available (default-ON kill switch)",
+    (mode) => {
+      setFullyAvailable();
+      if (mode === "unset") delete process.env.MCPJAM_HARNESS_BROKER_DELIVERY;
+      else process.env.MCPJAM_HARNESS_BROKER_DELIVERY = "true";
+      expect(checkHarnessRuntimeAvailable(args())).toEqual({ ok: true });
+    },
+  );
+
+  describe("external-account harnesses skip the model + broker gates", () => {
+    // Three checks below are about a credential MCPJam supplies and a model
+    // MCPJam hosts. An external-account runtime has neither: Cursor
+    // authenticates on the customer's own Cursor account and its adapter
+    // passes NO model, so Cursor Auto picks one. Applying the brokered rules
+    // would refuse every Cursor host — its own seeded model is the
+    // deliberately-not-hosted `cursor/auto` sentinel.
     const cursorArgs = () =>
       args({
         harnessId: "cursor" as HarnessId,
@@ -349,6 +372,16 @@ describe("checkHarnessRuntimeAvailable", () => {
     it("is available on a model MCPJam does not host", () => {
       setFullyAvailable();
       expect(checkHarnessRuntimeAvailable(cursorArgs())).toEqual({ ok: true });
+    });
+
+    it("stays available with broker delivery killed (it has no broker)", () => {
+      setFullyAvailable();
+      process.env.MCPJAM_HARNESS_BROKER_DELIVERY = "false";
+      expect(checkHarnessRuntimeAvailable(cursorArgs())).toEqual({ ok: true });
+      // …while the brokered harness beside it is still refused, so this is a
+      // targeted exemption and not a hole in the kill switch.
+      const brokered = checkHarnessRuntimeAvailable(args());
+      expect(brokered.ok).toBe(false);
     });
 
     it("still enforces the gates that DO apply to it", () => {
