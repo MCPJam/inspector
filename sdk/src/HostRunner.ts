@@ -1,3 +1,4 @@
+import { collectRejectedToolCalls, markRejectedCalls } from "./progressive-discovery/rejected-calls.js";
 /**
  * HostRunner - Runs LLM prompts with tool calling for evals
  */
@@ -893,6 +894,7 @@ export class HostRunner implements HostExecutor {
     const pendingStepToolCalls: StartedToolCall[] = [];
     // Every completed step's response messages, in order. AI SDK 7's
     // `step.response.messages` holds only that step's, so they accumulate here.
+    const rejected = new Set<string>();
     const completedStepMessages: ModelMessage[] = [];
     let partialInputTokens = 0;
     let partialOutputTokens = 0;
@@ -1036,15 +1038,15 @@ export class HostRunner implements HostExecutor {
           partialInputTokens += stepResult.usage?.inputTokens ?? 0;
           partialOutputTokens += stepResult.usage?.outputTokens ?? 0;
           lastCompletedStepText = stepResult.text ?? "";
-          completedStepMessages.push(...(stepResult.response?.messages ?? []));
+          collectRejectedToolCalls(rejected, stepResult.toolCalls);
+          completedStepMessages.push(...markRejectedCalls(stepResult.response?.messages ?? [], rejected));
           const blocked = this.policyBlockedToolCallIds?.();
-          discovery?.noteStep(stepResult.toolCalls);
           completedToolCalls.push(
             ...stepResult.toolCalls
               .filter(
                 (toolCall) =>
                   !blocked?.has(toolCall.toolCallId) &&
-                  !discovery?.refusedCallIds.has(toolCall.toolCallId)
+                  !rejected.has(toolCall.toolCallId)
               )
               .map((toolCall) => ({
                 toolName: toolCall.toolName,
@@ -1062,7 +1064,7 @@ export class HostRunner implements HostExecutor {
       // had not loaded. Neither reached a server.
       const blockedToolCallIds = new Set([
         ...(this.policyBlockedToolCallIds?.() ?? []),
-        ...(discovery?.refusedCallIds ?? []),
+        ...rejected,
       ]);
       const toolCalls = extractToolCalls(
         result,
@@ -1080,7 +1082,7 @@ export class HostRunner implements HostExecutor {
       // Add response messages (assistant + tool messages from agentic loop).
       // `responseMessages` spans every step; in AI SDK 7 `response` is only
       // the final step's.
-      messages.push(...(result.responseMessages ?? []));
+      messages.push(...markRejectedCalls(result.responseMessages ?? [], rejected));
 
       const recordedSpans = spanIntegration.getSpans();
       patchEvalSpansMessageRangesFromSteps(
@@ -1134,7 +1136,7 @@ export class HostRunner implements HostExecutor {
       const partialToolCalls = [
         ...completedToolCalls,
         ...pendingStepToolCalls
-          .filter((toolCall) => !blockedAtFailure?.has(toolCall.toolCallId))
+          .filter((toolCall) => !blockedAtFailure?.has(toolCall.toolCallId) && !rejected.has(toolCall.toolCallId))
           .map((toolCall) => ({
             toolName: toolCall.toolName,
             arguments: toolCall.arguments,

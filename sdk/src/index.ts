@@ -2353,3 +2353,5 @@ export type {
 // Server feature model for the server canvas (KES-886). Browser-safe.
 export * from "./server-features/index.js";
 export * from "./server-card/index.js";
+
+export { collectRejectedToolCalls, markRejectedCalls } from "./progressive-discovery/rejected-calls.js";

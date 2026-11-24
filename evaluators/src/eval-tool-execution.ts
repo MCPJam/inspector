@@ -130,56 +130,27 @@ export function traceMessagePartIndicatesToolFailure(part: unknown): boolean {
   return classifyToolFailurePart(part) !== null;
 }
 
-function walkMessageContent(content: unknown): boolean {
-  if (typeof content === "string") return false;
-  if (!Array.isArray(content)) return false;
-  for (const part of content) {
-    if (traceMessagePartIndicatesToolFailure(part)) return true;
+/** IDs come from the engine's attribution on the assistant call. Error-text
+ * on a tool result alone cannot distinguish a refusal from an MCP failure. */
+export function rejectedToolCallIds(messages: readonly unknown[]): Set<string> {
+  const ids = new Set<string>();
+  for (const message of messages) {
+    if (!isRecord(message) || message.role !== "assistant" || !Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (!isRecord(part) || part.type !== "tool-call" || typeof part.toolCallId !== "string") continue;
+      const metadata = part.providerOptions;
+      if (isRecord(metadata) && isRecord(metadata.mcpjam) && metadata.mcpjam.rejectedToolCall === true) {
+        ids.add(part.toolCallId);
+      }
+    }
   }
-  return false;
+  return ids;
 }
 
-function messagesIndicateToolExecutionFailure(
-  messages: Array<{ role: string; content: unknown }> | undefined,
-): boolean {
-  if (!Array.isArray(messages)) return false;
-  for (const msg of messages) {
-    if (!msg || typeof msg.role !== "string") continue;
-    if (walkMessageContent(msg.content)) return true;
-  }
-  return false;
-}
-
-function spansIndicateToolExecutionFailure(
-  spans: EvalTraceSpanInput[] | undefined,
-): boolean {
-  if (!Array.isArray(spans)) return false;
-  return spans.some((s) => s.category === "tool" && s.status === "error");
-}
-
-/**
- * Whether a stored eval trace shows at least one tool execution failure
- * (errored tool spans and/or MCP error tool-results in messages).
- */
 export function traceIndicatesToolExecutionFailure(
   trace: EvalTraceInput | undefined,
 ): boolean {
-  if (trace == null) return false;
-  if (typeof trace === "string") return false;
-
-  if (Array.isArray(trace)) {
-    return messagesIndicateToolExecutionFailure(trace);
-  }
-
-  if (!isRecord(trace)) return false;
-
-  const messages = trace.messages as
-    Array<{ role: string; content: unknown }> | undefined;
-  const spans = trace.spans as EvalTraceSpanInput[] | undefined;
-
-  if (spansIndicateToolExecutionFailure(spans)) return true;
-  if (messagesIndicateToolExecutionFailure(messages)) return true;
-  return false;
+  return extractToolErrors(trace).length > 0;
 }
 
 function messageToolErrorRecords(
@@ -227,12 +198,15 @@ export function extractToolErrors(
   trace: EvalTraceInput | undefined,
 ): ToolErrorRecord[] {
   if (trace == null || typeof trace === "string") return [];
-  if (Array.isArray(trace)) return messageToolErrorRecords(trace);
+  if (Array.isArray(trace)) return extractToolErrors({ messages: trace });
   if (!isRecord(trace)) return [];
   const messages = trace.messages as
     Array<{ role: string; content: unknown }> | undefined;
   const spans = trace.spans as EvalTraceSpanInput[] | undefined;
-  return [...spanToolErrorRecords(spans), ...messageToolErrorRecords(messages)];
+  const rejected = rejectedToolCallIds(messages ?? []);
+  return [...spanToolErrorRecords(spans), ...messageToolErrorRecords(messages)].filter(
+    (error) => !error.toolCallId || !rejected.has(error.toolCallId),
+  );
 }
 
 export type FinalizeEvalPassedParams = {
