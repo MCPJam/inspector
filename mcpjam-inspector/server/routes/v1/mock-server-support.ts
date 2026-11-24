@@ -12,7 +12,7 @@ import {
   type MockDefinition,
   type MockIssue,
 } from "@mcpjam/sdk/mocks";
-import type { PlatformMockRealServer } from "@mcpjam/sdk/platform";
+import type { PlatformMockRealItem, PlatformMockRealServer } from "@mcpjam/sdk/platform";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { convexErrorData, translateConvexWriteError } from "./convex-errors.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
@@ -22,6 +22,10 @@ type Obj = Record<string, unknown>;
 /** What a connection to the real server read: its tools and its handshake. */
 export type RealServerRead = {
   tools: Tool[];
+  /** Read only for the families the definition edits. */
+  prompts?: Obj[];
+  resources?: Obj[];
+  resourceTemplates?: Obj[];
   serverInfo?: { name: string; version: string; title?: string };
   instructions?: string;
 };
@@ -65,6 +69,26 @@ export function assertCallable(definition: MockDefinition, real: RealServerRead)
 
 const TOOL_FIELDS = ["title", "description", "inputSchema", "outputSchema", "annotations", "icons", "_meta"] as const;
 
+const ITEM_FIELDS = ["title", "description", "name", "mimeType", "size", "arguments", "annotations", "icons", "_meta"] as const;
+
+/** What the real server holds today for each entry of a prompts, resources or templates map. */
+function describeRealItems(
+  entries: Record<string, object> | undefined,
+  items: Obj[] | undefined,
+  keyField: string,
+): PlatformMockRealItem[] | undefined {
+  if (!entries || Object.keys(entries).length === 0) return undefined;
+  const byKey = new Map((items ?? []).map((item): [string, Obj] => [String(item[keyField]), item]));
+  return Object.entries(entries).map(([key, entry]) => {
+    const found = byKey.get(key);
+    const current: Obj = {};
+    for (const field of ITEM_FIELDS) {
+      if ((entry as Obj)[field] !== undefined && found?.[field] !== undefined) current[field] = found[field];
+    }
+    return { key, found: found !== undefined, current };
+  });
+}
+
 /** What the real server holds today for each field the definition edits. */
 export function describeRealEdits(definition: MockDefinition, real: RealServerRead): PlatformMockRealServer {
   const byName = new Map(real.tools.map((tool): [string, Obj] => [tool.name, { ...tool }]));
@@ -88,8 +112,17 @@ export function describeRealEdits(definition: MockDefinition, real: RealServerRe
       ? { instructions: real.instructions }
       : {}),
     tools,
+    ...itemsField("prompts", describeRealItems(definition.prompts, real.prompts, "name")),
+    ...itemsField("resources", describeRealItems(definition.resources, real.resources, "uri")),
+    ...itemsField(
+      "resourceTemplates",
+      describeRealItems(definition.resourceTemplates, real.resourceTemplates, "uriTemplate"),
+    ),
   };
 }
+
+const itemsField = (name: string, items: PlatformMockRealItem[] | undefined) =>
+  items ? { [name]: items } : {};
 
 /** The backend's own mock codes, answered with the status each deserves. */
 function mockRefusal(error: unknown): WebRouteError | undefined {

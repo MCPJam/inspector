@@ -13,9 +13,22 @@ export interface MockFieldChange {
   summary: string;
 }
 
+/**
+ * What a change is about. A resource is grouped by its address: `skill://` is
+ * a skill file and `ui://` an app, as a reader thinks of them.
+ */
+export type MockChangeTarget =
+  | "server"
+  | "tool"
+  | "prompt"
+  | "resource"
+  | "resourceTemplate"
+  | "skill"
+  | "app";
+
 export interface MockChange {
-  target: "server" | "tool";
-  /** The tool's name as a client sees it; absent for the server. */
+  target: MockChangeTarget;
+  /** The name, URI or URI template a client sees; absent for the server. */
   name?: string;
   kind: MockChangeKind;
   summary: string;
@@ -146,8 +159,20 @@ export function diffMockDefinitions(
   after: MockDefinition
 ): MockChange[] {
   const changes: MockChange[] = [];
-  const { tools: _beforeTools, ...beforeServer } = before ?? {};
-  const { tools: _afterTools, ...afterServer } = after;
+  const {
+    tools: _beforeTools,
+    prompts: _beforePrompts,
+    resources: _beforeResources,
+    resourceTemplates: _beforeTemplates,
+    ...beforeServer
+  } = before ?? {};
+  const {
+    tools: _afterTools,
+    prompts: _afterPrompts,
+    resources: _afterResources,
+    resourceTemplates: _afterTemplates,
+    ...afterServer
+  } = after;
   const server = diffFlat(
     flatten(beforeServer, serverSpread, new Map()),
     flatten(afterServer, serverSpread, new Map()),
@@ -185,5 +210,74 @@ export function diffMockDefinitions(
       details,
     });
   }
+  changes.push(
+    ...diffItems("prompt", before?.prompts, after.prompts, () => "prompt"),
+    ...diffItems("resource", before?.resources, after.resources, (uri) =>
+      uri.startsWith("skill://")
+        ? "skill"
+        : uri.startsWith("ui://")
+          ? "app"
+          : "resource"
+    ),
+    ...diffItems(
+      "resource template",
+      before?.resourceTemplates,
+      after.resourceTemplates,
+      () => "resourceTemplate"
+    )
+  );
   return changes;
+}
+
+const itemSpread = (path: string) => /^(annotations|_meta)$/.test(path);
+
+function describeItem(
+  noun: string,
+  path: string,
+  kind: MockChangeKind,
+  key: string
+): string {
+  const q = `"${key}"`;
+  const gone = kind === "removed";
+  if (path === "hidden")
+    return gone ? `Showed the ${noun} ${q} again` : `Hid the ${noun} ${q}`;
+  const what =
+    path === "text" || path === "blob"
+      ? "content"
+      : path.replace(/([A-Z])/g, " $1").toLowerCase();
+  return gone
+    ? `Went back to the real ${what} of the ${noun} ${q}`
+    : `Changed the ${what} of the ${noun} ${q}`;
+}
+
+/** The changes to one of the keyed maps (prompts, resources, templates), by key, sorted. */
+function diffItems(
+  noun: string,
+  before: Record<string, object> | undefined,
+  after: Record<string, object> | undefined,
+  targetOf: (key: string) => Exclude<MockChangeTarget, "server" | "tool">
+): MockChange[] {
+  const out: MockChange[] = [];
+  const keys = new Set([
+    ...Object.keys(before ?? {}),
+    ...Object.keys(after ?? {}),
+  ]);
+  for (const key of [...keys].sort()) {
+    const b = before?.[key];
+    const a = after?.[key];
+    const details = diffFlat(
+      flatten(b, itemSpread, new Map()),
+      flatten(a, itemSpread, new Map()),
+      (path, kind) => describeItem(noun, path, kind, key)
+    );
+    if (details.length === 0) continue;
+    out.push({
+      target: targetOf(key),
+      name: key,
+      kind: b === undefined ? "added" : a === undefined ? "removed" : "changed",
+      summary: joined(details),
+      details,
+    });
+  }
+  return out;
 }

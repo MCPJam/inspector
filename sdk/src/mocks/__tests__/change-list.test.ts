@@ -123,4 +123,46 @@ describe("diffMockDefinitions", () => {
       'Changed the instructions the model answers "t" by',
     ]);
   });
+
+  it("lists prompt, resource, skill, app and template changes by what a client sees", () => {
+    const changes = diffMockDefinitions(
+      { resources: { "test://a": { description: "old" } } },
+      {
+        prompts: {
+          summarize: {
+            description: "d",
+            messages: [{ role: "user", content: { type: "text", text: "x" } }],
+          },
+        },
+        resources: {
+          "test://a": { description: "new" },
+          "skill://triage/SKILL.md": { text: "---\nname: triage\n---" },
+          "ui://counter/app.html": { text: "<b/>" },
+          "test://gone": { hidden: true },
+        },
+        resourceTemplates: { "docs://{+p}": { text: "t" } },
+      }
+    );
+    expect(changes.map((c) => [c.target, c.name, c.kind])).toEqual([
+      ["prompt", "summarize", "added"],
+      ["skill", "skill://triage/SKILL.md", "added"],
+      ["resource", "test://a", "changed"],
+      ["resource", "test://gone", "added"],
+      ["app", "ui://counter/app.html", "added"],
+      ["resourceTemplate", "docs://{+p}", "added"],
+    ]);
+    expect(changes[2]?.summary).toBe(
+      'Changed the description of the resource "test://a"'
+    );
+    expect(changes[3]?.summary).toBe('Hid the resource "test://gone"');
+    expect(changes[1]?.summary).toBe(
+      'Changed the content of the resource "skill://triage/SKILL.md"'
+    );
+    expect(
+      diffMockDefinitions(
+        { prompts: { p: { hidden: true } } },
+        { prompts: { p: { hidden: true } } }
+      )
+    ).toEqual([]);
+  });
 });

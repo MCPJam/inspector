@@ -60,6 +60,10 @@ export function inverseOfChanges(changes: readonly MockChange[], old: OldServer)
         continue;
       }
       const name = change.name ?? "";
+      if (change.target !== "tool") {
+        cannot(`${change.target}.${name}.${detail.path}`, `a mock cannot yet put back an edit to the ${change.target} "${name}"`);
+        continue;
+      }
       const path = `tools.${name}.${detail.path}`;
       const before = old.tools[name];
       const head = detail.path.split(".")[0] ?? "";

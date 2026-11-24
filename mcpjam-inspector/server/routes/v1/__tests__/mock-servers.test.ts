@@ -58,6 +58,9 @@ vi.mock("../../web/auth.js", async () => {
       if (real.failure) throw real.failure;
       const manager = {
         listTools: async () => ({ tools: real.tools }),
+        listPrompts: async () => ({ prompts: real.prompts }),
+        listResources: async () => ({ resources: real.resources }),
+        listResourceTemplates: async () => ({ resourceTemplates: real.templates }),
         getInitializationInfo: () => real.info,
       };
       return fn(manager, body, {});
@@ -81,9 +84,19 @@ const SEARCH = {
     required: ["query", "lang"],
   },
 };
-const real: { tools: unknown[]; info: unknown; failure?: Error } = {
+const real: {
+  tools: unknown[];
+  info: unknown;
+  failure?: Error;
+  prompts: unknown[];
+  resources: unknown[];
+  templates: unknown[];
+} = {
   tools: [],
   info: undefined,
+  prompts: [],
+  resources: [],
+  templates: [],
 };
 
 type Handler = (args: Record<string, any>) => unknown;
@@ -143,6 +156,9 @@ beforeEach(() => {
     serverCapabilities: { tools: {} },
   };
   real.failure = undefined;
+  real.prompts = [];
+  real.resources = [];
+  real.templates = [];
   queries = {
     "mockServers:getMock": () =>
       stored({ tools: { search: { description: "Find things." } } }),
@@ -591,6 +607,32 @@ describe("GET /projects/:projectId/mock-servers/:mockId", () => {
     const again = await json(request("GET", ONE));
     expect(again.unmatchedCalls).toEqual([]);
     expect(again.definition).toBeDefined();
+  });
+
+  it("shows the real server's current prompts, resources and templates for the entries a definition edits", async () => {
+    real.info = { serverVersion: { name: "markets", version: "1.0.0" }, serverCapabilities: { tools: {}, prompts: {}, resources: {} } };
+    real.prompts = [{ name: "summarize", description: "Real summary." }];
+    real.resources = [{ uri: "file:///a", name: "a", description: "Real a." }];
+    queries["mockServers:getMock"] = () =>
+      stored({
+        prompts: { summarize: { description: "Mine." }, added: { messages: [{ role: "user", content: { type: "text", text: "x" } }] } },
+        resources: { "file:///a": { description: "Mine." }, "skill://s/SKILL.md": { text: "x" } },
+        resourceTemplates: { "docs://{id}": { text: "x" } },
+      });
+    const body = await json(request("GET", ONE));
+    expect(body.realServer.prompts).toEqual([
+      { key: "summarize", found: true, current: { description: "Real summary." } },
+      { key: "added", found: false, current: {} },
+    ]);
+    expect(body.realServer.resources).toEqual([
+      { key: "file:///a", found: true, current: { description: "Real a." } },
+      { key: "skill://s/SKILL.md", found: false, current: {} },
+    ]);
+    expect(body.realServer.resourceTemplates).toEqual([{ key: "docs://{id}", found: false, current: {} }]);
+    // A definition that edits none of them reads none of them.
+    queries["mockServers:getMock"] = () => stored({ tools: { search: { description: "Find." } } });
+    const plain = await json(request("GET", ONE));
+    expect(plain.realServer.prompts).toBeUndefined();
   });
 
   it("reads a named version and lists what changed since another", async () => {

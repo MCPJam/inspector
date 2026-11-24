@@ -30,6 +30,15 @@ export type PlatformMockSaved = {
   changes: PlatformMockChange[];
 };
 
+/** The real server's current values for one prompt, resource or template the definition edits. */
+export type PlatformMockRealItem = {
+  /** The prompt name, resource URI or URI template the entry is keyed by. */
+  key: string;
+  found: boolean;
+  /** The real value of each field the entry edits. */
+  current: Record<string, unknown>;
+};
+
 /** The real server's current values for what the definition edits. */
 export type PlatformMockRealServer = {
   /** `unreachable` says why in `message`; `none` is a mock from nothing. */
@@ -44,6 +53,10 @@ export type PlatformMockRealServer = {
     /** The real value of each field the entry edits; `params.<name>` is a parameter's schema. */
     current: Record<string, unknown>;
   }>;
+  /** Present when the definition edits prompts, resources or templates. */
+  prompts?: PlatformMockRealItem[];
+  resources?: PlatformMockRealItem[];
+  resourceTemplates?: PlatformMockRealItem[];
 };
 
 /** A call to a tool with saved answers that none of them matched. */
@@ -58,7 +71,10 @@ export type PlatformMockUnmatchedCall = {
   lastSeenAt: number;
 };
 
-export type PlatformMockServer = Omit<PlatformMockSaved, "created" | "dryRun" | "changes"> & {
+export type PlatformMockServer = Omit<
+  PlatformMockSaved,
+  "created" | "dryRun" | "changes"
+> & {
   headVersion: number;
   definition: PlatformMockDefinition;
   createdAt: number | null;

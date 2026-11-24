@@ -10,7 +10,12 @@ import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { makeFunctionReference } from "convex/server";
 import { diffMockDefinitions, type MockChange, type MockDefinition } from "@mcpjam/sdk/mocks";
-import { listAllTools } from "@mcpjam/sdk/operations";
+import {
+  listAllPrompts,
+  listAllResources,
+  listAllResourceTemplates,
+  listAllTools,
+} from "@mcpjam/sdk/operations";
 import { ALL_CLIENTS, whatCanChange } from "@mcpjam/sdk/climbs";
 import type {
   PlatformMockSaved,
@@ -98,11 +103,38 @@ async function readMock(c: Context, projectId: string, mockId: string, version?:
   return row;
 }
 
-/** The real server's tools and handshake, on a connection made as the caller. */
-async function listReal(manager: Parameters<typeof listAllTools>[0], serverId: string): Promise<RealServerRead> {
+/**
+ * The real server's tools and handshake, on a connection made as the caller;
+ * with a definition, also the prompts, resources and templates it edits.
+ */
+async function listReal(
+  manager: Parameters<typeof listAllTools>[0],
+  serverId: string,
+  definition?: MockDefinition,
+): Promise<RealServerRead> {
   const { tools } = await listAllTools(manager, { serverId, cacheMode: "bypass" });
   const info = manager.getInitializationInfo(serverId);
-  return { tools, serverInfo: info?.serverVersion, instructions: info?.instructions };
+  const wants = (map: object | undefined) => map !== undefined && Object.keys(map).length > 0;
+  const capabilities = info?.serverCapabilities;
+  return {
+    tools,
+    serverInfo: info?.serverVersion,
+    instructions: info?.instructions,
+    // A family the real server does not declare has nothing to read.
+    ...(wants(definition?.prompts) && capabilities?.prompts
+      ? { prompts: (await listAllPrompts(manager, { serverId, cacheMode: "bypass" })).prompts }
+      : {}),
+    ...(wants(definition?.resources) && capabilities?.resources
+      ? { resources: (await listAllResources(manager, { serverId, cacheMode: "bypass" })).resources }
+      : {}),
+    ...(wants(definition?.resourceTemplates) && capabilities?.resources
+      ? {
+          resourceTemplates: (
+            await listAllResourceTemplates(manager, { serverId, cacheMode: "bypass" })
+          ).resourceTemplates,
+        }
+      : {}),
+  };
 }
 
 /** Runs `then` with the real server read as the caller (a mock from nothing has none). */
@@ -227,7 +259,7 @@ async function readRealForGet(
       c,
       { projectId, serverId: row.baseServerId },
       projectServerSchema,
-      (manager, body) => listReal(manager, body.serverId),
+      (manager, body) => listReal(manager, body.serverId, definition),
     );
     return {
       realServer: describeRealEdits(definition, real),
