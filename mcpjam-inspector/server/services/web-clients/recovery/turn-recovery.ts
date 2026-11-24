@@ -210,6 +210,7 @@ export async function runRecoverableWebTurn(
         projectId,
         webAccountId: account.webAccountId,
         runId,
+        ...(input.iterationId ? { iterationId: input.iterationId } : {}),
         pendingStep,
         browser,
         ...(restored !== undefined ? { restoredProfileVersion: restored } : {}),
