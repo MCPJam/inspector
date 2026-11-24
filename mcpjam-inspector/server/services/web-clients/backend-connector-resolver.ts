@@ -62,7 +62,13 @@ export function webClientService(
     client = new ConvexHttpClient(url, {
       logger: false,
       fetch: (input, init) =>
-        fetch(input, { ...init, signal: AbortSignal.timeout(SERVICE_TIMEOUT_MS) }),
+        fetch(input, {
+          ...init,
+          // A redirect would carry the service credential in the body to
+          // wherever it points.
+          redirect: "error",
+          signal: AbortSignal.timeout(SERVICE_TIMEOUT_MS),
+        }),
     });
   } catch (error) {
     // Runs at boot: a bad URL turns web connectors off, not the server.

@@ -48,6 +48,13 @@ import { runWebClientTurn } from "./run-web-client-turn.js";
 import { webClientEnvironmentFor } from "./web-client-environment.js";
 import { WebAccountUnavailableError, rotateRunAccounts } from "./web-client-run.js";
 import { webTurnMessages, webTurnSpans } from "./web-client-trace.js";
+import {
+  ambiguousExecutionMessage,
+  runRecoverableWebTurn,
+  webRecovery,
+  type RecoverableWebTurnResult,
+  type WebRunStop,
+} from "./recovery/turn-recovery.js";
 
 /** A run that stopped on the vendor's page. Never a server failure. */
 export class WebClientRunError extends Error {
@@ -55,6 +62,8 @@ export class WebClientRunError extends Error {
   constructor(
     readonly failure: RealUiFailure,
     message: string,
+    /** Set when recovery paused the run for a person, or found a call that may have run. */
+    readonly stop?: WebRunStop,
     /** The calls that reached the server before the page stopped, on an errored step. */
     readonly turnTrace?: PersistedTurnTrace,
   ) {
@@ -185,31 +194,37 @@ export async function runWebClientHarnessTurn(
   }
   const messages = options.messages;
   const promptIndex = Math.max(0, messages.filter((m) => m.role === "user").length - 1);
-  const run = async (): Promise<ChatEngineLoopResult> => {
-    let result: Awaited<ReturnType<typeof runWebClientTurn>>;
+  const run = async (
+    onPaused?: (paused: Extract<WebRunStop, { kind: "paused_for_person" }>) => void,
+  ): Promise<ChatEngineLoopResult> => {
+    const turn = {
+      runtimeId,
+      projectId: options.projectId!,
+      serverIds: options.selectedServers ?? [],
+      prompt: lastUserText(messages),
+      runId,
+      approval: {
+        requireToolApproval: options.requireToolApproval === true,
+        answer: approvalAnswerOf(options.approvalMode),
+      },
+      // Accounted where the other runtimes' blocks are (`onHarnessPolicyBlocks`).
+      ...(options.harnessToolPolicy
+        ? {
+            toolPolicy: {
+              snapshots: options.harnessToolPolicy,
+              onBlock: (block: HarnessPolicyBlockRecord) => options.onHarnessPolicyBlocks?.([block]),
+            },
+          }
+        : {}),
+      environment,
+      ...(options.abortSignal ? { signal: options.abortSignal } : {}),
+    };
+    const recovery = webRecovery();
+    let result: RecoverableWebTurnResult;
     try {
-      result = await runWebClientTurn({
-        runtimeId,
-        projectId: options.projectId!,
-        serverIds: options.selectedServers ?? [],
-        prompt: lastUserText(messages),
-        runId,
-        approval: {
-          requireToolApproval: options.requireToolApproval === true,
-          answer: approvalAnswerOf(options.approvalMode),
-        },
-        // Accounted where the other runtimes' blocks are (`onHarnessPolicyBlocks`).
-        ...(options.harnessToolPolicy
-          ? {
-              toolPolicy: {
-                snapshots: options.harnessToolPolicy,
-                onBlock: (block: HarnessPolicyBlockRecord) => options.onHarnessPolicyBlocks?.([block]),
-              },
-            }
-          : {}),
-        environment,
-        ...(options.abortSignal ? { signal: options.abortSignal } : {}),
-      });
+      result = recovery
+        ? await runRecoverableWebTurn(turn, recovery, onPaused)
+        : await runWebClientTurn(turn);
     } catch (error) {
       // The run's account is gone, so the run's pool stops handing it out.
       if (error instanceof WebAccountUnavailableError) runContext?.onAccountLost?.(error.message);
@@ -235,11 +250,14 @@ export async function runWebClientHarnessTurn(
     // A Stop ends the turn as the person's, whatever the page was doing.
     if (!result.ok && options.abortSignal?.aborted) return { messageHistory: messages, aborted: true };
     if (!result.ok) {
-      const message = webClientFailureMessage(name, result.failure);
+      const message =
+        result.stop?.kind === "ambiguous_execution"
+          ? ambiguousExecutionMessage(name, result.stop)
+          : webClientFailureMessage(name, result.failure);
       // A signed-out account can't serve the run's later sessions either.
       if (result.failure.kind === "needs_sign_in") runContext?.onAccountLost?.(message);
       // What reached the server stays on the record; the run still failed.
-      throw new WebClientRunError(result.failure, message, traceOf(true));
+      throw new WebClientRunError(result.failure, message, result.stop, traceOf(true));
     }
     const adapter = getHarnessAdapter(runtimeId);
     const plan = resolveHarnessMcpPlan({
@@ -292,7 +310,10 @@ export async function runWebClientHarnessTurn(
   let settled: ChatEngineLoopResult = { messageHistory: messages, aborted: false };
   const stream = createUIMessageStream({
     execute: async ({ writer }) => {
-      settled = await run();
+      // The pause panel's data: who can finish signing in, and the request.
+      settled = await run((paused) =>
+        writer.write({ type: "data-web-run-paused", data: { ...paused, clientName: name } }),
+      );
       if (settled.aborted) return;
       const reply = settled.messageHistory.at(-1);
       const text =
