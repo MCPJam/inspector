@@ -81,14 +81,15 @@ export interface SignInBrowser {
     browserSessionId: string;
   }): Promise<Uint8Array>;
   /**
-   * Closes and forgets the person's browser once its sign-in is over. One
-   * this replica doesn't hold for them is left as it is.
+   * Closes and forgets the person's browser once its sign-in is over, as
+   * `bearer` names them. One this replica doesn't hold for them is left as it is.
    */
   release(args: {
     actor: WebActor;
     projectId: string;
     webAccountId: string;
     browserSessionId: string;
+    bearer: string;
   }): Promise<void>;
 }
 
@@ -224,7 +225,9 @@ export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
       throw error;
     }
     // The browser stays open for the answers a person fixes in it (not signed
-    // in yet, or signed in to another account) and closes after any other.
+    // in yet, or signed in to another account) and closes after any other, so
+    // its id can't save the account again later.
+    const release = () => deps.browser.release({ ...browser, bearer: c.req.header("authorization") ?? "" });
     let identity;
     try {
       identity = await PAGE_MODULES[row.vendor].signedIn(driver, { timeoutMs: 30_000 });
@@ -232,7 +235,7 @@ export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
       if (error instanceof RealUiError && error.failure.kind === "needs_sign_in") {
         return c.json({ ok: false, reason: "not_signed_in" });
       }
-      await deps.browser.release(browser);
+      await release();
       throw error;
     }
     if (!identity.email) return c.json({ ok: false, reason: "not_signed_in" });
@@ -259,7 +262,7 @@ export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
         ...(identity.workspace ? { workspaceName: identity.workspace } : {}),
       });
     } finally {
-      await deps.browser.release(browser);
+      await release();
     }
   });
 

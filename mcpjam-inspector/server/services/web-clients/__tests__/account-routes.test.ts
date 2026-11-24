@@ -68,10 +68,10 @@ function routes(overrides: Partial<WebAccountRouteDeps> = {}) {
   return { app: createWebAccountRoutes(deps), deps, applied };
 }
 
-const post = (app: ReturnType<typeof routes>["app"], path: string, body: unknown) =>
+const post = (app: ReturnType<typeof routes>["app"], path: string, body: unknown, headers: Record<string, string> = {}) =>
   app.request(path, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...headers },
     body: JSON.stringify(body),
   });
 
@@ -113,9 +113,9 @@ describe("POST /accounts/:id/sign-in", () => {
 describe("POST /accounts/:id/save-profile", () => {
   const body = { projectId: "p1", browserSessionId: "browser-session-1" };
 
-  it("saves the profile against its version and marks the account verified", async () => {
+  it("saves the profile against its version, marks the account verified, and closes the browser", async () => {
     const { app, deps, applied } = routes();
-    expect(await (await post(app, "/accounts/acct-1/save-profile", body)).json()).toEqual({
+    expect(await (await post(app, "/accounts/acct-1/save-profile", body, { authorization: "Bearer saver" })).json()).toEqual({
       ok: true,
       accountEmail: "team@example.com",
       workspaceName: "Team",
@@ -134,6 +134,7 @@ describe("POST /accounts/:id/save-profile", () => {
         ...ACTOR,
       },
     ]);
+    expect(deps.browser.release).toHaveBeenCalledWith({ ...body, actor: ACTOR, webAccountId: "acct-1", bearer: "Bearer saver" });
   });
 
   it("answers not_signed_in, wrong_account and version_conflict without saving a wrong session", async () => {
@@ -160,6 +161,34 @@ describe("POST /accounts/:id/save-profile", () => {
       reason: "version_conflict",
     });
     expect(raced.applied).toEqual([]);
+    // The person fixes the first two in the same browser; someone else's save ends it.
+    expect(signedOut.deps.browser.release).not.toHaveBeenCalled();
+    expect(other.deps.browser.release).not.toHaveBeenCalled();
+    expect(raced.deps.browser.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes the browser when reading it or saving from it fails", async () => {
+    const unreadable = routes({
+      browser: {
+        ...routes().deps.browser,
+        driver: async () => ({
+          ...claudePage("team@example.com"),
+          navigate: async () => {
+            throw new Error("The browser went away.");
+          },
+        }),
+      },
+    });
+    expect((await post(unreadable.app, "/accounts/acct-1/save-profile", body)).status).toBe(500);
+    expect(unreadable.deps.browser.release).toHaveBeenCalledTimes(1);
+    const offline = routes({
+      saveProfile: async () => {
+        throw new Error("socket hang up");
+      },
+    });
+    expect((await post(offline.app, "/accounts/acct-1/save-profile", body)).status).toBe(500);
+    expect(offline.deps.browser.release).toHaveBeenCalledTimes(1);
+    expect(offline.applied).toEqual([]);
   });
 
   it("refuses a save for anyone the backend can't say manages accounts, reading no browser", async () => {
@@ -200,7 +229,7 @@ describe("POST /accounts/:id/save-profile", () => {
       expect((await post(failed.app, "/accounts/acct-1/save-profile", body)).status).toBe(500);
     }
     for (const { deps } of [saved, raced, exportFailed, pageGone]) {
-      expect(deps.browser.release).toHaveBeenCalledWith({ actor: ACTOR, ...body, webAccountId: "acct-1" });
+      expect(deps.browser.release).toHaveBeenCalledWith({ actor: ACTOR, ...body, webAccountId: "acct-1", bearer: "" });
     }
   });
 
