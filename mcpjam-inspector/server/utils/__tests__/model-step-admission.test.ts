@@ -11,6 +11,21 @@ const busy = () =>
     }),
     { status: 503, headers: { "Retry-After": "2" } },
   );
+// The body `buildSpendRefusalBody` sends when in-flight calls hold the credits.
+const held = (overrides: Record<string, unknown> = {}) =>
+  new Response(
+    JSON.stringify({
+      ok: false,
+      code: "user_rate_limit",
+      refusalReason: "holds_committed",
+      isRetryable: true,
+      retryAfter: 15_000,
+      outstandingHolds: 5,
+      heldCredits: 195,
+      ...overrides,
+    }),
+    { status: 429 },
+  );
 const options = () => ({
   sourceType: "swarm",
   stepIndex: 1,
@@ -61,6 +76,26 @@ describe("Model step admission retry", () => {
     },
   );
 
+  it.each([0, 1])(
+    "retries an eval model step refused for held credits at step %i",
+    async (stepIndex) => {
+      vi.useFakeTimers();
+      const ok = new Response("ok");
+      const request = vi
+        .fn()
+        .mockResolvedValueOnce(held())
+        .mockResolvedValueOnce(ok);
+      const result = withModelStepAdmissionRetry(request, {
+        ...options(),
+        sourceType: "eval",
+        stepIndex,
+      });
+      await vi.runAllTimersAsync();
+      expect(await result).toBe(ok);
+      expect(request).toHaveBeenCalledTimes(2);
+    },
+  );
+
   it.each([
     new Response("upstream unavailable", { status: 503 }),
     new Response("null", { status: 503 }),
@@ -71,6 +106,22 @@ describe("Model step admission retry", () => {
     }),
     new Response(
       '{"code":"user_rate_limit","refusalReason":"allowance_exhausted"}',
+      { status: 429 },
+    ),
+    new Response(
+      '{"code":"user_rate_limit","refusalReason":"insufficient_for_request"}',
+      { status: 429 },
+    ),
+    held({ isRetryable: false }),
+    // A locked wallet can carry the hold's reason; the code rules it out.
+    held({ code: "wallet_locked" }),
+    // The sentence alone never triggers a replay without the structured reason.
+    new Response(
+      JSON.stringify({
+        code: "user_rate_limit",
+        error:
+          "MCPJam model limit reached for the moment: 5 in-flight request(s) hold the remaining credits and release them as they finish.",
+      }),
       { status: 429 },
     ),
     new Response('{"code":"spending_reservation_busy"}', { status: 200 }),
@@ -128,6 +179,61 @@ describe("Model step admission retry", () => {
     expect(await result).toBe(response);
     expect(request).toHaveBeenCalledTimes(1);
     expect(response.bodyUsed).toBe(false);
+  });
+
+  it("returns the refusal when a wait would leave no time for the model step", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const response = held();
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(response)
+      .mockResolvedValue(new Response("ok"));
+    // The first wait is 7.5s; 7.5s plus the 60s margin does not fit in 60s.
+    const result = withModelStepAdmissionRetry(request, {
+      ...options(),
+      sourceType: "eval",
+      remainingTurnMs: () => 60_000,
+    });
+    await vi.runAllTimersAsync();
+    expect(await result).toBe(response);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(response.bodyUsed).toBe(false);
+  });
+
+  it("waits when the margin still fits in the turn", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const ok = new Response("ok");
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(held())
+      .mockResolvedValueOnce(ok);
+    const result = withModelStepAdmissionRetry(request, {
+      ...options(),
+      sourceType: "eval",
+      remainingTurnMs: () => 120_000,
+    });
+    await vi.runAllTimersAsync();
+    expect(await result).toBe(ok);
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it("releases a refused response before resending", async () => {
+    vi.useFakeTimers();
+    const refused = held();
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(refused)
+      .mockResolvedValueOnce(new Response("ok"));
+    const result = withModelStepAdmissionRetry(request, {
+      ...options(),
+      sourceType: "eval",
+    });
+    await vi.runAllTimersAsync();
+    expect((await result).ok).toBe(true);
+    // Cancelling the body disturbs its stream, which marks it used.
+    expect(refused.bodyUsed).toBe(true);
   });
 
   it("returns the final response intact after bounded retries", async () => {
