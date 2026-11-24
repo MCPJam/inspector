@@ -1095,6 +1095,27 @@ describe("ServerDetailModal", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it("focuses the save guidance when an invalid draft disables Save & Connect", async () => {
+    const user = userEvent.setup();
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={createServer({ connectionStatus: "disconnected" })}
+        existingServerNames={["another-server"]}
+      />
+    );
+
+    fireEvent.change(screen.getByDisplayValue("test-server"), {
+      target: { value: "another-server" },
+    });
+    const save = screen.getByRole("button", { name: "Save & Connect" });
+    expect(save).toBeDisabled();
+    await user.click(screen.getByRole("switch", { name: "Server connection" }));
+
+    expect(screen.getByDisplayValue("another-server")).toBeInTheDocument();
+    expect(screen.getByText("Save your changes to connect.")).toHaveFocus();
+  });
+
   it("does not submit when Enter is pressed in tools metadata", async () => {
     const onSubmit = vi.fn().mockResolvedValue({
       ok: true,

@@ -174,6 +174,7 @@ export interface ServerDetailController {
     offersReconnect: boolean;
     save: () => Promise<void>;
     saveButtonRef: RefObject<HTMLButtonElement | null>;
+    saveHintRef: RefObject<HTMLParagraphElement | null>;
     saveHint: string | null;
     /** The configuration form's submit handler. */
     submit: (event: FormEvent<HTMLFormElement>) => void;
@@ -375,13 +376,16 @@ export function useServerDetailController({
     isSignedIn,
   });
   const saveButtonRef = useRef<HTMLButtonElement>(null);
+  const saveHintRef = useRef<HTMLParagraphElement>(null);
   const [saveHint, setSaveHint] = useState<string | null>(null);
+  const focusSaveAction = useCallback(() => {
+    const button = saveButtonRef.current;
+    (button?.disabled ? saveHintRef.current : button)?.focus();
+  }, []);
   useEffect(() => {
     if (!isOpen || !formState.hasChanges) setSaveHint(null);
-    else if (activeTab === "configuration" && saveHint) {
-      saveButtonRef.current?.focus();
-    }
-  }, [isOpen, activeTab, formState.hasChanges, saveHint]);
+    else if (activeTab === "configuration" && saveHint) focusSaveAction();
+  }, [isOpen, activeTab, formState.hasChanges, saveHint, focusSaveAction]);
   const trimmedName = formState.name.trim();
   const isDuplicateServerName =
     trimmedName !== "" &&
@@ -516,7 +520,7 @@ export function useServerDetailController({
           ? "Save your changes to connect."
           : "Save your changes before disconnecting."
       );
-      if (activeTab === "configuration") saveButtonRef.current?.focus();
+      if (activeTab === "configuration") focusSaveAction();
       else selectTab("configuration");
       return;
     }
@@ -608,6 +612,7 @@ export function useServerDetailController({
       offersReconnect: isConnected && !formState.hasChanges,
       save: handleSave,
       saveButtonRef,
+      saveHintRef,
       saveHint: formState.hasChanges ? saveHint : null,
       submit: handleConfigurationSubmit,
     },

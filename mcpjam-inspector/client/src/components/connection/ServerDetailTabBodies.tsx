@@ -134,7 +134,13 @@ export function ServerConfigSaveButton({ controller }: ControllerProps) {
   return (
     <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
       {form.saveHint && (
-        <p id={hintId} role="status" className="text-xs text-muted-foreground">
+        <p
+          ref={form.saveHintRef}
+          id={hintId}
+          role="status"
+          tabIndex={-1}
+          className="text-xs text-muted-foreground"
+        >
           {form.saveHint}
         </p>
       )}
