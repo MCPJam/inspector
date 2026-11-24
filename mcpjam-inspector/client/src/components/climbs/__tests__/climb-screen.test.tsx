@@ -42,6 +42,39 @@ describe("ClimbScreen", () => {
     expect(await screen.findByText("running Baseline")).toBeInTheDocument();
   });
 
+  it("says why the baseline failed and runs it again from the button", async () => {
+    getClimb.mockResolvedValue(
+      makeClimb({ state: "baselining", baselineFailure: { unitKey: "baseline:1", reason: "Staging lost 3 of 12 iterations." } }),
+    );
+    continueClimb.mockResolvedValue({ resumed: false, baselineStarted: true });
+    show();
+    expect(await screen.findByText("Staging lost 3 of 12 iterations.")).toBeInTheDocument();
+    expect(screen.queryByText("running Baseline")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Run the baseline again" }));
+    expect(continueClimb).toHaveBeenCalledWith({ projectId: "proj_1", climbId: "climb_1" });
+    await waitFor(() => expect(getClimb).toHaveBeenCalledTimes(2));
+  });
+
+  it("keeps the failure on screen and says so when the baseline cannot start again", async () => {
+    getClimb.mockResolvedValue(
+      makeClimb({ state: "baselining", baselineFailure: { unitKey: "baseline:1", reason: "Staging lost 3 of 12 iterations." } }),
+    );
+    continueClimb.mockRejectedValue(new Error("Your plan has no credits left. Add credits, then try again."));
+    show();
+    await userEvent.click(await screen.findByRole("button", { name: "Run the baseline again" }));
+    expect(await screen.findByText(/no credits left/)).toBeInTheDocument();
+    expect(screen.getByText("Staging lost 3 of 12 iterations.")).toBeInTheDocument();
+  });
+
+  it("shows the running baseline, not the failure, while a new attempt runs", async () => {
+    getClimb.mockResolvedValue(
+      makeClimb({ state: "baselining", activeUnitKey: "baseline:2", baselineFailure: { unitKey: "baseline:1", reason: "Staging lost 3 of 12 iterations." } }),
+    );
+    show();
+    expect(await screen.findByText("running Baseline")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Run the baseline again" })).not.toBeInTheDocument();
+  });
+
   it("lands on the ready view when no round has run", async () => {
     getClimb.mockResolvedValue(makeClimb({ state: "ready" }));
     show();

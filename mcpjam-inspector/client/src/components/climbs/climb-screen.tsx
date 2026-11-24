@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@mcpjam/design-system/alert";
 import { Button } from "@mcpjam/design-system/button";
 import { continueClimb, getClimb, stopClimb } from "@/lib/apis/climbs-api";
+import { BaselineFailed } from "./baseline-failed";
 import { ClimbShell } from "./climb-shell";
 import type { Climb } from "./climb-types";
 import { MockSheet } from "./mock-sheet";
@@ -20,9 +21,14 @@ const POLL_MS = 5_000;
 /** A climb is read again while anything of it is still moving: the baseline, a round, MCPJam's turn, or the end. */
 function stillMoving(climb: Climb | undefined): boolean {
   if (!climb) return true;
-  if (climb.state === "baselining" || climb.rounds.some((round) => round.status === "running")) return true;
+  if ((climb.state === "baselining" && !failedBaseline(climb)) || climb.rounds.some((round) => round.status === "running")) return true;
   if (climb.step !== undefined && !climb.paused) return true;
   return climb.confirmation?.status === "running" || climb.verifications.some((run) => run.status === "running");
+}
+
+/** The last baseline attempt failed and none is running: only a person can start it again. */
+function failedBaseline(climb: Climb): boolean {
+  return climb.baselineFailure !== undefined && climb.activeUnitKey === undefined;
 }
 
 function firstSelection(climb: Climb): Selection {
@@ -115,7 +121,15 @@ export function ClimbScreen({
   let main;
   if (current === "base") {
     main =
-      climb.state === "baselining" ? (
+      climb.state === "baselining" && failedBaseline(climb) ? (
+        <BaselineFailed
+          reason={climb.baselineFailure!.reason}
+          onRunAgain={async () => {
+            await continueClimb({ projectId, climbId });
+            read.reload();
+          }}
+        />
+      ) : climb.state === "baselining" ? (
         <RunningView
           title="Baseline"
           climbId={climb.climbId}

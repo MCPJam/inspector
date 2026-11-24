@@ -98,7 +98,7 @@ class ClimbsScreenClient extends PlatformApiClient {
   resume(
     params: { projectId: string; climbId: string },
     options?: RequestOptions,
-  ): Promise<{ resumed: boolean; stepDue: boolean }> {
+  ): Promise<{ resumed: boolean; stepDue?: boolean; baselineStarted?: boolean }> {
     const climb = `${encodeURIComponent(params.projectId)}/climbs/${encodeURIComponent(params.climbId)}`;
     return this.request("POST", `/projects/${climb}/continue`, { body: {} }, options);
   }
@@ -196,11 +196,11 @@ export function getClimb(
   return call(() => client().getClimb(params, { signal }), signal);
 }
 
-/** Resumes a paused climb from the last settled round. */
+/** Resumes a paused climb from the last settled round, or runs a failed baseline again. */
 export function continueClimb(
   params: { projectId: string; climbId: string },
   signal?: AbortSignal,
-): Promise<{ resumed: boolean; stepDue: boolean }> {
+): Promise<{ resumed: boolean; stepDue?: boolean; baselineStarted?: boolean }> {
   return call(() => client().resume(params, { signal }), signal);
 }
 

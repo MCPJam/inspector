@@ -1,6 +1,6 @@
 import { Card } from "@mcpjam/design-system/card";
 import type { Climb } from "./climb-types";
-import { percent } from "./climb-format";
+import { percent, plural } from "./climb-format";
 
 type Group = NonNullable<NonNullable<Climb["baseline"]>["environments"][number]["steering"]>;
 
@@ -10,6 +10,7 @@ const runs = (group: Group | undefined) =>
 /** The baseline per environment: both runs' pass rates and the noise between them. */
 export function BaselineCards({ climb, labels }: { climb: Climb; labels: Record<string, string> }) {
   const environments = climb.baseline?.environments ?? [];
+  const newCases = climb.groups.newCases ?? [];
   return (
     <section className="flex flex-col gap-2" aria-label="Baseline">
       <h2 className="text-sm font-medium">Baseline</h2>
@@ -38,6 +39,13 @@ export function BaselineCards({ climb, labels }: { climb: Climb; labels: Record<
           </Card>
         ))}
       </div>
+      {newCases.length > 0 ? (
+        <p className="text-xs text-muted-foreground" data-testid="new-cases">
+          {plural(newCases.length, "case")} in the suite {newCases.length === 1 ? "is" : "are"} new to this climb:{" "}
+          {newCases.map((entry) => entry.key).join(", ")}. {newCases.length === 1 ? "It joins" : "They join"} steering from
+          the next round unless you set {newCases.length === 1 ? "it" : "them"} aside for confirmation.
+        </p>
+      ) : null}
     </section>
   );
 }
