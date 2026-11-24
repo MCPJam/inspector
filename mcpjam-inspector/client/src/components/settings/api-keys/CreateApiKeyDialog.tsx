@@ -43,8 +43,7 @@ export interface CreateApiKeyDialogProps {
   /** MCPJam orgs the user belongs to. The key is scoped to the selected one. */
   organizations: CreateApiKeyOrganization[];
   orgsLoading: boolean;
-  /** The org the app is in. When it is one of `organizations`, the key is
-   * scoped to it and no picker is shown. */
+  /** The org the app is in. Pre-selected when it is one of `organizations`. */
   activeOrganizationId?: string | null;
   onCreate: (args: {
     name: string;
@@ -69,23 +68,29 @@ export function CreateApiKeyDialog({
     DEFAULT_API_KEY_EXPIRY_DAYS,
   );
 
-  const activeOrganization = activeOrganizationId
-    ? organizations.find((o) => o._id === activeOrganizationId)
-    : undefined;
+  const activeOrganizationListed =
+    !!activeOrganizationId &&
+    organizations.some((o) => o._id === activeOrganizationId);
 
-  // Reset name and lifetime on open; use the active org, else auto-select the
-  // only org (and clear any stale selection that's no longer in the list).
+  // Reset the form on open.
   useEffect(() => {
     if (!open) return;
     setName("");
     setExpiresInDays(DEFAULT_API_KEY_EXPIRY_DAYS);
+    setOrganizationId("");
+  }, [open]);
+
+  // Keep a selection that is still listed; otherwise pre-select the active
+  // org, or the only org.
+  useEffect(() => {
+    if (!open) return;
     setOrganizationId((prev) => {
-      if (activeOrganization) return activeOrganization._id;
-      if (organizations.length === 1) return organizations[0]._id;
       if (prev && organizations.some((o) => o._id === prev)) return prev;
+      if (activeOrganizationListed) return activeOrganizationId;
+      if (organizations.length === 1) return organizations[0]._id;
       return "";
     });
-  }, [open, organizations, activeOrganization]);
+  }, [open, organizations, activeOrganizationId, activeOrganizationListed]);
 
   useSettingsDraft(
     open && !!name,
@@ -159,16 +164,8 @@ export function CreateApiKeyDialog({
         </div>
 
         <div className="space-y-2">
-          <Label
-            htmlFor={activeOrganization ? undefined : "api-key-org-select"}
-          >
-            Organization
-          </Label>
-          {activeOrganization ? (
-            <p className="text-sm font-medium" data-testid="api-key-active-org">
-              {activeOrganization.name}
-            </p>
-          ) : orgsLoading ? (
+          <Label htmlFor="api-key-org-select">Organization</Label>
+          {orgsLoading ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" aria-hidden />
               Loading organizations…
@@ -199,9 +196,6 @@ export function CreateApiKeyDialog({
           <p className="text-xs text-muted-foreground">
             The key acts inside this organization. Requests are scoped to its
             projects and servers.
-            {activeOrganization
-              ? " To create a key for another organization, switch to it first."
-              : null}
           </p>
           {mintRefused ? (
             <Alert role="status" data-testid="api-key-create-not-allowed">

@@ -202,14 +202,13 @@ describe("CreateApiKeyDialog active organization", () => {
     { _id: "org-b", name: "Beta" },
   ];
 
-  it("scopes the key to the active organization without asking", async () => {
+  it("pre-selects the active organization and keeps the picker", async () => {
     const user = userEvent.setup();
     renderDialog(twoOrgs, "org-b");
 
-    expect(screen.getByTestId("api-key-active-org")).toHaveTextContent("Beta");
     expect(
-      screen.queryByRole("combobox", { name: "Organization" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("combobox", { name: "Organization" }),
+    ).toHaveTextContent("Beta");
     await user.type(screen.getByLabelText("Name"), "ci");
     await user.click(screen.getByRole("button", { name: "Create key" }));
 
@@ -221,12 +220,34 @@ describe("CreateApiKeyDialog active organization", () => {
     expect(mockGetApiKeyMintEligibility).toHaveBeenCalledWith("org-b");
   });
 
-  it("falls back to the picker when the active organization is not listed", () => {
-    renderDialog(twoOrgs, "org-gone");
+  it("keeps the typed name when the active organization arrives late", async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderDialog(twoOrgs);
+    await user.type(screen.getByLabelText("Name"), "ci");
 
-    expect(screen.queryByTestId("api-key-active-org")).not.toBeInTheDocument();
+    rerender(
+      <CreateApiKeyDialog
+        open
+        onOpenChange={vi.fn()}
+        isCreating={false}
+        organizations={twoOrgs}
+        orgsLoading={false}
+        activeOrganizationId="org-b"
+        onCreate={onCreate}
+      />,
+    );
+
+    expect(screen.getByLabelText("Name")).toHaveValue("ci");
     expect(
       screen.getByRole("combobox", { name: "Organization" }),
-    ).toBeInTheDocument();
+    ).toHaveTextContent("Beta");
+  });
+
+  it("asks for an organization when the active one is not listed", () => {
+    renderDialog(twoOrgs, "org-gone");
+
+    expect(
+      screen.getByRole("combobox", { name: "Organization" }),
+    ).toHaveTextContent("Select an organization");
   });
 });

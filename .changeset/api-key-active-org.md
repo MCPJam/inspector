@@ -2,4 +2,4 @@
 "@mcpjam/inspector": patch
 ---
 
-Creating an API key now uses the organization you're in instead of asking you to pick one.
+The Create API key dialog now pre-selects the organization you are in.

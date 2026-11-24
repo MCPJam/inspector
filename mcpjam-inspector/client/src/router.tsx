@@ -5,8 +5,8 @@ import { ByokCreditsPage } from "./components/billing/ByokCreditsPage";
 import { CreditUsagePage } from "./components/billing/CreditUsagePage";
 import { createBrowserRouter, RouterProvider, redirect } from "react-router";
 import { RouteErrorScreen } from "./components/RouteErrorScreen";
+import { ApiKeysSettingsRoute } from "./components/settings/ApiKeysRoute";
 import App, {
-  ApiKeysSettingsRoute,
   BenchResultsRoute,
   BenchRunnerRoute,
   GithubChecksSettingsRoute,
