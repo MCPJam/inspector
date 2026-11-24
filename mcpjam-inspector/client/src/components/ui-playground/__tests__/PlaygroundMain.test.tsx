@@ -3290,6 +3290,9 @@ describe("PlaygroundMain", () => {
     });
 
     it("still sends Quick Run's prompt once, into the chat its reset opened", async () => {
+      vi.mocked(mockUseChatSession.resetChat).mockImplementationOnce(() => {
+        mockUseChatSession.chatSessionId = "chat-session-quick-run";
+      });
       const view = render(<PlaygroundMain {...defaultProps} />);
       await waitFor(() => expect(bridge()).not.toBe(null));
       view.rerender(
@@ -3303,9 +3306,12 @@ describe("PlaygroundMain", () => {
 
       expect(mockUseChatSession.resetChat).toHaveBeenCalled();
       expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
-      expect(mockUseChatSession.sendMessage.mock.calls[0]![0]).toMatchObject({
-        text: "Quick run prompt",
-      });
+      const { text, isCurrent } = mockUseChatSession.sendMessage.mock
+        .calls[0]![0] as { text: string; isCurrent?: () => boolean };
+      expect(text).toBe("Quick run prompt");
+      // Bound to the chat the reset opened, not the one it replaced.
+      expect(mockUseChatSession.chatSessionId).toBe("chat-session-quick-run");
+      expect(isCurrent?.()).toBe(true);
     });
 
     it("still sends the eval preview's auto-run prompt once", async () => {
