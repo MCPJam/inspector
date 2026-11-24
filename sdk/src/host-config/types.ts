@@ -79,6 +79,8 @@ export const HARNESS_IDS = [
   "cursor",
   "copilot-cli",
   "opencode",
+  "claude-web",
+  "chatgpt-web",
 ] as const;
 
 /**
@@ -89,6 +91,9 @@ export const HARNESS_IDS = [
  * OpenAI Codex; `"cursor"` runs the Cursor CLI (`cursor-agent`) over ACP;
  * `"opencode"` runs OpenCode through the published AI SDK adapter, with MCPJam
  * host-executed tools and a platform-brokered Anthropic lease.
+ * `"claude-web"` and `"chatgpt-web"` drive the vendor's own website in a
+ * browser on a project's web account; the vendor's MCP client reaches the
+ * servers through MCPJam's forwarding endpoint.
  * Extensible to additional runtimes (e.g. `"pi"`) later without a schema
  * migration.
  */
