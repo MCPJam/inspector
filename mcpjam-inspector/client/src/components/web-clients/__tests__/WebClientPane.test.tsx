@@ -368,6 +368,13 @@ describe("SaveWebAccountBar", () => {
     ).toBeEnabled();
   });
 
+  it("shows the retry instruction when the server kept the browser open", async () => {
+    const message = "Couldn’t capture this browser profile. Keep the browser open and save again.";
+    await save(() => Promise.reject(new WebApiError(503, "WEB_ACCOUNT_PROFILE_RETRY", message)));
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(screen.getByRole("button", { name: "Save for the project" })).toBeEnabled();
+  });
+
   it("says the save didn't happen when the request fails", async () => {
     await save(() => Promise.reject(new Error("network")));
     expect(await screen.findByRole("alert")).toHaveTextContent(
