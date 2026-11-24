@@ -114,6 +114,25 @@ describe("verifyClimb", () => {
     expect(result.unrestorable[0]!.why).toContain("No stored capture");
   });
 
+  it("says a kept code change cannot be put back by a mock, and runs the server alone", async () => {
+    const notAMock = () => {
+      throw Object.assign(new Error("x"), { data: { code: "MOCK_NOT_FOUND" } });
+    };
+    const { deps, fake, createEvalRunGroup } = setup({
+      handlers: {
+        "mockServers:getMock": notAMock,
+        "climbFinish:beginClimbVerification": () => ({ unitKey: "verification:1", verificationIndex: 1, estimatedCredits: 10, groups: [group("server")] }),
+      },
+    });
+    const result = await verifyClimb(deps, "proj1", CLIMB_ROW, args, clock());
+    expect(result).toMatchObject({ ran: true, mode: "server_only", estimate: { groups: 1 } });
+    expect(result.unrestorable).toHaveLength(1);
+    expect(result.unrestorable[0]!.why).toContain("kept change is code");
+    expect(result.unrestorable[0]!.why).not.toContain("No stored capture");
+    expect(fake.called("climbFinish:beginClimbVerification")[0]).not.toHaveProperty("restoreMockId");
+    expect(createEvalRunGroup).toHaveBeenCalledTimes(1);
+  });
+
   it("verifies another saved server in place of the climbed one", async () => {
     const { deps, fake } = setup();
     await verifyClimb(deps, "proj1", CLIMB_ROW, { ...args, targetServerId: "s_new", serverVersion: "2.0.1" }, clock());

@@ -37,6 +37,8 @@ type MockMade = { mockId: string; version: number };
 
 const POLL_MS = 2_000;
 
+const CODE_UNRESTORABLE = "The kept change is code, which a mock cannot put back, so the server's numbers are set beside the ones the climb recorded.";
+
 export async function verifyClimb(
   deps: ClimbDeps,
   projectId: string,
@@ -49,13 +51,17 @@ export async function verifyClimb(
   const targetId = args.targetServerId ?? climb.serverId;
 
   const best = climb.best ? await definitionOf(convex, climb.best.serverId, climb.best.serverVersion) : undefined;
+  // A best that is a saved server and no mock is code: no mock can put it back, so only the server runs.
+  const keptCode = climb.best !== undefined && best === undefined;
   const kept = diffMockDefinitions({}, best ?? {});
   const old = await loadOldServer(deps, projectId, climb.serverId, climb.createdAt);
   const listing = await deps.readServer(projectId, targetId);
   const listingCheck = checkKeptChanges(kept, listing, old && { instructions: old.instructions, tools: old.tools });
   const inverse = old ? inverseOfChanges(kept, old) : undefined;
-  const restorable = inverse !== undefined && inverse.unrestorable.length === 0 && Object.keys(inverse.definition).length > 0;
-  const unrestorable: Unrestorable[] = inverse?.unrestorable ?? [{ path: "(all)", why: "No stored capture of the server from before the climb, so its old values are not known." }];
+  const restorable = !keptCode && inverse !== undefined && inverse.unrestorable.length === 0 && Object.keys(inverse.definition).length > 0;
+  const unrestorable: Unrestorable[] = keptCode
+    ? [{ path: "(all)", why: CODE_UNRESTORABLE }]
+    : inverse?.unrestorable ?? [{ path: "(all)", why: "No stored capture of the server from before the climb, so its old values are not known." }];
 
   const estimate = await estimateGroup(convex, { suiteId: climb.suiteId, environmentIds: plan.environmentIds, caseIds: plan.caseIds }, restorable ? 2 : 1);
   const mode = restorable ? "paired" : "server_only";
