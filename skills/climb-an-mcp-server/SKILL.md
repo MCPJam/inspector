@@ -1,11 +1,11 @@
 ---
 name: climb-an-mcp-server
-description: Improve an MCP server from an eval suite with MCPJam's climb tools, one measured change at a time, on mock servers, then hand the kept changes to the coding agent that edits the server's code and verify them on the real server. Use when connected to MCPJam's MCP server and asked to improve, tune or hill-climb a server, its tool descriptions or its token use, from an eval that already exists.
+description: Improve an MCP server from an eval suite with MCPJam's climb tools, one measured change at a time, on mock servers or on a saved server that runs your code change, then hand the kept changes to the coding agent that edits the server's code and verify them on the real server. Use when connected to MCPJam's MCP server and asked to improve, tune or hill-climb a server, its tool descriptions or its token use, from an eval that already exists.
 ---
 
 # climb-an-mcp-server
 
-You have MCPJam's climb tools. A climb improves a saved server from an eval suite, one round at a time. Each round tries one change on a **mock**: a real MCP server MCPJam hosts in front of the server, which states only what you change and leaves everything else to the real server. A stated rule keeps or reverts the change in every environment the suite runs in. At the end the kept changes come back as a prompt for whoever edits the server's code, and `verify_climb` checks they hold on the real server.
+You have MCPJam's climb tools. A climb improves a saved server from an eval suite, one round at a time. Each round tries one change on a **mock**: a real MCP server MCPJam hosts in front of the server, which states only what you change and leaves everything else to the real server. A change to the server's code is a **code round**: you save a server that runs your branch and submit it. A stated rule keeps or reverts the change in every environment the suite runs in. At the end the kept changes come back as a prompt for whoever edits the server's code, and `verify_climb` checks they hold on the real server.
 
 This skill is about running a climb. To write the eval first, use `create-mcp-eval` or `run-mcpjam-evals`.
 
@@ -30,6 +30,7 @@ The tools never hand you either. Your sign-in could open them. Do not.
 ```
 start_climb -> get_climb (until ready) -> create_mock_server / update_mock_server
      -> submit_climb_round -> get_climb_round (waitSeconds) -> next round ...
+     (a code change: save a server that runs your branch, then submit_climb_round with it)
      -> stop_climb -> confirm_climb -> apply the prompt -> verify_climb
 ```
 
@@ -41,17 +42,19 @@ start_climb -> get_climb (until ready) -> create_mock_server / update_mock_serve
 
 **4. Write the change.** `get_mock_server` returns `whatCanChange`: every place a mock can change, ranked, with the current value, which clients read it and the failed runs that point at it. Take the top entry whose clients include the ones your environments run. A change no client of the climb reads is refused before any run. Make **one change per round** so a result means one thing. Create the mock from the real server with `create_mock_server`, or save a new version with `update_mock_server` and the version you read.
 
-**5. Submit and read.** `submit_climb_round` with the mock. Then `get_climb_round` with `waitSeconds` up to 50 and call it again while `settled` is false. The result is per environment, against the noise. See `references/rounds.md`.
+**5. Submit and read.** `submit_climb_round` with the mock. For a code change, save a server that runs your branch and submit that saved server instead: any saved server of the project is a round's server. The climbed server keeps running its current code for the whole climb, because the baseline and the best so far are measured on it, so never change its code in place. Then `get_climb_round` with `waitSeconds` up to 50 and call it again while `settled` is false. The result is per environment, against the noise. See `references/rounds.md`.
 
 **6. Repeat** until `get_climb` says the climb stopped (every steering case passes, the target was reached, or the round limit), or stop it yourself with `stop_climb`. A round that is refused names what is needed and what is left: do not work around a limit, report it.
 
-**7. Stop, confirm, apply.** `stop_climb` returns the summary and the prompt. The summary labels steering and validation results as the cases that helped pick the result, and says what the climb established and what it did not. If the suite set cases aside, call `confirm_climb` once (use `dryRun` first for the cost): it reports the difference with a 95% interval, and when the interval includes zero the gain is within noise and you should say so and not recommend shipping it. Hand the prompt to the agent that edits the server's code.
+**7. Stop, confirm, apply.** `stop_climb` returns the summary and the prompt. The summary labels steering and validation results as the cases that helped pick the result, and says what the climb established and what it did not. If the suite set cases aside, call `confirm_climb` once (use `dryRun` first for the cost): it reports the difference with a 95% interval, and when the interval includes zero the gain is within noise and you should say so and not recommend shipping it. Hand the prompt to the agent that edits the server's code. A kept code round shows in the prompt as the saved server it ran: keep that code by merging the branch it runs.
 
-**8. Verify.** After the edits are committed and the server runs them, call `verify_climb` with the commit. It names each kept change as applied, missing or different, and starts no run unless asked. Then it runs the server beside a mock that puts the old values back and applies the same rule. Report whether the gain holds on the real server, both gains, and the baseline then and now. MCPJam records the commit you give it; it cannot check which code the server runs.
+**8. Verify.** After the edits are committed and the server runs them, call `verify_climb` with the commit. It names each kept change as applied, missing or different, and starts no run unless asked. Then it runs the server beside a mock that puts the old values back and applies the same rule. When the kept change is code, a mock cannot put it back: it runs the server alone and sets its numbers beside the ones the climb recorded. Report whether the gain holds on the real server, both gains, and the baseline then and now. MCPJam records the commit you give it; it cannot check which code the server runs.
 
 ## Rules that save money and trust
 
 - One change per round. Never batch.
+- A kept code round makes its server the best so far. Leave that server's code as it is and run the next code change on another saved server: a later round on the same server would be measured against itself.
+- If `suiteCheck` says an environment replays one decision (`replays_one_decision`), a change that steers the model can look like a sure win there. For a pass-rate climb, use an environment that samples.
 - Never resubmit a reverted change hoping for a different result. A round measures noise too; `get_climb_round` shows how much.
 - A round that is **not decided** is not a loss: read its reason (a lost run, a changed real server) and fix that, do not read it as a result.
 - Overrule a round (`set_climb_round_decision`) only with a reason you would put your name to. It is recorded.

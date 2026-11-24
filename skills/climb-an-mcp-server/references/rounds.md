@@ -10,4 +10,4 @@ Every move is judged against the noise between the two baseline runs. A pass rat
 
 When the best so far's numbers are older than an hour, or the suite or an environment changed, the round measures the best again beside the candidate and says why (`remeasureBest`). That is a second run group, and the estimate counts it.
 
-What to do next: a reverted round says what moved the wrong way; try a smaller change to the same place or a different place. A kept round becomes the best so far; the next change builds on its mock.
+What to do next: a reverted round says what moved the wrong way; try a smaller change to the same place or a different place. A kept round becomes the best so far; the next mock change builds on its mock. A kept code round makes its saved server the best so far: leave its code as it is, and run the next code change on another saved server.

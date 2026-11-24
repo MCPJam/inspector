@@ -15,7 +15,8 @@ Start from the failed runs behind a `climbFor` option, not from a list of ideas.
 - **Tool descriptions and inputs.** Read by every client. First place to look.
 - **Titles, output schemas, annotations, icons.** MCPJam's own client does not send them to the model, so a round that changes only these is refused when every environment runs it. Harness clients may read them: this is unconfirmed, so a climb that includes one can try.
 - **Instructions.** Harness clients read them in the handshake. Whether MCPJam's client puts them in an eval's prompt is unconfirmed.
-- **Prompts, resources, skills, apps.** Not built into mocks yet. Do not propose them.
+- **Prompts, resources, skills, apps.** Not built into mocks yet. Do not propose them as mock changes; a code round can try them.
+- **Anything in the code.** A fix a mock cannot state (a missing tool, a tool's answer, a prompt or resource) is a code round: save a server that runs your branch and submit it. Make one change per branch.
 
 ## Before you write a change
 
