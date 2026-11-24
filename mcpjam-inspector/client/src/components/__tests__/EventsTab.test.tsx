@@ -291,7 +291,7 @@ describe("EventsTab (local)", () => {
     // The declared capability is one disclosure away.
     openSection(/Server details/);
     expect(
-      screen.getByText("Events declared"),
+      screen.getByText("capabilities.events declared"),
     ).toBeInTheDocument();
     expect(mockLoadEventsCatalog).toHaveBeenCalledWith(SERVER);
   });
