@@ -78,7 +78,9 @@ export const ANALYTICS_EVENTS = {
    * One Platform API request answered, hosted only
    * (`server/utils/v1-usage-event.ts`). Route pattern, status, error code,
    * latency, auth method and the client's declared surface and name. Never
-   * paths, bodies, query strings, error messages or raw user agents.
+   * paths, bodies, query strings, error messages or raw user agents. A request
+   * with no identity (a refused credential, a public route) sends nothing, so
+   * failure rates cover authenticated callers; auth failures stay in Axiom.
    */
   api_v1_request_completed: { source: "server" },
   /**

@@ -79,13 +79,15 @@ const enums: Record<string, readonly string[]> = {
   engine: ["emulated", "harness:claude-code", "harness:codex", "harness:opencode"],
   environment_skill_delivery: ["harness", "harness_unsupported", "emulated"],
   // api_v1_request_completed
-  method: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+  method: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
   error_code: V1_ERROR_CODES,
+  // Every `authMethod` in server/types/hono.ts, plus "none". Keep in step.
   auth_method: [
     "workos_api_key",
     "workos_agent",
     "slack_service",
     "discord_service",
+    "teams_service",
     "guest",
     "authkit_jwt",
     "unverified_passthrough",
