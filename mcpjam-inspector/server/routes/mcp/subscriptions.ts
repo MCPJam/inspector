@@ -44,14 +44,22 @@ import { reportRouteFailure, readRequestJson } from "../../utils/route-error-rep
  */
 
 // ---------------------------------------------------------------------------
-// SSE fan-out (one channel for every connected server)
+// SSE fan-out (one channel per manager, covering all of its servers)
 // ---------------------------------------------------------------------------
 
-type Subscriber = { send: (event: unknown) => void; close: () => void };
+type Subscriber = {
+  manager: MCPClientManager;
+  send: (event: unknown) => void;
+  close: () => void;
+};
 const subscribers = new Set<Subscriber>();
 
-function broadcast(event: SubscriptionBridgeEvent): void {
+function broadcast(
+  manager: MCPClientManager,
+  event: SubscriptionBridgeEvent,
+): void {
   for (const sub of Array.from(subscribers)) {
+    if (sub.manager !== manager) continue;
     try {
       sub.send(event);
     } catch {
@@ -248,7 +256,7 @@ export function getOrCreateEntry(
     onStreamChange: (stream) => {
       const view = toStreamView(stream);
       entry.streams.set(view.localId, view);
-      broadcast({
+      broadcast(manager, {
         type: "subscription_stream",
         serverId,
         era: view.era,
@@ -258,7 +266,7 @@ export function getOrCreateEntry(
     onNotification: (event) => {
       const view = toNotificationView(event);
       push(entry.notifications, view);
-      broadcast({
+      broadcast(manager, {
         type: "subscription_notification",
         serverId,
         notification: view,
@@ -267,7 +275,11 @@ export function getOrCreateEntry(
     onRejectedNotification: (event) => {
       const view = toRejectionView(event);
       push(entry.rejectedNotifications, view);
-      broadcast({ type: "subscription_rejected", serverId, rejection: view });
+      broadcast(manager, {
+        type: "subscription_rejected",
+        serverId,
+        rejection: view,
+      });
     },
   });
 
@@ -355,7 +367,7 @@ subscriptions.get("/stream", async (c) => {
 
       controller.enqueue(encoder.encode(`retry: 1500\n\n`));
 
-      const subscriber = { send, close };
+      const subscriber: Subscriber = { manager, send, close };
       subscribers.add(subscriber);
 
       // Snapshot first: a late subscriber must see streams that opened (and
