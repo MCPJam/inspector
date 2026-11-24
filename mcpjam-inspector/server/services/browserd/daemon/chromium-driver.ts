@@ -171,6 +171,14 @@ class ActError extends Error {
  */
 class LeaseTakenMidAct extends Error {}
 
+/** A scoped observation whose `rootSelector` matched nothing: the page's answer. */
+function nothingMatches(selector: string): string {
+  return formatBrowserdError(
+    "unknown_selector",
+    `nothing on this page matches "${selector}"; re-observe the page and pick a selector from what it shows`,
+  );
+}
+
 /**
  * An a11y payload minus the ref INDEX, for a result that cannot store one.
  *
@@ -2372,7 +2380,7 @@ export class ChromiumDriver implements BrowserDriver {
       case "screenshot":
         return this.observeScreenshot(tabId, entry, permit);
       case "text": {
-        return this.observeText(tabId, entry, permit);
+        return this.observeText(tabId, entry, permit, action.rootSelector);
       }
       case "a11y": {
         const rendered = await this.renderA11y(tabId, entry, action);
@@ -2535,11 +2543,27 @@ export class ChromiumDriver implements BrowserDriver {
     tabId: string,
     entry: TabEntry,
     permit: () => boolean,
+    /** Read this one element's text instead of the page's. */
+    rootSelector?: string,
   ): Promise<BrowserCommandResult> {
+    const read = async (): Promise<string | BrowserCommandResult> => {
+      const text =
+        rootSelector === undefined
+          ? await entry.page.pageText()
+          : await this.readElementText(entry, rootSelector);
+      // A read that found nothing, or could not look, while a person took the
+      // browser says nothing about the element. It reports them instead, so
+      // the turn waits for the handback rather than calling the element gone.
+      if (typeof text === "string" || permit()) return text;
+      return this.leaseBlockedResult(
+        "a person took control of this browser while this was running; the result was discarded and nothing was observed",
+      );
+    };
     const STABLE_ATTEMPTS = 2;
     let before = await this.snapshot(entry.page);
     for (let attempt = 0; attempt < STABLE_ATTEMPTS; attempt += 1) {
-      const text = await entry.page.pageText();
+      const text = await read();
+      if (typeof text !== "string") return text;
       const after = await this.snapshot(entry.page);
       const output = this.cappedText(text);
       // Both must hold: a same-skeleton client-side route change moves the URL
@@ -2557,12 +2581,45 @@ export class ChromiumDriver implements BrowserDriver {
         "a person has taken control of this browser; nothing was observed",
       );
     }
-    const text = await entry.page.pageText();
+    const text = await read();
+    if (typeof text !== "string") return text;
     const after = await this.snapshot(entry.page);
     return {
       ...this.observation(tabId, entry, this.cappedText(text), after, permit),
       settled: false,
     };
+  }
+
+  /**
+   * One element's text for a scoped text observation, found by Playwright's
+   * engine as an act's target is; otherwise the result that says why not.
+   */
+  private async readElementText(
+    entry: TabEntry,
+    selector: string,
+  ): Promise<string | BrowserCommandResult> {
+    if (!entry.page.elementText) {
+      return {
+        ok: false,
+        error: formatBrowserdError(
+          "unsupported_target",
+          'this browser reads only a whole page\'s text; observe {mode:"text"} without rootSelector',
+        ),
+      };
+    }
+    let text: string | null;
+    try {
+      text = await entry.page.elementText(selector);
+    } catch (error) {
+      // Not "nothing matches": Playwright could not look, for a selector it
+      // can't parse or a page that closed.
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        ok: false,
+        error: formatBrowserdError("unsupported_target", message.split("\n")[0]),
+      };
+    }
+    return text ?? { ok: false, error: nothingMatches(selector) };
   }
 
   /** The text observation's payload, cut to budget with the counted marker. */
@@ -3745,17 +3802,17 @@ export class ChromiumDriver implements BrowserDriver {
       }
       rootBackendNodeId = known.backendDOMNodeId;
     } else if (action.rootSelector !== undefined) {
-      const resolved = await resolveBackendNodeId(cdp, action.rootSelector);
+      // CSS goes to CDP as it always has. A selector CDP refuses, in the
+      // syntax act targets use, is found by Playwright's engine instead.
+      const resolved = await resolveBackendNodeId(
+        cdp,
+        action.rootSelector,
+        entry.page.elementNodeId?.bind(entry.page),
+      );
       if (resolved === null) {
         return {
           ok: false,
-          error: {
-            ok: false,
-            error:
-              `unknown_selector: nothing on this page matches ` +
-              `"${action.rootSelector}"; re-observe the page and pick a ` +
-              `selector from what it shows`,
-          },
+          error: { ok: false, error: nothingMatches(action.rootSelector) },
         };
       }
       rootBackendNodeId = resolved;

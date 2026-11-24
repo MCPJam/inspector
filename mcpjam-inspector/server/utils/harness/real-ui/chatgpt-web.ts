@@ -2,12 +2,18 @@
  * chatgpt.com.
  *
  * Built from the HARN-129 spike's walkthrough: custom MCP servers are added
- * from the composer's plus menu ("Add custom MCP server"), MCPJam's sign-in
- * page asks for consent with an organization choice, write tools ask the
- * person to confirm by default, and a cold sign-in in a fresh hosted browser
- * stopped at OpenAI's security check. The controls below are unverified
- * against the live site until a "live vendor" run records them; a missing
- * one ends the run as `page_changed`, never as a server failure.
+ * from Plugins ("Add custom MCP server"), MCPJam's sign-in page asks for
+ * consent with an organization choice, write tools ask the person to confirm
+ * by default, and a cold sign-in in a fresh hosted browser stopped at
+ * OpenAI's security check.
+ *
+ * Observed on the live site, in a signed-in hosted browser: the composer and
+ * plugin controls this module uses, and a turn that reached ChatGPT's
+ * connector setup, which hasn't completed there yet. No live turn has called
+ * a tool through a connector, so the approval prompt, the reply signals and
+ * the saved chat below are unverified against the live site until a "live
+ * vendor" run records them; a missing control ends the run as
+ * `page_changed`, never as a server failure.
  *
  * ChatGPT sends no tool use id with its MCP calls, so its calls are matched
  * to the wire by time only.
@@ -21,14 +27,12 @@ import {
   RealUiError,
   answerRunApproval,
   commonBlocker,
-  cssString,
   needsSignIn,
   pageChanged,
   requirePlaywrightSelectors,
-  waitVisibleUnlessBlocked,
   type ConversationToolCall,
   type RealUiPageModule,
-  type RealUiStep,
+  type SavedConversation,
   type StepContext,
 } from "./page-module.js";
 import {
@@ -39,34 +43,62 @@ import {
   text,
 } from "./vendor-json.js";
 
+import {
+  CHATGPT_CHALLENGE as CHALLENGE, CHATGPT_COMPOSER as COMPOSER,
+  ensureChatGptPlugin, exactRole, readChatGptAccount, waitForControl as waitVisible,
+} from "./chatgpt-controls.js";
+
 const ORIGIN = "https://chatgpt.com";
-const COMPOSER = "#prompt-textarea";
-const SEND = '[data-testid="send-button"]';
-const STOP = '[data-testid="stop-button"]';
-const PLUS = '[data-testid="composer-plus-btn"]';
+
+const STOP = 'button[aria-label="Stop generating"], [data-testid="stop-button"]';
 const USER_MESSAGE = '[data-message-author-role="user"]';
 const ASSISTANT = '[data-message-author-role="assistant"]';
 const CHAT_PATH = /^\/c\/([0-9a-f-]{36})$/;
-const CHALLENGE = 'iframe[src*="arkoselabs"], iframe[src*="challenges.cloudflare.com"]';
-const PLUGINS_PANEL = "role=dialog";
+
 const PLAN_LIMIT =
   /you(?:'|’)ve (?:reached|hit) (?:the|your) .*(?:limit|cap)|usage cap/i;
-
-const role = (kind: string, name: string) =>
-  `role=${kind}[name="${cssString(name)}"]`;
-
-const waitVisible = (driver: PageDriver, selector: string, ctx: StepContext, what: string, step: RealUiStep) =>
-  waitVisibleUnlessBlocked(driver, selector, ctx, { what, step, challengeSelectors: [CHALLENGE] });
 
 /** ChatGPT's own API takes the session's access token, read from the page. */
 async function session(driver: PageDriver): Promise<Record<string, unknown>> {
   return record(await readVendorJson(driver, `${ORIGIN}/api/auth/session`));
 }
 
-async function openPlusMenuItem(driver: PageDriver, ctx: StepContext, item: string, step: RealUiStep) {
-  await driver.click(PLUS);
-  await waitVisible(driver, role("menuitem", item), ctx, `the ${item} menu item`, step);
-  await driver.click(role("menuitem", item));
+/**
+ * The chat as the page shows it, for a browser that can't run a script in
+ * the page (the hosted one): ChatGPT's own API takes the session's token in a
+ * header, which only a script can send. The page shows no tool call times,
+ * so the turn's calls come from MCPJam's record of the wire alone.
+ */
+async function readShownConversation(
+  driver: PageDriver,
+  id: string,
+  ctx: StepContext,
+): Promise<SavedConversation> {
+  const url = `${ORIGIN}/c/${id}`;
+  if ((await driver.url()) !== url) await driver.navigate(url);
+  await waitVisible(driver, ASSISTANT, ctx, "the saved reply", "read_conversation");
+  // A person can take the browser to another chat between these reads and
+  // hand it back. What was read then belongs to that chat, not this id.
+  const stillShown = async () => {
+    const shown = new URL(await driver.url());
+    if (shown.origin === ORIGIN && CHAT_PATH.exec(shown.pathname)?.[1] === id) return;
+    throw new RealUiError({
+      kind: "driver",
+      step: "read_conversation",
+      message: "The browser moved to another chat while the reply was read. Run it again.",
+    });
+  };
+  const userPrompt = await driver.readText(USER_MESSAGE);
+  await stillShown();
+  const replyText = (await driver.readText(`${ASSISTANT} >> nth=-1`)) ?? "";
+  await stillShown();
+  return {
+    conversationId: id,
+    url,
+    ...(userPrompt ? { userPrompt } : {}),
+    replyText,
+    toolCalls: [],
+  };
 }
 
 export const chatgptWebPageModule: RealUiPageModule = {
@@ -79,10 +111,11 @@ export const chatgptWebPageModule: RealUiPageModule = {
     const blocked = await this.blocker(driver);
     if (blocked) throw new RealUiError({ ...blocked, step: "sign_in_check" });
     const url = new URL(await driver.url());
-    if (url.origin !== ORIGIN || (await driver.readText('[data-testid="login-button"]')) !== undefined) {
+    if (url.origin !== ORIGIN || (await driver.readText('[data-testid="login-button"], a[href^="/auth/login"]')) !== undefined) {
       throw needsSignIn("signed_out", "sign_in_check", "The ChatGPT account is signed out.");
     }
     await waitVisible(driver, COMPOSER, ctx, "the chat composer", "sign_in_check");
+    if (!driver.canEvaluate) return readChatGptAccount(driver, ctx);
     const current = await session(driver);
     const user = record(current.user);
     if (!text(user.email)) {
@@ -108,48 +141,12 @@ export const chatgptWebPageModule: RealUiPageModule = {
 
   async ensureConnector(driver, connector, ctx) {
     requirePlaywrightSelectors(driver, "connector", "chatgpt.com");
-    // Plugins, then +, then "Add custom MCP server": the walkthrough's path.
-    // A server already added under this name is reused, never added twice.
+    // Plugins, then Add, then "Add custom MCP server", as the live site
+    // showed it. A server already added under this name is reused once its
+    // address checks out, never added twice.
     await driver.navigate(`${ORIGIN}/`);
     await waitVisible(driver, COMPOSER, ctx, "the chat composer", "connector");
-    await openPlusMenuItem(driver, ctx, "Plugins", "connector");
-    const existing = `${PLUGINS_PANEL} >> text="${cssString(connector.name)}"`;
-    const add = `${PLUGINS_PANEL} >> role=button[name=/^(\\+|Add)$/]`;
-    await driver.waitFor(
-      async () =>
-        (await driver.readText(existing)) !== undefined ||
-        (await driver.readText(add)) !== undefined,
-      { timeoutMs: ctx.timeoutMs, signal: ctx.signal, what: "the plugins list" },
-    );
-    if ((await driver.readText(existing)) !== undefined) {
-      const shown = (await driver.readText(`${PLUGINS_PANEL} >> text="${cssString(connector.url)}"`)) !== undefined;
-      await driver.press("Escape");
-      if (shown) return;
-      throw new RealUiError({
-        kind: "connector_failed",
-        step: "connector",
-        message: `ChatGPT has a server named ${connector.name} with a different address. Remove it in ChatGPT, then run again.`,
-      });
-    }
-    await driver.click(add);
-    await waitVisible(driver, role("menuitem", "Add custom MCP server"), ctx, "the add server item", "connector");
-    await driver.click(role("menuitem", "Add custom MCP server"));
-    // The form opens over the Plugins panel, a dialog too, so the form is the
-    // dialog with the URL field; the panel's own Add button never matches.
-    const dialog = 'role=dialog >> internal:has="role=textbox[name=/url/i]"';
-    await waitVisible(driver, dialog, ctx, "the add server form", "connector");
-    await driver.type(`${dialog} >> role=textbox[name=/name/i]`, connector.name);
-    await driver.type(`${dialog} >> role=textbox[name=/url/i]`, connector.url);
-    await driver.click(`${dialog} >> role=button[name=/^(Create|Add|Connect)$/]`);
-    await driver.waitFor(
-      async () => {
-        // MCPJam's own sign-in page asks for consent: a person's step.
-        const blocked = await commonBlocker(driver, { challengeSelectors: [CHALLENGE], step: "connector" });
-        if (blocked) throw new RealUiError(blocked);
-        return (await driver.readText(dialog)) === undefined;
-      },
-      { timeoutMs: ctx.timeoutMs, signal: ctx.signal, what: "ChatGPT to add the server" },
-    );
+    await ensureChatGptPlugin(driver, connector, ctx);
   },
 
   async openNewChat(driver, ctx) {
@@ -161,18 +158,15 @@ export const chatgptWebPageModule: RealUiPageModule = {
   },
 
   async enableConnector(driver, name, ctx) {
-    const toggle = role("menuitemcheckbox", name);
-    await openPlusMenuItem(driver, ctx, "More", "enable_connector");
-    await waitVisible(driver, toggle, ctx, "the server in the tools menu", "enable_connector");
-    if ((await driver.readText(`${toggle}[checked=true]`)) === undefined) {
-      await driver.click(toggle);
-    }
-    await driver.press("Escape");
+    await driver.click(exactRole("button", "Add files and more"));
+    const plugin = exactRole("button", `${name} ${name}`);
+    await waitVisible(driver, plugin, ctx, "the installed plugin in the composer", "enable_connector");
+    await driver.click(plugin);
   },
 
   async send(driver, prompt, ctx) {
     await driver.type(COMPOSER, prompt);
-    await driver.click(SEND);
+    await driver.click(exactRole("button", "Send"));
     let conversationUrl: string | undefined;
     await driver.waitFor(
       async () => {
@@ -188,6 +182,9 @@ export const chatgptWebPageModule: RealUiPageModule = {
   },
 
   async findSent(driver, prompt, _ctx, since) {
+    // Without a script the chat list can't be read, so the send stays
+    // ambiguous rather than being guessed.
+    if (!driver.canEvaluate) return undefined;
     const token = text((await session(driver)).accessToken);
     if (!token) return undefined;
     const page = record(
@@ -221,9 +218,10 @@ export const chatgptWebPageModule: RealUiPageModule = {
     return { finished: signals.length === 3, signals };
   },
 
-  async readConversation(driver, conversationUrl) {
+  async readConversation(driver, conversationUrl, ctx) {
     const id = CHAT_PATH.exec(new URL(conversationUrl).pathname)?.[1];
     if (!id) throw pageChanged("read_conversation", "The chat's address has no conversation id.");
+    if (!driver.canEvaluate) return readShownConversation(driver, id, ctx);
     const token = text((await session(driver)).accessToken);
     if (!token) throw needsSignIn("signed_out", "read_conversation", "The ChatGPT account is signed out.");
     const saved = record(

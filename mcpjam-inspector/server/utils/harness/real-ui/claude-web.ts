@@ -200,6 +200,16 @@ export const claudeWebPageModule: RealUiPageModule = {
 
   async ensureConnector(driver, connector, ctx, keep = []) {
     requirePlaywrightSelectors(driver, "connector", "claude.ai");
+    // The chat's connector menu opens with a key pressed on it. A browser
+    // that can't do that is refused here, before any connector on the
+    // account changes, not at the menu after.
+    if (driver.pressesOnElement === false) {
+      throw new RealUiError({
+        kind: "driver",
+        step: "connector",
+        message: "MCPJam can't use claude.ai in the hosted browser yet. Run this client from the local app.",
+      });
+    }
     const origin = URL.canParse(connector.url) ? new URL(connector.url).origin : "";
     if (!origin || !isMcpjamName(connector.name) || !isForwardingEndpoint(connector.url, origin)) {
       throw new RealUiError({
