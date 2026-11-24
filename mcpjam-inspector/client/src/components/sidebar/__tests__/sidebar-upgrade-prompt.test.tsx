@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { SidebarUpgradePrompt } from "../sidebar-upgrade-prompt";
+import { AccountCreatedToast } from "../sidebar-guest-signup-prompt";
 import { markPendingSignUpToast } from "@/lib/pending-signup-toast";
 
 const mocks = vi.hoisted(() => ({
@@ -15,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   setInterval: vi.fn(),
   recipients: vi.fn(),
   assign: vi.fn(),
+  hasPro: vi.fn(() => true),
 }));
 
 vi.mock("@/lib/analytics", () => ({ track: mocks.track }));
@@ -40,7 +42,9 @@ vi.mock("@/hooks/useOrganizationBilling", () => ({
       currency: "usd",
       plans: {
         free: { displayName: "Free" },
-        pro: { displayName: "Pro", prices: { monthly: 2900, annual: 29000 } },
+        pro: mocks.hasPro()
+          ? { displayName: "Pro", prices: { monthly: 2900, annual: 29000 } }
+          : undefined,
       },
     },
   }),
@@ -84,6 +88,8 @@ function freeStatus(overrides: Record<string, unknown> = {}) {
     effectivePlan: "free",
     trialStatus: "none",
     canManageBilling: true,
+    isOwner: true,
+    billingConfigured: true,
     ...overrides,
   };
 }
@@ -104,6 +110,7 @@ describe("SidebarUpgradePrompt", () => {
     vi.clearAllMocks();
     sessionStorage.clear();
     mocks.user.mockReturnValue(null);
+    mocks.hasPro.mockReturnValue(true);
     mocks.billingStatus.mockReturnValue(freeStatus());
     mocks.start.mockResolvedValue({ redirected: true, shouldDismiss: false });
     mocks.recipients.mockReturnValue([
@@ -143,12 +150,8 @@ describe("SidebarUpgradePrompt", () => {
     markPendingSignUpToast();
     mocks.user.mockReturnValue({ createdAt: new Date().toISOString() });
 
-    const { rerender } = renderPrompt({ isGuest: false, organizationId: "org-1" });
-    rerender(
-      <SidebarProvider>
-        <SidebarUpgradePrompt isGuest={false} organizationId="org-1" />
-      </SidebarProvider>,
-    );
+    const { rerender } = render(<AccountCreatedToast />);
+    rerender(<AccountCreatedToast />);
 
     expect(mocks.toastSuccess).toHaveBeenCalledTimes(1);
     expect(mocks.toastSuccess).toHaveBeenCalledWith(
@@ -161,9 +164,41 @@ describe("SidebarUpgradePrompt", () => {
     markPendingSignUpToast();
     mocks.user.mockReturnValue({ createdAt: "2024-01-01T00:00:00.000Z" });
 
-    renderPrompt({ isGuest: false, organizationId: "org-1" });
+    render(<AccountCreatedToast />);
 
     expect(mocks.toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("skips the account toast for an account made minutes before the click", () => {
+    mocks.user.mockReturnValue({
+      createdAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+    });
+    markPendingSignUpToast();
+
+    render(<AccountCreatedToast />);
+
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("shows nothing for an owner when billing is not configured", () => {
+    mocks.billingStatus.mockReturnValue(
+      freeStatus({ canManageBilling: false, billingConfigured: false }),
+    );
+
+    renderPrompt({ isGuest: false, organizationId: "org-1" });
+
+    expect(screen.queryByTestId(/^sidebar-prompt-/)).toBeNull();
+  });
+
+  it("hides the member card when the catalog offers no Pro", () => {
+    mocks.hasPro.mockReturnValue(false);
+    mocks.billingStatus.mockReturnValue(
+      freeStatus({ canManageBilling: false, isOwner: false }),
+    );
+
+    renderPrompt({ isGuest: false, organizationId: "org-1" });
+
+    expect(screen.queryByTestId("sidebar-prompt-owner_request")).toBeNull();
   });
 
   it("opens the Pro confirm dialog in place for a Free owner", async () => {
@@ -201,7 +236,7 @@ describe("SidebarUpgradePrompt", () => {
   });
 
   it("asks the owners instead of opening checkout for a member", () => {
-    mocks.billingStatus.mockReturnValue(freeStatus({ canManageBilling: false }));
+    mocks.billingStatus.mockReturnValue(freeStatus({ canManageBilling: false, isOwner: false }));
     renderPrompt({ isGuest: false, organizationId: "org-1" });
 
     fireEvent.click(screen.getByTestId("sidebar-prompt-owner_request"));
@@ -213,7 +248,7 @@ describe("SidebarUpgradePrompt", () => {
   });
 
   it("hides the member card when the org has no owner to ask", () => {
-    mocks.billingStatus.mockReturnValue(freeStatus({ canManageBilling: false }));
+    mocks.billingStatus.mockReturnValue(freeStatus({ canManageBilling: false, isOwner: false }));
     mocks.recipients.mockReturnValue([]);
     renderPrompt({ isGuest: false, organizationId: "org-1" });
 

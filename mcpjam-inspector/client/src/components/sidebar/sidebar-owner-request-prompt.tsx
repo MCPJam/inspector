@@ -1,4 +1,5 @@
 import { buildUpgradeRequestMail } from "@/components/billing/RequestUpgradeButton";
+import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import { useUpgradeRequestRecipients } from "@/hooks/use-upgrade-request-recipients";
 import { track } from "@/lib/analytics";
 import {
@@ -9,7 +10,8 @@ import {
 
 /**
  * Free org, no billing rights: checkout would dead-end, so the card drafts
- * the upgrade request to the org's owners instead.
+ * the upgrade request to the org's owners instead. Orgs on the legacy
+ * catalog have no Pro to ask for.
  */
 export function SidebarOwnerRequestPrompt({
   organizationId,
@@ -19,12 +21,15 @@ export function SidebarOwnerRequestPrompt({
   organizationName: string;
 }) {
   const { recipients } = useUpgradeRequestRecipients(organizationId);
-  const href = buildUpgradeRequestMail({
-    recipients,
-    organizationName,
-    teamName: "Pro",
-    origin: "sidebar",
-  });
+  const { planCatalog } = useOrganizationBilling(organizationId);
+  const href = !planCatalog?.plans.pro
+    ? null
+    : buildUpgradeRequestMail({
+        recipients,
+        organizationName,
+        teamName: "Pro",
+        origin: "sidebar",
+      });
   useSidebarPromptShown(href ? "owner_request" : null, organizationId);
   if (!href) return null;
 

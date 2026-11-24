@@ -22,17 +22,20 @@ export function markPendingSignUpToast(now: number = Date.now()): void {
 }
 
 /** Read and clear in one step, expired or not. */
-export function consumePendingSignUpToast(now: number = Date.now()): boolean {
+/** Returns when the sign-up click happened, or null when no live marker exists. */
+export function consumePendingSignUpToast(
+  now: number = Date.now(),
+): number | null {
   let storedAt: unknown = null;
   try {
     const raw = sessionStorage.getItem(PENDING_SIGNUP_TOAST_STORAGE_KEY);
     sessionStorage.removeItem(PENDING_SIGNUP_TOAST_STORAGE_KEY);
     storedAt = raw ? (JSON.parse(raw) as { storedAt?: unknown }).storedAt : null;
   } catch {
-    return false;
+    return null;
   }
-  return (
-    typeof storedAt === "number" &&
+  return typeof storedAt === "number" &&
     Math.abs(now - storedAt) <= PENDING_SIGNUP_TOAST_TTL_MS
-  );
+    ? storedAt
+    : null;
 }

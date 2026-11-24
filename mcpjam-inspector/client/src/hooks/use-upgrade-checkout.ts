@@ -124,7 +124,9 @@ export function readUpgradeReturnToken(
     return {
       organizationId: parsed.organizationId,
       origin:
-        parsed.origin === "credits" || parsed.origin === "native_harness"
+        parsed.origin === "credits" ||
+        parsed.origin === "native_harness" ||
+        parsed.origin === "sidebar"
           ? parsed.origin
           : "evals",
       userId: currentUserId,

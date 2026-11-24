@@ -10,20 +10,20 @@ describe("pending sign-up toast marker", () => {
 
   it("is consumed exactly once", () => {
     markPendingSignUpToast(1_000);
-    expect(consumePendingSignUpToast(2_000)).toBe(true);
-    expect(consumePendingSignUpToast(2_000)).toBe(false);
+    expect(consumePendingSignUpToast(2_000)).toBe(1_000);
+    expect(consumePendingSignUpToast(2_000)).toBeNull();
   });
 
   it("expires, and is cleared even when expired", () => {
     markPendingSignUpToast(0);
-    expect(consumePendingSignUpToast(PENDING_SIGNUP_TOAST_TTL_MS + 1)).toBe(
-      false,
-    );
+    expect(
+      consumePendingSignUpToast(PENDING_SIGNUP_TOAST_TTL_MS + 1),
+    ).toBeNull();
     expect(sessionStorage.length).toBe(0);
   });
 
   it("ignores a malformed value", () => {
     sessionStorage.setItem("mcpjam:pending-signup-toast-v1", "{nope");
-    expect(consumePendingSignUpToast()).toBe(false);
+    expect(consumePendingSignUpToast()).toBeNull();
   });
 });
