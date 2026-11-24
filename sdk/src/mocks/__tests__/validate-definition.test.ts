@@ -62,17 +62,101 @@ describe("validateMockDefinition shape", () => {
     expect(result.issues[1].message).toContain("description");
   });
 
-  it("refuses prompts, resources and resourceTemplates as not available yet", () => {
-    for (const key of ["prompts", "resources", "resourceTemplates"]) {
-      const result = validateMockDefinition({ [key]: {} });
-      expect(result.ok).toBe(false);
-      if (result.ok) continue;
-      expect(result.issues).toHaveLength(1);
-      expect(result.issues[0]).toMatchObject({
-        code: "not_available_yet",
-        path: key,
-      });
-    }
+  it("accepts prompts and resources (skills and apps among them)", () => {
+    const definition = {
+      prompts: {
+        summarize: {
+          description: "Summarize a topic.",
+          arguments: [{ name: "topic", required: true }],
+          messages: [
+            {
+              role: "user",
+              content: { type: "text", text: "Summarize {{input.topic}}." },
+            },
+          ],
+        },
+        old_prompt: { hidden: true },
+        titled: { title: "Better title" },
+      },
+      resources: {
+        "skill://triage/SKILL.md": {
+          text: "---\nname: triage\ndescription: Sort issues.\n---\nBody",
+        },
+        "ui://counter/app.html": { text: "<button>+1</button>" },
+        "file:///logo.png": {
+          name: "logo",
+          blob: "aGVsbG8=",
+          mimeType: "image/png",
+        },
+        "file:///hidden.txt": { hidden: true },
+      },
+    };
+    expect(validateMockDefinition(definition).ok).toBe(true);
+  });
+
+  it("checks the shape of prompts and resources, naming the path of each problem", () => {
+    const issues = (input: unknown) => {
+      const result = validateMockDefinition(input);
+      return result.ok ? [] : result.issues.map((i) => [i.code, i.path]);
+    };
+    expect(issues({ prompts: { p: { messages: [] } } })).toEqual([
+      ["invalid_type", "prompts.p.messages"],
+    ]);
+    expect(
+      issues({
+        prompts: {
+          p: { messages: [{ role: "system", content: { type: "text" } }] },
+        },
+      })
+    ).toEqual([["invalid_value", "prompts.p.messages.0.role"]]);
+    expect(
+      issues({ prompts: { p: { hidden: true, description: "x" } } })
+    ).toEqual([["param_conflict", "prompts.p"]]);
+    expect(issues({ prompts: { p: { descripton: "x" } } })).toEqual([
+      ["unknown_field", "prompts.p.descripton"],
+    ]);
+    expect(issues({ resources: { "no-scheme": { text: "x" } } })).toEqual([
+      ["invalid_value", "resources.no-scheme"],
+    ]);
+    expect(
+      issues({ resources: { "file:///a": { text: "x", blob: "eA==" } } })
+    ).toEqual([["param_conflict", "resources.file:///a"]]);
+    expect(
+      issues({ resources: { "file:///a": { blob: "not base64!" } } })
+    ).toEqual([["invalid_value", "resources.file:///a.blob"]]);
+    expect(
+      issues({
+        resources: { "ui://a/app.html": { text: "x", mimeType: "text/html" } },
+      })
+    ).toEqual([["invalid_value", "resources.ui://a/app.html.mimeType"]]);
+    expect(
+      issues({ resources: { "skill://s/SKILL.md": { blob: "eA==" } } })
+    ).toEqual([["invalid_type", "resources.skill://s/SKILL.md"]]);
+    expect(issues({ prompts: "x" })).toEqual([["invalid_type", "prompts"]]);
+  });
+
+  it("refuses adding prompts or resources while removing their capability", () => {
+    const issues = (input: unknown) => {
+      const result = validateMockDefinition(input);
+      return result.ok ? [] : result.issues.map((i) => [i.code, i.path]);
+    };
+    expect(
+      issues({
+        capabilities: { prompts: null },
+        prompts: {
+          p: {
+            messages: [{ role: "user", content: { type: "text", text: "x" } }],
+          },
+        },
+      })
+    ).toEqual([["param_conflict", "capabilities.prompts"]]);
+    // Hiding a real prompt while removing the capability is consistent.
+    expect(
+      issues({
+        capabilities: { prompts: null },
+        prompts: { p: { hidden: true } },
+      })
+    ).toEqual([]);
   });
 
   it("accepts answer.from real, saved, model or omitted and refuses anything else", () => {

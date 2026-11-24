@@ -14,6 +14,10 @@ export const MOCK_ERROR_CODES = {
   methodUnavailable: ProtocolErrorCode.MethodNotFound,
   /** `tools/call` for a name the mock does not list (JSON-RPC invalid params). */
   toolNotFound: ProtocolErrorCode.InvalidParams,
+  /** `prompts/get` for a prompt the mock does not list (JSON-RPC invalid params). */
+  promptNotFound: ProtocolErrorCode.InvalidParams,
+  /** `resources/read` for a resource the mock does not serve (MCP's own code). */
+  resourceNotFound: -32002,
 } as const;
 
 export interface MissingEditedTool {
@@ -77,5 +81,36 @@ export function realUnreachableError(cause: unknown): ProtocolError {
     {
       mockCode: "mock_real_unreachable",
     }
+  );
+}
+
+export type MockItemKind = "prompt" | "resource";
+
+/** `prompts/list` and its kin: the definition edits something the real server no longer lists. */
+export function editedItemMissingError(
+  kind: MockItemKind,
+  keys: string[]
+): ProtocolError {
+  const names = keys.map((key) => `"${key}"`).join(", ");
+  return new ProtocolError(
+    MOCK_ERROR_CODES.editedToolMissing,
+    `The mock edits the ${kind}${keys.length === 1 ? "" : "s"} ${names}, which the real server no longer lists. Update the mock to drop ${keys.length === 1 ? "that edit" : "those edits"}.`,
+    { mockCode: "mock_edited_item_missing", kind, items: keys }
+  );
+}
+
+export function promptNotFoundError(name: string): ProtocolError {
+  return new ProtocolError(
+    MOCK_ERROR_CODES.promptNotFound,
+    `Prompt ${name} not found`,
+    { mockCode: "mock_prompt_not_found", prompt: name }
+  );
+}
+
+export function resourceNotFoundError(uri: string): ProtocolError {
+  return new ProtocolError(
+    MOCK_ERROR_CODES.resourceNotFound,
+    `Resource ${uri} not found`,
+    { mockCode: "mock_resource_not_found", uri }
   );
 }

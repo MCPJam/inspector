@@ -5,7 +5,9 @@ import type {
 } from "@modelcontextprotocol/server";
 import type { MockDefinition } from "./definition-types.js";
 import type { MockObserver } from "./mock-observer.js";
+import { registerItemHandlers } from "./item-handlers.js";
 import { pageOf } from "./paging.js";
+import { ownsItems } from "./resolve-items.js";
 import type { MockModelAnswerer } from "./model-answers.js";
 import { answerItself } from "./self-answer.js";
 import {
@@ -40,6 +42,11 @@ function effectiveCapabilities(
     if (value === null) delete merged[key];
     else merged[key] = value;
   }
+  // What the definition adds, the mock declares, unless the definition says otherwise.
+  const stated = definition.capabilities ?? {};
+  const own = ownsItems(definition);
+  if (own.prompts && !("prompts" in stated)) merged.prompts ??= {};
+  if (own.resources && !("resources" in stated)) merged.resources ??= {};
   return merged as ServerCapabilities;
 }
 
@@ -155,6 +162,14 @@ async function buildServer(
     await relay.flush();
     return result;
   });
+
+  const itemContext = {
+    definition,
+    real,
+    realCapabilities: info.capabilities,
+    mockCapabilities,
+  };
+  registerItemHandlers(server, itemContext);
 
   // Every other method goes to the real server when both sides have it, and is
   // refused by name when only one does.

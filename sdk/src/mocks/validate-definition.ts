@@ -1,10 +1,7 @@
 import { checkDefinitionCaps } from "./definition-caps.js";
 import type { MockCapIssueCode } from "./definition-caps.js";
-import {
-  MAX_SAVED_CASES,
-  MOCK_CAPABILITY_KEYS,
-  MOCK_RESERVED_DEFINITION_KEYS,
-} from "./definition-types.js";
+import { MAX_SAVED_CASES, MOCK_CAPABILITY_KEYS } from "./definition-types.js";
+import { checkItems } from "./validate-items.js";
 import type { MockDefinition } from "./definition-types.js";
 
 export type MockIssueCode =
@@ -12,7 +9,6 @@ export type MockIssueCode =
   | "invalid_type"
   | "invalid_value"
   | "unknown_field"
-  | "not_available_yet"
   | "param_conflict"
   | "uncallable_input";
 
@@ -23,7 +19,8 @@ export interface MockIssue {
 }
 
 export type MockValidationResult =
-  { ok: true; definition: MockDefinition } | { ok: false; issues: MockIssue[] };
+  | { ok: true; definition: MockDefinition }
+  | { ok: false; issues: MockIssue[] };
 
 const TOP_FIELDS = [
   "serverInfo",
@@ -31,6 +28,8 @@ const TOP_FIELDS = [
   "capabilities",
   "pageSize",
   "tools",
+  "prompts",
+  "resources",
 ];
 const MAX_PAGE_SIZE = 1000;
 const TOOL_FIELDS = [
@@ -334,17 +333,7 @@ export function validateMockDefinition(input: unknown): MockValidationResult {
   for (const issue of checkDefinitionCaps(input))
     c.add(issue.code, issue.path, issue.message);
   if (c.issues.length === 0 && c.object(input, "")) {
-    for (const key of MOCK_RESERVED_DEFINITION_KEYS) {
-      if (key in input) {
-        c.add(
-          "not_available_yet",
-          key,
-          `Editing "${key}" is not available yet. Remove it and edit tools instead.`
-        );
-      }
-    }
-    // Reserved keys were reported by name above, so they are allowed here.
-    c.fields(input, [...TOP_FIELDS, ...MOCK_RESERVED_DEFINITION_KEYS], "");
+    c.fields(input, TOP_FIELDS, "");
     if ("serverInfo" in input && c.object(input.serverInfo, "serverInfo")) {
       c.fields(input.serverInfo, INFO_FIELDS, "serverInfo");
       for (const key of INFO_FIELDS) {
@@ -373,6 +362,7 @@ export function validateMockDefinition(input: unknown): MockValidationResult {
       for (const [name, tool] of Object.entries(input.tools))
         c.tool(name, tool, at("tools", name));
     }
+    checkItems(input, (issue) => c.add(issue.code, issue.path, issue.message));
   }
   if (c.issues.length > 0) return { ok: false, issues: c.issues };
   // The checks above establish every field's type, so this is the one place the

@@ -187,3 +187,82 @@ describe("recordUnmatchedCalls", () => {
     expect(body.arguments).toEqual({});
   });
 });
+
+describe("V10 at the route: a mock from nothing, in process", () => {
+  const nothing = resolvedMock({
+    baseServerId: null,
+    definition: {
+      tools: {
+        add: {
+          inputSchema: {
+            type: "object",
+            properties: { a: { type: "number" } },
+          },
+          answer: {
+            from: "saved",
+            cases: [{ result: { content: [{ type: "text", text: "2" }] } }],
+          },
+        },
+      },
+      prompts: {
+        summarize: {
+          arguments: [{ name: "topic" }],
+          messages: [
+            {
+              role: "user",
+              content: { type: "text", text: "Summarize {{input.topic}}." },
+            },
+          ],
+        },
+      },
+      resources: {
+        "skill://triage/SKILL.md": {
+          text: "---\nname: triage\ndescription: Sort.\n---\nBody",
+        },
+        "ui://counter/app.html": { text: "<button>+1</button>" },
+      },
+    },
+  });
+
+  it("lists and answers every family with no real server and no request beyond the route", async () => {
+    const deps = {
+      resolve: vi.fn(async () => nothing),
+      recordUnmatched: vi.fn(),
+    };
+    const client = await dialMock((r) =>
+      serveMock(r, "mock1", door("ann"), deps),
+    );
+    expect((await client.listTools("mock")).tools.map((t) => t.name)).toEqual([
+      "add",
+    ]);
+    expect(
+      (
+        (await client.executeTool("mock", "add", { a: 1 })) as {
+          content: unknown[];
+        }
+      ).content,
+    ).toEqual([{ type: "text", text: "2" }]);
+    expect(
+      (await client.listPrompts("mock")).prompts.map((p) => p.name),
+    ).toEqual(["summarize"]);
+    const prompt = await client.getPrompt("mock", {
+      name: "summarize",
+      arguments: { topic: "tides" },
+    });
+    expect(prompt.messages[0]).toMatchObject({
+      content: { text: "Summarize tides." },
+    });
+    expect(
+      (await client.listResources("mock")).resources.map((r) => r.uri),
+    ).toEqual(["skill://triage/SKILL.md", "ui://counter/app.html"]);
+    const app = await client.readResource("mock", {
+      uri: "ui://counter/app.html",
+    });
+    expect(app.contents[0]).toMatchObject({
+      text: "<button>+1</button>",
+      mimeType: "text/html;profile=mcp-app",
+    });
+    expect(deps.recordUnmatched).not.toHaveBeenCalled();
+    await client.disconnectAllServers();
+  });
+});

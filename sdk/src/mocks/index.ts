@@ -9,11 +9,23 @@ export * from "./build-mock.js";
 export * from "./mock-errors.js";
 export * from "./real-server.js";
 export {
+  planPromptGet,
+  planResourceRead,
+  resolveMockPrompts,
+  resolveMockResources,
+  type ResolvedItems,
+} from "./resolve-items.js";
+export {
   hashRealToolListing,
   mergeTool,
   resolveMockTools,
 } from "./resolve-tools.js";
-export { inverseOfChanges, type InverseMock, type OldServer, type Unrestorable } from "./inverse.js";
+export {
+  inverseOfChanges,
+  type InverseMock,
+  type OldServer,
+  type Unrestorable,
+} from "./inverse.js";
 export type {
   MockAnswerSource,
   MockObservedEvent,

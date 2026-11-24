@@ -10,7 +10,12 @@
  */
 
 export type JsonValue =
-  string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
 
 export type JsonObject = { [key: string]: JsonValue };
 
@@ -118,6 +123,60 @@ export interface MockTool {
   answer?: MockAnswer;
 }
 
+export interface MockPromptArgument {
+  name: string;
+  title?: string;
+  description?: string;
+  required?: boolean;
+}
+
+/** `content` is one content block, as MCP carries it: `{ type: "text", text }` and the like. */
+export type MockPromptMessage = {
+  role: "user" | "assistant";
+  content: JsonObject;
+};
+
+/**
+ * An entry states only what it changes on the real server's prompt of the same
+ * name. With `messages` the prompt is the mock's own: it is listed from the
+ * entry (added when the real server lacks it) and `prompts/get` answers from
+ * the messages, with `{{input.x}}` filled from the call's arguments.
+ */
+export interface MockPrompt {
+  /** Remove the prompt under this name. Nothing else may accompany it. */
+  hidden?: true;
+  title?: string;
+  description?: string;
+  /** Replaces the real prompt's argument list whole. */
+  arguments?: MockPromptArgument[];
+  icons?: JsonObject[];
+  /** Merged key by key over the real prompt's `_meta`. */
+  _meta?: JsonObject;
+  messages?: MockPromptMessage[];
+}
+
+/**
+ * A resource of the real server, edited, hidden, or added. With `text` or
+ * `blob` (base64) the mock serves the content itself. An added resource needs
+ * one of them; its name defaults to the last segment of its URI.
+ */
+export interface MockResource {
+  hidden?: true;
+  name?: string;
+  title?: string;
+  description?: string;
+  mimeType?: string;
+  size?: number;
+  annotations?: JsonObject;
+  icons?: JsonObject[];
+  _meta?: JsonObject;
+  text?: string;
+  blob?: string;
+}
+
+/** The mimeType of an MCP App's HTML. */
+export const MCP_APP_MIME_TYPE = "text/html;profile=mcp-app";
+
 export interface MockServerInfo {
   name?: string;
   title?: string;
@@ -152,11 +211,8 @@ export interface MockDefinition {
    */
   pageSize?: number;
   tools?: Record<string, MockTool>;
+  /** Keyed by the prompt name a client sees. */
+  prompts?: Record<string, MockPrompt>;
+  /** Keyed by resource URI. A `skill://` entry is a skill file and a `ui://` entry an MCP App. */
+  resources?: Record<string, MockResource>;
 }
-
-/** Top-level keys a later stage builds; the validator refuses them today. */
-export const MOCK_RESERVED_DEFINITION_KEYS = [
-  "prompts",
-  "resources",
-  "resourceTemplates",
-] as const;
