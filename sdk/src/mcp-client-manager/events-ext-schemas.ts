@@ -166,9 +166,9 @@ export const eventsSubscribeResultSchema = z
 /** `events/unsubscribe` result — an empty object. */
 export const eventsUnsubscribeResultSchema = z.looseObject({});
 
-/** SEP-3415 wraps every successful Events result in a complete result. */
+/** The modern client requires and strips `complete` from the wire before this check. */
 export const betaEventsResultSchema = z.looseObject({
-  resultType: z.literal("complete"),
+  resultType: z.literal("complete").optional(),
 });
 
 /** The nested JSON-RPC error carried by `terminated` / `notifications/events/error`. */

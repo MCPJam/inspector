@@ -92,10 +92,14 @@ it("validates Beta results and uses legacy error meanings only on the legacy con
 
   await manager.connectToServer(SERVER_ID, { url: beta.url, mcpProtocolVersion: "2026-07-28", baseFetch });
   expect(manager.getEventsSupport(SERVER_ID)).toMatchObject({ beta: true, declared: true });
-  expect(await manager.listServerEvents(SERVER_ID)).toMatchObject({ resultType: "complete" });
+  expect((await manager.listServerEvents(SERVER_ID)).events.length).toBeGreaterThan(0);
 
   responses = { "events/list": { result: { events: [] } } };
   await expect(manager.listServerEvents(SERVER_ID)).rejects.toBeInstanceOf(InvalidEventsPayloadError);
+  responses["events/list"] = { result: { resultType: "input_required", requestState: "pending" } };
+  await expect(manager.listServerEvents(SERVER_ID)).rejects.toBeInstanceOf(InvalidEventsPayloadError);
+
+  responses = {};
 
   responses = { "events/unsubscribe": { error: { code: -32011, message: "Application error" } } };
   await expect(manager.unsubscribeServerEvents(SERVER_ID, unsubscribe)).rejects.toMatchObject({ code: -32011 });

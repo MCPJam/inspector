@@ -19,6 +19,7 @@
  */
 
 import { z } from "zod";
+import { SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import type { ManagedMcpClient } from "./managed-mcp-client.js";
 import type { ClientRequestOptions } from "./types.js";
 import {
@@ -28,6 +29,7 @@ import {
   assertEventsSubscribeResult,
   assertEventsUnsubscribeResult,
   classifyEventsRpcError,
+  InvalidEventsPayloadError,
   rememberEventsErrorProfile,
   type EventsWireProfile,
 } from "./events-ext-guards.js";
@@ -100,11 +102,15 @@ export async function sendEventsRequest(
     const result = await ctx.client.requestWithSchema(
       { method, params },
       EVENTS_WIRE_RESULT_SCHEMA,
-      ctx.options
+      profile === "beta" ? { ...ctx.options, allowInputRequired: true } : ctx.options
     );
     if (profile === "beta") assertBetaEventsResult(method, result);
     return result;
   } catch (error) {
+    if (profile === "beta" && error instanceof SdkError &&
+      (error.code === SdkErrorCode.InvalidResult || error.code === SdkErrorCode.UnsupportedResultType)) {
+      throw new InvalidEventsPayloadError(`${method} result`, [error.message], { method });
+    }
     rememberEventsErrorProfile(error, profile);
     throw error;
   }
