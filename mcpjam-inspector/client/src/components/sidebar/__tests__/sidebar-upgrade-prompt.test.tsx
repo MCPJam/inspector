@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { SidebarUpgradePrompt } from "../sidebar-upgrade-prompt";
 import { AccountCreatedToast } from "../sidebar-guest-signup-prompt";
+import { SidebarProConfirmDialog } from "../sidebar-pro-upgrade-prompt";
 import { markPendingSignUpToast } from "@/lib/pending-signup-toast";
 
 const mocks = vi.hoisted(() => ({
@@ -75,12 +76,15 @@ vi.mock("@/components/organization/PlanChangeConfirmDialog", () => ({
     plan,
     onConfirm,
     onIntervalChange,
+    onOpenChange,
   }: {
     plan: string;
     onConfirm: () => void;
     onIntervalChange: (interval: "monthly" | "annual") => void;
+    onOpenChange: (open: boolean) => void;
   }) => (
     <div data-testid="plan-confirm-dialog" data-plan={plan}>
+      <button onClick={() => onOpenChange(false)}>Close</button>
       <button onClick={() => onIntervalChange("annual")}>Annual</button>
       <button onClick={onConfirm}>Continue to checkout</button>
     </div>
@@ -106,6 +110,7 @@ function renderPrompt(props: { isGuest: boolean; organizationId?: string }) {
         isGuest={props.isGuest}
         organizationId={props.organizationId ?? null}
       />
+      <SidebarProConfirmDialog />
     </SidebarProvider>,
   );
 }
@@ -209,7 +214,10 @@ describe("SidebarUpgradePrompt", () => {
   });
 
   it("opens the Plans page with the Pro confirm dialog for a Free owner", async () => {
-    renderPrompt({ isGuest: false, organizationId: "org-1" });
+    const { rerender } = renderPrompt({
+      isGuest: false,
+      organizationId: "org-1",
+    });
 
     const card = screen.getByTestId("sidebar-prompt-pro_upgrade");
     expect(card).toHaveTextContent("No daily credit limit, add more anytime");
@@ -225,6 +233,12 @@ describe("SidebarUpgradePrompt", () => {
       }),
     );
     expect(mocks.navigate).toHaveBeenCalledWith("/organizations/org-1/plans");
+    // The Plans page hides the sidebar; the dialog must outlive the card.
+    rerender(
+      <SidebarProvider>
+        <SidebarProConfirmDialog />
+      </SidebarProvider>,
+    );
     expect(screen.getByTestId("plan-confirm-dialog")).toHaveAttribute(
       "data-plan",
       "pro",
@@ -241,6 +255,9 @@ describe("SidebarUpgradePrompt", () => {
       expect.objectContaining({ location: "sidebar_prompt" }),
     );
     expect(mocks.start).toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByTestId("plan-confirm-dialog")).toBeNull();
   });
 
   it("asks the owners instead of opening checkout for a member", () => {
