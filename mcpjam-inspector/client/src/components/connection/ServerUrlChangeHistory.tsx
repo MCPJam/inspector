@@ -1,13 +1,7 @@
 import type { ReactNode } from "react";
-import { useQuery } from "convex/react";
 import { ArrowRight, TriangleAlert } from "lucide-react";
-import { describeError } from "@mcpjam/sdk/browser";
-import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useSoftQuery } from "@/hooks/use-soft-query";
 import { isConvexQueryNotServed } from "@/lib/convex-error";
-import { credentialOriginOf } from "@/lib/credential-origin";
-import type { ServerWithName } from "@/state/app-types";
-import type { ServerAuth } from "./server-auth";
 
 /**
  * Exported so the test can build the exact message the client sees, and so a
@@ -55,12 +49,6 @@ const CLEARED_KIND_LABELS: Record<string, string> = {
 
 const credentialList = new Intl.ListFormat("en");
 
-interface RecoveryContext {
-  server: ServerWithName;
-  auth: ServerAuth;
-  isForbidden: boolean;
-}
-
 function clearedCredentialLabels(event: ServerUrlChangeEvent): string[] {
   const kinds = event.metadata?.clearedKinds;
   if (!Array.isArray(kinds)) return [];
@@ -73,8 +61,8 @@ function clearedCredentialLabels(event: ServerUrlChangeEvent): string[] {
 
 /**
  * Inspector can outlive a backend rollback. Treat a deployment that does
- * not serve this read as missing audit history instead of failing History
- * or Config. A ConvexError refusal carries its own message.
+ * not serve this read as missing audit history. A ConvexError refusal
+ * carries its own message.
  */
 export function isServerUrlHistoryUnavailable(error: Error): boolean {
   return isConvexQueryNotServed(error, SERVER_URL_CHANGES_QUERY);
@@ -181,96 +169,4 @@ export function ServerUrlChangeDetails({
       )}
     </div>
   );
-}
-
-export function ServerCredentialRecovery({
-  serverId,
-  server,
-  auth,
-}: {
-  serverId: string | null;
-  server: ServerWithName;
-  auth: ServerAuth;
-}) {
-  if (!serverId || server.connectionStatus !== "failed") return null;
-  const error = server.lastNormalizedError ??
-    (server.lastError ? describeError(server.lastError) : null);
-  const isForbidden = error?.slug === "auth/http_403";
-  if (
-    error?.slug !== "auth/http_401" &&
-    error?.slug !== "auth/consent_required" &&
-    error?.slug !== "oauth/no_bearer_challenge" &&
-    !isForbidden
-  ) return null;
-  return (
-    <ErrorBoundary
-      key={serverId}
-      name="server-url-change-history"
-      fallback={null}
-      isExpectedError={isServerUrlHistoryUnavailable}
-    >
-      <CredentialRecoveryMessage
-        serverId={serverId}
-        server={server}
-        auth={auth}
-        isForbidden={isForbidden}
-      />
-    </ErrorBoundary>
-  );
-}
-
-function recoveryMessage(
-  changes: ServerUrlChangeEvent[],
-  {
-    server,
-    auth,
-    isForbidden,
-  }: RecoveryContext
-): string | null {
-  const origin = credentialOriginOf(server.config.url?.toString());
-  if (!origin) return null;
-  // Match the latest address change. A path edit keeps credentials bound to
-  // the same origin, so it doesn't supersede a credential clear.
-  const latestChange = changes.find(({ action, metadata }) =>
-    action === CREDENTIALS_CLEARED_ACTION ||
-    metadata?.viaTransportFlip ||
-    metadata?.previousOrigin !== metadata?.nextOrigin
-  );
-  if (
-    latestChange?.metadata?.nextOrigin !== origin ||
-    !latestChange.metadata.clearedOnOriginChange
-  ) return null;
-
-  const usesClientSecret =
-    auth.method === "oauth" ||
-    auth.method === "xaa" ||
-    (auth.method === "auto" && server.registrationMode === "preregistered");
-  const missing = clearedCredentialLabels(latestChange).filter((label) =>
-    (label === "request headers" && !auth.headers) ||
-    (label === "bearer token" && !auth.bearer && auth.method === "bearer") ||
-    (label === "OAuth client secret" && !server.hasClientSecret && usesClientSecret)
-  );
-  if (missing.length === 0) return null;
-  const credentials = credentialList.format(missing);
-  // A 403 can also come from an access policy such as an IP allowlist.
-  return isForbidden
-    ? `The URL change cleared the ${credentials}. Check which credentials the server requires.`
-    : `Re-enter the ${credentials} to reconnect.`;
-}
-
-function CredentialRecoveryMessage({
-  serverId,
-  ...recovery
-}: RecoveryContext & { serverId: string }) {
-  const events = useQuery(
-    SERVER_URL_CHANGES_QUERY as never,
-    { serverId } as never,
-  ) as ServerUrlChangeEvent[] | undefined;
-
-  const message = recoveryMessage(renderableChanges(events), recovery);
-  return message ? (
-    <p role="status" className="mb-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
-      {message}
-    </p>
-  ) : null;
 }

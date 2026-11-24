@@ -20,6 +20,7 @@ import { HOSTED_MODE } from "@/lib/config";
 import { XAA_PARTIAL_OVERRIDE_ERROR } from "@/lib/xaa/identity";
 import { useConfidentialCimdCapability } from "@/hooks/use-confidential-cimd-capability";
 import {
+  credentialClearAcknowledgementKey,
   pendingCredentialClearForStdioTargetEdit,
   pendingCredentialClearForUrlEdit,
   rowHoldsStoredCredential,
@@ -159,6 +160,9 @@ export function useServerForm(
   const [savedUrl, setSavedUrl] = useState<string | null>(null);
   const [savedCommand, setSavedCommand] = useState<string | null>(null);
   const [savedArgs, setSavedArgs] = useState<string[]>([]);
+  // The destination the user has explicitly accepted losing credentials for.
+  const [credentialClearAcknowledgedFor, setCredentialClearAcknowledgedFor] =
+    useState<string | null>(null);
   const [clearClientSecret, setClearClientSecret] = useState(false);
   const [bearerToken, setBearerToken] = useState("");
   // True when the server has a saved bearer token whose value was stripped
@@ -370,6 +374,7 @@ export function useServerForm(
       setCommandInput(fullCommand);
       setSavedCommand(server.config.command ?? null);
       setSavedArgs(server.config.args ? [...server.config.args] : []);
+      setCredentialClearAcknowledgedFor(null);
 
       // Don't set a default scope for existing servers - use what's configured
       // Only set default for new servers
@@ -959,6 +964,7 @@ export function useServerForm(
     setSavedUrl(null);
     setSavedCommand(null);
     setSavedArgs([]);
+    setCredentialClearAcknowledgedFor(null);
     setOauthScopesInput("");
     setOauthProtocolMode(DEFAULT_OAUTH_PROTOCOL_MODE);
     setOauthRegistrationMode(DEFAULT_OAUTH_REGISTRATION_MODE);
@@ -1077,6 +1083,13 @@ export function useServerForm(
           nextCommand: nextStdioTarget.command,
           nextArgs: nextStdioTarget.args,
         });
+  // Blocked until acknowledged, following `authConfigurationBlocksSubmit`. A
+  // destructive side effect on somebody else's credential should not happen on
+  // a single Save click.
+  const credentialClearBlocksSubmit =
+    pendingCredentialClear !== null &&
+    credentialClearAcknowledgedFor !==
+      credentialClearAcknowledgementKey(pendingCredentialClear);
   const oauthAuthorizationHeaderWarning =
     type === "http" &&
     authType === "oauth" &&
@@ -1090,6 +1103,9 @@ export function useServerForm(
     preregisteredOauthBlocksSubmit,
     authConfigurationBlocksSubmit,
     pendingCredentialClear,
+    credentialClearBlocksSubmit,
+    credentialClearAcknowledgedFor,
+    acknowledgeCredentialClear: setCredentialClearAcknowledgedFor,
 
     // Form data
     name,

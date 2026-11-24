@@ -1306,11 +1306,8 @@ export function useServerState({
     const serversWithRuntime: Record<string, ServerWithName> = {};
     for (const [name, server] of Object.entries(project.servers)) {
       const runtimeState = appState.servers[name];
-      // The hosted row reflects credential clears and replacements made by
-      // any project member. A runtime connection can still carry the old flags.
-      const hasHostedProject = isAuthenticated && !useLocalFallback;
-      const credentials = hasHostedProject ? server : runtimeState;
-      const fallbackCredentials = hasHostedProject ? runtimeState : server;
+      const runtimeHasBearerToken = getServerBearerTokenState(runtimeState);
+      const projectHasBearerToken = getServerBearerTokenState(server);
       // Env now lives on the Convex server doc and is returned by the
       // resolver inside `server.config.env`; no localStorage read needed.
       serversWithRuntime[name] = {
@@ -1333,12 +1330,10 @@ export function useServerState({
           runtimeState?.lastConnectionTime || server.lastConnectionTime,
         retryCount: runtimeState?.retryCount || 0,
         hasClientSecret:
-          credentials?.hasClientSecret ?? fallbackCredentials?.hasClientSecret,
-        hasEnv: credentials?.hasEnv ?? fallbackCredentials?.hasEnv,
-        hasHeaders: credentials?.hasHeaders ?? fallbackCredentials?.hasHeaders,
-        hasBearerToken:
-          getServerBearerTokenState(credentials) ??
-          getServerBearerTokenState(fallbackCredentials),
+          runtimeState?.hasClientSecret ?? server.hasClientSecret,
+        hasEnv: runtimeState?.hasEnv ?? server.hasEnv,
+        hasHeaders: runtimeState?.hasHeaders ?? server.hasHeaders,
+        hasBearerToken: runtimeHasBearerToken ?? projectHasBearerToken,
       };
     }
 

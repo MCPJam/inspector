@@ -1,11 +1,6 @@
 import { Loader2 } from "lucide-react";
 import { useId } from "react";
 import { Button } from "@mcpjam/design-system/button";
-import {
-  Popover,
-  PopoverAnchor,
-  PopoverContent,
-} from "@mcpjam/design-system/popover";
 import { Switch } from "@mcpjam/design-system/switch";
 import { HostCompatContent } from "@/components/compat/HostCompatContent";
 import { ServerSettingsPanel } from "../host-workspace/ServerSettingsPanel";
@@ -16,7 +11,6 @@ import { ServerHistoryContent } from "./ServerHistoryContent";
 import { ServerHistoryDriftChip } from "./ServerHistoryDriftChip";
 import { ServerInfoContent } from "./ServerInfoContent";
 import { ServerInfoToolsMetadataContent } from "./ServerInfoToolsMetadataContent";
-import { ServerCredentialRecovery } from "./ServerUrlChangeHistory";
 import { EffectiveProtocolVersionChip } from "./shared/EffectiveProtocolVersionChip";
 import type { ServerDetailController } from "./hooks/use-server-detail-controller";
 
@@ -98,7 +92,6 @@ export function ServerDetailConnectionControls({
         </span>
       </span>
       <Switch
-        aria-label={connection.isConnected ? "Disconnect" : "Connect"}
         checked={connection.isConnected}
         disabled={connection.toggleDisabled}
         onCheckedChange={connection.toggle}
@@ -115,25 +108,18 @@ export function ServerConfigTabBody({
   /** Project default XAA test identity, shown as override placeholders. */
   projectXaaDefaultIdentity: { subject: string; email: string } | null;
 }) {
-  const { form, protocol, projectId, hostedServerId, server, auth } = controller;
+  const { form, protocol, projectId, hostedServerId } = controller;
   return (
-    <>
-      <ServerCredentialRecovery
-        serverId={hostedServerId}
-        server={server}
-        auth={auth.summary}
-      />
-      <EditServerFormContent
-        formState={form.state}
-        isDuplicateServerName={form.isDuplicateServerName}
-        projectId={projectId}
-        hostedServerId={hostedServerId}
-        projectXaaDefaultIdentity={projectXaaDefaultIdentity}
-        mcpProtocolVersionOverride={protocol.override}
-        hostDefaultMcpProtocolVersion={protocol.hostDefault}
-        onMcpProtocolVersionOverrideChange={protocol.onOverrideChange}
-      />
-    </>
+    <EditServerFormContent
+      formState={form.state}
+      isDuplicateServerName={form.isDuplicateServerName}
+      projectId={projectId}
+      hostedServerId={hostedServerId}
+      projectXaaDefaultIdentity={projectXaaDefaultIdentity}
+      mcpProtocolVersionOverride={protocol.override}
+      hostDefaultMcpProtocolVersion={protocol.hostDefault}
+      onMcpProtocolVersionOverrideChange={protocol.onOverrideChange}
+    />
   );
 }
 
@@ -141,103 +127,43 @@ export function ServerConfigTabBody({
  * Save & Connect for the configuration form, or Reconnect for a connected
  * server with no edits. Submits the enclosing form when saving.
  */
-export function ServerConfigSaveButton({
-  controller,
-  portalled = true,
-}: ControllerProps & { portalled?: boolean }) {
+export function ServerConfigSaveButton({ controller }: ControllerProps) {
   const { form, connection } = controller;
   const hintId = useId();
-  const titleId = useId();
-  const descriptionId = useId();
-  const pending = form.state.pendingCredentialClear;
-  const isUrlChange = pending?.kind === "url-origin";
   return (
-    <Popover
-      open={form.isCredentialConfirmationOpen}
-      onOpenChange={(open) => {
-        if (!open) form.dismissCredentialConfirmation();
-      }}
-    >
-      <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
-        {form.saveHint && (
-          <p id={hintId} role="status" className="text-xs text-muted-foreground">
-            {form.saveHint}
-          </p>
-        )}
-        <PopoverAnchor asChild>
-          <Button
-            ref={form.saveButtonRef}
-            type={form.offersReconnect ? "button" : "submit"}
-            onClick={
-              form.offersReconnect
-                ? () => void connection.connect({ allowInteractiveOAuthFlow: false })
-                : undefined
-            }
-            aria-describedby={form.saveHint ? hintId : undefined}
-            aria-haspopup={pending ? "dialog" : undefined}
-            aria-expanded={pending ? form.isCredentialConfirmationOpen : undefined}
-            disabled={form.saveBlocked}
-            size="sm"
-          >
-            {form.isSaving || connection.isReconnecting ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                {form.isSaving ? "Saving..." : "Reconnecting..."}
-              </>
-            ) : form.offersReconnect ? (
-              "Reconnect"
-            ) : (
-              "Save & Connect"
-            )}
-          </Button>
-        </PopoverAnchor>
-      </div>
-      {pending && (
-          <PopoverContent
-            portalled={portalled}
-          side="top"
-          align="end"
-          sideOffset={8}
-          collisionPadding={12}
-          aria-labelledby={titleId}
-          aria-describedby={descriptionId}
-          className="w-80 max-w-[calc(100vw-2rem)] space-y-3 border-warning/40"
-          onCloseAutoFocus={(event) => {
-            event.preventDefault();
-            form.saveButtonRef.current?.focus();
-          }}
-        >
-          <div className="space-y-1.5">
-            <h3 id={titleId} className="text-sm font-medium">
-              {isUrlChange ? "Save the new server URL?" : "Save the new server command?"}
-            </h3>
-            <p id={descriptionId} className="text-sm text-muted-foreground">
-              {isUrlChange
-                ? "Changing the server URL clears saved credentials for everyone on the project. Add the credentials the new URL requires to reconnect."
-                : "Changing the server command clears saved credentials for everyone on the project. Add the credentials the new command requires to reconnect."}
-            </p>
-          </div>
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={form.dismissCredentialConfirmation}
-            >
-              Keep editing
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              disabled={form.saveBlocked}
-              onClick={form.confirmCredentialClear}
-            >
-              Save & Connect
-            </Button>
-          </div>
-        </PopoverContent>
+    <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
+      {form.saveHint && (
+        <p id={hintId} role="status" className="text-xs text-muted-foreground">
+          {form.saveHint}
+        </p>
       )}
-    </Popover>
+      <Button
+        ref={form.saveButtonRef}
+        type={form.offersReconnect ? "button" : "submit"}
+        onClick={
+          form.offersReconnect
+            ? () =>
+                void connection.connect({
+                  allowInteractiveOAuthFlow: false,
+                })
+            : undefined
+        }
+        aria-describedby={form.saveHint ? hintId : undefined}
+        disabled={form.saveBlocked}
+        size="sm"
+      >
+        {form.isSaving || connection.isReconnecting ? (
+          <>
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            {form.isSaving ? "Saving..." : "Reconnecting..."}
+          </>
+        ) : form.offersReconnect ? (
+          "Reconnect"
+        ) : (
+          "Save & Connect"
+        )}
+      </Button>
+    </div>
   );
 }
 
@@ -378,7 +304,7 @@ export function ServerClientsTabBody({
   );
 }
 
-/** Address changes and persisted snapshots, available while disconnected. */
+/** URL changes, command changes, and revisions, available while disconnected. */
 export function ServerHistoryTabBody({ controller }: ControllerProps) {
   const { projectId, hostedServerId } = controller;
   if (!projectId || !hostedServerId) return null;

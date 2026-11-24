@@ -313,9 +313,7 @@ describe("useServerDetailController", () => {
     });
     expect(controller().form.state.needsStoredHeaderReveal).toBe(true);
 
-    await act(async () => {
-      fireEvent.submit(screen.getByTestId("config-form"));
-    });
+    await act(() => controller().form.save());
     expect(mockFetchServerSecrets).toHaveBeenCalledWith({
       projectId: "project_1",
       serverId: "server_1",
