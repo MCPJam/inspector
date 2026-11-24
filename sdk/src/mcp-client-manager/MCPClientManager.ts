@@ -16,6 +16,7 @@ import {
   type EventsSupport,
 } from "./events-capability-capture.js";
 import {
+  EventsListChangedNotificationMethod,
   listEventsExt,
   pollEventsExt,
   sendEventsRequest,
@@ -32,6 +33,7 @@ import {
   EventsStreamTap,
   wrapTransportForEventStreams,
 } from "./events-stream-tap.js";
+import { watchEventsCatalog } from "./events-catalog-listen.js";
 import type {
   EventsListResultWire,
   EventsPollResultWire,
@@ -726,6 +728,29 @@ export class MCPClientManager {
   async ensureEventsSupport(serverId: string): Promise<EventsSupport> {
     await this.ensureConnected(serverId);
     return this.getEventsSupport(serverId);
+  }
+
+  /** Observe acknowledged Beta catalog changes until the caller or connection closes. */
+  async watchEventsCatalog(
+    serverId: string,
+    options: { signal: AbortSignal; onChange: () => void; onReady?: () => void },
+  ): Promise<void> {
+    await this.ensureConnected(serverId, options.signal);
+    const support = this.getEventsSupport(serverId);
+    const client = this.getClientOrThrow(serverId);
+    if (!support.beta || !support.listChanged || client.getProtocolEra?.() !== "modern") return;
+
+    await watchEventsCatalog(client, this.eventStreamTapFor(serverId).catalog, {
+      ...options,
+      subscribe: (handler) => {
+        this.addNotificationHandler(serverId, EventsListChangedNotificationMethod, handler);
+        return () => this.removeNotificationHandler(serverId, EventsListChangedNotificationMethod, handler);
+      },
+      onChange: () => {
+        this.eventsCapabilityCapture.invalidateBetaCatalog(serverId);
+        options.onChange();
+      },
+    });
   }
 
   /** The raw capture behind {@link getEventsSupport}, for display. */
@@ -4084,6 +4109,7 @@ export class MCPClientManager {
       preserveRetryPromise?: boolean;
     }
   ): void {
+    this.closeEventsStreamTap(serverId);
     const state = this.liveClientStates.get(serverId);
     state?.stdioStderrCleanup?.();
 
@@ -4124,6 +4150,7 @@ export class MCPClientManager {
     serverId: string,
     state: LiveClientState
   ): void {
+    this.closeEventsStreamTap(serverId);
     state.stdioStderrCleanup?.();
 
     const nextState: LiveClientState = {};
@@ -4152,6 +4179,11 @@ export class MCPClientManager {
     this.toolDeclarationCapture.clear(serverId);
     this.eventsCapabilityCapture.clear(serverId);
     this.aggregatedToolsListWarmed.delete(serverId);
+  }
+
+  private closeEventsStreamTap(serverId: string): void {
+    this.eventStreamTaps.get(serverId)?.catalog.close();
+    this.eventStreamTaps.delete(serverId);
   }
 
   private async destroyLiveState(

@@ -66,6 +66,10 @@ export class EventsCapabilityCapture {
     return this.betaCatalogs.get(serverId);
   }
 
+  invalidateBetaCatalog(serverId: string): void {
+    if (this.betaCatalogs.has(serverId)) this.betaCatalogs.set(serverId, Symbol());
+  }
+
   private readonly captured = new Map<string, CapturedEventsCapability>();
   private readonly pending = new Map<
     string,
@@ -95,10 +99,6 @@ export class EventsCapabilityCapture {
 
   observe(event: RpcLogEvent): void {
     const message = event.message as Record<string, unknown> | undefined;
-    if (event.direction === "receive" && message?.method === "notifications/events/list_changed" &&
-        this.betaCatalogs.has(event.serverId)) {
-      this.betaCatalogs.set(event.serverId, Symbol());
-    }
     if (!isRecord(message) || message.id === undefined || message.id === null) {
       return;
     }

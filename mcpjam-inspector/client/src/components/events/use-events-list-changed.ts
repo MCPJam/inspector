@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
+import { watchEventsCatalog } from "@/lib/apis/mcp-events-api";
 
 export const EVENTS_LIST_CHANGED = "notifications/events/list_changed";
 
@@ -11,12 +12,18 @@ export const EVENTS_LIST_CHANGED = "notifications/events/list_changed";
 export function useEventsListChanged(
   serverName: string | undefined,
   onChange: () => void,
+  beta = false,
 ) {
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
   useEffect(() => {
     if (!serverName) return;
+    if (beta) {
+      const abort = new AbortController();
+      void watchEventsCatalog(serverName, abort.signal, () => onChangeRef.current());
+      return () => abort.abort();
+    }
     let seen = new Set(
       useTrafficLogStore.getState().mcpServerItems.map((item) => item.id),
     );
@@ -48,5 +55,5 @@ export function useEventsListChanged(
       unsubscribe();
       if (timer) clearTimeout(timer);
     };
-  }, [serverName]);
+  }, [serverName, beta]);
 }

@@ -141,7 +141,9 @@ export function EventsTab({
   } = useEventsCatalog({ hasServer, serverName, connected });
   const declared =
     catalogState === "ready" && catalog?.support.declared === true;
-  useEventsListChanged(declared ? serverName : undefined, retryCatalog);
+  const support = catalog?.support;
+  const watchCatalog = connected && support?.declared && (!support.beta || support.listChanged);
+  useEventsListChanged(watchCatalog ? serverName : undefined, retryCatalog, support?.beta);
 
   // A different server starts from its own lists.
   useEffect(() => {

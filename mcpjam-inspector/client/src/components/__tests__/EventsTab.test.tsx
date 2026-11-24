@@ -21,6 +21,7 @@ import type {
 } from "@/shared/events-api";
 
 const mockLoadEventsCatalog = vi.fn();
+const mockWatchEventsCatalog = vi.fn<(serverName: string, signal: AbortSignal, onChange: () => void) => Promise<void>>();
 const mockListLocal = vi.fn();
 const mockCreateLocal = vi.fn();
 const mockSetLocalState = vi.fn();
@@ -30,6 +31,7 @@ const mockTrack = vi.fn();
 vi.mock("@/lib/apis/mcp-events-api", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   loadEventsCatalog: (...args: unknown[]) => mockLoadEventsCatalog(...args),
+  watchEventsCatalog: (...args: Parameters<typeof mockWatchEventsCatalog>) => mockWatchEventsCatalog(...args),
   listLocalEventSubscriptions: (...args: unknown[]) => mockListLocal(...args),
   createLocalEventSubscription: (...args: unknown[]) =>
     mockCreateLocal(...args),
@@ -913,6 +915,24 @@ describe("EventsTab (local)", () => {
     await waitFor(() => expect(mockLoadEventsCatalog).toHaveBeenCalledTimes(2));
     expect(screen.getByTestId("event-type-detail")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Enter repo")).toHaveValue("octo/hello");
+  });
+
+  it("refreshes a Beta catalog from the watch and ends the watch on unmount", async () => {
+    const support = { ...declaredSupport, beta: true, listChanged: true };
+    mockLoadEventsCatalog.mockResolvedValue(catalog([issueCreated], { support }));
+    mockWatchEventsCatalog.mockResolvedValue(undefined);
+    const view = renderTab();
+
+    await waitFor(() => expect(mockWatchEventsCatalog).toHaveBeenCalledTimes(1));
+    const [serverName, signal, onChange] = mockWatchEventsCatalog.mock.calls[0]!;
+    expect(serverName).toBe(SERVER);
+    mockLoadEventsCatalog.mockResolvedValue(catalog([{ ...issueCreated, name: "issue.closed" }], { support }));
+    act(onChange);
+    expect(await screen.findByText("issue.closed")).toBeInTheDocument();
+    expect(mockWatchEventsCatalog).toHaveBeenCalledTimes(1);
+
+    view.unmount();
+    expect(signal.aborted).toBe(true);
   });
 
   it("keeps the newer streamed state when an action's response arrives late", async () => {
