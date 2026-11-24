@@ -29,7 +29,8 @@ vi.mock("posthog-js/react", () => ({
 // Home cards subscribe to each run for suite scores. These tests render
 // the home without a Convex client, so the suite rows stay empty.
 vi.mock("convex/react", () => ({
-  useQuery: () => undefined,
+  useQuery: (_query: unknown, args: Record<string, unknown> | "skip") =>
+    args !== "skip" && args.protocolVersion ? { page: [] } : undefined,
 }));
 
 vi.mock("../PersistConformanceRun", () => ({ PersistConformanceRun: () => null }));
@@ -1702,6 +1703,55 @@ describe("ConformanceTab", () => {
         expect.objectContaining({
           checkIds: ["ping"],
           protocolVersion: "2025-03-26",
+        }),
+      ),
+    );
+  });
+
+  it.each([false, true])("opens checks for a new protocol input only when it is unset (saved: %s)", async (saved) => {
+    const user = userEvent.setup();
+    setupSuccessfulRunMocks();
+    const server = createHttpServer({ name: "alpha" });
+    render(
+      <ConformanceTab
+        server={server}
+        servers={[server]}
+        onSelectServer={vi.fn()}
+        lastRuns={{ alpha: createRunListItem("srv_a") }}
+        onViewRun={vi.fn()}
+        onLoadServerDefaults={async () => ({
+          selection: {
+            protocol: ["modern-tool-output-schema-conformant"],
+            protocolAdvice: [],
+            apps: [],
+            tasks: [],
+            oauth: false,
+          },
+          inputs: saved ? { toolCallProbe: { toolName: "echo" } } : {},
+        })}
+      />,
+    );
+    await user.click(
+      screen.getByRole("combobox", { name: "Protocol version for alpha" }),
+    );
+    await user.click(screen.getByRole("option", { name: "2026-07-28" }));
+    await user.click(screen.getByRole("button", { name: "Run alpha" }));
+
+    if (!saved) {
+      expect(
+        await screen.findByRole("heading", { name: "Set what you'd like to test" }),
+      ).toBeVisible();
+      expect(mockRunProtocol).not.toHaveBeenCalled();
+      const run = screen.getByRole("button", { name: RUN_LABEL });
+      await waitFor(() => expect(run).toBeEnabled());
+      await user.click(run);
+    }
+    await waitFor(() =>
+      expect(mockRunProtocol).toHaveBeenCalledWith(
+        "alpha",
+        expect.objectContaining({
+          protocolVersion: "2026-07-28",
+          checkIds: ["modern-tool-output-schema-conformant"],
         }),
       ),
     );

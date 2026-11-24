@@ -137,6 +137,7 @@ describe("ConformanceServerList", () => {
     expect(within(draw).getByRole("status")).toHaveTextContent(
       "Loading latest run",
     );
+    expect(within(draw).getByRole("button", { name: "Run draw" })).toBeDisabled();
     expect(
       within(draw).queryByRole("button", { name: "View last run" }),
     ).toBeNull();
@@ -148,7 +149,12 @@ describe("ConformanceServerList", () => {
       "Clients can connect on any version your server supports. Run this one to make sure it passes too.",
     );
     await user.click(within(draw).getByRole("button", { name: "Run draw" }));
-    expect(onRun).toHaveBeenCalledWith("draw", "2025-06-18", "2025-06-18");
+    expect(onRun).toHaveBeenCalledWith(
+      "draw",
+      "2025-06-18",
+      "2025-06-18",
+      "2025-11-25",
+    );
     expect(
       within(echo).getByRole("button", { name: "View last run" }),
     ).toBeVisible();

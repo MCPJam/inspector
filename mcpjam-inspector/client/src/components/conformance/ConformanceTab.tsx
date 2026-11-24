@@ -21,7 +21,10 @@ import {
   isSelected,
   runnableSelection,
 } from "@/hooks/conformance-suite-state";
-import { withoutTaskAnswersCheck } from "@/shared/conformance-settings";
+import {
+  hasNewProtocolInputs,
+  withoutTaskAnswersCheck,
+} from "@/shared/conformance-settings";
 import {
   CONFORMANCE_RUN_PARAM,
   CONFORMANCE_SETUP_PARAM,
@@ -58,6 +61,11 @@ import {
 } from "@/hooks/use-conformance-probes";
 
 const LAST_SERVER_KEY = "mcpjam.conformance.lastServer.v1";
+type RunOptions = {
+  arriving?: boolean;
+  resolvedVersion?: McpProtocolVersion;
+  previousVersion?: McpProtocolVersion;
+};
 
 function readLastServer(): string | null {
   try {
@@ -161,13 +169,11 @@ export function ConformanceTab({
     );
   };
   const showHistory = history !== undefined;
-  // Run opens the setup steps; Continue hands back the server and revision to
-  // run, and the run view mounts fresh for them and starts. `id` keys that
-  // mount, so a Continue on the server already shown still starts anew.
-  // Home's checklist lands with `?setup=1` to start at the setup steps.
+  // Home's checklist opens setup via `?setup=1`.
   const [setupTarget, setSetupTarget] = useState<{
     serverName?: string;
     version?: McpProtocolVersion;
+    defaults?: ConformanceDefaults;
   } | null>(() =>
     new URLSearchParams(location.search).has(CONFORMANCE_SETUP_PARAM) ? {} : null,
   );
@@ -398,6 +404,7 @@ export function ConformanceTab({
   const [failedRequest, setFailedRequest] = useState<{
     name: string;
     pin?: ProtocolVersionPin;
+    options?: RunOptions;
   } | null>(null);
   const readDefaults = (name: string): Promise<ConformanceDefaults> =>
     onLoadServerDefaults &&
@@ -426,7 +433,7 @@ export function ConformanceTab({
   const requestDefaults = async (
     name: string,
     pin?: ProtocolVersionPin,
-    options?: { arriving?: boolean; resolvedVersion?: McpProtocolVersion },
+    options?: RunOptions,
   ) => {
     const id = ++requestId.current;
     setLoadingDefaults(true);
@@ -435,18 +442,32 @@ export function ConformanceTab({
     try {
       const defaults = await readDefaults(name);
       if (!mounted.current || id !== requestId.current) return;
-      if (pin)
+      const { previousVersion, resolvedVersion } = options ?? {};
+      if (
+        previousVersion &&
+        resolvedVersion &&
+        servers &&
+        onSelectServer &&
+        hasNewProtocolInputs(
+          previousVersion,
+          resolvedVersion,
+          defaults.selection,
+          defaults.inputs,
+        )
+      )
+        setSetupTarget({ serverName: name, version: resolvedVersion, defaults });
+      else if (pin)
         (options?.arriving ? beginRun : startRun)(
           name,
           pin,
           defaults.selection,
           defaults.inputs,
-          options?.resolvedVersion,
+          resolvedVersion,
         );
       else setSettingsFor(name);
     } catch {
       if (mounted.current && id === requestId.current)
-        setFailedRequest({ name, pin });
+        setFailedRequest({ name, pin, options });
     } finally {
       if (mounted.current && id === requestId.current) {
         setLoadingDefaults(false);
@@ -514,18 +535,10 @@ export function ConformanceTab({
     serverName: string,
     version: ProtocolVersionPin,
     resolvedVersion?: McpProtocolVersion,
+    previousVersion?: McpProtocolVersion,
   ) => {
     setRunFrom("overview");
-    if (onLoadServerDefaults)
-      void requestDefaults(serverName, version, { resolvedVersion });
-    else
-      startRun(
-        serverName,
-        version,
-        defaultsFor(serverName) ?? {},
-        undefined,
-        resolvedVersion,
-      );
+    void requestDefaults(serverName, version, { resolvedVersion, previousVersion });
   };
   const home =
     recentServers.length > 0 && onViewRun ? (
@@ -542,8 +555,6 @@ export function ConformanceTab({
         onSetup={(serverName, version) => setSetupTarget({ serverName, version })}
       />
     ) : undefined;
-  // Run always opens the setup steps, even with no servers yet: the server
-  // list may still be loading, and the steps say what is missing.
   const openSetup =
     servers && onSelectServer ? () => setSetupTarget({}) : undefined;
   const setupServerName =
@@ -557,9 +568,7 @@ export function ConformanceTab({
         projectServersLoading={projectServersLoading}
         initialServerName={setupServerName}
         initialVersionPin={setupTarget.version ?? start?.versionPin ?? "auto"}
-        // Saved defaults win, as they do for Run again: they already hold the
-        // last setup run's picks, plus any Settings change since. The last
-        // run's picks only count for the server it ran on.
+        initialDefaults={setupTarget.defaults}
         initialSelection={
           start &&
           start.serverName === setupServerName &&
@@ -583,18 +592,15 @@ export function ConformanceTab({
         ) => {
           const effectiveVersion = resolvedProtocolVersion ?? versionPin;
           setSetupTarget(null);
-          const runnable = runnableSelection(selection, effectiveVersion);
           const savedInputs = probesAfterRun(
-            probesFor(serverName),
+            (setupTarget.serverName === serverName ? setupTarget.defaults?.inputs : undefined) ??
+              probesFor(serverName),
             probes,
-            runnable,
+            runnableSelection(selection, effectiveVersion),
             effectiveVersion,
           );
           setProbes(serverName, savedInputs);
           startRun(serverName, versionPin, selection, probes, resolvedProtocolVersion);
-          // The checks picked here become the server's defaults: Settings
-          // opens on them and the server list's Run reuses them. A failed
-          // save leaves the old defaults; the run goes ahead either way.
           saveDefaults?.(serverName, selection, savedInputs).catch(() => {
             toast.error(
               "Could not save these checks as the server's defaults. Change them in Settings to try again.",
@@ -746,7 +752,11 @@ export function ConformanceTab({
       {failedRequest ? (
         <ConformanceDefaultsError
           onRetry={() =>
-            void requestDefaults(failedRequest.name, failedRequest.pin)
+            void requestDefaults(
+              failedRequest.name,
+              failedRequest.pin,
+              failedRequest.options,
+            )
           }
         />
       ) : null}

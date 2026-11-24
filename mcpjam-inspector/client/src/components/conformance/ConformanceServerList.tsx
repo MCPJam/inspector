@@ -21,6 +21,7 @@ import {
 } from "@mcpjam/sdk/browser";
 import type { ProtocolVersionPin } from "@/hooks/use-conformance-run";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import { isHttpServer } from "@/hooks/conformance-suite-state";
 import { useConformanceProtocolConnection } from "@/hooks/use-conformance-protocol-connection";
 import { useArtifactQuery } from "@/lib/artifact-urls";
 import { type ConformanceRunListItem } from "./ConformanceHistory";
@@ -133,6 +134,7 @@ function ServerCard({
     serverName: string,
     version: ProtocolVersionPin,
     resolvedVersion?: McpProtocolVersion,
+    previousVersion?: McpProtocolVersion,
   ) => void;
   onSetup: (serverName: string, version: McpProtocolVersion) => void;
   disabled: boolean;
@@ -193,11 +195,6 @@ function ServerCard({
     connectionResult?.status === "ready"
       ? connectionResult.protocolVersion
       : undefined;
-  const handleRun = () => {
-    if (retry) connection.retry();
-    else if (needsSetup) onSetup(serverName, selection);
-    else onRun(serverName, pin, resolvedVersion);
-  };
   const showLatest = selection === null || selection === latestVersion;
   const byVersion = useQuery(
     listRuns,
@@ -212,6 +209,17 @@ function ServerCard({
   );
   const run = showLatest ? latestRun : byVersion?.page[0];
   const loading = !showLatest && byVersion === undefined;
+  const handleRun = () => {
+    if (retry) connection.retry();
+    else if (needsSetup) onSetup(serverName, selection);
+    else
+      onRun(
+        serverName,
+        pin,
+        resolvedVersion,
+        !run && knownLatest && isHttpServer(server) ? latestVersion : undefined,
+      );
+  };
   const detail = useArtifactQuery<{ reports?: SuiteReport[] } | null>(
     "conformanceRuns:getRun",
     run ? { runId: run._id } : "skip",
@@ -319,7 +327,13 @@ function ServerCard({
           )}
           <Button
             size="sm"
-            disabled={disabled || starting || connection.checking || unsupported}
+            disabled={
+              disabled ||
+              starting ||
+              loading ||
+              connection.checking ||
+              unsupported
+            }
             onClick={handleRun}
             aria-label={
               starting ? `Starting ${serverName}` : `${runLabel} ${serverName}`
