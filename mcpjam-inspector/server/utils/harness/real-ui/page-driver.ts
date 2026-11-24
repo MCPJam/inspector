@@ -18,6 +18,11 @@ export type PageDriverErrorCode =
   | "site_blocked"
   /** The command may or may not have run. Never retry it blindly. */
   | "unknown_outcome"
+  /**
+   * A person has the browser: they took control in its pane, or their hold
+   * lapsed without being handed back. Nothing ran and nothing was read.
+   */
+  | "person_has_browser"
   | "failed";
 
 export class PageDriverError extends Error {
@@ -50,6 +55,11 @@ export interface PageDriver {
    * `>>` chains) as well as CSS. A driver without them refuses those reads.
    */
   readonly playwrightSelectors: boolean;
+  /**
+   * False where `press` refuses a key meant for one element, as the hosted
+   * browser does: it presses only where focus is. Absent means it can.
+   */
+  readonly pressesOnElement?: boolean;
   navigate(url: string): Promise<void>;
   url(): Promise<string>;
   /** Runs `fn` in the page. Throws `unsupported` where `canEvaluate` is false. */

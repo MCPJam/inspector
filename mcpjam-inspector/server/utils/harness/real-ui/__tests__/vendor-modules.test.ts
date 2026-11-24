@@ -420,6 +420,58 @@ describe("chatgpt.com", () => {
     expect(saved.toolCalls[0]).not.toHaveProperty("toolUseId");
   });
 
+  it("reads the chat from the page in a browser that runs no script", async () => {
+    const driver: PageDriver = {
+      ...cannedDriver({
+        url: `https://chatgpt.com/c/${id}`,
+        // The hosted browser reads an element's text, as the Playwright one does.
+        texts: {
+          '[data-message-author-role="user"]': "say hello",
+          '[data-message-author-role="assistant"]': "Calling echo",
+          '[data-message-author-role="assistant"] >> nth=-1': 'It said "hello".',
+        },
+      }),
+      kind: "hosted",
+      canEvaluate: false,
+    };
+    expect(
+      await chatgptWebPageModule.readConversation(driver, `https://chatgpt.com/c/${id}`, { timeoutMs: 1_000 }),
+    ).toEqual({
+      conversationId: id,
+      url: `https://chatgpt.com/c/${id}`,
+      userPrompt: "say hello",
+      replyText: 'It said "hello".',
+      toolCalls: [],
+    });
+    // The chat list needs the session's token, so an earlier send stays ambiguous.
+    expect(
+      await chatgptWebPageModule.findSent(driver, "say hello", { timeoutMs: 1_000 }, "2026-11-23T10:00:00Z"),
+    ).toBeUndefined();
+  });
+
+  it("refuses a page read when the browser moved to another chat while it read", async () => {
+    // A person can take the browser to another chat between the reads, and
+    // hand it back: its prompt and reply must not come back under this id.
+    const other = "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const base = cannedDriver({ url: `https://chatgpt.com/c/${id}` });
+    const driver: PageDriver = {
+      ...base,
+      kind: "hosted",
+      canEvaluate: false,
+      async readText(selector) {
+        if (selector === '[data-message-author-role="assistant"] >> nth=-1') {
+          await base.navigate(`https://chatgpt.com/c/${other}`);
+          return "the other chat's reply";
+        }
+        return selector.startsWith("[data-message-author-role=") ? "shown" : undefined;
+      },
+    };
+    const read = chatgptWebPageModule.readConversation(driver, `https://chatgpt.com/c/${id}`, { timeoutMs: 1_000 });
+    await expect(read).rejects.toMatchObject({
+      failure: { kind: "driver", step: "read_conversation" },
+    });
+  });
+
   it("finds its own chat after a restart, and never one created before the send began", async () => {
     const earlier = "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee";
     const asked = (prompt: string) => ({
@@ -504,68 +556,113 @@ describe("chatgpt.com", () => {
 
 describe("chatgpt.com's connector step", () => {
   const connector = { name: "MCPJam orders", url: "https://inspector.example/mcp/abc" };
-  const base = {
-    '#prompt-textarea': "",
-    'role=menuitem[name="Plugins"]': "Plugins",
-    'role=menuitem[name="Add custom MCP server"]': "Add custom MCP server",
+  const composer = '[contenteditable="true"][aria-label="Ask ChatGPT"]';
+  const current = { [composer]: "" };
+  const installed = 'role=link[name="MCPJam orders"s]';
+  const pluginSettings = {
+    ...current, [installed]: connector.name,
+    'role=button[name="Add"s]': "Add", 'role=link[name="Settings"s]': "Settings",
+    'role=link[name="View details"s]': "View details",
   };
 
-  it("reuses a server already added under the name and address", async () => {
-    const driver = cannedDriver({
-      url: "https://chatgpt.com/",
-      texts: {
-        ...base,
-        'role=dialog >> text="MCPJam orders"': "MCPJam orders",
-        'role=dialog >> text="https://inspector.example/mcp/abc"': connector.url,
-      },
-    });
-    await chatgptWebPageModule.ensureConnector(driver, connector, { timeoutMs: 1_000 });
-    expect(driver.click).not.toHaveBeenCalledWith('role=menuitem[name="Add custom MCP server"]');
-    expect(driver.type).not.toHaveBeenCalled();
+  it("reads the hosted account email from Settings with the sidebar collapsed", async () => {
+    const email = "review@example.org";
+    const controls = {
+      ...current,
+      'role=button[name="Show sidebar"s]': "",
+      'role=menuitem[name="Settings"s]': "",
+      'role=dialog >> role=button[name="Account"s]': "",
+      'role=dialog >> text=/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/': email,
+    };
+    const fixture = cannedDriver({ url: "https://chatgpt.com/", texts: controls });
+    let expanded = false;
+    const driver: PageDriver = {
+      ...fixture, kind: "hosted", canEvaluate: false,
+      click: async (target) => { if (target === 'role=button[name="Show sidebar"s]') expanded = true; },
+      readText: async (target) => expanded && target === 'role=button[name="Open profile menu"s]'
+        ? "Profile" : fixture.readText(target),
+    };
+    await expect(chatgptWebPageModule.signedIn(driver, { timeoutMs: 500 })).resolves.toEqual({ email });
+    expect(await driver.url()).toBe("https://chatgpt.com/");
   });
 
-  it("adds one through Plugins, then +, then Add custom MCP server", async () => {
-    const driver = cannedDriver({
-      url: "https://chatgpt.com/",
-      texts: { ...base, "role=dialog >> role=button[name=/^(\\+|Add)$/]": "+" },
-    });
-    // The form never opens in this canned page, so the step ends waiting.
-    await expect(
-      chatgptWebPageModule.ensureConnector(driver, connector, { timeoutMs: 300 }),
-    ).rejects.toMatchObject({ code: "timeout" });
+  it("checks the installed plugin address in Settings before reusing it", async () => {
+    const shown = `main >> text="${connector.url}"`;
+    const driver = cannedDriver({ url: "https://chatgpt.com/", texts: { ...pluginSettings, [shown]: connector.url } });
+    await chatgptWebPageModule.ensureConnector(driver, connector, { timeoutMs: 500 });
+    expect(driver.click).toHaveBeenCalledWith('role=link[name="Settings"s]');
+    expect(driver.type).not.toHaveBeenCalled();
+    const other = cannedDriver({ url: "https://chatgpt.com/", texts: pluginSettings });
+    await expect(chatgptWebPageModule.ensureConnector(other, connector, { timeoutMs: 500 }))
+      .rejects.toMatchObject({ failure: { kind: "connector_failed" } });
+  });
+
+  it("leaves ChatGPT's trust checkbox for the person setting up the server", async () => {
+    const driver = cannedDriver({ url: "https://chatgpt.com/", texts: {
+      ...current, 'role=button[name="Add"s]': "Add",
+      'role=menuitem[name="Add custom MCP server"s]': "Add custom MCP server",
+      'role=dialog >> role=textbox[name="Name"s]': "",
+      'role=dialog >> role=checkbox[name="I understand and want to continue"s][checked=false]': "",
+    } });
+    await expect(chatgptWebPageModule.ensureConnector(driver, connector, { timeoutMs: 500 }))
+      .rejects.toMatchObject({ failure: { kind: "needs_sign_in", reason: "consent" } });
+    expect(driver.type).toHaveBeenLastCalledWith('role=dialog >> role=textbox[name="Server URL"s]', connector.url);
+    expect(driver.click).toHaveBeenCalledTimes(2);
+  });
+
+  it("selects the named plugin in the current composer", async () => {
+    const item = 'role=button[name="MCPJam orders MCPJam orders"s]';
+    const driver = cannedDriver({ url: "https://chatgpt.com/", texts: { ...current, [item]: connector.name } });
+    await chatgptWebPageModule.enableConnector(driver, connector.name, { timeoutMs: 500 });
+    expect(vi.mocked(driver.click).mock.calls).toEqual([['role=button[name="Add files and more"s]'], [item]]);
+  });
+
+  it("adds one through Plugins, then Add custom MCP server, and waits for it to install", async () => {
+    const installed = 'role=link[name="MCPJam orders"s]';
+    const create = 'role=dialog >> role=button[name="Create as a plugin"s]';
+    const fixture = cannedDriver({ url: "https://chatgpt.com/", texts: {
+      ...current, 'role=button[name="Add"s]': "Add",
+      'role=menuitem[name="Add custom MCP server"s]': "Add custom MCP server",
+      'role=dialog >> role=textbox[name="Name"s]': "",
+    } });
+    let created = false;
+    const driver: PageDriver = {
+      ...fixture,
+      click: vi.fn(async (target: string) => {
+        if (target === create) created = true;
+      }),
+      readText: async (target) => (created && target === installed ? connector.name : fixture.readText(target)),
+    };
+    await chatgptWebPageModule.ensureConnector(driver, connector, { timeoutMs: 1_000 });
     expect(vi.mocked(driver.click).mock.calls.map(([selector]) => selector)).toEqual([
-      '[data-testid="composer-plus-btn"]',
-      'role=menuitem[name="Plugins"]',
-      "role=dialog >> role=button[name=/^(\\+|Add)$/]",
-      'role=menuitem[name="Add custom MCP server"]',
+      'role=button[name="Add"s]',
+      'role=menuitem[name="Add custom MCP server"s]',
+      create,
+    ]);
+    expect(vi.mocked(fixture.type).mock.calls).toEqual([
+      ['role=dialog >> role=textbox[name="Name"s]', connector.name],
+      ['role=dialog >> role=textbox[name="Server URL"s]', connector.url],
     ]);
   });
 
-  // The Plugins panel is a dialog too, with its own Add button, and it stays
-  // open under the add server form.
-  const panel = { ...base, "role=dialog": "Plugins", "role=dialog >> role=button[name=/^(\\+|Add)$/]": "Add" };
-  const form = 'role=dialog >> internal:has="role=textbox[name=/url/i]"';
-
-  it("waits for the add server form, not the Plugins panel it opens over", async () => {
-    const driver = cannedDriver({ url: "https://chatgpt.com/", texts: panel });
-    await expect(
-      chatgptWebPageModule.ensureConnector(driver, connector, { timeoutMs: 300 }),
-    ).rejects.toMatchObject({ code: "timeout", message: "Timed out waiting for the add server form." });
-    expect(driver.type).not.toHaveBeenCalled();
-  });
-
-  it("fills in the form and is done when it closes, with the Plugins panel still open", async () => {
-    const texts: Record<string, string> = { ...panel, [form]: "Add custom MCP server" };
-    const driver = cannedDriver({ url: "https://chatgpt.com/", texts });
-    vi.mocked(driver.click).mockImplementation(async (selector) => {
-      if (selector.startsWith(form)) delete texts[form];
+  it("sends with the composer's Send button and waits for the chat to open", async () => {
+    const chat = "https://chatgpt.com/c/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const fixture = cannedDriver({ url: "https://chatgpt.com/", texts: current });
+    let sent = false;
+    const driver: PageDriver = {
+      ...fixture,
+      click: vi.fn(async () => {
+        sent = true;
+      }),
+      url: async () => (sent ? chat : "https://chatgpt.com/"),
+      readText: async (target) =>
+        sent && target === '[data-message-author-role="user"]' ? "say hello" : fixture.readText(target),
+    };
+    await expect(chatgptWebPageModule.send(driver, "say hello", { timeoutMs: 1_000 })).resolves.toEqual({
+      conversationUrl: chat,
     });
-    await chatgptWebPageModule.ensureConnector(driver, connector, { timeoutMs: 1_000 });
-    expect(vi.mocked(driver.type).mock.calls).toEqual([
-      [`${form} >> role=textbox[name=/name/i]`, connector.name],
-      [`${form} >> role=textbox[name=/url/i]`, connector.url],
-    ]);
-    expect(driver.click).toHaveBeenLastCalledWith(`${form} >> role=button[name=/^(Create|Add|Connect)$/]`);
+    expect(fixture.type).toHaveBeenCalledWith(composer, "say hello");
+    expect(vi.mocked(driver.click).mock.calls).toEqual([['role=button[name="Send"s]']]);
   });
 });
 
@@ -579,54 +676,68 @@ describe("the hosted driver", () => {
 
   it("sends the command API's own commands and runs no script", async () => {
     const send = vi.fn(async (_command: BrowserAgentCommand) =>
-      executed({ url: "https://claude.ai/new", a11y: "textbox" }),
+      executed({ url: "https://claude.ai/new", text: " hi\n" }),
     );
     const driver = createHostedPageDriver(send, { sites: WEB_CLIENT_SITES.claude });
     await driver.navigate("https://claude.ai/new");
     await driver.click('[data-testid="chat-input-send"]');
     await driver.type('[data-testid="chat-input"]', "hi");
     expect(await driver.url()).toBe("https://claude.ai/new");
-    expect(await driver.readText('[data-testid="chat-input"]')).toBe("textbox");
+    expect(await driver.readText('[data-testid="chat-input"]')).toBe("hi");
     expect(send.mock.calls.map(([command]) => command)).toEqual([
       { op: "navigate", url: "https://claude.ai/new", observeAfter: "none" },
       { op: "act", verb: "click", target: { selector: '[data-testid="chat-input-send"]' }, observeAfter: "none" },
       { op: "act", verb: "type", target: { selector: '[data-testid="chat-input"]' }, value: "hi", observeAfter: "none" },
       { op: "observe", mode: "url" },
-      { op: "observe", mode: "a11y", rootSelector: '[data-testid="chat-input"]', filter: "all" },
+      { op: "observe", mode: "text", rootSelector: '[data-testid="chat-input"]' },
     ]);
     expect(driver.canEvaluate).toBe(false);
     await expect(driver.evaluate(() => 1, {})).rejects.toMatchObject({ code: "unsupported" });
   });
 
-  it("refuses a read only Playwright's selector engine resolves, and sends nothing for it", async () => {
-    const send = vi.fn(async () => executed({ a11y: "button" }));
+  it("stops claude.ai's connector step before it changes any connector on the account", async () => {
+    // Its chat menu needs a key pressed on one element, which this browser
+    // refuses: stopping at the menu would leave the account's connectors changed.
+    const send = vi.fn(async (_command: BrowserAgentCommand) => executed({ url: "https://claude.ai/new" }));
     const driver = createHostedPageDriver(send, { sites: WEB_CLIENT_SITES.claude });
-    expect(driver.playwrightSelectors).toBe(false);
-    for (const selector of [
-      'role=button[name="Add connector"]',
-      '.dframe-pane-primary >> [placeholder="Search"]',
-      "text=Step 2 of 2",
-      ':is(dialog, [role="dialog"]):has-text("MCPJam")',
-    ]) {
-      await expect(driver.readText(selector)).rejects.toMatchObject({ code: "unsupported" });
-    }
+    const connector = { name: "MCPJam orders 1a2b3c4d", url: "https://inspector.example/mcp/connector-1" };
+    await expect(claudeWebPageModule.ensureConnector(driver, connector, { timeoutMs: 300 })).rejects.toMatchObject({
+      failure: { kind: "driver", step: "connector" },
+    });
     expect(send).not.toHaveBeenCalled();
-    expect(await driver.readText('input[type="password"], [data-testid="chat-input"]')).toBe("button");
   });
 
-  it("keeps the claude.ai and chatgpt.com modules off it until its reads take their selectors", async () => {
-    const send = vi.fn(async () => executed({ url: "https://claude.ai/new", a11y: "textbox" }));
-    const connector = { name: "MCPJam orders 1a2b3c4d", url: "https://inspector.example/mcp/connector-1" };
-    for (const [module, sites] of [
-      [claudeWebPageModule, WEB_CLIENT_SITES.claude],
-      [chatgptWebPageModule, WEB_CLIENT_SITES.chatgpt],
-    ] as const) {
-      const driver = createHostedPageDriver(send, { sites });
-      await expect(module.ensureConnector(driver, connector, { timeoutMs: 300 })).rejects.toMatchObject({
-        failure: { kind: "driver", step: "connector" },
-      });
-    }
+  it("reads an element as absent only when nothing matches it, and fails any other read", async () => {
+    const failed = (code: string): BrowserAgentResult => ({
+      status: "executed",
+      commandId: "c",
+      ok: false,
+      error: { code, message: `${code} for this read` },
+    });
+    const send = vi.fn(async (command: BrowserAgentCommand) =>
+      command.op === "observe" && command.rootSelector === "role=dialog"
+        ? failed("unknown_selector")
+        : failed("unsupported_target"),
+    );
+    const driver = createHostedPageDriver(send, { sites: WEB_CLIENT_SITES.chatgpt });
+    expect(await driver.readText("role=dialog")).toBeUndefined();
+    // A read that failed is never taken for an element that isn't there.
+    await expect(driver.readText("main")).rejects.toMatchObject({ code: "failed" });
+  });
+
+  it("refuses a key press aimed at an element, which the browser would send wherever focus is", async () => {
+    const send = vi.fn(async (_command: BrowserAgentCommand) => executed());
+    const driver = createHostedPageDriver(send, { sites: WEB_CLIENT_SITES.claude });
+    // Its reads and acts find elements with Playwright's engine in the browser.
+    expect(driver.playwrightSelectors).toBe(true);
+    await expect(driver.press("ArrowRight", '[data-testid="add-menu-connectors"]')).rejects.toMatchObject({
+      code: "unsupported",
+    });
     expect(send).not.toHaveBeenCalled();
+    await driver.press("Escape");
+    expect(send.mock.calls.map(([command]) => command)).toEqual([
+      { op: "act", verb: "press", value: "Escape", observeAfter: "none" },
+    ]);
   });
 
   it("reads a site's JSON from the page's text, and goes back to the page it was on", async () => {
@@ -675,5 +786,27 @@ describe("the hosted driver", () => {
     await expect(driver.navigate("https://example.com")).rejects.toMatchObject({ code: "site_blocked" });
     await expect(driver.click("#send")).rejects.toMatchObject({ code: "unknown_outcome" });
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads a site's own JSON from the page text the browser shows, and says when it is cut short", async () => {
+    let shown = 'Pretty-print\n```\n{"user":{"email":"a@example.com"}}\n```';
+    const send = vi.fn(async (command: BrowserAgentCommand) =>
+      command.op === "observe" && command.mode === "text"
+        ? executed({ text: shown })
+        : executed({ url: "https://chatgpt.com/" }),
+    );
+    const driver = createHostedPageDriver(send, { sites: WEB_CLIENT_SITES.chatgpt });
+    expect(await readVendorJson(driver, "https://chatgpt.com/api/auth/session")).toEqual({
+      user: { email: "a@example.com" },
+    });
+    expect(send.mock.calls.map(([command]) => command.op)).toEqual(["observe", "navigate", "observe", "navigate"]);
+    shown = '{"user":{"email":"a@exa';
+    await expect(readVendorJson(driver, "https://chatgpt.com/api/auth/session")).rejects.toMatchObject({
+      code: "failed",
+    });
+    // The token-carrying API needs a script, which this browser can't run.
+    await expect(
+      readVendorJson(driver, "https://chatgpt.com/backend-api/conversations", { authorization: "Bearer t" }),
+    ).rejects.toMatchObject({ code: "unsupported" });
   });
 });
