@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   agentPrompt,
+  defaultClimbServerId,
   hasIssues,
   startIssues,
   startRequest,
@@ -84,5 +85,39 @@ describe("agentPrompt", () => {
     expect(prompt).toContain('"climb-an-mcp-server"');
     expect(prompt).toContain("Environments: Claude Code · Sonnet, MCPJam · Haiku.");
     expect(prompt).toContain("Stop after 10 rounds or 4,000 credits.");
+  });
+});
+
+describe("defaultClimbServerId", () => {
+  const servers = [
+    { id: "srv_1", name: "stateless" },
+    { id: "srv_2", name: "mcpjam-mcp-checkout" },
+  ];
+
+  it("takes the suite's saved server, not the project's first", () => {
+    expect(
+      defaultClimbServerId(
+        { servers: ["mcpjam-mcp-checkout"], serverBindings: [{ serverName: "mcpjam-mcp-checkout", projectServerId: "srv_2" }] },
+        servers,
+      ),
+    ).toBe("srv_2");
+  });
+
+  it("matches by name when the suite has no saved-server id", () => {
+    expect(defaultClimbServerId({ servers: ["mcpjam-mcp-checkout"] }, servers)).toBe("srv_2");
+  });
+
+  it("skips a binding to a server the project no longer has", () => {
+    expect(
+      defaultClimbServerId(
+        { servers: ["mcpjam-mcp-checkout"], serverBindings: [{ serverName: "gone", projectServerId: "srv_9" }] },
+        servers,
+      ),
+    ).toBe("srv_2");
+  });
+
+  it("falls back to the first server, or none, when the suite names none the project has", () => {
+    expect(defaultClimbServerId({ servers: ["elsewhere"] }, servers)).toBe("srv_1");
+    expect(defaultClimbServerId({}, [])).toBe("");
   });
 });

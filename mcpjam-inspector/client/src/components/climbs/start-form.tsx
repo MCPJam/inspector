@@ -32,10 +32,12 @@ import {
   DEFAULT_CREDIT_LIMIT,
   DEFAULT_ROUND_LIMIT,
   agentPrompt,
+  defaultClimbServerId,
   hasIssues,
   startIssues,
   startRequest,
   type StartDraft,
+  type SuiteServers,
 } from "./start-model";
 
 export type StartFormServer = { id: string; name: string };
@@ -69,7 +71,7 @@ export function StartForm({
   onCancel,
 }: {
   projectId: string;
-  suite: { id: string; name: string };
+  suite: { id: string; name: string } & SuiteServers;
   caseCount: number;
   servers: StartFormServer[];
   environments: StartFormEnvironment[];
@@ -79,7 +81,7 @@ export function StartForm({
 }) {
   const usableModels = useMemo(() => models.filter((model) => !model.disabled), [models]);
   const [draft, setDraft] = useState<StartDraft>(() => ({
-    serverId: servers[0]?.id ?? "",
+    serverId: defaultClimbServerId(suite, servers),
     environmentIds: environments.map((environment) => environment.id),
     picker: "person",
     modelId: usableModels[0]?.id ?? "",

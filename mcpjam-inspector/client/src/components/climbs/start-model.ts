@@ -70,6 +70,33 @@ export function startRequest(
 }
 
 /** What a person pastes into their coding agent to run the climb with MCPJam's tools and the skill. */
+/** The servers a suite names: by saved-server id where it has one, else by name. */
+export type SuiteServers = {
+  servers?: readonly string[];
+  serverBindings?: ReadonlyArray<{ serverName: string; projectServerId?: string }>;
+};
+
+/**
+ * The server a new climb starts on: the first of the suite's own servers that
+ * the project has saved. Without this the form took the project's first
+ * server, which a suite on another server cannot climb. Falls back to that
+ * first server only when the suite names none the project has.
+ */
+export function defaultClimbServerId(
+  suite: SuiteServers,
+  servers: ReadonlyArray<{ id: string; name: string }>,
+): string {
+  for (const binding of suite.serverBindings ?? []) {
+    const id = binding.projectServerId;
+    if (id && servers.some((server) => server.id === id)) return id;
+  }
+  for (const name of suite.servers ?? []) {
+    const match = servers.find((server) => server.name === name);
+    if (match) return match.id;
+  }
+  return servers[0]?.id ?? "";
+}
+
 export function agentPrompt(input: {
   serverName: string;
   suiteName: string;

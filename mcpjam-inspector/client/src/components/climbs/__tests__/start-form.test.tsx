@@ -44,6 +44,14 @@ describe("StartForm", () => {
     expect(screen.getByText(/too few cases to set any aside/)).toBeInTheDocument();
   });
 
+  it("starts on the suite's own server, not the project's first", async () => {
+    startClimb.mockResolvedValue({ climbId: "climb_1" });
+    render(<StartForm {...baseProps} suite={{ ...baseProps.suite, servers: ["stateless"] }} />);
+    await userEvent.click(screen.getByRole("button", { name: /Run the baseline/ }));
+    await waitFor(() => expect(startClimb).toHaveBeenCalled());
+    expect(startClimb).toHaveBeenCalledWith(expect.objectContaining({ serverId: "srv_2" }));
+  });
+
   it("starts the baseline with the person as picker", async () => {
     startClimb.mockResolvedValue({ climbId: "climb_1" });
     render(<StartForm {...baseProps} />);

@@ -56,7 +56,12 @@ export function SuiteClimbTab({
       <div className="py-4">
         <StartForm
           projectId={projectId}
-          suite={{ id: suite._id, name: suite.name }}
+          suite={{
+            id: suite._id,
+            name: suite.name,
+            servers: suite.environment?.servers,
+            serverBindings: suite.environment?.serverBindings,
+          }}
           caseCount={caseCount}
           servers={real}
           environments={targets.filter((target) => target.id !== "suite-default")}
