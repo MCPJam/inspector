@@ -88,7 +88,7 @@ function environment(): WebClientEnvironment {
 
 const ALLOW: WebTurnApproval = { requireToolApproval: false, answer: "deny" };
 
-function turn(approval: WebTurnApproval = ALLOW) {
+function turn(approval: WebTurnApproval = ALLOW, env: WebClientEnvironment = environment()) {
   return runWebClientTurn({
     runtimeId: "claude-web",
     projectId: "project-1",
@@ -96,7 +96,7 @@ function turn(approval: WebTurnApproval = ALLOW) {
     prompt: "say hello",
     runId: "run-1",
     approval,
-    environment: environment(),
+    environment: env,
     turnWindows: windows,
     ledger,
     stepTimeoutMs: 10_000,
@@ -210,6 +210,121 @@ describe("runWebClientTurn", { timeout: 90_000 }, () => {
     });
     expect(vendor.sends).toEqual([]);
     expect(windows.active("conn-orders")).toBeUndefined();
+  });
+
+  it("keeps the completed turn when recording its outcome fails", async () => {
+    const warn = vi.spyOn(logger, "warn");
+    const result = await turn(ALLOW, {
+      ...environment(),
+      onOutcome: async () => {
+        throw new Error("backend unavailable");
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.page.conversation.replyText).toBe("echo said: echo: say hello");
+      expect(result.toolCalls).toEqual([expect.objectContaining({ toolName: "echo", state: "result" })]);
+    }
+    expect(warn).toHaveBeenCalledWith(
+      "[web-clients] the turn's outcome could not be recorded on the account",
+      expect.objectContaining({ ok: true, message: "backend unavailable" }),
+    );
+    warn.mockRestore();
+  });
+
+  it("keeps the turn's own failure when recording it fails", async () => {
+    vendor.challenge = true;
+    const result = await turn(ALLOW, {
+      ...environment(),
+      onOutcome: async () => {
+        throw new Error("backend unavailable");
+      },
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      failure: { kind: "needs_sign_in", reason: "human_check" },
+      pendingStep: { stepId: "sign_in_check" },
+    });
+  });
+
+  it("records and returns the sign-in a run stopped on even when its durable close fails", async () => {
+    vendor.challenge = true;
+    const outcomes: unknown[] = [];
+    let closes = 0;
+    const result = await turn(ALLOW, {
+      ...environment(),
+      turnGate: {
+        open: async () => {},
+        close: async () => {
+          closes += 1;
+          if (closes === 1) throw new Error("backend unavailable");
+        },
+      },
+      onOutcome: async (outcome) => void outcomes.push(outcome),
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      infrastructure: true,
+      failure: { kind: "needs_sign_in", reason: "human_check" },
+      pendingStep: { stepId: "sign_in_check" },
+    });
+    expect(outcomes).toEqual([
+      expect.objectContaining({ ok: false, failure: expect.objectContaining({ kind: "needs_sign_in" }) }),
+    ]);
+    expect(closes).toBe(2);
+  });
+
+  it("retries a durable close that failed without failing the turn, and closes the browser either way", async () => {
+    const warn = vi.spyOn(logger, "warn");
+    let closes = 0;
+    const close = vi.fn(async (_turnId: string) => {
+      closes += 1;
+      if (closes === 1) throw new Error("backend unavailable");
+    });
+    const browserClosed = vi.fn();
+    const outcomes: unknown[] = [];
+    const base = environment();
+    const result = await turn(ALLOW, {
+      ...base,
+      turnGate: { open: async () => {}, close },
+      onOutcome: async (outcome) => void outcomes.push(outcome),
+      async openBrowser(args) {
+        const opened = await base.openBrowser(args);
+        return {
+          driver: opened.driver,
+          close: async () => {
+            browserClosed();
+            await opened.close();
+          },
+        };
+      },
+    });
+    // The turn ran, so it keeps its evidence and its report; a caller that
+    // saw it fail would send the prompt again.
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.page.conversation.replyText).toBe("echo said: echo: say hello");
+      expect(result.toolCalls).toEqual([expect.objectContaining({ toolName: "echo", state: "result" })]);
+    }
+    expect(outcomes).toEqual([expect.objectContaining({ ok: true, webAccountId: "account-1" })]);
+    expect(warn).toHaveBeenCalledWith(
+      "[web-clients] the turn's durable window did not close",
+      expect.objectContaining({ message: "backend unavailable" }),
+    );
+    expect(close).toHaveBeenCalledTimes(2);
+    expect(close.mock.calls[1]).toEqual(close.mock.calls[0]);
+    expect(browserClosed).toHaveBeenCalledTimes(1);
+    expect(windows.active("conn-orders")).toBeUndefined();
+    warn.mockRestore();
+  });
+
+  it("never lets a durable close that keeps failing replace the turn's result", async () => {
+    const close = vi.fn(async () => {
+      throw new Error("backend unavailable");
+    });
+    const result = await turn(ALLOW, { ...environment(), turnGate: { open: async () => {}, close } });
+    expect(result.ok).toBe(true);
+    expect(close).toHaveBeenCalledTimes(2);
   });
 });
 
