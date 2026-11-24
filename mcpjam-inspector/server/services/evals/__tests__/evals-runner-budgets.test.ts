@@ -1293,8 +1293,10 @@ describe("hosted Browser run with more cases than its box budget", () => {
 
   it("falls back to the capacity retry when a released box stays counted", async () => {
     // The documented limit: a lost release leaves three slots for four
-    // cases until the backend stops counting the box.
-    const { rows, wire } = await runBrowserSuite({
+    // cases until the backend stops counting the box, so some of the fourth
+    // case's iterations exhaust the retry. Each iteration either gets a box
+    // or fails on capacity, nothing else.
+    const { rows, wire, setupFailed } = await runBrowserSuite({
       cases: 8,
       runsPerCase: 4,
       holdMs: 60_000,
@@ -1303,6 +1305,11 @@ describe("hosted Browser run with more cases than its box budget", () => {
     expect(rows.size).toBe(32);
     expect(wire.refused).toBeGreaterThan(0);
     expect(wire.peak).toBe(4);
+    expect(setupFailed.length).toBeGreaterThan(0);
+    expect(wire.booted + setupFailed.length).toBe(32);
+    for (const row of setupFailed) {
+      expect(row.error).toMatch(/^Waiting on sandbox capacity:/);
+    }
   });
 });
 

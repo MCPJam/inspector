@@ -4449,7 +4449,9 @@ export const runEvalSuiteWithAiSdk = async ({
       environment: config.environment,
       runId,
     });
-    const caseLimit = isWebClientRuntimeId(harnessOfHostConfig(suiteHostConfig))
+    const caseLimit = isWebClientRuntimeId(
+      harnessOfHostConfig(suiteHostConfig),
+    )
       ? createConcurrencyLimiter(1)
       : sandboxSlots
         ? createConcurrencyLimiter(sandboxSlots)

@@ -268,9 +268,10 @@ describe("a suite run whose organization's trial is used up (2026-11-18)", () =>
     const error = vi.spyOn(logger, "error");
     const { recorder, statuses } = await runHarnessSuite(20, 4);
 
-    // At most one refusal per case already in flight; none of 80 retried.
+    // At most one refusal per case in flight, and the run's box limit keeps
+    // 4 cases in flight; none of 80 retried.
     const refused = provisionBox.mock.calls.length;
-    expect(refused).toBeLessThanOrEqual(20);
+    expect(refused).toBeLessThanOrEqual(4);
     // Every other row is skipped; none is left pending or running.
     expect(statuses).toEqual({ setup_failed: refused, skipped: 80 - refused });
     expect(error).not.toHaveBeenCalledWith(
