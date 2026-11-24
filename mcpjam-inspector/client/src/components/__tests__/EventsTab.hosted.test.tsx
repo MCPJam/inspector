@@ -66,7 +66,8 @@ vi.mock("convex/react", () => ({
   useQuery: (_ref: unknown, args: unknown) =>
     args === "skip" ? undefined : hostedRows,
   useMutation: (ref: unknown) => {
-    if (!mutations.has(ref)) mutations.set(ref, vi.fn().mockResolvedValue({}));
+    if (!mutations.has(ref))
+      mutations.set(ref, vi.fn().mockResolvedValue(hostedRow));
     return mutations.get(ref);
   },
 }));
@@ -161,13 +162,16 @@ const hostedRow = {
   consecutiveFailures: 0,
 };
 
-function openWorkspaceView(name: "Received" | "Subscriptions" | "Definition") {
-  const tabs = screen.getByRole("tablist", { name: "Event workspace" });
-  fireEvent.click(within(tabs).getByRole("tab", { name: new RegExp(`^${name}`) }));
+async function openWorkspaceView(name: "Occurrences" | "Subscriptions") {
+  fireEvent.click(screen.getByRole("tab", { name: new RegExp(`^${name}`) }));
+  if (name === "Subscriptions") {
+    const list = await screen.findByTestId("subscription-list");
+    fireEvent.click(within(list).getAllByRole("button")[0]!);
+  }
 }
 
 function subscribeButton() {
-  return within(screen.getByRole("dialog")).getByRole("button", {
+  return screen.getByRole("button", {
     name: "Subscribe",
   });
 }
@@ -226,8 +230,9 @@ describe("EventsTab (hosted)", () => {
       dispatchState: "acked",
       data: { title: "hi" },
     });
+    await openWorkspaceView("Occurrences");
+    fireEvent.click(await screen.findByTestId("select-occurrence-3"));
     const entry = await screen.findByTestId("feed-entry");
-    fireEvent.click(within(entry).getByRole("button"));
     expect(within(entry).getByText("evt_3")).toBeInTheDocument();
     expect(within(entry).getByText("acked")).toBeInTheDocument();
 
@@ -268,23 +273,24 @@ describe("EventsTab (hosted)", () => {
 
     // The registry row for this server renders, labelled with its client.
     await screen.findByTestId("events-activity");
-    openWorkspaceView("Subscriptions");
+    await openWorkspaceView("Subscriptions");
     const card = await screen.findByTestId("subscription-sub_convex_1");
-    fireEvent.click(within(card).getByRole("button"));
     expect(within(card).getByTestId("subscription-host")).toHaveTextContent(
       "ChatGPT",
     );
 
+    fireEvent.click(await screen.findByRole("tab", { name: /^Events/ }));
     fireEvent.click(
       within(await screen.findByTestId("event-types")).getByRole("button", {
         name: /issue\.created/,
       }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Subscribe" }));
     // Hosted webhooks need no acknowledgement: they use the public inbox.
     fireEvent.click(screen.getByRole("radio", { name: /Webhook/ }));
     expect(
-      screen.queryByRole("checkbox", { name: /local development receiver/ }),
+      screen.queryByRole("checkbox", {
+        name: /Receive webhooks on this machine/,
+      }),
     ).toBeNull();
     fireEvent.click(subscribeButton());
 
@@ -319,18 +325,13 @@ describe("EventsTab (hosted)", () => {
     // A project-wide hosted subscription never borrows a saved client's
     // identity, and there is no picker to choose one.
     await screen.findByTestId("event-types");
-    expect(screen.queryByTestId("events-host-label")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Server details/ }));
-    expect(await screen.findByTestId("events-host-label")).toHaveTextContent(
-      "MCPJam (built-in)",
-    );
     expect(screen.queryByLabelText("Events client")).toBeNull();
+    fireEvent.click(await screen.findByRole("tab", { name: /^Events/ }));
     fireEvent.click(
       within(await screen.findByTestId("event-types")).getByRole("button", {
         name: /issue\.created/,
       }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Subscribe" }));
     // Built-in receives every mode the hosted runtime supports.
     expect(screen.getByRole("radio", { name: /Poll/ })).toBeEnabled();
     fireEvent.click(screen.getByRole("radio", { name: /Webhook/ }));
@@ -365,12 +366,12 @@ describe("EventsTab (hosted)", () => {
       />,
     );
 
+    fireEvent.click(await screen.findByRole("tab", { name: /^Events/ }));
     fireEvent.click(
       within(await screen.findByTestId("event-types")).getByRole("button", {
         name: /issue\.created/,
       }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Subscribe" }));
     expect(screen.getByRole("radio", { name: /Push/ })).toBeDisabled();
     expect(
       screen.getByText(
@@ -402,12 +403,11 @@ describe("EventsTab (hosted)", () => {
     );
 
     await screen.findByTestId("events-activity");
-    fireEvent.click(screen.getByRole("button", { name: /Rejected deliveries/ }));
-    expect(screen.getByText(/Open a subscription and choose Check inbox/)).toBeInTheDocument();
-    expect(screen.queryByText(/^No rejected deliveries/)).not.toBeInTheDocument();
-    openWorkspaceView("Subscriptions");
+    expect(
+      screen.queryByRole("button", { name: /Rejected deliveries/ }),
+    ).not.toBeInTheDocument();
+    await openWorkspaceView("Subscriptions");
     const card = await screen.findByTestId("subscription-sub_convex_1");
-    fireEvent.click(within(card).getByRole("button"));
     fireEvent.click(within(card).getByRole("button", { name: /Pause/ }));
     const setState = mutations.get(EVENT_SUBSCRIPTIONS_API.setDesiredState)!;
     await waitFor(() =>
@@ -423,6 +423,10 @@ describe("EventsTab (hosted)", () => {
         projectId: "proj_1",
         subscriptionId: "sub_convex_1",
       }),
+    );
+    await openWorkspaceView("Occurrences");
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Rejected deliveries/ }),
     );
     expect(await screen.findByText("stale_timestamp")).toBeInTheDocument();
   });

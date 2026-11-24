@@ -4,7 +4,6 @@ import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import { cn } from "@mcpjam/design-system/cn";
-import { AlertTriangle } from "lucide-react";
 import {
   describeModeRefusal,
   isEventDeliveryMode,
@@ -161,25 +160,29 @@ export function SubscribeDelivery({
         </p>
       ) : null}
       {form.needsAcknowledgement ? (
-        <div className="space-y-2 rounded-md border border-warning/40 bg-warning/10 p-3">
-          <div className="flex items-start gap-2 text-xs text-foreground">
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-warning" />
-            <p>
-              Allow the server to reach this machine over plain http. Runs that
-              use a local receiver do not count as passing.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id={`subscribe-${eventName}-ack`}
-              checked={form.acknowledged}
-              onCheckedChange={(checked) =>
-                form.setAcknowledged(checked === true)
-              }
-            />
-            <Label htmlFor={`subscribe-${eventName}-ack`} className="text-xs">
-              Use local development receiver (non-conformant, plain http)
+        <div className="flex items-start gap-2 pt-2">
+          <Checkbox
+            id={`subscribe-${eventName}-ack`}
+            aria-describedby={`subscribe-${eventName}-receiver-description`}
+            checked={form.acknowledged}
+            onCheckedChange={(checked) =>
+              form.setAcknowledged(checked === true)
+            }
+          />
+          <div className="space-y-1">
+            <Label
+              htmlFor={`subscribe-${eventName}-ack`}
+              className="text-xs leading-4"
+            >
+              Receive webhooks on this machine
             </Label>
+            <p
+              id={`subscribe-${eventName}-receiver-description`}
+              className="text-[11px] text-muted-foreground"
+            >
+              Uses unencrypted HTTP. The server must be able to reach this
+              machine.
+            </p>
           </div>
         </div>
       ) : null}

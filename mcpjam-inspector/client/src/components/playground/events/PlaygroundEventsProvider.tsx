@@ -265,12 +265,12 @@ function useRuntime(
       current.current.servers[server.serverName]?.connectionStatus !==
         "connected"
     )
-      throw new Error("Reconnect the server before adding an event.");
+      throw new Error("Reconnect the server before connecting an event.");
     const ownerScope = scope;
     const generation = lifecycle.current;
     const targetAgent = useEventAgentBridge.getState().agent;
     if (!targetAgent)
-      throw new Error("Open an agent conversation before adding an event.");
+      throw new Error("Open an agent conversation before connecting an event.");
     if (targetAgent.blockedReason) throw new Error(targetAgent.blockedReason);
     const isCurrent = () =>
       alive.current &&
@@ -280,19 +280,19 @@ function useRuntime(
     const afterSeq = await watermark();
     if (!isCurrent())
       throw new Error(
-        "The client changed. Add the event again for the selected client.",
+        "The client changed. Connect the event again for the selected client.",
       );
     let subscription: EventsSubscriptionView;
     if (hosted) {
       const serverId = resolveHostedEventsServerId(server.serverName);
       if (!projectId || !serverId)
         throw new Error(
-          "Save the server in this project before adding an event.",
+          "Save the server in this project before connecting an event.",
         );
       const descriptor = await buildHostedEventDescriptor(event);
       if (!isCurrent())
         throw new Error(
-          "The client changed. Add the event again for the selected client.",
+          "The client changed. Connect the event again for the selected client.",
         );
       const row = await createHosted({
         projectId,
@@ -323,7 +323,7 @@ function useRuntime(
     }
     if (!isCurrent())
       throw new Error(
-        "The client changed. Add the event again for the selected client.",
+        "The client changed. Connect the event again for the selected client.",
       );
     if (
       current.current.bindings.some(
@@ -331,7 +331,7 @@ function useRuntime(
       )
     )
       throw new Error(
-        "This event is already connected. Use Edit to change its instructions.",
+        "This event is already connected. Use Edit instructions to change what the agent should do.",
       );
     setBindings((previous) => {
       return [
@@ -365,7 +365,7 @@ function useRuntime(
         "connected"
     )
       throw new Error(
-        "Select an agent and reconnect the server before adding a test event.",
+        "Select an agent and reconnect the server before connecting a test event.",
       );
     if (target.blockedReason) throw new Error(target.blockedReason);
     const id = crypto.randomUUID();

@@ -239,7 +239,7 @@ export interface CallbackUrlCheck {
 }
 
 /**
- * The draft makes `https` a MUST for callback URLs. Plain http is accepted
+ * MCP Events makes `https` a MUST for callback URLs. Plain http is accepted
  * only behind an explicit flag, and only ever as a labelled development mode.
  */
 export function checkCallbackUrl(
@@ -258,7 +258,7 @@ export function checkCallbackUrl(
   }
   if (!args.allowInsecure) {
     throw usageError(
-      `${args.flag} must be https:// — the MCP Events draft requires https callback URLs. ` +
+      `${args.flag} must be https:// — MCP Events requires HTTPS callback URLs. ` +
         `Pass ${args.insecureFlag} to use plain http for local development (NON-CONFORMANT; never a conformance pass).`,
     );
   }
@@ -268,7 +268,7 @@ export function checkCallbackUrl(
 export function insecureModeWarning(flag: string, url: string): string {
   return (
     `WARNING: ${flag} is a NON-CONFORMANT development mode. The callback URL ${url} is plain http; ` +
-    "the MCP Events draft requires https, so a conformant server must refuse it. " +
+    "MCP Events requires HTTPS, so a conformant server must refuse it. " +
     "Results from this mode never count as a conformance pass."
   );
 }

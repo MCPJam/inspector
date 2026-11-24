@@ -27,6 +27,7 @@ export function InspectorPaneHeader<T extends string>({
   ariaLabel,
   secondaryActions,
   primaryAction,
+  compact = false,
 }: {
   tabs: InspectorPaneTab<T>[];
   activeTab: T;
@@ -35,6 +36,8 @@ export function InspectorPaneHeader<T extends string>({
   ariaLabel: string;
   secondaryActions?: ReactNode;
   primaryAction?: ReactNode;
+  /** Reduce tab spacing when a pane has several navigation labels. */
+  compact?: boolean;
 }) {
   const tabRefs = useRef(new Map<T, HTMLButtonElement>());
 
@@ -68,7 +71,10 @@ export function InspectorPaneHeader<T extends string>({
         <div
           role="tablist"
           aria-label={ariaLabel}
-          className="flex min-w-0 items-center gap-1.5 overflow-x-auto [scrollbar-width:none]"
+          className={cn(
+            "flex min-w-0 items-center overflow-x-auto [scrollbar-width:none]",
+            compact ? "gap-1" : "gap-1.5",
+          )}
           onKeyDown={onKeyDown}
         >
           {tabs.map((tab) => {
@@ -86,7 +92,8 @@ export function InspectorPaneHeader<T extends string>({
                 tabIndex={selected ? 0 : -1}
                 onClick={() => onTabChange(tab.id)}
                 className={cn(
-                  "shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer",
+                  "shrink-0 whitespace-nowrap py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer",
+                  compact ? "px-1.5" : "px-3",
                   selected
                     ? "bg-primary/10 text-primary"
                     : "text-muted-foreground hover:text-foreground",

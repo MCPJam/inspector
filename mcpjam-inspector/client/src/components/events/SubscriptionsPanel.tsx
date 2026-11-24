@@ -106,7 +106,9 @@ function SubscriptionCard({
   slotState,
   termination,
   onAction,
+  defaultOpen = false,
 }: {
+  defaultOpen?: boolean;
   subscription: EventsSubscriptionView;
   hosted: boolean;
   now: number;
@@ -127,7 +129,7 @@ function SubscriptionCard({
     );
 
   return (
-    <Collapsible asChild>
+    <Collapsible asChild defaultOpen={defaultOpen}>
     <li
       className="rounded-md border border-border bg-card"
       data-testid={`subscription-${subscription.id}`}
@@ -382,7 +384,9 @@ export function SubscriptionsPanel({
   emptyText,
   terminationFor,
   onAction,
+  defaultOpen = false,
 }: {
+  defaultOpen?: boolean;
   subscriptions: EventsSubscriptionView[];
   hosted: boolean;
   busyId: string | null;
@@ -407,6 +411,7 @@ export function SubscriptionsPanel({
         <SubscriptionCard
           key={subscription.id}
           subscription={subscription}
+          defaultOpen={defaultOpen}
           hosted={hosted}
           now={now}
           busy={busyId === subscription.id}

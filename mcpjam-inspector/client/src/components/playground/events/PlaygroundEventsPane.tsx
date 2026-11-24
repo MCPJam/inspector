@@ -46,13 +46,13 @@ export function PlaygroundEventsPane() {
           }}
         >
           <Plus className="mr-1 size-3.5" />
-          Add event
+          Connect event
         </Button>
       </div>
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
         {runtime.bindings.length === 0 ? (
           <p className="py-3 text-xs text-muted-foreground">
-            Add a server event to see how your agent responds.
+            Connect a server event to see how your agent responds.
           </p>
         ) : (
           runtime.bindings.map((binding) => {
@@ -100,7 +100,7 @@ export function PlaygroundEventsPane() {
                     variant="ghost"
                     onClick={() => setSelected({ binding, mode: "edit" })}
                   >
-                    Edit
+                    Edit instructions
                   </Button>
                   <Button
                     size="sm"
@@ -225,7 +225,7 @@ function BindingDialog({
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>
-            {mode === "test" ? "Trigger event" : "Edit event"}
+            {mode === "test" ? "Trigger event" : "Edit instructions"}
           </DialogTitle>
           <DialogDescription>
             {mode === "test"

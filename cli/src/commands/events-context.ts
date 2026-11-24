@@ -156,7 +156,7 @@ export function addEventsTargetOptions(command: Command): Command {
 export function addEventArgsOption(command: Command): Command {
   return command.option(
     "--event-args <json>",
-    "Event arguments as a JSON object, @path, or - for stdin (default {})",
+    "Subscription arguments as a JSON object, @path, or - for stdin (default {})",
   );
 }
 

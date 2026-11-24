@@ -3,3 +3,5 @@
 ---
 
 Simplify the Events catalog and workspace with expandable delivery and subscription rows, Subscribe and Trigger event sheets, and connection details on demand.
+
+Move the New sidebar badge from WebMCP to Events.
