@@ -1124,8 +1124,13 @@ export function adaptContext(
       // Every page stops first. One still running on a cleared site could
       // write its cookies or storage again before the browser closes, and the
       // archive would keep them. Only a blank page, for the CDP session, opens
-      // after; the caller closes the browser next.
-      await Promise.all(context.pages().map((open) => open.close()));
+      // after; the caller closes the browser next. A page that won't close in
+      // time fails the export before anything is cleared or archived.
+      const closed = await Promise.race([
+        Promise.all(context.pages().map((open) => open.close())).then(() => true),
+        closeGrace().then(() => false),
+      ]);
+      if (!closed) throw new Error("profile_export_pages_did_not_close");
       const page = await context.newPage();
       const cdp = await context.newCDPSession(page);
       for (const origin of origins) {
