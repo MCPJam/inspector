@@ -164,6 +164,7 @@ export interface EventsCreateSubscriptionRequest {
 
 /** One journal entry, as the feed carries it. */
 export interface EventsFeedEntryView {
+  afterRemoval?: boolean;
   seq: number;
   kind: "event" | "gap" | "terminated" | "inbox_gap" | "quarantined" | string;
   origin: "webhook" | "poll" | "push" | "simulation" | "replay";

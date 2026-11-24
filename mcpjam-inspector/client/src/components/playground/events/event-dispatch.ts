@@ -1,4 +1,7 @@
-import type { EventsFeedEntryView } from "@/shared/events-api";
+import type {
+  EventsFeedEntryView,
+  EventsSubscriptionView,
+} from "@/shared/events-api";
 
 export interface EventBinding {
   id: string;
@@ -10,6 +13,18 @@ export interface EventBinding {
   enabled: boolean;
   afterSeq: number;
   agentScope: string;
+  subscription?: Pick<EventsSubscriptionView, "desiredState" | "observedState">;
+}
+
+function acceptsEvents(binding: EventBinding): boolean {
+  const subscription = binding.subscription;
+  return (
+    !subscription ||
+    (subscription.desiredState === "active" &&
+      !["removing", "removed", "terminated"].includes(
+        subscription.observedState,
+      ))
+  );
 }
 
 export interface EventAgent {
@@ -70,9 +85,11 @@ export function createEventDispatcher(options: {
       if (
         disposed ||
         !binding?.enabled ||
+        !acceptsEvents(binding) ||
         entry.kind !== "event" ||
         entry.quarantined ||
         entry.idConflict ||
+        entry.afterRemoval ||
         entry.logicalSubscriptionId !== binding.logicalId ||
         entry.name !== binding.eventName ||
         (!localTest && entry.seq <= binding.afterSeq)
@@ -111,13 +128,18 @@ export function createEventDispatcher(options: {
       }
       const revision = revisions.get(id) ?? 0;
       const generation = lifecycle;
-      const isCurrent = () =>
-        !disposed &&
-        lifecycle === generation &&
-        options.binding(id)?.enabled === true &&
-        (revisions.get(id) ?? 0) === revision &&
-        options.connected(binding) &&
-        options.agent()?.scope === agent.scope;
+      const isCurrent = () => {
+        const latest = options.binding(id);
+        return (
+          !disposed &&
+          lifecycle === generation &&
+          latest?.enabled === true &&
+          acceptsEvents(latest) &&
+          (revisions.get(id) ?? 0) === revision &&
+          options.connected(binding) &&
+          options.agent()?.scope === agent.scope
+        );
+      };
       inFlight = true;
       try {
         const sent = await agent.send(eventTurn(binding, entry), isCurrent);

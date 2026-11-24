@@ -6,6 +6,7 @@ import {
   usePlaygroundEvents,
 } from "../PlaygroundEventsProvider";
 import { useEventAgentBridge } from "../event-agent-bridge";
+import type { UseEventsFeedOptions } from "@/components/events/use-events-feed";
 
 const mocks = vi.hoisted(() => ({
   flag: undefined as boolean | undefined,
@@ -89,10 +90,41 @@ beforeEach(() => {
     mode: "poll",
     arguments: {},
     observedState: "active",
+    desiredState: "active",
   });
 });
 
 describe("Playground Events lifecycle", () => {
+  it("stops dispatch as soon as a shared subscription is removed, before another frame", async () => {
+    const send = vi.fn(async () => true);
+    useEventAgentBridge
+      .getState()
+      .set({ scope: "chat:client", blockedReason: null, send });
+    render(tree());
+    await act(add);
+    const options = mocks.feed.mock.lastCall![0] as UseEventsFeedOptions;
+    act(() => {
+      options.onSubscription?.({
+        ...runtime!.bindings[0].subscription!,
+        desiredState: "removed",
+        observedState: "removing",
+      });
+      options.onNewEntries?.([
+        {
+          seq: 43,
+          kind: "event",
+          origin: "poll",
+          namespace: "live",
+          logicalSubscriptionId: "logical",
+          name: "demo.ping",
+          eventId: "late",
+          receivedAt: 101,
+          data: {},
+        },
+      ]);
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
   it("preserves the conversation across flag hydration and host selection", () => {
     mocks.flag = undefined;
     const { rerender } = render(tree());

@@ -118,7 +118,7 @@ function useRuntime(
         ),
     });
   const updateSubscriptions = (subscriptions: EventsSubscriptionView[]) => {
-    setBindings((previous) =>
+    const update = (previous: PlaygroundEventBinding[]) =>
       previous.map((binding) => {
         const subscription = subscriptions.find(
           (row) => row.id === binding.subscriptionId,
@@ -126,8 +126,10 @@ function useRuntime(
         return subscription
           ? { ...binding, subscription, logicalId: logicalIdOf(subscription) }
           : binding;
-      }),
-    );
+      });
+    // A following feed frame can arrive before React renders this snapshot.
+    current.current.bindings = update(current.current.bindings);
+    setBindings(update);
   };
   useEffect(() => {
     if (rows)

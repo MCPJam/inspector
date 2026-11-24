@@ -82,6 +82,7 @@ describe("foreground event dispatch", () => {
     { kind: "gap" },
     { quarantined: true },
     { idConflict: true },
+    { afterRemoval: true },
     { logicalSubscriptionId: "other" },
     { name: "other.event" },
     { seq: 0 },
@@ -139,30 +140,60 @@ describe("foreground event dispatch", () => {
     expect(f.agent().send).not.toHaveBeenCalled();
     expect(f.result).toHaveBeenCalledTimes(2);
   });
-  it.each(["pause", "remove", "dispose", "client", "disconnect"])(
-    "cancels a send awaiting preflight on %s",
-    async (action) => {
-      const f = fixture();
-      let release: () => void = () => {};
-      const gate = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      f.agent().send = async (_text, isCurrent) => {
-        await gate;
-        return isCurrent();
+  it.each([
+    "pause",
+    "remove",
+    "dispose",
+    "client",
+    "disconnect",
+    "subscriptionRemoved",
+    "subscriptionTerminated",
+  ])("cancels a send awaiting preflight on %s", async (action) => {
+    const f = fixture();
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    f.agent().send = async (_text, isCurrent) => {
+      await gate;
+      return isCurrent();
+    };
+    const pending = f.dispatcher.dispatch("binding", f.entry);
+    if (action === "pause") {
+      f.dispatcher.invalidate("binding");
+      f.binding().enabled = false;
+    }
+    if (action === "remove") f.setBinding(undefined);
+    if (action === "dispose") f.dispatcher.dispose();
+    if (action === "client")
+      f.setAgent({ ...f.agent(), scope: "different-client" });
+    if (action === "disconnect") f.setConnected(false);
+    if (action === "subscriptionRemoved")
+      f.binding().subscription = {
+        desiredState: "removed",
+        observedState: "removing",
       };
-      const pending = f.dispatcher.dispatch("binding", f.entry);
-      if (action === "pause") {
-        f.dispatcher.invalidate("binding");
-        f.binding().enabled = false;
-      }
-      if (action === "remove") f.setBinding(undefined);
-      if (action === "dispose") f.dispatcher.dispose();
-      if (action === "client")
-        f.setAgent({ ...f.agent(), scope: "different-client" });
-      if (action === "disconnect") f.setConnected(false);
-      release();
-      expect(await pending).toBe(false);
+    if (action === "subscriptionTerminated")
+      f.binding().subscription = {
+        desiredState: "active",
+        observedState: "terminated",
+      };
+    release();
+    expect(await pending).toBe(false);
+  });
+  it.each([
+    { desiredState: "paused", observedState: "active" },
+    { desiredState: "removed", observedState: "active" },
+    { desiredState: "active", observedState: "removing" },
+    { desiredState: "active", observedState: "removed" },
+    { desiredState: "active", observedState: "terminated" },
+  ] as const)(
+    "does not wake the agent for a stopped subscription: %j",
+    async (subscription) => {
+      const f = fixture();
+      f.binding().subscription = subscription;
+      expect(await f.dispatcher.dispatch("binding", f.entry)).toBe(false);
+      expect(f.agent().send).not.toHaveBeenCalled();
     },
   );
   it("serializes events arriving in the same batch before React renders busy", async () => {
