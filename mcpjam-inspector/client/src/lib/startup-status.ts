@@ -2,6 +2,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { useAppLoadStallReport } from "./app-load-stall";
 import { useStartupTracking } from "./startup-tracking";
+import { recordDesktopActivity } from "./desktop-diagnostics";
 import { useConvexAuth } from "convex/react";
 import { create } from "zustand";
 import {
@@ -94,6 +95,26 @@ export function StartupStatusTracker(): null {
   const publicPage = !isAuthenticated && shouldSkipGuestSession();
   useAppLoadStallReport(userReady || publicPage, status.stage);
   useStartupTracking(status, userReady);
+
+  // The desktop Help menu reads this from the main process, which still works
+  // when this window is stuck. It is the only renderer heartbeat, and it runs
+  // while startup is blocked and App has not mounted.
+  const { user, isLoading: workOsLoading } = useInspectorAuth();
+  const signedIn = Boolean(user);
+  useEffect(() => {
+    if (!window.electronAPI?.diagnostics) return;
+    const report = () =>
+      recordDesktopActivity({
+        kind: "startup",
+        phase: "state",
+        stage: userReady ? "ready" : status.stage,
+        auth: workOsLoading ? "loading" : signedIn ? "signed_in" : "guest",
+        version: __APP_VERSION__,
+      });
+    report();
+    const timer = setInterval(report, 15_000);
+    return () => clearInterval(timer);
+  }, [userReady, status.stage, signedIn, workOsLoading]);
 
   useEffect(() => {
     if (startupSettled) return;

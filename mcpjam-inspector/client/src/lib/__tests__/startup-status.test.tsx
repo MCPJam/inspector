@@ -1,7 +1,12 @@
 import { act, render, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const auth = vi.hoisted(() => ({ isAuthenticated: false, publicPage: false }));
+const auth = vi.hoisted(() => ({
+  isAuthenticated: false,
+  publicPage: false,
+  workOsUser: null as { id: string } | null,
+  workOsLoading: false,
+}));
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({
@@ -13,12 +18,19 @@ vi.mock("../vanity-landing-hosts", () => ({
   shouldSkipGuestSession: () => auth.publicPage,
 }));
 vi.mock("@/hooks/use-inspector-auth", () => ({
-  useInspectorAuth: () => ({ user: null }),
+  useInspectorAuth: () => ({
+    user: auth.workOsUser,
+    isLoading: auth.workOsLoading,
+  }),
 }));
 const reportCaught = vi.hoisted(() => vi.fn());
 vi.mock("../error-reporting", () => ({ reportCaught }));
 const analytics = vi.hoisted(() => ({ track: vi.fn() }));
 vi.mock("../analytics", () => ({ track: analytics.track }));
+const desktop = vi.hoisted(() => ({ record: vi.fn() }));
+vi.mock("../desktop-diagnostics", () => ({
+  recordDesktopActivity: desktop.record,
+}));
 vi.mock("../guest-session", () => ({
   getGuestSessionRefusal: () => null,
   subscribeGuestSessionChanges: () => () => {},
@@ -53,6 +65,8 @@ describe("StartupStatusTracker", () => {
     reportCaught.mockReset();
     auth.isAuthenticated = false;
     auth.publicPage = false;
+    auth.workOsUser = null;
+    auth.workOsLoading = false;
     useSessionRefreshStore.setState({ status: "idle", kind: null });
   });
 
@@ -156,5 +170,70 @@ describe("StartupStatusTracker", () => {
       ([name]) => name === "app_startup_blocked",
     );
     expect(blocked).toHaveLength(0);
+  });
+
+  it("tells the desktop app its stage and sign-in state, and keeps reporting while stuck", () => {
+    desktop.record.mockClear();
+    Object.defineProperty(window, "electronAPI", {
+      value: { diagnostics: { record: vi.fn() } },
+      configurable: true,
+    });
+    try {
+      render(<StartupStatusTracker />);
+      expect(desktop.record).toHaveBeenLastCalledWith({
+        kind: "startup",
+        phase: "state",
+        stage: "app_load/auth_pending",
+        auth: "guest",
+        version: __APP_VERSION__,
+      });
+      // No stage change for a while: the heartbeat still marks the window alive.
+      const before = desktop.record.mock.calls.length;
+      act(() => vi.advanceTimersByTime(15_000));
+      expect(desktop.record.mock.calls.length).toBe(before + 1);
+      act(() => reportUserReadiness(true, true));
+      expect(desktop.record).toHaveBeenLastCalledWith(
+        expect.objectContaining({ stage: "ready" }),
+      );
+    } finally {
+      Reflect.deleteProperty(window, "electronAPI");
+    }
+  });
+
+  it("reports WorkOS identity, not guest Convex authentication, and never the user ID", () => {
+    desktop.record.mockClear();
+    Object.defineProperty(window, "electronAPI", {
+      value: { diagnostics: { record: vi.fn() } },
+      configurable: true,
+    });
+    auth.isAuthenticated = true;
+    auth.workOsLoading = true;
+    try {
+      const view = render(<StartupStatusTracker />);
+      expect(desktop.record).toHaveBeenLastCalledWith(
+        expect.objectContaining({ auth: "loading" }),
+      );
+      auth.workOsLoading = false;
+      view.rerender(<StartupStatusTracker />);
+      expect(desktop.record).toHaveBeenLastCalledWith(
+        expect.objectContaining({ auth: "guest" }),
+      );
+      auth.workOsUser = { id: "private-user" };
+      view.rerender(<StartupStatusTracker />);
+      expect(desktop.record).toHaveBeenLastCalledWith(
+        expect.objectContaining({ auth: "signed_in" }),
+      );
+      expect(JSON.stringify(desktop.record.mock.calls)).not.toContain(
+        "private-user",
+      );
+    } finally {
+      Reflect.deleteProperty(window, "electronAPI");
+    }
+  });
+
+  it("does not report anything outside the desktop app", () => {
+    desktop.record.mockClear();
+    render(<StartupStatusTracker />);
+    expect(desktop.record).not.toHaveBeenCalled();
   });
 });
