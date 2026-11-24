@@ -190,6 +190,7 @@ import {
   createLocalConnectorRoutes,
   mountInspectorWebConnectors,
 } from "./services/web-clients/inspector-endpoint.js";
+import { mountWebClientRuntime } from "./services/web-clients/runtime-mount.js";
 import { assertHostedFirstPartyMcpUrls } from "./utils/hosted-mcp-base-fetch.js";
 import { loadPrivateEgressAllowlist } from "./utils/hosted-egress-guard.js";
 import webRoutes from "./routes/web/index";
@@ -582,6 +583,7 @@ app.use("/api/*", sentryRequestIdentityMiddleware);
 app.use("/api/*", requestLogContextMiddleware);
 
 // API Routes
+mountWebClientRuntime(app, { hosted: HOSTED_MODE });
 if (!HOSTED_MODE) {
   app.route("/api/apps", appsRoutes);
   app.route("/api/mcp", mcpRoutes);

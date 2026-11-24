@@ -1,3 +1,4 @@
+import type { WebClientRunContext } from "../services/web-clients/web-client-run.js";
 import type { TurnAuthorization } from "../services/turn-authorization.js";
 import { finishPendingPersist } from "./completed-turn-finalization.js";
 import { WIDGET_TOOL_VERBS } from "../services/widget-tool-verbs.js";
@@ -1064,6 +1065,8 @@ export interface MCPJamHandlerOptions {
     sessionIdx?: number;
   };
   authHeader?: string;
+  /** Web clients: the eval run's owner and frozen accounts (`webClientRunOfEvalRun`). */
+  webClientRun?: WebClientRunContext;
   scenarioId?: string;
   accessVersion?: number;
   projectId?: string;
