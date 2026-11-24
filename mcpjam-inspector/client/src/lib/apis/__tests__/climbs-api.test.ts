@@ -7,12 +7,21 @@ vi.mock("@/lib/session-token", () => ({
 
 import {
   ClimbsApiError,
+  confirmClimb,
   continueClimb,
+  decideRound,
+  draftChange,
   forgetMockChanges,
   getClimb,
+  getClimbRound,
   isClimbsApiError,
   listClimbs,
   mockChangesBetween,
+  readMockDefinition,
+  saveMockDefinition,
+  submitRound,
+  updateClimbMeasure,
+  verifyClimb,
   startClimb,
   stopClimb,
 } from "../climbs-api";
@@ -168,5 +177,58 @@ describe("climbs api: reads and the rest", () => {
     await expect(
       mockChangesBetween({ projectId: "p", mockId: "m", version: 3, sinceVersion: 2 }),
     ).resolves.toEqual([]);
+  });
+});
+
+describe("climbs api: rounds, mocks, the end", () => {
+  const body = () => JSON.parse(String(lastCall().init.body));
+
+  it("reads one round and overrules it with a reason", async () => {
+    respond({ number: 2, status: "settled" });
+    await getClimbRound({ projectId: "p", climbId: "c1", roundNumber: 2 });
+    expect(lastCall().url.pathname).toBe("/api/v1/projects/p/climbs/c1/rounds/2");
+    respond({ climbId: "c1" });
+    await decideRound({ projectId: "p", climbId: "c1", roundNumber: 2, decision: "kept", reason: "It reads better." });
+    expect(lastCall().url.pathname).toBe("/api/v1/projects/p/climbs/c1/rounds/2/decision");
+    expect(body()).toEqual({ decision: "kept", reason: "It reads better." });
+  });
+
+  it("sets what the climb is for", async () => {
+    respond({ climbId: "c1", measure: "tokens" });
+    await updateClimbMeasure({ projectId: "p", climbId: "c1", measure: "tokens" });
+    expect(lastCall().init.method).toBe("PATCH");
+    expect(body()).toEqual({ measure: "tokens" });
+  });
+
+  it("reads a mock's definition and head version, saves a whole definition, and submits the saved version", async () => {
+    respond({ id: "m", definition: { tools: {} }, headVersion: 3 });
+    expect(await readMockDefinition({ projectId: "p", mockId: "m", version: 2 })).toEqual({ definition: { tools: {} }, headVersion: 3 });
+    expect(lastCall().url.searchParams.get("version")).toBe("2");
+    respond({ version: 4, created: true }, 201);
+    await saveMockDefinition({ projectId: "p", mockId: "m", definition: { tools: { a: {} } }, expectedVersion: 3 });
+    expect(lastCall().url.pathname).toBe("/api/v1/projects/p/mock-servers/m/versions");
+    expect(body()).toEqual({ definition: { tools: { a: {} } }, expectedVersion: 3 });
+    respond({ roundNumber: 2 }, 202);
+    await submitRound({ projectId: "p", climbId: "c1", serverId: "m", serverVersion: "4", idempotencyKey: "k" });
+    expect(lastCall().url.pathname).toBe("/api/v1/projects/p/climbs/c1/rounds");
+    expect(body()).toEqual({ serverId: "m", serverVersion: "4", idempotencyKey: "k" });
+  });
+
+  it("asks for a draft of one tool", async () => {
+    respond({ description: "Lists them.", patchJson: "{}" });
+    await draftChange({ projectId: "p", climbId: "c1", toolName: "list_projects", includeTitle: false });
+    expect(lastCall().url.pathname).toBe("/api/v1/projects/p/climbs/c1/draft");
+    expect(body()).toEqual({ toolName: "list_projects", includeTitle: false });
+  });
+
+  it("quotes the confirmation with a dry run, and verifies with a commit and runAnyway", async () => {
+    respond({ dryRun: true });
+    await confirmClimb({ projectId: "p", climbId: "c1", dryRun: true });
+    expect(lastCall().url.pathname).toBe("/api/v1/projects/p/climbs/c1/confirmation");
+    expect(body()).toEqual({ dryRun: true });
+    respond({ ran: true });
+    await verifyClimb({ projectId: "p", climbId: "c1", commit: { sha: "4f2c9ab" }, runAnyway: true });
+    expect(lastCall().url.pathname).toBe("/api/v1/projects/p/climbs/c1/verifications");
+    expect(body()).toEqual({ commit: { sha: "4f2c9ab" }, runAnyway: true });
   });
 });

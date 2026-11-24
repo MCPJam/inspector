@@ -18,12 +18,14 @@ import {
   PlatformApiClient,
   isPlatformApiError,
   type PlatformClimbLaunch,
+  type PlatformClimbConfirmed,
   type PlatformClimbDraft,
   type PlatformClimbListItem,
   type PlatformClimbRoundSubmitted,
   type PlatformClimbStopped,
   type PlatformClimbMeasure,
   type PlatformClimbVerdict,
+  type PlatformClimbVerified,
   type PlatformMockChange,
 } from "@mcpjam/sdk/platform";
 import type {
@@ -273,6 +275,32 @@ export function draftChange(
   signal?: AbortSignal,
 ): Promise<PlatformClimbDraft> {
   return call(() => client().draftClimbChange(params, { signal }), signal);
+}
+
+/** The one-time confirmation. With `dryRun` it only says what it would cost. Otherwise it SPENDS credits and runs once. */
+export function confirmClimb(
+  params: { projectId: string; climbId: string; dryRun?: boolean },
+  signal?: AbortSignal,
+): Promise<PlatformClimbConfirmed> {
+  return call(() => client().confirmClimb(params, { signal }), signal);
+}
+
+/**
+ * Checks a server's listing against the kept changes and, when they are all in,
+ * runs the server beside a mock that puts the old values back. A missing change
+ * stops it with `blockedBecause` unless `runAnyway`. Otherwise it SPENDS credits.
+ */
+export function verifyClimb(
+  params: {
+    projectId: string;
+    climbId: string;
+    commit?: { sha?: string; branch?: string };
+    dryRun?: boolean;
+    runAnyway?: boolean;
+  },
+  signal?: AbortSignal,
+): Promise<PlatformClimbVerified> {
+  return call(() => client().verifyClimb(params, { signal }), signal);
 }
 
 const changeCache = new Map<string, Promise<PlatformMockChange[]>>();

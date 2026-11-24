@@ -35,6 +35,8 @@ export const COPY = {
   better: "Better",
   worse: "Worse",
   noChange: "No change",
+  holds: "Holds",
+  alreadyPasses: "Already passes every case",
   validationBetter: "Validation cases went up too",
   noValidationMove: "Validation cases didn't move",
   withinNoise: "A move smaller than the noise between the two baseline runs does not count as a move.",

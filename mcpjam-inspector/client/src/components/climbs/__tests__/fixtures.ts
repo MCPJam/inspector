@@ -114,3 +114,31 @@ export const baselineEnv = (id: string, a: number, b: number) => ({
   steering: { counted: 18, passed: b, lost: 0, passRateBps: [a, b] as [number, number], passRateNoiseBps: 560 },
   validation: { counted: 12, passed: 10, lost: 0, passRateBps: [8300, 8300] as [number, number], passRateNoiseBps: 0 },
 });
+
+import type { ClimbSummary } from "@mcpjam/sdk/climbs";
+
+export function makeSummary(overrides: Partial<ClimbSummary> = {}): ClimbSummary {
+  return {
+    measure: "pass_rate",
+    stoppedBecause: "the round limit was reached",
+    steering: {
+      label: "Steering cases",
+      environments: [
+        { environmentId: "env_a", baselinePassRateBps: 7800, bestPassRateBps: 9400 },
+        { environmentId: "env_b", baselinePassRateBps: 10000, bestPassRateBps: 10000 },
+      ],
+    },
+    validation: {
+      label: "Validation cases",
+      environments: [
+        { environmentId: "env_a", baselinePassRateBps: 8300, bestPassRateBps: 8300 },
+        { environmentId: "env_b", baselinePassRateBps: 10000, bestPassRateBps: 10000 },
+      ],
+    },
+    rounds: [],
+    confirmation: { status: "not_run", usedByEarlierClimbs: [] },
+    established: ["2 rounds improved pass rate."],
+    notEstablished: ["Both groups helped pick this result."],
+    ...overrides,
+  };
+}
