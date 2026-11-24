@@ -6543,6 +6543,7 @@ export default function App() {
     activeHostId,
     checkoutIntentForBilling,
     connectedOrConnectingServerConfigs,
+    currentUser,
     consumeCheckoutIntent,
     displayServerConfigs,
     convexProjectId,

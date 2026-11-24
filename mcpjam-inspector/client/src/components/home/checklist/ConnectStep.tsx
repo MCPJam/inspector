@@ -1,0 +1,272 @@
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { Button } from "@mcpjam/design-system/button";
+import { FieldError } from "@mcpjam/design-system/field-error";
+import { Input } from "@mcpjam/design-system/input";
+import { cn } from "@mcpjam/design-system/cn";
+import { ErrorCard } from "@/components/ui/error-card";
+import { getConnectionStatusMeta } from "@/components/connection/server-card-utils";
+import { deriveServerName } from "@/components/onboarding/FirstRunOnboardingOverlay";
+import { validateServerFormData } from "@/lib/server-form-validation";
+import type { ServerFormData } from "@/shared/types.js";
+import type { ServerWithName } from "@/state/app-types";
+
+/** How long typing has to pause before a valid URL starts connecting. */
+export const CONNECT_TYPING_PAUSE_MS = 1000;
+
+export type ConnectAction =
+  "auto_started" | "confirmed" | "denied" | "failed" | "retried";
+
+interface Attempt {
+  name: string;
+  formData: ServerFormData;
+  /** Only a server this attempt created is removed on cancel or deny. */
+  created: boolean;
+}
+
+function urlOf(server: ServerWithName | undefined): string | null {
+  return server?.config && "url" in server.config
+    ? String(server.config.url)
+    : null;
+}
+
+function nameFor(url: string, servers: Record<string, ServerWithName>) {
+  const base = deriveServerName(url);
+  for (let n = 1; ; n += 1) {
+    const name = n === 1 ? base : `${base} ${n}`;
+    if (!servers[name]) return name;
+  }
+}
+
+function looksLikeUrl(value: string): boolean {
+  if (!/^https?:\/\/\S+$/i.test(value)) return false;
+  try {
+    const { hostname } = new URL(value);
+    return (
+      hostname.includes(".") ||
+      hostname === "localhost" ||
+      hostname.startsWith("[")
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function ConnectStep({
+  servers,
+  onConnect,
+  onRemove,
+  onReconnect,
+  onConfirmed,
+  onTrack,
+  onAttemptChange,
+}: {
+  servers: Record<string, ServerWithName>;
+  onConnect: (
+    formData: ServerFormData,
+    options: { suppressErrorToast: boolean; suppressSuccessToast: boolean },
+  ) => Promise<unknown>;
+  onRemove: (name: string) => Promise<unknown>;
+  /** Reconnects a saved server as it is, keeping its saved authentication. */
+  onReconnect: (name: string) => Promise<unknown>;
+  onConfirmed: (name: string) => void;
+  onTrack: (action: ConnectAction, extra?: { error_slug?: string }) => void;
+  /** The unconfirmed server, so the step isn't checked before Confirm. */
+  onAttemptChange: (name: string | null) => void;
+}) {
+  const [url, setUrl] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttemptState] = useState<Attempt | null>(null);
+  // Read by the unmount cleanup, which outlives the last render's state.
+  const attemptRef = useRef<Attempt | null>(null);
+  const setAttempt = (next: Attempt | null) => {
+    attemptRef.current = next;
+    setAttemptState(next);
+  };
+  const timer = useRef<number | undefined>(undefined);
+  const latest = useRef({ onRemove, onAttemptChange, onTrack });
+  latest.current = { onRemove, onAttemptChange, onTrack };
+  const attemptName = attempt?.name ?? null;
+  useEffect(() => onAttemptChange(attemptName), [attemptName, onAttemptChange]);
+  useEffect(
+    () => () => {
+      window.clearTimeout(timer.current);
+      const current = attemptRef.current;
+      if (!current) return;
+      if (current.created) void latest.current.onRemove(current.name);
+      latest.current.onAttemptChange(null);
+    },
+    [],
+  );
+
+  const server = attempt ? servers[attempt.name] : undefined;
+  const status = attempt ? (server?.connectionStatus ?? "connecting") : null;
+
+  const errorSlug = server?.lastNormalizedError?.slug;
+  const trackedFailure = useRef<Attempt | null>(null);
+  useEffect(() => {
+    if (status !== "failed" || !attempt) return;
+    if (trackedFailure.current === attempt) return;
+    trackedFailure.current = attempt;
+    latest.current.onTrack(
+      "failed",
+      errorSlug ? { error_slug: errorSlug } : {},
+    );
+  }, [status, attempt, errorSlug]);
+
+  const discard = (current: Attempt | null) => {
+    if (current?.created) void onRemove(current.name);
+  };
+
+  const connect = (target: Attempt) => {
+    if (!target.created) {
+      void onReconnect(target.name);
+      return;
+    }
+    void onConnect(target.formData, {
+      suppressErrorToast: true,
+      suppressSuccessToast: true,
+    });
+  };
+
+  const start = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    if (!looksLikeUrl(trimmed)) {
+      setError("Enter a full URL, like https://mcp.example.com/mcp.");
+      return;
+    }
+    const saved = Object.values(servers).find(
+      (candidate) => urlOf(candidate) === trimmed,
+    );
+    const name = saved?.name ?? nameFor(trimmed, servers);
+    const formData: ServerFormData = {
+      name,
+      type: "http",
+      url: trimmed,
+      useOAuth: true,
+      authMethod: "auto",
+    };
+    const invalid = validateServerFormData(formData);
+    if (invalid) {
+      setError(invalid);
+      return;
+    }
+    setError(null);
+    const next = { name, formData, created: !saved };
+    setAttempt(next);
+    onTrack("auto_started");
+    connect(next);
+  };
+
+  const onChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const value = event.target.value;
+    setUrl(value);
+    setError(null);
+    window.clearTimeout(timer.current);
+    if (attempt) {
+      discard(attempt);
+      setAttempt(null);
+    }
+    const pasted =
+      (event.nativeEvent as InputEvent).inputType === "insertFromPaste";
+    if (pasted) start(value);
+    else
+      timer.current = window.setTimeout(
+        () => start(value),
+        CONNECT_TYPING_PAUSE_MS,
+      );
+  };
+
+  const reset = () => {
+    discard(attempt);
+    setAttempt(null);
+    setUrl("");
+  };
+
+  const meta = status ? getConnectionStatusMeta(status) : null;
+
+  return (
+    <>
+      <p className="text-sm text-muted-foreground">
+        Paste your MCP server&apos;s URL. MCPJam connects as soon as the URL is
+        valid.
+      </p>
+      <div className="space-y-1.5">
+        <Input
+          type="url"
+          inputMode="url"
+          aria-label="Server URL"
+          aria-invalid={error ? true : undefined}
+          placeholder="https://mcp.example.com/mcp"
+          value={url}
+          onChange={onChange}
+        />
+        <FieldError>{error}</FieldError>
+      </div>
+      {attempt &&
+      meta &&
+      (status === "connecting" || status === "oauth-flow") ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <meta.Icon className={meta.iconClassName} aria-hidden />
+          <span className="flex-1" role="status">
+            {meta.label}
+          </span>
+          <Button type="button" variant="ghost" size="sm" onClick={reset}>
+            Cancel
+          </Button>
+        </div>
+      ) : null}
+      {attempt && meta && status === "connected" ? (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 text-sm" role="status">
+            <span
+              className={cn("size-2 rounded-full", meta.indicatorClassName)}
+              aria-hidden
+            />
+            <span className="text-foreground">Connected to {attempt.name}</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                onTrack("confirmed");
+                onConfirmed(attempt.name);
+                setAttempt(null);
+                setUrl("");
+              }}
+            >
+              Confirm
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                onTrack("denied");
+                reset();
+              }}
+            >
+              Use a different server
+            </Button>
+          </div>
+        </div>
+      ) : null}
+      {attempt && (status === "failed" || status === "disconnected") ? (
+        <ErrorCard
+          density="row"
+          error={
+            server?.lastNormalizedError ??
+            server?.lastError ??
+            `Couldn't connect to ${attempt.formData.url}. Check the URL and try again.`
+          }
+          onRetry={() => {
+            trackedFailure.current = null;
+            onTrack("retried");
+            connect(attempt);
+          }}
+        />
+      ) : null}
+    </>
+  );
+}

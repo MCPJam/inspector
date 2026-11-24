@@ -1,0 +1,185 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import type { ServerWithName } from "@/state/app-types";
+import { CONNECT_TYPING_PAUSE_MS, ConnectStep } from "../ConnectStep";
+
+vi.mock("@/components/ui/error-card", () => ({
+  ErrorCard: ({ onRetry }: { onRetry?: () => void }) => (
+    <button type="button" onClick={onRetry}>
+      Retry
+    </button>
+  ),
+}));
+
+const URL_VALUE = "https://mcp.acme.dev/mcp";
+
+function setup(servers: Record<string, ServerWithName> = {}) {
+  const props = {
+    servers,
+    onConnect: vi.fn().mockResolvedValue(undefined),
+    onRemove: vi.fn().mockResolvedValue(undefined),
+    onReconnect: vi.fn().mockResolvedValue(undefined),
+    onConfirmed: vi.fn(),
+    onTrack: vi.fn(),
+    onAttemptChange: vi.fn(),
+  };
+  const view = render(<ConnectStep {...props} />);
+  return { props, view };
+}
+
+function typeUrl(value: string) {
+  fireEvent.change(screen.getByLabelText("Server URL"), {
+    target: { value },
+  });
+}
+
+const server = (connectionStatus: ServerWithName["connectionStatus"]) =>
+  ({
+    name: "Acme",
+    config: { url: URL_VALUE },
+    connectionStatus,
+  }) as unknown as ServerWithName;
+
+beforeEach(() => vi.useFakeTimers());
+afterEach(() => vi.useRealTimers());
+
+describe("ConnectStep", () => {
+  it("starts connecting once typing pauses on a valid URL", () => {
+    const { props } = setup();
+    typeUrl(URL_VALUE);
+    expect(props.onConnect).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(CONNECT_TYPING_PAUSE_MS));
+    expect(props.onConnect).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Acme", type: "http", url: URL_VALUE }),
+      { suppressErrorToast: true, suppressSuccessToast: true },
+    );
+    expect(props.onTrack).toHaveBeenCalledWith("auto_started");
+    expect(props.onAttemptChange).toHaveBeenLastCalledWith("Acme");
+  });
+
+  it("explains an incomplete URL and sends nothing", () => {
+    const { props } = setup();
+    typeUrl("mcp.acme");
+    act(() => vi.advanceTimersByTime(CONNECT_TYPING_PAUSE_MS));
+    expect(props.onConnect).not.toHaveBeenCalled();
+    expect(screen.getByText(/Enter a full URL/)).toBeVisible();
+  });
+
+  it("asks to confirm a connected server", () => {
+    const { props, view } = setup();
+    typeUrl(URL_VALUE);
+    act(() => vi.advanceTimersByTime(CONNECT_TYPING_PAUSE_MS));
+    view.rerender(
+      <ConnectStep {...props} servers={{ Acme: server("connected") }} />,
+    );
+    expect(screen.getByText("Connected to Acme")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(props.onConfirmed).toHaveBeenCalledWith("Acme");
+    expect(props.onTrack).toHaveBeenCalledWith("confirmed");
+  });
+
+  it("removes the server it added when the user picks another", () => {
+    const { props, view } = setup();
+    typeUrl(URL_VALUE);
+    act(() => vi.advanceTimersByTime(CONNECT_TYPING_PAUSE_MS));
+    view.rerender(
+      <ConnectStep {...props} servers={{ Acme: server("connected") }} />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use a different server" }),
+    );
+    expect(props.onRemove).toHaveBeenCalledWith("Acme");
+  });
+
+  it("cancels the attempt when the URL is edited", () => {
+    const { props, view } = setup();
+    typeUrl(URL_VALUE);
+    act(() => vi.advanceTimersByTime(CONNECT_TYPING_PAUSE_MS));
+    view.rerender(
+      <ConnectStep {...props} servers={{ Acme: server("connecting") }} />,
+    );
+    typeUrl(`${URL_VALUE}2`);
+    expect(props.onRemove).toHaveBeenCalledWith("Acme");
+  });
+
+  it("reconnects a saved server with that URL instead of overwriting it", () => {
+    const { props } = setup({ Acme: server("disconnected") });
+    typeUrl(URL_VALUE);
+    act(() => vi.advanceTimersByTime(CONNECT_TYPING_PAUSE_MS));
+    expect(props.onConnect).not.toHaveBeenCalled();
+    expect(props.onReconnect).toHaveBeenCalledWith("Acme");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(props.onReconnect).toHaveBeenCalledTimes(2);
+    typeUrl("https://other.example.com/mcp");
+    expect(props.onRemove).not.toHaveBeenCalled();
+  });
+
+  it("starts connecting right away on paste", () => {
+    const { props } = setup();
+    const input = screen.getByLabelText("Server URL");
+    // jsdom's change event carries no InputEvent, so dispatch the paste one.
+    act(() => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set?.call(input, URL_VALUE);
+      input.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          inputType: "insertFromPaste",
+        }),
+      );
+    });
+    expect(props.onConnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("abandons an unconfirmed attempt when the step closes", () => {
+    const { props, view } = setup();
+    typeUrl(URL_VALUE);
+    act(() => vi.advanceTimersByTime(CONNECT_TYPING_PAUSE_MS));
+    view.rerender(
+      <ConnectStep {...props} servers={{ Acme: server("connected") }} />,
+    );
+    view.unmount();
+    expect(props.onRemove).toHaveBeenCalledWith("Acme");
+    expect(props.onAttemptChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it("keeps a confirmed server when the step closes", () => {
+    const { props, view } = setup();
+    typeUrl(URL_VALUE);
+    act(() => vi.advanceTimersByTime(CONNECT_TYPING_PAUSE_MS));
+    view.rerender(
+      <ConnectStep {...props} servers={{ Acme: server("connected") }} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    view.unmount();
+    expect(props.onRemove).not.toHaveBeenCalled();
+  });
+
+  it("tracks a failed connection once, with its error slug", () => {
+    const { props, view } = setup();
+    typeUrl(URL_VALUE);
+    act(() => vi.advanceTimersByTime(CONNECT_TYPING_PAUSE_MS));
+    const failed = {
+      ...server("failed"),
+      lastNormalizedError: { slug: "network/unreachable" },
+    } as unknown as ServerWithName;
+    view.rerender(<ConnectStep {...props} servers={{ Acme: failed }} />);
+    view.rerender(<ConnectStep {...props} servers={{ Acme: { ...failed } }} />);
+    const failures = props.onTrack.mock.calls.filter(([a]) => a === "failed");
+    expect(failures).toEqual([
+      ["failed", { error_slug: "network/unreachable" }],
+    ]);
+  });
+
+  it("accepts a localhost URL", () => {
+    const { props } = setup();
+    typeUrl("http://localhost:3001/mcp");
+    act(() => vi.advanceTimersByTime(CONNECT_TYPING_PAUSE_MS));
+    expect(props.onConnect).toHaveBeenCalledWith(
+      expect.objectContaining({ url: "http://localhost:3001/mcp" }),
+      expect.anything(),
+    );
+  });
+});
