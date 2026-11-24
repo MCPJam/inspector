@@ -1,7 +1,7 @@
 /**
- * `mcpjam events watch`: stream one event as NDJSON through the SDK's
+ * `mcpjam events watch`: watch one event type as NDJSON through the SDK's
  * coordinator, push runtime and in-memory inbox, with an optional local
- * webhook receiver, then unsubscribe.
+ * webhook receiver, then stop delivery using the selected mode's cleanup.
  */
 
 import { randomBytes } from "node:crypto";
@@ -149,11 +149,12 @@ export function registerWatch(events: Command): void {
       events
         .command("watch")
         .description(
-          "Stream an event as NDJSON on stdout until Ctrl-C, --duration or --max-events, then unsubscribe. " +
+          "Watch occurrences and control messages for an event type as MCPJam NDJSON until Ctrl-C, --duration or --max-events. " +
+            "On exit, stop polling, close the push stream, or unsubscribe the webhook. " +
             "Modes: push (events/stream), poll (events/poll loop) or webhook (a local receiver behind --public-url). " +
             "Default: webhook when a receiver flag (--public-url, --listen, --insecure-local-receiver) is given, else push when the event offers it, else poll.",
         )
-        .argument("<name>", "Event name, from `events list`")
+        .argument("<name>", "Event type name, from `events list`")
         .option("--mode <mode>", "Delivery mode: poll, push or webhook")
         .option(
           "--duration <seconds>",

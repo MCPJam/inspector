@@ -1,4 +1,3 @@
-import { cn } from "@mcpjam/design-system/cn";
 import { JsonEditor } from "@/components/ui/json-editor";
 import type { EventsListResponse } from "@/shared/events-api";
 
@@ -20,17 +19,8 @@ export function CapabilityPanel({ catalog }: { catalog: EventsListResponse }) {
   return (
     <div className="space-y-2" data-testid="events-capability">
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span
-          className={cn(
-            "rounded-sm border px-1.5 py-0.5 text-[10px] font-medium",
-            support.declared
-              ? "border-success/40 bg-success/10 text-foreground"
-              : "border-border bg-muted text-muted-foreground",
-          )}
-        >
-          {support.declared
-            ? support.beta ? "MCP Events Beta declared" : "capabilities.events declared"
-            : "MCP Events capability missing"}
+        <span className="text-xs text-muted-foreground">
+          {support.declared ? "Events declared" : "MCP Events capability missing"}
         </span>
         {support.declared && support.listChanged ? (
           <span className="text-[11px] text-muted-foreground">

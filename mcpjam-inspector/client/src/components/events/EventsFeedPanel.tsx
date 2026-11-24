@@ -1,13 +1,11 @@
-import { useState } from "react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@mcpjam/design-system/collapsible";
-import { SearchInput } from "@/components/ui/search-input";
 import { cn } from "@mcpjam/design-system/cn";
-import { AlertTriangle, ChevronRight, Inbox } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import type {
   EventsFeedEntryView,
   EventsRejectionView,
 } from "@/shared/events-api";
-import type { EventsFeedGap, EventsFeedStatus } from "./use-events-feed";
+import type { EventsFeedStatus } from "./use-events-feed";
 import { describeTermination, formatTime, safeJson } from "./event-utils";
 
 const STATUS_LABELS: Record<EventsFeedStatus, string> = {
@@ -70,7 +68,7 @@ function Flag({
   );
 }
 
-function FeedEntryRow({
+export function EventOccurrenceDetails({
   entry,
   subscriptionLabel,
 }: {
@@ -78,7 +76,7 @@ function FeedEntryRow({
   subscriptionLabel?: string;
 }) {
   return (
-    <Collapsible asChild>
+    <Collapsible asChild defaultOpen>
     <li className="border-b border-border last:border-b-0" data-testid="feed-entry">
       <CollapsibleTrigger className="group flex w-full items-center gap-2 py-3 text-left text-xs">
         <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
@@ -132,10 +130,6 @@ function FeedEntryRow({
           </div>
         ) : null}
       </dl>
-      <details className="text-[11px]">
-        <summary className="cursor-pointer text-muted-foreground">Delivery metadata</summary>
-        <EventDataView data={{ ...entry, data: undefined }} />
-      </details>
       </CollapsibleContent>
     </li>
     </Collapsible>
@@ -152,69 +146,6 @@ function TerminationLine({ error }: { error: EventsFeedEntryView["error"] }) {
         <span className="font-mono text-muted-foreground"> ({error.code})</span>
       ) : null}
     </p>
-  );
-}
-
-export function EventsFeedPanel({
-  entries,
-  gaps,
-  status,
-  error,
-  labelFor,
-  showStatus = true,
-}: {
-  /** Oldest first; rendered newest first. */
-  entries: EventsFeedEntryView[];
-  gaps: EventsFeedGap[];
-  status: EventsFeedStatus;
-  error: string | null;
-  labelFor: (entry: EventsFeedEntryView) => string | undefined;
-  /** Off when the pane already shows the feed status in its header. */
-  showStatus?: boolean;
-}) {
-  const [query, setQuery] = useState("");
-  const needle = query.trim().toLowerCase();
-  const newestFirst = [...entries].reverse().filter((entry) =>
-    !needle || safeJson(entry).toLowerCase().includes(needle) || labelFor(entry)?.toLowerCase().includes(needle),
-  );
-  return (
-    <div className="space-y-2">
-      <SearchInput value={query} onValueChange={setQuery} placeholder="Search received events..." />
-      {showStatus || error ? (
-        <div className="flex items-center gap-2">
-          {showStatus ? <FeedStatusBadge status={status} /> : null}
-          {error ? (
-            <span className="text-[11px] text-destructive">{error}</span>
-          ) : null}
-        </div>
-      ) : null}
-      {gaps.map((gap) => (
-        <p
-          key={`${gap.fromSeq}-${gap.toSeq}`}
-          className="flex items-center gap-1.5 rounded-md border border-warning/40 bg-warning/10 p-2 text-[11px] text-foreground"
-        >
-          <AlertTriangle className="h-3.5 w-3.5 text-warning" />
-          Entries #{gap.fromSeq} to #{gap.toSeq} are no longer in the inbox's
-          history.
-        </p>
-      ))}
-      {newestFirst.length === 0 ? (
-        <div className="flex items-center gap-2 py-6 text-xs text-muted-foreground">
-          <Inbox className="h-4 w-4" />
-          {needle ? "No received events match your search." : "No events received yet. They appear here as they arrive."}
-        </div>
-      ) : (
-        <ul>
-          {newestFirst.map((entry) => (
-            <FeedEntryRow
-              key={entry.seq}
-              entry={entry}
-              subscriptionLabel={labelFor(entry)}
-            />
-          ))}
-        </ul>
-      )}
-    </div>
   );
 }
 

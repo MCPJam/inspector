@@ -36,7 +36,7 @@ export function EventDefinition({ event }: { event: EventDescriptorView }) {
       </AccordionItem>
       <AccordionItem value="definition">
         <AccordionTrigger className="text-xs">
-          Full event definition
+          Raw JSON
         </AccordionTrigger>
         <AccordionContent>
           <ScrollableJsonView

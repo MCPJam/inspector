@@ -112,12 +112,12 @@ export function createEventDispatcher(options: {
         agent && agent.scope !== binding.agentScope
           ? "Agent or conversation changed. Resume this event to connect it here."
           : !options.connected(binding)
-            ? "Event skipped. Reconnect the server, then trigger a test event."
+            ? "Occurrence skipped. Reconnect the server, then use Trigger event to test with new event data."
             : inFlight || agent?.blockedReason
               ? (agent?.blockedReason ??
-                "Event skipped while the agent is busy. Trigger it again when the turn finishes.")
+                "Occurrence skipped while the agent was busy. When the turn finishes, use Trigger event to test with new event data.")
               : !agent
-                ? "Event skipped. Open an agent conversation, then trigger it again."
+                ? "Occurrence skipped. Open an agent conversation, then use Trigger event to test with new event data."
                 : null;
       if (blocked || !agent) {
         options.result(
@@ -148,7 +148,7 @@ export function createEventDispatcher(options: {
             id,
             sent
               ? "Event sent to agent"
-              : "Event was not sent. Check the conversation, then trigger it again.",
+              : "Event data was not sent. Check the conversation, then use Trigger event to start a new test.",
           );
         return sent;
       } catch (error) {
@@ -157,7 +157,7 @@ export function createEventDispatcher(options: {
             id,
             error instanceof Error
               ? error.message
-              : "Could not run the event. Try again.",
+              : "Couldn't send event data to the agent. Try again.",
           );
         return false;
       } finally {

@@ -35,27 +35,21 @@ import {
   resolveHostedEventsServerId,
   rotateLocalEventSubscriptionSecret,
   setLocalEventSubscriptionState,
-  simulateEvent,
 } from "@/lib/apis/mcp-events-api";
 import { logEventsFeedEntries } from "@/lib/events-traffic";
 import type {
   EventDescriptorView,
   EventsFeedEntryView,
   EventsRejectionView,
-  EventsSimulateRequest,
   EventsSlotStateResponse,
   EventsSubscriptionView,
 } from "@/shared/events-api";
 import { CapabilityPanel } from "./events/CapabilityPanel";
 import type { SubscriptionAction } from "./events/SubscriptionsPanel";
 import { EventsHeader } from "./events/EventsTabSections";
-import { EventsSidebar } from "./events/EventsSidebar";
-import {
-  EventsActivity,
-  type ActivityScope,
-  type EventsWorkspaceView,
-} from "./events/EventsActivity";
-import { EventSubscribeSheet } from "./events/EventSubscribeSheet";
+import { EventsSidebar, type EventsBrowseTab } from "./events/EventsSidebar";
+import { EventsActivity } from "./events/EventsActivity";
+import { EventSubscribePanel } from "./events/EventSubscribePanel";
 import { useEventsHost } from "./events/use-events-host";
 import { useEventsCatalog } from "./events/use-events-catalog";
 import { useEventsFeed } from "./events/use-events-feed";
@@ -76,7 +70,7 @@ interface EventsTabProps {
   isActive?: boolean;
   /** Refetch the catalog when the connection reaches "connected". */
   connectionStatus?: string;
-  /** The Convex project (hosted registry, viewer tokens, simulations). */
+  /** The Convex project (hosted registry and viewer tokens). */
   projectId?: string | null;
   /** The playground's active client; the default client to subscribe as. */
   activeHostId?: string | null;
@@ -114,13 +108,11 @@ export function EventsTab({
   const hostChoice = eventsHost.choice;
   const hostName = hostChoice?.name ?? "This client";
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
-  const [subscribeOpen, setSubscribeOpen] = useState(false);
   const [workspaceSelected, setWorkspaceSelected] = useState(false);
   const [subscribing, setSubscribing] = useState(false);
   const [busySubscriptionId, setBusySubscriptionId] = useState<string | null>(
     null,
   );
-  const [simulating, setSimulating] = useState(false);
   const [slotStates, setSlotStates] = useState<
     Record<string, EventsSlotStateResponse>
   >({});
@@ -128,8 +120,13 @@ export function EventsTab({
     Map<string, EventsSubscriptionView>
   >(() => new Map());
   const [registryError, setRegistryError] = useState<string | null>(null);
-  const [workspaceView, setWorkspaceView] =
-    useState<EventsWorkspaceView>("received");
+  const [activeTab, setActiveTab] = useState<EventsBrowseTab>("events");
+  const [selectedSubscriptionId, setSelectedSubscriptionId] = useState<
+    string | null
+  >(null);
+  const [selectedOccurrenceSeq, setSelectedOccurrenceSeq] = useState<
+    number | null
+  >(null);
   const navigate = useAppNavigate();
 
   // ── catalog ─────────────────────────────────────────────────────────────
@@ -146,13 +143,19 @@ export function EventsTab({
   const declared =
     catalogState === "ready" && catalog?.support.declared === true;
   const support = catalog?.support;
-  const watchCatalog = connected && support?.declared && (!support.beta || support.listChanged);
-  useEventsListChanged(watchCatalog ? serverName : undefined, retryCatalog, support?.beta);
+  const watchCatalog =
+    connected && support?.declared && (!support.beta || support.listChanged);
+  useEventsListChanged(
+    watchCatalog ? serverName : undefined,
+    retryCatalog,
+    support?.beta,
+  );
 
   // A different server starts from its own lists.
   useEffect(() => {
-    setSubscribeOpen(false);
-    setWorkspaceView("received");
+    setActiveTab("events");
+    setSelectedSubscriptionId(null);
+    setSelectedOccurrenceSeq(null);
     setWorkspaceSelected(false);
   }, [serverName]);
 
@@ -388,10 +391,12 @@ export function EventsTab({
             throw new Error("Open a project to subscribe on hosted MCPJam.");
           }
           if (!hostedServerId) {
-            throw new Error("Add this server to the project to subscribe to its events.");
+            throw new Error(
+              "Add this server to the project to subscribe to its events.",
+            );
           }
           const descriptor = await buildHostedEventDescriptor(event);
-          await createHostedSubscription({
+          const subscription = await createHostedSubscription({
             projectId,
             serverId: hostedServerId,
             eventName: event.name,
@@ -408,6 +413,7 @@ export function EventsTab({
               : {}),
             ...(value.ttlMs !== undefined ? { ttlMs: value.ttlMs } : {}),
           });
+          setSelectedSubscriptionId(String(subscription._id));
         },
         local: async () => {
           const subscription = await createLocalEventSubscription({
@@ -432,9 +438,11 @@ export function EventsTab({
               : {}),
           });
           upsertFromResponse(subscription);
+          setSelectedSubscriptionId(subscription.id);
         },
       });
-      setSubscribeOpen(false);
+      setActiveTab("subscriptions");
+      setWorkspaceSelected(true);
       toast.success(`Subscribed to ${event.name}`);
     } catch (error) {
       toast.error(errorMessage(error, "Could not subscribe. Try again."));
@@ -506,27 +514,6 @@ export function EventsTab({
     }
   };
 
-  const handleSimulate = async (request: EventsSimulateRequest) => {
-    setSimulating(true);
-    try {
-      const result = await simulateEvent({ projectId, request });
-      if (result.entry) feed.ingestEntries([result.entry]);
-      toast.success(
-        result.entry
-          ? "Test event added to the feed"
-          : "Test event accepted. It will appear in the feed.",
-      );
-      return true;
-    } catch (error) {
-      toast.error(
-        errorMessage(error, "Couldn't trigger the event. Try again."),
-      );
-      return false;
-    } finally {
-      setSimulating(false);
-    }
-  };
-
   // ── workspace selection ────────────────────────────────────────────────
   const form = useSubscribeForm({
     event: selectedEvent,
@@ -551,9 +538,12 @@ export function EventsTab({
       : undefined;
 
   const workspaceEvent = selectedEvent;
-  const scope: ActivityScope = selectedEventName
-    ? { kind: "eventType", name: selectedEventName }
-    : { kind: "server" };
+  const selectedSubscription = serverSubscriptions.find(
+    (subscription) => subscription.id === selectedSubscriptionId,
+  );
+  const selectedOccurrence = visibleEntries.find(
+    (entry) => entry.seq === selectedOccurrenceSeq,
+  );
 
   // ── render ──────────────────────────────────────────────────────────────
   if (!hasServer) {
@@ -633,26 +623,54 @@ export function EventsTab({
       onLoadMore={loadMoreEvents}
       onRefresh={retryCatalog}
       onHide={() => setIsSidebarVisible(false)}
+      activeTab={activeTab}
+      onTabChange={(tab) => {
+        setActiveTab(tab);
+        setWorkspaceSelected(false);
+      }}
       selectedEventName={selectedEventName}
       onSelectEvent={(name) => {
-        setSubscribeOpen(false);
         setSelectedEventName(name);
         setWorkspaceSelected(true);
-        setWorkspaceView("received");
       }}
       subscriptions={serverSubscriptions}
+      selectedSubscriptionId={selectedSubscriptionId}
+      onSelectSubscription={(id) => {
+        setSelectedSubscriptionId(id);
+        setWorkspaceSelected(true);
+      }}
+      entries={visibleEntries}
+      selectedOccurrenceSeq={selectedOccurrenceSeq}
+      onSelectOccurrence={(seq) => {
+        setSelectedOccurrenceSeq(seq);
+        setWorkspaceSelected(true);
+      }}
     />
   );
 
   const centerContent = (
     <EventsActivity
-      scope={scope}
-      view={workspaceView}
-      onViewChange={setWorkspaceView}
+      activeTab={activeTab}
+      subscription={selectedSubscription}
+      occurrence={selectedOccurrence}
       event={workspaceEvent}
       subscribeAction={
+        <Button
+          size="sm"
+          disabled={!workspaceEvent || subscribing || !form.canSubmit}
+          onClick={() => void form.submit()}
+        >
+          {subscribing ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <BellPlus className="size-4" />
+          )}
+          {subscribing ? "Subscribing…" : "Subscribe"}
+        </Button>
+      }
+      subscribeContent={
         workspaceEvent ? (
-          <EventSubscribeSheet
+          <EventSubscribePanel
             event={workspaceEvent}
             form={form}
             availability={selectedAvailability}
@@ -665,25 +683,15 @@ export function EventsTab({
                 subscription.eventName === workspaceEvent.name &&
                 replayUnsupported(subscription),
             )}
-            subscribing={subscribing}
-            open={subscribeOpen}
-            onOpenChange={setSubscribeOpen}
           />
-        ) : (
-          <Button size="sm" disabled>
-            <BellPlus className="size-4" />
-            Subscribe
-          </Button>
-        )
+        ) : null
       }
-      hostName={hostName}
       hosted={hosted}
       notice={hostedRegistryNotice}
       registryError={registryError}
       subscriptionsLoading={Boolean(
         hosted && projectId && hostedRows === undefined,
       )}
-      subscriptions={serverSubscriptions}
       busySubscriptionId={busySubscriptionId}
       slotStates={slotStates}
       onSubscriptionAction={(subscription, action) =>
@@ -694,16 +702,20 @@ export function EventsTab({
       feedStatus={feed.status}
       feedError={feed.error}
       labelForEntry={labelForEntry}
-      events={catalog.events}
-      simulating={simulating}
-      onSimulate={handleSimulate}
       rejections={rejections}
-      catalog={catalog}
     />
   );
 
   const mobileNavigation = {
-    selectionKey: workspaceSelected ? selectedEventName ?? "all-events" : "",
+    selectionKey: workspaceSelected
+      ? activeTab === "events"
+        ? (selectedEventName ?? "")
+        : activeTab === "subscriptions"
+          ? (selectedSubscription?.id ?? "")
+          : selectedOccurrence
+            ? String(selectedOccurrence.seq)
+            : ""
+      : "",
     selectionPanel: "content" as const,
     contentLabel: "Workspace",
     onBack: () => {
@@ -715,7 +727,7 @@ export function EventsTab({
   return (
     <ThreePanelLayout
       id="events"
-      defaultSizes={{ left: 22, right: 25 }}
+      defaultSizes={{ left: 34, right: 25 }}
       mobileNavigation={mobileNavigation}
       sidebar={sidebarContent}
       content={centerContent}

@@ -60,12 +60,12 @@ export function AddPlaygroundEvent({
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>
-            {selected ? selected.event.name : "Add event"}
+            {selected ? selected.event.name : "Connect event"}
           </DialogTitle>
           <DialogDescription>
             {selected
               ? `${selected.server.serverName}. ${selected.event.description ?? ""}`
-              : "Choose an event from your connected servers."}
+              : "Choose an event type from your connected servers."}
           </DialogDescription>
         </DialogHeader>
         {selected ? (
@@ -79,8 +79,8 @@ export function AddPlaygroundEvent({
         ) : (
           <>
             <Input
-              aria-label="Search events"
-              placeholder="Search events or servers…"
+              aria-label="Search event types"
+              placeholder="Search event types or servers…"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
@@ -171,7 +171,7 @@ function ConfigureEvent({
   const blocked = !runtime.host
     ? "Loading client settings…"
     : runtime.host.missing
-      ? "Select an available client to add an event."
+      ? "Select an available client to connect an event."
       : availability
         ? describeNoSubscribableMode(availability, runtime.host.name)
         : null;
@@ -197,7 +197,7 @@ function ConfigureEvent({
         setError(
           cause instanceof Error
             ? cause.message
-            : "Could not add the event. Try again.",
+            : "Couldn't connect the event. Try again.",
         );
       } finally {
         setBusy(false);
@@ -207,7 +207,7 @@ function ConfigureEvent({
   return (
     <div className="space-y-4">
       <Button variant="ghost" size="sm" onClick={onBack} disabled={busy}>
-        Back to events
+        Back to event types
       </Button>
       {!testOnly ? <SubscribeParameters form={form} /> : null}
       <div className="space-y-2">
@@ -274,7 +274,7 @@ function ConfigureEvent({
                   setError(
                     cause instanceof Error
                       ? cause.message
-                      : "Could not add the test event. Try again.",
+                      : "Couldn't connect the test event. Try again.",
                   );
                 }
               }
@@ -286,7 +286,11 @@ function ConfigureEvent({
           !!runtime.agentBlockedReason
         }
       >
-        {busy ? "Adding event…" : testOnly ? "Add test event" : "Add event"}
+        {busy
+          ? "Connecting event…"
+          : testOnly
+            ? "Connect test event"
+            : "Connect event"}
       </Button>
     </div>
   );

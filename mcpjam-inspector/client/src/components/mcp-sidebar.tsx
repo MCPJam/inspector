@@ -362,6 +362,7 @@ export const navigationSections: NavSection[] = [
         title: "Events",
         url: "/events",
         icon: Radio,
+        badge: "New",
         featureFlag: EVENTS_FEATURE_FLAG,
       },
       {
@@ -371,7 +372,6 @@ export const navigationSections: NavSection[] = [
         title: "WebMCP",
         url: "/webmcp",
         icon: Globe,
-        badge: "New",
         featureFlag: WEBMCP_INSPECTOR_FEATURE_FLAG,
       },
     ],

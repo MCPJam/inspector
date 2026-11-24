@@ -109,7 +109,7 @@ describe("sidebar section grouping", () => {
       .filter((item) => item.badge === "New")
       .map((item) => item.title);
 
-    expect(badged).toEqual(["Conformance", "WebMCP"]);
+    expect(badged).toEqual(["Conformance", "Events"]);
   });
 
   it("lists Evaluate before Swarms and User Testing in Measure", () => {
