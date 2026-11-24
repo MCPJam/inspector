@@ -6,6 +6,7 @@
  * the platform bundle.
  */
 import type { MockChange, MockFieldChange } from "../mocks/change-list.js";
+import type { ChangeEntry } from "../climbs/types.js";
 
 export type PlatformMockDefinition = object;
 export type PlatformMockChange = MockChange;
@@ -53,4 +54,6 @@ export type PlatformMockServer = Omit<PlatformMockSaved, "created" | "dryRun" | 
   sinceVersion?: number;
   changes?: PlatformMockChange[];
   realServer: PlatformMockRealServer;
+  /** Everything the mock can change on this server, ranked, with who reads each. Present when the real server was read. */
+  whatCanChange?: ChangeEntry[];
 };

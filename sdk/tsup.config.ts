@@ -17,6 +17,8 @@ export default defineConfig({
     "src/operations.ts",
     // Node-only, and kept out of index.ts and browser.ts so neither bundle carries it.
     "src/mocks/index.ts",
+    // Pure functions over a climb's results: browser-safe, and a screen's to import.
+    "src/climbs/index.ts",
     "src/skill-reference.ts",
     "src/model-factory.ts",
     "src/model-native-ids.ts",

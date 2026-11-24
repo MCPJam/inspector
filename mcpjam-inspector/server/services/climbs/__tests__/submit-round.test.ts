@@ -34,7 +34,14 @@ function setup(handlers: Record<string, (args: any) => unknown> = {}, groups = [
       roundsLeft: 2,
     }),
     "testSuites:estimateSuiteRunCredits": () => ({ credits: 25, lowerBoundCredits: 20 }),
-    "mockServers:getMock": () => ({ version: 4 }),
+    "mockServers:getMock": () => ({ version: 4, definitionJson: JSON.stringify({ tools: { search: { description: "Search the index." } } }) }),
+    "projectEnvironments:resolveEnvironmentForLaunch": () => ({
+      environmentRef: { environmentId: "env_a", name: "Staging", revision: 1 },
+      hostId: "host_plain",
+      selectedServerIds: ["s_real"],
+      servers: [{ serverId: "s_real", name: "Echo" }],
+    }),
+    "hosts:getHost": () => ({ config: { hostStyle: "mcpjam" } }),
     "climbRounds:beginClimbRound": () => ({ roundNumber: 2, unitKey: "round:2", remeasureBest: false, groups }),
     "climbSettle:recordClimbRunLaunch": () => ({}),
     "climbSettle:failClimbUnit": () => ({ failed: 1 }),
@@ -160,7 +167,8 @@ describe("submitRound", () => {
     const named = setup();
     await submitRound(named.deps, "proj1", CLIMB_ROW, { ...args, serverVersion: "2" });
     expect(named.fake.called("climbRounds:beginClimbRound")[0]).toMatchObject({ serverVersion: "2" });
-    expect(named.fake.called("mockServers:getMock")).toEqual([]);
+    // The head is not read to find a version: the one the caller named is the one checked.
+    expect(named.fake.called("mockServers:getMock")).toEqual([{ mockId: "s_candidate", version: 2 }]);
 
     const plain = setup({
       "mockServers:getMock": () => {

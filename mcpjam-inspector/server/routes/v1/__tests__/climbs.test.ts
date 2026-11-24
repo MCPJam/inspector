@@ -303,7 +303,18 @@ describe("rounds", () => {
 
   beforeEach(() => {
     queries["climbRounds:planClimbRound"] = () => ({ allowed: true, candidateCaseIds: ["case_1"], remeasureBest: null });
-    queries["mockServers:getMock"] = () => ({ version: 3 });
+    // The candidate changes a description: a field every client reads.
+    queries["mockServers:getMock"] = () => ({
+      version: 3,
+      definitionJson: JSON.stringify({ tools: { search: { description: "Search the index." } } }),
+    });
+    queries["projectEnvironments:resolveEnvironmentForLaunch"] = () => ({
+      environmentRef: { environmentId: "env_a", name: "Staging", revision: 1 },
+      hostId: "host_plain",
+      selectedServerIds: ["s_real"],
+      servers: [{ serverId: "s_real", name: "Echo" }],
+    });
+    queries["hosts:getHost"] = () => ({ config: { hostStyle: "mcpjam" } });
     mutations["climbRounds:beginClimbRound"] = () => ({
       roundNumber: 1,
       unitKey: "round:1",
@@ -354,6 +365,27 @@ describe("rounds", () => {
     expect(calls(mocks.mutation, "climbRounds:beginClimbRound")).toEqual([]);
   });
 
+  it("refuses a round whose only change no client of the climb reads, before any quote or run", async () => {
+    queries["mockServers:getMock"] = () => ({
+      version: 3,
+      definitionJson: JSON.stringify({ tools: { search: { title: "Search" } } }),
+    });
+    const res = await request("POST", ROUNDS, { serverId: "s_candidate" });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as any;
+    expect(body.message).toContain("No client in this climb reads what this round changes");
+    expect(body.message).toContain("Claude Code");
+    expect(body.details).toMatchObject({ code: "CLIMB_CHANGE_NOT_READ", unread: [{ field: "toolTitle" }] });
+    expect(calls(mocks.mutation, "climbRounds:beginClimbRound")).toEqual([]);
+    expect(launches).toEqual([]);
+  });
+
+  it("lets a round through that submits the best so far unchanged", async () => {
+    queries["mockServers:getMock"] = () => ({ version: 1, definitionJson: "{}" });
+    const res = await request("POST", ROUNDS, { serverId: "s_baseline" });
+    expect(res.status).toBe(202);
+  });
+
   it("refuses an unknown field and a missing server", async () => {
     expect((await request("POST", ROUNDS, { serverId: "s", mock: 1 })).status).toBe(400);
     expect((await request("POST", ROUNDS, {})).status).toBe(400);
@@ -400,9 +432,14 @@ describe("rounds", () => {
   });
 
   it("stops a climb and answers what stands as kept", async () => {
-    mutations["climbRounds:stopClimb"] = () => ({ state: "stopped", stopReason: "stopped_by_caller", best: { roundNumber: 2 }, kept: [{ number: 2, serverId: "s_candidate", overruled: false }] });
+    mutations["climbRounds:stopClimb"] = () => ({ state: "stopped", stopReason: "stopped_by_caller", best: { roundNumber: 2 }, kept: [{ number: 2, serverId: "s_candidate", serverVersion: "3", validation: "better", overruled: false }] });
+    queries["climbs:getClimb"] = () => climbRow({ state: "stopped", rounds: [{ number: 2, status: "settled", serverId: "s_candidate", serverVersion: "3", verdict: "kept", standing: "kept", reasons: [] }] });
+    queries["mockServers:getMock"] = (args) => ({ definitionJson: JSON.stringify(args.version ? { tools: { search: { description: "Search the index." } } } : {}) });
     const res = await request("POST", `${CLIMBS}/${CLIMB}/stop`);
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ climbId: CLIMB, state: "stopped", kept: [{ number: 2 }] });
+    const body = (await res.json()) as any;
+    expect(body).toMatchObject({ climbId: CLIMB, state: "stopped", kept: [{ number: 2 }] });
+    expect(body.prompt).toContain("1. Round 2 (also better on validation cases)");
+    expect(body.prompt).toContain("Now: Search the index.");
   });
 });

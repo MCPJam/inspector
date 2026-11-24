@@ -150,7 +150,7 @@ export const getMockServerOperation: PlatformOperation<GetMockServerInput, GetMo
   name: "get_mock_server",
   title: "Get a mock server",
   description:
-    "Read one version of a mock server (the head by default): its address, its definition, and the real server's current values for what the definition edits, so a change can be written without reading the real server separately. With sinceVersion, also the change list from that version. realServer.status says whether the real server could be read.",
+    "Read one version of a mock server (the head by default): its address, its definition, and the real server's current values for what the definition edits, so a change can be written without reading the real server separately. With sinceVersion, also the change list from that version. realServer.status says whether the real server could be read. `whatCanChange` ranks everything the mock can change on that server (where to change it, its current value and which clients read it), so the top entry can be applied with update_mock_server as it stands.",
   readOnly: true,
   permalink,
   inputSchema: getInput,

@@ -15,6 +15,7 @@ import { climbFns, translateClimbWriteError } from "./backend.js";
 import type { ClimbDeps } from "./deps.js";
 import { estimateGroup } from "./estimate.js";
 import { launchUnit, type RegisteredGroup } from "./launch-unit.js";
+import { refuseIfNoClientReads } from "./unread-change.js";
 
 type RoundPlan = {
   allowed: boolean;
@@ -54,8 +55,10 @@ export async function submitRound(
       new ConvexError({ code: plan.refusal.code, message: plan.refusal.message, ...plan.refusal.extra }),
     );
   }
-  const realListingHash = await deps.hashListing(projectId, climb.serverId);
   const serverVersion = args.serverVersion ?? (await headVersionOf(convex, args.serverId));
+  // A change no client of the climb reads would measure nothing: refuse it before any run.
+  await refuseIfNoClientReads(convex, climb, args.serverId, serverVersion);
+  const realListingHash = await deps.hashListing(projectId, climb.serverId);
   const groups = plan.remeasureBest ? 2 : 1;
   const estimate = await estimateGroup(
     convex,

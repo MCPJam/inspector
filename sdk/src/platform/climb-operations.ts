@@ -168,7 +168,7 @@ export const getClimbOperation: PlatformOperation<GetClimbInput, GetClimbResult>
   name: "get_climb",
   title: "Get a climb",
   description:
-    "Read a climb: its state, limits and credits left, the cases in each group (steering cases by key, validation as counts), the baseline's noise per environment, every round with who submitted it and how it came out, and the best server so far. Validation results are totals and never carry a case. Poll this after `start_climb` until the state is `ready`.",
+    "Read a climb: its state, limits and credits left, the cases in each group (steering cases by key, validation as counts), the baseline's noise per environment, every round with who submitted it, and the best server so far. Once the baseline has settled it also returns `suiteCheck` (whether the suite can show a change: noise, the smallest change per measure, cases that flipped between the two runs, environments with no room to improve, tools no validation case covers), `climbFor` (the things to climb for, each with its measure, a number counted on steering cases and up to three failed runs with a reason and a link) and `whatCanChange` (everything a mock can change on this server, ranked, with the current value, which clients read it, the failed runs that point at it and what was tried). Validation results are totals and never carry a case. Poll this after `start_climb` until the state is `ready`.",
   readOnly: true,
   permalink: suitePermalink,
   inputSchema: getInput,

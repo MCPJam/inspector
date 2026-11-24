@@ -6,10 +6,15 @@
  */
 import type { ConvexHttpClient } from "convex/browser";
 import type { PlatformApiClient } from "@mcpjam/sdk/platform";
+import type { RealServer } from "./listing.js";
 
 export type ClimbDeps = {
   convex: ConvexHttpClient;
-  client: Pick<PlatformApiClient, "createEvalRunGroup" | "cancelEvalRun">;
+  client: Pick<PlatformApiClient, "createEvalRunGroup" | "cancelEvalRun" | "listEvalRunIterations" | "getEvalRun">;
   /** The hash of the real server's tool listing, read now. */
   hashListing: (projectId: string, serverId: string) => Promise<string>;
+  /** What the real server lists now, for the ranked list of what can change. */
+  readServer: (projectId: string, serverId: string) => Promise<RealServer>;
+  /** Where a link to a run's page points. */
+  appOrigin: string;
 };

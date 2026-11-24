@@ -17,6 +17,8 @@ export const climbFns = {
   start: mutation("climbs:startClimb"),
   update: mutation("climbs:updateClimb"),
   get: query("climbs:getClimb"),
+  // Not in the backend yet: the run ids of each unit's run groups (see the contract).
+  runGroups: query("climbs:getClimbRunGroups"),
   list: query("climbs:listClimbs"),
   beginBaseline: mutation("climbs:beginClimbBaseline"),
   recordRunLaunch: mutation("climbSettle:recordClimbRunLaunch"),

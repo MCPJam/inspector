@@ -52,6 +52,11 @@
       "import": "./dist/mocks/index.js",
       "default": "./dist/mocks/index.js"
     },
+    "./climbs": {
+      "types": "./dist/climbs/index.d.ts",
+      "import": "./dist/climbs/index.js",
+      "default": "./dist/climbs/index.js"
+    },
     "./operations": {
       "types": "./dist/operations.d.ts",
       "import": "./dist/operations.js",

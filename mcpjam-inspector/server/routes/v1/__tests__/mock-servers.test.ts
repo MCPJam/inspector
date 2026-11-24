@@ -680,3 +680,21 @@ describe("GET /projects/:projectId/servers", () => {
     expect(calls(mocks.query, "mockServers:listMocks")).toEqual([]);
   });
 });
+
+describe("GET /projects/:projectId/mock-servers/:mockId, what can change", () => {
+  it("ranks everything the mock can change on the real server, with who reads each, and never fails the read on it", async () => {
+    const res = await request("GET", `${MOCKS}/${MOCK}`);
+    const body = await json(res);
+    expect(body.whatCanChange.length).toBeGreaterThan(0);
+    const description = body.whatCanChange.find((entry: any) => entry.where.mockPath === "tools.search.description");
+    expect(description).toMatchObject({ current: "Search the index.", readByAnyClient: true });
+    expect(description.readBy.map((reader: any) => reader.client)).toEqual(
+      expect.arrayContaining(["mcpjam", "claude-code", "codex"]),
+    );
+
+    real.failure = new Error("connect ECONNREFUSED 10.0.0.5:443");
+    const down = await json(request("GET", `${MOCKS}/${MOCK}`));
+    expect(down.realServer.status).toBe("unreachable");
+    expect(down.whatCanChange).toBeUndefined();
+  });
+});

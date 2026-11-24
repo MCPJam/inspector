@@ -13,6 +13,21 @@ import { hashRealToolListing } from "@mcpjam/sdk/mocks";
 import type { ReplacementSpec, ServerReplacementInput } from "./replacement.js";
 import { projectServerSchema, runEphemeralConnection } from "../../routes/web/auth.js";
 
+/** What the real server lists and says of itself, as the caller sees it. */
+export type RealServer = {
+  tools: Tool[];
+  serverInfo?: { name: string; version: string; title?: string };
+  instructions?: string;
+};
+
+export async function readRealServer(c: Context, projectId: string, serverId: string): Promise<RealServer> {
+  return runEphemeralConnection(c, { projectId, serverId }, projectServerSchema, async (manager, body) => {
+    const { tools } = await listAllTools(manager, { serverId: body.serverId, cacheMode: "bypass" });
+    const info = manager.getInitializationInfo(body.serverId);
+    return { tools: tools as Tool[], serverInfo: info?.serverVersion, instructions: info?.instructions };
+  });
+}
+
 /** Every tool the real server lists, each exactly as it listed it. */
 export async function readRealTools(c: Context, projectId: string, serverId: string): Promise<Tool[]> {
   return runEphemeralConnection(c, { projectId, serverId }, projectServerSchema, async (manager, body) => {

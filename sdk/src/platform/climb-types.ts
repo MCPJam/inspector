@@ -3,6 +3,8 @@
  * (the keep rule, the noise, the verdicts, the stop rule); these types only
  * name what it returns. Rates and ratios are whole basis points: 100 is 1%.
  */
+import type { ChangeEntry, ClimbForOption, SuiteCheck } from "../climbs/types.js";
+
 export type PlatformClimbMeasure = "pass_rate" | "tokens" | "cost" | "tool_calls";
 export type PlatformClimbState = "baselining" | "ready" | "running" | "stopped";
 export type PlatformClimbStopReason =
@@ -91,7 +93,7 @@ export type PlatformClimbVerification = {
 };
 
 /** `climbs:getClimb`, as the backend describes a climb. */
-export type PlatformClimb = {
+export type PlatformClimbBase = {
   climbId: string;
   suiteId: string;
   projectId: string;
@@ -129,6 +131,15 @@ export type PlatformClimb = {
   verifications: PlatformClimbVerification[];
   createdAt: number;
   updatedAt: number;
+};
+
+/** What `get_climb` adds to it: the suite check, what to climb for and what can change, each from the SDK's climb functions. */
+export type PlatformClimb = PlatformClimbBase & {
+  suiteCheck?: SuiteCheck;
+  climbFor?: ClimbForOption[];
+  whatCanChange?: ChangeEntry[];
+  /** What this read could not do, in words a caller can act on. */
+  notes?: string[];
 };
 
 export type PlatformClimbListItem = {
@@ -245,4 +256,6 @@ export type PlatformClimbStopped = {
     validation?: "better" | "unchanged";
     overruled: boolean;
   }>;
+  /** For the coding agent that works on the server's code: the kept changes in order, those that also helped on validation first. */
+  prompt: string;
 };

@@ -11,6 +11,7 @@ import { z } from "zod";
 import { makeFunctionReference } from "convex/server";
 import { diffMockDefinitions, type MockChange, type MockDefinition } from "@mcpjam/sdk/mocks";
 import { listAllTools } from "@mcpjam/sdk/operations";
+import { ALL_CLIENTS, whatCanChange } from "@mcpjam/sdk/climbs";
 import type { PlatformMockSaved, PlatformMockServer } from "@mcpjam/sdk/platform";
 import { projectServerSchema, runEphemeralConnection } from "../web/auth.js";
 import { ErrorCode, WebRouteError, parseWithSchema } from "../web/errors.js";
@@ -214,8 +215,8 @@ async function readRealForGet(
   projectId: string,
   row: MockRow,
   definition: MockDefinition,
-): Promise<PlatformMockServer["realServer"]> {
-  if (!row.baseServerId) return { status: "none", tools: [] };
+): Promise<Pick<PlatformMockServer, "realServer" | "whatCanChange">> {
+  if (!row.baseServerId) return { realServer: { status: "none", tools: [] } };
   try {
     const real = await runEphemeralConnection(
       c,
@@ -223,7 +224,11 @@ async function readRealForGet(
       projectServerSchema,
       (manager, body) => listReal(manager, body.serverId),
     );
-    return describeRealEdits(definition, real);
+    return {
+      realServer: describeRealEdits(definition, real),
+      // Every client a mock reaches, since no climb narrows it here.
+      whatCanChange: whatCanChange({ server: real, clients: ALL_CLIENTS }),
+    };
   } catch (error) {
     // The mock is readable without its real server. The cause stays in the
     // log: it can name the real server's address or its sign-in state.
@@ -232,10 +237,12 @@ async function readRealForGet(
       error: error instanceof Error ? error.message : String(error),
     });
     return {
-      status: "unreachable",
-      message:
-        "MCPJam could not read the real server just now. Check that it is up and that you can sign in to it, then read the mock again.",
-      tools: [],
+      realServer: {
+        status: "unreachable",
+        message:
+          "MCPJam could not read the real server just now. Check that it is up and that you can sign in to it, then read the mock again.",
+        tools: [],
+      },
     };
   }
 }
@@ -262,7 +269,7 @@ mockServers.get("/projects/:projectId/mock-servers/:mockId", async (c) => {
     ...(earlier
       ? { sinceVersion: earlier.version, changes: diffMockDefinitions(JSON.parse(earlier.definitionJson), definition) }
       : {}),
-    realServer: await readRealForGet(c, projectId, row, definition),
+    ...(await readRealForGet(c, projectId, row, definition)),
   };
   return v1Resource(c, dto);
 });

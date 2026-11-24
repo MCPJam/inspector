@@ -142,7 +142,7 @@ export const stopClimbOperation: PlatformOperation<StopClimbInput, StopClimbResu
   name: "stop_climb",
   title: "Stop a climb",
   description:
-    "Stop a climb for good: no more rounds, and a round or baseline in flight is failed and its runs cancelled. Returns where it ended, the best server so far and the rounds that stand as kept, in order. Calling it again changes nothing. A stopped climb can still be confirmed once and verified.",
+    "Stop a climb for good: no more rounds, and a round or baseline in flight is failed and its runs cancelled. Returns where it ended, the best server so far, the rounds that stand as kept in order, and `prompt`: the kept changes, those that also helped on validation cases first, with each old and new value, for the coding agent that works on the server\'s code. Calling it again changes nothing. A stopped climb can still be confirmed once and verified.",
   readOnly: false,
   risk: "destructive",
   permalink: suitePermalink,

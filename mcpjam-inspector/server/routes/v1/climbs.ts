@@ -10,8 +10,11 @@ import { z } from "zod";
 import type { PlatformClimb } from "@mcpjam/sdk/platform";
 import { climbFns, translateClimbReadError, translateClimbWriteError } from "../../services/climbs/backend.js";
 import type { ClimbDeps } from "../../services/climbs/deps.js";
-import { hashRealServerListing } from "../../services/climbs/listing.js";
+import { hashRealServerListing, readRealServer } from "../../services/climbs/listing.js";
+import { readClimbInFull } from "../../services/climbs/read-climb.js";
+import { MCPJAM_HOSTED_ORIGIN } from "../../config.js";
 import { startClimb } from "../../services/climbs/start-climb.js";
+import { stopClimb } from "../../services/climbs/stop-climb.js";
 import { submitRound } from "../../services/climbs/submit-round.js";
 import { submittedViaOf } from "../../services/climbs/surface.js";
 import { readRound } from "../../services/climbs/wait-round.js";
@@ -108,6 +111,8 @@ export async function climbDepsFor(c: Context): Promise<ClimbDeps> {
       ...(launch?.ciMetadata ? { ci: launch.ciMetadata } : {}),
     }),
     hashListing: (projectId, serverId) => hashRealServerListing(c, projectId, serverId),
+    readServer: (projectId, serverId) => readRealServer(c, projectId, serverId),
+    appOrigin: MCPJAM_HOSTED_ORIGIN,
   };
 }
 
@@ -152,7 +157,8 @@ climbs.get("/projects/:projectId/climbs", async (c) => {
 // GET /v1/projects/:projectId/climbs/:climbId
 climbs.get("/projects/:projectId/climbs/:climbId", async (c) => {
   const deps = await climbDepsFor(c);
-  return v1Resource(c, await readClimb(deps, projectIdOf(c), c.req.param("climbId") ?? ""));
+  const climb = await readClimb(deps, projectIdOf(c), c.req.param("climbId") ?? "");
+  return v1Resource(c, await readClimbInFull(deps, climb));
 });
 
 // PATCH /v1/projects/:projectId/climbs/:climbId
@@ -226,8 +232,7 @@ climbs.post("/projects/:projectId/climbs/:climbId/stop", async (c) => {
   const deps = await climbDepsFor(c);
   const climb = await readClimb(deps, projectIdOf(c), c.req.param("climbId") ?? "");
   try {
-    const stopped: Record<string, unknown> = await deps.convex.mutation(climbFns.stop, { climbId: climb.climbId });
-    return v1Resource(c, { climbId: climb.climbId, suiteId: climb.suiteId, ...stopped });
+    return v1Resource(c, await stopClimb(deps, climb));
   } catch (error) {
     throw translateClimbWriteError(error);
   }
