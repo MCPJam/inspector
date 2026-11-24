@@ -8,7 +8,7 @@ import {
   clearComparisonAuthRecovery,
 } from "@/lib/comparison-auth-recovery";
 import { useRetainedCompareClients } from "@/hooks/use-retained-compare-clients";
-import { useHistoryTarget } from "@/hooks/use-history-target";
+import { useThreadSend } from "@/hooks/use-history-target";
 import { useLocalAutoApproveConsent } from "@/hooks/useLocalAutoApproveConsent";
 import { PluginOnboardingHandoff } from "@/components/host-workspace/plugin-onboarding-handoff";
 import { WorkspaceFileActionsProvider } from "@/components/host-workspace/file-actions";
@@ -3956,20 +3956,15 @@ export function PlaygroundMain({
     resumedVersion,
   ]);
 
-  const isCurrentHistoryTarget = useHistoryTarget(chatSessionId, convexProjectId);
-  // A send belongs to the thread open when it started. A click on another
-  // thread or New chat bumps the epoch before any discard dialog; the other
-  // ways the open thread changes move the selection counter or the target.
-  const sendEpochRef = useRef(0);
-  const beginThreadSend = useCallback(() => {
-    const epoch = sendEpochRef.current;
-    const selection = historySelectionRequestIdRef.current;
-    const target = { chatSessionId, projectId: convexProjectId };
-    return () =>
-      sendEpochRef.current === epoch &&
-      historySelectionRequestIdRef.current === selection &&
-      isCurrentHistoryTarget(target);
-  }, [chatSessionId, convexProjectId, isCurrentHistoryTarget]);
+  const {
+    isCurrentTarget: isCurrentHistoryTarget,
+    begin: beginThreadSend,
+    leave: leaveThreadSend,
+  } = useThreadSend(
+    chatSessionId,
+    convexProjectId,
+    historySelectionRequestIdRef,
+  );
 
   const refreshCurrentHistorySession = useCallback(
     async ({ retries = 0, markRead = false, isCurrent = () => true } = {}) => {
@@ -4062,9 +4057,9 @@ export function PlaygroundMain({
       return true;
     }
 
-    // The sender checked its thread just before this call, so a check taken
-    // here covers the read: a thread picked meanwhile is not this send's.
-    const isCurrent = beginThreadSend();
+    // Every sender but plugin messages checks its thread just before this
+    // call, so a check taken here covers the read.
+    const { isCurrent } = beginThreadSend();
     let detail: Awaited<ReturnType<typeof refreshCurrentHistorySession>> = null;
     try {
       detail = await withPresendSyncTimeout(
@@ -4102,7 +4097,8 @@ export function PlaygroundMain({
   const handleSelectThread = useCallback(
     async (session: ChatHistorySession) => {
       if (isStreaming) return;
-      sendEpochRef.current += 1;
+      // Clicking the open thread's row is not a move to another thread.
+      if (session._id !== activeHistorySessionId) leaveThreadSend();
       if (!(await ensureDiscardDraftConfirmed())) return;
       if (hasUnsavedDraftRef.current) {
         clearComposerDraft();
@@ -4162,11 +4158,13 @@ export function PlaygroundMain({
       }
     },
     [
+      activeHistorySessionId,
       adoptRestoredConversationTarget,
       clearComposerDraft,
       convexProjectId,
       ensureDiscardDraftConfirmed,
       isStreaming,
+      leaveThreadSend,
       loadHistorySession,
       restoreHistoryServerSelection,
     ],
@@ -4326,7 +4324,7 @@ export function PlaygroundMain({
   const handleNewChat = useCallback(
     async (options?: { shared?: boolean; isCurrent?: () => boolean }) => {
       if (isStreaming) return false;
-      sendEpochRef.current += 1;
+      leaveThreadSend();
       if (!(await ensureDiscardDraftConfirmed())) return false;
       // An App's new-chat action can lapse while the person decides; a reset
       // for it then would discard their draft for nothing.
@@ -4354,6 +4352,7 @@ export function PlaygroundMain({
       clearComposerDraft,
       ensureDiscardDraftConfirmed,
       isStreaming,
+      leaveThreadSend,
       resetChat,
       resetMultiModelSessions,
       syncResumedVersion,
@@ -5028,7 +5027,7 @@ export function PlaygroundMain({
         // follow-up on a reopened conversation would otherwise be the FIRST
         // thing that runs on a target the transcript never used, with no user
         // action in between to make that a choice.
-        const isThreadCurrent = beginThreadSend();
+        const { isCurrent: isThreadCurrent } = beginThreadSend();
         const isCurrent = () => isCallerCurrent() && isThreadCurrent();
         if (!isCurrent() || conversationSendBlockedRef.current) {
           return false;
@@ -5669,7 +5668,7 @@ export function PlaygroundMain({
   // through `performComposerSubmit`, one submit at a time.
 
   const submitComposer = useCallback(async (): Promise<boolean> => {
-    const isCurrent = beginThreadSend();
+    const { isCurrent } = beginThreadSend();
     if (isCompareMode && !ensureCompareReady()) return false;
     if (!composerHasContent || sendBlocked) {
       return false;
@@ -6140,10 +6139,10 @@ export function PlaygroundMain({
       // clicked while a submit is being prepared would wipe that submit's
       // attachments and the submit would still send its draft.
       void composerSend.run(async () => {
-        const isCurrent = beginThreadSend();
-        // A prompt whose thread was left is not put in the new one.
+        const { isCurrent, left } = beginThreadSend();
+        // A prompt is not put in the thread or new chat the user moved to.
         const refuse = () => {
-          if (isCurrent()) composer.setInput(prompt);
+          if (!left()) composer.setInput(prompt);
         };
         if (!(await ensureSelectedServerReadyForChat()) || !isCurrent()) {
           refuse();
@@ -6235,10 +6234,10 @@ export function PlaygroundMain({
         composer.setInput(text);
         return;
       }
-      const isCurrent = beginThreadSend();
-      // A prompt whose thread was left is not put in the new one.
+      const { isCurrent, left } = beginThreadSend();
+      // A prompt is not put in the thread or new chat the user moved to.
       const refuse = () => {
-        if (isCurrent()) composer.setInput(text);
+        if (!left()) composer.setInput(text);
       };
       if (!(await ensureSelectedServerReadyForChat()) || !isCurrent()) {
         refuse();

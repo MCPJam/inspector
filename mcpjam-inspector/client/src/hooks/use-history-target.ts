@@ -28,3 +28,34 @@ export function useHistoryTarget<P>(
     [],
   );
 }
+
+/**
+ * Ties a send to the thread open when it started. `leave()` marks a click on
+ * another thread or New chat, before any discard dialog; the other ways the
+ * open thread changes move `selection` or the history target. `left` is the
+ * click alone: a prompt dropped while the user stayed, such as by the send's
+ * own detach, goes back in the composer.
+ */
+export function useThreadSend<P>(
+  chatSessionId: string,
+  projectId: P,
+  selection: { readonly current: number },
+) {
+  const isCurrentTarget = useHistoryTarget(chatSessionId, projectId);
+  const epoch = useRef(0);
+  const begin = useCallback(() => {
+    const started = epoch.current;
+    const selected = selection.current;
+    const target = { chatSessionId, projectId };
+    const left = () => epoch.current !== started;
+    return {
+      left,
+      isCurrent: () =>
+        !left() && selection.current === selected && isCurrentTarget(target),
+    };
+  }, [chatSessionId, projectId, selection, isCurrentTarget]);
+  const leave = useCallback(() => {
+    epoch.current += 1;
+  }, []);
+  return { isCurrentTarget, begin, leave };
+}

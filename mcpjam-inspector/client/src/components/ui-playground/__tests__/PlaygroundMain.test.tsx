@@ -3095,6 +3095,66 @@ describe("PlaygroundMain", () => {
     );
 
     it.each([
+      {
+        sender: "a starter chip",
+        messages: [],
+        text: "Starter chip prompt",
+        trigger: () =>
+          fireEvent.click(screen.getByRole("button", { name: "Starter chip" })),
+      },
+      {
+        sender: '"Ask agent to run"',
+        messages: transcript,
+        text: "Run the tool for me",
+        trigger: () =>
+          useAgentToolPromptBridge.getState().requestRun("Run the tool for me"),
+      },
+    ])(
+      "puts $sender back in the composer when its own read finds the thread gone",
+      async ({ messages, text, trigger }) => {
+        const toastError = vi.spyOn(toast, "error");
+        const view = await openThreadA();
+        mockUseChatSession.messages = messages as never;
+        view.rerender(<PlaygroundMain {...defaultProps} />);
+        mockReadHistory.mockRejectedValue(new WebApiError(404, null, "gone"));
+
+        await act(async () => {
+          trigger();
+        });
+        await settle();
+
+        // The detach moves the selection counter, but the user stayed.
+        expect(toastError).toHaveBeenCalledWith(
+          expect.stringContaining("This chat is no longer available"),
+        );
+        expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+        expect(screen.getByTestId("chat-input-field")).toHaveValue(text);
+      },
+    );
+
+    it("lets the send go out when the open thread's own row is clicked and the dialog is cancelled", async () => {
+      const readiness = holdServerReadiness();
+      await renderWithThreadA({
+        ensureServersReady: readiness.ensureServersReady,
+      });
+      await typeAndSend("draft for A");
+
+      await act(async () => {
+        void bridge()?.onSelectThread(sessionA);
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByText("Cancel"));
+      });
+      await act(async () => readiness.release());
+      await settle();
+
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      expect(mockUseChatSession.sendMessage.mock.calls[0]![0]).toMatchObject({
+        text: "draft for A",
+      });
+    });
+
+    it.each([
       ["a composer send", true],
       ["a starter chip", false],
     ])(
