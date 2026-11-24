@@ -6,6 +6,7 @@ import { CLIENT_FEATURE_FLAG_KEYS } from "@/shared/client-feature-flags";
 import { createWebAccountView } from "@/test/factories";
 import { webAccountsApi, type WebAccount } from "../api";
 import {
+  runAccountOf,
   webAccountAsConnection,
   webAccountName,
   webClientSite,
@@ -70,5 +71,13 @@ describe("web accounts helpers", () => {
     expect(getFunctionName(webAccountsApi.setSuiteSelection)).toBe(
       "webClientSuites:setSuiteWebAccountSelection",
     );
+  });
+
+  it("runs on the default account, else the first", () => {
+    const first = account({ webAccountId: "a" });
+    const fallback = account({ webAccountId: "b", isDefault: true });
+    expect(runAccountOf([first, fallback])).toBe(fallback);
+    expect(runAccountOf([first])).toBe(first);
+    expect(runAccountOf([])).toBeUndefined();
   });
 });
