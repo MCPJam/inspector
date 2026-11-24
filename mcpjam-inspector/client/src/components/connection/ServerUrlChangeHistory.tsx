@@ -230,11 +230,14 @@ function recoveryMessage(
     !latestChange.metadata.clearedOnOriginChange
   ) return null;
 
+  const usesClientSecret =
+    auth.method === "oauth" ||
+    auth.method === "xaa" ||
+    (auth.method === "auto" && server.registrationMode === "preregistered");
   const missing = clearedCredentialLabels(latestChange).filter((label) =>
     (label === "request headers" && !auth.headers) ||
     (label === "bearer token" && !auth.bearer && auth.method === "bearer") ||
-    (label === "OAuth client secret" && !server.hasClientSecret &&
-      (auth.method === "oauth" || auth.method === "xaa"))
+    (label === "OAuth client secret" && !server.hasClientSecret && usesClientSecret)
   );
   return missing.length > 0
     ? `Re-enter the ${credentialList.format(missing)} to reconnect.`

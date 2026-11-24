@@ -259,6 +259,34 @@ describe("ServerUrlChangeHistory", () => {
     );
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
+
+  it("offers client-secret recovery for Automatic auth with preregistered credentials", () => {
+    useQueryMock.mockReturnValue([
+      {
+        ...urlChange,
+        metadata: { ...urlChange.metadata, clearedKinds: ["client_secret"] },
+      },
+    ]);
+    const server = createServer({
+      config: { url: "https://new.example.com/mcp" },
+      connectionStatus: "failed",
+      lastError: "HTTP 401 Unauthorized",
+      registrationMode: "preregistered",
+      hasClientSecret: false,
+    });
+
+    render(
+      <ServerCredentialRecovery
+        serverId="srv_1"
+        server={server}
+        auth={{ method: "auto", bearer: null, headers: null }}
+      />
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Re-enter the OAuth client secret to reconnect."
+    );
+  });
 });
 
 describe("isServerUrlHistoryUnavailable", () => {
