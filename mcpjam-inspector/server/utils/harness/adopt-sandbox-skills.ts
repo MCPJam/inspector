@@ -24,7 +24,7 @@
  *  - Content is read via `readTextFile` (sandbox files API, no 16k cap), NEVER
  *    shell `cat` (exec output is capped at 16k).
  */
-import { readSkillDocument } from "../skill-parser.js";
+import { readSkillDocument } from "../../../shared/skill-document.js";
 import { HOSTED_MODE } from "../../config.js";
 import { isValidSkillName } from "../../../shared/skill-types.js";
 import {
