@@ -92,6 +92,9 @@ vi.mock("@/components/ui/json-editor", () => ({
   JsonEditor: (props: { value: unknown }) => (
     <div data-testid="json-editor">{JSON.stringify(props.value)}</div>
   ),
+  ScrollableJsonView: (props: { value: unknown }) => (
+    <div data-testid="json-view">{JSON.stringify(props.value)}</div>
+  ),
 }));
 
 import { EventsTab } from "../EventsTab";
@@ -257,12 +260,17 @@ describe("EventsTab (hosted)", () => {
       "ChatGPT",
     );
 
+    fireEvent.click(
+      within(await screen.findByTestId("event-types")).getByRole("button", {
+        name: /issue\.created/,
+      }),
+    );
     // Hosted webhooks need no acknowledgement: they use the public inbox.
     fireEvent.click(screen.getByRole("radio", { name: /Webhook/ }));
     expect(
       screen.queryByRole("checkbox", { name: /local development receiver/ }),
     ).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /Subscribe/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Subscribe/ }));
 
     const create = mutations.get(EVENT_SUBSCRIPTIONS_API.create)!;
     await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
@@ -298,11 +306,15 @@ describe("EventsTab (hosted)", () => {
       "Client: MCPJam (built-in)",
     );
     expect(screen.queryByLabelText("Events client")).toBeNull();
-    await screen.findByTestId("subscribe-form");
+    fireEvent.click(
+      within(await screen.findByTestId("event-types")).getByRole("button", {
+        name: /issue\.created/,
+      }),
+    );
     // Built-in receives every mode the hosted runtime supports.
-    expect(screen.getByRole("radio", { name: /Poll/ })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /Poll/ })).toBeEnabled();
     fireEvent.click(screen.getByRole("radio", { name: /Webhook/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Subscribe/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Subscribe/ }));
 
     const create = mutations.get(EVENT_SUBSCRIPTIONS_API.create)!;
     await waitFor(() =>
@@ -311,6 +323,40 @@ describe("EventsTab (hosted)", () => {
       ),
     );
     expect(create.mock.calls[0]![0]).not.toHaveProperty("profile");
+  });
+
+  it("keeps hosted push visibly unavailable, with the reason", async () => {
+    mockLoadEventsCatalog.mockResolvedValue({
+      events: [
+        {
+          name: "issue.created",
+          delivery: ["push", "poll"],
+          inputSchema: { type: "object", properties: {} },
+        },
+      ],
+      support: { handshakeObserved: true, declared: true, listChanged: false },
+      protocolVersion: "2026-07-28",
+    });
+    render(
+      <EventsTab
+        serverConfig={serverConfig()}
+        serverName="github"
+        projectId="proj_1"
+      />,
+    );
+
+    fireEvent.click(
+      within(await screen.findByTestId("event-types")).getByRole("button", {
+        name: /issue\.created/,
+      }),
+    );
+    expect(screen.getByRole("radio", { name: /Push/ })).toBeDisabled();
+    expect(
+      screen.getByText(
+        "Hosted subscriptions can't use push yet. Use webhook or poll, or subscribe from the local app.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /Poll/ })).toBeChecked();
   });
 
   it("pauses through setDesiredState and loads slot rejections", async () => {

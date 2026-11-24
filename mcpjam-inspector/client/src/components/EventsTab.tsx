@@ -21,6 +21,7 @@ import { AlertCircle, Loader2, Radio, RefreshCw } from "lucide-react";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
 import { EmptyState } from "./ui/empty-state";
 import { track } from "@/lib/analytics";
+import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import {
   getApiContextRevision,
@@ -48,28 +49,28 @@ import type {
   EventsSubscriptionView,
 } from "@/shared/events-api";
 import { CapabilityPanel } from "./events/CapabilityPanel";
-import { SubscribeForm, type SubscribeFormValue } from "./events/SubscribeForm";
+
 import {
   SubscriptionsPanel,
   type SubscriptionAction,
 } from "./events/SubscriptionsPanel";
 import { SimulatePanel } from "./events/SimulatePanel";
 import { EventsFeedPanel, RejectionsPanel } from "./events/EventsFeedPanel";
-import {
-  DeliveryChips,
-  DraftHeader,
-  SchemaViewer,
-  Section,
-} from "./events/EventsTabSections";
-import { EventTypesSidebar } from "./events/EventTypesSidebar";
+import { DraftHeader, Section } from "./events/EventsTabSections";
+import { EventsSidebar } from "./events/EventsSidebar";
 import { useEventsHost } from "./events/use-events-host";
 import { useEventsCatalog } from "./events/use-events-catalog";
 import { useEventsFeed } from "./events/use-events-feed";
 import { useEventsListChanged } from "./events/use-events-list-changed";
 import {
+  useSubscribeForm,
+  type SubscribeFormValue,
+} from "./events/use-subscribe-form";
+import {
   describeTermination,
   errorMessage,
   logicalIdOf,
+  replayUnsupported,
   type TerminationReason,
 } from "./events/event-utils";
 
@@ -129,6 +130,7 @@ export function EventsTab({
     Map<string, EventsSubscriptionView>
   >(() => new Map());
   const [registryError, setRegistryError] = useState<string | null>(null);
+  const navigate = useAppNavigate();
 
   // ── catalog ─────────────────────────────────────────────────────────────
   const {
@@ -534,6 +536,39 @@ export function EventsTab({
     }
   };
 
+  // ── left pane ───────────────────────────────────────────────────────────
+  const form = useSubscribeForm({
+    event: selectedEvent,
+    modes: selectedAvailability?.modes ?? [],
+    blockedReason,
+    hosted,
+    busy: subscribing,
+    onSubscribe: handleSubscribe,
+  });
+
+  // A local client that receives no events is fixed in Clients, not here.
+  const blockedAction =
+    !hosted &&
+    hostChoice &&
+    !hostChoice.missing &&
+    hostChoice.id !== null &&
+    hostChoice.modes.length === 0
+      ? {
+          label: "Open Clients",
+          onClick: () => navigate(buildHostsPath(hostChoice.id)),
+        }
+      : undefined;
+
+  const replayUnsupportedFor = useCallback(
+    (eventName: string) =>
+      serverSubscriptions.some(
+        (subscription) =>
+          subscription.eventName === eventName &&
+          replayUnsupported(subscription),
+      ),
+    [serverSubscriptions],
+  );
+
   // ── render ──────────────────────────────────────────────────────────────
   if (!hasServer) {
     return (
@@ -599,18 +634,25 @@ export function EventsTab({
   }
 
   const sidebarContent = (
-    <EventTypesSidebar
+    <EventsSidebar
       catalog={catalog}
-      availabilityFor={availabilityFor}
-      hostName={hostName}
-      selectedEventName={selectedEventName}
       loadingMore={loadingMore}
-      onSelectEvent={setSelectedEventName}
       onLoadMore={loadMoreEvents}
       onRefresh={retryCatalog}
       onHide={() => setIsSidebarVisible(false)}
+      selectedEvent={selectedEvent}
+      onSelectEvent={setSelectedEventName}
+      availabilityFor={availabilityFor}
+      hostName={hostName}
+      hosted={hosted}
+      form={form}
+      subscribing={subscribing}
+      blockedReason={blockedReason}
+      blockedAction={blockedAction}
+      replayUnsupportedFor={replayUnsupportedFor}
     />
   );
+
 
   const hostedRegistryNotice =
     hosted && !projectId
@@ -637,36 +679,6 @@ export function EventsTab({
           </p>
         ) : null}
 
-        {selectedEvent ? (
-          <Section
-            title={selectedEvent.name}
-            description={selectedEvent.description}
-          >
-            <DeliveryChips
-              delivery={selectedEvent.delivery}
-              availability={selectedAvailability}
-              hostName={hostName}
-            />
-            <div className="space-y-1">
-              <SchemaViewer
-                label="Input schema"
-                schema={selectedEvent.inputSchema}
-              />
-              <SchemaViewer
-                label="Payload schema"
-                schema={selectedEvent.payloadSchema}
-              />
-            </div>
-            <SubscribeForm
-              event={selectedEvent}
-              modes={selectedAvailability?.modes ?? []}
-              blockedReason={blockedReason}
-              hosted={hosted}
-              busy={subscribing}
-              onSubscribe={handleSubscribe}
-            />
-          </Section>
-        ) : null}
 
         <Section
           title="Subscriptions"
@@ -687,7 +699,7 @@ export function EventsTab({
               hosted={hosted}
               busyId={busySubscriptionId}
               slotStates={slotStates}
-              emptyText="No subscriptions on this server yet. Subscribe to an event type above."
+              emptyText="No subscriptions on this server yet. Pick an event type to subscribe."
               terminationFor={terminationFor}
               onAction={(subscription, action) =>
                 void handleSubscriptionAction(subscription, action)
@@ -744,6 +756,10 @@ export function EventsTab({
         >
           <RejectionsPanel rejections={rejections} />
         </Section>
+
+        <Section title="Server capability">
+          <CapabilityPanel catalog={catalog} />
+        </Section>
       </div>
     </ScrollArea>
   );
@@ -751,11 +767,14 @@ export function EventsTab({
   return (
     <ThreePanelLayout
       id="events"
+      mobileNavigation={{
+        selectionKey: selectedEventName ? `event:${selectedEventName}` : "",
+      }}
       sidebar={sidebarContent}
       content={centerContent}
       sidebarVisible={isSidebarVisible}
       onSidebarVisibilityChange={setIsSidebarVisible}
-      sidebarTooltip="Show event types"
+      sidebarTooltip="Show events sidebar"
       serverName={serverName}
     />
   );

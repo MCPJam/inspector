@@ -1,6 +1,5 @@
 import { cn } from "@mcpjam/design-system/cn";
 import { Radio } from "lucide-react";
-import { JsonEditor } from "@/components/ui/json-editor";
 import {
   describeModeRefusal,
   isEventDeliveryMode,
@@ -40,14 +39,20 @@ export function Section({
 
 /**
  * "Draft" is a label, not a gate (per the events plan): the extension is a
- * working-group draft pinned at one commit. The right side holds the client
- * the tab subscribes as, which decides the delivery modes on offer.
+ * working-group draft pinned at one commit. The right side holds whatever the
+ * pane wants beside it, such as the client the tab subscribes as.
  */
-export function DraftHeader({ children }: { children?: React.ReactNode }) {
+export function DraftHeader({
+  title = "Events",
+  children,
+}: {
+  title?: string;
+  children?: React.ReactNode;
+}) {
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-3">
       <Radio className="h-4 w-4 text-muted-foreground" />
-      <h2 className="text-sm font-semibold text-foreground">Events</h2>
+      <h2 className="text-sm font-semibold text-foreground">{title}</h2>
       <a
         href={EVENTS_DRAFT_SOURCE_URL}
         target="_blank"
@@ -104,36 +109,5 @@ export function DeliveryChips({
         );
       })}
     </div>
-  );
-}
-
-export function SchemaViewer({
-  label,
-  schema,
-}: {
-  label: string;
-  schema?: Record<string, unknown>;
-}) {
-  if (!schema) {
-    return (
-      <p className="text-[11px] text-muted-foreground">
-        {label}: none declared
-      </p>
-    );
-  }
-  return (
-    <details className="text-[11px]">
-      <summary className="cursor-pointer text-muted-foreground">
-        {label}
-      </summary>
-      <div className="mt-1 max-h-72 overflow-auto rounded-md border border-border">
-        <JsonEditor
-          value={schema}
-          viewOnly
-          collapsible
-          defaultExpandDepth={3}
-        />
-      </div>
-    </details>
   );
 }
