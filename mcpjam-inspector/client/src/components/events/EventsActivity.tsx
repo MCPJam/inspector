@@ -17,7 +17,7 @@ import type {
   EventsSubscriptionView,
 } from "@/shared/events-api";
 import { CapabilityPanel } from "./CapabilityPanel";
-import { DraftHeader, Section } from "./EventsTabSections";
+import { EventsHeader, Section } from "./EventsTabSections";
 import {
   EventsFeedPanel,
   FeedStatusBadge,
@@ -191,7 +191,7 @@ export function EventsActivity({
   return (
     <ScrollArea className="h-full">
       <div className="pb-16" data-testid="events-activity">
-        <DraftHeader title="Activity">
+        <EventsHeader title="Activity" profile={catalog.support.beta ? "beta" : "legacy"}>
           {scopeLabel ? <ScopeLabel>{scopeLabel}</ScopeLabel> : null}
           <span
             className="text-[11px] text-muted-foreground"
@@ -204,7 +204,7 @@ export function EventsActivity({
           <Badge variant="outline" className="text-[10px]">
             {hosted ? "Hosted inbox" : "Local inbox"}
           </Badge>
-        </DraftHeader>
+        </EventsHeader>
         {notice ? (
           <p className="mx-5 mt-4 rounded-md border border-warning/40 bg-warning/10 p-2 text-xs text-foreground">
             {notice}

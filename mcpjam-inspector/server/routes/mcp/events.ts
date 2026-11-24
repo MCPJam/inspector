@@ -64,6 +64,7 @@ function toSupportView(
 ): { support: EventsSupportView; rawCapabilities?: Record<string, unknown>; protocolVersion?: string } {
   const support = manager.getEventsSupport(serverId);
   const captured = manager.getCapturedEventsCapability(serverId);
+  const protocolVersion = manager.getNegotiatedProtocolVersion?.(serverId) ?? captured?.protocolVersion;
   return {
     support: {
       handshakeObserved: support.handshakeObserved,
@@ -74,7 +75,7 @@ function toSupportView(
       ...(support.source ? { source: support.source } : {}),
     },
     ...(captured?.rawCapabilities ? { rawCapabilities: captured.rawCapabilities } : {}),
-    ...(captured?.protocolVersion ? { protocolVersion: captured.protocolVersion } : {}),
+    ...(protocolVersion ? { protocolVersion } : {}),
   };
 }
 
@@ -343,7 +344,7 @@ export function createLocalEventsRouter(options: LocalEventsRouterOptions = {}):
           400,
           "EVENTS_UNDECLARED",
           support.handshakeObserved
-            ? `"${request.serverId}" did not declare capabilities.events.`
+            ? `"${request.serverId}" did not declare an MCP Events capability.`
             : `The handshake with "${request.serverId}" was not observed, so its events capability is unknown.`,
           { handshakeObserved: support.handshakeObserved },
         );

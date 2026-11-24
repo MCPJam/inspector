@@ -48,7 +48,7 @@ import type {
 } from "@/shared/events-api";
 import { CapabilityPanel } from "./events/CapabilityPanel";
 import type { SubscriptionAction } from "./events/SubscriptionsPanel";
-import { DraftHeader } from "./events/EventsTabSections";
+import { EventsHeader } from "./events/EventsTabSections";
 import { EventsSidebar, type EventsPaneTab } from "./events/EventsSidebar";
 import { EventsActivity, type ActivityScope } from "./events/EventsActivity";
 import { useEventsHost } from "./events/use-events-host";
@@ -611,7 +611,7 @@ export function EventsTab({
   if (!catalog.support.declared) {
     return (
       <div className="flex h-full flex-col overflow-auto">
-        <DraftHeader />
+        <EventsHeader />
         <EmptyState
           icon={Radio}
           className="py-12"

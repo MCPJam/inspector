@@ -245,15 +245,6 @@ function classifyUnredacted(
       authLost: false,
     };
   }
-  if (isAuthError(error).isAuth) {
-    return {
-      kind: "authorization_lost",
-      message: describe(error),
-      at: now,
-      retryable: false,
-      authLost: true,
-    };
-  }
   const classified = classifyEventsRpcError(method, error);
   if (classified) {
     const reason = (classified.data as { reason?: unknown } | undefined)?.reason;
@@ -271,6 +262,15 @@ function classifyUnredacted(
         (classified.kind === "CallbackEndpointError" &&
           reason === "challenge_failed"),
       authLost: classified.kind === "Forbidden",
+    };
+  }
+  if (isAuthError(error).isAuth) {
+    return {
+      kind: "authorization_lost",
+      message: describe(error),
+      at: now,
+      retryable: false,
+      authLost: true,
     };
   }
   if (isInvalidEventsPayloadError(error)) {

@@ -47,7 +47,7 @@ export type { EventsCommandOptions, EventsTargetOptions } from "./events-context
 export type { EventsWatchOptions } from "./events-watch.js";
 
 /**
- * `mcpjam events` — MCP Events (triggers), draft@28ec35e.
+ * `mcpjam events` — MCP Events Beta and legacy profiles.
  *
  * Every verb connects directly to the server you name, like `tools call`.
  * The lifecycle rules live in `@mcpjam/sdk/events` (coordinator, push runtime,
@@ -71,7 +71,7 @@ function registerList(events: Command): void {
     events
       .command("list")
       .description(
-        "Report the server's events capability and every event type it offers (events/list, all pages). Exits 2 when the server did not declare capabilities.events, unless --force.",
+        "Report the selected Events capability and all event types. Exits 2 when the capability is absent, unless --force.",
       ),
   ).action(async (options: EventsCommandOptions, command: Command) => {
     const ctx = buildContext(options, command);

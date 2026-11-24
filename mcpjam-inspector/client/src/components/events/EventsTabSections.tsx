@@ -6,6 +6,7 @@ import {
   type SubscribableModes,
 } from "@mcpjam/sdk/browser";
 import {
+  EVENTS_BETA_SOURCE_URL,
   EVENTS_DRAFT_DATE,
   EVENTS_DRAFT_SOURCE_URL,
 } from "@/lib/events-profiles";
@@ -37,32 +38,31 @@ export function Section({
   );
 }
 
-/**
- * "Draft" is a label, not a gate (per the events plan): the extension is a
- * working-group draft pinned at one commit. The right side holds whatever the
- * pane wants beside it, such as the client the tab subscribes as.
- */
-export function DraftHeader({
+/** Link to the protocol contract declared by the connected server. */
+export function EventsHeader({
   title = "Events",
+  profile,
   children,
 }: {
   title?: string;
+  profile?: "beta" | "legacy";
   children?: React.ReactNode;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-3">
       <Radio className="h-4 w-4 text-muted-foreground" />
       <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-      <a
-        href={EVENTS_DRAFT_SOURCE_URL}
-        target="_blank"
-        rel="noreferrer"
-        className="rounded-sm border border-pending/40 bg-pending/10 px-1.5 py-0.5 text-[10px] font-medium text-foreground hover:underline"
-        title={`MCP Events is a working-group draft. MCPJam implements its ${EVENTS_DRAFT_DATE} revision.`}
-        data-testid="events-draft-badge"
-      >
-        Draft · {EVENTS_DRAFT_DATE}
-      </a>
+      {profile ? (
+        <a
+          href={profile === "beta" ? EVENTS_BETA_SOURCE_URL : EVENTS_DRAFT_SOURCE_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="rounded-sm border border-pending/40 bg-pending/10 px-1.5 py-0.5 text-[10px] font-medium text-foreground hover:underline"
+          data-testid="events-profile-badge"
+        >
+          {profile === "beta" ? "Events Beta" : `Legacy draft · ${EVENTS_DRAFT_DATE}`}
+        </a>
+      ) : null}
       {children ? (
         <div className="ml-auto flex items-center gap-2">{children}</div>
       ) : null}

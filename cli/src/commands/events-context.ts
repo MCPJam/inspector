@@ -113,7 +113,7 @@ function notePeerProtocol(
   serverId: string,
   ctx: EventsContext,
 ): void {
-  const negotiated = manager.getCapturedEventsCapability(serverId)?.protocolVersion;
+  const negotiated = manager.getNegotiatedProtocolVersion(serverId);
   const documented = ctx.profile.protocolVersions.value;
   if (negotiated && !documented.includes(negotiated)) {
     ctx.status(
@@ -138,7 +138,7 @@ export function addEventsTargetOptions(command: Command): Command {
         command
           .option(
             "--profile <profile>",
-            'Events profile the run is judged by: "beta", "draft" or "chatgpt" (default: negotiated Events version)',
+            'Events wire profile: "beta", "draft" or "chatgpt" (default: negotiated Events profile)',
           )
           .option(
             "--protocol-version <version>",
@@ -146,7 +146,7 @@ export function addEventsTargetOptions(command: Command): Command {
           )
           .option(
             "--force",
-            "Send events/* even when the server did not declare capabilities.events (conformance probing)",
+            "Send events/* without the selected capability declaration to probe conformance",
           ),
       ),
     ),

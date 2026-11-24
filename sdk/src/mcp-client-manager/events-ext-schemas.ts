@@ -217,6 +217,12 @@ export const verificationEnvelopeSchema = z
 export const EVENTS_SUBSCRIPTION_ID_META_KEY =
   "io.modelcontextprotocol/subscriptionId" as const;
 
+export const betaEventsStreamResultSchema = betaEventsResultSchema.extend({
+  _meta: z.looseObject({
+    [EVENTS_SUBSCRIPTION_ID_META_KEY]: z.union([z.string(), z.number()]),
+  }),
+});
+
 const pushMetaSchema = z
   .object({
     [EVENTS_SUBSCRIPTION_ID_META_KEY]: z.union([z.string(), z.number()]),
