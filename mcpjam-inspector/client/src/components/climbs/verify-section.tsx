@@ -88,10 +88,13 @@ export function VerifySection({
   climb,
   labels,
   onChanged,
+  nothingKept = false,
 }: {
   climb: Climb;
   labels: Record<string, string>;
   onChanged: () => void;
+  /** No round was kept: verification checks kept changes, so the backend would refuse it. */
+  nothingKept?: boolean;
 }) {
   const [commit, setCommit] = useState("");
   const [pending, setPending] = useState(false);
@@ -119,6 +122,15 @@ export function VerifySection({
       setPending(false);
     }
   };
+
+  if (nothingKept && !report && !running) {
+    return (
+      <Card className="gap-4 px-4 py-4 shadow-none" aria-label="Verify on your server">
+        <h2 className="text-sm font-medium">Verify on your server</h2>
+        <p className="text-sm text-muted-foreground">No round was kept, so there is nothing to verify.</p>
+      </Card>
+    );
+  }
 
   return (
     <Card className="gap-4 px-4 py-4 shadow-none" aria-label="Verify on your server">

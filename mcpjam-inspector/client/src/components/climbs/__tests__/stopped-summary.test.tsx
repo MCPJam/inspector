@@ -66,6 +66,26 @@ describe("StoppedSummary", () => {
     expect(screen.getByText("Change 1: Hide 4 deprecated parameters")).toBeInTheDocument();
   });
 
+  it("says why it stopped, and plainly when someone stopped it", async () => {
+    stopClimb.mockResolvedValue(stoppedResult(makeSummary({ stoppedBecause: "the round limit was reached" })));
+    show({}, { stopReason: "round_limit" });
+    expect(await screen.findByText("It stopped because the round limit was reached.")).toBeInTheDocument();
+  });
+
+  it("does not repeat itself for a climb stopped on request", async () => {
+    stopClimb.mockResolvedValue(stoppedResult(makeSummary({ stoppedBecause: "it was stopped" })));
+    show({}, { stopReason: "stopped_by_caller" });
+    expect(await screen.findByText("It was stopped on request.")).toBeInTheDocument();
+    expect(screen.queryByText(/because it was stopped/)).not.toBeInTheDocument();
+  });
+
+  it("offers no verification when no round was kept", async () => {
+    stopClimb.mockResolvedValue({ ...stoppedResult(), kept: [], prompt: "" });
+    show();
+    expect(await screen.findByText("No round was kept, so there is nothing to verify.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Verify" })).not.toBeInTheDocument();
+  });
+
   it("says plainly what a climb established when the suite set no cases aside", async () => {
     stopClimb.mockResolvedValue(stoppedResult(makeSummary({ confirmation: { status: "no_cases", usedByEarlierClimbs: [] } })));
     show({}, { groups: { steering: 6, validation: 4, confirmation: 0, steeringCases: [], steeringToolsWithoutValidation: [] } });

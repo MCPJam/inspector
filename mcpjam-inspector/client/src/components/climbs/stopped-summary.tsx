@@ -10,6 +10,17 @@ import { VerifySection } from "./verify-section";
 import type { RoundChanges } from "./use-round-changes";
 
 /**
+ * Why the climb stopped. A climb someone stopped says so plainly: the
+ * summary's phrase for it, "it was stopped", would read "It stopped because it
+ * was stopped".
+ */
+function stopSentence(climb: Climb, stoppedBecause: string): string {
+  return climb.stopReason === "stopped_by_caller"
+    ? "It was stopped on request."
+    : `It stopped because ${stoppedBecause}.`;
+}
+
+/**
  * What a stopped climb showed. The summary and the prompt come from
  * `stop_climb`, which can be asked again for a climb that has stopped: it
  * changes nothing and answers the same.
@@ -42,7 +53,7 @@ export function StoppedSummary({
             Climb stopped · {climb.limits.roundsStarted === 1 ? "1 round" : `${climb.limits.roundsStarted} rounds`}
           </div>
           <h1 className="text-xl font-semibold tracking-tight">What this climb showed</h1>
-          {stopped ? <p className="text-sm text-muted-foreground">It stopped because {stopped.summary.stoppedBecause}.</p> : null}
+          {stopped ? <p className="text-sm text-muted-foreground">{stopSentence(climb, stopped.summary.stoppedBecause)}</p> : null}
         </div>
         {onBack ? (
           <Button variant="outline" onClick={onBack}>
@@ -77,7 +88,7 @@ export function StoppedSummary({
             onChanged={onChanged}
           />
           <KeptChanges climb={climb} stopped={stopped} changes={changes} />
-          <VerifySection climb={climb} labels={labels} onChanged={onChanged} />
+          <VerifySection climb={climb} labels={labels} onChanged={onChanged} nothingKept={stopped.kept.length === 0} />
         </>
       )}
     </div>
