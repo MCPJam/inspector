@@ -48,4 +48,9 @@ export {
   type MockModelAnswerRequest,
   type MockModelAnswerer,
 } from "./model-answers.js";
+export {
+  createMockSessionMap,
+  type MockSessionMap,
+  type MockSessionMapOptions,
+} from "./session-map.js";
 export { chooseCase, finishCase, fillSteps } from "./saved-answers.js";

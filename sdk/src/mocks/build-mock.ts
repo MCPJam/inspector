@@ -1,10 +1,16 @@
-import { createMcpHandler, Server } from "@modelcontextprotocol/server";
+import {
+  createMcpHandler,
+  isLegacyRequest,
+  Server,
+} from "@modelcontextprotocol/server";
 import type {
   McpHttpHandler,
   ServerCapabilities,
 } from "@modelcontextprotocol/server";
 import { stepHostFor } from "./case-call.js";
-import { definitionLogs } from "./definition-types.js";
+import { createLegacySessionHandler } from "./session-map.js";
+import type { MockSessionMap } from "./session-map.js";
+import { definitionAsks, definitionLogs } from "./definition-types.js";
 import type { MockDefinition } from "./definition-types.js";
 import type { MockObserver } from "./mock-observer.js";
 import { answerSkillsMethod, registerItemHandlers } from "./item-handlers.js";
@@ -80,6 +86,12 @@ export interface BuildMockOptions {
   observer?: MockObserver;
   /** Answers the calls of tools with `answer.from: "model"`; without one, such a call says so. */
   modelAnswerer?: MockModelAnswerer;
+  /**
+   * Holds the sessions a 2025-era caller needs when a case asks a question or
+   * a model request. Without it a 2025-era call to such a case is refused by
+   * the server SDK; a 2026-07-28 caller needs no session either way.
+   */
+  sessions?: { map: MockSessionMap; key: string };
 }
 
 async function buildServer(
@@ -236,8 +248,24 @@ export function buildMock(
   real: MockRealServer = NO_REAL_SERVER,
   options: BuildMockOptions = {}
 ): McpHttpHandler {
-  return createMcpHandler(
-    (ctx) => buildServer(definition, real, options, ctx.requestInfo?.signal),
-    { legacy: "stateless" }
+  const factory = (ctx: { requestInfo?: Request }) =>
+    buildServer(definition, real, options, ctx.requestInfo?.signal);
+  if (!options.sessions || !definitionAsks(definition)) {
+    return createMcpHandler(factory, { legacy: "stateless" });
+  }
+  // A question on a 2025-era connection travels on a session, so those
+  // callers get one; 2026-07-28 callers carry the question in the result.
+  const modern = createMcpHandler(factory, { legacy: "reject" });
+  const legacy = createLegacySessionHandler(
+    options.sessions.map,
+    options.sessions.key,
+    (swap) => buildServer(definition, swap, options)
   );
+  return {
+    ...modern,
+    fetch: async (request, fetchOptions) =>
+      (await isLegacyRequest(request, fetchOptions?.parsedBody))
+        ? legacy(request, real, fetchOptions)
+        : modern.fetch(request, fetchOptions),
+  };
 }

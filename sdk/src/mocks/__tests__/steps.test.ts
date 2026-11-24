@@ -4,7 +4,12 @@ import {
 } from "@modelcontextprotocol/client";
 import { LOG_LEVEL_META_KEY } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildMock, NO_REAL_SERVER, validateMockDefinition } from "../index.js";
+import {
+  buildMock,
+  createMockSessionMap,
+  NO_REAL_SERVER,
+  validateMockDefinition,
+} from "../index.js";
 import type { JsonObject, MockDefinition, MockSavedCase } from "../index.js";
 
 const closers: Array<() => Promise<void>> = [];
@@ -41,7 +46,11 @@ async function connect(
   options: Parameters<typeof buildMock>[2] = {}
 ) {
   expect(validateMockDefinition(definition)).toMatchObject({ ok: true });
-  const handler = buildMock(definition, NO_REAL_SERVER, options);
+  const sessions = { map: createMockSessionMap(), key: "caller:mock:1" };
+  const handler = buildMock(definition, NO_REAL_SERVER, {
+    sessions,
+    ...options,
+  });
   const client = new Client(
     { name: "mock-test", version: "1.0.0" },
     {
@@ -76,8 +85,11 @@ async function connect(
         handler.fetch(new Request(input as string | URL, init)),
     })
   );
-  closers.push(() => client.close());
-  return { client, asked };
+  closers.push(async () => {
+    await client.close();
+    await sessions.map.closeAll();
+  });
+  return { client, asked, sessions: sessions.map };
 }
 
 describe.each(ERAS)("saved case steps (%s)", (era) => {
@@ -119,9 +131,7 @@ describe.each(ERAS)("saved case steps (%s)", (era) => {
       expect.objectContaining({ level: "info", data: "hello Ada" }),
     ]);
   });
-});
 
-describe.each(["modern" as Era])("saved case questions (%s)", (era) => {
   it("asks the person a form question and reads the answer in the result", async () => {
     const { client, asked } = await connect(
       definitionOf([
@@ -293,6 +303,125 @@ describe.each(["modern" as Era])("saved case questions (%s)", (era) => {
     );
     const result = await client.callTool({ name: "work", arguments: {} });
     expect(result.content).toEqual([{ type: "text", text: "decline" }]);
+  });
+});
+
+describe("a 2025-era session", () => {
+  it("is not shared with another caller and is closed when idle", async () => {
+    let clock = 0;
+    const map = createMockSessionMap({ idleMs: 1000, now: () => clock });
+    const definition = definitionOf([
+      {
+        steps: [
+          {
+            kind: "ask",
+            id: "q",
+            message: "ok?",
+            requestedSchema: {
+              type: "object",
+              properties: { v: { type: "string" } },
+            },
+          },
+        ],
+        result: text("x"),
+      },
+    ]);
+    const request = (key: string, sessionId?: string) =>
+      buildMock(definition, NO_REAL_SERVER, { sessions: { map, key } }).fetch(
+        new Request("http://mock.local/mcp", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+            ...(sessionId && { "mcp-session-id": sessionId }),
+          },
+          body: JSON.stringify(
+            sessionId
+              ? { jsonrpc: "2.0", id: 2, method: "ping" }
+              : {
+                  jsonrpc: "2.0",
+                  id: 1,
+                  method: "initialize",
+                  params: {
+                    protocolVersion: "2025-06-18",
+                    capabilities: {},
+                    clientInfo: { name: "t", version: "1" },
+                  },
+                }
+          ),
+        })
+      );
+    const opened = await request("alice:m:1");
+    const id = opened.headers.get("mcp-session-id")!;
+    expect(id).toBeTruthy();
+    await opened.text();
+    expect(map.size()).toBe(1);
+    expect((await request("bob:m:1", id)).status).toBe(404);
+    expect((await request("alice:m:1", id)).status).toBe(200);
+    clock = 5000;
+    await map.sweep();
+    expect(map.size()).toBe(0);
+    expect((await request("alice:m:1", id)).status).toBe(404);
+  });
+
+  it("holds a bounded number per key and over all keys, closing the idlest", async () => {
+    let clock = 0;
+    const map = createMockSessionMap({
+      maxPerKey: 2,
+      maxSessions: 3,
+      now: () => clock,
+    });
+    const definition = definitionOf([
+      {
+        steps: [
+          {
+            kind: "ask",
+            id: "q",
+            message: "ok?",
+            requestedSchema: {
+              type: "object",
+              properties: { v: { type: "string" } },
+            },
+          },
+        ],
+        result: text("x"),
+      },
+    ]);
+    const open = async (key: string) => {
+      clock += 1;
+      const response = await buildMock(definition, NO_REAL_SERVER, {
+        sessions: { map, key },
+      }).fetch(
+        new Request("http://mock.local/mcp", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "initialize",
+            params: {
+              protocolVersion: "2025-06-18",
+              capabilities: {},
+              clientInfo: { name: "t", version: "1" },
+            },
+          }),
+        })
+      );
+      await response.text();
+      return response.headers.get("mcp-session-id");
+    };
+    await open("a");
+    await open("a");
+    await open("a");
+    expect(map.size()).toBe(2);
+    await open("b");
+    expect(map.size()).toBe(3);
+    await open("c");
+    expect(map.size()).toBe(3);
+    await map.closeAll();
   });
 });
 

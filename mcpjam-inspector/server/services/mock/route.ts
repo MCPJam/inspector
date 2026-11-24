@@ -14,7 +14,10 @@
  */
 import {
   buildMock,
+  createMockSessionMap,
+  definitionAsks,
   type MockModelAnswerer,
+  type MockSessionMap,
   type MockObservedEvent,
   type MockRealServer,
 } from "@mcpjam/sdk/mocks";
@@ -47,7 +50,16 @@ export type MockDoor =
   | { kind: "http"; bearerToken: string; caller: ManagerCallerContext; profile: MockDialProfile }
   | ({ kind: "in-process" } & MockDoorContext);
 
+/**
+ * What a mock that asks questions keeps between requests. It lives in this
+ * process: a caller inside MCPJam always reaches it, and a client outside on a
+ * 2025 revision may land on another replica, where its session is not found.
+ */
+const defaultSessions = createMockSessionMap();
+
 export interface MockRouteDeps {
+  /** Where 2025-era sessions live (default: this process's own map). */
+  sessions?: MockSessionMap;
   open?: OpenReal;
   resolve?: typeof resolveMock;
   recordUnmatched?: typeof recordUnmatchedCalls;
@@ -192,9 +204,15 @@ export async function serveMock(
     const modelAnswerer = !usesModel
       ? undefined
       : (deps.modelAnswerer ?? defaultModelAnswerer(door.caller, bearerToken))(mock);
+    // A session belongs to one caller and one version of one mock, so no other
+    // caller can use its id.
+    const owner = `${actorDigest(caller, bearerToken)}:${mockId}`;
     const response = await buildMock(resolved.definition, real, {
       observer: (event) => observed.push(event),
       modelAnswerer,
+      ...(definitionAsks(resolved.definition) && {
+        sessions: { map: deps.sessions ?? defaultSessions, key: `${owner}:${resolved.version}` },
+      }),
     }).fetch(request, {
       // Names the caller by a digest; carries no credential.
       authInfo: {
