@@ -23,6 +23,10 @@ import {
   mcpCallToolResultToModelOutput,
   mcpCallToolResultToModelOutputWithLinkedResources,
 } from "./model-output.js";
+import {
+  projectToolResultByRule,
+  structuredContentRuleOf,
+} from "./tool-result-rule.js";
 import type { ModelVisibleMcpToolResults } from "../host-config/types.js";
 
 /**
@@ -256,6 +260,10 @@ export function projectMcpToolResultForModel(
   toolMeta: Parameters<typeof isMcpAppTool>[0],
   options: McpModelVisibleToolResultPolicy & { readResource?: McpLinkedResourceReader; abortSignal?: AbortSignal } = {}
 ) {
+  // A host that records its client's rule gets that client's view for App and
+  // plain tools alike, from the raw result; hosts without one keep the scrubs.
+  const rule = structuredContentRuleOf(options.modelVisibleMcpToolResults);
+  if (rule) return projectToolResultByRule(result, rule, options);
   const visible = isMcpAppTool(toolMeta)
     ? scrubMetaAndStructuredContentFromToolResult(result)
     : isChatGPTAppTool(toolMeta) ? scrubStructuredContentFromToolResult(result) : result;

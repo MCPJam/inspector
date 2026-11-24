@@ -369,7 +369,7 @@ export const SKILLS_FEATURES: readonly FeatureDefinition[] = [
     summary:
       "The host asks before loading a skill and ties approval to the digests it verified.",
     howTo:
-      "MCPJam asks before it loads a server's skill in the Playground. Load one to see the consent step.",
+      "Hosts should ask the user before they load a server's skill.",
     owner: "host",
     spec: specAt("skills", "security-considerations"),
     assessment: { primary: "observed" },

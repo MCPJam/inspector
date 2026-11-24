@@ -1,11 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("../check-map/index.js", () => ({
-  featuresForCheck: (ref: string) =>
-    ref === "protocol:tools-list" || ref === "apps:ui-resources-readable"
-      ? ["test.tools"]
-      : [],
-}));
+vi.mock("../check-map/index.js", () => {
+  const MAPPED: Record<string, string[]> = {
+    "protocol:tools-list": ["test.tools", "test.checked"],
+    "apps:ui-resources-readable": ["test.tools"],
+    "events:events-poll": ["test.events-only"],
+  };
+  return {
+    featuresForCheck: (ref: string) => MAPPED[ref] ?? [],
+    checksForFeature: (id: string) =>
+      Object.keys(MAPPED).filter((ref) => MAPPED[ref].includes(id)),
+  };
+});
 
 import { evaluateServerFeatures } from "../evaluate.js";
 import { coreSpec } from "../catalog/spec-refs.js";
@@ -80,6 +86,53 @@ describe("evaluateServerFeatures", () => {
     const result = evaluateServerFeatures([detected], connected());
     expect(result.assessments["test.detected"].sources).toEqual(["detected"]);
     expect(result.assessments["test.detected"].evidence[0].count).toBe(2);
+  });
+
+  it("labels a probe that only read a listing as declared", () => {
+    const listed = feature("test.listed", {
+      assessment: {
+        primary: "probed",
+        probed: () => ({ kind: "present", via: "advertised" }),
+      },
+    });
+    const result = evaluateServerFeatures([listed], connected({ probes: {} }));
+    expect(result.assessments["test.listed"]).toMatchObject({
+      state: "supported",
+      sources: ["declared"],
+    });
+    // How it was fetched is still recorded.
+    expect(result.assessments["test.listed"].evidence[0]).toMatchObject({
+      provenance: "wire",
+      intrusiveness: "read-only",
+    });
+  });
+
+  it("puts what MCPJam saw ahead of what the server declared", () => {
+    const both = feature("test.both", {
+      assessment: {
+        primary: "observed",
+        observable: true,
+        declared: () => ({ kind: "present", via: "advertised" }),
+      },
+    });
+    const result = evaluateServerFeatures(
+      [both],
+      connected({
+        observations: [
+          {
+            featureId: "test.both",
+            count: 1,
+            firstSeenAt: 1,
+            lastSeenAt: 2,
+            lastSource: "rpc",
+          },
+        ],
+      })
+    );
+    expect(result.assessments["test.both"].sources).toEqual([
+      "observed",
+      "declared",
+    ]);
   });
 
   it("offers Could add only when the basis was captured completely", () => {
@@ -239,19 +292,158 @@ describe("evaluateServerFeatures", () => {
     const setup = feature("test.setup", {
       assessment: { primary: "configured", setup: "client-credentials" },
     });
-    const result = evaluateServerFeatures([observed, checked, setup], connected());
+    const result = evaluateServerFeatures(
+      [observed, checked, setup],
+      connected({ setupOffered: ["client-credentials"] }),
+    );
     expect(result.assessments["test.observed"].nextAction).toBe("use-in-playground");
     expect(result.assessments["test.checked"].nextAction).toBe("run-checks");
     expect(result.assessments["test.setup"].nextAction).toBe("set-up");
+  });
 
-    const configured = evaluateServerFeatures(
-      [setup],
-      connected({ configured: ["client-credentials"] }),
-    );
-    expect(configured.assessments["test.setup"]).toMatchObject({
-      state: "supported",
-      sources: ["configured"],
+  it("offers only a step that can produce evidence for the feature", () => {
+    const unobservable = feature("test.unobservable", {
+      assessment: { primary: "observed" },
     });
+    const eventsOnly = feature("test.events-only", {
+      assessment: { primary: "checked" },
+    });
+    const result = evaluateServerFeatures(
+      [unobservable, eventsOnly],
+      connected({ checksOffered: ["protocol", "apps", "tasks", "oauth"] }),
+    );
+    for (const id of ["test.unobservable", "test.events-only"]) {
+      expect(result.assessments[id]).toMatchObject({
+        state: "not-checked",
+        reason: "MCPJam cannot check this yet.",
+      });
+      expect(result.assessments[id].nextAction).toBeUndefined();
+    }
+    const anySuite = evaluateServerFeatures([eventsOnly], connected());
+    expect(anySuite.assessments["test.events-only"].nextAction).toBe("run-checks");
+  });
+
+  it("offers Refresh before the probes run and nothing once they said nothing", () => {
+    const probed = feature("test.probed", {
+      assessment: { primary: "probed", probed: () => null },
+    });
+    const before = evaluateServerFeatures([probed], connected());
+    expect(before.assessments["test.probed"].nextAction).toBe("refresh");
+    const after = evaluateServerFeatures(
+      [probed],
+      connected({ probes: { "http-transport": makeProbe("http-transport", {}) } }),
+    );
+    expect(after.assessments["test.probed"]).toMatchObject({
+      reason: "MCPJam cannot check this yet.",
+    });
+    expect(after.assessments["test.probed"].nextAction).toBeUndefined();
+  });
+
+  it("asks to reconnect only while nothing was captured", () => {
+    const declared = feature("test.declared", {
+      assessment: { primary: "declared", declared: () => null },
+    });
+    const captured = evaluateServerFeatures([declared], connected());
+    expect(captured.assessments["test.declared"].nextAction).toBeUndefined();
+    const notCaptured = evaluateServerFeatures([declared], {
+      connected: true,
+      context: { transport: "streamable-http" },
+    });
+    expect(notCaptured.assessments["test.declared"].nextAction).toBe("reconnect");
+  });
+
+  it("says when an OAuth sign-in records the feature instead of offering Reconnect", () => {
+    const oauth = feature("test.oauth", {
+      assessment: { primary: "oauth-flow", oauthFlow: () => null },
+    });
+    const result = evaluateServerFeatures([oauth], connected());
+    expect(result.assessments["test.oauth"]).toMatchObject({
+      state: "not-checked",
+      reason: "Recorded the next time you sign in to this server with OAuth.",
+    });
+    expect(result.assessments["test.oauth"].nextAction).toBeUndefined();
+  });
+
+  it("never counts setup in MCPJam as the server supporting a feature", () => {
+    const setup = feature("test.setup", {
+      assessment: { primary: "configured", setup: "client-credentials" },
+    });
+    const offered = {
+      configured: ["client-credentials"] as const,
+      setupOffered: ["client-credentials"] as const,
+    };
+    const configured = evaluateServerFeatures([setup], connected(offered));
+    expect(configured.assessments["test.setup"]).toMatchObject({
+      state: "not-checked",
+      reason:
+        "Set up in MCPJam. Reconnect the account from the Auth tab to record the result.",
+      evidence: [],
+    });
+    // Reconnecting with saved tokens records nothing, so no Reconnect step.
+    expect(configured.assessments["test.setup"].nextAction).toBeUndefined();
+    const notConnected = evaluateServerFeatures([setup], {
+      connected: false,
+      ...offered,
+    });
+    expect(notConnected.assessments["test.setup"].nextAction).toBe("connect");
+  });
+
+  it("keeps Connect for a set-up server whose only evidence is an inconclusive probe", () => {
+    const setup = feature("test.setup", {
+      assessment: {
+        primary: "configured",
+        setup: "client-credentials",
+        probed: () => ({
+          kind: "unknown",
+          reason: "The probe could not finish.",
+        }),
+      },
+    });
+    const result = evaluateServerFeatures([setup], {
+      connected: false,
+      probes: { authorization: makeProbe("authorization", {}) },
+      configured: ["client-credentials"],
+      setupOffered: ["client-credentials"],
+    });
+    expect(result.assessments["test.setup"]).toMatchObject({
+      reason: "The probe could not finish.",
+      nextAction: "connect",
+    });
+    const connectedSetUp = evaluateServerFeatures([setup], {
+      connected: true,
+      probes: { authorization: makeProbe("authorization", {}) },
+      configured: ["client-credentials"],
+      setupOffered: ["client-credentials"],
+    });
+    expect(connectedSetUp.assessments["test.setup"].reason).toBe(
+      "The probe could not finish. Set up in MCPJam. Reconnect the account from the Auth tab to record the result."
+    );
+  });
+
+  it("asks for setup before connecting a server that never connected", () => {
+    const setup = feature("test.setup", {
+      assessment: { primary: "configured", setup: "client-credentials" },
+    });
+    const result = evaluateServerFeatures([setup], {
+      connected: false,
+      setupOffered: ["client-credentials"],
+    });
+    expect(result.assessments["test.setup"].nextAction).toBe("set-up");
+  });
+
+  it("offers no Set up step for setup this MCPJam surface cannot do", () => {
+    const setup = feature("test.setup", {
+      assessment: { primary: "configured", setup: "client-credentials" },
+    });
+    const result = evaluateServerFeatures(
+      [setup],
+      connected({ setupOffered: ["enterprise-managed-authorization"] }),
+    );
+    expect(result.assessments["test.setup"]).toMatchObject({
+      state: "not-checked",
+      reason: "MCPJam cannot check this yet.",
+    });
+    expect(result.assessments["test.setup"].nextAction).toBeUndefined();
   });
 
   it("asks to connect a server that was never connected", () => {
@@ -345,6 +537,75 @@ describe("evaluateServerFeatures", () => {
     expect(card?.leafCount).toBe(2);
     const family = result.families.find((entry) => entry.id === "tools-discovery");
     expect(family?.counts.supported).toBe(1);
+  });
+
+  it("offers the Playground only where traffic can show the feature", () => {
+    const legacyOnly = feature("test.legacy-only", {
+      assessment: {
+        primary: "observed",
+        observable: true,
+        observableEra: "legacy",
+      },
+    });
+    const modern = makeSurface({ protocolVersion: "2026-07-28" });
+    const onModern = evaluateServerFeatures(
+      [legacyOnly],
+      connected({}, modern)
+    );
+    expect(onModern.assessments["test.legacy-only"]).toMatchObject({
+      state: "not-checked",
+      reason: "MCPJam cannot check this yet.",
+    });
+    expect(onModern.assessments["test.legacy-only"].nextAction).toBeUndefined();
+
+    const onLegacy = evaluateServerFeatures([legacyOnly], connected());
+    expect(onLegacy.assessments["test.legacy-only"].nextAction).toBe(
+      "use-in-playground"
+    );
+  });
+
+  it("gives a rolled-up parent the chip of its supported children", () => {
+    const parent = feature("test.parent");
+    const declaredChild = feature("test.parent.a", {
+      parent: "test.parent",
+      assessment: { primary: "declared", declared: capability("a") },
+    });
+    const observedChild = feature("test.parent.b", {
+      parent: "test.parent",
+      assessment: { primary: "observed", observable: true },
+    });
+    const surface = makeSurface({ capabilities: { a: {} } });
+
+    const declaredOnly = evaluateServerFeatures(
+      [parent, declaredChild, observedChild],
+      connected({}, surface)
+    );
+    expect(declaredOnly.assessments["test.parent"]).toMatchObject({
+      state: "supported",
+      sources: ["declared"],
+    });
+
+    const seen = evaluateServerFeatures(
+      [parent, declaredChild, observedChild],
+      connected(
+        {
+          observations: [
+            {
+              featureId: "test.parent.b",
+              count: 1,
+              firstSeenAt: 1,
+              lastSeenAt: 2,
+              lastSource: "rpc",
+            },
+          ],
+        },
+        surface
+      )
+    );
+    expect(seen.assessments["test.parent"]).toMatchObject({
+      state: "supported",
+      sources: ["observed", "declared"],
+    });
   });
 
   it("hashes the capture context into the evaluation", () => {

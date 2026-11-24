@@ -243,21 +243,23 @@ skills.post("/get", async (c) => {
  */
 skills.post("/upload", async (c) => {
   try {
+    // Typed as unknown and checked here, before the directory is created:
+    // the SKILL.md writer needs strings.
     const { name, description, content } = (await readRequestJson(c)) as {
-      name?: string;
-      description?: string;
-      content?: string;
+      name?: unknown;
+      description?: unknown;
+      content?: unknown;
     };
 
-    if (!name) {
+    if (!name || typeof name !== "string") {
       return c.json({ success: false, error: "name is required" }, 400);
     }
 
-    if (!description) {
+    if (!description || typeof description !== "string") {
       return c.json({ success: false, error: "description is required" }, 400);
     }
 
-    if (!content) {
+    if (!content || typeof content !== "string") {
       return c.json({ success: false, error: "content is required" }, 400);
     }
 

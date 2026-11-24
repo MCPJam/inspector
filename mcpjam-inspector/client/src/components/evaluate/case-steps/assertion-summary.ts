@@ -7,7 +7,11 @@
  */
 import { ShieldCheck, type LucideIcon } from "lucide-react";
 import { EVAL_ADD_CATALOG } from "@/components/evals/eval-add-catalog";
-import type { Predicate } from "@/shared/eval-matching";
+import {
+  checkRole,
+  type EvalMatchOptions,
+  type Predicate,
+} from "@/shared/eval-matching";
 import {
   formatCriterion,
   INLINE_ASSERT_LABELS,
@@ -44,11 +48,17 @@ function iconFor(key: string): LucideIcon {
   return ICON_BY_KEY.get(key) ?? ShieldCheck;
 }
 
+type ArgumentMatching = EvalMatchOptions["argumentMatching"];
+
 function argsExtra(
   predicate: Extract<Predicate, { type: "toolCalledWith" }>,
+  routeMatching: ArgumentMatching,
 ): string {
   const count = Object.keys(predicate.args?.args ?? {}).length;
-  const mode = predicate.args?.argumentMatching ?? "partial";
+  // A gating assert is graded by the case's match options, not its own.
+  const own = predicate.args?.argumentMatching;
+  const gating = checkRole(predicate) !== "advisory";
+  const mode = (gating && routeMatching ? routeMatching : own) ?? "partial";
   if (mode === "ignore") return "any arguments";
   // Exact matching compares the whole object: no arguments means none allowed.
   if (count === 0) return mode === "exact" ? "no arguments" : "any arguments";
@@ -96,6 +106,7 @@ function toolOperand(predicate: Predicate): string | null {
 function predicateSummary(
   predicate: Predicate,
   inline: boolean,
+  routeMatching: ArgumentMatching,
 ): AssertionSummary {
   const Icon = iconFor(`check:${predicate.type}`);
   // A kind from a newer build has no label here; show its name, not a crash.
@@ -104,7 +115,9 @@ function predicateSummary(
   }
   const base = PREDICATE_KIND_LABELS[predicate.type];
   const extra =
-    predicate.type === "toolCalledWith" ? argsExtra(predicate) : undefined;
+    predicate.type === "toolCalledWith"
+      ? argsExtra(predicate, routeMatching)
+      : undefined;
   if (base.endsWith("…")) {
     const value = ellipsisOperand(predicate);
     // toolResultMatchesSchema's operand (a tool) is optional: blank is "any tool".
@@ -125,7 +138,7 @@ function predicateSummary(
     predicate.type === "onlyToolsCalled" &&
     Array.isArray(predicate.toolNames) &&
     predicate.toolNames.length === 0;
-  if (noTool || (!inline && NAMED_IN_LABEL.has(predicate.type))) {
+  if (noTool || NAMED_IN_LABEL.has(predicate.type)) {
     return { label: formatCriterion({ predicate }), Icon };
   }
   const label =
@@ -176,12 +189,17 @@ function widgetSummary(assertion: WidgetAssertion): AssertionSummary {
   };
 }
 
-/** `inline`: the assertion sits under a step, so the "so far" labels apply. */
+/**
+ * `inline`: the assertion sits under a step, so the "so far" labels apply.
+ * `routeMatching`: the case's resolved argument matching, which grades a
+ * gating `toolCalledWith`.
+ */
 export function assertionSummary(
   assertion: Predicate | WidgetAssertion,
   inline: boolean,
+  routeMatching?: ArgumentMatching,
 ): AssertionSummary {
   return isWidgetAssertion(assertion)
     ? widgetSummary(assertion)
-    : predicateSummary(assertion, inline);
+    : predicateSummary(assertion, inline, routeMatching);
 }

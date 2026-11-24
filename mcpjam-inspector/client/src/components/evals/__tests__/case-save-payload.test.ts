@@ -3,6 +3,7 @@ import type { TestStep } from "@/shared/steps";
 import {
   advancedConfigForUpdate,
   buildCaseSavePayload,
+  buildCaseUpdatePayload,
   buildDraftTestCase,
   normalizeAdvancedConfig,
   type CaseSaveForm,
@@ -111,12 +112,20 @@ describe("normalizeAdvancedConfig", () => {
 
 describe("advancedConfigForUpdate", () => {
   it.each([
-    { next: { temperature: 0.2 }, stored: undefined, sent: { temperature: 0.2 } },
+    {
+      next: { temperature: 0.2 },
+      stored: undefined,
+      sent: { temperature: 0.2 },
+    },
     { next: undefined, stored: { failOnToolError: false }, sent: {} },
     { next: undefined, stored: undefined, sent: undefined },
-  ])("sends $sent for next $next over stored $stored", ({ next, stored, sent }) => {
-    expect(advancedConfigForUpdate(next, stored)).toEqual(sent);
-  });
+    { next: undefined, stored: { system: "" }, sent: undefined },
+  ])(
+    "sends $sent for next $next over stored $stored",
+    ({ next, stored, sent }) => {
+      expect(advancedConfigForUpdate(next, stored)).toEqual(sent);
+    },
+  );
 });
 
 describe("loadCaseSteps", () => {
@@ -135,5 +144,35 @@ describe("loadCaseSteps", () => {
       kind: "prompt",
       prompt: "List my workspaces",
     });
+  });
+});
+
+describe("buildCaseUpdatePayload", () => {
+  it("sends each cleared override as null", () => {
+    const payload = buildCaseUpdatePayload(form(), {
+      isNegativeTest: false,
+      storedAdvancedConfig: undefined,
+    });
+    expect(payload).toMatchObject({
+      matchOptions: null,
+      predicates: null,
+      judgeConfigOverride: null,
+    });
+    expect(payload.advancedConfig).toBeUndefined();
+  });
+
+  it("sends {} for a cleared advanced config and keeps a set one", () => {
+    expect(
+      buildCaseUpdatePayload(form(), {
+        isNegativeTest: false,
+        storedAdvancedConfig: { failOnToolError: false },
+      }).advancedConfig,
+    ).toEqual({});
+    expect(
+      buildCaseUpdatePayload(
+        form({ advancedConfig: { failOnToolError: false } }),
+        { isNegativeTest: false, storedAdvancedConfig: undefined },
+      ).advancedConfig,
+    ).toEqual({ failOnToolError: false });
   });
 });

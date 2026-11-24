@@ -140,6 +140,22 @@ describe("assertionSummary outside a step", () => {
     );
   });
 
+  it.each<[string, Predicate]>([
+    ["widgetRendered", { type: "widgetRendered", toolName: "cart_view" }],
+    [
+      "toolInputMatches",
+      { type: "toolInputMatches", toolName: "search", patterns: ["q="] },
+    ],
+    [
+      "toolResultMatches",
+      { type: "toolResultMatches", toolName: "search", patterns: ["ok"] },
+    ],
+  ])("%s names its tool inside a step too", (_kind, predicate) => {
+    expect(summary(predicate, true).label).toContain(
+      (predicate as { toolName: string }).toolName,
+    );
+  });
+
   it("a blank view check keeps its plain label", () => {
     expect(summary({ type: "widgetRendered" }, false).label).toBe(
       summary({ type: "widgetRendered" }, true).label,
@@ -168,5 +184,23 @@ describe("assertionSummary edge cases", () => {
     expect(summary({ type: "onlyToolsCalled", toolNames: [] })).toEqual({
       label: "No tool should be called",
     });
+  });
+
+  const called = (role?: "advisory") =>
+    ({
+      type: "toolCalledWith",
+      toolName: "search",
+      args: { args: { q: "x" } },
+      ...(role ? { role } : {}),
+    }) as Predicate;
+
+  it("grades a gating tool assert by the case's argument matching", () => {
+    const { extra } = assertionSummary(called(), true, "exact");
+    expect(extra).toBe("1 argument, exact match");
+  });
+
+  it("keeps an advisory tool assert's own matching", () => {
+    const { extra } = assertionSummary(called("advisory"), true, "exact");
+    expect(extra).toBe("1 argument, partial match");
   });
 });
