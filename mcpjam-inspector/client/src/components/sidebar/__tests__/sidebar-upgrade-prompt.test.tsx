@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { SidebarUpgradePrompt } from "../sidebar-upgrade-prompt";
@@ -257,6 +257,17 @@ describe("SidebarUpgradePrompt", () => {
     expect(mocks.start).toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByTestId("plan-confirm-dialog")).toBeNull();
+  });
+
+  it("closes the Pro confirm dialog when Back leaves the Plans page", () => {
+    renderPrompt({ isGuest: false, organizationId: "org-1" });
+    fireEvent.click(screen.getByTestId("sidebar-prompt-pro_upgrade"));
+    expect(screen.getByTestId("plan-confirm-dialog")).toBeInTheDocument();
+
+    act(() => {
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
     expect(screen.queryByTestId("plan-confirm-dialog")).toBeNull();
   });
 

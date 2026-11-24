@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { PlanChangeConfirmDialog } from "@/components/organization/PlanChangeConfirmDialog";
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import { useUpgradeCheckout } from "@/hooks/use-upgrade-checkout";
@@ -107,6 +107,17 @@ export function SidebarProConfirmDialog() {
 function ProConfirmDialog({ organizationId }: { organizationId: string }) {
   const { upgrade, planCatalog, entry, context } =
     useProCheckout(organizationId);
+  // Back from the Plans page leaves the offer behind with it.
+  useEffect(() => {
+    const plansPath = buildOrganizationPath(organizationId, "plans");
+    const closeOffPlans = () => {
+      if (window.location.pathname !== plansPath) {
+        setConfirmOrganizationId(null);
+      }
+    };
+    window.addEventListener("popstate", closeOffPlans);
+    return () => window.removeEventListener("popstate", closeOffPlans);
+  }, [organizationId]);
   if (!entry || !planCatalog) return null;
 
   return (
