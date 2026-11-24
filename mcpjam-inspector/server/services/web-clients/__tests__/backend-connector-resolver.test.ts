@@ -215,6 +215,50 @@ describe("backend connector resolver", () => {
   });
 });
 
+describe("backend service transport", () => {
+  it("doesn't follow a redirect, so the service credential stays with the deployment", async () => {
+    const { createServer } = await import("node:http");
+    const received: string[] = [];
+    const elsewhere = createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => (body += chunk));
+      request.on("end", () => {
+        received.push(body);
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ status: "success", value: null, logLines: [] }));
+      });
+    });
+    const listen = (server: ReturnType<typeof createServer>) =>
+      new Promise<number>((resolve) =>
+        server.listen(0, "127.0.0.1", () => {
+          const address = server.address();
+          resolve(typeof address === "object" && address ? address.port : 0);
+        }),
+      );
+    const elsewherePort = await listen(elsewhere);
+    // A deployment that answers every call by pointing it at another origin.
+    const deployment = createServer((request, response) => {
+      response.statusCode = 307;
+      response.setHeader("location", `http://127.0.0.1:${elsewherePort}${request.url}`);
+      response.end();
+    });
+    const deploymentPort = await listen(deployment);
+    try {
+      const service = webClientService({
+        INSPECTOR_SERVICE_TOKEN: "service-token",
+        CONVEX_URL: `http://127.0.0.1:${deploymentPort}`,
+      });
+      await expect(
+        service?.read({ action: "resolveWebConnector", connectorId: "c1" }),
+      ).rejects.toThrow();
+      expect(received).toEqual([]);
+    } finally {
+      deployment.close();
+      elsewhere.close();
+    }
+  });
+});
+
 describe("backend connector upstream", () => {
   const baseFetch = vi.fn<typeof fetch>();
   const disconnectAllServers = vi.fn(async () => {});
