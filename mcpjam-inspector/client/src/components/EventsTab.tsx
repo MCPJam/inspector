@@ -15,7 +15,7 @@ import {
   type MCPServerConfig,
 } from "@mcpjam/sdk/browser";
 import { Button } from "@mcpjam/design-system/button";
-import { AlertCircle, Loader2, Radio, RefreshCw } from "lucide-react";
+import { AlertCircle, BellPlus, Loader2, Radio, RefreshCw } from "lucide-react";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
 import { EmptyState } from "./ui/empty-state";
 import { track } from "@/lib/analytics";
@@ -50,7 +50,12 @@ import { CapabilityPanel } from "./events/CapabilityPanel";
 import type { SubscriptionAction } from "./events/SubscriptionsPanel";
 import { EventsHeader } from "./events/EventsTabSections";
 import { EventsSidebar, type EventsPaneTab } from "./events/EventsSidebar";
-import { EventsActivity, type ActivityScope } from "./events/EventsActivity";
+import {
+  EventsActivity,
+  type ActivityScope,
+  type EventsWorkspaceView,
+} from "./events/EventsActivity";
+import { EventSubscribeSheet } from "./events/EventSubscribeSheet";
 import { useEventsHost } from "./events/use-events-host";
 import { useEventsCatalog } from "./events/use-events-catalog";
 import { useEventsFeed } from "./events/use-events-feed";
@@ -109,6 +114,7 @@ export function EventsTab({
   const hostChoice = eventsHost.choice;
   const hostName = hostChoice?.name ?? "This client";
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
+  const [subscribeOpen, setSubscribeOpen] = useState(false);
   const [subscribing, setSubscribing] = useState(false);
   const [busySubscriptionId, setBusySubscriptionId] = useState<string | null>(
     null,
@@ -122,6 +128,8 @@ export function EventsTab({
   >(() => new Map());
   const [registryError, setRegistryError] = useState<string | null>(null);
   const [paneTab, setPaneTab] = useState<EventsPaneTab>("events");
+  const [workspaceView, setWorkspaceView] =
+    useState<EventsWorkspaceView>("received");
   const [selectedSubscriptionId, setSelectedSubscriptionId] = useState<
     string | null
   >(null);
@@ -147,6 +155,8 @@ export function EventsTab({
 
   // A different server starts from its own lists.
   useEffect(() => {
+    setSubscribeOpen(false);
+    setWorkspaceView("received");
     setSelectedSubscriptionId(null);
     setSelectedEntrySeq(null);
   }, [serverName]);
@@ -429,6 +439,7 @@ export function EventsTab({
           upsertFromResponse(subscription);
         },
       });
+      setSubscribeOpen(false);
       toast.success(`Subscribed to ${event.name}`);
     } catch (error) {
       toast.error(errorMessage(error, "Could not subscribe. Try again."));
@@ -519,7 +530,7 @@ export function EventsTab({
     }
   };
 
-  // ── left-pane selection ────────────────────────────────────────────────
+  // ── workspace selection ────────────────────────────────────────────────
   const form = useSubscribeForm({
     event: selectedEvent,
     modes: selectedAvailability?.modes ?? [],
@@ -542,15 +553,7 @@ export function EventsTab({
         }
       : undefined;
 
-  const replayUnsupportedFor = useCallback(
-    (eventName: string) =>
-      serverSubscriptions.some(
-        (subscription) =>
-          subscription.eventName === eventName &&
-          replayUnsupported(subscription),
-      ),
-    [serverSubscriptions],
-  );
+  const workspaceEvent = paneTab === "events" ? selectedEvent : undefined;
 
   const scope: ActivityScope =
     paneTab === "events" && selectedEventName
@@ -635,22 +638,22 @@ export function EventsTab({
   const sidebarContent = (
     <EventsSidebar
       tab={paneTab}
-      onTabChange={setPaneTab}
+      onTabChange={(tab) => {
+        setPaneTab(tab);
+        setWorkspaceView(tab === "subscriptions" ? "subscriptions" : "received");
+      }}
       catalog={catalog}
       loadingMore={loadingMore}
       onLoadMore={loadMoreEvents}
       onRefresh={retryCatalog}
       onHide={() => setIsSidebarVisible(false)}
-      selectedEvent={selectedEvent}
-      onSelectEvent={setSelectedEventName}
+      selectedEventName={selectedEventName}
+      onSelectEvent={(name) => {
+        setSubscribeOpen(false);
+        setSelectedEventName(name);
+      }}
       availabilityFor={availabilityFor}
       hostName={hostName}
-      hosted={hosted}
-      form={form}
-      subscribing={subscribing}
-      blockedReason={blockedReason}
-      blockedAction={blockedAction}
-      replayUnsupportedFor={replayUnsupportedFor}
       subscriptions={serverSubscriptions}
       activeSubscriptionCount={
         serverSubscriptions.filter(
@@ -658,10 +661,16 @@ export function EventsTab({
         ).length
       }
       selectedSubscriptionId={selectedSubscriptionId}
-      onSelectSubscription={setSelectedSubscriptionId}
+      onSelectSubscription={(id) => {
+        setSelectedSubscriptionId(id);
+        setWorkspaceView("subscriptions");
+      }}
       entries={visibleEntries}
       selectedEntrySeq={selectedEntrySeq}
-      onSelectEntry={setSelectedEntrySeq}
+      onSelectEntry={(seq) => {
+        setSelectedEntrySeq(seq);
+        setWorkspaceView("received");
+      }}
       labelForEntry={labelForEntry}
     />
   );
@@ -669,6 +678,35 @@ export function EventsTab({
   const centerContent = (
     <EventsActivity
       scope={scope}
+      view={workspaceView}
+      onViewChange={setWorkspaceView}
+      event={workspaceEvent}
+      subscribeAction={
+        workspaceEvent ? (
+          <EventSubscribeSheet
+            event={workspaceEvent}
+            form={form}
+            availability={selectedAvailability}
+            hostName={hostName}
+            hosted={hosted}
+            blockedReason={blockedReason}
+            blockedAction={blockedAction}
+            replayUnsupported={serverSubscriptions.some(
+              (subscription) =>
+                subscription.eventName === workspaceEvent.name &&
+                replayUnsupported(subscription),
+            )}
+            subscribing={subscribing}
+            open={subscribeOpen}
+            onOpenChange={setSubscribeOpen}
+          />
+        ) : (
+          <Button size="sm" disabled>
+            <BellPlus className="size-4" />
+            Subscribe
+          </Button>
+        )
+      }
       hostName={hostName}
       hosted={hosted}
       notice={hostedRegistryNotice}
@@ -695,34 +733,29 @@ export function EventsTab({
     />
   );
 
-  // On a phone, an event type keeps its form in the left pane (as a tool
-  // does); a subscription or a received event opens the middle pane.
-  const mobileNavigation =
-    paneTab === "subscriptions" && selectedSubscriptionId
-      ? {
-          selectionKey: `subscription:${selectedSubscriptionId}`,
-          selectionPanel: "content" as const,
-          onBack: () => setSelectedSubscriptionId(null),
-          contentLabel: "Activity",
-        }
-      : paneTab === "received" && selectedEntrySeq !== null
-        ? {
-            selectionKey: `entry:${selectedEntrySeq}`,
-            selectionPanel: "content" as const,
-            onBack: () => setSelectedEntrySeq(null),
-            contentLabel: "Activity",
-          }
-        : {
-            selectionKey:
-              paneTab === "events" && selectedEventName
-                ? `event:${selectedEventName}`
-                : "",
-            contentLabel: "Activity",
-          };
+  const mobileNavigation = {
+    selectionKey: scope.kind === "server" ? "" : JSON.stringify(scope),
+    selectionPanel: "content" as const,
+    contentLabel: "Activity",
+    onBack: () => {
+      switch (scope.kind) {
+        case "eventType":
+          setSelectedEventName(null);
+          break;
+        case "subscription":
+          setSelectedSubscriptionId(null);
+          break;
+        case "entry":
+          setSelectedEntrySeq(null);
+          break;
+      }
+    },
+  };
 
   return (
     <ThreePanelLayout
       id="events"
+      defaultSizes={{ left: 25, right: 25 }}
       mobileNavigation={mobileNavigation}
       sidebar={sidebarContent}
       content={centerContent}

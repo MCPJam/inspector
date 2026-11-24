@@ -197,11 +197,26 @@ function renderTab() {
   );
 }
 
-/** Open an event type from the catalog list, as a user would. */
+/** Select an event type and open its subscribe sheet. */
 async function openEventType(name: string) {
   const list = await screen.findByTestId("event-types");
   fireEvent.click(within(list).getByRole("button", { name: new RegExp(name) }));
-  return screen.findByTestId("event-type-detail");
+  fireEvent.click(screen.getByRole("button", { name: "Subscribe" }));
+  return screen.findByRole("dialog");
+}
+
+function openWorkspaceView(name: "Received" | "Subscriptions" | "Definition") {
+  const tabs = screen.getByRole("tablist", { name: "Event workspace" });
+  fireEvent.mouseDown(within(tabs).getByRole("tab", { name }), {
+    button: 0,
+    ctrlKey: false,
+  });
+}
+
+function subscribeButton() {
+  return within(screen.getByRole("dialog")).getByRole("button", {
+    name: "Subscribe",
+  });
 }
 
 /** Open a collapsed accordion section by its heading. */
@@ -269,7 +284,7 @@ describe("EventsTab (local)", () => {
     expect(within(list).getAllByText("webhook")).toHaveLength(2);
     expect(within(list).getAllByText("poll")).toHaveLength(1);
     // The list stays open: nothing is selected until the user picks.
-    expect(screen.queryByTestId("event-type-detail")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.getByRole("tab", { name: /Events/ })).toHaveTextContent("2");
     expect(screen.getByRole("button", { name: /^Subscribe/ })).toBeDisabled();
     // The declared capability is one disclosure away.
@@ -296,7 +311,7 @@ describe("EventsTab (local)", () => {
     // ttlMs is a webhook subscription's lifetime: not offered for poll.
     expect(screen.queryByLabelText("ttlMs")).toBeNull();
     // A double click still creates one subscription.
-    const subscribe = screen.getByRole("button", { name: /^Subscribe/ });
+    const subscribe = subscribeButton();
     fireEvent.click(subscribe);
     fireEvent.click(subscribe);
 
@@ -311,7 +326,9 @@ describe("EventsTab (local)", () => {
       maxAgeMs: 60000,
     });
     expect(mockCreateLocal).toHaveBeenCalledTimes(1);
-    // The created subscription shows up in the list.
+    // A successful subscribe returns to the selected event workspace.
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    openWorkspaceView("Subscriptions");
     expect(
       await screen.findByTestId("subscription-esub_1"),
     ).toBeInTheDocument();
@@ -327,7 +344,7 @@ describe("EventsTab (local)", () => {
     await openEventType("tick");
     const raw = await screen.findByLabelText("Arguments JSON");
     fireEvent.change(raw, { target: { value: '{"every":"1m"}' } });
-    fireEvent.click(screen.getByRole("button", { name: /^Subscribe/ }));
+    fireEvent.click(subscribeButton());
     await waitFor(() =>
       expect(mockCreateLocal).toHaveBeenCalledWith(
         expect.objectContaining({ arguments: { every: "1m" }, mode: "poll" }),
@@ -372,7 +389,7 @@ describe("EventsTab (local)", () => {
         name: /Use local development receiver/,
       }),
     );
-    fireEvent.click(screen.getByRole("button", { name: /^Subscribe/ }));
+    fireEvent.click(subscribeButton());
     await waitFor(() =>
       expect(mockCreateLocal).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -385,6 +402,8 @@ describe("EventsTab (local)", () => {
         }),
       ),
     );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    openWorkspaceView("Subscriptions");
     const card = await screen.findByTestId("subscription-esub_1");
     expect(within(card).getByTestId("subscription-host")).toHaveTextContent(
       "ChatGPT",
@@ -417,7 +436,7 @@ describe("EventsTab (local)", () => {
       within(blocked).getByRole("button", { name: "Open Clients" }),
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("Events client")).toBeNull();
-    expect(screen.getByRole("button", { name: /^Subscribe/ })).toBeDisabled();
+    expect(subscribeButton()).toBeDisabled();
   });
 
   it("requires the development-receiver acknowledgement for a local webhook", async () => {
@@ -433,7 +452,7 @@ describe("EventsTab (local)", () => {
     fireEvent.change(await screen.findByPlaceholderText("Enter repo"), {
       target: { value: "octo/hello" },
     });
-    const subscribe = screen.getByRole("button", { name: /^Subscribe/ });
+    const subscribe = subscribeButton();
     expect(subscribe).toBeDisabled();
 
     fireEvent.click(
@@ -452,6 +471,8 @@ describe("EventsTab (local)", () => {
         }),
       ),
     );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    openWorkspaceView("Subscriptions");
     const card = await screen.findByTestId("subscription-esub_1");
     expect(within(card).getByText("Development override")).toBeInTheDocument();
   });
@@ -481,12 +502,14 @@ describe("EventsTab (local)", () => {
         }),
       ],
     });
+    openWorkspaceView("Subscriptions");
     const card = await screen.findByTestId("subscription-esub_1");
     expect(within(card).getByText("srv-sub-other")).toBeInTheDocument();
     expect(within(card).getByText(/Callback returned 500/)).toBeInTheDocument();
     expect(within(card).getByTestId("observed-state")).toHaveTextContent(
       "Active",
     );
+    openWorkspaceView("Received");
 
     emitFrame({
       type: "entry",
@@ -608,7 +631,7 @@ describe("EventsTab (local)", () => {
     });
     renderTab();
 
-    await screen.findByTestId("subscription-esub_1");
+    await screen.findByTestId("events-activity");
     openSection(/Simulate an event/);
     expect(screen.getByTestId("simulate-warning")).toHaveTextContent(
       "Matching triggers still run",
@@ -656,6 +679,8 @@ describe("EventsTab (local)", () => {
     );
     renderTab();
 
+    await screen.findByTestId("events-activity");
+    openWorkspaceView("Subscriptions");
     const card = await screen.findByTestId("subscription-esub_1");
     fireEvent.click(within(card).getByRole("button", { name: /Pause/ }));
     await waitFor(() =>
@@ -666,7 +691,7 @@ describe("EventsTab (local)", () => {
     ).toBeInTheDocument();
   });
 
-  it("returns to the list with its search after Back, and focuses the row it opened", async () => {
+  it("keeps catalog search and selection while inspecting a definition or closing setup", async () => {
     mockLoadEventsCatalog.mockResolvedValue(
       catalog([
         issueCreated,
@@ -683,18 +708,31 @@ describe("EventsTab (local)", () => {
       ),
     ).toBeNull();
 
-    await openEventType("issue.created");
-    fireEvent.click(
-      screen.getByRole("button", { name: "Show full event type list" }),
-    );
-
-    expect(
-      await screen.findByPlaceholderText("Search event types..."),
-    ).toHaveValue("issue");
-    const row = within(screen.getByTestId("event-types")).getByRole("button", {
+    const list = screen.getByTestId("event-types");
+    const row = within(list).getByRole("button", {
       name: /issue\.created/,
     });
-    await waitFor(() => expect(row).toHaveFocus());
+    fireEvent.click(row);
+    expect(row).toHaveAttribute("aria-pressed", "true");
+    expect(search).toHaveValue("issue");
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    openWorkspaceView("Definition");
+    expect(screen.getByText("Full event definition")).toBeInTheDocument();
+    const subscribe = screen.getByRole("button", { name: "Subscribe" });
+    fireEvent.click(subscribe);
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(subscribe).toHaveFocus());
+    expect(search).toHaveValue("issue");
+
+    fireEvent.change(search, { target: { value: "" } });
+    fireEvent.click(
+      within(list).getByRole("button", { name: /pull_request\.opened/ }),
+    );
+    expect(row).toHaveAttribute("aria-pressed", "false");
+    expect(
+      screen.getByRole("heading", { name: "pull_request.opened" }),
+    ).toBeInTheDocument();
   });
 
   it("lists subscriptions and received events in their tabs and scopes the activity to the selection", async () => {
@@ -711,10 +749,10 @@ describe("EventsTab (local)", () => {
     ]);
     renderTab();
 
-    await screen.findByTestId("subscription-esub_2");
+    const browseTabs = await screen.findByRole("tablist", { name: "Browse events" });
     // The count is active subscriptions, not every row.
-    const subscriptionsTab = screen.getByRole("tab", { name: /Subscriptions/ });
-    expect(subscriptionsTab).toHaveTextContent("Subscriptions1");
+    const subscriptionsTab = within(browseTabs).getByRole("tab", { name: /Subscriptions/ });
+    await waitFor(() => expect(subscriptionsTab).toHaveTextContent("Subscriptions1"));
     fireEvent.click(subscriptionsTab);
     fireEvent.click(
       within(screen.getByTestId("subscription-list")).getByRole("button", {
@@ -744,7 +782,7 @@ describe("EventsTab (local)", () => {
         data: { title: "x" },
       },
     });
-    const receivedTab = screen.getByRole("tab", { name: /Received/ });
+    const receivedTab = within(browseTabs).getByRole("tab", { name: /Received/ });
     await waitFor(() => expect(receivedTab).toHaveTextContent("Received1"));
     fireEvent.click(receivedTab);
     fireEvent.click(
@@ -754,6 +792,7 @@ describe("EventsTab (local)", () => {
     );
     const activity = screen.getByTestId("events-activity");
     expect(within(activity).getByText("evt_4")).toBeInTheDocument();
+    openWorkspaceView("Subscriptions");
     const owner = within(activity).getByTestId("subscription-esub_1");
     expect(
       within(owner).getByRole("button", { name: /Unsubscribe/ }),
@@ -826,6 +865,7 @@ describe("EventsTab (local)", () => {
       data: { kind: "event" },
     });
 
+    openWorkspaceView("Subscriptions");
     const reasonOf = (id: string) =>
       within(screen.getByTestId(`subscription-${id}`)).getByTestId(
         "subscription-termination",
@@ -837,6 +877,7 @@ describe("EventsTab (local)", () => {
       "Schema changed. Refresh the event types, then subscribe again.",
     );
     expect(reasonOf("esub_3")).toHaveTextContent("Event type removed");
+    openWorkspaceView("Received");
     expect(
       screen.getAllByTestId("termination-reason").map((row) => row.textContent),
     ).toEqual(
@@ -868,6 +909,8 @@ describe("EventsTab (local)", () => {
     ]);
     renderTab();
 
+    await screen.findByTestId("events-activity");
+    openWorkspaceView("Subscriptions");
     const suspended = await screen.findByTestId("subscription-esub_1");
     expect(within(suspended).getByTestId("delivery-state")).toHaveTextContent(
       "Suspended after repeated failures",
@@ -910,7 +953,7 @@ describe("EventsTab (local)", () => {
     });
 
     await waitFor(() => expect(mockLoadEventsCatalog).toHaveBeenCalledTimes(2));
-    expect(screen.getByTestId("event-type-detail")).toBeInTheDocument();
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Enter repo")).toHaveValue("octo/hello");
   });
 
@@ -945,6 +988,8 @@ describe("EventsTab (local)", () => {
     );
     renderTab();
 
+    await screen.findByTestId("events-activity");
+    openWorkspaceView("Subscriptions");
     const card = await screen.findByTestId("subscription-esub_1");
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
     fireEvent.click(within(card).getByRole("button", { name: /Pause/ }));

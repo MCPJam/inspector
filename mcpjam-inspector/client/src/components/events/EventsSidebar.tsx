@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { BellPlus, Loader2, PanelLeftClose, RefreshCw } from "lucide-react";
+import { useMemo, useState } from "react";
+import { PanelLeftClose, RefreshCw } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import type { SubscribableModes } from "@mcpjam/sdk/browser";
@@ -12,9 +12,7 @@ import type {
   EventsSubscriptionView,
 } from "@/shared/events-api";
 import { EventsListItem } from "./EventsListItem";
-import { EventTypeDetail, type BlockedAction } from "./EventTypeDetail";
 import { DeliveryChips } from "./EventsTabSections";
-import type { SubscribeForm } from "./use-subscribe-form";
 import { formatTime, observedStateLabel } from "./event-utils";
 
 export type EventsPaneTab = "events" | "subscriptions" | "received";
@@ -37,11 +35,6 @@ function EmptyText({ children }: { children: React.ReactNode }) {
   );
 }
 
-/**
- * The Events left pane: the Tools header with Events, Subscriptions and
- * Received, and the list for each. Selecting an event type replaces the list
- * with its detail and subscribe form, as selecting a tool does.
- */
 export function EventsSidebar({
   tab,
   onTabChange,
@@ -50,16 +43,10 @@ export function EventsSidebar({
   onLoadMore,
   onRefresh,
   onHide,
-  selectedEvent,
+  selectedEventName,
   onSelectEvent,
   availabilityFor,
   hostName,
-  hosted,
-  form,
-  subscribing,
-  blockedReason,
-  blockedAction,
-  replayUnsupportedFor,
   subscriptions,
   activeSubscriptionCount,
   selectedSubscriptionId,
@@ -76,18 +63,12 @@ export function EventsSidebar({
   onLoadMore: () => Promise<void>;
   onRefresh: () => void;
   onHide: () => void;
-  selectedEvent: EventDescriptorView | undefined;
+  selectedEventName: string | null;
   onSelectEvent: (eventName: string | null) => void;
   availabilityFor: (
     event: EventDescriptorView,
   ) => SubscribableModes | undefined;
   hostName: string;
-  hosted: boolean;
-  form: SubscribeForm;
-  subscribing: boolean;
-  blockedReason: string | null;
-  blockedAction?: BlockedAction;
-  replayUnsupportedFor: (eventName: string) => boolean;
   subscriptions: EventsSubscriptionView[];
   activeSubscriptionCount: number;
   selectedSubscriptionId: string | null;
@@ -102,15 +83,11 @@ export function EventsSidebar({
   const receivedCount = entries.filter(
     (entry) => entry.kind === "event",
   ).length;
-  // Back returns focus to the row that was opened.
-  const [returnFocusTo, setReturnFocusTo] = useState<string | null>(null);
-
-  const showDetail = tab === "events" && selectedEvent !== undefined;
 
   return (
     <div className="flex h-full flex-col border-r border-border bg-background">
       <InspectorPaneHeader<EventsPaneTab>
-        ariaLabel="Events views"
+        ariaLabel="Browse events"
         tabs={[
           {
             id: "events",
@@ -160,92 +137,50 @@ export function EventsSidebar({
             </Button>
           </>
         }
-        primaryAction={
-          <Button
-            size="sm"
-            className="h-8 px-3 text-xs"
-            disabled={!showDetail || !form.canSubmit}
-            onClick={form.submit}
-            title={
-              !selectedEvent
-                ? "Pick an event type to subscribe"
-                : (blockedReason ?? undefined)
-            }
-          >
-            {subscribing ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <BellPlus className="h-3 w-3" />
-            )}
-            <span className="ml-1">
-              {subscribing ? "Subscribing" : "Subscribe"}
-            </span>
-          </Button>
-        }
       />
 
-      {showDetail && selectedEvent ? (
-        <EventTypeDetail
-          event={selectedEvent}
-          events={catalog.events}
-          onBack={() => {
-            setReturnFocusTo(selectedEvent.name);
-            onSelectEvent(null);
-          }}
-          onSwitch={onSelectEvent}
-          form={form}
-          availability={availabilityFor(selectedEvent)}
-          hostName={hostName}
-          hosted={hosted}
-          blockedReason={blockedReason}
-          blockedAction={blockedAction}
-          replayUnsupported={replayUnsupportedFor(selectedEvent.name)}
-        />
-      ) : (
-        <div className="flex min-h-0 flex-1 flex-col">
-          <div className="flex-shrink-0 px-3 py-2">
-            <SearchInput
-              value={query}
-              onValueChange={setQuery}
-              placeholder={SEARCH_PLACEHOLDERS[tab]}
-            />
-          </div>
-          <div className="flex-1 overflow-hidden">
-            <ScrollArea className="h-full">
-              <div className="space-y-2 p-3 pb-16">
-                {tab === "events" ? (
-                  <EventTypeList
-                    catalog={catalog}
-                    query={query}
-                    loadingMore={loadingMore}
-                    onLoadMore={onLoadMore}
-                    onSelect={onSelectEvent}
-                    availabilityFor={availabilityFor}
-                    hostName={hostName}
-                    returnFocusTo={returnFocusTo}
-                    onFocusReturned={() => setReturnFocusTo(null)}
-                  />
-                ) : tab === "subscriptions" ? (
-                  <SubscriptionList
-                    subscriptions={subscriptions}
-                    query={query}
-                    selectedId={selectedSubscriptionId}
-                    onSelect={onSelectSubscription}
-                  />
-                ) : (
-                  <ReceivedList
-                    entries={entries}
-                    query={query}
-                    selectedSeq={selectedEntrySeq}
-                    onSelect={onSelectEntry}
-                    labelFor={labelForEntry}
-                  />
-                )}
-              </div>
-            </ScrollArea>
-          </div>
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex-shrink-0 px-3 py-2">
+          <SearchInput
+            value={query}
+            onValueChange={setQuery}
+            placeholder={SEARCH_PLACEHOLDERS[tab]}
+          />
         </div>
-      )}
+        <div className="flex-1 overflow-hidden">
+          <ScrollArea className="h-full">
+            <div className="space-y-2 p-3 pb-16">
+              {tab === "events" ? (
+                <EventTypeList
+                  catalog={catalog}
+                  query={query}
+                  loadingMore={loadingMore}
+                  onLoadMore={onLoadMore}
+                  onSelect={onSelectEvent}
+                  availabilityFor={availabilityFor}
+                  hostName={hostName}
+                  selectedEventName={selectedEventName}
+                />
+              ) : tab === "subscriptions" ? (
+                <SubscriptionList
+                  subscriptions={subscriptions}
+                  query={query}
+                  selectedId={selectedSubscriptionId}
+                  onSelect={onSelectSubscription}
+                />
+              ) : (
+                <ReceivedList
+                  entries={entries}
+                  query={query}
+                  selectedSeq={selectedEntrySeq}
+                  onSelect={onSelectEntry}
+                  labelFor={labelForEntry}
+                />
+              )}
+            </div>
+          </ScrollArea>
+        </div>
+      </div>
     </div>
   );
 }
@@ -258,22 +193,19 @@ function EventTypeList({
   onSelect,
   availabilityFor,
   hostName,
-  returnFocusTo,
-  onFocusReturned,
+  selectedEventName,
 }: {
   catalog: EventsListResponse;
   query: string;
   loadingMore: boolean;
   onLoadMore: () => Promise<void>;
-  onSelect: (eventName: string) => void;
+  onSelect: (eventName: string | null) => void;
   availabilityFor: (
     event: EventDescriptorView,
   ) => SubscribableModes | undefined;
   hostName: string;
-  returnFocusTo: string | null;
-  onFocusReturned: () => void;
+  selectedEventName: string | null;
 }) {
-  const listRef = useRef<HTMLUListElement>(null);
   const visible = useMemo(
     () =>
       catalog.events.filter((event) =>
@@ -281,15 +213,6 @@ function EventTypeList({
       ),
     [catalog.events, query],
   );
-
-  useEffect(() => {
-    if (!returnFocusTo) return;
-    const row = Array.from(
-      listRef.current?.querySelectorAll<HTMLElement>("[data-item-key]") ?? [],
-    ).find((element) => element.dataset.itemKey === returnFocusTo);
-    row?.focus();
-    onFocusReturned();
-  }, [returnFocusTo, onFocusReturned]);
 
   if (catalog.events.length === 0) {
     return <EmptyText>This server lists no event types.</EmptyText>;
@@ -299,7 +222,7 @@ function EventTypeList({
       {visible.length === 0 ? (
         <EmptyText>No event types match your search.</EmptyText>
       ) : (
-        <ul ref={listRef} className="space-y-2" data-testid="event-types">
+        <ul className="space-y-2" data-testid="event-types">
           {visible.map((event) => (
             <li key={event.name}>
               <EventsListItem
@@ -312,9 +235,10 @@ function EventTypeList({
                     hostName={hostName}
                   />
                 }
-                selected={false}
-                itemKey={event.name}
-                onClick={() => onSelect(event.name)}
+                selected={event.name === selectedEventName}
+                onClick={() =>
+                  onSelect(event.name === selectedEventName ? null : event.name)
+                }
               />
             </li>
           ))}
