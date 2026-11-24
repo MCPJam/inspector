@@ -286,6 +286,83 @@ describe("useChatSession fork preservation", () => {
     mockState.status = "ready";
   });
 
+  describe("new turn admission", () => {
+    const options = {
+      selectedServers: [],
+      hostedContext: { projectId: "project-1", selectedServerIds: [] },
+    };
+
+    it.each(["manual", "event"])(
+      "refuses a competing turn while the %s send is in flight before React reports busy",
+      async (first) => {
+        let finish!: () => void;
+        mockState.sendMessage.mockReturnValueOnce(new Promise<void>((resolve) => {
+          finish = resolve;
+        }));
+        const { result } = renderHook(() => useChatSession(options));
+        await act(async () => {
+          expect(await result.current.sendMessage({ text: first })).toBe(true);
+          expect(await result.current.sendMessage({
+            text: first === "manual" ? "event" : "manual",
+            isCurrent: () => true,
+          })).toBe(false);
+        });
+        expect(mockState.status).toBe("ready");
+        expect(mockState.sendMessage).toHaveBeenCalledTimes(1);
+        await act(async () => finish());
+        await act(async () => {
+          expect(await result.current.sendMessage({ text: "next turn" })).toBe(true);
+        });
+        expect(mockState.sendMessage).toHaveBeenCalledTimes(2);
+      },
+    );
+
+    it("rechecks busy state after server preparation and preserves unsent history", async () => {
+      let finish!: (rows: Array<{ serverId: string }>) => void;
+      const ensureServerIds = vi.fn(() => new Promise<Array<{ serverId: string }>>((resolve) => {
+        finish = resolve;
+      }));
+      const { result, rerender } = renderHook(() => useChatSession({
+        ...options,
+        selectedServers: ["server-1"],
+        hostedContext: { ...options.hostedContext, ensureServerIds },
+      }));
+      let pending!: Promise<boolean>;
+      act(() => {
+        pending = result.current.sendMessage({
+          text: "event",
+          isCurrent: () => true,
+          prependMessages: [{ id: "pending", role: "user", parts: [{ type: "text", text: "context" }] }],
+        });
+      });
+      expect(ensureServerIds).toHaveBeenCalledOnce();
+      mockState.status = "streaming";
+      rerender();
+      await act(async () => {
+        finish([{ serverId: "persisted-server" }]);
+        expect(await pending).toBe(false);
+      });
+      expect(mockState.sendMessage).not.toHaveBeenCalled();
+      expect(result.current.messages).toEqual([]);
+    });
+
+    it("releases admission after the transport rejects", async () => {
+      let reject!: (error: Error) => void;
+      mockState.sendMessage.mockReturnValueOnce(new Promise<void>((_resolve, rejectSend) => {
+        reject = rejectSend;
+      }));
+      const { result } = renderHook(() => useChatSession(options));
+      await act(async () => {
+        expect(await result.current.sendMessage({ text: "first" })).toBe(true);
+        reject(new Error("transport stopped"));
+      });
+      await act(async () => {
+        expect(await result.current.sendMessage({ text: "retry" })).toBe(true);
+      });
+      expect(mockState.sendMessage).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe("bounded auto-resume", () => {
     /** The prompt, then a step whose browser-fulfilled call has settled. */
     const settledClientToolTurn = [

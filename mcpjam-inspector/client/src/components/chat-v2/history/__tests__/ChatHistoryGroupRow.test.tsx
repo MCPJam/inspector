@@ -161,7 +161,7 @@ describe("ChatHistoryGroupRow", () => {
     const b = column("b", 1);
     const { groupActions, onActionComplete } = renderGroup([a, b]);
 
-    expect(screen.queryByText("Share to project")).toBeNull();
+    expect(screen.queryByText("Add to Shared Sessions")).toBeNull();
     await user.click(screen.getByText("Pin"));
     expect(groupActions.pin).toHaveBeenCalledWith("g1");
     expect(rowActions.pin).not.toHaveBeenCalled();

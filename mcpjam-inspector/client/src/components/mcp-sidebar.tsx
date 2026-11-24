@@ -27,7 +27,6 @@ import {
   MessagesSquare,
   Globe,
   Radio,
-  Zap,
   ClipboardCheck,
 } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
@@ -250,16 +249,6 @@ export const navigationSections: NavSection[] = [
         icon: MessageCircle,
       },
       {
-        // Agent runs fired by MCP Events on MCPJam's hosted runner. Sits next
-        // to Playground because it is the unattended version of the same
-        // thing: a model with the project's servers, reacting to an event
-        // instead of a message.
-        title: "Triggers",
-        url: "/triggers",
-        icon: Zap,
-        featureFlag: EVENTS_FEATURE_FLAG,
-      },
-      {
         title: "Environments",
         url: "/environments",
         icon: Layers,
@@ -373,6 +362,7 @@ export const navigationSections: NavSection[] = [
         title: "Events",
         url: "/events",
         icon: Radio,
+        badge: "New",
         featureFlag: EVENTS_FEATURE_FLAG,
       },
       {
@@ -382,7 +372,6 @@ export const navigationSections: NavSection[] = [
         title: "WebMCP",
         url: "/webmcp",
         icon: Globe,
-        badge: "New",
         featureFlag: WEBMCP_INSPECTOR_FEATURE_FLAG,
       },
     ],
@@ -499,7 +488,6 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
    * gone with the old layout.
    */
   onSwitchOrganization?: (organizationId: string) => void;
-  onProjectShared?: (sharedProjectId: string, sourceProjectId?: string) => void;
   billingGateDenied?: Partial<Record<BillingFeatureName, boolean>>;
   billingGateEnforcementActive?: boolean;
   isCreateProjectDisabled?: boolean;
