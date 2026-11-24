@@ -1285,7 +1285,8 @@ describe("web routes — chat-v2 hosted mode", () => {
       expect.objectContaining({
         chatSessionId: "chat-session-column",
         multiModel,
-      })
+      }),
+      expect.anything(),
     );
   });
 
