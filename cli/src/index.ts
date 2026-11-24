@@ -39,7 +39,6 @@ import {
   resolveCommandOutcome,
 } from "./lib/command-outcome.js";
 import { installDeploymentPreflight } from "./lib/deployment-preflight.js";
-import { installHttp1GlobalDispatcher } from "@mcpjam/sdk/internal/network-proxy";
 import { installProxyDispatcher } from "./lib/network-proxy.js";
 import { addGlobalOptions } from "./lib/server-config.js";
 import {
@@ -204,11 +203,8 @@ export async function runCliEntrypoint(
   dependencies: CliEntrypointDependencies = {},
 ): Promise<CliMainResult> {
   // Here and not in `main`: a program embedding the CLI keeps its own
-  // process-wide networking. HTTP/1.1 goes on top of the proxy dispatcher, so
-  // it must come second: on Node 26 an HTTP/2 request aborted as it starts
-  // crashes the process (CQT-216, nodejs/undici#6143).
+  // process-wide networking.
   installProxyDispatcher();
-  installHttp1GlobalDispatcher();
   const result = await main(argv, dependencies);
   process.exitCode = result.exitCode;
 

@@ -52,6 +52,7 @@ import {
   type OAuthConformanceSession,
 } from "../../services/conformance-oauth-sessions.js";
 import { createStreamingPinnedFetch } from "../../utils/pinned-fetch.js";
+import { http1Fetch } from "@mcpjam/sdk/internal/network-proxy";
 import {
   bindCredentialHeaders,
   type CredentialHeaderBinding,
@@ -103,7 +104,8 @@ const CONFORMANCE_MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
  * following its redirects unchecked as it did while this comment's predecessor
  * documented the gap.
  *
- * A no-op outside hosted mode, where reaching localhost is the point.
+ * No guard outside hosted mode, where reaching localhost is the point; local
+ * runs only stay on HTTP/1.1 (`localFetch` below).
  *
  * With a `binding`, the connection's own credentials (a delivered token, its
  * stored credential headers) go only to the origins they are bound to.
@@ -122,6 +124,10 @@ export function createConformanceFetch(
     // SSE without punishing a healthy stream for staying open.
     bodyIdleTimeoutMs: CONFORMANCE_BODY_IDLE_TIMEOUT_MS,
     maxResponseBytes: CONFORMANCE_MAX_RESPONSE_BYTES,
+    // Local runs stay on HTTP/1.1 where Node's fetch would negotiate HTTP/2:
+    // a run connects and disconnects at once, and on Node 26's HTTP/2 that
+    // crashes the process (CQT-216). Hosted runs use the pinned transport.
+    localFetch: http1Fetch,
   });
   // An MCP server's answers are read as MCP (hosted: see
   // `withHostedMcpAnswerBodies`). An OAuth endpoint's are not — its error

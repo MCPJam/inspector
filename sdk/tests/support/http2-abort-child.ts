@@ -1,26 +1,35 @@
 /**
- * Child process for `http1-fetch.test.ts`. Sends one request; with `abort`,
- * then sends a second one aborted in the same tick it starts and stays alive
- * past undici's four-second HTTP/2 idle reaper. On Node 26's HTTP/2 path that
- * reaping is what crashes the process (nodejs/undici#6143), so the parent
- * asserts this process exits 0.
+ * Child process for `http1-fetch.test.ts`, which records the HTTP version of
+ * every request the server sees. Every mode outlives undici's four-second
+ * HTTP/2 idle reaper, which is what crashes the process on Node 26's HTTP/2
+ * path (nodejs/undici#6143); the parent asserts this process exits 0.
  *
- * usage: node --import tsx http2-abort-child.ts <url> <plain|http1Fetch|installed> <once|abort>
+ * - `plain`: one plain `fetch`.
+ * - `http1Fetch`: one request through `http1Fetch`, then one aborted in the
+ *   same tick it starts, then the idle wait, then one plain `fetch`, which
+ *   must still negotiate HTTP/2: the process-wide dispatcher is untouched.
+ * - `runConformance`: the CLI's entry point with its defaults (protocol, apps
+ *   and tasks; auto-detected version), then the idle wait.
+ *
+ * The test bundles this file with esbuild and runs it: `<bundle> <origin> <mode>`.
  */
-import {
-  http1Fetch,
-  installHttp1GlobalDispatcher,
-} from "../../src/http1-fetch.js";
+// Through the package entry, which loads modules in the order the published
+// build does; importing `conformance-run.ts` alone trips a circular import.
+import { runConformance } from "../../src/index.js";
+import { http1Fetch } from "../../src/http1-fetch.js";
 
-const [url, mode, step] = process.argv.slice(2);
-if (mode === "installed") installHttp1GlobalDispatcher();
-const fetchFn = mode === "http1Fetch" ? http1Fetch : globalThis.fetch;
+const [origin, mode] = process.argv.slice(2);
+const outliveIdleReaper = () =>
+  new Promise((resolve) => setTimeout(resolve, 5_500));
 
-await (await fetchFn(url)).text();
+if (mode === "plain") {
+  await (await fetch(`${origin}/plain`)).text();
+}
 
-if (step === "abort") {
+if (mode === "http1Fetch") {
+  await (await http1Fetch(`${origin}/http1`)).text();
   const controller = new AbortController();
-  const aborted = fetchFn(url, { signal: controller.signal });
+  const aborted = http1Fetch(`${origin}/http1`, { signal: controller.signal });
   controller.abort();
   await aborted.then(
     (response) => response.body?.cancel(),
@@ -28,7 +37,19 @@ if (step === "abort") {
       if (!(error instanceof Error && error.name === "AbortError")) throw error;
     }
   );
-  await new Promise((resolve) => setTimeout(resolve, 5_500));
+  await outliveIdleReaper();
+  await (await fetch(`${origin}/global`)).text();
+}
+
+if (mode === "runConformance") {
+  // The fake server answers just enough JSON-RPC to be dialled; whether the
+  // suites pass is not the point, only how they reach it.
+  await runConformance({
+    server: { url: `${origin}/mcp` },
+    protocol: { checkTimeout: 2_000 },
+    __suppressTelemetry: true,
+  });
+  await outliveIdleReaper();
 }
 
 process.exit(0);

@@ -26,7 +26,6 @@ import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { MCPClientManager } from "@mcpjam/sdk";
-import { installHttp1GlobalDispatcher } from "@mcpjam/sdk/internal/network-proxy";
 import {
   applyInspectorUserAgent,
   withDefaultUserAgent,
@@ -341,11 +340,6 @@ function getInspectorFrontendUrlOptions() {
     isProduction: process.env.NODE_ENV === "production",
   };
 }
-
-// Before anything dials out: on Node 26 every fetch in this process stays on
-// HTTP/1.1, because an HTTP/2 request aborted as it starts crashes the process
-// (CQT-216, nodejs/undici#6143). A no-op on Node 24 and earlier.
-installHttp1GlobalDispatcher();
 
 // Ensure PATH is initialized from the user's shell so spawned processes can find binaries (e.g., npx)
 try {

@@ -268,6 +268,10 @@ jobs:
           cache: npm
       - name: Install workspace dependencies
         run: npm ci --ignore-scripts --legacy-peer-deps
+      # Some SDK suites import the built package (`sdk/dist`); the main job
+      # gets it from `test:checks`, this one has to build it.
+      - name: Build the SDK
+        run: npm run build -w @mcpjam/evaluators && npm run build -w @mcpjam/sdk
       - name: Run the SDK suite on Node 26
         run: npm run test -w @mcpjam/sdk
 

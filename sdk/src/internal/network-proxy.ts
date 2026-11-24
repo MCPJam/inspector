@@ -5,7 +5,8 @@
  * promise. As a library the SDK never changes the process-wide proxy itself.
  */
 
-export { installHttp1GlobalDispatcher } from "../http1-fetch.js";
+/** The default `fetch` for MCP connections and conformance runs. */
+export { http1Fetch } from "../http1-fetch.js";
 
 export interface ProxySettings {
   httpsProxy: string | null;

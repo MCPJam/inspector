@@ -1,5 +1,6 @@
 /**
- * HTTP/1.1 on runtimes whose built-in `fetch` negotiates HTTP/2 (CQT-216).
+ * HTTP/1.1 for MCP traffic on runtimes whose built-in `fetch` negotiates
+ * HTTP/2 (CQT-216).
  *
  * Node 26 bundles undici 8, whose `fetch` negotiates HTTP/2 with any TLS
  * server that offers it; Node 24 and earlier speak HTTP/1.1. On that HTTP/2
@@ -12,11 +13,16 @@
  *
  * `allowH2: false` is undici's documented way to keep HTTP/1.1 (its v7 to v8
  * migration guide), and the MCP TypeScript SDK maintainers recommend handing
- * the transport such a `fetch` on affected Node versions. It is applied by
- * composing NODE'S OWN global dispatcher, never a dispatcher built from the
- * npm `undici` package: one from a different undici major than the bundled
- * one does not speak the same handler protocol. Composing also keeps any
- * proxy or TLS dispatcher the application installed.
+ * the transport such a `fetch` on affected Node versions. It is applied PER
+ * REQUEST, as the default `fetch` of MCP connections and conformance runs,
+ * never to the process: forcing HTTP/1.1 globally breaks any unrelated
+ * service that only speaks HTTP/2. A caller that supplies its own `fetch`
+ * keeps it.
+ *
+ * The dispatcher is NODE'S OWN global one, composed, never one built from the
+ * npm `undici` package: a dispatcher from a different undici major than the
+ * bundled one does not speak the same handler protocol. Composing also keeps
+ * any proxy or TLS dispatcher the application installed.
  *
  * Revisit once a Node 26 release bundles the undici fix.
  */
@@ -35,7 +41,6 @@ interface ComposableDispatcher {
   ) => ComposableDispatcher;
 }
 
-const http1Dispatchers = new WeakSet<ComposableDispatcher>();
 const http1DispatcherFor = new WeakMap<
   ComposableDispatcher,
   ComposableDispatcher
@@ -78,14 +83,12 @@ function nodeGlobalDispatcher(): ComposableDispatcher | undefined {
 
 /** `base` with every request marked `allowH2: false`, built once per base. */
 function http1Only(base: ComposableDispatcher): ComposableDispatcher {
-  if (http1Dispatchers.has(base)) return base;
   let http1 = http1DispatcherFor.get(base);
   if (!http1) {
     http1 = base.compose(
       (dispatch) => (options, handler) =>
         dispatch({ ...options, allowH2: false }, handler)
     );
-    http1Dispatchers.add(http1);
     http1DispatcherFor.set(base, http1);
   }
   return http1;
@@ -110,19 +113,3 @@ export const http1Fetch: typeof fetch = (input, init) => {
   const http1Init = { ...init, dispatcher: http1Only(base) };
   return fetchFn(input, http1Init);
 };
-
-/**
- * Make every `fetch` in this process keep HTTP/1.1 where the built-in one
- * would negotiate HTTP/2. For applications that own their process (the CLI,
- * the Inspector server), at startup and after any proxy dispatcher is in
- * place. As a library the SDK never changes process-wide networking itself.
- * Returns whether it changed the global dispatcher.
- */
-export function installHttp1GlobalDispatcher(): boolean {
-  if (!fetchNegotiatesHttp2()) return false;
-  const base = nodeGlobalDispatcher();
-  if (!base) return false;
-  const http1 = http1Only(base);
-  if (http1 === base) return false;
-  return Reflect.set(globalThis, GLOBAL_DISPATCHER, http1);
-}
