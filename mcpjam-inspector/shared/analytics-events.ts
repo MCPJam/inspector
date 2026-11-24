@@ -75,6 +75,13 @@ export const ANALYTICS_EVENTS = {
   // --- Public API agent surface (server-authoritative; no client twin) ---
   api_agent_turn_completed: { source: "server" },
   /**
+   * One Platform API request answered, hosted only
+   * (`server/utils/v1-usage-event.ts`). Route pattern, status, error code,
+   * latency, auth method and the client's declared surface and name. Never
+   * paths, bodies, query strings, error messages or raw user agents.
+   */
+  api_v1_request_completed: { source: "server" },
+  /**
    * One agent Playground turn finished (`POST /v1/chat-sessions/messages`).
    * Outcome/count/duration only — the messages and tool payloads on that
    * route are customer conversation content and never ride an event.

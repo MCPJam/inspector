@@ -292,7 +292,8 @@ export async function verifyAuthKitToken(
  *   issuer, but for a different audience (the MCP worker's resource
  *   indicator, a Connect OAuth application such as the CLI). The backend
  *   accepts these on some paths, so the gateway lets them through for
- *   downstream to judge rather than rejecting a valid credential.
+ *   downstream to judge rather than rejecting a valid credential. `sub` rides
+ *   along for usage analytics only (`analyticsUserId`), never for access.
  * - `keys_unavailable` — the issuer is trusted but its signing keys could not
  *   be fetched. The gateway cannot decide; downstream still verifies.
  * - `not_authkit` — not a JWT, or not from an AuthKit issuer (MCPJam-minted
@@ -308,7 +309,7 @@ export type AuthKitBearerVerdict =
       agent?: AgentRegistrationClaim;
     }
   | { kind: "invalid"; reason: string }
-  | { kind: "foreign_audience" }
+  | { kind: "foreign_audience"; sub: string }
   | { kind: "keys_unavailable"; issuer: string; reason: string }
   | { kind: "not_authkit" };
 
@@ -511,6 +512,6 @@ export async function classifyAuthKitBearer(
     };
   }
   return resolved.anyAudienceIssuers.has(issuer)
-    ? { kind: "foreign_audience" }
+    ? { kind: "foreign_audience", sub }
     : { kind: "invalid", reason: "audience" };
 }

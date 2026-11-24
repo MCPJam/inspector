@@ -3,7 +3,12 @@ import {
   ANALYTICS_EVENTS,
   type ServerAnalyticsEventName,
 } from "./analytics-events";
-import { telemetryActorId } from "@mcpjam/sdk/internal/telemetry";
+import {
+  MCP_CLIENT_FAMILIES,
+  telemetryActorId,
+} from "@mcpjam/sdk/internal/telemetry";
+import { V1_ERROR_CODES } from "@mcpjam/sdk/public-api";
+import catalog from "./telemetry-catalog.generated.json";
 import {
   HARNESS_TURN_BOOTSTRAPS,
   HARNESS_TURN_DURATIONS,
@@ -16,9 +21,21 @@ import { isLogConvexIdShape } from "./strict-log";
 const enums: Record<string, readonly string[]> = {
   origin: ["playground", "evals", "api", "scenario"],
   source_type: ["playground", "eval", "api", "direct", "scenario", "swarm"],
-  surface: ["api", "eval", "playground", "scenario", "web", "local"],
+  surface: [
+    "api",
+    "eval",
+    "playground",
+    "scenario",
+    "web",
+    "local",
+    "mcp",
+    "cli",
+    "sdk",
+  ],
   outcome: [
     "ok",
+    "client_error",
+    "server_error",
     "partial",
     "failed",
     "rate_limited",
@@ -61,9 +78,24 @@ const enums: Record<string, readonly string[]> = {
   ],
   engine: ["emulated", "harness:claude-code", "harness:codex", "harness:opencode"],
   environment_skill_delivery: ["harness", "harness_unsupported", "emulated"],
+  // api_v1_request_completed
+  method: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+  error_code: V1_ERROR_CODES,
+  auth_method: [
+    "workos_api_key",
+    "workos_agent",
+    "slack_service",
+    "discord_service",
+    "guest",
+    "authkit_jwt",
+    "unverified_passthrough",
+    "none",
+  ],
+  mcp_client: MCP_CLIENT_FAMILIES,
 };
 const numbers = new Set([
   "duration_ms",
+  "http_status",
   "tool_call_count",
   "created_count",
   "itemCount",
@@ -94,7 +126,7 @@ const wholeMilliseconds = new Set<string>(HARNESS_TURN_DURATIONS);
  * The organization a server-side check verified (a `LogConvexId` from the
  * request context), kept only in a Convex ID's shape.
  */
-const ids = new Set(["organization_id"]);
+const ids = new Set(["organization_id", "project_id"]);
 const booleans = new Set([
   "include_llm_observations",
   "success",
@@ -103,6 +135,8 @@ const booleans = new Set([
   "hasNextCursor",
   "environment_overridden",
   "$process_person_profile",
+  "streamed",
+  "is_guest",
 ]);
 
 export type ServerAnalyticsFieldRule =
@@ -157,6 +191,21 @@ export function rebuildServerAnalytics(
       (!rule.integer || Number.isInteger(value))
     )
       properties[key] = value;
+  }
+  // `operation` is "METHOD /route/:pattern", kept only when that route is
+  // mounted for that method, so no path value can ride it.
+  const operation = input.operation;
+  if (typeof operation === "string") {
+    const [method, route, extra] = operation.split(" ");
+    if (
+      extra === undefined &&
+      catalog.routeEntries.some(
+        (entry) =>
+          entry.path === route &&
+          (entry.method === "ALL" || entry.method === method),
+      )
+    )
+      properties.operation = operation;
   }
   const harness = input.harness_id;
   const packVersion = input.pack_version;

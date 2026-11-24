@@ -447,6 +447,10 @@ export async function bearerAuthMiddleware(
   if (verdict.kind === "keys_unavailable") {
     warnAuthKitKeysUnavailable(verdict);
   }
+  if (verdict.kind === "foreign_audience") {
+    // Who to count in usage analytics, and nothing else: see `analyticsUserId`.
+    c.set("analyticsUserId", verdict.sub);
+  }
 
   // Everything else passes through UNVERIFIED, exactly as every JWT used to:
   //
