@@ -522,17 +522,15 @@ export function useServerDetailController({
    *
    * One list read by both the Save button's `disabled` and the form's submit
    * handler, because Enter in any configuration input submits the form. It
-   * covers MJ-003's credential-clear acknowledgement, which is there so a
-   * destructive save cannot happen without one, as well as the duplicate-name
-   * check, the auth-configuration block, and the in-flight reconnect guard.
+   * covers the duplicate-name check, the auth-configuration block, and the
+   * in-flight reconnect guard.
    */
   const saveBlocked =
     isDuplicateServerName ||
     isSaving ||
     isReconnecting ||
     (!formState.hasChanges && !isConnected) ||
-    formState.authConfigurationBlocksSubmit ||
-    formState.credentialClearBlocksSubmit;
+    formState.authConfigurationBlocksSubmit;
 
   const handleConfigurationSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
