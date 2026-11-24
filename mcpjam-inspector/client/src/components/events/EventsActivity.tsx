@@ -254,11 +254,10 @@ export function EventsActivity({
                 className="rounded-md border border-warning/40 bg-warning/10 p-2 text-[11px] text-foreground"
                 data-testid="simulate-warning"
               >
-                A simulated event is MCPJam's, not the server's: it goes to the{" "}
+                Simulated events stay in MCPJam&apos;s{" "}
                 <code className="font-mono">simulation</code> namespace and
-                never reaches the server. Triggers that match it still run, as
-                they would for a real event. It can never collide with or
-                suppress a live event.
+                never reach the server. Matching triggers still run; live events
+                are never affected.
               </p>
               <SimulatePanel
                 subscriptions={subscriptions.filter(

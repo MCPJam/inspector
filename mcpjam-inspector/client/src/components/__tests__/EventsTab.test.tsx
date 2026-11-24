@@ -612,7 +612,7 @@ describe("EventsTab (local)", () => {
     await screen.findByTestId("subscription-esub_1");
     openSection(/Simulate an event/);
     expect(screen.getByTestId("simulate-warning")).toHaveTextContent(
-      "Triggers that match it still run",
+      "Matching triggers still run",
     );
     const panel = await screen.findByTestId("simulate-panel");
     // Prefilled from the payload schema's defaults.
