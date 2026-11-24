@@ -1,3 +1,4 @@
+import type { WebClientRunContext } from "../services/web-clients/web-client-run.js";
 import type { TurnAuthorization } from "../services/turn-authorization.js";
 import { finishPendingPersist } from "./completed-turn-finalization.js";
 import { WIDGET_TOOL_VERBS } from "../services/widget-tool-verbs.js";
@@ -55,6 +56,7 @@ import {
   readModelOutputImage,
   renameToolNamePart,
   renameToolNamesInMessages,
+  type ErrorOrigin,
   type NormalizedError,
 } from "@mcpjam/sdk";
 import {
@@ -647,6 +649,19 @@ export interface MCPJamEngineErrorEvent {
    * error and go through the normal describer.
    */
   normalized?: NormalizedError;
+  /**
+   * The origin the turn's failure reporter based its capture decision on
+   * (`RouteFailureReport.origin`, promotion included). Absent ⇒ not reported
+   * (an aborted turn, or an emitter that does not report), or classified from
+   * the message alone (the harness catch): a consumer must treat that as
+   * unrecorded.
+   */
+  reportedOrigin?: ErrorOrigin;
+  /**
+   * Whether that reporter sent this failure to Sentry
+   * (`RouteFailureReport.captured`). Absent ⇒ not reported.
+   */
+  reportedCaptured?: boolean;
 }
 
 /**
@@ -1050,6 +1065,8 @@ export interface MCPJamHandlerOptions {
     sessionIdx?: number;
   };
   authHeader?: string;
+  /** Web clients: the eval run's owner and frozen accounts (`webClientRunOfEvalRun`). */
+  webClientRun?: WebClientRunContext;
   scenarioId?: string;
   accessVersion?: number;
   projectId?: string;
@@ -4397,6 +4414,12 @@ async function processOneStep(ctx: StepContext): Promise<{
       promptIndex: traceTurn.promptIndex,
       stepIndex,
       normalized,
+      ...(backendReport
+        ? {
+            reportedOrigin: backendReport.origin,
+            reportedCaptured: backendReport.captured,
+          }
+        : {}),
       // A response is in hand, so this is unambiguously the model's leg —
       // no flag needed to know it.
       phase: "stream",
@@ -5038,6 +5061,12 @@ async function processOneStep(ctx: StepContext): Promise<{
         promptIndex: traceTurn.promptIndex,
         stepIndex,
         normalized: stepNormalized,
+        ...(stepReport
+          ? {
+              reportedOrigin: stepReport.origin,
+              reportedCaptured: stepReport.captured,
+            }
+          : {}),
         // The enclosing `try` opens on tool wrapping and execution, which is
         // reached only after the stream responded. Nothing pre-request can
         // land here.
@@ -5237,6 +5266,12 @@ async function processOneStep(ctx: StepContext): Promise<{
       promptIndex: traceTurn.promptIndex,
       stepIndex,
       normalized: emptyStepNormalized,
+      ...(emptyStepReport
+        ? {
+            reportedOrigin: emptyStepReport.origin,
+            reportedCaptured: emptyStepReport.captured,
+          }
+        : {}),
       // A response was streamed in full; only its content was missing. Never
       // `setup` — the model leg unambiguously ran.
       phase: "stream",
@@ -6125,6 +6160,8 @@ export async function runChatEngineLoop(
           rawText: errorText,
           promptIndex: traceTurn.promptIndex,
           normalized: loopNormalized,
+          reportedOrigin: loopReport.origin,
+          reportedCaptured: loopReport.captured,
           // The only one of this file's three emitters that can fire on
           // either side of the handover. See `modelInvoked`.
           phase: modelInvoked ? "stream" : "setup",

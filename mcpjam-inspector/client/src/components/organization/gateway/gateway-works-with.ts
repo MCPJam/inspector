@@ -24,6 +24,7 @@ import {
   harnessDisplayName,
   harnessModelSupportAtPinnedVersion,
 } from "@/shared/harness-model-support";
+import { isWebClientRuntimeId } from "@/shared/web-clients";
 
 export type WorksWithRow = {
   id: string;
@@ -45,11 +46,17 @@ const SERVERS_ONLY =
 const POLICY_BLOCKS =
   "Your organization's key policy doesn't allow calls from each user's Inspector.";
 
-/** Harness clients in descriptor order, with Cursor (no org path) last. */
-const HARNESS_IDS = Object.keys(HARNESS_DESCRIPTORS).sort(
-  (a, b) =>
-    Number(harnessWireApi(a) === null) - Number(harnessWireApi(b) === null),
-);
+/**
+ * Harness clients in descriptor order, with Cursor (no org path) last. Web
+ * clients are left out: they run the vendor's own model on a project's web
+ * account, never on a model connection, and they stay behind their own flag.
+ */
+const HARNESS_IDS = Object.keys(HARNESS_DESCRIPTORS)
+  .filter((id) => !isWebClientRuntimeId(id))
+  .sort(
+    (a, b) =>
+      Number(harnessWireApi(a) === null) - Number(harnessWireApi(b) === null),
+  );
 
 export const joinNames = (names: readonly string[]) =>
   names.length < 2

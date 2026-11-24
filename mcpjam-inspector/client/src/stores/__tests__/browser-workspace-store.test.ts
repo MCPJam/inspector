@@ -13,6 +13,7 @@ const reset = () =>
     collapsedRailForBrowser: false,
     revealSeq: 0,
     revealConversationId: null,
+    autoOpened: {},
   });
 
 describe("browser workspace layout", () => {
@@ -22,6 +23,25 @@ describe("browser workspace layout", () => {
     const state = useBrowserWorkspaceStore.getState();
     expect(state.conversations).toEqual({});
     expect(state.size).toBe(60);
+  });
+
+  it("opens by itself once per chat and client, so a close holds", () => {
+    const { openBrowserOnce, closeBrowser } =
+      useBrowserWorkspaceStore.getState();
+    openBrowserOnce("a", "host-1");
+    expect(useBrowserWorkspaceStore.getState().conversations.a?.open).toBe(
+      true,
+    );
+    closeBrowser("a");
+    openBrowserOnce("a", "host-1");
+    expect(useBrowserWorkspaceStore.getState().conversations.a?.open).toBe(
+      false,
+    );
+    // Another client in the same chat opens it again, once.
+    openBrowserOnce("a", "host-2");
+    expect(useBrowserWorkspaceStore.getState().conversations.a?.open).toBe(
+      true,
+    );
   });
 
   it("keeps the conversation layout stable when browsing calls it again", () => {

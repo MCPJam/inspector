@@ -1,3 +1,4 @@
+import { usePublishEventAgent } from "@/components/playground/events/event-agent-bridge";
 import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 import {
   hasComparisonAuthRecoveryRequest,
@@ -378,7 +379,8 @@ import {
 } from "@/components/ui-playground/multi-model-playground-card";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
-import { shouldAutoRunPreview, shouldRunPreview } from "./preview-autorun";
+import { shouldRunPreview } from "./preview-autorun";
+import { usePlaygroundAutoRun } from "./use-compare-auto-run";
 import {
   chatHistoryAction,
   getChatHistoryState,
@@ -619,6 +621,10 @@ interface PlaygroundMainProps {
    * Used by the eval preview to "run on open" when the case renders a widget.
    */
   autoRunInput?: string;
+  /** Fires once this mount commits to the `autoRunInput` send. */
+  onAutoRunStarted?: () => void;
+  /** Fires once the `autoRunInput` prompt is actually sent. */
+  onAutoRunSent?: () => void;
   /**
    * Increment to re-run the case in the live preview from outside (eval Quick
    * Run). Each new value resets the thread and re-sends the case prompt
@@ -735,6 +741,8 @@ export function PlaygroundMain({
   hideWelcomeHero = false,
   hideCenterHeaderChrome = false,
   autoRunInput,
+  onAutoRunStarted,
+  onAutoRunSent,
   runPreviewRequest,
   onMessagesChange,
   onStreamingChange,
@@ -2798,21 +2806,32 @@ export function PlaygroundMain({
   const compareReadiness = useRef(
     new Map<string, { ready: boolean; error?: string }>(),
   );
+  const [compareReadyCount, setCompareReadyCount] = useState(0);
   const reportCompareReadiness = useCallback(
     (id: string, ready: boolean, error?: string) => {
-      compareReadiness.current.set(`${multiModelSessionGeneration}:${id}`, {
-        ready,
-        error,
-      });
+      const key = `${multiModelSessionGeneration}:${id}`;
+      const wasReady = compareReadiness.current.get(key)?.ready === true;
+      compareReadiness.current.set(key, { ready, error });
+      if (ready && !wasReady) setCompareReadyCount((count) => count + 1);
     },
     [multiModelSessionGeneration],
   );
+  const compareLanesReady = useCallback(
+    () =>
+      !retainedClientsPaused &&
+      compareLanes.length > 0 &&
+      compareLanes.every(
+        ({ id }) =>
+          compareReadiness.current.get(`${multiModelSessionGeneration}:${id}`)
+            ?.ready === true,
+      ),
+    [retainedClientsPaused, compareLanes, multiModelSessionGeneration],
+  );
   const ensureCompareReady = () => {
-    if (retainedClientsPaused) return false;
+    if (compareLanesReady()) return true;
     const states = compareLanes.map(({ id }) =>
       compareReadiness.current.get(`${multiModelSessionGeneration}:${id}`),
     );
-    if (states.every((state) => state?.ready)) return true;
     toast.error(
       states.find((state) => state?.error)?.error ??
         "Wait for all comparison clients to finish setup.",
@@ -4983,17 +5002,17 @@ export function PlaygroundMain({
   pluginMessageDispatchRef.current = pluginMessage.send;
 
   const handleSendFollowUp = useCallback(
-    (text: string) => {
+    (text: string, isCurrent: () => boolean = () => true) => {
       return (async () => {
         // Same gate as the composer, and for the same reason: a widget-driven
         // follow-up on a reopened conversation would otherwise be the FIRST
         // thing that runs on a target the transcript never used, with no user
         // action in between to make that a choice.
-        if (conversationSendBlockedRef.current) {
-          return;
+        if (!isCurrent() || conversationSendBlockedRef.current) {
+          return false;
         }
         if (!(await ensureSelectedServerReadyForChat())) {
-          return;
+          return false;
         }
         // Every send entry point takes the same thread preflight, not just the
         // composer: a resumed session that moved between subscription updates
@@ -5001,7 +5020,7 @@ export function PlaygroundMain({
         // hosted route honors it, the turn runs in full and only THEN takes a
         // 409 and a conflict detach. A no-op when no history thread is open.
         if (!(await ensureThreadReadyForSend())) {
-          return;
+          return false;
         }
         // The local-execution gate runs at EVERY send entry point, exactly as
         // the thread preflight above does. Reaching the transport without it
@@ -5016,13 +5035,13 @@ export function PlaygroundMain({
           // prompt it was talking about gone. Putting it there is what makes
           // that instruction true.
           composer.setInput(text);
-          return;
+          return false;
         }
         // The first check is stale once the gates above have yielded. A study
         // block, a target disclosure, or a history restore that landed in that
         // window has to win, or the follow-up still goes out.
-        if (conversationSendBlockedRef.current) {
-          return;
+        if (!isCurrent() || conversationSendBlockedRef.current) {
+          return false;
         }
         const sentContext = modelContextQueue;
         const sent = await sendMessage({
@@ -5031,7 +5050,7 @@ export function PlaygroundMain({
           widgetModelContext: sentContext,
           // The gates above can finish and this call can still await server
           // preparation. The study block has to be read again at dispatch.
-          isCurrent: () => !conversationSendBlockedRef.current,
+          isCurrent: () => isCurrent() && !conversationSendBlockedRef.current,
         });
         // A refusal keeps the queue. A success drops only the objects this
         // request carried: a widget can replace or add entries during the
@@ -5048,6 +5067,8 @@ export function PlaygroundMain({
             ),
           );
         }
+        // `sendMessage` resolves false when it refuses the send.
+        return sent !== false;
       })();
     },
     [
@@ -5061,44 +5082,22 @@ export function PlaygroundMain({
     ],
   );
 
-  // Auto-run: when `autoRunInput` is set (eval preview "run on open"), send it
-  // once after the session has bootstrapped and while the thread is still
-  // empty. `handleSendFollowUp` ensures the server is connected first. The ref
-  // makes it fire exactly once per mount even as deps change.
-  const autoRanRef = useRef(false);
-  useEffect(() => {
-    if (
-      !shouldAutoRunPreview({
-        autoRunInput,
-        alreadyRan: autoRanRef.current,
-        isSessionBootstrapComplete,
-        isThreadEmpty,
-        isStreaming,
-        handoffPending: isEvalChatHandoffPending,
-      })
-    ) {
-      return;
-    }
-    autoRanRef.current = true;
-    // The prompt is auto-sent, so clear it out of the composer. The composer is
-    // otherwise seeded with the same `initialInput` (so it mirrors the eval
-    // editor's left-pane prompt); leaving the sent text behind would both look
-    // stale and invite an accidental duplicate send. The mirror only re-seeds
-    // when `initialInput` itself changes, so this clear sticks.
-    //
-    // Written BEFORE the call, which is only a matter of reading order — the
-    // call suspends on its first `await`, so this line always ran first anyway.
-    // Stating it plainly because `handleSendFollowUp` can now DEFER instead of
-    // sending (the local-execution gate opens a dialog) and puts the prompt back
-    // when it does, which lands after this clear and outlives it. That is the
-    // intended end state, not a leak past the clear: nothing was sent, so there
-    // is no stale text and no duplicate to invite — and the notice under the
-    // composer says "press Send to continue", which needs the prompt to still
-    // be there. `autoRanRef` is already set, so the only send that can follow
-    // is the user's own.
-    composer.setInput("");
-    handleSendFollowUp(autoRunInput as string);
-  }, [
+  usePublishEventAgent({
+    scope: `${chatSessionId}:${selectedModel ? modelRowKey(selectedModel) : ""}:${previewedHostId ?? ""}`,
+    blockedReason: !isSessionBootstrapComplete ||
+      !isSelectedModelResolved || previewedHostLoading || restoringAdhoc
+      ? "Wait for the agent conversation to finish loading."
+      : isCompareMode
+      ? "Choose one agent to run events."
+      : isStreamingActive || isPreparingServerForSend
+        ? "Event skipped while the agent is busy. Trigger it again when the turn finishes."
+        : composerDisabled || sendBlocked || conversationSendBlockedRef.current
+          ? "The conversation is not ready. Check the agent settings, then trigger the event again."
+          : null,
+    send: handleSendFollowUp,
+  });
+
+  const compareAutoRun = usePlaygroundAutoRun({
     autoRunInput,
     composer,
     evalChatHandoff,
@@ -5106,8 +5105,20 @@ export function PlaygroundMain({
     isSessionBootstrapComplete,
     isThreadEmpty,
     isStreaming,
+    isCompareMode,
+    compareReadyCount,
+    compareLanesReady,
+    submitBlocked,
+    clientInit,
+    modelContextQueue,
+    ensureSelectedServerReadyForChat,
+    ensureThreadReadyForSend,
+    ensureLocalHarnessReadyForSend,
     handleSendFollowUp,
-  ]);
+    broadcastSequence,
+    onAutoRunStarted,
+    onAutoRunSent,
+  });
 
   // Surface the live conversation to embedders (eval preview captures it back
   // into the case spec). Effect-driven so it tracks streaming updates too.
@@ -5484,6 +5495,7 @@ export function PlaygroundMain({
     );
     return true;
   };
+  compareAutoRun.queueRef.current = queueBroadcastRequest;
 
   const mergedToolRenderOverrides = useMemo(
     () => ({
@@ -7572,10 +7584,11 @@ export function PlaygroundMain({
                           }
                           broadcastRequest={broadcastRequest?.request ?? null}
                           claimBroadcastDelivery={(request) =>
-                            broadcastRequest?.claim(
-                              request,
-                              broadcastRecipient("host", column.compareId),
-                            ) ?? false
+                              compareAutoRun.claim(
+                                broadcastRequest,
+                                request,
+                                broadcastRecipient("host", column.compareId),
+                              )
                           }
                           deterministicExecutionRequest={
                             deterministicExecutionRequest
@@ -7720,10 +7733,11 @@ export function PlaygroundMain({
                             selectedServers={selectedServers}
                             broadcastRequest={broadcastRequest?.request ?? null}
                             claimBroadcastDelivery={(request) =>
-                              broadcastRequest?.claim(
+                              compareAutoRun.claim(
+                                broadcastRequest,
                                 request,
                                 broadcastRecipient("model", compareId),
-                              ) ?? false
+                              )
                             }
                             deterministicExecutionRequest={
                               deterministicExecutionRequest

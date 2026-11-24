@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   parseDesktopActivity,
   type DesktopActivity,
+  type StartupStage,
 } from "../shared/desktop-diagnostics.js";
 
 type RecordEntry = DesktopActivity & { at: number };
@@ -27,6 +28,7 @@ export function createDesktopDiagnostics(options: {
   let rendererAt: number | undefined;
   let auth: DesktopActivity["auth"];
   let version: string | undefined;
+  let startupStage: StartupStage | undefined;
   let reports = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pending:
@@ -60,6 +62,7 @@ export function createDesktopDiagnostics(options: {
       run_id: runId,
       renderer_version: version ?? "unknown",
       auth: auth ?? "unknown",
+      startup_stage: startupStage ?? "unknown",
       renderer_last_seen_at: rendererAt ?? null,
       renderer_context_stale:
         rendererAt === undefined || now() - rendererAt > 30_000,
@@ -77,6 +80,7 @@ export function createDesktopDiagnostics(options: {
     rendererAt = now();
     if (activity.auth) auth = activity.auth;
     if (activity.version) version = activity.version;
+    if (activity.stage) startupStage = activity.stage;
     const entry = { ...activity, at: now() };
     history.push(entry);
     if (pending) {
@@ -191,6 +195,8 @@ export function createDesktopDiagnostics(options: {
     if (pending && exited) pending.renderer_exits++;
     rendererAt = undefined;
     auth = undefined;
+    // A new page load reports its own stage; the old one no longer applies.
+    startupStage = undefined;
     publish();
   }
   publish();

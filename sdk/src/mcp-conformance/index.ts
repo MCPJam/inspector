@@ -17,6 +17,7 @@ export type {
   MCPReadinessId,
   MCPReadinessSpecStrength,
   MCPReadinessWarning,
+  MCPPassedAdvice,
   MCPServerSurfaceSnapshot,
 } from "./types.js";
 
