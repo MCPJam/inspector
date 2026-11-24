@@ -2162,16 +2162,16 @@ describe("web routes — chat-v2 hosted mode", () => {
       expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
     });
 
-    it("an operator state (broker delivery off) stays 503; a turn setting is 422 FEATURE_NOT_SUPPORTED", async () => {
+    it("an operator state (no computers data plane) stays 503; a turn setting is 422 FEATURE_NOT_SUPPORTED", async () => {
       checkHarnessRuntimeAvailableMock.mockReturnValueOnce({
         ok: false,
-        kind: "broker-disabled",
-        reason: "broker delivery is disabled on this server",
+        kind: "computers-unconfigured",
+        reason: "this server has no computers data plane",
       } as never);
       const operator = await post({}, claudeCode);
       expect(operator.status).toBe(503);
       const operatorBody = JSON.stringify(await operator.json());
-      expect(operatorBody).toContain('"kind":"broker-disabled"');
+      expect(operatorBody).toContain('"kind":"computers-unconfigured"');
       expect(operatorBody).not.toContain("FEATURE_NOT_SUPPORTED");
 
       checkHarnessRuntimeAvailableMock.mockReturnValueOnce({

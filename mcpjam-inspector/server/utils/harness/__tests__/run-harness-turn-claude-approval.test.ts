@@ -267,7 +267,6 @@ beforeEach(() => {
   state.executions = 0;
   resetApprovalParkForTests();
   resetLocalHarnessRegistryForTests();
-  vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
 });
 afterEach(() => {
   resetApprovalParkForTests();

@@ -246,7 +246,6 @@ beforeEach(() => {
   process.env.INSPECTOR_SERVICE_TOKEN = "svc";
   process.env.E2B_API_KEY = "e2b";
   process.env.COMPUTERS_TERMINAL_TOKEN_SECRET = "secret";
-  delete process.env.MCPJAM_HARNESS_BROKER_DELIVERY;
   __setHostedCatalogForTests([MODEL]);
 
   mutationMock.mockImplementation(async (ref) => {

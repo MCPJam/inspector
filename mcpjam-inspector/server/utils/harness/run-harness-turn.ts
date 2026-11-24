@@ -138,10 +138,7 @@ import { withWarmBridgeRuntime } from "./warm-bridge-runtime.js";
 import { withWarmBridgeBootstrap } from "./warm-bridge-files.js";
 import { warmBridgeWindowMs, warmRetentionFor } from "./warm-retention.js";
 import { OrgLeaseTurn } from "./org-lease-turn.js";
-import {
-  harnessBrokerDeliveryEnabled,
-  nativeForwardingEnabled,
-} from "./harness-flags.js";
+import { nativeForwardingEnabled } from "./harness-flags.js";
 import {
   emitError,
   emitFinish,
@@ -1625,31 +1622,14 @@ export async function runHarnessTurn(
         throw new Error(`Can't run this turn: ${effortRefusal}.`);
       }
 
-      // 1. Credential delivery gate. BROKER-ONLY (COMP-23): the lease is
-      // installed into E2B's egress transform AFTER the sandbox id is known
-      // (step 3b) and the CLI runs with dummy creds — the inspector never
-      // holds a model credential. The raw-key client path (resolveAuth →
+      // 1. Credentials are BROKER-ONLY (COMP-23): the lease is installed into
+      // E2B's egress transform AFTER the sandbox id is known (step 3b) and the
+      // CLI runs with dummy creds, so the inspector never holds a model
+      // credential. The raw-key client path (resolveAuth →
       // /web/harness/model-credential) was removed because it spent the
-      // system AI Gateway key with zero metering. With the kill switch off,
-      // EVERY scope fails closed here (guests were already broker-only —
-      // this now covers members too); the chat-v2 routes surface the same
-      // condition pre-stream via checkHarnessRuntimeAvailable.
-      //
-      // An EXTERNAL-ACCOUNT harness is exempt, and not as a favour: it has no
-      // broker to disable. Its credential is the customer's own materialized
-      // project secret and its model traffic never touches MCPJam's proxy, so
-      // refusing it here would be switching off a path it never uses.
-      if (
-        harnessAdapter.modelAccess !== "external-account" &&
-        !harnessBrokerDeliveryEnabled()
-      ) {
-        throw new Error(
-          "Harness runs require broker credential delivery, but it is " +
-            "disabled on this server (MCPJAM_HARNESS_BROKER_DELIVERY=false). " +
-            "There is no fallback credential path — re-enable the broker to " +
-            "run harness turns.",
-        );
-      }
+      // system AI Gateway key with zero metering. An EXTERNAL-ACCOUNT harness
+      // has no broker: its credential is the customer's own materialized
+      // project secret, and its model traffic never touches MCPJam's proxy.
 
       // 2. Build the .mcp.json — always-proxy: ensure a per-server tunnel and
       // point every entry at MCPJam's own adapter-http (no upstream creds in the

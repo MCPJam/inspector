@@ -46,7 +46,6 @@ const ENV = {
   INSPECTOR_SERVICE_TOKEN: "test-svc-token",
   COMPUTERS_TERMINAL_TOKEN_SECRET: "terminal-secret-16+",
   E2B_API_KEY: "e2b-test",
-  MCPJAM_HARNESS_BROKER_DELIVERY: "true",
 };
 
 const clientManager = {

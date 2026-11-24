@@ -59,11 +59,8 @@ disabled in the UI rather than silently ignored.
 - A signed-in **project member** (guests run only via host-funded swarms,
   capped).
 
-No credential configuration is needed — broker delivery is on by default and
-the backend broker and model proxy are always-on. The one related setting is
-an emergency kill switch: `MCPJAM_HARNESS_BROKER_DELIVERY=false` on the
-inspector makes harness runs unavailable with a pre-stream error. It is a
-shutoff, never a bypass.
+No credential configuration is needed: broker delivery, the backend broker
+and the model proxy are always on.
 
 ## Billing
 
@@ -118,11 +115,10 @@ real runtime did. All fail closed; a failed start spends nothing.
 
 | Condition | What you see |
 |---|---|
-| Broker delivery kill-switched (`MCPJAM_HARNESS_BROKER_DELIVERY=false`) | Pre-flight error naming the kill switch — harness runs are unavailable on that server. |
 | Enterprise-managed authorization policy on the host | Pre-flight error — the harness MCP proxy can't carry the policy, so the combination is rejected rather than silently bypassed. |
 | Require tool approval + selected MCP servers | Claude Code and Codex: honored, with MCPJam gating the host-executed tools (Codex runs on `app-server`; the `exec` transport is retired). Cursor: approval works on native tools, but combined with selected MCP servers it is a pre-flight error (its adapter does not yet gate MCP calls). |
 | Computers data plane not configured | Pre-flight error naming the data plane requirement. |
-| Model not MCPJam-provided / not runnable | Pre-flight error asking you to pick an eligible model. The web and MCP chat routes answer `422 FEATURE_NOT_SUPPORTED` (the request is valid; retrying will not help), not 503; the broker kill switch and a missing computers data plane stay 503. |
+| Model not MCPJam-provided / not runnable | Pre-flight error asking you to pick an eligible model. The web and MCP chat routes answer `422 FEATURE_NOT_SUPPORTED` (the request is valid; retrying will not help), not 503; a missing computers data plane stays 503. |
 | Cursor key missing, mis-bound or only project-shared | Pre-flight error naming `CURSOR_API_KEY` and what is wrong with it. See [cursor-host.md](./cursor-host.md). |
 | Computer at daily start cap | Start-limit dialog with upgrade CTA. |
 | Org out of compute allowance + credits (enforce mode) | Computer pauses with the "Paused for billing" notice. |

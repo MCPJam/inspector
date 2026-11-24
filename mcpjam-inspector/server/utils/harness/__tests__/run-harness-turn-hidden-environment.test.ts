@@ -302,7 +302,6 @@ function materializeArgs(): {
 }
 
 beforeEach(() => {
-  vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
   harnessState.lastOpts = undefined;
   passes.reconcileSkillDirs.mockClear();
   passes.materializeSkillFiles.mockClear();

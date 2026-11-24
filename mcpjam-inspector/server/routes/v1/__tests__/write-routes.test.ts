@@ -169,7 +169,6 @@ describe("v1 write routes", () => {
     CONVEX_URL: process.env.CONVEX_URL,
     CONVEX_HTTP_URL: process.env.CONVEX_HTTP_URL,
     INSPECTOR_SERVICE_TOKEN: process.env.INSPECTOR_SERVICE_TOKEN,
-    MCPJAM_HARNESS_BROKER_DELIVERY: process.env.MCPJAM_HARNESS_BROKER_DELIVERY,
   };
   const originalFetch = global.fetch;
 
@@ -183,6 +182,7 @@ describe("v1 write routes", () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
+    vi.unstubAllEnvs();
     for (const [key, value] of Object.entries(originalEnv)) {
       if (value) process.env[key] = value;
       else delete process.env[key];
@@ -2604,10 +2604,11 @@ describe("v1 write routes", () => {
       // failed a check that needed no run row.
       //
       // The unavailability is stated by the FIXTURE, not inherited from the
-      // machine: switching broker delivery off makes the shared runtime check
-      // fail for a reason this test controls, so a CI box that happens to
-      // carry harness credentials still exercises the refusal.
-      process.env.MCPJAM_HARNESS_BROKER_DELIVERY = "false";
+      // machine: with no E2B key the server has no computers data plane, so
+      // the shared runtime check fails for a reason this test controls, and a
+      // CI box that happens to carry harness credentials still exercises the
+      // refusal.
+      vi.stubEnv("E2B_API_KEY", "");
       hostSuiteQueries({
         "hosts:getHost": () => ({ config: { harness: "claude-code" } }),
       });
@@ -2636,7 +2637,7 @@ describe("v1 write routes", () => {
       // run row freezes. Judging the suite's default host instead would admit
       // an environment pinned to a harness this server cannot drive — the
       // exact mis-attribution the gate exists to stop.
-      process.env.MCPJAM_HARNESS_BROKER_DELIVERY = "false";
+      vi.stubEnv("E2B_API_KEY", "");
       mockConvexQueries({
         "testSuites:getTestSuite": () => ({
           ...SUITE_DOC,
@@ -2687,7 +2688,6 @@ describe("v1 write routes", () => {
       // it with one the pinned Codex CLI runs without tools. The run executes
       // the override, so the dry run must refuse — judging the host's model
       // would answer 202 and fail (or run tool-less) after siblings started.
-      vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
       vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc_token");
       vi.stubEnv("E2B_API_KEY", "e2b-test");
       vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "terminal-secret-16+");

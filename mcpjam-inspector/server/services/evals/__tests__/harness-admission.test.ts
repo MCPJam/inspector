@@ -28,7 +28,6 @@ const ENV_KEYS = [
   "INSPECTOR_SERVICE_TOKEN",
   "COMPUTERS_TERMINAL_TOKEN_SECRET",
   "E2B_API_KEY",
-  "MCPJAM_HARNESS_BROKER_DELIVERY",
 ] as const;
 
 const saved: Record<string, string | undefined> = {};
@@ -42,10 +41,6 @@ beforeEach(() => {
   process.env.INSPECTOR_SERVICE_TOKEN = "test-svc-token";
   process.env.COMPUTERS_TERMINAL_TOKEN_SECRET = "terminal-secret-16+";
   process.env.E2B_API_KEY = "e2b-test";
-  // Explicit rather than inherited: the shared gate reads this key and treats
-  // an unset value as enabled, so leaving it ambient would make every verdict
-  // below depend on the machine the suite happens to run on.
-  process.env.MCPJAM_HARNESS_BROKER_DELIVERY = "true";
 });
 
 afterEach(() => {
@@ -253,8 +248,8 @@ describe("checkEvalHarnessAdmission", () => {
     expect(verdict.reason).toContain('"high"');
   });
 
-  it("refuses when broker delivery is switched off, with the gate's own reason", () => {
-    process.env.MCPJAM_HARNESS_BROKER_DELIVERY = "false";
+  it("refuses a server with no computers data plane, with the gate's own reason", () => {
+    delete process.env.E2B_API_KEY;
     const verdict = checkEvalHarnessAdmission({
       hostConfig: harnessHost(),
       serverIds: ["s1"],
@@ -262,7 +257,7 @@ describe("checkEvalHarnessAdmission", () => {
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("can’t access the credentials");
+    expect(verdict.reason).toContain("needs a cloud computer");
   });
 
   it("admits Codex for a suite with MCP servers (host-executed delivery)", () => {

@@ -179,7 +179,6 @@ async function runAndCapture(overrides: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
-  vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => new Response("{}", { status: 200 })),
