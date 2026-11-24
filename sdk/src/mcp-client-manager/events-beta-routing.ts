@@ -39,16 +39,18 @@ export function withEventsBetaRouting(
       return send(input, init);
     }
     if (typeof init?.body !== "string") return send(input, init);
-    const headers = new Headers(init.headers);
-    const method = headers.get("mcp-method");
+    const originalHeaders = new Headers(init.headers);
+    const method = originalHeaders.get("mcp-method");
     const listing = method === "events/list";
     if (!listing && (!method || !EVENTS_BETA_ROUTED_METHODS.has(method))) {
       return send(input, init);
     }
-    headers.delete("Mcp-Name");
-    for (const name of [...headers.keys()]) {
-      if (name.startsWith(MCP_PARAM_HEADER_PREFIX)) headers.delete(name);
-    }
+    const headers = new Headers();
+    originalHeaders.forEach((value, name) => {
+      if (name !== "mcp-name" && !name.startsWith(MCP_PARAM_HEADER_PREFIX)) {
+        headers.set(name, value);
+      }
+    });
     if (listing) {
       cached = undefined;
       return send(input, { ...init, headers });
