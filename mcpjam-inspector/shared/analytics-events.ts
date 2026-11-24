@@ -382,12 +382,6 @@ export const ANALYTICS_EVENTS = {
   host_toolbar_timezone_changed: { source: "client" },
   import_json_button_clicked: { source: "client" },
   interactive_signin_required: { source: "client" },
-  // Guest "Invite team members" nudge (sidebar CTA shown to signed-out users
-  // on hosted): shown/dismissed measure the gate's conversion funnel; the
-  // sign-up/sign-in clicks themselves reuse `sign_up_button_clicked` /
-  // `login_button_clicked` with location "invite_signup_nudge".
-  invite_signup_nudge_shown: { source: "client" },
-  invite_signup_nudge_dismissed: { source: "client" },
   logger_cleared: { source: "client" },
   logger_collapsed: { source: "client" },
   logger_copy_clicked: { source: "client" },
@@ -553,6 +547,12 @@ export const ANALYTICS_EVENTS = {
   servers_tab_viewed: { source: "client" },
   share_dialog_opened: { source: "client" },
   sidebar_nav_clicked: { source: "client" },
+  // The always-on sidebar footer card. `prompt` is "guest_signup",
+  // "pro_upgrade" or "owner_request". Guest clicks reuse
+  // `sign_up_button_clicked`; Pro and owner-request clicks fire
+  // `upgrade_button_clicked`; the confirm dialog reuses
+  // `plans_upgrade_confirm_*`. All carry location "sidebar_prompt".
+  sidebar_prompt_shown: { source: "client" },
   stateless_protocol_connect: { source: "client" },
   suite_viewed: { source: "client" },
   swarm_create_generate_completed: { source: "client" },
@@ -571,6 +571,7 @@ export const ANALYTICS_EVENTS = {
   tunnel_created: { source: "client" },
   tunnel_rotated: { source: "client" },
   update_server_button_clicked: { source: "client" },
+  upgrade_button_clicked: { source: "client" },
   xaa_flow_completed: { source: "client" },
   xaa_flow_started: { source: "client" },
   xaa_resource_app_saved: { source: "client" },
