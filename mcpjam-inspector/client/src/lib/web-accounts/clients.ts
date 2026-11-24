@@ -18,6 +18,26 @@ export function webClientVendorOfHost(host: {
   return target ? webClientVendorForRuntime(target.harnessId) : undefined;
 }
 
+/**
+ * The clients a person may pick. Claude web and ChatGPT web stay out while
+ * their flag is off, even in a project that made them while it was on. One
+ * already picked (`keep`) stays listed, so it still shows by name and can be
+ * unpicked; it just can't be picked again.
+ */
+export function pickableHosts<
+  T extends Parameters<typeof webClientVendorOfHost>[0] & { hostId: string },
+>(
+  hosts: readonly T[],
+  webClientsEnabled: boolean,
+  keep: Iterable<string | null | undefined> = [],
+): T[] {
+  if (webClientsEnabled) return [...hosts];
+  const kept = new Set(keep);
+  return hosts.filter(
+    (host) => kept.has(host.hostId) || !webClientVendorOfHost(host),
+  );
+}
+
 /** The vendor's site as people know it, such as claude.ai. */
 export function webClientSite(vendor: WebClientVendor): string {
   return new URL(WEB_CLIENT_SITES[vendor][0]).host;
