@@ -760,7 +760,7 @@ function ConvertSessionDialogCoreInner({
       // upgrade wording.
       toast.error(
         getPromotionBlockedCopy(error) ??
-          getBillingErrorMessage(error, "Failed to save as test case"),
+          getBillingErrorMessage(error, "Couldn't save as test case. Try again."),
       );
     } finally {
       setIsSubmitting(false);
