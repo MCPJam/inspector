@@ -22,9 +22,14 @@ export type EventsDeliveryModeView = "poll" | "push" | "webhook";
 export interface EventsSupportView {
   handshakeObserved: boolean;
   declared: boolean;
+  beta?: boolean;
   listChanged: boolean;
   capability?: Record<string, unknown>;
   source?: "initialize" | "server/discover";
+}
+
+export interface EventsCatalogFrame {
+  type: "ready" | "changed";
 }
 
 export interface EventDescriptorView {

@@ -40,6 +40,7 @@ import type {
 import type { MCPClientManager } from "@mcpjam/sdk";
 import { InboxBackpressureError } from "@mcpjam/sdk/events";
 import {
+  createManualHostedConnection,
   handleRoute,
   projectServerSchema,
   readJsonBody,
@@ -59,6 +60,7 @@ import {
 } from "../../services/events/config.js";
 import { HttpInboxClient } from "../../services/events/inbox-client.js";
 import { classifyEventsRouteError } from "../../services/events/route-errors.js";
+import { streamEventCatalogChanges } from "../../services/events/catalog-changes.js";
 import {
   issueViewerToken,
   MIN_VIEWER_KEY_LENGTH,
@@ -278,6 +280,7 @@ function supportView(
     support: {
       handshakeObserved: support.handshakeObserved,
       declared: support.declared,
+      ...(support.beta ? { beta: true } : {}),
       listChanged: support.listChanged,
       ...(support.capability ? { capability: support.capability } : {}),
       ...(support.source ? { source: support.source } : {}),
@@ -371,6 +374,12 @@ const slotStateSchema = z.object({
 // ---------------------------------------------------------------------------
 
 const events = new Hono();
+
+events.post("/catalog-changes", async (c) => {
+  const rawBody = await readJsonBody<Record<string, unknown>>(c);
+  const { manager, body } = await createManualHostedConnection(c, rawBody, projectServerSchema);
+  return streamEventCatalogChanges(c, manager, body.serverId, () => manager.disconnectAllServers());
+});
 
 events.post("/list", async (c) =>
   withEphemeralConnection(c, eventsListSchema, async (manager, body) =>
