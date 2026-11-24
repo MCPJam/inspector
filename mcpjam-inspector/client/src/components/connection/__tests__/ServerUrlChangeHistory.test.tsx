@@ -242,7 +242,7 @@ describe("ServerUrlChangeHistory", () => {
     );
 
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Re-enter the request headers and bearer token if required by the server."
+      "The URL change cleared the request headers and bearer token. Check which credentials the server requires."
     );
 
     rerender(
@@ -253,7 +253,7 @@ describe("ServerUrlChangeHistory", () => {
       />
     );
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Re-enter the request headers and bearer token if required by the server."
+      "The URL change cleared the request headers and bearer token. Check which credentials the server requires."
     );
 
     rerender(

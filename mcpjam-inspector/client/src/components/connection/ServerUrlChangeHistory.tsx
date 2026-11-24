@@ -254,7 +254,7 @@ function recoveryMessage(
   const credentials = credentialList.format(missing);
   // A 403 can also come from an access policy such as an IP allowlist.
   return isForbidden
-    ? `Re-enter the ${credentials} if required by the server.`
+    ? `The URL change cleared the ${credentials}. Check which credentials the server requires.`
     : `Re-enter the ${credentials} to reconnect.`;
 }
 
