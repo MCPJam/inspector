@@ -132,6 +132,7 @@ export default defineConfig({
     "@mcpjam/sdk/widget-runtime",
     "@mcpjam/sdk/events",
     "@mcpjam/sdk/mocks",
+    "@mcpjam/sdk/climbs",
     "@mcpjam/sdk/internal/plugin-host",
     "@mcpjam/sdk/internal/telemetry",
     "@mcpjam/sdk/internal/network-proxy",
@@ -208,6 +209,8 @@ export default defineConfig({
       // Mock servers: `buildMock` and the definition's validator. Without its
       // own line the bare alias rewrites this to `sdk/dist/index.js/mocks`.
       "@mcpjam/sdk/mocks": join(rootDir, "../sdk/dist/mocks/index.js"),
+      // Climbs: the pure functions over a climb's results, the same way.
+      "@mcpjam/sdk/climbs": join(rootDir, "../sdk/dist/climbs/index.js"),
     };
   },
 });
