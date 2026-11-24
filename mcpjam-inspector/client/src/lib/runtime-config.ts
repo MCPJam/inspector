@@ -4,6 +4,8 @@ export interface InspectorClientRuntimeConfig {
   workosClientId?: string;
   workosApiHostname?: string;
   doNotTrack?: boolean;
+  signupCampaignAppOrigin?: string;
+  signupCampaignWebsiteOrigins?: string;
   sandboxOrigin?: string;
   platformAgentDisabled?: boolean;
 }
@@ -14,7 +16,7 @@ declare global {
   }
 }
 
-function getRuntimeConfig(): InspectorClientRuntimeConfig | null {
+export function getRuntimeConfig(): InspectorClientRuntimeConfig | null {
   if (typeof window === "undefined") {
     return null;
   }
@@ -71,6 +73,13 @@ export function getRuntimeSandboxOrigin(): string | undefined {
  * Sentry disabled and PostHog opted out with no remote loading; feature flags
  * still arrive from the server, which answers them without PostHog.
  */
+export function browserAnalyticsOptedOut(): boolean {
+  return getRuntimeDoNotTrack() || (typeof navigator !== "undefined" && (
+    navigator.doNotTrack === "1" ||
+    (navigator as Navigator & {globalPrivacyControl?: boolean}).globalPrivacyControl === true
+  ));
+}
+
 export function getRuntimeDoNotTrack(): boolean {
   return getRuntimeConfig()?.doNotTrack === true;
 }

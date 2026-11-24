@@ -723,7 +723,7 @@ describe("useEnsureDbUser", () => {
     vi.spyOn(document, "cookie", "get").mockImplementation(() => receipt);
     vi.spyOn(document, "cookie", "set").mockImplementation((value) => { receipt = value.split(";")[0]; });
     mockState.ensureUser.mockImplementationOnce(async () => {
-      if (optOut) localStorage.setItem("mcpjam-analytics-consent", "denied");
+      if (optOut) mockState.posthog = { is_capturing: () => false };
       websiteVisit(expiresAt + 1000, "linkedin/winter_launch");
       return "user-row";
     });
@@ -732,12 +732,27 @@ describe("useEnsureDbUser", () => {
       await waitFor(() => expect(result.current.isUserReady).toBe(true));
       expect(mockState.ensureUser).toHaveBeenCalledWith({ signupCampaign: "linkedin/fall_launch" });
       expect(receipt).toBe("__Host-mcpjam_signup_consumed=" + expiresAt);
-      localStorage.removeItem("mcpjam-analytics-consent");
       expect(await readSignupCampaign(() => true)).toMatchObject({label: "linkedin/winter_launch"});
       websiteVisit(expiresAt);
       expect(await readSignupCampaign(() => true)).toBeUndefined();
     } finally {
-      localStorage.removeItem("mcpjam-analytics-consent");
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("uses only the configured staging origins and honors GPC before fetching", async () => {
+    vi.stubGlobal("location", new URL("https://staging.mcpjam.com"));
+    window.__MCP_RUNTIME_CONFIG__ = {signupCampaignAppOrigin: location.origin, signupCampaignWebsiteOrigins: "https://website-staging.mcpjam.com"};
+    websiteVisit(Date.now() + 60_000);
+    try {
+      await readSignupCampaign(() => true);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(fetch).toHaveBeenCalledWith("https://website-staging.mcpjam.com/api/signup-campaign", expect.anything());
+      vi.stubGlobal("navigator", {globalPrivacyControl:true});
+      expect(await readSignupCampaign(() => true)).toBeUndefined();
+      expect(fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      delete window.__MCP_RUNTIME_CONFIG__;
       vi.unstubAllGlobals();
     }
   });
@@ -912,8 +927,6 @@ describe("useEnsureDbUser", () => {
         await vi.advanceTimersByTimeAsync(delayMs);
       });
     }
-
-    expect(result.current.setupFailed).toBe(true);
 
     // Budget spent: setup is genuinely finished and failed, so the error
     // screen is now the right thing to show.

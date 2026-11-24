@@ -120,7 +120,7 @@ if (sandboxOriginFault) {
 }
 
 function AuthBootstrap({ children }: { children: ReactNode }) {
-  const { isEnsuringUser, isUserReady, hasIdentity, setupFailed } = useEnsureDbUser();
+  const { isEnsuringUser, isUserReady, hasIdentity } = useEnsureDbUser();
   useAppLoadStallReport(isUserReady, hasIdentity);
   useEffect(() => {
     authRefusalDiagnostics.update({ ready: isUserReady });
@@ -129,7 +129,6 @@ function AuthBootstrap({ children }: { children: ReactNode }) {
 
   return (
     <DbUserReadyProvider
-      setupFailed={setupFailed}
       isEnsuringUser={isEnsuringUser}
       isUserReady={isUserReady}
     >

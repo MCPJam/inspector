@@ -23,6 +23,8 @@ export interface InspectorClientRuntimeConfig {
   workosApiHostname?: string;
   /** Present only under DO_NOT_TRACK: the browser then starts no Sentry and sends PostHog nothing. */
   doNotTrack?: boolean;
+  signupCampaignAppOrigin?: string;
+  signupCampaignWebsiteOrigins?: string;
   /** `MCPJAM_SANDBOX_ORIGIN`; the browser prefers it to its build-time sandbox origin. */
   sandboxOrigin?: string;
   /** Present only under `MCPJAM_PLATFORM_AGENT=off`: the browser then hides the agent. */
@@ -218,6 +220,8 @@ export function getInspectorClientRuntimeConfig(): InspectorClientRuntimeConfig 
     convexSiteUrl,
     workosClientId,
     workosApiHostname,
+    signupCampaignAppOrigin: getNonEmptyEnv("SIGNUP_CAMPAIGN_APP_ORIGIN"),
+    signupCampaignWebsiteOrigins: getNonEmptyEnv("SIGNUP_CAMPAIGN_WEBSITE_ORIGINS"),
     // The server's opt-out reaches the browser here rather than as a build
     // argument, so one image serves installs that opt out and ones that do not.
     ...(telemetryOptedOut(process.env.DO_NOT_TRACK)

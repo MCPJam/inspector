@@ -1,7 +1,9 @@
+import { MCPJAM_HOSTED_APP_ORIGIN } from "./oauth/constants";
+import { browserAnalyticsOptedOut, getRuntimeConfig } from "./runtime-config";
 // The campaign stays in an HttpOnly, host-only marketing-site cookie. The
 // app remembers only the expiry of the last visit it successfully attributed.
 const receiptName = "__Host-mcpjam_signup_consumed";
-const websiteOrigins = [
+const productionWebsiteOrigins = [
   "https://www.mcpjam.com",
   "https://mcpjam.com",
 ] as const;
@@ -14,15 +16,25 @@ function consumedThrough(): number {
   return Number(receipt?.slice(receiptName.length + 1)) || 0;
 }
 
-function allowed(canCapture: () => boolean): boolean {
-  return (
-    location.origin === "https://app.mcpjam.com" &&
-    canCapture() &&
-    navigator.doNotTrack !== "1" &&
-    !(navigator as Navigator & { globalPrivacyControl?: boolean })
-      .globalPrivacyControl &&
-    localStorage.getItem("mcpjam-analytics-consent") !== "denied"
-  );
+function websiteOrigins(): readonly string[] {
+  if (location.origin === MCPJAM_HOSTED_APP_ORIGIN)
+    return productionWebsiteOrigins;
+  const config = getRuntimeConfig();
+  if (
+    location.protocol !== "https:" ||
+    config?.signupCampaignAppOrigin !== location.origin
+  )
+    return [];
+  return (config.signupCampaignWebsiteOrigins ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => {
+      try {
+        return value.startsWith("https://") && new URL(value).origin === value;
+      } catch {
+        return false;
+      }
+    });
 }
 
 async function fromWebsite(
@@ -57,12 +69,14 @@ export async function readSignupCampaign(
   canCapture: () => boolean,
 ): Promise<SignupCampaign | undefined> {
   try {
-    if (!allowed(canCapture)) return;
+    if (browserAnalyticsOptedOut() || !canCapture()) return;
+    const origins = websiteOrigins();
+    if (!origins.length) return;
     const signal = AbortSignal.timeout(1200);
     const visits = await Promise.all(
-      websiteOrigins.map((origin) => fromWebsite(origin, signal)),
+      origins.map((origin) => fromWebsite(origin, signal)),
     );
-    if (!allowed(canCapture)) return;
+    if (browserAnalyticsOptedOut() || !canCapture()) return;
     const latest = visits
       .filter((v): v is SignupCampaign => !!v)
       .sort((a, b) => b.expiresAt - a.expiresAt)[0];
