@@ -422,7 +422,7 @@ function EvaluateTabContent({
       return;
     }
     // Missing from the overview is not yet proof the suite is gone — not
-    // until the suite's OWN query has answered. "Promote to test case" into a
+    // until the suite's OWN query has answered. "Save as test case" into a
     // NEW suite creates it in an action, whose result can reach this client
     // before the overview subscription's update does; and the promote dialog
     // holds that same subscription (same args), so this page can mount on a

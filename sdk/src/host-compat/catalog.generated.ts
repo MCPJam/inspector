@@ -759,6 +759,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             image: false,
           },
         },
+        structuredContent: "fallback",
       },
       mcpToolResultImageRendering: {
         placement: "inline",
@@ -1074,6 +1075,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             image: false,
           },
         },
+        structuredContent: "preferred",
       },
       mcpToolResultImageRendering: {
         placement: "none",
@@ -4853,7 +4855,9 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       rendersMcpApps: false,
       supportedProtocolVersions: ["2025-06-18"],
       verifiedAt: 1794528000000,
-      modelVisibleMcpToolResults: {},
+      modelVisibleMcpToolResults: {
+        structuredContent: "preferred",
+      },
       mcpToolResultImageRendering: {},
       hostStyle: "codex-cli",
       modelId: "openai/gpt-6-luna",

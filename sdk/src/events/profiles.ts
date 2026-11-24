@@ -17,8 +17,10 @@
  * they are recorded on the run, always labelled, and never count as a pass.
  */
 
+import type { EventsSupport } from "../mcp-client-manager/events-capability-capture.js";
 import { MCP_PROTOCOL_VERSIONS } from "../mcp-client-manager/mcp-protocol-version.js";
 
+export const BETA_PROFILE_ID = "beta@c77b843" as const;
 export const DRAFT_PROFILE_ID = "draft@28ec35e" as const;
 /** ChatGPT as OpenAI currently documents it; the `chatgpt` alias. */
 export const CHATGPT_PROFILE_ID = "chatgpt@2026-11-05" as const;
@@ -29,10 +31,12 @@ export const CHATGPT_PROFILE_ID = "chatgpt@2026-11-05" as const;
  */
 export const CHATGPT_2026_09_30_PROFILE_ID = "chatgpt@2026-09-30" as const;
 export type EventsProfileId =
+  | typeof BETA_PROFILE_ID
   | typeof DRAFT_PROFILE_ID
   | typeof CHATGPT_PROFILE_ID
   | typeof CHATGPT_2026_09_30_PROFILE_ID;
 export const EVENTS_PROFILE_IDS: readonly EventsProfileId[] = [
+  BETA_PROFILE_ID,
   DRAFT_PROFILE_ID,
   CHATGPT_PROFILE_ID,
   CHATGPT_2026_09_30_PROFILE_ID,
@@ -72,7 +76,7 @@ export interface EventsProfile {
   id: EventsProfileId;
   title: string;
   /** Where the host reads the capability. */
-  capabilityPlacement: ProfileFact<"capabilities.events">;
+  capabilityPlacement: ProfileFact<"capabilities.events" | "capabilities.extensions['io.modelcontextprotocol/events']">;
   protocolVersions: ProfileFact<string[]>;
   /** Transports the host connects over. */
   transports: ProfileFact<McpTransport[]>;
@@ -164,7 +168,8 @@ export const DRAFT_PROFILE: EventsProfile = {
     provenance: policy("CSPRNG, middle of the draft's 24–64 byte window."),
   },
   refreshLead: {
-    value: "max(60 s, 10% of the remaining grant) before refreshBefore",
+    value:
+      "max(60 s, 10% of the remaining grant), at most half of it, before refreshBefore",
     provenance: policy("MCPJam keeper schedule."),
   },
   unsubscribesOnEnd: {
@@ -285,11 +290,26 @@ export const CHATGPT_2026_09_30_PROFILE: EventsProfile = {
   },
 };
 
+const betaSource: ProfileProvenance = {
+  kind: "documented",
+  source: "https://github.com/modelcontextprotocol/ext-events/blob/c77b84395eff0ae32f53b0516c2214fe276ed050/specification/beta/events/events.mdx",
+};
 export const EVENTS_PROFILES: Record<EventsProfileId, EventsProfile> = {
+  [BETA_PROFILE_ID]: {
+    ...DRAFT_PROFILE, id: BETA_PROFILE_ID, title: "MCP Events beta (SEP-3415)",
+    capabilityPlacement: { value: "capabilities.extensions['io.modelcontextprotocol/events']", provenance: betaSource },
+    protocolVersions: { value: ["2026-07-28"], provenance: betaSource },
+    transports: { value: ["stdio", "streamable-http"], provenance: betaSource },
+  },
   [DRAFT_PROFILE_ID]: DRAFT_PROFILE,
   [CHATGPT_PROFILE_ID]: CHATGPT_PROFILE,
   [CHATGPT_2026_09_30_PROFILE_ID]: CHATGPT_2026_09_30_PROFILE,
 };
+
+export function hasEventsProfileCapability(support: EventsSupport, profile: EventsProfileId): boolean {
+  if (profile === BETA_PROFILE_ID) return support.beta === true;
+  return support.declared && (!support.beta || support.legacy === true);
+}
 
 export function getEventsProfile(id: EventsProfileId): EventsProfile {
   return EVENTS_PROFILES[id];

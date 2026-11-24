@@ -48,6 +48,10 @@ import { resolveWorkosApiBaseUrl } from "./services/workos-api-base.js";
 import { resolveTrustedClientIpHeader } from "./utils/client-ip.js";
 import { loadFeatureFlagFileAtBoot } from "./utils/feature-flag-source.js";
 import { MCPClientManager } from "@mcpjam/sdk";
+import {
+  applyInspectorUserAgent,
+  withDefaultUserAgent,
+} from "./utils/outbound-user-agent.js";
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
 import { progressStore } from "./services/progress-store.js";
@@ -218,10 +222,13 @@ export async function createHonoApp() {
     isProduction,
   });
 
+  applyInspectorUserAgent();
+
   // Create the MCPJam client manager instance and wire RPC logging to SSE bus
   const mcpClientManager = new MCPClientManager(
     {},
     {
+      baseFetch: withDefaultUserAgent(),
       retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
       // Observed server features, filed under each connection's own context.
       featureObserver: (event) => recordLocalObservation(mcpClientManager, event),

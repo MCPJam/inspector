@@ -60,6 +60,7 @@ import type {
   RawHttpCheckContext,
 } from "./types.js";
 import { MCP_CHECK_CATEGORIES } from "./types.js";
+import { pinRefusalChecks } from "./version-refusal.js";
 import {
   collectClientAdvice,
   collectRawAdvice,
@@ -311,6 +312,8 @@ async function runClientChecks(
    * guessed era.
    */
   authorizationRefused?: true;
+  /** The pinned version was refused: no raw check or advice may run. */
+  versionRefused?: true;
   /** The check that carries a failed connect, for checks blocked by it. */
   connectFailedCheck?: { id: MCPCheckId; title: string };
 }> {
@@ -479,6 +482,17 @@ async function runClientChecks(
         readiness: [],
         authorizationRefused: true,
       };
+    }
+
+    // The server refused the pinned version (see `version-refusal.ts`).
+    const refused = pinRefusalChecks(error, {
+      config,
+      selectedCheckIds,
+      selectedClientChecks,
+      categoryOf: (id) => CHECK_CATEGORY_BY_ID.get(id) ?? "protocol",
+    });
+    if (refused) {
+      return { checks: refused, config, readiness: [], versionRefused: true };
     }
 
     // A raw-only Auto run has no client-backed check on which to report a
@@ -667,12 +681,12 @@ export class MCPConformanceTest {
       connectFailedCheck: clientRun.connectFailedCheck,
     };
 
-    // A refused Auto run already reported every selected check as
-    // could-not-run; the raw families get nothing to grade against an era the
-    // run never learned.
-    const rawSelection: Set<MCPCheckId> = clientRun.authorizationRefused
-      ? new Set()
-      : selectedCheckIds;
+    // A refused run (an Auto run's credentials, or a pinned version) already
+    // reported every selected check; the raw families get nothing to grade.
+    const rawSelection: Set<MCPCheckId> =
+      clientRun.authorizationRefused || clientRun.versionRefused
+        ? new Set()
+        : selectedCheckIds;
 
     const [
       protocolChecks,
@@ -686,7 +700,10 @@ export class MCPConformanceTest {
         runSecurityChecks(rawContext, rawSelection),
         runTransportChecks(rawContext, rawSelection),
         runModernChecks(rawContext, rawSelection),
-        collectRawAdvice(rawContext),
+        // No advice about a version the server refused.
+        clientRun.versionRefused
+          ? Promise.resolve<MCPReadinessOutcome[]>([])
+          : collectRawAdvice(rawContext),
       ]),
       this.config.signal
     );

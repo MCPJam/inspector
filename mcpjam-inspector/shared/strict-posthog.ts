@@ -1,5 +1,6 @@
 import { version } from "../package.json";
 import { POSTHOG_PROJECT_KEY } from "./posthog-project";
+import { APP_LOAD_STALL_CODES } from "./app-load-stall";
 import {
   EXTENSION_OPERATION_ERROR_CODES,
   EXTENSION_OPERATION_PROPERTIES,
@@ -15,6 +16,10 @@ const GITHUB_STAR_PROMPT = {
   reason: ["completed", "return_visit"],
   has_advice: "boolean",
 } as const satisfies Record<string, Rule>;
+
+/** The largest value a `"count"` field keeps; anything above it is dropped. */
+export const STRICT_COUNT_MAX = 1_000_000;
+
 const CATALOG: Readonly<Record<string, Readonly<Record<string, Rule>>>> = {
   extension_launch_completed: {
     location: ["host_workspace"],
@@ -39,6 +44,22 @@ const CATALOG: Readonly<Record<string, Readonly<Record<string, Rule>>>> = {
     // Measures how long the content grant takes, to tune the launch timeout.
     launch_trigger: ["immediate", "grant", "timeout", "hidden"],
     policy_wait_ms: "count",
+  },
+  // `app_launched` fires only once an actor is known, so a launch that never
+  // finishes starting is invisible to it. These two are sent before any actor
+  // exists: one per page load, and one when the recovery card appears.
+  app_startup_started: {
+    location: ["app"],
+    platform: ["web", "npm", "docker", "mac", "win", "electron"],
+    deployment: ["hosted", "self_hosted"],
+  },
+  app_startup_blocked: {
+    location: ["app"],
+    platform: ["web", "npm", "docker", "mac", "win", "electron"],
+    deployment: ["hosted", "self_hosted"],
+    stage: APP_LOAD_STALL_CODES,
+    trigger: ["failure", "deadline"],
+    elapsed_ms: "count",
   },
   send_message: {
     location: ["chat_tab", "ui_playground"],
@@ -141,7 +162,7 @@ export function rebuildStrictPostHogEvent(
         typeof candidate === "number" &&
         Number.isInteger(candidate) &&
         candidate >= 0 &&
-        candidate <= 1_000_000
+        candidate <= STRICT_COUNT_MAX
       )
         properties[key] = candidate;
     } else if (rule === "boolean") {

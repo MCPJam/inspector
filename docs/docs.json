@@ -50,12 +50,10 @@
             "icon": "rocket",
             "pages": [
               "index",
-              "getting-started",
-              {
-                "group": "Choose where to run",
-                "pages": ["installation", "hosted/overview"]
-              },
-              "inspector/connecting-servers"
+              "installation",
+              "hosted/overview",
+              "inspector/connecting-servers",
+              "inspector/mcp-support"
             ]
           },
           {
@@ -65,6 +63,7 @@
               "inspector/playground",
               {
                 "group": "Test MCP Apps",
+                "icon": "app-window",
                 "pages": [
                   "guides/first-mcp-app",
                   "guides/first-chatgpt-app-react",
@@ -73,10 +72,12 @@
               },
               {
                 "group": "Check host compatibility",
+                "icon": "monitor-check",
                 "pages": ["inspector/host-compat", "inspector/host-templates"]
               },
               {
                 "group": "Test authentication",
+                "icon": "shield-check",
                 "pages": [
                   "inspector/guided-oauth",
                   "inspector/xaa-debugger",
@@ -85,6 +86,7 @@
               },
               {
                 "group": "Inspect your server",
+                "icon": "search",
                 "pages": ["inspector/tools-prompts-resources", "inspector/debugging"]
               }
             ]
@@ -92,7 +94,41 @@
           {
             "group": "Evaluate",
             "icon": "flask-conical",
-            "pages": ["inspector/evals", "inspector/eval-test-users"]
+            "pages": [
+              "evaluate/overview",
+              "evaluate/run-your-first-eval",
+              "evaluate/how-evals-work",
+              {
+                "group": "Author cases",
+                "icon": "pencil",
+                "pages": ["evaluate/write-a-case", "evaluate/generate-cases"]
+              },
+              {
+                "group": "Run and review",
+                "icon": "list-checks",
+                "pages": [
+                  "evaluate/run-a-suite",
+                  "evaluate/what-a-run-can-access",
+                  "evaluate/read-results"
+                ]
+              },
+              {
+                "group": "Grade and ship",
+                "icon": "scale",
+                "pages": ["evaluate/configure-grading", "evaluate/run-evals-in-ci"]
+              },
+              {
+                "group": "Reference",
+                "icon": "book-open",
+                "pages": [
+                  "evaluate/reference/assertions",
+                  "evaluate/reference/suite-settings",
+                  "evaluate/reference/runs-and-results"
+                ]
+              },
+              "evaluate/troubleshooting",
+              "inspector/eval-test-users"
+            ]
           },
           {
             "group": "Configure",
@@ -101,12 +137,14 @@
               "inspector/clients",
               {
                 "group": "Manage your workspace",
+                "icon": "users",
                 "pages": ["inspector/projects", "inspector/home"]
               },
               "inspector/protocol-versions",
               "inspector/skills",
               {
                 "group": "Use with other tools",
+                "icon": "plug",
                 "pages": [
                   "hosted/mcp-server",
                   "inspector/docs-server",
@@ -115,6 +153,7 @@
               },
               {
                 "group": "Enterprise admin",
+                "icon": "building-2",
                 "pages": ["hosted/sso", "hosted/network"]
               },
               "inspector/telemetry-privacy"
@@ -259,6 +298,14 @@
     "dark": "/logo/mcp_jam_dark.png"
   },
   "redirects": [
+    {
+      "source": "/getting-started",
+      "destination": "/"
+    },
+    {
+      "source": "/inspector/evals",
+      "destination": "/evaluate/overview"
+    },
     {
       "source": "/hosted/claude-connector",
       "destination": "/hosted/mcp-server"
@@ -481,7 +528,7 @@
     },
     {
       "source": "/inspector/test-cases",
-      "destination": "/inspector/evals"
+      "destination": "/evaluate/overview"
     },
     {
       "source": "/inspector/xaa-test-idp",
@@ -732,7 +779,7 @@
     "404": {
       "redirect": false,
       "title": "Lost in the inspector?",
-      "description": "Try the [getting started guide](/getting-started), the [CLI overview](/cli/overview), or the [SDK reference](/sdk/index). Related pages are listed below."
+      "description": "Try the [docs home](/), the [CLI overview](/cli/overview), or the [SDK reference](/sdk/index). Related pages are listed below."
     }
   }
 }

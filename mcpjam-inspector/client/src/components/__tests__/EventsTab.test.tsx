@@ -1,7 +1,9 @@
 /**
- * The Events tab (MCP Events draft extension) in LOCAL mode: the catalog,
- * the subscribe form, the client it subscribes as, the local webhook acknowledgement, and the
- * SSE feed (`/api/mcp/events/stream` frames), including untrusted event data.
+ * The Events tab (MCP Events draft extension) in LOCAL mode: the catalog
+ * list and selected event type, the subscribe form, the client it subscribes
+ * as, the local webhook acknowledgement, the SSE feed
+ * (`/api/mcp/events/stream` frames) including untrusted event data, and the
+ * spec's subscription states.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -89,6 +91,9 @@ vi.mock("../ui/three-panel-layout", () => ({
 vi.mock("@/components/ui/json-editor", () => ({
   JsonEditor: (props: { value: unknown }) => (
     <div data-testid="json-editor">{JSON.stringify(props.value)}</div>
+  ),
+  ScrollableJsonView: (props: { value: unknown }) => (
+    <div data-testid="json-view">{JSON.stringify(props.value)}</div>
   ),
 }));
 
@@ -190,6 +195,18 @@ function renderTab() {
   );
 }
 
+/** Open an event type from the catalog list, as a user would. */
+async function openEventType(name: string) {
+  const list = await screen.findByTestId("event-types");
+  fireEvent.click(within(list).getByRole("button", { name: new RegExp(name) }));
+  return screen.findByTestId("event-type-detail");
+}
+
+/** Open a collapsed accordion section by its heading. */
+function openSection(name: RegExp | string) {
+  fireEvent.click(screen.getByRole("button", { name }));
+}
+
 describe("EventsTab (local)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -252,6 +269,12 @@ describe("EventsTab (local)", () => {
     expect(within(list).getByText("pull_request.opened")).toBeInTheDocument();
     expect(within(list).getAllByText("webhook")).toHaveLength(2);
     expect(within(list).getAllByText("poll")).toHaveLength(1);
+    // The list stays open: nothing is selected until the user picks.
+    expect(screen.queryByTestId("event-type-detail")).toBeNull();
+    expect(screen.getByRole("tab", { name: /Events/ })).toHaveTextContent("2");
+    expect(screen.getByRole("button", { name: /^Subscribe/ })).toBeDisabled();
+    // The declared capability is one disclosure away.
+    openSection(/Server capability/);
     expect(
       screen.getByText("capabilities.events declared"),
     ).toBeInTheDocument();
@@ -263,14 +286,20 @@ describe("EventsTab (local)", () => {
     mockCreateLocal.mockResolvedValue(subscriptionView({ mode: "poll" }));
     renderTab();
 
+    await openEventType("issue.created");
     const repo = await screen.findByPlaceholderText("Enter repo");
     fireEvent.change(repo, { target: { value: "octo/hello" } });
     expect(screen.getByRole("radio", { name: /Poll/ })).toBeChecked();
-    fireEvent.change(screen.getByLabelText("Maximum event age in ms (optional)"), {
+    openSection(/Advanced settings/);
+    fireEvent.change(screen.getByLabelText("maxAgeMs"), {
       target: { value: "60000" },
     });
-    fireEvent.click(screen.getByRole("checkbox", { name: /No expiry/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Subscribe/ }));
+    // ttlMs is a webhook subscription's lifetime: not offered for poll.
+    expect(screen.queryByLabelText("ttlMs")).toBeNull();
+    // A double click still creates one subscription.
+    const subscribe = screen.getByRole("button", { name: /^Subscribe/ });
+    fireEvent.click(subscribe);
+    fireEvent.click(subscribe);
 
     await waitFor(() => expect(mockCreateLocal).toHaveBeenCalledTimes(1));
     expect(mockCreateLocal).toHaveBeenCalledWith({
@@ -281,8 +310,8 @@ describe("EventsTab (local)", () => {
       // No client is active: MCPJam (built-in), named explicitly.
       host: null,
       maxAgeMs: 60000,
-      ttlMs: null,
     });
+    expect(mockCreateLocal).toHaveBeenCalledTimes(1);
     // The created subscription shows up in the list.
     expect(
       await screen.findByTestId("subscription-esub_1"),
@@ -296,9 +325,10 @@ describe("EventsTab (local)", () => {
     mockCreateLocal.mockResolvedValue(subscriptionView({ eventName: "tick" }));
     renderTab();
 
+    await openEventType("tick");
     const raw = await screen.findByLabelText("Arguments JSON");
     fireEvent.change(raw, { target: { value: '{"every":"1m"}' } });
-    fireEvent.click(screen.getByRole("button", { name: /Subscribe/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Subscribe/ }));
     await waitFor(() =>
       expect(mockCreateLocal).toHaveBeenCalledWith(
         expect.objectContaining({ arguments: { every: "1m" }, mode: "poll" }),
@@ -321,10 +351,18 @@ describe("EventsTab (local)", () => {
     );
 
     expect(await screen.findByTestId("events-host-label")).toHaveTextContent(
-      "Receiving as ChatGPT",
+      "Client: ChatGPT",
     );
-    expect(screen.queryByRole("radio", { name: /Poll/ })).toBeNull();
-    expect(screen.queryByRole("radio", { name: /Push/ })).toBeNull();
+    await openEventType("issue.created");
+    // Modes the client refuses stay listed, disabled, with the reason.
+    expect(screen.getByRole("radio", { name: /Poll/ })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: /Push/ })).toBeDisabled();
+    const delivery = screen.getByTestId("subscribe-delivery");
+    expect(
+      within(delivery).getByText(
+        "ChatGPT doesn't receive events by poll. Turn it on in its Protocol settings, or pick another client.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /Webhook/ })).toBeChecked();
 
     fireEvent.change(screen.getByPlaceholderText("Enter repo"), {
@@ -335,7 +373,7 @@ describe("EventsTab (local)", () => {
         name: /Use local development receiver/,
       }),
     );
-    fireEvent.click(screen.getByRole("button", { name: /Subscribe/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Subscribe/ }));
     await waitFor(() =>
       expect(mockCreateLocal).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -370,10 +408,17 @@ describe("EventsTab (local)", () => {
 
     const list = await screen.findByTestId("event-types");
     expect(within(list).getByText("issue.created")).toBeInTheDocument();
-    expect(await screen.findByTestId("subscribe-blocked")).toHaveTextContent(
+    await openEventType("issue.created");
+    const blocked = await screen.findByTestId("subscribe-blocked");
+    expect(blocked).toHaveTextContent(
       "doesn't receive events. Turn on a delivery mode in its Protocol settings, or pick another client.",
     );
-    expect(screen.getByRole("button", { name: /Subscribe/ })).toBeDisabled();
+    // Client policy is fixed in Clients, not with a picker here.
+    expect(
+      within(blocked).getByRole("button", { name: "Open Clients" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Events client")).toBeNull();
+    expect(screen.getByRole("button", { name: /^Subscribe/ })).toBeDisabled();
   });
 
   it("requires the development-receiver acknowledgement for a local webhook", async () => {
@@ -385,10 +430,11 @@ describe("EventsTab (local)", () => {
     );
     renderTab();
 
+    await openEventType("issue.created");
     fireEvent.change(await screen.findByPlaceholderText("Enter repo"), {
       target: { value: "octo/hello" },
     });
-    const subscribe = screen.getByRole("button", { name: /Subscribe/ });
+    const subscribe = screen.getByRole("button", { name: /^Subscribe/ });
     expect(subscribe).toBeDisabled();
 
     fireEvent.click(
@@ -507,6 +553,7 @@ describe("EventsTab (local)", () => {
         bodyBytes: 120,
       },
     });
+    openSection(/Rejected deliveries/);
     const rejections = await screen.findByTestId("rejections");
     expect(within(rejections).getByText("bad_signature")).toBeInTheDocument();
     expect(
@@ -562,6 +609,11 @@ describe("EventsTab (local)", () => {
     });
     renderTab();
 
+    await screen.findByTestId("subscription-esub_1");
+    openSection(/Simulate an event/);
+    expect(screen.getByTestId("simulate-warning")).toHaveTextContent(
+      "Matching triggers still run",
+    );
     const panel = await screen.findByTestId("simulate-panel");
     // Prefilled from the payload schema's defaults.
     await waitFor(() =>
@@ -595,8 +647,13 @@ describe("EventsTab (local)", () => {
   it("pauses a subscription through the local route", async () => {
     mockLoadEventsCatalog.mockResolvedValue(catalog([issueCreated]));
     mockListLocal.mockResolvedValue([subscriptionView()]);
+    // A desired-state change bumps the generation, as the runtime does.
     mockSetLocalState.mockResolvedValue(
-      subscriptionView({ desiredState: "paused", observedState: "paused" }),
+      subscriptionView({
+        generation: 3,
+        desiredState: "paused",
+        observedState: "paused",
+      }),
     );
     renderTab();
 
@@ -608,5 +665,297 @@ describe("EventsTab (local)", () => {
     expect(
       await within(card).findByRole("button", { name: /Resume/ }),
     ).toBeInTheDocument();
+  });
+
+  it("returns to the list with its search after Back, and focuses the row it opened", async () => {
+    mockLoadEventsCatalog.mockResolvedValue(
+      catalog([
+        issueCreated,
+        { name: "pull_request.opened", delivery: ["webhook"] },
+      ]),
+    );
+    renderTab();
+
+    const search = await screen.findByPlaceholderText("Search event types...");
+    fireEvent.change(search, { target: { value: "issue" } });
+    expect(
+      within(screen.getByTestId("event-types")).queryByText(
+        "pull_request.opened",
+      ),
+    ).toBeNull();
+
+    await openEventType("issue.created");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Show full event type list" }),
+    );
+
+    expect(
+      await screen.findByPlaceholderText("Search event types..."),
+    ).toHaveValue("issue");
+    const row = within(screen.getByTestId("event-types")).getByRole("button", {
+      name: /issue\.created/,
+    });
+    await waitFor(() => expect(row).toHaveFocus());
+  });
+
+  it("lists subscriptions and received events in their tabs and scopes the activity to the selection", async () => {
+    mockLoadEventsCatalog.mockResolvedValue(catalog([issueCreated]));
+    mockListLocal.mockResolvedValue([
+      subscriptionView(),
+      subscriptionView({
+        id: "esub_2",
+        eventName: "issue.closed",
+        mode: "poll",
+        desiredState: "paused",
+        observedState: "paused",
+      }),
+    ]);
+    renderTab();
+
+    await screen.findByTestId("subscription-esub_2");
+    // The count is active subscriptions, not every row.
+    const subscriptionsTab = screen.getByRole("tab", { name: /Subscriptions/ });
+    expect(subscriptionsTab).toHaveTextContent("Subscriptions1");
+    fireEvent.click(subscriptionsTab);
+    fireEvent.click(
+      within(screen.getByTestId("subscription-list")).getByRole("button", {
+        name: /issue\.closed/,
+      }),
+    );
+    expect(screen.queryByTestId("subscription-esub_1")).toBeNull();
+    // Ending a poll subscription stops polling; it is not an unsubscribe.
+    expect(
+      within(screen.getByTestId("subscription-esub_2")).getByRole("button", {
+        name: /Stop polling/,
+      }),
+    ).toBeInTheDocument();
+
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    emitFrame({
+      type: "entry",
+      entry: {
+        seq: 4,
+        kind: "event",
+        origin: "webhook",
+        namespace: "live",
+        logicalSubscriptionId: "esub_1",
+        eventId: "evt_4",
+        name: "issue.created",
+        receivedAt: Date.now(),
+        data: { title: "x" },
+      },
+    });
+    const receivedTab = screen.getByRole("tab", { name: /Received/ });
+    await waitFor(() => expect(receivedTab).toHaveTextContent("Received1"));
+    fireEvent.click(receivedTab);
+    fireEvent.click(
+      within(screen.getByTestId("received-list")).getByRole("button", {
+        name: /issue\.created/,
+      }),
+    );
+    const activity = screen.getByTestId("events-activity");
+    expect(within(activity).getByText("evt_4")).toBeInTheDocument();
+    const owner = within(activity).getByTestId("subscription-esub_1");
+    expect(
+      within(owner).getByRole("button", { name: /Unsubscribe/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("names why the server terminated a subscription, for draft and Beta codes", async () => {
+    mockLoadEventsCatalog.mockResolvedValue(catalog([issueCreated]));
+    renderTab();
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+
+    const terminated = (message: string) => ({
+      kind: "terminated",
+      message,
+      at: Date.now(),
+      retryable: false,
+    });
+    emitFrame({
+      type: "snapshot",
+      nextAfter: 0,
+      subscriptions: [
+        subscriptionView({
+          observedState: "terminated",
+          lastError: terminated("Forbidden"),
+        }),
+        subscriptionView({
+          id: "esub_2",
+          mode: "push",
+          observedState: "terminated",
+          lastError: terminated("Unsupported"),
+        }),
+        subscriptionView({
+          id: "esub_3",
+          mode: "poll",
+          observedState: "terminated",
+          lastError: terminated("NotFound"),
+        }),
+      ],
+    });
+    const entry = (
+      seq: number,
+      logicalSubscriptionId: string,
+      error: { code: number; message: string; data?: unknown },
+    ) =>
+      emitFrame({
+        type: "entry",
+        entry: {
+          seq,
+          kind: "terminated",
+          origin: "webhook",
+          namespace: "live",
+          logicalSubscriptionId,
+          receivedAt: Date.now(),
+          error,
+        },
+      });
+    entry(1, "esub_1", {
+      code: -32024,
+      message: "Forbidden",
+      data: { reason: "Access revoked" },
+    });
+    entry(2, "esub_2", {
+      code: -32026,
+      message: "Unsupported",
+      data: { feature: "payloadSchema", reason: "schema_changed" },
+    });
+    entry(3, "esub_3", {
+      code: -32011,
+      message: "NotFound",
+      data: { kind: "event" },
+    });
+
+    const reasonOf = (id: string) =>
+      within(screen.getByTestId(`subscription-${id}`)).getByTestId(
+        "subscription-termination",
+      );
+    await waitFor(() =>
+      expect(reasonOf("esub_1")).toHaveTextContent("Access revoked"),
+    );
+    expect(reasonOf("esub_2")).toHaveTextContent(
+      "Schema changed. Refresh the event types, then subscribe again.",
+    );
+    expect(reasonOf("esub_3")).toHaveTextContent("Event type removed");
+    expect(
+      screen.getAllByTestId("termination-reason").map((row) => row.textContent),
+    ).toEqual(
+      expect.arrayContaining([expect.stringContaining("Access revoked")]),
+    );
+  });
+
+  it("shows webhook delivery status, and an event type the server can't replay", async () => {
+    mockLoadEventsCatalog.mockResolvedValue(catalog([issueCreated]));
+    mockListLocal.mockResolvedValue([
+      subscriptionView({
+        lastCursor: null,
+        deliveryStatus: {
+          active: false,
+          lastDeliveryAt: "2026-02-19T15:45:00Z",
+          lastError: "http_4xx",
+          failedSince: "2026-02-19T15:50:00Z",
+        },
+      }),
+      subscriptionView({
+        id: "esub_2",
+        deliveryStatus: {
+          active: true,
+          lastError: null,
+          throttled: true,
+          retryAfterMs: 60000,
+        },
+      }),
+    ]);
+    renderTab();
+
+    const suspended = await screen.findByTestId("subscription-esub_1");
+    expect(within(suspended).getByTestId("delivery-state")).toHaveTextContent(
+      "Suspended after repeated failures",
+    );
+    expect(within(suspended).getByText("http_4xx")).toBeInTheDocument();
+    expect(
+      within(suspended).getByText("null (replay not supported)"),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("subscription-esub_2")).getByTestId(
+        "delivery-state",
+      ),
+    ).toHaveTextContent("Throttled, for about 60s");
+
+    await openEventType("issue.created");
+    expect(screen.getByTestId("replay-unsupported")).toBeInTheDocument();
+  });
+
+  it("reads the catalog again when the server says its event types changed, keeping the draft", async () => {
+    mockLoadEventsCatalog.mockResolvedValue(catalog([issueCreated]));
+    renderTab();
+
+    await openEventType("issue.created");
+    fireEvent.change(await screen.findByPlaceholderText("Enter repo"), {
+      target: { value: "octo/hello" },
+    });
+    expect(mockLoadEventsCatalog).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      useTrafficLogStore.getState().addMcpServerLog({
+        serverId: SERVER,
+        direction: "RECEIVE",
+        method: "notifications/events/list_changed",
+        timestamp: new Date().toISOString(),
+        payload: {
+          jsonrpc: "2.0",
+          method: "notifications/events/list_changed",
+        },
+      });
+    });
+
+    await waitFor(() => expect(mockLoadEventsCatalog).toHaveBeenCalledTimes(2));
+    expect(screen.getByTestId("event-type-detail")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Enter repo")).toHaveValue("octo/hello");
+  });
+
+  it("keeps the newer streamed state when an action's response arrives late", async () => {
+    mockLoadEventsCatalog.mockResolvedValue(catalog([issueCreated]));
+    mockListLocal.mockResolvedValue([subscriptionView({ generation: 2 })]);
+    let respond: (view: EventsSubscriptionView) => void = () => undefined;
+    mockSetLocalState.mockImplementation(
+      () =>
+        new Promise<EventsSubscriptionView>((resolve) => {
+          respond = resolve;
+        }),
+    );
+    renderTab();
+
+    const card = await screen.findByTestId("subscription-esub_1");
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    fireEvent.click(within(card).getByRole("button", { name: /Pause/ }));
+    await waitFor(() => expect(mockSetLocalState).toHaveBeenCalled());
+
+    // The stream reports the pause before the request returns...
+    emitFrame({
+      type: "subscription",
+      subscription: subscriptionView({
+        generation: 3,
+        desiredState: "paused",
+        observedState: "paused",
+      }),
+    });
+    expect(within(card).getByTestId("observed-state")).toHaveTextContent(
+      "Paused",
+    );
+    // ...and the response, as of when the request was handled, is older.
+    await act(async () => {
+      respond(
+        subscriptionView({
+          generation: 3,
+          desiredState: "paused",
+          observedState: "active",
+        }),
+      );
+    });
+    expect(within(card).getByTestId("observed-state")).toHaveTextContent(
+      "Paused",
+    );
   });
 });

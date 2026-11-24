@@ -15,12 +15,11 @@ import {
   type MCPServerConfig,
 } from "@mcpjam/sdk/browser";
 import { Button } from "@mcpjam/design-system/button";
-import { Badge } from "@mcpjam/design-system/badge";
-import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { AlertCircle, Loader2, Radio, RefreshCw } from "lucide-react";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
 import { EmptyState } from "./ui/empty-state";
 import { track } from "@/lib/analytics";
+import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import {
   getApiContextRevision,
@@ -48,25 +47,23 @@ import type {
   EventsSubscriptionView,
 } from "@/shared/events-api";
 import { CapabilityPanel } from "./events/CapabilityPanel";
-import { SubscribeForm, type SubscribeFormValue } from "./events/SubscribeForm";
-import {
-  SubscriptionsPanel,
-  type SubscriptionAction,
-} from "./events/SubscriptionsPanel";
-import { SimulatePanel } from "./events/SimulatePanel";
-import { EventsFeedPanel, RejectionsPanel } from "./events/EventsFeedPanel";
-import {
-  DeliveryChips,
-  DraftHeader,
-  SchemaViewer,
-  Section,
-} from "./events/EventsTabSections";
-import { EventTypesSidebar } from "./events/EventTypesSidebar";
-import { EventsHostPicker } from "./events/EventsHostPicker";
+import type { SubscriptionAction } from "./events/SubscriptionsPanel";
+import { DraftHeader } from "./events/EventsTabSections";
+import { EventsSidebar, type EventsPaneTab } from "./events/EventsSidebar";
+import { EventsActivity, type ActivityScope } from "./events/EventsActivity";
 import { useEventsHost } from "./events/use-events-host";
 import { useEventsCatalog } from "./events/use-events-catalog";
 import { useEventsFeed } from "./events/use-events-feed";
-import { errorMessage, logicalIdOf } from "./events/event-utils";
+import { useEventsListChanged } from "./events/use-events-list-changed";
+import {
+  useSubscribeForm,
+  type SubscribeFormValue,
+} from "./events/use-subscribe-form";
+import {
+  errorMessage,
+  logicalIdOf,
+  replayUnsupported,
+} from "./events/event-utils";
 
 interface EventsTabProps {
   serverConfig?: MCPServerConfig;
@@ -100,8 +97,9 @@ export function EventsTab({
     track("events_tab_viewed", { location: "events_tab" });
   }, []);
 
-  // The client subscriptions are made as. It decides the delivery modes on
-  // offer; the catalog stays visible whatever it accepts.
+  // The client subscriptions are made as: built-in when hosted, the active
+  // client when local. It decides the delivery modes on offer; the catalog
+  // stays visible whatever it accepts.
   const eventsHost = useEventsHost({
     hosted,
     projectId,
@@ -123,6 +121,12 @@ export function EventsTab({
     Map<string, EventsSubscriptionView>
   >(() => new Map());
   const [registryError, setRegistryError] = useState<string | null>(null);
+  const [paneTab, setPaneTab] = useState<EventsPaneTab>("events");
+  const [selectedSubscriptionId, setSelectedSubscriptionId] = useState<
+    string | null
+  >(null);
+  const [selectedEntrySeq, setSelectedEntrySeq] = useState<number | null>(null);
+  const navigate = useAppNavigate();
 
   // ── catalog ─────────────────────────────────────────────────────────────
   const {
@@ -137,6 +141,13 @@ export function EventsTab({
   } = useEventsCatalog({ hasServer, serverName, connected });
   const declared =
     catalogState === "ready" && catalog?.support.declared === true;
+  useEventsListChanged(declared ? serverName : undefined, retryCatalog);
+
+  // A different server starts from its own lists.
+  useEffect(() => {
+    setSelectedSubscriptionId(null);
+    setSelectedEntrySeq(null);
+  }, [serverName]);
 
   // ── registry ────────────────────────────────────────────────────────────
   // The hosted server id comes from the API context, which fills in after
@@ -171,6 +182,24 @@ export function EventsTab({
       return next;
     });
   }, []);
+
+  // An action's response is the subscription as it was when the request was
+  // handled. The stream has often delivered a newer state for the same
+  // generation by then, so a response only lands when it is newer.
+  const upsertFromResponse = useCallback(
+    (subscription: EventsSubscriptionView) => {
+      setLocalSubscriptions((previous) => {
+        const current = previous.get(subscription.id);
+        if (current && current.generation >= subscription.generation) {
+          return previous;
+        }
+        const next = new Map(previous);
+        next.set(subscription.id, subscription);
+        return next;
+      });
+    },
+    [],
+  );
 
   useEffect(() => {
     if (hosted || !serverName || !declared) return;
@@ -333,7 +362,7 @@ export function EventsTab({
   const blockedReason = !hostChoice
     ? "Loading clients…"
     : hostChoice.missing
-      ? "The client you picked was deleted. Pick another client to subscribe."
+      ? "This client no longer exists. Make another client active to subscribe."
       : selectedAvailability
         ? describeNoSubscribableMode(selectedAvailability, hostChoice.name)
         : null;
@@ -395,7 +424,7 @@ export function EventsTab({
               ? { overrides: ["insecure-local-receiver" as const] }
               : {}),
           });
-          upsertLocal([subscription]);
+          upsertFromResponse(subscription);
         },
       });
       toast.success(`Subscribed to ${event.name}`);
@@ -422,12 +451,12 @@ export function EventsTab({
               });
             },
             local: async () => {
-              upsertLocal([
+              upsertFromResponse(
                 await setLocalEventSubscriptionState(
                   subscription.id,
                   action.desiredState,
                 ),
-              ]);
+              );
             },
           });
           break;
@@ -437,9 +466,9 @@ export function EventsTab({
               await requestHostedRotation({ subscriptionId: subscription.id });
             },
             local: async () => {
-              upsertLocal([
+              upsertFromResponse(
                 await rotateLocalEventSubscriptionSecret(subscription.id),
-              ]);
+              );
             },
           });
           toast.success("Secret rotation requested");
@@ -487,6 +516,48 @@ export function EventsTab({
       setSimulating(false);
     }
   };
+
+  // ── left-pane selection ────────────────────────────────────────────────
+  const form = useSubscribeForm({
+    event: selectedEvent,
+    modes: selectedAvailability?.modes ?? [],
+    blockedReason,
+    hosted,
+    busy: subscribing,
+    onSubscribe: handleSubscribe,
+  });
+
+  // A local client that receives no events is fixed in Clients, not here.
+  const blockedAction =
+    !hosted &&
+    hostChoice &&
+    !hostChoice.missing &&
+    hostChoice.id !== null &&
+    hostChoice.modes.length === 0
+      ? {
+          label: "Open Clients",
+          onClick: () => navigate(buildHostsPath(hostChoice.id)),
+        }
+      : undefined;
+
+  const replayUnsupportedFor = useCallback(
+    (eventName: string) =>
+      serverSubscriptions.some(
+        (subscription) =>
+          subscription.eventName === eventName &&
+          replayUnsupported(subscription),
+      ),
+    [serverSubscriptions],
+  );
+
+  const scope: ActivityScope =
+    paneTab === "events" && selectedEventName
+      ? { kind: "eventType", name: selectedEventName }
+      : paneTab === "subscriptions" && selectedSubscriptionId
+        ? { kind: "subscription", id: selectedSubscriptionId }
+        : paneTab === "received" && selectedEntrySeq !== null
+          ? { kind: "entry", seq: selectedEntrySeq }
+          : { kind: "server" };
 
   // ── render ──────────────────────────────────────────────────────────────
   if (!hasServer) {
@@ -552,20 +623,6 @@ export function EventsTab({
     );
   }
 
-  const sidebarContent = (
-    <EventTypesSidebar
-      catalog={catalog}
-      availabilityFor={availabilityFor}
-      hostName={hostName}
-      selectedEventName={selectedEventName}
-      loadingMore={loadingMore}
-      onSelectEvent={setSelectedEventName}
-      onLoadMore={loadMoreEvents}
-      onRefresh={retryCatalog}
-      onHide={() => setIsSidebarVisible(false)}
-    />
-  );
-
   const hostedRegistryNotice =
     hosted && !projectId
       ? "Open a project to manage its subscriptions."
@@ -573,141 +630,103 @@ export function EventsTab({
         ? "Add this server to the project to subscribe to its events."
         : null;
 
-  const centerContent = (
-    <ScrollArea className="h-full">
-      <div className="pb-16">
-        <DraftHeader>
-          <EventsHostPicker
-            hosted={hosted}
-            hosts={eventsHost.hosts}
-            hostId={eventsHost.hostId}
-            choice={hostChoice}
-            onChange={eventsHost.setHostId}
-          />
-        </DraftHeader>
-        {hostedRegistryNotice ? (
-          <p className="mx-5 mt-4 rounded-md border border-warning/40 bg-warning/10 p-2 text-xs text-foreground">
-            {hostedRegistryNotice}
-          </p>
-        ) : null}
-
-        {selectedEvent ? (
-          <Section
-            title={selectedEvent.name}
-            description={selectedEvent.description}
-          >
-            <DeliveryChips
-              delivery={selectedEvent.delivery}
-              availability={selectedAvailability}
-              hostName={hostName}
-            />
-            <div className="space-y-1">
-              <SchemaViewer
-                label="Input schema"
-                schema={selectedEvent.inputSchema}
-              />
-              <SchemaViewer
-                label="Payload schema"
-                schema={selectedEvent.payloadSchema}
-              />
-            </div>
-            <SubscribeForm
-              event={selectedEvent}
-              modes={selectedAvailability?.modes ?? []}
-              blockedReason={blockedReason}
-              hosted={hosted}
-              busy={subscribing}
-              onSubscribe={handleSubscribe}
-            />
-          </Section>
-        ) : null}
-
-        <Section
-          title="Subscriptions"
-          description={
-            hosted
-              ? "This server's subscriptions in this project. MCPJam refreshes each one automatically."
-              : "This server's subscriptions on this machine."
-          }
-        >
-          {registryError ? (
-            <p className="text-xs text-destructive">{registryError}</p>
-          ) : null}
-          {hosted && projectId && hostedRows === undefined ? (
-            <p className="text-xs text-muted-foreground">Loading…</p>
-          ) : (
-            <SubscriptionsPanel
-              subscriptions={serverSubscriptions}
-              hosted={hosted}
-              busyId={busySubscriptionId}
-              slotStates={slotStates}
-              onAction={(subscription, action) =>
-                void handleSubscriptionAction(subscription, action)
-              }
-            />
-          )}
-        </Section>
-
-        <Section
-          title="Simulate an event"
-          description={
-            <>
-              Delivered in the <code className="font-mono">simulation</code>{" "}
-              namespace: it runs triggers but can never collide with or suppress
-              a live event.
-            </>
-          }
-        >
-          <SimulatePanel
-            subscriptions={serverSubscriptions.filter(
-              (subscription) => subscription.desiredState !== "removed",
-            )}
-            events={catalog.events}
-            busy={simulating}
-            onSimulate={handleSimulate}
-          />
-        </Section>
-
-        <Section
-          title="Live feed"
-          description="Every delivery the inbox receives, newest first. Treat event data as untrusted."
-          actions={
-            <Badge variant="outline" className="text-[10px]">
-              {hosted ? "Hosted inbox" : "Local inbox"}
-            </Badge>
-          }
-        >
-          <EventsFeedPanel
-            entries={visibleEntries}
-            gaps={feed.gaps}
-            status={feed.status}
-            error={feed.error}
-            labelFor={labelForEntry}
-          />
-        </Section>
-
-        <Section
-          title="Rejected deliveries"
-          description={
-            hosted
-              ? "Recorded per webhook slot (reason, headers, size; never the body or signature). Use Check slot on a subscription to load them."
-              : "Deliveries the local receiver refused (reason, headers, size; never the body or signature)."
-          }
-        >
-          <RejectionsPanel rejections={rejections} />
-        </Section>
-      </div>
-    </ScrollArea>
+  const sidebarContent = (
+    <EventsSidebar
+      tab={paneTab}
+      onTabChange={setPaneTab}
+      catalog={catalog}
+      loadingMore={loadingMore}
+      onLoadMore={loadMoreEvents}
+      onRefresh={retryCatalog}
+      onHide={() => setIsSidebarVisible(false)}
+      selectedEvent={selectedEvent}
+      onSelectEvent={setSelectedEventName}
+      availabilityFor={availabilityFor}
+      hostName={hostName}
+      hosted={hosted}
+      form={form}
+      subscribing={subscribing}
+      blockedReason={blockedReason}
+      blockedAction={blockedAction}
+      replayUnsupportedFor={replayUnsupportedFor}
+      subscriptions={serverSubscriptions}
+      activeSubscriptionCount={
+        serverSubscriptions.filter(
+          (subscription) => subscription.observedState === "active",
+        ).length
+      }
+      selectedSubscriptionId={selectedSubscriptionId}
+      onSelectSubscription={setSelectedSubscriptionId}
+      entries={visibleEntries}
+      selectedEntrySeq={selectedEntrySeq}
+      onSelectEntry={setSelectedEntrySeq}
+      labelForEntry={labelForEntry}
+    />
   );
+
+  const centerContent = (
+    <EventsActivity
+      scope={scope}
+      hostName={hostName}
+      hosted={hosted}
+      notice={hostedRegistryNotice}
+      registryError={registryError}
+      subscriptionsLoading={Boolean(
+        hosted && projectId && hostedRows === undefined,
+      )}
+      subscriptions={serverSubscriptions}
+      busySubscriptionId={busySubscriptionId}
+      slotStates={slotStates}
+      onSubscriptionAction={(subscription, action) =>
+        void handleSubscriptionAction(subscription, action)
+      }
+      entries={visibleEntries}
+      gaps={feed.gaps}
+      feedStatus={feed.status}
+      feedError={feed.error}
+      labelForEntry={labelForEntry}
+      events={catalog.events}
+      simulating={simulating}
+      onSimulate={handleSimulate}
+      rejections={rejections}
+      catalog={catalog}
+    />
+  );
+
+  // On a phone, an event type keeps its form in the left pane (as a tool
+  // does); a subscription or a received event opens the middle pane.
+  const mobileNavigation =
+    paneTab === "subscriptions" && selectedSubscriptionId
+      ? {
+          selectionKey: `subscription:${selectedSubscriptionId}`,
+          selectionPanel: "content" as const,
+          onBack: () => setSelectedSubscriptionId(null),
+          contentLabel: "Activity",
+        }
+      : paneTab === "received" && selectedEntrySeq !== null
+        ? {
+            selectionKey: `entry:${selectedEntrySeq}`,
+            selectionPanel: "content" as const,
+            onBack: () => setSelectedEntrySeq(null),
+            contentLabel: "Activity",
+          }
+        : {
+            selectionKey:
+              paneTab === "events" && selectedEventName
+                ? `event:${selectedEventName}`
+                : "",
+            contentLabel: "Activity",
+          };
 
   return (
     <ThreePanelLayout
       id="events"
+      mobileNavigation={mobileNavigation}
       sidebar={sidebarContent}
       content={centerContent}
       sidebarVisible={isSidebarVisible}
       onSidebarVisibilityChange={setIsSidebarVisible}
-      sidebarTooltip="Show event types"
+      sidebarTooltip="Show events sidebar"
       serverName={serverName}
     />
   );
