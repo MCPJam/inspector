@@ -1176,6 +1176,7 @@ export type HostConfigInputV2 = {
   // `false` → show every tool (faithful to hosts that don't implement
   // SEP-1865). `undefined` → "use the spec default" (filter).
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   // Personal computer opt-in (resource only; capabilities ride
   // `builtInToolIds`). Optional + absent ⇒ no computer, hashing
   // byte-identically to pre-feature rows (the `progressiveToolDiscovery`
@@ -1284,6 +1285,7 @@ export type CanonicalHostConfigV2 = {
   // Mirrors HostConfigInputV2.respectToolVisibility. Same undefined-vs-set
   // policy.
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   // Mirrors HostConfigInputV2.computer with input `null` collapsed to
   // undefined, so the canonical JSON for "no computer" is byte-identical to
   // pre-feature rows.

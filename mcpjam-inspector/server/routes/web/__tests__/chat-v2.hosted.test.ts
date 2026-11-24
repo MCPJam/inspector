@@ -1252,6 +1252,44 @@ describe("web routes — chat-v2 hosted mode", () => {
     );
   });
 
+  it("forwards a multi-model column for hosted direct chats", async () => {
+    const { app, token } = createWebTestApp();
+    const multiModel = {
+      groupId: "group-1",
+      position: 1,
+      columnKind: "model",
+      compareId: "openai/gpt-5-mini",
+    };
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        selectedServerNames: ["Asana"],
+        chatSessionId: "chat-session-column",
+        multiModel,
+        messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatSessionId: "chat-session-column",
+        multiModel,
+      }),
+      expect.anything(),
+    );
+  });
+
   it("forwards directVisibility for hosted direct chats", async () => {
     const { app, token } = createWebTestApp();
 

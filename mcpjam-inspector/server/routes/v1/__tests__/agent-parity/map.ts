@@ -70,6 +70,8 @@ export const COVERED: Readonly<Record<string, string>> = {};
  * module → a one-line reason.
  */
 export const NOT_EXPOSED: Readonly<Record<string, string>> = {
+  "directChatHistory/multiModelGroups:actOnCurrentMultiModelGroup":
+    "Group rename, pin, and archive are flag-gated Sessions rail actions. The public API works with individual sessions",
   "chatSessionPromote:findSimilarPlaygroundPrompt":
     "Drives the Playground's repeat-prompt tip; agents save a prompt as a test case directly instead of being nudged",
   "serverFeatureEvidence:getForServer":

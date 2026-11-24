@@ -290,6 +290,7 @@ export async function resolveManagedTurnSetup(args: {
       temperature: bodyTemperature,
       requireToolApproval: bodyRequireToolApproval,
       respectToolVisibility: bodyRespectToolVisibility,
+      runUnloadedToolCalls: body.runUnloadedToolCalls,
       progressiveToolDiscovery: body.progressiveToolDiscovery,
       modelVisibleMcpToolResults: body.modelVisibleMcpToolResults,
       mcpToolResultImageRendering: body.mcpToolResultImageRendering,

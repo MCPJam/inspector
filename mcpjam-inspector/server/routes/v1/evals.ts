@@ -2716,6 +2716,7 @@ function hostConfigDtoToInput(dto: any): Record<string, unknown> {
     clientCapabilities: dto.clientCapabilities,
     hostContext: dto.hostContext,
     ...opt("progressiveToolDiscovery"),
+    ...opt("runUnloadedToolCalls"),
     ...opt("requireNativeToolDiscovery"),
     ...opt("respectToolVisibility"),
     ...opt("modelVisibleMcpToolResults"),
@@ -6570,6 +6571,20 @@ evals.get(
       trace = await convex.action("testSuites:getTestIterationBlob" as any, {
         iterationId,
       });
+      // The iteration owns the execution snapshot. A blob may be read after
+      // the client switches profiles or a different Inspector release ships.
+      if (trace && typeof trace === "object" && !Array.isArray(trace)) {
+        const metadata = (iteration as IterationDoc).metadata;
+        trace = {
+          ...trace,
+          ...(typeof metadata?.runUnloadedToolCalls === "boolean"
+            ? { runUnloadedToolCalls: metadata.runUnloadedToolCalls }
+            : {}),
+          ...(typeof metadata?.engineVersion === "string"
+            ? { engineVersion: metadata.engineVersion }
+            : {}),
+        };
+      }
     } catch (error) {
       throw translateConvexReadError(error, {
         ...scopedEvalReadOptions("Eval iteration not found"),

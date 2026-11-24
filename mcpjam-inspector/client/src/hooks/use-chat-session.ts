@@ -241,7 +241,11 @@ import {
   useTrafficLogStore,
 } from "@/stores/traffic-log-store";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
-import type { ChatRewind, WidgetModelContextEntry } from "@/shared/chat-v2";
+import type {
+  ChatMultiModelColumn,
+  ChatRewind,
+  WidgetModelContextEntry,
+} from "@/shared/chat-v2";
 import {
   isScopeStepUpDataPart,
   isScopeStepUpFinishedDataPart,
@@ -659,6 +663,7 @@ export interface UseChatSessionOptions {
    * affect the next send without remounting.
    */
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   /** Host-level MCP tool-result content/resource visibility policy. */
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   /** Host-level UI rendering policy for MCP tool-returned images. */
@@ -679,6 +684,8 @@ export interface UseChatSessionOptions {
    * its own. Read through a ref so it reaches the body builder at POST time.
    */
   comparePane?: boolean;
+  /** Saves this chat as a column of a multi-model session. */
+  multiModelColumn?: ChatMultiModelColumn;
   /**
    * Definitions for those built-in tools, as the model is shown them — used by
    * the RAW view of a reopened session and nowhere else.
@@ -985,6 +992,7 @@ export interface UseChatSessionReturn {
         temperature?: number;
         requireToolApproval?: boolean;
         respectToolVisibility?: boolean;
+        runUnloadedToolCalls?: boolean;
         modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
         mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
         selectedServers?: string[];
@@ -2463,6 +2471,11 @@ export function useChatSession(
   // project default for direct chat, etc.) — and the hook just threads it
   // into the request body. Held in a ref so a mid-session flip is
   // reflected on the very next send without remounting.
+  const runUnloadedToolCallsRef = useRef<boolean | undefined>(undefined);
+  const resumedRunUnloadedToolCallsRef = useRef<boolean | undefined>(undefined);
+  runUnloadedToolCallsRef.current =
+    options.runUnloadedToolCalls ??
+    options.executionConfig?.runUnloadedToolCalls;
   const progressiveToolDiscoveryRef = useRef<boolean | undefined>(undefined);
   // Prefer the top-level option when set (used by paths that don't go
   // through ExecutionConfig — e.g. the playground per-host column), but
@@ -2510,6 +2523,8 @@ export function useChatSession(
     options.builtInToolIds ?? options.executionConfig?.builtInToolIds;
   const comparePaneRef = useRef(false);
   comparePaneRef.current = options.comparePane === true;
+  const multiModelColumnRef = useRef(options.multiModelColumn);
+  multiModelColumnRef.current = options.multiModelColumn;
   // Read through a ref for the same reason the ids above are: the transport's
   // body builder is created once and must see the CURRENT value at POST time,
   // not the one captured when the transport was memoized.
@@ -4317,6 +4332,7 @@ export function useChatSession(
             : {}),
           requireToolApproval: requireToolApprovalRef.current,
           respectToolVisibility: respectToolVisibilityRef.current,
+          runUnloadedToolCalls: runUnloadedToolCallsRef.current ?? resumedRunUnloadedToolCallsRef.current,
           ...(modelVisibleMcpToolResultsRef.current !== undefined
             ? {
                 modelVisibleMcpToolResults:
@@ -4352,6 +4368,9 @@ export function useChatSession(
             : {}),
           ...(rewind ? { rewind } : {}),
           ...(comparePaneRef.current ? { comparePane: true } : {}),
+          ...(multiModelColumnRef.current
+            ? { multiModel: multiModelColumnRef.current }
+            : {}),
           // Preserve []: it explicitly disables the client's built-in tools.
           ...(builtInToolIdsRef.current !== undefined
             ? { builtInToolIds: builtInToolIdsRef.current }
@@ -5862,6 +5881,7 @@ export function useChatSession(
   const resetChat = useCallback(() => {
     skipNextForkDetectionRef.current = true;
     clearPendingSessionHydration();
+    resumedRunUnloadedToolCallsRef.current = undefined;
     resumedModelVisibleMcpToolResultsRef.current = undefined;
     resumedMcpToolResultImageRenderingRef.current = undefined;
     rewindRef.current = null;
@@ -5998,6 +6018,7 @@ export function useChatSession(
       },
     ) => {
       skipNextForkDetectionRef.current = true;
+      resumedRunUnloadedToolCallsRef.current = undefined;
       resumedModelVisibleMcpToolResultsRef.current = undefined;
       resumedMcpToolResultImageRenderingRef.current = undefined;
       rewindRef.current = null;
@@ -6267,6 +6288,7 @@ export function useChatSession(
           reasoningEffort?: string;
           requireToolApproval?: boolean;
           respectToolVisibility?: boolean;
+          runUnloadedToolCalls?: boolean;
           modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
           mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
           selectedServers?: string[];
@@ -6416,6 +6438,7 @@ export function useChatSession(
         if (session.resumeConfig?.respectToolVisibility !== undefined) {
           setRespectToolVisibility(session.resumeConfig.respectToolVisibility);
         }
+        resumedRunUnloadedToolCallsRef.current = session.resumeConfig?.runUnloadedToolCalls;
         resumedModelVisibleMcpToolResultsRef.current =
           session.resumeConfig?.modelVisibleMcpToolResults;
         resumedMcpToolResultImageRenderingRef.current =

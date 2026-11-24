@@ -751,7 +751,6 @@ footer,
   padding: 1rem 1.5rem !important;
   min-height: 0 !important;
   height: auto !important;
-  margin: 0 !important;
 }
 
 /* Collapse any inner wrappers that would otherwise force a tall slab */
