@@ -1,6 +1,8 @@
-import { Badge } from "@mcpjam/design-system/badge";
+import { useState } from "react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@mcpjam/design-system/collapsible";
+import { SearchInput } from "@/components/ui/search-input";
 import { cn } from "@mcpjam/design-system/cn";
-import { AlertTriangle, Inbox } from "lucide-react";
+import { AlertTriangle, ChevronRight, Inbox } from "lucide-react";
 import type {
   EventsFeedEntryView,
   EventsRejectionView,
@@ -75,48 +77,24 @@ function FeedEntryRow({
   entry: EventsFeedEntryView;
   subscriptionLabel?: string;
 }) {
-  const isEvent = entry.kind === "event";
   return (
-    <li
-      className="space-y-1.5 border-b border-border py-2 last:border-b-0"
-      data-testid="feed-entry"
-    >
-      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-        <span className="font-mono text-muted-foreground">#{entry.seq}</span>
-        <Badge
-          variant={isEvent ? "secondary" : "outline"}
-          className="font-mono text-[10px]"
-        >
-          {entry.kind}
-        </Badge>
-        {entry.name ? (
-          <span className="font-mono font-semibold text-foreground">
-            {entry.name}
-          </span>
-        ) : null}
-        <span className="text-muted-foreground">via {entry.origin}</span>
+    <Collapsible asChild>
+    <li className="border-b border-border last:border-b-0" data-testid="feed-entry">
+      <CollapsibleTrigger className="group flex w-full items-center gap-2 py-3 text-left text-xs">
+        <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
+        <span className="min-w-0 flex-1 break-all font-mono font-medium">{entry.name ?? entry.kind}</span>
         {entry.namespace !== "live" ? (
-          <span
-            className="rounded-sm border border-info/40 bg-info/10 px-1.5 py-0.5 text-[10px] font-medium text-foreground"
-            data-testid="namespace-badge"
-          >
-            {entry.namespace}
-          </span>
+          <span className="text-[10px] text-muted-foreground" data-testid="namespace-badge">Test</span>
         ) : null}
-        {entry.idConflict ? (
-          <Flag title="The server sent this event under a different subscription ID. The event was still recorded.">
-            Subscription mismatch
-          </Flag>
-        ) : null}
-        {entry.quarantined || entry.kind === "quarantined" ? (
-          <Flag title="The payload did not match the event's payload schema; nothing was run.">
-            Quarantined
-          </Flag>
-        ) : null}
-        <span className="ml-auto text-[10px] text-muted-foreground">
-          {formatTime(entry.receivedAt)}
-        </span>
-      </div>
+        {entry.idConflict ? <Flag title="The server sent a different subscription ID. The event was still recorded.">Subscription mismatch</Flag> : null}
+        {entry.quarantined || entry.kind === "quarantined" ? <Flag title="The payload did not match the event schema; nothing was run.">Quarantined</Flag> : null}
+        <span className="shrink-0 text-[10px] text-muted-foreground">{formatTime(entry.receivedAt)}</span>
+      </CollapsibleTrigger>
+      {entry.kind === "terminated" ? <TerminationLine error={entry.error} /> : entry.error ? (
+        <p className="pb-2 text-[11px] text-destructive">{entry.error.code}: {entry.error.message}</p>
+      ) : null}
+      <CollapsibleContent className="space-y-3 pb-3 pl-5">
+        <EventDataView data={entry.data} />
       <dl className="flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] text-muted-foreground">
         {entry.eventId ? (
           <div>
@@ -154,24 +132,13 @@ function FeedEntryRow({
           </div>
         ) : null}
       </dl>
-      {entry.kind === "terminated" ? (
-        <TerminationLine error={entry.error} />
-      ) : entry.error ? (
-        <p className="text-[11px] text-destructive">
-          {entry.error.code}: {entry.error.message}
-        </p>
-      ) : null}
-      {entry.data !== undefined ? (
-        <details open={isEvent}>
-          <summary className="cursor-pointer text-[10px] text-muted-foreground">
-            Data (untrusted)
-          </summary>
-          <div className="mt-1">
-            <EventDataView data={entry.data} />
-          </div>
-        </details>
-      ) : null}
+      <details className="text-[11px]">
+        <summary className="cursor-pointer text-muted-foreground">Delivery metadata</summary>
+        <EventDataView data={{ ...entry, data: undefined }} />
+      </details>
+      </CollapsibleContent>
     </li>
+    </Collapsible>
   );
 }
 
@@ -205,9 +172,14 @@ export function EventsFeedPanel({
   /** Off when the pane already shows the feed status in its header. */
   showStatus?: boolean;
 }) {
-  const newestFirst = [...entries].reverse();
+  const [query, setQuery] = useState("");
+  const needle = query.trim().toLowerCase();
+  const newestFirst = [...entries].reverse().filter((entry) =>
+    !needle || safeJson(entry).toLowerCase().includes(needle) || labelFor(entry)?.toLowerCase().includes(needle),
+  );
   return (
     <div className="space-y-2">
+      <SearchInput value={query} onValueChange={setQuery} placeholder="Search received events..." />
       {showStatus || error ? (
         <div className="flex items-center gap-2">
           {showStatus ? <FeedStatusBadge status={status} /> : null}
@@ -229,7 +201,7 @@ export function EventsFeedPanel({
       {newestFirst.length === 0 ? (
         <div className="flex items-center gap-2 py-6 text-xs text-muted-foreground">
           <Inbox className="h-4 w-4" />
-          No events received yet. They appear here as they arrive.
+          {needle ? "No received events match your search." : "No events received yet. They appear here as they arrive."}
         </div>
       ) : (
         <ul>
