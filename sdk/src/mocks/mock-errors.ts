@@ -62,6 +62,15 @@ export function methodUnavailableError(
   );
 }
 
+/** A method no side of the mock serves: JSON-RPC method not found, not an internal error. */
+export function unknownMethodError(method: string): ProtocolError {
+  return new ProtocolError(
+    MOCK_ERROR_CODES.methodUnavailable,
+    `Method not found: ${method}`,
+    { mockCode: "mock_method_unavailable", method }
+  );
+}
+
 export function toolNotFoundError(name: string): ProtocolError {
   return new ProtocolError(
     MOCK_ERROR_CODES.toolNotFound,

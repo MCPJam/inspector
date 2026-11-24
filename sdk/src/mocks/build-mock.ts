@@ -14,6 +14,7 @@ import { answerItself } from "./self-answer.js";
 import {
   editedToolMissingError,
   methodUnavailableError,
+  unknownMethodError,
   realUnreachableError,
   toolNotFoundError,
 } from "./mock-errors.js";
@@ -194,10 +195,19 @@ async function buildServer(
       if (!info.capabilities[capability])
         throw methodUnavailableError(request.method, "real", capability);
     }
-    return real.request(
-      { method: request.method, params: request.params },
-      { signal: ctx.mcpReq.signal }
-    );
+    try {
+      return await real.request(
+        { method: request.method, params: request.params },
+        { signal: ctx.mcpReq.signal }
+      );
+    } catch (cause) {
+      // The MCP client throws a TypeError for a method outside the spec, which
+      // the server would answer as -32603. No server has such a method, so say
+      // method not found, as the spec asks for an unknown method.
+      if (cause instanceof TypeError)
+        throw unknownMethodError(request.method);
+      throw cause;
+    }
   };
   return server;
 }

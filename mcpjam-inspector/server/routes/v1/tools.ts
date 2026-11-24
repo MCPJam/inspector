@@ -12,6 +12,22 @@ import { projectAuthChallenge } from "../../utils/hosted-upstream-projection.js"
 
 const tools = new Hono();
 
+// JSON-RPC "invalid params". A server answers a call to a tool it does not
+// list with it, as the MCP specification's tools "Error Handling" section says.
+const JSONRPC_INVALID_PARAMS = -32602;
+
+/**
+ * The server's own refusal of a call, as a 400 that keeps its words. Left to
+ * the shared mapper it falls through to INTERNAL_ERROR, which blames MCPJam for
+ * a caller's mistake (a tool the server does not list, a mock's hidden tool).
+ */
+function refusedParams(error: unknown): WebRouteError | undefined {
+  const { code } = (error ?? {}) as { code?: unknown };
+  if (code !== JSONRPC_INVALID_PARAMS || !(error instanceof Error)) return undefined;
+  const message = error.message.replace(/^MCP error -?\d+:\s*/, "");
+  return new WebRouteError(400, ErrorCode.VALIDATION_ERROR, message, { jsonRpcCode: code });
+}
+
 // POST /v1/projects/:projectId/servers/:serverId/tools
 // List the server's tools. Wraps the same listTools core as /api/web/tools/list,
 // projecting the MCP result into the canonical { items, nextCursor? } page.
@@ -49,11 +65,11 @@ tools.post("/projects/:projectId/servers/:serverId/tools/call", async (c) =>
         );
       }
       const startedAt = Date.now();
-      const result = await manager.executeTool(
-        body.serverId,
-        body.toolName,
-        body.parameters
-      );
+      const result = await manager
+        .executeTool(body.serverId, body.toolName, body.parameters)
+        .catch((error: unknown) => {
+          throw refusedParams(error) ?? error;
+        });
       const durationMs = Math.max(0, Date.now() - startedAt);
       // Additive sibling on the MCP CallToolResult. `v1Resource` returns the
       // object verbatim, so agents can read latency without a second hop.

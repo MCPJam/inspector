@@ -429,3 +429,29 @@ describe("hashRealToolListing", () => {
     expect(hashRealToolListing([])).not.toBe(base);
   });
 });
+
+describe.each<Era>(["legacy", "modern"])("buildMock JSON-RPC errors (%s era)", (era) => {
+  it("answers an unknown method with method not found, on a mock of a real server", async () => {
+    const { handler } = await connectMock({}, era);
+    expect(await rawError(handler, era, "mock/unknown")).toMatchObject({
+      code: -32601,
+    });
+  });
+
+  it("answers an unknown method with method not found, on a mock from nothing", async () => {
+    const handler = buildMock({}, NO_REAL_SERVER);
+    expect(await rawError(handler, era, "mock/unknown")).toMatchObject({
+      code: -32601,
+    });
+  });
+
+  it("answers a call to a hidden or unlisted tool as the MCP SDK does: invalid params naming the tool", async () => {
+    const { client } = await connectMock({ tools: { echo: { hidden: true } } }, era);
+    for (const name of ["echo", "nothing_like_it"]) {
+      await expect(client.callTool({ name, arguments: {} })).rejects.toMatchObject({
+        code: -32602,
+        message: expect.stringContaining(`Tool ${name} not found`),
+      });
+    }
+  });
+});

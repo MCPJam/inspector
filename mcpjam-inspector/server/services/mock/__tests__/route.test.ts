@@ -107,6 +107,20 @@ describe("a mock served in process", () => {
     expect(response.status).toBe(403);
   });
 
+  it("answers a call to a hidden tool with invalid params naming it, as an SDK server does", async () => {
+    const d = {
+      open: stub.open,
+      resolve: vi.fn(async () => resolvedMock({ definition: { tools: { echo: { hidden: true } } } })),
+    };
+    const client = await dialMock((r) => serveMock(r, "mock1", inProcess("ann"), d));
+    const failure = await client.executeTool("mock", "echo", { message: "hi" }).catch((error: unknown) => error);
+    console.log(failure instanceof Error ? failure.constructor.name : typeof failure, (failure as Error).message, JSON.stringify(failure));
+    expect(failure).toMatchObject({ code: -32602 });
+    expect((failure as Error).message).toContain("Tool echo not found");
+    expect(stub.echoes).toEqual([]);
+    await client.disconnectAllServers();
+  });
+
   it("serves a mock made from nothing with no real server", async () => {
     const d = {
       open: stub.open,

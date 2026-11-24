@@ -1,3 +1,4 @@
+import { unknownMethodError } from "./mock-errors.js";
 import type {
   CallToolResult,
   LoggingLevel,
@@ -70,7 +71,7 @@ export const NO_REAL_SERVER: MockRealServer = {
     throw new Error(`There is no real server to call "${call.name}" on.`);
   },
   request: async ({ method }) => {
-    throw new Error(`There is no real server to send ${method} to.`);
+    throw unknownMethodError(method);
   },
   onListChanged: () => () => {},
 };

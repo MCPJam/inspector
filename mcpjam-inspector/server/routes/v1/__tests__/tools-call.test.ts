@@ -170,4 +170,16 @@ describe("POST /v1/projects/:projectId/servers/:serverId/tools/call", () => {
     expect(body.code).not.toBeUndefined();
     expect(body).not.toHaveProperty("durationMs");
   });
+
+  it("answers a call to a tool the server does not list as a 400 that names the tool, not INTERNAL_ERROR", async () => {
+    const refusal = Object.assign(new Error("MCP error -32602: Tool echo not found"), { code: -32602 });
+    stubConnection(vi.fn().mockRejectedValue(refusal));
+
+    const res = await postToolsCall();
+    const body = (await res.json()) as { code?: string; message?: string };
+
+    expect(res.status).toBe(400);
+    expect(body.code).toBe("VALIDATION_ERROR");
+    expect(body.message).toBe("Tool echo not found");
+  });
 });
