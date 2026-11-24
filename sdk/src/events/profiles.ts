@@ -168,7 +168,8 @@ export const DRAFT_PROFILE: EventsProfile = {
     provenance: policy("CSPRNG, middle of the draft's 24–64 byte window."),
   },
   refreshLead: {
-    value: "max(60 s, 10% of the remaining grant) before refreshBefore",
+    value:
+      "max(60 s, 10% of the remaining grant), at most half of it, before refreshBefore",
     provenance: policy("MCPJam keeper schedule."),
   },
   unsubscribesOnEnd: {
