@@ -1318,7 +1318,7 @@ function openTunnel(grant) {
     `x-mcpjam-preview-key: ${grant.key}`,
     ...Object.entries(grant.upstreamHeaders).map(([k, v]) => `${k}: ${v}`)
   ].join("\r\n");
-  return new Promise((resolve2, reject) => {
+  return new Promise((resolve3, reject) => {
     const socket = secure ? tls.connect({ host: url.hostname, servername: url.hostname, port }) : net.connect(port, url.hostname);
     socket.once(
       secure ? "secureConnect" : "connect",
@@ -1345,7 +1345,7 @@ function openTunnel(grant) {
       socket.off("close", onClose);
       const rest = buf.subarray(end + 4);
       if (rest.length) socket.unshift(rest);
-      resolve2(socket);
+      resolve3(socket);
     };
     const onClose = () => reject(new Error("tunnel_closed"));
     socket.on("data", onData);
@@ -1508,11 +1508,11 @@ var WorkspacePreviewRelay = class {
   }
 };
 function listen(server, port, host2) {
-  return new Promise((resolve2, reject) => {
+  return new Promise((resolve3, reject) => {
     server.once("error", reject);
     server.listen(port, host2, () => {
       server.off("error", reject);
-      resolve2();
+      resolve3();
     });
   });
 }
@@ -1652,8 +1652,8 @@ function createVideoRecorder(options) {
     }
     let settleExit = () => {
     };
-    const exited = new Promise((resolve2) => {
-      settleExit = resolve2;
+    const exited = new Promise((resolve3) => {
+      settleExit = resolve3;
     });
     const entry = {
       id: args.id,
@@ -1745,13 +1745,13 @@ function createVideoRecorder(options) {
       let timer;
       await Promise.race([
         entry.exited,
-        new Promise((resolve2) => {
+        new Promise((resolve3) => {
           timer = setTimer(() => {
             try {
               entry.child.kill("SIGKILL");
             } catch {
             }
-            resolve2();
+            resolve3();
           }, graceMs);
         })
       ]);
@@ -4081,7 +4081,7 @@ var DEFAULT_BODY_LIMIT_BYTES = 1024 * 1024;
 var BodyTooLargeError = class extends Error {
 };
 function readRequestBody(req, limitBytes) {
-  return new Promise((resolve2, reject) => {
+  return new Promise((resolve3, reject) => {
     const chunks = [];
     let size = 0;
     let refused = false;
@@ -4096,7 +4096,7 @@ function readRequestBody(req, limitBytes) {
       }
       chunks.push(chunk);
     });
-    req.on("end", () => resolve2(Buffer.concat(chunks).toString("utf8")));
+    req.on("end", () => resolve3(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
 }
@@ -5850,8 +5850,8 @@ var SessionBarrier = class {
   request(size) {
     this.pending = size;
     if (this.pendingSince === 0) this.pendingSince = this.now();
-    const settled = new Promise((resolve2) => {
-      this.requestWaiters.push(resolve2);
+    const settled = new Promise((resolve3) => {
+      this.requestWaiters.push(resolve3);
     });
     this.clearTimer(this.debounceHandle);
     this.debounceHandle = this.setTimer(() => {
@@ -5905,7 +5905,7 @@ var SessionBarrier = class {
     this.resizing = this.apply(size).catch(() => {
     }).then(() => {
       this.resizing = null;
-      for (const resolve2 of waiters) resolve2();
+      for (const resolve3 of waiters) resolve3();
       this.maybeResize();
     });
   }
@@ -7238,8 +7238,8 @@ var WebMcpBridge = class {
       }
       throw error;
     }
-    const output = await new Promise((resolve2, reject) => {
-      const waiter = { resolve: resolve2, reject, cdp: owner };
+    const output = await new Promise((resolve3, reject) => {
+      const waiter = { resolve: resolve3, reject, cdp: owner };
       const early = this.earlyResponses.get(invocationId);
       if (early) {
         this.earlyResponses.delete(invocationId);
@@ -7803,8 +7803,8 @@ function createTabViewport(cdp, options) {
       try {
         await Promise.race([
           stop(),
-          new Promise((resolve2) => {
-            timer = setTimeout(resolve2, 1e3);
+          new Promise((resolve3) => {
+            timer = setTimeout(resolve3, 1e3);
           })
         ]);
       } finally {
@@ -8019,8 +8019,8 @@ async function settleBridge(page) {
   try {
     await Promise.race([
       page.webmcp().catch(() => null),
-      new Promise((resolve2) => {
-        timer = setTimeout(() => resolve2(null), BRIDGE_SETTLE_MS);
+      new Promise((resolve3) => {
+        timer = setTimeout(() => resolve3(null), BRIDGE_SETTLE_MS);
       })
     ]);
   } finally {
@@ -9753,8 +9753,8 @@ var ChromiumDriver = class {
     this.stopPageCreated?.();
     await Promise.race([
       Promise.allSettled([...this.pendingTabs.values()]),
-      new Promise((resolve2) => {
-        const timer2 = setTimeout(resolve2, CLOSE_PENDING_TAB_GRACE_MS);
+      new Promise((resolve3) => {
+        const timer2 = setTimeout(resolve3, CLOSE_PENDING_TAB_GRACE_MS);
         timer2.unref?.();
       })
     ]);
@@ -9771,8 +9771,8 @@ var ChromiumDriver = class {
     try {
       await Promise.race([
         rendererCleanup,
-        new Promise((resolve2) => {
-          timer = setTimeout(resolve2, CLOSE_SURFACE_GRACE_MS);
+        new Promise((resolve3) => {
+          timer = setTimeout(resolve3, CLOSE_SURFACE_GRACE_MS);
         })
       ]);
     } finally {
@@ -10842,11 +10842,11 @@ ${headers.map(
   server.on("upgrade", (req, socket, head) => {
     void tunnel(req, socket, head, true);
   });
-  await new Promise((resolve2, reject) => {
+  await new Promise((resolve3, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => {
       server.off("error", reject);
-      resolve2();
+      resolve3();
     });
   });
   const address = server.address();
@@ -10861,7 +10861,7 @@ ${headers.map(
     unsubscribe?.();
     unregister();
     for (const socket of sockets) socket.destroy();
-    await new Promise((resolve2) => server.close(() => resolve2()));
+    await new Promise((resolve3) => server.close(() => resolve3()));
   };
   server.on("error", () => {
     void close();
@@ -11695,8 +11695,8 @@ function cookieDomainsFor(host2) {
 }
 var CONTEXT_CLOSE_GRACE_MS = 1e4;
 function closeGrace(ms = CONTEXT_CLOSE_GRACE_MS) {
-  return new Promise((resolve2) => {
-    const timer = setTimeout(resolve2, ms);
+  return new Promise((resolve3) => {
+    const timer = setTimeout(resolve3, ms);
     timer.unref?.();
   });
 }
@@ -11923,7 +11923,7 @@ function isPublicWebUrl(raw) {
   }
   return WEB_PROTOCOLS.has(url.protocol) && isPublicHost(url.hostname);
 }
-function createPublicNetworkPolicy(resolve2 = lookup) {
+function createPublicNetworkPolicy(resolve3 = lookup) {
   return {
     isActive: () => true,
     onRevoked: () => () => {
@@ -11934,7 +11934,7 @@ function createPublicNetworkPolicy(resolve2 = lookup) {
       if (!Number.isInteger(port) || port < 1 || port > 65535 || !isPublicHost(name)) {
         throw new BrowserPolicyError(REFUSED);
       }
-      const addresses = isIP(name) ? [{ address: name, family: isIP(name) }] : await resolve2(name, { all: true, verbatim: true });
+      const addresses = isIP(name) ? [{ address: name, family: isIP(name) }] : await resolve3(name, { all: true, verbatim: true });
       if (addresses.length === 0 || addresses.some(({ address }) => !isPublicHost(address))) {
         throw new BrowserPolicyError(REFUSED);
       }
@@ -11944,8 +11944,10 @@ function createPublicNetworkPolicy(resolve2 = lookup) {
 }
 
 // server/services/browserd/daemon/prepare-browser-profile.ts
+import { createHash as createHash2 } from "node:crypto";
 import { readFile as readFile2, readdir as readdir2, rm } from "node:fs/promises";
-import { isAbsolute, join as join4, relative as relative2, sep as sep2 } from "node:path";
+import { createServer as createServer3 } from "node:net";
+import { isAbsolute, join as join4, relative as relative2, resolve as resolve2, sep as sep2 } from "node:path";
 
 // server/services/browserd/profile-archive.ts
 import { lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -12306,6 +12308,11 @@ async function emptyProfileDir(config) {
     );
   }
   const kept = config.recordDir ? relative2(config.userDataDir, config.recordDir) : "";
+  if (config.recordDir && !kept) {
+    throw new Error(
+      "MCPJAM_BROWSERD_RECORD_DIR is the profile directory itself. Set it to a folder inside or outside the profile."
+    );
+  }
   const keep = kept && !kept.startsWith("..") && !isAbsolute(kept) ? kept.split(sep2) : [];
   await emptyExcept(config.userDataDir, keep);
 }
@@ -12324,6 +12331,32 @@ async function emptyExcept(dir, keep) {
     }
     await rm(join4(dir, entry), { recursive: true, force: true });
   }
+}
+async function withProfileClaim(userDataDir, boot) {
+  const claim = await takeProfileClaim(userDataDir);
+  try {
+    return await boot();
+  } finally {
+    claim?.close();
+  }
+}
+async function takeProfileClaim(userDataDir) {
+  if (process.platform !== "linux") return void 0;
+  const id = createHash2("sha256").update(resolve2(userDataDir)).digest("hex");
+  const server = createServer3();
+  try {
+    await new Promise((listening, failed) => {
+      server.once("error", failed);
+      server.listen(`\0mcpjam-browserd-profile-${id}`, listening);
+    });
+  } catch (error) {
+    if (error.code !== "EADDRINUSE") throw error;
+    throw new Error(
+      "profile_in_use: another browser is starting on this profile; try again"
+    );
+  }
+  server.unref();
+  return server;
 }
 
 // server/services/browserd/daemon/main.ts
@@ -12426,7 +12459,7 @@ async function resizeHostedDisplay(deps, next, previous) {
 }
 
 // server/services/browserd/daemon/config.ts
-import { createHash as createHash2, randomBytes as randomBytes5 } from "node:crypto";
+import { createHash as createHash3, randomBytes as randomBytes5 } from "node:crypto";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 var DEFAULT_ON_FEATURES = [
   "a11yFrames",
@@ -12570,7 +12603,7 @@ function readBundleHash(argv = process.argv, hashFile = defaultHashFile) {
   }
 }
 function defaultHashFile(path) {
-  return createHash2("sha256").update(readFileSync(path)).digest("hex");
+  return createHash3("sha256").update(readFileSync(path)).digest("hex");
 }
 
 // server/services/browserd/daemon/main.ts
@@ -12579,13 +12612,13 @@ function log(message) {
 `);
 }
 function runShell(command) {
-  return new Promise((resolve2) => {
+  return new Promise((resolve3) => {
     execFile(
       "/bin/sh",
       ["-c", command],
       { timeout: 1e4 },
       (error, _stdout, stderr) => {
-        resolve2({
+        resolve3({
           exitCode: error ? error.code ?? 1 : 0,
           stderr: typeof stderr === "string" ? stderr : void 0
         });
@@ -12606,16 +12639,18 @@ function displayHeight(config) {
 async function main() {
   const config = readBrowserdConfig();
   const bundleHash = readBundleHash();
-  const profileImported = await prepareBrowserProfile(config);
-  const context = await launchBrowserdContext({
-    userDataDir: config.userDataDir,
-    profileImported,
-    headless: config.headless,
-    extraArgs: extraArgsFor(config),
-    contextMode: config.contextMode,
-    deviceScaleFactor: config.deviceScaleFactor,
-    ...config.networkPolicy === "public" ? { egressPolicy: createPublicNetworkPolicy() } : {}
-  });
+  const context = await withProfileClaim(
+    config.userDataDir,
+    async () => launchBrowserdContext({
+      userDataDir: config.userDataDir,
+      profileImported: await prepareBrowserProfile(config),
+      headless: config.headless,
+      extraArgs: extraArgsFor(config),
+      contextMode: config.contextMode,
+      deviceScaleFactor: config.deviceScaleFactor,
+      ...config.networkPolicy === "public" ? { egressPolicy: createPublicNetworkPolicy() } : {}
+    })
+  );
   const lease = new HandoffLease();
   let encoder;
   const canResize = config.contextMode === "persistent" && config.kiosk && (await runShell(
