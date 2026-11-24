@@ -1,6 +1,15 @@
 vi.mock("@/components/browser/BrowserRuntimeControls", () => ({
   BrowserRuntimeControls: () => null,
 }));
+// The real web client pane, over a stub of the project's account list.
+const webAccountsState = vi.hoisted(() => ({
+  accounts: [] as unknown[],
+  loaded: true,
+  isAdmin: false,
+}));
+vi.mock("@/hooks/use-web-accounts", () => ({
+  useWebAccounts: () => webAccountsState,
+}));
 /**
  * The browser panel, in its new home beside chat.
  *
@@ -11,6 +20,7 @@ vi.mock("@/components/browser/BrowserRuntimeControls", () => ({
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
+import { createWebAccountView } from "@/test/factories";
 
 const engineState = {
   engine: "local" as "local" | "cloud",
@@ -117,6 +127,9 @@ function renderPanel(visible = true) {
 }
 
 beforeEach(() => {
+  webAccountsState.accounts = [];
+  webAccountsState.loaded = true;
+  webAccountsState.isAdmin = false;
   engineState.engine = "local";
   engineState.selectedEngine = "local";
   engineState.granted = true;
@@ -324,4 +337,41 @@ describe("the browser a chat owns", () => {
 it("makes a restored session browser available to its authenticated owner without a host", () => {
   expect(browserPanelAvailable({ hostHasBrowser: false, sessionHasBrowser: true, selectedEngine: "cloud", isAuthenticated: true, localBrowserRunning: false })).toBe(true);
   expect(browserPanelAvailable({ hostHasBrowser: false, sessionHasBrowser: true, selectedEngine: "cloud", isAuthenticated: false, localBrowserRunning: false })).toBe(false);
+});
+
+describe("a web client's pane", () => {
+  function renderWebClient() {
+    engineState.engine = "cloud";
+    engineState.selectedEngine = "cloud";
+    return render(
+      <PlaygroundBrowserPanel
+        projectId="proj-1"
+        hostId="host-1"
+        visible
+        onClose={vi.fn()}
+        webClientVendor="claude"
+      />,
+    );
+  }
+
+  it("attaches no hosted browser while the project has no account", () => {
+    renderWebClient();
+    expect(screen.queryByTestId("browser-pane")).toBeNull();
+    expect(screen.getByTestId("web-pane-blocked")).toHaveTextContent(
+      "This project has no Claude web account yet",
+    );
+    expect(screen.getByTestId("web-account-chip")).toBeInTheDocument();
+  });
+
+  it("attaches the hosted browser once the project has a usable account", () => {
+    webAccountsState.accounts = [
+      createWebAccountView({ webAccountId: "wa-1", status: "ready" }),
+    ];
+    renderWebClient();
+    expect(screen.getByTestId("browser-pane")).toHaveAttribute(
+      "data-engine",
+      "hosted",
+    );
+    expect(screen.queryByTestId("web-pane-blocked")).toBeNull();
+  });
 });

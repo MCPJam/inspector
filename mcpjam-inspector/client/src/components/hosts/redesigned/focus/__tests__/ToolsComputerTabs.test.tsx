@@ -69,8 +69,7 @@ vi.mock("posthog-js/react", () => ({
         ? flags.webClients
         : true,
 }));
-// The web runtime ids land with the web runtime; the tab asks only which
-// client this is.
+// The tab asks only which web client a draft is.
 vi.mock("@/lib/web-accounts/clients", () => ({
   webClientVendorOfHost: () => webClient.vendor,
 }));

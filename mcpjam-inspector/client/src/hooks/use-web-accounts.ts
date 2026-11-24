@@ -19,8 +19,8 @@ export function useWebAccounts(
 ) {
   const { isAuthenticated } = useConvexAuth();
   const enabled = useWebClientsEnabled();
-  const asks =
-    enabled && isAuthenticated && !!vendor && shouldQueryProjectId(projectId);
+  const queryable = shouldQueryProjectId(projectId);
+  const asks = enabled && isAuthenticated && !!vendor && queryable;
   const all = useQuery(
     webAccountsApi.list,
     asks && projectId ? { projectId } : "skip",
@@ -34,10 +34,11 @@ export function useWebAccounts(
     [all, vendor],
   );
   // Loaded only once the role is known too, so an admin never sees a
-  // member's view on the way in.
+  // member's view on the way in. A project the list can't be asked about
+  // (local or unsaved) has no web accounts, rather than loading for good.
   return {
     accounts,
-    loaded: all !== undefined && !roleLoading,
+    loaded: (!queryable || all !== undefined) && !roleLoading,
     isAdmin: canManage,
   };
 }
