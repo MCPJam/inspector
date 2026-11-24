@@ -1325,6 +1325,7 @@ export type {
 // Which Events error an `events/*` JSON-RPC error is (draft and Beta codes),
 // so the Events tab names a termination the same way the runtime does.
 // Browser-safe: pure predicates over the error object.
+export * from "./events/receiver.js";
 export { classifyEventsRpcError } from "./mcp-client-manager/events-ext-guards.js";
 export type {
   ClassifiedEventsError,

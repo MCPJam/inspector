@@ -89,12 +89,18 @@ describe("local events routes", () => {
   it("requires a session everywhere except the development receiver", async () => {
     const unauthenticated = await fetch(`${base}/api/mcp/events/feed`);
     expect(unauthenticated.status).toBe(401);
-    const hook = await fetch(`${base}/api/mcp/events/hooks/i/nope/s/nope`, {
+    const hook = await fetch(`${base}/api/mcp/events/hooks/events-fixture/i/nope/s/nope`, {
       method: "POST",
       body: "{}",
     });
     // Reached the route (no session needed) and was refused by the inbox.
-    expect(hook.status).toBe(410);
+    expect(hook.status).toBe(404);
+    expect(await hook.json()).toEqual({ error: "unknown_slot" });
+    const oldHook = await fetch(`${base}/api/mcp/events/hooks/i/nope/s/nope`, {
+      method: "POST",
+      body: "{}",
+    });
+    expect(oldHook.status).toBe(404);
   });
 
   it("reports support and lists descriptors", async () => {
@@ -354,9 +360,22 @@ describe("local events routes", () => {
     );
     // Plain http on the inspector's own port, under the hooks route.
     expect(subscription.callbackUrl).toMatch(
-      new RegExp(`^${base}/api/mcp/events/hooks/i/[a-z2-7]+/s/[a-z2-7]+$`),
+      new RegExp(`^${base}/api/mcp/events/hooks/${SERVER_ID}/i/[a-z2-7]+/s/[a-z2-7]+$`),
     );
+    expect(subscription.callbackVerifiedAt).toEqual(expect.any(Number));
     expect(JSON.stringify(subscription)).not.toMatch(/whsec_/);
+    expect(fixture.received).toContainEqual(expect.objectContaining({
+      method: "events/subscribe",
+      params: expect.objectContaining({
+        delivery: expect.objectContaining({ url: subscription.callbackUrl }),
+        ttlMs: 600_000,
+      }),
+    }));
+
+    const wrongServer = subscription.callbackUrl.replace(`/hooks/${SERVER_ID}/`, "/hooks/other-server/");
+    const wrong = await fetch(wrongServer, { method: "POST", body: "{}" });
+    expect(wrong.status).toBe(404);
+    expect(await wrong.json()).toEqual({ error: "unknown_slot" });
     // The fixture verified the receiver through the challenge.
     expect(
       fixture.subscriptions().find((row) => row.url === subscription.callbackUrl),
@@ -397,6 +416,58 @@ describe("local events routes", () => {
 
     const rotated = await call("POST", `/subscriptions/${id}/rotate`);
     expect(rotated.status).toBe(200);
+  });
+
+  it("validates custom URLs and pins a live subscription to its receiver", async () => {
+    const request = {
+      serverId: SERVER_ID,
+      eventName: "comment.created",
+      arguments: { document_id: "doc_custom" },
+      mode: "webhook",
+      host: null,
+    };
+    const invalid = await call("POST", "/subscriptions", {
+      ...request,
+      receiver: { kind: "custom", baseUrl: "https://user:pass@example.com/hooks" },
+    });
+    expect(invalid.status).toBe(400);
+    expect(invalid.body.message).toBe("Remove the credentials from the callback URL.");
+
+    const custom = {
+      kind: "custom",
+      baseUrl: `${base}/api/mcp/events/hooks/`,
+    };
+    const created = await call("POST", "/subscriptions", {
+      ...request,
+      receiver: custom,
+      overrides: ["insecure-local-receiver"],
+      ttlMs: null,
+    });
+    expect(created.status).toBe(200);
+    const id = created.body.subscription.id;
+    await vi.waitFor(async () => {
+      const list = await call("GET", "/subscriptions");
+      const subscription = list.body.subscriptions.find((row: { id: string }) => row.id === id);
+      expect(subscription).toMatchObject({
+        observedState: "active",
+        callbackVerifiedAt: expect.any(Number),
+      });
+    });
+    expect(fixture.received).toContainEqual(expect.objectContaining({
+      method: "events/subscribe",
+      params: expect.objectContaining({ ttlMs: null }),
+    }));
+
+    const conflict = await call("POST", "/subscriptions", { ...request, receiver: { kind: "local" } });
+    expect(conflict.status).toBe(409);
+    expect(conflict.body.code).toBe("EVENTS_CONFLICT");
+    const replay = await call("POST", "/subscriptions", {
+      ...request,
+      receiver: { ...custom, baseUrl: custom.baseUrl.slice(0, -1) },
+      overrides: ["insecure-local-receiver"],
+    });
+    expect(replay.body.subscription.id).toBe(id);
+    await call("POST", `/subscriptions/${id}/state`, { desiredState: "removed" });
   });
 
   it("delivers push events through events/stream", async () => {

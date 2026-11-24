@@ -33,6 +33,7 @@ import {
   CHATGPT_2026_09_30_PROFILE_ID,
   CHATGPT_PROFILE_ID,
   DRAFT_PROFILE_ID,
+  checkCallbackUrl,
   getEventsProfile,
   hasEventsProfileCapability,
   type EventsProfile,
@@ -232,37 +233,19 @@ export async function withEventsErrors<T>(
   }
 }
 
-export interface CallbackUrlCheck {
-  url: URL;
-  /** True for a plain-http URL accepted under the insecure flag. */
-  insecure: boolean;
-}
-
-/**
- * MCP Events makes `https` a MUST for callback URLs. Plain http is accepted
- * only behind an explicit flag, and only ever as a labelled development mode.
- */
-export function checkCallbackUrl(
+/** Apply CLI flag guidance to the shared callback URL check. */
+export function requireCallbackUrl(
   value: string,
   args: { flag: string; insecureFlag: string; allowInsecure: boolean },
-): CallbackUrlCheck {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw usageError(`${args.flag} is not a valid URL: ${value}`);
-  }
-  if (url.protocol === "https:") return { url, insecure: false };
-  if (url.protocol !== "http:") {
-    throw usageError(`${args.flag} must be an https:// URL (got ${url.protocol}).`);
-  }
-  if (!args.allowInsecure) {
+): { url: URL; insecure: boolean } {
+  const checked = checkCallbackUrl(value);
+  if (!checked.ok) throw usageError(`${args.flag}: ${checked.reason}`);
+  if (checked.insecure && !args.allowInsecure) {
     throw usageError(
-      `${args.flag} must be https:// — MCP Events requires HTTPS callback URLs. ` +
-        `Pass ${args.insecureFlag} to use plain http for local development (NON-CONFORMANT; never a conformance pass).`,
+      `${args.flag} must be https://. Pass ${args.insecureFlag} to use plain http for local development (NON-CONFORMANT).`,
     );
   }
-  return { url, insecure: true };
+  return checked;
 }
 
 export function insecureModeWarning(flag: string, url: string): string {

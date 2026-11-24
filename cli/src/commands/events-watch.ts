@@ -9,6 +9,7 @@ import { Command } from "commander";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import {
   BETA_PROFILE_ID,
+  DEFAULT_LOCAL_WEBHOOK_TTL_MS,
   computeBindingKey,
   createManagerPushPort,
   EventsCoordinator,
@@ -22,7 +23,7 @@ import {
 } from "@mcpjam/sdk/events";
 import {
   assertEventsDeclaredOrForced,
-  checkCallbackUrl,
+  requireCallbackUrl,
   describeDeliveryMismatch,
   insecureModeWarning,
   listAllServerEvents,
@@ -51,6 +52,8 @@ import {
 export interface EventsWatchOptions extends EventsCommandOptions {
   mode?: string;
   duration?: number;
+  ttl?: number;
+  expiry?: boolean;
   listen?: string;
   publicUrl?: string;
   insecureLocalReceiver?: boolean;
@@ -77,6 +80,9 @@ function planWatchReceiver(options: EventsWatchOptions): {
     options.publicUrl !== undefined ||
     options.insecureLocalReceiver === true ||
     options.listen !== undefined;
+  if (options.ttl !== undefined && options.expiry === false) {
+    throw usageError("Pass --ttl or --no-expiry, not both.");
+  }
   if (mode !== undefined && mode !== "webhook" && receiverFlags) {
     throw usageError(
       "--public-url, --listen and --insecure-local-receiver apply only to --mode webhook.",
@@ -84,6 +90,9 @@ function planWatchReceiver(options: EventsWatchOptions): {
   }
   const wantsWebhook = mode === "webhook" || receiverFlags;
   if (!wantsWebhook) {
+    if (options.ttl !== undefined || options.expiry === false) {
+      throw usageError("--ttl and --no-expiry apply only to --mode webhook.");
+    }
     return mode ? { forcedMode: mode as DeliveryMode } : {};
   }
   if (options.publicUrl === undefined && options.insecureLocalReceiver !== true) {
@@ -95,14 +104,11 @@ function planWatchReceiver(options: EventsWatchOptions): {
   let publicUrl: URL | undefined;
   let insecure = options.insecureLocalReceiver === true && options.publicUrl === undefined;
   if (options.publicUrl !== undefined) {
-    const checked = checkCallbackUrl(options.publicUrl, {
+    const checked = requireCallbackUrl(options.publicUrl, {
       flag: "--public-url",
       insecureFlag: "--insecure-local-receiver",
       allowInsecure: options.insecureLocalReceiver === true,
     });
-    if (checked.url.search || checked.url.hash) {
-      throw usageError("--public-url must not carry a query string or fragment.");
-    }
     publicUrl = checked.url;
     insecure = checked.insecure;
   }
@@ -166,6 +172,8 @@ export function registerWatch(events: Command): void {
           "Stop after this many delivered events",
           positiveInteger("Max events"),
         )
+        .option("--ttl <seconds>", "Webhook subscription lifetime (default 600 seconds)", parseDurationSeconds)
+        .option("--no-expiry", "Webhook subscription with no expiry")
         .option("--cursor <cursor>", "Start from this cursor (default: null, start from now)")
         .option("--max-age-ms <ms>", "maxAgeMs sent with poll/stream/subscribe", (value: string) =>
           parseNonNegativeInteger(value, "Max age"),
@@ -273,6 +281,9 @@ export function registerWatch(events: Command): void {
           lastCursor: options.cursor ?? null,
           consecutiveFailures: 0,
           ...(options.maxAgeMs !== undefined ? { maxAgeMs: options.maxAgeMs } : {}),
+          ...(mode === "webhook"
+            ? { ttlMs: options.expiry === false ? null : options.ttl ?? DEFAULT_LOCAL_WEBHOOK_TTL_MS }
+            : {}),
         };
         const coordinator = new EventsCoordinator({
           rpc: async () => buildRpcPort(manager, serverId, options.force),
