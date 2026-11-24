@@ -153,6 +153,15 @@ export function PlaygroundServerConnectButton({
           align="start"
           className="w-80 max-w-[calc(100vw-2rem)] p-0"
           aria-label="Connect a saved server"
+          onFocusOutside={(event) => {
+            // Keep the search and connection result visible after an alert dialog.
+            if (
+              event.target instanceof Element &&
+              event.target.closest('[role="alertdialog"]')
+            ) {
+              event.preventDefault();
+            }
+          }}
         >
           <div className="space-y-2 border-b border-border p-3">
             <p className="text-sm font-medium">Connect a saved server</p>
