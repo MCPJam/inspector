@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import {
   chmod,
   link,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -492,7 +493,9 @@ describe("installing a pack", () => {
       expect(result.state).toBe("ready");
       // The link did not survive extraction.
       const packRoot = join(packVersionRoot("claude-code", PACK_VERSION), "claude-code");
-      await expect(readFile(join(packRoot, "sneaky"))).rejects.toThrow();
+      await expect(lstat(join(packRoot, "sneaky"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     } finally {
       process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE = saved!;
     }
