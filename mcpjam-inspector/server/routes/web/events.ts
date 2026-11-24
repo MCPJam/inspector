@@ -17,10 +17,12 @@
  * (authorize → connect → request → disconnect), exactly like tasks.
  *
  * The other three talk to the inbox Worker with the ADMIN token, so each
- * first proves the caller is a member of the project NOW (C7), through a
- * Convex read made with the caller's own bearer — the inspector never takes
- * a project id's word for it. `simulate` and `slot-state` additionally check
- * that the subscription belongs to that project, and `simulate` that the
+ * first proves the caller is a member of the project NOW (C7), through
+ * `eventSubscriptions:authorizeFeed` read with the caller's own bearer — the
+ * backend's events gate, so the inspector never takes a project id's word for
+ * it and never keeps a second copy of the rule. `simulate` and `slot-state`
+ * additionally check that the subscription belongs to that project, and
+ * `simulate` that the
  * caller OWNS it: a simulated event runs the subscription's triggers, which
  * act with the owner's credentials. A viewer token is the only credential
  * that ever leaves here, and it is scoped to one inbox, read-only, and valid
@@ -77,11 +79,11 @@ export interface WebEventsDeps {
   inbox: (
     inboxId: string,
   ) => Pick<HttpInboxClient, "getViewerEpoch" | "simulate" | "slotState">;
-  /** `projects:getProjectCapabilities` with the caller's bearer. */
-  projectAccess: (
-    c: Context,
-    projectId: string,
-  ) => Promise<ProjectAccessRow | null>;
+  /**
+   * `eventSubscriptions:authorizeFeed` with the caller's bearer: throws unless
+   * the caller passes the backend's own events gate (C7) for the project.
+   */
+  authorizeFeed: (c: Context, projectId: string) => Promise<void>;
   /**
    * `eventSubscriptions:authorizeSimulation` with the caller's bearer: throws
    * unless the caller owns the subscription. Convex resolves the caller, so
@@ -91,29 +93,18 @@ export interface WebEventsDeps {
   now: () => number;
 }
 
-interface ProjectAccessRow {
-  projectId?: string;
-  role?: string;
-  projectRole?: string | null;
-  isProjectAdmin?: boolean;
-}
-
 const defaultDeps: WebEventsDeps = {
   backend: () => new EventsBackendClient(),
   inbox: (inboxId) => new HttpInboxClient({ inboxId }),
-  projectAccess: async (c, projectId) => {
+  authorizeFeed: async (c, projectId) => {
     const client = createConvexClient(await getConvexBearerForRequest(c));
     try {
-      return (await client.query(
-        "projects:getProjectCapabilities" as never,
+      await client.query(
+        "eventSubscriptions:authorizeFeed" as never,
         { projectId } as never,
-      )) as ProjectAccessRow | null;
+      );
     } catch (error) {
-      throw translateConvexReadError(error, {
-        scope: "web.events.membership",
-        notFoundMessage: "Project not found",
-        redactedIsRefusal: true,
-      });
+      throw feedRefusal(error);
     }
   },
   authorizeSimulation: async (c, subscriptionId) => {
@@ -129,6 +120,19 @@ const defaultDeps: WebEventsDeps = {
   },
   now: () => Date.now(),
 };
+
+/**
+ * How `authorizeFeed` refusing becomes an answer: a neutral 404, whichever
+ * rule refused (not a member, a guest, a scoped bearer), matching the
+ * 404-never-403 rule for a project the caller may not read.
+ */
+export function feedRefusal(error: unknown): WebRouteError {
+  return translateConvexReadError(error, {
+    scope: "web.events.membership",
+    notFoundMessage: "Project not found",
+    redactedIsRefusal: true,
+  });
+}
 
 /**
  * How `authorizeSimulation` refusing becomes an answer. The owner refusal is a
@@ -168,38 +172,17 @@ export function setWebEventsDepsForTests(
 // Helpers
 // ---------------------------------------------------------------------------
 
-const ORG_ROLE_RANK: Record<string, number> = {
-  guest: 0,
-  member: 1,
-  admin: 2,
-  owner: 3,
-};
-
 /**
- * C7 "member now": an organization member (or higher), or a holder of a
- * project grant. A guest with no grant is refused, as is a caller the read
- * does not recognize at all.
+ * C7 "member now", decided by the backend's `requireEventsProjectMember`, the
+ * gate every other events function uses. It is asked, never re-derived here:
+ * a second copy of the rule is how the feed came to admit guests and scoped
+ * bearers that `eventSubscriptions:list` refuses.
  */
 async function assertProjectMember(
   c: Context,
   projectId: string,
 ): Promise<void> {
-  const row = await deps.projectAccess(c, projectId);
-  if (!row) {
-    throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Project not found");
-  }
-  const rank = ORG_ROLE_RANK[row.role ?? ""] ?? 0;
-  const granted =
-    row.isProjectAdmin === true ||
-    row.projectRole === "admin" ||
-    row.projectRole === "editor";
-  if (rank < ORG_ROLE_RANK.member! && !granted) {
-    throw new WebRouteError(
-      403,
-      ErrorCode.FORBIDDEN,
-      "Only project members can read this project's events.",
-    );
-  }
+  await deps.authorizeFeed(c, projectId);
 }
 
 function requireEventsPlane(): void {
