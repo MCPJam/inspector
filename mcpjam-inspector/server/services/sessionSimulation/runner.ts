@@ -423,6 +423,8 @@ export interface SyntheticHostRuntime {
   harness?: Harness;
   agentLoop?: Harness;
   tasks?: MCPJamHandlerOptions["tasks"];
+  /** A web client session's account, held for all its turns, and its run's owner. */
+  webClientRun?: MCPJamHandlerOptions["webClientRun"];
   /**
    * Scenario-access version for the drain's `/stream/org/resolve` authorization
    * and the scenario-scoped widget capture. Set on the scenario surface; the
@@ -587,6 +589,7 @@ export async function runSyntheticHostSession(
     browserSandboxBinding,
     harnessSandboxBinding,
     harnessExecutionTarget,
+    webClientRun,
     accessVersion,
     scenarioId,
     environmentId,
@@ -1309,6 +1312,7 @@ export async function runSyntheticHostSession(
             ...(harness && harnessSandboxBinding
               ? { harnessSandboxBinding }
               : {}),
+            ...(harness && webClientRun ? { webClientRun } : {}),
             // The target's Project Environment — the GRANT BOUNDARY the harness
             // turn checks a BROKERED external-account credential against. Harness
             // only: the emulated engine resolves no such credential, and this
@@ -2383,6 +2387,9 @@ export async function drainAssistantTurn(
     // Ephemeral harness box (B-isolation phase 6) — present ⇒ the harness turn
     // runs on it instead of reserving the acting member's personal computer.
     ...(harnessSandboxBinding ? { harnessSandboxBinding } : {}),
+    // A web client session's leased account and its loss callback. Without
+    // it the turn would run on the project's default account.
+    ...(args.webClientRun ? { webClientRun: args.webClientRun } : {}),
     // No ceiling for a harness host: its model broker clamps `max_tokens` to it
     // without touching the model's thinking budget, so one below the broker's
     // own default (64,000) can make Anthropic refuse every thinking turn. The

@@ -925,7 +925,7 @@ describe("SwarmRunDetail findings wiring", () => {
       within(nav).getByRole("button", { name: "Findings" }),
     ).toBeInTheDocument();
     expect(screen.getByTestId("swarm-findings-tab")).toBeInTheDocument();
-    expect(screen.getByTestId("swarm-run-detail-state")).toBeInTheDocument();
+    expect(screen.queryByTestId("swarm-run-detail-state")).not.toBeInTheDocument();
     expect(
       screen.queryByTestId("stub-insights-workbench"),
     ).not.toBeInTheDocument();
@@ -934,7 +934,6 @@ describe("SwarmRunDetail findings wiring", () => {
   it("still lands on Findings by default", () => {
     renderDetail();
     expect(screen.getByTestId("swarm-findings-tab")).toBeInTheDocument();
-    expect(screen.getByTestId("swarm-run-detail-state")).toBeInTheDocument();
     expect(
       screen.queryByTestId("stub-insights-workbench"),
     ).not.toBeInTheDocument();

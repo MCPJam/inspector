@@ -83,6 +83,18 @@ export async function startLocalHarnessMcpPlane(args: LocalHarnessMcpPlaneArgs) 
           if (info) publishHarnessScopeStepUp(current.turnId, info);
         },
       });
+      // The loopback proxy lists tools but cannot relay tool-list change
+      // notifications. Advertising them makes Copilot wait on subscriptions/listen.
+      if (parsed.body.method === "server/discover") {
+        const tools: unknown = result?.result?.capabilities?.tools;
+        if (tools && typeof tools === "object" && "listChanged" in tools) {
+          const { listChanged: _listChanged, ...capabilities } = tools;
+          result.result = {
+            ...result.result,
+            capabilities: { ...result.result.capabilities, tools: capabilities },
+          };
+        }
+      }
       if (result !== null) rpcLogBus.publish({ serverId, direction: "receive", timestamp: new Date().toISOString(), message: result });
       finish(result === null ? 202 : 200, result ?? undefined);
     } catch {
