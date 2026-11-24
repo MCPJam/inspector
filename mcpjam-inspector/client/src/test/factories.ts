@@ -10,6 +10,7 @@ import type {
 import { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { AppInstance } from "@mcpjam/widget-react";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
+import type { WebAccount } from "@/lib/web-accounts/api";
 
 // Counter for generating unique IDs
 let idCounter = 0;
@@ -284,6 +285,27 @@ export function makeAppInstance(overrides: Partial<AppInstance> = {}): AppInstan
     bridge: new AppBridge(null, { name: "test", version: "1" }, {}),
     tools: [{ name: "make_move", inputSchema: { type: "object", properties: { san: { type: "string" } } } }],
     registeredAtMs: 0,
+    ...overrides,
+  };
+}
+
+/** A project's Claude web account as the backend lists it: ready, the default. */
+export function createWebAccountView(
+  overrides: Partial<WebAccount> = {},
+): WebAccount {
+  return {
+    webAccountId: uniqueId("web-account"),
+    projectId: "project-1",
+    vendor: "claude",
+    label: "QA team",
+    status: "ready",
+    accountEmail: "qa@example.com",
+    hasProfile: true,
+    profileVersion: 1,
+    reconnectOwnerUserId: "user-admin",
+    allowLocalRuns: false,
+    createdAt: 1,
+    isDefault: true,
     ...overrides,
   };
 }
