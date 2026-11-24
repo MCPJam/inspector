@@ -33,11 +33,11 @@ describe("session refresh sign-in recovery", () => {
     expect(screen.getByRole("button", { name: "Sign in" })).toBeTruthy();
   });
 
-  it("keeps a signed-in transient failure on the existing retry path", () => {
+  it("offers a signed-in user Sign in as well as Retry after a transient failure", () => {
     auth.user = { id: "member" };
     render(<SessionRefreshBanner />);
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeTruthy();
   });
 
   it("shows one sign-in action after the session expires", () => {

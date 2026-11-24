@@ -903,9 +903,11 @@ export function SuiteIterationsView({
             ? "test-detail"
             : "overview";
   // Evaluate's saved case: steps editor with the flag on; waits while it loads.
+  // Direct guests keep today's editor, which has their inline runner.
   const stepsEditorFlag = useTestCaseStepsEditorEnabled();
   const stepsEditorRoute =
     evaluateCaseEditor &&
+    !isDirectGuest &&
     viewMode === "test-edit" &&
     opensInStepsEditor(route) &&
     stepsEditorFlag !== false;
@@ -2311,7 +2313,7 @@ export function SuiteIterationsView({
                       evalRunsDisabledReason ??
                       (rerunningSuiteId ? "A run is already starting." : null),
                   }}
-                  onRunCase={isDirectGuest ? undefined : onRunCase}
+                  onRunCase={onRunCase}
                   runOutOfCreditsReason={caseRunOutOfCreditsReason}
                   onDeleteTestCasesBatch={onDeleteTestCasesBatch}
                   navigation={navigation}

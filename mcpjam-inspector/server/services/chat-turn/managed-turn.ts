@@ -37,6 +37,11 @@ import { logger } from "../../utils/logger.js";
 import { resolveManagedTurnSetup } from "./managed-setup.js";
 import { prepareManagedConnections } from "./managed-connections.js";
 import { prepareManagedTools } from "./managed-tools.js";
+import {
+  harnessBoxFirstEnabled,
+  playgroundBoxPlan,
+} from "./playground-box-plan.js";
+import { startPlaygroundBoxEarly } from "./owned-playground-box.js";
 import { TurnTiming } from "../../utils/turn-timing.js";
 import { harnessTurnEventSink } from "../../utils/harness/harness-turn-event.js";
 import {
@@ -150,6 +155,22 @@ export async function handleManagedChatTurn(
       harnessComputerWorkdir,
       executionBound,
     } = setup.value;
+    // The box is the turn's longest wait before the stream: with the switch on
+    // it is booked now, by the same plan the tools stage books it by, and
+    // boots while the turn is authorized and its connections are made. The
+    // turn's resources own it either way, so a turn that fails before the
+    // tools stage still releases it.
+    const boxPlan = harnessBoxFirstEnabled()
+      ? playgroundBoxPlan({ c, bearerToken, timing, setup: setup.value })
+      : undefined;
+    const earlyPlaygroundBox = boxPlan
+      ? startPlaygroundBoxEarly(
+          resources,
+          boxPlan.reason,
+          boxPlan.args,
+          Boolean(c.get("guestId")),
+        )
+      : undefined;
 
     const turnAuthorization = await prepareTurnAuthorization(c, {
       projectId: hostedBody.projectId, chatSessionId: body.chatSessionId, executionTarget,
@@ -218,6 +239,7 @@ export async function handleManagedChatTurn(
       }),
     );
     const tools = await prepareManagedTools({
+      ...(earlyPlaygroundBox ? { earlyPlaygroundBox } : {}),
       c,
       rawBody,
       bearerToken,

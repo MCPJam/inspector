@@ -2,6 +2,7 @@ import { useCursorModels } from "./use-cursor-models";
 import { isRuntimeAccountModel } from "@/shared/model-provider";
 import { reportCaught } from "@/lib/error-reporting";
 import { useHarnessApprovalStop } from "./use-harness-approval-stop";
+import { isWebClientRuntimeId } from "@/shared/web-clients";
 import { isHarness } from "@mcpjam/sdk/host-config/internal";
 import { createTurnAuthorizationRenewal } from "@/lib/turn-authorization-renewal";
 import { createPersistReceiptRecovery } from "@/lib/persist-receipt-recovery";
@@ -430,10 +431,10 @@ const SANDBOX_NOTICE_MESSAGES: Record<SandboxNoticeReason, string> = {
 // local to avoid coupling the hook to the registry's `__internal` export.
 const APP_TOOL_ALIAS_REGEX = /^app_[a-z0-9]{8}$/i;
 
-function resolveSystemPrompt(value: string | null | undefined): string {
+function resolveSystemPrompt(value: string | null | undefined, fallback: string): string {
   return typeof value === "string" && value.trim().length > 0
     ? value
-    : DEFAULT_SYSTEM_PROMPT;
+    : fallback;
 }
 
 function getOrgProviderKeyForModel(model: ModelDefinition): string | null {
@@ -2215,9 +2216,9 @@ export function useChatSession(
   appToolsRegistryRef.current = appToolsRegistry;
   const appState = useMaybeSharedAppState();
   const initialModelId = executionConfig?.modelId;
-  const initialSystemPrompt = resolveSystemPrompt(
-    executionConfig?.systemPrompt,
-  );
+  const defaultSystemPrompt = isWebClientRuntimeId(harnessModelTarget?.harnessId)
+    ? ""
+    : DEFAULT_SYSTEM_PROMPT;
   const initialTemperature = executionConfig?.temperature ?? 0.7;
   const initialRequireToolApproval =
     executionConfig?.requireToolApproval ?? false;
@@ -2263,10 +2264,8 @@ export function useChatSession(
   const authIsMemberRef = useRef(false);
   const [isSessionBootstrapComplete, setIsSessionBootstrapComplete] =
     useState(false);
-  const [systemPrompt, setSystemPromptState] = useState(initialSystemPrompt);
-  const setSystemPrompt = useCallback((prompt: string) => {
-    setSystemPromptState(resolveSystemPrompt(prompt));
-  }, []);
+  const [configuredSystemPrompt, setSystemPrompt] = useState(executionConfig?.systemPrompt ?? "");
+  const systemPrompt = resolveSystemPrompt(configuredSystemPrompt, defaultSystemPrompt);
   const [temperatureOverride, setTemperatureOverride] = useState<number | undefined>(undefined);
   /**
    * The scenario whose transcript this surface may resume across a refresh, or
@@ -5533,6 +5532,14 @@ export function useChatSession(
     syncRestoredToolRenderOverrides,
   ]);
 
+  // The SDK status reaches React after admission. Hold a synchronous lease so
+  // manual and event sends cannot both enter that gap in the same conversation.
+  const activeSendSessions = useRef(new Set<string>());
+  const canStartTurn = useCallback(() =>
+    !activeSendSessions.current.has(chatSessionIdRef.current) &&
+    statusRef.current !== "submitted" && statusRef.current !== "streaming",
+  []);
+
   // Wrapped sendMessage that accepts FileUIPart[]
   const sendMessage = useCallback(
     (options: {
@@ -5575,7 +5582,7 @@ export function useChatSession(
       // (Only genuinely NEW user turns flow through this wrapper; in-turn
       // continuations — tool-approval responses, tool outputs — reuse the same
       // client and go through `addToolApprovalResponse`/`addToolOutput`.)
-      if (isCurrent && !isCurrent()) return Promise.resolve(false);
+      if (!canStartTurn() || (isCurrent && !isCurrent())) return Promise.resolve(false);
       if (hiddenEnvironmentActive && hostedHiddenEnvironment?.blockingError) {
         toast.error(hostedHiddenEnvironment.blockingError);
         return Promise.resolve(false);
@@ -5709,8 +5716,9 @@ export function useChatSession(
           );
           return false;
         }
+        let admitted = false;
         try {
-          if (!sendIsCurrent() || (isCurrent && !isCurrent())) {
+          if (!canStartTurn() || !sendIsCurrent() || (isCurrent && !isCurrent())) {
             pendingWidgetModelContextRef.current = undefined;
             resolvedHostedServersRef.current = null;
             return false;
@@ -5771,6 +5779,8 @@ export function useChatSession(
             ? { body: { scopeStepUpCancel: cancelSignIn } }
             : undefined;
           appMessageTurnRef.current = pluginMessage !== undefined;
+          activeSendSessions.current.add(sessionAtSend);
+          admitted = true;
           let sent: Promise<void>;
           if (pluginMessage) {
             sent = baseSendMessage(
@@ -5798,6 +5808,8 @@ export function useChatSession(
           } else {
             sent = baseSendMessage({ text, ...extra }, requestOptions);
           }
+          const release = () => { activeSendSessions.current.delete(sessionAtSend); };
+          void Promise.resolve(sent).then(release, release);
           if (cancelClaim) {
             // The settle effect then clears the marker once the server's
             // finished part or the call's result arrived, and otherwise
@@ -5812,6 +5824,7 @@ export function useChatSession(
             void Promise.resolve(sent).then(settle, settle);
           }
         } catch (error) {
+          if (admitted) activeSendSessions.current.delete(sessionAtSend);
           pendingWidgetModelContextRef.current = undefined;
           resolvedHostedServersRef.current = null;
           throw error;
@@ -5823,6 +5836,7 @@ export function useChatSession(
       hostedHiddenEnvironment?.blockingError,
       hiddenEnvironmentActive,
       baseSendMessage,
+      canStartTurn,
       setMessages,
       savedClientSendGuard,
       sendPreparationGuard,
@@ -6461,7 +6475,7 @@ export function useChatSession(
   const executionRespectToolVisibility = executionConfig?.respectToolVisibility;
   useEffect(() => {
     if (!isExecutionConfigControlled) return;
-    setSystemPrompt(executionSystemPrompt ?? DEFAULT_SYSTEM_PROMPT);
+    setSystemPrompt(executionSystemPrompt ?? "");
   }, [isExecutionConfigControlled, executionSystemPrompt, setSystemPrompt]);
 
   useEffect(() => {
