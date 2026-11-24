@@ -60,7 +60,9 @@ export type RealUiFailure =
         | "send_ambiguous"
         | "reply_timeout"
         /** The browser could not do what the module asked. */
-        | "driver";
+        | "driver"
+        /** Another turn is running on this connector. */
+        | "turn_running";
       step: RealUiStep;
       message: string;
     };
@@ -122,12 +124,14 @@ export interface RealUiPageModule {
   blocker(driver: PageDriver): Promise<RealUiFailure | undefined>;
   /**
    * The connector named `name` exists, points at `url` and is connected.
-   * A broken one is removed and added again, never reconnected.
+   * A broken one is removed and added again, never reconnected. Room for it
+   * is never made by removing one named in `keep`, the turn's own.
    */
   ensureConnector(
     driver: PageDriver,
     connector: { name: string; url: string },
     ctx: StepContext,
+    keep?: readonly string[],
   ): Promise<void>;
   openNewChat(driver: PageDriver, ctx: StepContext): Promise<void>;
   enableConnector(driver: PageDriver, name: string, ctx: StepContext): Promise<void>;

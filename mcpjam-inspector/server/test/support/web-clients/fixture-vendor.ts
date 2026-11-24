@@ -6,7 +6,8 @@
  * chats and sends a prompt. The backend then dials each enabled connector,
  * lists its tools, asks the page to approve the call (Always allow / Allow
  * once), and calls the first tool with `_meta["claudecode/toolUseId"]`, as
- * claude.ai's client does. Each chat is saved as JSON the page module reads.
+ * claude.ai's client does, or with no id, as chatgpt.com's does. Each chat is
+ * saved as JSON the page module reads.
  *
  * Test-only. `fixture-web.ts` is the page module that drives it.
  */
@@ -25,7 +26,7 @@ type Chat = {
   createdAt: string;
   state: "running" | "awaiting_approval" | "done";
   reply: string;
-  toolCalls: Array<{ toolUseId: string; name: string; at: string }>;
+  toolCalls: Array<{ toolUseId?: string; name: string; at: string }>;
   approve?: (always: boolean) => void;
 };
 
@@ -37,6 +38,8 @@ export type FixtureVendor = {
   connectors: Map<string, string>;
   /** Shows a human check on every page while set. */
   challenge: boolean;
+  /** Calls tools with no tool use id, on the wire or in the chat, as chatgpt.com does. */
+  withoutToolUseIds: boolean;
   /** Where `/redirect` sends the page, like a vendor link to another site. */
   redirectTo?: string;
   close(): Promise<void>;
@@ -124,6 +127,7 @@ export async function startFixtureVendor(): Promise<FixtureVendor> {
     chats: new Map(),
     connectors: new Map(),
     challenge: false,
+    withoutToolUseIds: false,
   };
   // The tools a person chose Always allow for, by connector name. A
   // connector removed, or added again at another address, starts over.
@@ -150,15 +154,15 @@ export async function startFixtureVendor(): Promise<FixtureVendor> {
           if (always) alwaysAllowed.set(name, allowed.add(tool.name));
           chat.state = "running";
         }
-        const toolUseId = `toolu_fixture_${randomUUID().slice(0, 8)}`;
-        chat.toolCalls.push({ toolUseId, name: tool.name, at: new Date().toISOString() });
+        const toolUseId = vendor.withoutToolUseIds ? undefined : `toolu_fixture_${randomUUID().slice(0, 8)}`;
+        chat.toolCalls.push({ ...(toolUseId ? { toolUseId } : {}), name: tool.name, at: new Date().toISOString() });
         const called = await rpc(url, init.sessionId, {
           id: 3,
           method: "tools/call",
           params: {
             name: tool.name,
             arguments: { message: chat.prompt },
-            _meta: { "claudecode/toolUseId": toolUseId, progressToken: 7 },
+            _meta: { ...(toolUseId ? { "claudecode/toolUseId": toolUseId } : {}), progressToken: 7 },
           },
         });
         const content = called.result?.content as Array<{ text?: string }> | undefined;

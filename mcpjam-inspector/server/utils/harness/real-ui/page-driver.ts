@@ -38,6 +38,9 @@ export type WaitOptions = {
   what: string;
 };
 
+/** What `evaluate` hands the page: plain JSON, nothing of the server's. */
+export type EvaluateArg = Record<string, string | Record<string, string>>;
+
 export interface PageDriver {
   readonly kind: "playwright" | "hosted";
   /** Whether `evaluate` can run code in the page's own session. */
@@ -50,7 +53,7 @@ export interface PageDriver {
   navigate(url: string): Promise<void>;
   url(): Promise<string>;
   /** Runs `fn` in the page. Throws `unsupported` where `canEvaluate` is false. */
-  evaluate<T, A>(fn: (arg: A) => T | Promise<T>, arg: A): Promise<T>;
+  evaluate<T>(fn: (arg: EvaluateArg) => T | Promise<T>, arg: EvaluateArg): Promise<T>;
   waitFor(condition: () => Promise<boolean>, options: WaitOptions): Promise<void>;
   click(selector: string): Promise<void>;
   /** Replaces the field's text with `text`. */
