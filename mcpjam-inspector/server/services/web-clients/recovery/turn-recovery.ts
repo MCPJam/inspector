@@ -79,6 +79,20 @@ export class SignInBrowserAccountMismatchError extends Error {
   }
 }
 
+/**
+ * Thrown by a hosted Inspector's handback environment when the handback names
+ * no sign-in browser. Hosted, the handback reads the browser the person signed
+ * in with; a local Inspector reads this machine's own profile and needs none.
+ */
+export class SignInBrowserNotNamedError extends Error {
+  constructor() {
+    super(
+      "The handback didn't say which browser you signed in with. Open this account's sign-in page, then finish.",
+    );
+    this.name = "SignInBrowserNotNamedError";
+  }
+}
+
 export type WebRecoverySetup = {
   /**
    * The reconnect backend, acting for the run's person. Undefined when the

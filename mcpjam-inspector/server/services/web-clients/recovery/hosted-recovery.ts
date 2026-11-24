@@ -14,6 +14,7 @@ import {
 } from "./convex-backend.js";
 import {
   SignInBrowserAccountMismatchError,
+  SignInBrowserNotNamedError,
   type WebRecoverySetup,
 } from "./turn-recovery.js";
 
@@ -25,7 +26,7 @@ export function createHostedWebRecovery(
       actor ? createConvexWebReconnectBackend(actor, { service }) : undefined,
     ledger: createConvexLedgerReader(service),
     async handbackEnvironment({ actor, projectId, browserSessionId }) {
-      if (!browserSessionId) return undefined;
+      if (!browserSessionId) throw new SignInBrowserNotNamedError();
       const held = { browserSessionId, actor, projectId };
       if (!signInBrowserAccount(held)) return undefined;
       return {

@@ -24,6 +24,7 @@ import { createHostedWebRecovery } from "../hosted-recovery.js";
 import {
   setWebRecovery,
   SignInBrowserAccountMismatchError,
+  SignInBrowserNotNamedError,
   webRecovery,
 } from "../turn-recovery.js";
 
@@ -46,6 +47,7 @@ function signInBrowser(id: string): WebClientHostedBrowser {
     chatSessionId: `chat-${id}`,
     driver: { kind: "hosted" } as unknown as PageDriver,
     exportProfile: async () => new TextEncoder().encode(`profile-${id}`),
+    close: async () => {},
   };
 }
 
@@ -110,7 +112,16 @@ describe("hosted recovery", () => {
     ).rejects.toBeInstanceOf(SignInBrowserAccountMismatchError);
   });
 
-  it("finds no browser without its id, for another person, or in another project", async () => {
+  it("asks a hosted handback to name the sign-in browser it used", async () => {
+    const { service } = recordingService();
+    const recovery = createHostedWebRecovery(service);
+
+    await expect(
+      recovery.handbackEnvironment?.({ actor: ADMIN, projectId: "project-1" }),
+    ).rejects.toBeInstanceOf(SignInBrowserNotNamedError);
+  });
+
+  it("finds no browser for another person, in another project, or under another id", async () => {
     const { service } = recordingService();
     const recovery = createHostedWebRecovery(service);
     keepSignInBrowser({
@@ -121,7 +132,6 @@ describe("hosted recovery", () => {
       close: async () => {},
     });
     for (const handback of [
-      { actor: ADMIN, projectId: "project-1" },
       { actor: OTHER, projectId: "project-1", browserSessionId: "browser-1" },
       {
         actor: { actorUserId: "user_admin" },
