@@ -22,7 +22,16 @@ const mocks = vi.hoisted(() => ({
   navigate: vi.fn(),
 }));
 
+const flags = vi.hoisted(() => ({
+  proCard: "test" as string | boolean | undefined,
+}));
+
 vi.mock("@/lib/analytics", () => ({ track: mocks.track }));
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: () => undefined,
+  useFeatureFlagVariantKey: (key: string) =>
+    key === "sidebar-pro-upgrade-card" ? flags.proCard : undefined,
+}));
 vi.mock("@/lib/toast", () => ({ toast: { success: mocks.toastSuccess } }));
 vi.mock("@/hooks/use-inspector-auth", () => ({
   useInspectorAuth: () => ({ signUp: mocks.signUp, signIn: vi.fn() }),
@@ -126,6 +135,7 @@ describe("SidebarUpgradePrompt", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sessionStorage.clear();
+    flags.proCard = "test";
     mocks.user.mockReturnValue(null);
     mocks.hasPro.mockReturnValue(true);
     mocks.billingStatus.mockReturnValue(freeStatus());
@@ -297,6 +307,19 @@ describe("SidebarUpgradePrompt", () => {
     renderPrompt({ isGuest: false, organizationId: "org-1" });
     expect(screen.queryByTestId("plan-confirm-dialog")).toBeNull();
   });
+
+  it.each(["control", undefined])(
+    "keeps today's sidebar for an owner in the %s arm",
+    (variant) => {
+      flags.proCard = variant;
+      renderPrompt({ isGuest: false, organizationId: "org-1" });
+      expect(screen.queryByTestId("sidebar-prompt-pro_upgrade")).toBeNull();
+      expect(mocks.track).not.toHaveBeenCalledWith(
+        "sidebar_prompt_shown",
+        expect.anything(),
+      );
+    },
+  );
 
   it("asks the owners instead of opening checkout for a member", () => {
     mocks.billingStatus.mockReturnValue(freeStatus({ canManageBilling: false, isOwner: false }));

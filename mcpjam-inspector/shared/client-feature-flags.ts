@@ -54,6 +54,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "scheduled-evals-enabled",
   "server-canvas",
   "shared-slack-channel-enabled",
+  "sidebar-pro-upgrade-card",
   "skills-enabled",
   "slack-agent-org-settings",
   "synthetic-monitors",

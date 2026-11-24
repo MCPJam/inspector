@@ -1,4 +1,5 @@
 import { useEffect, useSyncExternalStore } from "react";
+import { useFeatureFlagVariantKey } from "posthog-js/react";
 import { PlanChangeConfirmDialog } from "@/components/organization/PlanChangeConfirmDialog";
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import { useUpgradeCheckout } from "@/hooks/use-upgrade-checkout";
@@ -12,6 +13,7 @@ import {
 } from "./sidebar-prompt-card";
 
 const LOCATION = "sidebar_prompt";
+export const SIDEBAR_PRO_CARD_FLAG = "sidebar-pro-upgrade-card";
 
 // The Plans page hides the sidebar, so the confirm dialog's open state lives
 // outside the card and the Plans page renders the dialog once it has painted.
@@ -66,12 +68,24 @@ export function SidebarProUpgradePrompt({
 }: {
   organizationId: string;
 }) {
-  const { upgrade, planCatalog, entry, context } =
-    useProCheckout(organizationId);
+  const checkout = useProCheckout(organizationId);
+  if (!checkout.entry || !checkout.planCatalog) return null;
+  return <ProUpgradeCard organizationId={organizationId} checkout={checkout} />;
+}
+
+// A/B test: `control` keeps today's sidebar. The flag is read only for owners
+// who could buy Pro, so exposures count only people the card could reach.
+function ProUpgradeCard({
+  organizationId,
+  checkout: { upgrade, context },
+}: {
+  organizationId: string;
+  checkout: ReturnType<typeof useProCheckout>;
+}) {
+  const show = useFeatureFlagVariantKey(SIDEBAR_PRO_CARD_FLAG) === "test";
   const navigate = useAppNavigate();
-  const available = !!entry && !!planCatalog;
-  useSidebarPromptShown(available ? "pro_upgrade" : null, organizationId);
-  if (!available) return null;
+  useSidebarPromptShown(show ? "pro_upgrade" : null, organizationId);
+  if (!show) return null;
 
   return (
     <SidebarPromptCard
