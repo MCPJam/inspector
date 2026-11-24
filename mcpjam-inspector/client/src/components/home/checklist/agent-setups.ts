@@ -100,7 +100,7 @@ export const AGENT_CLIENT_GROUPS: readonly {
         icons: [cursorLogo],
         install: `cursor://anysphere.cursor-deeplink/mcp/install?name=mcpjam&config=${btoa(JSON.stringify({ url: HOSTED_MCP_URL }))}`,
         manual:
-          "Add this to .cursor/mcp.json, or ~/.cursor/mcp.json for all projects, inside any existing mcpServers object.",
+          "Add this to .cursor/mcp.json, or ~/.cursor/mcp.json for all projects. If the file already has mcpServers, add only the mcpjam entry to it.",
         snippet: JSON.stringify(
           { mcpServers: { mcpjam: { url: HOSTED_MCP_URL } } },
           null,
