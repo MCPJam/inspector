@@ -120,6 +120,7 @@ export function withEventsBetaRouting(
         "code" in payload.error &&
         payload.error.code === -32020
       ) {
+        cached = undefined;
         knownDescriptors.delete(params.name);
         await refreshCatalog();
         return route();
