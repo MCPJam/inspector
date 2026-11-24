@@ -28,6 +28,14 @@ export const SUBMIT_CLIMB_ROUND_PROPOSAL: GatedProposalMeta = {
   confirmSeverity: "spend",
 };
 
+export const CONFIRM_CLIMB_PROPOSAL: GatedProposalMeta = {
+  describe: (input) =>
+    `Confirm climb ${text(input, "climb") ?? "(unnamed)"} once: two run groups on the cases no round ran, in every environment of the climb`,
+  buttonLabel: "Run the confirmation",
+  kind: "start",
+  confirmSeverity: "spend",
+};
+
 export const START_CLIMB_PROPOSAL: GatedProposalMeta = {
   describe: (input) =>
     `Start a climb of ${text(input, "server") ?? "(unnamed server)"} on suite ${text(input, "suite") ?? "(unnamed)"}: ` +

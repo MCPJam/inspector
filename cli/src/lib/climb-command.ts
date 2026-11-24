@@ -2,7 +2,13 @@
  * What the climb commands share: parsing the flags a climb takes, and the
  * bounded `--wait` that polls a climb until it leaves a state.
  */
-import { MAX_ROUND_WAIT_SECONDS, getClimbOperation, getClimbRoundOperation } from "@mcpjam/sdk/platform";
+import {
+  MAX_ROUND_WAIT_SECONDS,
+  confirmClimbOperation,
+  getClimbOperation,
+  getClimbRoundOperation,
+  type ConfirmClimbInput,
+} from "@mcpjam/sdk/platform";
 import { usageError } from "./output.js";
 
 /** A number flag, or a usage error that names the flag. */
@@ -80,4 +86,26 @@ export async function waitForRound(
     const read = await getClimbRoundOperation.execute({ ...round, waitSeconds: hold }, context);
     if (read.settled || !wait.wait || Date.now() >= deadline) return read;
   }
+}
+
+/**
+ * `confirm --wait`: the call holds in bounds of at most a minute until the
+ * confirmation has settled, and the first call alone launches it. A call that
+ * comes back unsettled is read again with `climbs get`, which holds the result.
+ */
+export async function waitForConfirmation(
+  input: ConfirmClimbInput & { wait?: boolean; waitSeconds?: number },
+  context: Context
+): Promise<Awaited<ReturnType<typeof confirmClimbOperation.execute>>> {
+  const { wait, waitSeconds, ...confirm } = input;
+  const hold = wait && !confirm.dryRun ? Math.min(MAX_ROUND_WAIT_SECONDS, waitSeconds ?? WAIT_SECONDS_DEFAULT) : 0;
+  const confirmed = await confirmClimbOperation.execute({ ...confirm, waitSeconds: hold }, context);
+  const deadline = Date.now() + (waitSeconds ?? WAIT_SECONDS_DEFAULT) * 1000;
+  while (wait && !confirmed.dryRun && !confirmed.settled && Date.now() < deadline) {
+    const climb = await getClimbOperation.execute({ project: input.project, climb: input.climb }, context);
+    if (climb.confirmationResult?.status === "settled") return { ...confirmed, settled: true, result: climb.confirmationResult };
+    if (climb.confirmation?.status === "failed") return confirmed;
+    await new Promise((resolve) => setTimeout(resolve, 10_000));
+  }
+  return confirmed;
 }

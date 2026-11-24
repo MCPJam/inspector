@@ -4,6 +4,7 @@
  * name what it returns. Rates and ratios are whole basis points: 100 is 1%.
  */
 import type { ChangeEntry, ClimbForOption, SuiteCheck } from "../climbs/types.js";
+import type { ClimbSummary, ConfirmationSummary } from "../climbs/summary.js";
 
 export type PlatformClimbMeasure = "pass_rate" | "tokens" | "cost" | "tool_calls";
 export type PlatformClimbState = "baselining" | "ready" | "running" | "stopped";
@@ -138,6 +139,8 @@ export type PlatformClimb = PlatformClimbBase & {
   suiteCheck?: SuiteCheck;
   climbFor?: ClimbForOption[];
   whatCanChange?: ChangeEntry[];
+  /** Once a confirmation has settled: its per-environment difference and 95% interval, computed on read. */
+  confirmationResult?: ConfirmationSummary;
   /** What this read could not do, in words a caller can act on. */
   notes?: string[];
 };
@@ -258,4 +261,26 @@ export type PlatformClimbStopped = {
   }>;
   /** For the coding agent that works on the server's code: the kept changes in order, those that also helped on validation first. */
   prompt: string;
+  /** Steering and validation results labeled as the cases that picked the result, the confirmation, and what the climb established and did not. */
+  summary: ClimbSummary;
+};
+
+/** `confirm_climb`: the two run groups on the confirmation cases, or, with `dryRun`, only what they would cost. */
+export type PlatformClimbConfirmed = {
+  climbId: string;
+  suiteId: string;
+  dryRun: boolean;
+  estimate: PlatformClimbEstimate;
+  confirmationCaseCount: number;
+  environmentIds: string[];
+  /** Earlier climbs on the suite that used any of the same confirmation cases: a second look at them is selection again. */
+  confirmationCasesUsedBy: string[];
+  /** Absent on a dry run. */
+  unitKey?: string;
+  groups?: PlatformClimbLaunchedGroup[];
+  /** Present once the confirmation settled within the wait. */
+  result?: ConfirmationSummary;
+  summary?: ClimbSummary;
+  /** False when the call returned with the confirmation still running: read `get_climb` for it. */
+  settled: boolean;
 };

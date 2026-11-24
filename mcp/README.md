@@ -58,6 +58,7 @@ beta; they are listed [after the table](#held-tools).
 | `get_climb_round` | Read one round: kept, reverted or not decided and why, who submitted it, and each environment's pass rate and measure against the noise. `waitSeconds` holds the call until the round settles. Validation shows totals only. | — |
 | `set_climb_round_decision` | Overrule a settled round with a reason, recorded with who overruled it. Moves the best so far. | — |
 | `stop_climb` | Stop a climb for good and get where it ended and the rounds that stand as kept. | — |
+| `confirm_climb` | Run the one-time confirmation of a stopped climb: two run groups on the cases no round ran, the mock with no changes and the best server. Returns the difference per environment with a 95% interval found by resampling cases, and says when the gain is within noise. Runs once. `dryRun` returns the estimate alone. Launches paid runs. Behind the `climbs` feature. | — |
 | `list_server_accounts` | List the accounts a saved MCP server signs in with: id, name, default, needs reconnecting, hosted-only. Never a token. | — |
 | `get_server_account` | Read one of a saved server's accounts by id or name. Never a token; another person's account answers not found. | — |
 | `delete_server_account` | Delete one of a saved server's accounts and ask its issuer to revoke the token. The default account is refused while other accounts exist. | — |

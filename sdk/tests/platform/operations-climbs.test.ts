@@ -3,6 +3,7 @@ import {
   OPERATION_FEATURES,
   PlatformApiClient,
   getClimbOperation,
+  confirmClimbOperation,
   getClimbRoundOperation,
   isFeatureUnavailable,
   isOperationAvailable,
@@ -242,5 +243,28 @@ describe("round operations", () => {
     });
     const error = await submitClimbRoundOperation.execute({ climb: "climb-1", server: "echo" }, { client, ...CONTEXT }).catch((e) => e);
     expect(isFeatureUnavailable(error)).toBe(true);
+  });
+});
+
+describe("confirm_climb", () => {
+  it("sends dryRun and the wait, and answers a dry run's estimate", async () => {
+    const { client, bodies } = clientWith({ [`POST ${CLIMBS}/climb-1/confirmation`]: { climbId: "climb-1", suiteId: "suite-1", dryRun: true, settled: false } });
+    const result = await confirmClimbOperation.execute({ climb: "climb-1", dryRun: true, waitSeconds: 30 }, { client, ...CONTEXT });
+    expect(bodies).toEqual([{ dryRun: true, waitSeconds: 30 }]);
+    expect(result).toMatchObject({ dryRun: true, project: { id: "project-1" } });
+  });
+
+  it("is a paid write behind climbs, with a bounded wait", () => {
+    expect(confirmClimbOperation).toMatchObject({ readOnly: false, risk: "spend" });
+    expect(OPERATION_FEATURES.confirm_climb).toBe("climbs");
+    expect(confirmClimbOperation.inputSchema.safeParse({ climb: "c", waitSeconds: 51 }).success).toBe(false);
+  });
+
+  it("passes the backend's refusal that nothing was set aside through in its own words", async () => {
+    const { client } = clientWith({
+      [`POST ${CLIMBS}/climb-1/confirmation`]: () =>
+        Response.json({ code: "CONFLICT", message: "The suite set no cases aside for a confirmation.", details: { code: "CLIMB_NO_CONFIRMATION_CASES" } }, { status: 409 }),
+    });
+    await expect(confirmClimbOperation.execute({ climb: "climb-1" }, { client, ...CONTEXT })).rejects.toThrow("set no cases aside");
   });
 });

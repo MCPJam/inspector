@@ -11,6 +11,7 @@ import type { PlatformClimb } from "@mcpjam/sdk/platform";
 import { climbFns, translateClimbReadError, translateClimbWriteError } from "../../services/climbs/backend.js";
 import type { ClimbDeps } from "../../services/climbs/deps.js";
 import { hashRealServerListing, readRealServer } from "../../services/climbs/listing.js";
+import { confirmClimb } from "../../services/climbs/confirm-climb.js";
 import { readClimbInFull } from "../../services/climbs/read-climb.js";
 import { MCPJAM_HOSTED_ORIGIN } from "../../config.js";
 import { startClimb } from "../../services/climbs/start-climb.js";
@@ -78,6 +79,11 @@ const submitBody = z.strictObject({
 const decisionBody = z.strictObject({
   decision: z.enum(["kept", "reverted"]),
   reason: z.string().trim().min(1).max(500),
+});
+
+const confirmBody = z.strictObject({
+  dryRun: z.boolean().optional(),
+  waitSeconds: z.number().int().min(0).max(MAX_ROUND_WAIT_SECONDS).optional(),
 });
 
 const roundQuery = z.object({ wait: z.coerce.number().int().min(0).max(MAX_ROUND_WAIT_SECONDS).optional() });
@@ -235,6 +241,20 @@ climbs.post("/projects/:projectId/climbs/:climbId/stop", async (c) => {
     return v1Resource(c, await stopClimb(deps, climb));
   } catch (error) {
     throw translateClimbWriteError(error);
+  }
+});
+
+// POST /v1/projects/:projectId/climbs/:climbId/confirmation: the one-time confirmation, or its quote.
+climbs.post("/projects/:projectId/climbs/:climbId/confirmation", async (c) => {
+  const projectId = projectIdOf(c);
+  const body = parseWithSchema(confirmBody, await readJsonObjectBody(c));
+  const deps = await climbDepsFor(c);
+  const climb = await readClimb(deps, projectId, c.req.param("climbId") ?? "");
+  try {
+    const confirmed = await confirmClimb(deps, projectId, climb, { dryRun: body.dryRun === true, waitSeconds: body.waitSeconds ?? 0 });
+    return v1Resource(c, confirmed, confirmed.dryRun ? 200 : 202);
+  } catch (error) {
+    throw error instanceof WebRouteError ? error : translateClimbWriteError(error);
   }
 });
 

@@ -5,18 +5,30 @@
  * climb functions in the SDK from the climb, the real server and the baseline's
  * steering iterations; none of it recomputes the keep rule or the noise.
  */
-import { climbForOptions, suiteCheck, whatCanChange, type ChangeEntry, type ClimbForOption, type SuiteCheck } from "@mcpjam/sdk/climbs";
+import {
+  climbForOptions,
+  suiteCheck,
+  summarizeConfirmation,
+  whatCanChange,
+  type ChangeEntry,
+  type ClimbForOption,
+  type ConfirmationSummary,
+  type SuiteCheck,
+} from "@mcpjam/sdk/climbs";
 import type { PlatformClimb } from "@mcpjam/sdk/platform";
 import { logger } from "../../utils/logger.js";
 import { clientsOfClimb } from "./clients.js";
 import type { ClimbDeps } from "./deps.js";
 import { loadBaselineEvidence } from "./evidence.js";
 import { loadRoundChanges } from "./round-changes.js";
+import { readConfirmation } from "./summary.js";
 
 export type ClimbRead = PlatformClimb & {
   suiteCheck: SuiteCheck;
   climbFor?: ClimbForOption[];
   whatCanChange?: ChangeEntry[];
+  /** The confirmation's difference and interval once it has settled. */
+  confirmationResult?: ConfirmationSummary;
   /** What this read could not do, in words a caller can act on. */
   notes: string[];
 };
@@ -27,6 +39,8 @@ export async function readClimbInFull(deps: ClimbDeps, climb: PlatformClimb): Pr
 
   const notes: string[] = [];
   const { projectId } = climb;
+  const confirmationResult =
+    climb.confirmation?.status === "settled" ? summarizeConfirmation(climb, await readConfirmation(deps, climb.climbId)) : undefined;
   const server = await deps.readServer(projectId, climb.serverId).catch((error: unknown) => {
     // A server that is down must not hide what the backend settled.
     logger.warn("[climbs] the real server was not read for get_climb", {
@@ -41,7 +55,7 @@ export async function readClimbInFull(deps: ClimbDeps, climb: PlatformClimb): Pr
   if (!available) notes.push("This backend does not return the baseline's runs yet, so no failed runs are shown.");
 
   const options = climbForOptions(climb, evidence, { toolCount: server?.tools.length });
-  if (!server) return { ...climb, suiteCheck: check, climbFor: options, notes };
+  if (!server) return { ...climb, suiteCheck: check, climbFor: options, ...(confirmationResult ? { confirmationResult } : {}), notes };
   const [clients, tried] = await Promise.all([clientsOfClimb(deps.convex, climb), loadRoundChanges(deps.convex, climb)]);
   const view = { serverInfo: server.serverInfo, instructions: server.instructions, tools: server.tools };
   return {
@@ -49,6 +63,7 @@ export async function readClimbInFull(deps: ClimbDeps, climb: PlatformClimb): Pr
     suiteCheck: check,
     climbFor: options,
     whatCanChange: whatCanChange({ server: view, clients, evidence, tried }),
+    ...(confirmationResult ? { confirmationResult } : {}),
     notes,
   };
 }

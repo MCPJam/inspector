@@ -10,15 +10,17 @@
  */
 import type { Command } from "commander";
 import {
+  confirmClimbOperation,
   setClimbRoundDecisionOperation,
   stopClimbOperation,
   submitClimbRoundOperation,
   getClimbRoundOperation,
   suitePermalink,
+  type ConfirmClimbInput,
   type SubmitClimbRoundInput,
 } from "@mcpjam/sdk/platform";
 import { usageError } from "../lib/output.js";
-import { WAIT_FLAG, WAIT_SECONDS_DEFAULT, WAIT_SECONDS_FLAG, waitForRound } from "../lib/climb-command.js";
+import { WAIT_FLAG, WAIT_SECONDS_DEFAULT, WAIT_SECONDS_FLAG, waitForConfirmation, waitForRound } from "../lib/climb-command.js";
 import {
   addProjectOption,
   bindOperation,
@@ -30,6 +32,7 @@ import {
 type Wait = { wait?: boolean; waitSeconds?: string };
 type RoundOptions = PlatformOptions & Wait & { project?: string; climb: string; round: string };
 type SubmitInput = SubmitClimbRoundInput & { wait?: boolean; waitSeconds?: number };
+type ConfirmInput = ConfirmClimbInput & { wait?: boolean; waitSeconds?: number };
 
 function decisionOf(value: string): "kept" | "reverted" {
   if (value === "kept" || value === "reverted") return value;
@@ -122,6 +125,32 @@ export function registerClimbRoundCommands(climbs: Command): void {
       round: parseRequiredIntegerOption(options.round, "--round", { min: 1 }),
       decision: decisionOf(options.decision),
       reason: options.reason,
+    }),
+  );
+
+  bindOperation(
+    addProjectOption(
+      climbs
+        .command("confirm")
+        .description(
+          "Run the one-time confirmation of a stopped climb on the cases no round ran, and print the difference with its 95% interval. THIS LAUNCHES PAID RUNS",
+        )
+        .requiredOption("--climb <id>", "The climb's ID")
+        .option("--dry-run", "Print what the confirmation would cost and start nothing")
+        .option(WAIT_FLAG, "Wait for the confirmation to settle (default: return once it has launched)")
+        .option(WAIT_SECONDS_FLAG, `How long --wait may take (default ${WAIT_SECONDS_DEFAULT})`),
+    ),
+    {
+      name: confirmClimbOperation.name,
+      permalink: suitePermalink,
+      execute: (input: ConfirmInput, context) => waitForConfirmation(input, context),
+    },
+    (options: PlatformOptions & Wait & { project?: string; climb: string; dryRun?: boolean }) => ({
+      project: options.project,
+      climb: options.climb,
+      dryRun: options.dryRun,
+      wait: options.wait,
+      waitSeconds: waitSeconds(options),
     }),
   );
 

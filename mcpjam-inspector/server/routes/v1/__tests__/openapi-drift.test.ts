@@ -137,6 +137,7 @@ const KNOWN_UNDOCUMENTED = new Set([
   "get /projects/{projectId}/climbs/{climbId}/rounds/{roundNumber}",
   "post /projects/{projectId}/climbs/{climbId}/rounds/{roundNumber}/decision",
   "post /projects/{projectId}/climbs/{climbId}/stop",
+  "post /projects/{projectId}/climbs/{climbId}/confirmation",
   // Unified share control plane — REST ships in I2; OpenAPI + SDK in I5.
   "get /projects/{projectId}/shares/{resourceType}/{resourceId}",
   "patch /projects/{projectId}/shares/{resourceType}/{resourceId}",

@@ -29,6 +29,7 @@ export type * from "./mock-types.js";
 // Climbs: operations and wire shapes (defined in their own modules).
 export * from "./climb-operations.js";
 export * from "./climb-round-operations.js";
+export * from "./climb-finish-operations.js";
 export type * from "./climb-types.js";
 
 export {

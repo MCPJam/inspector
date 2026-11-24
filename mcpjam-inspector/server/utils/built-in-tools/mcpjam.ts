@@ -692,6 +692,8 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Returns a round's numbers per environment and can hold the call while it runs; chat gets it with the round view. Available on the API, the CLI, MCP and the agent.",
   set_climb_round_decision:
     "Overrules the keep rule and moves the best so far; chat gets it with the round view. Available on the API, the CLI, MCP and the agent.",
+  confirm_climb:
+    "Launches the one-time confirmation's paid runs and reads its interval; chat gets it with the climb summary. Available on the API, the CLI, MCP and the agent.",
   stop_climb:
     "Ends a climb and cancels a round in flight; chat gets it with the climb screens. Available on the API, the CLI and MCP.",
   list_climbs:

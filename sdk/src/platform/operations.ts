@@ -145,6 +145,7 @@ import {
   stopClimbOperation,
   submitClimbRoundOperation,
 } from "./climb-round-operations.js";
+import { confirmClimbOperation } from "./climb-finish-operations.js";
 import {
   createMockServerOperation,
   getMockServerOperation,
@@ -19428,6 +19429,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getClimbRoundOperation,
   setClimbRoundDecisionOperation,
   stopClimbOperation,
+  confirmClimbOperation,
   // Server accounts. Tokens are write-only, and the upload and the update are
   // excluded from the MCP catalog and the agent registry: the upload carries a
   // token in its INPUT, and the default decides which account runs with no

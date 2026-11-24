@@ -7,6 +7,7 @@
 import { MockServerClient } from "./mock-client.js";
 import type {
   PlatformClimb,
+  PlatformClimbConfirmed,
   PlatformClimbListItem,
   PlatformClimbMeasure,
   PlatformClimbDecision,
@@ -115,5 +116,14 @@ export abstract class ClimbClient extends MockServerClient {
   /** Stops the climb, cancelling a round in flight. */
   stopClimb(params: { projectId: string; climbId: string }, options?: Options): Promise<PlatformClimbStopped> {
     return this.request("POST", climbPath(params.projectId, params.climbId, "/stop"), {}, options);
+  }
+
+  /** Runs the one-time confirmation on the cases no round ran, or with `dryRun` only quotes it. */
+  confirmClimb(
+    params: { projectId: string; climbId: string; dryRun?: boolean; waitSeconds?: number },
+    options?: Options
+  ): Promise<PlatformClimbConfirmed> {
+    const { projectId, climbId, ...body } = params;
+    return this.request("POST", climbPath(projectId, climbId, "/confirmation"), { body, declareLaunch: true }, options);
   }
 }

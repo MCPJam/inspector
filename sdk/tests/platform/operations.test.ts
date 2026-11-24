@@ -2767,6 +2767,7 @@ describe("operation catalog consistency", () => {
     get_climb_round: { climb: "c", round: 1 },
     set_climb_round_decision: { climb: "c", round: 1, decision: "kept", reason: "r" },
     stop_climb: { climb: "c" },
+    confirm_climb: { climb: "c" },
   };
 
   it("keeps tool-safe names and accepts each operation's minimal input", () => {
@@ -3026,6 +3027,7 @@ describe("operation catalog consistency", () => {
       "submit_climb_round",
       "set_climb_round_decision",
       "stop_climb",
+      "confirm_climb",
       // Stores a report and sends its text to the MCPJam team — a write, and
       // `risk: "exposure"` because the text leaves the caller's organization.
       "send_feedback",

@@ -223,3 +223,17 @@ test("stop posts to the climb, and a bad --decision is a usage error before any 
   );
   assert.equal(requests.length, 1);
 });
+
+test("confirm sends the dry run and the wait; --wait reads the climb for the result after the first call", async () => {
+  const requests = stubFetch({
+    [`POST ${CLIMBS}/climb-1/confirmation`]: [{ climbId: "climb-1", suiteId: "suite-1", dryRun: false, settled: false }],
+    [`GET ${CLIMBS}/climb-1`]: [{ ...CLIMB, confirmationResult: { status: "settled", environments: [] } }],
+  });
+  await run("confirm", ["--climb", "climb-1", "--dry-run"]);
+  assert.deepEqual(requests[0]?.body, { dryRun: true, waitSeconds: 0 });
+  const waited = await run("confirm", ["--climb", "climb-1", "--wait"]);
+  assert.equal(waited.settled, true);
+  const posts = requests.filter((request) => request.method === "POST");
+  // One call holds for at most the operation's own bound (50 s), then `get` is read until it settles.
+  assert.deepEqual(posts.at(-1)?.body, { waitSeconds: 50 });
+});

@@ -177,6 +177,7 @@ v1.on("POST", [...V1_EVAL_LAUNCH_ROUTES], refuseWhileDraining("eval_run"));
 export const V1_CLIMB_LAUNCH_ROUTES = [
   "/projects/:projectId/climbs",
   "/projects/:projectId/climbs/:climbId/rounds",
+  "/projects/:projectId/climbs/:climbId/confirmation",
 ] as const;
 v1.on("POST", [...V1_CLIMB_LAUNCH_ROUTES], refuseWhileDraining("eval_run"));
 
