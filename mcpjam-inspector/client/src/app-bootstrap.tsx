@@ -83,7 +83,10 @@ import {
   updateThemePreset,
 } from "./lib/theme-utils";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
-import { useAppLoadStallReport } from "./lib/app-load-stall";
+import {
+  reportUserReadiness,
+  StartupStatusTracker,
+} from "./lib/startup-status";
 import { DbUserReadyProvider } from "./contexts/db-user-ready-context";
 import { LegalAcceptanceGate } from "./components/legal/LegalAcceptanceGate";
 import {
@@ -122,7 +125,10 @@ if (sandboxOriginFault) {
 
 function AuthBootstrap({ children }: { children: ReactNode }) {
   const { isEnsuringUser, isUserReady, hasIdentity } = useEnsureDbUser();
-  useAppLoadStallReport(isUserReady, hasIdentity);
+  useEffect(() => {
+    reportUserReadiness(isUserReady, hasIdentity);
+    return () => reportUserReadiness(false, false);
+  }, [isUserReady, hasIdentity]);
   useEffect(() => {
     authRefusalDiagnostics.update({ ready: isUserReady });
     return () => authRefusalDiagnostics.update({ ready: false });
@@ -474,6 +480,8 @@ if (isInIframe) {
       <HostedAuthEntry>
         <ConvexProviderWithAuth client={convex} useAuth={useUnifiedConvexAuth}>
           <GuestTabTransitionListener />
+          {/* Above both startup gates: the outer one blocks first. */}
+          <StartupStatusTracker />
           <SignOutBoundary>
             <AuthRecoveryBoundary>
               <AuthBootstrap>

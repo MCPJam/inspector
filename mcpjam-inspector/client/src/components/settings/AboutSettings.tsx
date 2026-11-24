@@ -55,7 +55,7 @@ export function AboutSettings() {
             Test, debug, and evaluate your MCP servers and apps.
           </SettingsPageDescription>
         </div>
-        <GitHubStarButton />
+        <GitHubStarButton location="settings" />
       </header>
 
       <div className="divide-y divide-border border-y border-border">

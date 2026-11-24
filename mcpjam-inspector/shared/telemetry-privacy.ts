@@ -460,6 +460,7 @@ export const APP_ROUTE_WORDS: ReadonlySet<string> = new Set([
   "project-settings",
   "prompts",
   "readiness",
+  "reconnect",
   "redeem",
   "registry",
   "resources",
@@ -486,6 +487,7 @@ export const APP_ROUTE_WORDS: ReadonlySet<string> = new Set([
   "triggers",
   "usage",
   "user-testing",
+  "web-accounts",
   "webmcp",
   "xaa-flow",
 ]);

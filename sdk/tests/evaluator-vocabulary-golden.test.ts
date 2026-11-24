@@ -33,7 +33,10 @@ import {
   definitionsForDeployment,
   roleForDeployment,
 } from "../src/contract/policy-spelling.js";
-import { definitionHash } from "../src/contract/derive.js";
+import {
+  buildEvaluationConfigSnapshot,
+  definitionHash,
+} from "../src/contract/derive.js";
 import type { EvaluationConfigSnapshot } from "../src/contract/types.js";
 import type { Predicate } from "../src/predicates/types.js";
 import type { Scorer } from "../src/scorers/types.js";
@@ -202,6 +205,35 @@ const legacyBuilders: Record<string, () => EvalTest> = {
     }),
 };
 
+/**
+ * The authored half of a snapshot: everything but the platform checks.
+ *
+ * The fixture predates the platform rows (`platform:toolExecution`,
+ * `platform:iterationError`), which every case gained at once as a deliberate,
+ * stated identity change. Comparing the authored half keeps this gate doing
+ * its job — no vocabulary step may move an authored id or hash — while the
+ * platform pair is pinned on its own below.
+ */
+function authored(snapshot: EvaluationConfigSnapshot): EvaluationConfigSnapshot {
+  return buildEvaluationConfigSnapshot(
+    snapshot.definitions.filter((d) => d.idSource !== "platform"),
+  );
+}
+
+/** The platform pair every case declares, pinned like the fixture pins the rest. */
+const PLATFORM_GATES_GATING = [
+  [
+    "platform:toolExecution",
+    "required",
+    "6da7f04d936b3eb8aae3d7164a24a70f3e0dd683d1216b219c59a5e09905c420",
+  ],
+  [
+    "platform:iterationError",
+    "required",
+    "2d49eef303d8a2026cdb2ab8dd0fbcf41d8d7b653aaaecb231790709118d907d",
+  ],
+];
+
 describe("evaluation config identity is frozen", () => {
   it("covers every golden row with a builder, and every builder with a row", () => {
     expect(Object.keys(legacyBuilders).sort()).toEqual(
@@ -212,7 +244,9 @@ describe("evaluation config identity is frozen", () => {
   for (const entry of goldenCases) {
     describe(entry.label, () => {
       it("produces the pinned snapshot", () => {
-        const built = legacyBuilders[entry.label]!().getEvaluationConfigSnapshot();
+        const built = authored(
+          legacyBuilders[entry.label]!().getEvaluationConfigSnapshot(),
+        );
         expect(built).toEqual(entry.snapshot);
       });
 
@@ -221,8 +255,9 @@ describe("evaluation config identity is frozen", () => {
         // computed separately, so without this a change to `definitionHash()`
         // alone would keep every other assertion green while breaking the
         // `ScoreResult.definitionHash` joins this contract freezes.
-        const built =
-          legacyBuilders[entry.label]!().getEvaluationConfigSnapshot();
+        const built = authored(
+          legacyBuilders[entry.label]!().getEvaluationConfigSnapshot(),
+        );
         expect(
           Object.fromEntries(
             built.definitions.map((d) => [d.scorerId, definitionHash(d)]),
@@ -231,7 +266,9 @@ describe("evaluation config identity is frozen", () => {
       });
 
       it("keeps every evaluator id and id source, in order", () => {
-        const built = legacyBuilders[entry.label]!().getEvaluationConfigSnapshot();
+        const built = authored(
+          legacyBuilders[entry.label]!().getEvaluationConfigSnapshot(),
+        );
         expect(
           built.definitions.map((d) => `${d.scorerId} (${d.idSource})`),
         ).toEqual(
@@ -239,6 +276,15 @@ describe("evaluation config identity is frozen", () => {
             (d) => `${d.scorerId} (${d.idSource})`,
           ),
         );
+      });
+
+      it("appends exactly the two platform checks, gating by default", () => {
+        const platform = legacyBuilders[entry.label]!()
+          .getEvaluationConfigSnapshot()
+          .definitions.filter((d) => d.idSource === "platform");
+        expect(
+          platform.map((d) => [d.scorerId, d.role, definitionHash(d)]),
+        ).toEqual(PLATFORM_GATES_GATING);
       });
     });
   }

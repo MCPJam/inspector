@@ -288,15 +288,21 @@ export const REQUEST_CONTROL_FEATURES: readonly FeatureDefinition[] = [
     family: "request-control",
     name: "Cancellation",
     summary:
-      "Either side can cancel a request in flight, and the receiver stops the work.",
+      "The client cancels a request in flight and the server stops the work. Before 2026-07-28 a server could also cancel its own requests.",
     howTo:
-      "Stop work when you receive notifications/cancelled, or on 2026-07-28 HTTP when the request's stream closes.",
+      "Stop work when you receive notifications/cancelled, or on 2026-07-28 HTTP when the request's stream closes. On 2026-07-28, send notifications/cancelled only to end a subscriptions/listen stream.",
     owner: "server",
     spec: coreSpec("2026-07-28", "basic/patterns/cancellation"),
     stage: "stable",
     lifecycle: {},
     optional: true,
-    assessment: { primary: "observed", observable: true },
+    // Traffic shows a server cancelling its own request, which only legacy
+    // revisions allow; nothing on the wire shows a server stopping work.
+    assessment: {
+      primary: "observed",
+      observable: true,
+      observableEra: "legacy",
+    },
   },
   {
     id: "request-control.ping",
