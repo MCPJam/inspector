@@ -39,6 +39,7 @@ import type {
 } from "./oauth-conformance/types.js";
 import type { HttpServerConfig } from "./mcp-client-manager/index.js";
 import { listTools, withEphemeralClient } from "./operations.js";
+import { discoverStatelessLoginMetadata } from "./oauth/stateless-login-discovery.js";
 import { probeMcpServer } from "./server-probe.js";
 
 export interface OAuthLoginConfig
@@ -234,18 +235,22 @@ export async function resolveOAuthLoginAuthorizationPlan(
     return basePlan;
   }
 
-  const probe = await probeMcpServer({
+  const discoveryConfig = {
     url: input.serverUrl,
     protocolVersion: basePlan.protocolVersion,
     headers: input.customHeaders,
     timeoutMs: input.stepTimeout ?? DEFAULT_OAUTH_LOGIN_STEP_TIMEOUT_MS,
     fetchFn: input.fetchFn,
     allowPrivateNetwork: input.allowPrivateNetwork,
-  });
+  };
+  const discovery =
+    basePlan.protocolVersion === "2026-07-28"
+      ? await discoverStatelessLoginMetadata(discoveryConfig, input.auth?.mode)
+      : (await probeMcpServer(discoveryConfig)).oauth;
 
   return resolveAuthorizationPlan({
     ...toAuthorizationPlanInput(input),
-    discovery: probe.oauth,
+    discovery,
   });
 }
 

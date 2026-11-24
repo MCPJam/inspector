@@ -19,6 +19,7 @@ const MAX_EVENT_STREAM_PROBE_BYTES = 64 * 1024;
 
 export interface ProbeHttpAttempt {
   name:
+    | "stateless_tools_list"
     | "streamable_initialize"
     | "sse_probe"
     | "resource_metadata"
