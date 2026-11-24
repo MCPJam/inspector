@@ -164,23 +164,11 @@ describe("POST /accounts/:id/save-profile", () => {
     // The person fixes the first two in the same browser; someone else's save ends it.
     expect(signedOut.deps.browser.release).not.toHaveBeenCalled();
     expect(other.deps.browser.release).not.toHaveBeenCalled();
+    expect(raced.deps.browser.release).toHaveBeenCalledOnce();
     expect(raced.deps.browser.release).toHaveBeenCalledTimes(1);
   });
 
-  it("closes the browser when reading it or saving from it fails", async () => {
-    const unreadable = routes({
-      browser: {
-        ...routes().deps.browser,
-        driver: async () => ({
-          ...claudePage("team@example.com"),
-          navigate: async () => {
-            throw new Error("The browser went away.");
-          },
-        }),
-      },
-    });
-    expect((await post(unreadable.app, "/accounts/acct-1/save-profile", body)).status).toBe(500);
-    expect(unreadable.deps.browser.release).toHaveBeenCalledTimes(1);
+  it("closes the browser when the storage outcome is unknown", async () => {
     const offline = routes({
       saveProfile: async () => {
         throw new Error("socket hang up");
@@ -199,38 +187,30 @@ describe("POST /accounts/:id/save-profile", () => {
     expect(unknown.deps.saveProfile).not.toHaveBeenCalled();
   });
 
-  it("closes the browser once the save is over: saved, saved first by someone else, or failed", async () => {
-    const saved = routes();
-    expect((await post(saved.app, "/accounts/acct-1/save-profile", body)).status).toBe(200);
-    const raced = routes({
-      saveProfile: async () => ({ ok: false, reason: "version_conflict", profileVersion: 5 }),
-    });
-    expect((await post(raced.app, "/accounts/acct-1/save-profile", body)).status).toBe(200);
-    const exportFailed = routes({
-      browser: {
-        ...routes().deps.browser,
-        captureProfile: async () => {
-          throw new Error("The export stopped.");
-        },
-      },
-    });
-    const pageGone = routes({
-      browser: {
-        ...routes().deps.browser,
-        driver: async () => ({
-          ...claudePage("team@example.com"),
-          navigate: async () => {
-            throw new Error("The page closed.");
-          },
-        }),
-      },
-    });
-    for (const failed of [exportFailed, pageGone]) {
-      expect((await post(failed.app, "/accounts/acct-1/save-profile", body)).status).toBe(500);
+  it.each(["identity", "capture"] as const)("retries a failed %s check on the same browser", async (stage) => {
+    const page = claudePage("team@example.com");
+    const error = new Error("private browser details");
+    const captureProfile = vi.fn(async () => new Uint8Array([1, 2, 3]));
+    if (stage === "identity") {
+      page.navigate = vi.fn(page.navigate).mockRejectedValueOnce(error);
+    } else {
+      captureProfile.mockRejectedValueOnce(error);
     }
-    for (const { deps } of [saved, raced, exportFailed, pageGone]) {
-      expect(deps.browser.release).toHaveBeenCalledWith({ actor: ACTOR, ...body, webAccountId: "acct-1", bearer: "" });
-    }
+    const { app, deps } = routes({
+      browser: { ...routes().deps.browser, driver: async () => page, captureProfile },
+    });
+    const path = "/accounts/acct-1/save-profile";
+    const first = await post(app, path, body);
+    expect(first.status).toBe(503);
+    expect(await first.json()).toMatchObject({
+      code: "WEB_ACCOUNT_PROFILE_RETRY",
+      message: expect.stringContaining(stage === "identity" ? "check which account" : "capture this browser"),
+    });
+    expect(deps.browser.release).not.toHaveBeenCalled();
+    expect(deps.saveProfile).not.toHaveBeenCalled();
+    expect(await (await post(app, path, body)).json()).toMatchObject({ ok: true });
+    expect(deps.saveProfile).toHaveBeenCalledTimes(1);
+    expect(deps.browser.release).toHaveBeenCalledOnce();
   });
 
   it("keeps the browser open while the person finishes signing in or switches accounts", async () => {

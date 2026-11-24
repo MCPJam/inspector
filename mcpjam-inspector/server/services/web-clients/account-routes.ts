@@ -16,7 +16,7 @@
  *     and marks the account verified. Answers `{ok:true, accountEmail,
  *     workspaceName?}` or `{ok:false, reason}` with `not_signed_in`,
  *     `wrong_account` or `version_conflict`. The browser stays open after
- *     the first two, for the person to fix, and closes after anything else.
+ *     the first two and failures before storage, so the admin can retry.
  *     A browser this replica doesn't hold for the person, project and
  *     account answers 409.
  *
@@ -26,6 +26,7 @@
  */
 import { Hono, type Context } from "hono";
 import { z } from "zod";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 import {
   WEB_CLIENT_SITES,
   WEB_CLIENT_VENDORS,
@@ -224,10 +225,20 @@ export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
       if (error instanceof SignInBrowserNotFoundError) return c.json({ error: error.message }, 409);
       throw error;
     }
-    // The browser stays open for the answers a person fixes in it (not signed
-    // in yet, or signed in to another account) and closes after any other, so
-    // its id can't save the account again later.
+    // Reading the vendor page and capturing a profile are safe to retry on
+    // the same browser. Once storage starts, its outcome may be ambiguous.
     const release = () => deps.browser.release({ ...browser, bearer: c.req.header("authorization") ?? "" });
+    const retryBeforeStorage = (stage: "identity" | "capture", error: unknown) => {
+      // Browser errors may quote the vendor page. Report only the phase and kind.
+      const kind = error instanceof RealUiError ? error.failure.kind : "unavailable";
+      reportRouteFailure("Web account profile save interrupted", new Error(`${stage}: ${kind}`), {
+        source: `web-clients.save-profile.${stage}`, hop: "mcpjam_internal",
+      });
+      const message = stage === "identity"
+        ? "Couldn’t check which account is signed in. Return to the chat in this browser, then save again."
+        : "Couldn’t capture this browser profile. Keep the browser open and save again.";
+      return c.json({ code: "WEB_ACCOUNT_PROFILE_RETRY", message }, 503);
+    };
     let identity;
     try {
       identity = await PAGE_MODULES[row.vendor].signedIn(driver, { timeoutMs: 30_000 });
@@ -235,18 +246,23 @@ export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
       if (error instanceof RealUiError && error.failure.kind === "needs_sign_in") {
         return c.json({ ok: false, reason: "not_signed_in" });
       }
-      await release();
-      throw error;
+      return retryBeforeStorage("identity", error);
     }
     if (!identity.email) return c.json({ ok: false, reason: "not_signed_in" });
     if (row.accountEmail && row.accountEmail.toLowerCase() !== identity.email.toLowerCase()) {
       return c.json({ ok: false, reason: "wrong_account" });
     }
+    let profile: Uint8Array;
+    try {
+      profile = await deps.browser.captureProfile(browser);
+    } catch (error) {
+      return retryBeforeStorage("capture", error);
+    }
     try {
       const saved = await deps.saveProfile(actor, {
         webAccountId,
         expectedProfileVersion: row.profileVersion ?? 0,
-        profile: await deps.browser.captureProfile(browser),
+        profile,
       });
       if (!saved.ok) return c.json({ ok: false, reason: saved.reason });
       await deps.service.apply({
