@@ -4119,6 +4119,8 @@ export function PlaygroundMain({
     liveColumnKeys: compareLanes.map((lane) => lane.id),
     applyRestore: restoreMultiModelSession,
   });
+  const { openFromHistory: openMultiModelSessionFromHistory } =
+    multiModelSessions;
   const recoveryReads = useRecoveryColumnReads(comparisonRecovery);
   // What a compare column needs to restore its chat and to save its place.
   const multiModelColumnProps = (columnKey: string) => ({
@@ -4142,7 +4144,7 @@ export function PlaygroundMain({
         historySelectionRequestIdRef.current === selectionRequestId;
       // Holds sends while a session may be reopening; a restore clears it.
       setLoadingHistorySessionId(session._id);
-      const opened = await multiModelSessions.openFromHistory(
+      const opened = await openMultiModelSessionFromHistory(
         session,
         siblings,
         isCurrentSelection,
@@ -4214,7 +4216,7 @@ export function PlaygroundMain({
       isStreaming,
       loadHistorySession,
       restoreHistoryServerSelection,
-      multiModelSessions.openFromHistory,
+      openMultiModelSessionFromHistory,
     ],
   );
 
