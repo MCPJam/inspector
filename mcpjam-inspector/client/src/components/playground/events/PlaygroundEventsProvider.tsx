@@ -67,15 +67,16 @@ function useRuntime(
     (binding) => binding.ownerScope === scope && enabled,
   );
   const agent = useEventAgentBridge((state) => state.agent);
+  const agentScope = agent?.scope;
   useEffect(() => {
     setBindings([]);
     setCatalogs([]);
   }, [scope]);
   useEffect(() => {
-    if (!agent) return;
+    if (agentScope === undefined) return;
     setBindings((previous) =>
       previous.map((binding) =>
-        binding.enabled && binding.agentScope !== agent.scope
+        binding.enabled && binding.agentScope !== agentScope
           ? {
               ...binding,
               enabled: false,
@@ -85,7 +86,7 @@ function useRuntime(
           : binding,
       ),
     );
-  }, [agent?.scope]);
+  }, [agentScope]);
   const [catalogs, setCatalogs] = useState<ServerEventCatalog[]>([]);
   const [loading, setLoading] = useState(false);
   const rows = useQuery(

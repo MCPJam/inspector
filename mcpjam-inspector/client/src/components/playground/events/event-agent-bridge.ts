@@ -12,8 +12,9 @@ export const useEventAgentBridge = create<{
 
 export function usePublishEventAgent(agent: EventAgent) {
   const publish = useEventAgentBridge((state) => state.set);
+  const { scope, blockedReason, send } = agent;
   useEffect(() => {
-    publish(agent);
+    publish({ scope, blockedReason, send });
     return () => publish(null);
-  }, [agent.scope, agent.blockedReason, agent.send, publish]);
+  }, [scope, blockedReason, send, publish]);
 }
