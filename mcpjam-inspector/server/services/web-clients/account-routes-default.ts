@@ -15,48 +15,15 @@ import { getInternalBackendConfig } from "../internal-backend.js";
 import { createWebAccountRoutes, SignInBrowserNotFoundError } from "./account-routes.js";
 import { refusalCode, webClientService } from "./backend-connector-resolver.js";
 import { webClientsEnabledFor } from "./endpoint-auth.js";
-import { openWebClientHostedBrowser, type WebClientHostedBrowser } from "./hosted-browser.js";
+import { openWebClientHostedBrowser } from "./hosted-browser.js";
 import { createProfileForRunClient, type WebActor } from "./hosted-web-client-environment.js";
 import { actorFromBearer, restoreWebProfile } from "./hosted-web-client-runtime.js";
 import { createConvexWebReconnectBackend } from "./recovery/convex-backend.js";
+import { findSignInBrowser, keepSignInBrowser, releaseSignInBrowser } from "./sign-in-browsers.js";
 import { PageDriverError } from "../../utils/harness/real-ui/page-driver.js";
 import { logger } from "../../utils/logger.js";
 
 const bearerOf = (c: Context) => c.req.header("authorization") ?? "";
-
-/**
- * Sign-in browsers this replica opened, each with the person, project and
- * account it was opened for, so one person's id never drives another's
- * browser. Only this replica holds them: save-profile on another one finds
- * none, and the person starts the sign-in again.
- */
-type KeptSignInBrowser = {
-  browser: WebClientHostedBrowser;
-  actor: WebActor;
-  projectId: string;
-  webAccountId: string;
-  expiry: NodeJS.Timeout;
-};
-const signInBrowsers = new Map<string, KeptSignInBrowser>();
-/** Long past any sign-in: a browser nobody saved by then is closed. */
-const SIGN_IN_BROWSER_KEEP_MS = 2 * 60 * 60_000;
-
-function keepSignInBrowser(entry: Omit<KeptSignInBrowser, "expiry">): void {
-  const id = entry.browser.browserSessionId;
-  clearTimeout(signInBrowsers.get(id)?.expiry);
-  const expiry = setTimeout(() => void releaseSignInBrowser(id), SIGN_IN_BROWSER_KEEP_MS);
-  expiry.unref();
-  signInBrowsers.set(id, { ...entry, expiry });
-}
-
-/** Forgets the browser and closes it, which never throws. */
-async function releaseSignInBrowser(browserSessionId: string): Promise<void> {
-  const kept = signInBrowsers.get(browserSessionId);
-  if (!kept) return;
-  signInBrowsers.delete(browserSessionId);
-  clearTimeout(kept.expiry);
-  await kept.browser.close();
-}
 
 export function createDefaultWebAccountRoutes(): Hono {
   const service = webClientService();
@@ -117,15 +84,23 @@ export function createDefaultWebAccountRoutes(): Hono {
           vendor,
           ...(profileArchive ? { profileArchive } : {}),
         });
-        keepSignInBrowser({ browser, actor, projectId, webAccountId });
+        const { browserSessionId } = browser;
+        keepSignInBrowser({
+          browser,
+          actor,
+          projectId,
+          webAccountId,
+          close: (closer) => browser.close(closer),
+        });
         try {
           await browser.driver.navigate(startUrl);
         } catch (error) {
-          // The browser is open either way; the person can open the page there.
           if (!(error instanceof PageDriverError)) {
-            await releaseSignInBrowser(browser.browserSessionId);
+            // The person never gets this browser's id, so nothing else would let it go.
+            releaseSignInBrowser({ browserSessionId, actor, projectId, webAccountId, bearer });
             throw error;
           }
+          // The browser is open either way; the person can open the page there.
           logger.warn("[web-clients] the sign-in browser did not open the vendor's sign-in page", {
             code: error.code,
           });
@@ -139,7 +114,7 @@ export function createDefaultWebAccountRoutes(): Hono {
         return signInBrowserOf(args).exportProfile();
       },
       async release(args) {
-        if (heldSignInBrowser(args)) await releaseSignInBrowser(args.browserSessionId);
+        releaseSignInBrowser(args);
       },
     },
   });
@@ -161,36 +136,12 @@ export function createDefaultWebAccountRoutes(): Hono {
   }
 }
 
-type SignInBrowserArgs = {
-  browserSessionId: string;
-  actor: WebActor;
-  projectId: string;
-  webAccountId: string;
-};
-
-/** The person's own sign-in browser for this account, if this replica holds it. */
-function heldSignInBrowser(args: SignInBrowserArgs): WebClientHostedBrowser | undefined {
-  const kept = signInBrowsers.get(args.browserSessionId);
-  if (
-    !kept ||
-    !sameActor(kept.actor, args.actor) ||
-    kept.projectId !== args.projectId ||
-    kept.webAccountId !== args.webAccountId
-  ) {
-    return undefined;
-  }
-  return kept.browser;
-}
-
-function signInBrowserOf(args: SignInBrowserArgs): WebClientHostedBrowser {
-  const browser = heldSignInBrowser(args);
+/**
+ * The person's own sign-in browser for this account. One this replica doesn't
+ * hold answers 409, so the person starts the sign-in again.
+ */
+function signInBrowserOf(args: Parameters<typeof findSignInBrowser>[0]) {
+  const browser = findSignInBrowser(args);
   if (!browser) throw new SignInBrowserNotFoundError();
   return browser;
-}
-
-function sameActor(a: WebActor, b: WebActor): boolean {
-  if ("actorExternalId" in a) {
-    return "actorExternalId" in b && a.actorExternalId === b.actorExternalId;
-  }
-  return "actorUserId" in b && a.actorUserId === b.actorUserId;
 }

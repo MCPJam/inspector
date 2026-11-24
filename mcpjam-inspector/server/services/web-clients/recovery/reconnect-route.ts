@@ -1,12 +1,18 @@
 /**
- * `POST /api/web-clients/reconnect/:requestId/handback { projectId }`: a
- * signed-in person finished signing a web account in again, in the browser
- * this server holds for it. Acting as them, recovery checks the browser shows
- * the account's own seat and workspace, saves its profile, and resumes the
- * runs that waited. The backend decides who may hand an account back.
+ * `POST /api/web-clients/reconnect/:requestId/handback
+ *   { projectId, browserSessionId? }`: a signed-in person finished signing a
+ * web account in again. Hosted, they signed in in the sign-in browser this
+ * server holds for the account, and `browserSessionId` names it; a local
+ * Inspector reads this machine's own profile and sends none. Acting as them,
+ * recovery checks the browser shows the account's own seat and workspace,
+ * saves its profile, and resumes the runs that waited. The backend decides
+ * who may hand an account back.
  *
  * Answers `{ status: "resumed", resumedRuns }`, or `{ status }` with
- * `not_signed_in`, `wrong_identity`, `not_found` or `cancelled`.
+ * `not_signed_in`, `wrong_identity`, `not_found` or `cancelled`. A hosted
+ * handback that names no sign-in browser answers 400. A sign-in browser this
+ * server doesn't hold, or one opened for another account, answers 409 with
+ * what the person does next.
  */
 import { Hono } from "hono";
 import { z } from "zod";
@@ -20,7 +26,6 @@ import {
   type WebClientService,
 } from "../backend-connector-resolver.js";
 import { webClientsEnabledFor } from "../endpoint-auth.js";
-import type { WebClientEnvironment } from "../web-client-environment.js";
 import { accountBrowserOver } from "./account-browser.js";
 import {
   createConvexLedgerReader,
@@ -30,7 +35,12 @@ import {
 } from "./convex-backend.js";
 import { createWebRecoveryCoordinator } from "./coordinator.js";
 import { resumeWebRun } from "./paused-runs.js";
-import { webRecovery } from "./turn-recovery.js";
+import {
+  SignInBrowserAccountMismatchError,
+  SignInBrowserNotNamedError,
+  webRecovery,
+  type HandbackBrowsers,
+} from "./turn-recovery.js";
 
 export type WebReconnectRouteDeps = {
   service: WebClientService;
@@ -39,7 +49,8 @@ export type WebReconnectRouteDeps = {
   environmentFor(handback: {
     actor: WebActor;
     projectId: string;
-  }): Promise<WebClientEnvironment | undefined>;
+    browserSessionId?: string;
+  }): Promise<HandbackBrowsers | undefined>;
   enabledFor(userId: string): Promise<boolean>;
 };
 
@@ -58,7 +69,11 @@ function processDeps(): WebReconnectRouteDeps | undefined {
   };
 }
 
-const handbackBody = z.object({ projectId: z.string().min(1).max(512) });
+const handbackBody = z.object({
+  projectId: z.string().min(1).max(512),
+  /** The sign-in browser the person signed in with, from the sign-in route. */
+  browserSessionId: z.string().min(1).max(256).optional(),
+});
 
 export function createWebReconnectRoutes(
   deps: WebReconnectRouteDeps | undefined = processDeps(),
@@ -92,17 +107,28 @@ export function createWebReconnectRoutes(
       );
     }
     const actor = { actorExternalId: userId };
-    const environment = await deps.environmentFor({
-      actor,
-      projectId: body.data.projectId,
-    });
+    let environment: HandbackBrowsers | undefined;
+    try {
+      environment = await deps.environmentFor({
+        actor,
+        projectId: body.data.projectId,
+        ...(body.data.browserSessionId
+          ? { browserSessionId: body.data.browserSessionId }
+          : {}),
+      });
+    } catch (error) {
+      if (error instanceof SignInBrowserNotNamedError) {
+        return c.json({ error: error.message }, 400);
+      }
+      throw error;
+    }
     if (!environment) {
       return c.json(
         {
           error:
-            "This server can't open a signed-in browser for web accounts yet.",
+            "The browser you signed in with isn't open here anymore. Take over the browser again, sign in, then finish.",
         },
-        503,
+        409,
       );
     }
     let browser: ReturnType<typeof accountBrowserOver> | undefined;
@@ -137,6 +163,10 @@ export function createWebReconnectRoutes(
       ).length;
       return c.json({ status: "resumed", resumedRuns });
     } catch (error) {
+      // Not an outage: trying again with the same browser can't succeed.
+      if (error instanceof SignInBrowserAccountMismatchError) {
+        return c.json({ error: error.message }, 409);
+      }
       reportRouteFailure("A web account could not be handed back", error, {
         source: "web-clients.reconnect.handback",
         hop: "mcpjam_internal",
