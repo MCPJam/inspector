@@ -18,7 +18,9 @@ import {
   PlatformApiClient,
   isPlatformApiError,
   type PlatformClimbLaunch,
+  type PlatformClimbDraft,
   type PlatformClimbListItem,
+  type PlatformClimbRoundSubmitted,
   type PlatformClimbStopped,
   type PlatformClimbMeasure,
   type PlatformClimbVerdict,
@@ -238,6 +240,39 @@ export function updateClimbMeasure(
   signal?: AbortSignal,
 ): Promise<Climb> {
   return call(() => client().updateClimb(params, { signal }), signal);
+}
+
+/** A mock server's definition at one version, with its head version for the next save. */
+export async function readMockDefinition(
+  params: { projectId: string; mockId: string; version?: number },
+  signal?: AbortSignal,
+): Promise<{ definition: object; headVersion: number }> {
+  const mock = await call(() => client().getMockServer(params, { signal }), signal);
+  return { definition: mock.definition, headVersion: mock.headVersion };
+}
+
+/** Saves a whole definition as the mock's next version. Saving what the head already holds writes nothing. */
+export function saveMockDefinition(
+  params: { projectId: string; mockId: string; definition: object; expectedVersion: number },
+  signal?: AbortSignal,
+): Promise<{ version: number; created: boolean }> {
+  return call(() => client().saveMockServerVersion(params, { signal }), signal);
+}
+
+/** Submits a saved mock version as a round. SPENDS credits: the round runs the steering and validation cases in every environment. */
+export function submitRound(
+  params: { projectId: string; climbId: string; serverId: string; serverVersion: string; idempotencyKey: string },
+  signal?: AbortSignal,
+): Promise<PlatformClimbRoundSubmitted> {
+  return call(() => client().submitClimbRound(params, { signal }), signal);
+}
+
+/** A model's draft of one tool's description. Saves nothing and starts no run. */
+export function draftChange(
+  params: { projectId: string; climbId: string; toolName: string; includeTitle?: boolean },
+  signal?: AbortSignal,
+): Promise<PlatformClimbDraft> {
+  return call(() => client().draftClimbChange(params, { signal }), signal);
 }
 
 const changeCache = new Map<string, Promise<PlatformMockChange[]>>();
