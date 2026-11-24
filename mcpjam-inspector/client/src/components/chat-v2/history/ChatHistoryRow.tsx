@@ -362,7 +362,7 @@ export function ChatHistoryRow({
           </DropdownMenuTrigger>
           <DropdownMenuContent
             align="end"
-            className="w-44"
+            className="w-52"
             onClick={(e) => e.stopPropagation()}
           >
             {canConvertToTestCase && onConvertToTestCase ? (
