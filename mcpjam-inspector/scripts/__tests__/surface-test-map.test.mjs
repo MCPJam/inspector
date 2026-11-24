@@ -279,6 +279,7 @@ test("a file whose every test is skipped runs nothing", () => {
     `test.concurrent.skip("a", () => {});`,
     `test.skip.concurrent("a", () => {});`,
     `it.skip.each([1])("a %s", () => {});`,
+    `test.skip(/* disabled temporarily */ "a", () => {});`,
   ];
   for (const source of skipped) assert.equal(runsTests(source), false, source);
   const runs = [

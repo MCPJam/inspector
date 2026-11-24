@@ -431,6 +431,7 @@ function closingParen(code, open) {
  * a skip with a quoted title (or an `.each` table) declares a test.
  */
 export function runsTests(source) {
+  const { executable } = scanSource(source);
   const { code } = bareCode(source);
   const skipped = [...code.matchAll(SKIPPED_SUITE)].map((m) => {
     const open = m.index + m[0].length - 1;
@@ -439,7 +440,7 @@ export function runsTests(source) {
   const titled = (m) =>
     m[1] === "`" ||
     m[0].includes(".each") ||
-    /^\s*["'`]/.test(source.slice(m.index + m[0].length));
+    /^\s*["'`]/.test(executable.slice(m.index + m[0].length));
   let declares =
     skipped.length > 0 || [...code.matchAll(SKIPPED_TEST)].some(titled);
   for (const match of code.matchAll(TEST_CALL)) {
