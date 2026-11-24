@@ -167,6 +167,26 @@ describe("usePlaygroundClientInitialization", () => {
     });
   });
 
+  it("reports settling until the comparison lineup is in", async () => {
+    let resolve: (value: unknown) => void = () => {};
+    mocks.ensure.mockReturnValue(new Promise((r) => (resolve = r)));
+    const { result, update } = renderInit([MCPJAM]);
+    update({ hostListLoading: true });
+    expect(result.current.settling).toBe(true);
+    update({ hostListLoading: false });
+    await settle();
+    expect(result.current.settling).toBe(true);
+    await act(async () => resolve(CREATED_LINEUP));
+    expect(result.current.settling).toBe(false);
+  });
+
+  it("is settled for a member, who never asks for comparison", async () => {
+    mocks.role = { canManage: false, isLoading: false };
+    const { result } = renderInit([MCPJAM]);
+    await settle();
+    expect(result.current.settling).toBe(false);
+  });
+
   it("selects a lineup the backend just created, Claude leading", async () => {
     mocks.ensure.mockResolvedValue(CREATED_LINEUP);
     const live = liveTarget();

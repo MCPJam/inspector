@@ -85,6 +85,12 @@ export interface BootBrowserdOptions {
   deviceScaleFactor?: number;
   /** One-shot profile archive written before browserd starts. */
   profileArchivePath?: string;
+  /**
+   * Start Chromium from an empty profile, whatever an earlier boot on this box
+   * left in `userDataDir`: a web account's browser, which must never open on
+   * the person's own sign-ins.
+   */
+  freshProfile?: boolean;
 }
 
 export interface BrowserdHandle {
@@ -369,6 +375,7 @@ function buildEnv(
   if (options.profileArchivePath) {
     env.MCPJAM_BROWSERD_PROFILE_ARCHIVE = options.profileArchivePath;
   }
+  if (options.freshProfile) env.MCPJAM_BROWSERD_FRESH_PROFILE = "1";
   if (options.networkPolicy === "public")
     env.MCPJAM_BROWSERD_NETWORK = "public";
   return env;

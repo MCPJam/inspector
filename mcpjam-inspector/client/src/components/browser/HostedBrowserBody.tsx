@@ -147,6 +147,7 @@ export function HostedBrowserBody({
   mintToken,
   hostId = null,
   active = true,
+  allowProfileSave = true,
 }: {
   projectId: string | null;
   /** Durable logical browser session, when this pane belongs to a chat. */
@@ -167,6 +168,12 @@ export function HostedBrowserBody({
    * hibernate rather than being held awake for a picture nobody is looking at.
    */
   active?: boolean;
+  /**
+   * Offer "Save profile for other chats". Off for a web account's browser:
+   * its cookies are the project's Claude or ChatGPT session, which must not
+   * become a profile that acts as the person in their other chats.
+   */
+  allowProfileSave?: boolean;
 }) {
   const workspaceEnabled = useBrowserWorkspaceEnabled();
   const [session, setSession] = useState<Session | null>(null);
@@ -1358,7 +1365,7 @@ export function HostedBrowserBody({
           onInput={noteVncInput}
         >
           {pausedState === "awake" ? (
-            <BrowserPanel projectId={projectId} sessionId={sessionId} />
+            <BrowserPanel projectId={projectId} sessionId={sessionId} onInput={noteVncInput} />
           ) : null}
         </PausablePane>
       </>
@@ -1436,7 +1443,7 @@ export function HostedBrowserBody({
             tiers={HOSTED_TIERS}
             onTier={onTier}
           >
-            {session && sessionId ? (
+            {session && sessionId && allowProfileSave ? (
               <BrowserProfileSaveButton
                 projectId={projectId ?? ""}
                 exportArchive={exportProfile}

@@ -6,12 +6,7 @@
  *
  *   - an in-memory registry of `SubscriptionRecord`s (`locality: "local"`),
  *     each with the development overrides the user explicitly acknowledged;
- *   - ONE `MemoryEventInbox` whose callback URLs are this inspector's own
- *     development receiver — `http://127.0.0.1:<port>/api/mcp/events/hooks/
- *     i/<inboxId>/s/<slotId>`. Plain http, so a webhook subscription is only
- *     created when the user explicitly picked it and acknowledged the
- *     `insecure-local-receiver` override; it is labelled as such everywhere
- *     and is never a conformance pass;
+ *   - ONE `MemoryEventInbox` with a callback base pinned to each webhook subscription;
  *   - an `EventsCoordinator` whose rpc port drives the singleton manager for
  *     the record's server, stepped by a small scheduler (a timer armed at the
  *     earliest `nextActionAt`, bounded concurrency, and a generation fence
@@ -31,6 +26,7 @@
 
 import { randomUUID } from "node:crypto";
 import {
+  DEFAULT_LOCAL_WEBHOOK_TTL_MS,
   EventsCoordinator,
   EventsPushRuntime,
   IDLE_NEXT_ACTION_AT,
@@ -39,6 +35,7 @@ import {
   computeArgumentsHash,
   computeBindingKey,
   createManagerPushPort,
+  rememberEventsErrorProfile,
   type EventsRpcPort,
   type JournalEntry,
   type PushStreamHandle,
@@ -54,7 +51,13 @@ import type {
   EventsHostView,
   EventsSubscriptionView,
 } from "@/shared/events-api";
+import { localEventsServerSegment } from "@/shared/local-events-hooks";
 import { logger } from "../../utils/logger.js";
+import {
+  localWebhookFailureKind,
+  resolveWebhookReceiver,
+  type LocalWebhookReceiver,
+} from "./receivers.js";
 import {
   feedEntryView,
   rejectionView,
@@ -87,6 +90,8 @@ interface LocalSubscription {
   host: EventsHostView;
   overrides: LocalOverride[];
   argumentsHash: string;
+  receiver?: LocalWebhookReceiver;
+  lastWebhookAt?: number;
   push?: PushStreamHandle;
 }
 
@@ -111,6 +116,7 @@ type Listener = (frame: EventsStreamFrame) => void;
 export class LocalEventsRuntime {
   readonly inbox: MemoryEventInbox;
   private readonly manager: MCPClientManager;
+  private readonly publicOrigin: string;
   private readonly clock: { now(): number };
   private readonly coordinator: EventsCoordinator;
   private readonly subscriptions = new Map<string, LocalSubscription>();
@@ -126,11 +132,17 @@ export class LocalEventsRuntime {
 
   constructor(options: LocalEventsRuntimeOptions) {
     this.manager = options.manager;
+    this.publicOrigin = options.publicOrigin;
     this.clock = options.clock ?? { now: () => Date.now() };
     this.concurrency = Math.max(1, options.concurrency ?? 4);
     this.pushOptions = options.pushOptions;
     this.inbox = new MemoryEventInbox({
       publicOrigin: options.publicOrigin,
+      resolveCallbackBase: ({ logicalSubscriptionId }) => {
+        const receiver = this.subscriptions.get(logicalSubscriptionId)?.receiver;
+        if (!receiver) throw new Error("The subscription has no webhook receiver.");
+        return receiver.callbackBase;
+      },
       clock: this.clock,
     });
     this.coordinator = new EventsCoordinator({
@@ -152,7 +164,17 @@ export class LocalEventsRuntime {
     return {
       list: (params) => manager.listServerEvents(serverId, params),
       poll: (params) => manager.pollServerEvents(serverId, params),
-      subscribe: (params) => manager.subscribeServerEvents(serverId, params),
+      subscribe: async (params) => {
+        try {
+          return await manager.subscribeServerEvents(serverId, params);
+        } catch (error) {
+          // The manager and coordinator can load through different SDK entry points.
+          const profile = manager.getServerConfig(serverId)?.eventsWireProfile
+            ?? (manager.getEventsSupport(serverId).beta ? "beta" : "legacy");
+          rememberEventsErrorProfile(error, profile);
+          throw error;
+        }
+      },
       unsubscribe: (params) => manager.unsubscribeServerEvents(serverId, params),
     };
   }
@@ -195,16 +217,24 @@ export class LocalEventsRuntime {
     // (C4: one more unsubscribe after a late delivery).
     if (entry.origin === "webhook") {
       const local = this.subscriptions.get(entry.logicalSubscriptionId);
-      if (local && local.record.desiredState === "removed" && local.record.mode === "webhook") {
+      if (!local) return;
+      if (local.record.desiredState === "removed" && local.record.mode === "webhook") {
         local.record = { ...local.record, nextActionAt: this.clock.now() };
         this.kick();
+      } else if (entry.kind === "event" && !entry.quarantined) {
+        const first = local.lastWebhookAt === undefined;
+        local.lastWebhookAt = entry.receivedAt;
+        if (first) this.publish(local);
       }
     }
   }
 
   private view(local: LocalSubscription): EventsSubscriptionView {
+    const slotId = local.record.slotId;
     return subscriptionView(local.record, {
       locality: "local",
+      callbackVerifiedAt: slotId ? this.inbox.slotState(slotId)?.verifiedAt : undefined,
+      lastWebhookAt: local.lastWebhookAt,
       host: local.host,
       overrides: local.overrides,
     });
@@ -261,16 +291,17 @@ export class LocalEventsRuntime {
 
   /** Idempotent: one LIVE subscription per (server, event, arguments, mode). */
   create(request: EventsCreateSubscriptionRequest): EventsSubscriptionView {
-    const overrides: LocalOverride[] = (request.overrides ?? []).filter(
-      (value): value is LocalOverride => value === "insecure-local-receiver",
-    );
-    if (request.mode === "webhook" && !overrides.includes("insecure-local-receiver")) {
-      throw new LocalEventsError(
-        400,
-        "EVENTS_UNAVAILABLE",
-        "Local webhook delivery uses the plain-http development receiver on this inspector's own port. " +
-          'It is never a conformance pass; acknowledge it with overrides: ["insecure-local-receiver"].',
+    let receiver: LocalWebhookReceiver | undefined;
+    if (request.mode === "webhook") {
+      const resolved = resolveWebhookReceiver(
+        request.receiver ?? { kind: "local" },
+        this.publicOrigin,
+        request.serverId,
       );
+      if ("reason" in resolved) {
+        throw new LocalEventsError(400, "EVENTS_UNAVAILABLE", resolved.reason);
+      }
+      receiver = resolved.receiver;
     }
     const argumentsHash = computeArgumentsHash(request.arguments);
     const host: EventsHostView = request.host
@@ -293,9 +324,24 @@ export class LocalEventsRuntime {
             "This event is already subscribed under another client. Remove that subscription first.",
           );
         }
+        if (
+          existing.receiver?.kind !== receiver?.kind ||
+          existing.receiver?.callbackBase !== receiver?.callbackBase
+        ) {
+          throw new LocalEventsError(
+            409,
+            "EVENTS_CONFLICT",
+            "This event already uses a different callback. Remove that subscription first.",
+          );
+        }
+        this.requireWebhookConsent(receiver, request.overrides);
         return this.view(existing);
       }
     }
+    this.requireWebhookConsent(receiver, request.overrides);
+    const ttlMs = request.ttlMs === undefined && receiver
+      ? DEFAULT_LOCAL_WEBHOOK_TTL_MS
+      : request.ttlMs;
     const now = this.clock.now();
     const record: SubscriptionRecord = {
       id: `esub_${randomUUID().replace(/-/g, "")}`,
@@ -317,12 +363,13 @@ export class LocalEventsRuntime {
       nextActionAt: now,
       consecutiveFailures: 0,
       ...(request.maxAgeMs !== undefined ? { maxAgeMs: request.maxAgeMs } : {}),
-      ...(request.ttlMs !== undefined ? { ttlMs: request.ttlMs } : {}),
+      ...(ttlMs !== undefined ? { ttlMs } : {}),
     };
     const local: LocalSubscription = {
       record,
       host,
-      overrides: request.mode === "webhook" ? overrides : [],
+      overrides: receiver?.insecure ? ["insecure-local-receiver"] : [],
+      receiver,
       argumentsHash,
     };
     this.subscriptions.set(record.id, local);
@@ -330,6 +377,16 @@ export class LocalEventsRuntime {
     this.publish(local);
     this.kick();
     return this.view(local);
+  }
+
+  private requireWebhookConsent(receiver: LocalWebhookReceiver | undefined, overrides?: LocalOverride[]): void {
+    if (receiver?.insecure && !overrides?.includes("insecure-local-receiver")) {
+      throw new LocalEventsError(
+        400,
+        "EVENTS_UNAVAILABLE",
+        'To use an HTTP callback, acknowledge the non-conformant mode with overrides: ["insecure-local-receiver"].',
+      );
+    }
   }
 
   /** A user edit: bumps the generation, which fences any in-flight step. */
@@ -437,13 +494,16 @@ export class LocalEventsRuntime {
    * C3 acceptance table. New rejections are broadcast as frames.
    */
   async receive(args: {
+    serverSegment: string;
     inboxId: string;
     slotId: string;
     headers: Headers;
     body: Uint8Array;
   }): Promise<ReceiveResult> {
-    if (args.inboxId !== this.inbox.inboxId) {
-      return { status: 410, body: { error: "unknown_inbox" } };
+    const slot = args.inboxId === this.inbox.inboxId ? this.inbox.slotState(args.slotId) : undefined;
+    const local = slot && this.subscriptions.get(slot.logicalSubscriptionId);
+    if (!local || localEventsServerSegment(local.record.serverId) !== args.serverSegment) {
+      return { status: 404, body: { error: "unknown_slot" } };
     }
     const before = this.inbox.rejections.length;
     const lastBefore = this.inbox.rejections[before - 1];
@@ -458,6 +518,9 @@ export class LocalEventsRuntime {
     const start = lastBefore ? rejections.lastIndexOf(lastBefore) + 1 : 0;
     for (const rejection of rejections.slice(start)) {
       this.emit({ type: "rejection", rejection: rejectionView(rejection) });
+    }
+    if (local.record.slotId === args.slotId && this.inbox.slotState(args.slotId)?.verifiedAt !== slot?.verifiedAt) {
+      this.publish(local);
     }
     return result;
   }
@@ -564,6 +627,12 @@ export class LocalEventsRuntime {
         if (current.record.rotation !== snapshot.rotation) {
           if (current.record.rotation) next.rotation = current.record.rotation;
           next.nextActionAt = Math.min(next.nextActionAt, this.clock.now());
+        }
+        if (snapshot.desiredState === "active" && current.receiver && next.lastError) {
+          const kind = localWebhookFailureKind(next.lastError.kind, current.receiver.insecure);
+          if (kind.startsWith("callback_")) {
+            next.lastError = { ...next.lastError, kind, message: "Couldn't deliver webhook events." };
+          }
         }
         current.record = next;
         if (outcome.action === "failed" && outcome.failure) {

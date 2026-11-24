@@ -5,6 +5,7 @@
  * load-bearing and was previously untestable without driving a whole iteration
  * — which is how the harness half of it went missing.
  */
+import { isWebClientRuntimeId } from "@/shared/web-clients";
 import { parseBrowserToolPolicy } from "./browser-tool-policy.js";
 
 const BROWSER_BUILT_IN_TOOL_ID = "browser";
@@ -80,8 +81,11 @@ export function needsEphemeralEvalSandbox(args: {
   hostedBrowserAvailable?: boolean;
   runId: unknown;
 }): EphemeralEvalSandboxNeed {
+  // A web client drives the vendor's website: its browser comes from the web
+  // client environment, never from a box booted for the iteration.
+  const harnessNeedsBox = Boolean(args.harness) && !isWebClientRuntimeId(args.harness);
   if (args.runId === null || args.runId === undefined) {
-    return { needed: Boolean(args.harness), runtimeKind: "terminal" };
+    return { needed: harnessNeedsBox, runtimeKind: "terminal" };
   }
   if (declaresUnattendedBrowser(args)) {
     // A browser needs the DESKTOP image whatever else is true. A pinned
@@ -92,7 +96,7 @@ export function needsEphemeralEvalSandbox(args: {
     return { needed: true, runtimeKind: "desktop-browser" };
   }
   return {
-    needed: Boolean(args.pinnedEnvironmentId) || Boolean(args.harness),
+    needed: Boolean(args.pinnedEnvironmentId) || harnessNeedsBox,
     runtimeKind: "terminal",
   };
 }

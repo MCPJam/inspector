@@ -19,14 +19,19 @@
  */
 
 import { z } from "zod";
+import { SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import type { ManagedMcpClient } from "./managed-mcp-client.js";
 import type { ClientRequestOptions } from "./types.js";
 import {
+  assertBetaEventsResult,
   assertEventsListResult,
   assertEventsPollResult,
   assertEventsSubscribeResult,
   assertEventsUnsubscribeResult,
   classifyEventsRpcError,
+  InvalidEventsPayloadError,
+  rememberEventsErrorProfile,
+  type EventsWireProfile,
 } from "./events-ext-guards.js";
 import type {
   EventsListResultWire,
@@ -84,18 +89,31 @@ const EVENTS_WIRE_RESULT_SCHEMA = z.looseObject({});
 export interface EventsCallContext {
   client: ManagedMcpClient;
   options?: ClientRequestOptions;
+  wireProfile?: EventsWireProfile;
 }
 
-async function sendEventsRequest(
+export async function sendEventsRequest(
   ctx: EventsCallContext,
   method: EventsRequestMethod,
   params: Record<string, unknown>
 ): Promise<unknown> {
-  return ctx.client.requestWithSchema(
-    { method, params },
-    EVENTS_WIRE_RESULT_SCHEMA,
-    ctx.options
-  );
+  const profile = ctx.wireProfile ?? "legacy";
+  try {
+    const result = await ctx.client.requestWithSchema(
+      { method, params },
+      EVENTS_WIRE_RESULT_SCHEMA,
+      profile === "beta" ? { ...ctx.options, allowInputRequired: true } : ctx.options
+    );
+    if (profile === "beta") assertBetaEventsResult(method, result);
+    return result;
+  } catch (error) {
+    if (profile === "beta" && error instanceof SdkError &&
+      (error.code === SdkErrorCode.InvalidResult || error.code === SdkErrorCode.UnsupportedResultType)) {
+      throw new InvalidEventsPayloadError(`${method} result`, [error.message], { method });
+    }
+    rememberEventsErrorProfile(error, profile);
+    throw error;
+  }
 }
 
 /** `events/list` — one page. */

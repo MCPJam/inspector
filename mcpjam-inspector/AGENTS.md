@@ -24,3 +24,15 @@
 - Eval prompts must discover workspace data or establish fixtures before
   using them. Keep cases focused on the server behavior being tested and
   preserve required discovery steps and prerequisites.
+
+## Proactive pop-ups
+
+- Use `AnnouncementDialog`, `AnnouncementSpotlight`, or `AnnouncementToast`
+  for unsolicited pop-ups. Custom surfaces such as guided tours use
+  `useAnnouncementSlot`. The Inspector shell pauses the shared queue during
+  onboarding. Don't persist "seen" until the popup gets its turn.
+- Keep required prompts, user-triggered dialogs, and action feedback out of
+  this queue. The client typecheck flags direct custom toasts, feature
+  spotlights, and raw dialogs/popovers that use `defaultOpen`. For openings
+  driven by state or effects, verify the trigger in review and test that new
+  announcements wait behind an existing one.

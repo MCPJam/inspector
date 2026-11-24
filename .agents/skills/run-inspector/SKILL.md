@@ -39,97 +39,17 @@ Keep this link private: it signs a browser in.
 Open that exact link in the browser; the bare client URL does not
 carry the session token. Never paste the link into a PR, comment or log.
 
-Signed-in flows (WorkOS) need a real account: use an agent environment
-(next section). Without the `mcpjam-backend` checkout or its agents key, say
-in the PR which signed-in checks you could not run instead of faking them.
+Signed-in flows (WorkOS) need a real account: see the next section.
 
-## QA a PR, signed in (agent environments)
+## QA a PR, signed in
 
-An agent environment is a disposable backend running your backend code, with
-test accounts, real-model chat, project secrets, hosted browsers and the
-feature flags you choose. It lives two days. By default its first user has
-finished signing up and has a workspace with one saved server, MCPJam's
-deterministic `https://stateless.mcpjam.com/mcp` (`echo` returns
-`echo: <message>`), so the first thing you test is a real result.
-`mcpjam-backend`'s `scripts/agentEnv.ts` documents every command; the usual
-run:
-
-1. Install dependencies in both checkouts first: `npm ci` in
-   `mcpjam-backend`, and the install in this repo's `AGENTS.md` here. A fresh
-   cloud checkout has neither, and a session with two repositories may skip
-   their setup hooks. On a fresh machine, also run
-   `npx playwright install chromium` in `mcpjam-inspector`.
-2. In `mcpjam-backend`: `npm run agent-env -- up --name <change>`, and pass
-   the same `--name` to the later commands (without it, the name is that
-   checkout's branch, and `main` is refused). It needs one secret, the agents
-   key; if it's missing, `up` says where it comes from, and you ask the
-   engineer rather than work around it.
-   - It writes `environment.json` next to the profile: the backend commit it
-     deployed, the users and the seeded workspace. `--json` prints it.
-   - Add `--backend-ref <ref>` or `--backend-dir <backend worktree>` when the
-     PR needs backend changes. `--seed empty` starts every user on first-run
-     onboarding, for onboarding PRs. `--flags-file <json>` chooses feature
-     flags; a flag the file leaves out is off, in the backend and in this app
-     alike.
-3. `npm run agent-env -- sign-in --name <change> --grant` writes a sign-in
-   grant. It works once.
-4. Here: `npm run qa:start -w @mcpjam/inspector -- --environment <environment.json> --grant <grant>`.
-   It starts an instance with the environment's profile, signs a browser in,
-   and opens the seeded workspace. It reports ready only when that browser
-   shows the workspace with its saved server, and prints JSON: the instance
-   URLs, a `storageState` for your next browser context, a screenshot and
-   the stop command.
-5. Drive the app with your own Playwright script:
-   `browser.newContext({ storageState: '<printed path>' })`.
-   - The storage state is good for one context: the app rotates the session
-     on load. Save `context.storageState({ path })` back at the end, or get a
-     new grant and run `qa:start` again. It reuses the running instance and
-     takes seconds.
-   - Navigate inside the app. A full reload brings a saved server back
-     disconnected unless Auto-connect is on.
-   - To record what a reviewer should see, use
-     `mcpjam-inspector/scripts/qa-record.mjs`: `const recording = await startRecording(page)`,
-     then `await recording.stop("<out>.mp4")`. Playwright's own video records
-     this app as white frames.
-   - The repo's Playwright configs block the backend's domain, so they don't
-     fit here.
-6. When the PR fixes a bug, reproduce it on the base commit first: a second
-   worktree at the PR's base, and `qa:start --name <change>-base` there with
-   its own grant.
-7. Report a short QA result:
-   - **Tested:** the Inspector commit and the backend commit from
-     `environment.json`, and whether either had uncommitted edits.
-   - **Did and saw:** each action and what happened, such as "called `echo`
-     with `qa` through the saved connection: `echo: qa`".
-   - **Blocked:** each check you couldn't run and why. Say blocked; never
-     passed.
-   - **Evidence:** a screenshot or recording where it helps someone judge the
-     behavior. An agent that can't attach images to a PR uploads them to the
-     Kestral task and links them.
-8. Keep the environment for follow-ups ("does it survive signing out and
-   back in?"): a new grant and `qa:start` give a fresh browser in the same
-   workspace, with the same data.
-9. When you're done: `npm run qa:stop -w @mcpjam/inspector -- --name <change>`,
-   then `npm run agent-env -- down --name <change>` in `mcpjam-backend`. `down`
-   stops the environment's hosted browsers and deletes its accounts and
-   backend; leftovers count against a shared limit until a daily sweep
-   removes them.
-
-Notes:
-
-- The profile runs the app in hosted mode, which won't connect to localhost
-  or private addresses. Chat and connection checks need a public MCP server,
-  such as the seeded one, the Excalidraw demo in onboarding or
-  `https://mcp.deepwiki.com/mcp`.
-- The backend can't reach an instance on your machine. The instance runs the
-  durable agent-turn and chat-stage work itself on a timer, and the app's own
-  connect, tools and OAuth flows go through the instance directly. Connects
-  started from the REST API, CLI, MCP tools or chat agents (and the handoff
-  page they link to), and eval judge results, wait on a backend request that
-  doesn't reach it. Report flows that wait on those as unverified, not
-  failed.
-- Hosted browsers start on WebMCP → Open browser; enter a public URL first,
-  because the default address points at nothing inside the cloud desktop.
+Signed-in checks need a real account on a backend of your own. MCPJam staff
+get one from Jamroom, MCPJam's MCP server for agent environments, and follow
+the `jamroom` skill in the `mcpjam-backend` repository
+(`.agents/skills/jamroom/SKILL.md`). It covers the whole run: building the
+environment, starting this app signed in against it, recording evidence and
+cleaning up. Without it, say in the PR which signed-in checks you couldn't
+run instead of faking them.
 
 ## Guest mode
 

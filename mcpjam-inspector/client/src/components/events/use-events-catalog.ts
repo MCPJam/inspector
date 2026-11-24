@@ -20,7 +20,9 @@ export interface EventsCatalog {
 
 /**
  * The server's events catalog, read once the server is connected and again on
- * `retry`. The selected event survives a re-read that still lists it.
+ * `retry`. Nothing is selected until the user picks an event type: `null` is
+ * the list. A re-read keeps the selection while it is still listed, and a
+ * different server starts from the list again.
  */
 export function useEventsCatalog({
   hasServer,
@@ -41,6 +43,10 @@ export function useEventsCatalog({
   );
 
   useEffect(() => {
+    setSelectedEventName(null);
+  }, [serverName]);
+
+  useEffect(() => {
     if (!hasServer || !serverName || !connected) return;
     let cancelled = false;
     setCatalogState("loading");
@@ -53,7 +59,7 @@ export function useEventsCatalog({
         setSelectedEventName((previous) =>
           result.events.some((event) => event.name === previous)
             ? previous
-            : (result.events[0]?.name ?? null),
+            : null,
         );
       })
       .catch((error) => {
@@ -85,7 +91,7 @@ export function useEventsCatalog({
       );
     } catch (error) {
       toast.error(
-        errorMessage(error, "Could not load more events. Try again."),
+        errorMessage(error, "Could not load more event types. Try again."),
       );
     } finally {
       setLoadingMore(false);
