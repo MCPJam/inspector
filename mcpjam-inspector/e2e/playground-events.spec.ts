@@ -175,6 +175,17 @@ test("demo events reach the Playground agent through real delivery and test inje
   // A client without Events support can accept an explicitly labelled test
   // message. This does not qualify any vendor harness's native Events support.
   if (!hosted) {
+    // A saved conversation restores its own client. Start a fresh one before
+    // selecting a different client for the test-only case.
+    await page.getByRole("button", { name: "Clear chat", exact: true }).click();
+    await page
+      .getByRole("alertdialog")
+      .getByRole("button", { name: "Clear chat", exact: true })
+      .click();
+    await expect(page.getByRole("alertdialog")).not.toBeVisible();
+    await expect(
+      page.getByText("EVENT_ACK server-Push", { exact: true }),
+    ).toHaveCount(0);
     await chooseClient(page, "Claude");
     // Finish the client's conversation transition before attaching a binding.
     // Switching clients pauses bindings that belong to the previous scope.
