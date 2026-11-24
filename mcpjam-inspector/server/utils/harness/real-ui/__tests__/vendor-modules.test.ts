@@ -695,6 +695,18 @@ describe("the hosted driver", () => {
     await expect(driver.evaluate(() => 1, {})).rejects.toMatchObject({ code: "unsupported" });
   });
 
+  it("stops claude.ai's connector step before it changes any connector on the account", async () => {
+    // Its chat menu needs a key pressed on one element, which this browser
+    // refuses: stopping at the menu would leave the account's connectors changed.
+    const send = vi.fn(async (_command: BrowserAgentCommand) => executed({ url: "https://claude.ai/new" }));
+    const driver = createHostedPageDriver(send, { sites: WEB_CLIENT_SITES.claude });
+    const connector = { name: "MCPJam orders 1a2b3c4d", url: "https://inspector.example/mcp/connector-1" };
+    await expect(claudeWebPageModule.ensureConnector(driver, connector, { timeoutMs: 300 })).rejects.toMatchObject({
+      failure: { kind: "driver", step: "connector" },
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("reads an element as absent only when nothing matches it, and fails any other read", async () => {
     const failed = (code: string): BrowserAgentResult => ({
       status: "executed",
