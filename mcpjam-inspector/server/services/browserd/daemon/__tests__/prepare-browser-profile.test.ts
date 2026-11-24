@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exportBrowserProfileArchive } from "../../profile-archive";
@@ -79,6 +79,44 @@ describe("prepareBrowserProfile", () => {
     await expect(readFile(join(userDataDir, "Default", "Cookies"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(readFile(join(userDataDir, "Default", "Login Data"))).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(join(userDataDir, "recordings", "run.mp4"), "utf8")).toBe("an earlier run's video");
+  });
+
+  it("leaves a profile a live browser holds, rather than empty it under that browser", async () => {
+    const { userDataDir } = await fixture();
+    await mkdir(join(userDataDir, "Default"), { recursive: true });
+    await writeFile(join(userDataDir, "Default", "Login Data"), "a running browser's sign-ins");
+    // Another machine's lock is a live owner this process can't rule out.
+    await symlink("another-host-4242", join(userDataDir, "SingletonLock"));
+    await expect(
+      prepareBrowserProfile(
+        readBrowserdConfig({
+          MCPJAM_BROWSERD_USER_DATA_DIR: userDataDir,
+          MCPJAM_BROWSERD_TOKEN: "test-token",
+          MCPJAM_BROWSERD_FRESH_PROFILE: "1",
+        }),
+      ),
+    ).rejects.toThrow(/^profile_in_use: /);
+    expect(await readFile(join(userDataDir, "Default", "Login Data"), "utf8")).toBe("a running browser's sign-ins");
+  });
+
+  it("keeps only the recordings folder when it sits inside a profile folder", async () => {
+    const { userDataDir } = await fixture();
+    const recordDir = join(userDataDir, "Default", "recordings");
+    await mkdir(recordDir, { recursive: true });
+    await writeFile(join(userDataDir, "Default", "Cookies"), "someone else's cookies");
+    await writeFile(join(recordDir, "run.mp4"), "an earlier run's video");
+    expect(
+      await prepareBrowserProfile(
+        readBrowserdConfig({
+          MCPJAM_BROWSERD_USER_DATA_DIR: userDataDir,
+          MCPJAM_BROWSERD_TOKEN: "test-token",
+          MCPJAM_BROWSERD_FRESH_PROFILE: "1",
+          MCPJAM_BROWSERD_RECORD_DIR: recordDir,
+        }),
+      ),
+    ).toBe(false);
+    await expect(readFile(join(userDataDir, "Default", "Cookies"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(join(recordDir, "run.mp4"), "utf8")).toBe("an earlier run's video");
   });
 
   it("keeps an earlier boot's profile when a fresh one isn't asked for", async () => {

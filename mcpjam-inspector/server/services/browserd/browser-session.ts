@@ -345,6 +345,20 @@ export interface EnsureBrowserSessionArgs {
 }
 
 /**
+ * A fresh profile was asked for on a sandbox whose browser is already running
+ * for another session. That browser holds whatever profile it started with,
+ * so it is refused rather than handed over, and never stopped for this one.
+ */
+export class FreshProfileRefusedError extends Error {
+  constructor() {
+    super(
+      "This desktop already runs another browser, so a new browser with an empty profile can't start on it. Start the run again.",
+    );
+    this.name = "FreshProfileRefusedError";
+  }
+}
+
+/**
  * A live browserd, whichever engine is running it.
  *
  * A UNION rather than one shape with optional fields, because the hosted
@@ -1555,8 +1569,9 @@ async function bootAndPublish<THandle>(
   } catch (bootError) {
     // Another replica may have won the boot race for this box (the keyed lock
     // is per-process only): before failing, ask the store once more and reuse
-    // a daemon that verifies.
-    const raced = await args.reuseAgain();
+    // a daemon that verifies. Never for a fresh profile, which that daemon's
+    // browser may not have started from.
+    const raced = args.freshProfile ? null : await args.reuseAgain();
     if (raced) return { kind: "adopted", handle: raced };
     throw bootError;
   }
@@ -1571,9 +1586,11 @@ async function bootAndPublish<THandle>(
   const recorded = await args.publish(booted);
   if (recorded.status === "conflict") {
     // Stop our own daemon first (the winner's session must be verified against
-    // a box we are no longer fighting over), then adopt the winner.
+    // a box we are no longer fighting over), then adopt the winner. Never for
+    // a fresh profile: the winner's browser may not have started from one.
     await booted.stop().catch(() => {});
     args.onAdopt?.();
+    if (args.freshProfile) throw new FreshProfileRefusedError();
     const adopted = await args.reuseAgain();
     if (adopted) return { kind: "adopted", handle: adopted };
     throw new Error(
@@ -1685,6 +1702,7 @@ async function ensureOnSandbox(
     requiredFeature,
   );
   if (reusedHandle) {
+    if (args.freshProfile) throw new FreshProfileRefusedError();
     if (
       args.expectedExistingBootId &&
       reusedHandle.bootId !== args.expectedExistingBootId
@@ -1756,7 +1774,10 @@ async function ensureOnSandbox(
     // desktop boot it guards, and it means the kill is conditional on what we
     // still believe is there rather than on a lookup from before we connected.
     const raced = await reuseAgain();
-    if (raced) return raced;
+    if (raced) {
+      if (args.freshProfile) throw new FreshProfileRefusedError();
+      return raced;
+    }
 
     if (target.watched) {
       const claimId = randomUUID();
