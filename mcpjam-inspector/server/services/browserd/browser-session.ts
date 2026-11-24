@@ -1827,6 +1827,7 @@ async function ensureOnSandbox(
       if (fencedRace) {
         await fence?.release();
         fence = null;
+        if (args.freshProfile) throw new FreshProfileRefusedError();
         return fencedRace;
       }
     }
