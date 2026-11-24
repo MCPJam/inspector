@@ -13,6 +13,7 @@
  */
 
 export type EventsProfileIdView =
+  | "beta@c77b843"
   | "draft@28ec35e"
   | "chatgpt@2026-11-05"
   | "chatgpt@2026-09-30";
@@ -21,9 +22,14 @@ export type EventsDeliveryModeView = "poll" | "push" | "webhook";
 export interface EventsSupportView {
   handshakeObserved: boolean;
   declared: boolean;
+  beta?: boolean;
   listChanged: boolean;
   capability?: Record<string, unknown>;
   source?: "initialize" | "server/discover";
+}
+
+export interface EventsCatalogFrame {
+  type: "ready" | "changed";
 }
 
 export interface EventDescriptorView {
@@ -158,6 +164,7 @@ export interface EventsCreateSubscriptionRequest {
 
 /** One journal entry, as the feed carries it. */
 export interface EventsFeedEntryView {
+  afterRemoval?: boolean;
   seq: number;
   kind: "event" | "gap" | "terminated" | "inbox_gap" | "quarantined" | string;
   origin: "webhook" | "poll" | "push" | "simulation" | "replay";

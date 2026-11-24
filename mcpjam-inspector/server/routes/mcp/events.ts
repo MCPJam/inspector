@@ -43,6 +43,7 @@ import {
   LocalEventsRuntime,
 } from "../../services/events/local-runtime.js";
 import { classifyEventsRouteError } from "../../services/events/route-errors.js";
+import { streamEventCatalogChanges } from "../../services/events/catalog-changes.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 /** Receiver bodies are capped by the inbox too; refuse obvious floods early. */
@@ -63,16 +64,18 @@ function toSupportView(
 ): { support: EventsSupportView; rawCapabilities?: Record<string, unknown>; protocolVersion?: string } {
   const support = manager.getEventsSupport(serverId);
   const captured = manager.getCapturedEventsCapability(serverId);
+  const protocolVersion = manager.getNegotiatedProtocolVersion?.(serverId) ?? captured?.protocolVersion;
   return {
     support: {
       handshakeObserved: support.handshakeObserved,
       declared: support.declared,
+      ...(support.beta ? { beta: true } : {}),
       listChanged: support.listChanged,
       ...(support.capability ? { capability: support.capability } : {}),
       ...(support.source ? { source: support.source } : {}),
     },
     ...(captured?.rawCapabilities ? { rawCapabilities: captured.rawCapabilities } : {}),
-    ...(captured?.protocolVersion ? { protocolVersion: captured.protocolVersion } : {}),
+    ...(protocolVersion ? { protocolVersion } : {}),
   };
 }
 
@@ -185,6 +188,13 @@ export function createLocalEventsRouter(options: LocalEventsRouterOptions = {}):
   };
 
   // --- Server operations ------------------------------------------------------
+
+  router.post("/catalog-changes", async (c) => {
+    const body = await readBody(c);
+    const serverId = typeof body.serverId === "string" ? body.serverId : "";
+    if (!serverId) return eventsError(c, 400, "EVENTS_NOT_FOUND", "serverId is required");
+    return streamEventCatalogChanges(c, c.mcpClientManager, serverId);
+  });
 
   router.post("/support", async (c) => {
     const body = await readBody(c);
@@ -334,7 +344,7 @@ export function createLocalEventsRouter(options: LocalEventsRouterOptions = {}):
           400,
           "EVENTS_UNDECLARED",
           support.handshakeObserved
-            ? `"${request.serverId}" did not declare capabilities.events.`
+            ? `"${request.serverId}" did not declare an MCP Events capability.`
             : `The handshake with "${request.serverId}" was not observed, so its events capability is unknown.`,
           { handshakeObserved: support.handshakeObserved },
         );

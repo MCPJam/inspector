@@ -112,10 +112,28 @@ const claimed = z.object({ dispatch: z.boolean(), state });
 const settled = z.object({ replayed: z.boolean(), adopted: z.boolean() });
 
 export class ExecutionControlError extends Error {
-  constructor(readonly code: string) {
+  /** `reason` is the control plane's own refusal code, when it sent one. */
+  constructor(
+    readonly code: string,
+    readonly reason?: string,
+  ) {
     super(`Forwarding execution refused (${code}).`);
     this.name = "ExecutionControlError";
   }
+}
+
+const refusalBody = z.object({ code: z.string().regex(/^[a-z_]{1,80}$/) });
+
+async function refusalReason(response: Response): Promise<string | undefined> {
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    // A refusal without a JSON body still refuses; only its reason is unknown.
+    return undefined;
+  }
+  const parsed = refusalBody.safeParse(body);
+  return parsed.success ? parsed.data.code : undefined;
 }
 
 /** One trusted service connection; neither credential is sent to the upstream MCP server. */
@@ -296,7 +314,10 @@ export async function requestExecutionControl<T>(request: object, schema: z.ZodT
       signal: AbortSignal.timeout(15_000),
     });
     if (!response.ok)
-      throw new ExecutionControlError(`control_${response.status}`);
+      throw new ExecutionControlError(
+        `control_${response.status}`,
+        await refusalReason(response),
+      );
     const parsed = schema.safeParse(await response.json());
     if (!parsed.success)
       throw new ExecutionControlError("invalid_control_response");

@@ -1,4 +1,6 @@
 import { createHostToolCancellation } from "./host-tool-cancellation";
+import { startEarly, takeEarly, type EarlyStart } from "../early-start.js";
+import { overlapMcpConfigWithBroker } from "./startup-overlap.js";
 import { retainedAppResourcesEligible } from "./forwarding/retained-app-eligibility";
 import { cursorRuntimeLogin } from "./runtime-login.js";
 import { startLeaseHeartbeat } from "./lease-heartbeat.js";
@@ -15,6 +17,8 @@ import { forwardingAdmission } from "./forwarding/enhanced-admission.js";
 import { startHarnessForwardingGrant } from "./forwarding/forwarding-grant.js";
 import { APPROVAL_UNAVAILABLE, answerOnlyDecidedCalls, decidedCalls, pausedCallsForDecisions, type DecidedCall } from "./forwarding/approval-bindings.js";
 import { resolveHarnessMcpPlan, type HarnessMcpPlan } from "./harness-mcp-plan.js";
+import { isWebClientRuntimeId } from "@/shared/web-clients";
+import { runWebClientHarnessTurn } from "../../services/web-clients/web-client-harness-turn.js";
 import { buildHarnessMcpAtTurn } from "./harness-mcp-receipt.js";
 import { assertHarnessMcpDiscoveryGate } from "./harness-mcp-discovery-gate.js";
 import {
@@ -164,7 +168,11 @@ import {
   pluginOriginByServerId,
   type RuntimePluginVersion,
 } from "../../services/environments/effective-capabilities.js";
-import { projectSelectedMcpServersAsHostTools } from "./host-executed-mcp-tools.js";
+import {
+  projectSelectedMcpServersAsHostTools,
+  type HostExecutedMcpProjection,
+} from "./host-executed-mcp-tools.js";
+import { identifyHarnessTool } from "./harness-tool-names.js";
 import {
   logPluginSkillDelivery,
   pluginVersionsFingerprint,
@@ -252,7 +260,7 @@ import {
   withHarnessPromptImages,
   type HarnessPromptImage,
 } from "./harness-prompt-images.js";
-import { harnessTurnSkills } from "./skill-delivery.js";
+import { harnessTurnSkillsFromPlan } from "./skill-delivery.js";
 import {
   harnessServerSkills,
   withServedSkills,
@@ -264,7 +272,6 @@ import {
   hostToolApproval,
   withServerSkillCommandGate,
 } from "./server-skill-command-gate.js";
-import { takesServerSkillsAsTools } from "./skills-descriptor.js";
 import {
   boxSkillsFolder,
   failedBoxSkills,
@@ -325,6 +332,7 @@ import {
   type HarnessPolicyBlockEvent,
 } from "./harness-policy-block-channel.js";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
+import { withoutStructuredContentRule } from "@mcpjam/sdk";
 import {
   harnessScopeStepUpServerMatches,
   matchHarnessScopeStepUpToolCall,
@@ -833,6 +841,10 @@ export async function runHarnessTurn(
   options: MCPJamHandlerOptions,
   streamSink: "ui" | "none",
 ): Promise<ChatEngineLoopResult> {
+  // A website has no box, no broker and no proxy: its turn drives the page.
+  if (isWebClientRuntimeId(options.harness)) {
+    return runWebClientHarnessTurn(options, streamSink);
+  }
   const hostToolCancellation = createHostToolCancellation();
   const {
     messages,
@@ -857,7 +869,7 @@ export async function runHarnessTurn(
     onLiveTextDelta,
     requireToolApproval,
     approvalMode,
-    modelVisibleMcpToolResults,
+    modelVisibleMcpToolResults: hostModelVisibleMcpToolResults,
     respectToolVisibility,
     tasks,
     chatSessionId,
@@ -879,10 +891,8 @@ export async function runHarnessTurn(
     harnessExecutionTarget,
     executionScope,
     scenarioParticipant,
-    pinnedHarnessSkills,
-    runtimeSkillsOverride,
+    skillPlan,
     effectiveCapabilities,
-    liveTurn,
     environmentId,
     environmentUnresolvedReason,
     runtimeSecrets: runtimeSecretsOverride,
@@ -891,6 +901,11 @@ export async function runHarnessTurn(
     createHarnessScopeStepUpContinuation,
     turnTiming,
   } = options;
+  // Harness runs keep today's projection even when the client row records its
+  // rule (KES-1007): admission, fingerprints and relayed results stay as they were.
+  const modelVisibleMcpToolResults = withoutStructuredContentRule(
+    hostModelVisibleMcpToolResults,
+  );
   // One typed route.operation.failed per turn; the system fallback covers
   // callers with no request context (evals/swarms).
   const failureReporter = oncePerTurn(
@@ -1297,6 +1312,7 @@ export async function runHarnessTurn(
     // per tool result and then dropped, so the map cannot outgrow the turn.
     const hostExecutedRawResults = new Map<string, unknown>();
     const retainedResourceSources = new Map<string, RetainedResourcePresentation>();
+    const retainedResourceRefusals = new Set<string>();
     let pendingScopeChallenge: HarnessScopeStepUpEvent | undefined;
     let suspendedHarnessToolCallId: string | undefined;
     let scopeStepUpCreation: Promise<void> | undefined;
@@ -1816,9 +1832,9 @@ export async function runHarnessTurn(
           chatSessionId, hostRendersApps: streamSink === "ui" && options.harnessHostCapabilities !== undefined,
           scenarioId, evalIterationId, journeyRunId, localExecution: !!harnessExecutionTarget,
         }),
-        laneId: () => continuity?.laneId, sources: retainedResourceSources, turnId,
+        laneId: () => continuity?.laneId, sources: retainedResourceSources, refused: retainedResourceRefusals, turnId,
       });
-      const hostExecutedMcp =
+      const hostExecutedMcp: HostExecutedMcpProjection =
         !nativeMcpDelivery && (selectedServers?.length ?? 0) > 0
           ? await projectSelectedMcpServersAsHostTools({
               manager: mcpClientManager,
@@ -1867,12 +1883,14 @@ export async function runHarnessTurn(
                 tasks,
               },
             })
-          : { tools: {}, keyToServerId: {} };
+          : { tools: {}, keyToServerId: {}, toolRegistry: new Map() };
       // The attribution map is whichever mode produced one; they are the same
       // shape and the same sanitize+dedup, so `parseToolName` is identical.
       let harnessKeyToServerId = nativeMcpDelivery
         ? keyToServerId
         : hostExecutedMcp.keyToServerId;
+      const serverToolNames = (serverId: string): string[] =>
+        Object.keys(mcpClientManager.getAllToolAnnotations(serverId));
 
       // 2b. Claim the harness session lane (multi-turn continuity). Done BEFORE
       // waking the box so a "turn already running" (409) doesn't provision it.
@@ -1886,13 +1904,7 @@ export async function runHarnessTurn(
       // unknown (`null`) and `skillsHash` undefined, so it is OMITTED from
       // claim/commit and the backend reuses the stored hash (no resume churn,
       // no empty-hash commit), and the box is left exactly as it is.
-      const turnSkills = await harnessTurnSkills({
-        pinnedHarnessSkills,
-        serverSkillsAsTools: takesServerSkillsAsTools(harnessAdapter),
-        runtimeSkillsOverride,
-        ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
-        liveTurn,
-      });
+      const turnSkills = harnessTurnSkillsFromPlan(skillPlan, harnessAdapter.id);
       const skillsArePinned = turnSkills.mode === "pinned";
       const runtimeSkills = turnSkills.skills;
       const skillsHash = turnSkills.skillsHash;
@@ -2030,10 +2042,8 @@ export async function runHarnessTurn(
       // MCP-server skills through MCPJam's skill tools, and the gate that holds
       // the runtime's commands while one is in use.
       const serverSkills = await harnessServerSkills(harnessAdapter, {
-        mode: turnSkills.mode,
         live: turnSkills.live,
-        pinnedHarnessSkills,
-        effectiveCapabilities,
+        capturedServerSkills: skillPlan?.set.serverSkills ?? [],
         manager: mcpClientManager,
         serverIds: selectedServers ?? [],
         messages,
@@ -2310,13 +2320,32 @@ export async function runHarnessTurn(
       if (useNativeForwarding && !harnessExecutionTarget && !evalIterationId && continuity?.laneId && publicBaseUrl &&
         !harnessAdapter.fingerprintsMcpConfig)
         sessionGrantOrigin = new URL(publicBaseUrl).origin;
-      if (deferSessionConfig) {
+      // With `MCPJAM_HARNESS_OVERLAP_MCP_CONFIG`, a brokered turn mints its MCP
+      // configuration while its broker starts: nothing reads it before the
+      // broker returns, where it is taken (`settleMcpConfig`) and a failed
+      // mint throws. The session grant is asked for whenever servers are
+      // selected, the one input the broker needs from the configuration.
+      let earlyMcpConfig: EarlyStart<Awaited<ReturnType<typeof perTurnProxyConfig>>> | undefined;
+      if (deferSessionConfig && overlapMcpConfigWithBroker() && !externalAccountAuth) {
+        const lane = continuity?.laneId && publicBaseUrl ? continuity : undefined;
+        if (lane && publicBaseUrl && (selectedServers?.length ?? 0) > 0) sessionGrantOrigin = new URL(publicBaseUrl).origin;
+        earlyMcpConfig = startEarly(() => lane
+          ? buildNativeProxyConfig(undefined, { owner: lane.owner, leaseId: lane.leaseId, turnId })
+          : perTurnProxyConfig());
+      } else if (deferSessionConfig) {
         if (continuity?.laneId && publicBaseUrl) {
           ({ mcpJson, keyToServerId } = await buildNativeProxyConfig(undefined, { owner: continuity.owner, leaseId: continuity.leaseId, turnId }));
           if (Object.keys(mcpJson.mcpServers).length > 0) sessionGrantOrigin = new URL(publicBaseUrl).origin;
         } else ({ mcpJson, keyToServerId } = await perTurnProxyConfig());
         harnessKeyToServerId = keyToServerId;
       }
+      const settleMcpConfig = async () => {
+        if (!earlyMcpConfig) return;
+        const started = earlyMcpConfig;
+        earlyMcpConfig = undefined;
+        ({ mcpJson, keyToServerId } = await takeEarly(started));
+        harnessKeyToServerId = keyToServerId;
+      };
       const sessionGrantMissed = (grantOrigin: string | undefined) => {
         logger.warn("[harness] session grant origin differs from the MCP proxy; using per-turn tokens", {
           proxyOrigin: sessionGrantOrigin, grantOrigin: grantOrigin ?? null,
@@ -2684,6 +2713,9 @@ export async function runHarnessTurn(
               harnessId: harnessAdapter.id,
               sandboxId: sandboxId!,
               connectionPreparedByBroker: () => connectionPreparedByBroker,
+              // Not a lane's first turn alone: an earlier attempt that never
+              // committed may have left its bridge on the same box.
+              unusedBox: () => harnessSandboxBinding?.unused === true,
               defaultWorkingDirectory,
               proxyUrl: () => auth.ANTHROPIC_BASE_URL ?? auth.OPENAI_BASE_URL,
               // The materialized secrets, as a session-wide env bag on every `run`
@@ -2837,6 +2869,7 @@ export async function runHarnessTurn(
           bearer: await currentAuthorization(),
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
+        await settleMcpConfig();
         if (!broker.ok) {
           // Throws propagate to the turn's outer catch; onFinishEngine frees the
           // claimed lane (sessionEstablished still false) and revokes the broker
@@ -2876,6 +2909,7 @@ export async function runHarnessTurn(
         auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl, warmAgentPilot);
         modelEndpoint = org.brokeredEndpoint;
       }
+      await settleMcpConfig();
       tBroker = turnEvent.mark("broker");
 
       continuity = org.continuityOnLeasedKey(continuity);
@@ -3231,6 +3265,7 @@ export async function runHarnessTurn(
               ...(uploadQuotaComputerId
                 ? { computerId: uploadQuotaComputerId }
                 : {}),
+              ...(localPrepared === null ? { hostedBox: true } : {}),
               ...(abortSignal ? { signal: abortSignal } : {}),
             }).catch((error: unknown) => {
               boxSkillsWritten = failedBoxSkills(boxSkills, error);
@@ -3831,13 +3866,22 @@ export async function runHarnessTurn(
             // The adapter decides; this call site only has to hand over both.
             // (Which is why `input` is now resolved FIRST — it is an argument to
             // the attribution, not just something recorded after it.)
-            const { serverId, toolName } = harnessAdapter.attributeToolCall
-              ? harnessAdapter.attributeToolCall({
-                  rawToolName,
-                  input,
-                  keyToServerId: harnessKeyToServerId,
-                })
-              : harnessAdapter.parseToolName(rawToolName, harnessKeyToServerId);
+            // Then the server's real tool name: a renamed `cad_tray` is `cad.tray`.
+            const { serverId, toolName } = identifyHarnessTool({
+              rawToolName,
+              // Only a runtime whose adapter reads identity from the input
+              // (Cursor) wraps the registered name there.
+              ...(harnessAdapter.attributeToolCall ? { input } : {}),
+              attributed: harnessAdapter.attributeToolCall
+                ? harnessAdapter.attributeToolCall({
+                    rawToolName,
+                    input,
+                    keyToServerId: harnessKeyToServerId,
+                  })
+                : harnessAdapter.parseToolName(rawToolName, harnessKeyToServerId),
+              hostToolRegistry: hostExecutedMcp.toolRegistry,
+              serverToolNames,
+            });
             const account = toolConnectionAttribution(
               hostExecutedMcp.tools[rawToolName],
               input,
@@ -3858,7 +3902,8 @@ export async function runHarnessTurn(
             // Approval continuation can repeat a call already in saved history.
             // Keep its original input and card; only the result is new.
             const savedCall = toolCallLookupFor(() => messageHistory)(toolCallId);
-            if (savedCall) {
+            // An unverified saved call keeps no identity here, as at its result.
+            if (savedCall && !savedCall.unverified) {
               toolMeta.set(toolCallId, { ...toolMeta.get(toolCallId), ...savedCall });
               drainOpenToolCalls.add(toolCallId);
               continue;
@@ -3922,9 +3967,12 @@ export async function runHarnessTurn(
             drainOpenToolCalls.delete(toolCallId);
             const errorEvent =
               type === "tool-error" || type === "tool-output-error";
-            const historicalCall = toolCallLookupFor(() => messageHistory)(
+            const savedCall = toolCallLookupFor(() => messageHistory)(
               toolCallId,
             );
+            // The stream signer vouches for nothing on an unverified call, so
+            // its server and tool name must not attribute this result either.
+            const historicalCall = savedCall?.unverified ? undefined : savedCall;
             if (errorEvent) {
               // Ignore duplicate terminal events and errors for calls never issued.
               if (
@@ -3942,7 +3990,8 @@ export async function runHarnessTurn(
             hostExecutedRawResults.delete(toolCallId);
             const retainedSource = retainedResourceSources.get(toolCallId);
             retainedResourceSources.delete(toolCallId);
-            const hostPresentation = withRetainedResourceSource(rawHostExecuted, retainedSource ? {...retainedSource, version: 1, toolCallId} : undefined);
+            const retainedRefused = retainedResourceRefusals.delete(toolCallId);
+            const hostPresentation = withRetainedResourceSource(rawHostExecuted, retainedSource ? {...retainedSource, version: 1, toolCallId} : undefined, retainedRefused);
             const modelOutput = (part as { output?: unknown }).output ??
               (part as { result?: unknown }).result;
             if (hasRawHostExecuted && !errorEvent) {
@@ -3964,18 +4013,23 @@ export async function runHarnessTurn(
               (isCallToolResult(output) && output.isError === true);
             // Result-only resumes retain the saved MCP identity even when the
             // runtime echoes an unqualified tool name.
-            const parsedMeta = harnessAdapter.parseToolName(
-              String(
-                (part as { toolName?: unknown }).toolName ??
-                  historicalCall?.toolName ??
-                  "tool",
-              ),
-              harnessKeyToServerId,
+            const resultToolName = String(
+              (part as { toolName?: unknown }).toolName ??
+                historicalCall?.toolName ??
+                "tool",
             );
+            const parsedMeta = identifyHarnessTool({
+              rawToolName: resultToolName,
+              attributed: harnessAdapter.parseToolName(resultToolName, harnessKeyToServerId),
+              hostToolRegistry: hostExecutedMcp.toolRegistry,
+              serverToolNames,
+            });
             const meta = toolMeta.get(toolCallId) ?? {
               ...parsedMeta,
+              // The saved call names the real tool; this turn's registry may
+              // have given its wire name to another tool since.
               ...(historicalCall?.serverId
-                ? { serverId: historicalCall.serverId }
+                ? { serverId: historicalCall.serverId, toolName: historicalCall.toolName }
                 : {}),
             };
             // A tool call the MCP proxy blocked on policy, recognised only when
@@ -4850,7 +4904,7 @@ export async function runHarnessTurn(
       // unconditionally and left no typed record (the response is a 200
       // stream the HTTP failure events never see). Classify first, page only
       // on origin=mcpjam, emit route.operation.failed.
-      failureReporter({
+      const report = failureReporter({
         message: "[harness] turn failed",
         error: err,
         source: "chat.harness-turn",
@@ -4905,6 +4959,10 @@ export async function runHarnessTurn(
         // failure then stays unclassified rather than being guessed from the
         // sentence above.
         ...(failureEvidence ? { infra: failureEvidence } : {}),
+        // Whether it paged, never its origin: the reporter had only the
+        // message, which reads our own broker's 401/429 as the user's. With
+        // no origin, the eval driver still captures what it declined.
+        reportedCaptured: report.captured,
       });
     } finally {
       if (!sessionEstablished) {

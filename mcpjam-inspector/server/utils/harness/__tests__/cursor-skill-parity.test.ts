@@ -24,7 +24,10 @@ import {
   promptWithSkills,
   skillWrites,
 } from "../../../test/support/fake-harness-bridge";
-import { writeTurnToBox } from "../../../test/support/skill-delivery";
+import {
+  frozenPlan,
+  writeTurnToBox,
+} from "../../../test/support/skill-delivery";
 
 const adapter = getHarnessAdapter("cursor");
 const descriptor = adapter.skills;
@@ -139,21 +142,19 @@ describe("Cursor skill parity (real adapter)", () => {
     const box = fakeSkillBox();
     const written = await writeTurnToBox(
       "cursor",
-      {
-        pinnedHarnessSkills: [
-          {
-            skillId: "sk_release-notes",
-            name: "release-notes",
-            description: "Write release notes.",
-            content: "# Release notes",
-            contentHash: "hash-release-notes",
-            frontmatter: {
-              alwaysApply: true,
-              metadata: { surfaces: "ide", alwaysApply: "true" },
-            },
+      frozenPlan("cursor", [
+        {
+          skillId: "sk_release-notes",
+          name: "release-notes",
+          description: "Write release notes.",
+          content: "# Release notes",
+          contentHash: "hash-release-notes",
+          frontmatter: {
+            alwaysApply: true,
+            metadata: { surfaces: "ide", alwaysApply: "true" },
           },
-        ],
-      },
+        },
+      ]),
       box,
     );
     expect(written.delivered).toEqual([

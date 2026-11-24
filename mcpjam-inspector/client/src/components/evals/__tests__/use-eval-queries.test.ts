@@ -106,6 +106,61 @@ describe("useEvalQueries", () => {
     );
   });
 
+  it("keeps the suite's last details while its query restarts after a failed delete", () => {
+    const details = { testCases: [], iterations: [] };
+    mocks.useQuery.mockImplementation((name: string, args: unknown) =>
+      name === "testSuites:getAllTestCasesAndIterationsBySuite" && args !== "skip"
+        ? details
+        : undefined,
+    );
+    const { result, rerender } = renderHook(
+      ({ deletingSuiteId, live }: { deletingSuiteId: string | null; live: boolean }) => {
+        if (!live) mocks.useQuery.mockReturnValue(undefined);
+        return useEvalQueries({
+          isAuthenticated: true,
+          selectedSuiteId: "suite-1",
+          deletingSuiteId,
+          projectId: "ws-1",
+          organizationId: null,
+        });
+      },
+      { initialProps: { deletingSuiteId: null as string | null, live: true } },
+    );
+    expect(result.current.suiteDetails).toBe(details);
+
+    // The delete pauses the query, then fails and the query starts over.
+    rerender({ deletingSuiteId: "suite-1", live: false });
+    rerender({ deletingSuiteId: null, live: false });
+
+    expect(result.current.suiteDetails).toBe(details);
+    expect(result.current.isSuiteDetailsLoading).toBe(false);
+  });
+
+  it("never stands one suite's details in for another's", () => {
+    const details = { testCases: [], iterations: [] };
+    mocks.useQuery.mockImplementation((name: string, args: unknown) =>
+      name === "testSuites:getAllTestCasesAndIterationsBySuite" &&
+      (args as { suiteId?: string })?.suiteId === "suite-1"
+        ? details
+        : undefined,
+    );
+    const { result, rerender } = renderHook(
+      ({ selectedSuiteId }: { selectedSuiteId: string }) =>
+        useEvalQueries({
+          isAuthenticated: true,
+          selectedSuiteId,
+          deletingSuiteId: null,
+          projectId: "ws-1",
+          organizationId: null,
+        }),
+      { initialProps: { selectedSuiteId: "suite-1" } },
+    );
+    expect(result.current.suiteDetails).toBe(details);
+    rerender({ selectedSuiteId: "suite-2" });
+    expect(result.current.suiteDetails).toBeUndefined();
+    expect(result.current.isSuiteDetailsLoading).toBe(true);
+  });
+
   it("reads cases only, never the whole suite's iterations, in per-run mode", () => {
     const { result } = renderHook(() =>
       useEvalQueries({

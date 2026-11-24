@@ -200,6 +200,58 @@ describe("strict PostHog reconstruction", () => {
   });
 });
 
+describe("strict startup events", () => {
+  it("counts a startup that has no actor yet, with closed fields only", () => {
+    const result = rebuildStrictPostHogEvent({
+      event: "app_startup_blocked",
+      properties: {
+        location: "app",
+        platform: "win",
+        deployment: "self_hosted",
+        stage: "app_load/session_refresh_failed",
+        trigger: "failure",
+        elapsed_ms: 21_400,
+        user_agent: secret,
+      },
+    });
+    expect(result).toEqual({
+      event: "app_startup_blocked",
+      properties: expect.objectContaining({
+        distinct_id: "strict",
+        $process_person_profile: false,
+        location: "app",
+        platform: "win",
+        deployment: "self_hosted",
+        stage: "app_load/session_refresh_failed",
+        trigger: "failure",
+        elapsed_ms: 21_400,
+      }),
+    });
+    expect(JSON.stringify(result)).not.toContain("SENTINEL");
+  });
+
+  it("drops a stage or trigger outside the catalog", () => {
+    const result = rebuildStrictPostHogEvent({
+      event: "app_startup_blocked",
+      properties: { stage: secret, trigger: secret, elapsed_ms: -1 },
+    });
+    expect(result?.properties).not.toHaveProperty("stage");
+    expect(result?.properties).not.toHaveProperty("trigger");
+    expect(result?.properties).not.toHaveProperty("elapsed_ms");
+  });
+
+  it("forwards app_startup_started", () => {
+    const result = rebuildStrictPostHogEvent({
+      event: "app_startup_started",
+      properties: { location: "app", platform: "web", deployment: "hosted" },
+    });
+    expect(result?.properties).toMatchObject({
+      platform: "web",
+      deployment: "hosted",
+    });
+  });
+});
+
 describe("strict app launches", () => {
   const launch = {
     ...product,

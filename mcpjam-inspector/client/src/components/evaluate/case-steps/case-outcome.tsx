@@ -39,6 +39,7 @@ export function CaseOutcome({
   draft,
   card,
   readOnly,
+  caseOverrides = true,
   onEdit,
   onOpenSuiteSettings,
 }: {
@@ -46,6 +47,8 @@ export function CaseOutcome({
   draft: CaseStepsDraft;
   card: CaseScorecard;
   readOnly: boolean;
+  /** False hides the judge opt-out and the tool error switch. */
+  caseOverrides?: boolean;
   onEdit: (edit: DraftEdit) => void;
   onOpenSuiteSettings: () => void;
 }) {
@@ -106,7 +109,7 @@ export function CaseOutcome({
           >
             Edit in suite settings
           </Button>
-        ) : (
+        ) : caseOverrides ? (
           <div className="flex items-center gap-2">
             <Switch
               id="case-steps-judge-skip"
@@ -130,9 +133,9 @@ export function CaseOutcome({
               Skip for this case
             </Label>
           </div>
-        )}
+        ) : null}
       </div>
-      {readOnly ? null : (
+      {readOnly || !caseOverrides ? null : (
         <div className="mt-2">
           <ToolErrorSwitch
             checked={failsOnToolError(draft.advancedConfig)}
