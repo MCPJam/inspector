@@ -170,12 +170,16 @@ async function keepSendRecord(journal: SendJournal, turnKey: string, at: string)
   await journal.claim(turnKey, { state: "sending", at });
 }
 
+/** The surface may keep its stream alive until this particular wait settles. */
+export type WebTurnPauseListener = (
+  pause: Extract<WebRunStop, { kind: "paused_for_person" }>,
+  turnId: string,
+) => (() => void) | void;
+
 export async function runRecoverableWebTurn(
   input: WebClientTurnInput,
   setup: WebRecoverySetup | undefined,
-  onPaused?: (
-    paused: Extract<WebRunStop, { kind: "paused_for_person" }>,
-  ) => void,
+  onPaused?: WebTurnPauseListener,
 ): Promise<RecoverableWebTurnResult> {
   const vendor = webClientVendorForRuntime(input.runtimeId);
   const { projectId, runId, environment } = input;
@@ -279,8 +283,8 @@ export async function runRecoverableWebTurn(
       });
       // No try is left to carry the turn on after a handback.
       if (last) return pausedStop();
-      onPaused?.(paused);
       const waitingOn = { requestId: outcome.requestId, runId };
+      const endPause = onPaused?.(paused, result.turnId);
       const resumed = await waitForResume(waitingOn, step, {
         ...(input.signal ? { signal: input.signal } : {}),
         timeoutMs: setup.maxPauseMs ?? MAX_PAUSE_MS,
@@ -289,7 +293,7 @@ export async function runRecoverableWebTurn(
           (await backend.listWebReconnectRequests({ projectId })).find(
             (request) => request.requestId === outcome.requestId,
           )?.status,
-      });
+      }).finally(() => endPause?.());
       if (!resumed) return pausedStop();
     }
     const { verdict, ambiguous } = await ledgerCheck(step);

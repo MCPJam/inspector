@@ -26,6 +26,7 @@ import {
 } from "@/shared/web-clients";
 import type { PersistedTurnTrace } from "../../utils/chat-ingestion.js";
 import type { InfraFailureEvidence } from "../../utils/infra-failure-evidence.js";
+import { writeTraceEvent } from "../../utils/live-chat-trace-stream.js";
 import { buildHarnessMcpAtTurn } from "../../utils/harness/harness-mcp-receipt.js";
 import { resolveHarnessMcpPlan } from "../../utils/harness/harness-mcp-plan.js";
 import {
@@ -54,6 +55,7 @@ import {
   webRecovery,
   type RecoverableWebTurnResult,
   type WebRunStop,
+  type WebTurnPauseListener,
 } from "./recovery/turn-recovery.js";
 
 /** A run that stopped on the vendor's page. Never a server failure. */
@@ -195,7 +197,7 @@ export async function runWebClientHarnessTurn(
   const messages = options.messages;
   const promptIndex = Math.max(0, messages.filter((m) => m.role === "user").length - 1);
   const run = async (
-    onPaused?: (paused: Extract<WebRunStop, { kind: "paused_for_person" }>) => void,
+    onPaused?: WebTurnPauseListener,
   ): Promise<ChatEngineLoopResult> => {
     const turn = {
       runtimeId,
@@ -316,9 +318,15 @@ export async function runWebClientHarnessTurn(
   const stream = createUIMessageStream({
     execute: async ({ writer }) => {
       // The pause panel's data: who can finish signing in, and the request.
-      settled = await run((paused) =>
-        writer.write({ type: "data-web-run-paused", data: { ...paused, clientName: name } }),
-      );
+      settled = await run((paused, turnId) => {
+        writer.write({ type: "data-web-run-paused", data: { ...paused, clientName: name } });
+        const interval = options.heartbeatIntervalMs ?? 15_000;
+        if (!Number.isFinite(interval) || interval < 1) return;
+        const timer = setInterval(() => {
+          writeTraceEvent(writer, { type: "heartbeat", turnId, promptIndex });
+        }, interval);
+        return () => clearInterval(timer);
+      });
       if (settled.aborted) return;
       const reply = settled.messageHistory.at(-1);
       const text =
