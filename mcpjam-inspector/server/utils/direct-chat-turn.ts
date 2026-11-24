@@ -1,3 +1,4 @@
+import { collectRejectedToolCalls, markRejectedCalls, withUniqueToolCallIds } from "@mcpjam/sdk";
 import { buildResolvedModelRequestPayload } from "./model-request-payload";
 import { withPageToolAttributionMetadata } from "./page-tool-call-attribution";
 import {
@@ -304,9 +305,9 @@ export interface DirectChatTurnEngineErrorEvent {
  * provider rejects (`cart.add`) are aliased on the wire and restored in its
  * reply. A gateway id string has no model object to wrap.
  */
-function providerReadyModel(llmModel: LanguageModel): LanguageModel {
+function providerReadyModel(llmModel: LanguageModel, history: ModelMessage[]): LanguageModel {
   const model = withoutEmptyTextBlocks(llmModel);
-  return typeof model === "string" ? model : withProviderSafeToolNames(model);
+  return typeof model === "string" ? model : withUniqueToolCallIds(withProviderSafeToolNames(model), history);
 }
 
 export interface RunDirectChatTurnOptions {
@@ -467,6 +468,7 @@ export interface RunDirectChatTurnHandle {
    * `NoOutputGeneratedError`, which names neither provider nor status.
    */
   lastStreamError: () => unknown;
+  rejectedToolCallIds: ReadonlySet<string>;
 }
 
 export function stampMcpToolOriginProviderOptions(
@@ -648,6 +650,7 @@ export function runDirectChatTurn(
   };
   const traceContext = createAiSdkEvalTraceContext(traceAnchor);
   const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
+  const rejectedToolCallIds = new Set<string>();
   let currentStepIndex = 0;
   // Time-to-first-chunk capture (OTel gen_ai.response.time_to_first_chunk):
   // absolute Date.now() of the first streamed chunk for each step, set once in
@@ -757,7 +760,7 @@ export function runDirectChatTurn(
   let result: ReturnType<typeof streamText>;
   try {
     result = streamText({
-    model: providerReadyModel(llmModel),
+    model: providerReadyModel(llmModel, messageHistory),
     messages: messageHistory,
     // AI SDK 7 rejects system messages in `messages` by default. The history
     // carries them on purpose: MCP server instructions reach the model as
@@ -918,10 +921,11 @@ export function runDirectChatTurn(
       }
     },
     onStepFinish: async (step) => {
+      collectRejectedToolCalls(rejectedToolCallIds, step.toolCalls ?? []);
       const responseMessages = scrubSuspendedToolResultMessages(
         stampMcpToolOriginProviderOptions(
           Array.isArray(step?.response?.messages)
-            ? (step.response.messages as ModelMessage[])
+            ? markRejectedCalls(step.response.messages, rejectedToolCallIds)
             : [],
           tools,
         ),
@@ -1132,7 +1136,7 @@ export function runDirectChatTurn(
           scrubSuspendedToolResultMessages(
             stampMcpToolOriginProviderOptions(
               Array.isArray(step?.response?.messages)
-                ? (step.response.messages as ModelMessage[])
+                ? markRejectedCalls(step.response.messages, rejectedToolCallIds)
                 : [],
               tools,
             ),
@@ -1186,6 +1190,7 @@ export function runDirectChatTurn(
     modelId,
     cleanup,
     isAborted: () => aborted || abortSignal?.aborted === true,
+    rejectedToolCallIds,
     lastStreamError: () => streamError,
   };
 }
@@ -1227,7 +1232,7 @@ export async function consumeDirectChatTurnHeadless(
     const totalUsage = await handle.result.totalUsage;
     const finishReason = await handle.result.finishReason;
     const messages = Array.isArray(responseMessages)
-      ? (responseMessages as ModelMessage[])
+      ? markRejectedCalls(responseMessages, handle.rejectedToolCallIds)
       : [];
     return {
       messages,

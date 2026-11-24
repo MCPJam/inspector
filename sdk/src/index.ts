@@ -1313,6 +1313,7 @@ export {
   withProviderSafeToolNames,
 } from "./provider-tool-names.js";
 export type { ToolNameAliases } from "./provider-tool-names.js";
+export { withUniqueToolCallIds } from "./tool-call-ids.js";
 
 // Progressive MCP tool discovery: the `search_mcp_tools` / `load_mcp_tools`
 // meta-tools, the tool catalog, the On / Auto / Off plan and the per-step
@@ -2353,3 +2354,5 @@ export type {
 // Server feature model for the server canvas (KES-886). Browser-safe.
 export * from "./server-features/index.js";
 export * from "./server-card/index.js";
+
+export { collectRejectedToolCalls, markRejectedCalls } from "./progressive-discovery/rejected-calls.js";

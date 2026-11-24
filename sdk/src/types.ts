@@ -130,6 +130,8 @@ export interface PromptResultData {
   messages: ModelMessage[];
   text: string;
   toolCalls: ToolCall[];
+  /** Raw malformed attempts, retained for report evidence only. */
+  malformedToolCalls?: readonly { toolName: string; input: string }[];
   usage: TokenUsage;
   latency: LatencyBreakdown;
   error?: string;

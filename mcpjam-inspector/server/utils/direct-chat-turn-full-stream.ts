@@ -1,3 +1,4 @@
+import { markRejectedCalls } from "@mcpjam/sdk";
 /**
  * Part-by-part consumption of a direct turn, for callers that translate the
  * stream while it arrives (the local eval runner's SSE). The headless consumer
@@ -78,7 +79,7 @@ export async function consumeDirectChatTurnFullStream(
     const modelId = (response as { modelId?: unknown } | undefined)?.modelId;
     return {
       messages: Array.isArray(responseMessages)
-        ? (responseMessages as ModelMessage[])
+        ? markRejectedCalls(responseMessages as ModelMessage[], handle.rejectedToolCallIds)
         : [],
       steps,
       totalUsage,

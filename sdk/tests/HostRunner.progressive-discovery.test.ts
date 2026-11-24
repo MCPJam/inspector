@@ -14,7 +14,7 @@ import type { Tool } from "../src/mcp-client-manager/types.js";
  * the runner sent every tool whatever the setting.
  */
 
-type Step = { call: string; input: Record<string, unknown> } | { text: string };
+type Step = { call: string; input: Record<string, unknown>; id?: string } | { text: string };
 
 type SeenCall = { tools: string[]; toolChoice: unknown };
 
@@ -43,7 +43,7 @@ function scriptedModel(steps: Step[]) {
         content: [
           {
             type: "tool-call" as const,
-            toolCallId: `call-${seen.length}`,
+            toolCallId: step.id ?? `call-${seen.length}`,
             toolName: step.call,
             input: JSON.stringify(step.input),
           },
@@ -314,4 +314,31 @@ describe("HostRunner progressive tool discovery", () => {
     );
     expect(seen).toHaveLength(0);
   });
+});
+
+it("gives a dispatched retry and the next prompt their own IDs", async () => {
+  const tools = makeTools(1);
+  tools.ctrl_tool_0.execute = async () => {
+    throw new Error("fixture server failed");
+  };
+  const { model } = scriptedModel([
+    { call: "invented", input: {}, id: "call_0" },
+    { call: "ctrl_tool_0", input: {}, id: "call_0" },
+    { text: "Finished" },
+    { call: "ctrl_tool_0", input: {}, id: "call_0" },
+    { text: "Finished again" },
+  ]);
+  const host = runner(false, tools, model);
+  const first = await host.run("First prompt");
+  const next = await host.run("Second prompt", { context: [first] });
+  const calls = [...first.getMessages(), ...next.getMessages()].flatMap((msg) =>
+    msg.role === "assistant" && Array.isArray(msg.content)
+      ? msg.content.filter((part) => part.type === "tool-call")
+      : []
+  );
+  expect(new Set(calls.map((part) => part.toolCallId)).size).toBe(3);
+  expect(calls.map((part) => part.providerOptions?.mcpjam?.rejectedToolCall))
+    .toEqual([true, undefined, undefined]);
+  expect(first.toolsCalled()).toEqual(["ctrl_tool_0"]);
+  expect(next.toolsCalled()).toEqual(["ctrl_tool_0"]);
 });
