@@ -227,7 +227,12 @@ mockServers.post("/projects/:projectId/mock-servers/:mockId/versions", async (c)
       contentHash: head.contentHash,
     };
     if (body.dryRun) {
-      return v1Resource(ctx, saved(fields, changes, { created: changes.length > 0, dryRun: true }));
+      // The version the save would write: the next one, or the head when the change equals it.
+      const would = changes.length > 0;
+      return v1Resource(
+        ctx,
+        saved(would ? { ...fields, version: head.headVersion + 1 } : fields, changes, { created: would, dryRun: true }),
+      );
     }
     let result: { version: number; contentHash: string; created: boolean };
     try {

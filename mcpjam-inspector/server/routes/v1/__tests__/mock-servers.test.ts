@@ -395,10 +395,18 @@ describe("POST /projects/:projectId/mock-servers/:mockId/versions", () => {
     expect(await res.json()).toMatchObject({
       dryRun: true,
       created: true,
-      version: 2,
+      // The head is 2, so the save would write 3.
+      version: 3,
       changes: [{ target: "tool", name: "search", kind: "changed" }],
     });
     expect(mocks.mutation).not.toHaveBeenCalled();
+  });
+
+  it("with dryRun on a change equal to the head answers created false and the head's version", async () => {
+    const res = await request("POST", VERSIONS, {
+      body: { definition: { tools: { search: { description: "Find things." } } }, expectedVersion: 2, dryRun: true },
+    });
+    expect(await res.json()).toMatchObject({ dryRun: true, created: false, version: 2, changes: [] });
   });
 
   it("with dryRun still refuses an invalid change and an uncallable one", async () => {
