@@ -35,6 +35,19 @@ export function submittedByLabel(climb: Climb, round: ClimbRoundSummary): string
   return round.submittedBy.trim() || "Your agent";
 }
 
+/**
+ * "Overruled by Casey: It reads better." for a round a person overruled, else
+ * null. The rule's own verdict stays readable in the round view; this only
+ * says who changed what stands, and why.
+ */
+export function overruleLine(round: ClimbRoundSummary): string | null {
+  const overruled = round.overruled;
+  if (!overruled) return null;
+  const by = overruled.by.trim();
+  const reason = overruled.reason.trim();
+  return `Overruled${by ? ` by ${by}` : ""}${reason ? `: ${reason}` : "."}`;
+}
+
 export function keptRounds(climb: Climb): ClimbRoundSummary[] {
   return climb.rounds.filter((round) => roundResult(round) === "kept");
 }

@@ -7,6 +7,7 @@ import {
   RESULT_WORD,
   changeTitle,
   roundResult,
+  overruleLine,
   submittedByLabel,
 } from "./round-model";
 import type { RoundChanges } from "./use-round-changes";
@@ -20,6 +21,7 @@ function RailRow({
   label,
   sub,
   icon,
+  title,
 }: {
   active: boolean;
   onClick: () => void;
@@ -27,11 +29,13 @@ function RailRow({
   label: string;
   sub: string;
   icon: React.ReactNode;
+  title?: string;
 }) {
   return (
     <Button
       variant="ghost"
       onClick={onClick}
+      title={title}
       aria-current={active ? "true" : undefined}
       className={cn(
         "h-auto w-full justify-start gap-2 px-2 py-1.5 text-sm font-normal",
@@ -94,7 +98,8 @@ export function RoundsRail({
             onClick={() => onSelect(round.number)}
             tag={String(round.number)}
             label={changeTitle(changes[round.number], round.number)}
-            sub={`${submittedByLabel(climb, round)} · ${RESULT_WORD[result]}`}
+            sub={`${submittedByLabel(climb, round)} · ${RESULT_WORD[result]}${round.overruled ? " (overruled)" : ""}`}
+            title={overruleLine(round) ?? undefined}
             icon={<ResultIcon result={result} />}
           />
         );

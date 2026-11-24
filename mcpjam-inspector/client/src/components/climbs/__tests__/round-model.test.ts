@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   bestSoFarLabel,
   changeTitle,
+  overruleLine,
   roundResult,
   startingVersion,
   submittedByLabel,
@@ -81,5 +82,15 @@ describe("changeTitle", () => {
     expect(changeTitle(undefined, 4)).toBe("Round 4");
     expect(changeTitle(null, 4)).toBe("Round 4");
     expect(changeTitle([], 4)).toBe("Round 4");
+  });
+});
+
+describe("overruleLine", () => {
+  it("names who overruled a round and why", () => {
+    const round = makeRound({ verdict: "reverted", standing: "kept", overruled: { to: "kept", by: "Casey", reason: "It reads better.", at: 1 } });
+    expect(overruleLine(round)).toBe("Overruled by Casey: It reads better.");
+  });
+  it("says nothing about a round the rule decided", () => {
+    expect(overruleLine(makeRound())).toBeNull();
   });
 });

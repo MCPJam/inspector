@@ -20,7 +20,7 @@ import { ResultBadge } from "./result-badge";
 import { ResultTable } from "./result-table";
 import { RoundPanes } from "./round-panes";
 import { RunningView } from "./running-view";
-import { bestSoFarLabel, changeTitle, roundResult, submittedByLabel } from "./round-model";
+import { bestSoFarLabel, changeTitle, overruleLine, roundResult, submittedByLabel } from "./round-model";
 import { verdictSentence } from "./round-verdict";
 import { useAsyncRead } from "./use-async-read";
 import type { RoundChanges } from "./use-round-changes";
@@ -123,6 +123,7 @@ export function RoundView({
             ) : null}
           </div>
           <h2 className="text-lg font-semibold leading-snug tracking-tight">{title}</h2>
+          {overruleLine(summary) ? <p className="mt-1 text-sm text-muted-foreground">{overruleLine(summary)}</p> : null}
         </div>
         <ResultBadge result={result} />
       </div>

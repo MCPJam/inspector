@@ -56,6 +56,9 @@ export type PlatformClimbEnvironmentBaseline = {
   validation?: PlatformClimbGroupBaseline;
 };
 
+/** A person's decision over the rule's verdict on a round: what they set, who, why and when (`at` is epoch ms). */
+export type PlatformClimbOverrule = { to: PlatformClimbVerdict; by: string; reason: string; at: number };
+
 export type PlatformClimbRoundSummary = {
   number: number;
   status: "running" | "settled" | "failed";
@@ -69,6 +72,8 @@ export type PlatformClimbRoundSummary = {
   /** What stands: the overrule if there is one, else the verdict. */
   standing?: PlatformClimbVerdict;
   reasons: string[];
+  /** Present only when a person overruled the round. */
+  overruled?: PlatformClimbOverrule;
   /** Set on a round MCPJam picked, with the chat session that holds its transcript. */
   pickedBy?: "mcpjam";
   pickerChatSessionId?: string;
@@ -236,7 +241,6 @@ export type PlatformClimbRound = PlatformClimbRoundSummary & {
   }>;
   environmentsWithoutMeasure: string[];
   failureReason?: string;
-  overruled?: { to: PlatformClimbVerdict; by: string; reason: string; at: number };
 };
 
 /** `set_climb_round_decision`: the round as it now stands, and the best so far after the overrule. */

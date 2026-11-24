@@ -65,6 +65,17 @@ describe("RoundView", () => {
     expect(screen.getByText(/Measures pass rate/)).toBeInTheDocument();
   });
 
+  it("says who overruled the round and why, under its title", async () => {
+    show(makeRound({ verdict: "reverted", standing: "kept", overruled: { to: "kept", by: "Casey", reason: "It reads better.", at: 1 } }));
+    expect(await screen.findByText("Overruled by Casey: It reads better.")).toBeInTheDocument();
+  });
+
+  it("shows no overrule line on a round the rule decided", async () => {
+    show();
+    await screen.findByText("Kept.");
+    expect(screen.queryByText(/Overruled/)).not.toBeInTheDocument();
+  });
+
   it("links MCPJam's transcript only on a round MCPJam picked", async () => {
     show(makeRound({ pickedBy: "mcpjam", pickerChatSessionId: "chat_1" }));
     await userEvent.click(await screen.findByRole("button", { name: "MCPJam's transcript" }));
