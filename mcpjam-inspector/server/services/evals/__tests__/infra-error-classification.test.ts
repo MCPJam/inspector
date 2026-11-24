@@ -800,6 +800,7 @@ describe("classifyEvalInfraError — a web client turn that stopped on the vendo
     ["page_changed", "provider_unavailable", "platform", false],
     ["send_ambiguous", "provider_unavailable", "platform", false],
     ["driver", "sandbox", "sandbox", true],
+    ["connector_not_found", "configuration", "platform", false],
   ] as const)("is the run's failure when the page stopped with %s", (code, cls, layer, retryable) => {
     expect(classifyEvalInfraError({ source: "web_client", code })).toEqual({
       class: cls,
