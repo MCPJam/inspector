@@ -28,6 +28,8 @@ export type LedgerEntry = {
   upstreamStatus?: number;
   /** SHA-256 of the result payload, so a reconciled result can be checked. */
   resultHash?: string;
+  /** The backend's id for the same call, when it is kept durably. */
+  durableId?: string;
 };
 
 export type LedgerMatch = {
@@ -58,6 +60,22 @@ export interface ToolCallLedger {
   ): void;
   forTurn(turnId: string): LedgerEntry[];
   find(match: LedgerMatch): LedgerEntry[];
+}
+
+/**
+ * The backend's copy of the ledger, which outlives this process: recovery
+ * after a restart reconciles a lost answer from it. `record` resolves with
+ * the durable id, or undefined when this connector's calls are not kept
+ * durably, and rejects when the call could not be recorded.
+ */
+export interface DurableToolCallLedger {
+  record(
+    entry: Parameters<ToolCallLedger["forwarded"]>[0],
+  ): Promise<string | undefined>;
+  settle(
+    id: string,
+    outcome: Parameters<ToolCallLedger["settle"]>[1],
+  ): Promise<void>;
 }
 
 /** Stable JSON with sorted keys, so equal arguments hash equally. */
