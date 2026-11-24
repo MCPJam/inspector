@@ -22,7 +22,11 @@ const {
   validateWidgetModelContextEntriesMock,
   buildWidgetModelContextSystemPromptMock,
   WidgetModelContextValidationErrorMock,
+  resolveQueryMock,
+  environmentSkills,
 } = vi.hoisted(() => ({
+  resolveQueryMock: vi.fn(),
+  environmentSkills: [] as Array<Record<string, unknown>>,
   checkHarnessRuntimeAvailableMock: vi.fn(() => ({ ok: true })),
   prepareChatV2Mock: vi.fn(),
   listCloudRuntimeSkillsMock: vi.fn(),
@@ -93,13 +97,14 @@ vi.mock("convex/browser", async () => {
       const name = getFunctionName(ref);
       if (name === "hostConfigsV2:getProjectDefault") return null;
       if (name === "projects:getProjectCapabilities") return { projectRole: "admin" };
+      resolveQueryMock(name, args);
       const runtime = await fetchHostRuntimeConfigMock.mock.results.at(-1)?.value;
       return {
         specVersion: 1, environmentOrigin: "adhoc",
         environmentRef: { environmentId: args.environmentId ?? "chat-environment", name: "Chat", revision: 1 },
         host: { hostId: "chat-host", runtimeConfig: runtime?.config ?? {} },
         servers: { effectiveServerIds: args.serverOverrideIds ?? [] },
-        skills: [], pluginVersions: [], selectedSecretIds: [], serverConfigHashes: {},
+        skills: [...environmentSkills], pluginVersions: [], selectedSecretIds: [], serverConfigHashes: {},
       };
     }
   }};
@@ -255,6 +260,7 @@ import {
   playgroundHarnessBoxUnavailableReason,
 } from "../../../utils/harness/playground-box.js";
 import { MCPClientManager } from "@mcpjam/sdk";
+import { TurnTiming } from "../../../utils/turn-timing.js";
 
 describe("web routes — chat-v2 hosted mode", () => {
   const originalFetch = global.fetch;
@@ -291,6 +297,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       config: { selectedServerIds: ["server-1"] },
     });
     listCloudRuntimeSkillsMock.mockReset().mockResolvedValue([]);
+    environmentSkills.length = 0;
     // Default: scenario runtime-config resolves (empty = host has no
     // overrides). Scenario turns now FAIL CLOSED on a failed fetch, so the
     // happy-path tests must resolve it rather than lean on the old fallback.
@@ -548,12 +555,16 @@ describe("web routes — chat-v2 hosted mode", () => {
         surface: "preview",
         modelId: "openai/gpt-5-mini",
         modelSource: "mcpjam",
-      })
+      }),
+      expect.anything(),
     );
     // Non-direct flows must NOT send hostConfig — backend skips with
     // missing_field, which is the desired behavior for scenario/serverShare.
     const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
     expect(persistArgs.hostConfig).toBeUndefined();
+    // The request context, so a failed save is logged as a typed event.
+    const persistContext = persistChatSessionToConvexMock.mock.calls[0][1];
+    expect(persistContext.req.raw).toBeInstanceOf(Request);
   });
 
   it("validates a pageTools snapshot and forwards it, so a hosted turn can offer a page's own tools", async () => {
@@ -711,6 +722,25 @@ describe("web routes — chat-v2 hosted mode", () => {
         gaps: ["host-capability:message.audio"],
       },
     }));
+  });
+
+  it("hands a harness turn the route's recorder, which reports its closing event as a web turn", async () => {
+    const { app, token } = createWebTestApp();
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: { harness: "claude-code", hostStyle: "claude", selectedServerIds: ["server-1"] },
+    });
+    const response = await postJson(app, "/api/web/chat-v2", {
+      projectId: "project-1", hostId: "host-1", chatSessionId: "turn-event-chat",
+      selectedServerIds: ["server-1"],
+      messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
+      model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
+    }, token);
+    expect(response.status).toBe(200);
+    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledTimes(1);
+    const { turnTiming } = handleMCPJamFreeChatModelMock.mock.calls[0]![0];
+    expect(turnTiming).toBeInstanceOf(TurnTiming);
+    expect(turnTiming.harnessTurnEvent.surface).toBe("web");
   });
 
   it("FAILS CLOSED when the host runtime-config fetch fails — never runs the engine", async () => {
@@ -994,6 +1024,41 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 
+  it("asks a signed-out visitor to sign in before a share link's harness turn", async () => {
+    const { app, token } = createWebTestApp();
+    // The backend's answer when the link's client runs a harness that a
+    // signed-in guest would get.
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
+      ok: false,
+      status: 401,
+      code: "SCENARIO_SIGN_IN_REQUIRED",
+      error: "Sign in to preview this scenario.",
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        scenarioId: "cbx_1",
+        accessVersion: 1,
+        chatSessionId: "chat-cb-sign-in",
+        messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
+        model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
+      },
+      token
+    );
+
+    // `details.code` is what the share-link page reads to replace the chat
+    // with its sign-in prompt (`classifyScenarioAccessError`).
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({
+      details: { code: "SCENARIO_SIGN_IN_REQUIRED" },
+    });
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
   it("a scenario session ignores a stray hostId (scenario path wins)", async () => {
     const { app, token } = createWebTestApp();
 
@@ -1235,7 +1300,8 @@ describe("web routes — chat-v2 hosted mode", () => {
           // resolvedTemperature from prepareChatV2Mock default (0.7)
           temperature: 0.7,
         }),
-      })
+      }),
+      expect.anything(),
     );
     const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
     expect(
@@ -1281,7 +1347,8 @@ describe("web routes — chat-v2 hosted mode", () => {
         resumeConfig: expect.objectContaining({
           modelVisibleMcpToolResults: resolvedImagePolicyMatcher(false),
         }),
-      })
+      }),
+      expect.anything(),
     );
   });
 
@@ -1611,15 +1678,12 @@ describe("web routes — chat-v2 hosted mode", () => {
   });
 
   /**
-   * The project pool on a target that resolves NO environment (host / adhoc).
-   *
-   * This is the arm the convergence rewired: it used to reach the orchestrator as
-   * a `cloudSkills` option that chose one exclusive branch of a chain, and it now
-   * arrives as a live capability set alongside every other origin. The three
-   * cases below are the three the route can actually be in, and they differ in
-   * ways that matter: an EMPTY catalog is authoritative, a FAILED one is not.
+   * A client's turn (host / adhoc target) runs in its hidden environment,
+   * which the backend resolves in the client's skill selection: the turn asks
+   * for that scope and plans from what comes back. It never reads the
+   * project's pool itself.
    */
-  describe("hosted chat-v2 — the project skill catalog", () => {
+  describe("hosted chat-v2 — a client's skills", () => {
     const bodyWithSkills = {
       projectId: "project-1",
       selectedServerIds: ["server-1"],
@@ -1628,19 +1692,17 @@ describe("web routes — chat-v2 hosted mode", () => {
       model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
     };
 
-    it("delivers a non-empty catalog as a live resolved source", async () => {
-      listCloudRuntimeSkillsMock.mockResolvedValue([
-        {
-          skillId: "sk_1",
-          ref: "release-notes",
-          name: "release-notes",
-          description: "Write release notes",
-          aggregateHash: "agg_1",
-          channels: [],
-          content: async () => "# release-notes",
-          files: [],
-        },
-      ]);
+    it("plans the skills the backend's scope added, as a live turn", async () => {
+      environmentSkills.push({
+        skillId: "sk_1",
+        name: "release-notes",
+        description: "Write release notes",
+        content: "# release-notes",
+        aggregateHash: "agg_1",
+        channels: ["host"],
+        provenance: { skillId: "sk_1", name: "release-notes" },
+        files: [],
+      });
       const { app, token } = createWebTestApp();
 
       const response = await postJson(
@@ -1651,20 +1713,27 @@ describe("web routes — chat-v2 hosted mode", () => {
       );
       expect(response.status).toBe(200);
 
+      expect(resolveQueryMock).toHaveBeenCalledWith(
+        "projectEnvironments:resolveEnvironmentForRuntime",
+        expect.objectContaining({ skillScope: "visible" }),
+      );
       const args = prepareChatV2Mock.mock.calls.at(-1)![0];
-      expect(args.skillsSource.kind).toBe("resolved");
-      // Live, so a connected server's SEP-2640 skills compose on top rather than
-      // being displaced by the project's.
-      expect(args.skillsSource.composeLiveServerSkills).toBe(true);
+      expect(args.skills.runtime).toEqual({ kind: "agent" });
+      // Live, so a connected server's SEP-2640 skills compose on top rather
+      // than being displaced by the environment's.
+      expect(args.skills.agent).toEqual({ kind: "live" });
       expect(
-        args.skillsSource.capabilities.standaloneSkills.map(
-          (skill: { ref: string }) => skill.ref
-        )
+        args.skills.delivered.map((ref: { ref: string }) => ref.ref),
       ).toEqual(["release-notes"]);
+      expect(listCloudRuntimeSkillsMock).not.toHaveBeenCalled();
+      // The turn records the skill it handed the engine.
+      const persisted = persistChatSessionToConvexMock.mock.calls.at(-1)![0];
+      expect(persisted.turnTrace.skillsAtTurn).toEqual([
+        { skillId: "sk_1", name: "release-notes" },
+      ]);
     });
 
-    it("keeps an empty catalog authoritative rather than falling back", async () => {
-      listCloudRuntimeSkillsMock.mockResolvedValue([]);
+    it("keeps a client with no skills on a live plan with none", async () => {
       const { app, token } = createWebTestApp();
 
       const response = await postJson(
@@ -1675,33 +1744,12 @@ describe("web routes — chat-v2 hosted mode", () => {
       );
       expect(response.status).toBe(200);
 
-      // "This project has no skills" is an answer, not a gap: the source is still
-      // resolved and still live, it is simply empty.
       const args = prepareChatV2Mock.mock.calls.at(-1)![0];
-      expect(args.skillsSource.kind).toBe("resolved");
-      expect(args.skillsSource.capabilities.standaloneSkills).toEqual([]);
-      expect(args.skillsSource.composeLiveServerSkills).toBe(true);
-    });
-
-    it("loses the turn's project skills, and nothing else, when the catalog fails", async () => {
-      listCloudRuntimeSkillsMock.mockRejectedValue(new Error("convex down"));
-      const { app, token } = createWebTestApp();
-
-      const response = await postJson(
-        app,
-        "/api/web/chat-v2",
-        bodyWithSkills,
-        token
-      );
-      // Losing the skills must not lose the turn.
-      expect(response.status).toBe(200);
-
-      // The shared setup retains the connected server set even if project
-      // skills are unavailable.
-      const args = prepareChatV2Mock.mock.calls.at(-1)![0];
-      expect(args.skillsSource).toMatchObject({
-        kind: "resolved",
-        capabilities: { standaloneSkills: [], effectiveServerIds: ["server-1"] },
+      expect(args.skills).toMatchObject({
+        runtime: { kind: "agent" },
+        agent: { kind: "live" },
+        delivered: [],
+        set: { standaloneSkills: [], effectiveServerIds: ["server-1"] },
       });
     });
   });

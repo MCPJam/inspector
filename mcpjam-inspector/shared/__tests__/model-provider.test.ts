@@ -94,6 +94,16 @@ describe("runtime-chosen sentinels", () => {
     expect(runtimeChosenModelSentinelName("cursor/auto")).toBe("Cursor Auto");
   });
 
+  it("names the web clients' models after the clients, whose sites pick them", () => {
+    expect(runtimeChosenModelSentinelName("claude-web/default")).toBe(
+      "Claude web",
+    );
+    expect(runtimeChosenModelSentinelName("chatgpt-web/default")).toBe(
+      "ChatGPT web",
+    );
+    expect(isRuntimeChosenModelSentinel("claude-web/opus")).toBe(false);
+  });
+
   it("still classifies the sentinel's provider honestly", () => {
     // Being a sentinel does NOT make the id providerless to the classifier —
     // `cursor` is a registered ModelProvider precisely so the id does not fall

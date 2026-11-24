@@ -138,6 +138,60 @@ describe("accountSetGroup", () => {
     );
   });
 
+  it("refuses a chosen account the backend withheld in the backend's words, not as a reconnect", () => {
+    const withheld = {
+      connectionId: DUMMY,
+      label: "Dummy",
+      isDefault: false,
+      accessToken: null,
+      unavailableReason: "credential_export_denied",
+      unavailablePolicy: "hostedOnlyAccount",
+      unavailableCause: "not_acknowledged",
+      unavailableMessage:
+        "Local runs aren't allowed yet for this server's shared sign-in. Ask a project admin to turn on Allow local runs in the server's sharing settings.",
+    };
+    const run = () =>
+      group([DUMMY], authorized({ oauthConnections: [withheld] }));
+    // After the server and account it is about.
+    expect(refusal(run)).toBe(`Asana Dummy: ${withheld.unavailableMessage}`);
+    expect(() => run()).toThrow(
+      expect.objectContaining({
+        details: expect.objectContaining({
+          exportDenied: true,
+          policy: "hostedOnlyAccount",
+          cause: "not_acknowledged",
+        }),
+      }),
+    );
+  });
+
+  it.each([
+    [
+      "an upload on a shared server",
+      { accountKind: "shared", accountUploaded: true },
+    ],
+    ["an older backend's upload", { accountKind: "uploaded" }],
+  ] as const)(
+    "asks for a fresh upload, not a sign-in, when %s has no token",
+    (_label, kind) => {
+      const expired = {
+        connectionId: DUMMY,
+        label: "CI account",
+        isDefault: false,
+        accessToken: null,
+        unavailableReason: "refresh_token_unavailable",
+        ...kind,
+      };
+      expect(
+        refusal(() =>
+          group([DUMMY], authorized({ oauthConnections: [expired] })),
+        ),
+      ).toBe(
+        "Asana CI account has no usable uploaded token. Upload a fresh token for it, or choose another account in the suite's settings.",
+      );
+    },
+  );
+
   it("refuses when a chosen account was removed", () => {
     expect(
       refusal(() => group([DUMMY], authorized({ oauthConnections: [] }))),
@@ -152,10 +206,74 @@ describe("accountSetGroup", () => {
     ).toContain("couldn't confirm which Asana account");
   });
 
-  it("leaves a shared server on its project connection", () => {
-    expect(
-      group([DUMMY], authorized({ oauthAccountSet: "shared" })),
-    ).toBeUndefined();
+  describe("on a server shared with the project", () => {
+    const FIRST = "c".repeat(32);
+    const SECOND = "d".repeat(32);
+    // Project accounts carry no profile; the backend names them by their names.
+    const project = authorized({
+      oauthConnections: [
+        {
+          connectionId: FIRST,
+          label: "test-automation-1",
+          displayName: "test-automation-1",
+          isDefault: true,
+          accessToken: "token-1",
+        },
+        {
+          connectionId: SECOND,
+          label: "test-automation-2",
+          displayName: "test-automation-2",
+          isDefault: false,
+          accessToken: "token-2",
+        },
+      ],
+    });
+
+    const tracker = (set: string[], auth: ConvexBatchAuthorizeSuccess) =>
+      accountSetGroup({
+        serverId: "tracker",
+        serverName: "Task tracker",
+        auth,
+        set,
+      });
+
+    it("runs with exactly the project accounts the person chose", () => {
+      expect(tracker([SECOND], project)).toEqual([
+        {
+          serverId: "tracker",
+          connectionId: SECOND,
+          key: "tracker",
+          label: "test-automation-2",
+          isDefault: true,
+        },
+      ]);
+      expect(
+        tracker([SECOND, FIRST], project)?.map(({ connectionId, key }) => ({
+          connectionId,
+          key,
+        })),
+      ).toEqual([
+        { connectionId: SECOND, key: `tracker#${SECOND}` },
+        { connectionId: FIRST, key: "tracker" },
+      ]);
+    });
+
+    it("refuses a chosen project account that needs reconnecting, by name", () => {
+      const quarantined = authorized({
+        oauthConnections: [
+          {
+            connectionId: SECOND,
+            displayName: "test-automation-2",
+            isDefault: false,
+            accessToken: null,
+            needsReauth: true,
+          },
+        ],
+      });
+      expect(refusal(() => tracker([SECOND], quarantined))).toBe(
+        "Task tracker test-automation-2 needs reconnect. Reconnect it in Authorization, or choose another account in the suite's settings.",
+      );
+    });
   });
 });
 

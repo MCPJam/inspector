@@ -4,10 +4,10 @@
  * ONE implementation for every publisher and both execution modes. A local
  * `/api/mcp/…` request and a hosted durable run reach the same four steps in
  * the same order — gather pinned evidence, optionally ask the backend broker
- * for model observations, validate and map them, grade — and differ only in
- * what they do with the result. Forking it per surface is how a hosted run and
- * a local run of the same server end up disagreeing, and the first question
- * anyone asks about a disagreement is which one to believe.
+ * for model observations and decisions, validate and map them, grade — and
+ * differ only in what they do with the result. Forking it per surface is how
+ * a hosted run and a local run of the same server end up disagreeing, and the
+ * first question anyone asks about a disagreement is which one to believe.
  *
  * WHAT THIS FILE DOES NOT DO, structurally rather than by discipline:
  *
@@ -32,17 +32,36 @@ import {
   gradeOpenAIReadiness,
   parseClaudeExperienceObservations,
   parseOpenAIExperienceObservations,
+  xmldomParseXml,
   type ClaudeReadinessResult,
+  type DirectoryAnswer,
+  type DirectoryDecisionScan,
   type DirectoryObservationEnvelope,
   type DirectoryObservationReason,
   type DirectoryFeatureClaim,
   type DirectoryLazyAuthProbeConfig,
   type DirectoryObservationState,
   type DirectoryObservationStatus,
+  type DirectoryReviewerPathEvidence,
+  type DirectoryReviewerRunInput,
   type MuseReadinessResult,
+  type OpenAIArchiveObservations,
   type OpenAIReadinessResult,
   type OpenAISubmissionMode,
 } from "@mcpjam/sdk";
+import type { PluginFileSource } from "@mcpjam/sdk/plugin-bundle";
+import { logger } from "../../utils/logger.js";
+import {
+  claudeDecisionInput,
+  decisionScanFor,
+  openaiDecisionInput,
+  type DecisionRequester,
+  type DecisionScanInput,
+} from "./decision-scan.js";
+import {
+  gatherReviewerPath,
+  type ReviewerPathOptions,
+} from "./reviewer-path.js";
 
 export type ReadinessPublisher = "claude" | "openai" | "muse";
 
@@ -93,6 +112,8 @@ export interface RunReadinessOptions {
   signal?: AbortSignal;
   /** Absent ⇒ this run cannot request observations and cannot spend. */
   requestObservations?: ObservationRequester;
+  /** Absent ⇒ this run asks no decision questions and cannot spend on them. */
+  requestDecisions?: DecisionRequester;
   /** Per-request budget. The caller owns the run-level deadline. */
   timeoutMs?: number;
   /**
@@ -103,7 +124,33 @@ export interface RunReadinessOptions {
   lazyAuthProbe?: DirectoryLazyAuthProbeConfig;
   /** Features the submitter claims. */
   claimedFeatures?: DirectoryFeatureClaim[];
+  /** A Claude connector submission's answers, graded with the portal's rules. */
+  submissionAnswers?: readonly DirectoryAnswer[];
+  /**
+   * The package an OpenAI run grades, already checked against the stored
+   * version it came from, with the facts read off its ZIP.
+   */
+  pluginPackage?: {
+    source: PluginFileSource;
+    archive: OpenAIArchiveObservations;
+  };
+  /** A submission run's reviewer path, checked on the reviewer account only. */
+  reviewer?: ReviewerPathOptions;
   now?: () => Date;
+}
+
+/** The reviewer path once the server's evidence names its discovery documents. */
+async function reviewerEvidence(
+  options: RunReadinessOptions,
+  documents: { prm?: string; authorizationServer?: string },
+): Promise<DirectoryReviewerRunInput> {
+  if (!options.reviewer) return {};
+  const evidence = await gatherReviewerPath(options.reviewer, options, {
+    "protected-resource": documents.prm,
+    "authorization-server": documents.authorizationServer,
+  });
+  assertNotCancelled(options.signal);
+  return evidence;
 }
 
 /**
@@ -133,7 +180,7 @@ export class ReadinessLeaseLostError extends Error {
 }
 
 /** Whether a thrown value is one of the two stop signals. */
-function isStopSignal(error: unknown): boolean {
+export function isStopSignal(error: unknown): boolean {
   return (
     error instanceof ReadinessRunCancelledError ||
     error instanceof ReadinessLeaseLostError
@@ -154,7 +201,7 @@ function assertNotCancelled(signal: AbortSignal | undefined): void {
  */
 const MAX_OBSERVATION_EVIDENCE_BYTES = 256 * 1024;
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
+export function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
@@ -248,7 +295,8 @@ export function renderObservationEvidence(input: {
  */
 async function resolveObservations<Kind extends string, Id extends string>(
   options: RunReadinessOptions,
-  evidence: string,
+  /** Absent when the run could not use the server: a model would read nothing. */
+  evidence: string | undefined,
   // The publisher's OWN parser, passed in so the returned state carries that
   // publisher's envelope type. A shared parser would widen it to `string` ids
   // and hand the grader an envelope it cannot tell apart from the other
@@ -265,6 +313,14 @@ async function resolveObservations<Kind extends string, Id extends string>(
       reason: "not_requested",
       detail:
         "this run did not request model-backed observations, so nothing was charged",
+    };
+  }
+  if (evidence === undefined) {
+    return {
+      status: "not-requested",
+      reason: "no_evidence",
+      detail:
+        "the server could not be used, so no model was asked to read it and nothing was charged",
     };
   }
 
@@ -329,10 +385,43 @@ async function resolveObservations<Kind extends string, Id extends string>(
   return { status: "completed", envelope: parsed.envelope };
 }
 
+/**
+ * Ask the decision questions, TOTAL like the observation pass: the stop
+ * signals pass, and any other failure leaves the decision checks unjudged.
+ */
+async function resolveDecisions(
+  options: RunReadinessOptions,
+  input: DecisionScanInput,
+): Promise<DirectoryDecisionScan | undefined> {
+  const request = options.requestDecisions;
+  if (!request) return undefined;
+  return decisionScanFor(input, async (items) => {
+    try {
+      return await request({ items, signal: options.signal });
+    } catch (error) {
+      if (isStopSignal(error)) throw error;
+      const detail = error instanceof Error ? error.message : String(error);
+      logger.warn("[readiness] decision request failed", { detail });
+      return { status: "unanswered", detail };
+    }
+  });
+}
+
+/**
+ * Whether the Claude gather recorded that it could not use the server, which
+ * the SDK's partial-results gather sets as `serverFailure`. Read by name, so
+ * a gather that never sets it reads as a server that answered.
+ */
+function serverFailed(evidence: object): boolean {
+  return "serverFailure" in evidence && evidence.serverFailure !== undefined;
+}
+
 export interface ReadinessRunOutcome {
   result: DirectoryReadinessResult;
   /** The observation axis, mirrored out so a caller can report it separately. */
   observations: DirectoryObservationState<string, string>;
+  /** A submission run's reviewer path, which its tool tests must respect. */
+  reviewerPath?: DirectoryReviewerPathEvidence;
 }
 
 /**
@@ -400,27 +489,50 @@ export async function runDirectoryReadiness(
       ...(options.claimedFeatures !== undefined
         ? { claimedFeatures: options.claimedFeatures }
         : {}),
+      ...(options.pluginPackage
+        ? {
+            packageSource: options.pluginPackage.source,
+            archive: options.pluginPackage.archive,
+            // Node has no `DOMParser`: without this, SVG assets are a gap.
+            parseXml: xmldomParseXml,
+          }
+        : {}),
       now: options.now,
     });
     assertNotCancelled(options.signal);
+    const reviewer = await reviewerEvidence(options, {
+      prm: evidence.auth?.prm?.url,
+      authorizationServer:
+        evidence.auth?.authorizationServers?.[0]?.metadataUrl,
+    });
 
     const observations = await resolveObservations(
       options,
       renderObservationEvidence({
         target: options.target,
         tools: evidence.tools,
-        skills: evidence.importedSkills?.skills,
+        // The package's skills when the run uploads them, else the server's.
+        skills: evidence.importedSkills?.skills ?? evidence.package?.skills,
       }),
       parseOpenAIExperienceObservations,
+    );
+    assertNotCancelled(options.signal);
+    const decisionScan = await resolveDecisions(
+      options,
+      openaiDecisionInput(evidence),
     );
     assertNotCancelled(options.signal);
 
     return {
       result: gradeOpenAIReadiness({
         ...evidence,
+        ...reviewer,
+        submissionAnswers: options.submissionAnswers,
         llmObservations: observations,
+        decisionScan,
       }),
       observations,
+      reviewerPath: reviewer.reviewerPath,
     };
   }
 
@@ -440,22 +552,39 @@ export async function runDirectoryReadiness(
     now: options.now,
   });
   assertNotCancelled(options.signal);
+  const reviewer = await reviewerEvidence(options, {
+    prm: evidence.auth.prm?.url,
+    authorizationServer: evidence.auth.firstAuthorizationServer?.metadataUrl,
+  });
 
   const observations = await resolveObservations(
     options,
-    renderObservationEvidence({
-      target: options.target,
-      tools: evidence.tools,
-    }),
+    serverFailed(evidence)
+      ? undefined
+      : renderObservationEvidence({
+          target: options.target,
+          tools: evidence.tools,
+        }),
     parseClaudeExperienceObservations,
+  );
+  assertNotCancelled(options.signal);
+  const decisionScan = await resolveDecisions(
+    options,
+    claudeDecisionInput(evidence),
   );
   assertNotCancelled(options.signal);
 
   return {
     result: gradeClaudeReadiness({
       ...evidence,
+      ...reviewer,
       llmObservations: observations,
+      decisionScan,
+      ...(options.submissionAnswers
+        ? { submissionAnswers: options.submissionAnswers }
+        : {}),
     }),
     observations,
+    reviewerPath: reviewer.reviewerPath,
   };
 }

@@ -17,6 +17,7 @@ const identity = {
   hostId: "host",
   intentDigest: "digest",
 };
+const signal = new AbortController().signal;
 describe("new-chat message transfer", () => {
   it.each([
     "actorId",
@@ -24,43 +25,50 @@ describe("new-chat message transfer", () => {
     "subject",
     "hostId",
     "intentDigest",
-  ] as const)("refuses a changed %s", (key) => {
+  ] as const)("refuses a changed %s", async (key) => {
     const store = new MessagePreparations();
-    const token = store.issue(record);
-    expect(() => store.read(token, { ...identity, [key]: "other" })).toThrow(
-      "INSTANCE_MESSAGE_UNAVAILABLE",
-    );
+    const token = await store.issue(record);
+    await expect(
+      store.read(token, { ...identity, [key]: "other" }),
+    ).rejects.toThrow("INSTANCE_MESSAGE_UNAVAILABLE");
+    await expect(
+      store.bind(token, { ...identity, [key]: "other" }, "destination"),
+    ).rejects.toThrow("INSTANCE_MESSAGE_UNAVAILABLE");
   });
-  it("expires without extending its deadline on read or retry", () => {
+  it("expires without extending its deadline on read or retry", async () => {
     let now = 0;
     const store = new MessagePreparations(() => now);
-    const token = store.issue(record);
+    const token = await store.issue(record);
     now = 59_999;
-    expect(store.read(token, identity).revision).toBe("revision");
-    store.bind(token, "destination");
+    expect((await store.read(token, identity)).revision).toBe("revision");
+    await store.bind(token, identity, "destination");
     now++;
-    expect(() => store.read(token, identity)).toThrow();
-    expect(() => store.bind(token, "destination")).toThrow();
+    await expect(store.read(token, identity)).rejects.toThrow();
+    await expect(store.bind(token, identity, "destination")).rejects.toThrow();
   });
-  it("permits only identical destination and message replay", () => {
+  it("permits only identical destination and message replay", async () => {
     const store = new MessagePreparations();
-    const token = store.issue(record);
-    expect(store.issue(record)).toBe(token);
-    store.bind(token, "destination-message");
-    store.bind(token, "destination-message");
-    expect(() => store.bind(token, "other-message")).toThrow();
+    const token = await store.issue(record);
+    expect(await store.issue(record)).toBe(token);
+    await store.bind(token, identity, "destination-message");
+    await store.bind(token, identity, "destination-message");
+    await expect(
+      store.bind(token, identity, "other-message"),
+    ).rejects.toThrow();
   });
-  it("bounds outstanding transfers and reclaims only expired records", () => {
+  it("bounds outstanding transfers and reclaims only expired records", async () => {
     let now = 0;
     const store = new MessagePreparations(() => now);
     for (let i = 0; i < 512; i++)
-      store.issue({ ...record, intentDigest: String(i) });
-    expect(() => store.issue(record)).toThrow("INSTANCE_MESSAGE_LIMIT");
+      await store.issue({ ...record, intentDigest: String(i) });
+    await expect(store.issue(record)).rejects.toThrow("INSTANCE_MESSAGE_LIMIT");
     now = 60_000;
-    expect(store.issue(record)).toHaveLength(43);
+    expect(await store.issue(record)).toHaveLength(43);
   });
-  it("cannot recover authority from an unknown or restarted receipt", () => {
-    const token = new MessagePreparations().issue(record);
-    expect(() => new MessagePreparations().read(token, identity)).toThrow();
+  it("cannot recover authority from an unknown or restarted receipt", async () => {
+    const token = await new MessagePreparations().issue(record);
+    await expect(
+      new MessagePreparations().read(token, identity, signal),
+    ).rejects.toThrow();
   });
 });

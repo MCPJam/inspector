@@ -24,7 +24,8 @@
  *  - Content is read via `readTextFile` (sandbox files API, no 16k cap), NEVER
  *    shell `cat` (exec output is capped at 16k).
  */
-import matter from "gray-matter";
+import { readSkillDocument } from "../../../shared/skill-document.js";
+import { HOSTED_MODE } from "../../config.js";
 import { isValidSkillName } from "../../../shared/skill-types.js";
 import {
   convexAdoptComputerSkills,
@@ -32,7 +33,6 @@ import {
 } from "../computers/convex-skills-client.js";
 import { extractExtraFrontmatter } from "../skill-extra-frontmatter.js";
 import { shellQuote } from "./shell-quote.js";
-import { CLAUDE_CODE_SKILLS_BASE } from "./skill-roots.js";
 import { logger } from "../logger.js";
 
 const MANIFEST_BASENAME = ".mcpjam-skills.json";
@@ -44,7 +44,7 @@ const SKILL_CONTENT_MAX_BYTES = 128 * 1024;
 const SKILL_DESCRIPTION_MAX_CHARS = 1024;
 /**
  * Hard cap on the RAW SKILL.md we'll even parse — the 128KB body cap plus
- * headroom for frontmatter. Bounding before `matter()` means an oversized/bad
+ * headroom for frontmatter. Bounding before parsing means an oversized/bad
  * filesystem skill can't spend time+memory parsing before we reject it.
  */
 const MAX_RAW_SKILL_MD_BYTES = SKILL_CONTENT_MAX_BYTES + 64 * 1024;
@@ -108,9 +108,9 @@ function parseAdoptCandidate(
   raw: string,
   dirName: string
 ): AdoptSkillInput | null {
-  let parsed: matter.GrayMatterFile<string>;
+  let parsed: ReturnType<typeof readSkillDocument>;
   try {
-    parsed = matter(raw);
+    parsed = readSkillDocument(raw);
   } catch (err) {
     logger.info("[adopt-sandbox-skills] skip: unparseable SKILL.md", {
       dir: dirName,
@@ -118,7 +118,7 @@ function parseAdoptCandidate(
     });
     return null;
   }
-  const data = parsed.data as Record<string, unknown>;
+  const data = parsed.frontmatter ?? {};
   const name = typeof data.name === "string" ? data.name : undefined;
   if (!name || !isValidSkillName(name)) {
     logger.info(
@@ -149,7 +149,7 @@ function parseAdoptCandidate(
   if (description.length > SKILL_DESCRIPTION_MAX_CHARS) {
     description = description.slice(0, SKILL_DESCRIPTION_MAX_CHARS);
   }
-  const content = parsed.content.trim();
+  const content = parsed.body.trim();
   if (!content) {
     logger.info("[adopt-sandbox-skills] skip: empty body", { dir: dirName });
     return null;
@@ -183,23 +183,30 @@ function parseAdoptCandidate(
  * of the snapshot claim, and `executionScope` does not cover it: eval runs set
  * no execution scope at all.
  *
- * `HARNESS_SKILL_ADOPTION_DISABLED=1` remains the operator-side kill switch.
+ * The hosted app never adopts. Whatever runs on the box can write a SKILL.md
+ * there, including commands a model chose after reading an MCP server's
+ * output, and adopting it would turn that text into a skill the person's later
+ * turns load. A self-hosted Inspector adopts unless its operator sets
+ * `HARNESS_SKILL_ADOPTION_DISABLED=1`.
  */
 export function shouldAdoptSandboxSkills(args: {
   runSucceeded: boolean;
   aborted: boolean;
   pausedForApproval: boolean;
   supportsSkills: boolean;
-  /** `null` ⇒ the live skills fetch failed; adopting on top of an unknown set
-   *  could re-adopt something we simply failed to see as already-managed. */
+  /** False when the turn named no skill source, so its set is unknown;
+   *  adopting on top of an unknown set could re-adopt something we simply
+   *  failed to see as already-managed. */
   runtimeSkillsKnown: boolean;
   skillsArePinned: boolean;
   /** Guest / swarm scopes never adopt (v1). */
   hasExecutionScope: boolean;
   hasCredentials: boolean;
   hasFileSession: boolean;
-  adoptionDisabled: boolean;
 }): boolean {
+  if (HOSTED_MODE || process.env.HARNESS_SKILL_ADOPTION_DISABLED === "1") {
+    return false;
+  }
   return (
     args.runSucceeded &&
     !args.aborted &&
@@ -209,8 +216,7 @@ export function shouldAdoptSandboxSkills(args: {
     !args.skillsArePinned &&
     !args.hasExecutionScope &&
     args.hasCredentials &&
-    args.hasFileSession &&
-    !args.adoptionDisabled
+    args.hasFileSession
   );
 }
 
@@ -225,12 +231,11 @@ export async function adoptSandboxSkills(args: {
   authHeader: string;
   projectId: string;
   managedNames: Set<string>;
-  /** The RUNTIME's skills root (`HarnessRuntimeAdapter.skillsBaseDir`). Defaults
-   *  to Claude Code's for legacy callers. */
-  skillsBase?: string;
+  /** The runtime's skills folder, absolute. */
+  skillsBase: string;
   signal?: AbortSignal;
 }): Promise<{ adopted: AdoptedSkillEntry[] }> {
-  const skillsBase = args.skillsBase ?? CLAUDE_CODE_SKILLS_BASE;
+  const { skillsBase } = args;
   try {
     if (args.signal?.aborted) return { adopted: [] };
     // List entries (small output — bounded dir). `-1` one per line; dotfiles
@@ -271,7 +276,7 @@ export async function adoptSandboxSkills(args: {
       }
       if (!raw) continue; // not a skill dir (no SKILL.md) — silent, not a skill
       // Bound the raw file BEFORE parsing so an oversized/bad SKILL.md can't
-      // spend time+memory in gray-matter before we'd reject it anyway.
+      // spend time+memory in the YAML parser before we'd reject it anyway.
       if (byteLength(raw) > MAX_RAW_SKILL_MD_BYTES) {
         logger.info(
           "[adopt-sandbox-skills] skip: SKILL.md too large to parse",

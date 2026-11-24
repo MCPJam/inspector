@@ -417,6 +417,12 @@ export interface MCPAppsRendererProps {
   /** Modes allowed by the host, resource and initialized App for presentation controls. */
   onAppSupportedDisplayModesChange?: (modes: DisplayMode[] | undefined) => void;
   /**
+   * The host fixed a display mode that the App's `availableDisplayModes`
+   * leaves out. With this set, the renderer closes the App and hands its
+   * declared modes back instead of showing a load error.
+   */
+  onFixedDisplayModeUnsupported?: (declared: DisplayMode[]) => void;
+  /**
    * Called when the widget sends `ui/notifications/request-teardown`
    * and the host has agreed to honor it (matrix `requestTeardown !==
    * false`). The renderer has already attempted a graceful
@@ -838,6 +844,7 @@ export function MCPAppsRendererSurface({
   onExitFullscreen,
   onModelContextUpdate,
   onAppSupportedDisplayModesChange,
+  onFixedDisplayModeUnsupported,
   onRequestTeardown,
   onConfirmDownload,
   isOffline,
@@ -1165,6 +1172,10 @@ export function MCPAppsRendererSurface({
   const fixedDisplayMode = host.surface.fixedDisplayMode;
   const fixedDisplayModeRef = useRef(fixedDisplayMode);
   fixedDisplayModeRef.current = fixedDisplayMode;
+  const onFixedDisplayModeUnsupportedRef = useRef(
+    onFixedDisplayModeUnsupported
+  );
+  onFixedDisplayModeUnsupportedRef.current = onFixedDisplayModeUnsupported;
   const displayBehavior = host.surface.displayBehavior;
   const displayBehaviorRef = useRef(displayBehavior);
   displayBehaviorRef.current = displayBehavior;
@@ -3409,6 +3420,22 @@ export function MCPAppsRendererSurface({
             const declaredAppModes = appCaps?.availableDisplayModes as
               | DisplayMode[]
               | undefined;
+            // A host that can show the App another way takes it back here,
+            // before it is drawn in a mode it says it can't use.
+            const fixedMode = fixedDisplayModeRef.current;
+            const unsupported = onFixedDisplayModeUnsupportedRef.current;
+            if (
+              fixedMode &&
+              unsupported &&
+              declaredAppModes &&
+              !declaredAppModes.includes(fixedMode)
+            ) {
+              setIsReady(false);
+              isReadyRef.current = false;
+              void b.close();
+              unsupported(declaredAppModes);
+              return;
+            }
             // SEP-1865: clamp the advertised + runtime mode set against the
             // app's declaration. The next render of `hostContext` will pick
             // up the new intersection and the post-init `setHostContext`

@@ -29,7 +29,11 @@ import { toast } from "@/lib/toast";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
+import { TrialDecisionDialog } from "./components/billing/TrialDecisionDialog";
+import { AnnouncementQueueProvider } from "./components/announcement-slot";
 import { StdioCommandApprovalDialog } from "./components/connection/StdioCommandApprovalDialog";
+import { LauncherProjectChoiceDialog } from "./components/connection/LauncherProjectChoiceDialog";
+import { useLauncherAttach } from "./hooks/use-launcher-attach";
 import { isSignOutInProgress } from "./lib/auth/sign-out-latch";
 import { useAuthExitCleanup } from "./hooks/use-sign-out";
 import { PendingOrganizationDeletions } from "./components/organization/PendingOrganizationDeletions";
@@ -49,12 +53,9 @@ import { SkillsTab } from "./components/SkillsTab";
 import { LearningTab } from "./components/LearningTab";
 import { TaskAccountsTab } from "./components/TaskAccountsTab";
 import { EventsTab } from "./components/EventsTab";
-import { EventTriggersTab } from "./components/EventTriggersTab";
 import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capabilities-context";
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
-import { EvalsTab } from "./components/EvalsTab";
 import { EvaluateTab } from "./components/EvaluateTab";
-import { CiEvalsTab } from "./components/CiEvalsTab";
 import { UserTestingTab } from "./components/UserTestingTab";
 import { SwarmsTab } from "./components/swarms/SwarmsTab";
 import { EmptyState } from "./components/ui/empty-state";
@@ -156,8 +157,6 @@ import {
 } from "@mcpjam/design-system/alert";
 import { Button } from "@mcpjam/design-system/button";
 import {
-  Dialog,
-  DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
@@ -200,6 +199,8 @@ import {
   setTelemetryIdentity,
 } from "./lib/telemetry-context";
 import { usePostHogOrgContext } from "./hooks/usePostHogOrgContext";
+import { PostHogThemeContext } from "./hooks/usePostHogThemeContext";
+import { DarkDefaultNudge } from "./components/DarkDefaultNudge";
 import { useSentryOrgContext } from "./hooks/useSentryOrgContext";
 import { useDbUserBootstrapStatus } from "./contexts/db-user-ready-context";
 import { AppStateProvider } from "./state/app-state-context";
@@ -212,6 +213,7 @@ import type { BillingFeatureName } from "./hooks/useOrganizationBilling";
 // Import global styles
 import "./index.css";
 import { track } from "./lib/analytics";
+import { useAppLaunchedEvent } from "./lib/launch-tracking";
 import {
   trackFirstRunConnectionCancelled,
   trackFirstRunConnectionFailed,
@@ -231,6 +233,7 @@ import {
   updateThemePreset,
 } from "./lib/theme-utils";
 import LoadingScreen from "./components/LoadingScreen";
+import { StartupScreen } from "./components/startup/StartupScreen";
 import { OccupationGate } from "./components/signup/OccupationGate";
 import { Header } from "./components/Header";
 import { ThemePreset } from "./types/preferences/theme";
@@ -367,12 +370,10 @@ import {
   useHostList,
   useHostMutations,
 } from "@/hooks/useClients";
-import { useSandboxesEnabledState } from "@/hooks/useSandboxesEnabled";
 import { GuestFeaturePreview } from "@/components/guest-preview/GatedFeaturePreview";
 import { GuestPreviewCta } from "@/components/guest-preview/GuestPreviewCta";
 import type { GatedFeatureId } from "@/components/guest-preview/feature-highlights";
 import { useUnifiedSessionsEnabledState } from "@/hooks/useUnifiedSessionsEnabled";
-import { useEvaluateEnabled } from "@/hooks/useEvaluateEnabled";
 import { useEventsEnabledState } from "@/hooks/useEventsEnabled";
 import { LegacyEvalRedirect } from "./components/routing/legacy-eval-redirect";
 import {
@@ -384,6 +385,8 @@ import { useClaudeCodeHostEnabledState } from "./hooks/useClaudeCodeHostEnabled"
 import { useCodexHostEnabledState } from "./hooks/useCodexHostEnabled";
 import { useCopilotCliEnabled } from "@/hooks/useCopilotCliEnabled";
 import { useCursorHostEnabledState } from "./hooks/useCursorHostEnabled";
+import { useOpenCodeHostEnabledState } from "./hooks/useOpenCodeHostEnabled";
+import { useWebClientsEnabledState } from "./hooks/useWebClientsEnabled";
 import { hostFeatureFlagState } from "@/lib/host-compat/feature-visibility";
 import {
   HOST_VERIFY_TAB_PARAM,
@@ -418,7 +421,6 @@ import {
   useAppRouteContext,
   type AppRouteContext,
 } from "./lib/app-route-context";
-import { useEvalsMode, type EvalsMode } from "./lib/eval-route-url";
 import {
   Navigate,
   Outlet,
@@ -775,7 +777,7 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
     case "organizations":
       return <OrganizationsRoute />;
     case "evals":
-      return <EvalsRoute />;
+      return <LegacyEvalRedirect />;
     case "evaluate":
       return <EvaluateRoute />;
     case "home":
@@ -1209,6 +1211,8 @@ function useTemplateVerifyDeepLink({
   const codexEnabled = useCodexHostEnabledState();
   const copilotCliEnabled = useCopilotCliEnabled();
   const cursorCliEnabled = useCursorHostEnabledState();
+  const openCodeEnabled = useOpenCodeHostEnabledState();
+  const webClientsEnabled = useWebClientsEnabledState();
   const requestedTemplateId = useMemo<HostTemplateId | null>(() => {
     if (typeof window === "undefined") return null;
     const raw = new URLSearchParams(window.location.search).get(
@@ -1280,6 +1284,8 @@ function useTemplateVerifyDeepLink({
       codex: codexEnabled,
       copilotCli: copilotCliEnabled,
       cursorCli: cursorCliEnabled,
+      openCode: openCodeEnabled,
+      webClients: webClientsEnabled,
     });
     // Gated templates remain visible on caniuse.dev as reference profiles, but
     // they are not available for new-host creation until their rollout flags
@@ -1358,6 +1364,8 @@ function useTemplateVerifyDeepLink({
     codexEnabled,
     cursorCliEnabled,
     copilotCliEnabled,
+    openCodeEnabled,
+    webClientsEnabled,
     flagWaitExpired,
     roleLoading,
     canCreateHost,
@@ -1621,60 +1629,6 @@ export function ToolsRoute() {
   );
 }
 
-/**
- * Evaluate — one route, two lenses. Suites authors and runs eval suites;
- * Runs reviews what CI already produced. Both gate on the same `evals`
- * billing feature because they are one tab.
- */
-export function EvalsRoute({ mode }: { mode?: EvalsMode } = {}) {
-  const legacyEnabled = useEvaluateEnabled();
-  if (!legacyEnabled) return <LegacyEvalRedirect />;
-  return (
-    <PricingFeatureSignInGate feature="Evals">
-      <EvalsRouteContent mode={mode} />
-    </PricingFeatureSignInGate>
-  );
-}
-
-function EvalsRouteContent({ mode }: { mode?: EvalsMode } = {}) {
-  const {
-    billingUiEnabled,
-    activeTabBillingLocked,
-    activeTabBillingFeature,
-    convexProjectId,
-    ensureServersReady,
-    handleContinueEvalInChat,
-    handleConnect,
-  } = useAppRouteContext();
-  // The route table passes `mode` explicitly. The no-Router fallback body
-  // (component tests) dispatches on the tab id alone, which is `evals` for
-  // both lenses, so resolve from the URL when the prop is absent.
-  const pathnameMode = useEvalsMode();
-  const activeMode = mode ?? pathnameMode;
-
-  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
-    return <ActiveBillingUpsellGate />;
-  }
-
-  if (activeMode === "runs") {
-    return (
-      <CiEvalsTab
-        convexProjectId={convexProjectId}
-        ensureServersReady={ensureServersReady}
-      />
-    );
-  }
-
-  return (
-    <EvalsTab
-      projectId={convexProjectId}
-      ensureServersReady={ensureServersReady}
-      onContinueInChat={handleContinueEvalInChat}
-      handleConnect={handleConnect}
-    />
-  );
-}
-
 /** The public Evaluate experience; sign-in and billing still apply. */
 export function EvaluateRoute() {
   return (
@@ -1686,7 +1640,6 @@ export function EvaluateRoute() {
 
 function EvaluateRouteContent() {
   const {
-    billingUiEnabled,
     activeTabBillingLocked,
     activeTabBillingFeature,
     convexProjectId,
@@ -1694,7 +1647,7 @@ function EvaluateRouteContent() {
     handleContinueEvalInChat,
     handleConnect,
   } = useAppRouteContext();
-  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
+  if (activeTabBillingLocked && activeTabBillingFeature) {
     return <ActiveBillingUpsellGate />;
   }
 
@@ -2017,10 +1970,9 @@ function useGatedFeatureGate(feature: GatedFeatureId): ReactElement | null {
 }
 
 // The User Testing surface: `/user-testing` (the project's scenarios) and
-// `/user-testing/:scenarioId` (one scenario). Same billing feature,
-// `sandboxes-enabled` flag and gated-preview decision as Swarms below. The
-// flag decides whether the surface exists for a visitor; identity then
-// decides whether they get the preview or the real tab.
+// `/user-testing/:scenarioId` (one scenario). Same billing feature and
+// gated-preview decision as Swarms below: identity decides whether a visitor
+// gets the preview or the real tab.
 export function ScenariosRoute() {
   // NO `PricingFeatureSignInGate` HERE, deliberately, and it is not an
   // oversight from the merge that brought it in.
@@ -2032,8 +1984,8 @@ export function ScenariosRoute() {
   // whichever flag moves last silently decides what a visitor sees — so REEV-6
   // owns these two routes and the wrapper is removed from them.
   //
-  // It STAYS on Evals (`EvalsRoute`, `EvalRunnerRoute`). Evaluate is out of
-  // REEV-6's scope by decision, so nothing here replaces that gate.
+  // Evaluate keeps its own sign-in gate; its access policy is independent of
+  // the User Testing preview.
   //
   // What the preview has that the message does not: it shows the product, and
   // it offers sign-UP. Their message only offers sign-in, which is the wrong
@@ -2043,27 +1995,10 @@ export function ScenariosRoute() {
 
 function ScenariosRouteContent() {
   const { convexProjectId, isAuthenticated } = useAppRouteContext();
-  // The sidebar filters this item on the flag, but a filtered nav item is not
-  // a gate — `/user-testing` is a plain route, so without this a direct URL
-  // mounts the whole surface for users the flag excludes.
-  const sandboxesEnabled = useSandboxesEnabledState();
-  // Hooks first: every gate below early-returns, and a hook after one of them
-  // would crash React the moment a gate settles between renders.
+  // Hooks first: the gate below early-returns, and a hook after it would
+  // crash React the moment the gate settles between renders.
   const gate = useGatedFeatureGate("user-testing");
   const params = useParams<{ scenarioId?: string }>();
-
-  // The flag is the rollout control and runs before the preview: a visitor the
-  // flag excludes gets no surface at all, not a sign-up pitch for one.
-  //
-  // Only redirect on an explicit `false`. While PostHog hydrates the flag is
-  // `undefined`, and bouncing then would strand a flagged-in user who cold-
-  // loads the URL. (Same tradeoff SwarmsRoute makes.)
-  if (sandboxesEnabled === false) {
-    return <ScopedNavigate to={routePaths.servers} replace />;
-  }
-  if (sandboxesEnabled === undefined) {
-    return <LoadingScreen />;
-  }
 
   if (gate) {
     return gate;
@@ -2161,10 +2096,6 @@ function SwarmsRouteContent() {
   // via userId. Do NOT treat "no WorkOS email" as "not a member".
   const { user, isLoading: isWorkOsLoading } = useInspectorAuth();
   const isWorkOsSignedIn = !!user;
-  // The sidebar filters the Swarms nav item on this flag, but a filtered nav
-  // item is not a gate — `/swarms` is a plain route, so a direct URL mounted
-  // the whole surface for users the flag excludes.
-  const sandboxesEnabled = useSandboxesEnabledState();
   // The backend made Swarm member-only vs project *invitee guests* (role
   // `guest`): personas/journeys/runs reject that tier. Mirror that for
   // WorkOS-signed-in viewers by resolving role from the members list.
@@ -2196,15 +2127,6 @@ function SwarmsRouteContent() {
   // crash React the moment a gate settles.
   const gate = useGatedFeatureGate("swarms");
   const params = useParams<{ swarmId?: string }>();
-
-  // Flag before preview, for the reason given on ScenariosRoute. Only redirect
-  // on an explicit `false`; `undefined` means PostHog is still hydrating.
-  if (sandboxesEnabled === false) {
-    return <ScopedNavigate to={routePaths.servers} replace />;
-  }
-  if (sandboxesEnabled === undefined) {
-    return <LoadingScreen />;
-  }
 
   // Guests stop here. `null` means the viewer is a signed-in member.
   //
@@ -2391,21 +2313,11 @@ export function SessionsRoute() {
 }
 
 export function ResourcesRoute() {
-  const {
-    selectedMCPConfig, selectedServerEntry, appState, convexProjectId,
-    currentUser, hostedServerIdsByName = {},
-  } = useAppRouteContext();
-  const [hostId] = usePreviewedHostId(convexProjectId);
-  const selected = appState.selectedServer;
-  const serverId = hostedServerIdsByName[selected] ??
-    (Object.values(hostedServerIdsByName).includes(selected) ? selected : null);
-  const openInChatScope = currentUser?._id && hostId && convexProjectId && serverId
-    ? { actorId: currentUser._id, projectId: convexProjectId, hostId, serverId }
-    : null;
+  const { selectedMCPConfig, selectedServerEntry, appState } =
+    useAppRouteContext();
   return (
     <div className="h-full overflow-hidden">
       <ResourcesTab
-        openInChatScope={openInChatScope}
         serverConfig={selectedMCPConfig}
         serverName={appState.selectedServer}
         server={selectedServerEntry ?? undefined}
@@ -2638,21 +2550,13 @@ export function EventsRoute() {
  * so a local user can see what the feature is.
  */
 export function EventTriggersRoute() {
-  const { convexProjectId, isAuthenticated, isGuestProjectActor } =
-    useAppRouteContext();
+  const triggerId = useCurrentSearchParam("triggerId");
   const eventsEnabled = useEventsEnabledState();
-  if (eventsEnabled === false) {
-    return <ScopedNavigate to={routePaths.servers} replace />;
-  }
+  if (eventsEnabled === false) return <ScopedNavigate to={routePaths.servers} replace />;
   if (eventsEnabled === undefined) return null;
-  return (
-    <div className="h-full overflow-hidden">
-      <EventTriggersTab
-        projectId={convexProjectId ?? null}
-        isSignedInMember={isAuthenticated === true && !isGuestProjectActor}
-      />
-    </div>
-  );
+  const query = new URLSearchParams({ panel: "events", background: "1" });
+  if (triggerId) query.set("triggerId", triggerId);
+  return <ScopedNavigate to={`${routePaths.playground}?${query}`} replace />;
 }
 
 export function OAuthFlowRoute() {
@@ -2731,7 +2635,6 @@ export function OAuthFlowRoute() {
 
 export function XAAFlowRoute() {
   const {
-    xaaEnabled,
     appState,
     displayServerConfigs,
     areServersHydrated,
@@ -2743,7 +2646,6 @@ export function XAAFlowRoute() {
     xaaServerModalNonce,
     xaaDebuggerHasHeaderServers,
   } = useAppRouteContext();
-  if (xaaEnabled !== true) return null;
 
   return (
     <ErrorBoundary
@@ -2796,6 +2698,7 @@ export function WebmcpInspectorRoute() {
 export function PlaygroundRoute() {
   const {
     activeHost,
+    activeHostId,
     activeProject,
     activeProjectId,
     appState,
@@ -2850,6 +2753,7 @@ export function PlaygroundRoute() {
       }}
       suspendAutoConnect={suspendRouteAutoConnect}
       activeHost={activeHost}
+      activeHostId={activeHostId}
       evalChatHandoff={evalChatHandoff}
       onEvalChatHandoffConsumed={(id) =>
         setEvalChatHandoff((current: EvalChatHandoff | null) =>
@@ -3170,14 +3074,9 @@ export default function App() {
   const [pendingCheckoutIntent, setPendingCheckoutIntent] =
     useState<CheckoutIntent | null>(() => getInitialPendingCheckoutIntent());
   const posthog = usePostHog();
-  const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
-    "billing-entitlements-ui",
-  );
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
-  const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
-  const xaaEnabled = useFeatureFlagEnabled("xaa");
 
   // Per-tab "hide from this header" list for the OAuth / XAA debugger chip strip.
   // View-only (localStorage) — the x on a chip dismisses it from this header
@@ -3185,7 +3084,7 @@ export default function App() {
   const headerHiddenSurface: HeaderSurface | null =
     activeTab === "oauth-flow"
       ? "oauth"
-      : activeTab === "xaa-flow" && xaaEnabled === true
+      : activeTab === "xaa-flow"
         ? "xaa"
         : null;
   const { hidden: hiddenHeaderServers, hide: hideHeaderServer } =
@@ -3587,18 +3486,7 @@ export default function App() {
   // `disable_session_recording` flag cannot cover in-app navigation into it.
   useSessionRecordingPathGuard();
 
-  const lastLaunchedActorRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!actorKey) return;
-    if (lastLaunchedActorRef.current === actorKey) return;
-    lastLaunchedActorRef.current = actorKey;
-    track("app_launched", {
-      location: "app",
-      user_agent: navigator.userAgent,
-      version: __APP_VERSION__,
-      is_authenticated: Boolean(workOsUser),
-    });
-  }, [actorKey, workOsUser, posthog]);
+  useAppLaunchedEvent(actorKey, Boolean(workOsUser));
 
   // Set the initial theme mode and preset on page load
   const initialThemeMode = getInitialThemeMode();
@@ -3917,6 +3805,38 @@ export default function App() {
     [appState],
   );
   useInspectorCommandBus({ onScopeStepUp: handleInspectorScopeStepUp });
+  // Dev commands (launchInspector, the Vite plugin) attach their server here.
+  const launcherSignedIn = Boolean(workOsUser) && isCloudSyncActive;
+  useLauncherAttach({
+    enabled: !HOSTED_MODE,
+    // The developer's sign-in, not whether this tab has loaded: a signed-in
+    // tab still loading its project must not ask them to sign in.
+    signedIn: Boolean(workOsUser),
+    // Only once the project's saved servers have loaded: before that a
+    // same-name server the project already has is invisible to the tab.
+    project:
+      launcherSignedIn && areServersHydrated && activeProject?.sharedProjectId
+        ? { id: activeProject.sharedProjectId, name: activeProject.name }
+        : null,
+    servers: projectServers,
+    selectedServer: appState.selectedServer,
+    saveAndConnect: (formData, onSaved) =>
+      handleConnect(formData, {
+        suppressSuccessToast: true,
+        onConfigSaved: onSaved,
+      }),
+    connectSaved: (serverName) =>
+      reconnectServerWithResult(serverName, { suppressSuccessToast: true }),
+    saveWithoutConnecting: async (formData) =>
+      (await saveServerConfigWithoutConnecting(formData)) !== false,
+    removeServer: (serverName) => handleRemoveServer(serverName),
+    disconnectServer: (serverName) => handleDisconnect(serverName),
+    selectServer: setSelectedServer,
+    requestSignIn: () => {
+      captureAppSignInReturnPath();
+      void signIn();
+    },
+  });
   // MCPJam UI tools: registered in both modes; the always-available side
   // panel drives whichever inspector surface is open, so registration lives
   // at the App root. Disabled on the standalone scenario chat route: its end
@@ -5067,14 +4987,12 @@ export default function App() {
       permissionKey: telemetryPrivacy.scope,
     },
   );
-  const billingUiEnabled = billingEntitlementsUiEnabled === true;
   const navPremiumness =
     billingProjectId && projectPremiumness
       ? projectPremiumness
       : organizationPremiumness;
   const activeTabGate = getPremiumnessGateForTab(activeTab);
   const activeTabBillingLocked = isPremiumnessGateDeniedForShell({
-    billingUiEnabled,
     projectPremiumness,
     organizationPremiumness,
     hasProject: !!billingProjectId,
@@ -5086,7 +5004,6 @@ export default function App() {
     activeTabGate,
   );
   const projectCreationGate = resolveBillingGateState({
-    billingUiEnabled,
     organizationId: billingOrganizationId,
     billingStatus: shellBillingStatus,
     premiumness: organizationPremiumness,
@@ -5100,7 +5017,7 @@ export default function App() {
     return denied;
   }, [navPremiumness]);
   const billingGateEnforcementActive =
-    billingUiEnabled && isBillingEnforcementActive(navPremiumness);
+    isBillingEnforcementActive(navPremiumness);
   const isGuestProjectActor = currentUser?.isAnonymous === true;
   const guestProjectLimitReached =
     isGuestProjectActor && Object.keys(projects).length >= 1;
@@ -5137,12 +5054,10 @@ export default function App() {
   const trialModalDismissed =
     trialModalDismissedForOrg === billingOrganizationId;
   const showTrialDecisionModal =
-    billingUiEnabled &&
     shellBillingStatus?.decisionRequired === true &&
     shellBillingStatus?.isOwner === true &&
     !trialModalDismissed;
   const showTrialDecisionNotice =
-    billingUiEnabled &&
     shellBillingStatus?.decisionRequired === true &&
     shellBillingStatus?.isOwner === false;
 
@@ -5823,11 +5738,6 @@ export default function App() {
       return;
     }
 
-    if (billingEntitlementsUiEnabled === false) {
-      toast.error("Checkout isn't available in this environment.");
-      consumeCheckoutIntent();
-      return;
-    }
     if (!workOsUser) {
       if (isWorkOsLoading || billingSignInStartedRef.current) return;
       billingSignInStartedRef.current = true;
@@ -5876,7 +5786,6 @@ export default function App() {
     activeProject?.organizationId,
     billingLocation.pathname,
     billingLocation.search,
-    billingEntitlementsUiEnabled,
     consumeCheckoutIntent,
     currentUser?.isAnonymous,
     isAuthLoading,
@@ -5921,35 +5830,20 @@ export default function App() {
     } else if (activeTab === "client-config") {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (
-      activeTab === "conformance" &&
-      !isConformanceSharedRoute &&
-      conformanceEnabled === false
-    ) {
-      navigateToTarget(defaultHubRoute, { replace: true });
-    } else if (
       activeTab === "compatibility" &&
       compatibilityEnabled === false
     ) {
       // Only bounce on an explicit `false`. While PostHog hydrates the flag is
       // `undefined`; redirecting then would strand a flagged-in user who
       // cold-loads /compatibility (the redirect fires before the flag
-      // resolves) — the "refresh sends me home" bug. Mirrors the xaa branch.
-      navigateToTarget(defaultHubRoute, { replace: true });
-    } else if (activeTab === "xaa-flow" && xaaEnabled === false) {
-      // Only bounce on an explicit `false`. While PostHog hydrates the flag is
-      // `undefined`; redirecting then would strand a flagged-in user who
-      // cold-loads /xaa-flow (the redirect fires before the flag resolves) —
-      // which is exactly the "refresh sends me home" bug. Mirrors ComputerRoute.
+      // resolves) — the "refresh sends me home" bug.
       navigateToTarget(defaultHubRoute, { replace: true });
     }
   }, [
-    conformanceEnabled,
-    isConformanceSharedRoute,
     compatibilityEnabled,
     defaultHubRoute,
     registryEnabled,
     learningEnabled,
-    xaaEnabled,
     isAuthenticated,
     isAuthLoading,
     activeTab,
@@ -6326,7 +6220,6 @@ export default function App() {
   const checkoutIntentForBilling =
     useMemo((): CheckoutIntentWithOrganization | null => {
       if (
-        !billingUiEnabled ||
         activeTab !== "organizations" ||
         !routeOrganizationId ||
         routeOrganizationSection !== "plans" ||
@@ -6340,7 +6233,6 @@ export default function App() {
         organizationId: routeOrganizationId,
       };
     }, [
-      billingUiEnabled,
       activeTab,
       routeOrganizationId,
       routeOrganizationSection,
@@ -6441,21 +6333,12 @@ export default function App() {
   }
 
   if (isLoading && !isHostedChatRoute && !isFirstRunOAuthReturnActive) {
-    return <LoadingScreen />;
-  }
-
-  if (
-    activeTab === "conformance" &&
-    !isConformanceSharedRoute &&
-    conformanceEnabled === undefined
-  ) {
-    return <LoadingScreen />;
+    return <StartupScreen />;
   }
 
   const shouldShowBillingHandoffOverlay =
     !isHostedChatRoute &&
     !isOAuthCallback &&
-    billingEntitlementsUiEnabled !== false &&
     pendingCheckoutIntent !== null;
 
   if (
@@ -6463,7 +6346,8 @@ export default function App() {
     (shouldHoldHostedDefaultRouteForAuth ||
       shouldHoldHostedHomeRouteForAppReady)
   ) {
-    return <LoadingScreen />;
+    // Home also waits here for projects, which wait for the user record.
+    return <StartupScreen />;
   }
 
   if (
@@ -6478,7 +6362,7 @@ export default function App() {
           isSignOutInProgress() ||
           shouldReloadForMissingGuest)))
   ) {
-    return <LoadingScreen />;
+    return <StartupScreen />;
   }
 
   if (!isHostedChatRoute && isAuthenticated && currentUser === null) {
@@ -6514,7 +6398,7 @@ export default function App() {
     activeTab === "events" ||
     activeTab === "compatibility" ||
     activeTab === "oauth-flow" ||
-    (activeTab === "xaa-flow" && xaaEnabled === true) ||
+    activeTab === "xaa-flow" ||
     activeTab === "chat";
 
   const oauthDebuggerHasHeaderServers = hasDebuggerHeaderServers({
@@ -6543,7 +6427,7 @@ export default function App() {
           // which strands the user on an error page when the client isn't
           // registered). Save without connecting, then select it as the target.
           onConnect:
-            activeTab === "xaa-flow" && xaaEnabled === true
+            activeTab === "xaa-flow"
               ? async (formData) => {
                   await saveServerConfigWithoutConnecting(formData);
                   const name = formData.name?.trim();
@@ -6557,7 +6441,7 @@ export default function App() {
           // the active debugger's modal so it matches the in-canvas "Configure"
           // button; other tabs fall back to the generic modal (prop omitted).
           onAddServerRequested:
-            activeTab === "xaa-flow" && xaaEnabled === true
+            activeTab === "xaa-flow"
               ? () => setXaaServerModalNonce((n) => n + 1)
               : activeTab === "oauth-flow"
                 ? () => setOauthServerModalNonce((n) => n + 1)
@@ -6566,9 +6450,8 @@ export default function App() {
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
           showOnlyOAuthServers:
-            activeTab === "oauth-flow" ||
-            (activeTab === "xaa-flow" && xaaEnabled === true),
-          includeXaaServers: activeTab === "xaa-flow" && xaaEnabled === true,
+            activeTab === "oauth-flow" || activeTab === "xaa-flow",
+          includeXaaServers: activeTab === "xaa-flow",
           // Only the OAuth / XAA debugger headers get the "hide from this tab"
           // x button; other surfaces omit onHideServer so no x renders.
           hiddenServers: hiddenHeaderServers,
@@ -6580,8 +6463,7 @@ export default function App() {
           // target and it must not change without an explicit click. Other
           // tabs keep full auto-select (stale selections get replaced).
           autoSelectFilteredServer:
-            activeTab === "oauth-flow" ||
-            (activeTab === "xaa-flow" && xaaEnabled === true)
+            activeTab === "oauth-flow" || activeTab === "xaa-flow"
               ? "when-empty"
               : true,
           showOnlyServersWithViews: false,
@@ -6654,7 +6536,6 @@ export default function App() {
     appState,
     billingOrganizationId,
     billingProjectId,
-    billingUiEnabled,
     activeHost,
     activeHostId,
     checkoutIntentForBilling,
@@ -6687,7 +6568,6 @@ export default function App() {
     handleUpdateHostContext,
     handleUpdateProject,
     hostsTabSelectedHostId,
-    hostedServerIdsByName,
     isAuthLoading,
     isAuthenticated,
     isClientConfigSyncPending,
@@ -6721,7 +6601,6 @@ export default function App() {
     toggleServerSelection,
     upgradePlanForActiveTab,
     workOsUser,
-    xaaEnabled,
     oauthDebuggerHasHeaderServers,
     xaaDebuggerHasHeaderServers,
     xaaServerModalNonce,
@@ -6746,6 +6625,23 @@ export default function App() {
     "project-settings",
     "billing",
   ].includes(activeTab);
+  const announcementsEnabled =
+    !isWorkOsLoading &&
+    !isAuthLoading &&
+    effectiveHostedShellGateState === "ready" &&
+    !(isAuthenticated && currentUser === undefined) &&
+    (!HOSTED_MODE ||
+      (isAuthenticated &&
+        !isLoadingRemoteProjects &&
+        areServersHydrated &&
+        !!activeProjectId &&
+        activeProjectId !== "none")) &&
+    !shouldShowBillingHandoffOverlay &&
+    !(shouldRouteToFirstRunOnboarding && !firstRunOverlayDismissed) &&
+    !shouldSuspendFirstRunBackgroundConnections &&
+    !isOpeningFirstRunPlayground &&
+    firstRunPlaygroundPrompt === null &&
+    !playgroundOnboarding;
   const appContent = (
     <SettingsDraftProvider enabled={settingsShellActive}>
       <SidebarProvider defaultOpen={true}>
@@ -6767,12 +6663,12 @@ export default function App() {
           activeOrganizationId={activeOrganizationId}
           activeOrganizationName={activeOrganizationName}
           onSwitchOrganization={handleSidebarSwitchOrganization}
-          onProjectShared={handleProjectShared}
-          billingUiEnabled={billingUiEnabled}
           billingGateDenied={sidebarGateDenied}
           billingGateEnforcementActive={billingGateEnforcementActive}
           isCreateProjectDisabled={isCreateProjectDisabled}
           createProjectDisabledReason={createProjectDisabledReason}
+          conformanceServers={displayServerConfigs}
+          announcementsEnabled={announcementsEnabled}
         />
         <SettingsNavigation
           enabled={settingsShellActive}
@@ -6816,7 +6712,7 @@ export default function App() {
               headerHidden={appChromeHeaderHidden || settingsShellActive}
             >
               <PendingOrganizationDeletions />
-              {showTrialDecisionNotice ? (
+              {announcementsEnabled && showTrialDecisionNotice ? (
                 <div className="border-b border-border/60 px-4 py-3">
                   <Alert>
                     <AlertTriangle className="h-4 w-4" />
@@ -6846,61 +6742,54 @@ export default function App() {
             />
           </div>
         </div>
-        <Dialog
-          open={showTrialDecisionModal}
-          onOpenChange={(open) => {
-            if (!open)
-              setTrialModalDismissedForOrg(billingOrganizationId ?? null);
-          }}
+        <TrialDecisionDialog
+          eligible={announcementsEnabled && showTrialDecisionModal}
+          onDismiss={() =>
+            setTrialModalDismissedForOrg(billingOrganizationId ?? null)
+          }
         >
-          <DialogContent
-            onPointerDownOutside={(e) => e.preventDefault()}
-            onEscapeKeyDown={(e) => e.preventDefault()}
-            data-testid="trial-decision-modal"
-          >
-            <DialogHeader>
-              <DialogTitle>Choose how to continue</DialogTitle>
-              <DialogDescription>
-                Your trial has ended. Upgrade to keep paid features, or move
-                this organization to the Free plan.
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter className="gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                disabled={isSelectingFreeAfterTrial}
-                onClick={() => {
-                  void (async () => {
-                    try {
-                      await selectFreeAfterTrial();
-                      toast.success(
-                        "This organization is now on the Free plan.",
-                      );
-                    } catch {
-                      toast.error("Could not update plan. Try again.");
-                    }
-                  })();
-                }}
-              >
-                {isSelectingFreeAfterTrial ? "Saving…" : "Choose free"}
-              </Button>
-              <Button
-                type="button"
-                onClick={() => {
-                  setTrialModalDismissedForOrg(billingOrganizationId ?? null);
-                  if (billingOrganizationId) {
-                    navigateToTarget(
-                      `organizations/${billingOrganizationId}/billing`,
+          <DialogHeader>
+            <DialogTitle>Choose how to continue</DialogTitle>
+            <DialogDescription>
+              Your trial has ended. Upgrade to keep paid features, or move
+              this organization to the Free plan.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isSelectingFreeAfterTrial}
+              onClick={() => {
+                void (async () => {
+                  try {
+                    await selectFreeAfterTrial();
+                    toast.success(
+                      "This organization is now on the Free plan.",
                     );
+                  } catch {
+                    toast.error("Could not update plan. Try again.");
                   }
-                }}
-              >
-                Upgrade
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+                })();
+              }}
+            >
+              {isSelectingFreeAfterTrial ? "Saving…" : "Choose free"}
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                setTrialModalDismissedForOrg(billingOrganizationId ?? null);
+                if (billingOrganizationId) {
+                  navigateToTarget(
+                    `organizations/${billingOrganizationId}/billing`,
+                  );
+                }
+              }}
+            >
+              Upgrade
+            </Button>
+          </DialogFooter>
+        </TrialDecisionDialog>
       </SidebarProvider>
     </SettingsDraftProvider>
   );
@@ -6960,11 +6849,12 @@ export default function App() {
     };
   })();
 
-  return (
+  const shell = (
     <PreferencesStoreProvider
       themeMode={initialThemeMode}
       themePreset={initialThemePreset}
     >
+      <PostHogThemeContext />
       <ProjectClientConfigSync
         activeProjectId={activeProjectId}
         savedClientConfig={activeProject?.clientConfig}
@@ -6995,9 +6885,11 @@ export default function App() {
             isLoadingRemoteProjects={isLoadingRemoteProjects}
           >
             <Toaster />
+            <DarkDefaultNudge enabled={announcementsEnabled} />
             <MCPJamLimitDialog />
             <PlanLimitDialog />
             <StdioCommandApprovalDialog />
+            <LauncherProjectChoiceDialog />
             <UnavailableOrganizationDialog
               isAuthenticated={isAuthenticated}
               routeTab={activeTab}
@@ -7100,5 +6992,11 @@ export default function App() {
         </ServerActionsProvider>
       </AppStateProvider>
     </PreferencesStoreProvider>
+  );
+
+  return (
+    <AnnouncementQueueProvider enabled={announcementsEnabled}>
+      {shell}
+    </AnnouncementQueueProvider>
   );
 }

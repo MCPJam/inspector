@@ -2,7 +2,8 @@
  * The origin banner every server-served skill (SEP-2640) body is wrapped in.
  *
  * SHARED because two surfaces must produce it BYTE-IDENTICALLY:
- *   - `server/utils/server-skill-tools.ts`, when the model calls `loadSkill`;
+ *   - `server/utils/computers/server-skill-reads.ts`, when the model calls
+ *     `loadSkill`;
  *   - the playground SKILLS popover, whose pick is sent as a user message
  *     carrying the same text (`shared/user-context-message.ts`).
  *
@@ -192,7 +193,7 @@ export type ServerSkillLoad =
  * held entry to files the user never approved.
  *
  * Whether a load is trusted (provenance) is the server's call, made in
- * `server/utils/server-skill-held-entry.ts`.
+ * `server/utils/computers/server-skill-held-entry.ts`.
  */
 export function serverSkillLoads(
   messages: ReadonlyArray<ModelMessage> | undefined,

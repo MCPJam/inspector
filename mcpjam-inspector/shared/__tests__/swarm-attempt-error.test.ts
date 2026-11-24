@@ -370,6 +370,19 @@ describe("isAccountLimit", () => {
     expect(isAccountLimit(`Limit reached. (${code}, HTTP 429)`)).toBe(true);
   });
 
+  it("stops the whole run when the organization's native harness trial is used up", () => {
+    // Neither an upgrade nor a switch to MCPJam Harness happens mid-run, so
+    // every later native turn would be refused the same way.
+    expect(isAccountLimit(undefined, "native_harness_trial_exhausted")).toBe(
+      true,
+    );
+    expect(
+      accountLimitCode(
+        "This organization has used its 20 free native harness turns. (native_harness_trial_exhausted, HTTP 403)",
+      ),
+    ).toBe("native_harness_trial_exhausted");
+  });
+
   it("does NOT claim a 429 on the user's own provider key", () => {
     // BB-172: the user's own key really was throttled. No MCPJam code appears,
     // and the advice differs — MCPJam cannot lift someone else's rate limit.

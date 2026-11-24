@@ -134,7 +134,7 @@ const MAPPINGS: readonly DirectoryObservationMapping<
     title: "Listing copy may still contain placeholder text",
     lane: "experience-insights",
     class: "manual-review",
-    source: openaiPolicySource("app-guidelines", "§Listing quality"),
+    source: openaiPolicySource("plugin-guidelines", "§Listing quality"),
     remediation:
       "Review the listing fields for template text before submitting; reviewers reject placeholder copy.",
   },
@@ -143,7 +143,7 @@ const MAPPINGS: readonly DirectoryObservationMapping<
     title: "Listing copy may claim capabilities the tools do not implement",
     lane: "experience-insights",
     class: "manual-review",
-    source: openaiPolicySource("app-guidelines", "§Listing quality"),
+    source: openaiPolicySource("plugin-guidelines", "§Listing quality"),
     remediation:
       "Check that every capability the listing advertises is reachable through a tool this server actually exposes.",
   },
@@ -152,7 +152,7 @@ const MAPPINGS: readonly DirectoryObservationMapping<
     title: "Two or more skills may describe the same task",
     lane: "experience-insights",
     class: "heuristic",
-    source: openaiPolicySource("app-guidelines", "§Listing quality"),
+    source: openaiPolicySource("plugin-guidelines", "§Listing quality"),
     remediation:
       "Skills that overlap compete for the same trigger; separate their scopes or fold them together.",
   },
@@ -161,7 +161,10 @@ const MAPPINGS: readonly DirectoryObservationMapping<
     title: "A destructive tool may not explain its consequences",
     lane: "experience-insights",
     class: "manual-review",
-    source: openaiPolicySource("app-guidelines", "§Predictable side effects"),
+    source: openaiPolicySource(
+      "plugin-guidelines",
+      "§Predictable side effects"
+    ),
     remediation:
       "Say plainly in the description what a destructive tool changes and whether it can be undone.",
   },

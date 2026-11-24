@@ -21,7 +21,7 @@ export class NativeWireError extends Error {
 
 // JSON.parse would silently choose one of two decision keys. Reject duplicates
 // at every depth before inspecting any method, account or argument.
-function checkDuplicateKeys(text: string): void {
+export function checkDuplicateKeys(text: string): void {
   let pos = 0;
   const space = () => {
     while (/\s/.test(text[pos] ?? "") && pos < text.length) pos++;

@@ -1,8 +1,12 @@
 export type ConnectionIntent =
-  | { kind: "add" }
-  | { kind: "replace"; credentialId: string };
+  { kind: "add" } | { kind: "replace"; credentialId: string };
 export interface OAuthConnection {
   connectionId: string;
+  /**
+   * The N in "Account N", stored when the account was connected, so a default
+   * switch or a removal never renames the others. Absent from older backends.
+   */
+  accountNumber?: number;
   label?: string;
   profile?: {
     id: string;
@@ -15,6 +19,8 @@ export interface OAuthConnection {
   needsReauth?: boolean;
   authorizedAt?: number;
   expiresAt?: number;
+  /** A shared or API-uploaded account, whose tokens are never revealed. */
+  hostedOnly?: boolean;
 }
 export interface AuthorizedOAuthConnection extends OAuthConnection {
   /**
@@ -25,6 +31,11 @@ export interface AuthorizedOAuthConnection extends OAuthConnection {
   /** Canonical per-account timestamp, including the legacy createdAt fallback. */
   credentialAuthorizedAt?: number;
   accessToken?: string | null;
+  /** Origins `accessToken` may be sent to; absent from older backends. */
+  boundOrigins?: string[];
+  /** Absent: the person's own sign-in. */
+  accountKind?: "shared" | "uploaded";
+  accountUploaded?: boolean;
   unavailableReason?: string;
   /**
    * Built by the Inspector from the authorize result's default credential, not
@@ -46,13 +57,15 @@ export function connectionLabel(
   options?: ConnectionLabelOptions,
 ): string {
   const usable = (value?: string) =>
-    value && !(options?.withoutEmail && value.includes("@")) ? value : undefined;
+    value && !(options?.withoutEmail && value.includes("@"))
+      ? value
+      : undefined;
   return (
     usable(c.label) ||
     (options?.withoutEmail ? undefined : c.profile?.email) ||
     usable(c.profile?.name) ||
     usable(c.profile?.nickname) ||
-    `Account ${index + 1}`
+    `Account ${c.accountNumber ?? index + 1}`
   );
 }
 

@@ -611,10 +611,10 @@ export function composeWireFindingsSummary(
   const signals = wireSignalTotals(wire);
   const signal = signals[0];
   if (signal) {
+    // Recorded signals can include sessions without an AI report, so the
+    // number of sessions read is not a denominator for these counts.
     const lines = [
-      `${SWARM_FINDING_SIGNAL_LABELS[signal.signal]} in ${signal.count} of ${
-        wire.population.read
-      } sessions read.`,
+      `${SWARM_FINDING_SIGNAL_LABELS[signal.signal]} in ${plural(signal.count, "session")}.`,
     ];
     const persona = personaGoalLine(
       wire.findings.filter((row) => row.signal === signal.signal),
@@ -647,13 +647,15 @@ export function composeWireFindingsSummary(
 }
 
 export function wireFindingsFootnotes(wire: SwarmJourneyFindings): string[] {
-  const notes = wire.coverageNotes.map(
-    (note) =>
-      (wire.findings.some((row) => row.coverageNotes.includes(note))
-        ? sessionReportUnavailableMessage([note])
-        : undefined) ?? SWARM_FINDING_COVERAGE_NOTE_LABELS[note],
-  );
   const verification = wire.verification;
+  const notes = wire.coverageNotes
+    .filter((note) => note !== "mechanismsRejected" || !verification?.rejected)
+    .map(
+      (note) =>
+        (wire.findings.some((row) => row.coverageNotes.includes(note))
+          ? sessionReportUnavailableMessage([note])
+          : undefined) ?? SWARM_FINDING_COVERAGE_NOTE_LABELS[note],
+    );
   if (!verification) return notes;
   // Only proposals that were LOOKED AT and did not hold. An empty reply, an
   // unavailable model and a publication cap are none of them a rejected cause.

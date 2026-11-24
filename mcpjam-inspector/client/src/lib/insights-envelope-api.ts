@@ -38,7 +38,11 @@ import type {
   PlatformInsightsObservationState,
   PlatformInsightsStatus,
   PlatformUnifiedFindings,
+  PlatformEvalFindingsView,
+  PlatformFindingOption,
+  PlatformFindingProblem,
 } from "@mcpjam/sdk/platform";
+import { PLATFORM_EVAL_FINDINGS_VIEW_VERSION } from "@mcpjam/sdk/platform";
 
 export type InsightsEnvelopeStatus = PlatformInsightsStatus;
 export type InsightAttribution = PlatformInsightAttribution;
@@ -58,6 +62,9 @@ export type InsightsObservationState = PlatformInsightsObservationState;
 export type InsightsObservationCoverage = PlatformInsightsObservationCoverage;
 export type InsightsFindingProvenance = PlatformInsightsFindingProvenance;
 export type UnifiedFindings = PlatformUnifiedFindings;
+export type EvalFindingsView = PlatformEvalFindingsView;
+export type FindingProblem = PlatformFindingProblem;
+export type FindingOption = PlatformFindingOption;
 
 export const INSIGHTS_ENVELOPE_QUERIES = {
   /** Eval run → serverQuality projected into the common envelope. */
@@ -143,4 +150,28 @@ export function unifiedFindingsOf(
 ): UnifiedFindings | null {
   const payload = envelope?.unifiedFindings;
   return payload?.capability === "unified_findings_v1" ? payload : null;
+}
+
+/**
+ * Which findings view this client can render for an eval run.
+ *
+ * - `view`: the backend's observation view, in a version this client reads.
+ * - `legacy`: the backend serves findings but not the view; render the flat
+ *   list as before.
+ * - `unsupported`: the view is in a newer version; show the flat list rather
+ *   than misreading fields this client does not know.
+ */
+export type FindingsViewSupport =
+  | { kind: "view"; view: EvalFindingsView }
+  | { kind: "legacy" }
+  | { kind: "unsupported"; version: number };
+
+export function findingsViewOf(
+  unified: UnifiedFindings | null | undefined,
+): FindingsViewSupport {
+  const view = unified?.findingsView;
+  if (!view) return { kind: "legacy" };
+  return view.version === PLATFORM_EVAL_FINDINGS_VIEW_VERSION
+    ? { kind: "view", view }
+    : { kind: "unsupported", version: view.version };
 }

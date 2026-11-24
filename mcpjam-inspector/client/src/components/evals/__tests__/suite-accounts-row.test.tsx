@@ -6,9 +6,13 @@ import { ConvexError } from "convex/values";
 import { SuiteAccountsRow } from "../suite-accounts-row";
 import type { EvalSuite } from "../types";
 import type { SuiteAccountsView } from "@/lib/evals/eval-accounts";
+import { createWebAccountView } from "@/test/factories";
 
 const state = vi.hoisted(() => ({
   flag: true,
+  webFlag: false,
+  webAccounts: [] as unknown[],
+  webSelections: [] as unknown[] | undefined,
   view: undefined as unknown,
   save: vi.fn(),
   queried: [] as Array<{ name: string; args: unknown }>,
@@ -16,11 +20,22 @@ const state = vi.hoisted(() => ({
 
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (flag: string) =>
-    flag === "eval-account-selection-enabled" ? state.flag : false,
+    flag === "eval-account-selection-enabled"
+      ? state.flag
+      : flag === "web-clients-enabled"
+        ? state.webFlag
+        : false,
 }));
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
   useMutation: () => state.save,
+  useQuery: (query: never, args: unknown) => {
+    if (args === "skip") return undefined;
+    state.queried.push({ name: getFunctionName(query), args });
+    return getFunctionName(query) === "webClients:listWebAccounts"
+      ? state.webAccounts
+      : state.webSelections;
+  },
   useQueries: (queries: Record<string, { query: never; args: unknown }>) =>
     Object.fromEntries(
       Object.entries(queries).map(([key, { query, args }]) => {
@@ -41,6 +56,7 @@ vi.mock("@/hooks/useProjects", async (importOriginal) => ({
       { _id: "srv-asana", name: "Asana" },
       { _id: "srv-linear", name: "Linear" },
       { _id: "srv-okta", name: "Okta app" },
+      { _id: "srv-tracker", name: "Task tracker" },
     ],
   }),
 }));
@@ -92,6 +108,9 @@ function renderRow() {
 
 beforeEach(() => {
   state.flag = true;
+  state.webFlag = false;
+  state.webAccounts = [];
+  state.webSelections = [];
   state.view = view();
   state.save.mockReset();
   state.save.mockResolvedValue(null);
@@ -246,10 +265,9 @@ describe("SuiteAccountsRow", () => {
     });
   });
 
-  it("shows the project's shared and XAA connections as fixed rows", () => {
+  it("shows the project's XAA connection as a fixed row", () => {
     state.view = view({
       servers: [
-        { serverId: "srv-linear", mode: "shared", accounts: [], chosen: null },
         {
           serverId: "srv-okta",
           mode: "xaa",
@@ -264,14 +282,106 @@ describe("SuiteAccountsRow", () => {
     const project = screen.getByTestId("suite-accounts-project");
     expect(within(project).getByText("Project connections")).toBeInTheDocument();
     expect(
-      within(project).getByRole("row", { name: /Linear Shared with the project/ }),
-    ).toBeInTheDocument();
-    expect(
       within(project).getByRole("row", {
         name: /Okta app alice-test Simulated identity/,
       }),
     ).toBeInTheDocument();
     expect(within(project).queryByRole("checkbox")).toBeNull();
+  });
+
+  describe("a server shared with the project", () => {
+    const first = {
+      connectionId: "conn-ta1",
+      name: "test-automation-1",
+      isDefault: true,
+      needsReauth: false,
+    };
+    const second = {
+      connectionId: "conn-ta2",
+      name: "test-automation-2",
+      isDefault: false,
+      needsReauth: true,
+    };
+
+    it("lists its project accounts as choices beside the person's own", () => {
+      state.view = view({
+        servers: [
+          {
+            serverId: "srv-tracker",
+            mode: "shared",
+            accounts: [first, second],
+            chosen: ["conn-ta2"],
+          },
+        ],
+      });
+      renderRow();
+      expect(screen.queryByTestId("suite-accounts-project")).toBeNull();
+      const mine = screen.getByTestId("suite-accounts-mine");
+      expect(
+        within(mine).getByRole("rowheader", {
+          name: "Task tracker Shared with the project",
+        }),
+      ).toBeInTheDocument();
+      expect(
+        within(mine).getByRole("checkbox", {
+          name: "Task tracker test-automation-1",
+        }),
+      ).not.toBeChecked();
+      expect(
+        within(mine).getByRole("checkbox", {
+          name: "Task tracker test-automation-2",
+        }),
+      ).toBeChecked();
+      expect(within(mine).getByText("Needs reconnect")).toBeInTheDocument();
+    });
+
+    it("saves the project accounts a person chooses", async () => {
+      state.view = view({
+        servers: [
+          {
+            serverId: "srv-tracker",
+            mode: "shared",
+            accounts: [first, { ...second, needsReauth: false }],
+            chosen: null,
+          },
+        ],
+      });
+      const user = userEvent.setup();
+      renderRow();
+      await user.click(
+        screen.getByRole("checkbox", {
+          name: "Task tracker test-automation-2",
+        }),
+      );
+      expect(state.save).toHaveBeenLastCalledWith({
+        suiteId: "suite-1",
+        serverId: "srv-tracker",
+        connectionIds: ["conn-ta1", "conn-ta2"],
+      });
+    });
+
+    it("says when the project has no account to choose yet", () => {
+      state.view = view({
+        servers: [
+          {
+            serverId: "srv-tracker",
+            mode: "shared",
+            accounts: [],
+            chosen: null,
+          },
+        ],
+      });
+      renderRow();
+      const mine = screen.getByTestId("suite-accounts-mine");
+      expect(
+        within(mine).getByText(
+          "No project account yet. A project admin can connect one on the server's page.",
+        ),
+      ).toBeInTheDocument();
+      expect(
+        within(mine).getByRole("button", { name: "Open server" }),
+      ).toBeInTheDocument();
+    });
   });
 
   it("lists a schedule owner's accounts read-only", () => {
@@ -309,5 +419,87 @@ describe("SuiteAccountsRow", () => {
     expect(
       screen.getByText("None of this suite's servers use an account."),
     ).toBeInTheDocument();
+  });
+});
+
+describe("SuiteAccountsRow web clients", () => {
+  const qa = createWebAccountView({ webAccountId: "wa-qa" });
+  const evals = createWebAccountView({
+    webAccountId: "wa-evals",
+    label: "Evals bot",
+    accountEmail: "evals@example.com",
+    status: "needs_sign_in",
+    isDefault: false,
+  });
+
+  it("adds a web clients group behind its own flag, even with server accounts off", async () => {
+    state.flag = false;
+    state.webFlag = true;
+    state.webAccounts = [qa, evals];
+    const user = userEvent.setup();
+    renderRow();
+    expect(screen.queryByTestId("suite-accounts-mine")).toBeNull();
+    const group = screen.getByTestId("suite-accounts-web");
+    expect(within(group).getByText("Web clients")).toBeInTheDocument();
+    expect(
+      within(group).getByRole("columnheader", { name: "Client" }),
+    ).toBeInTheDocument();
+    expect(within(group).queryByText("Server")).toBeNull();
+    expect(
+      within(group).getByRole("rowheader", { name: "Claude web" }),
+    ).toBeInTheDocument();
+    expect(within(group).getByText("Needs sign-in")).toBeInTheDocument();
+    expect(
+      within(group).getByRole("checkbox", { name: "Claude web qa@example.com" }),
+    ).toBeChecked();
+    await user.click(
+      within(group).getByRole("checkbox", {
+        name: "Claude web evals@example.com",
+      }),
+    );
+    expect(state.save).toHaveBeenLastCalledWith({
+      suiteId: "suite-1",
+      vendor: "claude",
+      webAccountIds: ["wa-qa", "wa-evals"],
+    });
+  });
+
+  it("keeps the choices disabled until the saved choice loads", () => {
+    state.flag = false;
+    state.webFlag = true;
+    state.webAccounts = [qa, evals];
+    state.webSelections = undefined;
+    renderRow();
+    // The default shows checked meanwhile; a click would save over the
+    // person's real choice.
+    expect(
+      within(screen.getByTestId("suite-accounts-web")).getByRole("checkbox", {
+        name: "Claude web evals@example.com",
+      }),
+    ).toBeDisabled();
+  });
+
+  it("sits beside the servers' accounts when both flags are on", () => {
+    state.webFlag = true;
+    state.webAccounts = [qa];
+    renderRow();
+    expect(screen.getByTestId("suite-accounts-mine")).toBeInTheDocument();
+    expect(screen.getByTestId("suite-accounts-web")).toBeInTheDocument();
+  });
+
+  it("reads and shows nothing about web accounts while the flag is off", () => {
+    state.webAccounts = [qa];
+    renderRow();
+    expect(screen.queryByTestId("suite-accounts-web")).toBeNull();
+    expect(
+      state.queried.some(({ name }) => name.startsWith("webClient")),
+    ).toBe(false);
+  });
+
+  it("stays hidden while the project has no web accounts", () => {
+    state.flag = false;
+    state.webFlag = true;
+    const { container } = renderRow();
+    expect(container).toBeEmptyDOMElement();
   });
 });

@@ -284,7 +284,7 @@ export interface PersistedTurnTrace {
   /**
    * Which skills and which environment this turn ran with, echoed from the
    * backend's per-entry `provenance` rows (see
-   * `services/environments/runtime.ts` `turnSkillProvenance`).
+   * `services/environments/live-turn-skills.ts` `turnSkillProvenance`).
    *
    * Carried INSIDE the turn trace, not beside it, for two reasons. The binding
    * is per-TURN — a session live-follows Latest, so an edit changes what the
@@ -902,10 +902,10 @@ export async function persistChatSessionToConvex(
         "chat.session.persist.failed",
         {
           failureKind,
-          ...(status !== undefined ? { statusCode: status } : {}),
+          ...(status !== undefined ? { ingestStatusCode: status } : {}),
           ...(preview ? { responsePreview: preview } : {}),
           sourceType: options.sourceType,
-          origin: options.origin,
+          chatOrigin: options.origin,
         },
         error ? { error } : undefined,
       );
@@ -982,7 +982,7 @@ export async function persistChatSessionToConvex(
             "chat.session.persist.skipped",
             {
               sourceType: options.sourceType,
-              origin: options.origin,
+              chatOrigin: options.origin,
               hasTurnId: Boolean(options.turnTrace?.turnId),
             },
           );

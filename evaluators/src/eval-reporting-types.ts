@@ -30,6 +30,15 @@ export type EvalTraceSpanInput = {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  // Per-call cost evidence, on llm spans only. The full shape is the SDK's
+  // `ModelCallCostEvidence`; evaluators sits below the SDK and cannot import
+  // it, so this names the fields every record carries.
+  cost?: {
+    calculationVersion: number;
+    currency: "USD";
+    completeness: "complete" | "partial" | "unavailable";
+    amountUsd?: number;
+  };
   messageStartIndex?: number;
   messageEndIndex?: number;
   // GenAI harness metadata (step/llm spans). Mirror of inspector

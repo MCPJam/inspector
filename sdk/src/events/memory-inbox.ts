@@ -46,6 +46,8 @@ interface Slot {
   dispatch: boolean;
   state: SlotState;
   secret: string;
+  callbackUrl: string;
+  verifiedAt?: number;
   previousSecret?: string;
   previousSecretUntil?: number;
   serverSubscriptionId?: string;
@@ -74,6 +76,8 @@ export interface MemoryInboxOptions {
   inboxId?: string;
   /** Origin callback URLs are minted under. */
   publicOrigin: string;
+  resolveCallbackBase?: (args: { logicalSubscriptionId: string }) => string;
+  independentWebhookIds?: boolean;
   clock?: { now(): number };
   pendingTtlMs?: number;
   overlapMs?: number;
@@ -117,13 +121,17 @@ export class MemoryEventInbox implements InboxPort {
   readonly rejections: Rejection[] = [];
   private seq = 0;
   private readonly clock: { now(): number };
-  private readonly options: Required<Omit<MemoryInboxOptions, "clock" | "inboxId">>;
+  private readonly options: Required<Omit<MemoryInboxOptions, "clock" | "inboxId" | "resolveCallbackBase">>;
+
+  private readonly resolveCallbackBase: MemoryInboxOptions["resolveCallbackBase"];
 
   constructor(options: MemoryInboxOptions) {
+    this.resolveCallbackBase = options.resolveCallbackBase;
     this.inboxId = options.inboxId ?? randomId();
     this.clock = options.clock ?? { now: () => Date.now() };
     this.options = {
-      publicOrigin: options.publicOrigin.replace(/\/$/, ""),
+      publicOrigin: options.publicOrigin,
+      independentWebhookIds: options.independentWebhookIds ?? false,
       pendingTtlMs: options.pendingTtlMs ?? 15 * 60 * 1000,
       overlapMs: options.overlapMs ?? 10 * 60 * 1000,
       maxUndispatched: options.maxUndispatched ?? 1000,
@@ -131,7 +139,11 @@ export class MemoryEventInbox implements InboxPort {
   }
 
   callbackUrlFor(slotId: string): string {
-    return `${this.options.publicOrigin}/i/${this.inboxId}/s/${slotId}`;
+    return this.slots.get(slotId)?.callbackUrl ?? this.slotUrl(this.options.publicOrigin, slotId);
+  }
+
+  private slotUrl(base: string, slotId: string): string {
+    return `${base.replace(/\/$/, "")}/i/${this.inboxId}/s/${slotId}`;
   }
 
   // --- InboxPort ----------------------------------------------------------
@@ -164,6 +176,10 @@ export class MemoryEventInbox implements InboxPort {
       ...tenant,
       state: "pending",
       secret: generateWebhookSecret(),
+      callbackUrl: this.slotUrl(
+        this.resolveCallbackBase?.(tenant) ?? this.options.publicOrigin,
+        slotId,
+      ),
       observedSubscriptionIds: [],
       pendingExpiresAt: this.clock.now() + this.options.pendingTtlMs,
     };
@@ -182,7 +198,7 @@ export class MemoryEventInbox implements InboxPort {
     return {
       inboxId: this.inboxId,
       slotId: slot.slotId,
-      callbackUrl: this.callbackUrlFor(slot.slotId),
+      callbackUrl: slot.callbackUrl,
       secret: slot.secret,
       state: this.effectiveState(slot),
     };
@@ -402,7 +418,8 @@ export class MemoryEventInbox implements InboxPort {
 
     const headerSubscriptionId = headerValue(args.headers, "x-mcp-subscription-id");
     if (classified.kind === "verification") {
-      // Answered only when correctly signed (above) — never journalled.
+      // Answered only when correctly signed (above).
+      slot.verifiedAt = now;
       return { status: 200, body: { challenge: classified.envelope.challenge } };
     }
     if (this.undispatchedCount() >= this.options.maxUndispatched) {
@@ -451,7 +468,7 @@ export class MemoryEventInbox implements InboxPort {
         deliveryKey: computeDeliveryKey({ ...tenant, eventId: event.eventId }),
         dispatch,
         ...(idConflict ? { idConflict: true } : {}),
-        ...(verified.webhookId !== event.eventId ? { webhookIdMismatch: true } : {}),
+        ...(!this.options.independentWebhookIds && verified.webhookId !== event.eventId ? { webhookIdMismatch: true } : {}),
       };
     } else if (classified.kind === "gap" || classified.kind === "terminated") {
       row = {
@@ -523,6 +540,8 @@ export class MemoryEventInbox implements InboxPort {
   slotState(slotId: string):
     | {
         state: SlotState;
+        logicalSubscriptionId: string;
+        verifiedAt?: number;
         serverSubscriptionId?: string;
         observedSubscriptionIds: string[];
         hasPreviousSecret: boolean;
@@ -533,6 +552,8 @@ export class MemoryEventInbox implements InboxPort {
     return {
       state: this.effectiveState(slot),
       ...(slot.serverSubscriptionId ? { serverSubscriptionId: slot.serverSubscriptionId } : {}),
+      logicalSubscriptionId: slot.logicalSubscriptionId,
+      ...(slot.verifiedAt !== undefined ? { verifiedAt: slot.verifiedAt } : {}),
       observedSubscriptionIds: [...slot.observedSubscriptionIds],
       hasPreviousSecret: this.previousSecretLive(slot),
     };

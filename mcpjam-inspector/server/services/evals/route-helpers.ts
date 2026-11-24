@@ -4,7 +4,7 @@ import {
   type HttpServerConfig,
   type MCPServerReplayConfig,
 } from "@mcpjam/sdk";
-import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
+import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
   buildServerToolSnapshotDebug,
   exportConnectedServerToolSnapshotForEvalAuthoring,
@@ -13,6 +13,7 @@ import {
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
 import { backendFailureText } from "../../utils/backend-failure-text.js";
+import { hostedCredentialDeliveryHeaders } from "../service-credential.js";
 
 export type ReplayConfig = {
   runId: string;
@@ -105,6 +106,8 @@ export async function fetchReplayConfig(
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${userAuthToken}`,
+          // The replay connects from this process; its tokens stay here.
+          ...hostedCredentialDeliveryHeaders(HOSTED_MODE),
         },
         body: JSON.stringify({ runId }),
         signal: controller.signal,

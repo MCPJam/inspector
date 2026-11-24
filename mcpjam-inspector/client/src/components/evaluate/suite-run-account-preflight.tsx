@@ -19,11 +19,11 @@ import {
 } from "../evals/helpers";
 import type { EvalSuite } from "../evals/types";
 
-/** The account half of the Setup Run preflight. Each field is absent until there is something to say. */
+/** The account half of the Set up run preflight. Each field is absent until there is something to say. */
 export type AccountPreflight = {
   /** Chosen accounts the launch would refuse: removed, or needing reconnect. */
   accountProblems?: AccountProblem[];
-  /** The person's own accounts the run will use. */
+  /** The accounts the run will use for the person, on servers they choose for. */
   runsAs?: RunsAsEntry[];
   /** Both, for only the servers these refs (ids or names) name. */
   accountsFor?: (

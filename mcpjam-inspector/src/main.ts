@@ -5,18 +5,19 @@
 import "./ws-native-fallback.js";
 import { writeInspectorRuntime } from "../server/services/inspector-runtime";
 import { OAuthCallbackDelivery } from "./oauth-callback-delivery.js";
-// Must stay below that guard: `security-policy.js` reaches into `server/`,
-// which pulls in `ws`. Hoisted above it, `ws` evaluates before
-// WS_NO_BUFFER_UTIL is set -- the #4208 path `ws-native-fallback.test.ts` pins.
+// Must stay below that guard: it reaches into `server/`, which can pull in
+// `ws`. Hoisted above it, `ws` evaluates before WS_NO_BUFFER_UTIL is set --
+// the #4208 path `ws-native-fallback.test.ts` pins.
 import { setAgentBrowserRendererOrigin } from "./ipc/agent-browser/agent-browser-listeners.js";
-import { registerBrowserController } from "../server/services/browserd/local/security-policy.js";
 import {
   initDesktopSentry,
   reportDesktopStartupFailure,
 } from "./strict-sentry.js";
 import { recordUpdateShutdown } from "./ipc/update/update-shutdown.js";
 import { installDesktopDiagnostics } from "./desktop-diagnostics-electron.js";
-import { app, BrowserWindow, shell, Menu, dialog, session, ipcMain } from "electron";
+import { app, BrowserWindow, shell, Menu, dialog, session, ipcMain, clipboard } from "electron";
+import { release } from "node:os";
+import { buildHelpMenu } from "./desktop-help-menu.js";
 import {
   registerMainProcessCrashHandlers,
 } from "./crash-reporting.js";
@@ -245,6 +246,11 @@ function shouldForceElectronOAuthFallback(): boolean {
   );
 }
 
+/** Packaged builds bind IPv4 loopback; dev binds `localhost`, often `::1`. */
+function serverBindHost(): string {
+  return app.isPackaged ? "127.0.0.1" : "localhost";
+}
+
 function getServerUrl(): string {
   return `http://127.0.0.1:${serverPort}`;
 }
@@ -467,9 +473,13 @@ async function startHonoServer(): Promise<number> {
       ? process.resourcesPath
       : app.getAppPath();
     process.env.NODE_ENV = app.isPackaged ? "production" : "development";
+    // The server reads its version from here when it loads (/health, User-Agent).
+    if (!process.env.MCPJAM_INSPECTOR_VERSION?.trim()) {
+      process.env.MCPJAM_INSPECTOR_VERSION = app.getVersion();
+    }
 
     // Bind to 127.0.0.1 when packaged to avoid IPv6-only localhost issues
-    const hostname = app.isPackaged ? "127.0.0.1" : "localhost";
+    const hostname = serverBindHost();
 
     let port: number;
     if (cachedProbedPort !== null) {
@@ -550,6 +560,8 @@ async function startHonoServer(): Promise<number> {
     // Node's cache; subsequent calls just return the cached exports, which
     // is exactly what we want now that we're reusing the same port.
     const { createHonoApp } = await import("../server/app.js");
+    const { registerBrowserController } =
+      await import("../server/services/browserd/local/security-policy.js");
 
     // Seal the local-harness instance key with the OS keychain. Injected
     // rather than imported by the server, which has to stay loadable under
@@ -971,6 +983,18 @@ function createAppMenu(): void {
           : []),
       ],
     },
+    buildHelpMenu({
+      snapshot: desktopDiagnostics.snapshot,
+      // Probe the host the server is bound to, not getServerUrl's 127.0.0.1.
+      serverUrl: () =>
+        serverPort > 0 ? `http://${serverBindHost()}:${serverPort}` : null,
+      appVersion: () => app.getVersion(),
+      electronVersion: process.versions.electron,
+      os: `${process.platform}-${release()}`,
+      writeClipboard: (text) => clipboard.writeText(text),
+      confirm: (message) =>
+        void dialog.showMessageBox({ type: "info", message }),
+    }),
   ];
 
   const menu = Menu.buildFromTemplate(template);

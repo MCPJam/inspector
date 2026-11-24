@@ -1,3 +1,4 @@
+import { isWebClientRuntimeId } from "../../../shared/web-clients.js";
 import { externalAccountCredentialFor } from "../../../shared/external-credential-selection.js";
 import { markOnboardingPhase } from "../plugin-host/onboarding-trace.js";
 import { makeFunctionReference } from "convex/server";
@@ -63,6 +64,9 @@ export async function resolveChatTurn(args: {
   signal?: AbortSignal;
   prepareChatTurn?: boolean;
   preparedChatTurn?: unknown;
+  /** A client's turn (`resolveEnvironmentForRuntime`). The backend's own
+   *  preparation always asks for it. */
+  skillScope?: "visible";
 }): Promise<ResolvedChatTurn> {
   if (
     !args.client ||
@@ -151,7 +155,7 @@ export async function resolveChatTurn(args: {
     const harness = raw.runtimeConfig.agentLoop ?? raw.runtimeConfig.harness;
     if (
       typeof harness !== "string" ||
-      !externalAccountCredentialFor(harness) ||
+      (!externalAccountCredentialFor(harness) && !isWebClientRuntimeId(harness)) ||
       (args.target.kind === "host" && raw.hostId !== args.target.hostId)
     ) {
       throw new WebRouteError(
@@ -191,6 +195,7 @@ export async function resolveChatTurn(args: {
     ...(args.selection.kind === "explicit"
       ? { overrides: { serverIds: args.selection.serverIds } }
       : {}),
+    ...(args.skillScope ? { skillScope: args.skillScope } : {}),
   });
   if (
     composition &&

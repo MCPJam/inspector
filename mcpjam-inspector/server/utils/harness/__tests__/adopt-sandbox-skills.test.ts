@@ -37,6 +37,21 @@ function fakeSession(dirs: string[], files: Record<string, string | undefined>) 
 beforeEach(() => vi.clearAllMocks());
 
 describe("adoptSandboxSkills", () => {
+  it("rejects an alternate frontmatter engine during adoption", async () => {
+    const session = fakeSession(["sample"], {
+      sample: '---json\n{"name":"sample","description":"example"}\n---\ninstructions',
+    });
+    const out = await adoptSandboxSkills({
+      skillsBase: SKILLS_BASE,
+      session,
+      authHeader: "Bearer test",
+      projectId: "proj_1",
+      managedNames: new Set(),
+    });
+    expect(out.adopted).toEqual([]);
+    expect(convexAdoptComputerSkills).not.toHaveBeenCalled();
+  });
+
   it("adopts a valid unmanaged dir and returns its skillId for the manifest", async () => {
     vi.mocked(convexAdoptComputerSkills).mockResolvedValue({
       results: [{ name: "pdf-tools", status: "adopted", skillId: "sk_1" }],
@@ -45,6 +60,7 @@ describe("adoptSandboxSkills", () => {
       "pdf-tools": skillMd("pdf-tools"),
     });
     const out = await adoptSandboxSkills({
+      skillsBase: SKILLS_BASE,
       session,
       authHeader: "Bearer x",
       projectId: "proj_1",
@@ -97,6 +113,7 @@ describe("adoptSandboxSkills", () => {
       "shared-skill": skillMd("shared-skill"),
     });
     const out = await adoptSandboxSkills({
+      skillsBase: SKILLS_BASE,
       session,
       authHeader: "Bearer x",
       projectId: "proj_1",
@@ -111,6 +128,7 @@ describe("adoptSandboxSkills", () => {
       "on-disk-name": skillMd("frontmatter-name"),
     });
     const out = await adoptSandboxSkills({
+      skillsBase: SKILLS_BASE,
       session,
       authHeader: "Bearer x",
       projectId: "proj_1",
@@ -127,6 +145,7 @@ describe("adoptSandboxSkills", () => {
       "big-desc": skillMd("big-desc", longDesc),
     });
     await adoptSandboxSkills({
+      skillsBase: SKILLS_BASE,
       session,
       authHeader: "Bearer x",
       projectId: "proj_1",
@@ -141,6 +160,7 @@ describe("adoptSandboxSkills", () => {
     const md = `---\nname: with-tools\ndescription: d\nallowed-tools: Bash, Read\nlicense: MIT\n---\n\nbody\n`;
     const session = fakeSession(["with-tools"], { "with-tools": md });
     await adoptSandboxSkills({
+      skillsBase: SKILLS_BASE,
       session,
       authHeader: "Bearer x",
       projectId: "proj_1",
@@ -177,6 +197,7 @@ describe("adoptSandboxSkills", () => {
       ),
     };
     const out = await adoptSandboxSkills({
+      skillsBase: SKILLS_BASE,
       session,
       authHeader: "Bearer x",
       projectId: "proj_1",
@@ -208,6 +229,7 @@ describe("adoptSandboxSkills", () => {
       ),
     };
     const out = await adoptSandboxSkills({
+      skillsBase: SKILLS_BASE,
       session,
       authHeader: "Bearer x",
       projectId: "proj_1",
@@ -224,6 +246,7 @@ describe("adoptSandboxSkills", () => {
     for (const d of ["a", "b", "c", "d", "e", "f", "g"]) files[d] = skillMd(d);
     const session = fakeSession(dirs, files);
     await adoptSandboxSkills({
+      skillsBase: SKILLS_BASE,
       session,
       authHeader: "Bearer x",
       projectId: "proj_1",
@@ -239,6 +262,7 @@ describe("adoptSandboxSkills", () => {
       readTextFile: vi.fn(),
     };
     const out = await adoptSandboxSkills({
+      skillsBase: SKILLS_BASE,
       session,
       authHeader: "Bearer x",
       projectId: "proj_1",

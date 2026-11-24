@@ -22,11 +22,14 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import type { HostListItem } from "@/hooks/useClients";
-import { resolveHostLogoByName } from "@/lib/host-logo";
+import { resolveHostLogo } from "@/lib/host-logo";
 import type { HostThemeMode } from "@/lib/client-styles";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 import { clientDisplayName } from "@/lib/client-display-name";
 import { HostChipLogo } from "@/components/hosts/host-chip";
+import { useOpenAcrossRemount } from "./use-open-across-remount";
+import { useWebClientsEnabled } from "@/hooks/useWebClientsEnabled";
+import { pickableHosts } from "@/lib/web-accounts/clients";
 
 /**
  * Data needed to drive the chat-input client (host) chip. Mirrors the model
@@ -42,7 +45,10 @@ import { HostChipLogo } from "@/components/hosts/host-chip";
  * parent's mutual-exclusion logic keeps working unchanged.
  */
 export interface ClientSelectorData {
-  hosts: Pick<HostListItem, "hostId" | "name" | "displayName">[];
+  hosts: Pick<
+    HostListItem,
+    "hostId" | "name" | "displayName" | "hostStyle" | "runtime"
+  >[];
   /** Project the hosts belong to — required to create new hosts. May be a
    *  client-local project id (UUID) before the project is synced to Convex. */
   projectId: string | null;
@@ -102,7 +108,7 @@ function compactHostLabel(name: string): string {
 export function ClientSelector({
   trigger,
   inModal = false,
-  hosts,
+  hosts: listedHosts,
   projectId,
   currentHostId,
   selectedHostIds,
@@ -123,12 +129,29 @@ export function ClientSelector({
   themeMode,
   modalThemeMode = themeMode,
 }: ClientSelectorProps) {
+  // Claude web and ChatGPT web clients stay out of the list while their flag
+  // is off (the shared `pickableHosts` rule), except one this chat already
+  // runs: it keeps its row so it can be switched away from or dropped.
+  const webClientsEnabled = useWebClientsEnabled();
+  const runningHostIds = useMemo(
+    () =>
+      environmentPanes.length > 0 ||
+      (enableMultiHost && selectedHostIds.length > 0)
+        ? selectedHostIds
+        : [currentHostId],
+    [currentHostId, enableMultiHost, environmentPanes, selectedHostIds],
+  );
+  const listed = useMemo(
+    () => pickableHosts(listedHosts, webClientsEnabled, runningHostIds),
+    [listedHosts, webClientsEnabled, runningHostIds],
+  );
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const keepPopoverOpenRef = useRef(false);
   const keepPopoverOpenTimeoutRef = useRef<number | null>(null);
   const onOpenChangeRef = useRef(onOpenChange);
+  useOpenAcrossRemount(isOpen, () => setIsOpen(true));
 
   useEffect(() => {
     onOpenChangeRef.current = onOpenChange;
@@ -182,17 +205,18 @@ export function ClientSelector({
     setIsOpen(nextOpen);
   };
 
+  // Every client, hidden ones included, so a running one keeps its name.
   const hostsById = useMemo(() => {
     const map = new Map<string, ClientSelectorData["hosts"][number]>();
-    for (const host of hosts) map.set(host.hostId, host);
+    for (const host of listedHosts) map.set(host.hostId, host);
     return map;
-  }, [hosts]);
+  }, [listedHosts]);
 
   // Whether the checklist (checkboxes, multi-select) renders at all — with
   // 0-1 clients available, or when the parent has withdrawn compare
   // (shared session, environment mode), there's nothing to multi-select and
   // rows fall back to plain single-select.
-  const checklistMode = enableMultiHost && hosts.length > 1;
+  const checklistMode = enableMultiHost && listed.length > 1;
 
   // The lineup is the persisted array — but ONLY while checklist mode is
   // actually available. The Playground can withdraw compare (host count
@@ -214,6 +238,13 @@ export function ClientSelector({
     () => new Set(effectiveSelectedHostIds),
     [effectiveSelectedHostIds],
   );
+  // The rows. A hidden client gets one only while it's actually selected: a
+  // row is a way to drop it, never to pick it.
+  const hosts = useMemo(
+    () =>
+      pickableHosts(listedHosts, webClientsEnabled, effectiveSelectedHostIds),
+    [listedHosts, webClientsEnabled, effectiveSelectedHostIds],
+  );
 
   const leadHostId = environmentLeads
     ? null
@@ -225,7 +256,7 @@ export function ClientSelector({
       ? (environmentPanes[0]?.label ?? "Select client")
       : "Select client";
   const leadHostLogo = leadHost?.name
-    ? resolveHostLogoByName(leadHost.name, themeMode)
+    ? resolveHostLogo(leadHost, themeMode)
     : null;
 
   const isComparing =
@@ -368,8 +399,8 @@ export function ClientSelector({
                         const name = compactHostLabel(
                           host ? clientDisplayName(host) : hostId,
                         );
-                        const logo = resolveHostLogoByName(
-                          host?.name ?? name,
+                        const logo = resolveHostLogo(
+                          host ?? { name },
                           themeMode,
                         );
                         return (
@@ -448,8 +479,8 @@ export function ClientSelector({
                   const host = hostsById.get(hostId);
                   const isLead = index === 0 && !environmentLeads;
                   const name = host ? clientDisplayName(host) : hostId;
-                  const logo = resolveHostLogoByName(
-                    host?.name ?? name,
+                  const logo = resolveHostLogo(
+                    host ?? { name },
                     modalThemeMode,
                   );
                   return (
@@ -510,7 +541,7 @@ export function ClientSelector({
                 const isSelected = selectedIds.has(host.hostId);
                 const isLimitedOut =
                   checklistMode && !isSelected && limitReached;
-                const logo = resolveHostLogoByName(host.name, modalThemeMode);
+                const logo = resolveHostLogo(host, modalThemeMode);
 
                 // A real button, not the row's own click target. Outside a
                 // comparison the row body switches clients; while comparing it

@@ -19,6 +19,7 @@ import type {
 import { runnableSelection } from "@/hooks/conformance-suite-state";
 import {
   CONFORMANCE_RUN_PARAM,
+  CONFORMANCE_SETUP_PARAM,
   useAppNavigate,
   useCurrentLocationParts,
 } from "@/lib/app-navigation";
@@ -43,6 +44,8 @@ import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
 import { ConformanceDefaultsError } from "./ConformanceDefaultsError";
 import { ConformanceSettings } from "./ConformanceSettings";
 import { ConformanceSetup } from "./ConformanceSetup";
+import { track } from "@/lib/analytics";
+import { ConformanceRunRequestContext } from "./conformance-run-request";
 import {
   probesAfterRun,
   useConformanceProbeStore,
@@ -155,7 +158,21 @@ export function ConformanceTab({
   // Run opens the setup steps; Continue hands back the server and revision to
   // run, and the run view mounts fresh for them and starts. `id` keys that
   // mount, so a Continue on the server already shown still starts anew.
-  const [setupOpen, setSetupOpen] = useState(false);
+  // Home's checklist lands with `?setup=1` to start at the setup steps.
+  const [setupOpen, setSetupOpen] = useState(() =>
+    new URLSearchParams(location.search).has(CONFORMANCE_SETUP_PARAM),
+  );
+  // Dropped once read, so a refresh or a view change doesn't reopen setup.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (!params.has(CONFORMANCE_SETUP_PARAM)) return;
+    params.delete(CONFORMANCE_SETUP_PARAM);
+    const query = params.toString();
+    navigate(
+      `${location.pathname}${query ? `?${query}` : ""}${location.hash}`,
+      { replace: true },
+    );
+  }, [location.search, location.pathname, location.hash, navigate]);
   const [start, setStart] = useState<{
     id: number;
     serverName: string;
@@ -195,6 +212,9 @@ export function ConformanceTab({
     serverName: string;
     seconds: number | null;
   }>>({});
+  useEffect(() => {
+    track("conformance_tab_viewed", { location: "conformance_tab" });
+  }, []);
   useEffect(() => {
     setChangedTimeouts((previous) => {
       const pending = Object.fromEntries(
@@ -547,18 +567,17 @@ export function ConformanceTab({
   if (!server || !server.name || server.name === "none" || !server.config) {
     if (setup) return setup;
     // Same pre-run page as with a server; running just asks for one first.
+    const noServerRunRequest = {
+      run: openSetup
+        ? () => {
+            setRunFrom(activeView);
+            openSetup();
+          }
+        : () => toast.info(NO_SERVERS_MESSAGE),
+      disabled: false,
+    };
     const noServerRunButton = (
-      <Button
-        size="sm"
-        onClick={
-          openSetup
-            ? () => {
-                setRunFrom(activeView);
-                openSetup();
-              }
-            : () => toast.info(NO_SERVERS_MESSAGE)
-        }
-      >
+      <Button size="sm" onClick={noServerRunRequest.run}>
         {RUN_LABEL}
       </Button>
     );
@@ -573,8 +592,12 @@ export function ConformanceTab({
         </ConformanceHeader>
         <ConformanceTabPanel view={activeView}>
           {activeView === "history" ? (
-            <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
-              {history}
+            // The same column and run request as with a server, so History
+            // centers its states and offers the same Run.
+            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 py-6">
+              <ConformanceRunRequestContext.Provider value={noServerRunRequest}>
+                {history}
+              </ConformanceRunRequestContext.Provider>
             </div>
           ) : (
             <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 pt-6 pb-8">

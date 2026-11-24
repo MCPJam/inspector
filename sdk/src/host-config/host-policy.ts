@@ -15,6 +15,7 @@ import type {
   McpToolResultImageRenderPlacement,
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
+  ModelVisibleStructuredContent,
 } from "./types.js";
 
 export type { ToolExposureSignals } from "./tool-visibility.js";
@@ -41,6 +42,11 @@ function readHostStyle(
 }
 
 export type ResolvedModelVisibleMcpToolResults = {
+  /**
+   * Present only when the host sets it: the harness profile schema is strict,
+   * so an undefined-valued key would change admission for every host.
+   */
+  structuredContent?: ModelVisibleStructuredContent;
   directContent: {
     text: boolean;
     image: boolean;
@@ -154,6 +160,9 @@ export function resolveModelVisibleMcpToolResults(
     DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS.linkedResources.blob.enabled;
 
   return {
+    ...(policy?.structuredContent !== undefined
+      ? { structuredContent: policy.structuredContent }
+      : {}),
     directContent: {
       text:
         policy?.directContent?.text ??

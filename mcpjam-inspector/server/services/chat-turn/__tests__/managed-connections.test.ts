@@ -1,11 +1,13 @@
 import {
   getManagerResourceSnapshot,
+  setManagerConnections,
   setManagerResourceSnapshots,
 } from "../../../utils/mcp-connections";
+import type { MCPClientManager } from "@mcpjam/sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { HOSTED_HARNESS_INPUT_VERSION } from "../../../../shared/hosted-elicitation";
-const m = vi.hoisted(() => ({ order: [] as string[], authorize: vi.fn(), refused: {} as Record<string, unknown> }));
+const m = vi.hoisted(() => ({ order: [] as string[], authorize: vi.fn(), refused: {} as Record<string, unknown>, capture: vi.fn(async (..._args: unknown[]) => {}) }));
 vi.mock("../../../routes/web/hosted-elicitation.js", async (original) => ({
   ...(await original<
     typeof import("../../../routes/web/hosted-elicitation.js")
@@ -38,8 +40,11 @@ vi.mock("../../../routes/web/auth.js", async (original) => ({
 vi.mock("../../../utils/v1-convex-token.js", () => ({
   getConvexBearerForRequest: async () => "convex-bearer",
 }));
-vi.mock("../../../utils/connection-profile-refresh.js", () => ({
-  refreshConnectionProfiles: async () => {},
+vi.mock("../../../utils/account-profile-capture.js", async (original) => ({
+  ...(await original<
+    typeof import("../../../utils/account-profile-capture.js")
+  >()),
+  captureAccountProfile: m.capture,
 }));
 vi.mock("../../xaa-mint.js", async (original) => ({
   ...(await original<typeof import("../../xaa-mint.js")>()),
@@ -69,6 +74,60 @@ const setup = {
   resolvedExecution: {},
   turnRail: "hosted",
 } as unknown as Setup;
+
+describe("session-start profile refresh", () => {
+  // The refresh is MCPJam's own lookup of which account a run used. "Require
+  // tool approval" simulates a host's prompts for the model's calls, so it
+  // must not cost a run its account label.
+  it.each([true, false])(
+    "asks every account's profile tool when tool approval is required: %s",
+    async (requireToolApproval) => {
+      m.capture.mockClear();
+      const manager = {} as MCPClientManager;
+      manager.disconnectAllServers = async () => {};
+      manager.getInitializationInfo = () => undefined;
+      setManagerConnections(manager, {
+        "server-1": ["work", "personal"].map((connectionId) => ({
+          serverId: "server-1",
+          connectionId,
+          key: `server-1::${connectionId}`,
+          label: connectionId,
+        })),
+      });
+      m.authorize.mockImplementationOnce(async () => ({
+        manager,
+        oauthServerUrls: {},
+        authenticatedUserId: "user-1",
+        refusedServers: {},
+      }));
+      const resources = new TurnResources((error) => {
+        throw error;
+      });
+      const app = new Hono();
+      app.post("/", async (c) => {
+        await prepareManagedConnections({
+          c,
+          rawBody: {},
+          bearerToken: "bearer",
+          rpcCollector: createHostedRpcLogCollector({}),
+          resources,
+          setup: { ...setup, requireToolApproval } as Setup,
+          onOAuthServerUrls: () => {},
+        });
+        return c.json({ ok: true });
+      });
+      expect((await app.request("/", { method: "POST" })).status).toBe(200);
+      expect(m.capture).toHaveBeenCalledTimes(2);
+      for (const connectionId of ["work", "personal"])
+        expect(m.capture).toHaveBeenCalledWith(
+          manager,
+          expect.objectContaining({ connectionId }),
+          { bearer: "bearer", projectId: "project-1" },
+        );
+      await resources.dispose();
+    },
+  );
+});
 
 describe("managed connection ownership", () => {
   beforeEach(() => {

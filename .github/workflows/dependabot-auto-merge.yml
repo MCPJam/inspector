@@ -1,14 +1,13 @@
 name: Dependabot Auto-approve
 
 # Takes exactly ONE action on every Dependabot PR:
-#   - APPROVE -> approve it, so a person can add it to the merge queue with
-#                one click once the required checks on main pass.
+#   - APPROVE -> approve it, so a person can merge it with one click once
+#                the required checks on main pass.
 #   - HOLD    -> leave it open for a human and say, in one line, why.
 #
-# It never queues a PR itself. GitHub starts no workflow for an event caused
-# by GITHUB_TOKEN, and that includes the merge_group event of a PR this token
-# adds to the queue: the entry gets no checks, sits at the head of the queue
-# and blocks every PR behind it.
+# It never merges a PR itself. GitHub starts no workflow for an event caused
+# by GITHUB_TOKEN, so a merge made with this token would land on main without
+# triggering any of main's push workflows.
 #
 # What is approved on its own: security updates, dev-dependency patch/minor bumps,
 # and — since 2026-09-24 — majors and runtime patch/minor bumps too. Holding
@@ -16,8 +15,9 @@ name: Dependabot Auto-approve
 # from 2026-09-01 to 2026-09-23 about twenty major PRs sat open and one
 # Dependabot PR merged. A green CI run is the review now, so the second class
 # carries one extra condition: the checks that actually EXERCISE the update
-# must be required on main, because the merge queue waits only for required
-# checks. On 2026-09-24 main requires "Build and Test" and "Run Tests", and
+# must be required on main, because a PR can be merged as soon as the
+# required checks pass, whatever the others say. On 2026-09-24 main requires
+# "Build and Test" and "Run Tests", and
 # neither runs the inspector's own test suite ("Inspector Tests N/6") or
 # builds the example apps ("Build examples"). #5474 shows why that matters:
 # with the typecheck fixed, its remaining breakage — including a runtime break
@@ -185,7 +185,8 @@ jobs:
 
       # The approval is the whole APPROVE decision, not a general bypass: the
       # "Standard BC" ruleset on main requires 1 approving review, so with it
-      # a person only has to add the PR to the merge queue. It is posted by
+      # a person only has to merge the PR once the required checks pass. It
+      # is posted by
       # github-actions[bot], only in this workflow, only for the classes
       # decided above, and never by the PR author. No `gh pr merge --auto`
       # here: see the top of this file.
@@ -200,7 +201,7 @@ jobs:
           set -euo pipefail
           gh api -X POST "repos/$REPO/pulls/$PR/reviews" \
             -f event=APPROVE \
-            -f body="Auto-approved: $REASON. Add it to the merge queue once the required checks pass." >/dev/null
+            -f body="Auto-approved: $REASON. Merge it once the required checks pass." >/dev/null
 
       - name: Hold for human review
         if: steps.decide.outputs.action == 'hold'
@@ -250,7 +251,7 @@ jobs:
               approvals=$(gh api --paginate "repos/$REPO/pulls/$PR/reviews" \
                 --jq '.[] | select(.user.login == "github-actions[bot]" and .state == "APPROVED") | .id' | wc -l)
               if [ "$approvals" -gt 0 ]; then
-                echo "Outcome: APPROVE — approved; a person adds it to the merge queue."
+                echo "Outcome: APPROVE — approved; a person merges it once the required checks pass."
               else
                 echo "::error title=Approval never posted::PR #$PR was classified APPROVE but has no approval from this workflow. Check the Approve step — a silent 403 there is the likely cause, which would mean this workflow is running with a read-only token."
                 exit 1

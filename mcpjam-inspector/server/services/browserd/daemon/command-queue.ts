@@ -26,6 +26,7 @@ import {
   BrowserCommand,
   BrowserCommandOutcome,
   BrowserCommandResult,
+  BrowserCommandSecret,
   CommandQueueOptions,
   DEFAULT_COMMAND_QUEUE_OPTIONS,
   DEFAULT_QUEUE_KEY,
@@ -51,7 +52,7 @@ export interface CommandContext {
    * Values for this command's `{{secret:NAME}}` placeholders, only the names it
    * references: the daemon scrubs observations for everything it is given.
    */
-  secrets?: ReadonlyArray<{ name: string; value: string }>;
+  secrets?: ReadonlyArray<BrowserCommandSecret>;
 }
 
 /**

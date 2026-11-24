@@ -12,6 +12,7 @@ import {
 import { pluginBindingDigest } from "./bindings.js";
 import { pluginFormSources, type PluginFormParent } from "./form-sources.js";
 import { pluginInstances, type PluginInstanceIdentity } from "./instances.js";
+import { restorePluginFormOwner } from "./form-owner.js";
 import { PluginInvocationError } from "./invocation.js";
 import type { createPluginRequestRuntime } from "./request-runtime.js";
 
@@ -73,13 +74,24 @@ export async function assertPluginFormPending(options: {
   signal.throwIfAborted();
 }
 
-/** Original source and live durable window shared by previews and uploads. No URI grant. */
-export function createPluginFormAuthority(options: PluginFormServiceOptions) {
-  const { source, signal: ownerSignal } = pluginFormSources.get(
+/** Original source and live durable window shared by previews and uploads. No URI grant.
+ * A stored source and its owner are restored on any replica, and read again
+ * after every pending check, so a close anywhere refuses what follows. */
+export async function createPluginFormAuthority(
+  options: PluginFormServiceOptions,
+) {
+  const {
+    source,
+    signal: ownerSignal,
+    ownerRef,
+  } = await pluginFormSources.restore(
     options.sourceToken,
     options.actor,
     options.parent,
+    options.signal,
   );
+  if (ownerRef)
+    await restorePluginFormOwner(ownerRef, options.actor, options.signal);
   const instance = pluginInstances.getFormOwner(source.owner, options.actor);
   const signal = AbortSignal.any([
     options.signal,
@@ -102,6 +114,17 @@ export function createPluginFormAuthority(options: PluginFormServiceOptions) {
       signal,
     });
     signal.throwIfAborted();
+    // The stored rows after the pending wait, never beside it.
+    if (ownerRef) {
+      await pluginFormSources.refresh(
+        options.sourceToken,
+        options.actor,
+        options.parent,
+        signal,
+      );
+      await restorePluginFormOwner(ownerRef, options.actor, signal);
+      signal.throwIfAborted();
+    }
     pluginFormSources.get(options.sourceToken, options.actor, options.parent);
     pluginInstances.getFormOwner(source.owner, options.actor);
   };
@@ -158,10 +181,10 @@ export function createPluginFormAuthority(options: PluginFormServiceOptions) {
   };
 }
 
-export function createPluginFormService(
+export async function createPluginFormService(
   options: PluginFormPreviewServiceOptions,
 ) {
-  const service = createPluginFormAuthority(options);
+  const service = await createPluginFormAuthority(options);
   const profile = ownedPluginFormProfile(
     // The File resources toggle of the client that elicited this form.
     service.source.fileResources === true,
