@@ -73,7 +73,6 @@ export function createEventDispatcher(options: {
         entry.kind !== "event" ||
         entry.quarantined ||
         entry.idConflict ||
-        entry.webhookIdMismatch ||
         entry.logicalSubscriptionId !== binding.logicalId ||
         entry.name !== binding.eventName ||
         (!localTest && entry.seq <= binding.afterSeq)

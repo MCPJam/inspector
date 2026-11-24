@@ -82,7 +82,6 @@ describe("foreground event dispatch", () => {
     { kind: "gap" },
     { quarantined: true },
     { idConflict: true },
-    { webhookIdMismatch: true },
     { logicalSubscriptionId: "other" },
     { name: "other.event" },
     { seq: 0 },
@@ -92,6 +91,16 @@ describe("foreground event dispatch", () => {
       await f.dispatcher.dispatch("binding", { ...f.entry, ...change }),
     ).toBe(false);
     expect(f.agent().send).not.toHaveBeenCalled();
+  });
+  it("accepts independent webhook message IDs even from an inbox with the old draft warning", async () => {
+    const f = fixture();
+    expect(
+      await f.dispatcher.dispatch("binding", {
+        ...f.entry,
+        webhookIdMismatch: true,
+      }),
+    ).toBe(true);
+    expect(f.agent().send).toHaveBeenCalledTimes(1);
   });
   it("does not replay a historical simulation from the shared inbox", async () => {
     const f = fixture();

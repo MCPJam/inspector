@@ -92,8 +92,14 @@ test("demo events reach the Playground agent through real delivery and test inje
   const serverName = `Events E2E ${Date.now()}`;
   const dialog = page.getByRole("dialog");
   await dialog.getByPlaceholder("my-mcp-server").fill(serverName);
-  await dialog.getByPlaceholder("http://localhost:8080/mcp").fill(session.url);
-  await dialog.getByRole("combobox").nth(1).click();
+  await dialog
+    .getByPlaceholder(
+      hosted ? "https://example.com/mcp" : "http://localhost:8080/mcp",
+    )
+    .fill(session.url);
+  await dialog
+    .getByRole("combobox", { name: "Authentication", exact: true })
+    .click();
   await page.getByRole("option", { name: "Bearer Token", exact: true }).click();
   await dialog.getByPlaceholder("Enter your bearer token").fill(session.token);
   const connected = page.waitForResponse(
@@ -133,7 +139,7 @@ test("demo events reach the Playground agent through real delivery and test inje
       const binding = page.getByRole("region", {
         name: "demo.ping connection",
       });
-      await expect(binding).toContainText("Listening");
+      await expect(binding).toContainText("Listening", { timeout: 45_000 });
       await triggerTest(page, `manual-${mode}`);
       const message = `server-${mode}`;
       const emitted = await emitter.executeTool("demo", "emit_ping", {

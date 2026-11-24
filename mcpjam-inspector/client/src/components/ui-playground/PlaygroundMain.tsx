@@ -5079,7 +5079,8 @@ export function PlaygroundMain({
 
   usePublishEventAgent({
     scope: `${chatSessionId}:${selectedModel?.id}:${previewedHostId ?? ""}`,
-    blockedReason: !isSessionBootstrapComplete || !isSelectedModelResolved || previewedHostLoading || restoringAdhoc
+    blockedReason: !isSessionBootstrapComplete ||
+      !isSelectedModelResolved || previewedHostLoading || restoringAdhoc
       ? "Wait for the agent conversation to finish loading."
       : isCompareMode
       ? "Choose one agent to run events."
