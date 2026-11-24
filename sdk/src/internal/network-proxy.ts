@@ -5,6 +5,8 @@
  * promise. As a library the SDK never changes the process-wide proxy itself.
  */
 
+export { installHttp1GlobalDispatcher } from "../http1-fetch.js";
+
 export interface ProxySettings {
   httpsProxy: string | null;
   httpProxy: string | null;
