@@ -78,6 +78,7 @@ import type { ToolPolicyGate } from "./tool-policy-gate";
 import type { UsageTotals } from "./types";
 import type { InfraFailureEvidence } from "../../utils/infra-failure-evidence.js";
 import { harnessFailureEvidenceOf } from "../../utils/harness/harness-provider-error.js";
+import { WebClientRunError, webClientFailureEvidenceOf } from "../web-clients/web-client-harness-turn.js";
 
 type ToolCall = {
   toolName: string;
@@ -702,6 +703,9 @@ export async function driveHostedEvalTurn(
     }
 
     acc.capturedSpans.push(...traceCtx.recordedSpans);
+    // A web client run that stopped on its page still names the calls that
+    // reached the server first.
+    if (error instanceof WebClientRunError) acc.capturedSpans.push(...(error.turnTrace?.spans ?? []));
     let iterationError: string;
     let iterationErrorDetails: string | undefined;
     if (error instanceof Error) {
@@ -725,7 +729,8 @@ export async function driveHostedEvalTurn(
     // Structured evidence ONLY from a typed thrower (a harness setup step, a
     // bridge's typed provider error) — an arbitrary object with a status
     // could be the customer's server talking.
-    const errorInfra = harnessFailureEvidenceOf(error);
+    const errorInfra =
+      harnessFailureEvidenceOf(error) ?? webClientFailureEvidenceOf(error);
     // `failedStage` already names the layer; "pre-turn setup" is the one call
     // site that never reached the model.
     return {
