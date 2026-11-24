@@ -7,12 +7,23 @@ import { InspectorPaneHeader } from "@/components/ui/inspector-pane-header";
 import { SearchInput } from "@/components/ui/search-input";
 import type {
   EventDescriptorView,
+  EventsFeedEntryView,
   EventsListResponse,
+  EventsSubscriptionView,
 } from "@/shared/events-api";
 import { EventsListItem } from "./EventsListItem";
 import { EventTypeDetail, type BlockedAction } from "./EventTypeDetail";
 import { DeliveryChips } from "./EventsTabSections";
 import type { SubscribeForm } from "./use-subscribe-form";
+import { formatTime, observedStateLabel } from "./event-utils";
+
+export type EventsPaneTab = "events" | "subscriptions" | "received";
+
+const SEARCH_PLACEHOLDERS: Record<EventsPaneTab, string> = {
+  events: "Search event types...",
+  subscriptions: "Search subscriptions...",
+  received: "Search received events...",
+};
 
 function matches(query: string, ...values: Array<string | undefined>) {
   const needle = query.trim().toLowerCase();
@@ -27,11 +38,13 @@ function EmptyText({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * The Events left pane: the Tools header over the server's event types.
- * Selecting an event type replaces the list with its detail and subscribe
- * form, as selecting a tool does.
+ * The Events left pane: the Tools header with Events, Subscriptions and
+ * Received, and the list for each. Selecting an event type replaces the list
+ * with its detail and subscribe form, as selecting a tool does.
  */
 export function EventsSidebar({
+  tab,
+  onTabChange,
   catalog,
   loadingMore,
   onLoadMore,
@@ -47,7 +60,17 @@ export function EventsSidebar({
   blockedReason,
   blockedAction,
   replayUnsupportedFor,
+  subscriptions,
+  activeSubscriptionCount,
+  selectedSubscriptionId,
+  onSelectSubscription,
+  entries,
+  selectedEntrySeq,
+  onSelectEntry,
+  labelForEntry,
 }: {
+  tab: EventsPaneTab;
+  onTabChange: (tab: EventsPaneTab) => void;
   catalog: EventsListResponse;
   loadingMore: boolean;
   onLoadMore: () => Promise<void>;
@@ -65,16 +88,28 @@ export function EventsSidebar({
   blockedReason: string | null;
   blockedAction?: BlockedAction;
   replayUnsupportedFor: (eventName: string) => boolean;
+  subscriptions: EventsSubscriptionView[];
+  activeSubscriptionCount: number;
+  selectedSubscriptionId: string | null;
+  onSelectSubscription: (id: string | null) => void;
+  /** This server's feed entries, oldest first. */
+  entries: EventsFeedEntryView[];
+  selectedEntrySeq: number | null;
+  onSelectEntry: (seq: number | null) => void;
+  labelForEntry: (entry: EventsFeedEntryView) => string | undefined;
 }) {
   const [query, setQuery] = useState("");
+  const receivedCount = entries.filter(
+    (entry) => entry.kind === "event",
+  ).length;
   // Back returns focus to the row that was opened.
   const [returnFocusTo, setReturnFocusTo] = useState<string | null>(null);
 
-  const showDetail = selectedEvent !== undefined;
+  const showDetail = tab === "events" && selectedEvent !== undefined;
 
   return (
     <div className="flex h-full flex-col border-r border-border bg-background">
-      <InspectorPaneHeader
+      <InspectorPaneHeader<EventsPaneTab>
         ariaLabel="Events views"
         tabs={[
           {
@@ -87,9 +122,21 @@ export function EventsSidebar({
               ? "Event types loaded so far; the server has more"
               : "Event types this server lists",
           },
+          {
+            id: "subscriptions",
+            label: "Subscriptions",
+            count: activeSubscriptionCount,
+            countTitle: "Active subscriptions on this server",
+          },
+          {
+            id: "received",
+            label: "Received",
+            count: receivedCount,
+            countTitle: "Received events loaded in this view",
+          },
         ]}
-        activeTab="events"
-        onTabChange={() => undefined}
+        activeTab={tab}
+        onTabChange={onTabChange}
         secondaryActions={
           <>
             <Button
@@ -160,23 +207,40 @@ export function EventsSidebar({
             <SearchInput
               value={query}
               onValueChange={setQuery}
-              placeholder="Search event types..."
+              placeholder={SEARCH_PLACEHOLDERS[tab]}
             />
           </div>
           <div className="flex-1 overflow-hidden">
             <ScrollArea className="h-full">
               <div className="space-y-2 p-3 pb-16">
-                <EventTypeList
-                  catalog={catalog}
-                  query={query}
-                  loadingMore={loadingMore}
-                  onLoadMore={onLoadMore}
-                  onSelect={onSelectEvent}
-                  availabilityFor={availabilityFor}
-                  hostName={hostName}
-                  returnFocusTo={returnFocusTo}
-                  onFocusReturned={() => setReturnFocusTo(null)}
-                />
+                {tab === "events" ? (
+                  <EventTypeList
+                    catalog={catalog}
+                    query={query}
+                    loadingMore={loadingMore}
+                    onLoadMore={onLoadMore}
+                    onSelect={onSelectEvent}
+                    availabilityFor={availabilityFor}
+                    hostName={hostName}
+                    returnFocusTo={returnFocusTo}
+                    onFocusReturned={() => setReturnFocusTo(null)}
+                  />
+                ) : tab === "subscriptions" ? (
+                  <SubscriptionList
+                    subscriptions={subscriptions}
+                    query={query}
+                    selectedId={selectedSubscriptionId}
+                    onSelect={onSelectSubscription}
+                  />
+                ) : (
+                  <ReceivedList
+                    entries={entries}
+                    query={query}
+                    selectedSeq={selectedEntrySeq}
+                    onSelect={onSelectEntry}
+                    labelFor={labelForEntry}
+                  />
+                )}
               </div>
             </ScrollArea>
           </div>
@@ -268,5 +332,95 @@ function EventTypeList({
         </Button>
       ) : null}
     </>
+  );
+}
+
+function SubscriptionList({
+  subscriptions,
+  query,
+  selectedId,
+  onSelect,
+}: {
+  subscriptions: EventsSubscriptionView[];
+  query: string;
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+}) {
+  if (subscriptions.length === 0) {
+    return (
+      <EmptyText>
+        No subscriptions on this server yet. Pick an event type to subscribe.
+      </EmptyText>
+    );
+  }
+  const visible = subscriptions.filter((subscription) =>
+    matches(query, subscription.eventName, subscription.mode),
+  );
+  if (visible.length === 0) {
+    return <EmptyText>No subscriptions match your search.</EmptyText>;
+  }
+  return (
+    <ul className="space-y-2" data-testid="subscription-list">
+      {visible.map((subscription) => (
+        <li key={subscription.id}>
+          <EventsListItem
+            title={subscription.eventName}
+            description={`${subscription.mode} · ${observedStateLabel(subscription.observedState)}`}
+            selected={subscription.id === selectedId}
+            onClick={() =>
+              onSelect(subscription.id === selectedId ? null : subscription.id)
+            }
+          />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ReceivedList({
+  entries,
+  query,
+  selectedSeq,
+  onSelect,
+  labelFor,
+}: {
+  entries: EventsFeedEntryView[];
+  query: string;
+  selectedSeq: number | null;
+  onSelect: (seq: number | null) => void;
+  labelFor: (entry: EventsFeedEntryView) => string | undefined;
+}) {
+  if (entries.length === 0) {
+    return (
+      <EmptyText>No events received yet. They appear as they arrive.</EmptyText>
+    );
+  }
+  const visible = [...entries]
+    .reverse()
+    .filter((entry) => matches(query, entry.name, entry.eventId, entry.kind));
+  if (visible.length === 0) {
+    return <EmptyText>No received events match your search.</EmptyText>;
+  }
+  return (
+    <ul className="space-y-2" data-testid="received-list">
+      {visible.map((entry) => (
+        <li key={entry.seq}>
+          <EventsListItem
+            title={entry.name ?? entry.kind}
+            description={[
+              entry.kind === "event" ? undefined : entry.kind,
+              formatTime(entry.receivedAt),
+              labelFor(entry),
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+            selected={entry.seq === selectedSeq}
+            onClick={() =>
+              onSelect(entry.seq === selectedSeq ? null : entry.seq)
+            }
+          />
+        </li>
+      ))}
+    </ul>
   );
 }

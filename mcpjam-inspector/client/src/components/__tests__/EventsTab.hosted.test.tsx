@@ -397,6 +397,9 @@ describe("EventsTab (hosted)", () => {
         subscriptionId: "sub_convex_1",
       }),
     );
+    fireEvent.click(
+      screen.getByRole("button", { name: /Rejected deliveries/ }),
+    );
     expect(await screen.findByText("stale_timestamp")).toBeInTheDocument();
   });
 });
