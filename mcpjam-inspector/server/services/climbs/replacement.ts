@@ -117,6 +117,30 @@ export async function applyServerReplacements(
   return { environment: { ...environment, servers }, replacements: recorded, replaced };
 }
 
+/**
+ * The environment with each replacement's server swapped in by name, and
+ * nothing else checked. `prepareEvalRun` may resolve the environment again for
+ * its own venue, which brings the real server back; this puts the round's
+ * server in place again. Applying it to an environment already swapped
+ * changes nothing.
+ */
+export function withServersReplacedByName(
+  environment: ResolvedEnvironmentForLaunch,
+  replacements: readonly Pick<ServerReplacementInput, "serverName" | "replacementServerId">[],
+): ResolvedEnvironmentForLaunch {
+  if (!Array.isArray(environment.servers) || replacements.length === 0) return environment;
+  const byName = new Map(
+    replacements.map((replacement) => [replacement.serverName.trim().toLowerCase(), replacement.replacementServerId]),
+  );
+  return {
+    ...environment,
+    servers: environment.servers.map((server) => {
+      const replacementId = byName.get(server.name.trim().toLowerCase());
+      return replacementId ? { ...server, serverId: replacementId } : server;
+    }),
+  };
+}
+
 const getMock = makeFunctionReference<"query">("mockServers:getMock");
 
 export type MockPin = { serverId: string; version: number; contentHash: string };

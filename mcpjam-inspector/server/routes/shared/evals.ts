@@ -73,7 +73,11 @@ import {
 } from "@/shared/probe-config";
 import { deriveItemIdempotencyKey } from "../../utils/idempotency.js";
 import type { LaunchContext } from "../../utils/launch-context.js";
-import type { MockPin, ServerReplacement } from "../../services/climbs/replacement.js";
+import {
+  withServersReplacedByName,
+  type MockPin,
+  type ServerReplacement,
+} from "../../services/climbs/replacement.js";
 import {
   createEvalCasesInBatches,
   partialResultOf,
@@ -2619,6 +2623,11 @@ export async function prepareEvalRun(
           }).catch((error) => {
             throw translateEnvironmentResolveError(error);
           });
+    // A launch that replaces a server: the environment resolved above for
+    // this venue lists the real server again, so swap the round's back in.
+    if (serverReplacements?.length) {
+      environmentLaunch = withServersReplacedByName(environmentLaunch, serverReplacements);
+    }
   } else if (serverIds.length === 0) {
     // Legacy launches keep the old ≥1-server contract; enforced here (not
     // in Zod) because environment launches legitimately send none.

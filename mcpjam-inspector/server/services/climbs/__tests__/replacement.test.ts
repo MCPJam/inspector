@@ -5,6 +5,7 @@ import {
   resolveMockPins,
   resolveReplacementLaunch,
   serverReplacementSchema,
+  withServersReplacedByName,
   type ServerReplacement,
 } from "../replacement.js";
 import type { ResolvedEnvironmentForLaunch } from "../../environments/resolve.js";
@@ -134,5 +135,34 @@ describe("serverReplacementSchema", () => {
   it("is strict and takes at most the four fields", () => {
     expect(serverReplacementSchema.safeParse({ serverName: "a", replacementServerId: "b", extra: 1 }).success).toBe(false);
     expect(serverReplacementSchema.safeParse({ serverName: "a", replacementServerId: "b" }).success).toBe(true);
+  });
+});
+
+describe("withServersReplacedByName", () => {
+  // prepareEvalRun resolves the environment again for its own venue, which
+  // brings the real server back; the round's server must go in again.
+  it("puts the round's server back into an environment resolved again", () => {
+    const resolvedAgain = environment([
+      { serverId: "s_real", name: "Echo" },
+      { serverId: "s_other", name: "Docs" },
+    ]);
+    const swapped = withServersReplacedByName(resolvedAgain, [
+      { serverName: " echo ", replacementServerId: "s_mock" },
+    ]);
+    expect(swapped.servers).toEqual([
+      { serverId: "s_mock", name: "Echo" },
+      { serverId: "s_other", name: "Docs" },
+    ]);
+    expect(resolvedAgain.servers?.[0]?.serverId).toBe("s_real");
+  });
+
+  it("changes nothing on an environment already swapped", () => {
+    const once = withServersReplacedByName(ENV, [{ serverName: "Echo", replacementServerId: "s_mock" }]);
+    const twice = withServersReplacedByName(once, [{ serverName: "Echo", replacementServerId: "s_mock" }]);
+    expect(twice).toEqual(once);
+  });
+
+  it("leaves an environment alone when nothing is replaced", () => {
+    expect(withServersReplacedByName(ENV, [])).toBe(ENV);
   });
 });
