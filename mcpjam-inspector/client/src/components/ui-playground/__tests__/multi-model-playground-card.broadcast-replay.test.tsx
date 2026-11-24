@@ -1,3 +1,5 @@
+import { createCompareBroadcast } from "../compare-broadcast";
+import type { BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
 import { useState } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -37,6 +39,7 @@ vi.mock("use-stick-to-bottom", () => {
   };
 });
 
+let sessionModel: { id: string; name: string; provider: string; hosted?: boolean } | undefined;
 const mockUseChatSession = {
   // Elicitation surface (hosted). These suites never elicit, but the shape
   // must match the hook's contract or the dialog crashes on undefined.
@@ -45,6 +48,16 @@ const mockUseChatSession = {
   elicitationResponding: false,
   urlElicitationRequired: [],
   dismissUrlElicitationRequired: vi.fn(),
+  // The hook resolves the card's own row; a lazy read because `model` is
+  // declared below this mock.
+  get selectedModel() {
+    return sessionModel ?? model;
+  },
+  // Tests restore the mock with `Object.assign`; writing the card's own row
+  // back clears the per-test override.
+  set selectedModel(value: typeof sessionModel) {
+    sessionModel = value === model ? undefined : value;
+  },
   messages: [],
   setMessages: vi.fn(),
   sendMessage: vi.fn(),
@@ -232,7 +245,9 @@ describe("a freshly mounted card defers a queued turn until auth bootstrap", () 
     widgetModelContext: [],
   };
 
-  function cardWithBroadcast(broadcastRequest: unknown) {
+  let delivery = createCompareBroadcast(request, ["host-1"]);
+
+  function cardWithBroadcast(broadcastRequest: BroadcastChatTurnRequest | null) {
     return (
       <MultiModelPlaygroundCard
         compareId="host-1"
@@ -241,7 +256,8 @@ describe("a freshly mounted card defers a queued turn until auth bootstrap", () 
         model={model}
         comparisonSummaries={[]}
         selectedServers={[]}
-        broadcastRequest={broadcastRequest as never}
+        broadcastRequest={broadcastRequest}
+        claimBroadcastDelivery={(candidate) => delivery.claim(candidate, "host-1")}
         deterministicExecutionRequest={null}
         stopRequestId={0}
         executionConfig={{
@@ -261,11 +277,12 @@ describe("a freshly mounted card defers a queued turn until auth bootstrap", () 
     );
   }
 
-  function renderWithBroadcast(broadcastRequest: unknown) {
+  function renderWithBroadcast(broadcastRequest: BroadcastChatTurnRequest | null) {
     return render(cardWithBroadcast(broadcastRequest));
   }
 
   it("defers the queued turn, then sends it once bootstrap completes", async () => {
+    delivery = createCompareBroadcast(request, ["host-1"]);
     const view = renderWithBroadcast(request);
     expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
 
@@ -281,6 +298,27 @@ describe("a freshly mounted card defers a queued turn until auth bootstrap", () 
 
     view.rerender(cardWithBroadcast(request));
     expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not resend a retained parent request after an actual card remount", async () => {
+    mockUseChatSession.isSessionBootstrapComplete = true;
+    delivery = createCompareBroadcast(request, ["host-1"]);
+    const first = renderWithBroadcast(request);
+    await waitFor(() => expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1));
+    first.unmount();
+    renderWithBroadcast(request);
+    expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts a new explicit submit after remount without replaying the previous one", () => {
+    mockUseChatSession.isSessionBootstrapComplete = true;
+    delivery = createCompareBroadcast(request, ["host-1"]);
+    const first = renderWithBroadcast(request);
+    first.unmount();
+    const next = { ...request, id: 2 };
+    delivery = createCompareBroadcast(next, ["host-1"]);
+    renderWithBroadcast(next);
+    expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(2);
   });
 
   it("stays quiet when there is nothing queued (isolates the trigger)", async () => {

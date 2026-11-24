@@ -1,4 +1,8 @@
 import { useEffect, useRef } from "react";
+import {
+  dismissOAuthCallbackHint,
+  showOAuthCallbackHint,
+} from "@/lib/oauth/callback-hint";
 
 interface OAuthAuthorizationModalProps {
   open: boolean;
@@ -36,12 +40,14 @@ export const OAuthAuthorizationModal = ({
       return () => {};
     }
 
-    // Monitor popup closure
+    // Monitor popup closure. A code closes the modal first, which clears this
+    // interval, so a close seen here means the sign-in never came back.
     const checkPopupClosed = setInterval(() => {
       if (popupRef.current?.closed) {
         clearInterval(checkPopupClosed);
         onOpenChange(false);
         hasOpenedRef.current = false;
+        showOAuthCallbackHint("try again");
       }
     }, 500);
 
@@ -61,6 +67,7 @@ export const OAuthAuthorizationModal = ({
 
       // Check if this is an OAuth callback message
       if (event.data?.type === "OAUTH_CALLBACK" && event.data?.code) {
+        dismissOAuthCallbackHint();
         // Notify parent component
         onAuthorizationComplete?.();
         // Close our "modal" state
@@ -75,6 +82,8 @@ export const OAuthAuthorizationModal = ({
       channel = new BroadcastChannel("oauth_callback_channel");
       channel.onmessage = (event) => {
         if (event.data?.type === "OAUTH_CALLBACK" && event.data?.code) {
+          // A COOP page can read as closed early; its code still comes here.
+          dismissOAuthCallbackHint();
           // Notify parent component
           onAuthorizationComplete?.();
           // Close our "modal" state

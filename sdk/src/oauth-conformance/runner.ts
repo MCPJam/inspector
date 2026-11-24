@@ -1,4 +1,5 @@
 import { refreshAuthorization } from "../oauth/browser-auth.js";
+import { captureConformanceRun } from "../telemetry.js";
 import {
   captureOpenAIProfile,
   findOpenAIProfileTool,
@@ -487,6 +488,7 @@ function mergeConformanceDynamicRegistration(
 export class OAuthConformanceTest {
   private readonly config: NormalizedOAuthConformanceConfig;
   private readonly deps: OAuthConformanceRunnerDependencies;
+  private readonly suppressTelemetry: boolean;
 
   constructor(
     config: OAuthConformanceConfig,
@@ -494,9 +496,13 @@ export class OAuthConformanceTest {
   ) {
     this.config = normalizeOAuthConformanceConfig(config);
     this.deps = deps;
+    // The normalized config drops it, so read it from the caller's config.
+    this.suppressTelemetry = config.__suppressTelemetry === true;
   }
 
   async run(): Promise<ConformanceResult> {
+    if (!this.suppressTelemetry)
+      void captureConformanceRun("sdk", { suite: "oauth", mode: "single" });
     const startedAt = Date.now();
     const steps: StepResult[] = [];
     let state = cloneEmptyFlowState();
@@ -1001,9 +1007,12 @@ export class OAuthConformanceTest {
 
           // A server the pre-flight found publishing this server's metadata
           // is graded from proactive discovery, so its 2xx is expected here.
+          // So is one the pre-flight saw challenge: a 401 proves it requires
+          // sign-in, and a later 2xx cannot make that not applicable.
           if (
             probe.kind === "anonymous_allowed" &&
-            authRequirement.requirement !== "optional"
+            authRequirement.requirement !== "optional" &&
+            authRequirement.requirement !== "required"
           ) {
             notApplicableReason = `the server answered a request without a token with HTTP ${probeStatus}`;
             // Replace the transition into the probe with the same single row

@@ -452,6 +452,27 @@ describe("buildReportOnlyContentSecurityPolicy", () => {
     expect(policy.get("connect-src")).toContain("https://o123.ingest.us.sentry.io");
   });
 
+  it("allows the events inbox origin the hosted feed connects to", () => {
+    const saved = process.env.EVENTS_INBOX_URL;
+    try {
+      delete process.env.EVENTS_INBOX_URL;
+      expect(
+        directives(buildReportOnlyContentSecurityPolicy({}, new Set(), "")).get(
+          "connect-src",
+        ),
+      ).toContain("https://hooks.mcpjam.com");
+      process.env.EVENTS_INBOX_URL = "https://hooks.mcpjam.test/";
+      expect(
+        directives(buildReportOnlyContentSecurityPolicy({}, new Set(), "")).get(
+          "connect-src",
+        ),
+      ).toContain("https://hooks.mcpjam.test");
+    } finally {
+      if (saved === undefined) delete process.env.EVENTS_INBOX_URL;
+      else process.env.EVENTS_INBOX_URL = saved;
+    }
+  });
+
   it("omits report-uri when the DSN cannot be parsed", () => {
     const policy = directives(
       buildReportOnlyContentSecurityPolicy({}, new Set(), "not a dsn"),

@@ -8,9 +8,18 @@ import { MCP_TASKS_EXTENSION_ID } from "../mcp-client-manager/tasks-dispatch.js"
 import { withTasksClient } from "./client-lifecycle.js";
 import {
   AUTHORIZATION_REQUIRED_MESSAGE,
-  authorizationRequiredDetails,
   isAuthorizationRefusal,
 } from "../conformance-authorization.js";
+import {
+  extractAuthChallenge,
+  getNumericStatus,
+} from "../mcp-client-manager/errors.js";
+import {
+  credentialsFromServerConfig,
+  loginRequiredDetails,
+} from "../conformance-login.js";
+import { needsSetupDetails, noTaskCreatedCopy } from "../conformance-input.js";
+import { badToolArgsMessage, checkToolArgs } from "../conformance-tool-args.js";
 
 import {
   buildConformanceProfileStamp,
@@ -22,6 +31,7 @@ import {
   type MCPTasksCheckId,
   type MCPTasksCheckResult,
   type MCPTasksConformanceResult,
+  type MCPTasksPassedAdvice,
   type MCPTasksReadinessWarning,
   type MCPTasksUncheckedAdvice,
 } from "./types.js";
@@ -39,6 +49,7 @@ import {
   toolTaskSupport,
   resolveProbeTool,
   findDeclarationViolations,
+  type ProbeToolResolution,
 } from "./metadata.js";
 import { validateCreateTaskShape } from "./shapes.js";
 import {
@@ -63,6 +74,7 @@ export class TaskGroupRunner extends TaskOperations {
     // check's warnings.
     const readiness: MCPTasksReadinessWarning[] = [];
     const uncheckedAdvice: MCPTasksUncheckedAdvice[] = [];
+    const passedAdvice: MCPTasksPassedAdvice[] = [];
     const sent: unknown[] = [];
     // The RAW inbound bytes. Every task check that has to judge the
     // discriminator reads this, because by the time a result reaches the
@@ -119,17 +131,103 @@ export class TaskGroupRunner extends TaskOperations {
           const taskCapableTools = tools.filter(
             (tool) => toolTaskSupport(tool) !== undefined
           );
-          const probe = resolveProbeTool(wire, tools, this.config.toolName);
+          // A 2025-11-25 server reaches the legacy wire by declaring ANY of
+          // `tasks.list`/`cancel`/`requests`, so the wire alone does not mean
+          // it accepts tools called as tasks. Without
+          // `tasks.requests.tools.call` a client MUST NOT call any of its
+          // tools as a task, whatever the tool's own `taskSupport` says
+          // (2025-11-25 tasks.mdx:113). The CLI and the Tools tab apply the
+          // same gate before their task calls.
+          const probe: ProbeToolResolution =
+            wire === "legacy" && !support.toolCalls
+              ? {
+                  reason:
+                    "This server supports tasks but did not declare `tasks.requests.tools.call`, so its tools can't be called as tasks. Nothing to check.",
+                  blocking: false,
+                }
+              : resolveProbeTool(wire, tools, this.config.toolName);
           const probeTool = probe.tool;
-          /** The check verdict for "there is no probe tool", per resolution. */
+          /**
+           * The check verdict for "there is no probe tool", per resolution. A
+           * missing or unlisted tool is the caller's setup to fix, so it costs
+           * no point either way.
+           */
           const missingProbeTool = (id: MCPTasksCheckId) =>
-            (probe.blocking ? couldNotRun : notApplicable)(
-              id,
-              probe.reason ?? "no probe tool resolved",
-              probe.blocking && !this.config.toolName
-                ? { missingInput: "tasksProbe" }
-                : undefined
-            );
+            probe.blocking
+              ? couldNotRun(
+                  id,
+                  probe.reason ?? "no probe tool resolved",
+                  needsSetupDetails(
+                    "tasksProbe",
+                    probe.setupMessage ??
+                      (this.config.toolName
+                        ? `This server doesn't list the tool ${JSON.stringify(
+                            this.config.toolName
+                          )}, so there was no task to check. Select a listed tool in setup, then run again.`
+                        : undefined)
+                  )
+                )
+              : notApplicable(id, probe.reason ?? "no probe tool resolved");
+          /**
+           * Arguments the picked tool's own schema rejects are the caller's
+           * setup to fix, not a server fault. `undefined` when they fit, or
+           * when we cannot tell, so the server-side verdict stands.
+           */
+          const argsVerdict = probeTool
+            ? checkToolArgs(
+                probeTool.inputSchema,
+                this.config.toolArguments ?? {}
+              )
+            : undefined;
+          const badArgs = (
+            id: MCPTasksCheckId,
+            message?: string
+          ): MCPTasksCheckResult | undefined => {
+            if (!probeTool || argsVerdict?.verdict !== "invalid")
+              return undefined;
+            // A 401 is the login to report, and a task that came back without
+            // its discriminator is the server's violation: neither is about
+            // the caller's arguments, whatever they look like.
+            if (
+              creationResult instanceof Error &&
+              (isAuthorizationRefusal(creationResult) ||
+                getNumericStatus(creationResult) === 401)
+            )
+              return undefined;
+            if (rawCreation && !rawCreation.discriminated) return undefined;
+            const text =
+              message ??
+              badToolArgsMessage(probeTool.name, argsVerdict.message);
+            return couldNotRun(id, text, {
+              tool: probeTool.name,
+              argsProblem: argsVerdict.message,
+              ...needsSetupDetails("tasksProbe", text),
+            });
+          };
+
+          /**
+           * A 401 on the task call is the login to fix, not a server fault:
+           * the checks it stopped are "Not run" at no cost.
+           */
+          const loginGap = (
+            id: MCPTasksCheckId
+          ): MCPTasksCheckResult | undefined =>
+            creationResult instanceof Error &&
+            (isAuthorizationRefusal(creationResult) ||
+              getNumericStatus(creationResult) === 401 ||
+              // An auth-provider 401 can arrive as a bare UnauthorizedError;
+              // its recorded challenge, not its name, says it was a 401 and
+              // not a 403 insufficient-scope.
+              extractAuthChallenge(creationResult)?.source === "http_401")
+              ? couldNotRun(
+                  id,
+                  AUTHORIZATION_REQUIRED_MESSAGE,
+                  loginRequiredDetails(
+                    creationResult,
+                    credentialsFromServerConfig(this.config.serverConfig)
+                  )
+                )
+              : undefined;
 
           let createdTaskId: string | undefined;
           let creationResult: unknown;
@@ -196,15 +294,17 @@ export class TaskGroupRunner extends TaskOperations {
               );
             } else if (creationResult instanceof Error) {
               checks.push(
-                failed(
-                  "tasks-result-type-discipline",
-                  Date.now() - stepStartedAt,
-                  `task-eligible tools/call failed: ${errorMessage(
+                loginGap("tasks-result-type-discipline") ??
+                  badArgs("tasks-result-type-discipline") ??
+                  failed(
+                    "tasks-result-type-discipline",
+                    Date.now() - stepStartedAt,
+                    `task-eligible tools/call failed: ${errorMessage(
+                      creationResult
+                    )}`,
+                    { tool: probeTool.name },
                     creationResult
-                  )}`,
-                  { tool: probeTool.name },
-                  creationResult
-                )
+                  )
               );
             } else if (createdTaskId === undefined) {
               // Server-decided: declining to produce a task is conformant, as
@@ -335,15 +435,19 @@ export class TaskGroupRunner extends TaskOperations {
                 // capability. Blaming -32021 here would point the developer
                 // at a problem they do not have.
                 checks.push(
-                  couldNotRun(
+                  badArgs(
                     "tasks-undeclared-creation-refused",
-                    `the tools/call fails with ${creation.code} even with the tasks extension declared, so the undeclared refusal cannot be tied to the missing capability; check --tool-name and --tool-args`,
-                    {
-                      tool: probeTool.name,
-                      outcome: creation.outcome,
-                      undeclaredCreationCode: creation.code,
-                    }
-                  )
+                    "Your tool failed even with tasks turned on, so there was nothing to check. Check the tool and args in setup."
+                  ) ??
+                    couldNotRun(
+                      "tasks-undeclared-creation-refused",
+                      `the tools/call fails with ${creation.code} even with the tasks extension declared, so the undeclared refusal cannot be tied to the missing capability; check --tool-name and --tool-args`,
+                      {
+                        tool: probeTool.name,
+                        outcome: creation.outcome,
+                        undeclaredCreationCode: creation.code,
+                      }
+                    )
                 );
               } else if (
                 creation.outcome === "refused" &&
@@ -464,21 +568,48 @@ export class TaskGroupRunner extends TaskOperations {
             // A thrown call is not "a normal result": say the call failed, so
             // the app's setup advice does not hide the real error.
             if (!createdTaskId && creationResult instanceof Error) {
-              return couldNotRun(
-                id,
-                `calling ${JSON.stringify(
-                  probeTool.name
-                )} failed, so there was no task to check: ${errorMessage(
-                  creationResult
-                )}`
+              return (
+                loginGap(id) ??
+                badArgs(id) ??
+                couldNotRun(
+                  id,
+                  `calling ${JSON.stringify(
+                    probeTool.name
+                  )} failed, so there was no task to check: ${errorMessage(
+                    creationResult
+                  )}`
+                )
               );
             }
             if (!createdTaskId) {
+              // A tool error is not "no task": with arguments that fit, the
+              // tool itself failed, which is the server's to answer for.
+              if (isRecord(creationResult) && creationResult.isError === true) {
+                return (
+                  badArgs(id) ??
+                  couldNotRun(
+                    id,
+                    `${JSON.stringify(
+                      probeTool.name
+                    )} returned a tool error instead of a task, so there was nothing to check`,
+                    { tool: probeTool.name, toolError: true }
+                  )
+                );
+              }
+              // The server may decline to make a task; picking a tool that
+              // makes one is the caller's setup, so this costs no point.
               return couldNotRun(
                 id,
                 `${JSON.stringify(
                   probeTool.name
-                )} returned a normal result instead of a task, so there was nothing to check; pass --tool-name (SDK: toolName) with a tool that creates a task, or --tool-args (SDK: toolArguments) that make this one create a task`
+                )} returned a normal result instead of a task, so there was nothing to check; pass --tool-name (SDK: toolName) with a tool that creates a task, or --tool-args (SDK: toolArguments) that make this one create a task`,
+                {
+                  tool: probeTool.name,
+                  ...needsSetupDetails(
+                    "tasksProbe",
+                    noTaskCreatedCopy(probeTool.name)
+                  ),
+                }
               );
             }
             return couldNotRun(
@@ -508,6 +639,7 @@ export class TaskGroupRunner extends TaskOperations {
             rawCreation,
             readiness,
             uncheckedAdvice,
+            passedAdvice,
           };
           this.config.signal?.throwIfAborted();
           await runReadChecks(context);
@@ -559,6 +691,9 @@ export class TaskGroupRunner extends TaskOperations {
           const pickedUnchecked = uncheckedAdvice.filter(
             (entry) => !pickedAdvice || pickedAdvice.includes(entry.id)
           );
+          const pickedPassed = passedAdvice.filter(
+            (entry) => !pickedAdvice || pickedAdvice.includes(entry.id)
+          );
 
           for (const check of checks) {
             if (isTasksToolCheck(check.id))
@@ -584,6 +719,7 @@ export class TaskGroupRunner extends TaskOperations {
             ...(pickedUnchecked.length > 0
               ? { uncheckedAdvice: pickedUnchecked }
               : {}),
+            ...(pickedPassed.length > 0 ? { passedAdvice: pickedPassed } : {}),
             summary:
               pending.length > 0
                 ? `${buildSummary(scored)}, ${pending.length} pending (unscored by profile ${profile.id}@${profile.version})`
@@ -626,7 +762,10 @@ export class TaskGroupRunner extends TaskOperations {
             couldNotRun(
               id,
               AUTHORIZATION_REQUIRED_MESSAGE,
-              authorizationRequiredDetails(error)
+              loginRequiredDetails(
+                error,
+                credentialsFromServerConfig(this.config.serverConfig)
+              )
             )
           )
         : [...selected].map((id) =>

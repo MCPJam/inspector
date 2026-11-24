@@ -13,9 +13,7 @@ import {
 } from "./chat-input/prompts/mentions-popover";
 import { PluginServerIcon } from "./chat-input/plugin-server-icon";
 import {
-  ContextAttachmentChip,
-  ContextGroupChip,
-  groupContextAttachments,
+  ContextAttachmentList,
   type ContextAttachment,
 } from "./chat-input/attachments/context-attachment-chip";
 import {
@@ -70,6 +68,7 @@ import {
 import {
   ModelSelector,
   type ModelSelectorEffortProps,
+  type ModelSelectorHarnessScope,
 } from "@/components/chat-v2/chat-input/model-selector";
 import { EffortControl } from "@/components/effort/effort-control";
 import { reasoningEffortDefaultForRow } from "@/lib/reasoning-effort-options";
@@ -322,10 +321,15 @@ interface ChatInputProps {
   /** Why Send is off, shown in its tooltip (an out-of-credits model). */
   submitDisabledReason?: string;
   isLoading?: boolean;
+  /** A send is being prepared: Enter is refused and Send shows a spinner. */
+  isSubmitting?: boolean;
+  canStop?: boolean;
   placeholder?: string;
   className?: string;
   currentModel: ModelDefinition;
   availableModels: ModelDefinition[];
+  /** The client(s) the model runs on; see `ModelSelectorHarnessScope`. */
+  harnessScope: ModelSelectorHarnessScope;
   onModelChange: (
     model: ModelDefinition,
     options?: { userInitiated?: boolean },
@@ -504,10 +508,13 @@ export function ChatInput({
   submitDisabled = false,
   submitDisabledReason,
   isLoading = false,
+  isSubmitting = false,
+  canStop = false,
   placeholder = "Type your message...",
   className,
   currentModel,
   availableModels,
+  harnessScope,
   onModelChange,
   onModelSelectorOpenChange,
   multiModelEnabled = false,
@@ -1542,6 +1549,8 @@ export function ChatInput({
         disabled ||
         submitDisabled ||
         isLoading ||
+        isSubmitting ||
+        canStop ||
         // While recording/transcribing the textarea shows a placeholder but
         // `value` still holds the draft — don't let Enter submit it behind the
         // voice UI (and leave the mic open).
@@ -1583,20 +1592,7 @@ export function ChatInput({
               </Button>
             </span>
           )}
-          {groupContextAttachments(contextAttachments).map((entry) =>
-            entry.kind === "group" ? (
-              <ContextGroupChip
-                key={`group:${entry.group.id}`}
-                group={entry.group}
-                items={entry.items}
-              />
-            ) : (
-              <ContextAttachmentChip
-                key={entry.attachment.id}
-                {...entry.attachment}
-              />
-            ),
-          )}
+          <ContextAttachmentList attachments={contextAttachments} />
           {mcpPromptResults.map((mcpPromptResult, index) => (
             <MCPPromptResultCard
               key={`prompt-${index}`}
@@ -1709,7 +1705,10 @@ export function ChatInput({
         ref={formRef}
         hidden={formCardActive}
         className={cn("w-full", className)}
-        onSubmit={onSubmit}
+        onSubmit={(event) => {
+          if (canStop) { event.preventDefault(); return; }
+          onSubmit(event);
+        }}
       >
         <div
           ref={containerRef}
@@ -2240,10 +2239,13 @@ export function ChatInput({
                 </Popover>
               )}
               {!minimalMode && clientSelector ? (
+                // No `onModelSelectorOpenChange`: that freezes the single vs
+                // Compare layout while open, so the first ticked client
+                // showed no panes until the popover closed. The selector
+                // stays open across the remount itself.
                 <ClientSelector
                   {...clientSelector}
                   isLoading={isLoading}
-                  onOpenChange={onModelSelectorOpenChange}
                   themeMode={resolvedThemeMode}
                   modalThemeMode={globalThemeMode}
                 />
@@ -2268,6 +2270,7 @@ export function ChatInput({
                   respondToProviderTabIntent
                   onManageOrgProviders={onManageOrgProviders}
                   onAddProvider={null}
+                  harnessScope={harnessScope}
                   requireOrgKeys={requireOrgKeys}
                   {...modelEfforts}
                   // Servers attached means the turn can call tools.
@@ -2437,7 +2440,7 @@ export function ChatInput({
                 </Tooltip>
               ) : (
                 voiceInputState !== "recording" &&
-                (isLoading ? (
+                (isLoading || canStop ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
@@ -2453,6 +2456,19 @@ export function ChatInput({
                     </TooltipTrigger>
                     <TooltipContent>Stop generating</TooltipContent>
                   </Tooltip>
+                ) : isSubmitting ? (
+                  <Button
+                    type="button"
+                    size="icon"
+                    className={cn(
+                      "size-[34px] rounded-full transition-colors shadow-none",
+                      activeSubmitButtonClasses,
+                    )}
+                    aria-label="Sending message"
+                    disabled
+                  >
+                    <Loader2 size={16} className="animate-spin" />
+                  </Button>
                 ) : (
                   <DisabledReasonTooltip
                     reason={submitDisabledReason}

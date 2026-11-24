@@ -6,7 +6,10 @@ import type {
   MCPReadResourceResult,
   MCPServerConfig,
 } from "../mcp-client-manager/index.js";
-import type { MCPReadinessWarning } from "../mcp-conformance/types.js";
+import type {
+  MCPPassedAdvice,
+  MCPReadinessWarning,
+} from "../mcp-conformance/types.js";
 
 export const MCP_APPS_CHECK_CATEGORIES = ["tools", "resources"] as const;
 
@@ -44,6 +47,11 @@ export interface MCPAppsReadinessWarning extends Omit<
   checkId: MCPAppsCheckId;
 }
 
+/** Advice the run checked and the server already meets. */
+export interface MCPAppsPassedAdvice extends Omit<MCPPassedAdvice, "id"> {
+  id: MCPAppsReadinessId;
+}
+
 export type MCPAppsCheckStatus = "passed" | "failed" | "skipped";
 
 /** @see {@link ConformanceSkipReason} — the vocabulary is shared by every suite. */
@@ -72,6 +80,11 @@ export interface MCPAppsCheckResult {
 export type MCPAppsConformanceConfig = MCPServerConfig & {
   /** Cancel this run and its active requests. */
   signal?: AbortSignal;
+  /**
+   * @internal set by a host that counts the run itself (the CLI, the
+   * Inspector) and by suites for their inner runs. See `captureConformanceRun`.
+   */
+  __suppressTelemetry?: boolean;
   checkIds?: MCPAppsCheckId[];
 };
 
@@ -124,6 +137,8 @@ export interface MCPAppsConformanceResult {
   checks: MCPAppsCheckResult[];
   /** SHOULD/MAY advice, beside the verdict. Absent when there is none. */
   readiness?: MCPAppsReadinessWarning[];
+  /** Advice the run checked and found nothing to change. Absent when none. */
+  passedAdvice?: MCPAppsPassedAdvice[];
   summary: string;
   durationMs: number;
   categorySummary: Record<
@@ -149,6 +164,8 @@ export interface MCPAppsConformanceResult {
 
 export interface MCPAppsConformanceSuiteConfig {
   name?: string;
+  /** @internal set by a host that counts the run itself. See `captureConformanceRun`. */
+  __suppressTelemetry?: boolean;
   target: MCPServerConfig;
   defaults?: MCPAppsConformanceSuiteDefaults;
   runs: MCPAppsConformanceSuiteRun[];

@@ -25,9 +25,9 @@ const isNotFound = (error: unknown) =>
  * gets a private `mcpjam-form-<uuid>` folder under
  * `~/.mcpjam/form-uploads` with an `ownership.json` journal entry, so the
  * server reads the files at their VM paths. MCPJam keeps no Computer
- * connection after the request, so cleanup is a journal sweep: each later
- * upload removes this root's entries whose retention has passed (never a
- * folder without a valid entry).
+ * connection outside the owned grant. Terminal cleanup removes its exact
+ * journaled folder; each later upload also sweeps expired orphaned entries
+ * (never a folder without a valid entry).
  */
 export function createComputerFormFileStore(
   files: () => Promise<ComputerFileSystem>,
@@ -102,8 +102,26 @@ export function createComputerFormFileStore(
       await fs.write(posix.join(root, MARKER), data);
       const payload = posix.join(root, "files");
       await fs.makeDir?.(payload);
-      // Removal happens through the retention sweep; no connection is kept.
-      return { root, payload, release: async () => {} };
+      return {
+        root,
+        payload,
+        release: async () => {
+          try {
+            const info = await fs.getInfo(root);
+            if (info.type !== "dir" || info.symlinkTarget) refuse();
+            const markerPath = posix.join(root, MARKER);
+            const markerInfo = await fs.getInfo(markerPath);
+            if (markerInfo.type !== "file" || markerInfo.symlinkTarget ||
+                markerInfo.size !== marker.byteLength) refuse();
+            const current = await fs.read(markerPath, { format: "bytes" });
+            if (current.length !== marker.length ||
+                current.some((value, index) => value !== marker[index])) refuse();
+            await fs.remove(root);
+          } catch (error) {
+            if (!isNotFound(error)) throw error;
+          }
+        },
+      };
     },
     async makeDir(path) {
       await (await files()).makeDir?.(path);

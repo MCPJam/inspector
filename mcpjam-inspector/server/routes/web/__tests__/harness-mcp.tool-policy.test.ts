@@ -6,7 +6,7 @@
  * (real signed token, real bridge, mock authorized manager), plus a real sealed
  * envelope carrying the launch-time decision snapshot.
  */
-import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 
@@ -37,6 +37,8 @@ vi.mock("../auth", () => ({
 }));
 
 import { harnessMcp } from "../harness-mcp.js";
+import { createAuthorizedManager } from "../auth";
+import { resetHarnessMcpTurnCache } from "../harness-mcp-turn-cache.js";
 import { signTestProxyToken } from "../../../utils/harness/__tests__/sign-test-token.js";
 import { sealHarnessProxyToken } from "../../../utils/harness/harness-proxy-policy-seal.js";
 import { HARNESS_POLICY_BLOCK_META_KEY } from "../../../utils/harness/harness-proxy-policy-enforcement.js";
@@ -132,6 +134,97 @@ beforeEach(() => {
 });
 
 describe("harness MCP proxy tool policy", () => {
+  describe("turn-bound credentials", () => {
+    const credential = (leaseId: string) => sealHarnessProxyToken({
+      token: innerToken("srv-a"), serverId: "srv-a", policy: snapshot(),
+      expiresAtMs: Date.now() + 60_000, turn: { laneId: "lane", leaseId },
+    });
+    let active: string | undefined;
+    beforeEach(() => {
+      active = "first";
+      vi.stubEnv("CONVEX_HTTP_URL", "https://authority.test");
+      vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-server-only");
+      vi.stubGlobal("fetch", vi.fn(async (url: URL, init: RequestInit) => {
+        expect(url.pathname).toBe("/internal/harness/proxy-turn");
+        expect(init.redirect).toBe("error");
+        const body = JSON.parse(String(init.body));
+        expect(body).toMatchObject({ projectId: "p1", laneId: "lane" });
+        return new Response(null, { status: body.leaseId === active ? 204 : 403 });
+      }));
+    });
+    afterEach(() => { resetHarnessMcpTurnCache(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+
+    it("refuses an old credential before dispatch, while idle and during a later turn", async () => {
+      const previous = credential("first");
+      expect((await call(previous, "read_file")).status).toBe(200);
+      active = undefined;
+      expect((await call(previous, "read_file")).status).toBe(401);
+      active = "second";
+      expect((await call(previous, "read_file")).status).toBe(401);
+      expect(mockManager.executeTool).toHaveBeenCalledTimes(1);
+      expect((await call(credential("second"), "read_file")).status).toBe(200);
+      expect(mockManager.executeTool).toHaveBeenCalledTimes(2);
+    });
+
+    it("drops a tool result that completes after the message lost ownership", async () => {
+      mockManager.executeTool.mockImplementationOnce(async () => {
+        active = "second";
+        return { content: [{ type: "text", text: "first-turn-only" }] };
+      });
+      const response = await call(credential("first"), "read_file");
+      expect(response.status).toBe(401);
+      expect(await response.text()).not.toContain("first-turn-only");
+      expect(mockManager.executeTool).toHaveBeenCalledTimes(1);
+    });
+
+    it("with per-turn reuse, reuses the connection and none of the live checks", async () => {
+      vi.stubEnv("MCPJAM_HARNESS_MCP_TURN_CACHE", "1");
+      const checks = vi.mocked(fetch);
+      const first = credential("first");
+      expect((await call(first, "read_file")).status).toBe(200);
+      // Before the body, before it runs, and after the call.
+      expect(checks).toHaveBeenCalledTimes(3);
+      checks.mockClear();
+      expect((await call(first, "read_file")).status).toBe(200);
+      expect(checks).toHaveBeenCalledTimes(3);
+      expect(createAuthorizedManager).toHaveBeenCalledTimes(1);
+      active = "second";
+      expect((await call(first, "read_file")).status).toBe(401);
+      expect(mockManager.executeTool).toHaveBeenCalledTimes(2);
+    });
+
+    it("with per-turn reuse, never runs a call whose turn ended after its first check", async () => {
+      vi.stubEnv("MCPJAM_HARNESS_MCP_TURN_CACHE", "1");
+      const first = credential("first");
+      expect((await call(first, "read_file")).status).toBe(200);
+      const authority = vi.mocked(fetch).getMockImplementation()!;
+      // Stop lands after the check made before the body was read.
+      vi.mocked(fetch).mockImplementationOnce(async (url, init) => {
+        const answer = await authority(url as URL, init as RequestInit);
+        active = "second";
+        return answer;
+      });
+      expect((await call(first, "read_file")).status).toBe(401);
+      expect(mockManager.executeTool).toHaveBeenCalledTimes(1);
+    });
+
+    it("with per-turn reuse, builds the connection again after a call fails", async () => {
+      vi.stubEnv("MCPJAM_HARNESS_MCP_TURN_CACHE", "1");
+      const first = credential("first");
+      mockManager.executeTool.mockRejectedValueOnce(new Error("Session not found"));
+      const failed = await call(first, "read_file");
+      expect((await failed.json()).error).toBeDefined();
+      expect((await call(first, "read_file")).status).toBe(200);
+      expect(createAuthorizedManager).toHaveBeenCalledTimes(2);
+    });
+
+    it("refuses dispatch when the authority is unavailable", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("disconnected")));
+      expect((await call(credential("first"), "read_file")).status).toBe(503);
+      expect(mockManager.executeTool).not.toHaveBeenCalled();
+    });
+  });
+
   it("blocks a denied tools/call before it reaches the manager", async () => {
     const res = await call(sealedToken("srv-a"), "delete_repo");
     expect(res.status).toBe(200);
@@ -146,6 +239,8 @@ describe("harness MCP proxy tool policy", () => {
       classification: "destructive",
     });
     expect(data.result.content[0].text).toContain("blocked by tool policy");
+    // A 2026-07-28 client refuses a result without it; earlier ones ignore it.
+    expect(data.result.resultType).toBe("complete");
     expect(mockManager.executeTool).not.toHaveBeenCalled();
   });
 

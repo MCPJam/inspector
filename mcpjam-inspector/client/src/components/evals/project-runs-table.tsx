@@ -104,10 +104,8 @@ import {
   useEvalRunDecisionBadge,
   useHasBeenVisible,
 } from "@/hooks/use-eval-run-decision-summary";
-import {
-  evalRunDecisionRevision,
-  isTerminalEvalRunStatus,
-} from "@/lib/evals/eval-decision-summary-store";
+import { evalRunDecisionRevision } from "@/lib/evals/eval-decision-summary-store";
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 import {
   decisionMeasurementUnitLabel,
   formatDecisionCounts,
@@ -175,7 +173,10 @@ const ALL_SUITES = "__all__";
  * `status` stays `"completed"`, so a reader that consults only `status`
  * reports a decided run as having no result.
  */
-export function runEffectiveOutcome(row: ProjectRunRow): string {
+/** Anything with a run's result and status: a table row or a run itself. */
+export type RunOutcomeFields = { result?: string | null; status: string };
+
+export function runEffectiveOutcome(row: RunOutcomeFields): string {
   return row.result && row.result !== "pending" ? row.result : row.status;
 }
 
@@ -1473,7 +1474,7 @@ function ProjectRunTableRow({
 }) {
   const [visibilityRef, hasBeenVisible, onScreen] =
     useHasBeenVisible<HTMLTableRowElement>();
-  const terminal = isTerminalEvalRunStatus(row.status);
+  const terminal = isEvalRunTerminalStatus(row.status);
   const {
     status: summaryStatus,
     summary,

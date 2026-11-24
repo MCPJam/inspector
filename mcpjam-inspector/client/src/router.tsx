@@ -22,8 +22,9 @@ import App, {
   CompatibilityRoute,
   ComputerRoute,
   EvalRunSharedRoute,
-  EvalsRoute,
   EvaluateRoute,
+  EventsRoute,
+  EventTriggersRoute,
   HostCompareRoute,
   HostsRoute,
   HomeRoute,
@@ -52,11 +53,13 @@ import App, {
   XAAFlowRoute,
 } from "./App";
 import { LoginInitiationRoute } from "./components/auth/login-initiation-route";
+import { ReadinessRoute } from "./components/readiness/ReadinessPage";
 import LoadingScreen from "./components/LoadingScreen";
 import { getFirstRunOAuthReturnServerName } from "./lib/first-run-oauth-return";
 import { ProjectRouteBoundary } from "./components/routing/project-route-boundary";
 import { LegacyProjectRouteNormalizer } from "./components/routing/legacy-project-route-normalizer";
 import { NotFoundRoute } from "./components/routing/not-found-route";
+import { WebAccountReconnectPage } from "./components/web-clients/WebAccountReconnectPage";
 import { getAppRouter, setAppRouter } from "./router-ref";
 import {
   buildHostsPath,
@@ -110,6 +113,21 @@ function AppEntryLandingRoute() {
  * `p/:projectId` and once at the root behind the legacy normalizer, so
  * nothing in this map knows about the project prefix.
  */
+/**
+ * Suite settings moved from `…/suite/:id/edit` to `…/suite/:id/settings`. Old
+ * links live in CI comments and PRs, so the old path stays as a redirect that
+ * keeps the project prefix and the query (`fromCaseChecks`). A link with
+ * `fromCaseChecks` came from a test case's evaluators, so it opens Default
+ * evaluators.
+ */
+export function redirectSuiteEditToSettings({ request }: { request: Request }) {
+  const url = new URL(request.url);
+  const target = url.searchParams.has("fromCaseChecks")
+    ? "/settings/evaluators"
+    : "/settings";
+  return redirect(url.pathname.replace(/\/edit\/?$/, target) + url.search);
+}
+
 const ROUTE_ELEMENTS: Record<
   string,
   { element?: React.ReactElement; loader?: (args: any) => unknown }
@@ -133,6 +151,9 @@ const ROUTE_ELEMENTS: Record<
     loader: ({ params }: any) => redirect(buildHostsPath(params.hostId)),
   },
   "host-compare": { element: <HostCompareRoute /> },
+  "web-accounts/:webAccountId/reconnect": {
+    element: <WebAccountReconnectPage />,
+  },
   // Chrome-less host-compare surface for vanity domains (caniuse.dev):
   // App renders this full-bleed (no sidebar/header) and skips the
   // first-run onboarding redirect. `bare` forces the no-sub-nav render
@@ -163,12 +184,14 @@ const ROUTE_ELEMENTS: Record<
   resources: { element: <ResourcesRoute /> },
   prompts: { element: <PromptsRoute /> },
   tasks: { element: <TasksRoute /> },
+  events: { element: <EventsRoute /> },
   skills: { element: <SkillsRoute /> },
   learning: { element: <LearningRoute /> },
   conformance: { element: <ConformanceRoute /> },
   "conformance/runs/:runId": { element: <ConformanceRunDetailRoute /> },
   "conformance/shared/:token": { element: <ConformanceSharedRoute /> },
   compatibility: { element: <CompatibilityRoute /> },
+  readiness: { element: <ReadinessRoute /> },
   "oauth-flow": { element: <OAuthFlowRoute /> },
   "xaa-flow": { element: <XAAFlowRoute /> },
   tracing: { element: <TracingRoute /> },
@@ -215,6 +238,7 @@ const ROUTE_ELEMENTS: Record<
   // so registration here does not expose the dark feature.
   sessions: { element: <SessionsRoute /> },
   playground: { element: <PlaygroundRoute /> },
+  triggers: { element: <EventTriggersRoute /> },
   support: { loader: () => redirect("/settings/support") },
   "settings/support": { element: <SupportRoute /> },
   settings: { element: <SettingsRoute /> },
@@ -263,6 +287,7 @@ const ROUTE_ELEMENTS: Record<
   "organizations/:orgId/api-keys": { element: <OrganizationsRoute /> },
   "organizations/:orgId/plans": { element: <OrganizationsRoute /> },
   "organizations/:orgId/data-management": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/security": { element: <OrganizationsRoute /> },
   "organizations/:orgId/audit-log": { element: <OrganizationsRoute /> },
   "organizations/:orgId/integrations": { element: <OrganizationsRoute /> },
   organizations: { element: <OrganizationsRoute /> },
@@ -276,22 +301,22 @@ const ROUTE_ELEMENTS: Record<
     loader: ({ params }) => redirect(`/organizations/${params.orgId}/billing`),
   },
   "evals/shared/:token": { element: <EvalRunSharedRoute /> },
-  evals: { element: <EvalsRoute /> },
-  "evals/create": { element: <EvalsRoute /> },
-  "evals/suite/:suiteId": { element: <EvalsRoute /> },
-  "evals/suite/:suiteId/runs/:runId": { element: <EvalsRoute /> },
+  evals: { element: <LegacyEvalRedirect /> },
+  "evals/create": { element: <LegacyEvalRedirect /> },
+  "evals/suite/:suiteId": { element: <LegacyEvalRedirect /> },
+  "evals/suite/:suiteId/runs/:runId": { element: <LegacyEvalRedirect /> },
   "evals/suite/:suiteId/test/:testId": { element: <LegacyEvalCaseRedirect /> },
   "evals/suite/:suiteId/test/:testId/edit": { element: <LegacyEvalCaseRedirect /> },
-  "evals/suite/:suiteId/edit": { element: <EvalsRoute /> },
-  // Runs mode. `mode` comes from the route table rather than sniffing the URL
-  // inside the component, so the two lenses stay one route element with one
-  // billing gate.
-  "evals/runs": { element: <EvalsRoute mode="runs" /> },
-  "evals/runs/create": { element: <EvalsRoute mode="runs" /> },
+  "evals/suite/:suiteId/settings": { element: <LegacyEvalRedirect /> },
+  "evals/suite/:suiteId/settings/evaluators": { element: <LegacyEvalRedirect /> },
+  "evals/suite/:suiteId/edit": { loader: redirectSuiteEditToSettings },
+  // Retired Runs links keep their artifact context through the redirect.
+  "evals/runs": { element: <LegacyEvalRedirect /> },
+  "evals/runs/create": { element: <LegacyEvalRedirect /> },
   "evals/runs/commit/:commitSha": { element: <LegacyEvalRedirect /> },
-  "evals/runs/suite/:suiteId": { element: <EvalsRoute mode="runs" /> },
+  "evals/runs/suite/:suiteId": { element: <LegacyEvalRedirect /> },
   "evals/runs/suite/:suiteId/runs/:runId": {
-    element: <EvalsRoute mode="runs" />,
+    element: <LegacyEvalRedirect />,
   },
   "evals/runs/suite/:suiteId/test/:testId": {
     element: <LegacyEvalCaseRedirect />,
@@ -299,13 +324,23 @@ const ROUTE_ELEMENTS: Record<
   "evals/runs/suite/:suiteId/test/:testId/edit": {
     element: <LegacyEvalCaseRedirect />,
   },
-  "evals/runs/suite/:suiteId/edit": { element: <EvalsRoute mode="runs" /> },
-  // Public Evaluate routes. Legacy access above is separately flagged.
+  "evals/runs/suite/:suiteId/settings": { element: <LegacyEvalRedirect /> },
+  "evals/runs/suite/:suiteId/settings/evaluators": {
+    element: <LegacyEvalRedirect />,
+  },
+  "evals/runs/suite/:suiteId/edit": { loader: redirectSuiteEditToSettings },
+  // Public Evaluate routes. Legacy links above redirect here.
   evaluate: { element: <EvaluateRoute /> },
   "evaluate/create": { element: <EvaluateRoute /> },
   "evaluate/eval-server/:serverId": { element: <EvaluateRoute /> },
   "evaluate/suite/:suiteId": { element: <EvaluateRoute /> },
   "evaluate/suite/:suiteId/runs/:runId": { element: <EvaluateRoute /> },
+  "evaluate/suite/:suiteId/runs/:runId/cases/:caseId": {
+    element: <EvaluateRoute />,
+  },
+  "evaluate/suite/:suiteId/runs/:runId/cases/:caseId/iterations/:iterationId": {
+    element: <EvaluateRoute />,
+  },
   // Evaluate prefix only: the compare page mounts behind
   // `showEvaluateRunPage`, and the `/evals` builders never set
   // `comparison`, so there is no `/evals/.../compare` URL to register.
@@ -314,7 +349,9 @@ const ROUTE_ELEMENTS: Record<
   "evaluate/suite/:suiteId/test/:testId/edit": {
     element: <EvaluateRoute />,
   },
-  "evaluate/suite/:suiteId/edit": { element: <EvaluateRoute /> },
+  "evaluate/suite/:suiteId/settings": { element: <EvaluateRoute /> },
+  "evaluate/suite/:suiteId/settings/evaluators": { element: <EvaluateRoute /> },
+  "evaluate/suite/:suiteId/edit": { loader: redirectSuiteEditToSettings },
   // Old CI links always land in public Evaluate, with fragments intact.
   "ci-evals": { element: <LegacyEvalRedirect /> },
   "ci-evals/*": { element: <LegacyEvalRedirect /> },

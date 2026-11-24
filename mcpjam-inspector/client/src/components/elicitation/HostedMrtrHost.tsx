@@ -1,20 +1,25 @@
+import { useRetainedFormPortal } from "./use-retained-form-portal";
 import { PluginFormPreviewServices } from "./form-app-preview";
 import type { PluginFormPorts } from "../schema-form/PluginFormFields";
 import type { ReactNode } from "react";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useState,
   useSyncExternalStore,
 } from "react";
-import { createPortal } from "react-dom";
 import {
   useComposerFormRegistration,
   useComposerFormStore,
   useComposerSlot,
 } from "./composer-form-store";
 import { ComposerFormCard, type ComposerFormAction } from "./ComposerFormCard";
+import {
+  formChoice,
+  observeExtensionOperation,
+} from "@/lib/extension-operation-health";
 import {
   compileComposerForm,
   logComposerFormDiagnostics,
@@ -141,12 +146,19 @@ export function HostedMrtrHost() {
   // own chat's composer card (and waits there while another chat is shown).
   // Without a composer the existing modal rail keeps it answerable.
   const composerMounted = useComposerFormStore((s) => s.slots.length > 0);
+  const [retainedComposerKeys, setRetainedComposerKeys] = useState<readonly string[]>([]);
+  useLayoutEffect(() => {
+    setRetainedComposerKeys((previous) => {
+      const next = rounds.filter((round) => isComposerPluginRound(round) &&
+        (composerMounted || previous.includes(round.key))).map((round) => round.key);
+      return next.length === previous.length && next.every((key, index) => key === previous[index])
+        ? previous : next;
+    });
+  }, [composerMounted, rounds]);
   const composerRounds = useMemo(
-    () =>
-      composerMounted
-        ? rounds.filter((round) => isComposerPluginRound(round))
-        : [],
-    [composerMounted, rounds],
+    () => rounds.filter((round) => isComposerPluginRound(round) &&
+      (composerMounted || retainedComposerKeys.includes(round.key))),
+    [composerMounted, rounds, retainedComposerKeys],
   );
 
   const activeRound: HostedMrtrRound | null =
@@ -187,7 +199,12 @@ export function HostedMrtrHost() {
     // KEEPS the round mounted so the user can retry. Owned plugin editors handle
     // rejection themselves; ordinary dialogs keep their existing error path.
     try {
-      await submit(activeRound.key, next);
+      await (activeRound.pluginFormProfile
+        ? observeExtensionOperation(
+            { operation: "form_response", choice: formChoice(answer.action) },
+            () => submit(activeRound.key, next),
+          )
+        : submit(activeRound.key, next));
     } catch (err) {
       if (activeRound.pluginFormProfile) throw err;
       console.error(
@@ -359,8 +376,14 @@ function ComposerMrtrRound({ round }: { round: HostedMrtrRound }) {
     cancel: () => useHostedMrtrStore.getState().cancel(round.key),
   });
   const slot = useComposerSlot(scope.workspaceId);
+  const composerMounted = useComposerFormStore((s) => s.slots.length > 0);
+  // Another chat's composer must not turn this retained request into a modal.
+  const portal = useRetainedFormPortal(
+    slot, queue.active && (!!slot || !composerMounted), scope.workspaceId,
+    undefined, false, !composerMounted,
+  );
   const current = round.requests[Math.min(index, round.requests.length - 1)];
-  if (!queue.active || !slot || !current) return null;
+  if (!portal.ready || !current) return null;
 
   const respond = async (
     action: ComposerFormAction,
@@ -385,7 +408,10 @@ function ComposerMrtrRound({ round }: { round: HostedMrtrRound }) {
       }
     }
     // A rejected submit keeps the round (and the card) for a retry.
-    await useHostedMrtrStore.getState().submit(round.key, next);
+    await observeExtensionOperation(
+      { operation: "form_response", choice: formChoice(action) },
+      () => useHostedMrtrStore.getState().submit(round.key, next),
+    );
   };
   const profile: PluginFormProfile = {
     ...round.pluginFormProfile!,
@@ -435,7 +461,7 @@ function ComposerMrtrRound({ round }: { round: HostedMrtrRound }) {
       onRespond={respond}
     />
   );
-  return createPortal(
+  return portal.render(
     current.pluginFormSourceToken ? (
       <PluginFormPreviewServices
         key={`${round.key}:${current.key}`}
@@ -452,7 +478,6 @@ function ComposerMrtrRound({ round }: { round: HostedMrtrRound }) {
     ) : (
       card()
     ),
-    slot,
   );
 }
 

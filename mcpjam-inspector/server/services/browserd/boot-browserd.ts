@@ -64,6 +64,8 @@ export interface BootBrowserdOptions {
   contextMode?: "persistent" | "ephemeral";
   /** The X display browserd's Chromium draws on. Defaults to `:0`. */
   display?: string;
+  /** `public`: the browser reaches public internet addresses only (`daemon/public-network.ts`). */
+  networkPolicy?: "public";
   /**
    * Make the window cover the display, with no chrome.
    *
@@ -83,6 +85,12 @@ export interface BootBrowserdOptions {
   deviceScaleFactor?: number;
   /** One-shot profile archive written before browserd starts. */
   profileArchivePath?: string;
+  /**
+   * Start Chromium from an empty profile, whatever an earlier boot on this box
+   * left in `userDataDir`: a web account's browser, which must never open on
+   * the person's own sign-ins.
+   */
+  freshProfile?: boolean;
 }
 
 export interface BrowserdHandle {
@@ -105,7 +113,15 @@ export interface BrowserdHandle {
   stop: () => Promise<void>;
 }
 
-const DEFAULT_READY_TIMEOUT_MS = 30_000;
+/**
+ * How long a boot waits for the ready line, X display included.
+ *
+ * The daemon prints it only after Chromium has launched, and a fresh box's
+ * first launch measured 12–38s on the desktop template (a second boot on the
+ * same box: about 1s). The old 30s cut off the slow first launches, which
+ * is the "did not report listening" failure people saw when opening a browser.
+ */
+export const BROWSERD_READY_TIMEOUT_MS = 60_000;
 
 /**
  * The X display a desktop box draws on — `:0`, the same one `@e2b/desktop`
@@ -359,6 +375,9 @@ function buildEnv(
   if (options.profileArchivePath) {
     env.MCPJAM_BROWSERD_PROFILE_ARCHIVE = options.profileArchivePath;
   }
+  if (options.freshProfile) env.MCPJAM_BROWSERD_FRESH_PROFILE = "1";
+  if (options.networkPolicy === "public")
+    env.MCPJAM_BROWSERD_NETWORK = "public";
   return env;
 }
 
@@ -376,7 +395,7 @@ export function bootBrowserd(
 ): Promise<BrowserdHandle> {
   const bearer = randomBytes(32).toString("hex");
   const env = buildEnv(bearer, options);
-  const readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
+  const readyTimeoutMs = options.readyTimeoutMs ?? BROWSERD_READY_TIMEOUT_MS;
 
   return new Promise<BrowserdHandle>((resolve, reject) => {
     let settled = false;

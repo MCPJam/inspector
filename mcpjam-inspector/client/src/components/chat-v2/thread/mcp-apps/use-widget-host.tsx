@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { toast } from "sonner";
 import { ClientCspToastGroup } from "@/lib/client-csp-toast";
+import { withoutThemeBoundColors } from "@/lib/host-context-colors";
 import {
   HOSTED_MODE,
   SANDBOX_ORIGIN,
@@ -26,6 +27,7 @@ import {
 } from "@/lib/config";
 import { authFetch } from "@/lib/session-token";
 import { artifactStableKey, fetchArtifact } from "@/lib/artifact-urls";
+import { useChatAppDisplayBehavior } from "@/contexts/chat-app-display-behavior-context";
 import { useIsScenarioSurface } from "@/contexts/scenario-surface-context";
 import { useWebManagedServers } from "@/contexts/web-managed-servers-context";
 import { useWidgetSurface } from "@/contexts/widget-surface-context";
@@ -38,7 +40,9 @@ import { useScenarioHostCapabilitiesOverride } from "@/contexts/scenario-client-
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 import { useSavedClient, useEffectiveHostContext } from "@/contexts/saved-client-context";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
+import { usePaneDisplay } from "@/contexts/pane-display-context";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
+import { useAppsBridgeObservations } from "@/lib/server-canvas/use-apps-bridge-observations";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import type { CspViolation } from "@/stores/widget-debug-store";
 import { compareCspPolicies } from "../csp-workbench/csp-header";
@@ -69,6 +73,7 @@ import { listResources, readResource } from "@/lib/apis/mcp-resources-api";
 import { listPrompts } from "@/lib/apis/mcp-prompts-api";
 import { listResourceTemplates } from "@/lib/apis/mcp-resource-templates-api";
 import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
+import { createSandboxViewServices } from "./sandbox-view-services";
 import { CheckoutDialogV2 } from "./checkout-dialog-v2";
 import type { CheckoutSession } from "@/shared/acp-types";
 import {
@@ -190,6 +195,7 @@ export function useWidgetHost(): WidgetHostImpl {
 
   const services = useMemo<WidgetHostServices>(
     () => ({
+      ...createSandboxViewServices(() => webManagedServersRef.current),
       fetchWidgetContent: fetchMcpAppsWidgetContent,
       readResource,
       listResources,
@@ -205,6 +211,7 @@ export function useWidgetHost(): WidgetHostImpl {
     [],
   );
 
+  const displayBehavior = useChatAppDisplayBehavior();
   const surface = useMemo<WidgetSurfaceInfo>(
     () => ({
       kind,
@@ -215,8 +222,15 @@ export function useWidgetHost(): WidgetHostImpl {
       viewMountMode: VIEW_MOUNT_MODE,
       viewSubdomainsEnabled: VIEW_SUBDOMAINS_ENABLED,
       playgroundCspMode,
+      ...(displayBehavior ? { displayBehavior } : {}),
     }),
-    [kind, persistentSurfaceHost, webManagedServers, playgroundCspMode],
+    [
+      kind,
+      persistentSurfaceHost,
+      webManagedServers,
+      playgroundCspMode,
+      displayBehavior,
+    ],
   );
 
   // --- environment inputs (Phase 1b raw ambient reads) -----------------------
@@ -230,9 +244,12 @@ export function useWidgetHost(): WidgetHostImpl {
   const sharedHostStyle = usePreferencesStore((s) => s.hostStyle);
   const scenarioHostStyle = useScenarioHostStyle();
   const ambientHostTheme = useScenarioHostTheme();
-  const scenarioHostTheme = savedClient
-    ? extractHostTheme(savedClient.hostContext) ?? null
-    : ambientHostTheme;
+  const paneDisplay = usePaneDisplay();
+  const scenarioHostTheme =
+    paneDisplay?.theme ??
+    (savedClient
+      ? extractHostTheme(savedClient.hostContext) ?? null
+      : ambientHostTheme);
   const hostCapabilitiesOverride = useScenarioHostCapabilitiesOverride();
   const activeMcpProfile = useActiveMcpProfile();
   // The profile is bound into the resolvers below (3d-iii) — it no longer leaves
@@ -241,7 +258,20 @@ export function useWidgetHost(): WidgetHostImpl {
   // against the live profile; the renderer recomputes via `environment.profileKey`.
   const activeMcpProfileRef = useRef(activeMcpProfile);
   activeMcpProfileRef.current = activeMcpProfile;
-  const draftHostContext = useEffectiveHostContext();
+  const effectiveHostContext = useEffectiveHostContext();
+  const paneTheme = paneDisplay?.theme;
+  const draftHostContext = useMemo(() => {
+    if (!paneTheme) return effectiveHostContext;
+    const next: Record<string, unknown> = {
+      ...effectiveHostContext,
+      theme: paneTheme,
+    };
+    const configuredTheme = extractHostTheme(effectiveHostContext);
+    if (configuredTheme && configuredTheme !== paneTheme) {
+      return withoutThemeBoundColors(next);
+    }
+    return next;
+  }, [effectiveHostContext, paneTheme]);
   const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
   const playgroundTimeZone = useUIPlaygroundStore((s) => s.globals.timeZone);
@@ -250,7 +280,8 @@ export function useWidgetHost(): WidgetHostImpl {
   const playgroundSafeAreaInsets = useUIPlaygroundStore(
     (s) => s.safeAreaInsets,
   );
-  const playgroundDeviceType = useUIPlaygroundStore((s) => s.deviceType);
+  const sharedDeviceType = useUIPlaygroundStore((s) => s.deviceType);
+  const playgroundDeviceType = paneDisplay?.deviceType ?? sharedDeviceType;
 
   const environment = useMemo<WidgetHostEnvironmentInputs>(
     () => ({
@@ -345,7 +376,10 @@ export function useWidgetHost(): WidgetHostImpl {
   const setWidgetHtml = useWidgetDebugStore((s) => s.setWidgetHtml);
   const setSandboxApplied = useWidgetDebugStore((s) => s.setSandboxApplied);
   const appendLifecycle = useWidgetDebugStore((s) => s.appendLifecycle);
-  const addTrafficLog = useTrafficLogStore((s) => s.addLog);
+  // Logged bridge traffic also feeds the server canvas's observed features.
+  const addTrafficLog = useAppsBridgeObservations(
+    useTrafficLogStore((s) => s.addLog),
+  );
   const cspTelemetryLimiterRef = useRef(new CspViolationTelemetryLimiter());
   const cspToastGroupRef = useRef(
     new ClientCspToastGroup(

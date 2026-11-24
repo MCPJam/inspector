@@ -11,6 +11,7 @@ import { AgentSidePanel } from "@/components/mcpjam-agent/AgentSidePanel";
 import { useAppReady } from "@/hooks/use-app-ready";
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
 import { track } from "@/lib/analytics";
+import { isPlatformAgentEnabled } from "@/lib/runtime-config";
 
 interface AgentSidePanelMountProps {
   projectId: string | null;
@@ -46,6 +47,8 @@ export function AgentSidePanelMount({
   const describeReady =
     !!describeScope && !!host && host.projectId === describeScope.projectId;
   const resolvedProjectId = inEvaluate && host ? host.projectId : projectId;
+  // Off on the server (MCPJAM_PLATFORM_AGENT=off): no panel and no shortcut.
+  const agentOff = !isPlatformAgentEnabled();
 
   useEffect(() => {
     if (!hidden && !inEvaluate && scoped && isOpen)
@@ -53,7 +56,7 @@ export function AgentSidePanelMount({
   }, [hidden, inEvaluate, scoped, isOpen]);
 
   useEffect(() => {
-    if (hidden || (inEvaluate && !describeReady)) return;
+    if (hidden || agentOff || (inEvaluate && !describeReady)) return;
     const handler = (event: KeyboardEvent) => {
       if (event.key !== "\\") return;
       if (!(event.metaKey || event.ctrlKey)) return;
@@ -81,6 +84,7 @@ export function AgentSidePanelMount({
     return () => window.removeEventListener("keydown", handler);
   }, [
     hidden,
+    agentOff,
     activeTab,
     inEvaluate,
     describeReady,
@@ -117,6 +121,7 @@ export function AgentSidePanelMount({
     host,
   ]);
 
+  if (agentOff) return null;
   if (inEvaluate && (!describeReady || !scoped)) return null;
   if (!inEvaluate && scoped) return null;
   if (inEvaluate && scoped && !host) return null;

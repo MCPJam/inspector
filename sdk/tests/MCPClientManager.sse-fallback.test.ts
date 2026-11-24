@@ -3,7 +3,11 @@ import type { AddressInfo } from "net";
 import { afterEach, describe, expect, it } from "vitest";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { MCPAuthError, MCPClientManager } from "../src/mcp-client-manager";
+import {
+  MCPAuthError,
+  MCPClientManager,
+  ProtocolVersionPinUnsupported,
+} from "../src/mcp-client-manager";
 import { createMockServer, startMockStreamableHttpServer } from "./mock-servers";
 
 /**
@@ -231,3 +235,93 @@ describe("MCPClientManager disableSseFallback", () => {
   }, 15000);
 });
 
+/**
+ * A 2026-07-28-only server: a legacy `initialize` POST is refused with HTTP
+ * 400 and JSON-RPC -32022 naming the versions it does support. GETs are
+ * counted, so a test can tell whether the SSE fallback was tried.
+ */
+async function startModernOnlyServer(): Promise<{
+  url: string;
+  sseAttempts: () => number;
+  stop: () => Promise<void>;
+}> {
+  let sseAttempts = 0;
+  const httpServer = http.createServer((req, res) => {
+    if (req.method === "GET") {
+      sseAttempts += 1;
+      res.writeHead(405);
+      res.end();
+      return;
+    }
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk;
+    });
+    req.on("end", () => {
+      const id = (JSON.parse(body || "{}") as { id?: unknown }).id ?? null;
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id,
+          error: {
+            code: -32022,
+            message: "Unsupported protocol version: 2025-06-18",
+            data: { supported: ["2026-07-28"], requested: "2025-06-18" },
+          },
+        })
+      );
+    });
+  });
+  return new Promise((resolve) => {
+    httpServer.listen(0, "127.0.0.1", () => {
+      const address = httpServer.address() as AddressInfo;
+      resolve({
+        url: `http://127.0.0.1:${address.port}/mcp`,
+        sseAttempts: () => sseAttempts,
+        stop: () =>
+          new Promise<void>((resolveStop) => {
+            httpServer.close(() => resolveStop());
+          }),
+      });
+    });
+  });
+}
+
+describe("MCPClientManager pinned-version refusal", () => {
+  const managers: MCPClientManager[] = [];
+  const stops: Array<() => Promise<void>> = [];
+
+  afterEach(async () => {
+    await Promise.all(
+      managers.map((manager) => manager.disconnectAllServers())
+    );
+    managers.length = 0;
+    await Promise.all(stops.map((stop) => stop()));
+    stops.length = 0;
+  });
+
+  it("reports a -32022 refusal as the pin, without trying SSE", async () => {
+    const server = await startModernOnlyServer();
+    stops.push(server.stop);
+    const manager = new MCPClientManager();
+    managers.push(manager);
+
+    const failure = await manager
+      .connectToServer("modern-only", {
+        url: server.url,
+        mcpProtocolVersion: "2025-06-18",
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => error
+      );
+
+    expect(failure).toBeInstanceOf(ProtocolVersionPinUnsupported);
+    expect(failure).toMatchObject({
+      protocolVersion: "2025-06-18",
+      supportedVersions: ["2026-07-28"],
+    });
+    expect(server.sseAttempts()).toBe(0);
+  }, 15000);
+});

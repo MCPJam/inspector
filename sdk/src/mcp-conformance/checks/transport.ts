@@ -5,6 +5,7 @@ import type {
 } from "../types.js";
 import { CHECK_ERAS } from "../types.js";
 import {
+  blockedResult,
   errorMessage,
   eraSkipMessage,
   failedResult,
@@ -21,6 +22,8 @@ import {
   modernRequestBody,
   rawHeadersProbe,
   rawRequest,
+  versionStopDetails,
+  type LegacyVersionStop,
   type RawHttpResult,
 } from "../raw-http.js";
 
@@ -149,12 +152,19 @@ async function initializeSession(ctx: RawHttpCheckContext): Promise<{
   body: unknown;
   contentType: string;
   isMcpLayerResponse: boolean;
+  /** The answered protocol version, when MCPJam supports it. */
+  negotiatedVersion?: string;
+  /** Set when the server did not answer with the version the run uses. */
+  versionStop?: LegacyVersionStop;
 }> {
-  const { result, sessionId } = await legacyInitialize(ctx);
+  const { result, sessionId, negotiatedVersion, versionStop } =
+    await legacyInitialize(ctx);
   return {
     ok: isOk(result),
     status: result.status,
     sessionId,
+    negotiatedVersion,
+    versionStop,
     body: result.json ?? (result.bodyText || undefined),
     contentType: result.headers["content-type"] ?? "",
     // Whether the server answered at the MCP layer at all. A non-2xx carrying
@@ -234,14 +244,25 @@ async function modernPostResponseContentTypeCheck(
 async function terminateSession(
   ctx: RawHttpCheckContext,
   sessionId: string | undefined,
+  negotiatedVersion: string | undefined,
 ): Promise<void> {
   if (!sessionId) {
     return;
   }
 
+  // The version header rides on every request after initialize
+  // (2025-06-18 and later), the closing DELETE included, and carries the
+  // version the server agreed to: a server that answered an older version
+  // may refuse the one we asked for, and the session would stay open.
   await rawRequest(ctx, {
     method: "DELETE",
-    headers: legacyHeaders({ sessionId }),
+    headers: legacyHeaders({
+      protocolVersion:
+        negotiatedVersion ??
+        ctx.config.protocolVersion ??
+        DEFAULT_LEGACY_PROTOCOL_VERSION,
+      sessionId,
+    }),
   }).catch(() => undefined);
 }
 
@@ -327,10 +348,16 @@ export async function runTransportChecks(
       ] as const) {
         if (selectedCheckIds.has(id)) {
           results.push(
-            couldNotRunResult(
-              TRANSPORT_CHECK_METADATA[id],
-              `Skipping check because the Streamable HTTP session could not be initialized: ${errorMessage(error)}`,
-            ),
+            selectedCheckIds.has("server-sse-polling-session")
+              ? blockedResult(
+                  TRANSPORT_CHECK_METADATA[id],
+                  TRANSPORT_CHECK_METADATA["server-sse-polling-session"],
+                  { reason: errorMessage(error) },
+                )
+              : couldNotRunResult(
+                  TRANSPORT_CHECK_METADATA[id],
+                  `Skipping check because the Streamable HTTP session could not be initialized: ${errorMessage(error)}`,
+                ),
           );
         }
       }
@@ -435,9 +462,41 @@ export async function runTransportChecks(
       ] as const) {
         if (selectedCheckIds.has(id)) {
           results.push(
+            selectedCheckIds.has("server-sse-polling-session")
+              ? blockedResult(
+                  TRANSPORT_CHECK_METADATA[id],
+                  TRANSPORT_CHECK_METADATA["server-sse-polling-session"],
+                  { status: session.status },
+                )
+              : couldNotRunResult(
+                  TRANSPORT_CHECK_METADATA[id],
+                  "Streamable HTTP session could not be initialized",
+                  { status: session.status },
+                ),
+          );
+        }
+      }
+
+      return results;
+    }
+
+    // The checks above read the `initialize` answer itself. The ones below
+    // send more requests on the session, which this run does not do once the
+    // server has answered with a version other than the one it uses.
+    const versionStop = session.versionStop;
+    if (versionStop !== undefined) {
+      for (const id of [
+        "server-accepts-multiple-post-streams",
+        "server-sse-streams-functional",
+        "notification-post-accepted",
+        "get-stream-or-405",
+      ] as const) {
+        if (selectedCheckIds.has(id)) {
+          results.push(
             couldNotRunResult(
               TRANSPORT_CHECK_METADATA[id],
-              "Streamable HTTP session could not be initialized",
+              versionStop.message,
+              versionStopDetails(versionStop),
             ),
           );
         }
@@ -706,7 +765,13 @@ export async function runTransportChecks(
       }
     }
   } finally {
-    await terminateSession(ctx, sessionId);
+    // The version the server answered, even one MCPJam does not speak: the
+    // session is on it, and the run's version may be refused.
+    await terminateSession(
+      ctx,
+      sessionId,
+      session?.negotiatedVersion ?? session?.versionStop?.answeredVersion
+    );
   }
 
   return results;

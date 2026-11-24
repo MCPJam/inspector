@@ -18,7 +18,9 @@
  * `application/json`; the optional GET returns a minimal server-stream the
  * client probes then closes; no `Mcp-Session-Id` (stateless).
  */
+import { createHash } from "node:crypto";
 import { Hono } from "hono";
+import type { MCPClientManager } from "@mcpjam/sdk";
 import { handleNativeForwarding } from "./harness-forwarding.js";
 import "../../types/hono";
 import {
@@ -26,11 +28,23 @@ import {
   handleJsonRpc,
   parseAndValidateJsonRpc,
 } from "../../services/mcp-http-bridge";
+import { downstreamProtocolVersionOf } from "../../services/bridge-protocol-version.js";
 import {
   createAuthorizedManager,
   withManager,
   type ManagerCallerContext,
 } from "./auth";
+import { authorizeProxyTurn } from "../../utils/harness/proxy-turn.js";
+import {
+  authorizeSessionRequest,
+  sameSessionTurn,
+} from "../../utils/harness/session-proxy-request.js";
+import { SESSION_GRANT_HEADER } from "../../utils/harness/session-grant.js";
+import {
+  cancelSessionCall,
+  trackSessionCall,
+} from "../../utils/harness/session-proxy-cancel.js";
+import { cancelledRequestId } from "../../utils/harness/forwarding/native-wire.js";
 import { verifyHarnessProxyToken } from "../../utils/harness/harness-proxy-token";
 import { unsealHarnessProxyToken } from "../../utils/harness/harness-proxy-policy-seal";
 import { evaluateHarnessProxyToolPolicy } from "../../utils/harness/harness-proxy-policy-enforcement";
@@ -46,6 +60,19 @@ import {
   isRpcLogSinkConfigured,
 } from "../../utils/harness/harness-rpc-log-sink";
 import { logger } from "../../utils/logger";
+import {
+  cancelRelayedListen,
+  harnessListenRelayEnabled,
+  isJsonRpcId,
+  LISTEN_METHOD,
+  relayListenStream,
+} from "./harness-mcp-listen-relay.js";
+import {
+  discardTurnManager,
+  harnessMcpTurnCacheEnabled,
+  withTurnManager,
+  type TurnConnection,
+} from "./harness-mcp-turn-cache.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { HOSTED_MODE } from "../../config.js";
 import {
@@ -228,13 +255,31 @@ async function handle(c: any) {
   // stays Convex's. A bare token keeps today's path byte-for-byte.
   const presentedToken = readProxyToken(c);
   const sealed = unsealHarnessProxyToken(presentedToken, serverId);
-  const claims = verifyHarnessProxyToken(
-    sealed?.token ?? presentedToken,
-    serverId
-  );
+  // A session envelope carries the lane's handle, not a turn's token: the live
+  // turn and its bound policy come from the backend on every request.
+  const sessionEnvelope = sealed?.session ? sealed : undefined;
+  const boxGrant = c.req.header(SESSION_GRANT_HEADER) || undefined;
+  const session = sessionEnvelope
+    ? await authorizeSessionRequest(sessionEnvelope, serverId, boxGrant)
+    : undefined;
+  if (session instanceof Response) return session;
+  const claims =
+    session?.claims ??
+    verifyHarnessProxyToken(sealed?.token ?? presentedToken, serverId);
   if (!claims || !claims.externalId || !claims.orgId) {
     return c.json({ error: "Unauthorized" }, 401);
   }
+  const correlationId = session?.turnId ?? readScopeStepUpCorrelationId(c);
+
+  const turn = sealed?.turn;
+  const checkTurn = turn
+    ? () => authorizeProxyTurn(turn, claims)
+    : sessionEnvelope && session
+      ? () =>
+          sameSessionTurn(sessionEnvelope, serverId, boxGrant, session.turnId)
+      : undefined;
+  const denied = turn ? await checkTurn?.() : undefined;
+  if (denied) return denied;
 
   if (rateLimited(`${claims.userId}:${serverId}`)) {
     return c.json({ error: "Rate limited" }, 429);
@@ -302,6 +347,38 @@ async function handle(c: any) {
     return c.json(validation.response, validation.status as 400);
   }
   const body = validation.body;
+  const relayListen = harnessListenRelayEnabled();
+  // The harness's own relayed listens, by its request id, for this caller: the
+  // token it presents, so two runs' clients (each naming its first listen
+  // `listen:0`) never share a key unless they share a token.
+  const listenCaller = [
+    claims.userId,
+    serverId,
+    createHash("sha256")
+      .update(presentedToken ?? "")
+      .digest("base64url"),
+  ].join("|");
+  const listenKey = (id: unknown) => `${listenCaller}|${JSON.stringify(id)}`;
+  if (relayListen && body.method === "notifications/cancelled") {
+    const requestId = (body as { params?: { requestId?: unknown } }).params
+      ?.requestId;
+    if (isJsonRpcId(requestId) && cancelRelayedListen(listenKey(requestId))) {
+      return c.body("Accepted", 202);
+    }
+  }
+  // A session client cancels with a separate request; it stops the call only
+  // where that call runs.
+  const cancelled = session ? cancelledRequestId(body) : undefined;
+  if (session && cancelled !== undefined) {
+    cancelSessionCall(session.laneId, serverId, cancelled);
+    return c.body("Accepted", 202);
+  }
+  const call =
+    session &&
+    body.method &&
+    (typeof body.id === "string" || typeof body.id === "number")
+      ? trackSessionCall(session.laneId, serverId, body.id)
+      : undefined;
 
   // Rebuild the user's authorized connection server-side via the acting-as
   // service-token exchange (no browser bearer in the sandbox). Convex baked the
@@ -314,7 +391,7 @@ async function handle(c: any) {
   };
 
   try {
-    const response = await withManager(
+    const createAuthorized = () =>
       createAuthorizedManager(
         caller,
         "", // bearer ignored on the workos_api_key path
@@ -399,8 +476,82 @@ async function handle(c: any) {
             }
           },
         },
-      ),
-      async (manager) => {
+      );
+    // With per-turn reuse on, a turn's requests share one authorized
+    // connection, keyed so nothing crosses a turn. Every request is still
+    // checked against its live turn.
+    const turnKey =
+      harnessMcpTurnCacheEnabled() && (turn || session)
+        ? [
+            claims.userId,
+            claims.projectId,
+            serverId,
+            session?.turnId ?? JSON.stringify(turn),
+            JSON.stringify(sealed?.profile ?? null),
+          ].join("|")
+        : undefined;
+    if (relayListen && body.method === LISTEN_METHOD && isJsonRpcId(body.id)) {
+      // A manager of the stream's own, for as long as the stream lasts.
+      const created = await createAuthorized();
+      const manager = "manager" in created ? created.manager : created;
+      const refused = await checkTurn?.();
+      if (refused) {
+        await manager.disconnectAllServers();
+        return refused;
+      }
+      return c.body(
+        relayListenStream({
+          id: body.id,
+          params: (body as { params?: unknown }).params,
+          serverId,
+          manager,
+          caller: listenCaller,
+          cancelKey: listenKey(body.id),
+          maxMs: HARNESS_MCP_STREAM_MAX_MS,
+          // The harness lists again on a change; the turn's reused client
+          // would answer from a cache the change made stale.
+          ...(turnKey ? { onChange: () => discardTurnManager(turnKey) } : {}),
+          ...(checkTurn
+            ? {
+                stillAuthorized: async () => (await checkTurn()) === undefined,
+              }
+            : {}),
+          onEnd: () =>
+            void manager.disconnectAllServers().catch((error: unknown) =>
+              logger.debug("[harness-mcp] relayed listen: disconnect failed", {
+                error: error instanceof Error ? error.name : "unknown",
+              }),
+            ),
+        }),
+        200,
+        {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no",
+        },
+      );
+    }
+    const onManager = <T>(
+      fn: (manager: MCPClientManager, connection?: TurnConnection) => Promise<T>,
+    ) =>
+      turnKey
+        ? withTurnManager(
+            turnKey,
+            () =>
+              createAuthorized().then((created) =>
+                "manager" in created ? created.manager : created,
+              ),
+            fn,
+          )
+        : withManager(createAuthorized(), fn);
+    const response = await onManager(
+      async (manager, connection) => {
+        // Connecting to a slow server can outlive the message that requested
+        // it, and a request on the turn's reused connection was first checked
+        // before its body arrived. Checked again here, just before it runs.
+        const refused = await checkTurn?.();
+        if (refused) return refused;
         // Enforce `toolPolicy` BEFORE the bridge: a denied call must never
         // reach `executeTool`. Only `tools/call` is gated, `tools/list` stays
         // unfiltered, and a block is a success envelope carrying the marker —
@@ -429,7 +580,6 @@ async function handle(c: any) {
               classification: block.marker.classification,
               at: Date.now(),
             };
-            const correlationId = readScopeStepUpCorrelationId(c);
             const deliveredLocally = publishHarnessPolicyBlock(
               correlationId,
               event,
@@ -460,7 +610,14 @@ async function handle(c: any) {
             return block.response;
           }
         }
-        return handleJsonRpc(serverId, body, manager, "adapter", {
+        const reply = await handleJsonRpc(serverId, body, manager, "adapter", {
+          ...(call ? { signal: call.signal } : {}),
+          downstreamProtocolVersion: downstreamProtocolVersionOf(body),
+          // This request's manager is still connecting: answer the handshake
+          // from the server's real connection, not a stand-in. Only with the
+          // listen relay, since a 2026-07-28 handshake without it leads to the
+          // listen stall.
+          awaitConnect: relayListen,
           // Inert unless this token carries an authorized eval scope AND the
           // harness named a turn — so playground traffic and capture-off runs
           // pay nothing and behave identically.
@@ -478,7 +635,6 @@ async function handle(c: any) {
                 ? { toolInput: context.toolInput }
                 : {}),
             };
-            const correlationId = readScopeStepUpCorrelationId(c);
             const deliveredLocally = publishHarnessScopeStepUp(
               correlationId,
               event,
@@ -516,8 +672,16 @@ async function handle(c: any) {
             );
           },
         });
+        // A failed request may have lost the upstream session; the next one
+        // builds the turn's connection again.
+        if (connection && reply && "error" in reply) connection.discard();
+        return reply;
       },
     );
+    if (response instanceof Response) return response;
+    // A tool already running at Stop may finish. Never return its data to a later turn.
+    const finished = await checkTurn?.();
+    if (finished) return finished;
     // Notification (no id) → 202 Accepted, no body.
     if (!response) return c.body("Accepted", 202);
     return c.json(response);
@@ -550,6 +714,8 @@ async function handle(c: any) {
       },
       200
     );
+  } finally {
+    call?.done();
   }
 }
 

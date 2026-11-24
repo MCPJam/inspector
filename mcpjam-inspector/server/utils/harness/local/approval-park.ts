@@ -1,21 +1,35 @@
 /**
- * A local session whose turn is paused on a human approval, and whose runtime
- * has to stay ALIVE for that decision to mean anything.
+ * A local session whose runtime stays ALIVE between two turns: a turn paused
+ * on a human approval, or (behind `MCPJAM_LOCAL_KEEP_AGENT`) a Codex runtime
+ * kept at the end of an ordinary turn for the conversation's next one.
  *
  * ── Why this exists ──────────────────────────────────────────────────────
- * Claude Code keeps its conversation on disk, so a paused local turn can be
- * torn down and re-driven later. Codex's app-server does not work that way: the
- * pending approval is a JSON-RPC request held open by ONE live `codex
- * app-server` process, inside one thread and one turn, and the bridge in front
- * of it holds the host-tool relay call (and its MCP `tools/call`) that is
- * waiting on the same decision. Tearing the tree down at the pause — which is
- * what a local turn's teardown does — loses the request. The adapter's
- * "Continue." fallback would then re-drive the thread with no approval
- * attached to anything, which is not "continuing what the user approved".
+ * Every local runtime holds a pending approval in its live process
+ * (`liveApprovalRuntime`): Claude Code's `canUseTool` waits inside the bridge,
+ * Codex's app-server holds a JSON-RPC request open inside one thread and one
+ * turn, with the host-tool relay call (and its MCP `tools/call`) waiting on
+ * the same decision, and GitHub Copilot CLI does the same. Tearing the tree
+ * down at the pause — which is what a local turn's teardown does — loses the
+ * request. Restarting from the conversation on disk would then re-drive the
+ * thread with no approval attached to anything, which is not "continuing
+ * what the user approved".
  *
- * So for such a harness the pause PARKS the runtime instead: the process tree,
- * the bridge, the relay state and the gateway's port all stay up; the model
- * credential does not. This module owns that parked state and its exits.
+ * So the pause PARKS the runtime instead: the process tree, the bridge, the
+ * relay state and the gateway's port all stay up; the model credential does
+ * not. This module owns that parked state and its exits.
+ *
+ * ── Turn parks ───────────────────────────────────────────────────────────
+ * A turn park keeps a Codex runtime after a turn that completed and
+ * committed, so the next turn can skip starting the CLI. Same registry, same
+ * hold (traffic held, lease revoked) and the same exits, plus its own limits:
+ * a 15-minute idle TTL, at most four per Inspector (the least recently used
+ * idle one is evicted), a 4-hour lifetime, and an end at Inspector shutdown
+ * or when an install starts for that harness. It is adopted only by the
+ * conversation's next turn, after its lane claim, for the generation and
+ * state version that turn's committed state names and the same configuration
+ * (`claimLocalTurnPark`); anything else ends it and the turn starts fresh.
+ * Why one ended is kept a while after its tombstone (`takeKeptRuntimeEnd`),
+ * so the next turn's event can say why there was nothing to adopt.
  *
  * ── The state machine (D7) ───────────────────────────────────────────────
  *
@@ -50,8 +64,19 @@ import { logger } from "../../logger.js";
 
 /** How long a parked session waits for a person before it is torn down. */
 export const DEFAULT_APPROVAL_PARK_TTL_MS = 30 * 60 * 1000;
+/** How long a kept runtime waits for the conversation's next turn. */
+export const DEFAULT_TURN_PARK_TTL_MS = 15 * 60 * 1000;
+/** The most runtimes one Inspector keeps between turns. */
+export const MAX_TURN_PARKS = 4;
+/** How long one kept runtime may live, however often it is used. */
+export const TURN_PARK_LIFETIME_MS = 4 * 60 * 60 * 1000;
 
-export type ParkedSessionState = "awaiting-approval" | "continuing" | "terminal";
+export type ParkedSessionState =
+  | "awaiting-approval"
+  /** A turn park waiting for the conversation's next turn. */
+  | "idle"
+  | "continuing"
+  | "terminal";
 
 export type ParkInvalidationReason =
   | "stopped"
@@ -60,7 +85,14 @@ export type ParkInvalidationReason =
   | "renewal-failed"
   | "authorization-revoked"
   | "continuation-failed"
-  | "superseded";
+  | "superseded"
+  | "configuration-changed"
+  | "evicted"
+  | "lifetime"
+  | "shutdown"
+  | "runtime-update"
+  /** `MCPJAM_LOCAL_KEEP_AGENT` was turned off while it was kept. */
+  | "switched-off";
 
 /** What a claim gets back: everything needed to hand the live runtime to the
  *  continuing turn. Opaque to this module. */
@@ -88,6 +120,22 @@ export interface ParkedLocalSession<R = ParkedResources> {
   holdModelTraffic: () => void;
   timer: ReturnType<typeof setTimeout> | null;
   invalidatedBy?: ParkInvalidationReason;
+  /** Present on a turn park: what the next turn must match to adopt it. */
+  kept?: KeptTurn;
+}
+
+interface KeptTurn {
+  harnessId: string;
+  /** The pack it runs, so a revoked or replaced pack can end it. */
+  runtimeDigest: string;
+  /** The lane state version the turn's commit produced. */
+  stateVersion: number;
+  /** The configuration the runtime was started with (`kept-runtime.ts`). */
+  fingerprint: string;
+  /** First kept, for the lifetime; carried across re-parks. */
+  createdAt: number;
+  /** Last parked or adopted, for eviction. */
+  lastUsedAt: number;
 }
 
 export type ClaimRefusal =
@@ -130,7 +178,49 @@ export function resetApprovalParkForTests(testClock?: Partial<Clock>): void {
     if (entry.timer) clock.clearTimer(entry.timer);
   }
   parked.clear();
+  keptEnds.clear();
   clock = { ...realClock, ...testClock };
+}
+
+/**
+ * How long why a kept runtime ended stays for its conversation's next turn:
+ * past the keep's idle window, so a turn that comes soon after an idle
+ * expiry still hears it, and far past the tombstone's minute.
+ */
+export const KEPT_END_RETENTION_MS = DEFAULT_TURN_PARK_TTL_MS + 15 * 60 * 1000;
+/** The most sessions whose kept runtime's end is remembered at once. */
+export const MAX_KEPT_ENDS = 64;
+
+export interface KeptRuntimeEnd {
+  reason: ParkInvalidationReason;
+  /** The bridge token of the process that ended. */
+  generation: string;
+  endedAt: number;
+}
+
+/** Each session's last kept-runtime end, oldest first. */
+const keptEnds = new Map<string, KeptRuntimeEnd>();
+
+function noteKeptRuntimeEnd(entry: ParkedLocalSession, reason: ParkInvalidationReason): void {
+  if (entry.kept === undefined) return;
+  const now = clock.now();
+  keptEnds.delete(entry.sessionId);
+  keptEnds.set(entry.sessionId, { reason, generation: entry.generation, endedAt: now });
+  for (const [sessionId, end] of keptEnds) {
+    if (keptEnds.size <= MAX_KEPT_ENDS && now - end.endedAt < KEPT_END_RETENTION_MS) break;
+    keptEnds.delete(sessionId);
+  }
+}
+
+/**
+ * Why this session's kept runtime last ended, handed out once: the turn that
+ * asks reports it, and no later turn reports it again. Undefined when none
+ * is remembered, or it is older than {@link KEPT_END_RETENTION_MS}.
+ */
+export function takeKeptRuntimeEnd(sessionId: string): KeptRuntimeEnd | undefined {
+  const end = keptEnds.get(sessionId);
+  keptEnds.delete(sessionId);
+  return end !== undefined && clock.now() - end.endedAt < KEPT_END_RETENTION_MS ? end : undefined;
 }
 
 export interface ParkLocalSessionArgs<R> {
@@ -152,11 +242,12 @@ export interface ParkLocalSessionArgs<R> {
  * one whose continuation paused again (continuing → awaiting-approval).
  *
  * Model traffic is held from this moment: nothing may be generated against a
- * credential while nobody is deciding anything. Returns false — and parks
+ * credential while nobody is deciding anything. Returns the record, which the
+ * pausing turn's late Stop may end (`endParkIfWaiting`), or null — parking
  * nothing — if the session was invalidated in the meantime (a Stop that landed
  * while the turn was winding down), so the caller tears down as usual.
  */
-export function parkLocalSession<R>(args: ParkLocalSessionArgs<R>): boolean {
+export function parkLocalSession<R>(args: ParkLocalSessionArgs<R>): ParkedLocalSession<R> | null {
   if (args.pendingApprovalIds.length === 0) {
     throw new Error("a parked session must be waiting on at least one approval");
   }
@@ -171,7 +262,7 @@ export function parkLocalSession<R>(args: ParkLocalSessionArgs<R>): boolean {
     parked.delete(args.sessionId);
   } else if (existing?.state === "terminal") {
     // THIS process was stopped while its turn was winding down.
-    return false;
+    return null;
   }
   const prior = parked.get(args.sessionId);
   const now = clock.now();
@@ -210,7 +301,7 @@ export function parkLocalSession<R>(args: ParkLocalSessionArgs<R>): boolean {
     pending: entry.pending.size,
     ttlMs: ttl,
   });
-  return true;
+  return entry;
 }
 
 /**
@@ -229,7 +320,8 @@ export function claimParkedLocalSession<R = ParkedResources>(args: {
   approvalIds: readonly string[];
 }): ClaimResult<R> {
   const entry = parked.get(args.sessionId) as ParkedLocalSession<R> | undefined;
-  if (entry === undefined) {
+  // A kept runtime holds no approval, so it cannot be the one being answered.
+  if (entry === undefined || entry.kept !== undefined) {
     return refusal(
       "absent",
       "The local session holding this approval has ended, so the decision " +
@@ -302,11 +394,14 @@ export function claimParkedLocalSession<R = ParkedResources>(args: {
 
 /**
  * The continuation finished without pausing again: the session is an ordinary
- * active session once more, and its own teardown owns it.
+ * active session once more, and its own teardown owns it. With `resources`,
+ * only a record holding exactly that runtime is released, so a late teardown
+ * of one runtime never drops the record of a newer one under the same id.
  */
-export function releaseParkedLocalSession(sessionId: string): void {
+export function releaseParkedLocalSession(sessionId: string, resources?: unknown): void {
   const entry = parked.get(sessionId);
   if (entry === undefined) return;
+  if (resources !== undefined && entry.resources !== resources) return;
   if (entry.timer) clock.clearTimer(entry.timer);
   parked.delete(sessionId);
 }
@@ -335,6 +430,7 @@ export async function invalidateParkedLocalSession(
   entry.state = "terminal";
   entry.invalidatedBy = reason;
   entry.pending.clear();
+  noteKeptRuntimeEnd(entry, reason);
   if (entry.timer) clock.clearTimer(entry.timer);
   entry.timer = null;
   logger.info("[local-harness] parked session ended", { sessionId, reason });
@@ -363,10 +459,26 @@ export function noteParkedLocalSessionEnded(sessionId: string): void {
   entry.state = "terminal";
   entry.invalidatedBy = "stopped";
   entry.pending.clear();
+  noteKeptRuntimeEnd(entry, "stopped");
   if (entry.timer) clock.clearTimer(entry.timer);
   // The same tombstone window as an invalidation, so a Stop never leaves a
   // record behind for good.
   expireTombstone(sessionId, entry);
+}
+
+/**
+ * End the park a turn made, for that turn's late Stop or a commit that did
+ * not land: only while it is still the record held for its session and still
+ * waiting. Once a newer turn has adopted the runtime (continuing) or kept it
+ * again (a newer record), the older turn has no say over it.
+ */
+export async function endParkIfWaiting(
+  entry: ParkedLocalSession,
+  reason: ParkInvalidationReason,
+): Promise<void> {
+  if (parked.get(entry.sessionId) !== entry) return;
+  if (entry.state !== "awaiting-approval" && entry.state !== "idle") return;
+  await invalidateParkedLocalSession(entry.sessionId, reason);
 }
 
 /** For a reconnecting UI and the status route: what is this session waiting on? */
@@ -395,6 +507,217 @@ export function describeParkedLocalSession(sessionId: string):
 export function hasParkedLocalSession(sessionId: string): boolean {
   const entry = parked.get(sessionId);
   return entry !== undefined && entry.state !== "terminal";
+}
+
+// ── Turn parks ────────────────────────────────────────────────────────────
+
+export interface ParkLocalTurnArgs<R> {
+  sessionId: string;
+  /** The live process generation: the bridge token in the committed state. */
+  generation: string;
+  userId: string;
+  projectId: string;
+  harnessId: string;
+  /** The pack it runs. */
+  runtimeDigest: string;
+  /** The lane state version the turn's commit produces. */
+  stateVersion: number;
+  /** The configuration the runtime runs with (`kept-runtime.ts`). */
+  fingerprint: string;
+  resources: R;
+  end: (reason: ParkInvalidationReason) => Promise<void>;
+  isAlive: () => boolean;
+  holdModelTraffic: () => void;
+  ttlMs?: number;
+}
+
+/**
+ * Keep a runtime after a turn that completed (active or continuing → idle).
+ *
+ * Model traffic is held and the lease revoked from this moment, exactly as
+ * for an approval. Returns the record, or null, keeping nothing, when the
+ * session was stopped while its turn wound down, when the runtime has
+ * outlived its lifetime, or when every slot is held by a turn in progress;
+ * the caller then tears down as usual.
+ */
+export function parkLocalTurn<R>(args: ParkLocalTurnArgs<R>): ParkedLocalSession<R> | null {
+  const existing = parked.get(args.sessionId);
+  if (existing && existing.generation !== args.generation) {
+    // Another process now owns this id; see `parkLocalSession`.
+    if (existing.timer) clock.clearTimer(existing.timer);
+    parked.delete(args.sessionId);
+  } else if (existing?.state === "terminal") {
+    return null;
+  }
+  const prior = parked.get(args.sessionId);
+  const now = clock.now();
+  const createdAt = prior?.kept?.createdAt ?? now;
+  const endOfLife = createdAt + TURN_PARK_LIFETIME_MS;
+  if (now >= endOfLife) {
+    logger.info("[local-harness] kept runtime reached its lifetime", {
+      sessionId: args.sessionId,
+    });
+    return null;
+  }
+  if (prior?.kept === undefined && !makeRoomForTurnPark()) return null;
+  if (prior?.timer) clock.clearTimer(prior.timer);
+  args.holdModelTraffic();
+  const idleUntil = now + (args.ttlMs ?? DEFAULT_TURN_PARK_TTL_MS);
+  const expiresAt = Math.min(idleUntil, endOfLife);
+  const entry: ParkedLocalSession<R> = {
+    sessionId: args.sessionId,
+    generation: args.generation,
+    userId: args.userId,
+    projectId: args.projectId,
+    state: "idle",
+    pending: new Set(),
+    consumed: new Set(prior?.consumed ?? []),
+    parkedAt: now,
+    expiresAt,
+    resources: args.resources,
+    end: args.end,
+    isAlive: args.isAlive,
+    holdModelTraffic: args.holdModelTraffic,
+    timer: null,
+    kept: {
+      harnessId: args.harnessId,
+      runtimeDigest: args.runtimeDigest,
+      stateVersion: args.stateVersion,
+      fingerprint: args.fingerprint,
+      createdAt,
+      lastUsedAt: now,
+    },
+  };
+  const reason: ParkInvalidationReason = endOfLife <= idleUntil ? "lifetime" : "idle-expired";
+  entry.timer = clock.setTimer(() => {
+    void invalidateParkedLocalSession(args.sessionId, reason);
+  }, expiresAt - now);
+  parked.set(args.sessionId, entry as ParkedLocalSession);
+  logger.info("[local-harness] runtime kept for the next turn", {
+    sessionId: args.sessionId,
+    ttlMs: expiresAt - now,
+  });
+  return entry;
+}
+
+/**
+ * Free a slot for one more kept runtime by evicting the least recently used
+ * idle ones. A runtime a turn is using is never evicted; when every slot is
+ * such a turn, nothing more is kept.
+ */
+function makeRoomForTurnPark(): boolean {
+  const kept = [...parked.values()].filter(
+    (entry) => entry.kept !== undefined && entry.state !== "terminal",
+  );
+  let held = kept.length;
+  const idle = kept
+    .filter((entry) => entry.state === "idle")
+    .sort((a, b) => (a.kept?.lastUsedAt ?? 0) - (b.kept?.lastUsedAt ?? 0));
+  for (const entry of idle) {
+    if (held < MAX_TURN_PARKS) break;
+    void invalidateParkedLocalSession(entry.sessionId, "evicted");
+    held -= 1;
+  }
+  return held < MAX_TURN_PARKS;
+}
+
+export type TurnParkRefusal =
+  | "absent"
+  | "terminal"
+  | "not-idle"
+  | "actor-mismatch"
+  | "stale"
+  | "configuration-changed"
+  | "lifetime"
+  | "process-died";
+
+/**
+ * Hand a kept runtime to the conversation's next turn (idle → continuing).
+ *
+ * Synchronous, like an approval claim. Adopted only for the generation and
+ * the state version the turn's committed lane state names: a turn that ran
+ * in between, in another Inspector or after this runtime's commit failed,
+ * moved one of them on, and its state is not this runtime's. And only for
+ * the same configuration. The caller ends a park it was refused.
+ */
+export function claimLocalTurnPark<R = ParkedResources>(args: {
+  sessionId: string;
+  generation: string;
+  stateVersion: number;
+  fingerprint: string;
+  userId: string;
+  projectId: string;
+}): { ok: true; parked: ParkedLocalSession<R> } | { ok: false; reason: TurnParkRefusal } {
+  const entry = parked.get(args.sessionId) as ParkedLocalSession<R> | undefined;
+  const kept = entry?.kept;
+  if (entry === undefined || kept === undefined) return { ok: false, reason: "absent" };
+  if (entry.state === "terminal") return { ok: false, reason: "terminal" };
+  if (entry.state !== "idle") return { ok: false, reason: "not-idle" };
+  if (entry.userId !== args.userId || entry.projectId !== args.projectId) {
+    return { ok: false, reason: "actor-mismatch" };
+  }
+  if (entry.generation !== args.generation || kept.stateVersion !== args.stateVersion) {
+    return { ok: false, reason: "stale" };
+  }
+  if (kept.fingerprint !== args.fingerprint) {
+    return { ok: false, reason: "configuration-changed" };
+  }
+  const now = clock.now();
+  if (now - kept.createdAt >= TURN_PARK_LIFETIME_MS) return { ok: false, reason: "lifetime" };
+  if (!entry.isAlive()) return { ok: false, reason: "process-died" };
+  if (entry.timer) clock.clearTimer(entry.timer);
+  entry.timer = null;
+  entry.state = "continuing";
+  kept.lastUsedAt = now;
+  return { ok: true, parked: entry };
+}
+
+/** Is a live (non-terminal) kept runtime held for this session? */
+export function hasLocalTurnPark(sessionId: string): boolean {
+  const entry = parked.get(sessionId);
+  return entry?.kept !== undefined && entry.state !== "terminal";
+}
+
+/**
+ * End kept runtimes: those `which` names (by harness and pack), or all. A
+ * runtime a turn is using is left to that turn unless `includeContinuing`:
+ * the turn does not keep it again while what ended the others still holds
+ * (`local-turn.ts`).
+ */
+export async function invalidateLocalTurnParks(
+  reason: ParkInvalidationReason,
+  options: {
+    which?: (kept: { harnessId: string; runtimeDigest: string }) => boolean;
+    includeContinuing?: boolean;
+  } = {},
+): Promise<void> {
+  const ending = [...parked.values()].filter(
+    (entry) =>
+      entry.kept !== undefined &&
+      (entry.state === "idle" ||
+        (options.includeContinuing === true && entry.state === "continuing")) &&
+      (options.which === undefined || options.which(entry.kept)),
+  );
+  await Promise.all(
+    ending.map((entry) => invalidateParkedLocalSession(entry.sessionId, reason)),
+  );
+}
+
+/**
+ * Inspector shutdown: stop every kept runtime now rather than leave its tree
+ * running detached until the next boot's janitor. Bounded, because shutdown
+ * has its own deadline and a lease revoke is a network call.
+ */
+export async function shutdownLocalTurnParks(timeoutMs = 10_000): Promise<void> {
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    invalidateLocalTurnParks("shutdown", { includeContinuing: true }),
+    new Promise<void>((resolvePromise) => {
+      deadline = setTimeout(resolvePromise, timeoutMs);
+      deadline.unref?.();
+    }),
+  ]);
+  if (deadline) clearTimeout(deadline);
 }
 
 function refusal(reason: ClaimRefusal, message: string): {

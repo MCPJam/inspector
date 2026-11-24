@@ -351,6 +351,13 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // symptom is a Browser section that silently never appears rather than an
   // error anyone can see.
   "/api/v1/built-in-tools/",
+  // Signing a project's Claude web or ChatGPT web account in, saving it and
+  // handing it back. The routes verify this bearer themselves; without it
+  // every sign-in answers 401 and no browser opens. The local Inspector's
+  // `/api/web-clients/local-connectors` is not listed: it takes the session
+  // token.
+  "/api/web-clients/accounts/",
+  "/api/web-clients/reconnect/",
   // The org-settings Capabilities page reading the agent's op registry, so its
   // toggles cannot drift from the tools the server actually offers.
   "/api/v1/agent-ops",
@@ -365,6 +372,13 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // Approving a stdio server's command re-reads its row the same way, with
   // the caller's bearer. Without this entry Allow answers 401.
   "/api/mcp/servers/approve-command",
+  // Apps bridge observations for the server canvas: the route authorizes the
+  // server and checks the rollout with the caller's bearer.
+  "/api/mcp/server-features/observations",
+  // Server canvas Refresh: the route checks the rollout, authorizes the
+  // server and writes the new capture and probe results with the caller's
+  // bearer, so without this entry it answers 401.
+  "/api/mcp/servers/canvas/refresh",
   // Local chat re-calls Convex for host/scenario runtime config and
   // persistence, so resolve its bearer at request time as well.
   "/api/mcp/chat-v2",
@@ -451,10 +465,26 @@ function isHostedAuthAllowedOrigin(parsed: URL): boolean {
  * with an extra path component can slip through.
  */
 const HOSTED_AUTH_PATH_PATTERNS = [
-  // The /conformance page starting, polling, cancelling and reading a
-  // directory-readiness run.
-  /^\/api\/v1\/projects\/[^/]+\/readiness-runs(\/[^/]+(\/(cancel|report))?)?$/,
+  /^\/api\/mcp\/(chat-persistence|turn-authorization)\/?$/,
+  // Reading command terms re-authorizes the server under the signed-in member.
+  /^\/api\/mcp\/servers\/command-approval\/?$/,
+  // The /conformance page starting, polling, cancelling, resuming and reading
+  // a directory-readiness run.
+  /^\/api\/v1\/projects\/[^/]+\/readiness-runs(\/[^/]+(\/(cancel|report|resume))?)?$/,
+  /^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/revisions(\/\d+\/diff)?$/,
   /^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/readiness-runs\/(claude|openai)$/,
+  // The /readiness page's reviewer sign-in: a submission's attempts, one
+  // attempt, resuming or cancelling it, and the handoff link a person
+  // finishes the sign-in with.
+  /^\/api\/v1\/projects\/[^/]+\/directory-submissions\/[^/]+\/reviewer-attempts(\/[^/]+(\/(resume|cancel|handoff))?)?$/,
+  // The /readiness page: the flows it copies, and a project's directory
+  // submissions with their runs, results, handoff summary, findings (one
+  // check's under its id), export, events and snapshots.
+  /^\/api\/v1\/directory-flows(\/[^/]+)?$/,
+  /^\/api\/v1\/projects\/[^/]+\/directory-submissions(\/[^/]+(\/(runs|results|handoff|export|events|snapshots|findings(\/[^/]+)?))?)?$/,
+  // The /readiness page's test plan: the saved plan, a draft, and what a
+  // run's calls showed.
+  /^\/api\/v1\/projects\/[^/]+\/directory-submissions\/[^/]+\/(test-plan(\/draft)?|tool-tests)$/,
   // The pre-run eval disclosure (G4b). Deliberate, anchored bearer-scope
   // change: without this entry the UI's hint would silently 401, since
   // `/api/v1/projects/` is not a prefix this list grants wholesale — see the
@@ -528,7 +558,7 @@ function isSignInRenewablePath(input: RequestInfo | URL): boolean {
     : typeof input === "string"
       ? input.split("?")[0]
       : "";
-  return SIGN_IN_RENEWABLE_PREFIXES.some((prefix) =>
+  return /^\/api\/(web|mcp)\/(chat-persistence|turn-authorization)\/?$/.test(pathname) || SIGN_IN_RENEWABLE_PREFIXES.some((prefix) =>
     pathname.startsWith(prefix),
   );
 }

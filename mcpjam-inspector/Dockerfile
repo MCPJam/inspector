@@ -67,6 +67,7 @@ COPY design-system/package.json ./design-system/package.json
 COPY chat-ui/package.json ./chat-ui/package.json
 COPY widget-react/package.json ./widget-react/package.json
 COPY mcpjam-inspector/package.json ./mcpjam-inspector/package.json
+COPY mcpjam-inspector/scripts/patch-harness-approvals.mjs ./mcpjam-inspector/scripts/patch-harness-approvals.mjs
 
 COPY soundcheck/package.json ./soundcheck/package.json
 COPY mcp/package.json ./mcp/package.json
@@ -161,6 +162,7 @@ RUN npm run bundle:chatgpt -w @mcpjam/inspector && \
     npm run bundle:mcp-apps -w @mcpjam/inspector && \
     npm run bundle:sandbox-proxies -w @mcpjam/inspector && \
     npm run bundle:plugin-shim -w @mcpjam/inspector && \
+    npm run bundle:copilot-cli-bridge -w @mcpjam/inspector && \
     npm run bundle:codex-appserver-bridge -w @mcpjam/inspector && \
     npm run bundle:local-harness-layer -w @mcpjam/inspector
 
@@ -188,7 +190,8 @@ ARG MCPJAM_BUILD_SURFACE=web
 # debug IDs and, given Railway's SENTRY_AUTH_TOKEN, uploads its maps. Docker
 # Hub runs the uploader in this same stage with a runtime-only credential.
 RUN npm run bundle:browser-harness -w @mcpjam/inspector && \
-    npm run build:server -w @mcpjam/inspector
+    npm run build:server -w @mcpjam/inspector && \
+    npm run build:production-traffic-migration -w @mcpjam/inspector
 
 # Both releases inherit the verified server bytes; only this intermediate
 # stage retains maps. They stay out of the published image and npm tarball.

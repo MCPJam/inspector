@@ -5,6 +5,7 @@
  * load-bearing and was previously untestable without driving a whole iteration
  * — which is how the harness half of it went missing.
  */
+import { isWebClientRuntimeId } from "@/shared/web-clients";
 import { parseBrowserToolPolicy } from "./browser-tool-policy.js";
 
 const BROWSER_BUILT_IN_TOOL_ID = "browser";
@@ -80,19 +81,22 @@ export function needsEphemeralEvalSandbox(args: {
   hostedBrowserAvailable?: boolean;
   runId: unknown;
 }): EphemeralEvalSandboxNeed {
+  // A web client drives the vendor's website: its browser comes from the web
+  // client environment, never from a box booted for the iteration.
+  const harnessNeedsBox = Boolean(args.harness) && !isWebClientRuntimeId(args.harness);
   if (args.runId === null || args.runId === undefined) {
-    return { needed: Boolean(args.harness), runtimeKind: "terminal" };
+    return { needed: harnessNeedsBox, runtimeKind: "terminal" };
   }
   if (declaresUnattendedBrowser(args)) {
     // A browser needs the DESKTOP image whatever else is true. A pinned
-    // environment alongside it is refused by the control plane
-    // (`desktop_pin_conflict`) with a sentence the run surfaces — deliberately
-    // there rather than here, so one place decides it and the message that
-    // reaches the user is the same on both surfaces.
+    // environment alongside it is the control plane's to settle: it pairs the
+    // pinned box with a desktop (`pairBrowser`), or an older one refuses with
+    // a sentence the run surfaces (`desktop_pin_conflict`). Deliberately there
+    // rather than here, so one place decides it for both surfaces.
     return { needed: true, runtimeKind: "desktop-browser" };
   }
   return {
-    needed: Boolean(args.pinnedEnvironmentId) || Boolean(args.harness),
+    needed: Boolean(args.pinnedEnvironmentId) || harnessNeedsBox,
     runtimeKind: "terminal",
   };
 }

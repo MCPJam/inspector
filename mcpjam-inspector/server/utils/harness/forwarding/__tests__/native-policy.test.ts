@@ -1,8 +1,11 @@
 import { expect, it } from "vitest";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 import {
+  assertPendingPolicy,
   nativePolicyDigest,
   stampNativeForwardingPolicy,
+  stampSessionEnvelopes,
+  startedOnSessionEnvelopes,
 } from "../native-policy";
 
 it("pins every tool-policy decision while tolerating harmless key order", () => {
@@ -31,4 +34,28 @@ it("pins every tool-policy decision while tolerating harmless key order", () => 
   ).toEqual({
     data: { bridge: "original", mcpjamForwardingPolicy: digest },
   });
+});
+
+it("refuses a missing or changed approval policy before a retained host tool can resume", () => {
+  const state = stampNativeForwardingPolicy({ data: {} }, "account-a");
+  expect(() => assertPendingPolicy(state, "account-a")).not.toThrow();
+  for (const stale of [state, {}, { data: {} }]) {
+    expect(() => assertPendingPolicy(stale, "account-b")).toThrow("policy has changed");
+  }
+});
+
+it("records a paused agent's session envelopes beside its other state", () => {
+  const state = { type: "continue", data: { pending: 1 } };
+  const stamped = stampSessionEnvelopes(state);
+  expect(stamped).toEqual({
+    type: "continue",
+    data: { pending: 1, mcpjamSessionEnvelopes: true },
+  });
+  expect(startedOnSessionEnvelopes(stamped)).toBe(true);
+  expect(startedOnSessionEnvelopes(state)).toBe(false);
+  // A state without a data record stays unmarked, so it is never kept.
+  for (const other of [null, "opaque", { data: "x" }]) {
+    expect(stampSessionEnvelopes(other)).toBe(other);
+    expect(startedOnSessionEnvelopes(other)).toBe(false);
+  }
 });

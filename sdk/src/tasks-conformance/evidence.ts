@@ -328,6 +328,11 @@ export interface InputRequiredLeg {
   answered?: string[];
   message?: string;
   code?: number;
+  /**
+   * On a rejection: why the configured answers could not satisfy the task
+   * (missing, extra, or failing its `requestedSchema`), when we can tell.
+   */
+  answersProblem?: string;
   /** Result members beyond the envelope; a conforming ack has none. */
   ackVerdict?: ShapeVerdict;
 }

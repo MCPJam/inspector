@@ -1,0 +1,325 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// Only `streamText` is replaced: the driver, the unified turn and the direct
+// engine run for real, so these see what reaches the model and what is kept.
+const streamTextMock = vi.fn();
+vi.mock("ai", async () => {
+  const actual = await vi.importActual<typeof import("ai")>("ai");
+  return {
+    ...actual,
+    streamText: (...args: unknown[]) => streamTextMock(...args),
+  };
+});
+
+import { APICallError, NoOutputGeneratedError } from "ai";
+import { driveLocalEvalTurn } from "../drive-local-eval-turn";
+import type {
+  DriveLocalEvalTurnParams,
+  LocalModelCallSettled,
+} from "../drive-local-eval-turn";
+
+const ids = { toolCallId: "call-1", toolName: "search" };
+const toolCall = { type: "tool-call", ...ids, input: { q: "status" } };
+const output = { type: "text", value: "ok" };
+const toolResult = { type: "tool-result", ...ids, output };
+const usage = { inputTokens: 3, outputTokens: 2, totalTokens: 5 };
+const responseMessages = [
+  { role: "assistant", content: [toolCall] },
+  { role: "tool", content: [toolResult] },
+  { role: "assistant", content: "Found it." },
+];
+
+function stream(parts: unknown[], failWith?: unknown) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      for (const part of parts) yield part;
+      if (failWith !== undefined) throw failWith;
+    },
+  };
+}
+
+function streamResult(fullStream = stream([])) {
+  return {
+    fullStream,
+    consumeStream: async () => {},
+    response: Promise.resolve({ modelId: "gpt-x-2026-01-01" }),
+    responseMessages: Promise.resolve(responseMessages),
+    steps: Promise.resolve([]),
+    totalUsage: Promise.resolve(usage),
+    finishReason: Promise.resolve("stop"),
+  };
+}
+
+function params(
+  overrides: Partial<DriveLocalEvalTurnParams> = {},
+  modelContext?: unknown,
+): DriveLocalEvalTurnParams {
+  const browser = {
+    setActivePromptIndex: vi.fn(),
+    setActiveWidgetChecks: vi.fn(),
+    dismissCarriedWidget: vi.fn(async () => {}),
+    getModelContext: () => modelContext,
+    computerWidgetTools: {},
+    browserInteractionSteps: [],
+    handleDirectToolResultChunk: vi.fn(async () => {}),
+  };
+  return {
+    promptIndex: 0,
+    promptTurn: { prompt: "hello" } as never,
+    acc: {
+      conversationMessages: [],
+      capturedSpans: [],
+      accumulatedUsage: {},
+      toolsCalledByPrompt: [],
+      assistantMessageByPrompt: [],
+      toolErrorsByPrompt: [],
+      pinnedToolErrors: [],
+      activePromptIndex: -1,
+      activePromptInputMessages: [],
+      activePartialResponseMessages: [],
+      activeCompletedStepCount: 0,
+      activeTraceCtx: null,
+      iterationError: undefined,
+      iterationErrorDetails: undefined,
+      stepErrorSource: undefined,
+      pinnedSetupFailure: false,
+    },
+    browser: browser as never,
+    mcpClientManager: {} as never,
+    selectedServers: [],
+    resolvePinnedServerKey: () => undefined,
+    prepared: {
+      allTools: { search: { _serverId: "srv-1", inputSchema: {} } },
+      enhancedSystemPrompt: "sys",
+    } as never,
+    llmModel: { provider: "openai.responses", modelId: "gpt-x" } as never,
+    test: { model: "gpt-x", provider: "openai" },
+    runStartedAt: Date.now(),
+    runIndex: 0,
+    iterationId: undefined,
+    suiteId: undefined,
+    runId: null,
+    testCaseId: undefined,
+    abortSignal: undefined,
+    turnTimeoutMs: 60_000,
+    turnRetries: 2,
+    toolChoice: undefined,
+    extractToolCalls: () => [],
+    ...overrides,
+  };
+}
+
+describe("driveLocalEvalTurn through the unified turn", () => {
+  beforeEach(() => {
+    streamTextMock.mockReset();
+  });
+
+  it("hands the run's turnRetries to the model call and reports the provider's model", async () => {
+    streamTextMock.mockReturnValueOnce(streamResult());
+    const onModelCallSettled = vi.fn();
+
+    const outcome = await driveLocalEvalTurn(
+      params({ turnRetries: 4, onModelCallSettled }),
+    );
+
+    expect(outcome).toEqual({ kind: "completed" });
+    expect(streamTextMock.mock.calls[0][0].maxRetries).toBe(4);
+    expect(onModelCallSettled).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "ok",
+        upstreamModel: "gpt-x-2026-01-01",
+        usage: expect.objectContaining({ inputTokens: 3, outputTokens: 2 }),
+      }),
+    );
+  });
+
+  it("records the prompt without plugin context and stamps each tool part with its server", async () => {
+    streamTextMock.mockReturnValueOnce(streamResult());
+    const turnParams = params(
+      {},
+      { role: "user", content: [{ type: "text", text: "widget state" }] },
+    );
+
+    await driveLocalEvalTurn(turnParams);
+
+    // The model saw the app's context on this turn's prompt…
+    expect(streamTextMock.mock.calls[0][0].messages.at(-1).content).toEqual([
+      { type: "text", text: "hello" },
+      { type: "text", text: "widget state" },
+    ]);
+    // …the persisted transcript does not, and its tool parts name their
+    // server the way hosted eval transcripts already do.
+    const [prompt, call, result] = turnParams.acc
+      .conversationMessages as Array<{
+      content: unknown;
+    }>;
+    expect(prompt).toEqual({ role: "user", content: "hello" });
+    expect(call.content).toEqual([
+      { ...toolCall, providerOptions: { mcpjam: { serverId: "srv-1" } } },
+    ]);
+    expect(result.content).toEqual([
+      { ...toolResult, providerOptions: { mcpjam: { serverId: "srv-1" } } },
+    ]);
+  });
+
+  it("rethrows what the stream threw and leaves the runner this turn's trace", async () => {
+    const providerError = new Error("429 Too Many Requests");
+    const thrown = new Error("No output generated.");
+    streamTextMock.mockReturnValueOnce(
+      streamResult(stream([{ type: "error", error: providerError }], thrown)),
+    );
+    const onModelCallSettled = vi.fn();
+    const turnParams = params({ onModelCallSettled });
+
+    await expect(driveLocalEvalTurn(turnParams)).rejects.toBe(thrown);
+
+    expect(onModelCallSettled).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "error", code: "provider_error" }),
+    );
+    // The runner's catch path finalizes these spans after the throw.
+    expect(turnParams.acc.activeTraceCtx).not.toBeNull();
+  });
+
+  it("throws the provider's error instead of the SDK's bare no-output error", async () => {
+    // What the SDK does when the first model call fails: the provider's error
+    // arrives as the stream's `error` part, then every result promise rejects
+    // with a `NoOutputGeneratedError` that has no cause.
+    const providerError = new APICallError({
+      message: "Incorrect API key provided",
+      url: "https://api.openai.com/v1/responses",
+      requestBodyValues: {},
+      statusCode: 401,
+      isRetryable: false,
+    });
+    streamTextMock.mockReturnValueOnce({
+      ...streamResult(stream([{ type: "error", error: providerError }])),
+      get response() {
+        return Promise.reject(new NoOutputGeneratedError());
+      },
+    });
+    const turnParams = params();
+
+    await expect(driveLocalEvalTurn(turnParams)).rejects.toBe(providerError);
+    expect(turnParams.acc.stepErrorEvidence).toEqual({
+      source: "provider_call",
+      httpStatus: 401,
+    });
+  });
+
+  it("puts each call's writeback price on its own llm span in a local org turn", async () => {
+    const steps = [
+      { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+      { inputTokens: 40, outputTokens: 6, totalTokens: 46 },
+    ];
+    streamTextMock.mockImplementationOnce((options: any) =>
+      streamResult({
+        async *[Symbol.asyncIterator]() {
+          for (const [stepNumber, stepUsage] of steps.entries()) {
+            await options.prepareStep({ stepNumber, messages: [] });
+            await options.onStepFinish({
+              usage: stepUsage,
+              response: { messages: [] },
+              finishReason: stepNumber === 0 ? "tool-calls" : "stop",
+              toolCalls: [],
+            });
+          }
+        },
+      }),
+    );
+    const priced = (amountUsd: number) => ({
+      calculationVersion: 1 as const,
+      currency: "USD" as const,
+      completeness: "complete" as const,
+      amountUsd,
+      source: "customer_rate" as const,
+      funding: "customer" as const,
+    });
+    const onModelCallSettled = vi.fn(
+      async ({ calls = [] }: LocalModelCallSettled) =>
+        Object.fromEntries(
+          calls.map((call) => [
+            call.callId,
+            priced(call.stepIndex ? 0.5 : 0.01),
+          ]),
+        ),
+    );
+    const turnParams = params({
+      onModelCallSettled,
+      // The local org path: its calls are priced by the backend, not here.
+      beforeModelCall: async () => turnParams.llmModel!,
+    });
+
+    await driveLocalEvalTurn(turnParams);
+
+    const calls = onModelCallSettled.mock.calls[0]![0].calls!;
+    expect(calls).toHaveLength(2);
+    const spans = turnParams.acc.capturedSpans;
+    expect(
+      spans
+        .filter((span) => span.category === "llm")
+        .map((span) => [span.stepIndex, span.callId, span.cost?.amountUsd]),
+    ).toEqual([
+      [0, calls[0]!.callId, 0.01],
+      [1, calls[1]!.callId, 0.5],
+    ]);
+    expect(spans.filter((span) => span.category === "step")).not.toEqual([]);
+    expect(
+      spans.filter((span) => span.category !== "llm" && span.cost),
+    ).toEqual([]);
+  });
+
+  it("puts each call's writeback id on its llm span when the writeback fails", async () => {
+    streamTextMock.mockImplementationOnce((options: any) =>
+      streamResult({
+        async *[Symbol.asyncIterator]() {
+          await options.prepareStep({ stepNumber: 0, messages: [] });
+          await options.onStepFinish({
+            usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+            response: { messages: [] },
+            finishReason: "stop",
+            toolCalls: [],
+          });
+        },
+      }),
+    );
+    const onModelCallSettled = vi.fn(async () => undefined);
+    const turnParams = params({
+      onModelCallSettled,
+      beforeModelCall: async () => turnParams.llmModel!,
+    });
+
+    await driveLocalEvalTurn(turnParams);
+
+    const [call] = (onModelCallSettled.mock.calls[0] as any)[0].calls;
+    expect(call.callId).toMatch(/^.+:0$/);
+    expect(
+      turnParams.acc.capturedSpans
+        .filter((span) => span.category === "llm")
+        .map((span) => [span.callId, span.cost]),
+    ).toEqual([[call.callId, undefined]]);
+  });
+
+  it("cancels instead of recording when the run is cancelled while the writeback settles", async () => {
+    streamTextMock.mockReturnValueOnce(streamResult());
+    const controller = new AbortController();
+    const onTurnSuccess = vi.fn();
+    const onModelCallSettled = vi.fn(async () => {
+      controller.abort();
+      return {};
+    });
+
+    const outcome = await driveLocalEvalTurn(
+      params({
+        abortSignal: controller.signal,
+        onModelCallSettled,
+        sinks: { onTurnSuccess } as never,
+      }),
+    );
+
+    expect(onModelCallSettled.mock.calls[0]![0]).toMatchObject({
+      outcome: "ok",
+    });
+    expect(outcome).toEqual({ kind: "cancelled" });
+    expect(onTurnSuccess).not.toHaveBeenCalled();
+  });
+});

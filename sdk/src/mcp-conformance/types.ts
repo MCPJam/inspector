@@ -296,6 +296,11 @@ export type MCPLogLevel = (typeof MCP_LOG_LEVELS)[number];
 export interface MCPConformanceConfig {
   /** Cancel this run and its active requests. */
   signal?: AbortSignal;
+  /**
+   * @internal set by a host that counts the run itself (the CLI, the
+   * Inspector) and by suites for their inner runs. See `captureConformanceRun`.
+   */
+  __suppressTelemetry?: boolean;
   serverUrl: string;
   accessToken?: string;
   customHeaders?: Record<string, string>;
@@ -464,7 +469,13 @@ export interface MCPServerSurfaceSnapshot {
   resourceUris: string[];
   resourceTemplateUris: string[];
   serverCapabilities?: Record<string, unknown>;
+  /** Listings that failed, so their emptiness proves nothing. */
+  unlisted?: SurfaceListing[];
 }
+
+/** The four listings the client phase reads into the surface. */
+export type SurfaceListing =
+  "tools" | "prompts" | "resources" | "resourceTemplates";
 
 /** Readiness advice ids (Phase 7 §15.4). Never part of the pass/fail verdict. */
 export const MCP_READINESS_IDS = [
@@ -510,7 +521,7 @@ export type RetiredMCPCheckId = keyof typeof RETIRED_MCP_CHECK_IDS;
  * for an era may still find nothing to say there (its probe decides).
  */
 export const READINESS_ERAS: Record<MCPReadinessId, MCPCheckEras> = {
-  "readiness-tool-order-deterministic": ["legacy", "modern"],
+  "readiness-tool-order-deterministic": ["modern"],
   // Modern: removed capabilities. Legacy: a revision older than 2025-11-25.
   "readiness-deprecated-feature-use": ["legacy", "modern"],
   "readiness-session-termination": ["legacy", "modern"],
@@ -549,6 +560,20 @@ export interface MCPReadinessWarning {
    */
   informational?: boolean;
 }
+
+/**
+ * A SHOULD/MAY the server already meets: the advice applied to this server,
+ * was checked, and found nothing to change. Like a warning, it never affects
+ * `passed` or any check status.
+ */
+export interface MCPPassedAdvice {
+  id: MCPReadinessId;
+  title: string;
+  specStrength: MCPReadinessSpecStrength;
+}
+
+/** What one advice probe concluded, when the advice applied. */
+export type MCPReadinessOutcome = MCPReadinessWarning | MCPPassedAdvice;
 
 export interface MCPConformanceResult {
   /**
@@ -593,6 +618,11 @@ export interface MCPConformanceResult {
    */
   readiness: MCPReadinessWarning[];
   /**
+   * Advice the run checked and found nothing to change. Absent when there is
+   * none. Advice that did not apply to this server is in neither list.
+   */
+  passedAdvice?: MCPPassedAdvice[];
+  /**
    * WHICH QUESTIONS THIS RUN ASKED, and which build asked them — the frozen
    * scored-check manifest, the checker version, the revisions and (from the
    * wire-schema check) the schema digest. See `conformance-profile.ts`.
@@ -611,6 +641,8 @@ export interface MCPConformanceResult {
 
 export interface MCPConformanceSuiteConfig {
   name?: string;
+  /** @internal set by a host that counts the run itself. See `captureConformanceRun`. */
+  __suppressTelemetry?: boolean;
   serverUrl: string;
   defaults?: Partial<Omit<MCPConformanceConfig, "serverUrl">>;
   runs: Array<
@@ -639,6 +671,8 @@ export interface MCPClientCheckContext {
   availablePrompts: string[];
   availableResources: string[];
   availableResourceTemplates: string[];
+  /** Listings that failed, so their emptiness proves nothing. */
+  unlisted?: SurfaceListing[];
 }
 
 export interface RawHttpCheckContext {
@@ -647,6 +681,8 @@ export interface RawHttpCheckContext {
   fetchFn: typeof fetch;
   /** Absent when the run selected raw-only checks and never connected. */
   surface?: MCPServerSurfaceSnapshot;
+  /** The check that carries a failed connect, for raw checks it blocked. */
+  connectFailedCheck?: { id: MCPCheckId; title: string };
   /**
    * The run-wide wire record every raw probe feeds (see
    * `wire-observations.ts`). Threaded on the CONTEXT rather than passed per

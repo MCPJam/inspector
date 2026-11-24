@@ -22,7 +22,11 @@ const {
   validateWidgetModelContextEntriesMock,
   buildWidgetModelContextSystemPromptMock,
   WidgetModelContextValidationErrorMock,
+  resolveQueryMock,
+  environmentSkills,
 } = vi.hoisted(() => ({
+  resolveQueryMock: vi.fn(),
+  environmentSkills: [] as Array<Record<string, unknown>>,
   checkHarnessRuntimeAvailableMock: vi.fn(() => ({ ok: true })),
   prepareChatV2Mock: vi.fn(),
   listCloudRuntimeSkillsMock: vi.fn(),
@@ -93,13 +97,14 @@ vi.mock("convex/browser", async () => {
       const name = getFunctionName(ref);
       if (name === "hostConfigsV2:getProjectDefault") return null;
       if (name === "projects:getProjectCapabilities") return { projectRole: "admin" };
+      resolveQueryMock(name, args);
       const runtime = await fetchHostRuntimeConfigMock.mock.results.at(-1)?.value;
       return {
         specVersion: 1, environmentOrigin: "adhoc",
         environmentRef: { environmentId: args.environmentId ?? "chat-environment", name: "Chat", revision: 1 },
         host: { hostId: "chat-host", runtimeConfig: runtime?.config ?? {} },
         servers: { effectiveServerIds: args.serverOverrideIds ?? [] },
-        skills: [], pluginVersions: [], selectedSecretIds: [], serverConfigHashes: {},
+        skills: [...environmentSkills], pluginVersions: [], selectedSecretIds: [], serverConfigHashes: {},
       };
     }
   }};
@@ -207,12 +212,6 @@ vi.mock("../../../utils/harness/playground-box.js", async () => {
     playgroundCredentialRefusal: vi.fn(
       async (): Promise<string | null> => null,
     ),
-    resolvePlaygroundCredentialEnvironment: vi.fn(
-      async (): Promise<
-        | { ok: true; environmentId: string }
-        | { ok: false; status: 409 | 502; message: string }
-      > => ({ ok: true, environmentId: "env_hidden" }),
-    ),
     acquirePlaygroundHarnessBox: vi.fn(async () => ({
       ok: true as const,
       box: {
@@ -253,14 +252,15 @@ vi.mock("../../../utils/computers/cloud-skill-tools.js", async () => {
   };
 });
 
+import { convertToModelMessages } from "ai";
 import { createWebTestApp, postJson } from "./helpers/test-app.js";
 import {
   acquirePlaygroundHarnessBox,
   playgroundCredentialRefusal,
   playgroundHarnessBoxUnavailableReason,
-  resolvePlaygroundCredentialEnvironment,
 } from "../../../utils/harness/playground-box.js";
 import { MCPClientManager } from "@mcpjam/sdk";
+import { TurnTiming } from "../../../utils/turn-timing.js";
 
 describe("web routes — chat-v2 hosted mode", () => {
   const originalFetch = global.fetch;
@@ -269,7 +269,7 @@ describe("web routes — chat-v2 hosted mode", () => {
   it("rejects local Browser selection before constructing hosted tools", async () => {
     const { app, token } = createWebTestApp();
     const response = await postJson(app, "/api/web/chat-v2", {
-      projectId: "project-1", selectedServerIds: [], messages: [{ role: "user", content: "hi" }],
+      projectId: "project-1", selectedServerIds: [], messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
       model: { id: "openai/gpt-5-mini", provider: "openai" }, browserEngine: "local",
     }, token);
     expect(response.status).toBe(409);
@@ -297,6 +297,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       config: { selectedServerIds: ["server-1"] },
     });
     listCloudRuntimeSkillsMock.mockReset().mockResolvedValue([]);
+    environmentSkills.length = 0;
     // Default: scenario runtime-config resolves (empty = host has no
     // overrides). Scenario turns now FAIL CLOSED on a failed fetch, so the
     // happy-path tests must resolve it rather than lean on the old fallback.
@@ -525,7 +526,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         accessVersion: 1,
         surface: "preview",
         chatSessionId: "chat-session-1",
-        messages: [{ role: "user", content: "preview request" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
         model: {
           id: "openai/gpt-5-mini",
           provider: "openai",
@@ -587,7 +588,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
         chatSessionId: "chat-session-1",
-        messages: [{ role: "user", content: "hi" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
         model: {
           id: "openai/gpt-5-mini",
           provider: "openai",
@@ -614,7 +615,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       projectId: "project-1",
       selectedServerIds: ["server-1"],
       chatSessionId: "chat-session-1",
-      messages: [{ role: "user", content: "hi" }],
+      messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
       model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
       uiTools,
     };
@@ -655,7 +656,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         selectedServerIds: ["server-1"],
         hostId: "host-1",
         chatSessionId: "chat-host-1",
-        messages: [{ role: "user", content: "preview request" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
         model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
       },
       token
@@ -684,7 +685,7 @@ describe("web routes — chat-v2 hosted mode", () => {
     const response = await postJson(app, "/api/web/chat-v2", {
       projectId: "project-1", hostId: "host-1", chatSessionId: "required-chat",
       selectedServerIds: ["server-1"],
-      messages: [{ role: "user", content: "continue" }],
+      messages: [{ role: "user", parts: [{ type: "text", text: "continue" }] }],
       model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
     }, token);
     expect(response.status).toBe(409);
@@ -705,7 +706,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       projectId: "project-1", hostId: "host-1", chatSessionId: "host-capabilities-chat",
       harnessStartupRequestId: "b19b8e67-f9a8-4d1f-9fce-7b6da581c041",
       selectedServerIds: ["server-1"], hostCapabilitiesOverride: {},
-      messages: [{ role: "user", content: "hello" }],
+      messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
       model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
     }, token);
     expect(response.status).toBe(200);
@@ -717,6 +718,25 @@ describe("web routes — chat-v2 hosted mode", () => {
         gaps: ["host-capability:message.audio"],
       },
     }));
+  });
+
+  it("hands a harness turn the route's recorder, which reports its closing event as a web turn", async () => {
+    const { app, token } = createWebTestApp();
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: { harness: "claude-code", hostStyle: "claude", selectedServerIds: ["server-1"] },
+    });
+    const response = await postJson(app, "/api/web/chat-v2", {
+      projectId: "project-1", hostId: "host-1", chatSessionId: "turn-event-chat",
+      selectedServerIds: ["server-1"],
+      messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
+      model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
+    }, token);
+    expect(response.status).toBe(200);
+    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledTimes(1);
+    const { turnTiming } = handleMCPJamFreeChatModelMock.mock.calls[0]![0];
+    expect(turnTiming).toBeInstanceOf(TurnTiming);
+    expect(turnTiming.harnessTurnEvent.surface).toBe("web");
   });
 
   it("FAILS CLOSED when the host runtime-config fetch fails — never runs the engine", async () => {
@@ -735,7 +755,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         selectedServerIds: ["server-1"],
         hostId: "host-1",
         chatSessionId: "chat-host-2",
-        messages: [{ role: "user", content: "preview request" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
         model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
       },
       token
@@ -768,7 +788,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         selectedServerIds: ["server-1"],
         hostId: "host-1",
         chatSessionId: "chat-host-policy",
-        messages: [{ role: "user", content: "preview request" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
         model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
         // The body says nothing about the policy — the stored host config is
         // authoritative, so the unsupported idp fails the turn closed.
@@ -798,7 +818,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
         chatSessionId: "chat-adhoc-policy",
-        messages: [{ role: "user", content: "preview request" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
         model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
         xaaPolicy: { idp: "okta" },
       },
@@ -823,7 +843,7 @@ describe("web routes — chat-v2 hosted mode", () => {
     const { app, token } = createWebTestApp();
     const response = await postJson(app, "/api/web/chat-v2", {
       projectId: "project-1", selectedServerIds: ["server-1"],
-      chatSessionId: "chat-policy", messages: [{ role: "user", content: "hello" }],
+      chatSessionId: "chat-policy", messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
       model: { id: "openai/gpt-5-mini", provider: "openai" },
       mirrorToolParamHeaders: false,
     }, token);
@@ -855,7 +875,7 @@ describe("web routes — chat-v2 hosted mode", () => {
           hostId: "host-1",
           selectedServerIds: ["server-1"],
           chatSessionId: "saved-pins",
-          messages: [{ role: "user", content: "hello" }],
+          messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
           model: { id: "openai/gpt-5-mini", provider: "openai" },
         },
         token,
@@ -886,7 +906,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         scenarioId: "cbx_1",
         accessVersion: 1,
         chatSessionId: "chat-cb-fail",
-        messages: [{ role: "user", content: "preview request" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
         model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
       },
       token
@@ -926,7 +946,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         scenarioId: "cbx_1",
         accessVersion: 1,
         chatSessionId: "chat-cb-denied",
-        messages: [{ role: "user", content: "preview request" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
         model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
       },
       token
@@ -957,7 +977,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         scenarioId: "cbx_1",
         accessVersion: 7,
         chatSessionId: "chat-cb-version",
-        messages: [{ role: "user", content: "hi" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
         model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
       },
       token
@@ -986,7 +1006,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         scenarioId: "cbx_1",
         accessVersion: 1,
         chatSessionId: "chat-cb-stale",
-        messages: [{ role: "user", content: "hi" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
         model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
       },
       token
@@ -997,6 +1017,41 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(response.status).toBe(409);
     const body = (await response.json()) as { code?: string };
     expect(body.code).toBe("SCENARIO_ACCESS_STALE");
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
+  it("asks a signed-out visitor to sign in before a share link's harness turn", async () => {
+    const { app, token } = createWebTestApp();
+    // The backend's answer when the link's client runs a harness that a
+    // signed-in guest would get.
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
+      ok: false,
+      status: 401,
+      code: "SCENARIO_SIGN_IN_REQUIRED",
+      error: "Sign in to preview this scenario.",
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        scenarioId: "cbx_1",
+        accessVersion: 1,
+        chatSessionId: "chat-cb-sign-in",
+        messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
+        model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
+      },
+      token
+    );
+
+    // `details.code` is what the share-link page reads to replace the chat
+    // with its sign-in prompt (`classifyScenarioAccessError`).
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({
+      details: { code: "SCENARIO_SIGN_IN_REQUIRED" },
+    });
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 
@@ -1013,7 +1068,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         accessVersion: 1,
         hostId: "host-1",
         chatSessionId: "chat-cb-1",
-        messages: [{ role: "user", content: "preview request" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
         model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
       },
       token
@@ -1037,7 +1092,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         reasoningEffort: "low",
         surface: "share_link",
         chatSessionId: "chat-session-shared",
-        messages: [{ role: "user", content: "hello from guest" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "hello from guest" }] }],
         model: {
           id: "anthropic/claude-opus-4.6",
           provider: "anthropic",
@@ -1068,7 +1123,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         projectId: "project-1",
         selectedServerIds: ["server-1", "server-2", "server-1"],
         chatSessionId: "chat-session-batch",
-        messages: [{ role: "user", content: "hello" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
         model: {
           id: "openai/gpt-5-mini",
           provider: "openai",
@@ -1124,7 +1179,7 @@ describe("web routes — chat-v2 hosted mode", () => {
           "server-1": "2026-07-28",
         },
         chatSessionId: "chat-session-stateless",
-        messages: [{ role: "user", content: "hello" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
         model: {
           id: "openai/gpt-5-mini",
           provider: "openai",
@@ -1165,7 +1220,7 @@ describe("web routes — chat-v2 hosted mode", () => {
           "server-stateless": "2026-07-28",
         },
         chatSessionId: "chat-session-mixed",
-        messages: [{ role: "user", content: "hello" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
         model: {
           id: "openai/gpt-5-mini",
           provider: "openai",
@@ -1205,7 +1260,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         selectedServerNames: ["Asana"],
         chatSessionId: "chat-session-direct",
         directVisibility: "project",
-        messages: [{ role: "user", content: "hello" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
         model: {
           id: "openai/gpt-5-mini",
           provider: "openai",
@@ -1262,7 +1317,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         chatSessionId: "chat-session-direct-images-off",
         directVisibility: "project",
         modelVisibleMcpToolResults: imagePolicy(false),
-        messages: [{ role: "user", content: "hello" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
         model: {
           id: "openai/gpt-5-mini",
           provider: "openai",
@@ -1292,6 +1347,12 @@ describe("web routes — chat-v2 hosted mode", () => {
   });
 
   it("does not resolve linked image resources from browser-replayed history", async () => {
+    // The replayed history has to reach the image mapping as real model
+    // messages, so this test converts it instead of using the file's identity.
+    const actual = await vi.importActual<typeof import("ai")>("ai");
+    vi.mocked(convertToModelMessages).mockImplementationOnce(
+      actual.convertToModelMessages as never,
+    );
     const { app, token } = createWebTestApp();
     managerListToolsMock.mockResolvedValue({
       tools: [{ name: "qa_return_linked_image_resource" }],
@@ -1317,39 +1378,27 @@ describe("web routes — chat-v2 hosted mode", () => {
         messages: [
           {
             role: "assistant",
-            content: [
+            parts: [
               {
-                type: "tool-call",
+                type: "dynamic-tool",
                 toolCallId: "call-linked-image",
                 toolName: "qa_return_linked_image_resource",
+                state: "output-available",
                 input: {},
-              },
-            ],
-          },
-          {
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: "call-linked-image",
-                toolName: "qa_return_linked_image_resource",
                 output: {
-                  type: "json",
-                  value: {
-                    content: [
-                      {
-                        type: "resource_link",
-                        uri: "example://linked-image.png",
-                        name: "Linked PNG resource",
-                        mimeType: "image/png",
-                      },
-                    ],
-                  },
+                  content: [
+                    {
+                      type: "resource_link",
+                      uri: "example://linked-image.png",
+                      name: "Linked PNG resource",
+                      mimeType: "image/png",
+                    },
+                  ],
                 },
               },
             ],
           },
-          { role: "user", content: "what can you tell me about the image" },
+          { role: "user", parts: [{ type: "text", text: "what can you tell me about the image" }] },
         ],
         model: {
           id: "openai/gpt-5-mini",
@@ -1410,7 +1459,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         selectedServerIds: ["server-1"],
         chatSessionId: "chat-session-gpt5",
         temperature: 0.3,
-        messages: [{ role: "user", content: "hello" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
         model: {
           id: "openai/gpt-5-mini",
           provider: "openai",
@@ -1440,7 +1489,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         messages: [
           {
             role: "user",
-            content: "hello from alice",
+            parts: [{ type: "text", text: "hello from alice" }],
             metadata: { senderUserId: "u-alice" },
           },
         ],
@@ -1478,7 +1527,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         messages: [
           {
             role: "user",
-            content: "hello from alice",
+            parts: [{ type: "text", text: "hello from alice" }],
             metadata: { senderUserId: "u-bob" },
           },
         ],
@@ -1553,7 +1602,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
         selectedServerNames: ["Asana"],
-        messages: [{ role: "user", content: "hello" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
         model: {
           id: "openai/gpt-5-mini",
           provider: "openai",
@@ -1596,7 +1645,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
         selectedServerNames: ["Notion"],
-        messages: [{ role: "user", content: "hello" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
         model: {
           id: "openai/gpt-5-mini",
           provider: "openai",
@@ -1623,36 +1672,31 @@ describe("web routes — chat-v2 hosted mode", () => {
   });
 
   /**
-   * The project pool on a target that resolves NO environment (host / adhoc).
-   *
-   * This is the arm the convergence rewired: it used to reach the orchestrator as
-   * a `cloudSkills` option that chose one exclusive branch of a chain, and it now
-   * arrives as a live capability set alongside every other origin. The three
-   * cases below are the three the route can actually be in, and they differ in
-   * ways that matter: an EMPTY catalog is authoritative, a FAILED one is not.
+   * A client's turn (host / adhoc target) runs in its hidden environment,
+   * which the backend resolves in the client's skill selection: the turn asks
+   * for that scope and plans from what comes back. It never reads the
+   * project's pool itself.
    */
-  describe("hosted chat-v2 — the project skill catalog", () => {
+  describe("hosted chat-v2 — a client's skills", () => {
     const bodyWithSkills = {
       projectId: "project-1",
       selectedServerIds: ["server-1"],
       chatSessionId: "chat-session-1",
-      messages: [{ role: "user", content: "hi" }],
+      messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
       model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
     };
 
-    it("delivers a non-empty catalog as a live resolved source", async () => {
-      listCloudRuntimeSkillsMock.mockResolvedValue([
-        {
-          skillId: "sk_1",
-          ref: "release-notes",
-          name: "release-notes",
-          description: "Write release notes",
-          aggregateHash: "agg_1",
-          channels: [],
-          content: async () => "# release-notes",
-          files: [],
-        },
-      ]);
+    it("plans the skills the backend's scope added, as a live turn", async () => {
+      environmentSkills.push({
+        skillId: "sk_1",
+        name: "release-notes",
+        description: "Write release notes",
+        content: "# release-notes",
+        aggregateHash: "agg_1",
+        channels: ["host"],
+        provenance: { skillId: "sk_1", name: "release-notes" },
+        files: [],
+      });
       const { app, token } = createWebTestApp();
 
       const response = await postJson(
@@ -1663,20 +1707,27 @@ describe("web routes — chat-v2 hosted mode", () => {
       );
       expect(response.status).toBe(200);
 
+      expect(resolveQueryMock).toHaveBeenCalledWith(
+        "projectEnvironments:resolveEnvironmentForRuntime",
+        expect.objectContaining({ skillScope: "visible" }),
+      );
       const args = prepareChatV2Mock.mock.calls.at(-1)![0];
-      expect(args.skillsSource.kind).toBe("resolved");
-      // Live, so a connected server's SEP-2640 skills compose on top rather than
-      // being displaced by the project's.
-      expect(args.skillsSource.composeLiveServerSkills).toBe(true);
+      expect(args.skills.runtime).toEqual({ kind: "agent" });
+      // Live, so a connected server's SEP-2640 skills compose on top rather
+      // than being displaced by the environment's.
+      expect(args.skills.agent).toEqual({ kind: "live" });
       expect(
-        args.skillsSource.capabilities.standaloneSkills.map(
-          (skill: { ref: string }) => skill.ref
-        )
+        args.skills.delivered.map((ref: { ref: string }) => ref.ref),
       ).toEqual(["release-notes"]);
+      expect(listCloudRuntimeSkillsMock).not.toHaveBeenCalled();
+      // The turn records the skill it handed the engine.
+      const persisted = persistChatSessionToConvexMock.mock.calls.at(-1)![0];
+      expect(persisted.turnTrace.skillsAtTurn).toEqual([
+        { skillId: "sk_1", name: "release-notes" },
+      ]);
     });
 
-    it("keeps an empty catalog authoritative rather than falling back", async () => {
-      listCloudRuntimeSkillsMock.mockResolvedValue([]);
+    it("keeps a client with no skills on a live plan with none", async () => {
       const { app, token } = createWebTestApp();
 
       const response = await postJson(
@@ -1687,33 +1738,12 @@ describe("web routes — chat-v2 hosted mode", () => {
       );
       expect(response.status).toBe(200);
 
-      // "This project has no skills" is an answer, not a gap: the source is still
-      // resolved and still live, it is simply empty.
       const args = prepareChatV2Mock.mock.calls.at(-1)![0];
-      expect(args.skillsSource.kind).toBe("resolved");
-      expect(args.skillsSource.capabilities.standaloneSkills).toEqual([]);
-      expect(args.skillsSource.composeLiveServerSkills).toBe(true);
-    });
-
-    it("loses the turn's project skills, and nothing else, when the catalog fails", async () => {
-      listCloudRuntimeSkillsMock.mockRejectedValue(new Error("convex down"));
-      const { app, token } = createWebTestApp();
-
-      const response = await postJson(
-        app,
-        "/api/web/chat-v2",
-        bodyWithSkills,
-        token
-      );
-      // Losing the skills must not lose the turn.
-      expect(response.status).toBe(200);
-
-      // The shared setup retains the connected server set even if project
-      // skills are unavailable.
-      const args = prepareChatV2Mock.mock.calls.at(-1)![0];
-      expect(args.skillsSource).toMatchObject({
-        kind: "resolved",
-        capabilities: { standaloneSkills: [], effectiveServerIds: ["server-1"] },
+      expect(args.skills).toMatchObject({
+        runtime: { kind: "agent" },
+        agent: { kind: "live" },
+        delivered: [],
+        set: { standaloneSkills: [], effectiveServerIds: ["server-1"] },
       });
     });
   });
@@ -1730,7 +1760,7 @@ describe("web routes — chat-v2 hosted mode", () => {
    * to correct it — leaving the session row naming a model the turn never
    * touched, or nothing at all.
    */
-  describe("an external-account harness host records ITS OWN model", () => {
+  describe("an external-account harness preserves a selected account model", () => {
     const cursorHost = {
       ok: true,
       config: {
@@ -1740,7 +1770,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       },
     };
 
-    it("persists the host's cursor/auto sentinel, not the browser's leftover pick", async () => {
+    it("persists the explicit Cursor account model instead of replacing it with Auto", async () => {
       fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
       const { app, token } = createWebTestApp();
 
@@ -1752,13 +1782,13 @@ describe("web routes — chat-v2 hosted mode", () => {
           selectedServerIds: ["server-1"],
           hostId: "host-cursor",
           chatSessionId: "chat-cursor-1",
-          messages: [{ role: "user", content: "preview request" }],
+          messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
           // What the picker actually holds on a Cursor host: an unrelated
           // model, because the sentinel is not a selectable entry.
           model: {
-            id: "anthropic/claude-haiku-4.5",
-            provider: "anthropic",
-            name: "Haiku",
+            id: "cursor/mini",
+            provider: "cursor",
+            name: "Cursor Mini",
           },
         },
         token
@@ -1768,10 +1798,10 @@ describe("web routes — chat-v2 hosted mode", () => {
       expect(persistChatSessionToConvexMock).toHaveBeenCalledTimes(1);
       const persisted = persistChatSessionToConvexMock.mock.calls.at(-1)![0];
       // The sentinel — never blank, and never the Haiku id that nothing ran.
-      expect(persisted.modelId).toBe("cursor/auto");
+      expect(persisted.modelId).toBe("cursor/mini");
       // And not billed to MCPJam: the turn ran on the customer's Cursor account.
       expect(persisted.modelSource).toBe("external-account");
-      expect(persisted.hostConfig?.modelId).toBe("cursor/auto");
+      expect(persisted.hostConfig?.modelId).toBe("cursor/mini");
     });
 
     it("routes the turn to the harness instead of demanding an org `cursor` provider key", async () => {
@@ -1786,11 +1816,11 @@ describe("web routes — chat-v2 hosted mode", () => {
           selectedServerIds: ["server-1"],
           hostId: "host-cursor",
           chatSessionId: "chat-cursor-2",
-          messages: [{ role: "user", content: "preview request" }],
+          messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
           model: {
-            id: "anthropic/claude-haiku-4.5",
-            provider: "anthropic",
-            name: "Haiku",
+            id: "cursor/mini",
+            provider: "cursor",
+            name: "Cursor Mini",
           },
         },
         token
@@ -1804,7 +1834,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledTimes(1);
       const engineArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
       expect(engineArgs.harness).toBe("cursor");
-      expect(engineArgs.modelId).toBe("cursor/auto");
+      expect(engineArgs.modelId).toBe("cursor/mini");
     });
 
     it("leaves a NON-harness host's model to the body, as before", async () => {
@@ -1828,7 +1858,7 @@ describe("web routes — chat-v2 hosted mode", () => {
           selectedServerIds: ["server-1"],
           hostId: "host-plain",
           chatSessionId: "chat-plain-1",
-          messages: [{ role: "user", content: "preview request" }],
+          messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
           model: {
             id: "anthropic/claude-haiku-4.5",
             provider: "anthropic",
@@ -1873,7 +1903,7 @@ describe("web routes — chat-v2 hosted mode", () => {
             selectedServerIds: ["server-1"],
             hostId: "host-cursor",
             chatSessionId: `chat-cursor-invalid-${label}`,
-            messages: [{ role: "user", content: "preview request" }],
+            messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
             model,
           },
           token
@@ -1918,11 +1948,11 @@ describe("web routes — chat-v2 hosted mode", () => {
           selectedServerIds: ["server-1"],
           hostId: "host-cursor-misconfigured",
           chatSessionId: "chat-cursor-4",
-          messages: [{ role: "user", content: "preview request" }],
+          messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
           model: {
-            id: "anthropic/claude-haiku-4.5",
-            provider: "anthropic",
-            name: "Haiku",
+            id: "cursor/mini",
+            provider: "cursor",
+            name: "Cursor Mini",
           },
         },
         token
@@ -1935,7 +1965,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       };
       expect(JSON.stringify(body)).toContain("FEATURE_NOT_SUPPORTED");
       expect(JSON.stringify(body)).toContain('"reason":"HARNESS_UNAVAILABLE"');
-      expect(JSON.stringify(body)).toContain("chooses its own model");
+      expect(JSON.stringify(body)).toContain("Cursor account");
       // The id its owner has to fix, named in the refusal.
       expect(JSON.stringify(body)).toContain("anthropic/claude-sonnet-4.5");
       // EARLY: the pre-flight sits after the model resolution, so reaching it
@@ -1961,7 +1991,7 @@ describe("web routes — chat-v2 hosted mode", () => {
           selectedServerIds: ["server-1"],
           hostId: "host-cursor-misconfigured",
           chatSessionId: "chat-cursor-5",
-          messages: [{ role: "user", content: "preview request" }],
+          messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
           model: { id: "cursor/auto", provider: "cursor", name: "Cursor Auto" },
         },
         token
@@ -1990,11 +2020,11 @@ describe("web routes — chat-v2 hosted mode", () => {
           selectedServerIds: ["server-1"],
           hostId: "host-cursor",
           chatSessionId: "chat-cursor-6",
-          messages: [{ role: "user", content: "preview request" }],
+          messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
           model: {
-            id: "anthropic/claude-haiku-4.5",
-            provider: "anthropic",
-            name: "Haiku",
+            id: "cursor/mini",
+            provider: "cursor",
+            name: "Cursor Mini",
           },
         },
         token
@@ -2004,7 +2034,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       expect(checkHarnessRuntimeAvailableMock).toHaveBeenLastCalledWith(
         expect.objectContaining({
           // Promoted: the host's model, not the body's.
-          model: expect.objectContaining({ id: "cursor/auto" }),
+          model: expect.objectContaining({ id: "cursor/mini" }),
           hostModelId: "cursor/auto",
         })
       );
@@ -2035,12 +2065,10 @@ describe("web routes — chat-v2 hosted mode", () => {
           selectedServerIds: ["server-1"],
           hostId: "host-1",
           chatSessionId: "chat-pg-1",
-          messages: [{ role: "user", content: "go" }],
-          model: {
-            id: "anthropic/claude-haiku-4.5",
-            provider: "anthropic",
-            name: "Haiku",
-          },
+          messages: [{ role: "user", parts: [{ type: "text", text: "go" }] }],
+          model: host.harness === "cursor"
+            ? { id: "cursor/auto", provider: "cursor", name: "Cursor Auto" }
+            : { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
           ...body,
         },
         token
@@ -2051,6 +2079,13 @@ describe("web routes — chat-v2 hosted mode", () => {
       modelId: "anthropic/claude-haiku-4.5",
       harness: "claude-code",
     };
+
+    it("refuses an ordinary provider model on the Cursor account path", async () => {
+      const response = await post({ model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" } }, cursor);
+      expect(response.status).toBe(422);
+      expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    });
 
     it("a Cursor turn runs on the conversation's box, and the engine gets the binding", async () => {
       const response = await post({}, cursor);
@@ -2161,11 +2196,11 @@ describe("web routes — chat-v2 hosted mode", () => {
 
     it("a Cursor turn whose key is refused provisions NOTHING: the check runs before the box", async () => {
       vi.mocked(playgroundCredentialRefusal).mockResolvedValueOnce(
-        "The Cursor harness requires a CURSOR_API_KEY project secret."
+        "Ask an org admin to add a Cursor key in Organization → AI providers."
       );
       const response = await post({}, cursor);
       expect(response.status).toBe(409);
-      expect(await response.text()).toMatch(/CURSOR_API_KEY/);
+      expect(await response.text()).toMatch(/Organization → AI providers/);
       expect(playgroundCredentialRefusal).toHaveBeenCalledWith(
         expect.objectContaining({
           harnessId: "cursor",
@@ -2179,41 +2214,17 @@ describe("web routes — chat-v2 hosted mode", () => {
     it("a compare column on Claude Code needs no credential check", async () => {
       await post({ comparePane: true }, claudeCode);
       expect(playgroundCredentialRefusal).not.toHaveBeenCalled();
-      expect(resolvePlaygroundCredentialEnvironment).not.toHaveBeenCalled();
     });
 
-    it("a Cursor turn on a client (no environment chosen) runs under a hidden environment carrying the member's key", async () => {
+    it("a Cursor turn on a client (no environment chosen) needs no key of the member's: the org key's readiness decides", async () => {
       const response = await post({}, cursor);
       expect(response.status).toBe(200);
-      expect(resolvePlaygroundCredentialEnvironment).toHaveBeenCalledWith(
-        expect.objectContaining({
-          projectId: "project-1",
-          hostId: "host-1",
-          harnessId: "cursor",
-        })
-      );
       expect(playgroundCredentialRefusal).toHaveBeenCalledWith(
-        expect.objectContaining({ environmentId: "env_hidden" })
+        expect.objectContaining({ harnessId: "cursor", projectId: "project-1" })
       );
       expect(acquirePlaygroundHarnessBox).toHaveBeenCalledWith(
-        expect.objectContaining({ projectEnvironmentId: "env_hidden" })
+        expect.objectContaining({ harness: "cursor" })
       );
-    });
-
-    it("no usable key: refused with where to add it, before any box", async () => {
-      vi.mocked(resolvePlaygroundCredentialEnvironment).mockResolvedValueOnce({
-        ok: false,
-        status: 409,
-        message:
-          "Add your Cursor API key (CURSOR_API_KEY) before using Cursor. Add or fix it under Project Settings → Secrets, then send again.",
-      });
-      const response = await post({}, cursor);
-      expect(response.status).toBe(409);
-      const text = await response.text();
-      expect(text).toMatch(/Project Settings → Secrets/);
-      expect(text).not.toMatch(/environment/i);
-      expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
-      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
     });
   });
 });

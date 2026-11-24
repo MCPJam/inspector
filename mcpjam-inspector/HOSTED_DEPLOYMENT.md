@@ -3,134 +3,146 @@
 Configuration notes for operators self-hosting MCPJam Inspector. Not relevant
 when running locally via `npx @mcpjam/inspector`.
 
-## Sandbox origin (required for production)
+## Admitted App documents
 
-The MCP Apps / ChatGPT Apps widget sandbox **must** be served from an origin
-distinct from the host app. Without origin separation, widget code running
-inside the sandbox iframe shares cookies and `localStorage` with the host app
-even though the iframe carries `sandbox="... allow-same-origin"`. CSP is not a
-substitute — origin separation is what enforces isolation.
+Hosted MCP Apps use a separate HTTPS origin for each admitted view. The server
+returns the view URL after authenticating the host, binding the loaded HTML and
+policy to its owner, and creating a durable lease. The document response carries
+the admitted Content Security Policy. Renderers stay blank until admission
+succeeds; they do not fall back to the generic sandbox URL.
 
 ### Configuration
 
-Two settings, and both are required. The client build says where widgets load
-from; the server says which hostnames serve nothing but widgets.
+Use a sandbox hostname distinct from the app hostname. The sandbox hostname and
+its wildcard must route to the same Inspector service as the app.
 
 ```bash
-# Client build time.
+# Inspector server runtime. Served to the browser with the page and used for
+# each admitted view's origin, so one image serves every deployment. Wins over
+# VITE_MCPJAM_SANDBOX_ORIGIN.
+MCPJAM_SANDBOX_ORIGIN=https://sandbox.example.com
+
+# Client build time AND Inspector server runtime. Used when
+# MCPJAM_SANDBOX_ORIGIN is unset.
 VITE_MCPJAM_SANDBOX_ORIGIN=https://sandbox.example.com
 
-# Server runtime. Comma-separated hostnames, no scheme, no port.
+# Inspector server runtime; hostnames only, without scheme, port or wildcard.
 SANDBOX_HOSTS=sandbox.example.com
+
+# Runtime URL of the matching backend's HTTP service.
+CONVEX_HTTP_URL=https://your-deployment.convex.site
 ```
 
-`VITE_MCPJAM_SANDBOX_ORIGIN` must be:
+Hosted Apps open only when the sandbox origin is an `https://` origin whose
+hostname is listed in `SANDBOX_HOSTS`. An `MCPJAM_SANDBOX_ORIGIN` that is not an
+http(s) origin is ignored, with a warning on stderr, and
+`VITE_MCPJAM_SANDBOX_ORIGIN` is used instead. On an image built by MCPJam's
+Railway pipeline, the browser's build-time value is `https://sandbox.mcpjam.com`,
+so widgets would load from MCPJam's sandbox host, not yours.
 
-- A different registrable origin from the host app (e.g. host on
-  `app.example.com`, sandbox on `sandbox.example.com`), so the browser scopes
-  cookies and storage separately.
-- Reachable by browsers. The same MCPJam backend serves both DNS names — no
-  separate deploy is required.
+The Inspector also needs its existing `INSPECTOR_SERVICE_TOKEN` secret. Configure
+it through the deployment's secret manager, matching the backend service
+credential. Never put its value in the client build or a URL. Deploy the backend
+lease endpoints before the matching Inspector build, following the backend
+[deploy playbook](https://github.com/MCPJam/mcpjam-backend/blob/main/docs/deploy-playbook.md).
 
-`SANDBOX_HOSTS` must list that hostname. A host on this list serves **exactly
-two paths** and answers `404` for everything else — no app shell, no assets, no
-API:
+Before enabling this build on staging, configure:
 
-- `GET /api/web/apps/mcp-apps/sandbox-proxy` — the sandbox document. It is
-  self-contained and receives widget HTML over `postMessage`, so this is all
-  the origin needs.
-- `GET /health` — so the canary and the platform probe still work there.
+- DNS for `sandbox.example.com` and `*.sandbox.example.com` to the Inspector
+  service, with ingress accepting both hostnames and preserving `Host`.
+- TLS covering both the sandbox hostname and `*.sandbox.example.com`. A
+  certificate for `*.example.com` does not cover the view subdomains.
+- Any access-proxy rules needed for sandbox document requests; an interstitial
+  login page cannot replace an admitted document.
+- The actual app origin in `MCPJAM_HOSTED_ORIGIN` and `WEB_ALLOWED_ORIGINS`.
 
-Default: `sandbox.mcpjam.com,sandbox-staging.mcpjam.com`.
+Admitted URLs have the form `https://v-<16 hex characters>.sandbox.example.com/`.
+These view origins are required independently of the older
+`VITE_MCPJAM_VIEW_SUBDOMAINS` option. Do not use an admitted view origin as a
+stable third-party OAuth redirect or API-key allowlist entry.
 
-Get this list wrong and the listed host stops serving the app, so change it on
-staging first. `SANDBOX_HOSTS=""` disables the partition entirely and is the
-rollback.
+### Routes and isolation
 
-### Why the partition exists
+`SANDBOX_HOSTS` defaults to `sandbox.mcpjam.com,sandbox-staging.mcpjam.com`.
+The exact sandbox hostname serves only the sandbox-proxy route and `/health`.
+A recognized view subdomain serves only
+`GET /api/web/apps/mcp-apps/sandbox-proxy`; it does not serve the app shell,
+assets, other APIs or `/health`.
 
-Serving the whole app from the sandbox hostname is not a live session-theft
-path — cookies are set without a `Domain=` attribute, so they are host-only and
-never reach the sandbox host. What it breaks is everything else: the origin
-holding untrusted widget content also answered `/api/*` and served the app
-bundle, and the client's boot guard for a genuinely same-origin sandbox fired
-on ordinary traffic to the sandbox hostname, where the app's origin and the
-configured sandbox origin are equal by definition. No page can tell that apart
-from a deploy that pointed its sandbox at itself. Only the server knows which
-hostname it was supposed to answer as, which is why the check lives there.
+An admitted document requires its valid, owner-bound capability and live lease.
+Missing, expired, released or wrong-origin capabilities do not serve a document.
+The URL contains a capability: redact its query when collecting logs or
+screenshots. A direct request to the generic proxy is not a readiness check.
 
-### Per-server view origins (optional)
+### Staging validation and rollback
 
-Each MCP server's views can be served from their own origin,
-`<label>.sandbox.example.com`, so apps do not share cookies or storage with
-each other and each gets an origin stable enough to name in an OAuth redirect
-URI or a third-party API-key allowlist. Off unless the deploy opts in:
-
-```bash
-# Client build time. Requires the DNS and certificate below.
-VITE_MCPJAM_VIEW_SUBDOMAINS=true
-```
-
-Before enabling it:
-
-- wildcard DNS for `*.sandbox.example.com` pointing at the same backend;
-- a certificate covering that wildcard. A one-level wildcard for the apex does
-  NOT cover `*.sandbox.example.com`, so this is usually a separate certificate;
-- if an access proxy fronts the sandbox host, its bypass must cover the
-  wildcard too, or the proxy document loads a login page instead.
-
-Enable it on staging first. With the DNS or certificate missing, a labelled
-host does not resolve and widgets fail to load rather than degrading — there is
-no fallback, by design, because silently sharing an origin is the failure this
-is meant to remove.
-
-`SANDBOX_HOSTS` needs no change: a label under a listed host is recognised
-automatically, and answers the sandbox proxy path only — not `/health`.
-
-### DNS / routing
-
-Point the sandbox hostname at the same backend that serves the host app.
-There is no shared state between the host app and the sandbox proxy — the
-proxy is a static bootstrap document that receives widget HTML via
-`postMessage`.
-
-### CSP
-
-The sandbox proxy emits a `frame-ancestors` directive, and accepts host
-messages, only from the origins this deploy serves the app from:
-`MCPJAM_HOSTED_ORIGIN` plus every `https://` entry in `WEB_ALLOWED_ORIGINS`.
-A hosted deploy does not include loopback origins. Make sure the host app
-origin (e.g. `https://app.example.com`) is `MCPJAM_HOSTED_ORIGIN` or is listed
-in `WEB_ALLOWED_ORIGINS` so the host page is allowed to frame the sandbox.
-
-### Verifying a deploy
+Check wildcard DNS and TLS with a disposable view hostname before opening an
+App. Then use the signed-in App flow to verify initialization, the actual HTTP
+CSP, blocked undeclared resources, retained-view renewal and explicit close.
+Repeat after a server restart to exercise the durable lease service. A passing
+`/health` alone does not prove wildcard routing, TLS or App admission works.
 
 `/health` reports `sandboxIsolation`:
 
-- `ok` — a sandbox hostname is configured and it is not the app's own host.
+- `ok` — a sandbox hostname is configured, it is not the app's own host, and
+  `MCPJAM_SANDBOX_ORIGIN`, when set, names a listed host.
 - `same-origin` — `SANDBOX_HOSTS` contains the app's host from
-  `MCPJAM_HOSTED_ORIGIN`. Widgets are not isolated, and that hostname has
-  stopped serving the app.
+  `MCPJAM_HOSTED_ORIGIN`, so that hostname has stopped serving the app, or
+  `MCPJAM_SANDBOX_ORIGIN` is the app's own origin. Either way widgets are not
+  isolated.
+- `unpartitioned` — `MCPJAM_SANDBOX_ORIGIN` names a host that `SANDBOX_HOSTS`
+  does not list, so the host widgets load from still serves the app shell and
+  `/api`.
 - `unset` — nothing is partitioned, or `MCPJAM_HOSTED_ORIGIN` could not be
   parsed to compare against.
 
-Anything other than `ok` is also logged once at error level during boot.
+Anything other than `ok` is also logged once at error level during boot, and
+printed on stderr, so it shows even in production without `VERBOSE_LOGS=true`.
+Missing backend lease credentials, wildcard routing or TLS leave Apps
+unavailable; they do not authorize an unsigned fallback.
 
-### Fallback behavior
-
-If `VITE_MCPJAM_SANDBOX_ORIGIN` is unset in a hosted build — or set to the
-app's own origin, which produces the same iframe — the sandbox falls back to
-same-origin and the client logs a security warning to the browser console. The
-fallback exists only as a soft-fail for misconfigured deploys; production
-deployments must set the variable. The regression test at
-`client/src/components/ui/__tests__/sandboxed-iframe.hosted.test.tsx` pins
-this contract.
+Rollback by restoring the previously tested, compatible Inspector/backend
+release pair through the deploy playbook. Keep the sandbox partition and origin
+isolation enabled.
 
 ### Local development
 
-Local development is unaffected. The dev client swaps between `localhost`
-and `127.0.0.1` to get origin separation without operator configuration, and
-no local Host header matches `SANDBOX_HOSTS`.
+Local admitted views use separate `127.0.0.1` listener ports and the same
+owner/policy checks. They do not require public wildcard DNS or a hosted service
+credential. A local pass does not qualify hosted routing or TLS.
+
+## Private MCP servers and model endpoints
+
+Hosted mode refuses to dial private destinations: loopback, RFC 1918, CGNAT
+(`100.64.0.0/10`), IPv6 unique-local, and any name that resolves to one. A
+deployment that runs on your own network, beside the MCP servers and model
+endpoints it should use, lists the ones it may reach:
+
+```bash
+# Comma-separated CIDRs and host suffixes.
+MCPJAM_PRIVATE_EGRESS_ALLOWLIST=10.0.0.0/8,fd00::/8,svc.cluster.local
+```
+
+- A range (`10.0.0.0/8`, `fd00::/8`, or a bare address for one host) matches
+  addresses: an IP literal in the URL, or an address a name resolves to. Write
+  the network address; `10.0.0.1/8` is refused.
+- A suffix (`svc.cluster.local`, leading dot optional) matches names on label
+  boundaries: `corp.example` matches `mcp.corp.example` but never
+  `evilcorp.example`. A listed name may resolve to any private address. There
+  are no wildcards.
+- Cloud metadata (`169.254.169.254`, `metadata.google.internal` and the
+  others), link-local, multicast and the unspecified address stay refused
+  whatever the list says, `0.0.0.0/0` included.
+- Every redirect hop is checked again, so a listed host cannot redirect onto an
+  unlisted one.
+- One invalid entry voids the whole list, so a typo never widens it: nothing
+  private is reachable, and the server logs an error at boot giving each bad
+  entry's position in the list and what is wrong with it. The entry itself is
+  not logged, since it could be a pasted URL with credentials. In production
+  the console shows the error only with `VERBOSE_LOGS=true`.
+
+The preflight check queries DNS directly, without `/etc/hosts`, so use fully
+qualified names such as `mcp.tools.svc.cluster.local`.
 
 ## Client address behind your own ingress
 
@@ -183,6 +195,29 @@ guest spend budgets and the limits that only trust a vouched-for address, the
 edge secret is then the only proof: a request without it gets no budget of its
 own, whatever the trusted header says. The other limits read the trusted
 header for it.
+
+## Turning the MCPJam agent off
+
+Ask MCPJam talks to MCPJam's own MCP servers: the platform worker
+(`mcp.mcpjam.com`) and the hosted docs servers. A deployment that cannot reach
+them turns the agent off:
+
+```bash
+MCPJAM_PLATFORM_AGENT=off
+```
+
+The agent's routes then answer `404` with code `FEATURE_NOT_SUPPORTED`
+without dialling anything, the server stops checking the platform worker URL
+at boot, and the app hides the agent's entry points. Any other value, or none,
+keeps the agent.
+
+The setting does not cover the headless agent in the public API
+(`POST /api/v1/projects/:projectId/agent`, the Slack bot's turn endpoint).
+Wherever `CONVEX_HTTP_URL` is set, each of its turns still checks the docs MCP
+server at `MCPJAM_DOCS_MCP_URL`, `https://docs.mcpjam.com/mcp` by default, and
+carries on without docs when that server does not answer. To keep those turns
+off the public docs server, set `MCPJAM_DOCS_MCP_URL` to one the deployment
+can reach.
 
 ## Organization-derived confidential CIMD (disabled by default)
 

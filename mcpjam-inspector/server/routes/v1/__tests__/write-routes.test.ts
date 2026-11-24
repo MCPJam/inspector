@@ -3,7 +3,8 @@ import { Hono } from "hono";
 
 // Covers the v1 WRITE surface: tools/call + prompts/get schema validation,
 // the async eval-run POST (mocked prepare/execute seam), the eval read
-// proxies (mocked ConvexHttpClient), and the OAuth import-tokens proxy.
+// proxies (mocked ConvexHttpClient). The deprecated OAuth import-tokens
+// alias is covered with the accounts API in server-accounts.test.ts.
 
 const {
   validateGuestTokenMock,
@@ -85,7 +86,11 @@ vi.mock("convex/browser", () => ({
   }),
 }));
 
+import { ConvexHttpClient } from "convex/browser";
 import v1Routes from "../index.js";
+import { convexReadFetch } from "../convex-read-errors.js";
+import { createConvexClient } from "../convex-client.js";
+import { createConvexClients } from "../../shared/evals.js";
 import { MAX_RUN_GROUP_TARGETS, parseMaxConcurrentRuns } from "../evals.js";
 import {
   __resetHostedModelCatalogForTests,
@@ -364,10 +369,12 @@ describe("v1 write routes", () => {
           "s_beta",
         ]);
         expect(createAuthorizedManagerMock.mock.calls[0][7]).toEqual({
+          pluginComputerRuntime: false,
           serverNames: ["alpha", "beta"],
           // Threaded so per-server XAA servers mint instead of 500ing —
           // the v1 eval API has no host-persona input, so no xaaPolicy.
           xaaIssuer: expect.stringContaining("/xaa"),
+          xaaPolicy: undefined,
         });
         expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
           serverIds: ["s_alpha", "s_beta"],
@@ -666,22 +673,15 @@ describe("v1 write routes", () => {
         }
       });
 
-      it("DOES execute a replay of a run still in flight", async () => {
-        // Deliberately unchanged: an in-flight run and one abandoned mid-flight
-        // are indistinguishable from here, and refusing to execute would strand
-        // the second. Deciding that needs a liveness signal, not a guess.
-        const { execute } = mockReplay("running");
-
+      it.each(["pending", "running"])("adopts a replay in %s without another executor", async (status) => {
+        const { execute } = mockReplay(status);
         const res = await request(
-          makeApp(),
-          "POST",
-          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
-          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", idempotencyKey: "same-key" }
+          makeApp(), "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", idempotencyKey: "same-key" },
         );
-
         expect(res.status).toBe(202);
-        expect((await res.json()).status).toBe("running");
-        expect(execute).toHaveBeenCalledTimes(1);
+        expect((await res.json()).status).toBe(status);
+        expect(execute).not.toHaveBeenCalled();
       });
 
       it("executes normally against a backend with no replay signal", async () => {
@@ -3142,6 +3142,35 @@ describe("v1 write routes", () => {
       });
     });
 
+    it("reads through convexReadFetch, so an upstream failure keeps its HTTP status", async () => {
+      // Without this fetch the client drops the status of a non-2xx Convex
+      // answer, and Sentry gets an empty `Error` (INSPECTOR-HONO-17).
+      convexQueryMock.mockResolvedValueOnce(RUN_DOC);
+      await request(
+        makeApp(),
+        "GET",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      );
+      expect(ConvexHttpClient).toHaveBeenCalledWith(
+        "https://convex.example.com",
+        { fetch: convexReadFetch }
+      );
+    });
+
+    it.each([
+      ["createConvexClient", () => createConvexClient("tok")],
+      ["createConvexClients", () => createConvexClients("tok").convexClient],
+    ])("%s reads through convexReadFetch too", (_factory, create) => {
+      // The shared factories serve most v1 routes and the eval run writes;
+      // their failures reach Sentry through the same strict boundary.
+      create();
+      expect(ConvexHttpClient).toHaveBeenCalledTimes(1);
+      expect(ConvexHttpClient).toHaveBeenCalledWith(
+        "https://convex.example.com",
+        { fetch: convexReadFetch },
+      );
+    });
+
     it("surfaces a RECORDED execution engine, and only when the run has one", async () => {
       // The omission case is pinned by the exact-match assertion above: a run
       // whose snapshot predates the field must not acquire `executionEngine`,
@@ -3160,6 +3189,110 @@ describe("v1 write routes", () => {
       expect((await res.json()) as any).toMatchObject({
         id: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         executionEngine: "harness:claude-code",
+      });
+    });
+
+    /**
+     * The accounts a run used. The backend has already removed every email
+     * this caller may not see, so the route forwards what it was given: an
+     * email the backend kept, and none where it removed one.
+     */
+    describe("accounts", () => {
+      // Fake values only.
+      const PROJECT_ACCOUNT = {
+        serverId: "srvasanaxxxxxxxxxxxxxxxxxxxxxxxx",
+        kind: "shared",
+        connectionId: "connsharedxxxxxxxxxxxxxxxxxxxxxx",
+        name: "QA bot",
+        tokenStoredBy: "Ana Ruiz",
+        tokenStoredAt: 1763372820000,
+        tokenUploaded: true,
+        identity: {
+          source: "token",
+          subject: "qa-bot",
+          issuer: "https://auth.example.com",
+          email: "qa-bot@example.com",
+          emailSource: "token",
+        },
+      };
+      // A teammate's personal account, read by someone else: the backend
+      // kept the name and subject and removed the email.
+      const PERSONAL_ACCOUNT = {
+        serverId: "srvlinearxxxxxxxxxxxxxxxxxxxxxxx",
+        kind: "account",
+        connectionId: "connpersonalxxxxxxxxxxxxxxxxxxxx",
+        name: "test-automation-1",
+        profileId: "profile-123",
+        tokenExpiresAt: 1763376420000,
+        identity: { source: "profile", name: "Test Automation", subject: "profile-123" },
+      };
+
+      it("returns each account on a run read, with an email only where the backend kept one", async () => {
+        convexQueryMock.mockResolvedValueOnce({
+          ...RUN_DOC,
+          accountsAtRun: [PROJECT_ACCOUNT, PERSONAL_ACCOUNT],
+        });
+        const res = await request(
+          makeApp(),
+          "GET",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        );
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as { accounts?: unknown[] };
+        expect(body.accounts).toEqual([
+          {
+            serverId: "srvasanaxxxxxxxxxxxxxxxxxxxxxxxx",
+            accountId: "connsharedxxxxxxxxxxxxxxxxxxxxxx",
+            name: "QA bot",
+            kind: "project",
+            tokenUploaded: true,
+            tokenStoredBy: "Ana Ruiz",
+            tokenStoredAt: 1763372820000,
+            identity: {
+              source: "token",
+              subject: "qa-bot",
+              issuer: "https://auth.example.com",
+              email: "qa-bot@example.com",
+              emailSource: "token",
+            },
+          },
+          {
+            serverId: "srvlinearxxxxxxxxxxxxxxxxxxxxxxx",
+            accountId: "connpersonalxxxxxxxxxxxxxxxxxxxx",
+            name: "test-automation-1",
+            kind: "personal",
+            tokenExpiresAt: 1763376420000,
+            identity: {
+              source: "profile",
+              name: "Test Automation",
+              subject: "profile-123",
+            },
+          },
+        ]);
+        expect(JSON.stringify(body.accounts?.[1])).not.toContain("@");
+      });
+
+      it("lists accounts per run, and omits them on a run that recorded none", async () => {
+        mockConvexQueries({
+          "testSuites:listTestSuiteRuns": () => [
+            { ...RUN_DOC, accountsAtRun: [PERSONAL_ACCOUNT] },
+            { ...RUN_DOC, _id: "run2xxxxxxxxxxxxxxxxxxxxxxxxxxxx" },
+          ],
+        });
+        const res = await request(
+          makeApp(),
+          "GET",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/runs"
+        );
+        expect(res.status).toBe(200);
+        const { items } = (await res.json()) as {
+          items: Array<{ id: string; accounts?: Array<{ name: string }> }>;
+        };
+        expect(items[0]?.accounts?.map((account) => account.name)).toEqual([
+          "test-automation-1",
+        ]);
+        expect(items[1]?.id).toBe("run2xxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+        expect(items[1]).not.toHaveProperty("accounts");
       });
     });
 
@@ -3385,55 +3518,6 @@ describe("v1 write routes", () => {
         code: "NOT_FOUND",
         details: { reason: "TRACE_NOT_AVAILABLE" },
       });
-    });
-  });
-
-  describe("POST oauth/import-tokens", () => {
-    it("forwards to Convex and returns { imported: true }", async () => {
-      global.fetch = vi.fn(async (input: any) => {
-        expect(String(input)).toBe(
-          "https://convex-http.example.com/web/oauth/import-tokens"
-        );
-        return new Response(JSON.stringify({ expiresAt: 123 }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      }) as typeof fetch;
-
-      const res = await request(
-        makeApp(),
-        "POST",
-        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/oauth/import-tokens",
-        {
-          serverUrl: "https://server.example.com/mcp",
-          tokens: { access_token: "at", refresh_token: "rt" },
-        }
-      );
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ imported: true, expiresAt: 123 });
-      const [, init] = (global.fetch as ReturnType<typeof vi.fn>).mock
-        .calls[0] as [string, RequestInit];
-      const forwarded = JSON.parse(String(init.body));
-      // Path params win over the body; kind pinned to generic.
-      expect(forwarded).toMatchObject({
-        projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
-        serverId: "s1",
-        kind: "generic",
-        tokens: { access_token: "at" },
-      });
-    });
-
-    it("rejects a body without tokens (400 VALIDATION_ERROR)", async () => {
-      const res = await request(
-        makeApp(),
-        "POST",
-        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/oauth/import-tokens",
-        { serverUrl: "https://server.example.com/mcp" }
-      );
-      expect(res.status).toBe(400);
-      expect(((await res.json()) as { code?: string }).code).toBe(
-        "VALIDATION_ERROR"
-      );
     });
   });
 });

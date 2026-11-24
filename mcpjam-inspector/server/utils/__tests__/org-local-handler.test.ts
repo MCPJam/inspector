@@ -85,9 +85,7 @@ function defaultStreamTextReturn(
     consumeStream: async () => {},
     response: Promise.resolve({
       modelId: "mock-model",
-      messages: overrides.messages ?? [
-        { role: "assistant", content: "Hi" },
-      ],
+      messages: overrides.messages ?? [{ role: "assistant", content: "Hi" }],
     }),
     steps: Promise.resolve(overrides.steps ?? []),
     totalUsage: Promise.resolve(
@@ -735,8 +733,9 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     // Yield so the queued microtask + the in-flight fetch settle.
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const usageCall = fetchMock.mock.calls.find(([url]) =>
-      typeof url === "string" && url.includes("/stream/org/local-usage"),
+    const usageCall = fetchMock.mock.calls.find(
+      ([url]) =>
+        typeof url === "string" && url.includes("/stream/org/local-usage"),
     );
     expect(usageCall).toBeDefined();
     const body = JSON.parse((usageCall![1] as any).body as string);
@@ -792,8 +791,9 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     }
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const usageCall = fetchMock.mock.calls.find(([url]) =>
-      typeof url === "string" && url.includes("/stream/org/local-usage"),
+    const usageCall = fetchMock.mock.calls.find(
+      ([url]) =>
+        typeof url === "string" && url.includes("/stream/org/local-usage"),
     );
     expect(usageCall).toBeUndefined();
   });
@@ -981,5 +981,95 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     expect(fullHistory).toHaveLength(2);
     expect(fullHistory[0]).toEqual(sharedMsg);
     expect(fullHistory[1]).toEqual(distinctResponse);
+  });
+
+  it("writes a two-call local turn back per call and saves each call's backend price on its llm span", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example";
+    const priced = (amountUsd: number) => ({
+      calculationVersion: 1,
+      currency: "USD",
+      completeness: "complete",
+      amountUsd,
+      source: "customer_rate",
+      funding: "customer",
+    });
+    let sentCalls: Array<{ requestId: string; usage: unknown }> = [];
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (_url, init) => {
+        sentCalls = JSON.parse(String(init?.body)).calls;
+        return Response.json({
+          ok: true,
+          costs: {
+            [sentCalls[0]!.requestId]: priced(0.01),
+            [sentCalls[1]!.requestId]: priced(0.5),
+          },
+        });
+      });
+    const steps = [
+      { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+      { inputTokens: 40, outputTokens: 6, totalTokens: 46 },
+    ];
+    streamTextMock.mockImplementationOnce((options: any) => {
+      queueMicrotask(async () => {
+        for (const [stepNumber, usage] of steps.entries()) {
+          await options.prepareStep({ stepNumber, messages: [] });
+          await options.onStepFinish({
+            usage,
+            response: { messages: [{ role: "assistant", content: "Hi" }] },
+            finishReason: stepNumber === 0 ? "tool-calls" : "stop",
+            toolCalls: [],
+          });
+        }
+        await options.onFinish({
+          steps: [
+            { response: { messages: [{ role: "assistant", content: "Hi" }] } },
+          ],
+          totalUsage: { inputTokens: 44, outputTokens: 12, totalTokens: 56 },
+          finishReason: "stop",
+          text: "Hi",
+        });
+      });
+      return defaultStreamTextReturn();
+    });
+
+    const onConversationComplete = vi.fn();
+    const response = handleLocalOrgChatModel({
+      provider: buildResolvedProvider(),
+      admission: ADMISSION,
+      projectId: "proj",
+      modelId: "gpt-4-turbo",
+      messages: [{ role: "user", content: "hi" }] as any,
+      systemPrompt: "s",
+      tools: {} as any,
+      onConversationComplete,
+    });
+    const reader = response.body?.getReader();
+    if (reader) while (!(await reader.read()).done);
+    await vi.waitFor(() => expect(onConversationComplete).toHaveBeenCalled());
+
+    // One writeback, one entry per provider request, each with its own usage.
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      "https://convex.example/stream/org/local-usage",
+    ]);
+    expect(sentCalls.map((call) => call.usage)).toEqual(steps);
+    expect(new Set(sentCalls.map((call) => call.requestId)).size).toBe(2);
+    const turnTrace = onConversationComplete.mock.calls[0]![1] as {
+      spans: Array<{
+        category: string;
+        stepIndex?: number;
+        callId?: string;
+        cost?: any;
+      }>;
+    };
+    // Each llm span names the writeback entry the backend priced it from.
+    expect(
+      turnTrace.spans
+        .filter((span) => span.category === "llm")
+        .map((span) => [span.stepIndex, span.callId, span.cost?.amountUsd]),
+    ).toEqual([
+      [0, sentCalls[0]!.requestId, 0.01],
+      [1, sentCalls[1]!.requestId, 0.5],
+    ]);
   });
 });

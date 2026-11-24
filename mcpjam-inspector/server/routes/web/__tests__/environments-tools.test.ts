@@ -38,7 +38,7 @@ vi.mock("../../../utils/route-handlers.js", async (importOriginal) => {
   return { ...actual, listTools: listToolsMock };
 });
 
-import { createWebTestApp } from "./helpers/test-app.js";
+import { createWebTestApp, postJson } from "./helpers/test-app.js";
 
 const SPEC = {
   specVersion: 1,
@@ -149,6 +149,62 @@ describe("GET /api/web/environments/:id/tools", () => {
     ]);
     // One teardown per per-server manager.
     expect(disconnectAllServersMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("passes explicit empty server ids to the runtime and never opens a connection", async () => {
+    convexQueryMock.mockResolvedValue({
+      ...SPEC,
+      servers: { effectiveServerIds: [], connectable: [] },
+    });
+    const { app, token } = createWebTestApp();
+    const response = await postJson(
+      app,
+      "/api/web/environments/env_1/tools?projectId=p_1",
+      { serverIds: [] },
+      token,
+    );
+    expect(response.status).toBe(200);
+    expect(convexQueryMock).toHaveBeenCalledWith(
+      "projectEnvironments:resolveEnvironmentForRuntime",
+      expect.objectContaining({ serverOverrideIds: [] }),
+    );
+    expect(await response.json()).toEqual({ servers: [] });
+    expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+  });
+
+  it("never connects to a disabled plugin’s server, while still listing the other server", async () => {
+    const pin = { pluginId: "p", pluginVersionId: "v", name: "plugin" };
+    convexQueryMock
+      .mockResolvedValueOnce({ ...SPEC, pluginVersions: [pin] })
+      .mockResolvedValueOnce({
+        pluginVersions: [pin],
+        serverComponents: [
+          { materializedServerId: "ps_2", pluginVersionId: "v" },
+        ],
+      });
+    const { app, token } = createWebTestApp();
+    const response = await postJson(
+      app,
+      "/api/web/environments/env_1/tools?projectId=p_1",
+      { pluginVersionIds: [] },
+      token,
+    );
+    expect(response.status).toBe(200);
+    expect(
+      createAuthorizedManagerMock.mock.calls.map((call) => call[3]),
+    ).toEqual([["ps_1"]]);
+  });
+
+  it("refuses a plugin the pane cannot add before listing any tools", async () => {
+    const { app, token } = createWebTestApp();
+    const response = await postJson(
+      app,
+      "/api/web/environments/env_1/tools?projectId=p_1",
+      { pluginVersionIds: ["extra"] },
+      token,
+    );
+    expect(response.status).toBe(400);
+    expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
   });
 
   it("degrades a per-server failure to that server's row, not the route", async () => {

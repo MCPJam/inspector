@@ -1,3 +1,7 @@
+import {
+  isMissingInputCheck,
+  missingInputMessage,
+} from "../../src/conformance-input.js";
 /**
  * The Tasks conformance runner driven END TO END against the raw extension
  * fixture over a real socket — no mocked `withEphemeralClient`, no mocked
@@ -34,6 +38,10 @@ import {
   type ExtensionTasksFixtureOptions,
   type ServedExtensionTasksFixture,
 } from "../support/extension-tasks-fixture.js";
+import {
+  LEGACY_TASK_TOOL_NAME,
+  serveLegacyTasksFixture,
+} from "../support/legacy-tasks-fixture.js";
 
 /**
  * A lifecycle that reaches `completed` on the second poll with no elicitation
@@ -352,18 +360,20 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
     expect(result.discovery.createdTaskId).toBeUndefined();
   });
 
-  it("reports INCOMPLETE, naming the tool, when toolName is not listed by the server", async () => {
-    // A typo must not silently skip six checks either.
+  it("shows an unlisted toolName as a setup gap, naming the tool", async () => {
+    // A typo must not silently skip six checks either: each one says so, and
+    // since the typo is the caller's, it costs the server nothing.
     const fixture = await serve();
     const result = await runAgainst(fixture, { toolName: "task_toool" });
 
-    expect(result.outcome).toBe("incomplete");
-    expect(result.passed).toBe(false);
-    expect(unrunChecks(result)).toHaveLength(11);
-    expect(result.incompleteReason).toContain('"task_toool"');
-    expect(result.incompleteReason).toContain("is not listed by this server");
+    const unrun = unrunChecks(result);
+    expect(unrun).toHaveLength(11);
+    expect(unrun.every(isMissingInputCheck)).toBe(true);
+    const reason = unrun[0]!.error?.message ?? "";
+    expect(reason).toContain('"task_toool"');
+    expect(reason).toContain("is not listed by this server");
     // …and it points at what the server DOES list.
-    expect(result.incompleteReason).toContain(TASK_TOOL_NAME);
+    expect(reason).toContain(TASK_TOOL_NAME);
     // No tools/call was attempted with a name the server never advertised.
     expect(
       fixture.received.filter((entry) => entry.method === "tools/call")
@@ -433,5 +443,83 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
     expect(result.checks.every((entry) => entry.status !== "passed")).toBe(
       true
     );
+  }, 20_000);
+});
+
+describe("MCPTasksConformanceTest against the 2025-11-25 legacy fixture", () => {
+  it("does not call a tool as a task when the server leaves out tasks.requests.tools.call", async () => {
+    // `tasks.cancel` alone resolves to the legacy wire, and the fixture's tool
+    // says `taskSupport: "required"`. 2025-11-25 tasks.mdx:113 still forbids
+    // the task call, so the checks that need a task are not applicable.
+    const fixture = await serveLegacyTasksFixture({
+      tasksCapability: { cancel: {} },
+    });
+    try {
+      const result = await new MCPTasksConformanceTest({
+        url: fixture.url,
+        mcpProtocolVersion: "2025-11-25",
+        timeout: 10_000,
+        toolName: LEGACY_TASK_TOOL_NAME,
+        pollTimeoutMs: 5_000,
+      } as never).run();
+
+      expect(check(result, "tasks-wire-resolvable").status).toBe("passed");
+      expect(
+        fixture.received.filter(
+          (entry) =>
+            entry.method === "tools/call" && entry.params?.task !== undefined
+        )
+      ).toEqual([]);
+      for (const id of [
+        "tasks-result-type-discipline",
+        "tasks-ttl-shape",
+        "tasks-inline-result",
+      ] as const) {
+        const entry = check(result, id);
+        expect(entry.status).toBe("skipped");
+        expect(entry.skipReason).toBe("not-applicable");
+        expect(entry.error?.message).toContain("tasks.requests.tools.call");
+      }
+    } finally {
+      await fixture.close();
+    }
+  }, 20_000);
+
+  it("does not call the picked tool as a task when it has no taskSupport", async () => {
+    // The server accepts task tool calls, but its only tool leaves out
+    // `execution.taskSupport`. 2025-11-25 tasks.mdx:115 forbids calling that
+    // tool as a task, so the checks that need a task cannot run.
+    const fixture = await serveLegacyTasksFixture({ toolTaskSupport: null });
+    try {
+      const result = await new MCPTasksConformanceTest({
+        url: fixture.url,
+        mcpProtocolVersion: "2025-11-25",
+        timeout: 10_000,
+        toolName: LEGACY_TASK_TOOL_NAME,
+        pollTimeoutMs: 5_000,
+      } as never).run();
+
+      expect(check(result, "tasks-wire-resolvable").status).toBe("passed");
+      expect(
+        fixture.received.filter(
+          (entry) =>
+            entry.method === "tools/call" && entry.params?.task !== undefined
+        )
+      ).toEqual([]);
+      for (const id of [
+        "tasks-result-type-discipline",
+        "tasks-ttl-shape",
+        "tasks-inline-result",
+      ] as const) {
+        const entry = check(result, id);
+        expect(entry.status).toBe("skipped");
+        expect(entry.skipReason).toBe("could-not-run");
+        expect(missingInputMessage(entry)).toBe(
+          `"${LEGACY_TASK_TOOL_NAME}" has no taskSupport, so it can't run as a task, and no tool on this server can. Add taskSupport to a tool, then run again.`
+        );
+      }
+    } finally {
+      await fixture.close();
+    }
   }, 20_000);
 });

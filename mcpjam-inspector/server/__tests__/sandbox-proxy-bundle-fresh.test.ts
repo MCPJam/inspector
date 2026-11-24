@@ -10,27 +10,21 @@
  * run `node scripts/bundle-sandbox-proxy-html.js`.
  */
 import { describe, it, expect } from "vitest";
-import fs from "fs";
+import { execFileSync } from "node:child_process";
 import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..", "..");
 
-const mcpAppsHtml = fs.readFileSync(
-  path.join(repoRoot, "server/routes/apps/mcp-apps/sandbox-proxy.html"),
-  "utf-8",
-);
-const bundledTs = fs.readFileSync(
-  path.join(repoRoot, "server/routes/apps/SandboxProxyHtml.bundled.ts"),
-  "utf-8",
-);
-
 describe("sandbox proxy bundle freshness", () => {
-  it("MCP_APPS_SANDBOX_PROXY_HTML matches sandbox-proxy.html source", () => {
-    const expected = JSON.stringify(mcpAppsHtml);
-    expect(bundledTs).toContain(
-      `export const MCP_APPS_SANDBOX_PROXY_HTML = ${expected};`,
-    );
+  it("MCP_APPS_SANDBOX_PROXY_HTML matches the HTML template and policy module", () => {
+    expect(() =>
+      execFileSync(
+        process.execPath,
+        [path.join(repoRoot, "scripts/bundle-sandbox-proxy-html.js"), "--check"],
+        { cwd: repoRoot, stdio: "pipe" },
+      ),
+    ).not.toThrow();
   });
 });

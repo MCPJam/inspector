@@ -14,6 +14,31 @@ function passedScore(score: number): ScoreSummary {
 }
 
 describe("OverallScoreCard", () => {
+  it("counts checks a login stopped once, in the sign-in sentence", () => {
+    render(
+      <OverallScoreCard
+        score={{
+          ...passedScore(100),
+          score: null,
+          applicable: 0,
+          passed: 0,
+          outcome: "incomplete",
+          couldNotRun: 3,
+        }}
+        serverName="srv"
+        version="2025-11-25"
+        blockedBySignIn={3}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Incomplete. 3 checks could not run because sign-in failed. Reconnect the server and run again.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/needs setup\)/)).toBeNull();
+    expect(screen.queryByText(/setup change/)).toBeNull();
+  });
+
   it("keeps a score of 100 visibly incomplete when some checks need input", () => {
     render(
       <OverallScoreCard
@@ -24,17 +49,17 @@ describe("OverallScoreCard", () => {
     );
     expect(
       screen.getByText(
-        "Incomplete. 2 checks need input. Select tools in setup and run again.",
+        "Incomplete. 2 checks need a setup change. Each one says what to change, then run again.",
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText("2 not run (missing input).")).toBeInTheDocument();
+    expect(screen.queryByText(/needs setup\)/)).toBeNull();
     expect(screen.queryByText(/passed/)).toBeNull();
     expect(screen.getByText("10/10")).toBeInTheDocument();
     expect(screen.queryByText(/partial/)).toBeNull();
-    expect(screen.queryByText("Fully conformant.")).toBeNull();
+    expect(screen.queryByText("Conformant.")).toBeNull();
   });
 
-  it("calls a passed run that skipped checks for missing input conformant, not fully", () => {
+  it("calls a passed run that skipped optional input checks conformant", () => {
     render(
       <OverallScoreCard
         score={{ ...passedScore(100), couldNotRun: 2 }}
@@ -44,30 +69,44 @@ describe("OverallScoreCard", () => {
     );
     expect(
       screen.getByText(
-        "Conformant. 2 checks need input. Select tools in setup and run again.",
+        "Conformant. 2 checks need a setup change. Each one says what to change, then run again.",
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText("2 not run (missing input).")).toBeInTheDocument();
+    expect(screen.queryByText(/needs setup\)/)).toBeNull();
     expect(screen.getByText("10/10")).toBeInTheDocument();
     expect(screen.queryByText(/partial/)).toBeNull();
-    expect(screen.queryByText("Fully conformant.")).toBeNull();
+  });
+
+  it("keeps guidance ahead of the input hint when a passed run has both", () => {
+    render(
+      <OverallScoreCard
+        score={{ ...passedScore(100), couldNotRun: 2, advisoryCount: 1 }}
+        serverName="srv"
+        version="2025-11-25"
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Conformant, with guidance. 2 checks need a setup change. Each one says what to change, then run again.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it.each([
     [
       3,
       0,
-      "Incomplete. 3 checks could not run. 2 checks need input. Select tools in setup and run again.",
+      "Incomplete. 3 checks could not run. 2 checks need a setup change. Each one says what to change, then run again.",
     ],
     [
       3,
       3,
-      "Incomplete. 3 checks could not run because the server did not answer in time. 2 checks need input. Select tools in setup and run again.",
+      "Incomplete. 3 checks could not run because the server did not answer in time. 2 checks need a setup change. Each one says what to change, then run again.",
     ],
     [
       3,
       2,
-      "Incomplete. 2 checks could not run because the server did not answer in time. 1 more could not run. 2 checks need input. Select tools in setup and run again.",
+      "Incomplete. 2 checks could not run because the server did not answer in time. 1 more could not run. 2 checks need a setup change. Each one says what to change, then run again.",
     ],
   ])(
     "keeps other unrun causes alongside missing inputs (%i unrun, %i timed out)",
@@ -106,7 +145,7 @@ describe("OverallScoreCard", () => {
     );
     expect(
       screen.getByText(
-        "Incomplete. 7 checks need input. Select tools in setup and run again.",
+        "Incomplete. 7 checks need a setup change. Each one says what to change, then run again.",
       ),
     ).toBeInTheDocument();
     expect(
@@ -126,7 +165,7 @@ describe("OverallScoreCard", () => {
     expect(screen.getByText("Conformant, with guidance.")).toBeInTheDocument();
   });
 
-  it("reads a passed run at 100 as fully conformant", () => {
+  it("reads a passed run at 100 as conformant", () => {
     render(
       <OverallScoreCard
         score={passedScore(100)}
@@ -134,7 +173,7 @@ describe("OverallScoreCard", () => {
         version="Auto"
       />,
     );
-    expect(screen.getByText("Fully conformant.")).toBeInTheDocument();
+    expect(screen.getByText("Conformant.")).toBeInTheDocument();
   });
 
   it("gives no verdict on a partial score while suites are still running", () => {
@@ -146,7 +185,7 @@ describe("OverallScoreCard", () => {
         isRunning
       />,
     );
-    expect(screen.queryByText("Fully conformant.")).toBeNull();
+    expect(screen.queryByText("Conformant.")).toBeNull();
     expect(
       screen.getByText("Running conformance checks..."),
     ).toBeInTheDocument();
@@ -258,7 +297,7 @@ describe("OverallScoreCard", () => {
     expect(screen.getByText("Not conformant.")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "51 could not run, 15 unscored, and 3 not applicable.",
+        "51 checks could not run, 15 checks unscored, and 3 checks not applicable.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("10/62")).toBeInTheDocument();
@@ -283,8 +322,30 @@ describe("OverallScoreCard", () => {
     );
     expect(screen.getByText("Not conformant.")).toBeInTheDocument();
     expect(
-      screen.getByText("11 could not run and 15 not applicable."),
+      screen.getByText("11 checks could not run and 15 checks not applicable."),
     ).toBeInTheDocument();
+  });
+
+  it("leaves the could-not-run count to the verdict when it already says it", () => {
+    render(
+      <OverallScoreCard
+        score={{
+          score: 85.7,
+          outcome: "incomplete",
+          applicable: 28,
+          passed: 24,
+          failed: 0,
+          couldNotRun: 4,
+          notApplicable: 38,
+        }}
+        serverName="amazon-test"
+        version="2025-11-25"
+      />,
+    );
+    expect(
+      screen.getByText("Incomplete. 4 checks could not run."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("38 checks not applicable.")).toBeInTheDocument();
   });
 
   it("shows the fraction without a partial mark", () => {

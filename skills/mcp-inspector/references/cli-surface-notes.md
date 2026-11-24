@@ -71,7 +71,7 @@ If a higher-priority surface contradicts a lower-priority summary, trust the hig
 
 - These are targeted flow tests, not a full security audit.
 - Use `--credentials-out <path>` when conformance is the auth handoff for later connected commands, then pass that path with `--credentials-file`.
-- `oauth conformance --conformance-checks` adds targeted negative probes for:
+- `oauth conformance` always runs targeted negative probes for:
   - DCR acceptance of non-loopback `http://` redirect URIs
   - invalid client rejection at the token endpoint
   - authorization-endpoint handling of mismatched `redirect_uri`

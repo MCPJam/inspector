@@ -23,11 +23,16 @@ vi.mock("../../../utils/logger.js", () => ({
 }));
 
 import {
+  ConvexHttpStatusError,
   classifyConvexReadError,
+  convexReadFetch,
   redactedReadRefusalError,
   translateConvexReadError,
+  translateConvexStatusError,
 } from "../convex-read-errors.js";
+import { translateConvexWriteError } from "../convex-errors.js";
 import { WebRouteError } from "../../web/errors.js";
+import { describeError } from "@mcpjam/sdk";
 
 beforeEach(() => vi.clearAllMocks());
 afterEach(() => vi.clearAllMocks());
@@ -284,6 +289,224 @@ describe("translateConvexReadError", () => {
       already
     );
   });
+
+  // Sentry's boundary drops the logged message and the error text, so these
+  // context facts are the only part of a 502 that says what failed.
+  it("reports the status of a non-2xx Convex answer, without a slug", () => {
+    translateConvexReadError(new ConvexHttpStatusError(429, "Error"), {
+      scope: "v1.test",
+    });
+    const context = errorMock.mock.calls[0]![2] as Record<string, unknown>;
+    expect(context.httpStatus).toBe(429);
+    // The describer would call a bare 429 `provider/quota`: an LLM provider's
+    // limit, not Convex's.
+    expect(context).not.toHaveProperty("slug");
+  });
+
+  it("reports a network failure's slug and no status", () => {
+    translate("fetch failed");
+    const context = errorMock.mock.calls[0]![2] as Record<string, unknown>;
+    expect(context.slug).toBe("transport/fetch_failed");
+    expect(context).not.toHaveProperty("httpStatus");
+  });
+
+  // A client without `convexReadFetch` throws the bare body, which the
+  // describer would file under the caller's LLM quota or credential.
+  it.each(["Too Many Requests", "401 Unauthorized"])(
+    "reports no slug for a body that only names a status: %s",
+    (body) => {
+      translate(body);
+      const context = errorMock.mock.calls[0]![2] as Record<string, unknown>;
+      expect(context).not.toHaveProperty("slug");
+    },
+  );
+
+  it("still answers 401 to a credential refusal that carries a status", () => {
+    const err = translateConvexReadError(
+      new ConvexHttpStatusError(401, '{"code":"Unauthenticated"}'),
+      { scope: "v1.test" },
+    );
+    expect(err.status).toBe(401);
+    expect(errorMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    // By text alone this reads `upstream`, and a 502 tells the client to
+    // retry the same dead token.
+    "Unauthorized",
+    // By text alone this reads `membership`, and a 404 tells the client to
+    // forget a resource it may still own.
+    "Not a member of this project",
+  ])("answers 401 to a Convex 401 whatever its body says: %s", (body) => {
+    const error = new ConvexHttpStatusError(401, body);
+    expect(classifyConvexReadError(error).kind).toBe("authentication");
+    expect(
+      translateConvexReadError(error, {
+        scope: "v1.test",
+        redactedIsRefusal: true,
+      }).status,
+    ).toBe(401);
+    expect(errorMock).not.toHaveBeenCalled();
+  });
+
+  it("answers 502 to a proxy's 500 even at a preflight", () => {
+    // "Server Error" in the body, but the function never ran: a redacted
+    // refusal comes back as a 560 the client reads itself. Answering 404
+    // here would report an outage as a missing resource.
+    const error = new ConvexHttpStatusError(500, "500 Internal Server Error");
+    expect(classifyConvexReadError(error).kind).toBe("upstream");
+    const err = translateConvexReadError(error, {
+      scope: "v1.test",
+      notFoundMessage: "Scenario not found",
+      redactedIsRefusal: true,
+    });
+    expect(err.status).toBe(502);
+    expect(warnMock).not.toHaveBeenCalled();
+    expect(errorMock.mock.calls[0]![2]).toMatchObject({ httpStatus: 500 });
+    expect(
+      redactedReadRefusalError(error, "Scenario not found"),
+    ).toBeUndefined();
+  });
+
+  it.each([
+    [
+      "a gateway's 504 page",
+      new ConvexHttpStatusError(504, "<html>504</html>"),
+    ],
+    ["a 408", new ConvexHttpStatusError(408, "")],
+    [
+      "a timeout body",
+      new ConvexHttpStatusError(502, "upstream request timeout"),
+    ],
+    ["a client timeout", new Error("Request timed out after 30000ms")],
+  ])("answers %s as 504 TIMEOUT, still logged", (_label, error) => {
+    const err = translateConvexReadError(error, { scope: "v1.test" });
+    expect([err.status, err.code, err.message]).toEqual([
+      504,
+      "TIMEOUT",
+      "Upstream request timed out",
+    ]);
+    expect(errorMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("translateConvexStatusError", () => {
+  it("answers a status error the way the read translator does", () => {
+    const error = new ConvexHttpStatusError(401, "Unauthorized");
+    expect(
+      translateConvexStatusError(error, { scope: "v1.test" })?.status,
+    ).toBe(401);
+  });
+
+  it("leaves any other error to the caller's own translator", () => {
+    // A plain refusal still means what its text says at those call sites.
+    expect(
+      translateConvexStatusError(new Error("Unauthorized"), {
+        scope: "v1.test",
+      }),
+    ).toBeUndefined();
+    expect(errorMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("a ConvexHttpStatusError reads like the Error(body) it replaces", () => {
+  // `convexReadFetch` keeps the body as the message, so every classifier that
+  // matches on text answers the same. Only the two status rules above differ.
+  const translations = (error: Error) => {
+    const read = translateConvexReadError(error, {
+      scope: "v1.test",
+      notFoundMessage: "Scenario not found",
+      redactedIsRefusal: true,
+    });
+    const write = translateConvexWriteError(error, { resource: "Server" });
+    return [read, write].map(({ status, code, message, details }) => ({
+      status,
+      code,
+      message,
+      details,
+    }));
+  };
+
+  it.each([
+    "Not a member of this project",
+    "Insufficient project permissions: requires admin",
+    "Server already exists",
+    "token expired",
+    "ArgumentValidationError: Value does not match validator",
+    "fetch failed",
+    "socket hang up",
+    "Request timed out",
+    "Could not find public function for servers:get",
+    "boom",
+  ])("%s", (body) => {
+    expect(translations(new ConvexHttpStatusError(502, body))).toEqual(
+      translations(new Error(body)),
+    );
+  });
+});
+
+describe("convexReadFetch", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const answering = (status: number, body = "") =>
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(body, { status })),
+    );
+
+  it("throws the body with its status on a non-2xx answer", async () => {
+    answering(502, "Error");
+    const thrown = await convexReadFetch("https://convex.test/api/query").catch(
+      (error: unknown) => error,
+    );
+    expect(thrown).toBeInstanceOf(ConvexHttpStatusError);
+    expect((thrown as ConvexHttpStatusError).convexStatus).toBe(502);
+    expect((thrown as Error).message).toBe("Error");
+  });
+
+  // Not every caller translates the error first. One that reaches a generic
+  // describer must read as the `Error(body)` it replaced, not as the caller's
+  // credential (401) or LLM quota (429).
+  it.each([401, 403, 429])(
+    "describes a Convex %s like the bare error it replaces",
+    (status) => {
+      expect(
+        describeError(new ConvexHttpStatusError(status, "Error")).slug,
+      ).toBe(describeError(new Error("Error")).slug);
+    },
+  );
+
+  it("keeps the status when the body cannot be read", async () => {
+    const dropped = new Error("socket hang up");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream({
+              start: (controller) => controller.error(dropped),
+            }),
+            { status: 503 },
+          ),
+      ),
+    );
+    const thrown = await convexReadFetch("https://convex.test/api/query").catch(
+      (error: unknown) => error,
+    );
+    expect(thrown).toBeInstanceOf(ConvexHttpStatusError);
+    expect((thrown as ConvexHttpStatusError).convexStatus).toBe(503);
+    expect((thrown as Error).message).toBe("socket hang up");
+    expect((thrown as Error).cause).toBe(dropped);
+  });
+
+  it.each([200, 560])(
+    "hands a %s answer back for the client to read",
+    async (status) => {
+      answering(status, "{}");
+      const response = await convexReadFetch("https://convex.test/api/query");
+      expect(response.status).toBe(status);
+    },
+  );
 });
 
 describe("redactedReadRefusalError", () => {

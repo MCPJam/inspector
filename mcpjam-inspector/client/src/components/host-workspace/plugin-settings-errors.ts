@@ -44,9 +44,18 @@ const SETTINGS_ERROR_DESCRIPTIONS: Record<string, string> = {
     "Settings aren't available right now. Check that the server is connected and plugin extensions are on for this client.",
   SETTINGS_REQUEST_INVALID: "MCPJam sent a settings request the server route rejected.",
   SETTINGS_RESPONSE_INVALID: "The settings reply couldn't be read.",
-  SETTINGS_RESPONSE_LIMIT: "The settings reply was too large (over 1 MB).",
+  SETTINGS_RESPONSE_LIMIT:
+    "The plugin settings are too large to display. Ask the server owner to reduce their size.",
   SETTINGS_CONTINUATION_UNSUPPORTED:
     "The settings tool asked for more input, which settings can't provide.",
+  INSTANCE_UNAVAILABLE:
+    "This Settings session ended. Close Settings and open it again.",
+  INSTANCE_STORE_UNAVAILABLE:
+    "MCPJam couldn't reach this Settings session. Try again in a moment.",
+  INSTANCE_PRIVATE_PARENT_UNAVAILABLE:
+    "This App stopped. Reopen Settings to run it again.",
+  INVOCATION_OUTCOME_UNKNOWN:
+    "MCPJam couldn't confirm whether the save went through. Refresh Settings to see the current values before saving again.",
 };
 
 export function describePluginSettingsError(code: string | undefined): string {

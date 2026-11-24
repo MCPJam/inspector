@@ -259,6 +259,47 @@ describe("v1 client routes", () => {
     });
   });
 
+  describe("host-config features gate (KES-1007)", () => {
+    const withRule = {
+      ...DETAIL_ROW,
+      config: {
+        modelId: "gpt-4o-mini",
+        modelVisibleMcpToolResults: {
+          directContent: { image: true },
+          structuredContent: "fallback",
+        },
+      },
+    };
+    const detail = (headers: Record<string, string>) =>
+      makeApp().request(
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1",
+        { method: "GET", headers: { Authorization: "Bearer tok", ...headers } },
+      );
+
+    it("leaves the client rule out for a caller that doesn't list the feature (released SDKs)", async () => {
+      mockQuery({ "hosts:getHost": withRule });
+      const res = await detail({});
+      expect(res.status).toBe(200);
+      expect(res.headers.get("vary")).toContain("x-mcpjam-host-config-features");
+      const body = (await res.json()) as { config: Record<string, unknown> };
+      expect(body.config.modelVisibleMcpToolResults).toEqual({
+        directContent: { image: true },
+      });
+    });
+
+    it("returns the client rule to a caller that lists the feature", async () => {
+      mockQuery({ "hosts:getHost": withRule });
+      const res = await detail({
+        "x-mcpjam-host-config-features": "model-visible-structured-content",
+      });
+      const body = (await res.json()) as { config: Record<string, unknown> };
+      expect(body.config.modelVisibleMcpToolResults).toEqual({
+        directContent: { image: true },
+        structuredContent: "fallback",
+      });
+    });
+  });
+
   describe("POST create", () => {
     it("creates a host from a full config and returns 201", async () => {
       convexMutationMock.mockResolvedValue({ hostId: "h1" });

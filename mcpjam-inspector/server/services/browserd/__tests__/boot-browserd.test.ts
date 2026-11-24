@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   bootBrowserd,
+  BROWSERD_READY_TIMEOUT_MS,
   DISPLAY_GEOMETRY,
   XVNC_LOOPBACK_PORT,
   type BrowserdSandbox,
@@ -126,6 +127,26 @@ describe("bootBrowserd", () => {
     await p;
     expect(fake.state.envs.MCPJAM_BROWSERD_WINDOW_SIZE).toBeUndefined();
     expect(fake.state.envs.MCPJAM_BROWSERD_HEADLESS).toBeUndefined();
+    expect(fake.state.envs.MCPJAM_BROWSERD_NETWORK).toBeUndefined();
+    expect(fake.state.envs.MCPJAM_BROWSERD_FRESH_PROFILE).toBeUndefined();
+  });
+
+  it("asks for an empty profile when the boot needs a fresh one", async () => {
+    const fake = fakeSandbox();
+    const p = bootBrowserd(fake.sandbox, { ...OPTS, freshProfile: true });
+    await tick();
+    fake.emit(READY());
+    await p;
+    expect(fake.state.envs.MCPJAM_BROWSERD_FRESH_PROFILE).toBe("1");
+  });
+
+  it("asks for the public-only network when the session needs it", async () => {
+    const fake = fakeSandbox();
+    const p = bootBrowserd(fake.sandbox, { ...OPTS, networkPolicy: "public" });
+    await tick();
+    fake.emit(READY());
+    await p;
+    expect(fake.state.envs.MCPJAM_BROWSERD_NETWORK).toBe("public");
   });
 
   it("reassembles a ready line split across chunks and ignores noise before it", async () => {
@@ -153,6 +174,32 @@ describe("bootBrowserd", () => {
     const fake = fakeSandbox();
     const p = bootBrowserd(fake.sandbox, { ...OPTS, readyTimeoutMs: 20 });
     await expect(p).rejects.toThrow(/within 20ms/);
+  });
+
+  describe("the default deadline", () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it("waits out a slow first Chromium launch", async () => {
+      // A fresh box's first launch measured up to 38s. The old 30s deadline
+      // failed exactly those opens.
+      const fake = fakeSandbox();
+      const p = bootBrowserd(fake.sandbox, OPTS);
+      await vi.advanceTimersByTimeAsync(45_000);
+      fake.emit(READY());
+      await expect(p).resolves.toMatchObject({ bootId: "boot-1" });
+    });
+
+    it("still gives up, and reaps the daemon, at the deadline", async () => {
+      const fake = fakeSandbox();
+      const p = bootBrowserd(fake.sandbox, OPTS);
+      const failed = expect(p).rejects.toThrow(
+        `within ${BROWSERD_READY_TIMEOUT_MS}ms`,
+      );
+      await vi.advanceTimersByTimeAsync(BROWSERD_READY_TIMEOUT_MS);
+      await failed;
+      expect(fake.state.kills).toBeGreaterThanOrEqual(1);
+    });
   });
 
   it("gives the daemon a DISPLAY — Chromium is headed and E2B shells inherit no image ENV", async () => {
@@ -199,7 +246,6 @@ describe("bootBrowserd", () => {
   });
 });
 
-
 /**
  * V-4a. The ready line is where the inspector first learns which wire it is
  * talking to. An older baked daemon prints the pre-V-4a line, and refusing
@@ -238,7 +284,6 @@ describe("the ready line's wire version", () => {
     await expect(p).rejects.toThrow();
   });
 });
-
 
 describe("the X geometry", () => {
   it("is the one the desktop template brings the display up at", () => {
@@ -301,7 +346,6 @@ describe("the X geometry", () => {
     expect(start).toContain("Xvfb :0");
   });
 });
-
 
 /**
  * V-6. Raising the display's sharpness is a MEASUREMENT, not a promise: the

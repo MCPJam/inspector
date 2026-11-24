@@ -131,6 +131,7 @@ import {
   runSyntheticHostSession,
 } from "../runner.js";
 import { SPONSORED_CAPACITY_MESSAGE } from "../../../../shared/swarm-sponsorship.js";
+import { preparedTargetSkills } from "../../../test/support/skill-delivery.js";
 
 const TURN_TRACE = {
   turnId: "turn-1",
@@ -589,10 +590,10 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     // The project pool arrives as a live capability set, and the source keeps
     // `composeLiveServerSkills` so a connected server's SEP-2640 skills compose
     // ON TOP of it rather than being displaced by it.
-    expect(prepareOpts.skillsSource.kind).toBe("resolved");
-    expect(prepareOpts.skillsSource.composeLiveServerSkills).toBe(true);
+    expect(prepareOpts.skills.runtime).toEqual({ kind: "agent" });
+    expect(prepareOpts.skills.agent).toEqual({ kind: "live" });
     expect(
-      prepareOpts.skillsSource.capabilities.standaloneSkills.map(
+      prepareOpts.skills.set.standaloneSkills.map(
         (skill: any) => skill.ref,
       ),
     ).toEqual(["pdf-tools"]);
@@ -610,25 +611,141 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     );
 
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
-    expect(prepareOpts.skillsSource).toEqual({ kind: "none" });
+    expect(prepareOpts.skills).toMatchObject({
+      runtime: { kind: "harness", harnessId: "claude-code" },
+      agent: null,
+      delivered: [],
+    });
     expect(listCloudRuntimeSkillsMock).not.toHaveBeenCalled();
   });
 
-  it("omits Cloud Skills under tool approval (headless can't approve)", async () => {
+  it("keeps Cloud Skills when the scenario requires tool approval", async () => {
     const fake = buildFakeBrowserContext({ computerUse: false });
     createBrowserSessionContextMock.mockReturnValue(fake);
 
-    // A synthetic visitor can't grant approval; the local-BYOK path fail-closes
-    // on any non-empty tool set, so emulated skill tools must not be injected
-    // when requireToolApproval is on (the skip stays correct even though
-    // empty projects no longer advertise phantom tools).
+    // No skill tool asks, so a visitor who can't approve has nothing to
+    // answer; commands still follow the switch.
     await runSyntheticHostSession(
       baseAdapter({ runtime: { requireToolApproval: true } }) as never,
     );
 
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
-    expect(prepareOpts.skillsSource).toEqual({ kind: "none" });
+    expect(prepareOpts.requireToolApproval).toBe(true);
+    expect(prepareOpts.skills.runtime).toEqual({ kind: "agent" });
+    expect(prepareOpts.skills.agent).toEqual({ kind: "live" });
+    expect(
+      prepareOpts.skills.set.standaloneSkills.map(
+        (skill: any) => skill.ref,
+      ),
+    ).toEqual(["pdf-tools"]);
+  });
+
+  it("plans a pinned target's turns from its frozen skills and records them on each turn", async () => {
+    createBrowserSessionContextMock.mockReturnValue(
+      buildFakeBrowserContext({ computerUse: false }),
+    );
+
+    await runSyntheticHostSession(
+      baseAdapter({
+        runtime: { pinnedSkillSource: await preparedTargetSkills() },
+      }) as never,
+    );
+
+    // Addressed by ref, as an eval run's are, and never the live catalog.
+    const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
+    expect(prepareOpts.skills.agent).toEqual({ kind: "frozen" });
+    expect(prepareOpts.skills.delivered.map((ref: any) => ref.ref)).toEqual([
+      "release-notes",
+      "acme/summarize",
+      "docs/search",
+    ]);
     expect(listCloudRuntimeSkillsMock).not.toHaveBeenCalled();
+    const persisted = persistChatSessionToConvexMock.mock.calls[0]![0] as any;
+    expect(
+      persisted.turnTrace.skillsAtTurn.map((row: any) => row.name),
+    ).toEqual(["release-notes", "summarize", "search"]);
+  });
+
+  it("hands a pinned harness target the copies its box writes, and records them", async () => {
+    createBrowserSessionContextMock.mockReturnValue(
+      buildFakeBrowserContext({ computerUse: false }),
+    );
+    const target = await preparedTargetSkills();
+
+    await runSyntheticHostSession(
+      baseAdapter({
+        runtime: { harness: "claude-code", pinnedSkillSource: target },
+      }) as never,
+    );
+
+    const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
+    expect(prepareOpts.skills).toMatchObject({
+      runtime: { kind: "harness", harnessId: "claude-code" },
+      agent: null,
+      // The captured server skill goes through MCPJam's skill tools, as in an
+      // eval run.
+      serverSkillsVia: "harness-tools",
+    });
+    // The harness turn carries out the same plan the turn's trace is written
+    // from. The server skill's copy is not written to the box, and it is served
+    // through the tools from the plan's set.
+    const handed = (runAssistantTurnMock.mock.calls[0]![0] as any).skillPlan;
+    expect(handed).toBe(prepareOpts.skills);
+    expect(handed.harness).toMatchObject({ mode: "pinned", live: false });
+    expect(handed.harness.skills.map((copy: any) => copy.name)).toEqual([
+      "release-notes",
+      "summarize",
+    ]);
+    expect(handed.set.serverSkills.map((skill: any) => skill.ref)).toEqual([
+      "docs/search",
+    ]);
+    const persisted = persistChatSessionToConvexMock.mock.calls[0]![0] as any;
+    expect(
+      persisted.turnTrace.skillsAtTurn.map((row: any) => row.name),
+    ).toEqual(["release-notes", "summarize", "search"]);
+  });
+
+  it("keeps a pinned target's skills when the scenario requires tool approval", async () => {
+    createBrowserSessionContextMock.mockReturnValue(
+      buildFakeBrowserContext({ computerUse: false }),
+    );
+
+    await runSyntheticHostSession(
+      baseAdapter({
+        runtime: {
+          requireToolApproval: true,
+          pinnedSkillSource: await preparedTargetSkills(),
+        },
+      }) as never,
+    );
+
+    // No skill tool asks, so a visitor who can't approve keeps them, and each
+    // turn records them.
+    const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
+    expect(prepareOpts.requireToolApproval).toBe(true);
+    expect(prepareOpts.skills.agent).toEqual({ kind: "frozen" });
+    expect(prepareOpts.skills.delivered.map((ref: any) => ref.ref)).toEqual([
+      "release-notes",
+      "acme/summarize",
+      "docs/search",
+    ]);
+    // Pinned means the target's own frozen set: the live catalog is not read.
+    expect(listCloudRuntimeSkillsMock).not.toHaveBeenCalled();
+    const persisted = persistChatSessionToConvexMock.mock.calls[0]![0] as any;
+    expect(
+      persisted.turnTrace.skillsAtTurn.map((row: any) => row.name),
+    ).toEqual(["release-notes", "summarize", "search"]);
+  });
+
+  it("records no skills on a turn of an older target, which reads them live", async () => {
+    createBrowserSessionContextMock.mockReturnValue(
+      buildFakeBrowserContext({ computerUse: false }),
+    );
+
+    await runSyntheticHostSession(baseAdapter() as never);
+
+    const persisted = persistChatSessionToConvexMock.mock.calls[0]![0] as any;
+    expect(persisted.turnTrace).not.toHaveProperty("skillsAtTurn");
   });
 
   it("reports a catalog fetch failure, and still composes live server skills", async () => {
@@ -655,9 +772,9 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     // and take the connected servers' skills down with it — skills that were
     // never fetched from Convex and never failed.
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
-    expect(prepareOpts.skillsSource.kind).toBe("resolved");
-    expect(prepareOpts.skillsSource.composeLiveServerSkills).toBe(true);
-    expect(prepareOpts.skillsSource.capabilities.standaloneSkills).toEqual([]);
+    expect(prepareOpts.skills.runtime).toEqual({ kind: "agent" });
+    expect(prepareOpts.skills.agent).toEqual({ kind: "live" });
+    expect(prepareOpts.skills.set.standaloneSkills).toEqual([]);
   });
 
   it("disposes the context when the turn throws, and reports failed", async () => {
@@ -1244,4 +1361,34 @@ it("forwards frozen agent-loop tool policies through the swarm drain", async () 
     agentLoop: "codex", respectToolVisibility: false,
     modelVisibleMcpToolResults: { directContent: { text: true } }, tasks,
   }));
+});
+
+it("hands a web client session's leased account through the swarm drain", async () => {
+  createBrowserSessionContextMock.mockReturnValue(buildFakeBrowserContext({ computerUse: false }));
+  const adapter = baseAdapter();
+  const webClientRun = {
+    runId: "run-1",
+    actor: { actorUserId: "owner-1" },
+    webAccountIds: ["acct-2"],
+    onAccountLost: vi.fn(),
+  };
+  const result = await runSyntheticHostSession({
+    ...adapter,
+    runtime: { ...adapter.runtime, harness: "chatgpt-web", webClientRun },
+  } as never);
+  expect(result).toEqual({ outcome: "succeeded" });
+  expect(runAssistantTurnMock).toHaveBeenCalledWith(
+    expect.objectContaining({ harness: "chatgpt-web", webClientRun }),
+  );
+});
+
+it("leaves a web client session with no run context on the default account", async () => {
+  createBrowserSessionContextMock.mockReturnValue(buildFakeBrowserContext({ computerUse: false }));
+  const adapter = baseAdapter();
+  const result = await runSyntheticHostSession({
+    ...adapter,
+    runtime: { ...adapter.runtime, harness: "chatgpt-web" },
+  } as never);
+  expect(result).toEqual({ outcome: "succeeded" });
+  expect(runAssistantTurnMock.mock.calls[0]![0]).not.toHaveProperty("webClientRun");
 });

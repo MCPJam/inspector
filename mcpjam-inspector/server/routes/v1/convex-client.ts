@@ -13,6 +13,7 @@
  */
 import { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { convexReadFetch } from "./convex-read-errors.js";
 
 export function createConvexClient(convexAuthToken: string): ConvexHttpClient {
   const convexUrl = process.env.CONVEX_URL;
@@ -23,7 +24,7 @@ export function createConvexClient(convexAuthToken: string): ConvexHttpClient {
       "Server missing CONVEX_URL configuration"
     );
   }
-  const client = new ConvexHttpClient(convexUrl);
+  const client = new ConvexHttpClient(convexUrl, { fetch: convexReadFetch });
   client.setAuth(convexAuthToken);
   return client;
 }

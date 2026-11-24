@@ -17,6 +17,7 @@ import {
 import { useActiveTab } from "@/lib/app-navigation";
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
 import { track } from "@/lib/analytics";
+import { isPlatformAgentEnabled } from "@/lib/runtime-config";
 
 const SHORTCUT_LABEL =
   typeof navigator !== "undefined" &&
@@ -56,6 +57,7 @@ export function AgentSidePanelTrigger() {
     }
   }, [activeTab, describeScope, isOpen, toggle]);
 
+  if (!isPlatformAgentEnabled()) return null;
   if (activeTab === "evaluate" && !describeScope) return null;
 
   return (
@@ -63,17 +65,15 @@ export function AgentSidePanelTrigger() {
       <TooltipTrigger asChild>
         <Button
           type="button"
-          // A chrome control, not a ghost: on the linen ground a fill-less
-          // button had nothing to separate it from the bar.
-          variant="secondary"
+          variant="chrome"
           size="sm"
           aria-label="Ask MCPJam"
           aria-pressed={isOpen}
           onClick={onClick}
-          className="h-9 gap-1.5 px-2.5"
+          className="gap-1.5 px-2.5"
         >
-          <MessageCircle className="h-4 w-4" aria-hidden />
-          <span>Ask MCPJam</span>
+          <MessageCircle className="h-4 w-4" aria-hidden data-chrome-icon />
+          <span>Ask</span>
         </Button>
       </TooltipTrigger>
       <TooltipContent side="bottom">

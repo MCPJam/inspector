@@ -49,7 +49,7 @@ import type { SerializedModelRequestTool } from "./model-request-payload";
 
 /**
  * The model-facing name charset, from `chat-v2-orchestration`'s Anthropic /
- * Bedrock gate — which THROWS THE WHOLE TURN on a violation rather than
+ * Bedrock gate — which THROWS A WHOLE HARNESS TURN on a violation rather than
  * dropping the tool. WebMCP allows `.` and 128 characters, so a page name is
  * routinely outside it and every minted name has to be checked against this.
  */

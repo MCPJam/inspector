@@ -89,6 +89,8 @@ async function bundleEntry(relativeEntry, { layer = false } = {}) {
     // wherever: the hosted bake lock and the local layer digest both hash
     // them.
     absWorkingDir: inspectorRoot,
+    // Shared dependency folders must not change the baked recipe identity.
+    preserveSymlinks: true,
     bundle: true,
     platform: "node",
     format: "esm",

@@ -45,17 +45,18 @@ interface SettingsProps {
   probes: ConformanceProbes;
   onChange: (probes: ConformanceProbes) => void;
 }
+/**
+ * Shown with the suite off too, so a row's "Use suite default" always has
+ * the default in view. Its draft blocks Run only while a picked check uses it.
+ */
 export function TasksSuiteDefaults({
   tools,
   probes,
   onChange,
-  selected,
   onValidChange,
 }: SettingsProps & {
-  selected?: MCPTasksCheckId[];
   onValidChange: (valid: boolean) => void;
 }) {
-  if (selected && !selected.some(isTasksToolCheck)) return null;
   return (
     <div className="my-3 space-y-2">
       <p className="text-sm font-medium">Tasks suite default</p>

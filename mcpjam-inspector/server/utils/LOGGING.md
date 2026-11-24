@@ -71,8 +71,9 @@ request body, path or header is not one, whatever its shape. Other IDs,
 | `apikey.admin_revoke.completed` | `routes/web/api-keys.ts` | `workosKeyId`, `alreadyRevoked`, `bindingCleanupFailed`, `bindingCleanupAttempts`, `bindingStatus?` |
 | `apikey.admin_revoke.unavailable` | `routes/web/api-keys.ts` | `workosKeyId`, `errorMessage` |
 | `auth.session.revoke_incomplete` | `routes/web/auth-session.ts` | `reason`, `status` |
+| `computer.terminal.input_failed` | `routes/web/computer-terminal.ts` | `errorCode` |
 | `mcp.connection.closed_with_pending_requests` | `index.ts` (system event) | `errorCode` |
-| `process.vitals` | `utils/process-vitals.ts` (system event) | `reason`, `heapUsedBytes`, `heapLimitBytes`, `oldSpaceUsedBytes`, `rpcLogBufferBytes`, `peakHeapUsedBytes` |
+| `process.vitals` | `utils/process-vitals.ts` (system event) | `reason`, `heapUsedBytes`, `heapLimitBytes`, `oldSpaceUsedBytes`, `rpcLogBufferBytes`, `peakHeapUsedBytes`, `openFdCount`, `openFdError` |
 
 All events live in `server/utils/log-events.ts`. Add new events there before emitting them.
 
@@ -110,5 +111,7 @@ shaped, rename it to say what it is (`client`, not `body`) rather than widening 
 
 ## ESLint enforcement
 
-`eslint.config.js` warns on new `logger.warn|error|info` calls in `server/routes/web/`.
-Run `npx eslint server/routes/web/` to check before committing route changes.
+`eslint.config.js` fails on new `logger.warn|error|info` calls in `server/routes/web/`: report a
+caught failure with `reportRouteFailure(message, error, { source, hop })` and everything else with
+`logger.event()`. In the other routes it fails on `logger.error` inside a `catch`, for the same reason.
+Run `npm run lint -w @mcpjam/inspector` to check before committing route changes.

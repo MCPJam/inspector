@@ -117,7 +117,105 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+async function expiredCompletion() {
+  const store = ledger();
+  const first = fixture(store.port);
+  const value = await first.invoker.invoke("entrypoint", "activation", { name: "tool" });
+  await first.flush();
+  const saved = await store.port.read("activation", new AbortController().signal);
+  const receipt = { ...saved!, expiresAt: Date.now() - 1 };
+  store.port.read = vi.fn(async () => receipt);
+  store.port.claim = vi.fn(async () => { throw new PluginInvocationError("RECEIPT_EXPIRED"); });
+  store.port.write = vi.fn();
+  return { store, receipt, first, value };
+}
+
+describe("retained completed activation receipts", () => {
+  it("delivers a completed result after its write lease without executing again", async () => {
+    const { store, first, value } = await expiredCompletion();
+    const cold = fixture(store.port);
+    await expect(cold.invoker.invoke("entrypoint", "activation", { name: "tool" })).resolves.toEqual(value);
+    expect(first.ports.execute).toHaveBeenCalledOnce();
+    expect(cold.ports.execute).not.toHaveBeenCalled();
+    expect(cold.ports.approve).not.toHaveBeenCalled();
+    expect(cold.ports.authorize).toHaveBeenCalledTimes(3);
+    expect(store.port.write).not.toHaveBeenCalled();
+  });
+
+  it.each(["reserved", "dispatched", "suspended", "failed", "unknown", "unavailable"] as const)(
+    "never recovers an expired %s receipt as a completed effect",
+    async (state) => {
+      const { store, receipt } = await expiredCompletion();
+      receipt.legs[0]!.state = state;
+      const cold = fixture(store.port);
+      await expect(cold.invoker.invoke("entrypoint", "activation", { name: "tool" })).rejects.toMatchObject({ code: "INVOCATION_OUTCOME_UNKNOWN" });
+      expect(cold.ports.execute).not.toHaveBeenCalled();
+      expect(store.port.write).not.toHaveBeenCalled();
+    },
+  );
+
+  it("can retry a failed receipt read without executing the activation", async () => {
+    const { store, value } = await expiredCompletion();
+    vi.mocked(store.port.read).mockRejectedValueOnce(new PluginInvocationError("RECEIPT_STORE_UNAVAILABLE"));
+    const cold = fixture(store.port);
+    await expect(cold.invoker.invoke("entrypoint", "activation", { name: "tool" })).rejects.toMatchObject({ code: "RECEIPT_STORE_UNAVAILABLE" });
+    await expect(cold.invoker.invoke("entrypoint", "activation", { name: "tool" })).resolves.toEqual(value);
+    expect(cold.ports.execute).not.toHaveBeenCalled();
+    expect(store.port.write).not.toHaveBeenCalled();
+  });
+
+  it("refuses a result past retention or missing after pruning without dispatch", async () => {
+    const { store, receipt } = await expiredCompletion();
+    receipt.expiresAt = Date.now() - 24 * 60 * 60_000;
+    const expired = fixture(store.port);
+    await expect(expired.invoker.invoke("entrypoint", "activation", { name: "tool" })).rejects.toMatchObject({ code: "RECEIPT_STORE_INVALID" });
+    store.port.read = vi.fn(async () => null);
+    const missing = fixture(store.port);
+    await expect(missing.invoker.invoke("entrypoint", "activation", { name: "tool" })).rejects.toMatchObject({ code: "INVOCATION_OUTCOME_UNKNOWN" });
+    expect(expired.ports.execute).not.toHaveBeenCalled();
+    expect(missing.ports.execute).not.toHaveBeenCalled();
+  });
+
+  it("refuses recovered data after revision change or owner revocation", async () => {
+    const { store } = await expiredCompletion();
+    const changed = fixture(store.port, {}, { revision: "changed" });
+    await expect(changed.invoker.invoke("entrypoint", "activation", { name: "tool" })).rejects.toMatchObject({ code: "AUTHORIZATION_CHANGED" });
+    store.port.read = vi.fn(async () => { throw new PluginInvocationError("INSTANCE_UNAVAILABLE"); });
+    const revoked = fixture(store.port);
+    await expect(revoked.invoker.invoke("entrypoint", "activation", { name: "tool" })).rejects.toMatchObject({ code: "INSTANCE_UNAVAILABLE" });
+    expect(changed.ports.execute).not.toHaveBeenCalled();
+    expect(revoked.ports.execute).not.toHaveBeenCalled();
+  });
+});
+
 describe("receipt writes on an App call's critical path", () => {
+  it("delivers a large App result once while recording that durable replay is unavailable", async () => {
+    const l = ledger();
+    const result = {
+      content: [],
+      structuredContent: { blob: "A".repeat(6_090_525) },
+    };
+    const execute = vi.fn(async () => result);
+    const f = fixture(l.port, { execute });
+    await expect(
+      f.invoker.invoke("app", "assembly", { name: "tool" }),
+    ).resolves.toBe(result);
+    await f.flush();
+    expect(l.rows.get("assembly")!.legs[0]).toMatchObject({
+      state: "unavailable",
+      errorCode: "RECEIPT_VALUE_UNAVAILABLE",
+    });
+    expect(l.rows.get("assembly")!.legs[0]!.valueJson).toBeUndefined();
+    await expect(
+      f.invoker.invoke("app", "assembly", { name: "tool" }),
+    ).resolves.toBe(result);
+    const restarted = fixture(l.port, { execute });
+    await expect(
+      restarted.invoker.invoke("app", "assembly", { name: "tool" }),
+    ).rejects.toMatchObject({ code: "RECEIPT_VALUE_UNAVAILABLE" });
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
   it("claims and marks dispatched in one write when nothing gated runs between them", async () => {
     const l = ledger();
     const f = fixture(l.port);

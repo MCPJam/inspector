@@ -9,6 +9,7 @@
  * to match on, and the strings are the ones its authorization helper actually
  * throws.
  */
+import { describeError } from "@mcpjam/sdk";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { translateStructuredConvexRefusal } from "./convex-errors.js";
 import { logger } from "../../utils/logger.js";
@@ -78,6 +79,15 @@ const REDACTED_SERVER_ERROR = /\bserver error\b/i;
  */
 const AUTHENTICATION_FAILURE =
   /\b(unauthenticated|invalid token|token (has )?expired|expired token|jwt)\b/i;
+
+/**
+ * A gateway's or the client's timeout. It answers 504 TIMEOUT, the status and
+ * code the write translator gives it through `mapRuntimeError`, so a write
+ * catch that reads status errors here first still answers a timeout the same
+ * way.
+ */
+const TIMEOUT_FAILURE = /timed out|timeout/i;
+const TIMEOUT_STATUSES: ReadonlySet<number> = new Set([408, 504]);
 
 /**
  * The production-masked refusal on a SCOPING READ that otherwise reports
@@ -184,6 +194,57 @@ export function isMissingConvexFunction(error: unknown): boolean {
   );
 }
 
+/** `ConvexHttpClient`'s status for "the function ran and threw". */
+const CONVEX_FUNCTION_FAILED_STATUS = 560;
+
+/**
+ * A non-2xx answer from Convex's HTTP API itself: the function never ran, so
+ * the backend's function logs have no row for it. The message is the response
+ * body, exactly what `ConvexHttpClient` would have thrown, so every message
+ * classifier above reads it unchanged. The field is not `status`: generic
+ * readers such as `describeError` and `mapRuntimeError` key on that name, and
+ * would read a Convex 401 or 429 as the caller's credential or LLM quota.
+ */
+export class ConvexHttpStatusError extends Error {
+  constructor(
+    readonly convexStatus: number,
+    body: string,
+    options?: ErrorOptions,
+  ) {
+    super(body, options);
+    this.name = "ConvexHttpStatusError";
+  }
+}
+
+/**
+ * The `fetch` for the Convex clients that `createConvexClient` and
+ * `createConvexClients` build. The client turns a non-2xx answer into
+ * `new Error(body)` and drops the status, and Sentry keeps
+ * neither the body nor the log message, so the only record of the failure was
+ * the word "Error" (INSPECTOR-HONO-17). Throwing here, before the client reads
+ * the response, keeps the status for the upstream report.
+ */
+export const convexReadFetch: typeof fetch = async (input, init) => {
+  const response = await fetch(input, init);
+  if (response.ok || response.status === CONVEX_FUNCTION_FAILED_STATUS) {
+    return response;
+  }
+  let body: string;
+  try {
+    body = await response.text();
+  } catch (cause) {
+    // A connection dropped mid-body still answered with this status. Its
+    // message ("terminated", "socket hang up") is what the transport
+    // classifiers match, so it stands in for the body.
+    throw new ConvexHttpStatusError(
+      response.status,
+      cause instanceof Error ? cause.message : "",
+      { cause },
+    );
+  }
+  throw new ConvexHttpStatusError(response.status, body);
+};
+
 export type ConvexReadFailure =
   | { kind: "membership" }
   | { kind: "authentication" }
@@ -191,14 +252,41 @@ export type ConvexReadFailure =
   | { kind: "redacted" }
   | { kind: "upstream" };
 
+/**
+ * A known HTTP status outranks the body text where the two disagree. Convex
+ * answers a rejected credential with 401 whatever the body says, and that is
+ * a 401 for the caller, not a retryable 502. And a status error never reads
+ * as `redacted`: the function did not run, while a redacted refusal comes back
+ * as a 560 the client reads itself, so a proxy's "500 Internal Server Error"
+ * is an outage and must not answer 404 at a preflight.
+ */
 export function classifyConvexReadError(error: unknown): ConvexReadFailure {
   const message = error instanceof Error ? error.message : String(error);
+  const convexStatus =
+    error instanceof ConvexHttpStatusError ? error.convexStatus : undefined;
+  if (convexStatus === 401) return { kind: "authentication" };
   if (MEMBERSHIP_REFUSAL.test(message)) return { kind: "membership" };
   if (AUTHENTICATION_FAILURE.test(message)) return { kind: "authentication" };
   if (ARGUMENT_VALIDATION_FAILURE.test(message))
     return { kind: "invalid-argument" };
-  if (REDACTED_SERVER_ERROR.test(message)) return { kind: "redacted" };
+  if (convexStatus === undefined && REDACTED_SERVER_ERROR.test(message))
+    return { kind: "redacted" };
   return { kind: "upstream" };
+}
+
+/**
+ * `translateConvexReadError`'s answer for a failure Convex's HTTP layer
+ * returned before the function ran, or `undefined` for anything else. For a
+ * catch whose own translator, or a rethrow to the v1 boundary, would read the
+ * body as prose: "401 Unauthorized" as a refusal, a proxy's 500 as our own.
+ */
+export function translateConvexStatusError(
+  error: unknown,
+  options: Parameters<typeof translateConvexReadError>[1],
+): WebRouteError | undefined {
+  return error instanceof ConvexHttpStatusError
+    ? translateConvexReadError(error, options)
+    : undefined;
 }
 
 /**
@@ -287,13 +375,32 @@ export function translateConvexReadError(
     );
   }
   // The REDACTED error, not the original — see `redactedErrorForCapture`.
+  // Sentry's boundary drops the message and keeps only catalogued facts, so
+  // the status or slug is what says which failure this was. Only a transport
+  // slug is reported: the describer reads a 401 or 429, by status or by body
+  // text such as "Too Many Requests", as an MCP server or LLM provider
+  // failure, and this one came from Convex.
   const redacted = redactedErrorForCapture(error);
+  const { slug } = describeError(error);
   logger.error(`[${options.scope}] upstream read failed`, redacted, {
     message: redacted.message,
+    ...(error instanceof ConvexHttpStatusError
+      ? { httpStatus: error.convexStatus }
+      : slug.startsWith("transport/")
+        ? { slug }
+        : {}),
   });
-  return new WebRouteError(
-    502,
-    ErrorCode.SERVER_UNREACHABLE,
-    "Upstream request failed",
-  );
+  const timedOut =
+    (error instanceof ConvexHttpStatusError &&
+      TIMEOUT_STATUSES.has(error.convexStatus)) ||
+    TIMEOUT_FAILURE.test(
+      error instanceof Error ? error.message : String(error),
+    );
+  return timedOut
+    ? new WebRouteError(504, ErrorCode.TIMEOUT, "Upstream request timed out")
+    : new WebRouteError(
+        502,
+        ErrorCode.SERVER_UNREACHABLE,
+        "Upstream request failed",
+      );
 }

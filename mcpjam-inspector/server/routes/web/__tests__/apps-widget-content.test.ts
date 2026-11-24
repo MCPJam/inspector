@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Hono } from "hono";
+import { generateSessionToken } from "../../../services/session-token.js";
+
+beforeEach(() => { generateSessionToken(); });
 
 /**
  * Hosted-mode `/web/apps/mcp-apps/widget-content` coverage.
@@ -78,6 +81,11 @@ import appsRoutes from "../apps.js";
 
 function makeApp() {
   const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("workosUserId", "metadata-fixture-user");
+    c.set("workosSessionId", "metadata-fixture-session");
+    await next();
+  });
   app.route("/api/web/apps", appsRoutes);
   return app;
 }

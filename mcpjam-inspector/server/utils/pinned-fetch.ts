@@ -34,12 +34,18 @@ import {
   OAuthProxyError,
 } from "@mcpjam/sdk/oauth/node";
 import { HOSTED_MODE } from "../config.js";
+import { withDefaultUserAgent } from "./outbound-user-agent.js";
 import {
   BlockedEgressTargetError,
   EgressResolutionError,
+  hostedPrivateEgressAdmission,
 } from "./hosted-egress-guard.js";
 
 export interface PinnedFetchOptions {
+  /** A trusted operator policy; never populate this from a request body. */
+  admitPrivateDestination?: Parameters<
+    typeof executeOAuthProxy
+  >[0]["admitPrivateDestination"];
   /**
    * Local-dev opt-in for loopback targets. Carved out for loopback ONLY — it
    * never relaxes the guard for LAN, link-local, CGNAT, multicast,
@@ -321,6 +327,7 @@ export function createPinnedFetch(
     if (
       !allowPrivateNetwork &&
       options.allowLoopback !== true &&
+      options.admitPrivateDestination === undefined &&
       isLoopbackOAuthUrl(url)
     ) {
       throw new BlockedEgressTargetError(
@@ -405,6 +412,7 @@ export function createPinnedFetch(
           // against the hop being dialled.
           httpsOnly: !hopAllowsLoopback && !hopAllowsPrivate,
           allowPrivateNetwork: hopAllowsPrivate,
+          admitPrivateDestination: options.admitPrivateDestination,
           redirect: "manual",
           timeoutMs: remainingTimeout(options.timeoutMs, startedAt),
           signal,
@@ -527,12 +535,15 @@ export function createStreamingPinnedFetch(
 ): typeof fetch {
   const hosted = options.hosted ?? HOSTED_MODE;
   if (!hosted) {
-    return ((...args: Parameters<typeof fetch>) =>
-      fetch(...args)) as typeof fetch;
+    return withDefaultUserAgent();
   }
 
   const streamingFetch = createPinnedStreamingFetch({
     allowLoopback: options.allowLoopback,
+    // The operator's private allowlist, through the guard's one decision: the
+    // transport asks it on every hop, at pin time, about the addresses it is
+    // about to dial. Absent when nothing is listed.
+    admitPrivateDestination: hostedPrivateEgressAdmission(),
     chainTimeoutMs: options.chainTimeoutMs ?? options.timeoutMs,
     bodyIdleTimeoutMs: options.bodyIdleTimeoutMs,
     maxResponseBytes: options.maxResponseBytes,

@@ -17,8 +17,10 @@ export type EvalBoxRuntimeKind = "terminal" | "desktop-browser";
  * Two ways in, and the second is the one that is easy to miss:
  *
  *   - the EMULATED path reaches the box only through the out-of-band `bash`
- *     tool, which exists on a TERMINAL box alone — `browser` and `bash` are
- *     mutually exclusive on a host config, so a desktop box never offers one;
+ *     tool, which the runner adds on a TERMINAL box alone. A run that pins an
+ *     image and declares a browser gets that terminal plus a separate desktop
+ *     for Browser, and the terminal is the box passed here; a desktop never
+ *     offers `bash`;
  *   - a HARNESS runs ON the box (`harnessSandboxBinding`) and brings its own
  *     file tools with it, whatever the image class.
  *

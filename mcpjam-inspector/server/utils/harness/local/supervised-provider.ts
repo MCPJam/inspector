@@ -34,6 +34,7 @@
  * survive into product copy.
  */
 import { randomUUID } from "node:crypto";
+import { localRuntime } from "./runtimes/index.js";
 import {
   lstat,
   mkdir,
@@ -54,9 +55,10 @@ import {
   resolve,
   sep,
 } from "node:path";
-import type {
-  HarnessV1NetworkSandboxSession,
-  HarnessV1SandboxProvider,
+import {
+  harnessStateDirectoryPath,
+  type HarnessV1NetworkSandboxSession,
+  type HarnessV1SandboxProvider,
 } from "@ai-sdk/harness";
 import { logger } from "../../logger.js";
 import { localHarnessStateRoot } from "./grants.js";
@@ -487,15 +489,12 @@ async function collectStream(
 
 export function createSupervisedLocalHarnessProvider(
   opts: SupervisedLocalHarnessProviderOptions,
-): HarnessV1SandboxProvider & { forbidNewProcesses: () => void } {
-  let processesForbidden = false;
+): HarnessV1SandboxProvider & { forbidNewProcesses: (refusal?: string) => void } {
+  // Set once a parked runtime is adopted, with what a spawn attempt then says.
+  let processesForbidden: string | null = null;
   const assertCanStart = async (): Promise<void> => {
     const assertNotAdopted = () => {
-      if (processesForbidden) {
-        throw new Error(
-          "The client waiting for approval could not be reached. The pending action will not run. Send a new message to continue.",
-        );
-      }
+      if (processesForbidden !== null) throw new Error(processesForbidden);
     };
     assertNotAdopted();
     const result = await revalidateRuntime(opts.runtime);
@@ -529,7 +528,7 @@ export function createSupervisedLocalHarnessProvider(
   // The framework requires the agent's working directory to be a proper
   // SUBDIRECTORY of the session's default working directory ("." and absolute
   // paths are both rejected), and it puts its own `.agent-runs/<session>` and
-  // `.harness-bootstrap` references under that default directory too.
+  // `.harness-bootstrap` references under `$HOME/.ai-sdk-harness`.
   //
   // Making the granted workspace the default working directory therefore had
   // two consequences, both wrong: the agent ran in
@@ -652,12 +651,11 @@ export function createSupervisedLocalHarnessProvider(
     const confineToSessionState = (path: string) =>
       confinePath(fromAdapterPath(path, platform), { roots: [roots[0]!] });
 
-    // Git Bash is how Claude Code runs shell commands on Windows. Codex runs
-    // its own shell, so it is neither looked up nor handed to it.
-    const gitBashPath =
-      opts.harnessId === "claude-code"
-        ? await resolveGitBashPath(platform)
-        : undefined;
+    // Git Bash, for a runtime that runs shell commands through Git for
+    // Windows. A runtime with its own shell is neither looked up nor handed it.
+    const gitBashPath = localRuntime(opts.harnessId).gitBashOnWindows
+      ? await resolveGitBashPath(platform)
+      : undefined;
     // The runtime this session launches from — the vendor pack and, where the
     // harness has one, the Inspector layer — must sit OUTSIDE both roots the
     // session may write. Inside one, the agent could rewrite the bytes it is
@@ -697,11 +695,11 @@ export function createSupervisedLocalHarnessProvider(
 
     const translationContext: CommandTranslationContext = {
       harnessId: opts.harnessId,
-      // Resolved exactly as the framework resolves it — against the session's
-      // default working directory — so the translator matches the string the
+      // Resolved exactly as the framework resolves it — against
+      // `$HOME/.ai-sdk-harness` — so the translator matches the string the
       // adapters will actually emit.
       adapterBootstrapDir: posix.resolve(
-        adapterWorkRoot,
+        harnessStateDirectoryPath({ sandboxHomeDir: adapterHome }),
         opts.manifest.adapterBootstrapDir,
       ),
       managedBundleRoot: opts.runtime.rootPath,
@@ -731,6 +729,7 @@ export function createSupervisedLocalHarnessProvider(
       // call we make.
       confine,
       confineToSessionState,
+      platform,
     };
 
     /**
@@ -827,8 +826,22 @@ export function createSupervisedLocalHarnessProvider(
       supplied: Readonly<Record<string, string>> | undefined,
     ): Record<string, string> => ({
       ...env,
-      ...filterBridgeSuppliedEnv(supplied),
+      ...filterBridgeSuppliedEnv(supplied, opts.harnessId),
     });
+
+    // Files a launch needs in session state (an ACP bridge's implementation
+    // descriptor), through the same symlink-aware check as everything else and
+    // by replacement: the agent can write in session state, so a link it
+    // planted at the name must not redirect the write or the read. The path is
+    // confined before anything is created, so a link planted where its parent
+    // would go can't make this create a directory outside session state.
+    const writeLaunchFiles = async (
+      files: ReadonlyArray<{ path: string; content: string }> | undefined,
+    ): Promise<void> => {
+      for (const file of files ?? []) {
+        await writeBytesAtomically(await confineToSessionState(file.path), Buffer.from(file.content, "utf8"));
+      }
+    };
 
     const runTranslated = async (
       translated: TranslatedCommand,
@@ -879,6 +892,7 @@ export function createSupervisedLocalHarnessProvider(
         }
         case "exec": {
           await assertCanStart();
+          await writeLaunchFiles(translated.files);
           const handle = await opts.supervisor.spawnSupervised({
             sessionId,
             executable: translated.executable,
@@ -1050,6 +1064,7 @@ export function createSupervisedLocalHarnessProvider(
         let spawning = false;
         try {
           await assertCanStart();
+          await writeLaunchFiles(translated.files);
           // Before the bridge exists, not after: once it is running, an
           // accepted connection on the leased port is indistinguishable from
           // "our bridge came up" and "our bridge failed to bind and something
@@ -1216,7 +1231,9 @@ export function createSupervisedLocalHarnessProvider(
   return {
     specificationVersion: "harness-sandbox-v1",
     providerId: "mcpjam-local-supervised",
-    forbidNewProcesses: () => { processesForbidden = true; },
+    forbidNewProcesses: (refusal = "The client waiting for approval could not be reached. The pending action will not run. Send a new message to continue.") => {
+      processesForbidden = refusal;
+    },
     // `bridgePorts` is gone from the stable contract: port discovery is the
     // adapter's job now, reading `session.ports` and resolving through
     // `getPortEndpoint`.

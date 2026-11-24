@@ -9,9 +9,24 @@ vi.mock("../../../utils/assistant-turn.js", () => ({
   runAssistantTurn: (...args: unknown[]) => runAssistantTurnMock(...args),
 }));
 
+import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
+import { buildLiveEffectiveCapabilities } from "../../environments/effective-capabilities";
+import { resolveTurnSkills } from "../../environments/turn-skills";
 import { driveHostedEvalTurn } from "../drive-hosted-eval-turn";
 import type { DriveHostedEvalTurnParams } from "../drive-hosted-eval-turn";
+import { buildHostedStepHandlers } from "../step-handlers";
 import { logger } from "../../../utils/logger";
+
+/** A run that froze no skills, planned for a harness: it clears the box. */
+const FROZEN_EMPTY_PLAN = resolveTurnSkills({
+  source: {
+    kind: "pins",
+    pins: [],
+    set: buildLiveEffectiveCapabilities({}),
+    harnessSkills: [],
+  },
+  runtime: { kind: "harness", harnessId: "claude-code" },
+});
 
 function baseParams(
   overrides: Partial<DriveHostedEvalTurnParams> = {},
@@ -221,46 +236,35 @@ describe("harness execution options reach the engine", () => {
     expect(options.environmentId).toBeUndefined();
   });
 
-  it("forwards a PRESENT-BUT-EMPTY pinnedHarnessSkills — the A/B arm", async () => {
-    // The one harness field gated on `!== undefined` rather than truthiness,
-    // and deliberately so: an empty array is how `skillsOverride: "exclude"`
-    // says "this arm runs with NO skills". A truthiness regression would drop
-    // it, the harness would fall back to its own project-wide skill fetch, and
-    // the skill-free arm would quietly run with skills — while every other
-    // assertion in this file still passed.
+  it("forwards the plan of an EMPTY frozen set — the A/B arm", async () => {
+    // An empty frozen set is how `skillsOverride: "exclude"` says "this arm
+    // runs with NO skills". The plan says it (`harness.skills` is `[]`, which
+    // clears the box), so dropping the plan would leave the skill-free arm with
+    // whatever skills its box already holds, while every other assertion in
+    // this file still passed.
     const options = await engineOptionsFor({
       ...HARNESS_OPTIONS,
-      pinnedHarnessSkills: [],
+      skillPlan: FROZEN_EMPTY_PLAN,
     } as unknown as Partial<DriveHostedEvalTurnParams>);
-    expect(options.pinnedHarnessSkills).toEqual([]);
+    expect(options.skillPlan).toBe(FROZEN_EMPTY_PLAN);
+    expect(options.skillPlan?.harness).toMatchObject({
+      mode: "pinned",
+      skills: [],
+    });
   });
 
-  it("delivers the run's pins on the FROZEN channel, not the live-environment one", async () => {
-    // `selectHarnessSkillSource` ranks pinned → environment → live, and only
-    // the top rank promises that nothing live is consulted. Sending a frozen
-    // run's skills as `runtimeSkillsOverride` would work in the happy case and
-    // be wrong in the one that matters: `runtimeSkillsOverride` is documented
-    // as the channel for a turn whose environment re-resolves each time.
+  it("delivers the run's plan, not the older inputs a live environment would send", async () => {
+    // The plan ranks a run's frozen copies above everything and promises that
+    // nothing live is consulted. Sending a frozen run's skills as
+    // `runtimeSkillsOverride` would work in the happy case and be wrong in the
+    // one that matters: that channel is for a turn whose environment
+    // re-resolves each time.
     const options = await engineOptionsFor({
       ...HARNESS_OPTIONS,
-      pinnedHarnessSkills: [
-        {
-          name: "deploy",
-          description: "ship it",
-          content: "# Deploy",
-          contentHash: "sha-1",
-        },
-      ],
+      skillPlan: FROZEN_EMPTY_PLAN,
     } as unknown as Partial<DriveHostedEvalTurnParams>);
 
-    expect(options.pinnedHarnessSkills).toEqual([
-      {
-        name: "deploy",
-        description: "ship it",
-        content: "# Deploy",
-        contentHash: "sha-1",
-      },
-    ]);
+    expect(options.skillPlan).toBe(FROZEN_EMPTY_PLAN);
     expect(options.runtimeSkillsOverride).toBeUndefined();
   });
 
@@ -304,7 +308,7 @@ describe("harness execution options reach the engine", () => {
       },
       harnessMcpProxy: { plane: "web-authorized", mode: "relay" },
       builtInTools: { web_search: {} },
-      pinnedHarnessSkills: [],
+      skillPlan: FROZEN_EMPTY_PLAN,
       modelVisibleMcpToolResults: { directContent: { image: false } },
       respectToolVisibility: false,
       tasks: { mode: "await" },
@@ -314,7 +318,7 @@ describe("harness execution options reach the engine", () => {
     expect(options.harnessSandboxBinding).toBeUndefined();
     expect(options.harnessMcpProxy).toBeUndefined();
     expect(options.builtInTools).toBeUndefined();
-    expect(options.pinnedHarnessSkills).toBeUndefined();
+    expect(options.skillPlan).toBeUndefined();
     expect(options.modelVisibleMcpToolResults).toBeUndefined();
     expect(options.respectToolVisibility).toBeUndefined();
     expect(options.tasks).toBeUndefined();
@@ -339,6 +343,37 @@ describe("harness execution options reach the engine", () => {
 
     expect(options.extraHeaders).toBeUndefined();
   });
+
+  it("hands the engine the turn's remaining budget for admission waits", async () => {
+    vi.useFakeTimers();
+    try {
+      const options = await engineOptionsFor({ turnTimeoutMs: 90_000 });
+      const remainingTurnMs = options.remainingTurnMs as () => number;
+
+      expect(remainingTurnMs()).toBe(90_000);
+      vi.advanceTimersByTime(30_000);
+      expect(remainingTurnMs()).toBe(60_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("caps the admission budget at the iteration's deadline when it comes first", async () => {
+    vi.useFakeTimers();
+    try {
+      const options = await engineOptionsFor({
+        turnTimeoutMs: 90_000,
+        iterationDeadlineAt: Date.now() + 40_000,
+      });
+      const remainingTurnMs = options.remainingTurnMs as () => number;
+
+      expect(remainingTurnMs()).toBe(40_000);
+      vi.advanceTimersByTime(50_000);
+      expect(remainingTurnMs()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 it("carries hosted request payloads into the authored eval turn", async () => {
@@ -347,6 +382,82 @@ it("carries hosted request payloads into the authored eval turn", async () => {
   runAssistantTurnMock.mockImplementationOnce(async () => ({ messages: [], usage: {}, turnTrace: { spans: [], requestPayloads: [entry] } }) as never);
   await driveHostedEvalTurn(params);
   expect(params.acc.requestPayloads).toEqual([{ ...entry, promptIndex: 3 }]);
+});
+
+describe("the turn's MCP routing record", () => {
+  const route = (reason: string): HarnessMcpAtTurn => ({
+    version: 1,
+    upstream: "mcpjam",
+    delivery: "mcp-endpoint",
+    profile: "client",
+    gaps: [],
+    reasons: [reason],
+    pinnedRuntimeVersion: "1.0.35",
+    plannerVersion: "harness-mcp-plan-v1",
+  });
+
+  /** A completed turn whose trace carries `harnessMcpAtTurn` when given. */
+  function engineCompletesTurn(harnessMcpAtTurn?: HarnessMcpAtTurn) {
+    runAssistantTurnMock.mockImplementationOnce(async (...args: unknown[]) => {
+      const { messages } = args[0] as { messages: unknown[] };
+      return {
+        messages: [...messages, { role: "assistant", content: "Done." }],
+        usage: {},
+        // The engine's own turn counter, not the eval's prompt index.
+        turnTrace: { promptIndex: 0, spans: [], harnessMcpAtTurn },
+      } as never;
+    });
+  }
+
+  function paramsWithRecords(promptIndex: number) {
+    const params = baseParams({ promptIndex });
+    const records = new Map<number, HarnessMcpAtTurn>();
+    params.acc.harnessMcpByPromptIndex = records;
+    return { params, records };
+  }
+
+  it("keeps the record under the eval turn's prompt index", async () => {
+    const { params, records } = paramsWithRecords(3);
+    engineCompletesTurn(route("eval iteration"));
+
+    expect(await driveHostedEvalTurn(params)).toEqual({ kind: "completed" });
+    expect([...records]).toEqual([[3, route("eval iteration")]]);
+  });
+
+  it("keeps nothing for a turn whose trace has no record", async () => {
+    const { params, records } = paramsWithRecords(0);
+    engineCompletesTurn();
+
+    await driveHostedEvalTurn(params);
+    expect(records.size).toBe(0);
+  });
+
+  it.each([true, false])(
+    "preserves the authored prompt's routing evidence across a widget follow-up (authored receipt present: %s)",
+    async (hasReceipt) => {
+      const { params, records } = paramsWithRecords(1);
+      const handlers = buildHostedStepHandlers({
+        ...params,
+        resolvePinnedServerKey: () => undefined,
+        pinnedToolErrors: [],
+      });
+      engineCompletesTurn(hasReceipt ? route("authored") : undefined);
+      await handlers.onPrompt({
+        step: { id: "p1", kind: "prompt", prompt: "Open the widget" },
+        stepIndex: 1,
+        turnOrdinal: 1,
+      });
+      engineCompletesTurn(route("follow-up"));
+      const followUp = await handlers.onFollowUp!({
+        text: "Show more",
+        stepIndex: 2,
+        turnOrdinal: 1,
+      });
+
+      expect(followUp.iterationError).toBeUndefined();
+      expect([...records]).toEqual(hasReceipt ? [[1, route("authored")]] : []);
+    },
+  );
 });
 
 it("adds the turn's reasoning and cached-input tokens onto the iteration usage", async () => {
@@ -484,6 +595,38 @@ describe("infra evidence reaches the turn outcome untouched", () => {
     expect(untyped.kind).toBe("failed");
     expect(untyped).not.toHaveProperty("errorInfra");
   });
+
+  it("keeps the calls a web client run sent before its page stopped", async () => {
+    const { WebClientRunError } = await import("../../web-clients/web-client-harness-turn");
+    const sent = {
+      id: "web-tool-0",
+      name: "echo",
+      category: "tool" as const,
+      startMs: 0,
+      endMs: 1,
+      promptIndex: 0,
+      stepIndex: 0,
+      status: "ok" as const,
+      toolCallId: "ledger-1",
+      toolName: "echo",
+      wireCorroborated: true,
+    };
+    runAssistantTurnMock.mockImplementationOnce(async () => {
+      throw new WebClientRunError(
+        { kind: "driver", step: "read_conversation", message: "The chat could not be read." },
+        "Claude web stopped before the reply finished.",
+        undefined,
+        { turnId: "turn-1", promptIndex: 0, startedAt: 0, endedAt: 1, spans: [sent], finishReason: "error", modelId: "m" },
+      );
+    });
+    const params = baseParams();
+    // The page stopped, so the run failed: it stays out of the server's pass rate.
+    expect(await driveHostedEvalTurn(params)).toMatchObject({
+      kind: "failed",
+      errorInfra: { source: "web_client", code: "driver" },
+    });
+    expect(params.acc.capturedSpans).toEqual([sent]);
+  });
 });
 
 it("does not read App state from a view dismissed before the next turn", async () => {
@@ -497,12 +640,12 @@ it("does not read App state from a view dismissed before the next turn", async (
   expect(JSON.stringify(params.acc.messageHistory)).not.toContain("Selected bolt");
 });
 
-describe("a failed turn's log line is not a second Sentry capture of an empty step", () => {
+describe("a failed turn's log line captures only what the engine's reporter did not record", () => {
   beforeEach(() => {
     runAssistantTurnMock.mockReset();
   });
 
-  const failWith = (code: string) =>
+  const failWith = (code: string, reported: Record<string, unknown> = {}) =>
     runAssistantTurnMock.mockImplementationOnce((async (opts: any) => {
       opts.onEngineError?.({
         message: "Backend step returned no content (stream error or empty response)",
@@ -511,6 +654,7 @@ describe("a failed turn's log line is not a second Sentry capture of an empty st
         promptIndex: 0,
         stepIndex: 0,
         phase: "stream",
+        ...reported,
       });
       return {
         messages: [{ role: "user", content: "hello" }],
@@ -521,7 +665,11 @@ describe("a failed turn's log line is not a second Sentry capture of an empty st
   it("logs an empty step as a warning: the engine already reported it", async () => {
     const error = vi.spyOn(logger, "error").mockImplementation(() => {});
     const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
-    failWith("provider_empty_response");
+    // A provider-owned empty step is reported as `ambiguous` on purpose.
+    failWith("provider_empty_response", {
+      reportedOrigin: "ambiguous",
+      reportedCaptured: false,
+    });
 
     const outcome = await driveHostedEvalTurn(baseParams());
 
@@ -537,14 +685,136 @@ describe("a failed turn's log line is not a second Sentry capture of an empty st
     warn.mockRestore();
   });
 
-  it("keeps every other failed turn on logger.error", async () => {
+  it("logs a refusal the engine already reported as a warning (INSPECTOR-HONO-70)", async () => {
     const error = vi.spyOn(logger, "error").mockImplementation(() => {});
-    failWith("provider_error");
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    // The prod nightly's refusal: `buildSpendRefusalBody` in the backend.
+    const refusal =
+      "MCPJam model limit reached for the moment: 4 in-flight request(s) hold the remaining credits and release them as they finish.";
+    runAssistantTurnMock.mockImplementationOnce((async (opts: any) => {
+      opts.onEngineError?.({
+        message: `${refusal} Retry in a few seconds.`,
+        rawText: `${refusal} Retry in a few seconds.`,
+        code: "user_rate_limit",
+        details: "Retry in a few seconds.",
+        httpStatus: 429,
+        refusalReason: "holds_committed",
+        outstandingHolds: 4,
+        promptIndex: 0,
+        stepIndex: 0,
+        phase: "stream",
+        // The reporter declined it as user-owned.
+        reportedOrigin: "user_config",
+        reportedCaptured: false,
+      });
+      return {
+        messages: [{ role: "user", content: "hello" }],
+        turnTrace: { spans: [] },
+      } as never;
+    }) as never);
+
+    const outcome = await driveHostedEvalTurn(baseParams());
+
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      iterationError: `${refusal} Retry in a few seconds.`,
+      errorCode: "user_rate_limit",
+      errorHttpStatus: 429,
+    });
+    expect(error).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("engineError=user_rate_limit"),
+    );
+    error.mockRestore();
+    warn.mockRestore();
+  });
+
+  const setupInfra = (httpStatus: number) => ({
+    source: "sandbox_setup",
+    code: "harness_broker_unavailable",
+    httpStatus,
+  });
+
+  it.each([
+    [
+      "paged on",
+      "capability_missing",
+      { reportedOrigin: "mcpjam", reportedCaptured: true },
+    ],
+    [
+      "declined as the user's server",
+      "provider_error",
+      { reportedOrigin: "user_server", reportedCaptured: false },
+    ],
+    [
+      "paged on in a harness setup step",
+      "harness_broker_unavailable",
+      { reportedCaptured: true, infra: setupInfra(503) },
+    ],
+  ])(
+    "logs a failure the reporter %s as a warning",
+    async (_label, code, reported) => {
+      const error = vi.spyOn(logger, "error").mockImplementation(() => {});
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+      failWith(code, reported);
+
+      await driveHostedEvalTurn(baseParams());
+
+      expect(error).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining(`engineError=${code}`),
+      );
+      error.mockRestore();
+      warn.mockRestore();
+    },
+  );
+
+  it.each([
+    [
+      "the reporter left unclassified",
+      "provider_error",
+      { reportedOrigin: "ambiguous", reportedCaptured: false },
+    ],
+    ["no reporter recorded", "provider_error", {}],
+    // The harness reports no origin: it classifies from the message alone,
+    // so a 429 from our own broker reads as the user's.
+    [
+      "the harness reporter declined",
+      "harness_broker_unavailable",
+      { reportedCaptured: false, infra: setupInfra(429) },
+    ],
+  ])("keeps a failure %s on logger.error", async (_label, code, reported) => {
+    const error = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    failWith(code, reported);
 
     await driveHostedEvalTurn(baseParams());
 
     expect(error).toHaveBeenCalledWith(
-      expect.stringContaining("engineError=provider_error"),
+      expect.stringContaining(`engineError=${code}`),
+    );
+    expect(warn).not.toHaveBeenCalledWith(
+      expect.stringContaining("engineError="),
+    );
+    error.mockRestore();
+    warn.mockRestore();
+  });
+
+  it("keeps a failure with no engine error on logger.error", async () => {
+    const error = vi.spyOn(logger, "error").mockImplementation(() => {});
+    runAssistantTurnMock.mockImplementationOnce(
+      async () =>
+        ({
+          messages: [{ role: "user", content: "hello" }],
+          turnTrace: { spans: [] },
+        }) as never,
+    );
+
+    expect(await driveHostedEvalTurn(baseParams())).toMatchObject({
+      kind: "failed",
+    });
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("engineError=none"),
     );
     error.mockRestore();
   });

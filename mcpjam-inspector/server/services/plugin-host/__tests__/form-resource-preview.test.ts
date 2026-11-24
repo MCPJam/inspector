@@ -94,7 +94,7 @@ async function fixture(
     requestedSchema: schema,
     expiresAt,
     ...override,
-  });
+  }, "credential");
   cleanups.push(
     () =>
       pluginInstances.closePersistent(

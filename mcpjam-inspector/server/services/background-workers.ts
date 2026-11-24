@@ -26,6 +26,11 @@ import {
   type BenchWorkerHandle,
 } from "./bench-worker";
 import {
+  localDoorbellIntervalMs,
+  startLocalDoorbell,
+  type LocalDoorbellHandle,
+} from "./local-doorbell-worker";
+import {
   assertWorkerCanRunClaims,
   resolveProcessRole,
   type ProcessRole,
@@ -84,6 +89,13 @@ export function startBackgroundWorkers(
   const productionChecksWorker: ProductionChecksWorkerHandle =
     startProductionChecksWorker();
 
+  // Local doorbell: runs the agent-turn and chat-stage passes on a timer for
+  // an Inspector the backend can't reach, such as one on a laptop against a
+  // disposable agent backend. Env-gated by MCPJAM_LOCAL_DOORBELL_MS.
+  const doorbellMs = localDoorbellIntervalMs();
+  const localDoorbell: LocalDoorbellHandle | undefined =
+    doorbellMs === null ? undefined : startLocalDoorbell(doorbellMs);
+
   return {
     stop: async () => {
       await Promise.all([
@@ -91,6 +103,7 @@ export function startBackgroundWorkers(
         githubChecksWorker?.stop(),
         benchWorker?.stop(),
         productionChecksWorker.stop(),
+        localDoorbell?.stop(),
       ]);
     },
   };

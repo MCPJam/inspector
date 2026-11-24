@@ -4,6 +4,7 @@ import { TASKS_READINESS_CATALOG } from "../conformance-catalog.js";
 import { MCP_TASKS_EXTENSION_ID } from "../mcp-client-manager/tasks-dispatch.js";
 
 import {
+  CHECK_METADATA,
   isRecord,
   errorMessage,
   passed,
@@ -13,15 +14,18 @@ import {
 } from "./metadata.js";
 import {
   INVALID_PARAMS,
+  TERMINAL_STATUSES,
   UndeclaredProbe,
   describeUndeclaredProbe,
 } from "./evidence.js";
 import type { TaskCheckContext } from "./check-context.js";
+import { blockedByDetails, blockedByMessage } from "../conformance-blocked.js";
 export async function runMutationChecks(context: TaskCheckContext) {
   const {
     operations,
     wire,
     createdTaskId,
+    finalTask,
     noTask,
     selected,
     checks,
@@ -30,6 +34,7 @@ export async function runMutationChecks(context: TaskCheckContext) {
     received,
     sent,
     readiness,
+    passedAdvice,
   } = context;
   if (selected.has("tasks-invalid-task-id-rejected")) {
     const stepStartedAt = Date.now();
@@ -78,6 +83,21 @@ export async function runMutationChecks(context: TaskCheckContext) {
           message: `An unknown task id should be rejected with -32602 (Invalid params): ${wrongAnswers.join("; ")}.`,
           details: { probedTaskId: probe.taskId, wrongAnswers },
           informational: true,
+        });
+      } else if (
+        probe.mutations.length > 0 &&
+        probe.mutations.every((entry) => entry.outcome !== "local-failure")
+      ) {
+        // Only when every mutating call reached the server and was rejected
+        // as asked: a run that left this advice out sends none, and a call
+        // that never got an answer judged nothing, so a pass on update alone
+        // would vouch for cancel unseen.
+        passedAdvice.push({
+          id: "tasks-readiness-unknown-task-id-mutations",
+          title:
+            TASKS_READINESS_CATALOG["tasks-readiness-unknown-task-id-mutations"]
+              .title,
+          specStrength: "SHOULD",
         });
       }
       const detail = { probedTaskId: probe.taskId, ...probe.detail };
@@ -303,10 +323,24 @@ export async function runMutationChecks(context: TaskCheckContext) {
       ];
       checks.push(
         rejections.length === 0
-          ? couldNotRun(
-              "tasks-undeclared-capability-names-requirements",
-              "no request was rejected with -32021, so no error payload named a required capability"
+          ? // With no -32021 there is no payload to grade. When the sibling
+            // check already failed for that, name it: it is the reason.
+            checks.some(
+              (check) =>
+                check.id === "tasks-undeclared-capability-rejected" &&
+                check.status === "failed"
             )
+            ? couldNotRun(
+                "tasks-undeclared-capability-names-requirements",
+                blockedByMessage(
+                  CHECK_METADATA["tasks-undeclared-capability-rejected"].title
+                ),
+                blockedByDetails("tasks-undeclared-capability-rejected")
+              )
+            : couldNotRun(
+                "tasks-undeclared-capability-names-requirements",
+                "no request was rejected with -32021, so no error payload named a required capability"
+              )
           : problems.length === 0
             ? passed(
                 "tasks-undeclared-capability-names-requirements",
@@ -369,23 +403,33 @@ export async function runMutationChecks(context: TaskCheckContext) {
         received
       );
       checks.push(
-        cancel.unavailable !== undefined
-          ? couldNotRun("tasks-cancel-ack-shape", cancel.unavailable)
-          : cancel.problems.length === 0
-            ? passed(
-                "tasks-cancel-ack-shape",
-                Date.now() - stepStartedAt,
-                cancel.detail,
-                cancel.warnings
-              )
-            : failed(
-                "tasks-cancel-ack-shape",
-                Date.now() - stepStartedAt,
-                `tasks/cancel was not acknowledged as the extension requires: ${cancel.problems.join(
-                  "; "
-                )}`,
-                cancel.detail
-              )
+        // Only a task known to have finished is "nothing to cancel": a
+        // -32602 for a task still running is the server's to explain.
+        cancel.taskGone &&
+          finalTask !== undefined &&
+          TERMINAL_STATUSES.has(String(finalTask.status))
+          ? notApplicable(
+              "tasks-cancel-ack-shape",
+              "The task finished before we sent cancel, so there was nothing to cancel.",
+              cancel.detail
+            )
+          : cancel.unavailable !== undefined
+            ? couldNotRun("tasks-cancel-ack-shape", cancel.unavailable)
+            : cancel.problems.length === 0
+              ? passed(
+                  "tasks-cancel-ack-shape",
+                  Date.now() - stepStartedAt,
+                  cancel.detail,
+                  cancel.warnings
+                )
+              : failed(
+                  "tasks-cancel-ack-shape",
+                  Date.now() - stepStartedAt,
+                  `tasks/cancel was not acknowledged as the extension requires: ${cancel.problems.join(
+                    "; "
+                  )}`,
+                  cancel.detail
+                )
       );
     }
   }

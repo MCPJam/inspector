@@ -7,6 +7,10 @@ import { SchemaFormFieldControl } from "../schema-form/SchemaFormFieldControl";
 import { patternHint, type SchemaFormField } from "../schema-form/field";
 import type { PluginSettingsField } from "@/shared/plugin-settings";
 import type { NativeSettingsController } from "./native-settings-controller";
+import {
+  observeExtensionOperation,
+  type ExtensionOperationProfile,
+} from "@/lib/extension-operation-health";
 type NativeSettingsAction = {
   name: string;
   title?: string;
@@ -31,15 +35,18 @@ export function NativeSettingsEditor({
   actionPending,
   actionResult,
   appActionsAvailable = false,
+  profile,
 }: {
   controller: NativeSettingsController;
   actions?:
     | readonly NativeSettingsAction[]
     | (() => readonly NativeSettingsAction[]);
-  onAction?: (tool: string) => void;
+  onAction?: (tool: string, button: HTMLButtonElement) => void;
   actionPending?: string;
   actionResult?: { tool: string; text: string; failed: boolean };
   appActionsAvailable?: boolean;
+  /** Which client profile Settings saves are counted under. */
+  profile?: ExtensionOperationProfile;
 }) {
   const snapshot = useSyncExternalStore(
     controller.subscribe,
@@ -127,7 +134,9 @@ export function NativeSettingsEditor({
                         Boolean(busy) ||
                         Boolean(actionPending)
                       }
-                      onClick={() => onAction?.(item.tool)}
+                      onClick={(event) =>
+                        onAction?.(item.tool, event.currentTarget)
+                      }
                       title={
                         result
                           ? result.text
@@ -253,7 +262,13 @@ export function NativeSettingsEditor({
             !snapshot.dirty ||
             Object.keys(snapshot.errors).length > 0
           }
-          onClick={() => void controller.save().catch(() => {})}
+          onClick={() =>
+            // The controller shows the failure; the outcome feeds the alert.
+            void observeExtensionOperation(
+              { operation: "settings_save", profile },
+              () => controller.save(),
+            ).catch(() => {})
+          }
         >
           {busy === "save" ? "Saving…" : "Save settings"}
         </Button>

@@ -358,6 +358,82 @@ describe("useServerState hosted OAuth callback guards", () => {
     },
   );
 
+  // A sign-in tied to one login (a lazy sign-in card on a server with 2+
+  // logins) only stores the credential. Hosted used to skip the reconnect,
+  // leaving the server "connecting", so the call waiting on it never resumed.
+  it("reconnects the server after a hosted per-login sign-in", async () => {
+    writeHostedOAuthPendingMarker({
+      surface: "project",
+      initiatingUserId: "user_1",
+      connectionIntent: { kind: "replace", credentialId: "cred_2" },
+      projectId: "ws_1",
+      serverId: "srv_asana",
+      serverName: "asana",
+      serverUrl: "https://mcp.asana.com/sse",
+      accessScope: "project_member",
+      returnPath: "#servers",
+    });
+    localStorage.setItem("mcp-oauth-pending", "asana");
+    mockHandleOAuthCallback.mockResolvedValue({
+      success: true,
+      serverName: "asana",
+    });
+    const dispatch = vi.fn();
+
+    renderHostedServerState(dispatch);
+
+    await waitFor(() => {
+      expect(toastSuccess).toHaveBeenCalledWith("Account connected");
+    });
+    expect(mockReconnectServer).toHaveBeenCalledWith(
+      "srv_asana",
+      expect.anything(),
+      expect.objectContaining({ projectId: "ws_1", serverName: "asana" }),
+    );
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "CONNECT_SUCCESS", name: "asana" }),
+    );
+  });
+
+  it("marks the server failed when the per-login reconnect fails", async () => {
+    writeHostedOAuthPendingMarker({
+      surface: "project",
+      initiatingUserId: "user_1",
+      connectionIntent: { kind: "replace", credentialId: "cred_2" },
+      projectId: "ws_1",
+      serverId: "srv_asana",
+      serverName: "asana",
+      serverUrl: "https://mcp.asana.com/sse",
+      accessScope: "project_member",
+      returnPath: "#servers",
+    });
+    localStorage.setItem("mcp-oauth-pending", "asana");
+    mockHandleOAuthCallback.mockResolvedValue({
+      success: true,
+      serverName: "asana",
+    });
+    mockReconnectServer.mockResolvedValue({
+      success: false,
+      error: "Server unreachable",
+    });
+    const dispatch = vi.fn();
+
+    renderHostedServerState(dispatch);
+
+    await waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "CONNECT_FAILURE",
+          name: "asana",
+          error: "Server unreachable",
+        }),
+      );
+    });
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "CONNECT_SUCCESS", name: "asana" }),
+    );
+  });
+
   // A `?code=` on a route this hook does not own must not be claimed. The
   // GitHub App bind returns to `/settings/integrations/github/callback`, and
   // this effect used to complete it as an MCP flow, fail, toast "No pending

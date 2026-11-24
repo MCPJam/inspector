@@ -37,8 +37,12 @@
  *   - the capability is compared in constant time;
  *   - bodies are size-capped and NEVER logged, in either direction;
  *   - the connecting socket's owning pid is checked against the supervised
- *     tree, so another process on the machine that learned the capability
- *     still cannot use it.
+ *     tree on every request, so another process on the machine that learned
+ *     the capability still cannot use it. The pid itself is looked up once
+ *     per connection (on macOS each lookup is an `lsof` process), because the
+ *     process at the other end of an open socket does not change; whether
+ *     that pid still belongs to the session is asked every time, since it
+ *     stops belonging once the session's roots have exited.
  */
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -184,6 +188,23 @@ export async function startLocalModelGateway(
   const platform = options.platform ?? process.platform;
   const doFetch = options.fetchImpl ?? fetch;
   const resolvePeer = options.resolvePeerPid ?? resolvePeerPid;
+  // The peer's pid, looked up once per connection and shared by every request
+  // it carries. A lookup the platform could not answer is not kept: the
+  // connection's next request asks again.
+  const peerPids = new WeakMap<Socket, Promise<number | null>>();
+  const peerPid = (socket: Socket): Promise<number | null> => {
+    const known = peerPids.get(socket);
+    if (known !== undefined) return known;
+    const lookup = resolvePeer(socket, platform);
+    peerPids.set(socket, lookup);
+    void lookup.then(
+      (pid) => {
+        if (pid === null) peerPids.delete(socket);
+      },
+      () => peerPids.delete(socket),
+    );
+    return lookup;
+  };
 
   let revoked = false;
   const stats = {
@@ -278,8 +299,8 @@ export async function startLocalModelGateway(
     // supervised tree is what narrows it back down. A platform that cannot
     // answer leaves this check silent rather than refusing everything.
     if (options.isSupervisedPid !== undefined) {
-      const peerPid = await resolvePeer(req.socket, platform);
-      if (peerPid !== null && !(await options.isSupervisedPid(peerPid))) {
+      const pid = await peerPid(req.socket);
+      if (pid !== null && !(await options.isSupervisedPid(pid))) {
         refuse(res, 403, "caller not part of this session");
         return;
       }

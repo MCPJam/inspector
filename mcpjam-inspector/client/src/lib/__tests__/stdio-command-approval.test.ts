@@ -12,6 +12,7 @@ vi.mock("@/lib/session-token", () => ({
 import {
   askStdioCommandApprovalForChatError,
   obtainStdioCommandApproval,
+  reviewStdioCommandApproval,
   readStdioCommandApprovalTerms,
   useStdioCommandApprovalStore,
 } from "../stdio-command-approval";
@@ -300,5 +301,28 @@ describe("askStdioCommandApprovalForChatError", () => {
     await answerNextPrompt(true);
     await asked;
     expect(toastMock.error).toHaveBeenCalledWith("disk full");
+  });
+});
+
+describe("review skipped plugin command", () => {
+  beforeEach(() => { authFetchMock.mockReset(); toastMock.success.mockClear(); toastMock.error.mockClear(); });
+  it("fetches fresh terms and cancellation neither approves, connects nor replays", async () => {
+    authFetchMock.mockResolvedValueOnce(jsonResponse(REFUSAL));
+    const answer = answerNextPrompt(false);
+    await reviewStdioCommandApproval("proj-1", "srv-1", "Files");
+    expect(await answer).toEqual(TERMS);
+    expect(authFetchMock).toHaveBeenCalledTimes(1);
+    expect(authFetchMock.mock.calls[0][0]).toBe("/api/mcp/servers/command-approval");
+    expect(toastMock.success).not.toHaveBeenCalled();
+  });
+  it("approval uses reviewed fingerprint but never retries the original operation", async () => {
+    authFetchMock.mockResolvedValueOnce(jsonResponse(REFUSAL)).mockResolvedValueOnce(jsonResponse({ success: true }));
+    const answer = answerNextPrompt(true);
+    await reviewStdioCommandApproval("proj-1", "srv-1", "Files");
+    await answer;
+    expect(authFetchMock.mock.calls.map((call) => call[0])).toEqual([
+      "/api/mcp/servers/command-approval", "/api/mcp/servers/approve-command",
+    ]);
+    expect(JSON.parse(authFetchMock.mock.calls[1][1].body).fingerprint).toBe(TERMS.fingerprint);
   });
 });

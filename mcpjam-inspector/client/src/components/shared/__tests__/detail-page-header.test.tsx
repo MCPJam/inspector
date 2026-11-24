@@ -3,6 +3,36 @@ import { describe, expect, it, vi } from "vitest";
 import { DetailPageHeader } from "../detail-page-header";
 
 describe("DetailPageHeader", () => {
+  it("places tabs below the title and actions in the wrapping Swarm layout", () => {
+    render(
+      <DetailPageHeader
+        backLabel="Swarms"
+        onBack={() => {}}
+        title={<h1>Weather Tools</h1>}
+        actions={<button type="button">Share</button>}
+        tabs={{
+          value: "findings",
+          options: [{ value: "findings", label: "Findings" }],
+          onChange: vi.fn(),
+          ariaLabel: "Swarm run view",
+          indicatorId: "test-tabs-below",
+        }}
+        tabsBelow
+      />,
+    );
+
+    const tabs = screen.getByRole("navigation", { name: "Swarm run view" });
+    const title = screen.getByRole("heading", { name: "Weather Tools" });
+    const actions = screen.getByRole("button", { name: "Share" }).parentElement
+      ?.parentElement;
+    // Pin the responsive grid and flex rules. Browser QA checks the rendered wrap.
+    expect(tabs.parentElement).toHaveClass("grid", "@lg/detail-header:flex-wrap");
+    expect(tabs).toHaveClass("col-span-2", "basis-full");
+    expect(title.parentElement).toHaveClass("col-span-2", "min-w-0");
+    expect(actions).toHaveClass("col-start-2", "row-start-1", "ml-auto");
+    expect(tabs.previousElementSibling).toBe(actions);
+  });
+
   it("keeps view tabs on the same row as the title", () => {
     const onChange = vi.fn();
     render(
@@ -145,5 +175,56 @@ describe("DetailPageHeader", () => {
     expect(scrollIntoView.mock.instances[0]).toBe(
       screen.getByRole("button", { name: "Insights" }),
     );
+  });
+
+  it("stacks the actions under back and title on a narrow header when asked", () => {
+    // jsdom has no layout: this pins the container query that moves the
+    // actions to their own line below 48rem instead of over the title.
+    const { rerender } = render(
+      <DetailPageHeader
+        backLabel="Conformance"
+        onBack={() => {}}
+        title={<h1>prober-2026</h1>}
+        actions={<button type="button">Run again</button>}
+        testId="header"
+        stackWhenNarrow
+      />,
+    );
+
+    const header = screen.getByTestId("header");
+    // Stacked, the row centers its items only from 48rem up.
+    const row = screen
+      .getByRole("heading", { name: "prober-2026" })
+      .closest("div.flex.justify-between");
+    expect(header).toHaveClass("@container/detail-header");
+    expect(row).toHaveClass("flex-col", "@3xl/detail-header:flex-row");
+    const runAgain = screen.getByRole("button", { name: "Run again" });
+    expect(row?.contains(runAgain)).toBe(true);
+    // The actions row can shrink to the header and wrap while stacked.
+    expect(runAgain.parentElement).toHaveClass(
+      "min-w-0",
+      "shrink",
+      "flex-wrap",
+      "@3xl/detail-header:shrink-0",
+    );
+
+    // Other detail pages keep their single row.
+    rerender(
+      <DetailPageHeader
+        backLabel="Swarms"
+        onBack={() => {}}
+        title={<h1>Swarm abc</h1>}
+        actions={<button type="button">Run again</button>}
+        testId="header"
+      />,
+    );
+    expect(screen.getByTestId("header")).not.toHaveClass(
+      "@container/detail-header",
+    );
+    expect(
+      screen
+        .getByRole("heading", { name: "Swarm abc" })
+        .closest("div.flex.items-center.justify-between"),
+    ).not.toHaveClass("flex-col");
   });
 });

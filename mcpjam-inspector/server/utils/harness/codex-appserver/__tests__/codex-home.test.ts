@@ -21,6 +21,12 @@ const base = {
 };
 
 describe("config.toml", () => {
+  it("closes pilot model connections so a new turn receives its own lease", () => {
+    expect(renderCodexConfigToml(base)).not.toContain("http_headers");
+    expect(renderCodexConfigToml({ ...base, closeModelConnections: true }))
+      .toContain('http_headers = { Connection = "close" }');
+  });
+
   it("renders the provider block and the relay server", () => {
     expect(
       renderCodexConfigToml({

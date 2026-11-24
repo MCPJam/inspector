@@ -6,7 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 const rootDir = process.cwd();
 const expectedMcpV2PackageVersions = {
   "@modelcontextprotocol/client": "2.3.1",
-  "@modelcontextprotocol/node": "2.0.0",
+  "@modelcontextprotocol/node": "2.1.2",
   "@modelcontextprotocol/server": "2.3.1",
 };
 const exactVersionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
@@ -89,6 +89,7 @@ try {
   if (packageSpecs.inspector.publish) {
     await assertPackedServerBytes(installDir);
     await smokeInspectorStartup(installDir);
+    await smokeAskMcpjam(installDir);
   }
 } finally {
   rmSync(tmpRoot, { recursive: true, force: true });
@@ -119,6 +120,28 @@ async function smokeLocalTest(installDir, tmpRoot) {
     workDir,
   });
   console.log("mcpjam test local smoke passed against the installed package.");
+}
+
+/**
+ * One signed-in Ask MCPJam turn through the INSTALLED Inspector with no
+ * service token. Shared with Build and Test's run against the built checkout
+ * so the two cannot drift.
+ */
+async function smokeAskMcpjam(installDir) {
+  const { runAskMcpjamSmoke } = await import(
+    path.join(rootDir, ".github", "scripts", "ask-mcpjam-smoke.mjs")
+  );
+  await runAskMcpjamSmoke({
+    inspectorBin: path.join(
+      installDir,
+      "node_modules",
+      "@mcpjam",
+      "inspector",
+      "bin",
+      "start.js",
+    ),
+    cwd: installDir,
+  });
 }
 
 function boolEnv(name) {

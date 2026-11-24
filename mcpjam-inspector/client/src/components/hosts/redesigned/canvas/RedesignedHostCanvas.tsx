@@ -1,33 +1,37 @@
 import {
   createContext,
   memo,
-  useCallback,
   useContext,
-  useEffect,
   useMemo,
   useRef,
-  useState,
   type CSSProperties,
 } from "react";
 import { motion } from "framer-motion";
 import {
-  BaseEdge,
-  Background,
-  BackgroundVariant,
-  Controls,
   Handle,
   Position,
-  ReactFlow,
   type Edge,
-  type EdgeProps,
   type Node,
   type NodeProps,
 } from "@xyflow/react";
 import { Globe, ArrowRight, ArrowUpRight, Plus, Server, Settings, TerminalSquare } from "lucide-react";
-import "@xyflow/react/dist/style.css";
 import { cn } from "@/lib/utils";
 import type { HostThemeMode } from "@/lib/client-styles";
 import { ComputerStatusChip } from "@/components/computer/ComputerStatusChip";
+import {
+  CanvasShell,
+  DECORATIVE_HANDLE_CLASS,
+} from "@/components/canvas-kit/CanvasShell";
+import {
+  shiftNodesY,
+  useMeasuredShift,
+  useReportedHeight,
+} from "@/components/canvas-kit/measured-shift";
+import {
+  TreeBranchEdge,
+  TreeTrunkEdge,
+  shiftFixedEdgesY,
+} from "@/components/canvas-kit/tree-edges";
 import {
   ADD_SERVER_NODE_ID,
   HOST_MATRIX_NODE_ID,
@@ -37,6 +41,7 @@ import {
   type ComputerNodeData,
   type BrowserNodeData,
   type HostMatrixNodeData,
+  type HostRedesignFlowNode,
   type HostRedesignViewModel,
   type ServerCardNodeData,
   type ServersHubNodeData,
@@ -48,8 +53,7 @@ import {
   SNAPPY_HOST_REVEAL,
 } from "../../transition-tokens";
 import { HostMatrixCard } from "./HostCapabilityMatrix";
-
-const decorativeHandleClass = "!opacity-0 !w-2 !h-2";
+import { HostHarnessChoice } from "./HostHarnessChoice";
 
 /* ============================================================
    Sub-region click dispatch. The matrix is a single ReactFlow
@@ -66,6 +70,8 @@ const HostMatrixContext = createContext<{
   themeMode: HostThemeMode;
   /** Navigate to the Computer tab — threaded to the Computer island's "Open terminal" link. */
   onOpenComputer?: () => void;
+  /** The canvas only summarizes: the Harness section names the harness. */
+  readOnly?: boolean;
 } | null>(null);
 
 /* ============================================================
@@ -78,25 +84,11 @@ const HostMatrixNodeRenderer = memo(
     const { data } = props;
     const ctx = useContext(HostMatrixContext);
     const containerRef = useRef<HTMLDivElement | null>(null);
-    const reportMatrixHeight = ctx?.reportMatrixHeight;
     // Sandbox CSP rows / permissions / View-iframe globals make the card's
     // height content-driven, so the canvas can't precompute where the
-    // servers hub belongs. ResizeObserver reads the layout box (transform
-    // animations don't pollute it), and the parent shifts the hub + server
-    // cards + branch edges by the delta vs. the static estimate.
-    useEffect(() => {
-      const el = containerRef.current;
-      if (!el || !reportMatrixHeight) return;
-      const ro = new ResizeObserver((entries) => {
-        const entry = entries[0];
-        if (!entry) return;
-        const box = entry.borderBoxSize?.[0];
-        const h = box ? box.blockSize : entry.contentRect.height;
-        if (h > 0) reportMatrixHeight(h);
-      });
-      ro.observe(el);
-      return () => ro.disconnect();
-    }, [reportMatrixHeight]);
+    // servers hub belongs. The parent shifts the hub + server cards + branch
+    // edges by the delta between this measured height and its estimate.
+    useReportedHeight(containerRef, ctx?.reportMatrixHeight);
     // Reveal the host card with a brief scale/fade after the page-level
     // crossfade begins. Without this the Cursor card reads as "already
     // there" on click — the demo's host group has the same beat.
@@ -123,12 +115,22 @@ const HostMatrixNodeRenderer = memo(
           themeMode={ctx?.themeMode ?? "light"}
           selectedNodeId={ctx?.selectedNodeId ?? null}
           onSelectNode={ctx?.onSelectNode ?? (() => {})}
+          harness={
+            data.harness ? (
+              <HostHarnessChoice
+                hostId={data.harness.hostId}
+                isDirty={data.harness.isDirty}
+                readOnly={ctx?.readOnly === true}
+                modelLabel={data.agent?.modelLabel ?? null}
+              />
+            ) : undefined
+          }
         />
         <Handle
           type="source"
           position={Position.Bottom}
           id="bottom"
-          className={decorativeHandleClass}
+          className={DECORATIVE_HANDLE_CLASS}
         />
       </motion.div>
     );
@@ -170,13 +172,13 @@ const ServersHubNodeRenderer = memo(
           type="target"
           position={Position.Top}
           id="top"
-          className={decorativeHandleClass}
+          className={DECORATIVE_HANDLE_CLASS}
         />
         <Handle
           type="source"
           position={Position.Bottom}
           id="bottom"
-          className={decorativeHandleClass}
+          className={DECORATIVE_HANDLE_CLASS}
         />
       </motion.div>
     );
@@ -281,7 +283,7 @@ const ServerCardNodeRenderer = memo(
           type="target"
           position={Position.Top}
           id="top"
-          className={decorativeHandleClass}
+          className={DECORATIVE_HANDLE_CLASS}
         />
       </motion.div>
     );
@@ -372,7 +374,7 @@ const BuiltinToolsNodeRenderer = memo(
           type="target"
           position={Position.Right}
           id="right"
-          className={decorativeHandleClass}
+          className={DECORATIVE_HANDLE_CLASS}
         />
       </motion.div>
     );
@@ -394,7 +396,7 @@ const BrowserNodeRenderer = memo(
       <span className="text-[10.5px]">
         {data.enabled ? data.profileLabel : "Configure browser access"}
       </span>
-      <Handle type="target" position={Position.Left} id="left" className={decorativeHandleClass} />
+      <Handle type="target" position={Position.Left} id="left" className={DECORATIVE_HANDLE_CLASS} />
     </div>
   ),
 );
@@ -430,7 +432,7 @@ const ComputerNodeRenderer = memo(
             type="target"
             position={Position.Left}
             id="left"
-            className={decorativeHandleClass}
+            className={DECORATIVE_HANDLE_CLASS}
           />
         </motion.div>
       );
@@ -497,7 +499,7 @@ const ComputerNodeRenderer = memo(
           type="target"
           position={Position.Left}
           id="left"
-          className={decorativeHandleClass}
+          className={DECORATIVE_HANDLE_CLASS}
         />
       </motion.div>
     );
@@ -516,29 +518,6 @@ const nodeTypes = {
 };
 
 /**
- * Both host-canvas edges (matrix→hub trunk and hub→card branches) read
- * their endpoints from `edge.data.fixed{Source,Target}{X,Y}` instead of
- * from ReactFlow's measured handle positions.
- *
- * Why: framer-motion's `layout` + `layoutId` morph on the canvas server
- * pills (and the matrix card's initial scale/y transform) modify the
- * elements' CSS transforms. ReactFlow measures handle positions via
- * `getBoundingClientRect`, which includes those transforms — so the
- * measured target X/Y can be hundreds of px away from where the node
- * actually lives in flow coordinates. That made one branch flap up to
- * the top-right of the canvas (the "giant dashed rectangle" artifact).
- *
- * The canvasBuilder already has authoritative flow coordinates for every
- * node, so just pass them straight through and bypass the measurement.
- */
-interface FixedEdgeData {
-  fixedSourceX: number;
-  fixedSourceY: number;
-  fixedTargetX: number;
-  fixedTargetY: number;
-}
-
-/**
  * Shift the reflowed `hostBranch` edges (host→hub→server cards) down by
  * `dy` to track the matrix card's measured-vs-estimated height delta.
  *
@@ -551,110 +530,32 @@ interface FixedEdgeData {
  * coordinates exist to prevent. Exported for direct unit testing.
  */
 export function shiftReflowedBranchEdges(edges: Edge[], dy: number): Edge[] {
-  if (dy === 0) return edges;
-  return edges.map((edge) => {
-    if (edge.type !== "hostBranch" || !edge.data) return edge;
-    if (edge.source === HOST_MATRIX_NODE_ID) return edge;
-    const d = edge.data as unknown as FixedEdgeData;
-    return {
-      ...edge,
-      data: {
-        ...d,
-        fixedSourceY: d.fixedSourceY + dy,
-        fixedTargetY: d.fixedTargetY + dy,
-      },
-    };
-  });
-}
-
-const TRUNK_CORNER = 14;
-const BRANCH_CORNER = 8;
-
-function buildOrthogonalTreePath(
-  sourceX: number,
-  sourceY: number,
-  targetX: number,
-  targetY: number,
-  cornerRadius: number,
-): string {
-  const midY = (sourceY + targetY) / 2;
-  const goingRight = targetX >= sourceX;
-  const dirX = goingRight ? 1 : -1;
-  const r = Math.min(
-    cornerRadius,
-    Math.abs(targetX - sourceX) / 2,
-    Math.abs(midY - sourceY),
-    Math.abs(targetY - midY),
+  return shiftFixedEdgesY(
+    edges,
+    dy,
+    (edge) => edge.type === "hostBranch" && edge.source !== HOST_MATRIX_NODE_ID,
   );
-  if (r <= 0.5) {
-    // Source and target vertically aligned — single straight line.
-    return `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`;
-  }
-  return [
-    `M ${sourceX} ${sourceY}`,
-    `L ${sourceX} ${midY - r}`,
-    `Q ${sourceX} ${midY} ${sourceX + r * dirX} ${midY}`,
-    `L ${targetX - r * dirX} ${midY}`,
-    `Q ${targetX} ${midY} ${targetX} ${midY + r}`,
-    `L ${targetX} ${targetY}`,
-  ].join(" ");
-}
-
-function makeFixedEdge(cornerRadius: number) {
-  return function FixedEdge({ id, data, style, markerEnd }: EdgeProps) {
-    const d = data as FixedEdgeData | undefined;
-    if (!d) return null;
-    const path = buildOrthogonalTreePath(
-      d.fixedSourceX,
-      d.fixedSourceY,
-      d.fixedTargetX,
-      d.fixedTargetY,
-      cornerRadius,
-    );
-    return <BaseEdge id={id} path={path} style={style} markerEnd={markerEnd} />;
-  };
 }
 
 /**
- * Trunk edge uses ReactFlow's measured source/target positions instead of
- * the canvasBuilder's fixed coords, so the line tracks the matrix card's
- * actual rendered bottom rather than the `matrixH` estimate (which the
- * card content doesn't reliably hit, leaving a visible gap + the apparent
- * offset that motivated this edge type).
- *
- * Why this is safe (unlike the branch edges): neither the matrix card nor
- * the servers hub uses framer-motion `layout`/`layoutId`. They only run a
- * one-time mount reveal that settles to an identity transform, so
- * `getBoundingClientRect` — and therefore ReactFlow's measured handle
- * positions — is correct in steady state. The branch edges still need
- * fixed coords because the server cards' `layoutId` morph persistently
- * pollutes their measured rects on every tab switch.
+ * The hub→card branches use fixed coordinates because the server cards'
+ * `layoutId` morph pollutes their measured rects on every tab switch. The
+ * matrix→hub trunk uses measured positions so it meets the matrix card's
+ * rendered bottom rather than the builder's height estimate.
  */
-function HostTrunkEdge({
-  id,
-  sourceX,
-  sourceY,
-  targetX,
-  targetY,
-  style,
-  markerEnd,
-}: EdgeProps) {
-  const path = buildOrthogonalTreePath(
-    sourceX,
-    sourceY,
-    targetX,
-    targetY,
-    TRUNK_CORNER,
-  );
-  return <BaseEdge id={id} path={path} style={style} markerEnd={markerEnd} />;
-}
-
-const HostBranchEdge = makeFixedEdge(BRANCH_CORNER);
-
 const edgeTypes = {
-  hostTrunk: HostTrunkEdge,
-  hostBranch: HostBranchEdge,
+  hostTrunk: TreeTrunkEdge,
+  hostBranch: TreeBranchEdge,
 };
+
+/** The nodes laid out below the matrix card, which move with its height. */
+function isServersBlockNode(node: HostRedesignFlowNode): boolean {
+  return (
+    node.id === SERVERS_HUB_NODE_ID ||
+    node.id === ADD_SERVER_NODE_ID ||
+    node.id.startsWith("server-card:")
+  );
+}
 
 interface RedesignedHostCanvasProps {
   viewModel: HostRedesignViewModel;
@@ -715,45 +616,21 @@ export function RedesignedHostCanvas({
     [viewModel.edges, readOnly],
   );
 
-  // Measured height of the host matrix card. The canvasBuilder positions
-  // the servers hub from a static height estimate; we shift the hub +
-  // server cards + add-server pill + branch-edge endpoints by
-  // (measured - estimated) so they always sit `SERVERS_HUB_GAP` below the
-  // card's true bottom. 0 means "not measured yet" — fall through to the
-  // static positions for the initial frame.
-  const [measuredMatrixH, setMeasuredMatrixH] = useState(0);
-  const reportMatrixHeight = useCallback((h: number) => {
-    setMeasuredMatrixH((prev) =>
-      Math.abs(prev - h) < 0.5 ? prev : h,
-    );
-  }, []);
+  // The builder places the servers hub from an estimate of the matrix card's
+  // height: `serversHubY = estimatedMatrixH + SERVERS_HUB_GAP`. Reading the
+  // estimate back off the hub keeps the shift in sync with whatever section
+  // toggles (apps extension on/off) the builder applied. Once the card is
+  // measured, the hub, server cards, add-server pill and their branch edges
+  // move by the difference so they sit `SERVERS_HUB_GAP` below its true bottom.
+  const hub = filteredNodes.find((n) => n.id === SERVERS_HUB_NODE_ID);
+  const { dy, reportHeight: reportMatrixHeight } = useMeasuredShift(
+    hub ? hub.position.y - SERVERS_HUB_GAP : null,
+  );
 
-  // The estimated matrix height the builder used is recoverable from the
-  // hub's pre-shift Y: `serversHubY = estimatedMatrixH + SERVERS_HUB_GAP`.
-  // Reading it off the hub keeps the shift in sync with whatever section
-  // toggles (apps extension on/off) the builder applied.
-  const dy = useMemo(() => {
-    if (measuredMatrixH <= 0) return 0;
-    const hub = filteredNodes.find((n) => n.id === SERVERS_HUB_NODE_ID);
-    if (!hub) return 0;
-    const estimatedMatrixH = hub.position.y - SERVERS_HUB_GAP;
-    return measuredMatrixH - estimatedMatrixH;
-  }, [filteredNodes, measuredMatrixH]);
-
-  const shiftedNodes = useMemo(() => {
-    if (dy === 0) return filteredNodes;
-    return filteredNodes.map((node) => {
-      const shouldShift =
-        node.id === SERVERS_HUB_NODE_ID ||
-        node.id === ADD_SERVER_NODE_ID ||
-        node.id.startsWith("server-card:");
-      if (!shouldShift) return node;
-      return {
-        ...node,
-        position: { x: node.position.x, y: node.position.y + dy },
-      };
-    });
-  }, [filteredNodes, dy]);
+  const shiftedNodes = useMemo(
+    () => shiftNodesY(filteredNodes, dy, isServersBlockNode),
+    [filteredNodes, dy],
+  );
 
   const shiftedEdges = useMemo(
     () => shiftReflowedBranchEdges(filteredEdges, dy),
@@ -786,6 +663,7 @@ export function RedesignedHostCanvas({
             onSelectNode: () => onRequestEdit?.(),
             reportMatrixHeight,
             themeMode,
+            readOnly: true,
           }
         : {
             selectedNodeId,
@@ -805,99 +683,35 @@ export function RedesignedHostCanvas({
     ],
   );
 
-  // Hold the canvas edges invisible until the server pills have landed at
-  // their layoutId destinations AND their inner content has faded in —
-  // otherwise the lines render at full opacity while the cards are still
-  // morphing in from the Servers grid, which reads as "lines drawn first,
-  // then servers". Timing covers SNAPPY_CAMERA (1150ms) + inner-fade tail.
-  const [edgesReady, setEdgesReady] = useState(false);
-  useEffect(() => {
-    const t = window.setTimeout(() => setEdgesReady(true), 1450);
-    return () => window.clearTimeout(t);
-  }, []);
-
-  // ReactFlow renders nodes at their absolute canvas coordinates first, then
-  // applies `fitView` on the next frame, which causes a one-frame "off-center"
-  // flash where edges trail off to wherever the nodes are pre-fit. Hide the
-  // viewport until onInit fires and fitView has settled, then fade in.
-  const [viewportReady, setViewportReady] = useState(false);
-
   return (
-    <div
-      className="host-redesign-canvas relative h-full w-full overflow-hidden rounded-[28px] border border-border/70 bg-background"
-      style={shellStyle}
-      data-edges-ready={edgesReady ? "true" : "false"}
-      data-viewport-ready={viewportReady ? "true" : "false"}
-    >
-      <HostMatrixContext.Provider value={matrixCtx}>
-        {/* Inline opacity gate: keeps ReactFlow's pre-fitView paint (nodes
-            at raw canvas coords, edges trailing off-screen) invisible until
-            fitView has applied. Inline style always wins over the cascade,
-            unlike the `data-viewport-ready` CSS attribute selector which was
-            getting shadowed by xyflow's own stylesheet in some load orders. */}
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            opacity: viewportReady ? 1 : 0,
-            transition: viewportReady
-              ? "opacity 220ms cubic-bezier(0.22, 1, 0.36, 1)"
-              : "none",
-          }}
-        >
-        <ReactFlow
-          nodes={nodes}
-          edges={shiftedEdges}
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          minZoom={0.55}
-          maxZoom={1.35}
-          proOptions={{ hideAttribution: true }}
-          panOnDrag
-          panOnScroll
-          zoomOnScroll
-          nodesDraggable={false}
-          nodesConnectable={false}
-          elementsSelectable={!readOnly}
-          fitView
-          fitViewOptions={{ padding: 0.18, duration: 0 }}
-          onInit={(instance) => {
-            // Force a deterministic fit + defer the visibility flip a couple
-            // frames so node-measurement and fitView have definitely
-            // applied. `requestAnimationFrame` alone fires before
-            // ReactFlow's measurement pass on the first render.
-            instance.fitView({ padding: 0.18, duration: 0 });
-            window.setTimeout(() => setViewportReady(true), 60);
-          }}
-          onNodeClick={(_, node) => {
-            if (readOnly) {
-              onRequestEdit?.(node.id);
-              return;
-            }
-            if (node.id === "add-server") {
-              onAddServer();
-              return;
-            }
-            onSelectNode(node.id);
-          }}
-          onPaneClick={readOnly ? () => onRequestEdit?.() : onClearSelection}
-        >
-          <Background
-            id="host-redesign-dots"
-            variant={BackgroundVariant.Dots}
-            gap={16}
-            size={0.9}
-            color="oklch(0.55 0.02 250 / 0.22)"
-            patternClassName="opacity-[0.45]"
-          />
-          <Controls
-            showInteractive={false}
-            className="!rounded-xl !border !border-border/70 !bg-card/95"
-          />
-        </ReactFlow>
-        </div>
-      </HostMatrixContext.Provider>
-    </div>
+    <HostMatrixContext.Provider value={matrixCtx}>
+      <CanvasShell
+        nodes={nodes}
+        edges={shiftedEdges}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        backgroundId="host-redesign-dots"
+        style={shellStyle}
+        elementsSelectable={!readOnly}
+        // Hold the edges back until the server pills have landed at their
+        // layoutId destinations and their content has faded in, so lines are
+        // not drawn before the cards arrive: SNAPPY_CAMERA (1150ms) plus the
+        // inner-fade tail.
+        edgeRevealDelayMs={1450}
+        onNodeClick={(node) => {
+          if (readOnly) {
+            onRequestEdit?.(node.id);
+            return;
+          }
+          if (node.id === "add-server") {
+            onAddServer();
+            return;
+          }
+          onSelectNode(node.id);
+        }}
+        onPaneClick={readOnly ? () => onRequestEdit?.() : onClearSelection}
+      />
+    </HostMatrixContext.Provider>
   );
 }
 

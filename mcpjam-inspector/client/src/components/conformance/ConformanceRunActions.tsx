@@ -7,14 +7,12 @@
 import { useEffect, useState } from "react";
 import { Settings, Share2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { ShareDialog } from "@/components/sharing/ShareDialog";
-import { ResourceSharePanel } from "@/components/sharing/ResourceSharePanel";
 import type { ConformanceSelection } from "@/hooks/use-conformance-run";
 import {
   buildConformanceRunServerPath,
-  buildConformanceSharePath,
   useAppNavigate,
 } from "@/lib/app-navigation";
+import { ConformanceShareRunDialog } from "./share/ConformanceShareRunDialog";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
 import type { ConformanceDefaults } from "@/hooks/use-conformance-server-data";
@@ -36,18 +34,25 @@ export type SavedRunServerSettings = {
     selection: ConformanceSelection,
     inputs?: ConformanceProbes,
   ) => Promise<void>;
+  /** Each server's saved run timeout override, by name. */
+  timeouts?: Record<string, number>;
+  /** Saves a server's run timeout; null goes back to the default. */
+  saveTimeout?: (serverName: string, seconds: number | null) => Promise<void>;
 };
 
 /**
- * Share for one saved run: opens the share dialog. Only a finished run can be
- * shared.
+ * Share for one saved run: opens the run's score card, to download or post,
+ * with its link and access settings. Only a finished run can be shared.
+ * `serverName` titles the card; the public link's preview never shows it.
  */
 export function ConformanceRunShareButton({
   runId,
   finished,
+  serverName,
 }: {
   runId: string;
   finished: boolean;
+  serverName?: string;
 }) {
   const [shareOpen, setShareOpen] = useState(false);
 
@@ -62,30 +67,13 @@ export function ConformanceRunShareButton({
       >
         <Share2 className="size-3.5" aria-hidden /> Share
       </Button>
-      <ShareDialog
+      <ConformanceShareRunDialog
+        runId={runId}
+        serverName={serverName}
+        finished={finished}
         open={shareOpen}
         onOpenChange={setShareOpen}
-        title="Share conformance run"
-        description="A redacted snapshot of this run."
-      >
-        <ResourceSharePanel
-          resourceType="conformanceRun"
-          resourceId={runId}
-          disabledReason={finished ? null : "Only a finished run can be shared"}
-          footerSlot={
-            <p className="text-xs text-muted-foreground">
-              Viewers see a frozen snapshot. Revoking access takes effect
-              immediately.
-            </p>
-          }
-          linkLabel="Share link"
-          buildShareUrl={(token) =>
-            `${window.location.origin}${buildConformanceSharePath(token)}`
-          }
-          testIdPrefix="conformance-share"
-          invites={false}
-        />
-      </ShareDialog>
+      />
     </>
   );
 }
@@ -112,7 +100,8 @@ export function SavedRunActions({
 }) {
   const navigate = useAppNavigate();
   return (
-    <div className="ml-auto flex items-center gap-2">
+    // Wraps when the header stacks it on a narrow window.
+    <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
       {serverName && settings ? (
         <Button
           variant="outline"
@@ -125,7 +114,14 @@ export function SavedRunActions({
           <Settings className="size-3.5" aria-hidden /> Settings
         </Button>
       ) : null}
-      <ConformanceRunShareButton runId={runId} finished={finished} />
+      {/* Only a saved server's own name goes on the card. A run without one
+          would fall back to its target key (a URL or a raw id), and the card
+          and post are public; with no name, the card shows none. */}
+      <ConformanceRunShareButton
+        runId={runId}
+        finished={finished}
+        serverName={serverName}
+      />
       <Button
         size="sm"
         disabled={serversLoading}
@@ -200,6 +196,18 @@ export function SavedRunSettings({
       inputs={settings.inputs?.[serverName] ?? initial?.inputs}
       onSave={(selection, inputs) =>
         settings.save(serverName, selection, inputs)
+      }
+      timeoutSeconds={
+        // `Object.hasOwn`, as the Conformance page reads the same map: a
+        // server named like a built-in ("constructor") must not get one.
+        settings.timeouts && Object.hasOwn(settings.timeouts, serverName)
+          ? settings.timeouts[serverName]
+          : undefined
+      }
+      onSaveTimeout={
+        settings.saveTimeout
+          ? (seconds) => settings.saveTimeout!(serverName, seconds)
+          : undefined
       }
       onBack={onBack}
     />

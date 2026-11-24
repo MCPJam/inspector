@@ -6,6 +6,7 @@ import {
 
 import { HOSTED_MODEL_IDS } from "./hosted-model-ids.generated";
 import { MODEL_ID_PREFIX_ALIASES } from "./model-id-prefix-aliases";
+import type { GatewayApi } from "./gateway-connection";
 
 import type {
   AuthMethod,
@@ -253,8 +254,8 @@ export const isMCPJamGuestAllowedModel = (
  * Which Anthropic ids reject the sampling parameters lives in `@mcpjam/sdk`
  * ({@link modelRejectsTemperature}) rather than here, because the SDK's
  * `HostRunner` builds its own provider request and needs the same answer. The
- * GPT-5 carve-out stays inspector-side: it is not a Claude family, so the SDK
- * predicate has nothing to say about it.
+ * GPT-5 and own-key GPT-6 carve-outs stay inspector-side: neither is a Claude
+ * family, so the SDK predicate has nothing to say about them.
  *
  * Hosted (MCPJam-provided) ids answer the same way as own-provider ones. They
  * used to be exempted on the grounds that the backend owns the request body it
@@ -265,7 +266,10 @@ export const isMCPJamGuestAllowedModel = (
  */
 export const modelSupportsTemperature = (modelId: string | Model): boolean => {
   const id = String(modelId);
-  if (id.includes("gpt-5")) {
+  // Bare GPT-6 ids reach OpenAI through the AI SDK, which drops temperature at
+  // the default effort; hosted `openai/gpt-6-*` rows answer from their catalog.
+  // A legacy host pin of bare `gpt-6-luna` bills to MCPJam and answers false too.
+  if (id.includes("gpt-5") || id.startsWith("gpt-6")) {
     return false;
   }
   return !modelRejectsTemperature(id);
@@ -281,7 +285,7 @@ export const modelSupportsTemperature = (modelId: string | Model): boolean => {
  * claiming `temperature` for one of those is stale, not news. What the metadata
  * adds is the models no id pattern covers: the reasoning families that reject
  * sampling for reasons unrelated to being Claude, which today only `gpt-5`
- * catches by name.
+ * and bare `gpt-6` ids catch by name.
  *
  * Only a COMPLETE parameter list may withdraw it
  * (`supportedParametersComplete`, set when the backend read the Gateway's full
@@ -404,6 +408,18 @@ export interface ModelDefinition {
    */
   orgProvider?: { providerKey: string; id?: string };
   /**
+   * Set on rows from an organization gateway (`custom:*`): the APIs it
+   * serves, where its calls come from, and the catalog model this row's
+   * gateway model maps to (absent when unmapped). Harness pickers judge the
+   * row on these (`gatewayHarnessModel`).
+   */
+  gateway?: {
+    providerKey: string;
+    apis: readonly GatewayApi[];
+    runtimeLocation?: "cloud" | "local";
+    modelId?: string;
+  };
+  /**
    * The id the provider API is called with, when it is chosen explicitly
    * rather than being the row id: the deployment name of an org Azure OpenAI
    * row. Copied to the saved selection's `nativeModelId` by the selection
@@ -473,18 +489,16 @@ export enum Model {
   CLAUDE_OPUS_4_6 = "claude-opus-4-6",
   CLAUDE_SONNET_4_6 = "claude-sonnet-4-6",
   CLAUDE_SONNET_4_5 = "claude-sonnet-4-5",
+  CLAUDE_HAIKU_5_5 = "claude-haiku-5-5",
   CLAUDE_HAIKU_4_5 = "claude-haiku-4-5",
   GPT_4_1 = "gpt-4.1",
   GPT_4_1_MINI = "gpt-4.1-mini",
   GPT_4_1_NANO = "gpt-4.1-nano",
   GPT_4O = "gpt-4o",
   GPT_4O_MINI = "gpt-4o-mini",
-  GPT_4_TURBO = "gpt-4-turbo",
-  GPT_4 = "gpt-4",
   GPT_5 = "gpt-5",
   GPT_5_MINI = "gpt-5-mini",
   GPT_5_NANO = "gpt-5-nano",
-  GPT_5_MAIN = "openai/gpt-5",
   GPT_5_PRO = "gpt-5-pro",
   GPT_5_CODEX = "gpt-5-codex",
   GPT_5_1 = "gpt-5.1",
@@ -493,23 +507,13 @@ export enum Model {
   GPT_5_6_LUNA = "gpt-5.6-luna",
   GPT_5_6_SOL = "gpt-5.6-sol",
   GPT_5_6_TERRA = "gpt-5.6-terra",
-  GPT_3_5_TURBO = "gpt-3.5-turbo",
+  GPT_6_LUNA = "gpt-6-luna",
   DEEPSEEK_CHAT = "deepseek-chat",
   DEEPSEEK_REASONER = "deepseek-reasoner",
   // Google Gemini models
   GEMINI_2_5_PRO = "gemini-2.5-pro",
   GEMINI_2_5_FLASH = "gemini-2.5-flash",
-  GEMINI_2_5_FLASH_LITE = "gemini-2.5-flash-lite",
   GEMINI_2_0_FLASH_EXP = "gemini-2.0-flash-exp",
-  // Google Gemma models
-  GEMMA_3_2B = "gemma-3-2b",
-  GEMMA_3_9B = "gemma-3-9b",
-  GEMMA_3_27B = "gemma-3-27b",
-  GEMMA_2_2B = "gemma-2-2b",
-  GEMMA_2_9B = "gemma-2-9b",
-  GEMMA_2_27B = "gemma-2-27b",
-  CODE_GEMMA_2B = "codegemma-2b",
-  CODE_GEMMA_7B = "codegemma-7b",
   // Mistral models
   MISTRAL_LARGE_LATEST = "mistral-large-latest",
   MISTRAL_SMALL_LATEST = "mistral-small-latest",
@@ -544,7 +548,7 @@ export enum Model {
 export const SUPPORTED_MODELS_REVIEWED_AT = "2026-09-25";
 
 // SUPPORTED_MODELS now holds only BYOK entries (the user brings their own key):
-// `Model.*`-enum ids and "azure/…" ids. Hosted ("free") models are no longer
+// bare provider ids and "azure/…" ids. Hosted ("free") models are no longer
 // listed here — they come from the backend catalog (live) or the generated
 // snapshot (fallback). See hostedModelDefinitionsFromSnapshot / HOSTED_MODEL_IDS.
 export const SUPPORTED_MODELS: ModelDefinition[] = [
@@ -597,10 +601,40 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     contextLength: 200000,
   },
   {
+    id: Model.CLAUDE_HAIKU_5_5,
+    name: "Claude Haiku 5.5",
+    provider: "anthropic",
+    contextLength: 1000000,
+  },
+  {
     id: Model.CLAUDE_HAIKU_4_5,
     name: "Claude Haiku 4.5",
     provider: "anthropic",
     contextLength: 200000,
+  },
+  {
+    id: "gpt-6.1-sol",
+    name: "GPT-6.1 Sol",
+    provider: "openai",
+    contextLength: 1050000,
+  },
+  {
+    id: Model.GPT_6_LUNA,
+    name: "GPT-6 Luna",
+    provider: "openai",
+    contextLength: 1050000,
+  },
+  {
+    id: "gpt-6-sol",
+    name: "GPT-6 Sol",
+    provider: "openai",
+    contextLength: 1050000,
+  },
+  {
+    id: "gpt-6-astra",
+    name: "GPT-6 Astra",
+    provider: "openai",
+    contextLength: 1050000,
   },
   {
     id: Model.GPT_5_6_LUNA,
@@ -846,7 +880,7 @@ const HOSTED_MODEL_IDS_SET: ReadonlySet<string> = new Set(HOSTED_MODEL_IDS);
 
 export const isModelSupported = (id: string): boolean => {
   const canonical = getCanonicalModelId(id);
-  // BYOK statics (bare `Model.*`/azure ids) — the exhaustive local list.
+  // BYOK statics (bare provider ids and azure ids) — the exhaustive local list.
   if (SUPPORTED_MODELS.some((model) => model.id === id)) return true;
   // Known hosted model from the snapshot seed.
   if (HOSTED_MODEL_IDS_SET.has(canonical)) return true;
@@ -1090,6 +1124,8 @@ export type ServerFormAuthType = "auto" | "oauth" | "bearer" | "none" | "xaa";
 export interface ServerFormData {
   name: string;
   type: "stdio" | "http";
+  /** Omit to preserve the saved mapping. Null clears it. */
+  publishedPluginId?: string | null;
   command?: string;
   args?: string[];
   url?: string;

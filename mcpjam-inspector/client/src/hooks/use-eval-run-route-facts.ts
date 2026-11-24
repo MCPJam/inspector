@@ -33,6 +33,7 @@ import {
   isEvalRouteFactsError,
   type RouteFactsFailureKind,
 } from "@/lib/apis/eval-route-facts-api";
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 
 export interface RouteFactsErrorInfo {
   message: string;
@@ -80,20 +81,6 @@ function toErrorInfo(error: unknown): RouteFactsErrorInfo {
   };
 }
 
-/**
- * The statuses after which a run's document will not appear later.
- *
- * Including the status in the effect's identity makes the transition into a
- * terminal state re-ask exactly once. Omitted by callers that do not track
- * it, which keeps the old single-shot behaviour rather than breaking them.
- */
-const TERMINAL_RUN_STATUSES = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "timed_out",
-]);
-
 export function useEvalRunRouteFacts({
   projectId,
   runId,
@@ -113,7 +100,11 @@ export function useEvalRunRouteFacts({
   enabled?: boolean;
 }): EvalRunRouteFactsState {
   const active = Boolean(enabled && projectId && runId);
-  const runIsOver = runStatus ? TERMINAL_RUN_STATUSES.has(runStatus) : true;
+  // A run's document will not appear after it is terminal. Including the
+  // status in the effect's identity makes the transition into a terminal state
+  // re-ask exactly once; callers that do not track it keep the single-shot
+  // behaviour.
+  const runIsOver = runStatus ? isEvalRunTerminalStatus(runStatus) : true;
 
   const [document, setDocument] = useState<EvalRunRouteFacts | null>(null);
   const [status, setStatus] = useState<EvalRunRouteFactsStatus>("idle");

@@ -1,7 +1,15 @@
-import { useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "convex/react";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { ChevronRight } from "lucide-react";
+import {
+  DiffGroup,
+  DiffRow,
+  RevisionDiffView,
+  type RevisionSide,
+  type SnapshotDiff,
+} from "./ServerHistoryDiff";
+import type { SnapshotDiscovery, SnapshotTool } from "./server-history-diff";
 
 /**
  * Server snapshot history. Each revision is an immutable capture of this
@@ -27,25 +35,16 @@ interface RevisionSummary {
   };
 }
 
-interface SnapshotDiff {
-  discovery?: { changed: boolean; changedFields: string[] };
-  tools: {
-    added: Array<{ name: string; description?: string }>;
-    removed: Array<{ name: string }>;
-    changed: Array<{ name: string; changedFields: string[] }>;
-  };
-}
-
-interface SnapshotTool {
-  name: string;
-  description?: string;
-}
-
 interface RevisionSnapshot {
+  revisionNumber: number;
   snapshot: {
     tools?: SnapshotTool[];
+    discovery?: SnapshotDiscovery;
+    /** Pre-v3 snapshots kept discovery under `initialize`. */
+    initialize?: SnapshotDiscovery;
   };
   counts: { tools: number };
+  redaction?: { droppedFields?: string[] };
 }
 
 function compactAgo(ms: number): string {
@@ -312,6 +311,9 @@ function DiffBody({
       toRevisionNumber: revisionNumber,
     } as never
   ) as { diff: SnapshotDiff } | null | undefined;
+  // Server info values and storage drops live on the revisions, not the diff.
+  const from = useRevisionSide(projectId, serverId, revisionNumber - 1);
+  const to = useRevisionSide(projectId, serverId, revisionNumber);
 
   if (result === undefined) {
     return <Skeleton className="h-4 w-40" />;
@@ -323,115 +325,26 @@ function DiffBody({
       </div>
     );
   }
+  return <RevisionDiffView diff={result.diff} from={from} to={to} />;
+}
 
-  const { added, removed, changed } = result.diff.tools;
-  const discovery = result.diff.discovery;
-  const empty =
-    added.length === 0 &&
-    removed.length === 0 &&
-    changed.length === 0 &&
-    !discovery?.changed;
-
-  return (
-    <>
-      {added.length > 0 && (
-        <DiffGroup label={`Added (${added.length})`} tone="text-success">
-          {added.map((tool) => (
-            <DiffRow
-              key={tool.name}
-              sigil="+"
-              tone="text-success"
-              name={tool.name}
-              note={tool.description}
-            />
-          ))}
-        </DiffGroup>
-      )}
-      {removed.length > 0 && (
-        <DiffGroup
-          label={`Removed (${removed.length})`}
-          tone="text-destructive"
-        >
-          {removed.map((tool) => (
-            <DiffRow
-              key={tool.name}
-              sigil="−"
-              tone="text-destructive"
-              name={tool.name}
-            />
-          ))}
-        </DiffGroup>
-      )}
-      {changed.length > 0 && (
-        <DiffGroup label={`Changed (${changed.length})`} tone="text-warning">
-          {changed.map((tool) => (
-            <DiffRow
-              key={tool.name}
-              sigil="~"
-              tone="text-warning"
-              name={tool.name}
-              note={tool.changedFields.join(", ")}
-            />
-          ))}
-        </DiffGroup>
-      )}
-      {discovery?.changed && (
-        <DiffGroup label="Server info" tone="text-warning">
-          <div className="text-[11.5px] text-muted-foreground">
-            {discovery.changedFields.join(", ")}
-          </div>
-        </DiffGroup>
-      )}
-      {empty && (
-        <div className="text-[11.5px] text-muted-foreground">
-          No tool changes
-        </div>
-      )}
-    </>
+function useRevisionSide(
+  projectId: string,
+  serverId: string,
+  revisionNumber: number
+): RevisionSide | null | undefined {
+  const revision = useQuery(
+    "serverInspections:getInspectionRevision" as never,
+    { projectId, serverId, revisionNumber } as never
+  ) as RevisionSnapshot | null | undefined;
+  return useMemo(
+    () =>
+      revision && {
+        revisionNumber: revision.revisionNumber,
+        discovery: revision.snapshot.discovery ?? revision.snapshot.initialize,
+        droppedFields: revision.redaction?.droppedFields,
+      },
+    [revision]
   );
 }
 
-function DiffGroup({
-  label,
-  tone,
-  children,
-}: {
-  label: string;
-  tone: string;
-  children: ReactNode;
-}) {
-  return (
-    <div>
-      <div
-        className={`mb-1.5 text-[10px] font-semibold uppercase tracking-wide ${tone}`}
-      >
-        {label}
-      </div>
-      <div className="space-y-1">{children}</div>
-    </div>
-  );
-}
-
-function DiffRow({
-  sigil,
-  tone,
-  name,
-  note,
-}: {
-  sigil: string;
-  tone: string;
-  name: string;
-  note?: string;
-}) {
-  return (
-    <div className="flex min-w-0 items-baseline gap-2">
-      <span className={`font-mono font-semibold ${tone}`}>{sigil}</span>
-      <code className="shrink-0 font-mono text-[12px] font-medium">{name}</code>
-      {note && (
-        <span className="truncate text-[11.5px] text-muted-foreground">
-          {note}
-        </span>
-      )}
-    </div>
-  );
-}

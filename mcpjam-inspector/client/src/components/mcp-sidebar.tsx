@@ -1,3 +1,5 @@
+import { useIsMemberActor } from "@/hooks/use-is-member-actor";
+import { useProjectEnvironmentsVisible } from "@/hooks/useProjectEnvironmentsEnabled";
 import * as React from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -24,11 +26,18 @@ import {
   Cable,
   MessagesSquare,
   Globe,
+  Radio,
+  ClipboardCheck,
 } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
+import {
+  EVENTS_FEATURE_FLAG,
+  useEventsEnabledState,
+} from "@/hooks/useEventsEnabled";
 import { track } from "@/lib/analytics";
 
 import { NavMain } from "@/components/sidebar/nav-main";
+import { ConformanceSpotlight } from "@/components/sidebar/conformance-spotlight";
 import {
   Sidebar,
   SidebarContent,
@@ -47,7 +56,6 @@ import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
-import { PlatformLaunchAnnouncement } from "@/components/sidebar/platform-launch-announcement";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
 import { InviteTeamSignUpDialog } from "@/components/auth/InviteTeamSignUpDialog";
 import { consumePendingInviteDialog } from "@/lib/pending-invite-dialog";
@@ -79,7 +87,7 @@ import {
   useOrganizationBillingStatus,
   type BillingFeatureName,
 } from "@/hooks/useOrganizationBilling";
-import type { Project } from "@/state/app-types";
+import type { Project, ServerWithName } from "@/state/app-types";
 
 interface NavItem {
   title: string;
@@ -121,17 +129,15 @@ interface NavSection {
  */
 export const SIDEBAR_RESOLVED_FLAG_KEYS = [
   "mcpjam-learning",
-  "sandboxes-enabled",
   "registry-enabled",
-  "mcpjam-conformance",
   "mcpjam-compatibility",
+  "mcpjam-directory-readiness",
   "hosts-enabled",
   "home-page-enabled",
-  "xaa",
   "project-environments-enabled",
   "unified-sessions-enabled",
-  "evaluate-enabled",
   WEBMCP_INSPECTOR_FEATURE_FLAG,
+  EVENTS_FEATURE_FLAG,
 ] as const;
 
 /**
@@ -168,14 +174,13 @@ export function filterByFeatureFlags(
 export function applyBillingGateNavState(
   sections: NavSection[],
   options: {
-    billingUiEnabled: boolean;
     /** When true, feature is denied by premiumness (locked). */
     gateDenied: Partial<Record<BillingFeatureName, boolean>>;
     enforcementActive: boolean;
   },
 ): NavSection[] {
-  const { billingUiEnabled, gateDenied, enforcementActive } = options;
-  if (!billingUiEnabled || !enforcementActive) {
+  const { gateDenied, enforcementActive } = options;
+  if (!enforcementActive) {
     return sections;
   }
 
@@ -255,10 +260,15 @@ export const navigationSections: NavSection[] = [
     id: "measure",
     label: "Measure",
     items: [
-      // Both are behind `sandboxes-enabled`, which is the rollout control.
-      // The flag is NOT combined with sign-in (REEV-6): when it is on, a
-      // signed-out visitor sees the items too, and the route decides what they
-      // get — a signed-out visitor gets the preview, a member the real tab.
+      {
+        title: "Evaluate",
+        url: "/evaluate",
+        icon: FlaskConical,
+        billingFeature: "evals",
+      },
+      // Neither is combined with sign-in (REEV-6): a signed-out visitor sees
+      // both items, and the route decides what they get — a signed-out
+      // visitor gets the preview, a member the real tab.
       //
       // Swarms before User Testing (Vig): less set-up is required to get value
       // out of it, so it is the better first stop.
@@ -266,33 +276,13 @@ export const navigationSections: NavSection[] = [
         title: "Swarms",
         url: "/swarms",
         icon: Network,
-        featureFlag: "sandboxes-enabled",
-        // Same pill XAA Debugger carries. It marks a NEW feature, not an
-        // access state: the earlier LOG IN / UPGRADE markers described who the
-        // reader was, and there is no longer a plan to report on.
-        badge: "New",
         billingFeature: "scenarios",
       },
       {
         title: "User Testing",
         url: "/user-testing",
         icon: Users,
-        featureFlag: "sandboxes-enabled",
-        badge: "New",
         billingFeature: "scenarios",
-      },
-      {
-        title: "Evaluate (Legacy)",
-        url: "/evals",
-        featureFlag: "evaluate-enabled",
-        icon: FlaskConical,
-        billingFeature: "evals",
-      },
-      {
-        title: "Evaluate",
-        url: "/evaluate",
-        icon: FlaskConical,
-        billingFeature: "evals",
       },
       {
         // Cross-surface session feed (Playground + User Testing + Evals +
@@ -319,24 +309,25 @@ export const navigationSections: NavSection[] = [
         title: "XAA Debugger",
         url: "/xaa-flow",
         icon: ShieldCheck,
-        featureFlag: "xaa",
       },
       {
         title: "Conformance",
         url: "/conformance",
         icon: MCPIcon,
-        // MCPJam-internal flag: rollout is restricted to the MCPJam team in
-        // PostHog. Keep the `mcpjam-` prefix so it's obvious at a glance that
-        // this is an internal-only flag (same convention as `mcpjam-learning`).
-        featureFlag: "mcpjam-conformance",
         badge: "New",
       },
       {
         title: "Compatibility",
         url: "/compatibility",
         icon: Boxes,
-        // MCPJam-internal flag (same convention as `mcpjam-conformance`).
+        // MCPJam-internal flag (same convention as `mcpjam-learning`).
         featureFlag: "mcpjam-compatibility",
+      },
+      {
+        title: "Readiness",
+        url: "/readiness",
+        icon: ClipboardCheck,
+        featureFlag: "mcpjam-directory-readiness",
       },
     ],
   },
@@ -368,13 +359,19 @@ export const navigationSections: NavSection[] = [
         icon: ListTodo,
       },
       {
+        title: "Events",
+        url: "/events",
+        icon: Radio,
+        badge: "New",
+        featureFlag: EVENTS_FEATURE_FLAG,
+      },
+      {
         // Tools a live web PAGE registers, rather than an MCP server — the
         // same primitive from the other side of the browser boundary, which is
         // why it sits here and not under Explore.
         title: "WebMCP",
         url: "/webmcp",
         icon: Globe,
-        badge: "New",
         featureFlag: WEBMCP_INSPECTOR_FEATURE_FLAG,
       },
     ],
@@ -491,12 +488,13 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
    * gone with the old layout.
    */
   onSwitchOrganization?: (organizationId: string) => void;
-  onProjectShared?: (sharedProjectId: string, sourceProjectId?: string) => void;
   billingGateDenied?: Partial<Record<BillingFeatureName, boolean>>;
   billingGateEnforcementActive?: boolean;
-  billingUiEnabled?: boolean;
   isCreateProjectDisabled?: boolean;
   createProjectDisabledReason?: string;
+  /** The servers the Conformance page offers, for its intro card's action. */
+  conformanceServers?: Record<string, ServerWithName>;
+  announcementsEnabled?: boolean;
 }
 
 export function MCPSidebar({
@@ -514,27 +512,24 @@ export function MCPSidebar({
   onSwitchOrganization,
   billingGateDenied = {},
   billingGateEnforcementActive = false,
-  billingUiEnabled = false,
   isCreateProjectDisabled = false,
   createProjectDisabledReason,
+  conformanceServers,
+  announcementsEnabled = true,
   ...props
 }: MCPSidebarProps) {
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
-  const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
-  const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
-  const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
-  const projectEnvironmentsEnabled = useFeatureFlagEnabled(
-    "project-environments-enabled",
-  );
+  const readinessEnabled = useFeatureFlagEnabled("mcpjam-directory-readiness");
   const unifiedSessionsEnabled = useFeatureFlagEnabled(
     "unified-sessions-enabled",
   );
-  const evaluateEnabled = useFeatureFlagEnabled("evaluate-enabled");
+  const eventsEnabled = useEventsEnabledState();
   const webmcpInspectorEnabled = useWebmcpInspectorEnabledState();
   const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
+  const projectEnvironmentsEnabled = useProjectEnvironmentsVisible(useIsMemberActor());
   const { user, isLoading: isWorkOsAuthLoading } = useAuth();
   // Until WorkOS + Convex resolve the session we don't yet know guest-vs-authed
   // (`user` is null and `isAuthenticated` is false even for signed-in users).
@@ -607,12 +602,9 @@ export function MCPSidebar({
   }, [canOpenInviteDialog]);
   const trialBilling = useOrganizationBillingStatus(
     activeProject?.organizationId ?? null,
-    { enabled: billingUiEnabled && !!activeProject?.organizationId },
   );
   const trialActive =
-    billingUiEnabled &&
-    trialBilling?.trialStatus === "active" &&
-    !!trialBilling.trialEndsAt;
+    trialBilling?.trialStatus === "active" && !!trialBilling.trialEndsAt;
   const handleTrialUpgradeClick = () => {
     if (!activeProject?.organizationId) return;
     appNavigate(`/organizations/${activeProject.organizationId}/billing`);
@@ -633,41 +625,33 @@ export function MCPSidebar({
   const featureFlags = useMemo(
     () => ({
       "mcpjam-learning": !!learningEnabled,
-      // Flag only, not `&& isAuthenticated`: a signed-out visitor is meant to
-      // reach the REEV-6 preview once the flag is on.
-      "sandboxes-enabled": sandboxesEnabled === true,
       "registry-enabled": registryEnabled === true,
-      "mcpjam-conformance": conformanceEnabled === true,
       "mcpjam-compatibility": compatibilityEnabled === true,
+      // Submissions belong to a project, like the rows below.
+      "mcpjam-directory-readiness": readinessEnabled === true && isAuthenticated,
       // Hosts/Connect and Home are fully rolled out; their nav visibility is
       // purely auth-driven (signed-out users keep the legacy Servers item).
       "hosts-enabled": isAuthenticated,
       "home-page-enabled": isAuthenticated,
-      xaa: xaaEnabled === true,
-      "project-environments-enabled":
-        projectEnvironmentsEnabled === true && isAuthenticated,
+      "project-environments-enabled": projectEnvironmentsEnabled,
       // Project-scoped like the two above: the feed needs a project, and
       // `SessionsRoute` renders a "needs a project" empty state without one.
       "unified-sessions-enabled":
         unifiedSessionsEnabled === true && isAuthenticated,
-      // Project-scoped like the rows above: every screen behind it needs a
-      // project to resolve suites against.
-      "evaluate-enabled": evaluateEnabled === true && isAuthenticated,
       // Hosted: the backend's availability answer, flag and readiness both.
       // Local: the local Browser rollout, which local guests may be in too.
       [WEBMCP_INSPECTOR_FEATURE_FLAG]: webmcpInspectorEnabled === true,
+      [EVENTS_FEATURE_FLAG]: eventsEnabled === true,
     }),
     [
       learningEnabled,
-      sandboxesEnabled,
       registryEnabled,
-      conformanceEnabled,
       compatibilityEnabled,
-      xaaEnabled,
+      readinessEnabled,
       projectEnvironmentsEnabled,
       unifiedSessionsEnabled,
-      evaluateEnabled,
       webmcpInspectorEnabled,
+      eventsEnabled,
       isAuthenticated,
     ],
   );
@@ -851,6 +835,20 @@ export function MCPSidebar({
                       isActive: isNavItemActive(item),
                     }))}
                     onItemClick={handleNavClick}
+                    wrapItem={(url, row) =>
+                      url === "/conformance" ? (
+                        <ConformanceSpotlight
+                          enabled={announcementsEnabled}
+                          servers={conformanceServers}
+                          onConformancePage={activeTab === "conformance"}
+                          onNavigate={appNavigate}
+                        >
+                          {row}
+                        </ConformanceSpotlight>
+                      ) : (
+                        row
+                      )
+                    }
                     learnMore={
                       learnMoreEnabled
                         ? {
@@ -895,10 +893,14 @@ export function MCPSidebar({
           {isAuthenticated && user && activeOrganizationId ? (
             <SidebarCredits
               organizationId={activeOrganizationId}
-              billingUiEnabled={billingUiEnabled}
-              onExplorePlans={() =>
+              onOpenBilling={() =>
                 appNavigate(
                   buildOrganizationPath(activeOrganizationId, "billing"),
+                )
+              }
+              onExplorePlans={() =>
+                appNavigate(
+                  buildOrganizationPath(activeOrganizationId, "plans"),
                 )
               }
             />
@@ -933,13 +935,6 @@ export function MCPSidebar({
           <SidebarUser />
         </SidebarFooter>
       </Sidebar>
-      {!authResolving && (
-        <PlatformLaunchAnnouncement
-          onNavigate={appNavigate}
-          audience={user ? "signed_in" : "guest"}
-          sandboxesEnabled={sandboxesEnabled === true}
-        />
-      )}
       {canOpenInviteDialog && showInviteDialog && activeOrganizationId ? (
         <InviteTeamMembersDialog
           key={activeOrganizationId}

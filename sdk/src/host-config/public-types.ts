@@ -27,6 +27,7 @@ import type {
   McpToolResultImageRenderingPolicy,
   McpToolResultImageRenderPlacement,
   ModelVisibleMcpToolResults,
+  ModelVisibleStructuredContent,
   OpenAiAppsCapabilities,
   ServerId,
   ToolParamHeaderMirroring,
@@ -47,6 +48,7 @@ export type {
   OpenAiAppsCapabilities,
   McpAppsCapabilities,
   ModelVisibleMcpToolResults,
+  ModelVisibleStructuredContent,
   ToolParamHeaderMirroring,
   PaginationTraversalMode,
   MrtrSupport,
@@ -193,7 +195,12 @@ export interface HostInit {
   temperature?: number;
   requireToolApproval?: boolean;
   requireNativeToolDiscovery?: boolean;
-  /** Opt into progressive MCP tool discovery (search/load meta-tools). */
+  /**
+   * Progressive MCP tool discovery (the search/load meta-tools). `true` on,
+   * `false` off. `HostRunner` reads unset as off; a saved client or host
+   * template means Auto by it, which `runWithClient` and `mcpjam test --host`
+   * apply: on once the tools reach 30 or about 10k tokens of definitions.
+   */
   progressiveToolDiscovery?: boolean;
   /** SEP-1865 `_meta.ui.visibility` filtering. Undefined → spec default. */
   respectToolVisibility?: boolean;

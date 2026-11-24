@@ -57,6 +57,8 @@ export const PLUGIN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
     "MCPJam gave this App access to its file again (the server restarted, or its hold on the file lapsed), so this save was refused. The App's unsaved changes are still in the viewer: read the file again (resources/read), then save against the ETag it returns.",
   RESOURCE_TOO_LARGE: "The file is larger than the host allows for Apps.",
   RESOURCE_UNSUPPORTED: "This file source doesn't support that operation.",
+  RESOURCE_WRITE_UNAVAILABLE:
+    "This Computer can't save the file safely. Copy your changes, then reconnect the Computer before trying again.",
   // Local files and file targets
   PLUGIN_FILE_TARGETS_NOT_DECLARED:
     'This client lists no files for this server. Add them under the client\'s mcpProfile.extensions["mcpjam/plugin-file-targets"] (a root folder and each file\'s relative path).',
@@ -125,6 +127,8 @@ export const PLUGIN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
     "The App is already running another request. Wait for it to finish.",
   ACTIVATION_SCHEMA_INVALID:
     "The entrypoint tool's input schema doesn't accept the arguments the host must send to open it.",
+  PLUGIN_ENTRYPOINT_UNOPENABLE:
+    "This client can't open an entry point whose tool name has two underscores or two dots in a row, or a dot next to an underscore. Rename the tool.",
   ACTIVATION_BINDING_CHANGED:
     "This App was opened with different settings before. Close it and open it again.",
   // Tool calls
@@ -247,8 +251,16 @@ export const PLUGIN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
     "MCPJam couldn't start watching this file for changes within 12 seconds, so it stopped waiting. The file can still be read; changes made elsewhere won't refresh the viewer until it subscribes again or the file is reopened.",
   // Model App / continuations
   MODEL_APP_UNAVAILABLE: "This App from the chat is no longer available.",
+  MODEL_FORM_UNAVAILABLE:
+    "This form is no longer available, so your answer wasn't sent. Ask the model to run the tool again.",
+  FORM_NOT_SAVED:
+    "MCPJam couldn't save this form, so it wasn't shown and the tool call ended. Ask the model to run the tool again.",
+  FORM_STORE_UNAVAILABLE:
+    "MCPJam couldn't load this form's saved state, so nothing was sent. Try again in a moment.",
   CONTINUATION_EXPIRED:
     "This form expired before it was answered, so the tool call did not finish. Run it again.",
+  CONTINUATION_FAILED:
+    "This form is closed and cannot be submitted. Start the tool call again.",
   CONTINUATION_CANCELLED:
     "This form was cancelled, so the tool call did not finish.",
   CONTINUATION_CONNECTION_UNAVAILABLE:

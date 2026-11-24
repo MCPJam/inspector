@@ -51,3 +51,12 @@ it("checks current policy at transport dispatch, including automatic follow-ups"
   await expect(transport.sendMessages(options)).rejects.toThrow("organization");
   expect(sendMessages).toHaveBeenCalledTimes(1);
 });
+
+
+it("admits only an available Cursor account model under the own-key policy", () => {
+  const cursor: ModelDefinition = { id: "cursor/mini", name: "Mini", provider: "cursor", hosted: false };
+  const args = { pending: false, requireOrgKeys: true, selectedModel: cursor, availableModels: [cursor] };
+  expect(orgPolicyBlocksChatSend(args)).toBe(false);
+  expect(orgPolicyBlocksChatSend({ ...args, availableModels: [] })).toBe(true);
+  expect(orgPolicyBlocksChatSend({ ...args, selectedModel: { ...cursor, disabled: true } })).toBe(true);
+});

@@ -4,7 +4,10 @@ import type {
 } from "../conformance-outcome.js";
 import type { ConformanceProfileStamp } from "../conformance-profile.js";
 import type { MCPServerConfig } from "../mcp-client-manager/index.js";
-import type { MCPReadinessWarning } from "../mcp-conformance/types.js";
+import type {
+  MCPPassedAdvice,
+  MCPReadinessWarning,
+} from "../mcp-conformance/types.js";
 import type { TasksWire } from "../mcp-client-manager/tasks-dispatch.js";
 
 export const MCP_TASKS_CHECK_CATEGORIES = [
@@ -123,6 +126,11 @@ export interface MCPTasksUncheckedAdvice {
   reason: string;
 }
 
+/** Advice the run checked and the server already meets. */
+export interface MCPTasksPassedAdvice extends Omit<MCPPassedAdvice, "id"> {
+  id: MCPTasksReadinessId;
+}
+
 export type MCPTasksCheckStatus = "passed" | "failed" | "skipped";
 
 /**
@@ -173,6 +181,12 @@ export interface MCPTasksCheckResult {
 export type MCPTasksConformanceConfig = MCPServerConfig & {
   /** Cancel active requests and polling, then close the owned connection. */
   signal?: AbortSignal;
+  /**
+   * @internal set by a host that counts the run itself (the CLI, the
+   * Inspector) and by `runConformance` for its inner run. See
+   * `captureConformanceRun`.
+   */
+  __suppressTelemetry?: boolean;
   /**
    * Run only these checks. A renamed id
    * ({@link RENAMED_MCP_TASKS_CHECK_IDS}) runs the check under its new name.
@@ -246,6 +260,8 @@ export interface MCPTasksConformanceResult {
   readiness?: MCPTasksReadinessWarning[];
   /** Picked advice this run could not judge. Absent when there is none. */
   uncheckedAdvice?: MCPTasksUncheckedAdvice[];
+  /** Advice the run checked and found nothing to change. Absent when none. */
+  passedAdvice?: MCPTasksPassedAdvice[];
   summary: string;
   durationMs: number;
   categorySummary: Record<

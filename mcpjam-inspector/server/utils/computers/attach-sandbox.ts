@@ -10,6 +10,7 @@ import {
   getSandboxEgressStatus,
   prepareSandboxConnection,
 } from "./control-plane-client.js";
+import { attachInParallel } from "../harness/harness-flags.js";
 
 /** The control plane owns all wakes; attachment must not create a late wake. */
 export class SandboxAttachmentError extends Error {
@@ -62,7 +63,7 @@ async function readRunningSandboxConnection(
   sandboxId: string,
   options: SandboxApiOpts,
   preparedByBroker: boolean,
-): Promise<ConstructorParameters<typeof Sandbox>[0]> {
+) {
   const deadline = Date.now() + 60_000;
   const timeout = AbortSignal.timeout(60_000);
   const signal = options.signal
@@ -88,59 +89,97 @@ async function readRunningSandboxConnection(
       );
   }
   const config = new ConnectionConfig(options);
-  const response = await new ApiClient(config).api.GET(
-    "/sandboxes/{sandboxID}",
-    {
-      params: { path: { sandboxID: sandboxId } },
-      signal: config.getSignal(options.requestTimeoutMs, signal),
-    },
-  );
-  if (response.response.status === 404)
-    throw new SandboxNotFoundError("This sandbox no longer exists.");
-  const data = response.data;
-  if (
-    !response.response.ok ||
-    !data ||
-    data.sandboxID !== sandboxId ||
-    !data.envdAccessToken
-  )
-    throw new SandboxAttachmentError(
-      "sandbox_attach_failed",
-      "Could not attach to this sandbox. Try again.",
+  // After the broker's acknowledgement the two reads are independent: start
+  // the policy barrier with the box read. Both must pass before anything runs.
+  // Settled into a value now and thrown after the box read's own checks, so a
+  // gone or paused box is still reported as that, as in the sequential order.
+  // Stopped when the attachment finishes, so a box read that fails first does
+  // not leave the barrier polling the policy service until its deadline.
+  const barrierStop = new AbortController();
+  const policyBarrier =
+    preparedByBroker && attachInParallel()
+      ? requireReadyPolicy(
+          sandboxId,
+          AbortSignal.any([signal, barrierStop.signal]),
+          deadline,
+        ).then(
+          () => ({ passed: true as const }),
+          (error: unknown) => ({ passed: false as const, error }),
+        )
+      : undefined;
+  try {
+    const response = await new ApiClient(config).api.GET(
+      "/sandboxes/{sandboxID}",
+      {
+        params: { path: { sandboxID: sandboxId } },
+        signal: config.getSignal(options.requestTimeoutMs, signal),
+      },
     );
-  if (data.state !== "running")
-    throw new SandboxAttachmentError(
-      "sandbox_asleep",
-      "This sandbox is paused. Wake it through MCPJam and try again.",
-    );
-  if (data.lifecycle?.autoResume !== false)
-    throw new SandboxAttachmentError(
-      "sandbox_policy_unavailable",
-      "This sandbox cannot run safely. Start a new sandbox.",
-    );
-  await requireReadyPolicy(sandboxId, signal, deadline);
-  return {
-    ...options,
-    sandboxId,
-    sandboxDomain: data.domain ?? undefined,
-    envdVersion: data.envdVersion,
-    envdAccessToken: data.envdAccessToken,
-  };
+    if (response.response.status === 404)
+      throw new SandboxNotFoundError("This sandbox no longer exists.");
+    const data = response.data;
+    if (
+      !response.response.ok ||
+      !data ||
+      data.sandboxID !== sandboxId ||
+      !data.envdAccessToken
+    )
+      throw new SandboxAttachmentError(
+        "sandbox_attach_failed",
+        "Could not attach to this sandbox. Try again.",
+      );
+    if (data.state !== "running")
+      throw new SandboxAttachmentError(
+        "sandbox_asleep",
+        "This sandbox is paused. Wake it through MCPJam and try again.",
+      );
+    if (data.lifecycle?.autoResume !== false)
+      throw new SandboxAttachmentError(
+        "sandbox_policy_unavailable",
+        "This sandbox cannot run safely. Start a new sandbox.",
+      );
+    if (policyBarrier) {
+      const barrier = await policyBarrier;
+      if (!barrier.passed) throw barrier.error;
+    } else {
+      await requireReadyPolicy(sandboxId, signal, deadline);
+    }
+    return {
+      ...options,
+      sandboxId,
+      sandboxDomain: data.domain ?? undefined,
+      envdVersion: data.envdVersion,
+      envdAccessToken: data.envdAccessToken,
+      privateAppPorts: data.network?.allowPublicTraffic === false,
+    };
+  } finally {
+    barrierStop.abort();
+  }
 }
 
-export async function attachRunningSandbox(
+export function attachRunningSandbox(
   sandboxId: string,
   options?: SandboxApiOpts,
-): Promise<Sandbox> {
-  return new Sandbox(await runningSandboxConnection(sandboxId, options));
+) {
+  return attach(sandboxId, options ?? {}, false);
 }
 
-/** Ordinary callers retain the wake/renewal and both readiness barriers. */
-export function runningSandboxConnection(
+/** Desktop streaming uses stored origins that cannot authenticate private ports. */
+export async function runningSandboxConnection(
   sandboxId: string,
   options: SandboxApiOpts = {},
 ): Promise<ConstructorParameters<typeof Sandbox>[0]> {
-  return readRunningSandboxConnection(sandboxId, options, false);
+  const { privateAppPorts, ...connection } = await readRunningSandboxConnection(
+    sandboxId,
+    options,
+    false,
+  );
+  if (privateAppPorts)
+    throw new SandboxAttachmentError(
+      "sandbox_attach_failed",
+      "Hosted Browser cannot connect to this private desktop.",
+    );
+  return connection;
 }
 
 /**
@@ -148,11 +187,22 @@ export function runningSandboxConnection(
  * this box. GET still verifies lifecycle state, and the final live readiness
  * barrier refuses quarantine or waits for a concurrent policy writer.
  */
-export async function attachBrokerPreparedSandbox(
+export function attachBrokerPreparedSandbox(
   sandboxId: string,
   options: SandboxApiOpts = {},
-): Promise<Sandbox> {
-  return new Sandbox(
-    await readRunningSandboxConnection(sandboxId, options, true),
+) {
+  return attach(sandboxId, options, true);
+}
+
+async function attach(
+  sandboxId: string,
+  options: SandboxApiOpts,
+  brokerPrepared: boolean,
+) {
+  const { privateAppPorts, ...connection } = await readRunningSandboxConnection(
+    sandboxId,
+    options,
+    brokerPrepared,
   );
+  return Object.assign(new Sandbox(connection), { privateAppPorts });
 }

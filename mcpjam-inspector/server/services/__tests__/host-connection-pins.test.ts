@@ -92,6 +92,25 @@ describe("buildHostConnectionPins", () => {
     expect(pins.initializePins).toBeUndefined();
   });
 
+  it("reads the negotiation only while the profile sets no protocol", () => {
+    const pins = (mcpProfile: Record<string, unknown>) =>
+      buildHostConnectionPins({ mcpProfile }, FALLBACK).initializePins;
+    expect(pins({ versionNegotiation: "legacy-first" })).toEqual({
+      versionNegotiation: "legacy-first",
+    });
+    // An explicit `auto` means Auto, and a pin wins.
+    expect(
+      pins({ versionNegotiation: "legacy-first", mcpProtocolVersion: "auto" }),
+    ).toBeUndefined();
+    expect(
+      pins({
+        versionNegotiation: "legacy-first",
+        mcpProtocolVersion: "2025-06-18",
+      }),
+    ).toEqual({ mcpProtocolVersion: "2025-06-18" });
+    expect(pins({ versionNegotiation: "modern-first" })).toBeUndefined();
+  });
+
   it("reads per-server pins under either spelling, skipping malformed ones", () => {
     const pins = buildHostConnectionPins(
       {

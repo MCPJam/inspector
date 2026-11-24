@@ -1187,19 +1187,29 @@ export {
   evalBacktestDraftSchema,
   evalBacktestRequestSchema,
   evalBacktestContinuationSchema,
-} from "./eval-backtest.js";
-export type {
-  EvalBacktestDraft,
-  EvalBacktestContinuation,
-  EvalBacktestDifference,
-  EvalBacktestReport,
+  type EvalBacktestDraft,
+  type EvalBacktestContinuation,
+  type EvalBacktestDifference,
+  type EvalBacktestReport,
 } from "./eval-backtest.js";
 export * from "./standard-check-ids.js";
 export * from "./standard-checks.js";
 export * from "./goal-completion.js";
 export * from "./judge-settings.js";
 export * from "./swarm-session-verdict.js";
+export {
+  ITERATION_ERROR_SCORER_ID,
+  TOOL_EXECUTION_SCORER_ID,
+  WIDGET_CHECK_SCORER_ID,
+  iterationErrorScoreDefinition,
+  iterationErrorScoreResult,
+  toolExecutionScoreDefinition,
+  toolExecutionScoreResult,
+  widgetCheckScoreDefinition,
+  widgetCheckScoreResult,
+} from "./platform-gates.js";
 export * from "./swarm-report.js";
 export * from "./eval-authoring.js";
 export * from "./eval-authoring-review.js";
 export * from "./swarm-finding.js";
+export * from "./eval-lifecycle.js";

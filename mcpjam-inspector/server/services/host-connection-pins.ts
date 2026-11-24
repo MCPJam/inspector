@@ -51,6 +51,7 @@ export interface HostConnectionPins {
     clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
     supportedProtocolVersions?: string[];
     mcpProtocolVersion?: McpProtocolVersion;
+    versionNegotiation?: "legacy-first";
   };
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
   /**
@@ -138,6 +139,14 @@ export function buildHostConnectionPins(
   const batchProtocol = coerceProtocolVersion(mcpProfile?.mcpProtocolVersion);
   if (batchProtocol) {
     initializePins.mcpProtocolVersion = batchProtocol;
+  }
+  // The negotiation applies only while the profile sets no protocol at all:
+  // an explicit "auto" means Auto.
+  if (
+    mcpProfile?.mcpProtocolVersion === undefined &&
+    mcpProfile?.versionNegotiation === "legacy-first"
+  ) {
+    initializePins.versionNegotiation = "legacy-first";
   }
 
   // Per-server pins from the overrides map. Accept both the resolver key

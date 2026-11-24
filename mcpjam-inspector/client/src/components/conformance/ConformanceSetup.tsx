@@ -5,15 +5,6 @@
  */
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { ConformanceTimeout } from "./ConformanceTimeout";
-import {
-  Breadcrumb,
-  BreadcrumbList,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@mcpjam/design-system/breadcrumb";
 import { Button } from "@mcpjam/design-system/button";
 import type { McpProtocolVersion } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -28,6 +19,7 @@ import { ProgressStepper } from "@/components/shared/progress-stepper";
 import { toast } from "@/lib/toast";
 import { startConnectToast } from "@/lib/connect-toast";
 import { useConformanceProtocolConnection } from "@/hooks/use-conformance-protocol-connection";
+import { useConformanceConnectToast } from "@/hooks/use-conformance-connect-toast";
 import { ConformanceProtocolConnection } from "./ConformanceProtocolConnection";
 import type {
   ConformanceConnectOutcome,
@@ -58,8 +50,6 @@ export function ConformanceSetup({
   initialVersionPin,
   initialSelection,
   defaultsFor,
-  timeoutFor,
-  onSaveTimeout,
   defaultsLoaded = true,
   onConnectServer,
   onEditServer,
@@ -86,8 +76,6 @@ export function ConformanceSetup({
   defaultsFor?: (serverName: string) => ConformanceSelection | undefined;
   /** False while the saved defaults are still loading: step 2 waits. */
   defaultsLoaded?: boolean;
-  timeoutFor?: (serverName: string) => number | undefined;
-  onSaveTimeout?: (serverName: string, seconds: number | null) => Promise<void>;
   /** Connects a server from the picker; the steps go on once it is. */
   onConnectServer?: ConformanceConnectServer;
   /** Opens a server's connection settings, offered when a connect fails. */
@@ -138,6 +126,10 @@ export function ConformanceSetup({
       ? protocolConnection.result.protocolVersion
       : undefined;
   const effectiveVersion = resolvedVersion ?? versionPin;
+  const holdConnectToast = useConformanceConnectToast(
+    serverName,
+    protocolConnection,
+  );
   // Picked from the project's list before this session loaded it: it has no
   // runtime entry until it connects.
   const pickedName =
@@ -226,7 +218,8 @@ export function ConformanceSetup({
     }
     setConnecting((names) => names.filter((other) => other !== name));
     if (outcome === "ready") {
-      progress.connected();
+      // Continue still waits on the protocol check, and so does the toast.
+      holdConnectToast(name, progress);
       return;
     }
     progress.failed(
@@ -308,38 +301,11 @@ export function ConformanceSetup({
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
       <div className="mx-auto w-full max-w-2xl px-8 py-6">
-        <Breadcrumb>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink asChild>
-                <button type="button" onClick={onCancel}>Conformance</button>
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              {step === 0 ? (
-                <BreadcrumbPage>Choose server and protocol</BreadcrumbPage>
-              ) : (
-                <BreadcrumbLink asChild>
-                  <button type="button" onClick={() => setStep(0)}>
-                    Choose server and protocol
-                  </button>
-                </BreadcrumbLink>
-              )}
-            </BreadcrumbItem>
-            {step === 1 && <>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem><BreadcrumbPage>Select what to test</BreadcrumbPage></BreadcrumbItem>
-            </>}
-          </BreadcrumbList>
-        </Breadcrumb>
-
         <ProgressStepper
           steps={STEPS}
           activeIndex={step}
           onStepSelect={setStep}
           ariaLabel="Conformance setup"
-          className="mt-6"
         />
 
         {step === 0 ? (
@@ -432,18 +398,10 @@ export function ConformanceSetup({
         ) : (
           <>
             {protocolNotice}
-            <div className="mt-3 flex items-center justify-between gap-3">
-              <h2 className="text-2xl font-semibold tracking-[-0.02em]">
-                Set what you'd like to test
-              </h2>
-              {serverName && onSaveTimeout && (
-                <ConformanceTimeout
-                  key={serverName}
-                  seconds={timeoutFor?.(serverName)}
-                  onSave={(seconds) => onSaveTimeout(serverName, seconds)}
-                />
-              )}
-            </div>
+            {/* The run timeout lives in the server's Settings, not here. */}
+            <h2 className="mt-3 text-2xl font-semibold tracking-[-0.02em]">
+              Set what you'd like to test
+            </h2>
             <p className="mt-1.5 text-sm leading-relaxed font-medium">
               Pick the suites and checks this run covers.
             </p>

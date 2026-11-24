@@ -1,3 +1,4 @@
+import { useCursorModels } from "./use-cursor-models";
 import { useMemo } from "react";
 import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 import type { ModelDefinition } from "@/shared/types";
@@ -36,6 +37,7 @@ export function useAvailableModels(options?: {
    * project is globally active.
    */
   projectId?: string | null;
+  harnessTargets?: readonly ({ harnessId: string } | null | undefined)[];
   /**
    * Model ids the surface has saved. While the organization requires its own
    * keys, one it no longer offers stays in the list as an
@@ -120,7 +122,8 @@ export function useAvailableModels(options?: {
     [savedModelIdsKey],
   );
 
-  const availableModels = useMemo(
+  const cursor = useCursorModels(convexProjectId, options?.harnessTargets?.some((target) => target?.harnessId === "cursor") === true, savedModelIds);
+  const baseModels = useMemo(
     () =>
       composeAvailableModels({
         orgConfig: hostedOrgModelConfig,
@@ -157,11 +160,11 @@ export function useAvailableModels(options?: {
     hostedOrgModelConfig?.pending === true ||
     (requireOrgKeys && modelSelectionsCapability === undefined);
   return {
-    availableModels,
+    availableModels: [...baseModels, ...cursor.models],
     modelSelectionsSupported,
     outOfCreditsReason,
     requireOrgKeys,
-    pending,
+    pending: pending || cursor.pending,
     ...(requireOrgKeys && manageOrgProviders
       ? { onManageOrgProviders: manageOrgProviders }
       : {}),

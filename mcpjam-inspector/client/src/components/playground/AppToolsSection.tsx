@@ -32,7 +32,7 @@ export function AppToolsSection({
     .map((group) => ({
       ...group,
       tools: group.tools.filter((tool) =>
-        `${group.appName} ${group.serverId} ${tool.rawName} ${tool.description ?? ""}`
+        `${group.appName} ${group.sourceLabel ?? ""} ${group.visibility ?? ""} ${group.serverId} ${tool.rawName} ${tool.description ?? ""}`
           .toLowerCase()
           .includes(query),
       ),
@@ -51,9 +51,10 @@ export function AppToolsSection({
         {groups.map((group) => (
           <ToolSourceHeader
             key={group.key}
-            title={group.appName}
+            title={group.sourceLabel ?? group.appName}
             chip={group.serverId}
           >
+            {group.visibility ? <p className="px-3 text-xs text-muted-foreground">{group.visibility === "visible" ? "Visible" : "Hidden"}</p> : null}
             {group.tools.map((tool) => (
               <button
                 type="button"
@@ -84,7 +85,7 @@ export function AppToolsSection({
                     {tool.description}
                   </p>
                 ) : null}
-                {!previewedHarnessId && tool.availability !== "offered" ? (
+                {(!previewedHarnessId || previewedHarnessId === "codex") && tool.availability !== "offered" ? (
                   <p className="mt-1 text-[10px] text-warning">
                     {droppedCopy[tool.availability]}
                   </p>
@@ -94,7 +95,7 @@ export function AppToolsSection({
           </ToolSourceHeader>
         ))}
         <p className="px-3 text-[10px] text-muted-foreground">
-          {harnessName
+          {harnessName && previewedHarnessId !== "codex"
             ? `${harnessName} can't call app tools. Run still calls them in the app.`
             : "Available to the model on its next request. They go away when the app closes."}
         </p>
