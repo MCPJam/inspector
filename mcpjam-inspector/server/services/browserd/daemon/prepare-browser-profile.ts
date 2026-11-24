@@ -58,6 +58,12 @@ async function emptyProfileDir(
   const kept = config.recordDir
     ? relative(config.userDataDir, config.recordDir)
     : "";
+  if (config.recordDir && !kept) {
+    // Keeping the whole directory would keep its sign-ins too.
+    throw new Error(
+      "MCPJAM_BROWSERD_RECORD_DIR is the profile directory itself. Set it to a folder inside or outside the profile.",
+    );
+  }
   const keep =
     kept && !kept.startsWith("..") && !isAbsolute(kept) ? kept.split(sep) : [];
   await emptyExcept(config.userDataDir, keep);

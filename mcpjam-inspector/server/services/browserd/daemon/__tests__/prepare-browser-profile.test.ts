@@ -122,6 +122,25 @@ describe("prepareBrowserProfile", () => {
     expect(await readFile(join(recordDir, "run.mp4"), "utf8")).toBe("an earlier run's video");
   });
 
+  it("refuses a fresh profile whose recordings folder is the profile itself", async () => {
+    const { userDataDir } = await fixture();
+    await mkdir(userDataDir, { recursive: true });
+    await writeFile(join(userDataDir, "run.mp4"), "an earlier run's video");
+    await expect(
+      prepareBrowserProfile(
+        readBrowserdConfig({
+          MCPJAM_BROWSERD_USER_DATA_DIR: userDataDir,
+          MCPJAM_BROWSERD_TOKEN: "test-token",
+          MCPJAM_BROWSERD_FRESH_PROFILE: "1",
+          MCPJAM_BROWSERD_RECORD_DIR: userDataDir,
+        }),
+      ),
+    ).rejects.toThrow(/is the profile directory itself/);
+    expect(await readFile(join(userDataDir, "run.mp4"), "utf8")).toBe(
+      "an earlier run's video",
+    );
+  });
+
   it.runIf(process.platform === "linux")(
     "lets one boot at a time start a browser on a profile",
     async () => {
