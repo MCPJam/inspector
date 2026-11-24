@@ -75,7 +75,7 @@ export function ChatGptPackageTitle({
 
   return (
     <>
-      ChatGPT plugin ZIP
+      ChatGPT plugin package
       {plugin && (
         <span className="ml-2 break-words font-normal">
           {plugin.displayName}{versionLabel && ` · ${versionLabel}`}

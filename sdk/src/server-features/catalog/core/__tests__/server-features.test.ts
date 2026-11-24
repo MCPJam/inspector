@@ -4,6 +4,7 @@ import {
   makeProbe,
   makeSurface,
 } from "../../../__tests__/fixtures.js";
+import { CORE_FEATURES } from "../index.js";
 import { declared, isGap, kindOf, probed } from "./helpers.js";
 
 describe("resources", () => {
@@ -129,5 +130,97 @@ describe("prompts", () => {
       coverage: fullCoverage({ prompts: "partial" }),
     });
     expect(isGap(declared("prompts.arguments", partial), partial)).toBe(false);
+  });
+});
+
+describe("completion, pagination and caching", () => {
+  it("reads the completions capability", () => {
+    const surface = makeSurface({ capabilities: { completions: {} } });
+    expect(kindOf(declared("completion.capability", surface))).toBe("present");
+    const partial = makeSurface({
+      coverage: fullCoverage({ capabilities: "partial" }),
+    });
+    expect(isGap(declared("completion.capability", partial), partial)).toBe(
+      false
+    );
+  });
+
+  it("shows pagination only when a list used more than one page", () => {
+    const paged = makeSurface({ listHints: { tools: { pages: 3 } } });
+    expect(declared("pagination.cursor", paged)).toMatchObject({
+      kind: "present",
+      detail: "Paged tools/list.",
+    });
+    const onePage = makeSurface({ listHints: { tools: { pages: 1 } } });
+    expect(kindOf(declared("pagination.cursor", onePage))).toBe("unknown");
+    const notCaptured = makeSurface({
+      coverage: fullCoverage({ listHints: "partial" }),
+    });
+    expect(declared("pagination.cursor", notCaptured)).toBeNull();
+  });
+
+  it("accepts ttlMs 0 and rejects an unknown cacheScope", () => {
+    const surface = makeSurface({
+      protocolVersion: "2026-07-28",
+      listHints: { tools: { ttlMs: 0, cacheScope: "shared" } },
+    });
+    expect(kindOf(declared("caching.ttl-ms", surface))).toBe("present");
+    expect(isGap(declared("caching.cache-scope", surface), surface)).toBe(true);
+    const partial = makeSurface({
+      coverage: fullCoverage({ listHints: "partial" }),
+    });
+    expect(isGap(declared("caching.ttl-ms", partial), partial)).toBe(false);
+  });
+});
+
+describe("request control, client features, MRTR and subscriptions", () => {
+  it("reads the logging capability", () => {
+    const surface = makeSurface({ capabilities: { logging: {} } });
+    expect(kindOf(declared("request-control.logging", surface))).toBe(
+      "present"
+    );
+    expect(
+      isGap(declared("request-control.logging", makeSurface()), makeSurface())
+    ).toBe(true);
+  });
+
+  it("assesses runtime-only families from traffic, never from the declaration", () => {
+    const runtime = CORE_FEATURES.filter((entry) =>
+      ["client-features", "mrtr"].includes(entry.family)
+    );
+    expect(runtime.length).toBe(18);
+    for (const entry of runtime) {
+      expect(entry.assessment.declared, entry.id).toBeUndefined();
+    }
+    const seenInUse = CORE_FEATURES.filter(
+      (entry) => entry.family === "client-features" && !entry.parent
+    ).concat(
+      CORE_FEATURES.filter((entry) => entry.parent === "client.elicitation")
+    );
+    for (const entry of seenInUse) {
+      if (entry.id === "client.elicitation") continue;
+      expect(entry.assessment.observable, entry.id).toBe(true);
+    }
+  });
+
+  it("waits for an update before trusting resources.subscribe", () => {
+    const promised = makeSurface({
+      capabilities: { resources: { subscribe: true } },
+    });
+    expect(
+      kindOf(declared("subscriptions.resources-subscribe", promised))
+    ).toBe("unknown");
+    const explicitFalse = makeSurface({
+      capabilities: { resources: { subscribe: false } },
+    });
+    expect(
+      isGap(
+        declared("subscriptions.resources-subscribe", explicitFalse),
+        explicitFalse
+      )
+    ).toBe(true);
+    expect(
+      kindOf(declared("subscriptions.resources-subscribe", makeSurface()))
+    ).toBe("not-applicable");
   });
 });

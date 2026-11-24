@@ -29,7 +29,11 @@ import { toast } from "@/lib/toast";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
+import { TrialDecisionDialog } from "./components/billing/TrialDecisionDialog";
+import { AnnouncementQueueProvider } from "./components/announcement-slot";
 import { StdioCommandApprovalDialog } from "./components/connection/StdioCommandApprovalDialog";
+import { LauncherProjectChoiceDialog } from "./components/connection/LauncherProjectChoiceDialog";
+import { useLauncherAttach } from "./hooks/use-launcher-attach";
 import { isSignOutInProgress } from "./lib/auth/sign-out-latch";
 import { useAuthExitCleanup } from "./hooks/use-sign-out";
 import { PendingOrganizationDeletions } from "./components/organization/PendingOrganizationDeletions";
@@ -49,7 +53,6 @@ import { SkillsTab } from "./components/SkillsTab";
 import { LearningTab } from "./components/LearningTab";
 import { TaskAccountsTab } from "./components/TaskAccountsTab";
 import { EventsTab } from "./components/EventsTab";
-import { EventTriggersTab } from "./components/EventTriggersTab";
 import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capabilities-context";
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvaluateTab } from "./components/EvaluateTab";
@@ -154,8 +157,6 @@ import {
 } from "@mcpjam/design-system/alert";
 import { Button } from "@mcpjam/design-system/button";
 import {
-  Dialog,
-  DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
@@ -232,6 +233,7 @@ import {
   updateThemePreset,
 } from "./lib/theme-utils";
 import LoadingScreen from "./components/LoadingScreen";
+import { StartupScreen } from "./components/startup/StartupScreen";
 import { OccupationGate } from "./components/signup/OccupationGate";
 import { Header } from "./components/Header";
 import { ThemePreset } from "./types/preferences/theme";
@@ -384,6 +386,7 @@ import { useCodexHostEnabledState } from "./hooks/useCodexHostEnabled";
 import { useCopilotCliEnabled } from "@/hooks/useCopilotCliEnabled";
 import { useCursorHostEnabledState } from "./hooks/useCursorHostEnabled";
 import { useOpenCodeHostEnabledState } from "./hooks/useOpenCodeHostEnabled";
+import { useWebClientsEnabledState } from "./hooks/useWebClientsEnabled";
 import { hostFeatureFlagState } from "@/lib/host-compat/feature-visibility";
 import {
   HOST_VERIFY_TAB_PARAM,
@@ -1209,6 +1212,7 @@ function useTemplateVerifyDeepLink({
   const copilotCliEnabled = useCopilotCliEnabled();
   const cursorCliEnabled = useCursorHostEnabledState();
   const openCodeEnabled = useOpenCodeHostEnabledState();
+  const webClientsEnabled = useWebClientsEnabledState();
   const requestedTemplateId = useMemo<HostTemplateId | null>(() => {
     if (typeof window === "undefined") return null;
     const raw = new URLSearchParams(window.location.search).get(
@@ -1281,6 +1285,7 @@ function useTemplateVerifyDeepLink({
       copilotCli: copilotCliEnabled,
       cursorCli: cursorCliEnabled,
       openCode: openCodeEnabled,
+      webClients: webClientsEnabled,
     });
     // Gated templates remain visible on caniuse.dev as reference profiles, but
     // they are not available for new-host creation until their rollout flags
@@ -1360,6 +1365,7 @@ function useTemplateVerifyDeepLink({
     cursorCliEnabled,
     copilotCliEnabled,
     openCodeEnabled,
+    webClientsEnabled,
     flagWaitExpired,
     roleLoading,
     canCreateHost,
@@ -2307,21 +2313,11 @@ export function SessionsRoute() {
 }
 
 export function ResourcesRoute() {
-  const {
-    selectedMCPConfig, selectedServerEntry, appState, convexProjectId,
-    currentUser, hostedServerIdsByName = {},
-  } = useAppRouteContext();
-  const [hostId] = usePreviewedHostId(convexProjectId);
-  const selected = appState.selectedServer;
-  const serverId = hostedServerIdsByName[selected] ??
-    (Object.values(hostedServerIdsByName).includes(selected) ? selected : null);
-  const openInChatScope = currentUser?._id && hostId && convexProjectId && serverId
-    ? { actorId: currentUser._id, projectId: convexProjectId, hostId, serverId }
-    : null;
+  const { selectedMCPConfig, selectedServerEntry, appState } =
+    useAppRouteContext();
   return (
     <div className="h-full overflow-hidden">
       <ResourcesTab
-        openInChatScope={openInChatScope}
         serverConfig={selectedMCPConfig}
         serverName={appState.selectedServer}
         server={selectedServerEntry ?? undefined}
@@ -2554,21 +2550,13 @@ export function EventsRoute() {
  * so a local user can see what the feature is.
  */
 export function EventTriggersRoute() {
-  const { convexProjectId, isAuthenticated, isGuestProjectActor } =
-    useAppRouteContext();
+  const triggerId = useCurrentSearchParam("triggerId");
   const eventsEnabled = useEventsEnabledState();
-  if (eventsEnabled === false) {
-    return <ScopedNavigate to={routePaths.servers} replace />;
-  }
+  if (eventsEnabled === false) return <ScopedNavigate to={routePaths.servers} replace />;
   if (eventsEnabled === undefined) return null;
-  return (
-    <div className="h-full overflow-hidden">
-      <EventTriggersTab
-        projectId={convexProjectId ?? null}
-        isSignedInMember={isAuthenticated === true && !isGuestProjectActor}
-      />
-    </div>
-  );
+  const query = new URLSearchParams({ panel: "events", background: "1" });
+  if (triggerId) query.set("triggerId", triggerId);
+  return <ScopedNavigate to={`${routePaths.playground}?${query}`} replace />;
 }
 
 export function OAuthFlowRoute() {
@@ -2710,6 +2698,7 @@ export function WebmcpInspectorRoute() {
 export function PlaygroundRoute() {
   const {
     activeHost,
+    activeHostId,
     activeProject,
     activeProjectId,
     appState,
@@ -2764,6 +2753,7 @@ export function PlaygroundRoute() {
       }}
       suspendAutoConnect={suspendRouteAutoConnect}
       activeHost={activeHost}
+      activeHostId={activeHostId}
       evalChatHandoff={evalChatHandoff}
       onEvalChatHandoffConsumed={(id) =>
         setEvalChatHandoff((current: EvalChatHandoff | null) =>
@@ -3809,6 +3799,38 @@ export default function App() {
     [appState],
   );
   useInspectorCommandBus({ onScopeStepUp: handleInspectorScopeStepUp });
+  // Dev commands (launchInspector, the Vite plugin) attach their server here.
+  const launcherSignedIn = Boolean(workOsUser) && isCloudSyncActive;
+  useLauncherAttach({
+    enabled: !HOSTED_MODE,
+    // The developer's sign-in, not whether this tab has loaded: a signed-in
+    // tab still loading its project must not ask them to sign in.
+    signedIn: Boolean(workOsUser),
+    // Only once the project's saved servers have loaded: before that a
+    // same-name server the project already has is invisible to the tab.
+    project:
+      launcherSignedIn && areServersHydrated && activeProject?.sharedProjectId
+        ? { id: activeProject.sharedProjectId, name: activeProject.name }
+        : null,
+    servers: projectServers,
+    selectedServer: appState.selectedServer,
+    saveAndConnect: (formData, onSaved) =>
+      handleConnect(formData, {
+        suppressSuccessToast: true,
+        onConfigSaved: onSaved,
+      }),
+    connectSaved: (serverName) =>
+      reconnectServerWithResult(serverName, { suppressSuccessToast: true }),
+    saveWithoutConnecting: async (formData) =>
+      (await saveServerConfigWithoutConnecting(formData)) !== false,
+    removeServer: (serverName) => handleRemoveServer(serverName),
+    disconnectServer: (serverName) => handleDisconnect(serverName),
+    selectServer: setSelectedServer,
+    requestSignIn: () => {
+      captureAppSignInReturnPath();
+      void signIn();
+    },
+  });
   // MCPJam UI tools: registered in both modes; the always-available side
   // panel drives whichever inspector surface is open, so registration lives
   // at the App root. Disabled on the standalone scenario chat route: its end
@@ -6305,7 +6327,7 @@ export default function App() {
   }
 
   if (isLoading && !isHostedChatRoute && !isFirstRunOAuthReturnActive) {
-    return <LoadingScreen />;
+    return <StartupScreen />;
   }
 
   const shouldShowBillingHandoffOverlay =
@@ -6318,7 +6340,8 @@ export default function App() {
     (shouldHoldHostedDefaultRouteForAuth ||
       shouldHoldHostedHomeRouteForAppReady)
   ) {
-    return <LoadingScreen />;
+    // Home also waits here for projects, which wait for the user record.
+    return <StartupScreen />;
   }
 
   if (
@@ -6333,7 +6356,7 @@ export default function App() {
           isSignOutInProgress() ||
           shouldReloadForMissingGuest)))
   ) {
-    return <LoadingScreen />;
+    return <StartupScreen />;
   }
 
   if (!isHostedChatRoute && isAuthenticated && currentUser === null) {
@@ -6539,7 +6562,6 @@ export default function App() {
     handleUpdateHostContext,
     handleUpdateProject,
     hostsTabSelectedHostId,
-    hostedServerIdsByName,
     isAuthLoading,
     isAuthenticated,
     isClientConfigSyncPending,
@@ -6635,7 +6657,6 @@ export default function App() {
           activeOrganizationId={activeOrganizationId}
           activeOrganizationName={activeOrganizationName}
           onSwitchOrganization={handleSidebarSwitchOrganization}
-          onProjectShared={handleProjectShared}
           billingGateDenied={sidebarGateDenied}
           billingGateEnforcementActive={billingGateEnforcementActive}
           isCreateProjectDisabled={isCreateProjectDisabled}
@@ -6715,61 +6736,54 @@ export default function App() {
             />
           </div>
         </div>
-        <Dialog
-          open={announcementsEnabled && showTrialDecisionModal}
-          onOpenChange={(open) => {
-            if (!open)
-              setTrialModalDismissedForOrg(billingOrganizationId ?? null);
-          }}
+        <TrialDecisionDialog
+          eligible={announcementsEnabled && showTrialDecisionModal}
+          onDismiss={() =>
+            setTrialModalDismissedForOrg(billingOrganizationId ?? null)
+          }
         >
-          <DialogContent
-            onPointerDownOutside={(e) => e.preventDefault()}
-            onEscapeKeyDown={(e) => e.preventDefault()}
-            data-testid="trial-decision-modal"
-          >
-            <DialogHeader>
-              <DialogTitle>Choose how to continue</DialogTitle>
-              <DialogDescription>
-                Your trial has ended. Upgrade to keep paid features, or move
-                this organization to the Free plan.
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter className="gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                disabled={isSelectingFreeAfterTrial}
-                onClick={() => {
-                  void (async () => {
-                    try {
-                      await selectFreeAfterTrial();
-                      toast.success(
-                        "This organization is now on the Free plan.",
-                      );
-                    } catch {
-                      toast.error("Could not update plan. Try again.");
-                    }
-                  })();
-                }}
-              >
-                {isSelectingFreeAfterTrial ? "Saving…" : "Choose free"}
-              </Button>
-              <Button
-                type="button"
-                onClick={() => {
-                  setTrialModalDismissedForOrg(billingOrganizationId ?? null);
-                  if (billingOrganizationId) {
-                    navigateToTarget(
-                      `organizations/${billingOrganizationId}/billing`,
+          <DialogHeader>
+            <DialogTitle>Choose how to continue</DialogTitle>
+            <DialogDescription>
+              Your trial has ended. Upgrade to keep paid features, or move
+              this organization to the Free plan.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isSelectingFreeAfterTrial}
+              onClick={() => {
+                void (async () => {
+                  try {
+                    await selectFreeAfterTrial();
+                    toast.success(
+                      "This organization is now on the Free plan.",
                     );
+                  } catch {
+                    toast.error("Could not update plan. Try again.");
                   }
-                }}
-              >
-                Upgrade
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+                })();
+              }}
+            >
+              {isSelectingFreeAfterTrial ? "Saving…" : "Choose free"}
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                setTrialModalDismissedForOrg(billingOrganizationId ?? null);
+                if (billingOrganizationId) {
+                  navigateToTarget(
+                    `organizations/${billingOrganizationId}/billing`,
+                  );
+                }
+              }}
+            >
+              Upgrade
+            </Button>
+          </DialogFooter>
+        </TrialDecisionDialog>
       </SidebarProvider>
     </SettingsDraftProvider>
   );
@@ -6829,7 +6843,7 @@ export default function App() {
     };
   })();
 
-  return (
+  const shell = (
     <PreferencesStoreProvider
       themeMode={initialThemeMode}
       themePreset={initialThemePreset}
@@ -6869,6 +6883,7 @@ export default function App() {
             <MCPJamLimitDialog />
             <PlanLimitDialog />
             <StdioCommandApprovalDialog />
+            <LauncherProjectChoiceDialog />
             <UnavailableOrganizationDialog
               isAuthenticated={isAuthenticated}
               routeTab={activeTab}
@@ -6971,5 +6986,11 @@ export default function App() {
         </ServerActionsProvider>
       </AppStateProvider>
     </PreferencesStoreProvider>
+  );
+
+  return (
+    <AnnouncementQueueProvider enabled={announcementsEnabled}>
+      {shell}
+    </AnnouncementQueueProvider>
   );
 }

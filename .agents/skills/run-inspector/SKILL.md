@@ -39,54 +39,17 @@ Keep this link private: it signs a browser in.
 Open that exact link in the browser; the bare client URL does not
 carry the session token. Never paste the link into a PR, comment or log.
 
-Signed-in flows (WorkOS) need a real account: use an agent environment
-(next section). Without the `mcpjam-backend` checkout or its agents key, say
-in the PR which signed-in checks you could not run instead of faking them.
+Signed-in flows (WorkOS) need a real account: see the next section.
 
-## Signed in, end to end (agent environments)
+## QA a PR, signed in
 
-An agent environment is a disposable backend running your backend code, with
-test accounts, real-model chat, project secrets, hosted browsers and the
-feature flags you choose. It lives two days. `mcpjam-backend`'s
-`scripts/agentEnv.ts` documents every command; the usual run:
-
-1. Install dependencies in both checkouts first: `npm ci` in
-   `mcpjam-backend`, and the install in this repo's `AGENTS.md` here. A fresh
-   cloud checkout has neither, and a session with two repositories may skip
-   their setup hooks.
-2. In `mcpjam-backend`: `npm run agent-env -- up --name <change>`, and pass
-   the same `--name` to the later commands (without it, the name is that
-   checkout's branch, and `main` is refused). It needs one secret, the agents
-   key; if it's missing, `up` says
-   where it comes from, and you ask the engineer rather than work around it.
-   Add `--backend-dir <backend worktree>` to run uncommitted backend code, and
-   `--flags-file <json>` to choose feature flags (a flag the file leaves out
-   is off, in the backend and in this app alike).
-3. Start this instance with the profile `up` printed:
-   `npm run dev:worktree -w @mcpjam/inspector -- auto --no-worker --env-file <profile>`.
-4. `npm run agent-env -- sign-in --name <change> --origin http://localhost:<client-port>`
-   prints a Playwright storage state. It is good for one browser context, so
-   run it again for each new one. A new account starts on first-run
-   onboarding: pick a role, then the connect-server dialog.
-5. Drive the app with your own Playwright script:
-   `browser.newContext({ storageState: '<printed path>' })`, pointed at the
-   instance URL. The repo's Playwright configs block the backend's domain, so
-   they don't fit here.
-6. Run `npm run agent-env -- down --name <change>` last. It stops the
-   environment's hosted browsers and deletes its accounts and backend;
-   leftovers count against a shared limit until a daily sweep removes them.
-
-Notes:
-
-- The profile runs the app in hosted mode, which won't connect to localhost
-  or private addresses. Chat and connection checks need a public MCP server,
-  such as the Excalidraw demo in onboarding or `https://mcp.deepwiki.com/mcp`.
-- The backend can't reach an instance on your machine. The instance runs the
-  durable agent-turn and chat-stage work itself on a timer, but backend
-  requests that name one server connection or one eval judge result don't
-  reach it. Report flows that wait on those as unverified, not failed.
-- Hosted browsers start on WebMCP → Open browser; enter a public URL first,
-  because the default address points at nothing inside the cloud desktop.
+Signed-in checks need a real account on a backend of your own. MCPJam staff
+get one from Jamroom, MCPJam's MCP server for agent environments, and follow
+the `jamroom` skill in the `mcpjam-backend` repository
+(`.agents/skills/jamroom/SKILL.md`). It covers the whole run: building the
+environment, starting this app signed in against it, recording evidence and
+cleaning up. Without it, say in the PR which signed-in checks you couldn't
+run instead of faking them.
 
 ## Guest mode
 

@@ -44,6 +44,7 @@ export async function runReadChecks(context: TaskCheckContext) {
     rawCreation,
     readiness,
     uncheckedAdvice,
+    passedAdvice,
   } = context;
   if (selected.has("tasks-ttl-shape")) {
     const stepStartedAt = Date.now();
@@ -298,7 +299,15 @@ export async function runReadChecks(context: TaskCheckContext) {
             "A failed task carries no `statusMessage`; the extension recommends one so a human can see why it failed.",
           informational: true,
         });
-      } else if (!rawStates.some((state) => state.status === "failed")) {
+      } else if (rawStates.some((state) => state.status === "failed")) {
+        passedAdvice.push({
+          id: "tasks-readiness-failed-status-message",
+          title:
+            TASKS_READINESS_CATALOG["tasks-readiness-failed-status-message"]
+              .title,
+          specStrength: "SHOULD",
+        });
+      } else {
         uncheckedAdvice.push({
           id: "tasks-readiness-failed-status-message",
           title:

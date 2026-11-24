@@ -45,6 +45,14 @@ export type {
   RpcLogEvent,
   HttpExchangeLogEvent,
   HttpExchangeLogger,
+  FeatureObserver,
+  FeatureObservationEvent,
+} from "./mcp-client-manager/index.js";
+// MCPJam's own traffic on a connection is not observed use.
+export {
+  isFeatureObservationPaused,
+  pauseFeatureObservation,
+  suppressFeatureObservation,
 } from "./mcp-client-manager/index.js";
 
 // SEP-2243 header mirroring: CLI and conformance use the send path’s walk.
@@ -120,6 +128,14 @@ export {
   type McpModelOutputWithLinkedResourcesOptions,
   type McpModelVisibleToolResultPolicy,
   type McpLinkedResourceReader,
+  mapMcpContentBlocksForModel,
+  EMPTY_TOOL_RESULT_TEXT,
+  hasNoContentBlocks,
+  projectToolResultByRule,
+  structuredContentRuleOf,
+  withoutStructuredContentRule,
+  type McpModelOutputText,
+  type ToolResultRuleOptions,
 } from "./mcp-client-manager/index.js";
 export {
   applyRuntimeClientCapabilities,
@@ -142,6 +158,7 @@ export {
   isInvalidEventsPayloadError,
   classifyEventsRpcError,
   EVENTS_ERROR_CODES,
+  type EventsWireProfile,
 } from "./mcp-client-manager/events-ext-guards.js";
 export type {
   EventsSupport,
@@ -160,6 +177,7 @@ export {
   runEventsConformance,
   startEventsConformanceReceiver,
   EVENTS_CHECK_IDS,
+  EVENTS_WEBHOOK_CHECK_IDS,
 } from "./events-conformance/index.js";
 export type {
   EventsConformanceConfig,
@@ -255,6 +273,7 @@ export {
   serverSkillsActive,
 } from "./server-skills.js";
 export type {
+  ServerSkillFileReader,
   ServerSkillListing,
   ServerSkillRefusal,
   ServerSkillSummary,
@@ -352,6 +371,7 @@ export {
 export { isNonRetryableMarkedError } from "./mcp-client-manager/error-utils.js";
 export { EvalReportingError, SdkError } from "./errors.js";
 export { probeMcpServer } from "./server-probe.js";
+export { parseBearerAuthenticateParameters } from "./oauth/state-machines/shared/challenges.js";
 export { discoverAuthorizationMetadata } from "./oauth/metadata-discovery.js";
 export type {
   AuthorizationMetadataDiscoveryConfig,
@@ -377,6 +397,7 @@ export type {
   ProbeTransportResult,
 } from "./server-probe.js";
 export {
+  DOCTOR_SKILL_VERIFY_SAMPLE,
   runServerDoctor,
   collectConnectedServerDoctorState,
   normalizeServerDoctorError,
@@ -400,6 +421,7 @@ export type {
   ServerDoctorSkillsCheck,
   ServerDoctorSkillsFindings,
   ConnectedServerDoctorState,
+  CollectConnectedServerDoctorStateOptions,
   RunServerDoctorInput,
   ServerDoctorDependencies,
 } from "./server-doctor.js";
@@ -716,6 +738,7 @@ export {
 export type {
   ConformanceReport,
   ConformanceReportAdvisory,
+  ConformanceReportPassedAdvisory,
   ConformanceReportCase,
   ConformanceReportCaseStatus,
   ConformanceReportGroup,
@@ -1468,6 +1491,7 @@ export type {
   MCPReadinessId,
   MCPReadinessSpecStrength,
   MCPReadinessWarning,
+  MCPPassedAdvice,
   MCPServerSurfaceSnapshot,
 } from "./mcp-conformance/index.js";
 export {
@@ -1963,6 +1987,7 @@ export type {
   McpToolResultImageRenderingPolicy,
   McpToolResultImageRenderPlacement,
   ModelVisibleMcpToolResults,
+  ModelVisibleStructuredContent,
   ServerId,
   CspDomainSet,
   OpenAiAppsCapabilities,
@@ -2296,6 +2321,11 @@ export type {
 } from "./mcp-client-manager/multi-connection-tools.js";
 
 export { aiRequestHeaders } from "./ai-request-headers.js";
+export {
+  getDefaultUserAgent,
+  mcpjamUserAgent,
+  setDefaultUserAgent,
+} from "./user-agent.js";
 
 export { EvalRunStartError } from "./eval-run-start.js";
 export type { EvalIdentityOptions } from "./eval-run-start.js";
@@ -2322,3 +2352,4 @@ export type {
 
 // Server feature model for the server canvas (KES-886). Browser-safe.
 export * from "./server-features/index.js";
+export * from "./server-card/index.js";

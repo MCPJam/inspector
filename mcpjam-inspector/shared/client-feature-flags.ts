@@ -22,10 +22,12 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "eval-run-stage-analytics",
   "eval-suite-results-page",
   "eval-suite-settings-tabs",
+  "eval-test-case-steps-editor",
   "evaluate-observe-first",
   "evaluate-run-result-pages",
   "evals-start-recording",
   "guest-credit-wall-copy",
+  "home-setup-checklist",
   "hosted-browser-enabled",
   "integrations-tab",
   "learn-more-enabled",
@@ -51,6 +53,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "run-disclosure-enabled",
   "sandbox-images-enabled",
   "scheduled-evals-enabled",
+  "server-canvas",
   "shared-slack-channel-enabled",
   "skills-enabled",
   "slack-agent-org-settings",
@@ -60,6 +63,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "trace-destinations",
   "unified-sessions-enabled",
   "unified-share-evals",
+  "web-clients-enabled",
 ] as const;
 
 export type ClientFeatureFlagKey = (typeof CLIENT_FEATURE_FLAG_KEYS)[number];

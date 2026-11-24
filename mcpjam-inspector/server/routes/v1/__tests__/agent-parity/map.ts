@@ -41,6 +41,7 @@ export const NOT_BACKEND_PREFIXES: Readonly<Record<string, string>> = {
   check: "eval step picker check ids",
   connection: "server facts row keys",
   discovery: "server facts row keys",
+  draft: "new test case sentinel ids, never stored",
   judge: "suite grading model keys",
   lc: "canvas builder option strings",
   match: "suite grading model keys",
@@ -50,6 +51,7 @@ export const NOT_BACKEND_PREFIXES: Readonly<Record<string, string>> = {
   read: "OAuth scope names",
   route: "case scorecard and case spine keys",
   scenario: "raw data export section keys",
+  sm: "Tailwind responsive class names",
   style: "eval helper fallback labels",
   swarm: "raw data export section keys",
   toolCalls: "suite grading model keys",
@@ -68,10 +70,20 @@ export const COVERED: Readonly<Record<string, string>> = {};
  * module → a one-line reason.
  */
 export const NOT_EXPOSED: Readonly<Record<string, string>> = {
+  "chatSessionPromote:findSimilarPlaygroundPrompt":
+    "Drives the Playground's repeat-prompt tip; agents save a prompt as a test case directly instead of being nudged",
+  "serverFeatureEvidence:getForServer":
+    "Feeds the server canvas page, behind the server-canvas flag; an agent route follows if agents need the same saved evidence",
   "credentials:getCredentialExportPolicy":
     "Organization security setting; agents see its effect when a credential delivery is refused",
   "credentials:setCredentialExportPolicy":
     "Organization security setting that controls where credentials can go; only admins change it, in the app",
+  "webClients:*":
+    "Claude web and ChatGPT web accounts, behind the web-clients-enabled flag; their v1 routes follow with the web account API",
+  "webClientSuites:*":
+    "A suite's Claude web and ChatGPT web account choices, behind the web-clients-enabled flag; their v1 routes follow with the web account API",
+  "webClientReconnect:*":
+    "Runs waiting for a Claude web or ChatGPT web sign-in, behind the web-clients-enabled flag; their v1 routes follow with the web account API",
 };
 
 /**
