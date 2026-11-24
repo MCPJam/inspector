@@ -216,7 +216,7 @@ export function ServerConfigSaveButton({
             </h3>
             <p id={descriptionId} className="text-sm text-muted-foreground">
               {isUrlChange
-                ? "Changing the server address clears saved credentials for everyone on the project. Add the credentials the new address requires to reconnect."
+                ? "Changing the server URL clears saved credentials for everyone on the project. Add the credentials the new URL requires to reconnect."
                 : "Changing the server command clears saved credentials for everyone on the project. Add the credentials the new command requires to reconnect."}
             </p>
           </div>
