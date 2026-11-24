@@ -107,6 +107,11 @@ export interface BrowserdConfig {
   /** One-shot profile archive to unpack before launching Chromium. */
   profileArchivePath?: string;
   /**
+   * Empty `userDataDir` before launch (an archive, if any, then fills it), so
+   * nothing an earlier boot on this box left behind reaches this browser.
+   */
+  freshProfile: boolean;
+  /**
    * `public`: the browser reaches public internet addresses only, through the
    * egress proxy (`public-network.ts`), and the daemon announces it. Only the
    * exact string opts in; a caller that needs it checks the announcement, so
@@ -256,6 +261,7 @@ export function readBrowserdConfig(
     ...(env.MCPJAM_BROWSERD_PROFILE_ARCHIVE?.trim()
       ? { profileArchivePath: env.MCPJAM_BROWSERD_PROFILE_ARCHIVE.trim() }
       : {}),
+    freshProfile: env.MCPJAM_BROWSERD_FRESH_PROFILE === "1",
     // Only a daemon that had to mint its own token was started by the box.
     startedBy: supplied.length === 0 && tokenFile ? "prelaunch" : "inspector",
   };

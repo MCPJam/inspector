@@ -3156,7 +3156,15 @@ async function runXMcpHeaderDeclarationsCheck(
           ? ""
           : ` (note: the tools/list walk ended early — ${terminationReason(termination)} — so further tools were not scanned)`
       }`,
-      { violations, toolCount, termination, pagesRead }
+      // On failure the count includes the invalid tools, so it is larger than
+      // the tool list a conforming client keeps. The distinct key gets its own
+      // UI label so the two numbers do not look like they disagree.
+      {
+        violations,
+        toolCountIncludingInvalid: toolCount,
+        termination,
+        pagesRead,
+      }
     );
   }
 

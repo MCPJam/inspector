@@ -9,6 +9,7 @@ import type { IncomingMessage } from "node:http";
 // `instanceof` check are unchanged.
 export { OAuthProxyError } from "./oauth-proxy-error.js";
 import { OAuthProxyError } from "./oauth-proxy-error.js";
+import { getDefaultUserAgent } from "./user-agent.js";
 
 export interface OAuthProxyRequest {
   url: string;
@@ -182,7 +183,7 @@ function buildRequestHeaders(
     delete headers[name];
   }
 
-  headers["user-agent"] ??= "MCP-Inspector/1.0";
+  headers["user-agent"] ??= getDefaultUserAgent();
   // Raw http(s).request does not decompress automatically. Requesting identity
   // keeps response parsing deterministic and preserves fetch-like semantics.
   headers["accept-encoding"] = "identity";
@@ -303,7 +304,7 @@ export async function fetchPinnedPublicDocument(
       url,
       {
         method: "GET",
-        headers: { "User-Agent": "MCP-Inspector/1.0", ...(opts.headers ?? {}) },
+        headers: { "User-Agent": getDefaultUserAgent(), ...(opts.headers ?? {}) },
         lookup: pinningLookup,
         servername: url.hostname,
         signal: deadline,
@@ -912,7 +913,7 @@ async function requestPinnedOAuthMetadata(
         headers: {
           Accept: "application/json",
           "Accept-Encoding": "identity",
-          "User-Agent": "MCP-Inspector/1.0",
+          "User-Agent": getDefaultUserAgent(),
         },
         ...(pinnedAddresses
           ? { lookup: createPinnedLookup(pinnedAddresses) }

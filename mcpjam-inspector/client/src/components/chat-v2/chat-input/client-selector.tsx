@@ -28,6 +28,8 @@ import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 import { clientDisplayName } from "@/lib/client-display-name";
 import { HostChipLogo } from "@/components/hosts/host-chip";
 import { useOpenAcrossRemount } from "./use-open-across-remount";
+import { useWebClientsEnabled } from "@/hooks/useWebClientsEnabled";
+import { pickableHosts } from "@/lib/web-accounts/clients";
 
 /**
  * Data needed to drive the chat-input client (host) chip. Mirrors the model
@@ -45,7 +47,7 @@ import { useOpenAcrossRemount } from "./use-open-across-remount";
 export interface ClientSelectorData {
   hosts: Pick<
     HostListItem,
-    "hostId" | "name" | "displayName" | "hostStyle"
+    "hostId" | "name" | "displayName" | "hostStyle" | "runtime"
   >[];
   /** Project the hosts belong to — required to create new hosts. May be a
    *  client-local project id (UUID) before the project is synced to Convex. */
@@ -106,7 +108,7 @@ function compactHostLabel(name: string): string {
 export function ClientSelector({
   trigger,
   inModal = false,
-  hosts,
+  hosts: listedHosts,
   projectId,
   currentHostId,
   selectedHostIds,
@@ -127,6 +129,22 @@ export function ClientSelector({
   themeMode,
   modalThemeMode = themeMode,
 }: ClientSelectorProps) {
+  // Claude web and ChatGPT web clients stay out of the list while their flag
+  // is off (the shared `pickableHosts` rule), except one this chat already
+  // runs: it keeps its row so it can be switched away from or dropped.
+  const webClientsEnabled = useWebClientsEnabled();
+  const runningHostIds = useMemo(
+    () =>
+      environmentPanes.length > 0 ||
+      (enableMultiHost && selectedHostIds.length > 0)
+        ? selectedHostIds
+        : [currentHostId],
+    [currentHostId, enableMultiHost, environmentPanes, selectedHostIds],
+  );
+  const listed = useMemo(
+    () => pickableHosts(listedHosts, webClientsEnabled, runningHostIds),
+    [listedHosts, webClientsEnabled, runningHostIds],
+  );
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [showCreate, setShowCreate] = useState(false);
@@ -187,17 +205,18 @@ export function ClientSelector({
     setIsOpen(nextOpen);
   };
 
+  // Every client, hidden ones included, so a running one keeps its name.
   const hostsById = useMemo(() => {
     const map = new Map<string, ClientSelectorData["hosts"][number]>();
-    for (const host of hosts) map.set(host.hostId, host);
+    for (const host of listedHosts) map.set(host.hostId, host);
     return map;
-  }, [hosts]);
+  }, [listedHosts]);
 
   // Whether the checklist (checkboxes, multi-select) renders at all — with
   // 0-1 clients available, or when the parent has withdrawn compare
   // (shared session, environment mode), there's nothing to multi-select and
   // rows fall back to plain single-select.
-  const checklistMode = enableMultiHost && hosts.length > 1;
+  const checklistMode = enableMultiHost && listed.length > 1;
 
   // The lineup is the persisted array — but ONLY while checklist mode is
   // actually available. The Playground can withdraw compare (host count
@@ -218,6 +237,13 @@ export function ClientSelector({
   const selectedIds = useMemo(
     () => new Set(effectiveSelectedHostIds),
     [effectiveSelectedHostIds],
+  );
+  // The rows. A hidden client gets one only while it's actually selected: a
+  // row is a way to drop it, never to pick it.
+  const hosts = useMemo(
+    () =>
+      pickableHosts(listedHosts, webClientsEnabled, effectiveSelectedHostIds),
+    [listedHosts, webClientsEnabled, effectiveSelectedHostIds],
   );
 
   const leadHostId = environmentLeads

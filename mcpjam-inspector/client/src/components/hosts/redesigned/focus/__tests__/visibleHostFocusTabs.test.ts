@@ -14,6 +14,17 @@ describe("visibleHostFocusTabs", () => {
     expect(ids({ ...base, hasBuiltInTools: true })).toContain("tools");
   });
 
+  it("shows Browser for a web client, whose accounts live there", () => {
+    const base = {
+      hasBuiltInTools: false,
+      computersEnabled: false,
+      computerAttached: false,
+      browsersEnabled: false,
+    };
+    expect(ids(base)).not.toContain("browser");
+    expect(ids({ ...base, webClient: true })).toContain("browser");
+  });
+
   it("gates Computer behind the flag", () => {
     const base = { hasBuiltInTools: true, computerAttached: false };
     expect(ids({ ...base, computersEnabled: false })).not.toContain("computer");
