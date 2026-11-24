@@ -514,6 +514,14 @@ const HOSTED_AUTH_PATH_PATTERNS = [
   // route answers "Bearer token required" — which reaches the user as a failed
   // cancel on a run that is still burning model spend.
   /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/cancel$/,
+  // The suite's Climb tab: starting, listing and reading climbs, a round and
+  // its decision, and the climb's stop, confirmation, draft, continue and
+  // verification. Same reason as the reads above: these go out through
+  // `authFetch`, and without an entry the tab answers "Bearer token required".
+  // The suffix is a closed set, and a round number is digits only.
+  /^\/api\/v1\/projects\/[^/]+\/climbs(\/[^/]+(\/(rounds(\/\d+(\/decision)?)?|stop|confirmation|draft|continue|verifications))?)?$/,
+  // The mock sheet: creating a mock, reading one, and saving a version.
+  /^\/api\/v1\/projects\/[^/]+\/mock-servers(\/[^/]+(\/versions)?)?$/,
 ];
 
 function pathMatchesHostedPrefix(pathname: string): boolean {
