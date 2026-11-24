@@ -66,7 +66,8 @@ const startBody = z
     targetBps: z.number().int().min(1).max(9_999).optional(),
     groupSizes: groupSizes.optional(),
     groupLists: groupLists.optional(),
-    seed: z.number().int().optional(),
+    // The backend takes a string; an integer is accepted as its decimal string so callers written for the number keep working.
+    seed: z.union([z.string().trim().min(1).max(100), z.number().int().safe().transform(String)]).optional(),
   })
   .refine((body) => !(body.groupSizes && body.groupLists), { message: "Give groupSizes or groupLists, not both." })
   .refine((body) => (body.picker === "mcpjam") === (body.pickerModel !== undefined), {

@@ -193,6 +193,15 @@ describe("POST /projects/:projectId/climbs", () => {
   });
 
   it.each([
+    [7, "7"],
+    ["split-a", "split-a"],
+  ])("forwards seed %j to the backend as the string %j", async (seed, expected) => {
+    const res = await request("POST", CLIMBS, { ...startBody, seed });
+    expect(res.status).toBe(201);
+    expect(calls(mocks.mutation, "climbs:startClimb")[0]).toMatchObject({ seed: expected });
+  });
+
+  it.each([
     ["no round limit", { suiteId: SUITE, serverId: "s_real", creditLimit: 5 }],
     ["no credit limit", { suiteId: SUITE, serverId: "s_real", roundLimit: 2 }],
     ["sizes and lists together", { ...startBody, groupSizes: { steering: 1 }, groupLists: { steering: ["a"] } }],

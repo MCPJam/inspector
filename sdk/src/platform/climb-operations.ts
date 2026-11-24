@@ -59,7 +59,10 @@ const startInput = z
     targetPercent: z.number().gt(0).lt(100).optional().describe("For tokens, cost or tool calls: stop when the best so far uses this percent less than the baseline, in every environment that recorded the measure. 5 is 5% fewer."),
     groupSizes: sizes.optional().describe("How many cases go in each group. Give this or `groups`."),
     groups: lists.optional().describe("The case keys in each group (a case without a key is its ID). Give this or `groupSizes`. A case not listed joins steering."),
-    seed: z.number().int().optional().describe("Seeds the random split of the cases, so the same split can be made again."),
+    seed: z
+      .union([text.max(100), z.number().int().safe().transform(String)])
+      .optional()
+      .describe("Seeds the random split of the cases, so the same split can be made again."),
   })
   .refine((input) => !(input.groupSizes && input.groups), {
     message: "Give groupSizes or groups, not both.",

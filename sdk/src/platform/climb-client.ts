@@ -50,7 +50,7 @@ export abstract class ClimbClient extends MockServerClient {
       targetBps?: number;
       groupSizes?: Group;
       groupLists?: Keys;
-      seed?: number;
+      seed?: string;
     },
     options?: Options
   ): Promise<PlatformClimbStarted> {
