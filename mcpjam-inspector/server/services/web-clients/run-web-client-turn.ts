@@ -94,7 +94,41 @@ export type WebClientTurnInput = {
   pageModule?: RealUiPageModule;
   stepTimeoutMs?: number;
   replyTimeoutMs?: number;
+  /** How long the turn waits for a connector another turn is using. */
+  connectorWaitMs?: number;
+  connectorPollMs?: number;
 };
+
+/**
+ * One turn at a time per connector: the endpoint attributes each call to the
+ * connector's open turn. Runs that share an account and a server (compared
+ * runs, Playground panes) take turns rather than failing the later one.
+ */
+const CONNECTOR_WAIT_MS = 10 * 60_000;
+const CONNECTOR_POLL_MS = 2_000;
+
+/** Another turn holds the connector, here or on another replica. */
+function connectorBusy(error: unknown): boolean {
+  return (
+    error instanceof TurnWindowConflictError ||
+    (error instanceof RealUiError && error.failure.kind === "turn_running")
+  );
+}
+
+function pause(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}
 
 export type WebClientTurnResult =
   | {
@@ -243,34 +277,19 @@ export async function runWebClientTurn(
         url: new URL(webConnectorPath(connectorId), env.publicBaseUrl).href,
       });
     }
-    const approve = webTurnApprover(
-      input.approval,
-      input.toolPolicy && {
-        ...input.toolPolicy,
-        serverOf: (id) => serverOfConnector.get(id),
-        onBlock: (block) => {
-          blocked.push(block);
-          input.toolPolicy?.onBlock?.(block);
+    await openWindows(
+      webTurnApprover(
+        input.approval,
+        input.toolPolicy && {
+          ...input.toolPolicy,
+          serverOf: (id) => serverOfConnector.get(id),
+          onBlock: (block) => {
+            blocked.push(block);
+            input.toolPolicy?.onBlock?.(block);
+          },
         },
-      },
+      ),
     );
-    for (const connectorId of serverOfConnector.keys()) {
-      try {
-        windows.open({ connectorId, runId: input.runId, turnId, approve });
-      } catch (error) {
-        // One turn at a time per connector: the endpoint attributes each call
-        // to the connector's open turn. Another run holding it stops this one
-        // as the run's failure, never the server's.
-        if (!(error instanceof TurnWindowConflictError)) throw error;
-        throw new RealUiError({
-          kind: "turn_running",
-          step: "connector",
-          message: "Another run is already using this connector.",
-        });
-      }
-      opened.push(connectorId);
-      await env.turnGate?.open({ connectorId, runId: input.runId, turnId });
-    }
     browser = await env.openBrowser({
       webAccountId: account.webAccountId,
       sites: module.sites.length ? module.sites : WEB_CLIENT_SITES[vendor],
@@ -298,6 +317,9 @@ export async function runWebClientTurn(
       toolCalls: wireCalls(page.conversation.toolCalls),
     };
   } catch (error) {
+    // A Stop goes up as the run's own cancellation: no page failed, and an
+    // abort's message is read-only, so redacting it would throw instead.
+    if (input.signal?.aborted && error === input.signal.reason) throw error;
     redactConnectors(error, serverOfConnector.keys(), env.publicBaseUrl);
     if (!(error instanceof RealUiError)) throw error;
     logger.warn("[web-clients] turn stopped", {
@@ -334,27 +356,67 @@ export async function runWebClientTurn(
   }
 
   /**
-   * Closes this turn's windows and browser, whichever way it ended. A durable
-   * close that fails stays pending so the next call retries it, and the
-   * browser closes either way.
+   * Opens the turn's window on every connector, or none: while another turn
+   * holds one, this turn lets go of all it took, waits, and tries again.
+   * Taking them in one order, and never holding one while waiting, means two
+   * turns can't each wait on the other.
    */
-  async function closeAll() {
+  async function openWindows(approve: ReturnType<typeof webTurnApprover>) {
+    const deadline = Date.now() + (input.connectorWaitMs ?? CONNECTOR_WAIT_MS);
+    const connectorIds = [...serverOfConnector.keys()].sort();
+    for (;;) {
+      // A stopped run takes no connector, so it opens no browser either.
+      input.signal?.throwIfAborted();
+      try {
+        for (const connectorId of connectorIds) {
+          windows.open({ connectorId, runId: input.runId, turnId, approve });
+          opened.push(connectorId);
+          await env.turnGate?.open({ connectorId, runId: input.runId, turnId });
+        }
+        return;
+      } catch (error) {
+        if (!connectorBusy(error)) throw error;
+        await closeWindows();
+        if (Date.now() >= deadline) {
+          throw new RealUiError({
+            kind: "turn_running",
+            step: "connector",
+            message: "Another run is still using this connector.",
+          });
+        }
+        await pause(input.connectorPollMs ?? CONNECTOR_POLL_MS, input.signal);
+      }
+    }
+  }
+
+  /**
+   * A durable close that fails stays pending, so the next call retries it.
+   * It never throws: the turn's own result or error stands.
+   */
+  async function closeWindows() {
     for (const connectorId of opened) {
       if (windows.active(connectorId)?.turnId === turnId) windows.close(turnId);
     }
-    const open = browser;
-    browser = undefined;
     try {
       if (opened.length > 0) await env.turnGate?.close(turnId);
       opened.length = 0;
     } catch (error) {
-      // The turn's own result or error stands: failing a turn that already
-      // ran would lose its evidence and make a caller send the prompt again,
-      // and a window nobody closes lapses on the backend.
+      // Failing a turn that already ran would lose its evidence and make a
+      // caller send the prompt again, and a window nobody closes lapses on
+      // the backend.
       logger.warn("[web-clients] the turn's durable window did not close", {
         runtimeId: input.runtimeId,
         message: error instanceof Error ? error.message : String(error),
       });
+    }
+  }
+
+  /** Closes this turn's windows and browser, whichever way it ended; the browser closes either way. */
+  async function closeAll() {
+    const open = browser;
+    browser = undefined;
+    try {
+      await closeWindows();
     } finally {
       await closeBrowser(open);
     }
