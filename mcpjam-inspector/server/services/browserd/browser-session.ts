@@ -335,7 +335,27 @@ export interface EnsureBrowserSessionArgs {
   logicalSessionId?: string;
   /** Saved profile bytes to apply only if this ensure has to boot a daemon. */
   profileArchive?: Uint8Array;
+  /**
+   * If this ensure has to boot a daemon on a sandbox, start it from an empty
+   * profile (then `profileArchive`, if any), not whatever an earlier boot left
+   * on the box. Never honoured on a computer, whose profile is its owner's.
+   */
+  freshProfile?: boolean;
   signal?: AbortSignal;
+}
+
+/**
+ * A fresh profile was asked for on a sandbox whose browser is already running
+ * for another session. That browser holds whatever profile it started with,
+ * so it is refused rather than handed over, and never stopped for this one.
+ */
+export class FreshProfileRefusedError extends Error {
+  constructor() {
+    super(
+      "This desktop already runs another browser, so a new browser with an empty profile can't start on it. Start the run again.",
+    );
+    this.name = "FreshProfileRefusedError";
+  }
 }
 
 /**
@@ -1505,6 +1525,7 @@ async function bootAndPublish<THandle>(
     sandbox: SessionSandbox;
     contextMode: BrowserContextMode;
     profileArchive?: Uint8Array;
+    freshProfile?: boolean;
     networkPolicy?: "public";
     /** Re-read the store for THIS target and verify what comes back. */
     reuseAgain: () => Promise<THandle | null>;
@@ -1537,6 +1558,7 @@ async function bootAndPublish<THandle>(
       ...(args.profileArchive
         ? { profileArchivePath: BROWSERD_PROFILE_ARCHIVE_PATH }
         : {}),
+      ...(args.freshProfile ? { freshProfile: true } : {}),
       ...(args.networkPolicy ? { networkPolicy: args.networkPolicy } : {}),
       // Applied to BOTH targets: a per-run desktop box has a display for the
       // same reason a computer does, and `hostedDisplayEnv` already keeps the
@@ -1547,8 +1569,9 @@ async function bootAndPublish<THandle>(
   } catch (bootError) {
     // Another replica may have won the boot race for this box (the keyed lock
     // is per-process only): before failing, ask the store once more and reuse
-    // a daemon that verifies.
-    const raced = await args.reuseAgain();
+    // a daemon that verifies. Never for a fresh profile, which that daemon's
+    // browser may not have started from.
+    const raced = args.freshProfile ? null : await args.reuseAgain();
     if (raced) return { kind: "adopted", handle: raced };
     throw bootError;
   }
@@ -1563,9 +1586,11 @@ async function bootAndPublish<THandle>(
   const recorded = await args.publish(booted);
   if (recorded.status === "conflict") {
     // Stop our own daemon first (the winner's session must be verified against
-    // a box we are no longer fighting over), then adopt the winner.
+    // a box we are no longer fighting over), then adopt the winner. Never for
+    // a fresh profile: the winner's browser may not have started from one.
     await booted.stop().catch(() => {});
     args.onAdopt?.();
+    if (args.freshProfile) throw new FreshProfileRefusedError();
     const adopted = await args.reuseAgain();
     if (adopted) return { kind: "adopted", handle: adopted };
     throw new Error(
@@ -1616,6 +1641,7 @@ async function ensureOnSandbox(
     | "signal"
     | "logicalSessionId"
     | "profileArchive"
+    | "freshProfile"
     | "expectedExistingBootId"
     | "networkPolicy"
   > &
@@ -1676,6 +1702,7 @@ async function ensureOnSandbox(
     requiredFeature,
   );
   if (reusedHandle) {
+    if (args.freshProfile) throw new FreshProfileRefusedError();
     if (
       args.expectedExistingBootId &&
       reusedHandle.bootId !== args.expectedExistingBootId
@@ -1747,7 +1774,10 @@ async function ensureOnSandbox(
     // desktop boot it guards, and it means the kill is conditional on what we
     // still believe is there rather than on a lookup from before we connected.
     const raced = await reuseAgain();
-    if (raced) return raced;
+    if (raced) {
+      if (args.freshProfile) throw new FreshProfileRefusedError();
+      return raced;
+    }
 
     if (target.watched) {
       const claimId = randomUUID();
@@ -1797,6 +1827,7 @@ async function ensureOnSandbox(
       if (fencedRace) {
         await fence?.release();
         fence = null;
+        if (args.freshProfile) throw new FreshProfileRefusedError();
         return fencedRace;
       }
     }
@@ -1808,6 +1839,7 @@ async function ensureOnSandbox(
         contextMode,
         diagnostics,
         ...(args.profileArchive ? { profileArchive: args.profileArchive } : {}),
+        ...(args.freshProfile ? { freshProfile: true } : {}),
         ...(args.networkPolicy ? { networkPolicy: args.networkPolicy } : {}),
         reuseAgain,
         publish: async (booted) => {

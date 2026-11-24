@@ -92,9 +92,61 @@ export async function elementNodeId(
       (element, [name, value]) => element.setAttribute(name, value),
       [MARK, token] as const,
     );
-    return await resolveBackendNodeId(cdp, `[${MARK}="${token}"]`);
+    const marked = `[${MARK}="${token}"]`;
+    return (
+      (await resolveBackendNodeId(cdp, marked)) ??
+      (await markedInShadowRoot(cdp, marked))
+    );
   } finally {
     await unmark(handle);
+  }
+}
+
+/**
+ * Finds `selector` through every open shadow root, from the page itself. A
+ * plain string, so bundling can't rename what runs in the page.
+ */
+const FIND_THROUGH_SHADOW_ROOTS = `(selector) => {
+  const walk = (root) => {
+    const hit = root.querySelector(selector);
+    if (hit) return hit;
+    for (const host of root.querySelectorAll("*")) {
+      const inner = host.shadowRoot ? walk(host.shadowRoot) : null;
+      if (inner) return inner;
+    }
+    return null;
+  };
+  return walk(document);
+}`;
+
+/**
+ * The marked element's backend node id when it sits in an open shadow root:
+ * Playwright's engines reach it there and CDP's `DOM.querySelector` doesn't.
+ */
+async function markedInShadowRoot(
+  cdp: CdpLike,
+  selector: string,
+): Promise<number | null> {
+  try {
+    const found = (await cdp.send("Runtime.evaluate", {
+      expression: `(${FIND_THROUGH_SHADOW_ROOTS})(${JSON.stringify(selector)})`,
+    })) as { result?: { objectId?: string } };
+    const objectId = found?.result?.objectId;
+    if (!objectId) return null;
+    try {
+      const described = (await cdp.send("DOM.describeNode", { objectId })) as {
+        node?: { backendNodeId?: number };
+      };
+      return described?.node?.backendNodeId ?? null;
+    } finally {
+      try {
+        await cdp.send("Runtime.releaseObject", { objectId });
+      } catch {
+        // A page that navigated has let the object go already.
+      }
+    }
+  } catch {
+    return null;
   }
 }
 

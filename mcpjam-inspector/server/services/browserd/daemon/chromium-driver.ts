@@ -2546,10 +2546,19 @@ export class ChromiumDriver implements BrowserDriver {
     /** Read this one element's text instead of the page's. */
     rootSelector?: string,
   ): Promise<BrowserCommandResult> {
-    const read = (): Promise<string | BrowserCommandResult> =>
-      rootSelector === undefined
-        ? entry.page.pageText()
-        : this.readElementText(entry, rootSelector);
+    const read = async (): Promise<string | BrowserCommandResult> => {
+      const text =
+        rootSelector === undefined
+          ? await entry.page.pageText()
+          : await this.readElementText(entry, rootSelector);
+      // A read that found nothing, or could not look, while a person took the
+      // browser says nothing about the element. It reports them instead, so
+      // the turn waits for the handback rather than calling the element gone.
+      if (typeof text === "string" || permit()) return text;
+      return this.leaseBlockedResult(
+        "a person took control of this browser while this was running; the result was discarded and nothing was observed",
+      );
+    };
     const STABLE_ATTEMPTS = 2;
     let before = await this.snapshot(entry.page);
     for (let attempt = 0; attempt < STABLE_ATTEMPTS; attempt += 1) {

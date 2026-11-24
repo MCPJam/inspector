@@ -52,8 +52,9 @@ export function accountBrowserOver(
   };
   return {
     async verifyAccount() {
-      const { driver } = await open();
       try {
+        // Opening can find the account signed out too, before any page loads.
+        const { driver } = await open();
         const { email, workspace } = await module.signedIn(driver, {
           timeoutMs: SIGN_IN_CHECK_MS,
         });

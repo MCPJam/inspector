@@ -157,18 +157,23 @@ export function createLocalWebClientEnvironment(deps: {
     async openBrowser({ sites, signal, waitUntil }) {
       const deadline =
         waitUntil ?? Date.now() + (deps.profileWaitMs ?? PROFILE_WAIT_MS);
-      for (;;) {
+      const poll = deps.profilePollMs ?? PROFILE_POLL_MS;
+      for (let waited = false; ; waited = true) {
         // A stopped run launches nothing, even once the profile frees.
         signal?.throwIfAborted();
-        if (!openProfiles.has(deps.profileDir)) break;
-        if (Date.now() >= deadline) {
+        const expired = Date.now() >= deadline;
+        // A profile free at the first look is taken whatever the budget; one
+        // that frees while the turn waits, only within it.
+        if (!openProfiles.has(deps.profileDir) && !(waited && expired)) break;
+        if (expired) {
           throw new RealUiError({
             kind: "turn_running",
             step: "connector",
             message: `Another turn is using this machine's ${name} browser.`,
           });
         }
-        await pause(deps.profilePollMs ?? PROFILE_POLL_MS, signal);
+        // A pause never runs past the deadline.
+        await pause(Math.min(poll, Math.max(0, deadline - Date.now())), signal);
       }
       openProfiles.add(deps.profileDir);
       let launched: Awaited<ReturnType<LaunchLocalBrowser>> | undefined;

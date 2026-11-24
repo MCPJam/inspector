@@ -7,7 +7,7 @@
  * Evidence: a real Chromium profile, archived and restored the way a hosted
  * box does it. The sites are served by request routing, not the network.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -97,6 +97,61 @@ describe("clearing a site before a profile export", { timeout: 60_000 }, () => {
       });
     } finally {
       await reopened.close();
+    }
+  });
+
+  it("stops every page before it clears a site, so none writes it back before the export", async () => {
+    const dir = await profileDir();
+    const context = await open(dir);
+    const page = await context.newPage();
+    await page.goto(`${SIGN_IN}/`);
+    // A page left running on the site keeps writing its session back.
+    await page.evaluate(() => {
+      setInterval(() => {
+        localStorage.setItem("session", "written again");
+        document.cookie = "session=again; path=/; max-age=3600; secure";
+      }, 1);
+    });
+
+    await adaptContext(context as never).clearOriginData!([SIGN_IN]);
+    expect(page.isClosed()).toBe(true);
+    // Time a page still running would have used to write.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await context.close();
+    const restored = await profileDir();
+    await importBrowserProfileArchive(restored, await exportBrowserProfileArchive(dir));
+
+    const reopened = await open(restored);
+    try {
+      expect((await reopened.cookies()).map((cookie) => cookie.domain)).not.toContain("signin.authkit.test");
+      expect(await storageAt(reopened, SIGN_IN)).toEqual({ local: null, databases: [] });
+    } finally {
+      await reopened.close();
+    }
+  });
+
+  it("fails the export when a page won't close in time, before clearing anything", async () => {
+    vi.useFakeTimers();
+    try {
+      const cleared: string[] = [];
+      const adapted = adaptContext({
+        newPage: async () => ({}) as never,
+        // A page that never finishes closing, as a renderer stuck in a dialog can.
+        pages: () => [{ close: () => new Promise<void>(() => {}) }] as never,
+        browser: () => null,
+        close: async () => {},
+        newCDPSession: async () => ({ send: async () => cleared.push("cdp") }) as never,
+        clearCookies: async () => {
+          cleared.push("cookies");
+        },
+      });
+      const clearing = adapted.clearOriginData!([SIGN_IN]);
+      const outcome = expect(clearing).rejects.toThrow("profile_export_pages_did_not_close");
+      await vi.advanceTimersByTimeAsync(10_000);
+      await outcome;
+      expect(cleared).toEqual([]);
+    } finally {
+      vi.useRealTimers();
     }
   });
 
