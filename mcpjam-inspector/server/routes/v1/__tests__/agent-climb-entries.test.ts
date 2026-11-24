@@ -20,6 +20,14 @@ describe("the headless agent and climbs", () => {
     expect(round.proposal.describe({ climb: "c1", server: "docs (mock)" })).toContain("docs (mock) as the next round of climb c1");
   });
 
+  it("proposes resuming a paused climb, as a spend", () => {
+    const resume = entry("continue_climb");
+    expect(resume?.tier).toBe("gated");
+    if (resume?.tier !== "gated") return;
+    expect(resume.proposal.confirmSeverity).toBe("spend");
+    expect(resume.proposal.describe({ climb: "c1" })).toContain("Continue climb c1: MCPJam picks the next change");
+  });
+
   it("reads and overrules directly, and never stops a climb for a person", () => {
     for (const name of ["get_climb", "list_climbs", "get_climb_round", "update_climb", "set_climb_round_decision"]) {
       expect(entry(name)?.tier, name).toBe("direct");

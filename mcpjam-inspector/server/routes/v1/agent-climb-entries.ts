@@ -28,6 +28,14 @@ export const SUBMIT_CLIMB_ROUND_PROPOSAL: GatedProposalMeta = {
   confirmSeverity: "spend",
 };
 
+export const CONTINUE_CLIMB_PROPOSAL: GatedProposalMeta = {
+  describe: (input) =>
+    `Continue climb ${text(input, "climb") ?? "(unnamed)"}: MCPJam picks the next change and runs it in every environment, within the climb's round and credit limits`,
+  buttonLabel: "Continue the climb",
+  kind: "start",
+  confirmSeverity: "spend",
+};
+
 export const CONFIRM_CLIMB_PROPOSAL: GatedProposalMeta = {
   describe: (input) =>
     `Confirm climb ${text(input, "climb") ?? "(unnamed)"} once: two run groups on the cases no round ran, in every environment of the climb`,

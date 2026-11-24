@@ -156,6 +156,7 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /projects/{projectId}/climbs/{climbId}/stop": "stopClimb",
   "post /projects/{projectId}/climbs/{climbId}/confirmation": "confirmClimb",
   "post /projects/{projectId}/climbs/{climbId}/draft": "draftClimbChange",
+  "post /projects/{projectId}/climbs/{climbId}/continue": "continueClimb",
   "post /projects/{projectId}/climbs/{climbId}/verifications": "verifyClimb",
   // Server accounts. Write-only tokens: no method returns one.
   "get /projects/{projectId}/servers/{serverId}/accounts": "listServerAccounts",

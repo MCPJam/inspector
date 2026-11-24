@@ -16,7 +16,16 @@ export type PlatformClimbStopReason =
   | "round_limit"
   | "stopped_by_caller";
 export type PlatformClimbVerdict = "kept" | "reverted" | "not_decided";
-export type PlatformClimbSubmittedVia = "cli" | "mcp" | "api" | "app";
+export type PlatformClimbSubmittedVia = "cli" | "mcp" | "api" | "app" | "mcpjam";
+export type PlatformClimbPicker = "person" | "agent" | "mcpjam";
+/** Where MCPJam's steps run: a worker that holds the service credential, or the starter's own Inspector. */
+export type PlatformClimbStepRunner = "hosted" | "local";
+export type PlatformClimbPausedCode =
+  | "attempts_exhausted"
+  | "nothing_submitted"
+  | "inspector_stopped"
+  | "starter_unresolvable"
+  | "feature_unavailable";
 
 /** One group of cases on one environment, as the baseline measured it. */
 export type PlatformClimbGroupBaseline = {
@@ -60,6 +69,9 @@ export type PlatformClimbRoundSummary = {
   /** What stands: the overrule if there is one, else the verdict. */
   standing?: PlatformClimbVerdict;
   reasons: string[];
+  /** Set on a round MCPJam picked, with the chat session that holds its transcript. */
+  pickedBy?: "mcpjam";
+  pickerChatSessionId?: string;
 };
 
 export type PlatformClimbConfirmationRecord = {
@@ -103,7 +115,16 @@ export type PlatformClimbBase = {
   serverId: string;
   serverName: string;
   environmentIds: string[];
-  picker: "person" | "agent";
+  picker: PlatformClimbPicker;
+  /** MCPJam as picker: the model it picks with, and where its steps run. */
+  pickerModel?: string;
+  stepRunner?: PlatformClimbStepRunner;
+  /** The step MCPJam has waiting or running. Absent: none. */
+  step?: { status: "due" | "claimed"; dueAt: number; attempts: number; emptyTurns: number; leaseExpiresAt?: number };
+  /** Set while the climb waits for a person: say why, then `continue_climb`. A paused climb is still ready or running. */
+  paused?: { at: number; code: PlatformClimbPausedCode; reason: string };
+  /** What MCPJam's own turns cost; the credits are already in `limits.creditsCommitted`. */
+  pickerSpend?: { credits: number; usd: number; tokens: number; turns: number };
   state: PlatformClimbState;
   stopReason?: PlatformClimbStopReason;
   measure: PlatformClimbMeasure;
@@ -312,6 +333,9 @@ export type PlatformClimbVerified = {
   report?: VerificationReport;
   settled: boolean;
 };
+
+/** `continue_climb`: the pause is cleared; the next step is due now, or when the round in flight settles. */
+export type PlatformClimbContinued = { climbId: string; suiteId: string; resumed: true; stepDue: boolean };
 
 /** `draft_climb_change`: a model's rewrite of one tool's description, as a draft and as the merge patch that applies it. */
 export type PlatformClimbDraft = {

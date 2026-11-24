@@ -349,6 +349,7 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   get_climb_round: "climbs",
   set_climb_round_decision: "climbs",
   stop_climb: "climbs",
+  continue_climb: "climbs",
   confirm_climb: "climbs",
   draft_climb_change: "climbs",
   verify_climb: "climbs",

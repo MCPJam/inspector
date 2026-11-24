@@ -4,6 +4,7 @@ import {
   PlatformApiClient,
   getClimbOperation,
   confirmClimbOperation,
+  continueClimbOperation,
   draftClimbChangeOperation,
   getClimbRoundOperation,
   isFeatureUnavailable,
@@ -114,6 +115,21 @@ describe("start_climb", () => {
     expect(parse({ roundLimit: 1, creditLimit: 0 })).toBe(false);
     expect(parse({ roundLimit: 1, creditLimit: 5, groupSizes: { steering: 1 }, groups: { steering: ["a"] } })).toBe(false);
     expect(parse({ roundLimit: 1, creditLimit: 5, targetPercent: 100 })).toBe(false);
+  });
+
+  it("sends MCPJam as the picker with its model, and only together", async () => {
+    const { client, bodies } = clientWith({ [`POST ${CLIMBS}`]: CLIMB });
+    await startClimbOperation.execute(
+      { suite: "suite-1", server: "server-1", roundLimit: 2, creditLimit: 10, picker: "mcpjam", pickerModel: "anthropic/claude-haiku-4.5" },
+      { client, ...CONTEXT }
+    );
+    expect(bodies).toEqual([
+      { suiteId: "suite-1", serverId: "server-1", roundLimit: 2, creditLimit: 10, picker: "mcpjam", pickerModel: "anthropic/claude-haiku-4.5" },
+    ]);
+    const parse = (input: object) => startClimbOperation.inputSchema.safeParse({ suite: "s", server: "x", roundLimit: 1, creditLimit: 5, ...input }).success;
+    expect(parse({ picker: "mcpjam" })).toBe(false);
+    expect(parse({ pickerModel: "m" })).toBe(false);
+    expect(parse({ picker: "agent", pickerModel: "m" })).toBe(false);
   });
 
   it("names the environment it could not find, before any request to start", async () => {
@@ -337,5 +353,20 @@ describe("verify_climb", () => {
     });
     await client.verifyClimb({ projectId: "project-1", climbId: "c" });
     expect(JSON.parse(seen[0]!["x-mcpjam-ci"]!)).toEqual({ commitSha: "abc", dirty: true });
+  });
+});
+
+describe("continue_climb", () => {
+  it("posts to the climb's continue route and answers with the project", async () => {
+    const { client, bodies } = clientWith({ [`POST ${CLIMBS}/climb-1/continue`]: { climbId: "climb-1", suiteId: SUITE.id, resumed: true, stepDue: true } });
+    const result = await continueClimbOperation.execute({ climb: "climb-1" }, { client, ...CONTEXT });
+    expect(bodies).toEqual([{}]);
+    expect(result).toMatchObject({ resumed: true, stepDue: true, project: { id: "project-1" } });
+  });
+
+  it("is a paid write behind climbs, since the steps it resumes spend credits", () => {
+    expect(continueClimbOperation).toMatchObject({ readOnly: false, risk: "spend" });
+    expect(OPERATION_FEATURES.continue_climb).toBe("climbs");
+    expect(continueClimbOperation.inputSchema.safeParse({}).success).toBe(false);
   });
 });

@@ -62,6 +62,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_climb_round: { command: "cloud climbs rounds get" },
   set_climb_round_decision: { command: "cloud climbs rounds decide" },
   stop_climb: { command: "cloud climbs stop" },
+  continue_climb: { command: "cloud climbs continue" },
   confirm_climb: { command: "cloud climbs confirm" },
   verify_climb: { command: "cloud climbs verify" },
   draft_climb_change: { command: "cloud climbs draft" },

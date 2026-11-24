@@ -7,11 +7,13 @@
  *   mcpjam cloud climbs rounds get --climb <id> --round 2
  *   mcpjam cloud climbs rounds decide --climb <id> --round 2 --decision kept --reason "..."
  *   mcpjam cloud climbs stop --climb <id>
+ *   mcpjam cloud climbs continue --climb <id>
  *   mcpjam cloud climbs draft --climb <id> --tool list_projects
  */
 import type { Command } from "commander";
 import {
   confirmClimbOperation,
+  continueClimbOperation,
   draftClimbChangeOperation,
   setClimbRoundDecisionOperation,
   stopClimbOperation,
@@ -210,6 +212,17 @@ export function registerClimbRoundCommands(climbs: Command): void {
         .requiredOption("--climb <id>", "The climb's ID"),
     ),
     stopClimbOperation,
+    (options: PlatformOptions & { project?: string; climb: string }) => ({ project: options.project, climb: options.climb }),
+  );
+
+  bindOperation(
+    addProjectOption(
+      climbs
+        .command("continue")
+        .description("Resume a climb MCPJam picks for after it paused. Its steps spend credits within the climb's limits")
+        .requiredOption("--climb <id>", "The climb's ID"),
+    ),
+    continueClimbOperation,
     (options: PlatformOptions & { project?: string; climb: string }) => ({ project: options.project, climb: options.climb }),
   );
 

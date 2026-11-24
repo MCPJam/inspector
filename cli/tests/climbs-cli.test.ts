@@ -103,6 +103,13 @@ test("start resolves names, converts percents to basis points and sends both lim
   });
 });
 
+test("start sends MCPJam as the picker with its model", async () => {
+  const requests = stubFetch();
+  await run("start", [...START, "--picker", "mcpjam", "--picker-model", "anthropic/claude-haiku-4.5"]);
+  const post = requests.find((request) => request.method === "POST");
+  assert.deepEqual({ picker: (post?.body as any).picker, pickerModel: (post?.body as any).pickerModel }, { picker: "mcpjam", pickerModel: "anthropic/claude-haiku-4.5" });
+});
+
 test("start without --wait returns as soon as the baseline has launched", async () => {
   const requests = stubFetch();
   const result = await run("start", START);
@@ -181,7 +188,7 @@ test("flag mistakes are usage errors before any request", async () => {
   await assert.rejects(run("start", [...START.slice(0, 4), "--round-limit", "0", "--credit-limit", "5"]), usageError(/--round-limit/));
   await assert.rejects(run("start", [...START.slice(0, 6), "--credit-limit", "x"]), usageError(/--credit-limit must be a number/));
   await assert.rejects(run("start", [...START, "--measure", "speed"]), usageError(/--measure/));
-  await assert.rejects(run("start", [...START, "--picker", "robot"]), usageError(/--picker/));
+  await assert.rejects(run("start", [...START, "--picker", "robot"]), usageError(/--picker must be agent, person or mcpjam/));
   await assert.rejects(run("start", [...START, "--steering-count", "2", "--steering", "a"]), usageError(/not both/));
   await assert.rejects(run("update", ["--climb", "c", "--clear-target", "--target-percent", "5"]), usageError(/not both/));
   assert.equal(requests.length, 0);
@@ -221,6 +228,16 @@ test("stop posts to the climb, and a bad --decision is a usage error before any 
     run("rounds decide", ["--climb", "climb-1", "--round", "2", "--decision", "maybe", "--reason", "x"]),
     usageError(/--decision must be kept or reverted/),
   );
+  assert.equal(requests.length, 1);
+});
+
+test("continue posts to the climb, and --picker takes mcpjam with its model", async () => {
+  const requests = stubFetch({ [`POST ${CLIMBS}/climb-1/continue`]: [{ climbId: "climb-1", suiteId: "suite-1", resumed: true, stepDue: true }] });
+  const result = await run("continue", ["--climb", "climb-1"]);
+  assert.equal(result.stepDue, true);
+  assert.equal(requests[0]?.path, `${CLIMBS}/climb-1/continue`);
+  await assert.rejects(run("start", [...START, "--picker", "mcpjam"]), usageError(/needs --picker-model/));
+  await assert.rejects(run("start", [...START, "--picker-model", "m"]), usageError(/goes with --picker mcpjam/));
   assert.equal(requests.length, 1);
 });
 

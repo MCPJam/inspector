@@ -52,10 +52,16 @@ function measureOf(value: string | undefined) {
   return measure;
 }
 
-function pickerOf(value: string | undefined): "agent" | "person" | undefined {
+function pickerOf(value: string | undefined): "agent" | "person" | "mcpjam" | undefined {
   if (value === undefined) return undefined;
-  if (value === "agent" || value === "person") return value;
-  throw usageError("--picker must be agent or person");
+  if (value === "agent" || value === "person" || value === "mcpjam") return value;
+  throw usageError("--picker must be agent, person or mcpjam");
+}
+
+function pickerModelOf(picker: string | undefined, model: string | undefined): string | undefined {
+  if (picker === "mcpjam" && !model) throw usageError("--picker mcpjam needs --picker-model, the model MCPJam picks with");
+  if (picker !== "mcpjam" && model) throw usageError("--picker-model goes with --picker mcpjam");
+  return model;
 }
 
 const waitSeconds = (options: Wait) => parseIntegerOption(options.waitSeconds, "--wait-seconds", { min: 1 });
@@ -77,7 +83,8 @@ export function registerClimbsCommands(cloud: Command): void {
         .requiredOption("--round-limit <n>", "The most rounds the climb may start (1 to 100)")
         .requiredOption("--credit-limit <n>", "The most credits the climb may commit, checked on estimates")
         .option("--environments <list>", "The suite's environments to climb in, comma-separated (default: all, up to 10)")
-        .option("--picker <who>", "Who picks each change: agent (default) or person")
+        .option("--picker <who>", "Who picks each change: agent (default), person or mcpjam")
+        .option("--picker-model <id>", "The model MCPJam picks with. Required with --picker mcpjam")
         .option("--measure <measure>", `What to climb for: ${MEASURES.join(", ")} (default pass_rate)`)
         .option("--min-improvement-percent <n>", "The smallest move of tokens, cost or tool calls that counts (default 1)")
         .option("--target-percent <n>", "Stop when tokens, cost or tool calls are this percent lower than the baseline")
@@ -110,6 +117,7 @@ export function registerClimbsCommands(cloud: Command): void {
           creditLimit: string;
           environments?: string;
           picker?: string;
+          pickerModel?: string;
           measure?: string;
           minImprovementPercent?: string;
           targetPercent?: string;
@@ -146,6 +154,7 @@ export function registerClimbsCommands(cloud: Command): void {
         creditLimit: parseNumberOption(options.creditLimit, "--credit-limit", { exclusiveMin: 0 }) as number,
         environments: parseListOption(options.environments, "--environments"),
         picker: pickerOf(options.picker),
+        pickerModel: pickerModelOf(options.picker, options.pickerModel),
         measure: measureOf(options.measure),
         minImprovementPercent: parseNumberOption(options.minImprovementPercent, "--min-improvement-percent", {
           min: 0.01,

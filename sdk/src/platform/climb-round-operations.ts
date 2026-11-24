@@ -18,6 +18,7 @@ import {
   type WithProject,
 } from "./climb-support.js";
 import type {
+  PlatformClimbContinued,
   PlatformClimbDecision,
   PlatformClimbRoundRead,
   PlatformClimbRoundSubmitted,
@@ -151,5 +152,26 @@ export const stopClimbOperation: PlatformOperation<StopClimbInput, StopClimbResu
     const { project, info } = await resolveClimbProject(context, input.project);
     const stopped = await context.client.stopClimb({ projectId: project.id, climbId: input.climb }, { signal: context.signal });
     return { ...stopped, project: info };
+  },
+};
+
+const continueInput = z.object({ project: projectInput, climb: climbInput });
+
+export type ContinueClimbInput = z.infer<typeof continueInput>;
+export type ContinueClimbResult = WithProject<PlatformClimbContinued>;
+
+export const continueClimbOperation: PlatformOperation<ContinueClimbInput, ContinueClimbResult> = {
+  name: "continue_climb",
+  title: "Continue a paused climb",
+  description:
+    "Resume a climb MCPJam picks for after it paused: a step that failed three times, a turn that twice submitted no round, an Inspector that stopped, the person who started the climb having no sign-in to act as, or the `climbs` feature being off at the time. Read `get_climb`: `paused` says why and what to fix first. This clears the pause and makes the next step due now, or when the round in flight settles, with fresh attempts. A pause is never a failure and never changes `state`. Refused when the climb is not paused or has stopped. The steps spend credits within the climb's own limits.",
+  readOnly: false,
+  risk: "spend",
+  permalink: suitePermalink,
+  inputSchema: continueInput,
+  async execute(input, context) {
+    const { project, info } = await resolveClimbProject(context, input.project);
+    const continued = await context.client.continueClimb({ projectId: project.id, climbId: input.climb }, { signal: context.signal });
+    return { ...continued, project: info };
   },
 };

@@ -174,6 +174,7 @@ const PLAIN_TOOLS = [
   "confirm_climb",
   "verify_climb",
   "draft_climb_change",
+  "continue_climb",
   // Server accounts: metadata reads and the delete, no widget view.
   "list_server_accounts",
   "get_server_account",
@@ -537,6 +538,7 @@ describe("platform tool registration", () => {
       "confirm_climb",
       "verify_climb",
       "draft_climb_change",
+      "continue_climb",
       "list_server_accounts",
       "get_server_account",
       "delete_server_account",
@@ -874,6 +876,8 @@ describe("platform tool registration", () => {
     // A draft saves nothing and starts no run, but it calls a model, which stays open-world.
     expect(annotationsOf("draft_climb_change")).toMatchObject({ readOnlyHint: false, openWorldHint: true });
     expect(annotationsOf("set_climb_round_decision")).toMatchObject({ readOnlyHint: false });
+    // A resume starts MCPJam's next step, which spends credits within the climb's limits.
+    expect(annotationsOf("continue_climb")).toMatchObject({ readOnlyHint: false });
 
     // Server accounts: the reads stay inside MCPJam; the delete asks the
     // token's issuer to revoke it, and a second delete answers not found.

@@ -49,7 +49,11 @@ const startInput = z
       .max(10)
       .optional()
       .describe("The suite's environments to climb in, by name or ID. Omit for every environment the suite has, up to 10."),
-    picker: z.enum(["person", "agent"]).optional().describe("Who picks each change. Defaults to `agent`: your own agent submits rounds with `submit_climb_round`."),
+    picker: z
+      .enum(["person", "agent", "mcpjam"])
+      .optional()
+      .describe("Who picks each change. Defaults to `agent`: your own agent submits rounds with `submit_climb_round`. `mcpjam`: MCPJam picks each change with the model in `pickerModel`, one step at a time, and pauses when a step cannot finish (`continue_climb` resumes it)."),
+    pickerModel: text.max(200).optional().describe("The model MCPJam picks with, as a model id. Required with `picker: mcpjam`, refused with any other picker."),
     measure: measureInput.optional().describe("What the climb tries to improve: pass_rate (default), tokens, cost or tool_calls. Fixed once round 1 settles."),
     minImprovementPercent: z.number().min(0.01).max(100).optional().describe("The smallest move of tokens, cost or tool calls that counts, in percent. Default 1."),
     targetPercent: z.number().gt(0).lt(100).optional().describe("For tokens, cost or tool calls: stop when the best so far uses this percent less than the baseline, in every environment that recorded the measure. 5 is 5% fewer."),
@@ -59,6 +63,10 @@ const startInput = z
   })
   .refine((input) => !(input.groupSizes && input.groups), {
     message: "Give groupSizes or groups, not both.",
+  })
+  .refine((input) => (input.picker === "mcpjam") === (input.pickerModel !== undefined), {
+    message: "Give pickerModel with picker mcpjam, and only then.",
+    path: ["pickerModel"],
   });
 
 export type StartClimbInput = z.infer<typeof startInput>;
@@ -95,6 +103,7 @@ export const startClimbOperation: PlatformOperation<StartClimbInput, StartClimbR
         creditLimit: input.creditLimit,
         ...(environmentIds ? { environmentIds } : {}),
         ...(input.picker ? { picker: input.picker } : {}),
+        ...(input.pickerModel ? { pickerModel: input.pickerModel } : {}),
         ...(input.measure ? { measure: input.measure } : {}),
         ...(input.minImprovementPercent !== undefined
           ? { minImprovementBps: percentToBps(input.minImprovementPercent) }

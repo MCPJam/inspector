@@ -8,6 +8,8 @@ import { MockServerClient } from "./mock-client.js";
 import type {
   PlatformClimb,
   PlatformClimbConfirmed,
+  PlatformClimbContinued,
+  PlatformClimbPicker,
   PlatformClimbDraft,
   PlatformClimbListItem,
   PlatformClimbMeasure,
@@ -40,7 +42,9 @@ export abstract class ClimbClient extends MockServerClient {
       roundLimit: number;
       creditLimit: number;
       environmentIds?: string[];
-      picker?: "person" | "agent";
+      picker?: PlatformClimbPicker;
+      /** The model MCPJam picks with; required when `picker` is `mcpjam`. */
+      pickerModel?: string;
       measure?: PlatformClimbMeasure;
       minImprovementBps?: number;
       targetBps?: number;
@@ -145,6 +149,11 @@ export abstract class ClimbClient extends MockServerClient {
   ): Promise<PlatformClimbVerified> {
     const { projectId, climbId, ...body } = params;
     return this.request("POST", climbPath(projectId, climbId, "/verifications"), { body, declareLaunch: true }, options);
+  }
+
+  /** Clears a paused climb's pause and makes MCPJam's next step due. */
+  continueClimb(params: { projectId: string; climbId: string }, options?: Options): Promise<PlatformClimbContinued> {
+    return this.request("POST", climbPath(params.projectId, params.climbId, "/continue"), { body: {} }, options);
   }
 
   draftClimbChange(
