@@ -58,6 +58,10 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   update_climb: { command: "cloud climbs update" },
   get_climb: { command: "cloud climbs get" },
   list_climbs: { command: "cloud climbs list" },
+  submit_climb_round: { command: "cloud climbs rounds submit" },
+  get_climb_round: { command: "cloud climbs rounds get" },
+  set_climb_round_decision: { command: "cloud climbs rounds decide" },
+  stop_climb: { command: "cloud climbs stop" },
   // `default` runs the same operation as `rename`, with `isDefault` in place
   // of a name.
   list_server_accounts: { command: "cloud server-accounts list" },

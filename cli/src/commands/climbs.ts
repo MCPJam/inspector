@@ -21,6 +21,7 @@ import {
   updateClimbOperation,
   type StartClimbInput,
 } from "@mcpjam/sdk/platform";
+import { registerClimbRoundCommands } from "./climb-rounds.js";
 import { usageError } from "../lib/output.js";
 import {
   WAIT_FLAG,
@@ -227,4 +228,6 @@ export function registerClimbsCommands(cloud: Command): void {
       limit: parseIntegerOption(options.limit, "--limit", { min: 1, max: 100 }),
     }),
   );
+
+  registerClimbRoundCommands(climbs);
 }

@@ -54,6 +54,10 @@ beta; they are listed [after the table](#held-tools).
 | `update_climb` | Change what a climb is for, the smallest improvement or its target until round 1 settles, or set cases aside as confirmation cases. Behind the `climbs` feature. | — |
 | `get_climb` | Read a climb: its state, limits, the cases in each group, the baseline's noise per environment, every round with who submitted it, and the best server so far. Validation shows totals only. | — |
 | `list_climbs` | List a project's climbs, newest first. | — |
+| `submit_climb_round` | Submit a saved server (usually a mock) as the next round of a climb: the steering and validation cases run in every environment with it replacing the climbed server, and the best so far is measured again when its numbers are old. Refused past the round or credit limit. Launches paid runs. Behind the `climbs` feature. | — |
+| `get_climb_round` | Read one round: kept, reverted or not decided and why, who submitted it, and each environment's pass rate and measure against the noise. `waitSeconds` holds the call until the round settles. Validation shows totals only. | — |
+| `set_climb_round_decision` | Overrule a settled round with a reason, recorded with who overruled it. Moves the best so far. | — |
+| `stop_climb` | Stop a climb for good and get where it ended and the rounds that stand as kept. | — |
 | `list_server_accounts` | List the accounts a saved MCP server signs in with: id, name, default, needs reconnecting, hosted-only. Never a token. | — |
 | `get_server_account` | Read one of a saved server's accounts by id or name. Never a token; another person's account answers not found. | — |
 | `delete_server_account` | Delete one of a saved server's accounts and ask its issuer to revoke the token. The default account is refused while other accounts exist. | — |

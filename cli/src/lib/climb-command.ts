@@ -2,7 +2,7 @@
  * What the climb commands share: parsing the flags a climb takes, and the
  * bounded `--wait` that polls a climb until it leaves a state.
  */
-import { getClimbOperation } from "@mcpjam/sdk/platform";
+import { MAX_ROUND_WAIT_SECONDS, getClimbOperation, getClimbRoundOperation } from "@mcpjam/sdk/platform";
 import { usageError } from "./output.js";
 
 /** A number flag, or a usage error that names the flag. */
@@ -58,5 +58,26 @@ export async function waitForClimb<TResult extends { climbId: string }>(
     const climb = await getClimbOperation.execute({ project: wait.project, climb: result.climbId }, context);
     if (done(climb) || Date.now() >= deadline) return climb;
     await sleep(POLL_MS);
+  }
+}
+
+type Round = Awaited<ReturnType<typeof getClimbRoundOperation.execute>>;
+
+/**
+ * With `--wait`, reads a round until it has settled or the bound passes, in
+ * holds of at most a minute (the operation's own bound), so no single call
+ * outlives what a surface allows. Returns the round as last read: `settled`
+ * says whether it finished.
+ */
+export async function waitForRound(
+  round: { climb: string; round: number; project?: string },
+  wait: { wait?: boolean; waitSeconds?: number },
+  context: Context
+): Promise<Round> {
+  const deadline = Date.now() + (wait.waitSeconds ?? WAIT_SECONDS_DEFAULT) * 1000;
+  for (;;) {
+    const hold = wait.wait ? Math.min(MAX_ROUND_WAIT_SECONDS, Math.max(0, Math.floor((deadline - Date.now()) / 1000))) : 0;
+    const read = await getClimbRoundOperation.execute({ ...round, waitSeconds: hold }, context);
+    if (read.settled || !wait.wait || Date.now() >= deadline) return read;
   }
 }

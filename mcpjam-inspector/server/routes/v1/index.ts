@@ -174,7 +174,10 @@ export const V1_EVAL_LAUNCH_ROUTES = [
 v1.on("POST", [...V1_EVAL_LAUNCH_ROUTES], refuseWhileDraining("eval_run"));
 
 /** The climb routes that launch run groups (they dispatch into the launch routes above). */
-export const V1_CLIMB_LAUNCH_ROUTES = ["/projects/:projectId/climbs"] as const;
+export const V1_CLIMB_LAUNCH_ROUTES = [
+  "/projects/:projectId/climbs",
+  "/projects/:projectId/climbs/:climbId/rounds",
+] as const;
 v1.on("POST", [...V1_CLIMB_LAUNCH_ROUTES], refuseWhileDraining("eval_run"));
 
 /**

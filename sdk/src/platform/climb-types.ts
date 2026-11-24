@@ -170,3 +170,79 @@ export type PlatformClimbLaunch = {
 
 /** `start_climb`: the climb, and the baseline it launched. */
 export type PlatformClimbStarted = PlatformClimb & { launch: PlatformClimbLaunch };
+
+/** One side of a comparison in one environment: the measure or pass rate against the best so far. */
+export type PlatformClimbMove = "better" | "worse" | "none";
+export type PlatformClimbGroupResult = {
+  passRate?: { candidateBps: number; bestBps: number; deltaBps: number; noiseBps: number; move: PlatformClimbMove };
+  measure?: { ratioBps: number; noiseBps: number; comparedCases: number; move: PlatformClimbMove };
+};
+
+/** `climbRounds:getClimbRound`: one round in full. Validation is totals per environment, never a case. */
+export type PlatformClimbRound = PlatformClimbRoundSummary & {
+  estimatedCredits: number;
+  remeasuredBest: boolean;
+  remeasureReason?: string;
+  againstBest: unknown;
+  validation?: "better" | "unchanged";
+  failedSteeringCaseKeys: string[];
+  validationRegressed?: boolean;
+  environments: Array<{
+    environmentId: string;
+    candidateLost: number;
+    bestLost: number;
+    measureRecorded: boolean;
+    steering?: PlatformClimbGroupResult;
+    validation?: PlatformClimbGroupResult;
+  }>;
+  environmentsWithoutMeasure: string[];
+  failureReason?: string;
+  overruled?: { to: PlatformClimbVerdict; by: string; reason: string; at: number };
+};
+
+/** `set_climb_round_decision`: the round as it now stands, and the best so far after the overrule. */
+export type PlatformClimbDecision = {
+  climbId: string;
+  suiteId: string;
+  round: PlatformClimbRound;
+  best: PlatformClimb["best"];
+};
+
+/** What waiting for a round did: whether it settled, and for how long it waited. */
+export type PlatformClimbRoundRead = PlatformClimbRound & {
+  climbId: string;
+  suiteId: string;
+  waitedMs: number;
+  settled: boolean;
+};
+
+/** `submit_climb_round`: the round that opened, what it will cost, and the runs it launched. */
+export type PlatformClimbRoundSubmitted = {
+  climbId: string;
+  suiteId: string;
+  roundNumber: number;
+  unitKey: string;
+  /** True when the same idempotency key had already registered this round: nothing was charged or launched again. */
+  replayed: boolean;
+  estimate: PlatformClimbEstimate;
+  /** The best so far is measured again in this round, and why. */
+  remeasureBest: boolean;
+  remeasureReasons: string[];
+  groups: PlatformClimbLaunchedGroup[];
+};
+
+/** `stop_climb`: where the climb ended and the rounds that stand as kept. */
+export type PlatformClimbStopped = {
+  climbId: string;
+  suiteId: string;
+  state: "stopped";
+  stopReason: PlatformClimbStopReason;
+  best: PlatformClimb["best"];
+  kept: Array<{
+    number: number;
+    serverId: string;
+    serverVersion?: string;
+    validation?: "better" | "unchanged";
+    overruled: boolean;
+  }>;
+};

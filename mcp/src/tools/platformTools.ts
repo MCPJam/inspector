@@ -142,6 +142,10 @@ import {
   updateClimbOperation,
   getClimbOperation,
   listClimbsOperation,
+  submitClimbRoundOperation,
+  getClimbRoundOperation,
+  setClimbRoundDecisionOperation,
+  stopClimbOperation,
   listServerAccountsOperation,
   getServerAccountOperation,
   deleteServerAccountOperation,
@@ -381,6 +385,10 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   updateClimbOperation,
   getClimbOperation,
   listClimbsOperation,
+  submitClimbRoundOperation,
+  getClimbRoundOperation,
+  setClimbRoundDecisionOperation,
+  stopClimbOperation,
   // SERVER ACCOUNTS — the reads plus the delete. The upload and the update
   // are in EXCLUDED_FROM_CATALOG; deleting the default while other accounts
   // exist is refused, so the delete never moves runs onto another account.

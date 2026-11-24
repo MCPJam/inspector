@@ -219,6 +219,8 @@ describe("agent op registry", () => {
         "update_mock_server",
         // What a climb is for, until round 1: free, and the backend holds the tier.
         "update_climb",
+        // Overrules the rule with a recorded reason, until the confirmation has run.
+        "set_climb_round_decision",
       ].sort(),
     );
   });

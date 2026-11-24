@@ -58,7 +58,7 @@ afterEach(() => {
 
 async function run(verb: string, args: string[]) {
   const { stdout } = await captureProcessOutput(() =>
-    buildProgram().parseAsync(["cloud", "climbs", verb, "--project", "project-1", "--api-key", "sk_test", ...args], { from: "user" }),
+    buildProgram().parseAsync(["cloud", "climbs", ...verb.split(" "), "--project", "project-1", "--api-key", "sk_test", ...args], { from: "user" }),
   );
   return JSON.parse(stdout);
 }
@@ -185,4 +185,41 @@ test("flag mistakes are usage errors before any request", async () => {
   await assert.rejects(run("start", [...START, "--steering-count", "2", "--steering", "a"]), usageError(/not both/));
   await assert.rejects(run("update", ["--climb", "c", "--clear-target", "--target-percent", "5"]), usageError(/not both/));
   assert.equal(requests.length, 0);
+});
+
+test("rounds submit sends the server's id and the retry handle; --wait reads the round until it settles", async () => {
+  const requests = stubFetch({
+    [`POST ${CLIMBS}/climb-1/rounds`]: [{ climbId: "climb-1", suiteId: "suite-1", roundNumber: 2 }],
+    [`GET ${CLIMBS}/climb-1/rounds/2`]: [{ number: 2, status: "running", settled: false }, { number: 2, status: "settled", settled: true, verdict: "kept" }],
+  });
+  const result = await run("rounds submit", ["--climb", "climb-1", "--server", "echo", "--idempotency-key", "k", "--wait"]);
+  assert.equal(result.verdict, "kept");
+  const post = requests.find((request) => request.method === "POST");
+  assert.deepEqual(post?.body, { serverId: "server-1", idempotencyKey: "k" });
+  const reads = requests.filter((request) => request.method === "GET");
+  assert.equal(reads.length, 2);
+  assert.match(reads[0]!.query, /wait=50/);
+});
+
+test("rounds get reads once without --wait, and decide sends the reason", async () => {
+  const requests = stubFetch({
+    [`GET ${CLIMBS}/climb-1/rounds/2`]: [{ number: 2, status: "running", settled: false }],
+    [`POST ${CLIMBS}/climb-1/rounds/2/decision`]: [{ climbId: "climb-1", suiteId: "suite-1", round: {}, best: {} }],
+  });
+  const round = await run("rounds get", ["--climb", "climb-1", "--round", "2"]);
+  assert.equal(round.settled, false);
+  await run("rounds decide", ["--climb", "climb-1", "--round", "2", "--decision", "kept", "--reason", "Flaky case."]);
+  assert.match(requests[0]!.query, /wait=0/);
+  assert.deepEqual(requests[1]!.body, { decision: "kept", reason: "Flaky case." });
+});
+
+test("stop posts to the climb, and a bad --decision is a usage error before any request", async () => {
+  const requests = stubFetch();
+  await run("stop", ["--climb", "climb-1"]);
+  assert.equal(requests[0]?.path, `${CLIMBS}/climb-1/stop`);
+  await assert.rejects(
+    run("rounds decide", ["--climb", "climb-1", "--round", "2", "--decision", "maybe", "--reason", "x"]),
+    usageError(/--decision must be kept or reverted/),
+  );
+  assert.equal(requests.length, 1);
 });

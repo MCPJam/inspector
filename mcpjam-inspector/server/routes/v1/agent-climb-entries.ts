@@ -19,6 +19,15 @@ const suiteTarget = (input: Record<string, unknown>): ProposedActionTarget | und
   return selector ? { type: "eval_suite", selector } : undefined;
 };
 
+export const SUBMIT_CLIMB_ROUND_PROPOSAL: GatedProposalMeta = {
+  describe: (input) =>
+    `Submit ${text(input, "server") ?? "(unnamed server)"} as the next round of climb ${text(input, "climb") ?? "(unnamed)"}: ` +
+    "the steering and validation cases run in every environment of the climb",
+  buttonLabel: "Run the round",
+  kind: "start",
+  confirmSeverity: "spend",
+};
+
 export const START_CLIMB_PROPOSAL: GatedProposalMeta = {
   describe: (input) =>
     `Start a climb of ${text(input, "server") ?? "(unnamed server)"} on suite ${text(input, "suite") ?? "(unnamed)"}: ` +

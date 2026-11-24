@@ -12,6 +12,12 @@ import { climbFns, translateClimbReadError, translateClimbWriteError } from "../
 import type { ClimbDeps } from "../../services/climbs/deps.js";
 import { hashRealServerListing } from "../../services/climbs/listing.js";
 import { startClimb } from "../../services/climbs/start-climb.js";
+import { submitRound } from "../../services/climbs/submit-round.js";
+import { submittedViaOf } from "../../services/climbs/surface.js";
+import { readRound } from "../../services/climbs/wait-round.js";
+import { MAX_ROUND_WAIT_SECONDS } from "@mcpjam/sdk/platform";
+import { readAnyIdempotencyKey } from "../../utils/idempotency.js";
+import { randomUUID } from "node:crypto";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { readLaunchContext } from "../../utils/launch-context.js";
 import { buildMcpjamPlatformClient } from "../web/mcpjam-platform-client.js";
@@ -59,6 +65,27 @@ const updateBody = z.strictObject({
   targetBps: z.number().int().min(1).max(9_999).nullable().optional(),
   moveToConfirmation: z.array(id).min(1).optional(),
 });
+
+const submitBody = z.strictObject({
+  serverId: id,
+  serverVersion: id.optional(),
+  idempotencyKey: id.max(256).optional(),
+});
+
+const decisionBody = z.strictObject({
+  decision: z.enum(["kept", "reverted"]),
+  reason: z.string().trim().min(1).max(500),
+});
+
+const roundQuery = z.object({ wait: z.coerce.number().int().min(0).max(MAX_ROUND_WAIT_SECONDS).optional() });
+
+const roundNumberOf = (c: Context): number => {
+  const parsed = Number(c.req.param("roundNumber"));
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Round not found. Read the climb with get_climb to see its rounds.");
+  }
+  return parsed;
+};
 
 const listQuery = z.object({
   suiteId: id.optional(),
@@ -137,6 +164,70 @@ climbs.patch("/projects/:projectId/climbs/:climbId", async (c) => {
   await readClimb(deps, projectId, climbId);
   try {
     return v1Resource(c, await deps.convex.mutation(climbFns.update, { climbId, ...body }));
+  } catch (error) {
+    throw translateClimbWriteError(error);
+  }
+});
+
+// POST /v1/projects/:projectId/climbs/:climbId/rounds: register a round and launch it.
+climbs.post("/projects/:projectId/climbs/:climbId/rounds", async (c) => {
+  const projectId = projectIdOf(c);
+  const body = parseWithSchema(submitBody, await readJsonObjectBody(c));
+  const deps = await climbDepsFor(c);
+  const climb = await readClimb(deps, projectId, c.req.param("climbId") ?? "");
+  try {
+    const submitted = await submitRound(deps, projectId, climb, {
+      serverId: body.serverId,
+      serverVersion: body.serverVersion,
+      // The header wins, like every launch route; a call with neither gets a key of its own.
+      idempotencyKey: readAnyIdempotencyKey(c) ?? body.idempotencyKey ?? randomUUID(),
+      submittedVia: submittedViaOf(readLaunchContext(c)),
+    });
+    return v1Resource(c, submitted, 202);
+  } catch (error) {
+    throw error instanceof WebRouteError ? error : translateClimbWriteError(error);
+  }
+});
+
+// GET /v1/projects/:projectId/climbs/:climbId/rounds/:roundNumber?wait=
+climbs.get("/projects/:projectId/climbs/:climbId/rounds/:roundNumber", async (c) => {
+  const projectId = projectIdOf(c);
+  const { wait } = parseWithSchema(roundQuery, c.req.query());
+  const deps = await climbDepsFor(c);
+  const climb = await readClimb(deps, projectId, c.req.param("climbId") ?? "");
+  try {
+    return v1Resource(c, await readRound(deps.convex, climb, roundNumberOf(c), wait ?? 0));
+  } catch (error) {
+    throw translateClimbReadError(error);
+  }
+});
+
+// POST /v1/projects/:projectId/climbs/:climbId/rounds/:roundNumber/decision: overrule a settled round.
+climbs.post("/projects/:projectId/climbs/:climbId/rounds/:roundNumber/decision", async (c) => {
+  const projectId = projectIdOf(c);
+  const body = parseWithSchema(decisionBody, await readJsonObjectBody(c));
+  const deps = await climbDepsFor(c);
+  const climb = await readClimb(deps, projectId, c.req.param("climbId") ?? "");
+  const roundNumber = roundNumberOf(c);
+  try {
+    const result: { round: Record<string, unknown>; best: unknown } = await deps.convex.mutation(climbFns.setDecision, {
+      climbId: climb.climbId,
+      roundNumber,
+      ...body,
+    });
+    return v1Resource(c, { climbId: climb.climbId, suiteId: climb.suiteId, ...result });
+  } catch (error) {
+    throw translateClimbWriteError(error);
+  }
+});
+
+// POST /v1/projects/:projectId/climbs/:climbId/stop
+climbs.post("/projects/:projectId/climbs/:climbId/stop", async (c) => {
+  const deps = await climbDepsFor(c);
+  const climb = await readClimb(deps, projectIdOf(c), c.req.param("climbId") ?? "");
+  try {
+    const stopped: Record<string, unknown> = await deps.convex.mutation(climbFns.stop, { climbId: climb.climbId });
+    return v1Resource(c, { climbId: climb.climbId, suiteId: climb.suiteId, ...stopped });
   } catch (error) {
     throw translateClimbWriteError(error);
   }

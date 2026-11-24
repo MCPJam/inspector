@@ -9,7 +9,12 @@ import type {
   PlatformClimb,
   PlatformClimbListItem,
   PlatformClimbMeasure,
+  PlatformClimbDecision,
+  PlatformClimbRoundRead,
+  PlatformClimbRoundSubmitted,
   PlatformClimbStarted,
+  PlatformClimbStopped,
+  PlatformClimbVerdict,
 } from "./climb-types.js";
 import type { PlatformPage } from "./types.js";
 
@@ -72,5 +77,43 @@ export abstract class ClimbClient extends MockServerClient {
   ): Promise<PlatformPage<PlatformClimbListItem>> {
     const query = { suiteId: params.suiteId, limit: params.limit };
     return this.request("GET", climbsPath(params.projectId), { query }, options);
+  }
+
+  /** Registers a round on a saved server and launches it. The idempotency key makes a retry safe. */
+  submitClimbRound(
+    params: {
+      projectId: string;
+      climbId: string;
+      serverId: string;
+      serverVersion?: string;
+      idempotencyKey?: string;
+    },
+    options?: Options
+  ): Promise<PlatformClimbRoundSubmitted> {
+    const { projectId, climbId, ...body } = params;
+    return this.request("POST", climbPath(projectId, climbId, "/rounds"), { body, declareLaunch: true }, options);
+  }
+
+  /** One round in full. With `waitSeconds` the call holds until the round settles or the bound passes. */
+  getClimbRound(
+    params: { projectId: string; climbId: string; roundNumber: number; waitSeconds?: number },
+    options?: Options
+  ): Promise<PlatformClimbRoundRead> {
+    const path = climbPath(params.projectId, params.climbId, `/rounds/${params.roundNumber}`);
+    return this.request("GET", path, { query: { wait: params.waitSeconds } }, options);
+  }
+
+  /** Overrules a settled round, recording who and why. */
+  setClimbRoundDecision(
+    params: { projectId: string; climbId: string; roundNumber: number; decision: Exclude<PlatformClimbVerdict, "not_decided">; reason: string },
+    options?: Options
+  ): Promise<PlatformClimbDecision> {
+    const { projectId, climbId, roundNumber, ...body } = params;
+    return this.request("POST", climbPath(projectId, climbId, `/rounds/${roundNumber}/decision`), { body }, options);
+  }
+
+  /** Stops the climb, cancelling a round in flight. */
+  stopClimb(params: { projectId: string; climbId: string }, options?: Options): Promise<PlatformClimbStopped> {
+    return this.request("POST", climbPath(params.projectId, params.climbId, "/stop"), {}, options);
   }
 }

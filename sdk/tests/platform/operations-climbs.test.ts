@@ -3,10 +3,14 @@ import {
   OPERATION_FEATURES,
   PlatformApiClient,
   getClimbOperation,
+  getClimbRoundOperation,
   isFeatureUnavailable,
   isOperationAvailable,
   listClimbsOperation,
+  setClimbRoundDecisionOperation,
   startClimbOperation,
+  stopClimbOperation,
+  submitClimbRoundOperation,
   updateClimbOperation,
 } from "../../src/platform/index.js";
 
@@ -172,5 +176,71 @@ describe("update_climb, get_climb and list_climbs", () => {
       expect(isOperationAvailable(name, {})).toBe(false);
       expect(isOperationAvailable(name, { climbs: true })).toBe(true);
     }
+  });
+});
+
+describe("round operations", () => {
+  const ROUND = { climbId: "climb-1", suiteId: "suite-1", number: 2, status: "settled", settled: true };
+
+  it("submits a saved server by name and sends the retry handle", async () => {
+    const { client, bodies } = clientWith({ [`POST ${CLIMBS}/climb-1/rounds`]: { climbId: "climb-1", suiteId: "suite-1", roundNumber: 2 } });
+    const result = await submitClimbRoundOperation.execute(
+      { climb: "climb-1", server: "echo", serverVersion: "3", idempotencyKey: "k" },
+      { client, ...CONTEXT }
+    );
+    expect(bodies).toEqual([{ serverId: "server-1", serverVersion: "3", idempotencyKey: "k" }]);
+    expect(result).toMatchObject({ roundNumber: 2, project: { id: "project-1" } });
+  });
+
+  it("reads a round, passing the wait the caller asked for", async () => {
+    const { client, lastUrl } = clientWith({ [`GET ${CLIMBS}/climb-1/rounds/2`]: ROUND });
+    const round = await getClimbRoundOperation.execute({ climb: "climb-1", round: 2, waitSeconds: 20 }, { client, ...CONTEXT });
+    expect(lastUrl().pathname).toBe(`${CLIMBS}/climb-1/rounds/2`);
+    expect(lastUrl().searchParams.get("wait")).toBe("20");
+    expect(round.settled).toBe(true);
+  });
+
+  it("bounds the wait, so no call outlives what a surface allows", () => {
+    const parse = (waitSeconds: number) => getClimbRoundOperation.inputSchema.safeParse({ climb: "c", round: 1, waitSeconds }).success;
+    expect(parse(50)).toBe(true);
+    expect(parse(51)).toBe(false);
+    expect(parse(-1)).toBe(false);
+  });
+
+  it("overrules a round with a reason and stops a climb", async () => {
+    const { client, bodies } = clientWith({
+      [`POST ${CLIMBS}/climb-1/rounds/2/decision`]: { climbId: "climb-1", suiteId: "suite-1", round: ROUND, best: { roundNumber: 0 } },
+      [`POST ${CLIMBS}/climb-1/stop`]: { climbId: "climb-1", suiteId: "suite-1", state: "stopped", kept: [] },
+    });
+    await setClimbRoundDecisionOperation.execute({ climb: "climb-1", round: 2, decision: "kept", reason: "Flaky case." }, { client, ...CONTEXT });
+    expect(bodies).toEqual([{ decision: "kept", reason: "Flaky case." }]);
+    expect(await stopClimbOperation.execute({ climb: "climb-1" }, { client, ...CONTEXT })).toMatchObject({ state: "stopped" });
+  });
+
+  it("requires a reason of at most 500 characters to overrule", () => {
+    const parse = (reason: string) =>
+      setClimbRoundDecisionOperation.inputSchema.safeParse({ climb: "c", round: 1, decision: "kept", reason }).success;
+    expect(parse("because")).toBe(true);
+    expect(parse("")).toBe(false);
+    expect(parse("x".repeat(501))).toBe(false);
+  });
+
+  it("declares what each costs and puts every one behind climbs", () => {
+    expect(submitClimbRoundOperation).toMatchObject({ readOnly: false, risk: "spend" });
+    expect(setClimbRoundDecisionOperation).toMatchObject({ readOnly: false, risk: "none" });
+    expect(stopClimbOperation).toMatchObject({ readOnly: false, risk: "destructive" });
+    expect(getClimbRoundOperation.readOnly).toBe(true);
+    for (const name of ["submit_climb_round", "get_climb_round", "set_climb_round_decision", "stop_climb"]) {
+      expect(OPERATION_FEATURES[name]).toBe("climbs");
+    }
+  });
+
+  it("answers FEATURE_UNAVAILABLE for a round when the flag is off", async () => {
+    const { client } = clientWith({
+      [`POST ${CLIMBS}/climb-1/rounds`]: () =>
+        Response.json({ code: "FORBIDDEN", message: "Climbs are not available.", details: { code: "FEATURE_UNAVAILABLE", feature: "climbs" } }, { status: 403 }),
+    });
+    const error = await submitClimbRoundOperation.execute({ climb: "climb-1", server: "echo" }, { client, ...CONTEXT }).catch((e) => e);
+    expect(isFeatureUnavailable(error)).toBe(true);
   });
 });

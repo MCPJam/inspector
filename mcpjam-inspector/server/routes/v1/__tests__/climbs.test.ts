@@ -283,3 +283,126 @@ describe("GET and PATCH a climb", () => {
     expect(await locked.json()).toMatchObject({ details: { code: "CLIMB_MEASURE_LOCKED" } });
   });
 });
+
+describe("rounds", () => {
+  const ROUNDS = `${CLIMBS}/${CLIMB}/rounds`;
+  const roundGroup = (role: string) => {
+    const idempotencyKey = `climb:${CLIMB}:round:1:${role}`;
+    return {
+      role,
+      runGroupId: runGroupIdFor(SUITE, idempotencyKey),
+      idempotencyKey,
+      deadlineAt: 9,
+      serverId: "s_candidate",
+      serverVersion: "3",
+      environmentIds: ["env_a"],
+      caseIds: ["case_1"],
+      status: "registered",
+    };
+  };
+
+  beforeEach(() => {
+    queries["climbRounds:planClimbRound"] = () => ({ allowed: true, candidateCaseIds: ["case_1"], remeasureBest: null });
+    queries["mockServers:getMock"] = () => ({ version: 3 });
+    mutations["climbRounds:beginClimbRound"] = () => ({
+      roundNumber: 1,
+      unitKey: "round:1",
+      remeasureBest: false,
+      groups: [roundGroup("candidate")],
+    });
+  });
+
+  it("submits a round as the caller's surface and answers 202 with the runs", async () => {
+    const res = await request(
+      "POST",
+      ROUNDS,
+      { serverId: "s_candidate" },
+      { "x-mcpjam-launcher": JSON.stringify({ kind: "mcp", client: "claude-code" }), "idempotency-key": "retry-1" },
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ climbId: CLIMB, roundNumber: 1, unitKey: "round:1", replayed: false });
+    expect(calls(mocks.mutation, "climbRounds:beginClimbRound")[0]).toMatchObject({
+      serverId: "s_candidate",
+      serverVersion: "3",
+      idempotencyKey: "retry-1",
+      submittedVia: "mcp",
+    });
+    expect(launches).toHaveLength(1);
+    expect(launches[0]!.body).toMatchObject({ climbId: CLIMB, caseIds: ["case_1"] });
+  });
+
+  it("answers a round past the limit with what is needed and what is left, and runs nothing", async () => {
+    mutations["climbRounds:beginClimbRound"] = () => {
+      throw refusal("CLIMB_ROUND_LIMIT_REACHED", "The climb has used its 3 rounds.", { needed: 1, left: 0 });
+    };
+    const res = await request("POST", ROUNDS, { serverId: "s_candidate" });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ details: { code: "CLIMB_ROUND_LIMIT_REACHED", needed: 1, left: 0 } });
+    expect(launches).toEqual([]);
+  });
+
+  it("answers a second round while one runs by its code", async () => {
+    queries["climbRounds:planClimbRound"] = () => ({
+      allowed: false,
+      refusal: { code: "CLIMB_ROUND_IN_FLIGHT", message: "Round 1 is still running. Wait for it, or stop the climb." },
+      candidateCaseIds: [],
+      remeasureBest: null,
+    });
+    const res = await request("POST", ROUNDS, { serverId: "s_candidate" });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ details: { code: "CLIMB_ROUND_IN_FLIGHT" } });
+    expect(calls(mocks.mutation, "climbRounds:beginClimbRound")).toEqual([]);
+  });
+
+  it("refuses an unknown field and a missing server", async () => {
+    expect((await request("POST", ROUNDS, { serverId: "s", mock: 1 })).status).toBe(400);
+    expect((await request("POST", ROUNDS, {})).status).toBe(400);
+    expect(mocks.mutation).not.toHaveBeenCalled();
+  });
+
+  it("reads a round, holding for at most the wait asked for and no more than the cap", async () => {
+    queries["climbRounds:getClimbRound"] = () => ({ number: 1, status: "settled", verdict: "kept", reasons: [] });
+    const res = await request("GET", `${ROUNDS}/1?wait=10`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ climbId: CLIMB, suiteId: SUITE, number: 1, settled: true });
+    expect((await request("GET", `${ROUNDS}/1?wait=500`)).status).toBe(400);
+    expect((await request("GET", `${ROUNDS}/0`)).status).toBe(404);
+  });
+
+  it("answers a round the climb does not have as not found", async () => {
+    queries["climbRounds:getClimbRound"] = () => {
+      throw refusal("CLIMB_ROUND_NOT_FOUND", "Round 9 does not exist on this climb.");
+    };
+    const res = await request("GET", `${ROUNDS}/9`);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ details: { code: "CLIMB_ROUND_NOT_FOUND" } });
+  });
+
+  it("overrules a round with the reason, and answers a confirmed climb as a conflict", async () => {
+    mutations["climbRounds:setClimbRoundDecision"] = (args) => ({ round: { number: args.roundNumber, standing: args.decision }, best: { roundNumber: 0 } });
+    const ok = await request("POST", `${ROUNDS}/2/decision`, { decision: "kept", reason: "The failed case is flaky." });
+    expect(ok.status).toBe(200);
+    expect(calls(mocks.mutation, "climbRounds:setClimbRoundDecision")[0]).toEqual({
+      climbId: CLIMB,
+      roundNumber: 2,
+      decision: "kept",
+      reason: "The failed case is flaky.",
+    });
+    expect(await ok.json()).toMatchObject({ climbId: CLIMB, round: { standing: "kept" }, best: { roundNumber: 0 } });
+
+    mutations["climbRounds:setClimbRoundDecision"] = () => {
+      throw refusal("CLIMB_CONFIRMED", "The confirmation has run, so a round can no longer be overruled.");
+    };
+    const spent = await request("POST", `${ROUNDS}/2/decision`, { decision: "reverted", reason: "x" });
+    expect(spent.status).toBe(409);
+    expect((await request("POST", `${ROUNDS}/2/decision`, { decision: "maybe", reason: "x" })).status).toBe(400);
+    expect((await request("POST", `${ROUNDS}/2/decision`, { decision: "kept", reason: "" })).status).toBe(400);
+  });
+
+  it("stops a climb and answers what stands as kept", async () => {
+    mutations["climbRounds:stopClimb"] = () => ({ state: "stopped", stopReason: "stopped_by_caller", best: { roundNumber: 2 }, kept: [{ number: 2, serverId: "s_candidate", overruled: false }] });
+    const res = await request("POST", `${CLIMBS}/${CLIMB}/stop`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ climbId: CLIMB, state: "stopped", kept: [{ number: 2 }] });
+  });
+});
