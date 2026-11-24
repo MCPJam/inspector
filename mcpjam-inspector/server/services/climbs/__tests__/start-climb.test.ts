@@ -1,5 +1,6 @@
 import { ConvexError } from "convex/values";
 import { describe, expect, it, vi } from "vitest";
+import { continueClimb } from "../continue-climb.js";
 import { startClimb } from "../start-climb.js";
 import { CLIMB, SUITE, fakeConvex, registered, startedReceipt } from "./helpers.js";
 
@@ -127,5 +128,27 @@ describe("startClimb", () => {
     // The unit was failed (which frees it) and the climb stopped.
     expect(fake.called("climbSettle:failClimbUnit")).toHaveLength(1);
     expect(fake.called("climbRounds:stopClimb")).toHaveLength(1);
+  });
+});
+
+describe("continueClimb", () => {
+  const failed = { ...CLIMB_ROW, baselineFailure: { unitKey: "baseline:2", reason: "Staging lost 3 of 12 iterations." } };
+
+  it("registers and launches the baseline again, as the next attempt, when the last one failed", async () => {
+    const { deps, fake, createEvalRunGroup } = setup();
+    const answer = await continueClimb(deps, "proj1", failed as never);
+    expect(answer).toMatchObject({ resumed: false, baselineStarted: true, launch: { unitKey: "baseline:1" } });
+    expect(fake.called("mockServers:createMock")[0]).toMatchObject({ name: "Echo (climb " + CLIMB.slice(-6) + " baseline 3)" });
+    expect(fake.called("climbs:beginClimbBaseline")).toHaveLength(1);
+    expect(createEvalRunGroup).toHaveBeenCalledTimes(2);
+    expect(fake.called("climbSteps:continueClimb")).toEqual([]);
+  });
+
+  it("leaves a climb with a baseline or one running to the backend's continue", async () => {
+    const { deps, fake, createEvalRunGroup } = setup({ "climbSteps:continueClimb": () => ({ resumed: true, stepDue: false }) });
+    const running = { ...failed, activeUnitKey: "baseline:3" };
+    expect(await continueClimb(deps, "proj1", running as never)).toMatchObject({ resumed: true, stepDue: false });
+    expect(fake.called("climbs:beginClimbBaseline")).toEqual([]);
+    expect(createEvalRunGroup).not.toHaveBeenCalled();
   });
 });

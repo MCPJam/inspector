@@ -223,7 +223,7 @@ export function registerClimbRoundCommands(climbs: Command): void {
     addProjectOption(
       climbs
         .command("continue")
-        .description("Resume a climb MCPJam picks for after it paused. Its steps spend credits within the climb's limits")
+        .description("Resume a climb MCPJam picks for after it paused, or run its baseline again after a failed baseline (get shows baselineFailure). THIS LAUNCHES PAID RUNS in the second case; steps spend credits within the climb's limits")
         .requiredOption("--climb <id>", "The climb's ID"),
     ),
     continueClimbOperation,

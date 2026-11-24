@@ -162,9 +162,9 @@ export type ContinueClimbResult = WithProject<PlatformClimbContinued>;
 
 export const continueClimbOperation: PlatformOperation<ContinueClimbInput, ContinueClimbResult> = {
   name: "continue_climb",
-  title: "Continue a paused climb",
+  title: "Continue a paused climb or run a failed baseline again",
   description:
-    "Resume a climb MCPJam picks for after it paused: a step that failed three times, a turn that twice submitted no round, an Inspector that stopped, the person who started the climb having no sign-in to act as, or the `climbs` feature being off at the time. Read `get_climb`: `paused` says why and what to fix first. This clears the pause and makes the next step due now, or when the round in flight settles, with fresh attempts. A pause is never a failure and never changes `state`. Refused when the climb is not paused or has stopped. The steps spend credits within the climb's own limits.",
+    "Resume a climb MCPJam picks for after it paused: a step that failed three times, a turn that twice submitted no round, an Inspector that stopped, the person who started the climb having no sign-in to act as, or the `climbs` feature being off at the time. Read `get_climb`: `paused` says why and what to fix first. This clears the pause and makes the next step due now, or when the round in flight settles, with fresh attempts. A pause is never a failure and never changes `state`. Refused when the climb is not paused or has stopped. The steps spend credits within the climb's own limits. Also runs the baseline again when it failed: `get_climb` shows `baselineFailure` (the climb stays `baselining` with no unit running, and `reason` names the environment that lost iterations), and this registers and launches a new attempt (answers `baselineStarted: true` and its `launch`). Refused when the climb has a baseline or one is running.",
   readOnly: false,
   risk: "spend",
   permalink: suitePermalink,

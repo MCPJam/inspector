@@ -712,6 +712,27 @@ describe("continue", () => {
     expect(mocks.startJob).toHaveBeenCalledWith(CLIMB);
   });
 
+  it("runs the baseline again for a climb whose last baseline failed, and launches both groups", async () => {
+    queries["climbs:getClimb"] = () => climbRow({ baselineFailure: { unitKey: "baseline:1", reason: "Staging lost 3 of 12 iterations." } });
+    const res = await request("POST", CONTINUE);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ climbId: CLIMB, resumed: false, baselineStarted: true, launch: { unitKey: "baseline:1" } });
+    expect(calls(mocks.mutation, "mockServers:createMock")[0]).toMatchObject({ name: expect.stringContaining("baseline 2") });
+    expect(calls(mocks.mutation, "climbs:beginClimbBaseline")).toHaveLength(1);
+    expect(launches.filter((l) => l.path.endsWith("/eval-run-groups"))).toHaveLength(2);
+    expect(calls(mocks.mutation, "climbSteps:continueClimb")).toEqual([]);
+  });
+
+  it("gives the backend's refusal when the baseline is already running", async () => {
+    queries["climbs:getClimb"] = () => climbRow({ activeUnitKey: "baseline:1" });
+    mutations["climbSteps:continueClimb"] = () => {
+      throw refusal("CLIMB_NOT_PAUSED", "This climb is not paused. Read it with get_climb.");
+    };
+    const res = await request("POST", CONTINUE);
+    expect(res.status).toBe(409);
+    expect(calls(mocks.mutation, "climbs:beginClimbBaseline")).toEqual([]);
+  });
+
   it("answers a climb that is not paused by its code, and starts nothing", async () => {
     queries["climbs:getClimb"] = () => climbRow({ state: "ready", picker: "mcpjam", stepRunner: "local" });
     mutations["climbSteps:continueClimb"] = () => {

@@ -16,6 +16,7 @@ import { confirmClimb } from "../../services/climbs/confirm-climb.js";
 import { draftClimbChange } from "../../services/climbs/draft-change.js";
 import { readClimbInFull } from "../../services/climbs/read-climb.js";
 import { MCPJAM_HOSTED_ORIGIN } from "../../config.js";
+import { continueClimb } from "../../services/climbs/continue-climb.js";
 import { startClimb } from "../../services/climbs/start-climb.js";
 import { stopClimb } from "../../services/climbs/stop-climb.js";
 import { submitRound } from "../../services/climbs/submit-round.js";
@@ -275,9 +276,7 @@ climbs.post("/projects/:projectId/climbs/:climbId/continue", async (c) => {
   try {
     // A local climb's steps run here and nowhere else, so the job that ended with the pause starts again.
     const startJob = climb.stepRunner === "local" ? await pickerJobFor(c, projectId) : undefined;
-    const resumed: { resumed: true; stepDue: boolean } = await deps.convex.mutation(climbFns.continue, { climbId: climb.climbId });
-    startJob?.(climb.climbId);
-    return v1Resource(c, { climbId: climb.climbId, suiteId: climb.suiteId, ...resumed });
+    return v1Resource(c, await continueClimb(deps, projectId, climb, () => startJob?.(climb.climbId)));
   } catch (error) {
     throw translateClimbWriteError(error);
   }

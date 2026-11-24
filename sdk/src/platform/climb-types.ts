@@ -149,9 +149,13 @@ export type PlatformClimbBase = {
     validation: number;
     confirmation: number;
     steeringCases: Array<{ key: string; tool: string }>;
+    /** Suite cases the groups do not name yet; each joins steering from the next round unless moved to confirmation. */
+    newCases?: Array<{ key: string; tool: string }>;
     steeringToolsWithoutValidation: string[];
   };
   activeUnitKey?: string;
+  /** The last baseline attempt failed: the climb stays `baselining` with no unit running. `reason` names the environment. `continue_climb` runs it again. */
+  baselineFailure?: { unitKey: string; reason: string; failedAt?: number };
   baseline?: { settledAt: number; environments: PlatformClimbEnvironmentBaseline[] };
   best?: { serverId: string; serverVersion?: string; roundNumber: number };
   rounds: PlatformClimbRoundSummary[];
@@ -339,7 +343,9 @@ export type PlatformClimbVerified = {
 };
 
 /** `continue_climb`: the pause is cleared; the next step is due now, or when the round in flight settles. */
-export type PlatformClimbContinued = { climbId: string; suiteId: string; resumed: true; stepDue: boolean };
+export type PlatformClimbContinued =
+  | { climbId: string; suiteId: string; resumed: true; stepDue: boolean; baselineStarted?: false }
+  | { climbId: string; suiteId: string; resumed: false; baselineStarted: true; launch: PlatformClimbLaunch };
 
 /** `draft_climb_change`: a model's rewrite of one tool's description, as a draft and as the merge patch that applies it. */
 export type PlatformClimbDraft = {
