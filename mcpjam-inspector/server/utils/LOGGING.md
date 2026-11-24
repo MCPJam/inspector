@@ -56,7 +56,8 @@ request body, path or header is not one, whatever its shape. Other IDs,
 | `tunnel.created` | `routes/mcp/tunnels.ts` | `tunnelKind`, `tunnelDomain`, `existed`, `credentialIdPresent?` |
 | `tunnel.creation_failed` | `routes/mcp/tunnels.ts` | `tunnelKind`, `errorCode` |
 | `tunnel.record_failed` | `routes/mcp/tunnels.ts` | `tunnelKind`, `tunnelDomain?`, `errorCode` |
-| `chat.session.persist.failed` | `utils/chat-ingestion.ts` | `failureKind`, `statusCode?`, `sourceType?` |
+| `chat.session.persist.failed` | `utils/chat-ingestion.ts` | `failureKind`, `ingestStatusCode?`, `sourceType?`, `chatOrigin?` |
+| `chat.session.persist.skipped` | `utils/chat-ingestion.ts` | `hasTurnId`, `sourceType?`, `chatOrigin?` |
 | `chat.secrets.undelivered` | `routes/web/chat-v2.ts` | `secretCount`, `isScenarioSession` |
 | `chat.builtin_tools.withheld` | `routes/web/chat-v2.ts` | `toolIds`, `unknownCount`, `reasons`, `targetKind` |
 | `chat.harness_model_unverified` | `routes/web/chat-v2.ts`, `routes/mcp/chat-v2.ts` | `harness`, `modelId`, `reason` |
