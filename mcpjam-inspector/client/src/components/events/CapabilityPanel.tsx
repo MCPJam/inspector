@@ -9,11 +9,14 @@ const SOURCE_LABELS: Record<string, string> = {
 
 /**
  * What the server declared, exactly as the handshake carried it (contract
- * C10): `capabilities.events` present or not, where it was read from, the
+ * C10): the negotiated Events declaration, where it was read from, the
  * negotiated protocol version, and the raw `capabilities` object.
  */
 export function CapabilityPanel({ catalog }: { catalog: EventsListResponse }) {
   const { support } = catalog;
+  const capabilityPath = support.beta
+    ? 'capabilities.extensions["io.modelcontextprotocol/events"]'
+    : "capabilities.events";
   return (
     <div className="space-y-2" data-testid="events-capability">
       <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -26,8 +29,8 @@ export function CapabilityPanel({ catalog }: { catalog: EventsListResponse }) {
           )}
         >
           {support.declared
-            ? "capabilities.events declared"
-            : "capabilities.events not declared"}
+            ? support.beta ? "MCP Events Beta declared" : "capabilities.events declared"
+            : "MCP Events capability missing"}
         </span>
         {support.declared && support.listChanged ? (
           <span className="text-[11px] text-muted-foreground">
@@ -56,7 +59,7 @@ export function CapabilityPanel({ catalog }: { catalog: EventsListResponse }) {
       {support.capability ? (
         <details className="text-[11px]">
           <summary className="cursor-pointer text-muted-foreground">
-            capabilities.events
+            {capabilityPath}
           </summary>
           <div className="mt-1 max-h-48 overflow-auto rounded-md border border-border">
             <JsonEditor

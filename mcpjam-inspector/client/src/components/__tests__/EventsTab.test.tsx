@@ -235,12 +235,9 @@ describe("EventsTab (local)", () => {
       await screen.findByText("This server does not declare events"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/capabilities\.events not declared/),
+      screen.getByText("MCP Events capability missing"),
     ).toBeInTheDocument();
-    // Labelled Draft, and the raw handshake capabilities stay inspectable.
-    expect(screen.getByTestId("events-draft-badge")).toHaveTextContent(
-      "Draft · 2026-09-04",
-    );
+    expect(screen.queryByTestId("events-profile-badge")).not.toBeInTheDocument();
     expect(screen.getByText("Raw capabilities")).toBeInTheDocument();
     // Nothing subscribes to the feed of a server that declares nothing.
     expect(FakeEventSource.instances).toHaveLength(0);
@@ -924,6 +921,7 @@ describe("EventsTab (local)", () => {
     const view = renderTab();
 
     await waitFor(() => expect(mockWatchEventsCatalog).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId("events-profile-badge")).toHaveTextContent("Events Beta");
     const [serverName, signal, onChange] = mockWatchEventsCatalog.mock.calls[0]!;
     expect(serverName).toBe(SERVER);
     mockLoadEventsCatalog.mockResolvedValue(catalog([{ ...issueCreated, name: "issue.closed" }], { support }));

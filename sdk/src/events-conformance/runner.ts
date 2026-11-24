@@ -61,7 +61,7 @@ export interface EventsConformanceConfig {
 }
 
 const TITLES: Record<EventsCheckId, string> = {
-  "events-capability-declared": "Server declares top-level capabilities.events",
+  "events-capability-declared": "Server declares the selected Events capability",
   "events-list-shape": "events/list returns valid descriptors",
   "events-poll-null-cursor": "A null-cursor poll starts from now",
   "events-subscribe-rejects-http-callback": "Non-https callback URLs are rejected",
@@ -80,7 +80,7 @@ const TITLES: Record<EventsCheckId, string> = {
   "events-subscription-id-header": "X-MCP-Subscription-Id matches the subscription id",
   "events-delivery-content-type": "Deliveries are application/json",
   "events-delivery-body-size": "Delivery bodies are at most 256 KiB",
-  "events-unsubscribe-twice": "A second unsubscribe is {} or NotFound",
+  "events-unsubscribe-twice": "A second unsubscribe returns an empty result or NotFound",
   "events-push-heartbeat": "Push streams send heartbeats (30 s cadence)",
   "chatgpt-readiness-webhook-listed": "At least one event lists webhook delivery",
   "chatgpt-readiness-protocol-version": "ChatGPT accepts the negotiated protocol version",
@@ -242,7 +242,7 @@ export async function runEventsConformance(
     );
     record(
       "events-list-shape",
-      "passed",
+      beta && unknownModes.length > 0 ? "violation" : "passed",
       `${descriptors.length} event type(s)` +
         (unknownModes.length ? `; unrecognized delivery modes: ${unknownModes.join(", ")}` : ""),
       { startedAt: listStarted }
@@ -422,7 +422,7 @@ export async function runEventsConformance(
         startedAt: subscribedAt,
       });
     } catch (error) {
-      const classified = classifyEventsRpcError("events/subscribe", error);
+      const classified = classifyEventsRpcError("events/subscribe", error, beta ? "beta" : "legacy");
       record("events-subscribe-result-shape", "violation", `subscribe failed: ${(error as Error).message}`, {
         startedAt: subscribedAt,
         ...(classified ? { details: { kind: classified.kind, data: classified.data } } : {}),
@@ -565,7 +565,7 @@ export async function runEventsConformance(
         );
         await quietUnsubscribe(descriptor, args, refuse.callbackUrl);
       } catch (error) {
-        const classified = classifyEventsRpcError("events/subscribe", error);
+        const classified = classifyEventsRpcError("events/subscribe", error, beta ? "beta" : "legacy");
         record(
           "events-consent-failure-blocks-delivery",
           classified?.kind === "CallbackEndpointError" ? "passed" : "violation",

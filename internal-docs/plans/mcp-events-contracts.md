@@ -4,6 +4,13 @@ Status: settled contracts for the implementation of [`mcp-events.md`](./mcp-even
 
 Draft pin: `modelcontextprotocol/experimental-ext-triggers-events` @ [`28ec35e`](https://github.com/modelcontextprotocol/experimental-ext-triggers-events/blob/28ec35e905daa241f019981e2836b4a02f1c0368/docs/design-sketch-proposal.md).
 
+## Events Beta compatibility
+
+- The `beta@c77b843` profile uses MCP `2026-07-28` with `capabilities.extensions["io.modelcontextprotocol/events"]` in `server/discover`. `draft@28ec35e` and the dated ChatGPT profiles use top-level `capabilities.events`.
+- Beta RPC results require `resultType: "complete"` on the wire. Its errors use `-32023` through `-32027`. Streamable HTTP requests named in the extension carry an encoded `Mcp-Name` and the annotated `Mcp-Param-*` arguments.
+- The Events tab requests catalog invalidations when the Beta server advertises `listChanged`. It refreshes on an acknowledged subscription and drops the watch on disconnect or a server change.
+- The saved-host policy key is `com.mcpjam/events`. [Events Beta specification](https://github.com/modelcontextprotocol/ext-events/blob/c77b84395eff0ae32f53b0516c2214fe276ed050/specification/beta/events/events.mdx)
+
 ## Where each contract lives in code
 
 | Contract | Inspector repo | Backend repo |

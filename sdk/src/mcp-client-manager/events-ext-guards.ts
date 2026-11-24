@@ -18,6 +18,7 @@
 import type { z } from "zod";
 import {
   betaEventsResultSchema,
+  betaEventsStreamResultSchema,
   eventOccurrenceSchema,
   eventsListResultSchema,
   eventsPollResultSchema,
@@ -137,7 +138,8 @@ function parseOrThrow<T>(
 }
 
 export function assertBetaEventsResult(method: string, value: unknown): void {
-  parseOrThrow(betaEventsResultSchema, value, `${method} result`, method);
+  const schema = method === "events/stream" ? betaEventsStreamResultSchema : betaEventsResultSchema;
+  parseOrThrow(schema, value, `${method} result`, method);
 }
 
 export function assertEventsListResult(value: unknown): EventsListResultWire {

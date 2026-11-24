@@ -276,6 +276,7 @@ function supportView(
 } {
   const support = manager.getEventsSupport(serverId);
   const captured = manager.getCapturedEventsCapability(serverId);
+  const protocolVersion = manager.getNegotiatedProtocolVersion?.(serverId) ?? captured?.protocolVersion;
   return {
     support: {
       handshakeObserved: support.handshakeObserved,
@@ -288,9 +289,7 @@ function supportView(
     ...(captured?.rawCapabilities
       ? { rawCapabilities: captured.rawCapabilities }
       : {}),
-    ...(captured?.protocolVersion
-      ? { protocolVersion: captured.protocolVersion }
-      : {}),
+    ...(protocolVersion ? { protocolVersion } : {}),
   };
 }
 

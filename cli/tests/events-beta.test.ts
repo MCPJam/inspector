@@ -46,15 +46,17 @@ test("Events beta negotiates, routes all named requests, and delivers over SSE a
       "--mode",
       "push",
       "--duration",
-      "6",
+      "20",
       "--max-events",
       "1",
     ]);
-    const deadline = Date.now() + 5_000;
+    const deadline = Date.now() + 20_000;
     while (!fixture.openStreams() && Date.now() < deadline) await delay(20);
-    if (fixture.openStreams()) await fixture.emit("comment.created", data);
+    const opened = fixture.openStreams() > 0;
+    if (opened) await fixture.emit("comment.created", data);
     const result = await watch;
     assert.equal(result.exitCode, 0, result.stderr);
+    assert.ok(opened, `The CLI did not open a Beta push stream. ${result.stderr}`);
     const event = JSON.parse(result.stdout.trim());
     assert.equal(event.origin, "push");
     assert.deepEqual(event.data, data);

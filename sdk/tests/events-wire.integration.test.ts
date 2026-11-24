@@ -24,6 +24,7 @@ import {
 import {
   EventsCoordinator,
   applySubscriptionPatch,
+  classifyStepFailure,
 } from "../src/events/coordinator.js";
 import type {
   EventsRpcPort,
@@ -80,7 +81,7 @@ it("validates Beta results and uses legacy error meanings only on the legacy con
   opened.managers.push(manager);
   const request = { name: "comment.created", arguments: { document_id: "doc" } };
   const unsubscribe = { ...request, delivery: { url: "https://example.invalid/hooks/1" } };
-  let responses: Record<string, { result: object } | { error: { code: number; message: string } }> = {};
+  let responses: Record<string, { result: object } | { error: { code: number; message: string; data?: object } }> = {};
   const baseFetch: typeof fetch = async (url, init) => {
     if (typeof init?.body === "string") {
       const body = JSON.parse(init.body);
@@ -105,6 +106,32 @@ it("validates Beta results and uses legacy error meanings only on the legacy con
   await expect(manager.unsubscribeServerEvents(SERVER_ID, unsubscribe)).rejects.toMatchObject({ code: -32011 });
   responses["events/unsubscribe"] = { error: { code: -32023, message: "NotFound" } };
   await expect(manager.unsubscribeServerEvents(SERVER_ID, unsubscribe)).resolves.toBe("already-gone");
+
+  const subscribe = { ...request, cursor: null, delivery: { ...unsubscribe.delivery, secret: "fixture" } };
+  const failures = [
+    { code: -32024, kind: "Forbidden", authLost: true, retryable: false },
+    { code: -32025, kind: "ResourceExhausted", authLost: false, retryable: true },
+    { code: -32026, kind: "Unsupported", authLost: false, retryable: false },
+    { code: -32027, reason: "timeout", kind: "callback_timeout", authLost: false, retryable: true },
+    { code: -32027, reason: "http_4xx", kind: "callback_http_4xx", authLost: false, retryable: false },
+  ];
+  for (const { code, reason, ...expected } of failures) {
+    responses["events/subscribe"] = { error: { code, message: expected.kind, ...(reason ? { data: { reason } } : {}) } };
+    const operation = manager.subscribeServerEvents(SERVER_ID, subscribe);
+    await expect(operation).rejects.toMatchObject({ code });
+    const error: unknown = await operation.catch((cause: unknown) => cause);
+    expect(classifyStepFailure("events/subscribe", error, 0)).toMatchObject(expected);
+  }
+
+  const stream = {
+    signal: new AbortController().signal,
+    timeout: 1_000,
+    onRequestId: () => undefined,
+    onRequestStreamEnd: () => undefined,
+  };
+  responses["events/stream"] = { result: { resultType: "complete" } };
+  await expect(manager.openEventsStream(SERVER_ID, { ...request, cursor: null }, stream))
+    .rejects.toBeInstanceOf(InvalidEventsPayloadError);
 
   await manager.disconnectServer(SERVER_ID);
   await manager.connectToServer(SERVER_ID, { url: draft.url, mcpProtocolVersion: "2025-11-25", baseFetch });

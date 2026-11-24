@@ -1,5 +1,5 @@
 /**
- * Shared plumbing for `mcpjam events` (MCP Events, draft@28ec35e).
+ * Shared plumbing for `mcpjam events`.
  *
  * The protocol lives in the SDK: `@mcpjam/sdk/events` owns the wire schemas,
  * the coordinator (every lifecycle transition), the profiles and the in-memory
@@ -14,7 +14,7 @@
  *   anyway, because a misbehaving server can quote a secret back inside an
  *   error message, and that sentence is exactly what a CLI prints.
  * - **Advertise = enforce.** `events/*` is not sent to a server that did not
- *   declare `capabilities.events` unless `--force` says so (the SDK's
+ *   declare the selected Events capability unless `--force` says so (the SDK's
  *   `allowUndeclared`), and the refusal is a usage-class exit (2).
  */
 
@@ -186,7 +186,7 @@ export async function listAllServerEvents(
 
 /**
  * Map an SDK/server failure from an `events/*` request onto a CLI error: the
- * draft's error codes (`-32011`…`-32015`) get a stable `EVENTS_*` code, the
+ * negotiated profile's errors get a stable `EVENTS_*` code, the
  * manager's own "not declared" refusal is exit 2, and every message is
  * scrubbed of secrets. Anything else is left for `normalizeCliError`.
  */
