@@ -27,7 +27,6 @@ import {
   MessagesSquare,
   Globe,
   Radio,
-  Zap,
   ClipboardCheck,
 } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
@@ -248,16 +247,6 @@ export const navigationSections: NavSection[] = [
         title: "Playground",
         url: "/playground",
         icon: MessageCircle,
-      },
-      {
-        // Agent runs fired by MCP Events on MCPJam's hosted runner. Sits next
-        // to Playground because it is the unattended version of the same
-        // thing: a model with the project's servers, reacting to an event
-        // instead of a message.
-        title: "Triggers",
-        url: "/triggers",
-        icon: Zap,
-        featureFlag: EVENTS_FEATURE_FLAG,
       },
       {
         title: "Environments",

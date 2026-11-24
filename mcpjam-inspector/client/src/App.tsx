@@ -53,7 +53,6 @@ import { SkillsTab } from "./components/SkillsTab";
 import { LearningTab } from "./components/LearningTab";
 import { TaskAccountsTab } from "./components/TaskAccountsTab";
 import { EventsTab } from "./components/EventsTab";
-import { EventTriggersTab } from "./components/EventTriggersTab";
 import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capabilities-context";
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvaluateTab } from "./components/EvaluateTab";
@@ -2547,21 +2546,13 @@ export function EventsRoute() {
  * so a local user can see what the feature is.
  */
 export function EventTriggersRoute() {
-  const { convexProjectId, isAuthenticated, isGuestProjectActor } =
-    useAppRouteContext();
+  const triggerId = useCurrentSearchParam("triggerId");
   const eventsEnabled = useEventsEnabledState();
-  if (eventsEnabled === false) {
-    return <ScopedNavigate to={routePaths.servers} replace />;
-  }
+  if (eventsEnabled === false) return <ScopedNavigate to={routePaths.servers} replace />;
   if (eventsEnabled === undefined) return null;
-  return (
-    <div className="h-full overflow-hidden">
-      <EventTriggersTab
-        projectId={convexProjectId ?? null}
-        isSignedInMember={isAuthenticated === true && !isGuestProjectActor}
-      />
-    </div>
-  );
+  const query = new URLSearchParams({ panel: "events", background: "1" });
+  if (triggerId) query.set("triggerId", triggerId);
+  return <ScopedNavigate to={`${routePaths.playground}?${query}`} replace />;
 }
 
 export function OAuthFlowRoute() {
@@ -2703,6 +2694,7 @@ export function WebmcpInspectorRoute() {
 export function PlaygroundRoute() {
   const {
     activeHost,
+    activeHostId,
     activeProject,
     activeProjectId,
     appState,
@@ -2757,6 +2749,7 @@ export function PlaygroundRoute() {
       }}
       suspendAutoConnect={suspendRouteAutoConnect}
       activeHost={activeHost}
+      activeHostId={activeHostId}
       evalChatHandoff={evalChatHandoff}
       onEvalChatHandoffConsumed={(id) =>
         setEvalChatHandoff((current: EvalChatHandoff | null) =>

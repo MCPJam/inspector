@@ -1,3 +1,4 @@
+import { PlaygroundEventsProvider } from "./events/PlaygroundEventsProvider";
 import { LocalBrowserOnboarding } from "@/components/browser/LocalBrowserOnboarding";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -71,6 +72,7 @@ const FOCUSABLE_SELECTOR =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 interface PlaygroundTabProps {
+  activeHostId?: string | null;
   activeProjectId?: string | null;
   /**
    * Shared (Convex) project id for the active project, when synced. Used as
@@ -506,6 +508,11 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
 
   return (
     <PlaygroundStateProvider value={playgroundState}>
+      <PlaygroundEventsProvider
+        projectId={projectScope}
+        hostId={previewedHostId ?? props.activeHostId ?? null}
+        host={effectiveHostConfig}
+      >
       <HostStyledShell
         hostSnapshot={{
           hostStyle,
@@ -760,6 +767,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
         </div>
         </ExtensionWorkspaceProvider>
       </HostStyledShell>
+      </PlaygroundEventsProvider>
     </PlaygroundStateProvider>
   );
 }
