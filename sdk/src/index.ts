@@ -1313,7 +1313,7 @@ export {
   withProviderSafeToolNames,
 } from "./provider-tool-names.js";
 export type { ToolNameAliases } from "./provider-tool-names.js";
-export { withUniqueToolCallIds, createToolCallIdNormalizer } from "./tool-call-ids.js";
+export { withUniqueToolCallIds } from "./tool-call-ids.js";
 
 // Progressive MCP tool discovery: the `search_mcp_tools` / `load_mcp_tools`
 // meta-tools, the tool catalog, the On / Auto / Off plan and the per-step

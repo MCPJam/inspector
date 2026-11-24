@@ -3,18 +3,23 @@ import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 
 type Model = Parameters<typeof wrapLanguageModel>[0]["model"];
 
-export function createToolCallIdNormalizer(used: Set<string>, step: number) {
+function createToolCallIdNormalizer(used: Set<string>, step: number) {
   const current = new Map<string, string>();
-  return (id: string) => {
-    const existing = current.get(id);
-    if (existing !== undefined) return existing;
-    let unique = id;
-    for (let suffix = 1; used.has(unique); suffix++) {
-      unique = `${id}__s${step}_${suffix}`;
-    }
-    current.set(id, unique);
-    used.add(unique);
-    return unique;
+  return {
+    reserve(id: string) {
+      const existing = current.get(id);
+      if (existing !== undefined) return existing;
+      let unique = id;
+      for (let suffix = 1; used.has(unique); suffix++) {
+        unique = `${id}__s${step}_${suffix}`;
+      }
+      current.set(id, unique);
+      used.add(unique);
+      return unique;
+    },
+    resolve(id: string) {
+      return current.get(id) ?? id;
+    },
   };
 }
 
@@ -45,10 +50,15 @@ export function withUniqueToolCallIds(model: Model, history: readonly ModelMessa
         reserveToolCallIds(used, params.prompt);
         const normalize = createToolCallIdNormalizer(used, ++step);
         const result = await doGenerate();
+        for (const part of result.content) {
+          if (part.type === "tool-call") normalize.reserve(part.toolCallId);
+        }
         return {
           ...result,
           content: result.content.map((part) =>
-            "toolCallId" in part ? { ...part, toolCallId: normalize(part.toolCallId) } : part
+            "toolCallId" in part
+              ? { ...part, toolCallId: normalize.resolve(part.toolCallId) }
+              : part
           ),
         };
       },
@@ -61,9 +71,14 @@ export function withUniqueToolCallIds(model: Model, history: readonly ModelMessa
           stream: result.stream.pipeThrough(new TransformStream<LanguageModelV4StreamPart, LanguageModelV4StreamPart>({
             transform(part, controller) {
               if ("toolCallId" in part) {
-                controller.enqueue({ ...part, toolCallId: normalize(part.toolCallId) });
-              } else if (part.type === "tool-input-start" || part.type === "tool-input-delta" || part.type === "tool-input-end") {
-                controller.enqueue({ ...part, id: normalize(part.id) });
+                const toolCallId = part.type === "tool-call"
+                  ? normalize.reserve(part.toolCallId)
+                  : normalize.resolve(part.toolCallId);
+                controller.enqueue({ ...part, toolCallId });
+              } else if (part.type === "tool-input-start") {
+                controller.enqueue({ ...part, id: normalize.reserve(part.id) });
+              } else if (part.type === "tool-input-delta" || part.type === "tool-input-end") {
+                controller.enqueue({ ...part, id: normalize.resolve(part.id) });
               } else {
                 controller.enqueue(part);
               }
