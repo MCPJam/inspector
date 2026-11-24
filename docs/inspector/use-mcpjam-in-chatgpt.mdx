@@ -2,10 +2,10 @@
 title: "Use MCPJam in ChatGPT"
 sidebarTitle: "ChatGPT plugin"
 icon: "message-circle"
-description: "Connect MCPJam to ChatGPT and verify the connection by listing your projects."
+description: "Install the MCPJam plugin in ChatGPT and connect your MCPJam account."
 ---
 
-## Before you begin
+## What you need
 
 - A ChatGPT account that can install plugins.
 - An MCPJam account with at least one project.
@@ -31,17 +31,7 @@ description: "Connect MCPJam to ChatGPT and verify the connection by listing you
   <Step title="Connect your MCPJam account">
     The plugin signs in with OAuth. ChatGPT sends you to MCPJam, you sign in and approve access, and you return to ChatGPT. ChatGPT never sees your MCPJam password.
 
-    ```mermaid
-    sequenceDiagram
-      participant You
-      participant ChatGPT
-      participant MCPJam
-      ChatGPT->>MCPJam: Request access
-      You->>MCPJam: Sign in, approve
-      MCPJam-->>ChatGPT: Access granted
-    ```
-
-    To check the connection, select **Settings** on the plugin page. The account is connected when its email appears under **Connected accounts**, marked **Primary**. If it's the right account, go to the next step.
+    To check the connection, select **Settings** on the plugin page. The account is connected when its email appears under **Connected accounts**, marked **Primary**. If it's the right account, you're set up.
 
     <Frame>
       <img src="/images/chatgpt-plugin/04-settings.png" alt="Plugin settings. Under Connected accounts, look for your MCPJam account email marked Primary." />
@@ -49,25 +39,25 @@ description: "Connect MCPJam to ChatGPT and verify the connection by listing you
 
     If the right account isn't listed, select **Connect another account** and sign in to MCPJam with that account.
   </Step>
-
-  <Step title="Ask for your projects">
-    On the plugin page, select the example prompt **List my MCPJam projects.** A new chat opens with the **MCPJam** chip already in the message box. Send the message.
-
-    <Frame>
-      <img src="/images/chatgpt-plugin/02-composer.png" alt="ChatGPT message box with the MCPJam chip followed by List my MCPJam projects, ready to send." />
-    </Frame>
-  </Step>
-
-  <Step title="Check the answer">
-    Compare the projects in the answer with the projects you see in MCPJam. If they match, the connection works.
-
-    <Frame>
-      <img src="/images/chatgpt-plugin/03-answer.png" alt="ChatGPT answer that lists MCPJam projects by name, starting with Demo project. Compare each name with the project list in MCPJam." />
-    </Frame>
-
-    Optional: to see which action ran, expand **Worked for…** above the answer. It shows **Listing Accessible MCPJam Projects**.
-  </Step>
 </Steps>
+
+## Try it: list your projects
+
+This is optional. It confirms that ChatGPT can read your MCPJam data.
+
+1. On the plugin page, select the example prompt **List my MCPJam projects.** A new chat opens with the **MCPJam** chip already in the message box. Send the message.
+
+   <Frame>
+     <img src="/images/chatgpt-plugin/02-composer.png" alt="ChatGPT message box with the MCPJam chip followed by List my MCPJam projects, ready to send." />
+   </Frame>
+
+2. Compare the projects in the answer with the projects you see in MCPJam. If they match, the connection works.
+
+   <Frame>
+     <img src="/images/chatgpt-plugin/03-answer.png" alt="ChatGPT answer that lists MCPJam projects by name, starting with Demo project. Compare each name with the project list in MCPJam." />
+   </Frame>
+
+   To see which action ran, expand **Worked for…** above the answer. It shows **Listing Accessible MCPJam Projects**.
 
 ## Ask about one of your projects
 

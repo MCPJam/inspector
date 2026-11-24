@@ -701,14 +701,13 @@ button[aria-label*="helpful" i]:hover {
   color: var(--mcj-ink-strong) !important;
 }
 
-/* Previous/Next pager — Mintlify renders it as one rounded slab.
-   Flatten the container, let prev/next read as separate affordances. */
+/* Previous/Next pager — Mintlify renders it as one bordered slab with
+   bordered links. Drop every border; the hover background marks the target. */
 nav[aria-label*="agination" i],
 nav[aria-label*="age navigation" i],
 [class*="pagination" i] {
   background: transparent !important;
-  border: 1px solid var(--mcj-rule);
-  border-radius: var(--mcj-radius);
+  border: none !important;
   box-shadow: none !important;
   margin-top: 1.25rem;
 }
@@ -717,8 +716,9 @@ nav[aria-label*="agination" i] a,
 nav[aria-label*="age navigation" i] a,
 [class*="pagination" i] a {
   background: transparent !important;
+  border: none !important;
   color: var(--mcj-ink) !important;
-  border-radius: 0;
+  border-radius: var(--mcj-radius);
   transition: background 120ms ease-out, color 120ms ease-out;
 }
 nav[aria-label*="agination" i] a:hover,
