@@ -1121,7 +1121,12 @@ export function adaptContext(
       if (!context.newCDPSession || !context.clearCookies) {
         throw new Error("This browser can't clear a site's data.");
       }
-      const page = context.pages()[0] ?? (await context.newPage());
+      // Every page stops first. One still running on a cleared site could
+      // write its cookies or storage again before the browser closes, and the
+      // archive would keep them. Only a blank page, for the CDP session, opens
+      // after; the caller closes the browser next.
+      await Promise.all(context.pages().map((open) => open.close()));
+      const page = await context.newPage();
       const cdp = await context.newCDPSession(page);
       for (const origin of origins) {
         // Local and session storage, IndexedDB, Cache Storage, service

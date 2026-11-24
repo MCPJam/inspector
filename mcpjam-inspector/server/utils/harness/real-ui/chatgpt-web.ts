@@ -77,12 +77,26 @@ async function readShownConversation(
   const url = `${ORIGIN}/c/${id}`;
   if ((await driver.url()) !== url) await driver.navigate(url);
   await waitVisible(driver, ASSISTANT, ctx, "the saved reply", "read_conversation");
+  // A person can take the browser to another chat between these reads and
+  // hand it back. What was read then belongs to that chat, not this id.
+  const stillShown = async () => {
+    const shown = new URL(await driver.url());
+    if (shown.origin === ORIGIN && CHAT_PATH.exec(shown.pathname)?.[1] === id) return;
+    throw new RealUiError({
+      kind: "driver",
+      step: "read_conversation",
+      message: "The browser moved to another chat while the reply was read. Run it again.",
+    });
+  };
   const userPrompt = await driver.readText(USER_MESSAGE);
+  await stillShown();
+  const replyText = (await driver.readText(`${ASSISTANT} >> nth=-1`)) ?? "";
+  await stillShown();
   return {
     conversationId: id,
     url,
     ...(userPrompt ? { userPrompt } : {}),
-    replyText: (await driver.readText(`${ASSISTANT} >> nth=-1`)) ?? "",
+    replyText,
     toolCalls: [],
   };
 }

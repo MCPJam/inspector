@@ -349,6 +349,13 @@ describe("ensureBrowserSession — relaunch triggers", () => {
     await expectRelaunch(f);
   });
 
+  it("never empties a computer's profile, even when a fresh one is asked for", async () => {
+    // A computer's profile is its owner's sign-ins; only a sandbox box boots fresh.
+    const f = makeFakes();
+    await ensureBrowserSession(f.deps, { ...ARGS, freshProfile: true });
+    expect(f.boot.mock.lastCall?.[1]).not.toHaveProperty("freshProfile");
+  });
+
   it("relaunches on a bootId mismatch (the row describes a previous boot)", async () => {
     const f = makeFakes({
       lookups: [liveLookup()],
@@ -1239,6 +1246,15 @@ describe("ensureBrowserSession — sandbox target", () => {
       sandboxId: SANDBOX_ID,
     },
   };
+
+  it("boots a sandbox from an empty profile when a fresh one is asked for", async () => {
+    const f = makeFakes({ lookups: [{ reachable: true, session: null }] });
+    await ensureBrowserSession(f.deps, { ...SANDBOX_ARGS, freshProfile: true });
+    expect(f.boot).toHaveBeenCalledWith(
+      f.sandbox.browserd,
+      expect.objectContaining({ freshProfile: true }),
+    );
+  });
 
   it("boots on the run's OWN box: no reserve, no lease, no stream", async () => {
     // Everything this path skips is a decision, not an omission. The box is

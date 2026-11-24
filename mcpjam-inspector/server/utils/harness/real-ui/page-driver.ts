@@ -55,6 +55,11 @@ export interface PageDriver {
    * `>>` chains) as well as CSS. A driver without them refuses those reads.
    */
   readonly playwrightSelectors: boolean;
+  /**
+   * False where `press` refuses a key meant for one element, as the hosted
+   * browser does: it presses only where focus is. Absent means it can.
+   */
+  readonly pressesOnElement?: boolean;
   navigate(url: string): Promise<void>;
   url(): Promise<string>;
   /** Runs `fn` in the page. Throws `unsupported` where `canEvaluate` is false. */

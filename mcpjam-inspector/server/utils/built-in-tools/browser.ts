@@ -2947,6 +2947,10 @@ export async function ensureHostedConversationSession(args: {
   const logicalSessionId = logical.sessionId;
   // A caller's own profile comes before the one the session was opened with,
   // which for a conversation is the person's default browser profile.
+  // Its fresh boot also starts from an empty profile directory: an archive
+  // import only adds files, and a blank profile must carry nothing an earlier
+  // boot on this box left there.
+  const freshProfile = !logical.lastBootId && args.ownProfile !== undefined;
   const profileArchive = logical.lastBootId
     ? null
     : args.ownProfile
@@ -3034,6 +3038,7 @@ export async function ensureHostedConversationSession(args: {
       ...(watched ? { watched: true as const } : {}),
     },
     ...(profileArchive ? { profileArchive } : {}),
+    ...(freshProfile ? { freshProfile: true } : {}),
     ...(args.signal ? { signal: args.signal } : {}),
   });
 }

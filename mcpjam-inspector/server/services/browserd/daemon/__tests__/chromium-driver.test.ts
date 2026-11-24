@@ -324,6 +324,26 @@ describe('ChromiumDriver — observe {mode:"text"}', () => {
     expect(res.leaseBlocked).toBe(true);
     expect(JSON.stringify(res)).not.toContain("hello");
   });
+
+  it("says the person has the browser, not that the element is missing, when they take it mid-read", async () => {
+    // A read that found nothing, or could not look, while someone took the
+    // browser says nothing about the element: the turn has to wait for them.
+    for (const rootSelector of ["role=dialog", UNPARSED]) {
+      const lease = new HandoffLease();
+      const page = withEngine(fakePage({ url: "https://x.test/" }), () => {
+        lease.acquire("person-1", 60_000);
+      });
+      const { context } = fakeContext({ pages: [page] });
+      const driver = new ChromiumDriver(context, { lease });
+      await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+      const res = await driver.execute(
+        cmd({ kind: "observe", mode: "text", rootSelector }),
+      );
+      expect(res.ok).toBe(false);
+      expect(res.leaseBlocked).toBe(true);
+      expect(res.error).toMatch(/^lease_held: /);
+    }
+  });
 });
 
 describe("ChromiumDriver — observe", () => {

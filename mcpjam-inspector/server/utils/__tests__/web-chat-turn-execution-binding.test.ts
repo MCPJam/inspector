@@ -7,8 +7,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const m = vi.hoisted(() => ({
-  mcpjamFree: vi.fn(async () => new Response("mcpjam")),
+  mcpjamFree: vi.fn(async (_args: Record<string, unknown>) => new Response("mcpjam")),
   assertExecution: vi.fn(async () => {}),
+  persist: vi.fn(async (_args: Record<string, unknown>) => ({ outcome: "saved" })),
 }));
 
 vi.mock("../mcpjam-stream-handler.js", () => ({
@@ -38,6 +39,10 @@ vi.mock("../chat-v2-orchestration.js", () => ({
 }));
 vi.mock("../mcp-tool-result-model-output.js", () => ({
   convertToMcpjamModelMessages: vi.fn(async () => []),
+}));
+vi.mock("../chat-ingestion.js", async (original) => ({
+  ...(await original<typeof import("../chat-ingestion.js")>()),
+  persistChatSessionToConvex: m.persist,
 }));
 vi.mock("../harness/conversation-execution.js", async (original) => ({
   ...(await original<typeof import("../harness/conversation-execution.js")>()),
@@ -90,6 +95,7 @@ describe("streamWebChatTurn — execution binding", () => {
   beforeEach(() => {
     m.mcpjamFree.mockClear();
     m.assertExecution.mockClear();
+    m.persist.mockClear();
     vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example.com");
   });
   afterEach(() => {
@@ -112,6 +118,21 @@ describe("streamWebChatTurn — execution binding", () => {
       );
     },
   );
+
+  it("records the prompt the web client was given, not MCPJam's own instructions", async () => {
+    const turn = args();
+    await streamWebChatTurn({
+      ...turn,
+      persist: { ...turn.persist, harness: "claude-web", systemPrompt: "User-configured prompt" },
+    });
+    const engine = m.mcpjamFree.mock.lastCall?.[0] as {
+      onConversationComplete?: (history: unknown[], trace: unknown) => Promise<unknown>;
+    };
+    await engine.onConversationComplete?.([], {});
+    expect(m.persist).toHaveBeenCalledWith(
+      expect.objectContaining({ systemPrompt: "User-configured prompt" }),
+    );
+  });
 
   it("awaits the check the route already started instead of a second one", async () => {
     const started = vi.fn(async () => {});
