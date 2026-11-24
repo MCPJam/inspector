@@ -3,10 +3,12 @@ import type {
   Prompt,
   ReadResourceResult,
   Resource,
+  ResourceTemplateType as ResourceTemplate,
 } from "@modelcontextprotocol/server";
 import { MCP_APP_MIME_TYPE } from "./definition-types.js";
 import type { MockDefinition } from "./definition-types.js";
 import { fillInputs } from "./saved-answers.js";
+import { matchTemplate } from "./uri-template.js";
 
 /**
  * Prompts, resources and resource templates as a client sees them: the real
@@ -119,6 +121,19 @@ export function resolveMockResources(
   }));
 }
 
+export function resolveMockTemplates(
+  definition: MockDefinition,
+  real: ResourceTemplate[]
+): ResolvedItems<ResourceTemplate> {
+  return resolve(
+    definition.resourceTemplates,
+    real,
+    "uriTemplate",
+    hasContent,
+    (template) => ({ name: template })
+  );
+}
+
 export type PromptPlan =
   | { kind: "hidden" }
   | { kind: "own"; result: GetPromptResult }
@@ -174,7 +189,7 @@ function contentsOf(
   };
 }
 
-/** Where `resources/read` for this URI is answered: a resource entry, then the real server. */
+/** Where `resources/read` for this URI is answered: a resource entry, then a template, then the real server. */
 function hasContentOf(entry: object): boolean {
   return hasContent(entry as Obj);
 }
@@ -187,6 +202,14 @@ export function planResourceRead(
   if (entry?.hidden === true) return { kind: "hidden" };
   if (entry && hasContentOf(entry))
     return { kind: "own", result: contentsOf(uri, entry) };
+  for (const [template, t] of Object.entries(
+    definition.resourceTemplates ?? {}
+  )) {
+    if (t.hidden === true || !hasContentOf(t)) continue;
+    const variables = matchTemplate(template, uri);
+    if (variables)
+      return { kind: "own", result: contentsOf(uri, t, variables) };
+  }
   return { kind: "real" };
 }
 
@@ -204,6 +227,8 @@ export function ownsItems(definition: MockDefinition): {
     );
   return {
     prompts: own(definition.prompts, (e) => e.messages !== undefined),
-    resources: own(definition.resources, hasContent),
+    resources:
+      own(definition.resources, hasContent) ||
+      own(definition.resourceTemplates, hasContent),
   };
 }

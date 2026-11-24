@@ -13,8 +13,10 @@ export {
   planResourceRead,
   resolveMockPrompts,
   resolveMockResources,
+  resolveMockTemplates,
   type ResolvedItems,
 } from "./resolve-items.js";
+export { matchTemplate, templateVariables } from "./uri-template.js";
 export {
   hashRealToolListing,
   mergeTool,

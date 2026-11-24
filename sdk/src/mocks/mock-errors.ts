@@ -84,7 +84,7 @@ export function realUnreachableError(cause: unknown): ProtocolError {
   );
 }
 
-export type MockItemKind = "prompt" | "resource";
+export type MockItemKind = "prompt" | "resource" | "resource template";
 
 /** `prompts/list` and its kin: the definition edits something the real server no longer lists. */
 export function editedItemMissingError(

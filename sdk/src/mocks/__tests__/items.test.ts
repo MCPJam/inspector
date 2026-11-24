@@ -124,7 +124,11 @@ describe.each<Era>(["legacy", "modern"])(
 
     it("edits a real resource's listing, hides another, and keeps reading the rest from the real server", async () => {
       const { client } = await h.connect(
-        { resources: { "test://greeting": { description: "A friendly hello." } } },
+        {
+          resources: {
+            "test://greeting": { description: "A friendly hello." },
+          },
+        },
         era
       );
       const listed = await client.listResources();
@@ -149,7 +153,9 @@ describe.each<Era>(["legacy", "modern"])(
       ).toEqual(["test://x"]);
       await expect(
         hidden.client.readResource({ uri: "test://greeting" })
-      ).rejects.toMatchObject({ message: expect.stringContaining("not found") });
+      ).rejects.toMatchObject({
+        message: expect.stringContaining("not found"),
+      });
     });
 
     it("refuses to list when an edit points at a resource the real server no longer lists, naming it", async () => {
@@ -251,7 +257,11 @@ describe.each<Era>(["legacy", "modern"])(
       const resources = Object.fromEntries(
         ["a", "b", "c"].map((n) => [`mem://${n}`, { text: n }])
       );
-      const { handler } = await h.connect({ pageSize: 2, resources }, era, true);
+      const { handler } = await h.connect(
+        { pageSize: 2, resources },
+        era,
+        true
+      );
       const uris = (page: { result?: Record<string, any> }) =>
         page.result?.resources.map((r: { uri: string }) => r.uri);
       const first = await h.rpc(handler, era, "resources/list");

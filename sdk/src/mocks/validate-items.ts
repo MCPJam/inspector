@@ -1,8 +1,9 @@
 import type { MockIssue, MockIssueCode } from "./validate-definition.js";
 import { MCP_APP_MIME_TYPE } from "./definition-types.js";
+import { templateVariables } from "./uri-template.js";
 
 /**
- * The shape checks for `prompts` and `resources`, called
+ * The shape checks for `prompts`, `resources` and `resourceTemplates`, called
  * by `validateMockDefinition` once the caps pass. Each message says what to
  * change.
  */
@@ -21,6 +22,14 @@ const RESOURCE_FIELDS = [
   "name",
   "mimeType",
   "size",
+  "annotations",
+  "text",
+  "blob",
+];
+const TEMPLATE_FIELDS = [
+  ...COMMON,
+  "name",
+  "mimeType",
   "annotations",
   "text",
   "blob",
@@ -243,6 +252,34 @@ function checkResource(
   }
 }
 
+function checkTemplate(
+  c: ItemCheck,
+  template: string,
+  value: unknown,
+  path: string
+) {
+  if (templateVariables(template) === undefined) {
+    c.add(
+      "invalid_value",
+      path,
+      `The template "${template}" is not a URI template this mock reads. Use simple variables such as file:///{path}, or {+path} for a value with slashes.`
+    );
+  }
+  if (!c.entry(value, path) || c.hidden(value, path, "resource template"))
+    return;
+  c.fields(value, TEMPLATE_FIELDS, path);
+  c.common(value, path);
+  c.strings(value, ["name", "mimeType"], path);
+  if ("annotations" in value && !isObj(value.annotations)) {
+    c.add(
+      "invalid_type",
+      at(path, "annotations"),
+      "annotations must be an object."
+    );
+  }
+  c.content(value, path);
+}
+
 /** Adds an issue for each problem in the maps; the rest of the definition is checked elsewhere. */
 export function checkItems(input: Obj, add: (issue: MockIssue) => void): void {
   const c = new ItemCheck((code, path, message) =>
@@ -253,6 +290,7 @@ export function checkItems(input: Obj, add: (issue: MockIssue) => void): void {
   > = [
     ["prompts", checkPrompt],
     ["resources", checkResource],
+    ["resourceTemplates", checkTemplate],
   ];
   for (const [field, check] of maps) {
     if (!(field in input)) continue;
@@ -272,7 +310,11 @@ export function checkItems(input: Obj, add: (issue: MockIssue) => void): void {
   const caps = isObj(input.capabilities) ? input.capabilities : {};
   const adds: Array<[string, boolean]> = [
     ["prompts", hasOwn(input.prompts, "messages")],
-    ["resources", hasOwn(input.resources, "text", "blob")],
+    [
+      "resources",
+      hasOwn(input.resources, "text", "blob") ||
+        hasOwn(input.resourceTemplates, "text", "blob"),
+    ],
   ];
   for (const [family, adding] of adds) {
     if (adding && caps[family] === null) {

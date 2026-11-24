@@ -30,6 +30,7 @@ const TOP_FIELDS = [
   "tools",
   "prompts",
   "resources",
+  "resourceTemplates",
 ];
 const MAX_PAGE_SIZE = 1000;
 const TOOL_FIELDS = [

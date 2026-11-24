@@ -1,6 +1,7 @@
 import type {
   GetPromptResult,
   ListPromptsResult,
+  ListResourceTemplatesResult,
   ListResourcesResult,
   ReadResourceResult,
   Server,
@@ -19,6 +20,7 @@ import {
   planResourceRead,
   resolveMockPrompts,
   resolveMockResources,
+  resolveMockTemplates,
 } from "./resolve-items.js";
 /** What the handlers need about both sides of the mock. */
 export interface ItemHandlerContext {
@@ -96,7 +98,11 @@ export function registerItemHandlers(
     });
   }
 
-  if (mockCapabilities.resources && hasEntries(definition.resources)) {
+  if (
+    mockCapabilities.resources &&
+    (hasEntries(definition.resources) ||
+      hasEntries(definition.resourceTemplates))
+  ) {
     server.setRequestHandler("resources/list", async (request, ctx) => {
       const realResources = realCapabilities.resources
         ? await realPages<ListResourcesResult["resources"][number]>(
@@ -117,6 +123,32 @@ export function registerItemHandlers(
         ...(page.nextCursor && { nextCursor: page.nextCursor }),
       };
     });
+    server.setRequestHandler(
+      "resources/templates/list",
+      async (request, ctx) => {
+        const realTemplates = realCapabilities.resources
+          ? await realPages<
+              ListResourceTemplatesResult["resourceTemplates"][number]
+            >(
+              real,
+              "resources/templates/list",
+              "resourceTemplates",
+              ctx.mcpReq.signal
+            )
+          : [];
+        const { items, missing } = resolveMockTemplates(
+          definition,
+          realTemplates
+        );
+        if (missing.length > 0)
+          throw editedItemMissingError("resource template", missing);
+        const page = pageOf(items, request.params?.cursor, pageSize);
+        return {
+          resourceTemplates: page.items,
+          ...(page.nextCursor && { nextCursor: page.nextCursor }),
+        };
+      }
+    );
     server.setRequestHandler("resources/read", async (request, ctx) => {
       const { uri } = request.params;
       const plan = planResourceRead(definition, uri);

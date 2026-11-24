@@ -174,6 +174,24 @@ export interface MockResource {
   blob?: string;
 }
 
+/**
+ * A resource template. With `text` or `blob`, a `resources/read` of a URI the
+ * template matches is answered from it, with `{{input.<variable>}}` filled
+ * from the URI. Hiding a template only removes it from the listing.
+ */
+export interface MockResourceTemplate {
+  hidden?: true;
+  name?: string;
+  title?: string;
+  description?: string;
+  mimeType?: string;
+  annotations?: JsonObject;
+  icons?: JsonObject[];
+  _meta?: JsonObject;
+  text?: string;
+  blob?: string;
+}
+
 /** The mimeType of an MCP App's HTML. */
 export const MCP_APP_MIME_TYPE = "text/html;profile=mcp-app";
 
@@ -215,4 +233,6 @@ export interface MockDefinition {
   prompts?: Record<string, MockPrompt>;
   /** Keyed by resource URI. A `skill://` entry is a skill file and a `ui://` entry an MCP App. */
   resources?: Record<string, MockResource>;
+  /** Keyed by the RFC 6570 URI template a client sees. */
+  resourceTemplates?: Record<string, MockResourceTemplate>;
 }
