@@ -2768,6 +2768,7 @@ describe("operation catalog consistency", () => {
     set_climb_round_decision: { climb: "c", round: 1, decision: "kept", reason: "r" },
     stop_climb: { climb: "c" },
     confirm_climb: { climb: "c" },
+    draft_climb_change: { climb: "c", tool: "t" },
     verify_climb: { climb: "c" },
   };
 
@@ -3030,6 +3031,7 @@ describe("operation catalog consistency", () => {
       "stop_climb",
       "confirm_climb",
       "verify_climb",
+      "draft_climb_change",
       // Stores a report and sends its text to the MCPJam team — a write, and
       // `risk: "exposure"` because the text leaves the caller's organization.
       "send_feedback",

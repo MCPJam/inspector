@@ -13,6 +13,7 @@ import type { ClimbDeps } from "../../services/climbs/deps.js";
 import { hashRealServerListing, readRealServer } from "../../services/climbs/listing.js";
 import { verifyClimb } from "../../services/climbs/verify-climb.js";
 import { confirmClimb } from "../../services/climbs/confirm-climb.js";
+import { draftClimbChange } from "../../services/climbs/draft-change.js";
 import { readClimbInFull } from "../../services/climbs/read-climb.js";
 import { MCPJAM_HOSTED_ORIGIN } from "../../config.js";
 import { startClimb } from "../../services/climbs/start-climb.js";
@@ -94,6 +95,12 @@ const verifyBody = z.strictObject({
   dryRun: z.boolean().optional(),
   runAnyway: z.boolean().optional(),
   waitSeconds: z.number().int().min(0).max(MAX_ROUND_WAIT_SECONDS).optional(),
+});
+
+const draftBody = z.strictObject({
+  toolName: id.max(200),
+  failedCaseKeys: z.array(id).max(10).optional(),
+  includeTitle: z.boolean().optional(),
 });
 
 const roundQuery = z.object({ wait: z.coerce.number().int().min(0).max(MAX_ROUND_WAIT_SECONDS).optional() });
@@ -267,6 +274,19 @@ climbs.post("/projects/:projectId/climbs/:climbId/confirmation", async (c) => {
     return v1Resource(c, confirmed, confirmed.dryRun ? 200 : 202);
   } catch (error) {
     throw error instanceof WebRouteError ? error : translateClimbWriteError(error);
+  }
+});
+
+// POST /v1/projects/:projectId/climbs/:climbId/draft: a model's rewrite of one tool's description. Saves nothing.
+climbs.post("/projects/:projectId/climbs/:climbId/draft", async (c) => {
+  const projectId = projectIdOf(c);
+  const body = parseWithSchema(draftBody, await readJsonObjectBody(c));
+  const deps = await climbDepsFor(c);
+  const climb = await readClimb(deps, projectId, c.req.param("climbId") ?? "");
+  try {
+    return v1Resource(c, await draftClimbChange(deps, climb, body));
+  } catch (error) {
+    throw translateClimbWriteError(error);
   }
 });
 

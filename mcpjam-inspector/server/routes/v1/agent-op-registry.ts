@@ -164,6 +164,7 @@ import {
   submitClimbRoundOperation,
   confirmClimbOperation,
   verifyClimbOperation,
+  draftClimbChangeOperation,
   listServerAccountsOperation,
   getServerAccountOperation,
   readServerResourceOperation,
@@ -1791,6 +1792,8 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   { operation: submitClimbRoundOperation, tier: "gated", proposal: SUBMIT_CLIMB_ROUND_PROPOSAL },
   { operation: confirmClimbOperation, tier: "gated", proposal: CONFIRM_CLIMB_PROPOSAL },
   { operation: verifyClimbOperation, tier: "gated", proposal: VERIFY_CLIMB_PROPOSAL },
+  // A draft saves nothing and starts no run: it is a read the agent may take on its own.
+  { operation: draftClimbChangeOperation, tier: "direct" },
   { operation: startClimbOperation, tier: "gated", proposal: START_CLIMB_PROPOSAL },
   // Account metadata only, structurally without a token, like the secrets
   // reads; the three writes are in EXCLUDED_FROM_AGENT.

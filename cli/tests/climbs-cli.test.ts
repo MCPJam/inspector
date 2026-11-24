@@ -249,3 +249,16 @@ test("verify sends the commit with the flags; --dry-run starts no wait", async (
     commit: { sha: "abc123", branch: "fix", dirty: true },
   });
 });
+
+test("draft posts the tool, the cases and the title request to the climb's draft route", async () => {
+  const requests = stubFetch({
+    [`POST ${CLIMBS}/climb-1/draft`]: [{ climbId: "climb-1", suiteId: "suite-1", toolName: "list_projects", description: "Lists projects.", patchJson: "{}" }],
+  });
+  const drafted = await run("draft", ["--climb", "climb-1", "--tool", "list_projects", "--cases", "case-a,case-b", "--title"]);
+  assert.equal(drafted.description, "Lists projects.");
+  assert.deepEqual(requests.find((request) => request.method === "POST")?.body, {
+    toolName: "list_projects",
+    failedCaseKeys: ["case-a", "case-b"],
+    includeTitle: true,
+  });
+});

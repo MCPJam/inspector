@@ -350,6 +350,7 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   set_climb_round_decision: "climbs",
   stop_climb: "climbs",
   confirm_climb: "climbs",
+  draft_climb_change: "climbs",
   verify_climb: "climbs",
   // Not hidden by `multi-account-connections`: a first account needs no
   // feature, and the backend refuses a second one where the feature is off.

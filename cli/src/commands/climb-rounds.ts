@@ -7,10 +7,12 @@
  *   mcpjam cloud climbs rounds get --climb <id> --round 2
  *   mcpjam cloud climbs rounds decide --climb <id> --round 2 --decision kept --reason "..."
  *   mcpjam cloud climbs stop --climb <id>
+ *   mcpjam cloud climbs draft --climb <id> --tool list_projects
  */
 import type { Command } from "commander";
 import {
   confirmClimbOperation,
+  draftClimbChangeOperation,
   setClimbRoundDecisionOperation,
   stopClimbOperation,
   submitClimbRoundOperation,
@@ -22,7 +24,7 @@ import {
   type VerifyClimbInput,
 } from "@mcpjam/sdk/platform";
 import { usageError } from "../lib/output.js";
-import { WAIT_FLAG, WAIT_SECONDS_DEFAULT, WAIT_SECONDS_FLAG, waitForConfirmation, waitForRound, waitForVerification } from "../lib/climb-command.js";
+import { WAIT_FLAG, WAIT_SECONDS_DEFAULT, WAIT_SECONDS_FLAG, parseListOption, waitForConfirmation, waitForRound, waitForVerification } from "../lib/climb-command.js";
 import {
   addProjectOption,
   bindOperation,
@@ -209,5 +211,27 @@ export function registerClimbRoundCommands(climbs: Command): void {
     ),
     stopClimbOperation,
     (options: PlatformOptions & { project?: string; climb: string }) => ({ project: options.project, climb: options.climb }),
+  );
+
+  bindOperation(
+    addProjectOption(
+      climbs
+        .command("draft")
+        .description(
+          "Draft a rewritten description for one tool of a climb, written by a model from the failed steering cases. It saves nothing: apply the printed patch with `mcpjam cloud mocks update --patch`",
+        )
+        .requiredOption("--climb <id>", "The climb's ID")
+        .requiredOption("--tool <name>", "The tool whose description to rewrite")
+        .option("--cases <keys>", "Steering case keys of that tool to draft from, comma-separated (default: the cases the latest round failed)")
+        .option("--title", "Also propose a title for the tool"),
+    ),
+    draftClimbChangeOperation,
+    (options: PlatformOptions & { project?: string; climb: string; tool: string; cases?: string; title?: boolean }) => ({
+      project: options.project,
+      climb: options.climb,
+      tool: options.tool,
+      cases: parseListOption(options.cases, "--cases"),
+      includeTitle: options.title,
+    }),
   );
 }

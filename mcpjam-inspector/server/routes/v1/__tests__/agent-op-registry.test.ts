@@ -207,6 +207,7 @@ describe("agent op registry", () => {
         "create_swarm",
         "update_swarm",
         "dismiss_swarm_finding",
+        "draft_climb_change",
         "undismiss_swarm_finding",
         "cancel_swarm_run_insights",
         "dismiss_study_finding",

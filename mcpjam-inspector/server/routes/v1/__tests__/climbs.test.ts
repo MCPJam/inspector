@@ -11,7 +11,7 @@ import { Hono } from "hono";
 import { getFunctionName } from "convex/server";
 import { ConvexError } from "convex/values";
 
-const mocks = vi.hoisted(() => ({ guest: vi.fn(), query: vi.fn(), mutation: vi.fn(), draining: false }));
+const mocks = vi.hoisted(() => ({ guest: vi.fn(), query: vi.fn(), mutation: vi.fn(), action: vi.fn(), draining: false }));
 
 vi.mock("../../../services/lifecycle/drain.js", async () => {
   const actual = await vi.importActual<typeof import("../../../services/lifecycle/drain.js")>("../../../services/lifecycle/drain.js");
@@ -20,7 +20,7 @@ vi.mock("../../../services/lifecycle/drain.js", async () => {
 vi.mock("../../../services/guest-token.js", () => ({ validateGuestTokenDetailedAsync: mocks.guest }));
 vi.mock("convex/browser", () => ({
   ConvexHttpClient: vi.fn().mockImplementation(function () {
-    return { setAuth: vi.fn(), query: mocks.query, mutation: mocks.mutation };
+    return { setAuth: vi.fn(), query: mocks.query, mutation: mocks.mutation, action: mocks.action };
   }),
 }));
 vi.mock("../../web/auth.js", async () => {
@@ -46,6 +46,7 @@ const CLIMBS = `/api/v1/projects/${PROJECT}/climbs`;
 type Handler = (args: Record<string, any>) => unknown;
 let queries: Record<string, Handler>;
 let mutations: Record<string, Handler>;
+let actions: Record<string, Handler>;
 let launches: Array<{ path: string; method: string; body: any; headers: Headers }>;
 
 const nameOf = (value: unknown) => getFunctionName(value as never);
@@ -127,6 +128,12 @@ beforeEach(() => {
     "climbSettle:recordClimbRunLaunch": () => ({}),
     "climbRounds:stopClimb": () => ({ state: "stopped" }),
   };
+  actions = {};
+  mocks.action.mockImplementation(async (fn, args) => {
+    const handler = actions[nameOf(fn)];
+    if (!handler) throw new Error(`unexpected action ${nameOf(fn)}`);
+    return handler(args);
+  });
   mocks.query.mockImplementation(async (fn, args) => {
     const handler = queries[nameOf(fn)];
     if (!handler) throw new Error(`unexpected query ${nameOf(fn)}`);
@@ -501,6 +508,64 @@ describe("confirmation", () => {
   it("bounds the wait and refuses an unknown field", async () => {
     expect((await request("POST", CONFIRM, { waitSeconds: 500 })).status).toBe(400);
     expect((await request("POST", CONFIRM, { wait: true })).status).toBe(400);
+  });
+});
+
+describe("draft", () => {
+  const DRAFT = `${CLIMBS}/${CLIMB}/draft`;
+  const drafted = { toolName: "list_projects", description: "Lists the projects you can open.", modelUsed: "openai/gpt-4.1-mini", basedOn: "real_server", failedCaseKeys: ["case_1"], trialsRead: 3, patchJson: '{"tools":{"list_projects":{"description":"Lists the projects you can open."}}}' };
+
+  it("calls the drafting action as the caller and answers the draft with the climb's ids", async () => {
+    actions["climbDraft:draftClimbChange"] = () => drafted;
+    const res = await request("POST", DRAFT, { toolName: "list_projects", failedCaseKeys: ["case_1"], includeTitle: true });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ climbId: CLIMB, suiteId: SUITE, description: drafted.description, patchJson: drafted.patchJson });
+    expect(mocks.action.mock.calls.map(([, args]) => args)).toEqual([{ climbId: CLIMB, toolName: "list_projects", failedCaseKeys: ["case_1"], includeTitle: true }]);
+    // A draft saves nothing and starts no run.
+    expect(mocks.mutation).not.toHaveBeenCalled();
+    expect(launches).toEqual([]);
+  });
+
+  it("leaves out what the caller did not ask for", async () => {
+    actions["climbDraft:draftClimbChange"] = () => drafted;
+    await request("POST", DRAFT, { toolName: "list_projects" });
+    expect(mocks.action.mock.calls[0]![1]).toEqual({ climbId: CLIMB, toolName: "list_projects" });
+  });
+
+  it("answers a draft already in progress as a conflict", async () => {
+    actions["climbDraft:draftClimbChange"] = () => {
+      throw refusal("CLIMB_DRAFT_IN_PROGRESS", "A draft is already being written for this climb. Wait for it, then ask again.");
+    };
+    const res = await request("POST", DRAFT, { toolName: "list_projects" });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ details: { code: "CLIMB_DRAFT_IN_PROGRESS" } });
+  });
+
+  it("names a tool no steering case calls as the caller's input", async () => {
+    actions["climbDraft:draftClimbChange"] = () => {
+      throw refusal("CLIMB_DRAFT_TOOL_NOT_STEERED", "No steering case calls this tool. Pick one from groups.steeringCases.");
+    };
+    const res = await request("POST", DRAFT, { toolName: "nothing" });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as any).message).toContain("steeringCases");
+  });
+
+  it("answers a model that gave nothing usable as a failed generation, not a bad request", async () => {
+    actions["climbDraft:draftClimbChange"] = () => {
+      throw refusal("CLIMB_DRAFT_UNUSABLE", "The model's answer could not be used. Ask again.");
+    };
+    const res = await request("POST", DRAFT, { toolName: "list_projects" });
+    expect(res.status).toBe(502);
+    expect(await res.json()).toMatchObject({ code: "GENERATION_FAILED", details: { code: "CLIMB_DRAFT_UNUSABLE" } });
+  });
+
+  it("refuses a climb of another project, a missing tool and more than ten cases before any model call", async () => {
+    queries["climbs:getClimb"] = () => climbRow({ projectId: "other" });
+    expect((await request("POST", DRAFT, { toolName: "t" })).status).toBe(404);
+    queries["climbs:getClimb"] = () => climbRow();
+    expect((await request("POST", DRAFT, {})).status).toBe(400);
+    expect((await request("POST", DRAFT, { toolName: "t", failedCaseKeys: Array.from({ length: 11 }, (_, i) => `c${i}`) })).status).toBe(400);
+    expect(mocks.action).not.toHaveBeenCalled();
   });
 });
 

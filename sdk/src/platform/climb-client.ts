@@ -8,6 +8,7 @@ import { MockServerClient } from "./mock-client.js";
 import type {
   PlatformClimb,
   PlatformClimbConfirmed,
+  PlatformClimbDraft,
   PlatformClimbListItem,
   PlatformClimbMeasure,
   PlatformClimbVerified,
@@ -144,5 +145,13 @@ export abstract class ClimbClient extends MockServerClient {
   ): Promise<PlatformClimbVerified> {
     const { projectId, climbId, ...body } = params;
     return this.request("POST", climbPath(projectId, climbId, "/verifications"), { body, declareLaunch: true }, options);
+  }
+
+  draftClimbChange(
+    params: { projectId: string; climbId: string; toolName: string; failedCaseKeys?: string[]; includeTitle?: boolean },
+    options?: Options
+  ): Promise<PlatformClimbDraft> {
+    const { projectId, climbId, ...body } = params;
+    return this.request("POST", climbPath(projectId, climbId, "/draft"), { body }, options);
   }
 }

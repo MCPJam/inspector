@@ -173,6 +173,7 @@ const PLAIN_TOOLS = [
   "stop_climb",
   "confirm_climb",
   "verify_climb",
+  "draft_climb_change",
   // Server accounts: metadata reads and the delete, no widget view.
   "list_server_accounts",
   "get_server_account",
@@ -535,6 +536,7 @@ describe("platform tool registration", () => {
       "stop_climb",
       "confirm_climb",
       "verify_climb",
+      "draft_climb_change",
       "list_server_accounts",
       "get_server_account",
       "delete_server_account",
@@ -869,6 +871,8 @@ describe("platform tool registration", () => {
       expect(annotationsOf(name)?.openWorldHint, name).toBe(true);
     }
     expect(annotationsOf("update_climb")).toMatchObject({ readOnlyHint: false });
+    // A draft saves nothing and starts no run, but it calls a model, which stays open-world.
+    expect(annotationsOf("draft_climb_change")).toMatchObject({ readOnlyHint: false, openWorldHint: true });
     expect(annotationsOf("set_climb_round_decision")).toMatchObject({ readOnlyHint: false });
 
     // Server accounts: the reads stay inside MCPJam; the delete asks the

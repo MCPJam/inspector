@@ -12,6 +12,7 @@ import { translateConvexReadError } from "../../routes/v1/convex-read-errors.js"
 
 const query = (name: string) => makeFunctionReference<"query">(name);
 const mutation = (name: string) => makeFunctionReference<"mutation">(name);
+const action = (name: string) => makeFunctionReference<"action">(name);
 
 export const climbFns = {
   start: mutation("climbs:startClimb"),
@@ -36,6 +37,8 @@ export const climbFns = {
   estimate: query("testSuites:estimateSuiteRunCredits"),
   createMock: mutation("mockServers:createMock"),
   getMock: query("mockServers:getMock"),
+  // A model call: the backend meters it as MCPJam's own drafting budget.
+  draft: action("climbDraft:draftClimbChange"),
 };
 
 /** What a refusal's code means for the HTTP answer. A code not listed here is the caller's input. */
@@ -46,6 +49,7 @@ const CONFLICTS = new Set([
   "CLIMB_CONFIRMATION_SPENT",
   "CLIMB_CONFIRMED",
   "CLIMB_CREDIT_LIMIT_REACHED",
+  "CLIMB_DRAFT_IN_PROGRESS",
   "CLIMB_MEASURE_LOCKED",
   "CLIMB_MEASURE_NOT_RECORDED",
   "CLIMB_NOT_READY",
@@ -60,6 +64,8 @@ const CONFLICTS = new Set([
   "CLIMB_STOPPED",
   "CLIMB_VERIFICATION_LIMIT_REACHED",
 ]);
+/** The model answered nothing usable: the request was fine, so it is not the caller's input. */
+const DRAFT_MODEL_FAILURES = new Set(["CLIMB_DRAFT_MODEL_ERROR", "CLIMB_DRAFT_UNUSABLE", "CLIMB_DRAFT_TOO_LONG"]);
 const NOT_FOUND = new Set(["CLIMB_NOT_FOUND", "CLIMB_ROUND_NOT_FOUND", "CLIMB_SERVER_NOT_FOUND"]);
 
 /** The backend's own refusal as a public error, or undefined for anything else. */
@@ -70,6 +76,7 @@ function climbRefusal(error: unknown): WebRouteError | undefined {
   const { code: _code, message, ...extra } = data as Record<string, unknown>;
   const text = typeof message === "string" && message.trim() ? message : "The climb request was refused.";
   const details = { code, ...extra };
+  if (DRAFT_MODEL_FAILURES.has(code)) return new WebRouteError(502, ErrorCode.GENERATION_FAILED, text, details);
   if (NOT_FOUND.has(code)) return new WebRouteError(404, ErrorCode.NOT_FOUND, text, details);
   if (CONFLICTS.has(code)) return new WebRouteError(409, ErrorCode.CONFLICT, text, details);
   return new WebRouteError(400, ErrorCode.VALIDATION_ERROR, text, details);

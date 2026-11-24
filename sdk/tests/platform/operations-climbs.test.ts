@@ -4,6 +4,7 @@ import {
   PlatformApiClient,
   getClimbOperation,
   confirmClimbOperation,
+  draftClimbChangeOperation,
   getClimbRoundOperation,
   isFeatureUnavailable,
   isOperationAvailable,
@@ -267,6 +268,39 @@ describe("confirm_climb", () => {
         Response.json({ code: "CONFLICT", message: "The suite set no cases aside for a confirmation.", details: { code: "CLIMB_NO_CONFIRMATION_CASES" } }, { status: 409 }),
     });
     await expect(confirmClimbOperation.execute({ climb: "climb-1" }, { client, ...CONTEXT })).rejects.toThrow("set no cases aside");
+  });
+});
+
+describe("draft_climb_change", () => {
+  const drafted = { climbId: "climb-1", suiteId: "suite-1", toolName: "echo", description: "Echoes.", modelUsed: "m", basedOn: "real_server", failedCaseKeys: [], trialsRead: 2, patchJson: "{}" };
+
+  it("sends the tool, the cases and the title request, and answers the draft with the project", async () => {
+    const { client, bodies } = clientWith({ [`POST ${CLIMBS}/climb-1/draft`]: drafted });
+    const result = await draftClimbChangeOperation.execute({ climb: "climb-1", tool: "echo", cases: ["a", "b"], includeTitle: true }, { client, ...CONTEXT });
+    expect(bodies).toEqual([{ toolName: "echo", failedCaseKeys: ["a", "b"], includeTitle: true }]);
+    expect(result).toMatchObject({ patchJson: "{}", project: { id: "project-1" } });
+  });
+
+  it("sends only the tool when nothing else is asked", async () => {
+    const { client, bodies } = clientWith({ [`POST ${CLIMBS}/climb-1/draft`]: drafted });
+    await draftClimbChangeOperation.execute({ climb: "climb-1", tool: "echo" }, { client, ...CONTEXT });
+    expect(bodies).toEqual([{ toolName: "echo" }]);
+  });
+
+  it("saves nothing and costs the climb no credits, behind climbs, with at most ten cases", () => {
+    expect(draftClimbChangeOperation).toMatchObject({ readOnly: false, risk: "none" });
+    expect(OPERATION_FEATURES.draft_climb_change).toBe("climbs");
+    const many = Array.from({ length: 11 }, (_, i) => `c${i}`);
+    expect(draftClimbChangeOperation.inputSchema.safeParse({ climb: "c", tool: "t", cases: many }).success).toBe(false);
+    expect(draftClimbChangeOperation.inputSchema.safeParse({ climb: "c" }).success).toBe(false);
+  });
+
+  it("passes the backend's refusal through in its own words", async () => {
+    const { client } = clientWith({
+      [`POST ${CLIMBS}/climb-1/draft`]: () =>
+        Response.json({ code: "VALIDATION_ERROR", message: "No steering case calls this tool.", details: { code: "CLIMB_DRAFT_TOOL_NOT_STEERED" } }, { status: 400 }),
+    });
+    await expect(draftClimbChangeOperation.execute({ climb: "climb-1", tool: "x" }, { client, ...CONTEXT })).rejects.toThrow("No steering case calls this tool");
   });
 });
 

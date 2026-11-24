@@ -312,3 +312,20 @@ export type PlatformClimbVerified = {
   report?: VerificationReport;
   settled: boolean;
 };
+
+/** `draft_climb_change`: a model's rewrite of one tool's description, as a draft and as the merge patch that applies it. */
+export type PlatformClimbDraft = {
+  climbId: string;
+  suiteId: string;
+  toolName: string;
+  description: string;
+  title?: string;
+  modelUsed: string;
+  /** Which description it rewrote: the mock's own edit in the best version, or the real server's stored listing. */
+  basedOn: "mock" | "real_server";
+  failedCaseKeys: string[];
+  /** How many failed iterations the model read. */
+  trialsRead: number;
+  /** An RFC 7396 merge patch of the mock definition, as a JSON string. */
+  patchJson: string;
+};
