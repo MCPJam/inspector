@@ -303,11 +303,14 @@ describe("POST /api/web-clients/reconnect/:requestId/handback", () => {
     expect(commands).toEqual([]);
   });
 
-  it("reports a backend failure and says the runs are still paused", async () => {
+  it("reports a backend failure and asks the person to check the runs first", async () => {
     const offline = new Error("socket hang up");
     const answered = await post({ ...OPEN, listWebReconnectRequests: offline });
     expect(answered.status).toBe(502);
-    expect(answered.body.error).toMatch(/the runs are still paused/);
+    // The handback may have gone through before the failure.
+    expect(answered.body.error).toBe(
+      "The handback didn't finish. Check whether your runs resumed before you try again.",
+    );
     expect(reported).toHaveBeenCalledWith(
       "A web account could not be handed back",
       offline,
