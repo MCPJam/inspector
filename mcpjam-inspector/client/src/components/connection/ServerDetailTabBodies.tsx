@@ -92,6 +92,7 @@ export function ServerDetailConnectionControls({
         </span>
       </span>
       <Switch
+        aria-label="Server connection"
         checked={connection.isConnected}
         disabled={connection.toggleDisabled}
         onCheckedChange={connection.toggle}

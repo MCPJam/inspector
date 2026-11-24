@@ -1086,7 +1086,7 @@ describe("ServerDetailModal", () => {
 
     const url = screen.getByDisplayValue("https://example.com/mcp");
     fireEvent.change(url, { target: { value: "https://example.com/mcp/v2" } });
-    await user.click(screen.getByRole("switch", { name: "Connect" }));
+    await user.click(screen.getByRole("switch", { name: "Server connection" }));
 
     expect(url).toHaveValue("https://example.com/mcp/v2");
     expect(screen.getByText("Save your changes to connect.")).toBeInTheDocument();
