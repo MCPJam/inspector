@@ -12,6 +12,7 @@ import { useAutoOAuthAuthorizationStore } from "@/lib/oauth/auto-oauth-escalatio
 
 export function AutoOAuthAuthorizationDialog() {
   const prompt = useAutoOAuthAuthorizationStore((state) => state.queue[0]);
+  const markShown = useAutoOAuthAuthorizationStore((state) => state.markShown);
   const settle = useAutoOAuthAuthorizationStore((state) => state.settle);
   if (!prompt) return null;
 
@@ -20,10 +21,13 @@ export function AutoOAuthAuthorizationDialog() {
       key={prompt.id}
       open
       onOpenChange={(open) => {
-        if (!open) settle(prompt.id, false);
+        if (!open) settle(prompt.id, "dismiss");
       }}
     >
-      <AlertDialogContent className="sm:max-w-md">
+      <AlertDialogContent
+        className="sm:max-w-md"
+        onOpenAutoFocus={() => markShown(prompt.id)}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle className="wrap-anywhere">
             Authorize "{prompt.serverName}"?
@@ -33,7 +37,9 @@ export function AutoOAuthAuthorizationDialog() {
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Not now</AlertDialogCancel>
+          <AlertDialogCancel onClick={() => settle(prompt.id, "not_now")}>
+            Not now
+          </AlertDialogCancel>
           <AlertDialogAction
             onClick={(event) => {
               // A double-click must not confirm the next server in the queue.
@@ -41,7 +47,7 @@ export function AutoOAuthAuthorizationDialog() {
                 event.preventDefault();
                 return;
               }
-              settle(prompt.id, true);
+              settle(prompt.id, "continue");
             }}
           >
             Continue to sign in

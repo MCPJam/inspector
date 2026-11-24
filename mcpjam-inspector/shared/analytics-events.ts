@@ -547,6 +547,11 @@ export const ANALYTICS_EVENTS = {
   save_api_key: { source: "client" },
   save_tool_button_clicked: { source: "client" },
   saved_request_item_loaded: { source: "client" },
+  // One impression per rendered Auto OAuth prompt and at most one decision.
+  // Join on the opaque prompt_id. A shown prompt without a decision measures
+  // no response. decision is continue, not_now or dismiss (Escape).
+  server_auto_oauth_prompt_shown: { source: "client" },
+  server_auto_oauth_prompt_resolved: { source: "client" },
   server_card_clicked: { source: "client" },
   // How a connect, reconnect or OAuth completion ended — one per attempt, from
   // `lib/connect-outcome-telemetry.ts`. Props: outcome (success | failure |

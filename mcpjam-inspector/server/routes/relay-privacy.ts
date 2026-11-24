@@ -1,6 +1,9 @@
-import { rebuildStrictPostHogEvent } from "../../shared/strict-posthog.js";
+import {
+  isAutoOAuthPromptEvent,
+  rebuildStrictPostHogEvent,
+} from "../../shared/strict-posthog.js";
 import { isLocalWebhookTelemetryEvent } from "../../shared/local-webhook-telemetry.js";
-import { relayEventMetadata } from "./relay-event-metadata.js";
+import { relayEventMetadata, relayPromptId } from "./relay-event-metadata.js";
 import {
   captureContextKey,
   CONSERVATIVE_TELEMETRY_POLICY,
@@ -286,9 +289,22 @@ export function applyEventPolicy(
   actorId?: string,
 ): unknown {
   if (!isRecord(event)) return null;
-  if (policy.content === "strict" || isLocalWebhookTelemetryEvent(event.event)) {
+  const autoOAuthPrompt = isAutoOAuthPromptEvent(event.event);
+  if (
+    policy.content === "strict" ||
+    isLocalWebhookTelemetryEvent(event.event) ||
+    autoOAuthPrompt
+  ) {
     const rebuilt = rebuildStrictPostHogEvent(event, actorId);
-    return rebuilt ? { ...rebuilt, ...relayEventMetadata(event) } : null;
+    if (!rebuilt) return null;
+    if (autoOAuthPrompt) {
+      const promptId = relayPromptId(
+        isRecord(event.properties) ? event.properties.prompt_id : null,
+      );
+      if (!promptId) return null;
+      rebuilt.properties.prompt_id = promptId;
+    }
+    return { ...rebuilt, ...relayEventMetadata(event) };
   }
   if (event.event === "$snapshot" && !replayAllowed(policy, declared)) {
     return null;

@@ -6,6 +6,16 @@ export const MAX_EVENT_FUTURE_MS = 5 * 60 * 1000;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+/** Link one prompt's events without forwarding the client-supplied identifier. */
+export function relayPromptId(value: unknown): string | null {
+  if (typeof value !== "string" || !/^[0-9a-f]{32}$/.test(value)) return null;
+  return createHash("sha256")
+    .update("mcpjam:posthog:auto-oauth-prompt:v1\0")
+    .update(value)
+    .digest("hex")
+    .slice(0, 32);
+}
+
 /** Mint an opaque retry-stable ID without forwarding a caller's identifier. */
 function eventId(value: unknown): string {
   if (typeof value !== "string" || !UUID.test(value)) return randomUUID();
