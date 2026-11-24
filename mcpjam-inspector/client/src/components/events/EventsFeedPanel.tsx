@@ -6,7 +6,7 @@ import type {
   EventsRejectionView,
 } from "@/shared/events-api";
 import type { EventsFeedGap, EventsFeedStatus } from "./use-events-feed";
-import { formatTime, safeJson } from "./event-utils";
+import { describeTermination, formatTime, safeJson } from "./event-utils";
 
 const STATUS_LABELS: Record<EventsFeedStatus, string> = {
   idle: "Idle",
@@ -159,7 +159,9 @@ function FeedEntryRow({
           </div>
         ) : null}
       </dl>
-      {entry.error ? (
+      {entry.kind === "terminated" ? (
+        <TerminationLine error={entry.error} />
+      ) : entry.error ? (
         <p className="text-[11px] text-destructive">
           {entry.error.code}: {entry.error.message}
         </p>
@@ -178,12 +180,26 @@ function FeedEntryRow({
   );
 }
 
+function TerminationLine({ error }: { error: EventsFeedEntryView["error"] }) {
+  const reason = describeTermination(error);
+  return (
+    <p className="text-[11px] text-foreground" data-testid="termination-reason">
+      <span className="font-medium">{reason.label}</span>
+      {reason.hint ? ` · ${reason.hint}` : ""}
+      {error ? (
+        <span className="font-mono text-muted-foreground"> ({error.code})</span>
+      ) : null}
+    </p>
+  );
+}
+
 export function EventsFeedPanel({
   entries,
   gaps,
   status,
   error,
   labelFor,
+  showStatus = true,
 }: {
   /** Oldest first; rendered newest first. */
   entries: EventsFeedEntryView[];
@@ -191,16 +207,20 @@ export function EventsFeedPanel({
   status: EventsFeedStatus;
   error: string | null;
   labelFor: (entry: EventsFeedEntryView) => string | undefined;
+  /** Off when the pane already shows the feed status in its header. */
+  showStatus?: boolean;
 }) {
   const newestFirst = [...entries].reverse();
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-2">
-        <FeedStatusBadge status={status} />
-        {error ? (
-          <span className="text-[11px] text-destructive">{error}</span>
-        ) : null}
-      </div>
+      {showStatus || error ? (
+        <div className="flex items-center gap-2">
+          {showStatus ? <FeedStatusBadge status={status} /> : null}
+          {error ? (
+            <span className="text-[11px] text-destructive">{error}</span>
+          ) : null}
+        </div>
+      ) : null}
       {gaps.map((gap) => (
         <p
           key={`${gap.fromSeq}-${gap.toSeq}`}
@@ -214,7 +234,7 @@ export function EventsFeedPanel({
       {newestFirst.length === 0 ? (
         <div className="flex items-center gap-2 py-6 text-xs text-muted-foreground">
           <Inbox className="h-4 w-4" />
-          No deliveries yet. Events appear here as they arrive.
+          No events received yet. They appear here as they arrive.
         </div>
       ) : (
         <ul>

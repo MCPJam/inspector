@@ -62,11 +62,16 @@ import {
   Section,
 } from "./events/EventsTabSections";
 import { EventTypesSidebar } from "./events/EventTypesSidebar";
-import { EventsHostPicker } from "./events/EventsHostPicker";
 import { useEventsHost } from "./events/use-events-host";
 import { useEventsCatalog } from "./events/use-events-catalog";
 import { useEventsFeed } from "./events/use-events-feed";
-import { errorMessage, logicalIdOf } from "./events/event-utils";
+import { useEventsListChanged } from "./events/use-events-list-changed";
+import {
+  describeTermination,
+  errorMessage,
+  logicalIdOf,
+  type TerminationReason,
+} from "./events/event-utils";
 
 interface EventsTabProps {
   serverConfig?: MCPServerConfig;
@@ -100,8 +105,9 @@ export function EventsTab({
     track("events_tab_viewed", { location: "events_tab" });
   }, []);
 
-  // The client subscriptions are made as. It decides the delivery modes on
-  // offer; the catalog stays visible whatever it accepts.
+  // The client subscriptions are made as: built-in when hosted, the active
+  // client when local. It decides the delivery modes on offer; the catalog
+  // stays visible whatever it accepts.
   const eventsHost = useEventsHost({
     hosted,
     projectId,
@@ -137,6 +143,7 @@ export function EventsTab({
   } = useEventsCatalog({ hasServer, serverName, connected });
   const declared =
     catalogState === "ready" && catalog?.support.declared === true;
+  useEventsListChanged(declared ? serverName : undefined, retryCatalog);
 
   // ── registry ────────────────────────────────────────────────────────────
   // The hosted server id comes from the API context, which fills in after
@@ -300,6 +307,27 @@ export function EventsTab({
     [subscriptionsByLogicalId],
   );
 
+  // The latest `terminated` signal per subscription says why it ended.
+  const terminations = useMemo(() => {
+    const byLogicalId = new Map<string, TerminationReason>();
+    for (const entry of visibleEntries) {
+      if (entry.kind === "terminated") {
+        byLogicalId.set(
+          entry.logicalSubscriptionId,
+          describeTermination(entry.error),
+        );
+      }
+    }
+    return byLogicalId;
+  }, [visibleEntries]);
+  const terminationFor = (subscription: EventsSubscriptionView) =>
+    subscription.observedState === "terminated"
+      ? (terminations.get(logicalIdOf(subscription)) ?? {
+          label: "Terminated",
+          hint: subscription.lastError?.message,
+        })
+      : null;
+
   const rejections = useMemo<EventsRejectionView[]>(() => {
     if (!hosted) return feed.rejections;
     return Object.values(slotStates)
@@ -333,7 +361,7 @@ export function EventsTab({
   const blockedReason = !hostChoice
     ? "Loading clients…"
     : hostChoice.missing
-      ? "The client you picked was deleted. Pick another client to subscribe."
+      ? "This client no longer exists. Make another client active to subscribe."
       : selectedAvailability
         ? describeNoSubscribableMode(selectedAvailability, hostChoice.name)
         : null;
@@ -577,13 +605,13 @@ export function EventsTab({
     <ScrollArea className="h-full">
       <div className="pb-16">
         <DraftHeader>
-          <EventsHostPicker
-            hosted={hosted}
-            hosts={eventsHost.hosts}
-            hostId={eventsHost.hostId}
-            choice={hostChoice}
-            onChange={eventsHost.setHostId}
-          />
+          <span
+            className="text-[11px] text-muted-foreground"
+            title="The client MCPJam subscribes as"
+            data-testid="events-host-label"
+          >
+            Client: {hostName}
+          </span>
         </DraftHeader>
         {hostedRegistryNotice ? (
           <p className="mx-5 mt-4 rounded-md border border-warning/40 bg-warning/10 p-2 text-xs text-foreground">
@@ -641,6 +669,8 @@ export function EventsTab({
               hosted={hosted}
               busyId={busySubscriptionId}
               slotStates={slotStates}
+              emptyText="No subscriptions on this server yet. Subscribe to an event type above."
+              terminationFor={terminationFor}
               onAction={(subscription, action) =>
                 void handleSubscriptionAction(subscription, action)
               }
@@ -669,8 +699,8 @@ export function EventsTab({
         </Section>
 
         <Section
-          title="Live feed"
-          description="Every delivery the inbox receives, newest first. Treat event data as untrusted."
+          title="Received"
+          description="Newest first. Event data comes from the server's upstream; treat it as untrusted."
           actions={
             <Badge variant="outline" className="text-[10px]">
               {hosted ? "Hosted inbox" : "Local inbox"}
@@ -690,7 +720,7 @@ export function EventsTab({
           title="Rejected deliveries"
           description={
             hosted
-              ? "Recorded per webhook slot (reason, headers, size; never the body or signature). Use Check slot on a subscription to load them."
+              ? "Recorded per webhook slot (reason, headers, size; never the body or signature). Use Check inbox on a subscription to load them."
               : "Deliveries the local receiver refused (reason, headers, size; never the body or signature)."
           }
         >

@@ -9,7 +9,7 @@ import {
   Pause,
   Play,
   ShieldCheck,
-  Trash2,
+  X,
 } from "lucide-react";
 import { copyToClipboard } from "@/lib/clipboard";
 import { BUILT_IN_EVENTS_HOST_NAME } from "./use-events-host";
@@ -18,12 +18,16 @@ import type {
   EventsSubscriptionView,
 } from "@/shared/events-api";
 import {
+  END_SUBSCRIPTION_LABELS,
   formatCountdown,
   formatTime,
   hasInsecureLocalReceiver,
   observedStateLabel,
   observedStateTone,
+  readDeliveryStatus,
+  replayUnsupported,
   safeJson,
+  type TerminationReason,
 } from "./event-utils";
 
 /** A clock that ticks once a second while mounted, for the countdowns. */
@@ -61,12 +65,45 @@ function Field({
   );
 }
 
+function DeliveryStatusFields({ value }: { value: unknown }) {
+  const status = readDeliveryStatus(value);
+  if (!status) return null;
+  const state = status.suspended
+    ? "Suspended after repeated failures"
+    : status.throttled
+      ? `Throttled${
+          status.retryAfterMs !== undefined
+            ? `, for about ${Math.ceil(status.retryAfterMs / 1000)}s`
+            : ""
+        }`
+      : "Delivering";
+  return (
+    <>
+      <Field label="Delivery">
+        <span data-testid="delivery-state">{state}</span>
+      </Field>
+      {status.lastError ? (
+        <Field label="lastError">{status.lastError}</Field>
+      ) : null}
+      {status.failedSince ? (
+        <Field label="failedSince">{formatTime(status.failedSince)}</Field>
+      ) : null}
+      {status.lastDeliveryAt ? (
+        <Field label="lastDeliveryAt">
+          {formatTime(status.lastDeliveryAt)}
+        </Field>
+      ) : null}
+    </>
+  );
+}
+
 function SubscriptionCard({
   subscription,
   hosted,
   now,
   busy,
   slotState,
+  termination,
   onAction,
 }: {
   subscription: EventsSubscriptionView;
@@ -74,6 +111,7 @@ function SubscriptionCard({
   now: number;
   busy: boolean;
   slotState?: EventsSlotStateResponse;
+  termination: TerminationReason | null;
   onAction: (action: SubscriptionAction) => void;
 }) {
   const removed = subscription.desiredState === "removed";
@@ -151,7 +189,15 @@ function SubscriptionCard({
         </div>
       ) : null}
 
-      {subscription.lastError ? (
+      {termination ? (
+        <p
+          className="rounded-md border border-warning/40 bg-warning/10 p-2 text-[11px] text-foreground"
+          data-testid="subscription-termination"
+        >
+          <span className="font-medium">{termination.label}</span>
+          {termination.hint ? `. ${termination.hint}` : ""}
+        </p>
+      ) : subscription.lastError ? (
         <p className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-[11px] text-destructive">
           <span className="font-mono">{subscription.lastError.kind}</span>:{" "}
           {subscription.lastError.message}
@@ -169,7 +215,11 @@ function SubscriptionCard({
         <Field label="Refresh before">
           {formatCountdown(subscription.refreshBefore, now)}
         </Field>
-        <Field label="Last cursor">{subscription.lastCursor ?? "none"}</Field>
+        <Field label="cursor">
+          {replayUnsupported(subscription)
+            ? "null (replay not supported)"
+            : (subscription.lastCursor ?? "none yet")}
+        </Field>
         <Field label="Generation">{subscription.generation}</Field>
         {isWebhook ? (
           <div className="min-w-0 space-y-0.5 sm:col-span-2">
@@ -200,7 +250,12 @@ function SubscriptionCard({
           </div>
         ) : null}
         {subscription.lastGapAt ? (
-          <Field label="Last gap">{formatTime(subscription.lastGapAt)}</Field>
+          <Field label="Last gap (truncated)">
+            {formatTime(subscription.lastGapAt)}
+          </Field>
+        ) : null}
+        {isWebhook ? (
+          <DeliveryStatusFields value={subscription.deliveryStatus} />
         ) : null}
       </dl>
 
@@ -319,8 +374,8 @@ function SubscriptionCard({
             disabled={busy}
             onClick={() => onAction({ kind: "state", desiredState: "removed" })}
           >
-            <Trash2 className="mr-1 h-3 w-3" />
-            Remove
+            <X className="mr-1 h-3 w-3" />
+            {END_SUBSCRIPTION_LABELS[subscription.mode]}
           </Button>
         </div>
       ) : null}
@@ -333,12 +388,19 @@ export function SubscriptionsPanel({
   hosted,
   busyId,
   slotStates,
+  emptyText,
+  terminationFor,
   onAction,
 }: {
   subscriptions: EventsSubscriptionView[];
   hosted: boolean;
   busyId: string | null;
   slotStates: Record<string, EventsSlotStateResponse>;
+  emptyText: string;
+  /** Why a terminated subscription ended, when the feed says. */
+  terminationFor: (
+    subscription: EventsSubscriptionView,
+  ) => TerminationReason | null;
   onAction: (
     subscription: EventsSubscriptionView,
     action: SubscriptionAction,
@@ -346,11 +408,7 @@ export function SubscriptionsPanel({
 }) {
   const now = useNow();
   if (subscriptions.length === 0) {
-    return (
-      <p className="text-xs text-muted-foreground">
-        No subscriptions on this server yet. Subscribe to an event type above.
-      </p>
-    );
+    return <p className="text-xs text-muted-foreground">{emptyText}</p>;
   }
   return (
     <ul className="space-y-2">
@@ -362,6 +420,7 @@ export function SubscriptionsPanel({
           now={now}
           busy={busyId === subscription.id}
           slotState={slotStates[subscription.id]}
+          termination={terminationFor(subscription)}
           onAction={(action) => onAction(subscription, action)}
         />
       ))}
