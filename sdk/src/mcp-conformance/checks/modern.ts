@@ -28,7 +28,7 @@
  * -32602 without specifying an HTTP status.
  */
 
-import { DiscoveryResultError, discoveryResultType, requireCompleteDiscovery } from "../../discovery-result.js";
+import { DiscoveryResultError, requireCompleteDiscovery } from "../../discovery-result.js";
 import type {
   MCPCheckSkipReason,
   MCPCheckId,
@@ -810,7 +810,7 @@ async function collectCacheableResults(
     { method: "server/discover", result: discover },
   ];
 
-  // Check 23 still needs the raw discriminator when discovery is unfinished.
+  // Check 23 still needs the raw discriminator when the discovery reply is invalid.
   // Its capabilities cannot be used to select follow-up requests.
   const type = jsonRpcResult(discover)?.resultType;
   if (type !== undefined && type !== COMPLETE_RESULT_TYPE) return collected;
@@ -840,7 +840,7 @@ function runResultTypeCheck(
     }
     const resultType = payload.resultType;
     observed[method] = resultType;
-    if (method === "server/discover") discoveryResultType(payload);
+    if (method === "server/discover") requireCompleteDiscovery(payload);
     if (typeof resultType !== "string" || resultType.length === 0) {
       missing.push(method);
     }

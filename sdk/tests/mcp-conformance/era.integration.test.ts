@@ -436,11 +436,15 @@ describe.each(["raw", "mixed"] as const)("invalid discovery in a %s run", mode =
     }).run();
     for (const id of checkIds) {
       const check = byId(result.checks, id);
-      if (id === "modern-client-handshake") expect(check.status).toBe("failed");
-      else if (id === "modern-no-session-id") expect(check.status).toBe("passed");
-      else if (id === "modern-result-type-present") {
-        expect(check.status).toBe(resultType === "input_required" ? "passed" : "failed");
-      } else expect(check.skipReason, id).toBe("could-not-run");
+      if (id === "modern-client-handshake" || id === "modern-result-type-present") {
+        expect(check.status).toBe("failed");
+        if (resultType === "input_required") {
+          expect(check.error?.message).toBe(
+            'server/discover returned "input_required", which the MCP spec forbids for this request',
+          );
+        }
+      } else if (id === "modern-no-session-id") expect(check.status).toBe("passed");
+      else expect(check.skipReason, id).toBe("could-not-run");
     }
     expect(methods).toEqual(mode === "raw" ? ["server/discover"] : ["server/discover", "server/discover"]);
   });
