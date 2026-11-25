@@ -637,14 +637,14 @@ describe("EventsTab (local)", () => {
     });
     expect(screen.getAllByTestId("feed-entry")).toHaveLength(1);
 
-    // Tracing gets a redacted webhook RECEIVE row per entry.
+    // Tracing gets one RECEIVE row per entry, named by its delivery mode.
     const rows = useTrafficLogStore
       .getState()
       .mcpServerItems.filter((item) => item.kind === "webhook");
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       direction: "RECEIVE",
-      method: "webhook event",
+      method: "simulation event",
       serverId: SERVER,
     });
 
