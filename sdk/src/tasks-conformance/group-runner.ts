@@ -513,6 +513,8 @@ export class TaskGroupRunner extends TaskOperations {
           this.config.signal?.throwIfAborted();
           let inputRequiredTask: Record<string, unknown> | undefined;
           let inputLeg: InputRequiredLeg | undefined;
+          let allowRepeatedKeys = false;
+          let repeatedInputKeys: string[] | undefined;
           const answered = new Set<string>();
           const inputSnapshots: Record<string, unknown>[] = [];
           const polled =
@@ -541,10 +543,14 @@ export class TaskGroupRunner extends TaskOperations {
                       ) {
                         inputLeg ??= leg;
                         // The server can repeat acknowledged keys until the update takes effect.
-                        return (
-                          leg.requested.length > 0 &&
-                          leg.requested.every((key) => answered.has(key))
-                        );
+                        if (!leg.requested.length || !leg.requested.every(key => answered.has(key)))
+                          return false;
+                        if (allowRepeatedKeys) {
+                          allowRepeatedKeys = false;
+                          return true;
+                        }
+                        repeatedInputKeys = leg.requested;
+                        return false;
                       }
                       // T12 grades actual acknowledgments. A later rejection cannot erase one.
                       if (
@@ -553,6 +559,7 @@ export class TaskGroupRunner extends TaskOperations {
                       )
                         inputLeg = leg;
                       if (leg.outcome !== "updated") return false;
+                      allowRepeatedKeys = true;
                       inputSnapshots.push(task);
                       for (const key of leg.answered ?? []) answered.add(key);
                       return true;
@@ -632,6 +639,7 @@ export class TaskGroupRunner extends TaskOperations {
             wire,
             finalTask,
             inputSnapshots,
+            repeatedInputKeys,
             createdTaskId,
             noTask,
             selected,

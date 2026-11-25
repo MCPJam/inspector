@@ -88,7 +88,9 @@ export async function runReadChecks(context: TaskCheckContext) {
       checks.push(
         couldNotRun(
           "tasks-inline-result",
-          `task did not reach a terminal status within ${
+          context.repeatedInputKeys
+            ? `The server kept requesting keys this run already answered: ${JSON.stringify(context.repeatedInputKeys)}. The task stayed on input_required.`
+            : `task did not reach a terminal status within ${
             operations.config.pollTimeoutMs
           }ms (last status: ${String(
             finalTask.status
