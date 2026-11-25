@@ -66,6 +66,7 @@ import {
   singleCaseHarnessBoxRefusal,
 } from "./evals/needs-ephemeral-sandbox";
 import { createStepExecutionState, executeSteps } from "./evals/step-executor";
+import { caseConcurrencyForRun } from "./evals/run-sandbox-slots";
 import { classifyEvalInfraError } from "./evals/infra-error-classification";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
 import {
@@ -4440,10 +4441,21 @@ export const runEvalSuiteWithAiSdk = async ({
         ...(extraHeaders ? { extraHeaders } : {}),
       });
     // A web client's account runs one turn per server at a time (a second
-    // is refused as turn_running), so its cases take turns.
-    const webClientCaseLimit = isWebClientRuntimeId(harnessOfHostConfig(suiteHostConfig))
+    // is refused as turn_running), so its cases take turns. Otherwise cases
+    // that boot boxes wait for one of the run's box slots before their first
+    // iteration (and its clock) starts; see `run-sandbox-slots.ts`.
+    const sandboxSlots = caseConcurrencyForRun({
+      suiteHostConfig,
+      environment: config.environment,
+      runId,
+    });
+    const caseLimit = isWebClientRuntimeId(
+      harnessOfHostConfig(suiteHostConfig),
+    )
       ? createConcurrencyLimiter(1)
-      : undefined;
+      : sandboxSlots
+        ? createConcurrencyLimiter(sandboxSlots)
+        : undefined;
     const testPromises = tests.map((test) =>
       // Cap concurrent headless browsers for every model-free render check
       // (legacy widget_probe OR a unified case whose turns are all pinned),
@@ -4454,8 +4466,8 @@ export const runEvalSuiteWithAiSdk = async ({
         promptTurns: resolveEvalTestCase(test).promptTurns,
       })
         ? renderCheckLimit(() => runOne(test))
-        : webClientCaseLimit
-          ? webClientCaseLimit(() => runOne(test))
+        : caseLimit
+          ? caseLimit(() => runOne(test))
           : runOne(test),
     );
 
