@@ -30,7 +30,7 @@
     "postcss": "^8.5.28",
     "tailwindcss": "^4.1.11",
     "tw-animate-css": "^1.3.5",
-    "typescript": "^5.5.2"
+    "typescript": "^7.0.2"
   },
   "engines": {
     "node": ">=22.11.0"
