@@ -536,6 +536,19 @@ export function buildEvaluatePath(route: EvalRoute): string {
   return buildEvalRoutePath(routePaths.evaluate, route);
 }
 
+/** The query key Evaluate reads to open a suite's run review on arrival. */
+export const EVAL_RUN_PARAM = "run";
+
+/**
+ * Evaluate, told to open `suiteId`'s run review as its Run does; starting
+ * the run then opens its run page. The page drops the key once it opens.
+ */
+export function buildEvaluateSuiteRunPath(suiteId: string): string {
+  return `${routePaths.evaluate}?${new URLSearchParams({
+    [EVAL_RUN_PARAM]: suiteId,
+  })}`;
+}
+
 /** Retired Evaluate URLs preserve artifact context; commits open the plain run table. */
 export function legacyEvalPathToEvaluatePath(
   pathname: string,
@@ -950,6 +963,13 @@ export function buildConformanceRunServerPath(serverName: string): string {
   return `${routePaths.conformance}?${new URLSearchParams({
     [CONFORMANCE_RUN_PARAM]: serverName,
   })}`;
+}
+
+/** The query key that opens the Conformance setup steps on arrival. */
+export const CONFORMANCE_SETUP_PARAM = "setup";
+
+export function buildConformanceSetupPath(): string {
+  return `${routePaths.conformance}?${CONFORMANCE_SETUP_PARAM}=1`;
 }
 
 export function buildConformanceSharePath(token: string): string {

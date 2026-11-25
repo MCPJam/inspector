@@ -12,6 +12,8 @@ import {
   ComparisonBrowser,
   LocalBrowserUnavailable,
 } from "@/components/browser/ComparisonBrowser";
+import { useWebClientPane } from "@/components/web-clients/WebClientPane";
+import type { WebClientVendor } from "@/shared/web-clients";
 
 /**
  * The browser, beside chat.
@@ -46,6 +48,8 @@ export interface PlaygroundBrowserPanelProps {
    */
   visible: boolean;
   onClose: () => void;
+  /** Set when the client is Claude web or ChatGPT web, whose page is the client. */
+  webClientVendor?: WebClientVendor;
 }
 
 export function PlaygroundBrowserPanel({
@@ -53,6 +57,7 @@ export function PlaygroundBrowserPanel({
   hostId = null,
   visible,
   onClose,
+  webClientVendor,
 }: PlaygroundBrowserPanelProps) {
   const engine = useBrowserEngine(projectId);
   // THE DURABLE SESSION, in the panel as well as in the rail tab it replaces.
@@ -112,6 +117,12 @@ export function PlaygroundBrowserPanel({
   // authorized it yet must see the local body's pointer, not a cloud browser
   // they did not ask for.
   const isLocal = engine.selectedEngine === "local";
+  const webClient = useWebClientPane({
+    projectId,
+    hostId,
+    vendor: webClientVendor,
+    local: isLocal,
+  });
 
   if (!browserSessionId)
     return (
@@ -126,6 +137,7 @@ export function PlaygroundBrowserPanel({
       data-testid="playground-browser-panel"
     >
       <div className="flex shrink-0 items-center justify-end gap-0.5 border-b border-border px-2 py-1">
+        {webClient?.chip}
         <button
           type="button"
           onClick={() => setExpanded(!expanded)}
@@ -160,8 +172,11 @@ export function PlaygroundBrowserPanel({
           <PanelRightClose className="size-3.5" aria-hidden />
         </button>
       </div>
+      {webClient?.banner}
       <div className="flex min-h-0 flex-1 flex-col">
-        {hasComparison && projectId ? (
+        {webClient?.blocker ? (
+          webClient.blocker
+        ) : hasComparison && projectId ? (
           <ComparisonBrowser
             key={`${projectId}:${browserSessionId}`}
             projectId={projectId}
@@ -188,6 +203,8 @@ export function PlaygroundBrowserPanel({
             mintToken={mintHostedBrowserToken}
             hostId={hostId}
             active={visible}
+            // A web client's browser runs on the project's account.
+            allowProfileSave={!webClient}
           />
         )}
       </div>

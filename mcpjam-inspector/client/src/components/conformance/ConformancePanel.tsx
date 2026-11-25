@@ -55,6 +55,7 @@ import {
   type SuiteState,
 } from "@/hooks/use-conformance-run";
 import { ConformanceRunHeader } from "./ConformanceRunHeader";
+import { useConformanceRunCompleted } from "./use-conformance-run-completed";
 import {
   ConformanceRunButton,
   ConformanceRunRequestContext,
@@ -310,6 +311,8 @@ export function ConformanceContent({
     openAuthorizationWindow,
     skipOAuth,
   } = snapshot;
+
+  useConformanceRunCompleted(isRunning, pooledScore);
 
   const protocolChecks = useMemo(
     () => protocolCatalog(snapshot.resolvedProtocolVersion ?? versionPin),

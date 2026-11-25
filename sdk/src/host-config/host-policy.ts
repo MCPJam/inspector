@@ -1,3 +1,4 @@
+import { discoveryRunMetadata } from "../sdk-version.js";
 /**
  * Host execution policy extraction + iteration-metadata stamping.
  *
@@ -15,6 +16,7 @@ import type {
   McpToolResultImageRenderPlacement,
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
+  ModelVisibleStructuredContent,
 } from "./types.js";
 
 export type { ToolExposureSignals } from "./tool-visibility.js";
@@ -41,6 +43,11 @@ function readHostStyle(
 }
 
 export type ResolvedModelVisibleMcpToolResults = {
+  /**
+   * Present only when the host sets it: the harness profile schema is strict,
+   * so an undefined-valued key would change admission for every host.
+   */
+  structuredContent?: ModelVisibleStructuredContent;
   directContent: {
     text: boolean;
     image: boolean;
@@ -154,6 +161,9 @@ export function resolveModelVisibleMcpToolResults(
     DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS.linkedResources.blob.enabled;
 
   return {
+    ...(policy?.structuredContent !== undefined
+      ? { structuredContent: policy.structuredContent }
+      : {}),
     directContent: {
       text:
         policy?.directContent?.text ??
@@ -280,6 +290,7 @@ export type HostExecutionPolicy = {
   /** undefined = spec default (filter app-only tools from model). false = opt out. */
   respectToolVisibility: boolean | undefined;
   progressiveDiscoveryEnabled: boolean;
+  runUnloadedToolCalls?: boolean;
   /**
    * Whether eligible MCP image-bearing tool-result content should be passed
    * through as model-visible image content instead of staying as JSON. These
@@ -335,6 +346,7 @@ export function extractHostExecutionPolicy(
     requireToolApproval,
     respectToolVisibility,
     progressiveDiscoveryEnabled,
+    runUnloadedToolCalls: hostConfig.runUnloadedToolCalls !== false,
     modelVisibleMcpToolResults,
     mcpToolResultImageRendering,
     hostStyle,
@@ -367,11 +379,11 @@ export function buildHostSnapshotMetadata(
   hostConfig: Record<string, unknown> | null
 ): Record<string, string | number | boolean> {
   if (!hostConfig) {
-    return {};
+    return discoveryRunMetadata();
   }
 
   const policy = extractHostExecutionPolicy(hostConfig);
-  const meta: Record<string, string | number | boolean> = {};
+  const meta: Record<string, string | number | boolean> = discoveryRunMetadata(policy.runUnloadedToolCalls);
   if (policy.progressiveDiscoveryEnabled) {
     meta.progressive_discovery_enabled = true;
   }
@@ -404,6 +416,7 @@ export function buildHostIterationMetadata(
   injectOpenAiCompat: boolean
 ): Record<string, string | number | boolean> {
   const meta: Record<string, string | number | boolean> = {
+    ...discoveryRunMetadata(policy.runUnloadedToolCalls),
     tools_total_before: signals.toolsTotalBefore,
     tools_exposed: signals.toolsExposed,
   };

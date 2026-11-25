@@ -46,6 +46,8 @@ export const HARNESS_MCP_DELIVERY = {
   "copilot-cli": HARNESS_DESCRIPTORS["copilot-cli"].mcpClient,
   cursor: HARNESS_DESCRIPTORS.cursor.mcpClient,
   opencode: HARNESS_DESCRIPTORS.opencode.mcpClient,
+  "claude-web": HARNESS_DESCRIPTORS["claude-web"].mcpClient,
+  "chatgpt-web": HARNESS_DESCRIPTORS["chatgpt-web"].mcpClient,
 } as const satisfies Record<Harness, HarnessMcpDelivery>;
 export function harnessMcpDelivery(harness: Harness): HarnessMcpDelivery {
   return HARNESS_MCP_DELIVERY[harness];
