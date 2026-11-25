@@ -226,6 +226,7 @@ import {
   attachmentsToFileUIParts,
   revokeFileAttachmentUrls,
 } from "@/components/chat-v2/chat-input/attachments/file-utils";
+import { remainingText } from "@/components/chat-v2/composer-sent";
 import {
   useUIPlaygroundStore,
   type DeviceType,
@@ -5854,7 +5855,8 @@ export function PlaygroundMain({
     // composer state intact — an honest error beats a message whose files
     // silently never reached the box. Inline file parts are unchanged (vision
     // et al. keep working).
-    let composerText = composer.input;
+    const sentText = composer.input;
+    let composerText = sentText;
     if (fileAttachments.length > 0 && computerAttachmentsActive) {
       try {
         const entries = await computerAttachmentUpload.uploadAttachments(
@@ -5947,7 +5949,8 @@ export function PlaygroundMain({
       setModelContextQueue([]);
     }
 
-    composer.setInput("");
+    // The box stayed editable during the send: keep what was added meanwhile.
+    composer.setInput((current) => remainingText(current, sentText));
     setMcpPromptResults([]);
     setSkillResults([]);
     revokeFileAttachmentUrls(fileAttachments);

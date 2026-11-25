@@ -2449,6 +2449,37 @@ describe("PlaygroundMain", () => {
       }
     });
 
+    it.each([
+      ["text added after the sent text", "first plus more", "plus more"],
+      ["an edited draft", "frist", "frist"],
+      ["a continued last word", "firstly", "firstly"],
+      ["nothing when the box was left alone", "first", ""],
+    ])(
+      "leaves %s in the box once the send goes out",
+      async (_case, typed, left) => {
+        await openSavedThread();
+        const releaseSync = holdPreSendSync();
+        fireEvent.change(screen.getByTestId("chat-input-field"), {
+          target: { value: "first" },
+        });
+        await act(async () => {
+          fireEvent.submit(screen.getByTestId("chat-input"));
+        });
+        fireEvent.change(screen.getByTestId("chat-input-field"), {
+          target: { value: typed },
+        });
+
+        await act(async () => releaseSync());
+
+        await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+        expect(sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ text: "first" }),
+        );
+        await waitFor(() => expect(composerProps().isSubmitting).toBe(false));
+        expect(composerProps().value).toBe(left);
+      },
+    );
+
     it("keeps the draft and frees Send when the pre-send sync fails", async () => {
       await openSavedThread();
       mockGetChatHistoryState.mockRejectedValue(new Error("network down"));
