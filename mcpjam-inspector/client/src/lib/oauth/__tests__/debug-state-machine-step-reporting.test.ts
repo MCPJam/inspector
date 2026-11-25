@@ -157,7 +157,7 @@ describe("OAuth debugger step-failure reporting", () => {
     });
     const finding: string = options.extra.finding;
     const groupedBy =
-      "Failed to request MCP server: Backend debug proxy error: 503 : Couldn't reach MCPJam's server because an HTML page (\"Web Login\") answered instead";
+      "Failed to request MCP server: Backend debug proxy error: 503 : Couldn't reach MCPJam's server because a web page (\"Web Login\") answered instead";
     expect(finding.slice(0, groupedBy.length)).toBe(groupedBy);
     expect(finding).not.toContain("<");
     expect(finding.length).toBeLessThanOrEqual(160);

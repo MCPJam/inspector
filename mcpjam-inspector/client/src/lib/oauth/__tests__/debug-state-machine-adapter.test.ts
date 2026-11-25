@@ -289,7 +289,7 @@ describe("Inspector OAuth debug proxy failures", () => {
     const message = () =>
       createDebugRequestExecutor()(request).catch((e: Error) => e.message);
     const summary = (status: number, named = "") =>
-      `Backend debug proxy error: ${status} : Couldn't reach MCPJam's server because an HTML page${named} answered instead`;
+      `Backend debug proxy error: ${status} : Couldn't reach MCPJam's server because a web page${named} answered instead`;
     const expectStart = (text: string, prefix: string) =>
       expect(text.slice(0, prefix.length)).toBe(prefix);
 
