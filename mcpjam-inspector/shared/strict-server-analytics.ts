@@ -8,7 +8,6 @@ import {
   telemetryActorId,
 } from "@mcpjam/sdk/internal/telemetry";
 import { V1_ERROR_CODES } from "@mcpjam/sdk/public-api";
-import catalog from "./telemetry-catalog.generated.json";
 import {
   HARNESS_TURN_BOOTSTRAPS,
   HARNESS_TURN_DURATIONS,
@@ -17,6 +16,9 @@ import {
   HARNESS_TURN_STARTS,
 } from "./harness-turn-event";
 import { isLogConvexIdShape } from "./strict-log";
+
+/** Methods a v1 usage event records (`HEAD` is served by the `GET` route). */
+const OPERATION_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"] as const;
 
 const enums: Record<string, readonly string[]> = {
   origin: ["playground", "evals", "api", "scenario"],
@@ -79,7 +81,7 @@ const enums: Record<string, readonly string[]> = {
   engine: ["emulated", "harness:claude-code", "harness:codex", "harness:opencode"],
   environment_skill_delivery: ["harness", "harness_unsupported", "emulated"],
   // api_v1_request_completed
-  method: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
+  method: OPERATION_METHODS,
   error_code: V1_ERROR_CODES,
   // Every `authMethod` in server/types/hono.ts, plus "none". Keep in step.
   auth_method: [
@@ -194,21 +196,7 @@ export function rebuildServerAnalytics(
     )
       properties[key] = value;
   }
-  // `operation` is "METHOD /route/:pattern", kept only when that route is
-  // mounted for that method, so no path value can ride it.
-  const operation = input.operation;
-  if (typeof operation === "string") {
-    const [method, route, extra] = operation.split(" ");
-    if (
-      extra === undefined &&
-      catalog.routeEntries.some(
-        (entry) =>
-          entry.path === route &&
-          (entry.method === "ALL" || entry.method === method),
-      )
-    )
-      properties.operation = operation;
-  }
+  if (isV1Operation(input.operation)) properties.operation = input.operation;
   const harness = input.harness_id;
   const packVersion = input.pack_version;
   if (
@@ -225,6 +213,27 @@ export function rebuildServerAnalytics(
     if (known) properties.pack_version = packVersion;
   }
   return { event: event as ServerAnalyticsEventName, distinctId, properties };
+}
+
+const V1_OPERATION_METHODS = new Set<string>(OPERATION_METHODS);
+/** `:param`, a lowercase word route segment (`eval-runs`, `v1`), or `*`. */
+const V1_ROUTE_SEGMENT = /^(?::[A-Za-z][A-Za-z0-9_]*|[a-z]+(?:-[a-z]+)*|v\d+|\*)$/;
+
+/**
+ * `operation` is "METHOD /api/v1/route/:pattern". Hono hands the middleware
+ * the matched pattern, never the request path, and this shape check keeps a
+ * path value from riding along if that ever changes: a segment holding an id,
+ * a number, an uppercase letter or punctuation fails it.
+ */
+function isV1Operation(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const [method, route, extra] = value.split(" ");
+  if (extra !== undefined || !V1_OPERATION_METHODS.has(method)) return false;
+  if (!route?.startsWith("/api/v1/")) return false;
+  return route
+    .slice("/api/v1/".length)
+    .split("/")
+    .every((segment) => V1_ROUTE_SEGMENT.test(segment));
 }
 
 /** Anonymous flag subjects are the UUIDv7 values minted by posthog-js. */

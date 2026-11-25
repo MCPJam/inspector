@@ -37,6 +37,7 @@ import type {
   ModelSelection,
 } from "../host-config/model-selection.js";
 import { PlatformApiError } from "./errors.js";
+import { asciiJson, clientDeclarationHeaders } from "./client-declaration.js";
 import { readSdkVersion } from "../sdk-version.js";
 import type {
   PlatformScenarioSummary,
@@ -392,13 +393,6 @@ export const RUN_LAUNCH_HEADERS = {
 } as const;
 
 /**
- * The same declared client as `x-mcpjam-launcher`, sent on EVERY request for
- * usage analytics. A separate header because the launcher is stored on what a
- * launch creates; this one is never stored or used to decide anything.
- */
-export const CLIENT_DECLARATION_HEADER = "x-mcpjam-client";
-
-/**
  * The eval-vocabulary negotiation header, mirrored from the server's
  * `routes/v1/eval-vocabulary.ts`. Sent only when the client was constructed
  * with `evalVocabulary: 2`; absent means vocabulary 1, and a server that
@@ -493,7 +487,7 @@ function buildLaunchHeaders(
       MAX_LAUNCHER_FIELD_CHARS
     );
     const serialized = withinHeaderCap(
-      JSON.stringify({
+      asciiJson({
         kind,
         ...(client ? { client } : {}),
         ...(version ? { version } : {}),
@@ -775,10 +769,9 @@ export class PlatformApiClient extends DirectoryReviewerAttemptClient {
       ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
       : DEFAULT_PLATFORM_USER_AGENT;
     this.launchHeaders = buildLaunchHeaders(options);
-    const declaredClient = this.launchHeaders?.[RUN_LAUNCH_HEADERS.launcher];
-    if (declaredClient) {
-      this.clientHeaders = { [CLIENT_DECLARATION_HEADER]: declaredClient };
-    }
+    this.clientHeaders = clientDeclarationHeaders(
+      this.launchHeaders?.[RUN_LAUNCH_HEADERS.launcher]
+    );
     // Lower-cased at construction so `request` cannot end up with two spellings
     // of one header — HTTP names are case-insensitive, but a plain object's
     // keys are not, and `{Authorization, authorization}` would send both.

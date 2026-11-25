@@ -35,6 +35,7 @@ export {
   type PlatformFeatureKey,
 } from "./features.js";
 
+export { CLIENT_DECLARATION_HEADER } from "./client-declaration.js";
 export {
   DEFAULT_PLATFORM_API_BASE_URL,
   DEFAULT_PLATFORM_USER_AGENT,
@@ -44,7 +45,6 @@ export {
   EVAL_VOCABULARY_HEADER,
   PlatformApiClient,
   RUN_LAUNCH_HEADERS,
-  CLIENT_DECLARATION_HEADER,
   type PlatformApiClientOptions,
   type PlatformCiMetadataOption,
   type PlatformRunLauncherOption,

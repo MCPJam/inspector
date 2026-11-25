@@ -244,6 +244,9 @@ export async function bearerAuthMiddleware(
 
     const workosKeyId = validation.apiKey.id;
     const workosUserId = validation.apiKey.owner.id;
+    // Count the key's owner in usage analytics even when the refusals below
+    // (rate limit, orphaned or expired key) return before identity is set.
+    c.set("analyticsUserId", workosUserId);
 
     // Per-key rate limit. Reject BEFORE doing the Convex user lookup so a
     // flood can't tie up the database either. Debit once per request (memoized

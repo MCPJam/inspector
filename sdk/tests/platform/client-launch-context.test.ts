@@ -225,6 +225,22 @@ describe("declared launch context", () => {
     expect(headersOf(fetchMock, 0)).not.toHaveProperty(RUN_LAUNCH_HEADERS.ci);
   });
 
+  it("escapes a non-ASCII launcher name so every request still sends", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => ok());
+    const client = makeClient(fetchMock, {
+      launcher: { kind: "mcp", client: "クライアント 🚀", version: "1.0" },
+    });
+
+    await client.getMe();
+
+    const headers = headersOf(fetchMock);
+    // The native constructor throws on any code unit above U+00FF.
+    const native = new Headers(headers);
+    expect(
+      JSON.parse(native.get(CLIENT_DECLARATION_HEADER)!)
+    ).toEqual({ kind: "mcp", client: "クライアント 🚀", version: "1.0" });
+  });
+
   it("sends nothing when the process declared nothing", async () => {
     const fetchMock = vi.fn().mockImplementation(async () => ok());
     await makeClient(fetchMock).createEvalRun({
