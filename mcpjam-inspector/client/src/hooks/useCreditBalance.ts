@@ -1,7 +1,7 @@
 import { useContractExpiry } from "./use-contract-expiry";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSoftQuery } from "@/hooks/use-soft-query";
 import { readStoredActiveOrganizationId } from "@/lib/active-organization-storage";
 import {
@@ -133,6 +133,40 @@ export const normalizeBalance = (
   };
 };
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * The daily bucket is a fixed window that the backend refills at
+ * `freeDailyResetAt`, computing the balance from the clock when queried.
+ * Nothing is written at the reset, so the subscription does not re-run and an
+ * open tab would keep the old window's balance and its model lock. Wake at the
+ * reset and read the bucket as refilled.
+ */
+function useDailyReset(
+  value: CreditBalanceState | undefined,
+): CreditBalanceState | undefined {
+  const resetAt = value?.billingModel === "daily" ? value.freeDailyResetAt : 0;
+  const [crossedResetAt, setCrossedResetAt] = useState<number | null>(null);
+  useEffect(() => {
+    const wait = resetAt - Date.now();
+    if (!resetAt || wait <= 0) return;
+    const timer = setTimeout(() => setCrossedResetAt(resetAt), wait + 1);
+    return () => clearTimeout(timer);
+  }, [resetAt]);
+  return useMemo(
+    () =>
+      value && resetAt > 0 && crossedResetAt === resetAt
+        ? {
+            ...value,
+            freeDailyCreditsRemaining: value.freeDailyCreditsTotal,
+            freeDailyPercentUsed: 0,
+            freeDailyResetAt: resetAt + MS_PER_DAY,
+          }
+        : value,
+    [value, resetAt, crossedResetAt],
+  );
+}
+
 interface UseCreditBalanceOptions {
   organizationId?: string | null;
   includeGuests?: boolean;
@@ -166,7 +200,7 @@ export function useCreditBalance({
   // referentially stable across renders. Keeps downstream effects/memos
   // that depend on `balance` from re-running when nothing actually changed.
   const normalized = useMemo(() => normalizeBalance(raw), [raw]);
-  const balance = useContractExpiry(normalized);
+  const balance = useDailyReset(useContractExpiry(normalized));
   // Treat the bootstrap window as loading so the card shows a skeleton
   // instead of flashing an empty zero state before the query resolves.
   const isLoading =

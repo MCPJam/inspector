@@ -512,3 +512,31 @@ describe("contract credit expiry", () => {
     vi.useRealTimers();
   });
 });
+
+describe("daily bucket reset", () => {
+  it("unlocks an open tab at the reset without a new balance", () => {
+    vi.useFakeTimers();
+    const now = Date.now();
+    mocks.convexAuth.isAuthenticated = true;
+    mocks.convexAuth.isLoading = false;
+    mocks.workosAuth.user = { id: "daily-owner" };
+    mocks.workosAuth.isLoading = false;
+    mocks.queryResult = {
+      billingModel: "daily",
+      freeDailyCreditsRemaining: 4,
+      freeDailyCreditsTotal: 300,
+      freeDailyResetAt: now + 1000,
+      paidCreditsRemaining: 0,
+      perCallMinimumCredits: 25,
+    };
+    mocks.useQuery.mockImplementation(() => mocks.queryResult);
+    const { result, unmount } = renderHook(() => useOutOfCredits("daily-org"));
+    expect(result.current).toBe(true);
+    act(() => {
+      vi.advanceTimersByTime(1001);
+    });
+    expect(result.current).toBe(false);
+    unmount();
+    vi.useRealTimers();
+  });
+});

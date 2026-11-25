@@ -399,11 +399,12 @@ export function harnessPickerModels(
       return model;
     }
     const row = harnessRowModelId(model, target, policy);
-    const refused = (reason: string): ModelDefinition => ({
-      ...model,
-      disabled: true,
-      disabledReason: reason,
-    });
+    // The harness's refusal replaces any credit lock: a top-up cannot make
+    // the row runnable here, so it must stop reading as out of credits.
+    const refused = (reason: string): ModelDefinition => {
+      const { disabledReasonCode: _code, ...rest } = model;
+      return { ...rest, disabled: true, disabledReason: reason };
+    };
     if ("refusal" in row) return refused(row.refusal);
     if (row.rail === "evidence" && !isMCPJamProvidedModelMenuItem(model)) {
       return refused(
