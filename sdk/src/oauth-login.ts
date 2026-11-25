@@ -36,6 +36,7 @@ import type {
   TrackedRequestFn,
   VerificationResult,
 } from "./oauth-conformance/types.js";
+import { detectLoginIssuerMigration } from "./oauth/login-issuer-migration.js";
 import { runLoginVerification } from "./oauth/login-verification.js";
 import { resolveLoginStepUpScopes } from "./oauth/login-step-up.js";
 import { discoverStatelessLoginMetadata } from "./oauth/stateless-login-discovery.js";
@@ -359,7 +360,7 @@ export async function runOAuthLogin(
   const getState = () => state;
 
   try {
-    const authorizationPlan = await resolveOAuthLoginAuthorizationPlan(input);
+    let authorizationPlan = await resolveOAuthLoginAuthorizationPlan(input);
     if (
       authorizationPlan.status !== "ready" ||
       !authorizationPlan.registrationStrategy
@@ -458,17 +459,37 @@ export async function runOAuthLogin(
     } as const;
 
     if (config.auth.mode !== "client_credentials") {
-      const runAuthorization = (customScopes = config.scopes) =>
+      const runAuthorization = (
+        customScopes = config.scopes,
+        migration?: {
+          issuer: string;
+          resource: string;
+          resourceMetadataUrl?: string;
+        }
+      ) =>
         runOAuthStateMachine({
           ...machineConfig,
           state: getState(),
           customScopes,
+          resourceMetadataUrl: migration?.resourceMetadataUrl,
+          loadPreregisteredCredentials: migration
+            ? undefined
+            : machineConfig.loadPreregisteredCredentials,
           maxSteps: 40,
           onAuthorizationRequest: async ({
             authorizationUrl,
             state: flowState,
           }) => {
             try {
+              if (
+                migration &&
+                (flowState.recordedIssuer !== migration.issuer ||
+                  flowState.resourceMetadata?.resource !== migration.resource)
+              ) {
+                throw new Error(
+                  "OAuth issuer or resource changed again during authorization."
+                );
+              }
               config.onProgress("Opening browser for authorization...");
               const authorizationResult =
                 config.auth.mode === "interactive"
@@ -525,9 +546,67 @@ export async function runOAuthLogin(
         );
       }
 
-      const initial = await runLoginVerification(config, flowResult.state);
+      let authenticatedState = flowResult.state;
+      let initial = await runLoginVerification(config, authenticatedState);
+      try {
+        const migration = await detectLoginIssuerMigration(
+          config,
+          authenticatedState,
+          initial.unauthorizedChallenge
+        );
+        if (migration) {
+          const registrationMode = authorizationPlan.registrationMode;
+          // Start with no tokens or registration from the previous issuer.
+          state = cloneEmptyFlowState();
+          if (config.registrationStrategy === "preregistered") {
+            throw new Error(
+              "OAuth issuer changed. Configure credentials registered with the new authorization server."
+            );
+          }
+          authorizationPlan = {
+            ...resolveAuthorizationPlan({
+              ...toAuthorizationPlanInput(input),
+              registrationMode: config.registrationStrategy,
+              discovery: migration.discovery,
+            }),
+            registrationMode,
+          };
+          if (authorizationPlan.status !== "ready") {
+            throw new Error(
+              authorizationPlan.blockers[0] ?? authorizationPlan.summary
+            );
+          }
+
+          config.onProgress(
+            "Authorization server changed. Starting OAuth with the new issuer..."
+          );
+          const migrated = await runAuthorization(config.scopes, migration);
+          if (!migrated.completed) {
+            throw new Error(
+              migrated.error?.message ??
+                "OAuth authorization with the new issuer did not complete."
+            );
+          }
+          authenticatedState = migrated.state;
+          initial = await runLoginVerification(config, authenticatedState);
+          if (initial.unauthorizedChallenge) {
+            throw new Error(
+              "The MCP server rejected the token from the new issuer."
+            );
+          }
+        }
+      } catch (error) {
+        return buildResult(
+          config,
+          authorizationPlan,
+          redirectUrl,
+          { ...state, accessToken: undefined, refreshToken: undefined },
+          initial.verification,
+          error instanceof Error ? error.message : String(error)
+        );
+      }
       let verification = initial.verification;
-      let resultState = flowResult.state;
+      let resultState = authenticatedState;
       const firstCall = verification?.callTool;
       if (
         config.protocolVersion === "2026-07-28" &&
@@ -537,7 +616,7 @@ export async function runOAuthLogin(
         try {
           const scopes = await resolveLoginStepUpScopes(
             config,
-            flowResult.state,
+            authenticatedState,
             initial.toolChallenge
           );
           if (scopes) {

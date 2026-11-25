@@ -1,6 +1,6 @@
 import type { AuthChallengeSignal } from "../mcp-client-manager/auth-challenge.js";
 import type { NormalizedOAuthConformanceConfig } from "../oauth-conformance/types.js";
-import { discoverAuthorizationMetadata } from "./metadata-discovery.js";
+import { discoverLoginChallengeMetadata } from "./login-challenge-metadata.js";
 import {
   computeScopeUnion,
   parseScopeString,
@@ -21,31 +21,9 @@ export async function resolveLoginStepUpScopes(
   if (scopes.every((scope) => previousScopes.includes(scope))) return;
 
   if (challenge.resourceMetadataUrl) {
-    const pointer = new URL(challenge.resourceMetadataUrl);
-    if (
-      pointer.origin !== new URL(config.serverUrl).origin ||
-      (pointer.protocol !== "https:" && pointer.protocol !== "http:") ||
-      pointer.username ||
-      pointer.password ||
-      pointer.hash
-    ) {
-      throw new Error(
-        "OAuth step-up received an invalid protected resource metadata URL."
-      );
-    }
-    const discovery = await discoverAuthorizationMetadata(
-      {
-        url: config.serverUrl,
-        protocolVersion: config.protocolVersion,
-        headers: config.customHeaders,
-        timeoutMs: config.stepTimeout,
-        fetchFn: config.fetchFn,
-        allowPrivateNetwork: config.allowPrivateNetwork,
-      },
-      {
-        optional: false,
-        wwwAuthenticate: `Bearer resource_metadata=${JSON.stringify(pointer.href)}`,
-      }
+    const discovery = await discoverLoginChallengeMetadata(
+      config,
+      challenge.resourceMetadataUrl
     );
     const issuer = state.recordedIssuer;
     if (

@@ -1,4 +1,7 @@
-import type { AuthChallengeSignal } from "../mcp-client-manager/auth-challenge.js";
+import {
+  parseChallengeHeader,
+  type AuthChallengeSignal,
+} from "../mcp-client-manager/auth-challenge.js";
 import { extractAuthChallenge } from "../mcp-client-manager/errors.js";
 import type { HttpServerConfig } from "../mcp-client-manager/index.js";
 import { listTools, withEphemeralClient } from "../operations.js";
@@ -15,6 +18,7 @@ export async function runLoginVerification(
 ): Promise<{
   verification?: VerificationResult;
   toolChallenge?: AuthChallengeSignal;
+  unauthorizedChallenge?: AuthChallengeSignal;
 }> {
   const verificationConfig = config.verification;
   if (!verificationConfig.listTools || !state.accessToken) {
@@ -23,6 +27,25 @@ export async function runLoginVerification(
 
   const result: VerificationResult = { ...previous };
   let toolChallenge: AuthChallengeSignal | undefined;
+  let unauthorizedChallenge: AuthChallengeSignal | undefined;
+  const resourceServer = new URL(config.serverUrl);
+  const recordUnauthorized: typeof fetch = async (input, init) => {
+    const response = await config.fetchFn(input, init);
+    const url = input instanceof Request ? input.url : String(input);
+    const method =
+      init?.method ?? (input instanceof Request ? input.method : "GET");
+    if (
+      response.status === 401 &&
+      method.toUpperCase() === "POST" &&
+      new URL(url).origin === resourceServer.origin
+    ) {
+      // server/discover can fail before a tool operation exists to carry the challenge.
+      unauthorizedChallenge = parseChallengeHeader(
+        response.headers.get("www-authenticate")
+      );
+    }
+    return response;
+  };
   const verifyConfig: HttpServerConfig = {
     url: config.serverUrl,
     accessToken: state.accessToken,
@@ -34,7 +57,10 @@ export async function runLoginVerification(
     // MCP endpoint is stateless (no initialize), so pin the transport; older
     // OAuth flows keep the legacy default (unset) they used before.
     ...(config.protocolVersion === "2026-07-28"
-      ? { mcpProtocolVersion: "2026-07-28" as const }
+      ? {
+          mcpProtocolVersion: "2026-07-28" as const,
+          baseFetch: recordUnauthorized,
+        }
       : {}),
   };
 
@@ -107,5 +133,12 @@ export async function runLoginVerification(
     }
   }
 
-  return { verification: result, toolChallenge };
+  return {
+    verification: result,
+    toolChallenge,
+    unauthorizedChallenge:
+      result.listTools?.passed === false || result.callTool?.passed === false
+        ? unauthorizedChallenge
+        : undefined,
+  };
 }
