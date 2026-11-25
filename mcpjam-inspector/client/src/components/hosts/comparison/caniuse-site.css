@@ -1,6 +1,6 @@
 @font-face {
   font-family: "Caniuse Instrument Sans";
-  src: url("/caniuse-instrument-sans.woff2") format("woff2");
+  src: url("./caniuse-instrument-sans.woff2") format("woff2");
   font-style: normal;
   font-weight: 400 700;
   font-display: swap;
