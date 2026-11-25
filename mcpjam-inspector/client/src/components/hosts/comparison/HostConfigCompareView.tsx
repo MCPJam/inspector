@@ -1421,12 +1421,14 @@ export function ShareComparisonDialog({
   fields,
   preserveQuery = false,
   copyOnShare = false,
+  iconOnly = false,
 }: {
   selectedHostIds: ReadonlyArray<string>;
   searchQuery: string;
   fields: ReadonlyArray<HostConfigFieldDef>;
   preserveQuery?: boolean;
   copyOnShare?: boolean;
+  iconOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -1454,11 +1456,12 @@ export function ShareComparisonDialog({
         variant="outline"
         size="sm"
         aria-label="Share"
-        title="Share"
+        title={copyOnShare && copied ? "Link copied" : "Share"}
         onClick={() => (copyOnShare ? void handleCopy() : setOpen(true))}
         className={cn(
           "gap-1.5",
-          CANIUSE_ACTION_BUTTON_CLASS
+          CANIUSE_ACTION_BUTTON_CLASS,
+          iconOnly && "size-8 px-0 has-[>svg]:px-0",
         )}
       >
         {copyOnShare && copied ? (
@@ -1466,8 +1469,8 @@ export function ShareComparisonDialog({
         ) : (
           <Share2 className="size-3.5" />
         )}
-        <span aria-live="polite">
-          {copyOnShare && copied ? "Link copied" : "Share"}
+        <span aria-live="polite" className={iconOnly ? "sr-only" : undefined}>
+          {copyOnShare && copied ? "Link copied" : iconOnly ? "" : "Share"}
         </span>
       </Button>
       <DialogContent className="sm:max-w-[460px]">

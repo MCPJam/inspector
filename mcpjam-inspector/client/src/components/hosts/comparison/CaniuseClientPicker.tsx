@@ -58,9 +58,9 @@ export function CaniuseClientPicker({
         if (!open) setPicker(null);
       }}
     >
-      <div className="mb-5 flex items-stretch gap-2">
+      <div className="mb-5 flex min-h-[47px] items-stretch gap-2 sm:min-h-[57px]">
         {selected.length > 0 && (
-          <div className="flex min-w-0 flex-1 flex-nowrap gap-2 overflow-x-auto rounded-md">
+          <div className="flex min-w-0 flex-1 flex-nowrap gap-2 overflow-x-auto rounded-md max-sm:[scrollbar-width:none]">
             {selected.map((client) => (
               <div
                 key={client.hostId}
@@ -69,7 +69,7 @@ export function CaniuseClientPicker({
                 <Button
                   variant="ghost"
                   disabled={!available.length}
-                  className="h-full min-w-0 flex-1 justify-start gap-1.5 px-2 py-2 text-left sm:gap-2 sm:px-2.5"
+                  className="h-full min-w-0 flex-1 justify-start gap-1.5 px-2 py-1 text-left text-[13px] leading-[1.35] sm:gap-2 sm:px-2.5 sm:py-2"
                   onClick={(event) => {
                     opener.current = event.currentTarget;
                     setPicker(client.hostId);
@@ -81,11 +81,11 @@ export function CaniuseClientPicker({
                     alt=""
                     className="size-7 shrink-0 rounded object-contain"
                   />
-                  <span className="min-w-0 flex-1">
+                  <span className="min-w-0 flex-1 font-semibold">
                     <span className="block whitespace-normal wrap-break-word">
                       {client.hostName}
                     </span>
-                    <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">
+                    <span className="rounded bg-muted px-1 text-[11px] font-medium text-muted-foreground">
                       {publicClientIdentity(client).surface}
                     </span>
                   </span>
@@ -113,7 +113,7 @@ export function CaniuseClientPicker({
               opener.current = null;
               setPicker("add");
             }}
-            className="h-auto min-h-12 shrink-0 px-2.5 sm:px-4"
+            className="h-auto shrink-0 px-2.5 text-[13px] font-bold sm:px-4"
           >
             <Plus className="size-4" /> Add client
           </Button>

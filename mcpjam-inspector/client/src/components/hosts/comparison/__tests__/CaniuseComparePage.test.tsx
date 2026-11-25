@@ -65,8 +65,12 @@ describe("CaniuseComparePage", () => {
       </MemoryRouter>,
     );
     expect(screen.queryByRole("link", { name: /Verify Claude Code/ })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Share" }));
-    expect(await screen.findByText("Link copied")).toBeInTheDocument();
+    const share = screen.getByRole("button", { name: "Share" });
+    const heading = screen.getByRole("heading", { name: "Capability matrix" });
+    expect(heading.nextElementSibling).toBe(share);
+    expect(share).toHaveTextContent(/^$/);
+    await user.click(share);
+    expect(await screen.findByText("Link copied")).toHaveClass("sr-only");
     expect(screen.queryByRole("dialog")).toBeNull();
     const params = new URL(writeText.mock.calls[0][0]).searchParams;
     expect(params.get("q")).toBe(query);

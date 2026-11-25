@@ -2,4 +2,4 @@
 "@mcpjam/inspector": patch
 ---
 
-Add editable client selections and catalog-wide adoption scores to the caniuse.dev comparison matrix.
+Add editable client selections, catalog-wide adoption scores, and a one-click share button beside the caniuse.dev comparison matrix heading.
