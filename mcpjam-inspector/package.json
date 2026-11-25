@@ -319,7 +319,7 @@
     "chromatic": "18.12.0",
     "concurrently": "^10.0.5",
     "electron": "43.8.3",
-    "es-module-lexer": "1.7.0",
+    "es-module-lexer": "3.0.5",
     "esbuild": "^0.28.2",
     "eslint": "^10.11.0",
     "eslint-plugin-react-hooks": "^7.1.1",
