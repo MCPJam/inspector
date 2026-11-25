@@ -1,3 +1,4 @@
+import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 import { guestTabRecovery } from "@/lib/auth/guest-tab-recovery";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
@@ -207,10 +208,15 @@ export function useEnsureDbUser() {
     attempts: number;
   } | null>(null);
   const recoveryTimerRef = useRef<number | null>(null);
+  const confirmedSubject = useSessionRefreshStore(
+    (state) => state.confirmedSubject
+  );
   const identityKey =
     !isLoading && isAuthenticated
       ? workosUserId
-        ? `workos:${workosUserId}`
+        ? confirmedSubject === workosUserId
+          ? `workos:${workosUserId}`
+          : null
         : actorKey
         ? `guest:${actorKey}`
         : null
@@ -505,7 +511,10 @@ export function useEnsureDbUser() {
 
   // `hasIdentity` lets the load-stall report tell an actor that never
   // resolved from a user record that is still being set up.
-  return { isEnsuringUser, isUserReady, hasIdentity: identityKey !== null,
+  return {
+    isEnsuringUser,
+    isUserReady,
+    hasIdentity: identityKey !== null,
     setupFailed: identityKey !== null && failedIdentity === identityKey,
   };
 }

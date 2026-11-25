@@ -1173,7 +1173,7 @@ export function ScenarioChatPage({
   );
   const landingState: ScenarioLandingState = isAuthSettling
     ? "resolvingAuth"
-    : isBootstrapping
+    : isBootstrapping || (waitingForAccount && !session)
     ? "bootstrapping"
     : session
     ? "ready"
@@ -1378,7 +1378,7 @@ export function ScenarioChatPage({
     pendingOAuthServers.every(({ state }) => isHostedOAuthBusy(state.status));
 
   const renderContent = () => {
-    if (waitingForAccount && setupFailed) return <UserSetupError />;
+    if (waitingForAccount && setupFailed) return <UserSetupError className="flex-1" />;
     if (landingState === "resolvingAuth" || landingState === "bootstrapping") {
       return (
         <div className="flex flex-1 items-center justify-center">

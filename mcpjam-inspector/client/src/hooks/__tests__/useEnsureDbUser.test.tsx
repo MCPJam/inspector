@@ -11,6 +11,7 @@ import {
 import { setSessionPrivacy } from "@/lib/session-privacy";
 
 const mockState = vi.hoisted(() => ({
+  socketSubject: undefined as string | undefined,
   actorKey: "guest-1" as string | null,
   auth: {
     user: null as {
@@ -37,6 +38,11 @@ const mockState = vi.hoisted(() => ({
     get_property?: (key: string) => unknown;
     get_distinct_id?: () => string;
   } | null,
+}));
+
+vi.mock("@/stores/session-refresh-store", () => ({
+  useSessionRefreshStore: (select: (state: { confirmedSubject: string | null }) => unknown) =>
+    select({ confirmedSubject: mockState.socketSubject ?? mockState.auth.user?.id ?? null }),
 }));
 
 vi.mock("convex/react", () => ({
@@ -97,6 +103,7 @@ describe("useEnsureDbUser", () => {
     mockState.getExistingGuestId.mockResolvedValue(null);
     mockState.isGuestActivated.mockReturnValue(false);
     mockState.getActivatedGuestId.mockReturnValue(null);
+    mockState.socketSubject = undefined;
     mockState.actorKey = "guest-1";
     mockState.auth.user = null;
     mockState.convexAuth.isAuthenticated = true;
@@ -107,6 +114,18 @@ describe("useEnsureDbUser", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
+  });
+
+  it("waits for the socket to confirm the signed-in account", async () => {
+    mockState.auth.user = { id: "workos-new" };
+    mockState.socketSubject = "previous-account";
+    const { result, rerender } = renderHook(() => useEnsureDbUser());
+    await act(async () => {});
+    expect(mockState.ensureUser).not.toHaveBeenCalled();
+    expect(result.current.isUserReady).toBe(false);
+    mockState.socketSubject = "workos-new";
+    rerender();
+    await waitFor(() => expect(result.current.isUserReady).toBe(true));
   });
 
   it("announces promotion before the mutation and completes after cookie retirement", async () => {

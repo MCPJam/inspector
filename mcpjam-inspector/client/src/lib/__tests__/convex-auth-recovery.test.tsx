@@ -201,7 +201,7 @@ function protocolPeer() {
   };
 }
 function jwt(n: number) {
-  return `eyJhbGciOiJIUzI1NiJ9.${btoa(JSON.stringify({ iat: 1700000000, exp: 1700000003, n }))}.test`;
+  return `eyJhbGciOiJIUzI1NiJ9.${btoa(JSON.stringify({ sub: "account-" + n, iat: 1700000000, exp: 1700000003, n }))}.test`;
 }
 const pauseQueries = useSessionRefreshStore.getState().pauseQueries;
 beforeEach(() => {
@@ -366,7 +366,7 @@ it("renews an expiring token when the page comes back, without a rejection", asy
   try {
     await waitFor(() => expect(peer.active.size).toBe(9));
     await waitFor(() =>
-      expect(useSessionRefreshStore.getState().authConfirmed).toBe(true),
+      expect(useSessionRefreshStore.getState().confirmedSubject).toBe("account-1"),
     );
     const before = peer.messages.filter(
       (m) => m === "Authenticate:User",
@@ -383,7 +383,7 @@ it("renews an expiring token when the page comes back, without a rejection", asy
       ).toBeGreaterThan(before),
     );
     await waitFor(() =>
-      expect(useSessionRefreshStore.getState().authConfirmed).toBe(true),
+      expect(useSessionRefreshStore.getState().confirmedSubject).toBe("account-2"),
     );
     expect(peer.active.size).toBe(9);
     expect(appMounts).toHaveBeenCalledTimes(1);

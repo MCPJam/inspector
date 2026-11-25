@@ -6348,7 +6348,7 @@ export default function App() {
   }
 
   if (!isHostedChatRoute && isAuthenticated && currentUser === null) {
-    return <UserSetupError />;
+    return <UserSetupError className="min-h-screen" />;
   }
 
   if (

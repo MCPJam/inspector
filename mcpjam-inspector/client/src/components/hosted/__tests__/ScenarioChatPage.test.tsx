@@ -1,7 +1,9 @@
+import { DbUserReadyProvider } from "@/contexts/db-user-ready-context";
+import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 import {
   act,
   fireEvent,
-  render,
+  render as testingRender,
   screen,
   waitFor,
 } from "@testing-library/react";
@@ -67,11 +69,16 @@ const {
   mockIsEmbeddedPreview: vi.fn<() => boolean>(() => false),
 }));
 
-const dbSetup = vi.hoisted(() => ({ ready: true, failed: false, paused: false }));
-vi.mock("@/contexts/db-user-ready-context", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/contexts/db-user-ready-context")>()),
-  useDbUserBootstrapStatus: () => ({ accountSetupComplete: dbSetup.ready, isUserReady: dbSetup.ready && !dbSetup.paused, setupFailed: dbSetup.failed }),
-}));
+const dbSetup = { ready: true, failed: false };
+function render(ui: React.ReactElement) {
+  return testingRender(ui, {
+    wrapper: ({ children }) => (
+      <DbUserReadyProvider isUserReady={dbSetup.ready} setupFailed={dbSetup.failed}>
+        {children}
+      </DbUserReadyProvider>
+    ),
+  });
+}
 
 vi.mock("convex/react", () => ({
   // useChatSession resolves the Convex client to submit elicitation answers
@@ -595,10 +602,23 @@ describe("ScenarioChatPage", () => {
     dbSetup.ready = false;
     try {
       const view = render(<ScenarioChatPage pathToken="account-token" />);
+      await act(async () => {});
       expect(mockAuthFetch).not.toHaveBeenCalled();
       dbSetup.ready = true;
       view.rerender(<ScenarioChatPage pathToken="account-token" />);
       await waitFor(() => expect(readScenarioSession()?.authenticatedUserId).toBe("user_123"));
+    } finally {
+      dbSetup.ready = true;
+    }
+  });
+
+  it("keeps a tokenless reload in the loading state during account setup", async () => {
+    dbSetup.ready = false;
+    try {
+      render(<ScenarioChatPage />);
+      await act(async () => {});
+      expect(screen.queryByText(/link unavailable/i)).not.toBeInTheDocument();
+      expect(document.querySelector(".animate-spin")).toBeInTheDocument();
     } finally {
       dbSetup.ready = true;
     }
@@ -618,19 +638,16 @@ describe("ScenarioChatPage", () => {
   });
 
   it("keeps the active tester session through a database readiness pause", async () => {
-    const view = render(<ScenarioChatPage pathToken="account-token" />);
+    render(<ScenarioChatPage pathToken="account-token" />);
     await waitFor(() => expect(readScenarioSession()?.authenticatedUserId).toBe("user_123"));
     const calls = mockAuthFetch.mock.calls.length;
-    try {
-      dbSetup.paused = true;
-      view.rerender(<ScenarioChatPage pathToken="account-token" />);
-      dbSetup.paused = false;
-      view.rerender(<ScenarioChatPage pathToken="account-token" />);
-      expect(mockAuthFetch).toHaveBeenCalledTimes(calls);
-      expect(readScenarioSession()?.authenticatedUserId).toBe("user_123");
-    } finally {
-      dbSetup.paused = false;
-    }
+    await act(async () => useSessionRefreshStore.getState().pauseQueries());
+    expect(useSessionRefreshStore.getState().queriesPaused).toBe(true);
+    await act(async () => useSessionRefreshStore.setState({ authConfirmed: true }));
+    expect(useSessionRefreshStore.getState().queriesPaused).toBe(false);
+    expect(mockAuthFetch).toHaveBeenCalledTimes(calls);
+    expect(readScenarioSession()?.authenticatedUserId).toBe("user_123");
+    useSessionRefreshStore.setState({ authConfirmed: false });
   });
 
   it("clears protected preview data on logout and re-redeems after account changes", async () => {
