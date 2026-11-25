@@ -190,7 +190,7 @@ describe("engine failure telemetry", () => {
     const onConversationComplete = vi.fn();
     const turn = runTurn({
       sourceType: "swarm",
-      remainingTurnMs: () => (canWait ? 60_000 : 1000),
+      remainingTurnMs: () => (canWait ? 120_000 : 1000),
       failureReporter: reporter,
       onEngineError,
       onConversationComplete,

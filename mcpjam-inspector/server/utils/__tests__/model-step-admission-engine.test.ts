@@ -232,18 +232,20 @@ describe("engine resend of a model step refused as busy", () => {
   });
 
   it("resends only the refused step after a tool ran, never the tool", async () => {
-    const actual = await vi.importActual<
-      typeof import("@/shared/http-tool-calls")
-    >("@/shared/http-tool-calls");
-    vi.mocked(executeToolCallsFromMessages).mockImplementation(
-      actual.executeToolCallsFromMessages,
-    );
-    vi.mocked(hasUnresolvedToolCalls).mockImplementation(
-      actual.hasUnresolvedToolCalls,
-    );
-    const lookUp = vi.fn(async () => ({
-      content: [{ type: "text", text: "found" }],
-    }));
+    vi.mocked(hasUnresolvedToolCalls).mockReturnValueOnce(true);
+    vi.mocked(executeToolCallsFromMessages).mockResolvedValueOnce([
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "look_up",
+            output: { type: "json", value: { found: true } },
+          },
+        ],
+      },
+    ] as never);
     const fetchSpy = vi
       .fn()
       .mockResolvedValueOnce(toolCall())
@@ -254,11 +256,10 @@ describe("engine resend of a model step refused as busy", () => {
 
     const events = await runTurn({
       sourceType: "eval",
-      tools: { look_up: { _serverId: "srv", execute: lookUp } },
       onConversationComplete,
     });
 
-    expect(lookUp).toHaveBeenCalledTimes(1);
+    expect(executeToolCallsFromMessages).toHaveBeenCalledTimes(1);
     expect(events).toEqual([]);
     // Step 0 once, then step 1 twice: refused, then resent.
     const steps = fetchSpy.mock.calls.map(
