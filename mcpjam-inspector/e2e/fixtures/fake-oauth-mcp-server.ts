@@ -64,6 +64,11 @@ export interface FakeOAuthMcpServerOptions {
    * Omitted by default: `/authorize` answers with a plain 302.
    */
   authorizePageCrossOriginOpenerPolicy?: string;
+  /**
+   * Add RFC 9207 `iss` (this server's issuer) to the authorization response.
+   * Omitted by default, matching servers that don't send it.
+   */
+  authorizationResponseIss?: boolean;
 }
 
 /** Shallow merge where an explicit `null` removes the key. */
@@ -315,6 +320,9 @@ export async function startFakeOAuthMcpServer(
         callbackUrl.searchParams.set("code", code);
         if (state) {
           callbackUrl.searchParams.set("state", state);
+        }
+        if (options.authorizationResponseIss) {
+          callbackUrl.searchParams.set("iss", origin);
         }
         if (options.authorizePageCrossOriginOpenerPolicy) {
           sendRedirectPage(
