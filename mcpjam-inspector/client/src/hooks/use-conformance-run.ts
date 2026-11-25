@@ -430,7 +430,7 @@ export function useConformanceRun({
               // The client can't check `iss` here (the runner holds the
               // issuer), so the provider's own error text stays unshown.
               error:
-                "Sign-in didn't finish. The authorization server returned an error instead of a code. Run the checks again.",
+                "Sign-in didn't finish. Run the checks again.",
             });
             return;
           }

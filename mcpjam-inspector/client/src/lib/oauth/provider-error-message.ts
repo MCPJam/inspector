@@ -2,7 +2,7 @@ import { validateAuthorizationResponseIssuer } from "@mcpjam/sdk/browser";
 
 /** Shown in place of a provider's own error text that can't be trusted. */
 export const UNVERIFIED_PROVIDER_ERROR_MESSAGE =
-  "Sign-in didn't finish. The authorization server returned an error, but its issuer couldn't be verified. Try again.";
+  "Sign-in didn't finish. The sign-in provider returned an error. Try again.";
 
 /**
  * The provider's `error_description` (or `error`), but only once the RFC 9207
