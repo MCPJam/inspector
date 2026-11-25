@@ -25,6 +25,7 @@ import {
 import { logEventsFeedEntries } from "@/lib/events-traffic";
 import type {
   EventDescriptorView,
+  EventsFeedEntryView,
   EventsListResponse,
   EventsSubscriptionView,
 } from "@/shared/events-api";
@@ -42,6 +43,8 @@ import {
 export interface PlaygroundEventBinding extends EventBinding {
   event: EventDescriptorView;
   subscription?: EventsSubscriptionView;
+  /** The latest occurrence that reached this binding, sent or skipped. */
+  lastEvent?: Pick<EventsFeedEntryView, "receivedAt" | "origin">;
   lastResult?: string;
   ownerScope: string;
   /** A short name the agent gave it (`mcpjam_subscribe_to_event`). */
@@ -130,6 +133,19 @@ function useRuntime(
       connected: (binding) =>
         current.current.servers[binding.serverName]?.connectionStatus ===
         "connected",
+      // The previous occurrence's result would describe the wrong event.
+      received: (id, { receivedAt, origin }) =>
+        setBindings((previous) =>
+          previous.map((binding) =>
+            binding.id === id
+              ? {
+                  ...binding,
+                  lastEvent: { receivedAt, origin },
+                  lastResult: undefined,
+                }
+              : binding,
+          ),
+        ),
       result: (id, lastResult) =>
         setBindings((previous) =>
           previous.map((binding) =>

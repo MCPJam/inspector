@@ -6,6 +6,7 @@ import {
   usePlaygroundEvents,
 } from "../PlaygroundEventsProvider";
 import { useEventAgentBridge } from "../event-agent-bridge";
+import { arrivalLabel } from "../binding-status";
 import type { UseEventsFeedOptions } from "@/components/events/use-events-feed";
 
 const mocks = vi.hoisted(() => ({
@@ -125,6 +126,39 @@ describe("Playground Events lifecycle", () => {
     });
     expect(send).not.toHaveBeenCalled();
   });
+  it("records when an occurrence arrived and what became of it", async () => {
+    render(tree());
+    await act(add);
+    const options = mocks.feed.mock.lastCall![0] as UseEventsFeedOptions;
+    const receivedAt = new Date(2026, 10, 25, 9, 30, 34).getTime();
+    act(() => {
+      options.onNewEntries?.([
+        {
+          seq: 43,
+          kind: "event",
+          origin: "push",
+          namespace: "live",
+          logicalSubscriptionId: "logical",
+          name: "demo.ping",
+          eventId: "arrival",
+          receivedAt,
+          data: {},
+        },
+      ]);
+    });
+    await waitFor(() =>
+      expect(runtime!.bindings[0].lastResult).toBe("Event sent to agent"),
+    );
+    const lastEvent = runtime!.bindings[0].lastEvent!;
+    expect(lastEvent).toEqual({ receivedAt, origin: "push" });
+    expect(arrivalLabel(lastEvent, "en-US")).toBe(
+      "Received 9:30:34 AM via push",
+    );
+    expect(arrivalLabel({ receivedAt, origin: "simulation" }, "en-US")).toBe(
+      "Test event 9:30:34 AM",
+    );
+  });
+
   it("preserves the conversation across flag hydration and host selection", () => {
     mocks.flag = undefined;
     const { rerender } = render(tree());

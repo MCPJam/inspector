@@ -58,6 +58,8 @@ export function createEventDispatcher(options: {
   binding: (id: string) => EventBinding | undefined;
   agent: () => EventAgent | null;
   connected: (binding: EventBinding) => boolean;
+  /** A new occurrence reached this binding, before it is sent or skipped. */
+  received: (id: string, entry: EventsFeedEntryView) => void;
   result: (id: string, message: string) => void;
 }) {
   let disposed = false;
@@ -107,6 +109,7 @@ export function createEventDispatcher(options: {
         const oldest = seen.values().next().value;
         if (oldest !== undefined) seen.delete(oldest);
       }
+      options.received(id, entry);
       const agent = options.agent();
       const blocked =
         agent && agent.scope !== binding.agentScope

@@ -20,7 +20,7 @@ import { EventDataView } from "@/components/events/EventsFeedPanel";
 import { ReachabilityHeader } from "@/components/events/ReachabilityHeader";
 import { hasInsecureLocalReceiver, simulationDataFromSchema } from "@/components/events/event-utils";
 import { AddPlaygroundEvent } from "./AddPlaygroundEvent";
-import { bindingStatus } from "./binding-status";
+import { arrivalLabel, bindingStatus } from "./binding-status";
 import {
   usePlaygroundEvents,
   type PlaygroundEventBinding,
@@ -122,10 +122,18 @@ export function PlaygroundEventsPane() {
                     {binding.enabled ? "Pause" : "Resume"}
                   </Button>
                 </div>
-                {binding.lastResult ? (
-                  <p role="status" className="text-xs text-muted-foreground">
-                    {binding.lastResult}
-                  </p>
+                {binding.lastEvent || binding.lastResult ? (
+                  <div
+                    role="status"
+                    className="space-y-0.5 text-xs text-muted-foreground"
+                  >
+                    {binding.lastEvent ? (
+                      <p className="text-foreground">
+                        {arrivalLabel(binding.lastEvent)}
+                      </p>
+                    ) : null}
+                    {binding.lastResult ? <p>{binding.lastResult}</p> : null}
+                  </div>
                 ) : null}
                 {!runtime.hosted && binding.subscription?.mode === "webhook" ? (
                   <ReachabilityHeader subscription={binding.subscription} />

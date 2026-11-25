@@ -18,3 +18,14 @@ export function bindingStatus(
     ? "Listening"
     : options.feedStatus;
 }
+
+/** When the latest occurrence reached the pane, and how it was delivered. */
+export function arrivalLabel(
+  event: NonNullable<PlaygroundEventBinding["lastEvent"]>,
+  locale?: string,
+): string {
+  const time = new Date(event.receivedAt).toLocaleTimeString(locale);
+  return event.origin === "simulation"
+    ? `Test event ${time}`
+    : `Received ${time} via ${event.origin}`;
+}
