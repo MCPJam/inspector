@@ -739,6 +739,7 @@ export interface PrepareChatV2Options {
    * Cursor template to mirror hosts that don't yet implement visibility.
    */
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   /**
    * MCP tool names this surface refuses to advertise, whichever server offers
    * them. Applied right after the visibility filter, so it only ever removes
@@ -1722,7 +1723,7 @@ export async function prepareChatV2(
     modelContextLength: modelDefinition.contextLength,
     options: harness
       ? { ...(options.progressiveToolDiscovery ?? {}), enabled: false }
-      : options.progressiveToolDiscovery,
+      : { ...options.progressiveToolDiscovery, runUnloadedToolCalls: options.runUnloadedToolCalls },
     envOverride,
   });
 

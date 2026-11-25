@@ -60,6 +60,7 @@ import { getFirstRunOAuthReturnServerName } from "./lib/first-run-oauth-return";
 import { ProjectRouteBoundary } from "./components/routing/project-route-boundary";
 import { LegacyProjectRouteNormalizer } from "./components/routing/legacy-project-route-normalizer";
 import { NotFoundRoute } from "./components/routing/not-found-route";
+import { WebAccountReconnectPage } from "./components/web-clients/WebAccountReconnectPage";
 import { getAppRouter, setAppRouter } from "./router-ref";
 import {
   buildHostsPath,
@@ -151,6 +152,9 @@ const ROUTE_ELEMENTS: Record<
     loader: ({ params }: any) => redirect(buildHostsPath(params.hostId)),
   },
   "host-compare": { element: <HostCompareRoute /> },
+  "web-accounts/:webAccountId/reconnect": {
+    element: <WebAccountReconnectPage />,
+  },
   // Chrome-less host-compare surface for vanity domains (caniuse.dev):
   // App renders this full-bleed (no sidebar/header) and skips the
   // first-run onboarding redirect. `bare` forces the no-sub-nav render

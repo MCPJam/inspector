@@ -76,6 +76,8 @@ export const NOT_EXPOSED: Readonly<Record<string, string>> = {
     "Feeds the page an owner opens from the request email or bell to approve it; agents do not decide access requests",
   "projectAccessRequests:decideProjectAccessRequest":
     "Grants a person access to a project and can add them to the organization; owners decide in the app or from the email",
+  "directChatHistory/multiModelGroups:actOnCurrentMultiModelGroup":
+    "Group rename, pin, and archive are flag-gated Sessions rail actions. The public API works with individual sessions",
   "chatSessionPromote:findSimilarPlaygroundPrompt":
     "Drives the Playground's repeat-prompt tip; agents save a prompt as a test case directly instead of being nudged",
   "serverFeatureEvidence:getForServer":
@@ -84,6 +86,12 @@ export const NOT_EXPOSED: Readonly<Record<string, string>> = {
     "Organization security setting; agents see its effect when a credential delivery is refused",
   "credentials:setCredentialExportPolicy":
     "Organization security setting that controls where credentials can go; only admins change it, in the app",
+  "webClients:*":
+    "Claude web and ChatGPT web accounts, behind the web-clients-enabled flag; their v1 routes follow with the web account API",
+  "webClientSuites:*":
+    "A suite's Claude web and ChatGPT web account choices, behind the web-clients-enabled flag; their v1 routes follow with the web account API",
+  "webClientReconnect:*":
+    "Runs waiting for a Claude web or ChatGPT web sign-in, behind the web-clients-enabled flag; their v1 routes follow with the web account API",
 };
 
 /**

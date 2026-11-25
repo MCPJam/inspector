@@ -31,8 +31,7 @@ const { computeIterationPassed, computeIterationResult } = await import(
 //
 // What retires is the browser's UNVERIFIED RE-DERIVATION of an iteration that
 // has already been graded. What survives is the matcher itself, for rows that
-// carry no stored result: legacy history, and the live-grading preview whose
-// synthetic per-turn rows were never persisted at all.
+// carry no stored result: legacy history.
 //
 // After this ships, restoring the old behaviour means reverting the PR that
 // introduced it — there is no flag.
@@ -97,23 +96,6 @@ describe("the matcher survives where there is nothing stored to trust", () => {
     } as never;
 
     expect(computeIterationPassed(legacy)).toBe(true);
-    expect(evaluateToolCalls).toHaveBeenCalledTimes(1);
-  });
-
-  test("a live-grading style projection is still graded by the matcher", () => {
-    evaluateToolCalls.mockClear();
-    // `eval-live-grading.ts` builds these per user turn. They are a PREVIEW of
-    // a verdict, not a re-derivation of a decided one, so they were never
-    // persisted and have no stored result to defer to.
-    const preview = {
-      status: "completed",
-      actualToolCalls: [{ toolName: "search", arguments: {} }],
-      testCaseSnapshot: {
-        expectedToolCalls: [{ toolName: "search", arguments: {} }],
-      },
-    } as never;
-
-    expect(computeIterationPassed(preview)).toBe(true);
     expect(evaluateToolCalls).toHaveBeenCalledTimes(1);
   });
 });

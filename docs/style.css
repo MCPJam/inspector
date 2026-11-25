@@ -701,31 +701,40 @@ button[aria-label*="helpful" i]:hover {
   color: var(--mcj-ink-strong) !important;
 }
 
-/* Previous/Next pager — Mintlify renders it as one rounded slab.
-   Flatten the container, let prev/next read as separate affordances. */
+/* Previous/Next pager — Mintlify renders it as one bordered slab with
+   bordered links. Drop every border; the hover background marks the target. */
 nav[aria-label*="agination" i],
 nav[aria-label*="age navigation" i],
-[class*="pagination" i] {
+[class*="pagination" i],
+#pagination {
   background: transparent !important;
-  border: 1px solid var(--mcj-rule);
-  border-radius: var(--mcj-radius);
+  border: none !important;
   box-shadow: none !important;
   margin-top: 1.25rem;
 }
 
 nav[aria-label*="agination" i] a,
 nav[aria-label*="age navigation" i] a,
-[class*="pagination" i] a {
+[class*="pagination" i] a,
+#pagination a {
   background: transparent !important;
+  border: none !important;
   color: var(--mcj-ink) !important;
-  border-radius: 0;
+  border-radius: var(--mcj-radius);
   transition: background 120ms ease-out, color 120ms ease-out;
 }
 nav[aria-label*="agination" i] a:hover,
 nav[aria-label*="age navigation" i] a:hover,
-[class*="pagination" i] a:hover {
+[class*="pagination" i] a:hover,
+#pagination a:hover {
   background: var(--mcj-paper-2) !important;
   color: var(--mcj-ink-strong) !important;
+}
+
+/* The 1px separator Mintlify puts between Previous and Next. */
+#pagination div.w-px,
+nav[aria-label*="agination" i] div.w-px {
+  display: none !important;
 }
 
 /* ── Footer ──────────────────────────────────────────────────────────────
@@ -742,7 +751,6 @@ footer,
   padding: 1rem 1.5rem !important;
   min-height: 0 !important;
   height: auto !important;
-  margin: 0 !important;
 }
 
 /* Collapse any inner wrappers that would otherwise force a tall slab */

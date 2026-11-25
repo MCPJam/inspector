@@ -16,7 +16,6 @@ import {
   parseProgressiveToolsEnv,
   resolveActiveToolNames,
   searchToolCatalog,
-  shouldForceInitialToolSearch,
   sumCatalogTokens,
 } from "../src/progressive-discovery/discovery.js";
 
@@ -370,65 +369,6 @@ describe("resolveActiveToolNames", () => {
   });
 });
 
-describe("shouldForceInitialToolSearch", () => {
-  const tools: ToolSet = {
-    asana_create_task: makeMcpTool({ serverId: "asana", fields: {} }),
-  } as unknown as ToolSet;
-  const plan = decideProgressivePlan({
-    catalog: buildToolCatalog(tools),
-    envOverride: true,
-  });
-
-  it("forces search on the first progressive step before any real tools load", () => {
-    expect(shouldForceInitialToolSearch(plan, createDiscoveryState(), 0)).toBe(
-      true,
-    );
-  });
-
-  it("does not force after step 0", () => {
-    expect(shouldForceInitialToolSearch(plan, createDiscoveryState(), 1)).toBe(
-      false,
-    );
-  });
-
-  it("does not force when a real tool is already loaded, newly loaded, or pending", () => {
-    const loadedState = createDiscoveryState();
-    loadedState.loadedToolIds.add(plan.catalog[0].toolId);
-    expect(shouldForceInitialToolSearch(plan, loadedState, 0)).toBe(false);
-
-    const newlyLoadedState = createDiscoveryState();
-    newlyLoadedState.newlyLoadedToolIds.add(plan.catalog[0].toolId);
-    expect(shouldForceInitialToolSearch(plan, newlyLoadedState, 0)).toBe(false);
-
-    const pendingState = createDiscoveryState();
-    pendingState.pendingApprovalToolIds.add(plan.catalog[0].toolId);
-    expect(shouldForceInitialToolSearch(plan, pendingState, 0)).toBe(false);
-  });
-
-  it("ignores stale unknown ids when deciding whether to force search", () => {
-    const state = createDiscoveryState();
-    state.loadedToolIds.add("ghost::loaded");
-    state.newlyLoadedToolIds.add("ghost::new");
-    state.pendingApprovalToolIds.add("ghost::pending");
-
-    expect(shouldForceInitialToolSearch(plan, state, 0)).toBe(true);
-  });
-
-  it("does not force when progressive discovery is disabled", () => {
-    expect(
-      shouldForceInitialToolSearch(
-        { ...plan, enabled: false },
-        createDiscoveryState(),
-        0,
-      ),
-    ).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// commitNewlyLoaded
-// ---------------------------------------------------------------------------
-
 describe("commitNewlyLoaded", () => {
   it("promotes newly-loaded ids into loaded and clears the staging set", () => {
     const state = createDiscoveryState();
@@ -525,25 +465,38 @@ describe("hydrateDiscoveryStateFromHistory", () => {
     ],
   });
 
+  it("requires a matching successful load result and restores only the confirmed names", () => {
+    const state = createDiscoveryState();
+    const result = (toolCallId: string, names: string[]) => ({
+      role: "tool", content: [{ type: "tool-result", toolName: META_TOOL_LOAD, toolCallId,
+        output: { type: "json", value: { loaded: names.map(name => ({ name })) } } }],
+    });
+    hydrateDiscoveryStateFromHistory(state, [
+      result("orphan", ["asana_get_task"]),
+      loadCall({ names: ["asana_create_task"] }),
+      result("c1", ["asana_create_task", "asana_get_task"]),
+    ], catalog);
+    expect([...state.loadedToolIds]).toEqual(["asana::asana_create_task"]);
+  });
   it("restores tools loaded by name", () => {
     const state = createDiscoveryState();
     const added = hydrateDiscoveryStateFromHistory(
       state,
-      [loadCall({ names: ["asana_create_task", "gone_tool"] })],
+      [loadCall({ names: ["asana_create_task", "gone_tool"] }), { role: "tool", content: [{ type: "tool-result", toolCallId: "c1", toolName: META_TOOL_LOAD, output: { type: "json", value: { loaded: [{ name: "asana_create_task" }], notFound: ["gone_tool"] } } }] }],
       catalog,
     );
     expect(added).toBe(1);
     expect([...state.loadedToolIds]).toEqual(["asana::asana_create_task"]);
   });
 
-  it("restores tools loaded by id in chats from before the name-only change", () => {
+  it("leaves an unacknowledged historical load out of the loaded set", () => {
     const state = createDiscoveryState();
     const added = hydrateDiscoveryStateFromHistory(
       state,
       [loadCall({ toolIds: ["asana::asana_get_task", "gone::tool"] })],
       catalog,
     );
-    expect(added).toBe(1);
-    expect([...state.loadedToolIds]).toEqual(["asana::asana_get_task"]);
+    expect(added).toBe(0);
+    expect([...state.loadedToolIds]).toEqual([]);
   });
 });

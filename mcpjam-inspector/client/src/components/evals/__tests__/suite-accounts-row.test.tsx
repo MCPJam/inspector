@@ -6,9 +6,13 @@ import { ConvexError } from "convex/values";
 import { SuiteAccountsRow } from "../suite-accounts-row";
 import type { EvalSuite } from "../types";
 import type { SuiteAccountsView } from "@/lib/evals/eval-accounts";
+import { createWebAccountView } from "@/test/factories";
 
 const state = vi.hoisted(() => ({
   flag: true,
+  webFlag: false,
+  webAccounts: [] as unknown[],
+  webSelections: [] as unknown[] | undefined,
   view: undefined as unknown,
   save: vi.fn(),
   queried: [] as Array<{ name: string; args: unknown }>,
@@ -16,11 +20,22 @@ const state = vi.hoisted(() => ({
 
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (flag: string) =>
-    flag === "eval-account-selection-enabled" ? state.flag : false,
+    flag === "eval-account-selection-enabled"
+      ? state.flag
+      : flag === "web-clients-enabled"
+        ? state.webFlag
+        : false,
 }));
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
   useMutation: () => state.save,
+  useQuery: (query: never, args: unknown) => {
+    if (args === "skip") return undefined;
+    state.queried.push({ name: getFunctionName(query), args });
+    return getFunctionName(query) === "webClients:listWebAccounts"
+      ? state.webAccounts
+      : state.webSelections;
+  },
   useQueries: (queries: Record<string, { query: never; args: unknown }>) =>
     Object.fromEntries(
       Object.entries(queries).map(([key, { query, args }]) => {
@@ -93,6 +108,9 @@ function renderRow() {
 
 beforeEach(() => {
   state.flag = true;
+  state.webFlag = false;
+  state.webAccounts = [];
+  state.webSelections = [];
   state.view = view();
   state.save.mockReset();
   state.save.mockResolvedValue(null);
@@ -401,5 +419,87 @@ describe("SuiteAccountsRow", () => {
     expect(
       screen.getByText("None of this suite's servers use an account."),
     ).toBeInTheDocument();
+  });
+});
+
+describe("SuiteAccountsRow web clients", () => {
+  const qa = createWebAccountView({ webAccountId: "wa-qa" });
+  const evals = createWebAccountView({
+    webAccountId: "wa-evals",
+    label: "Evals bot",
+    accountEmail: "evals@example.com",
+    status: "needs_sign_in",
+    isDefault: false,
+  });
+
+  it("adds a web clients group behind its own flag, even with server accounts off", async () => {
+    state.flag = false;
+    state.webFlag = true;
+    state.webAccounts = [qa, evals];
+    const user = userEvent.setup();
+    renderRow();
+    expect(screen.queryByTestId("suite-accounts-mine")).toBeNull();
+    const group = screen.getByTestId("suite-accounts-web");
+    expect(within(group).getByText("Web clients")).toBeInTheDocument();
+    expect(
+      within(group).getByRole("columnheader", { name: "Client" }),
+    ).toBeInTheDocument();
+    expect(within(group).queryByText("Server")).toBeNull();
+    expect(
+      within(group).getByRole("rowheader", { name: "Claude web" }),
+    ).toBeInTheDocument();
+    expect(within(group).getByText("Needs sign-in")).toBeInTheDocument();
+    expect(
+      within(group).getByRole("checkbox", { name: "Claude web qa@example.com" }),
+    ).toBeChecked();
+    await user.click(
+      within(group).getByRole("checkbox", {
+        name: "Claude web evals@example.com",
+      }),
+    );
+    expect(state.save).toHaveBeenLastCalledWith({
+      suiteId: "suite-1",
+      vendor: "claude",
+      webAccountIds: ["wa-qa", "wa-evals"],
+    });
+  });
+
+  it("keeps the choices disabled until the saved choice loads", () => {
+    state.flag = false;
+    state.webFlag = true;
+    state.webAccounts = [qa, evals];
+    state.webSelections = undefined;
+    renderRow();
+    // The default shows checked meanwhile; a click would save over the
+    // person's real choice.
+    expect(
+      within(screen.getByTestId("suite-accounts-web")).getByRole("checkbox", {
+        name: "Claude web evals@example.com",
+      }),
+    ).toBeDisabled();
+  });
+
+  it("sits beside the servers' accounts when both flags are on", () => {
+    state.webFlag = true;
+    state.webAccounts = [qa];
+    renderRow();
+    expect(screen.getByTestId("suite-accounts-mine")).toBeInTheDocument();
+    expect(screen.getByTestId("suite-accounts-web")).toBeInTheDocument();
+  });
+
+  it("reads and shows nothing about web accounts while the flag is off", () => {
+    state.webAccounts = [qa];
+    renderRow();
+    expect(screen.queryByTestId("suite-accounts-web")).toBeNull();
+    expect(
+      state.queried.some(({ name }) => name.startsWith("webClient")),
+    ).toBe(false);
+  });
+
+  it("stays hidden while the project has no web accounts", () => {
+    state.flag = false;
+    state.webFlag = true;
+    const { container } = renderRow();
+    expect(container).toBeEmptyDOMElement();
   });
 });

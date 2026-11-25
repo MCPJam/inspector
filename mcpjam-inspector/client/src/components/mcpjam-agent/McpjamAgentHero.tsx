@@ -20,6 +20,7 @@ import { generateId } from "ai";
 import { cn } from "@/lib/utils";
 import { track } from "@/lib/analytics";
 import { McpjamAgentComposer } from "@/components/mcpjam-agent/McpjamAgentComposer";
+import { takeKeptDraft } from "@/lib/mcpjam-agent/pending-prompt";
 import {
   appendRecentMcpjamAgentSession,
   loadRecentMcpjamAgentSessions,
@@ -78,6 +79,10 @@ export function McpjamAgentHero({
   className,
 }: McpjamAgentHeroProps) {
   const [value, setValue] = useState("");
+  useEffect(() => {
+    const kept = takeKeptDraft();
+    if (kept) setValue(kept);
+  }, []);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const [recentSessions, setRecentSessions] = useState<

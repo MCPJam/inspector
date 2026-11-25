@@ -1,5 +1,5 @@
 /**
- * Shared plumbing for `mcpjam events` (MCP Events, draft@28ec35e).
+ * Shared plumbing for `mcpjam events`.
  *
  * The protocol lives in the SDK: `@mcpjam/sdk/events` owns the wire schemas,
  * the coordinator (every lifecycle transition), the profiles and the in-memory
@@ -14,7 +14,7 @@
  *   anyway, because a misbehaving server can quote a secret back inside an
  *   error message, and that sentence is exactly what a CLI prints.
  * - **Advertise = enforce.** `events/*` is not sent to a server that did not
- *   declare `capabilities.events` unless `--force` says so (the SDK's
+ *   declare the selected Events capability unless `--force` says so (the SDK's
  *   `allowUndeclared`), and the refusal is a usage-class exit (2).
  */
 
@@ -33,6 +33,7 @@ import {
   CHATGPT_2026_09_30_PROFILE_ID,
   CHATGPT_PROFILE_ID,
   DRAFT_PROFILE_ID,
+  checkCallbackUrl,
   getEventsProfile,
   hasEventsProfileCapability,
   type EventsProfile,
@@ -186,7 +187,7 @@ export async function listAllServerEvents(
 
 /**
  * Map an SDK/server failure from an `events/*` request onto a CLI error: the
- * draft's error codes (`-32011`…`-32015`) get a stable `EVENTS_*` code, the
+ * negotiated profile's errors get a stable `EVENTS_*` code, the
  * manager's own "not declared" refusal is exit 2, and every message is
  * scrubbed of secrets. Anything else is left for `normalizeCliError`.
  */
@@ -232,43 +233,25 @@ export async function withEventsErrors<T>(
   }
 }
 
-export interface CallbackUrlCheck {
-  url: URL;
-  /** True for a plain-http URL accepted under the insecure flag. */
-  insecure: boolean;
-}
-
-/**
- * The draft makes `https` a MUST for callback URLs. Plain http is accepted
- * only behind an explicit flag, and only ever as a labelled development mode.
- */
-export function checkCallbackUrl(
+/** Apply CLI flag guidance to the shared callback URL check. */
+export function requireCallbackUrl(
   value: string,
   args: { flag: string; insecureFlag: string; allowInsecure: boolean },
-): CallbackUrlCheck {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw usageError(`${args.flag} is not a valid URL: ${value}`);
-  }
-  if (url.protocol === "https:") return { url, insecure: false };
-  if (url.protocol !== "http:") {
-    throw usageError(`${args.flag} must be an https:// URL (got ${url.protocol}).`);
-  }
-  if (!args.allowInsecure) {
+): { url: URL; insecure: boolean } {
+  const checked = checkCallbackUrl(value);
+  if (!checked.ok) throw usageError(`${args.flag}: ${checked.reason}`);
+  if (checked.insecure && !args.allowInsecure) {
     throw usageError(
-      `${args.flag} must be https:// — the MCP Events draft requires https callback URLs. ` +
-        `Pass ${args.insecureFlag} to use plain http for local development (NON-CONFORMANT; never a conformance pass).`,
+      `${args.flag} must be https://. Pass ${args.insecureFlag} to use plain http for local development (NON-CONFORMANT).`,
     );
   }
-  return { url, insecure: true };
+  return checked;
 }
 
 export function insecureModeWarning(flag: string, url: string): string {
   return (
     `WARNING: ${flag} is a NON-CONFORMANT development mode. The callback URL ${url} is plain http; ` +
-    "the MCP Events draft requires https, so a conformant server must refuse it. " +
+    "MCP Events requires HTTPS, so a conformant server must refuse it. " +
     "Results from this mode never count as a conformance pass."
   );
 }

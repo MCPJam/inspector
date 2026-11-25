@@ -29,6 +29,7 @@ import { toast } from "@/lib/toast";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
+import { AccountCreatedToast } from "./components/sidebar/sidebar-guest-signup-prompt";
 import { TrialDecisionDialog } from "./components/billing/TrialDecisionDialog";
 import { AnnouncementQueueProvider } from "./components/announcement-slot";
 import { StdioCommandApprovalDialog } from "./components/connection/StdioCommandApprovalDialog";
@@ -53,7 +54,6 @@ import { SkillsTab } from "./components/SkillsTab";
 import { LearningTab } from "./components/LearningTab";
 import { TaskAccountsTab } from "./components/TaskAccountsTab";
 import { EventsTab } from "./components/EventsTab";
-import { EventTriggersTab } from "./components/EventTriggersTab";
 import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capabilities-context";
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvaluateTab } from "./components/EvaluateTab";
@@ -234,6 +234,7 @@ import {
   updateThemePreset,
 } from "./lib/theme-utils";
 import LoadingScreen from "./components/LoadingScreen";
+import { StartupScreen } from "./components/startup/StartupScreen";
 import { OccupationGate } from "./components/signup/OccupationGate";
 import { Header } from "./components/Header";
 import { ThemePreset } from "./types/preferences/theme";
@@ -387,6 +388,7 @@ import { useCodexHostEnabledState } from "./hooks/useCodexHostEnabled";
 import { useCopilotCliEnabled } from "@/hooks/useCopilotCliEnabled";
 import { useCursorHostEnabledState } from "./hooks/useCursorHostEnabled";
 import { useOpenCodeHostEnabledState } from "./hooks/useOpenCodeHostEnabled";
+import { useWebClientsEnabledState } from "./hooks/useWebClientsEnabled";
 import { hostFeatureFlagState } from "@/lib/host-compat/feature-visibility";
 import {
   HOST_VERIFY_TAB_PARAM,
@@ -1212,6 +1214,7 @@ function useTemplateVerifyDeepLink({
   const copilotCliEnabled = useCopilotCliEnabled();
   const cursorCliEnabled = useCursorHostEnabledState();
   const openCodeEnabled = useOpenCodeHostEnabledState();
+  const webClientsEnabled = useWebClientsEnabledState();
   const requestedTemplateId = useMemo<HostTemplateId | null>(() => {
     if (typeof window === "undefined") return null;
     const raw = new URLSearchParams(window.location.search).get(
@@ -1284,6 +1287,7 @@ function useTemplateVerifyDeepLink({
       copilotCli: copilotCliEnabled,
       cursorCli: cursorCliEnabled,
       openCode: openCodeEnabled,
+      webClients: webClientsEnabled,
     });
     // Gated templates remain visible on caniuse.dev as reference profiles, but
     // they are not available for new-host creation until their rollout flags
@@ -1363,6 +1367,7 @@ function useTemplateVerifyDeepLink({
     cursorCliEnabled,
     copilotCliEnabled,
     openCodeEnabled,
+    webClientsEnabled,
     flagWaitExpired,
     roleLoading,
     canCreateHost,
@@ -2547,21 +2552,13 @@ export function EventsRoute() {
  * so a local user can see what the feature is.
  */
 export function EventTriggersRoute() {
-  const { convexProjectId, isAuthenticated, isGuestProjectActor } =
-    useAppRouteContext();
+  const triggerId = useCurrentSearchParam("triggerId");
   const eventsEnabled = useEventsEnabledState();
-  if (eventsEnabled === false) {
-    return <ScopedNavigate to={routePaths.servers} replace />;
-  }
+  if (eventsEnabled === false) return <ScopedNavigate to={routePaths.servers} replace />;
   if (eventsEnabled === undefined) return null;
-  return (
-    <div className="h-full overflow-hidden">
-      <EventTriggersTab
-        projectId={convexProjectId ?? null}
-        isSignedInMember={isAuthenticated === true && !isGuestProjectActor}
-      />
-    </div>
-  );
+  const query = new URLSearchParams({ panel: "events", background: "1" });
+  if (triggerId) query.set("triggerId", triggerId);
+  return <ScopedNavigate to={`${routePaths.playground}?${query}`} replace />;
 }
 
 export function OAuthFlowRoute() {
@@ -2703,6 +2700,7 @@ export function WebmcpInspectorRoute() {
 export function PlaygroundRoute() {
   const {
     activeHost,
+    activeHostId,
     activeProject,
     activeProjectId,
     appState,
@@ -2757,6 +2755,7 @@ export function PlaygroundRoute() {
       }}
       suspendAutoConnect={suspendRouteAutoConnect}
       activeHost={activeHost}
+      activeHostId={activeHostId}
       evalChatHandoff={evalChatHandoff}
       onEvalChatHandoffConsumed={(id) =>
         setEvalChatHandoff((current: EvalChatHandoff | null) =>
@@ -6341,7 +6340,7 @@ export default function App() {
   }
 
   if (isLoading && !isHostedChatRoute && !isFirstRunOAuthReturnActive) {
-    return <LoadingScreen />;
+    return <StartupScreen />;
   }
 
   const shouldShowBillingHandoffOverlay =
@@ -6354,7 +6353,8 @@ export default function App() {
     (shouldHoldHostedDefaultRouteForAuth ||
       shouldHoldHostedHomeRouteForAppReady)
   ) {
-    return <LoadingScreen />;
+    // Home also waits here for projects, which wait for the user record.
+    return <StartupScreen />;
   }
 
   if (
@@ -6369,7 +6369,7 @@ export default function App() {
           isSignOutInProgress() ||
           shouldReloadForMissingGuest)))
   ) {
-    return <LoadingScreen />;
+    return <StartupScreen />;
   }
 
   if (!isHostedChatRoute && isAuthenticated && currentUser === null) {
@@ -6547,6 +6547,7 @@ export default function App() {
     activeHostId,
     checkoutIntentForBilling,
     connectedOrConnectingServerConfigs,
+    currentUser,
     consumeCheckoutIntent,
     displayServerConfigs,
     convexProjectId,
@@ -6894,6 +6895,7 @@ export default function App() {
             <DarkDefaultNudge enabled={announcementsEnabled} />
             <MCPJamLimitDialog />
             <PlanLimitDialog />
+            <AccountCreatedToast />
             <StdioCommandApprovalDialog />
             <LauncherProjectChoiceDialog />
             <UnavailableOrganizationDialog

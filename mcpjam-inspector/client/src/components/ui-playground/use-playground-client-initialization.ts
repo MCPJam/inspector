@@ -159,10 +159,18 @@ export function usePlaygroundClientInitialization({
       return { projectId: pid, before, result };
     };
 
+  const defaultNeeded = ready && hostList.length === 0;
+  const comparisonNeeded =
+    ready &&
+    hostList.length > 0 &&
+    !roleLoading &&
+    canManage &&
+    !comparisonSettled;
+
   const defaultInit = useProjectClientInitialization({
     projectId,
     intent: "default",
-    needed: ready && hostList.length === 0,
+    needed: defaultNeeded,
     run: withSelection(false),
     // A fresh default replaces any lineup of deleted clients.
     onSuccess: ({ projectId: pid, before, result }) => {
@@ -185,12 +193,7 @@ export function usePlaygroundClientInitialization({
   const comparisonInit = useProjectClientInitialization({
     projectId,
     intent: "comparison",
-    needed:
-      ready &&
-      hostList.length > 0 &&
-      !roleLoading &&
-      canManage &&
-      !comparisonSettled,
+    needed: comparisonNeeded,
     run: withSelection(true),
     onSuccess: ({ projectId: pid, before, result }) => {
       const comparison = result.comparison;
@@ -211,5 +214,15 @@ export function usePlaygroundClientInitialization({
       );
     },
   });
-  return { defaultInit, comparisonInit };
+  const unsettled = (needed: boolean, init: typeof defaultInit) =>
+    needed && (init.state.status === "idle" || init.state.status === "pending");
+  // The client lineup may still change, e.g. from one client to a comparison.
+  const settling =
+    isAuthenticated &&
+    !!projectId &&
+    (hostListLoading ||
+      roleLoading ||
+      unsettled(defaultNeeded, defaultInit) ||
+      unsettled(comparisonNeeded, comparisonInit));
+  return { defaultInit, comparisonInit, settling };
 }
