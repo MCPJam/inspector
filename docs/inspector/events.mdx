@@ -102,6 +102,15 @@ A client must not send `events/*` requests to a server that has not declared it.
 
 ## Test events in the Events tab
 
+<Frame>
+  <img
+    className="block"
+    src="/images/events/subscribe.webp"
+    alt="Events tab with an event type selected, its parameters filled in, a delivery mode chosen and the Subscribe button highlighted"
+    width="1000"
+  />
+</Frame>
+
 <Steps>
   <Step title="Connect the server">
     Connect the server as usual from [Connect servers](/inspector/connecting-servers), then open the **Events** tab. If it shows **This server does not declare events**, the server's capabilities do not include the extension. Check the protocol version first: a server that only declares Events on `2026-07-28` will not show it on an older connection.
@@ -137,6 +146,15 @@ A client must not send `events/*` requests to a server that has not declared it.
     Click **Subscribe**. For a webhook, the subscription shows a three-step checklist: **Subscribed** once the server accepts `events/subscribe`, **Server reached MCPJam** once its verification request or first delivery arrives, and **Events arriving** once deliveries are coming in without errors. A step that stays unchecked tells you which leg to debug.
 
     Now cause the event, for example by calling the trigger tool from the [Tools tab](/inspector/tools-prompts-resources#tools) or by acting in the upstream system. Each occurrence appears under **Occurrences** with its `eventId`, `timestamp`, `cursor` and `data`. Check that `data` matches the `payloadSchema` and that `eventId` stays the same if the same upstream event is delivered twice.
+
+    <Frame>
+      <img
+        className="block"
+        src="/images/events/occurrences.png"
+        alt="Occurrences list with three comment.created events and the selected event's JSON payload and metadata"
+        width="1000"
+      />
+    </Frame>
   </Step>
   <Step title="Manage the subscription">
     Select it under **Subscriptions** to see its delivery mode, client, cursor, `refreshBefore`, server subscription id and the server's `deliveryStatus` (`lastDeliveryAt`, `lastError`, `failedSince`). From there you can:
