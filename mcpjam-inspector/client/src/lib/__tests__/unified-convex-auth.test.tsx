@@ -714,6 +714,89 @@ describe("useUnifiedConvexAuth", () => {
         }),
       );
     });
+
+    // A signed-in self-hosted tab refreshes through its own server's AuthKit
+    // proxy, so a fetch nothing answered is the local inspector process being
+    // gone, exactly as it is for a guest.
+    it("tags a WorkOS refresh whose fetch never reached the local inspector as routine", async () => {
+      mockState.workos.user = { id: "user-1" };
+      mockState.workos.getAccessToken.mockRejectedValue(
+        new TypeError("Failed to fetch"),
+      );
+      const onLocalServerUnreachable = vi.fn();
+
+      const result = await mountGuest();
+
+      let pending: Promise<string | null>;
+      await act(async () => {
+        pending = result.current.fetchAccessToken({ onLocalServerUnreachable });
+        await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
+      });
+
+      await act(async () => {
+        await expect(pending).resolves.toBeNull();
+      });
+      expect(mockState.reportCaught).toHaveBeenCalledWith(
+        new Error("workos_token_refresh failed"),
+        {
+          source: "workos_token_refresh",
+          level: "warning",
+          tags: {
+            page_class: "routine",
+            workos_refresh_failure: "local_server_unreachable",
+          },
+          fingerprint: ["workos_token_refresh", "local_server_unreachable"],
+          extra: {
+            attempts: 4,
+            errorName: "TypeError",
+            code: "guest_session/unreachable",
+          },
+        },
+      );
+      expect(onLocalServerUnreachable).toHaveBeenCalledTimes(1);
+    });
+
+    // authkit also throws without a status when another tab holds the refresh
+    // lock too long. That is not the local server, so it keeps paging.
+    it("keeps a WorkOS refresh lock timeout on the default policy", async () => {
+      const lockTimeout = new Error(
+        "Timed out waiting to refresh the session.",
+        {
+          cause: Object.assign(new Error("lock"), {
+            name: "AcquisitionTimeoutError",
+          }),
+        },
+      );
+      lockTimeout.name = "RefreshTimeoutError";
+      mockState.workos.user = { id: "user-1" };
+      mockState.workos.getAccessToken.mockRejectedValue(lockTimeout);
+      const onLocalServerUnreachable = vi.fn();
+
+      const result = await mountGuest();
+
+      let pending: Promise<string | null>;
+      await act(async () => {
+        pending = result.current.fetchAccessToken({ onLocalServerUnreachable });
+        await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
+      });
+
+      await act(async () => {
+        await expect(pending).resolves.toBeNull();
+      });
+      expect(mockState.reportCaught).toHaveBeenCalledWith(
+        new Error("workos_token_refresh failed"),
+        {
+          source: "workos_token_refresh",
+          level: "warning",
+          extra: {
+            attempts: 4,
+            errorName: "AcquisitionTimeoutError",
+            code: "guest_session/unreachable",
+          },
+        },
+      );
+      expect(onLocalServerUnreachable).not.toHaveBeenCalled();
+    });
   });
 });
 

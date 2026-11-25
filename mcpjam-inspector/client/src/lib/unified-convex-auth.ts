@@ -32,6 +32,8 @@ export type AuthTokenRequest = {
   forceRefreshToken?: boolean;
   signal?: AbortSignal;
   onAttempt?: (mode: "guest" | "workos") => void;
+  /** The refresh failed because this tab's own local server never answered. */
+  onLocalServerUnreachable?: () => void;
 };
 
 const GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS = [500, 1500, 3000] as const;
@@ -120,21 +122,26 @@ async function fetchTokenWithRetry(
   // status/reason fields and a fixed message; reporting cannot block recovery.
   try {
     const failure = guestFailureExtra(lastError);
-    // A guest throw with no status never got an answer. On a self-hosted
-    // install the guest request goes to this tab's own loopback server, so
-    // that is the local inspector process being gone (npx killed, laptop
-    // asleep), not the guest authority failing: still a Sentry event, but a
-    // `routine` one the paging rule skips, in its own issue so the real ones
-    // keep their "new" and "regressed" transitions.
+    // A throw with no status never got an answer. On a self-hosted install
+    // both refreshes go to this tab's own loopback server (the guest mint, and
+    // AuthKit through the server's `/user_management` proxy unless a WorkOS
+    // API hostname overrides it, which npx installs do not), so that is the
+    // local inspector process being gone (npx killed, laptop asleep), not the
+    // guest authority or WorkOS failing: still a Sentry event, but a `routine`
+    // one the paging rule skips, in its own issue so the real ones keep their
+    // "new" and "regressed" transitions. AuthKit also throws without a status
+    // when its cross-tab refresh lock times out, so a WorkOS failure counts
+    // only when `fetch` itself rejected.
     const unanswered =
-      opts.mode === "guest" &&
-      lastError !== undefined &&
-      failure.httpStatus === undefined;
+      lastError !== undefined && failure.httpStatus === undefined;
     const localServerUnreachable =
       unanswered &&
+      (opts.mode === "guest" ||
+        (opts.mode === "workos" && thrownName(lastError) === "TypeError")) &&
       !HOSTED_MODE &&
       typeof window !== "undefined" &&
       isLoopbackOAuthUrl(window.location.origin);
+    if (localServerUnreachable) opts.request?.onLocalServerUnreachable?.();
     reportCaught(
       new Error(`${opts.source} ${lastError ? "failed" : "returned no token"}`),
       {
@@ -142,10 +149,16 @@ async function fetchTokenWithRetry(
         level: "warning",
         ...(localServerUnreachable
           ? {
-              tags: {
-                page_class: "routine",
-                guest_refresh_failure: "local_server_unreachable",
-              },
+              tags:
+                opts.mode === "workos"
+                  ? {
+                      page_class: "routine",
+                      workos_refresh_failure: "local_server_unreachable",
+                    }
+                  : {
+                      page_class: "routine",
+                      guest_refresh_failure: "local_server_unreachable",
+                    },
               fingerprint: [opts.source, "local_server_unreachable"],
             }
           : {}),
