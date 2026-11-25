@@ -883,7 +883,8 @@ export class OAuthConformanceTest {
                     request: trackedRequest,
                   });
 
-            if (this.config.protocolVersion === "2026-07-28") {
+            // Versions are ISO dates, so string order is release order.
+            if (this.config.protocolVersion >= "2026-07-28") {
               // RFC 9207, all four cases, before the code goes anywhere near
               // the token endpoint. Earlier versions don't require it.
               const issCheck = validateAuthorizationResponseIssuer({
