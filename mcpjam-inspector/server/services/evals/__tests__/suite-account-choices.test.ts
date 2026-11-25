@@ -1,7 +1,14 @@
 import { getFunctionName } from "convex/server";
+import { MCPClientManager } from "@mcpjam/sdk";
 import { describe, expect, it, vi } from "vitest";
 import { WebRouteError } from "../../../routes/web/errors.js";
-import { loadSuiteConnectionIdSets } from "../suite-account-choices.js";
+import {
+  loadEvalRunAccountPlan,
+  loadSuiteConnectionIdSets,
+  openEvalAccountGroups,
+  type EvalAccountPlan,
+} from "../suite-account-choices.js";
+import { setManagerAuthorizedCredentials } from "../../../utils/mcp-connections.js";
 
 function convexAnswering(
   answers: Record<string, unknown | ((args: unknown) => unknown)>,
@@ -75,5 +82,49 @@ describe("loadSuiteConnectionIdSets", () => {
     await expect(run).rejects.toThrow(
       "MCPJam couldn't load the accounts chosen for this suite",
     );
+  });
+});
+
+describe("per-case eval accounts", () => {
+  const plan: EvalAccountPlan = [
+    { testCaseId: "inherits", serverId: "billing", connectionId: "auditor", source: "run" },
+    { testCaseId: "pinned", serverId: "billing", connectionId: "admin", source: "case" },
+    { testCaseId: "inherits", serverId: "crm", connectionId: "support", source: "suite" },
+    { testCaseId: "pinned", serverId: "crm", connectionId: "support", source: "suite" },
+  ];
+
+  it("opens separate authorized managers and keeps the untouched server on both", async () => {
+    const open = vi.fn(async (sets: Readonly<Record<string, readonly string[]>>) => {
+      const manager = new MCPClientManager();
+      vi.spyOn(manager, "listServers").mockReturnValue(Object.keys(sets));
+      vi.spyOn(manager, "disconnectAllServers").mockResolvedValue();
+      setManagerAuthorizedCredentials(manager, Object.fromEntries(
+        Object.entries(sets).map(([serverId, [accountId]]) => [serverId, accountId]),
+      ));
+      return manager;
+    });
+    const groups = await openEvalAccountGroups(plan, open);
+    expect(open.mock.calls).toEqual([
+      [{ billing: ["auditor"], crm: ["support"] }],
+      [{ billing: ["admin"], crm: ["support"] }],
+    ]);
+    expect(groups.forCase("inherits")).not.toBe(groups.forCase("pinned"));
+    expect(() => groups.forCase("unknown")).toThrow(/missing from the authorized account plan/i);
+    await groups.close();
+    expect(groups.forCase("inherits").disconnectAllServers).toHaveBeenCalledOnce();
+    expect(groups.forCase("pinned").disconnectAllServers).toHaveBeenCalledOnce();
+  });
+
+  it("refuses a one-off override on a backend that has no account planner", async () => {
+    const convex = convexAnswering({
+      "testSuiteAccountSelections:getEvalRunAccountPlan": new Error(
+        "Could not find public function for 'testSuiteAccountSelections:getEvalRunAccountPlan'",
+      ),
+    });
+    await expect(loadEvalRunAccountPlan(convex, {
+      suiteId: "suite-1",
+      serverIds: ["billing"],
+      runAccounts: [{ serverId: "billing", connectionId: "auditor" }],
+    })).rejects.toThrow(/cannot use the accounts selected for this run/i);
   });
 });

@@ -42,7 +42,13 @@ import {
   createConvexClient,
   type ReplayConfig,
 } from "./route-helpers.js";
-import { loadSuiteConnectionIdSets } from "./suite-account-choices.js";
+import {
+  loadEvalRunAccountPlan,
+  loadSuiteConnectionIdSets,
+  openEvalAccountGroups,
+  type EvalAccountPlan,
+} from "./suite-account-choices.js";
+import type { ConnectionIdSets } from "../../utils/oauth-account-sets.js";
 
 type ProjectServer = { _id: string; name: string; url?: string };
 
@@ -59,7 +65,7 @@ const getTestSuite = makeFunctionReference<
 const getTestCase = makeFunctionReference<
   "query",
   { testCaseId: string },
-  { projectId?: string } | null
+  { projectId?: string; testSuiteId?: string } | null
 >("testSuites:getTestCase");
 
 export type LocalEvalRun = {
@@ -70,6 +76,10 @@ export type LocalEvalRun = {
     serverNames?: string[];
     storageServerIds?: string[];
     resolvedEnvironment?: ResolvedEnvironmentForLaunch;
+    evalAccounts?: {
+      plan: EvalAccountPlan;
+      managerForCase: (caseId: string | undefined) => MCPClientManager;
+    };
   };
   /** Ends the run's own connections; never throws. */
   close: () => Promise<void>;
@@ -255,6 +265,7 @@ export async function openLocalEvalRun(
     suiteId?: string;
     /** A quick run names only its case. */
     testCaseId?: string;
+    caseIds?: string[];
     serverIds?: string[];
     storageServerIds?: string[];
     environmentId?: string;
@@ -315,7 +326,7 @@ export async function openLocalEvalRun(
         clientCapabilities: undefined,
         options: {},
       };
-  const { manager } = await createAuthorizedManager(
+  const openHosted = (connectionIdSets?: ConnectionIdSets) => createAuthorizedManager(
     callerContextFromHono(c),
     target.convexAuthToken,
     projectId,
@@ -333,18 +344,43 @@ export async function openLocalEvalRun(
       ...connection.options,
     },
   );
-  await connectLocalServers(c.mcpClientManager, manager, servers.localNames);
+  const open = async (sets?: ConnectionIdSets) => {
+    const { manager } = await openHosted(sets);
+    try {
+      await connectLocalServers(c.mcpClientManager, manager, servers.localNames);
+    } catch (error) {
+      await manager.disconnectAllServers();
+      throw error;
+    }
+    return manager;
+  };
+  const suiteId = target.suiteId ?? (target.testCaseId
+    ? (await convex.query(getTestCase, { testCaseId: target.testCaseId }))?.testSuiteId
+    : undefined);
+  const caseIds = target.testCaseId ? [target.testCaseId] : target.caseIds;
+  const plan = suiteId && servers.serverIds.length ? await loadEvalRunAccountPlan(convex, {
+    suiteId,
+    serverIds: servers.serverIds,
+    ...(caseIds?.length ? { caseIds } : {}),
+  }) : null;
+  const groups = plan ? await openEvalAccountGroups(plan, open) : undefined;
+  const manager = groups?.first ?? await open(connectionIdSets);
   return {
     manager,
-    request: servers.resolved
-      ? { resolvedEnvironment: servers.resolved }
-      : {
+    request: {
+      ...(servers.resolved
+        ? { resolvedEnvironment: servers.resolved }
+        : {
           serverIds: servers.serverIds,
           serverNames: servers.serverNames,
           storageServerIds: target.storageServerIds ?? servers.refs,
-        },
+        }),
+      ...(plan && groups ? {
+        evalAccounts: { plan, managerForCase: groups.forCase },
+      } : {}),
+    },
     close: () =>
-      manager.disconnectAllServers().catch((error: unknown) => {
+      (groups ? groups.close() : manager.disconnectAllServers()).catch((error: unknown) => {
         logger.warn("[local evals] closing a run's connections failed", {
           error: error instanceof Error ? error.message : String(error),
         });

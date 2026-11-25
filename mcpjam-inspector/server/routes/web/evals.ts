@@ -1,5 +1,10 @@
 import { anyUnattendedLocalHarness } from "../../utils/harness/local/run-resources.js";
-import { loadSuiteConnectionIdSets } from "../../services/evals/suite-account-choices.js";
+import {
+  loadEvalRunAccountPlan,
+  loadSuiteConnectionIdSets,
+  openEvalAccountGroups,
+} from "../../services/evals/suite-account-choices.js";
+import type { ConnectionIdSets } from "../../utils/oauth-account-sets.js";
 import { handleEvalAuthoring } from "../shared/eval-authoring.js";
 import { Hono } from "hono";
 import { captureServerEvent } from "../../utils/analytics.js";
@@ -199,7 +204,7 @@ evals.post("/run", async (c) =>
           rawBody.serverNames = serverNames;
         }
       }
-      const connection = await createManualHostedConnection(
+      const open = (sets?: ConnectionIdSets) => createManualHostedConnection(
         c,
         rawBody,
         hostedRunEvalsSchema,
@@ -215,7 +220,7 @@ evals.post("/run", async (c) =>
           // `loadSuiteHostConfig` is never hostless: no named host and no suite
           // config falls back to the default MCPJam host.
           connectionIdSetsForBody: async (body) =>
-            loadSuiteConnectionIdSets(
+            sets ?? await loadSuiteConnectionIdSets(
               createConvexClient(await getConvexBearerForRequest(c)),
               { suiteId: body.suiteId },
             ),
@@ -230,12 +235,33 @@ evals.post("/run", async (c) =>
             ),
         },
       );
-      const { manager, body, convexAuthToken } = connection;
+      const parsed = parseWithSchema(hostedRunEvalsSchema, rawBody);
+      const plan = parsed.suiteId && parsed.serverIds?.length
+        ? await loadEvalRunAccountPlan(
+            createConvexClient(await getConvexBearerForRequest(c)),
+            {
+              suiteId: parsed.suiteId,
+              serverIds: parsed.serverIds,
+              ...(parsed.caseIds?.length ? { caseIds: parsed.caseIds } : {}),
+            },
+          )
+        : null;
+      let connection: Awaited<ReturnType<typeof open>> | undefined;
+      const groups = plan ? await openEvalAccountGroups(plan, async (sets) => {
+        const current = await open(sets);
+        connection ??= current;
+        return current.manager;
+      }) : undefined;
+      const { manager, body, convexAuthToken } = connection ?? await open();
+      const close = () => groups ? groups.close() : manager.disconnectAllServers();
       let prepared: PreparedEvalRun;
 
       try {
         prepared = await prepareEvalRun(manager, {
           ...body,
+          ...(groups && plan ? {
+            evalAccounts: { plan, managerForCase: groups.forCase },
+          } : {}),
           ...((await anyUnattendedLocalHarness(c.req.header("authorization"), typeof rawBody.projectId === "string" ? rawBody.projectId : undefined)) ? { runtimeVenue: "local" as const } : {}),
           convexAuthToken,
           ...(preflightEnvironment
@@ -243,7 +269,7 @@ evals.post("/run", async (c) =>
             : {}),
         });
       } catch (error) {
-        await manager.disconnectAllServers().catch(() => {});
+        await close();
         throw error;
       }
 
@@ -255,7 +281,7 @@ evals.post("/run", async (c) =>
           route: "/api/web/evals/run",
           projectId: body.projectId,
         },
-        cleanup: () => manager.disconnectAllServers(),
+        cleanup: close,
       });
 
       // Server twin of the client's `eval_suite_run_started`.

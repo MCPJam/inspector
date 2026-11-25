@@ -1,3 +1,4 @@
+import type { EvalAccountPlan, EvalAccountSelection } from "../../services/evals/suite-account-choices.js";
 import { localHarnessIdOf, shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import { freezeEvalRunWebAccounts } from "../../services/web-clients/web-client-run.js";
 import { localHarnessCapabilities } from "../../services/evals/runner-capabilities.js";
@@ -644,6 +645,11 @@ export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
  * {@link EvalRunProvenance} beside the mutation call that has to honour it.
  */
 type RunEvalsWithManagerRequest = RunEvalsRequest & {
+  evalAccounts?: {
+    plan: EvalAccountPlan;
+    requested?: EvalAccountSelection[];
+    managerForCase: (caseId: string | undefined) => MCPClientManager;
+  };
   runtimeVenue?: "local" | "hosted";
   /** Already resolved by the public inline-suite boundary. */
   hostAttachments?: Array<{
@@ -2800,6 +2806,10 @@ export async function prepareEvalRun(
     // backend refusing a run they did approve.
     ...(importApprovals?.length ? { importApprovals } : {}),
     accountsAtRun: managerAccountsAtRun(clientManager),
+    ...(request.evalAccounts ? {
+      evalAccountPlan: request.evalAccounts.plan,
+      runAccounts: request.evalAccounts.requested,
+    } : {}),
     // Same rule, same reason. Spread apart rather than as one `launchContext`
     // object because the recorder's parameter list is the mutation's argument
     // list, and the backend takes the two as siblings of `source`.
@@ -3235,6 +3245,7 @@ export async function prepareEvalRun(
       convexHttpUrl,
       convexAuthToken,
       mcpClientManager: clientManager,
+      accountManagerForCase: request.evalAccounts?.managerForCase,
       recorder,
       suiteInjectOpenAiCompat,
       hostExecutionPolicy: suiteHostPolicy,
