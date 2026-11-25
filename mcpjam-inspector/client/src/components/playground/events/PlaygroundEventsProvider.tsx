@@ -418,7 +418,7 @@ function useRuntime(
     value: SubscribeFormValue,
   ): Promise<PlaygroundEventBinding> => {
     if (!current.current.bindings.some((binding) => binding.id === id))
-      throw new Error("This event connection no longer exists.");
+      throw new Error("This event subscription no longer exists.");
     const { subscription, afterSeq, targetAgent } = await createSubscription(
       server,
       event,
@@ -427,7 +427,7 @@ function useRuntime(
     );
     if (alreadyConnected(subscription.id, id))
       throw new Error(
-        "Another connection already watches this event with these arguments.",
+        "Another subscription already watches this event with these arguments.",
       );
     dispatcher.current?.invalidate(id);
     const move = (binding: PlaygroundEventBinding): PlaygroundEventBinding =>
@@ -447,7 +447,7 @@ function useRuntime(
     current.current.bindings = current.current.bindings.map(move);
     setBindings((previous) => previous.map(move));
     const moved = current.current.bindings.find((binding) => binding.id === id);
-    if (!moved) throw new Error("This event connection no longer exists.");
+    if (!moved) throw new Error("This event subscription no longer exists.");
     return moved;
   };
   const addTest = (

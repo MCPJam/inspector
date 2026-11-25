@@ -239,7 +239,7 @@ describe("mcpjam_subscribe_to_events", () => {
       ]),
     );
     expect(body.hint).toBe(
-      "Not in the schema: trip_id. Its properties are: tripId, flightId.",
+      "These arguments aren't accepted: trip_id. Use one of: tripId, flightId.",
     );
     expect(body.inputSchema).toEqual(flightEvent.inputSchema);
     expect(runtime.add).not.toHaveBeenCalled();

@@ -99,7 +99,7 @@ export function checkEventArguments(
     issues: issues.length > 0 ? issues : ["arguments: do not match the schema"],
     ...(known.length > 0 && unknown.length > 0
       ? {
-          hint: `Not in the schema: ${unknown.join(", ")}. Its properties are: ${known.join(", ")}.`,
+          hint: `These arguments aren't accepted: ${unknown.join(", ")}. Use one of: ${known.join(", ")}.`,
         }
       : {}),
   };

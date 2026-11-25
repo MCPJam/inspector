@@ -245,7 +245,8 @@ async function resolveTrigger(
   if (server.error)
     return {
       error: failure(
-        `Couldn't load the event types of "${serverName}": ${server.error}`,
+        `Couldn't load the event types of "${serverName}". Try again, or ask the user to reconnect it.`,
+        { reason: server.error },
       ),
     };
   if (!server.catalog?.support.declared)
@@ -264,7 +265,7 @@ async function resolveTrigger(
   if (check.valid === false) {
     return {
       error: failure(
-        `The params don't match the inputSchema of ${event.name}, so nothing was sent to the server. Fix them and call ${tool} again.`,
+        `The arguments for ${event.name} don't match what it accepts, so nothing was sent to the server. Fix the arguments and call ${tool} again.`,
         {
           issues: check.issues,
           ...(check.hint ? { hint: check.hint } : {}),
@@ -313,7 +314,7 @@ async function subscribe(
       subscription: describe(runtime, { ...existing, ...fields }),
       updated: true,
       message:
-        "A subscription already watched this event with these params, so it was updated with the new title and prompt instead of adding a second one.",
+        "This event already had a subscription, so its title and prompt were updated. No second subscription was added.",
     });
   }
   const picked = pickMode(runtime, resolved.event);
@@ -337,7 +338,7 @@ function findBinding(runtime: EventAgentRuntime, id: string) {
 
 const unknownId = (id: string) =>
   failure(
-    `No event subscription has the subscription_id "${id}". Call mcpjam_list_event_subscriptions for the current ids.`,
+    `Couldn't find an event subscription with the id "${id}". List your event subscriptions and choose one from the list.`,
   );
 
 async function update(
