@@ -301,11 +301,16 @@ export function CaniuseComparePage() {
                 mobileOptimized
                 verifyBaseUrl="https://app.mcpjam.com"
                 disabledVerifyTemplateIds={FLAG_GATED_HOST_IDS}
-                renderFieldSummary={(field) => {
-                  const summary = summaries.get(field.id);
-                  return (
-                    summary && <MatrixAdoption field={field} summary={summary} />
-                  );
+                summaryColumn={{
+                  label: "Client adoption",
+                  render: (field) => {
+                    const summary = summaries.get(field.id);
+                    return (
+                      summary && (
+                        <MatrixAdoption field={field} summary={summary} />
+                      )
+                    );
+                  },
                 }}
               />
             </div>
@@ -335,9 +340,9 @@ function MatrixAdoption({
       ? "No results"
       : overall.eventsMode
         ? `${overall.score}% of ${overall.measured} with results`
-        : `${overall.score}% ${overall.reporting ? "reported" : "adoption"}`;
+        : `${overall.score}%${overall.reporting ? " reported" : ""}`;
   return (
-    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+    <div className="flex flex-col items-center gap-0.5 text-xs tabular-nums text-muted-foreground">
       <Link
         to={path}
         className="font-bold text-primary hover:underline"
@@ -355,7 +360,7 @@ function MatrixAdoption({
         <Link
           key={slice}
           to={`${path}?slice=${encodeURIComponent(slice)}`}
-          className="rounded px-1 hover:bg-muted hover:text-foreground"
+          className="rounded px-1 text-[11px] hover:bg-muted hover:text-foreground"
         >
           {sliceLabel(slice)} {score === null ? "–" : `${score}%`}
         </Link>

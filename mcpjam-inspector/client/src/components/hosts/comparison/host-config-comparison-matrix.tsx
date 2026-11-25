@@ -44,7 +44,10 @@ import {
 
 interface HostConfigComparisonMatrixProps {
   subjects: ReadonlyArray<HostComparisonSubject>;
-  renderFieldSummary?: (field: HostConfigFieldDef) => React.ReactNode;
+  summaryColumn?: {
+    label: string;
+    render: (field: HostConfigFieldDef) => React.ReactNode;
+  };
   fields?: ReadonlyArray<HostConfigFieldDef>;
   /** When true, hide rows whose value is identical across every host. */
   divergingOnly?: boolean;
@@ -83,7 +86,7 @@ interface HostConfigComparisonMatrixProps {
  */
 export function HostConfigComparisonMatrix({
   subjects,
-  renderFieldSummary,
+  summaryColumn,
   fields = HOST_CONFIG_FIELDS,
   divergingOnly = false,
   supportFilter = "all",
@@ -217,7 +220,10 @@ export function HostConfigComparisonMatrix({
           )}
           style={
             mobileOptimized
-              ? { width: 140 + displaySubjects.length * 132 }
+              ? {
+                  width:
+                    140 + (summaryColumn ? 104 : 0) + displaySubjects.length * 132,
+                }
               : undefined
           }
         >
@@ -229,6 +235,7 @@ export function HostConfigComparisonMatrix({
                   : "w-[168px] sm:w-[300px]"
               }
             />
+            {summaryColumn && <col className="w-[104px] sm:w-[144px]" />}
             {displaySubjects.map((s) => (
               <col
                 key={s.hostId}
@@ -248,6 +255,14 @@ export function HostConfigComparisonMatrix({
                   Field
                 </span>
               </th>
+              {summaryColumn && (
+                <th
+                  scope="col"
+                  className="sticky top-0 z-20 border-b border-l border-border bg-card px-2 py-3 text-[11px] uppercase tracking-[0.12em] text-muted-foreground"
+                >
+                  {summaryColumn.label}
+                </th>
+              )}
               {displaySubjects.map((s) => (
                 <HostColumnHeader
                   key={s.hostId}
@@ -266,6 +281,7 @@ export function HostConfigComparisonMatrix({
               <VerifiedAtRow
                 subjects={displaySubjects}
                 mobileOptimized={mobileOptimized}
+                hasSummaryColumn={Boolean(summaryColumn)}
               />
             ) : null}
             {groups.map((group, groupIndex) => {
@@ -291,7 +307,7 @@ export function HostConfigComparisonMatrix({
                   visibleFieldIds={visibleFieldIds}
                   showDescriptions={showDescriptions}
                   mobileOptimized={mobileOptimized}
-                  renderFieldSummary={renderFieldSummary}
+                  summaryColumn={summaryColumn}
                 />
               );
             })}
@@ -305,9 +321,11 @@ export function HostConfigComparisonMatrix({
 function VerifiedAtRow({
   subjects,
   mobileOptimized,
+  hasSummaryColumn,
 }: {
   subjects: ReadonlyArray<HostComparisonSubject>;
   mobileOptimized: boolean;
+  hasSummaryColumn: boolean;
 }) {
   return (
     <tr className="border-b border-border bg-card">
@@ -321,6 +339,7 @@ function VerifiedAtRow({
           Verified at
         </span>
       </td>
+      {hasSummaryColumn && <td className="border-l border-border" />}
       {subjects.map((subject) => (
         <td
           key={subject.hostId}
@@ -356,7 +375,7 @@ function VerifiedAtRow({
 }
 
 interface SectionRowsProps {
-  renderFieldSummary?: HostConfigComparisonMatrixProps["renderFieldSummary"];
+  summaryColumn?: HostConfigComparisonMatrixProps["summaryColumn"];
   index: number;
   sectionLabel: string;
   divergeCount: number;
@@ -373,7 +392,7 @@ interface SectionRowsProps {
 }
 
 function SectionRows({
-  renderFieldSummary,
+  summaryColumn,
   index,
   sectionLabel,
   divergeCount,
@@ -385,7 +404,7 @@ function SectionRows({
   showDescriptions,
   mobileOptimized,
 }: SectionRowsProps) {
-  const colSpan = subjects.length + 1;
+  const colSpan = subjects.length + (summaryColumn ? 2 : 1);
   return (
     <>
       <tr>
@@ -441,7 +460,7 @@ function SectionRows({
             colSpan={colSpan}
             showDescriptions={showDescriptions}
             mobileOptimized={mobileOptimized}
-            renderFieldSummary={renderFieldSummary}
+            summaryColumn={summaryColumn}
           />
         );
       })}
@@ -450,7 +469,7 @@ function SectionRows({
 }
 
 function SubsectionRows({
-  renderFieldSummary,
+  summaryColumn,
   label,
   fields,
   subjects,
@@ -460,7 +479,7 @@ function SubsectionRows({
   showDescriptions,
   mobileOptimized,
 }: {
-  renderFieldSummary?: HostConfigComparisonMatrixProps["renderFieldSummary"];
+  summaryColumn?: HostConfigComparisonMatrixProps["summaryColumn"];
   label: string;
   fields: ReadonlyArray<HostConfigFieldDef>;
   subjects: ReadonlyArray<HostComparisonSubject>;
@@ -487,7 +506,7 @@ function SubsectionRows({
           diverges={divergingIds.has(field.id)}
           showDescriptions={showDescriptions}
           mobileOptimized={mobileOptimized}
-          summary={renderFieldSummary?.(field)}
+          summaryColumn={summaryColumn}
         />
       ))}
     </>
@@ -495,7 +514,7 @@ function SubsectionRows({
 }
 
 function FieldRow({
-  summary,
+  summaryColumn,
   field,
   subjects,
   coverageSubjects,
@@ -503,7 +522,7 @@ function FieldRow({
   showDescriptions,
   mobileOptimized,
 }: {
-  summary?: React.ReactNode;
+  summaryColumn?: HostConfigComparisonMatrixProps["summaryColumn"];
   field: HostConfigFieldDef;
   subjects: ReadonlyArray<HostComparisonSubject>;
   coverageSubjects: ReadonlyArray<HostComparisonSubject>;
@@ -513,7 +532,7 @@ function FieldRow({
 }) {
   // caniuse "global support" equivalent — only meaningful when comparing ≥2 hosts.
   const coverage =
-    summary === undefined && coverageSubjects.length >= 2
+    !summaryColumn && coverageSubjects.length >= 2
       ? rowCoverage(
           field,
           coverageSubjects.map((s) => s.config),
@@ -579,13 +598,17 @@ function FieldRow({
             </Tooltip>
           )}
         </div>
-        {summary}
         {field.description && showDescriptions && (
           <div className="mt-1 text-[11px] leading-snug text-muted-foreground">
             {field.description}
           </div>
         )}
       </td>
+      {summaryColumn && (
+        <td className="border-l border-border px-2 py-2.5 align-top sm:px-3">
+          {summaryColumn.render(field)}
+        </td>
+      )}
       {subjects.map((s) => (
         <td
           key={s.hostId}
