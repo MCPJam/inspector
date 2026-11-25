@@ -4,6 +4,8 @@ import { getRedactedConfigFlag } from "../server-auth";
 // Compare the saved inputs that can change the form, including URL values
 // recreated by server sync. Connection results and token refreshes are runtime
 // state and should not discard a draft or hide values the editor revealed.
+// OAuth scopes and client IDs learned from tokens or local storage alone are
+// read on the next form initialization, such as when the editor reopens.
 export function getServerFormSource(server: ServerWithName) {
   const { config, oauthFlowProfile } = server;
   return {
