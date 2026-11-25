@@ -1,3 +1,4 @@
+import { inspectorDiscoveryRunMetadata } from "../../utils/discovery-run-metadata";
 import { capRequestPayloadsForPersist } from "../../utils/live-chat-trace-stream";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
@@ -727,6 +728,7 @@ export function buildIterationFinishParams(args: {
   // Metadata includes structured timeout and experiment attribution.
   iterationMetadataBase: Record<string, unknown>;
   hostPolicy?: HostExecutionPolicy;
+  nativeHarness?: boolean;
   toolSignals?: ToolExposureSignals;
   /**
    * Folded run-level connect / tools-list evidence. Threaded into the
@@ -1046,6 +1048,7 @@ export function buildIterationFinishParams(args: {
             injectOpenAiCompat === true,
           )
         : {}),
+      ...inspectorDiscoveryRunMetadata(hostPolicy?.runUnloadedToolCalls, args.nativeHarness),
     },
   };
 }
@@ -1345,6 +1348,14 @@ export async function finalizeEvalIteration(
 
   const fanout = await persistEvalTraceFanout({
     convexClient,
+    ...(typeof metadata?.engineVersion === "string" ? {
+      discoveryAtTurn: {
+        engineVersion: metadata.engineVersion,
+        ...(typeof metadata.runUnloadedToolCalls === "boolean"
+          ? { runUnloadedToolCalls: metadata.runUnloadedToolCalls }
+          : {}),
+      },
+    } : {}),
     iterationId,
     iterationStartedAt: startedAt,
     messages,

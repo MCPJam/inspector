@@ -3503,6 +3503,23 @@ describe("v1 write routes", () => {
       });
     });
 
+    it.each([
+      [undefined, {}],
+      [{ runUnloadedToolCalls: false, engineVersion: "3.24.1", privateNote: "internal" },
+        { runUnloadedToolCalls: false, engineVersion: "3.24.1" }],
+    ])("exports only recorded discovery settings in an eval trace", async (metadata, expected) => {
+      convexQueryMock
+        .mockResolvedValueOnce(RUN_DOC)
+        .mockResolvedValueOnce({ suiteRunId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", metadata });
+      convexActionMock.mockResolvedValueOnce({ messages: [] });
+      const res = await request(
+        makeApp(), "GET",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx/iterations/iter1xxxxxxxxxxxxxxxxxxxxxxxxxxx/trace",
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ messages: [], ...expected });
+    });
+
     it("returns the trace blob and 404s with TRACE_NOT_AVAILABLE when missing", async () => {
       convexQueryMock
         .mockResolvedValueOnce(RUN_DOC)

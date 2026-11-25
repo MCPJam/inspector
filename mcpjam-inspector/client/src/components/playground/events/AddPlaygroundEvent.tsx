@@ -228,7 +228,7 @@ function ConfigureEvent({
         className="text-xs"
       >
         <summary className="cursor-pointer py-2 text-muted-foreground">
-          Delivery · {form.mode ?? "Unavailable"}
+          Delivery · {form.mode ?? (runtime.host ? "Unavailable" : "Loading…")}
         </summary>
         <SubscribeDelivery
           form={form}

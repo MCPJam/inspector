@@ -1,3 +1,4 @@
+import { originalMcpInputSchema } from "../original-mcp-input-schema.js";
 /**
  * Tool conversion utilities for integrating MCP tools with Vercel AI SDK
  */
@@ -48,7 +49,7 @@ export function ensureJsonSchemaObject(schema: unknown): JSONSchema7 {
     const record = schema as Record<string, unknown>;
     const base: JSONSchema7 = record.jsonSchema
       ? ensureJsonSchemaObject(record.jsonSchema)
-      : (record as JSONSchema7);
+      : { ...record } as JSONSchema7;
 
     // Many MCP tools omit the top-level type; Anthropic requires an object schema
     if (!("type" in base) || base.type === undefined) {
@@ -381,6 +382,7 @@ export async function convertMCPToolsToVercelTools(
       });
     }
 
+    Object.assign(vercelTool, { [originalMcpInputSchema]: inputSchema });
     (vercelTool as any)[MCP_PRESERVE_RAW_RESULT_FOR_UI] = true;
     tools[name] = vercelTool;
   }

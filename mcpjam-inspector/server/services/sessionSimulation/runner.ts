@@ -351,6 +351,7 @@ export interface SyntheticHostRuntime {
   maxOutputTokens?: number;
   requireToolApproval: boolean;
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   progressiveToolDiscovery?: boolean;
   requireNativeToolDiscovery?: boolean;
   builtInToolIds?: string[];
@@ -575,6 +576,7 @@ export async function runSyntheticHostSession(
     maxSteps,
     maxOutputTokens,
     respectToolVisibility,
+    runUnloadedToolCalls,
     progressiveToolDiscovery,
     builtInToolIds,
     browserToolPolicy,
@@ -1045,6 +1047,7 @@ export async function runSyntheticHostSession(
       temperature,
       requireToolApproval,
       respectToolVisibility,
+      runUnloadedToolCalls,
       modelVisibleMcpToolResults,
       tasks,
       ...(harness ? { harness } : {}),

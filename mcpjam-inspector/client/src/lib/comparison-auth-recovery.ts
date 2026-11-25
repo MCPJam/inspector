@@ -42,6 +42,17 @@ export function registerComparisonColumn(
     if (!group.size) columns.delete(id);
   };
 }
+/**
+ * The saved chat of each mounted column of a comparison, by `kind:compareId`.
+ * A column with no messages has no saved row yet, so it is left out.
+ */
+export function comparisonColumnSessions(id: string): Map<string, string> {
+  return new Map(
+    [...(columns.get(id)?.entries() ?? [])].flatMap(([key, column]) =>
+      column.hasMessages ? [[key, column.chatSessionId] as const] : [],
+    ),
+  );
+}
 export function prepareComparisonAuthRecovery(
   id: string,
   clickedColumn: string,

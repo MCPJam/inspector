@@ -432,7 +432,6 @@ export function HomeChecklist({
   if (!loaded) return <Skeleton className="h-[30rem] w-full rounded-xl" />;
 
   const shownIndex = STEP_ORDER.indexOf(shownStep);
-  const projectName: string = ctx.activeProject?.name ?? "your project";
 
   return (
     <section aria-labelledby="home-checklist-title" className="space-y-4">
@@ -469,7 +468,7 @@ export function HomeChecklist({
             id="home-checklist-title"
             className="text-sm font-semibold text-card-foreground"
           >
-            Finish setting up {projectName}
+            Finish setting up your project
           </h2>
           {doneCount >= SKIP_REST_AFTER ? (
             <Button
