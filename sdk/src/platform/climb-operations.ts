@@ -48,7 +48,7 @@ const startInput = z
       .min(1)
       .max(10)
       .optional()
-      .describe("The suite's environments to climb in, by name or ID. Omit for every environment the suite has, up to 10."),
+      .describe("The suite's environments to climb in, by name or by the ID `get_eval_suite` lists as `environmentIds`. Omit for every environment the suite has, up to 10."),
     picker: z
       .enum(["person", "agent", "mcpjam"])
       .optional()
@@ -58,7 +58,7 @@ const startInput = z
     minImprovementPercent: z.number().min(0.01).max(100).optional().describe("The smallest move of tokens, cost or tool calls that counts, in percent. Default 1."),
     targetPercent: z.number().gt(0).lt(100).optional().describe("For tokens, cost or tool calls: stop when the best so far uses this percent less than the baseline, in every environment that recorded the measure. 5 is 5% fewer."),
     groupSizes: sizes.optional().describe("How many cases go in each group. Give this or `groups`."),
-    groups: lists.optional().describe("The case keys in each group (a case without a key is its ID). Give this or `groupSizes`. A case not listed joins steering."),
+    groups: lists.optional().describe("The cases in each group, each by the `key` or the `id` that `list_eval_cases` shows. Give this or `groupSizes`. A case not listed joins steering."),
     seed: z
       .union([text.max(100), z.number().int().safe().transform(String)])
       .optional()
@@ -95,7 +95,7 @@ export const startClimbOperation: PlatformOperation<StartClimbInput, StartClimbR
     const suiteId = await resolveSuiteId(client, project, input.suite, signal);
     const serverId = await resolveServerId(client, project, input.server, signal);
     const environmentIds = input.environments
-      ? await resolveEnvironmentIds(client, project, input.environments, signal)
+      ? await resolveEnvironmentIds(client, project, suiteId, input.environments, signal)
       : undefined;
     const started = await client.startClimb(
       {
@@ -128,7 +128,7 @@ const updateInput = z.object({
   measure: measureInput.optional().describe("Change what the climb is for. Only until round 1 settles, and only to a measure every environment recorded."),
   minImprovementPercent: z.number().min(0.01).max(100).optional().describe("The smallest move of tokens, cost or tool calls that counts, in percent."),
   targetPercent: z.number().gt(0).lt(100).nullable().optional().describe("The target for tokens, cost or tool calls, in percent fewer. null clears it."),
-  moveToConfirmation: z.array(text).min(1).optional().describe("Case keys to set aside as confirmation cases. Only a case no round has run."),
+  moveToConfirmation: z.array(text).min(1).optional().describe("Cases to set aside as confirmation cases, each by the `key` or `id` that `list_eval_cases` shows. Only a case no round has run."),
 });
 
 export type UpdateClimbInput = z.infer<typeof updateInput>;

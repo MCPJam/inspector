@@ -14200,6 +14200,10 @@
             "type": "string",
             "description": "The case's effective declared id. Absent on cases authored before declared identity existed."
           },
+          "key": {
+            "type": "string",
+            "description": "What a climb calls this case: the platform's own key, else the case `id`. Give it, or the `id`, to `start_climb` and `update_climb` to name the case."
+          },
           "title": {
             "type": "string"
           },
@@ -15252,6 +15256,10 @@
           "declaredId": {
             "type": "string",
             "description": "The case's effective declared id. Absent on cases authored before declared identity existed."
+          },
+          "key": {
+            "type": "string",
+            "description": "What a climb calls this case: the platform's own key, else the case `id`. Give it, or the `id`, to `start_climb` and `update_climb` to name the case."
           },
           "title": {
             "type": "string"

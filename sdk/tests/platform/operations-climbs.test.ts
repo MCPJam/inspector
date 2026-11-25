@@ -34,6 +34,8 @@ const ENVIRONMENTS = [
   { id: "env-stg", projectId: PROJECT.id, name: "Staging", hostId: "h", revision: 1, archived: false, createdAt: 1, updatedAt: 2 },
   { id: "env-prod", projectId: PROJECT.id, name: "Prod", hostId: "h", revision: 1, archived: false, createdAt: 1, updatedAt: 2 },
 ];
+// A composed environment the suite attached shows in `environmentIds` but not in the project's list.
+const ATTACHED = ["env-stg", "env-prod", "env-composed"];
 const CLIMB = { climbId: "climb-1", suiteId: SUITE.id, state: "baselining", limits: {} };
 
 /** A client whose API answers from `routes` (a Response factory or a body), recording each body. */
@@ -46,6 +48,10 @@ function clientWith(routes: Record<string, unknown | (() => Response)>) {
     if (key.endsWith("/eval-suites")) return Response.json({ items: [SUITE] });
     if (key.endsWith("/servers")) return Response.json({ items: [SERVER] });
     if (key.endsWith("/environments")) return Response.json({ items: ENVIRONMENTS });
+    // The suite's detail: the environments attached to it, listed or not.
+    if (key === "GET /api/v1/projects/project-1/eval-suites/suite-1") {
+      return Response.json({ ...SUITE, environmentIds: ATTACHED });
+    }
     if (key in routes) {
       if (init?.body) bodies.push(JSON.parse(String(init.body)));
       const answer = routes[key];
@@ -137,6 +143,25 @@ describe("start_climb", () => {
     await expect(
       startClimbOperation.execute({ suite: "Smoke", server: "Echo", roundLimit: 1, creditLimit: 5, environments: ["Nope"] }, { client, ...CONTEXT })
     ).rejects.toThrow(/Environment "Nope" was not found/);
+    expect(bodies).toEqual([]);
+  });
+
+  it("takes an environment id the suite lists even when the project's list leaves it out", async () => {
+    const { client, bodies } = clientWith({ [`POST ${CLIMBS}`]: CLIMB });
+    await startClimbOperation.execute(
+      { suite: "Smoke", server: "Echo", roundLimit: 1, creditLimit: 5, environments: ["env-composed", "Staging"] },
+      { client, ...CONTEXT }
+    );
+    expect(bodies).toEqual([
+      expect.objectContaining({ environmentIds: ["env-composed", "env-stg"] }),
+    ]);
+  });
+
+  it("says which ids the suite has when an environment matches none", async () => {
+    const { client, bodies } = clientWith({});
+    await expect(
+      startClimbOperation.execute({ suite: "Smoke", server: "Echo", roundLimit: 1, creditLimit: 5, environments: ["env-elsewhere"] }, { client, ...CONTEXT })
+    ).rejects.toThrow(/suite's attached environments are: Staging \(id: env-stg\), Prod \(id: env-prod\), \(unnamed\) \(id: env-composed\)\..*environmentIds/s);
     expect(bodies).toEqual([]);
   });
 

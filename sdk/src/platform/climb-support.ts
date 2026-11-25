@@ -11,7 +11,8 @@ import {
   resolveSavedServer,
   toSelectedProjectInfo,
 } from "./operation-support.js";
-import { resolveByIdOrName } from "./resource-selectors.js";
+import { PlatformApiError } from "./errors.js";
+import { formatResourceList, resolutionError, resolveByIdOrName } from "./resource-selectors.js";
 import type { PlatformOperationContext } from "./operations.js";
 import type { PlatformProject } from "./types.js";
 import type { SelectedProjectInfo } from "./show-servers.js";
@@ -51,14 +52,44 @@ export async function resolveServerId(
   return (await resolveSavedServer(client, project, selector, signal)).id;
 }
 
+/**
+ * The suite's environments a climb runs in, by the id the suite shows or by name.
+ *
+ * The id a suite lists for an attached environment is accepted as it is: the
+ * project's environment list leaves out the unnamed environments a composed
+ * run attaches, so resolving only against that list refused ids the suite had
+ * just shown ("project has none"). A name or an id the suite does not list
+ * still resolves against the project's named environments, and one that
+ * matches neither says which ids the suite has.
+ */
 export async function resolveEnvironmentIds(
   client: PlatformApiClient,
   project: PlatformProject,
+  suiteId: string,
   selectors: readonly string[],
   signal: AbortSignal | undefined
 ): Promise<string[]> {
-  const page = await client.listEnvironments({ projectId: project.id }, { signal });
-  return selectors.map(
-    (selector) => resolveByIdOrName(page.items, selector, "Environment", `project "${project.name}"`).id
-  );
+  const [suite, page] = await Promise.all([
+    client.getEvalSuite({ projectId: project.id, suiteId }, { signal }),
+    client.listEnvironments({ projectId: project.id }, { signal }),
+  ]);
+  const attached = suite.environmentIds ?? [];
+  return selectors.map((raw) => {
+    const selector = raw.trim();
+    if (attached.includes(selector)) return selector;
+    try {
+      return resolveByIdOrName(page.items, selector, "Environment", `project "${project.name}"`).id;
+    } catch (error) {
+      if (!(error instanceof PlatformApiError) || error.code !== "NOT_FOUND") throw error;
+      const names = new Map(page.items.map((item) => [item.id, item.name]));
+      const have = attached.length
+        ? `The suite's attached environments are: ${formatResourceList(
+            attached.map((id) => ({ id, name: names.get(id) }))
+          )}.`
+        : "The suite has no attached environments. Attach one, then start the climb.";
+      throw resolutionError(
+        `Environment "${selector}" was not found among this suite's environments or the project's named ones. ${have} Give one of those ids (get_eval_suite lists them as environmentIds) or a name.`
+      );
+    }
+  });
 }

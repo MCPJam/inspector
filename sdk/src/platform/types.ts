@@ -2319,6 +2319,11 @@ export interface PlatformEvalCaseBase {
    * per-case routes take as their path parameter.
    */
   declaredId?: string;
+  /**
+   * What a climb calls this case: the platform's own key, else the row `id`.
+   * `start_climb` and `update_climb` take it, or the `id`, to name a case.
+   */
+  key?: string;
   title: string;
   /** Optional authored analytics grouping label; absent is unlabelled. */
   intent?: string;

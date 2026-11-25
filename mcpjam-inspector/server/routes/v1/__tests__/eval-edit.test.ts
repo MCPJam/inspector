@@ -1797,7 +1797,7 @@ describe("v1 eval-edit routes", () => {
     ];
     const PROMPT = [{ id: "s1", kind: "prompt", prompt: "hi" }];
 
-    it("POST stores the replies with the case, and GET reads them back", async () => {
+    it("POST stores the replies with the case, and GET reads them back, with the key a climb names it by", async () => {
       const res = await request("POST", CASES, {
         title: "asks",
         steps: PROMPT,
@@ -1813,6 +1813,18 @@ describe("v1 eval-edit routes", () => {
       );
       const read = (await (await request("GET", CASE_URL)).json()) as any;
       expect(read.inputAnswers).toEqual(REPLIES);
+      expect(read.key).toBe("ui_abc");
+    });
+
+    it("shows a case's id as its key when the platform gave it none", async () => {
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestCase"
+          ? Promise.resolve({ ...CASE_DOC, caseKey: undefined })
+          : defaultQueryImpl(name),
+      );
+      const read = (await (await request("GET", CASE_URL)).json()) as any;
+      expect(read.key).toBe("case1xxxxxxxxxxxxxxxxxxxxxxxxxxx");
+      expect(read).not.toHaveProperty("inputAnswers");
     });
 
     it("POST /cases/batch carries each case's replies", async () => {

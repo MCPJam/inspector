@@ -2320,6 +2320,13 @@ function toCaseDto(testCase: CaseDoc, vocabulary: EvalVocabulary = 1) {
     ...(typeof testCase.declaredCaseId === "string"
       ? { declaredId: testCase.declaredCaseId }
       : {}),
+    // What a climb calls the case. The platform mints the key when a case is
+    // authored here, and nothing else shows it, so a climb's case lists could
+    // not name such a case. Falls back to the id, as the climb does.
+    key:
+      typeof testCase.caseKey === "string" && testCase.caseKey
+        ? testCase.caseKey
+        : String(testCase._id),
     title: testCase.title ?? "",
     // An assert step's assertion carries a role too, and it is stored beside
     // the case's own checks — so it projects the same way.
