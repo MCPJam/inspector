@@ -1,4 +1,5 @@
 import { UnloadedToolCallsField } from "./UnloadedToolCallsField";
+import { ToolResultStructuredContentField } from "./ToolResultStructuredContentField";
 import { effectiveHarnessId } from "@/shared/harness-descriptors";
 import { useMemo, useState, type ReactNode } from "react";
 import { Info } from "lucide-react";
@@ -628,6 +629,15 @@ export function BehaviorTab({
             disabled={readOnly || progressiveTriValue === "off"}
             discoveryOff={progressiveTriValue === "off"}
             onChange={(value) => update({ runUnloadedToolCalls: value })}
+          />
+        )}
+
+        {/* Harness runs drop this rule and let the real CLI apply its own. */}
+        {selectedHarness ? null : (
+          <ToolResultStructuredContentField
+            policy={draft.modelVisibleMcpToolResults}
+            disabled={readOnly}
+            onChange={(next) => update({ modelVisibleMcpToolResults: next })}
           />
         )}
 
