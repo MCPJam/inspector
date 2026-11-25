@@ -54,6 +54,7 @@ export async function drawCaniuseReportCard(
   title: string,
   slice: string,
   coverage: CapabilityCoverage,
+  signal: AbortSignal,
 ) {
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Canvas unavailable");
@@ -103,6 +104,7 @@ export async function drawCaniuseReportCard(
     ),
     document.fonts.ready,
   ]);
+  if (signal.aborted) return;
   const imageBySrc = new Map(images);
 
   fill(0, 0, CARD_WIDTH, CARD_HEIGHT, 0, "--background");

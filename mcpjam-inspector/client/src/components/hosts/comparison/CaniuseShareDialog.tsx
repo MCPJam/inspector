@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Download, Link2, Share2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -39,7 +39,7 @@ export function CaniuseShareDialog({
   );
   const [feedback, setFeedback] = useState("");
   const [showLink, setShowLink] = useState(false);
-  const canvas = useRef<HTMLCanvasElement>(null);
+  const [canvas, setCanvas] = useState<HTMLCanvasElement | null>(null);
   const url = buildCapabilityShareUrl(slug, slice);
   const label = slice ? sliceLabel(slice) : "";
   const post = [
@@ -57,20 +57,19 @@ export function CaniuseShareDialog({
   linkedin.searchParams.set("url", url);
 
   useEffect(() => {
-    if (!open || !canvas.current) return;
-    let active = true;
-    void drawCaniuseReportCard(canvas.current, title, label, coverage).then(
+    if (!open || !canvas) return;
+    const controller = new AbortController();
+    setImageState("loading");
+    void drawCaniuseReportCard(canvas, title, label, coverage, controller.signal).then(
       () => {
-        if (active) setImageState("ready");
+        if (!controller.signal.aborted) setImageState("ready");
       },
       () => {
-        if (active) setImageState("error");
+        if (!controller.signal.aborted) setImageState("error");
       },
     );
-    return () => {
-      active = false;
-    };
-  }, [open, title, label, coverage]);
+    return () => controller.abort();
+  }, [open, canvas, title, label, coverage]);
 
   async function copyLink() {
     try {
@@ -83,7 +82,7 @@ export function CaniuseShareDialog({
   }
 
   function download() {
-    canvas.current?.toBlob((blob) => {
+    canvas?.toBlob((blob) => {
       if (!blob) {
         setFeedback("Could not download the card. Try again.");
         return;
@@ -121,7 +120,7 @@ export function CaniuseShareDialog({
         <DialogTitle>Share capability</DialogTitle>
         <div className="relative aspect-[1200/630] overflow-hidden rounded-lg bg-background">
           <canvas
-            ref={canvas}
+            ref={setCanvas}
             width={CARD_WIDTH}
             height={CARD_HEIGHT}
             className="block h-auto w-full"
