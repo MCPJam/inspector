@@ -61,6 +61,7 @@
             "icon": "bug",
             "pages": [
               "inspector/playground",
+              "inspector/events",
               {
                 "group": "Test MCP Apps",
                 "icon": "app-window",
@@ -510,10 +511,6 @@
     {
       "source": "/inspector/plugins",
       "destination": "/inspector/skills"
-    },
-    {
-      "source": "/inspector/events",
-      "destination": "/cli/events"
     },
     {
       "source": "/inspector/workspaces",
