@@ -33,9 +33,9 @@ export function useServerConnectionOperations(
   );
 
   useEffect(() => {
-    const pending = prompts.current;
+    const serverTokens = tokens.current;
     return () => {
-      for (const name of pending.keys()) nextOpToken(name);
+      for (const name of serverTokens.keys()) nextOpToken(name);
     };
   }, [nextOpToken]);
 

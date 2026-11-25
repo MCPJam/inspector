@@ -4309,6 +4309,44 @@ describe("useServerState auth mode regressions", () => {
     );
   });
 
+  it("does not ask for Auto authorization when a probe finishes after unmount", async () => {
+    type ProbeResult = {
+      success: false;
+      error: string;
+      oauthRequired: true;
+    };
+    let resolveProbe!: (result: ProbeResult) => void;
+    reconnectServerMock.mockReturnValueOnce(
+      new Promise<ProbeResult>((resolve) => {
+        resolveProbe = resolve;
+      }),
+    );
+    const appState = createAppState();
+    appState.projects.default.servers["demo-server"].authMethod = "auto";
+    const { result, unmount } = renderUseServerState(vi.fn(), appState);
+
+    let reconnect:
+      | ReturnType<typeof result.current.reconnectServerWithResult>
+      | undefined;
+    act(() => {
+      reconnect = result.current.reconnectServerWithResult("demo-server");
+    });
+    await waitFor(() => expect(reconnectServerMock).toHaveBeenCalledOnce());
+
+    unmount();
+    await act(async () => {
+      resolveProbe({
+        success: false,
+        error: "Authorization required",
+        oauthRequired: true,
+      });
+    });
+
+    expect(useAutoOAuthAuthorizationStore.getState().queue).toHaveLength(0);
+    await expect(reconnect).resolves.toMatchObject({ status: "superseded" });
+    expect(initiateOAuthMock).not.toHaveBeenCalled();
+  });
+
   it("cancels Auto authorization only when the displayed server disappears from the catalog", async () => {
     reconnectServerMock.mockResolvedValueOnce({
       success: false,
