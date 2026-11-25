@@ -132,6 +132,24 @@
             ]
           },
           {
+            "group": "Swarms",
+            "icon": "users-round",
+            "pages": [
+              "swarms/overview",
+              "swarms/run-your-first-swarm",
+              "swarms/read-results"
+            ]
+          },
+          {
+            "group": "User Testing",
+            "icon": "clipboard-list",
+            "pages": [
+              "user-testing/overview",
+              "user-testing/create-your-first-study",
+              "user-testing/read-results"
+            ]
+          },
+          {
             "group": "Configure",
             "icon": "settings",
             "pages": [
