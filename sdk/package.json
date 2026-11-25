@@ -246,7 +246,7 @@
     "ajv": "^8.20.0",
     "jszip": "^3.10.2",
     "ollama-ai-provider-v2": "^4.0.1",
-    "posthog-node": "^5.54.1",
+    "posthog-node": "^6.0.5",
     "xml-crypto": "^6.3.2",
     "xpath": "^0.0.34",
     "yaml": "^2.9.1",
