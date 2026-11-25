@@ -2,6 +2,10 @@ import { act, render, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OAuthAuthorizationModal } from "../OAuthAuthorizationModal";
+import {
+  OAUTH_POPUP_MARKER_TTL_MS,
+  readOAuthPopupMarker,
+} from "@/lib/oauth/popup-handoff-marker";
 
 const hint = vi.hoisted(() => ({
   showOAuthCallbackHint: vi.fn(),
@@ -122,6 +126,7 @@ describe("OAuthAuthorizationModal", () => {
 
 describe("OAuthAuthorizationModal callback hint", () => {
   let popup: { closed: boolean };
+  const onCallback = vi.fn();
 
   function Harness() {
     const [open, setOpen] = useState(true);
@@ -129,9 +134,18 @@ describe("OAuthAuthorizationModal callback hint", () => {
       <OAuthAuthorizationModal
         open={open}
         onOpenChange={setOpen}
-        authorizationUrl="https://auth.example.com/authorize"
+        authorizationUrl="https://auth.example.com/authorize?state=flow-state"
+        onCallback={onCallback}
       />
     );
+  }
+
+  function postCallback(data: Record<string, unknown>) {
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", { origin: window.location.origin, data }),
+      );
+    });
   }
 
   beforeEach(() => {
@@ -145,35 +159,87 @@ describe("OAuthAuthorizationModal callback hint", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    localStorage.clear();
   });
 
-  it("shows the hint when the popup closes with no code back", () => {
+  // A COOP provider page makes Chrome report the popup closed straight away
+  // while the user is still signing in.
+  it("keeps waiting when the popup reads as closed, then hints at the deadline", () => {
     render(<Harness />);
 
-    popup.closed = true;
-    act(() => {
-      vi.advanceTimersByTime(500);
-    });
-
-    expect(hint.showOAuthCallbackHint).toHaveBeenCalledWith("try again");
-  });
-
-  it("stays quiet when the code came back before the popup closed", () => {
-    render(<Harness />);
-
-    act(() => {
-      window.dispatchEvent(
-        new MessageEvent("message", {
-          origin: window.location.origin,
-          data: { type: "OAUTH_CALLBACK", code: "code" },
-        }),
-      );
-    });
     popup.closed = true;
     act(() => {
       vi.advanceTimersByTime(1_000);
     });
-
     expect(hint.showOAuthCallbackHint).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(OAUTH_POPUP_MARKER_TTL_MS);
+    });
+    expect(hint.showOAuthCallbackHint).toHaveBeenCalledWith("try again");
+  });
+
+  it("hands the first matching code to the tab and stays quiet", () => {
+    render(<Harness />);
+
+    popup.closed = true;
+    const message = {
+      type: "OAUTH_CALLBACK",
+      code: "code",
+      state: "flow-state",
+    };
+    postCallback(message);
+    postCallback(message);
+    act(() => {
+      vi.advanceTimersByTime(OAUTH_POPUP_MARKER_TTL_MS);
+    });
+
+    expect(onCallback).toHaveBeenCalledTimes(1);
+    expect(onCallback).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "code", state: "flow-state" }),
+    );
+    expect(hint.showOAuthCallbackHint).not.toHaveBeenCalled();
+  });
+
+  it("ignores a code whose state belongs to another sign-in", () => {
+    render(<Harness />);
+
+    postCallback({ type: "OAUTH_CALLBACK", code: "code", state: "other" });
+
+    expect(onCallback).not.toHaveBeenCalled();
+  });
+
+  it("hands a provider error to the tab", () => {
+    render(<Harness />);
+
+    postCallback({
+      type: "OAUTH_CALLBACK",
+      state: "flow-state",
+      error: "access_denied",
+      errorDescription: "The user denied access",
+    });
+
+    expect(onCallback).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: "access_denied",
+        errorDescription: "The user denied access",
+        code: undefined,
+      }),
+    );
+  });
+
+  it("writes the state marker before the popup opens and deletes it once used", () => {
+    vi.mocked(window.open).mockImplementation(() => {
+      expect(readOAuthPopupMarker("flow-state")).toMatchObject({
+        flow: "debugger",
+      });
+      return popup as unknown as Window;
+    });
+    render(<Harness />);
+
+    postCallback({ type: "OAUTH_CALLBACK", code: "code", state: "flow-state" });
+
+    expect(window.open).toHaveBeenCalledTimes(1);
+    expect(readOAuthPopupMarker("flow-state")).toBeNull();
   });
 });

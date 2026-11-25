@@ -4388,7 +4388,7 @@ describe("ConformanceTab", () => {
     );
     expect(openSpy).toHaveBeenLastCalledWith(
       "https://auth.example.com/authorize",
-      "oauth_conformance_auth",
+      expect.stringMatching(/^oauth_authorization_/),
       expect.any(String),
     );
     await screen.findByText("Waiting for browser authorization...");
