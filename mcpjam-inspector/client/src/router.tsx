@@ -556,6 +556,15 @@ export function createAppRouter(): AppRouter {
           {
             path: "__e2e/oauth-debugger",
             lazy: async () => {
+              if (
+                new URLSearchParams(window.location.search).get("surface") ===
+                "conformance"
+              ) {
+                const { ConformanceOAuthE2EHarness } = await import(
+                  "./components/e2e/ConformanceOAuthE2EHarness"
+                );
+                return { Component: ConformanceOAuthE2EHarness };
+              }
               const { OAuthDebuggerE2EHarness } =
                 await import("./components/e2e/OAuthDebuggerE2EHarness");
               return { Component: OAuthDebuggerE2EHarness };
