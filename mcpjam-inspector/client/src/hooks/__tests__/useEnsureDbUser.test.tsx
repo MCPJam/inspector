@@ -1,3 +1,4 @@
+import { getFunctionName, type FunctionReference } from "convex/server";
 import { readSignupCampaign } from "@/lib/signup-campaign";
 import { guestTabRecovery } from "@/lib/auth/guest-tab-recovery";
 import { act, renderHook, waitFor } from "@testing-library/react";
@@ -25,6 +26,7 @@ const mockState = vi.hoisted(() => ({
     isAuthenticated: true,
     isLoading: false,
   },
+  ensureCampaign: vi.fn(),
   ensureUser: vi.fn().mockResolvedValue(undefined),
   getGuestPromotionProof: vi.fn().mockResolvedValue(null),
   revokeGuestSessionAndCookie: vi.fn().mockResolvedValue(false),
@@ -43,7 +45,8 @@ const mockState = vi.hoisted(() => ({
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => mockState.convexAuth,
-  useMutation: () => mockState.ensureUser,
+  useMutation: (ref: FunctionReference<"mutation">) =>
+    getFunctionName(ref) === "users:ensureUserWithOutcome" ? mockState.ensureCampaign : mockState.ensureUser,
 }));
 
 vi.mock("posthog-js/react", () => ({
@@ -712,6 +715,26 @@ describe("useEnsureDbUser", () => {
     })));
   }
 
+  function campaignCookieJar() {
+    let receipt = "";
+    const write = vi.fn((value: string) => {
+      receipt = value.split(";")[0];
+    });
+    const previous = Object.getOwnPropertyDescriptor(document, "cookie");
+    Object.defineProperty(document, "cookie", {
+      configurable: true,
+      get: () => receipt,
+      set: write,
+    });
+    return {
+      write,
+      restore() {
+        if (previous) Object.defineProperty(document, "cookie", previous);
+        else Reflect.deleteProperty(document, "cookie");
+      },
+    };
+  }
+
   it.each([false, true])("acknowledges only the visit passed to the mutation (opt-out during signup: %s)", async (optOut) => {
     mockState.auth.user = { id: "workos-user-1" };
     mockState.actorKey = "workos-user-1";
@@ -719,10 +742,8 @@ describe("useEnsureDbUser", () => {
     vi.stubGlobal("location", new URL("https://app.mcpjam.com/"));
     const expiresAt = Date.now() + 1_905_000; // Website clock is two minutes ahead.
     websiteVisit(expiresAt);
-    let receipt = "";
-    vi.spyOn(document, "cookie", "get").mockImplementation(() => receipt);
-    vi.spyOn(document, "cookie", "set").mockImplementation((value) => { receipt = value.split(";")[0]; });
-    mockState.ensureUser.mockImplementationOnce(async () => {
+    const cookies = campaignCookieJar();
+    mockState.ensureCampaign.mockImplementationOnce(async () => {
       if (optOut) mockState.posthog = { is_capturing: () => false };
       websiteVisit(expiresAt + 1000, "linkedin/winter_launch");
       return { userId: "user-row", campaignApplied: true };
@@ -730,12 +751,13 @@ describe("useEnsureDbUser", () => {
     try {
       const { result } = renderHook(() => useEnsureDbUser());
       await waitFor(() => expect(result.current.isUserReady).toBe(true));
-      expect(mockState.ensureUser).toHaveBeenCalledWith({ signupCampaign: "linkedin/fall_launch" });
-      expect(receipt).toBe("__Host-mcpjam_signup_consumed=" + expiresAt);
+      expect(mockState.ensureCampaign).toHaveBeenCalledWith({ signupCampaign: "linkedin/fall_launch" });
+      expect(document.cookie).toBe("__Host-mcpjam_signup_consumed=" + expiresAt);
       expect(await readSignupCampaign(() => true)).toMatchObject({label: "linkedin/winter_launch"});
       websiteVisit(expiresAt);
       expect(await readSignupCampaign(() => true)).toBeUndefined();
     } finally {
+      cookies.restore();
       vi.unstubAllGlobals();
     }
   });
@@ -764,26 +786,28 @@ describe("useEnsureDbUser", () => {
     mockState.posthog = { is_capturing: capturing };
     vi.stubGlobal("location", new URL("https://app.mcpjam.com/"));
     websiteVisit(Date.now() + 900_000);
-    const write = vi.spyOn(document, "cookie", "set").mockImplementation(() => {});
+    const cookies = campaignCookieJar();
     if (scenario === "revoked session") {
-      mockState.ensureUser.mockResolvedValueOnce(null);
+      mockState.ensureCampaign.mockResolvedValueOnce(null);
     } else if (scenario === "returning user") {
-      mockState.ensureUser.mockResolvedValueOnce({ userId: "existing" });
+      mockState.ensureCampaign.mockResolvedValueOnce({ userId: "existing" });
     } else {
-      mockState.ensureUser.mockImplementationOnce(async () => {
+      mockState.ensureCampaign.mockImplementationOnce(async () => {
         capturing.mockReturnValue(false);
         throw new Error('Documents read from or written to the "users" table changed while this mutation was being run');
-      }).mockResolvedValueOnce("user-row");
+      });
     }
     try {
       const { result } = renderHook(() => useEnsureDbUser());
       await waitFor(() => expect(result.current.isUserReady).toBe(true));
-      expect(mockState.ensureUser.mock.calls[0][0]).toEqual({ signupCampaign: "linkedin/fall_launch" });
+      expect(mockState.ensureCampaign.mock.calls[0][0]).toEqual({ signupCampaign: "linkedin/fall_launch" });
       if (scenario === "opt-out before retry") {
-        expect(mockState.ensureUser.mock.calls[1][0]).toEqual({});
+        expect(mockState.ensureUser).toHaveBeenCalledWith({});
+        expect(mockState.ensureCampaign).toHaveBeenCalledTimes(1);
       }
-      expect(write).not.toHaveBeenCalled();
+      expect(cookies.write).not.toHaveBeenCalled();
     } finally {
+      cookies.restore();
       vi.unstubAllGlobals();
     }
   });
