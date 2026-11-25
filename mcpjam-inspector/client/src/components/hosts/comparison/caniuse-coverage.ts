@@ -89,8 +89,7 @@ export function capabilityCoverage(
 
 export type CapabilityCoverage = ReturnType<typeof capabilityCoverage>;
 
-export function eventsSupportSummary(coverage: CapabilityCoverage) {
-  const { full, measured, eventsMode } = coverage;
+export function eventsSupportSummary({ full, measured, eventsMode }: CapabilityCoverage) {
   const mode = eventsMode === "any" ? "at least one delivery mode" : `${eventsMode} delivery`;
   return `${full} of ${measured} clients with published results support ${mode}.`;
 }
