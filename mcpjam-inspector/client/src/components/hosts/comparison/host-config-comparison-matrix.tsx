@@ -210,7 +210,8 @@ export function HostConfigComparisonMatrix({
           // `overflow-auto` show a scrollbar only once the table actually
           // exceeds that height, not unconditionally.
           "min-h-0 overflow-auto",
-          mobileOptimized && "max-w-full [-webkit-overflow-scrolling:touch]",
+          mobileOptimized &&
+            "max-w-full [--matrix-field-width:140px] [-webkit-overflow-scrolling:touch] sm:[--matrix-field-width:300px]",
         )}
       >
         <table
@@ -231,7 +232,7 @@ export function HostConfigComparisonMatrix({
             <col
               className={
                 mobileOptimized
-                  ? "w-[140px] sm:w-[300px]"
+                  ? "w-[var(--matrix-field-width)]"
                   : "w-[168px] sm:w-[300px]"
               }
             />
@@ -605,7 +606,13 @@ function FieldRow({
         )}
       </td>
       {summaryColumn && (
-        <td className="border-l border-border px-2 py-2.5 align-top sm:px-3">
+        <td
+          className={cn(
+            "border-l border-border px-2 py-2.5 align-top sm:px-3",
+            // Keep focused adoption links clear of the sticky Field column.
+            mobileOptimized && "[&_a]:scroll-ml-[var(--matrix-field-width)]",
+          )}
+        >
           {summaryColumn.render(field)}
         </td>
       )}
