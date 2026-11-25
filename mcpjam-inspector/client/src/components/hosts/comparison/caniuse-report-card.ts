@@ -64,7 +64,11 @@ export async function drawCaniuseReportCard(
   signal: AbortSignal,
 ) {
   const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Canvas unavailable");
+  if (!ctx) {
+    throw new Error(
+      "Could not generate the report card. Close Share and try again.",
+    );
+  }
   const styles = getComputedStyle(canvas);
   const color = (name: string) => styles.getPropertyValue(name).trim();
   const font = (weight: number, size: number) => {
