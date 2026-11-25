@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Check, CircleHelp, Minus, X } from "lucide-react";
 import {
   Tooltip,
@@ -78,6 +79,7 @@ export function clientBadges(
 }
 
 export function ClientMap({ coverage }: { coverage: CapabilityCoverage }) {
+  const [openClient, setOpenClient] = useState<string | null>(null);
   return (
     <div className="grid gap-3">
       {groupResults(coverage)
@@ -104,11 +106,27 @@ export function ClientMap({ coverage }: { coverage: CapabilityCoverage }) {
                   : "No verification date";
                 return (
                   <li key={client.hostId}>
-                    <Tooltip>
+                    <Tooltip
+                      open={openClient === client.hostId}
+                      onOpenChange={(open) =>
+                        setOpenClient((current) =>
+                          open ? client.hostId : current === client.hostId ? null : current,
+                        )
+                      }
+                    >
                       <TooltipTrigger asChild>
                         <div
                           role="img"
                           tabIndex={0}
+                          onClick={(event) => {
+                            const pointer = event.nativeEvent;
+                            if ("pointerType" in pointer && pointer.pointerType === "touch") {
+                              event.preventDefault();
+                              setOpenClient((current) =>
+                                current === client.hostId ? null : client.hostId,
+                              );
+                            }
+                          }}
                           aria-label={`${client.hostName}. ${date}`}
                           className="flex h-[72px] w-[76px] flex-col items-center justify-center gap-1.5 rounded-lg border border-border bg-background py-2 text-foreground focus-visible:outline-2 focus-visible:outline-ring sm:h-20 sm:w-[90px]"
                         >
