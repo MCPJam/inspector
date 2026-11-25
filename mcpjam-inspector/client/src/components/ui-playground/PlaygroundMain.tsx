@@ -107,7 +107,10 @@ import {
   findModelForStoredChoice,
   modelRowKey,
 } from "@/components/chat-v2/shared/model-selection";
-import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import {
+  comparisonKey,
+  type ModelReasoningEffort,
+} from "@mcpjam/sdk/browser";
 import { useCompareSelections } from "@/hooks/use-compare-selections";
 import { useModelPickerEfforts } from "@/hooks/use-model-picker-efforts";
 import {
@@ -315,6 +318,7 @@ import {
   chipClientLimit,
   paneHostId,
   promoteLeadPane,
+  singleChatPanes,
   type ComparePaneTarget,
 } from "@/lib/compare-panes";
 import { useComparePaneSkillsSection } from "./compare-pane-skills";
@@ -334,6 +338,7 @@ import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 import { isOrgKeysDisallowedRow } from "@/components/chat-v2/shared/available-models";
 import { resolvePlaygroundClientColumn } from "@/lib/playground-client-columns";
 import { effectiveHarnessId } from "@/shared/harness-descriptors";
+import { harnessDisplayName } from "@/shared/harness-model-support";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import { useHostContextStore } from "@/stores/client-context-store";
 import {
@@ -852,8 +857,12 @@ export function PlaygroundMain({
   );
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
   const [skillResults, setSkillResults] = useState<SkillResult[]>([]);
-  const [modelContextQueue, setModelContextQueue, handleModelContextUpdate] =
-    useWidgetModelContextQueue();
+  const [
+    modelContextQueue,
+    setModelContextQueue,
+    handleModelContextUpdate,
+    restoreModelContext,
+  ] = useWidgetModelContextQueue();
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [traceViewMode, setTraceViewMode] =
     useState<PlaygroundTraceViewMode>("chat");
@@ -1533,6 +1542,7 @@ export function PlaygroundMain({
     isSessionBootstrapComplete,
     loadChatSession,
     rewindToMessage,
+    branchFromThread,
     syncResumedVersion,
     resumedVersion,
     restoredToolRenderOverrides,
@@ -4122,11 +4132,61 @@ export function PlaygroundMain({
       loaded: !serversLoading && !serversBootstrapping,
       signedIn: isConvexAuthenticated,
     },
+    compareActive: isCompareMode,
+    generation: multiModelSessionGeneration,
     liveColumnKeys: compareLanes.map((lane) => lane.id),
+    configuredColumnKeys: isMultiHostMode
+      ? clientResolutions.map(
+          (client) =>
+            `host:${client.status === "ready" ? client.column.compareId : client.compareId}`,
+        )
+      : // The saved lineup, not the cards: a card drops out while its model
+        // is unavailable, and that is not a removal.
+        compareSelections
+        ? compareSelections.map((selection) => `model:${comparisonKey(selection)}`)
+        : compareLanes.map((lane) => lane.id),
     applyRestore: restoreMultiModelSession,
+    branchFromThread,
+    detachForBranch: () => {
+      resumedThreadSendBaselineRef.current = null;
+      cancelPendingHistorySelection();
+      syncResumedVersion(null);
+      pendingRestoredModelRef.current = null;
+      clearConversationUrlRef.current();
+    },
+    showSingleChat: (column) => {
+      setMultiModelEnabled(false);
+      // One pane, so no client or environment grid covers the branch.
+      restorePanes(singleChatPanes(comparePanes, column.hostId));
+    },
+    unavailableHostIds: unavailableClients.map((client) => client.compareId),
+    modelsReady: availableModels.length > 0,
+    openColumnAlone: (column) => void handleSelectThread(column),
+    branchBlockedBy: previewedHarnessId
+      ? harnessDisplayName(previewedHarnessId)
+      : null,
   });
-  const { openFromHistory: openMultiModelSessionFromHistory } =
-    multiModelSessions;
+  const {
+    sendInColumn,
+    clearOpenedColumn,
+    trackStarted: trackMultiModelStarted,
+    openFromHistory: openMultiModelSessionFromHistory,
+  } = multiModelSessions;
+  // While a column is open alone, every send starts a new chat from it, so
+  // the saved column keeps the turns its session ran.
+  const sendOrBranch = useCallback(
+    // A branch copies `prependMessages` in after the transcript; an ordinary
+    // send writes them itself after its admission check.
+    (message: Parameters<typeof sendMessage>[0]) => {
+      if (!sendInColumn) return sendMessage(message);
+      const context = message.widgetModelContext ?? [];
+      return sendInColumn({
+        ...message,
+        onDispatchRefused: () => restoreModelContext(context),
+      });
+    },
+    [sendInColumn, restoreModelContext, sendMessage],
+  );
   const recoveryReads = useRecoveryColumnReads(comparisonRecovery);
   // What a compare column needs to restore its chat and to save its place.
   const multiModelColumnProps = (columnKey: string) => ({
@@ -4205,6 +4265,7 @@ export function PlaygroundMain({
         if (historySelectionRequestIdRef.current === selectionRequestId) {
           setActiveHistorySessionId(null);
           setViewingHistoryReplay(false);
+          clearOpenedColumn();
         }
         console.error("[PlaygroundMain] Failed to load chat session", err);
         toast.error("Failed to load chat history.");
@@ -4215,6 +4276,7 @@ export function PlaygroundMain({
       }
     },
     [
+      clearOpenedColumn,
       adoptRestoredConversationTarget,
       clearComposerDraft,
       convexProjectId,
@@ -4270,6 +4332,8 @@ export function PlaygroundMain({
         restoreHistoryServerSelection(
           detail.session.resumeConfig?.selectedServers,
         );
+        // A saved column reopened by its link branches on send, as from Sessions.
+        void openMultiModelSessionFromHistory(detail.session, undefined, () => true);
         adoptRestoredConversationTarget(detail.session);
         // `loadHistorySession` skips the model when the catalog hasn't loaded
         // yet; remember it so the effect below can apply it on arrival.
@@ -4328,6 +4392,7 @@ export function PlaygroundMain({
       adoptRestoredConversationTarget,
       convexProjectId,
       loadHistorySession,
+      openMultiModelSessionFromHistory,
       restoreHistoryServerSelection,
     ],
   );
@@ -4398,11 +4463,13 @@ export function PlaygroundMain({
       // root single-model session alone leaves the visible lane transcripts
       // intact and the user sees nothing happen.
       resetMultiModelSessions();
+      clearOpenedColumn();
       setLoadedThreadOwnerUserId(null);
       setPendingDirectVisibility(options?.shared ? "project" : "private");
       return true;
     },
     [
+      clearOpenedColumn,
       cancelPendingHistorySelection,
       clearComposerDraft,
       ensureDiscardDraftConfirmed,
@@ -4453,10 +4520,12 @@ export function PlaygroundMain({
       syncResumedVersion(null);
       resetChat();
       resetMultiModelSessions();
+      clearOpenedColumn();
       setLoadedThreadOwnerUserId(null);
       setPendingDirectVisibility("private");
     },
     [
+      clearOpenedColumn,
       cancelPendingHistorySelection,
       clearComposerDraft,
       resetChat,
@@ -5063,13 +5132,20 @@ export function PlaygroundMain({
     // Leaves the new chat time to publish and send before the server's
     // preparation lapses.
     preparedForMs: PLUGIN_MESSAGE_PREPARATION_MS - 15_000,
-    send: (intent, isCurrent) =>
-      sendMessage({
+    send: async (intent, isCurrent) => {
+      if (sendInColumn) {
+        toast.error(
+          "Apps can't send into a saved column. Open the multi-model session, or send a message to start a new chat.",
+        );
+        return false;
+      }
+      return sendMessage({
         text: "",
         pluginMessage: intent,
         isCurrent,
         metadata: outgoingSenderMetadata,
-      }),
+      });
+    },
     onSent: onFirstMessageSent,
   });
   pluginMessageDispatchRef.current = pluginMessage.send;
@@ -5117,7 +5193,7 @@ export function PlaygroundMain({
           return false;
         }
         const sentContext = modelContextQueue;
-        const sent = await sendMessage({
+        const sent = await sendOrBranch({
           text,
           metadata: outgoingSenderMetadata,
           widgetModelContext: sentContext,
@@ -5125,23 +5201,25 @@ export function PlaygroundMain({
           // preparation. The study block has to be read again at dispatch.
           isCurrent: () => isCurrent() && !conversationSendBlockedRef.current,
         });
-        // A refusal keeps the queue. A success drops only the objects this
-        // request carried: a widget can replace or add entries during the
-        // preparation above, and those were not sent.
-        if (sent) {
-          setModelContextQueue((current) =>
-            current.filter(
-              (entry) =>
-                !sentContext.some(
-                  (sentEntry) =>
-                    sentEntry.toolCallId === entry.toolCallId &&
-                    sentEntry === entry,
-                ),
-            ),
-          );
+        // A refused send runs no turn: keep the text, and the queue as it is.
+        if (!sent) {
+          composer.setInput(text);
+          return false;
         }
-        // `sendMessage` resolves false when it refuses the send.
-        return sent !== false;
+        // A success drops only the objects this request carried: a widget can
+        // replace or add entries during the preparation above, and those were
+        // not sent.
+        setModelContextQueue((current) =>
+          current.filter(
+            (entry) =>
+              !sentContext.some(
+                (sentEntry) =>
+                  sentEntry.toolCallId === entry.toolCallId &&
+                  sentEntry === entry,
+              ),
+          ),
+        );
+        return true;
       })();
     },
     [
@@ -5150,7 +5228,7 @@ export function PlaygroundMain({
       ensureThreadReadyForSend,
       ensureLocalHarnessReadyForSend,
       modelContextQueue,
-      sendMessage,
+      sendOrBranch,
       outgoingSenderMetadata,
     ],
   );
@@ -5229,11 +5307,13 @@ export function PlaygroundMain({
     setInjectedToolRenderOverrides({});
     setPreludeTraceExecutions([]);
     resetMultiModelSessions();
+    clearOpenedColumn();
     setViewingHistoryReplay(false);
   }, [
     cancelPendingHistorySelection,
     clearLogs,
     composer,
+    clearOpenedColumn,
     resetChat,
     resetMultiModelSessions,
     syncResumedVersion,
@@ -5556,6 +5636,7 @@ export function PlaygroundMain({
   ) => {
     if (!isCompareMode || !ensureCompareReady()) return false;
     trackSendMessage(captureProps);
+    trackMultiModelStarted(request.text ?? "");
     const kind = isMultiHostMode ? "host" : "model";
     const recipients = compareLanes.map(({ id }) =>
       broadcastRecipient(kind, id.slice(kind.length + 1)),
@@ -5837,7 +5918,7 @@ export function PlaygroundMain({
       // `sendMessage` writes the prompt and skill turns after its own
       // admission check, so a study block during server preparation neither
       // sends nor leaves those turns in the thread.
-      const sent = await sendMessage({
+      const sent = await sendOrBranch({
         text: composerText,
         files,
         metadata: outgoingSenderMetadata,
@@ -5881,7 +5962,9 @@ export function PlaygroundMain({
     queueBroadcastRequest,
     trackSendMessage,
     modelContextQueue,
-    sendMessage,
+    sendOrBranch,
+    trackMultiModelStarted,
+    compareSentPrompts.length,
     outgoingSenderMetadata,
     onFirstMessageSent,
     computerAttachmentsActive,
@@ -6008,6 +6091,9 @@ export function PlaygroundMain({
           // id — so a branch says so here, the way New Chat does through
           // `onReset("reset")`.
           onBeforeBranch: () => {
+            // The edit is a new chat, so a column opened alone is left behind;
+            // otherwise the next send would branch it again.
+            clearOpenedColumn();
             resumedThreadSendBaselineRef.current = null;
             cancelPendingHistorySelection();
             syncResumedVersion(null);
@@ -6039,6 +6125,7 @@ export function PlaygroundMain({
       sendBlocked,
       ensureSelectedServerReadyForChat,
       cancelPendingHistorySelection,
+      clearOpenedColumn,
       syncResumedVersion,
       rewindToMessage,
       outgoingSenderMetadata,
@@ -6209,7 +6296,8 @@ export function PlaygroundMain({
           trackSendMessage({ single_model_send: true });
           // Held until dispatch: the chips stay on screen through the hosted
           // preflight inside sendMessage, and a second click there would send.
-          const sent = await sendMessage({
+          // A refused send runs no turn: keep the draft, context and attachments.
+          const sent = await sendOrBranch({
             text: prompt,
             metadata: outgoingSenderMetadata,
             widgetModelContext: modelContextQueue,
@@ -6245,7 +6333,7 @@ export function PlaygroundMain({
       outgoingSenderMetadata,
       queueBroadcastRequest,
       sendBlocked,
-      sendMessage,
+      sendOrBranch,
       trackSendMessage,
     ],
   );
@@ -6292,11 +6380,16 @@ export function PlaygroundMain({
         setModelContextQueue([]);
       } else {
         trackSendMessage({ single_model_send: true });
-        sendMessage({
+        const sent = await sendOrBranch({
           text,
           metadata: outgoingSenderMetadata,
           widgetModelContext: modelContextQueue,
         });
+        // A refused column branch runs no turn: leave the prompt as a draft.
+        if (!sent) {
+          composer.setInput(text);
+          return;
+        }
         setModelContextQueue([]);
       }
       onFirstMessageSent?.();
@@ -6311,7 +6404,7 @@ export function PlaygroundMain({
       isCompareMode,
       queueBroadcastRequest,
       trackSendMessage,
-      sendMessage,
+      sendOrBranch,
       outgoingSenderMetadata,
       modelContextQueue,
       onFirstMessageSent,
@@ -6429,6 +6522,7 @@ export function PlaygroundMain({
       : { model: selectedModel },
   );
   const composerNotice =
+    multiModelSessions.notice ||
     apiSessionNotice ||
     conversationTargetNotice ||
     localHarnessNotice ||
@@ -6436,6 +6530,7 @@ export function PlaygroundMain({
     clientInitNotice ||
     signInNotice ? (
       <div className="flex flex-col gap-2">
+        {multiModelSessions.notice}
         {apiSessionNotice}
         {conversationTargetNotice}
         {localHarnessNotice}

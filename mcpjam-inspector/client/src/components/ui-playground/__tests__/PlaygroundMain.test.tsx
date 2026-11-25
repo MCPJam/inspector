@@ -193,8 +193,10 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: vi.fn(),
   }),
-  useFeatureFlagEnabled: () => false,
+  useFeatureFlagEnabled: (flag: string) => mockPosthogFlags.has(flag),
 }));
+// Every PostHog flag is off unless a test adds it here.
+const mockPosthogFlags = vi.hoisted(() => new Set<string>());
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 // COMP-14 composer upload. Off (the real flag, which PostHog above reports
@@ -331,7 +333,8 @@ const mockUseChatSession = {
   dismissUrlElicitationRequired: vi.fn(),
   messages: [],
   setMessages: vi.fn(),
-  sendMessage: vi.fn(),
+  // Resolves true like the real hook once the turn is dispatched.
+  sendMessage: vi.fn().mockResolvedValue(true),
   stop: vi.fn(),
   status: "ready",
   error: null,
@@ -3343,6 +3346,99 @@ describe("PlaygroundMain", () => {
     });
   });
 
+  describe("message edit in a column opened alone", () => {
+    const column = {
+      _id: "history-column",
+      chatSessionId: "column-session",
+      firstMessagePreview: "Original",
+      status: "active" as const,
+      directVisibility: "private" as const,
+      messageCount: 2,
+      version: 1,
+      startedAt: 1,
+      lastActivityAt: 1,
+      isPinned: false,
+      manualUnread: false,
+      isUnread: false,
+      messagesBlobUrl: "https://storage.test/blob",
+      resumeConfig: { selectedServers: ["test-server"] },
+      multiModel: { groupId: "group-1", position: 0 },
+    };
+
+    async function openColumnAlone() {
+      mockPosthogFlags.add("playground-multi-model-sessions");
+      mockConvexAuthState.isAuthenticated = true;
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Original" }] },
+      ];
+      mockUseChatSession.branchFromThread = vi.fn();
+      invalidateChatHistoryPrefetch();
+      mockReadHistory.mockResolvedValue({
+        ok: true,
+        session: column,
+        widgetSnapshots: [],
+      });
+      render(<PlaygroundMain {...defaultProps} />);
+      await waitFor(() => {
+        expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
+          null
+        );
+      });
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onSelectThread(column));
+      });
+      await waitFor(() => {
+        expect(screen.getByText("Open multi-model session")).toBeInTheDocument();
+      });
+    }
+
+    afterEach(() => {
+      mockPosthogFlags.clear();
+      invalidateChatHistoryPrefetch();
+    });
+
+    it("continues the edited chat on the next send instead of branching again", async () => {
+      mockUseChatSession.rewindToMessage = vi.fn(
+        async (args: { onBeforeBranch?: () => void }) => {
+          args.onBeforeBranch?.();
+          return { previousChatSessionId: "column-session" };
+        }
+      );
+      await openColumnAlone();
+
+      fireEvent.click(screen.getByTestId("edit-first-message"));
+      await waitFor(() => {
+        expect(
+          screen.queryByText("Open multi-model session")
+        ).not.toBeInTheDocument();
+      });
+
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "next message" },
+      });
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+      expect(mockUseChatSession.branchFromThread).not.toHaveBeenCalled();
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "next message" })
+      );
+    });
+
+    it("keeps the column open alone when the edit is refused", async () => {
+      // Refused before any branch is minted: `onBeforeBranch` never runs.
+      mockUseChatSession.rewindToMessage = vi.fn().mockResolvedValue(null);
+      await openColumnAlone();
+
+      fireEvent.click(screen.getByTestId("edit-first-message"));
+      await waitFor(() => {
+        expect(mockUseChatSession.rewindToMessage).toHaveBeenCalled();
+      });
+      expect(screen.getByText("Open multi-model session")).toBeInTheDocument();
+    });
+  });
+
   describe("conflict detach and the conversation URL", () => {
     const ORIGINAL_CONVERSATION_ID = "original-chat-session";
     const USER_MESSAGE = {
@@ -4057,6 +4153,28 @@ describe("PlaygroundMain", () => {
           "0"
         );
       });
+    });
+
+    it("keeps the starter prompt and staged skills when the send is refused", async () => {
+      // A column branch the client can't run resolves false with no turn.
+      mockUseChatSession.sendMessage.mockResolvedValueOnce(false);
+      render(<PlaygroundMain {...defaultProps} />);
+
+      fireEvent.click(screen.getByTestId("chat-input-attach-skill"));
+      fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalled();
+      });
+      await waitFor(() => {
+        expect(
+          (screen.getByTestId("chat-input-field") as HTMLInputElement).value
+        ).not.toBe("");
+      });
+      expect(screen.getByTestId("chat-input")).toHaveAttribute(
+        "data-skill-count",
+        "1"
+      );
     });
 
     it("does not replay a single-model send into compare cards mounted later", async () => {
