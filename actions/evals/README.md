@@ -5,8 +5,9 @@ summary, and save reports as a GitHub Actions artifact. On pull requests it can
 also post the client/model and failed-case tables as one updated comment.
 
 This action supports GitHub.com and Ubuntu runners. Hosted mode tests a suite's
-saved server. Command mode runs the repository's own SDK eval command against
-whatever server its workflow started.
+saved server. Self-hosted Ubuntu runners need Actions Runner v2.327.1 or later
+for the action dependencies' Node 24 runtime. Command mode runs the repository's
+own SDK eval command against whatever server its workflow started.
 
 ## Setup
 
@@ -41,7 +42,7 @@ permissions:
   pull-requests: write
 
 steps:
-  - uses: actions/checkout@v4
+  - uses: actions/checkout@v7
   - run: npm ci
   - run: npm run build
   - name: Start the MCP server

@@ -81,7 +81,7 @@ All three authenticate with an MCPJam API key (`sk_…`) stored as a CI secret n
         runs-on: ubuntu-latest
         timeout-minutes: 60
         steps:
-          - uses: actions/setup-node@v4
+          - uses: actions/setup-node@v7
             with:
               node-version: 22
 
@@ -113,7 +113,7 @@ All three authenticate with an MCPJam API key (`sk_…`) stored as a CI secret n
                 --out eval-report.xml
 
           - name: Upload eval reports
-            uses: actions/upload-artifact@v4
+            uses: actions/upload-artifact@v7
             if: always()
             with:
               name: hosted-eval
@@ -146,8 +146,8 @@ All three authenticate with an MCPJam API key (`sk_…`) stored as a CI secret n
         runs-on: ubuntu-latest
         timeout-minutes: 60
         steps:
-          - uses: actions/checkout@v4
-          - uses: actions/setup-node@v4
+          - uses: actions/checkout@v7
+          - uses: actions/setup-node@v7
             with:
               node-version: 22
           - run: npm ci
@@ -188,8 +188,8 @@ All three authenticate with an MCPJam API key (`sk_…`) stored as a CI secret n
         runs-on: ubuntu-latest
         timeout-minutes: 60
         steps:
-          - uses: actions/checkout@v4
-          - uses: actions/setup-node@v4
+          - uses: actions/checkout@v7
+          - uses: actions/setup-node@v7
             with:
               node-version: 22
           - run: npm ci

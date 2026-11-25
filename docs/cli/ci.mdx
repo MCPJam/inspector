@@ -34,7 +34,7 @@ jobs:
   mcp-doctor:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -85,7 +85,7 @@ jobs:
   mcp-doctor:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -126,7 +126,7 @@ jobs:
   mcp-doctor:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -156,7 +156,7 @@ jobs:
   mcp-doctor:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -193,7 +193,7 @@ Run the full registration x protocol version x auth mode matrix from a config fi
             --reporter junit-xml > report.xml
 
       - name: Upload test report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: oauth-conformance
@@ -214,7 +214,7 @@ Run a repeatable matrix of protocol check selections from a config file and publ
             --reporter junit-xml > protocol-report.xml
 
       - name: Upload protocol report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: protocol-conformance
@@ -233,7 +233,7 @@ Run the server-side MCP Apps surface checks from a config file and publish JUnit
             --reporter junit-xml > apps-report.xml
 
       - name: Upload apps report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: apps-conformance
@@ -462,7 +462,7 @@ runners is supported in this first version.
             --out eval-report.xml
 
       - name: Upload eval reports
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: hosted-eval
@@ -676,7 +676,7 @@ permissions:
   pull-requests: write
 
 steps:
-  - uses: actions/checkout@v4
+  - uses: actions/checkout@v7
   - run: npm ci
   - name: Start the MCP server
     run: |
