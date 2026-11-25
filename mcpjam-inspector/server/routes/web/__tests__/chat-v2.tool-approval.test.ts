@@ -70,6 +70,8 @@ vi.mock("@mcpjam/sdk", async () => {
       return {
         disconnectAllServers: vi.fn(),
         hasServer: (id: string) => id === "server-1",
+        setPerRequestLogLevel: vi.fn(),
+        onLogMessage: vi.fn(),
         listTools: vi.fn().mockResolvedValue({ tools: [] }),
         readResource: vi.fn().mockResolvedValue({ contents: [] }),
         getAllToolsMetadata: vi.fn().mockReturnValue({}),

@@ -54,6 +54,8 @@ function manager() {
     listServers: vi.fn(() => ["srv-1"]),
     getAllToolsMetadata: vi.fn(() => ({})),
     hasServer: vi.fn(() => true),
+    setPerRequestLogLevel: vi.fn(),
+    onLogMessage: vi.fn(),
     getSkillsSupport: vi.fn(() => ({ active: false })),
     executeTool: vi.fn(),
   };
