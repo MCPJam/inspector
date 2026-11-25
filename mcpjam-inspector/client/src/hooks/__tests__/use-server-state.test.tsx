@@ -4309,6 +4309,41 @@ describe("useServerState auth mode regressions", () => {
     );
   });
 
+  it("cancels a saved server's Auto authorization when its remote row disappears", async () => {
+    reconnectServerMock.mockResolvedValueOnce({
+      success: false,
+      error: "Authorization required",
+      oauthRequired: true,
+    });
+    const appState = createAppState();
+    appState.projects.default.servers["demo-server"].authMethod = "auto";
+    const options = {
+      activeProjectServersFlat: [{ _id: "srv_demo", name: "demo-server" }],
+    };
+    const dispatch = vi.fn();
+    const { result, rerender } = renderUseServerState(
+      dispatch,
+      appState,
+      options,
+    );
+    let reconnect:
+      | ReturnType<typeof result.current.reconnectServerWithResult>
+      | undefined;
+    act(() => {
+      reconnect = result.current.reconnectServerWithResult("demo-server");
+    });
+    await waitFor(() => {
+      expect(useAutoOAuthAuthorizationStore.getState().queue).toHaveLength(1);
+    });
+
+    options.activeProjectServersFlat = [];
+    rerender();
+
+    expect(useAutoOAuthAuthorizationStore.getState().queue).toHaveLength(0);
+    await expect(reconnect).resolves.toMatchObject({ status: "superseded" });
+    expect(initiateOAuthMock).not.toHaveBeenCalled();
+  });
+
   it("lets an inline surface own Auto's OAuth authorization prompt", async () => {
     testConnectionMock.mockResolvedValueOnce({
       success: false,
