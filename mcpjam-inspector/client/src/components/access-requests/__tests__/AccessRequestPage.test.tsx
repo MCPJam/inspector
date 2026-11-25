@@ -164,7 +164,9 @@ describe("AccessRequestPage", () => {
       await screen.findByText("Approved, access not active yet"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/once an open seat payment is finished/),
+      screen.getByText(
+        /after an organization owner finishes an open seat payment/,
+      ),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Open organization billing" }),

@@ -41,6 +41,12 @@ describe("generic app sign-in return path", () => {
     writeAppSignInReturnPath("/access-requests/req_1/extra", NOW);
     expect(consumeAppSignInReturnPath(NOW)).toBeNull();
   });
+  it("restores an access request page opened with a trailing slash", () => {
+    writeAppSignInReturnPath("/access-requests/req_1/?decision=approve", NOW);
+    expect(consumeAppSignInReturnPath(NOW)).toBe(
+      "/access-requests/req_1?decision=approve",
+    );
+  });
   it("keeps manual entry when sign-in state is missing", () => {
     writeAppSignInReturnPath("/redeem?manual=1&campaign=talk-123", NOW);
     expect(consumeAppSignInReturnPath(NOW)).toBe(

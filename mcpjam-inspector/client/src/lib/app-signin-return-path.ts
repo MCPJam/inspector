@@ -52,11 +52,13 @@ export function isAccessRequestPathname(pathname: string): boolean {
 /** The page plus the email's `decision` choice, and nothing else. */
 function accessRequestReturnPath(path: string): string | null {
   const url = new URL(path, "https://app.mcpjam.com");
-  if (!isAccessRequestPathname(url.pathname)) return null;
+  // The router opens the page with a trailing slash too; return it without.
+  const pathname = url.pathname.replace(/\/+$/, "");
+  if (!isAccessRequestPathname(pathname)) return null;
   const decision = url.searchParams.get("decision");
   return decision === "approve" || decision === "decline"
-    ? `${url.pathname}?decision=${decision}`
-    : url.pathname;
+    ? `${pathname}?decision=${decision}`
+    : pathname;
 }
 
 function isStorableReturnPath(path: string): boolean {

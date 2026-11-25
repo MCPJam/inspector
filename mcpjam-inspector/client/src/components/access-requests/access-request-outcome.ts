@@ -37,11 +37,13 @@ export function outcomeOfDecision(
   }
   if (result.access === "pending") {
     // The backend does not say what is still open (a seat payment started
-    // earlier, or an invitation), so name both and keep the billing link.
+    // earlier, or an invitation), so name both and keep the billing link. As
+    // above, the payment is an organization owner's step: this approver may
+    // only own the project.
     return {
       billing: true,
       title: "Approved, access not active yet",
-      body: `${who} gets access to ${project} once an open seat payment is finished in organization billing, or once they accept the invitation to your organization.`,
+      body: `${who} gets access to ${project} after an organization owner finishes an open seat payment in organization billing, or after they accept the invitation to your organization.`,
     };
   }
   return {
