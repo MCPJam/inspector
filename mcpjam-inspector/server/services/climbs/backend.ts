@@ -41,6 +41,8 @@ export const climbFns = {
   estimate: query("testSuites:estimateSuiteRunCredits"),
   createMock: mutation("mockServers:createMock"),
   getMock: query("mockServers:getMock"),
+  // The project's saved servers, for a name to show where a round only has an id.
+  projectServers: query("servers:getProjectServers"),
   // A model call: the backend meters it as MCPJam's own drafting budget.
   draft: action("climbDraft:draftClimbChange"),
 };

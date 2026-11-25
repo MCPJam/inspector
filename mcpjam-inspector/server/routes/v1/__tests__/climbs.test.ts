@@ -473,6 +473,20 @@ describe("rounds", () => {
     expect(body.summary).toMatchObject({ confirmation: { status: "not_run" } });
     expect(body.summary.steering.label).toContain("helped pick this result");
   });
+
+  it("names a kept code round's server in the prompt by its saved name", async () => {
+    mutations["climbRounds:stopClimb"] = () => ({ state: "stopped", stopReason: "stopped_by_caller", best: { roundNumber: 1 }, kept: [{ number: 1, serverId: "s_branch", serverVersion: "1", validation: "better", overruled: false }] });
+    queries["climbs:getClimb"] = () => climbRow({ state: "stopped", rounds: [{ number: 1, status: "settled", serverId: "s_branch", serverVersion: "1", verdict: "kept", standing: "kept", reasons: [] }] });
+    queries["mockServers:getMock"] = () => {
+      throw Object.assign(new Error("x"), { data: { code: "MOCK_NOT_FOUND" } });
+    };
+    queries["servers:getProjectServers"] = () => [{ _id: "s_branch", name: "mcpjam-mcp-branch" }];
+    queries["climbRounds:getClimbRound"] = () => ({ number: 1, status: "settled", verdict: "kept", standing: "kept", validation: "better", reasons: [], environments: [] });
+    queries["climbFinish:getClimbConfirmation"] = () => ({ status: "none" });
+    const body = (await (await request("POST", `${CLIMBS}/${CLIMB}/stop`)).json()) as any;
+    expect(body.prompt).toContain("Ran mcpjam-mcp-branch, which runs your own code");
+    expect(body.prompt).not.toContain("s_branch");
+  });
 });
 
 describe("confirmation", () => {
