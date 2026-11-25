@@ -64,7 +64,7 @@ export function CaniuseClientPicker({
             {selected.map((client) => (
               <div
                 key={client.hostId}
-                className="flex min-w-36 flex-1 shrink-0 items-center rounded-lg border border-border bg-card text-card-foreground"
+                className="flex min-w-44 flex-1 shrink-0 items-center rounded-lg border border-border bg-card text-card-foreground"
               >
                 <Button
                   variant="ghost"
@@ -82,7 +82,7 @@ export function CaniuseClientPicker({
                   className="size-7 shrink-0 rounded object-contain"
                   />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate">{client.hostName}</span>
+                    <span className="block whitespace-normal wrap-break-word">{client.hostName}</span>
                     <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">
                       {publicClientIdentity(client).surface}
                     </span>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { useReducedMotion } from "framer-motion";
 import { Search } from "lucide-react";
@@ -68,6 +68,10 @@ export function CaniuseComparePage() {
     [subjects],
   );
   const [params, setParams] = useSearchParams();
+  const pendingParams = useRef(params);
+  useLayoutEffect(() => {
+    pendingParams.current = params;
+  }, [params]);
   const query = fieldSearchQueryFromParams(params);
   const [showDescriptions, setShowDescriptions] = useState(false);
   const reduceMotion = useReducedMotion();
@@ -157,24 +161,19 @@ export function CaniuseComparePage() {
   }, [intro, showIntro]);
 
   function updateQuery(value: string) {
-    setParams(
-      (previous) => {
-        const next = new URLSearchParams(previous);
-        next.delete("capability");
-        if (value) next.set("q", value);
-        else next.delete("q");
-        return next;
-      },
-      { replace: true },
-    );
+    const next = new URLSearchParams(pendingParams.current);
+    next.delete("capability");
+    if (value) next.set("q", value);
+    else next.delete("q");
+    pendingParams.current = next;
+    setParams(next, { replace: true });
   }
 
   function updateSelection(ids: string[]) {
-    setParams((previous) => {
-      const next = new URLSearchParams(previous);
-      next.set("hosts", ids.join(","));
-      return next;
-    });
+    const next = new URLSearchParams(pendingParams.current);
+    next.set("hosts", ids.join(","));
+    pendingParams.current = next;
+    setParams(next);
   }
 
   if (showIntro && intro !== null) {

@@ -901,7 +901,7 @@ export function NotifyButton({ footer = false }: { footer?: boolean }) {
         {!footer && <Bell className="size-3.5" />}
         <span>{footer ? "Notify Me" : "Notify"}</span>
       </Button>
-      <DialogContent className={cn("sm:max-w-[420px]", footer && "dark caniuse-dialog border-0")}>
+      <DialogContent className={cn("sm:max-w-[420px]", footer && "dark caniuse-dialog border-0 text-foreground")}>
         {status === "succeeded" ? (
           <>
             <DialogHeader>
@@ -1014,7 +1014,7 @@ export function ReportInconsistencyDialog({ footer = false }: { footer?: boolean
         {!footer && <Flag className="size-3.5" />}
         <span>Report</span>
       </Button>
-      <DialogContent className={cn("sm:max-w-[440px]", footer && "dark caniuse-dialog border-0")}>
+      <DialogContent className={cn("sm:max-w-[440px]", footer && "dark caniuse-dialog border-0 text-foreground")}>
         {status === "succeeded" ? (
           <>
             <DialogHeader>
