@@ -36,7 +36,7 @@ export function TokenValue({
       : `${value.substring(0, 50)}...`;
 
   return (
-    <div>
+    <div className="ph-no-capture rr-block" data-ph-no-capture>
       <span className="text-muted-foreground font-medium">{label}:</span>
       <div
         className="font-mono text-foreground break-all bg-background/50 p-2 rounded mt-1 group cursor-pointer hover:bg-background/70 transition-colors"
