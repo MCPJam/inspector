@@ -355,6 +355,10 @@ async function runClientChecks(
         }
 
         const initializationInfo = manager.getInitializationInfo(serverId);
+        // Later discover() calls replace the SDK's per-connection snapshot.
+        const handshakeReply = selectedCheckIds.has("modern-client-handshake")
+          ? manager.getClient(serverId)?.getDiscoverResult()
+          : undefined;
         const negotiatedProtocolVersion = initializationInfo?.protocolVersion;
         const effectiveConfig: NormalizedMCPConformanceConfig =
           config.protocolVersion === undefined &&
@@ -418,6 +422,7 @@ async function runClientChecks(
           serverId,
           config: effectiveConfig,
           initializationInfo,
+          handshakeReply,
           connectDurationMs,
           availableTools: surface.toolNames,
           availablePrompts: surface.promptNames,

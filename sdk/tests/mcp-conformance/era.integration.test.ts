@@ -372,3 +372,35 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
     }
   });
 });
+
+describe.each([undefined, "2026-07-28"] as const)("handshake selection %s", (protocolVersion) => {
+  it.each([
+    ["partial", true, "failed"],
+    ["complete", true, "passed"],
+    [undefined, true, "passed"],
+    ["complete", false, "failed"],
+  ] as const)("checks discovery type %s with identity %s", async (resultType, identity, status) => {
+    const handler = createFixtureHandler();
+    let discoveries = 0;
+    const result = await new MCPConformanceTest({
+      serverUrl: "http://localhost/mcp",
+      protocolVersion,
+      checkIds: ["modern-client-handshake"],
+      readinessIds: [],
+      fetchFn: async (input, init) => {
+        const request = new Request(input, init);
+        const response = await handler.fetch(request);
+        if (request.headers.get("Mcp-Method") !== "server/discover") return response;
+        discoveries++;
+        const body = await response.json();
+        body.result.resultType = resultType;
+        if (!identity) delete body.result._meta["io.modelcontextprotocol/serverInfo"];
+        return Response.json(body, { headers: response.headers });
+      },
+    }).run();
+    const check = byId(result.checks, "modern-client-handshake");
+    expect(check.status, check.error?.message).toBe(status);
+    if (resultType === "partial") expect(check.error?.message).toContain('Unrecognized resultType "partial"');
+    expect(discoveries).toBe(1);
+  });
+});
