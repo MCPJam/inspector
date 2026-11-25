@@ -55,7 +55,7 @@ export interface PlaygroundClientColumn {
   executionConfig: ExecutionConfig;
   hostSnapshot: HostSnapshot;
   hostConfig: HostDetail["config"];
-  isUneditedStarterClient?: boolean;
+  preferAppThemeInCompare?: boolean;
 }
 
 export type PlaygroundClientResolution =
@@ -72,7 +72,7 @@ export type PlaygroundClientResolution =
       model?: ModelDefinition;
       /** Set once the client loads, so pane settings can fix the model. */
       hostConfig?: HostDetail["config"];
-      isUneditedStarterClient?: boolean;
+      preferAppThemeInCompare?: boolean;
       modelRows?: ModelDefinition[];
     };
 
@@ -129,7 +129,7 @@ export function resolvePlaygroundClientColumn({
   const config = host.config;
   const client = {
     hostConfig: config,
-    isUneditedStarterClient: host.isUneditedStarterClient,
+    preferAppThemeInCompare: host.preferAppThemeInCompare,
   };
   const selection = config.modelSelection;
   if (

@@ -2704,7 +2704,7 @@ describe("PlaygroundMain", () => {
       { appTheme: "dark", savedTheme: "light" },
       { appTheme: "light", savedTheme: "dark" },
     ] as const)(
-      "opens starter panes in $appTheme and keeps an edited client $savedTheme",
+      "opens starter panes in $appTheme and keeps a custom theme $savedTheme",
       ({ appTheme, savedTheme }) => {
         const projectId = "project-1";
         const clients = [
@@ -2720,7 +2720,7 @@ describe("PlaygroundMain", () => {
           mockHostQueryState.byId.set(hostId, {
             hostId,
             name: hostId,
-            isUneditedStarterClient: starter,
+            preferAppThemeInCompare: starter,
             config: {
               id: hostId,
               hostStyle,

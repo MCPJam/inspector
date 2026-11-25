@@ -8,9 +8,9 @@ export function resolveComparePaneTheme(
   appTheme: PaneTheme,
   preference: PaneThemePreference | undefined,
   hostContext: Record<string, unknown> | undefined,
-  isUneditedStarterClient?: boolean,
+  preferAppThemeInCompare?: boolean,
 ) {
-  const clientTheme = isUneditedStarterClient
+  const clientTheme = preferAppThemeInCompare
     ? undefined
     : extractHostTheme(hostContext);
   const choice =

@@ -510,7 +510,7 @@ export function useComparePaneControls({
         sharedTheme,
         display?.theme,
         hostConfig?.hostContext,
-        (column ?? blocked)?.isUneditedStarterClient,
+        (column ?? blocked)?.preferAppThemeInCompare,
       );
       return (lane) => ({
         actions: (

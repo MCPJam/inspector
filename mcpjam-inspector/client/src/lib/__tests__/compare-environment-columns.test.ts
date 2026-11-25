@@ -101,27 +101,27 @@ function resolve(
 }
 
 describe("resolveEnvironmentPaneColumn", () => {
-  it("keeps an environment pane on the app theme when its client is an unedited starter", () => {
+  it("uses the app theme for an environment whose client still matches its seed theme", () => {
     const host = client("h-1");
     const result = resolve(
       {},
       {
         host: {
           ...host,
-          isUneditedStarterClient: true,
+          preferAppThemeInCompare: true,
           config: { ...host.config, hostContext: { theme: "light" } },
         },
       },
     );
     expect(result.status).toBe("ready");
     if (result.status !== "ready") return;
-    const { hostConfig, isUneditedStarterClient } = result.column;
+    const { hostConfig, preferAppThemeInCompare } = result.column;
     expect(
       resolveComparePaneTheme(
         "dark",
         undefined,
         hostConfig.hostContext,
-        isUneditedStarterClient,
+        preferAppThemeInCompare,
       ),
     ).toMatchObject({ choice: "app", theme: "dark" });
   });

@@ -7522,7 +7522,7 @@ export function PlaygroundMain({
                           globalThemeMode,
                           columnDisplay?.theme,
                           column.hostConfig.hostContext,
-                          column.isUneditedStarterClient,
+                          column.preferAppThemeInCompare,
                         );
                         return (
                         <MultiModelPlaygroundCard

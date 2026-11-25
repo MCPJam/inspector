@@ -80,7 +80,7 @@ export function resolveEnvironmentPaneColumn({
   const config = host.config;
   const client = {
     hostConfig: config,
-    isUneditedStarterClient: host.isUneditedStarterClient,
+    preferAppThemeInCompare: host.preferAppThemeInCompare,
   };
   const harnessId = effectiveHarnessId(config);
   const modelRows = harnessPickerModels([...models], harnessId ? { harnessId } : null, {
