@@ -445,3 +445,27 @@ describe.each(["raw", "mixed"] as const)("invalid discovery in a %s run", mode =
     expect(methods).toEqual(mode === "raw" ? ["server/discover"] : ["server/discover", "server/discover"]);
   });
 });
+
+it("reports incomplete when Auto discovery fails and every selected client check is legacy-only", async () => {
+  const handler = createFixtureHandler();
+  const result = await new MCPConformanceTest({
+    serverUrl: "http://localhost/mcp",
+    checkIds: ["server-initialize"],
+    readinessIds: [],
+    fetchFn: async (input, init) => {
+      const request = new Request(input, init);
+      const response = await handler.fetch(request);
+      if (request.headers.get("Mcp-Method") !== "server/discover") return response;
+      const body = await response.json();
+      body.result.resultType = "partial";
+      return Response.json(body, { headers: response.headers });
+    },
+  }).run();
+  expect(result.outcome).toBe("incomplete");
+  expect(result.checks).toHaveLength(1);
+  expect(result.checks[0]).toMatchObject({
+    id: "server-initialize",
+    skipReason: "could-not-run",
+    error: { message: 'Unrecognized resultType "partial" in server/discover reply' },
+  });
+});

@@ -463,12 +463,20 @@ async function runClientChecks(
       }
       negotiationProbes.settle(config.era);
       const handshake = selectedClientChecks.find(check => check.id === "modern-client-handshake");
+      // If every client check is era-skipped, one must still carry the
+      // discovery error or the report can say "passed" without connecting.
+      const discoveryBlocker = selectedClientChecks.some(
+        check => !eraGate(check, config.era, config.protocolVersion),
+      ) ? undefined : selectedClientChecks[0];
       return {
         config,
         readiness: [],
         checks: selectedClientChecks.map(check => {
           if (check === handshake) {
             return failedResult(check, Date.now() - connectStartedAt, error.message);
+          }
+          if (check === discoveryBlocker) {
+            return couldNotRunResult(check, error.message);
           }
           return eraGate(check, config.era, config.protocolVersion) ??
             (handshake ? blockedResult(check, handshake) : couldNotRunResult(check, error.message));
