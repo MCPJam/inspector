@@ -1116,6 +1116,53 @@ describe("ServerDetailModal", () => {
     expect(screen.getByText("Save your changes to connect.")).toHaveFocus();
   });
 
+  it("returns a draft to Config and moves focus only when the switch is used", async () => {
+    const user = userEvent.setup();
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={createServer({ connectionStatus: "disconnected" })}
+      />
+    );
+
+    fireEvent.change(screen.getByDisplayValue("https://example.com/mcp"), {
+      target: { value: "https://example.com/mcp/v2" },
+    });
+    const overview = screen.getByRole("tab", { name: "Overview" });
+    const config = screen.getByRole("tab", { name: "Configuration" });
+    await user.click(overview);
+    expect(overview).toHaveAttribute("aria-selected", "true");
+
+    await user.click(screen.getByRole("switch", { name: "Server connection" }));
+    expect(config).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: "Save & Connect" })).toHaveFocus();
+    expect(screen.getByDisplayValue("https://example.com/mcp/v2")).toBeVisible();
+
+    await user.click(overview);
+    await user.click(config);
+    expect(config).toHaveFocus();
+    expect(screen.getByText("Save your changes to connect.")).toBeVisible();
+  });
+
+  it("keeps the disconnect draft and clears the hint when edits are reverted", async () => {
+    const user = userEvent.setup();
+    const onDisconnect = vi.fn();
+    render(<ServerDetailModal {...defaultProps} onDisconnect={onDisconnect} />);
+    const url = screen.getByDisplayValue("https://example.com/mcp");
+    fireEvent.change(url, { target: { value: "https://example.com/mcp/v2" } });
+    const connection = screen.getByRole("switch", { name: "Server connection" });
+
+    await user.click(connection);
+    expect(onDisconnect).not.toHaveBeenCalled();
+    expect(url).toHaveValue("https://example.com/mcp/v2");
+    expect(screen.getByText("Save your changes before disconnecting.")).toBeVisible();
+
+    fireEvent.change(url, { target: { value: "https://example.com/mcp" } });
+    expect(screen.queryByText("Save your changes before disconnecting.")).toBeNull();
+    await user.click(connection);
+    expect(onDisconnect).toHaveBeenCalledExactlyOnceWith("test-server");
+  });
+
   it("does not submit when Enter is pressed in tools metadata", async () => {
     const onSubmit = vi.fn().mockResolvedValue({
       ok: true,

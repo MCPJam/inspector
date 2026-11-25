@@ -61,8 +61,8 @@ function clearedCredentialLabels(event: ServerUrlChangeEvent): string[] {
 
 /**
  * Inspector can outlive a backend rollback. Treat a deployment that does
- * not serve this read as missing audit history. A ConvexError refusal
- * carries its own message.
+ * not serve this read as missing audit history. Other failures show the
+ * History tab's unavailable message.
  */
 export function isServerUrlHistoryUnavailable(error: Error): boolean {
   return isConvexQueryNotServed(error, SERVER_URL_CHANGES_QUERY);
@@ -89,6 +89,7 @@ function renderableChanges(events: ServerUrlChangeEvent[] | undefined) {
 }
 
 export function useServerUrlChangeEvents(serverId: string) {
+  // MJ-003 AC3 makes server URL changes available to project members on every plan, independent of the auditLog entitlement.
   // Revisions remain available when the audit query fails. The Convex
   // subscription reports the failure independently of this view.
   const { data, error } = useSoftQuery<ServerUrlChangeEvent[]>(

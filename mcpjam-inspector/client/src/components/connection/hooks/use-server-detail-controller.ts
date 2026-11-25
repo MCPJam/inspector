@@ -377,14 +377,26 @@ export function useServerDetailController({
   });
   const saveButtonRef = useRef<HTMLButtonElement>(null);
   const saveHintRef = useRef<HTMLParagraphElement>(null);
+  const focusSaveOnConfig = useRef(false);
   const [saveHint, setSaveHint] = useState<string | null>(null);
   const focusSaveAction = useCallback(() => {
     const button = saveButtonRef.current;
-    (button?.disabled ? saveHintRef.current : button)?.focus();
+    const target = button?.disabled ? saveHintRef.current : button;
+    if (!target) return;
+    focusSaveOnConfig.current = false;
+    target.focus();
   }, []);
   useEffect(() => {
-    if (!isOpen || !formState.hasChanges) setSaveHint(null);
-    else if (activeTab === "configuration" && saveHint) focusSaveAction();
+    if (!isOpen || !formState.hasChanges) {
+      focusSaveOnConfig.current = false;
+      setSaveHint(null);
+    } else if (
+      activeTab === "configuration" &&
+      saveHint &&
+      focusSaveOnConfig.current
+    ) {
+      focusSaveAction();
+    }
   }, [isOpen, activeTab, formState.hasChanges, saveHint, focusSaveAction]);
   const trimmedName = formState.name.trim();
   const isDuplicateServerName =
@@ -515,6 +527,7 @@ export function useServerDetailController({
 
   const toggleConnection = (connected: boolean) => {
     if (formState.hasChanges) {
+      focusSaveOnConfig.current = true;
       setSaveHint(
         connected
           ? "Save your changes to connect."
