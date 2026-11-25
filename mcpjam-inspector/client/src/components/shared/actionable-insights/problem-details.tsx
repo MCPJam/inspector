@@ -289,7 +289,7 @@ export function ProblemDetailsContent({
           {recommended && problem.recommendationReason ? (
             <details>
               <summary className="cursor-pointer font-semibold">
-                Evidence limits
+                More reasoning
               </summary>
               <p className="mt-2">
                 <FindingText text={option.rationale} />
