@@ -42,7 +42,9 @@ export function untestedCatalogAppValue(
  * A catalog row that stores no image policy at all (`{}` or absent), because
  * its probe did not measure image handling. A row that stores any part of
  * the policy was measured, and the policy helpers read it as written, so a
- * disabled resource type still reads as off.
+ * disabled resource type still reads as off. The text and structured content
+ * rule (`structuredContent`) is measured on its own and says nothing about
+ * images, so a row that stores only that rule still reads as not tested.
  */
 export function untestedCatalogImagePolicy(
   cfg: HostConfigDtoV2,
@@ -50,6 +52,7 @@ export function untestedCatalogImagePolicy(
 ): boolean {
   return (
     isCatalogRow(cfg) &&
-    (policy === undefined || Object.keys(policy).length === 0)
+    (policy === undefined ||
+      Object.keys(policy).every((key) => key === "structuredContent"))
   );
 }

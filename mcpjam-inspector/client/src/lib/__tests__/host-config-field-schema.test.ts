@@ -490,6 +490,21 @@ describe("values a catalog row left out", () => {
     ).toBe(false);
   });
 
+  it("leaves the image rows undefined when the row stores only the structured content rule", () => {
+    // Codex CLI's catalog row: the text/structured rule was measured, images were not.
+    const cfg = makeConfig({
+      rendersMcpApps: false,
+      modelVisibleMcpToolResults: { structuredContent: "preferred" },
+    } as Partial<HostConfigDtoV2>);
+    for (const id of [
+      "modelVisibleMcpToolResults.directContent.image",
+      "modelVisibleMcpToolResults.embeddedResources.blob.image",
+      "modelVisibleMcpToolResults.linkedResources.blob.image",
+    ]) {
+      expect(fieldById(id).read(cfg), id).toBeUndefined();
+    }
+  });
+
   it("keeps the effective value on a host the user built", () => {
     // No catalog facts: the resolver's answer is the host's real setting.
     const cfg = makeConfig({ hostStyle: "chatgpt" });
