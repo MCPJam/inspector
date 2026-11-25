@@ -21,6 +21,8 @@ export type RegisteredGroup = {
   role: string;
   runGroupId: string;
   idempotencyKey: string;
+  /** Which attempt of its round the group belongs to; a cut-off round's new attempt has its own groups. */
+  attempt?: number;
   deadlineAt: number;
   serverId: string;
   serverVersion?: string;

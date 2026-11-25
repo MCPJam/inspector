@@ -163,6 +163,31 @@ describe("submitRound", () => {
     expect(submitted.replayed).toBe(true);
   });
 
+  it("launches the groups of the new attempt of a cut-off round, under their own keys, and not the old one's", async () => {
+    const attemptTwo = withKey("candidate", {
+      idempotencyKey: `climb:${CLIMB}:round:2:candidate:attempt:2`,
+      attempt: 2,
+    });
+    const { deps, createEvalRunGroup } = setup(
+      {
+        "climbRounds:beginClimbRound": () => ({
+          roundNumber: 2,
+          unitKey: "round:2",
+          replayed: true,
+          remeasureBest: false,
+          // The backend returns the last attempt's groups only.
+          groups: [attemptTwo],
+        }),
+      },
+      [attemptTwo],
+    );
+    const submitted = await submitRound(deps, "proj1", CLIMB_ROW, args);
+    expect(submitted.replayed).toBe(true);
+    expect(createEvalRunGroup).toHaveBeenCalledTimes(1);
+    expect(createEvalRunGroup.mock.calls[0][0].body).toMatchObject({ idempotencyKey: `climb:${CLIMB}:round:2:candidate:attempt:2` });
+    expect(submitted.groups.map((g) => g.runGroupId)).toEqual([attemptTwo.runGroupId]);
+  });
+
   it("uses the version the caller named and sends none for a server that is not a mock", async () => {
     const named = setup();
     await submitRound(named.deps, "proj1", CLIMB_ROW, { ...args, serverVersion: "2" });

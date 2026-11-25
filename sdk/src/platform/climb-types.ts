@@ -67,6 +67,8 @@ export type PlatformClimbRoundSummary = {
   submittedBy: string;
   submittedVia: PlatformClimbSubmittedVia;
   openedAt: number;
+  /** `get_climb` lists it only for a round that ran again after its runs were cut off; absent means the first attempt. */
+  attempt?: number;
   settledAt?: number;
   verdict?: PlatformClimbVerdict;
   /** What stands: the overrule if there is one, else the verdict. */
@@ -230,6 +232,9 @@ export type PlatformClimbGroupResult = {
 
 /** `climbRounds:getClimbRound`: one round in full. Validation is totals per environment, never a case. */
 export type PlatformClimbRound = PlatformClimbRoundSummary & {
+  // `attempt` is always present on a round read: a round whose runs were cut off by a stopped process runs again, up to three times.
+  /** Every attempt's run groups, so each attempt can be seen to have runs of its own. Only the last attempt counts. */
+  groups?: Array<{ attempt: number; role: string; runGroupId: string; status: string; launchedRunIds: string[]; failureReason?: string }>;
   estimatedCredits: number;
   remeasuredBest: boolean;
   remeasureReason?: string;
