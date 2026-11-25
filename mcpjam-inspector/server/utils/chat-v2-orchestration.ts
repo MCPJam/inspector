@@ -71,6 +71,7 @@ import {
 import { needsApprovalFor } from "@/shared/tool-approval";
 import {
   buildEventAgentToolDefinitions,
+  eventToolCallNeedsApproval,
   type EventToolsSnapshot,
 } from "@/shared/event-agent-tools";
 import {
@@ -1558,8 +1559,9 @@ export async function prepareChatV2(
     pageTools,
     requireToolApproval === true,
   );
-  // MCP Events agent tools — client-fulfilled under fixed MCPJam names, with
-  // no approval floor (ChatGPT shows no approval card either). A harness turn
+  // MCP Events agent tools — client-fulfilled under fixed MCPJam names. No
+  // approval floor (ChatGPT shows no approval card), but the tools that change a
+  // watch follow the user's Require tool approval switch. A harness turn
   // has no browser to fulfil them. On an exact collision the server's own
   // tool wins, as for `ui_*`.
   const eventToolEntries: ToolSet = {};
@@ -1572,7 +1574,13 @@ export async function prepareChatV2(
       );
       continue;
     }
-    eventToolEntries[definition.name] = toNoExecuteAiSdkTool(definition);
+    eventToolEntries[definition.name] = toNoExecuteAiSdkTool({
+      ...definition,
+      needsApproval: eventToolCallNeedsApproval(
+        definition.name,
+        requireToolApproval === true,
+      ),
+    });
   }
   // COPIED, because the page-tool policy below removes entries from it and the
   // caller's object is the resolver's own return value.

@@ -38,12 +38,12 @@ beforeEach(() => {
 });
 
 describe("prepareChatV2 — MCP Events agent tools", () => {
-  it("advertises them as no-execute, approval-free tools scoped to the snapshot's servers", async () => {
+  it("advertises them as no-execute tools scoped to the snapshot's servers, with no approval by default", async () => {
     const result = await prepareChatV2({
       mcpClientManager: mockManager({}),
       modelDefinition: model,
       systemPrompt: "Base prompt.",
-      requireToolApproval: true,
+      requireToolApproval: false,
       eventTools,
     });
 
@@ -58,13 +58,32 @@ describe("prepareChatV2 — MCP Events agent tools", () => {
         jsonSchema: { properties: { server: { enum: string[] } } };
       };
     };
-    // The browser fulfils it through Connect event's path; no approval card.
+    // The browser fulfils it through Connect event's path; like ChatGPT, no
+    // approval card unless the user asked for one.
     expect(subscribe.execute).toBeUndefined();
     expect(subscribe.needsApproval).toBeUndefined();
     expect(subscribe.description).toContain("flight.status_changed");
     expect(subscribe.inputSchema.jsonSchema.properties.server.enum).toEqual([
       "flights",
     ]);
+  });
+
+  it("asks for approval on the tools that change a watch when Require tool approval is on", async () => {
+    const result = await prepareChatV2({
+      mcpClientManager: mockManager({}),
+      modelDefinition: model,
+      systemPrompt: "Base prompt.",
+      requireToolApproval: true,
+      eventTools,
+    });
+    const approval = (name: string) =>
+      (result.allTools[name] as unknown as { needsApproval?: unknown })
+        .needsApproval;
+    expect(approval(EVENT_AGENT_TOOL_NAMES.subscribe)).toBe(true);
+    expect(approval(EVENT_AGENT_TOOL_NAMES.update)).toBe(true);
+    expect(approval(EVENT_AGENT_TOOL_NAMES.delete)).toBe(true);
+    expect(approval(EVENT_AGENT_TOOL_NAMES.listEventTypes)).toBeUndefined();
+    expect(approval(EVENT_AGENT_TOOL_NAMES.listSubscriptions)).toBeUndefined();
   });
 
   it("advertises nothing without a snapshot, and nothing on a harness turn", async () => {

@@ -312,11 +312,15 @@ import {
 } from "@/lib/webmcp-inspector/chat-dispatch";
 import { pageToolCallNeedsApproval } from "@/shared/client-fulfilled-tools";
 import {
+  eventToolCallNeedsApproval,
   isEventAgentToolName,
   type EventAgentToolName,
   type EventToolsSnapshot,
 } from "@/shared/event-agent-tools";
-import { createUiAwareApprovalResponseHandler } from "@/lib/webmcp/ui-tool-approval";
+import {
+  createUiAwareApprovalResponseHandler,
+  findPartByApprovalId,
+} from "@/lib/webmcp/ui-tool-approval";
 import { respondToChatElicitation } from "@/lib/apis/elicitation-api";
 import {
   HOSTED_MRTR_VERSION,
@@ -717,11 +721,14 @@ export interface UseChatSessionOptions {
    * each call. Absent on surfaces with no Events pane.
    */
   eventAgentTools?: {
-    snapshot: () => EventToolsSnapshot | undefined;
+    snapshot: (
+      selectedServers?: readonly string[],
+    ) => EventToolsSnapshot | undefined;
     execute: (
       name: EventAgentToolName,
       toolCallId: string,
       input: unknown,
+      selectedServers?: readonly string[],
     ) => Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }>;
   };
   /** Callback when chat is reset */
@@ -2573,6 +2580,9 @@ export function useChatSession(
   usePageToolsRef.current = options.usePageTools === true;
   const eventAgentToolsRef = useRef(options.eventAgentTools);
   eventAgentToolsRef.current = options.eventAgentTools;
+  // The Events tools reach only the servers selected for this conversation.
+  const eventToolServersRef = useRef<readonly string[]>(selectedServers);
+  eventToolServersRef.current = selectedServers;
   const isHostedGuest = HOSTED_MODE && !workOsUser && !isWorkOsLoading;
   const sharedGuestMode =
     isHostedGuest && !isAuthLoading && !!hostedProjectId && !!hostedScenarioId;
@@ -4277,7 +4287,9 @@ export function useChatSession(
             : undefined;
         // MCP Events agent tools, for the servers whose catalog says they
         // declare Events right now.
-        const eventTools = eventAgentToolsRef.current?.snapshot();
+        const eventTools = eventAgentToolsRef.current?.snapshot(
+          eventToolServersRef.current,
+        );
         return {
           harnessStartupRequestId: harnessStartupRequestRef.current,
           ...(ownerRequestId
@@ -4612,9 +4624,26 @@ export function useChatSession(
       // MCP Events agent tools: exact names, run by the Playground's events
       // runtime. A turn always gets an output, or the stream would wait.
       if (isEventAgentToolName(toolName)) {
+        // A call that changes a watch waits for the approval pill when the
+        // user turned on Require tool approval: the same predicate and the
+        // same per-turn value the server built the tool from. The approval
+        // response handler runs it.
+        if (
+          eventToolCallNeedsApproval(
+            toolName,
+            turnRequireToolApprovalRef.current,
+          )
+        ) {
+          return;
+        }
         const executor = eventAgentToolsRef.current;
         const output = executor
-          ? await executor.execute(toolName, pageToolCallId, pageToolInput)
+          ? await executor.execute(
+              toolName,
+              pageToolCallId,
+              pageToolInput,
+              eventToolServersRef.current,
+            )
           : {
               content: [{ type: "text" as const, text: "MCP Events aren't available in this chat." }],
               isError: true,
@@ -4829,6 +4858,30 @@ export function useChatSession(
           toast.error(error instanceof Error ? error.message : "Could not prepare the saved servers for this approval. Try approving again.");
           return;
         }
+      }
+      // MCP Events agent tools are client-fulfilled: approving runs the call
+      // here and supplies its output; denying lets the server settle it.
+      const located = findPartByApprovalId(messagesRef.current, response.id);
+      if (located && isEventAgentToolName(located.toolName)) {
+        if (!response.approved) return sdkAddToolApprovalResponse(response);
+        const executor = eventAgentToolsRef.current;
+        const output = executor
+          ? await executor.execute(
+              located.toolName,
+              located.toolCallId,
+              located.input,
+              eventToolServersRef.current,
+            )
+          : {
+              content: [{ type: "text" as const, text: "MCP Events aren't available in this chat." }],
+              isError: true,
+            };
+        addToolOutput({
+          tool: located.toolName,
+          toolCallId: located.toolCallId,
+          output,
+        } as Parameters<typeof addToolOutput>[0]);
+        return;
       }
       return respond(response);
     };

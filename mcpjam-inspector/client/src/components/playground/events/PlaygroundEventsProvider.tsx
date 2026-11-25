@@ -366,10 +366,21 @@ function useRuntime(
       );
     return { subscription, afterSeq, targetAgent, ownerScope };
   };
-  const alreadyConnected = (subscriptionId: string, except?: string) =>
+  /**
+   * Whether this conversation already connects the subscription. Another
+   * conversation may connect the same server subscription with its own
+   * instructions: connections are per conversation.
+   */
+  const alreadyConnected = (
+    subscriptionId: string,
+    agentScope: string,
+    except?: string,
+  ) =>
     current.current.bindings.some(
       (binding) =>
-        binding.subscriptionId === subscriptionId && binding.id !== except,
+        binding.subscriptionId === subscriptionId &&
+        binding.agentScope === agentScope &&
+        binding.id !== except,
     );
   const add = async (
     server: ServerEventCatalog,
@@ -380,7 +391,7 @@ function useRuntime(
   ): Promise<PlaygroundEventBinding> => {
     const { subscription, afterSeq, targetAgent, ownerScope } =
       await createSubscription(server, event, value, options);
-    if (alreadyConnected(subscription.id))
+    if (alreadyConnected(subscription.id, targetAgent.scope))
       throw new Error(
         "This event is already connected. Use Edit instructions to change what the agent should do.",
       );
@@ -425,7 +436,7 @@ function useRuntime(
       value,
       { fromAgent: true },
     );
-    if (alreadyConnected(subscription.id, id))
+    if (alreadyConnected(subscription.id, targetAgent.scope, id))
       throw new Error(
         "Another subscription already watches this event with these arguments.",
       );

@@ -12,6 +12,7 @@ import type {
   PlaygroundEventBinding,
   ServerEventCatalog,
 } from "../PlaygroundEventsProvider";
+import { useEventAgentBridge } from "../event-agent-bridge";
 
 const flightEvent: EventDescriptorView = {
   name: "flight.status_changed",
@@ -76,6 +77,10 @@ function binding(
 
 let runtime: EventAgentRuntime;
 beforeEach(() => {
+  // The conversation the calls run in; `binding()` defaults to the same scope.
+  useEventAgentBridge.setState({
+    agent: { scope: "chat:model:", blockedReason: null, send: vi.fn() },
+  });
   const catalogs = [
     catalog("flights", [flightEvent]),
     catalog("echo", [], false),
@@ -442,5 +447,84 @@ describe("managing subscriptions", () => {
       {},
     );
     expect(result.isError).toBe(true);
+  });
+});
+
+describe("one conversation's reach", () => {
+  const subscribeInput = {
+    server: "flights",
+    title: "Rebook MJ204",
+    prompt: "Rebook if delayed 3h+",
+    triggers: [
+      {
+        event: "flight.status_changed",
+        params: { tripId: "t1", flightId: "MJ204" },
+      },
+    ],
+  };
+
+  it("advertises only the servers selected for the chat", () => {
+    expect(
+      eventToolsSnapshot(runtime, { selectedServers: ["echo"] }),
+    ).toBeUndefined();
+    expect(
+      eventToolsSnapshot(runtime, {
+        selectedServers: ["flights"],
+      })?.servers.map((server) => server.name),
+    ).toEqual(["flights"]);
+  });
+
+  it("refuses to subscribe to a server that isn't selected, before contacting it", async () => {
+    const result = await runEventAgentTool(
+      runtime,
+      EVENT_AGENT_TOOL_NAMES.subscribe,
+      subscribeInput,
+      { selectedServers: ["echo"] },
+    );
+    expect(result.isError).toBe(true);
+    expect(payload(result).error).toContain("isn't selected for this chat");
+    expect(runtime.loadCatalog).not.toHaveBeenCalled();
+    expect(runtime.add).not.toHaveBeenCalled();
+  });
+
+  it("keeps another conversation's connections out of reach", async () => {
+    runtime.bindings = [
+      binding({ id: "theirs", agentScope: "other-chat:model:" }),
+    ];
+    const listed = await runEventAgentTool(
+      runtime,
+      EVENT_AGENT_TOOL_NAMES.listSubscriptions,
+      {},
+    );
+    expect(payload(listed).subscriptions).toEqual([]);
+    const update = await runEventAgentTool(
+      runtime,
+      EVENT_AGENT_TOOL_NAMES.update,
+      { subscription_id: "theirs", is_enabled: true },
+    );
+    expect(update.isError).toBe(true);
+    expect(runtime.edit).not.toHaveBeenCalled();
+    // The same event and params here is this chat's own new connection, not
+    // the other chat's watch taken over.
+    const subscribed = await runEventAgentTool(
+      runtime,
+      EVENT_AGENT_TOOL_NAMES.subscribe,
+      subscribeInput,
+    );
+    expect(subscribed.isError).toBeUndefined();
+    expect(runtime.add).toHaveBeenCalledTimes(1);
+    expect(runtime.edit).not.toHaveBeenCalled();
+  });
+
+  it("tells the agent when a watch can miss an event", async () => {
+    const result = await runEventAgentTool(
+      runtime,
+      EVENT_AGENT_TOOL_NAMES.subscribe,
+      subscribeInput,
+    );
+    expect(payload(result).message).toContain(
+      "only while this conversation is open",
+    );
+    expect(payload(result).message).toContain("skipped");
   });
 });

@@ -30,6 +30,8 @@
  * definitions and the browser parses the calls from one source.
  */
 
+import { needsApprovalFor } from "./tool-approval";
+
 export const EVENT_AGENT_TOOL_NAMES = {
   listEventTypes: "mcpjam_list_event_types",
   subscribe: "mcpjam_subscribe_to_events",
@@ -51,6 +53,25 @@ const TOOL_NAME_SET: ReadonlySet<string> = new Set(
  */
 export function isEventAgentToolName(name: string): name is EventAgentToolName {
   return TOOL_NAME_SET.has(name);
+}
+
+/** The three tools that create a watch or change what future events make the agent do. */
+const MUTATING: ReadonlySet<string> = new Set([
+  EVENT_AGENT_TOOL_NAMES.subscribe,
+  EVENT_AGENT_TOOL_NAMES.update,
+  EVENT_AGENT_TOOL_NAMES.delete,
+]);
+
+/**
+ * Whether a call waits for the user's approval. ChatGPT shows no approval card,
+ * so by default none does; a user who turned on Require tool approval gets it
+ * for the tools that change a watch. The list tools never ask.
+ */
+export function eventToolCallNeedsApproval(
+  name: string,
+  requireToolApproval: boolean,
+): boolean {
+  return MUTATING.has(name) && needsApprovalFor("setting", requireToolApproval);
 }
 
 // ---------------------------------------------------------------------------
@@ -238,7 +259,7 @@ export function buildEventAgentToolDefinitions(
       name: EVENT_AGENT_TOOL_NAMES.subscribe,
       description:
         'Subscribe this conversation to an MCP event, so you are woken here when it happens. Use it when the user asks you to watch for something and act on it later (for example: "if my flight is delayed, rebook me"). ' +
-        "MCPJam checks each trigger's params against the event's inputSchema before contacting the server and picks the delivery mode. When a matching event arrives, MCPJam starts a new turn in this conversation with the event and your `prompt`. No confirmation step is needed when the user asked for this. " +
+        "MCPJam checks each trigger's params against the event's inputSchema before contacting the server and picks the delivery mode. When a matching event arrives, MCPJam starts a new turn in this conversation with the event and your `prompt`. Delivery has limits: events start turns only while this conversation is open in the Playground, and an event that arrives while you are in the middle of a turn is skipped. Tell the user this when you confirm the watch. " +
         "If a subscription for the same purpose already exists (for example, the user changed trips), change it with mcpjam_update_event_subscription instead of creating a second one. " +
         `Servers with events: ${catalog}. Call mcpjam_list_event_types first if you don't know an event's params.`,
       inputSchema: {

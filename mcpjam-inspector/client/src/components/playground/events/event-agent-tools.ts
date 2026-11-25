@@ -32,6 +32,7 @@ import type {
   EventsDeliveryModeView,
 } from "@/shared/events-api";
 import { bindingStatus } from "./binding-status";
+import { useEventAgentBridge } from "./event-agent-bridge";
 import { checkEventArguments } from "./event-arguments";
 import type {
   PlaygroundEventBinding,
@@ -80,14 +81,50 @@ function failure(
 const connected = (runtime: EventAgentRuntime, server: string) =>
   runtime.servers[server]?.connectionStatus === "connected";
 
+/** What one conversation may reach. */
+export interface EventAgentChat {
+  /** The servers selected for this conversation. Absent means every server. */
+  selectedServers?: readonly string[];
+  /** The conversation's agent scope; another scope's connections belong to another chat. */
+  agentScope?: string;
+}
+
+/**
+ * The runtime as one conversation sees it: only the servers selected for it,
+ * and only its own connections. Another chat's connections stay out of reach
+ * for listing, lookup and duplicate detection; the two chats can still share
+ * the underlying server subscription.
+ */
+function forChat(
+  runtime: EventAgentRuntime,
+  chat: EventAgentChat,
+): EventAgentRuntime {
+  const selected = chat.selectedServers;
+  const inChat = (name: string) =>
+    selected === undefined || selected.includes(name);
+  return {
+    ...runtime,
+    servers: Object.fromEntries(
+      Object.entries(runtime.servers).filter(([name]) => inChat(name)),
+    ),
+    catalogs: runtime.catalogs.filter((entry) => inChat(entry.serverName)),
+    bindings: runtime.bindings.filter(
+      (binding) =>
+        chat.agentScope !== undefined && binding.agentScope === chat.agentScope,
+    ),
+  };
+}
+
 /**
  * The servers to offer tools for: connected, and their catalog says Events
  * are declared with at least one event type. `undefined` offers none.
  */
 export function eventToolsSnapshot(
-  runtime: EventAgentRuntime | null,
+  source: EventAgentRuntime | null,
+  chat: EventAgentChat = {},
 ): EventToolsSnapshot | undefined {
-  if (!runtime?.host || runtime.host.missing) return undefined;
+  if (!source?.host || source.host.missing) return undefined;
+  const runtime = forChat(source, chat);
   const servers = runtime.catalogs
     .filter(
       (entry) =>
@@ -192,7 +229,7 @@ async function listEventTypes(runtime: EventAgentRuntime, server?: string) {
   const servers = server ? [server] : eventServers(runtime);
   if (server && !connected(runtime, server)) {
     return failure(
-      `"${server}" isn't connected. Servers with events: ${eventServers(runtime).join(", ") || "none"}.`,
+      `"${server}" isn't connected or isn't selected for this chat. Servers with events: ${eventServers(runtime).join(", ") || "none"}.`,
     );
   }
   const loaded = await Promise.all(servers.map(runtime.loadCatalog));
@@ -237,7 +274,7 @@ async function resolveTrigger(
   if (!connected(runtime, serverName)) {
     return {
       error: failure(
-        `"${serverName}" isn't connected. Servers with events: ${eventServers(runtime).join(", ") || "none"}.`,
+        `"${serverName}" isn't connected or isn't selected for this chat. Servers with events: ${eventServers(runtime).join(", ") || "none"}.`,
       ),
     };
   }
@@ -328,7 +365,7 @@ async function subscribe(
   );
   return success({
     subscription: describe(runtime, binding),
-    message: `Subscribed. When ${resolved.event.name} arrives, MCPJam starts a new turn in this conversation with the event and your prompt.`,
+    message: `Subscribed. When ${resolved.event.name} arrives, MCPJam starts a new turn in this conversation with the event and your prompt. Events start turns only while this conversation is open in the Playground, and an event that arrives during another turn is skipped.`,
   });
 }
 
@@ -393,11 +430,12 @@ async function remove(
 }
 
 export async function runEventAgentTool(
-  runtime: EventAgentRuntime | null,
+  source: EventAgentRuntime | null,
   name: EventAgentToolName,
   input: unknown,
+  chat: EventAgentChat = {},
 ): Promise<EventAgentToolResult> {
-  if (!runtime) {
+  if (!source) {
     return failure(
       "MCP Events aren't available in this Playground right now. Ask the user to open the Events pane.",
     );
@@ -405,6 +443,11 @@ export async function runEventAgentTool(
   const parsed = parseEventAgentToolCall(name, input);
   if (!parsed.ok) return failure(parsed.error);
   const call = parsed.call;
+  const runtime = forChat(source, {
+    selectedServers: chat.selectedServers,
+    // The conversation running the call, as the provider's own `add` sees it.
+    agentScope: chat.agentScope ?? useEventAgentBridge.getState().agent?.scope,
+  });
   try {
     switch (call.tool) {
       case "list_event_types":
@@ -426,7 +469,7 @@ export async function runEventAgentTool(
     return failure(
       error instanceof Error
         ? error.message
-        : "The events request failed. Try again.",
+        : "Couldn't load your events. Try again.",
     );
   }
 }
@@ -439,15 +482,21 @@ export function createEventAgentToolExecutor(
 ) {
   const calls = new Map<string, Promise<EventAgentToolResult>>();
   return {
-    snapshot: () => eventToolsSnapshot(getRuntime()),
+    /** The tools to advertise for a turn, limited to the chat's selected servers. */
+    snapshot: (selectedServers?: readonly string[]) =>
+      eventToolsSnapshot(getRuntime(), { selectedServers }),
+    /** Run one call as the current conversation, within its selected servers. */
     execute(
       name: EventAgentToolName,
       toolCallId: string,
       input: unknown,
+      selectedServers?: readonly string[],
     ): Promise<EventAgentToolResult> {
       const existing = calls.get(toolCallId);
       if (existing) return existing;
-      const run = runEventAgentTool(getRuntime(), name, input);
+      const run = runEventAgentTool(getRuntime(), name, input, {
+        selectedServers,
+      });
       calls.set(toolCallId, run);
       if (calls.size > MAX_REMEMBERED_CALLS) {
         const oldest = calls.keys().next().value;
