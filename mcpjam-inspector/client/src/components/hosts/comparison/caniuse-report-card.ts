@@ -66,7 +66,7 @@ export async function drawCaniuseReportCard(
   const ctx = canvas.getContext("2d");
   if (!ctx) {
     throw new Error(
-      "Could not generate the report card. Close Share and try again.",
+      "Couldn't generate the report card. Close Share and try again.",
     );
   }
   const styles = getComputedStyle(canvas);
