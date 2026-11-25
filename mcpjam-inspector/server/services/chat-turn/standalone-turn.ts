@@ -126,6 +126,7 @@ export async function runStandaloneTurn(
       temperature: body.temperature,
       requireToolApproval: body.requireToolApproval,
       respectToolVisibility: body.respectToolVisibility,
+      runUnloadedToolCalls: body.runUnloadedToolCalls,
       progressiveToolDiscovery: body.progressiveToolDiscovery,
       modelVisibleMcpToolResults: body.modelVisibleMcpToolResults,
       mcpToolResultImageRendering: body.mcpToolResultImageRendering,
@@ -177,6 +178,7 @@ export async function runStandaloneTurn(
         requireToolApproval,
         requireNativeToolDiscovery: execution.requireNativeToolDiscovery,
         respectToolVisibility: execution.respectToolVisibility,
+        runUnloadedToolCalls: execution.runUnloadedToolCalls,
         modelVisibleMcpToolResults: execution.modelVisibleMcpToolResults,
         customProviders: body.customProviders,
         ...(rail !== "hosted"
@@ -234,6 +236,7 @@ export async function runStandaloneTurn(
         directVisibility: body.directVisibility,
         expectedVersion: body.expectedVersion,
         rewind: body.rewind,
+        multiModel: body.multiModel,
         runtimeSecrets: [],
       },
       runtime: {

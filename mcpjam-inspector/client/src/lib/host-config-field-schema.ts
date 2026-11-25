@@ -948,6 +948,16 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     read: (cfg) => cfg.requireToolApproval,
   },
   {
+    id: "runUnloadedToolCalls",
+    section: "agent",
+    subsection: "Agent tooling",
+    label: "Run calls to unloaded tools",
+    path: "runUnloadedToolCalls",
+    description: "When the model calls a tool it has not loaded, run the call if its inputs are valid. Off refuses the call until the tool is loaded.",
+    kind: { kind: "boolean" },
+    read: (cfg) => cfg.runUnloadedToolCalls ?? true,
+  },
+  {
     id: "respectToolVisibility",
     section: "agent",
     subsection: "Agent tooling",

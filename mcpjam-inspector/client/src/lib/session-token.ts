@@ -351,6 +351,13 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // symptom is a Browser section that silently never appears rather than an
   // error anyone can see.
   "/api/v1/built-in-tools/",
+  // Signing a project's Claude web or ChatGPT web account in, saving it and
+  // handing it back. The routes verify this bearer themselves; without it
+  // every sign-in answers 401 and no browser opens. The local Inspector's
+  // `/api/web-clients/local-connectors` is not listed: it takes the session
+  // token.
+  "/api/web-clients/accounts/",
+  "/api/web-clients/reconnect/",
   // The org-settings Capabilities page reading the agent's op registry, so its
   // toggles cannot drift from the tools the server actually offers.
   "/api/v1/agent-ops",

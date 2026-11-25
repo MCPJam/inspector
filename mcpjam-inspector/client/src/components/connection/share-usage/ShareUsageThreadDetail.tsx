@@ -277,7 +277,7 @@ interface ShareUsageThreadDetailProps {
    */
   sessionLink?: string;
   /**
-   * Enables the "Promote to test case" affordance.
+   * Enables the "Save as test case" affordance.
    *
    * Supplied by surfaces that know the two things a `SharedChatThread` cannot
    * tell us: which project the session belongs to, and whether the viewer is
@@ -618,7 +618,7 @@ export function ShareUsageThreadDetail({
         return null;
       case "pending":
       case "running":
-        return "This session is still running. It can be promoted once the run finishes.";
+        return "This session is still running. It can be saved as a test case once the run finishes.";
       case "rate_limited":
         return "This session's run stopped on a rate limit, so the conversation is incomplete. Only sessions from runs that finished can become test cases.";
       case "failed":
@@ -630,12 +630,12 @@ export function ShareUsageThreadDetail({
         // session at once. Without this line the only symptom is a trickle of
         // one-off "unknown outcome" tickets that each look like bad data.
         warnMissingRunAttemptStatusOnce();
-        return "This session's run outcome is unknown, so it cannot be promoted to a test case.";
+        return "This session's run outcome is unknown, so it can't be saved as a test case. Open a session from a run that finished.";
       default:
         // `null` (an attempt the backend could not identify) and any status
         // this client has not learned yet. A property of the session, so no
         // warning.
-        return "This session's run outcome is unknown, so it cannot be promoted to a test case.";
+        return "This session's run outcome is unknown, so it can't be saved as a test case. Open a session from a run that finished.";
     }
   }, [canPromoteThread, thread?.sourceType, thread?.runAttemptStatus]);
 
@@ -821,7 +821,7 @@ export function ShareUsageThreadDetail({
                   aria-disabled
                   aria-describedby={promoteBlockedReasonId}
                 >
-                  Promote to test case
+                  Save as test case
                 </Button>
                 <span id={promoteBlockedReasonId} className="sr-only">
                   {promoteBlockedReason}
@@ -836,7 +836,7 @@ export function ShareUsageThreadDetail({
                 data-testid="share-usage-promote-to-test-case"
                 onClick={() => setPromoteOpen(true)}
               >
-                Promote to test case
+                Save as test case
               </Button>
             )
           ) : null}

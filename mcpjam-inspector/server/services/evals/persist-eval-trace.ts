@@ -188,7 +188,8 @@ type FanoutResult =
  * than pay that refusal on every iteration.
  */
 let skillsAtTurnRefusedUntil = 0;
-const SKILLS_AT_TURN_RETRY_MS = 10 * 60_000;
+let discoveryAtTurnRefusedUntil = 0;
+const OPTIONAL_TRACE_FIELD_RETRY_MS = 10 * 60_000;
 
 async function appendEvalTurnTrace(
   convexClient: ConvexHttpClient,
@@ -199,21 +200,29 @@ async function appendEvalTurnTrace(
       "testSuites:appendEvalTurnTrace" as any,
       body,
     ) as Promise<{ skipped?: boolean } | undefined>;
-  try {
-    return await write(payload);
-  } catch (error) {
-    if (
-      !("skillsAtTurn" in payload.turn) ||
-      !/extra field `?skillsAtTurn/.test(String(error))
-    ) {
-      throw error;
+  for (;;) {
+    try {
+      return await write(payload);
+    } catch (error) {
+      if ("discoveryAtTurn" in payload.turn && /extra field `?discoveryAtTurn/.test(String(error))) {
+        discoveryAtTurnRefusedUntil = Date.now() + OPTIONAL_TRACE_FIELD_RETRY_MS;
+        const { discoveryAtTurn: _refused, ...turn } = payload.turn;
+        payload = { ...payload, turn };
+        continue;
+      }
+      if (
+        !("skillsAtTurn" in payload.turn) ||
+        !/extra field `?skillsAtTurn/.test(String(error))
+      ) {
+        throw error;
+      }
+      skillsAtTurnRefusedUntil = Date.now() + OPTIONAL_TRACE_FIELD_RETRY_MS;
+      logger.info(
+        "[evals] the backend does not take eval skill records yet; writing turns without them",
+      );
+      const { skillsAtTurn: _refused, ...turn } = payload.turn;
+      payload = { ...payload, turn };
     }
-    skillsAtTurnRefusedUntil = Date.now() + SKILLS_AT_TURN_RETRY_MS;
-    logger.info(
-      "[evals] the backend does not take eval skill records yet; writing turns without them",
-    );
-    const { skillsAtTurn: _refused, ...turn } = payload.turn;
-    return await write({ ...payload, turn });
   }
 }
 
@@ -243,6 +252,7 @@ export async function persistEvalTraceFanout(args: {
    * shape an older backend's validator accepts.
    */
   harnessMcpByPromptIndex?: ReadonlyMap<number, HarnessMcpAtTurn>;
+  discoveryAtTurn?: { engineVersion: string; runUnloadedToolCalls?: boolean };
   /**
    * The skills the iteration's turns ran with, sent with every turn: an eval
    * iteration's skills do not change between its turns. Absent when the run
@@ -404,6 +414,9 @@ export async function persistEvalTraceFanout(args: {
               ? { browserInteractionSteps: stepsForThisTurn }
               : {}),
             ...(harnessMcpAtTurn ? { harnessMcpAtTurn } : {}),
+            ...(args.discoveryAtTurn && Date.now() >= discoveryAtTurnRefusedUntil
+              ? { discoveryAtTurn: args.discoveryAtTurn }
+              : {}),
             ...(args.skillsAtTurn && Date.now() >= skillsAtTurnRefusedUntil
               ? { skillsAtTurn: args.skillsAtTurn }
               : {}),

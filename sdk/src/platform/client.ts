@@ -410,6 +410,10 @@ export const EVAL_VOCABULARY_HEADER = "x-mcpjam-eval-vocabulary";
  */
 export const API_VOCABULARY_HEADER = "x-mcpjam-api-vocabulary";
 
+/** Host-config keys this SDK understands, so a `/v1` server can return them. */
+export const HOST_CONFIG_FEATURES_HEADER = "x-mcpjam-host-config-features";
+export const HOST_CONFIG_FEATURES = "model-visible-structured-content";
+
 /**
  * `study` → `scenario`, the stored spelling, before a noun VALUE goes on the
  * wire.
@@ -6669,6 +6673,9 @@ export class PlatformApiClient extends DirectoryReviewerAttemptClient {
     } else {
       delete headers[API_VOCABULARY_HEADER];
     }
+    // This SDK's canonicalizer understands these host-config keys; a server
+    // leaves them out of the configs it returns to a client that doesn't say so.
+    headers[HOST_CONFIG_FEATURES_HEADER] = HOST_CONFIG_FEATURES;
     // After `extraHeaders`, like every other header this client owns: an edge
     // authenticator's credential must not be able to relabel a run's origin.
     if (init.declareLaunch && this.launchHeaders) {

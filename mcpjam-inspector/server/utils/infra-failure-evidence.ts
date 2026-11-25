@@ -15,7 +15,12 @@ export type InfraFailureSource =
   /** A typed sandbox setup step: resolve, wake or reserve the box. */
   | "sandbox_setup"
   /** A typed platform setup step: the credential-broker lease. */
-  | "platform_setup";
+  | "platform_setup"
+  /**
+   * A Claude web or ChatGPT web turn that stopped on the vendor's page, with
+   * the page's failure kind as the code (`needs_sign_in`, `page_changed`, …).
+   */
+  | "web_client";
 
 /**
  * Who controls the model endpoint a model-layer failure came from.

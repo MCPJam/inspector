@@ -25,6 +25,7 @@ import {
   readComparisonAuthRecovery,
   registerComparisonColumn,
   prepareComparisonAuthRecovery,
+  type ComparisonAuthRecovery,
 } from "@/lib/comparison-auth-recovery";
 import { getCachedChatHistoryDetail } from "@/components/chat-v2/history/chat-history-prefetch";
 import {
@@ -184,6 +185,18 @@ interface MultiModelPlaygroundCardProps {
     profile: "chatgpt" | "codex";
   } | null;
   browserWorkspace?: { id: string; order: number; clientCount: number };
+  /**
+   * A comparison being restored; read once when the column mounts. Null means
+   * none; left out, the column reads the sign-in copy in sessionStorage.
+   */
+  comparisonRecovery?: ComparisonAuthRecovery | null;
+  /** Told once the column has taken its entry from `comparisonRecovery`. */
+  onRecoveryColumnRead?: (columnKey: string) => void;
+  /**
+   * This column's position in its multi-model session; only ever grows.
+   * Absent when the feature is off, and then the column saves no group.
+   */
+  multiModelPosition?: number;
   /**
    * Polymorphic column identity (Phase 3 of the multi-host plan). In model
    * mode it's the card's `comparisonKey` (the bare model id for a default
@@ -347,6 +360,9 @@ export function MultiModelPlaygroundCard({
   readinessNotice,
   extensionBinding = null,
   browserWorkspace,
+  comparisonRecovery,
+  onRecoveryColumnRead,
+  multiModelPosition,
   compareId,
   compareLabel,
   compareKind,
@@ -527,12 +543,19 @@ export function MultiModelPlaygroundCard({
       : pluginComputerAttached,
   });
   const [recoveryColumn] = useState(() =>
-    readComparisonAuthRecovery(
-      hostedContext?.projectId ?? "local",
+    (comparisonRecovery !== undefined
+      ? comparisonRecovery
+      : readComparisonAuthRecovery(hostedContext?.projectId ?? "local")
     )?.columns.find(
       (column) => column.compareId === compareId && column.kind === compareKind,
     ),
   );
+  const readRecoveryColumnKey = recoveryColumn
+    ? `${compareKind}:${compareId}`
+    : null;
+  useEffect(() => {
+    if (readRecoveryColumnKey) onRecoveryColumnRead?.(readRecoveryColumnKey);
+  }, [onRecoveryColumnRead, readRecoveryColumnKey]);
   const [recoveryStatus, setRecoveryStatus] = useState<
     "loading" | "ready" | "failed"
   >(recoveryColumn ? "loading" : "ready");
@@ -555,6 +578,21 @@ export function MultiModelPlaygroundCard({
           )
         : { ok: true as const },
     [browserWorkspace?.id, browserWorkspace?.clientCount, compareId],
+  );
+  // The comparison id is the multi-model session's group: a restored
+  // comparison keeps the id it was saved under, so its columns stay together.
+  const browserWorkspaceId = browserWorkspace?.id;
+  const multiModelColumn = useMemo(
+    () =>
+      browserWorkspaceId !== undefined && multiModelPosition !== undefined
+        ? {
+            groupId: browserWorkspaceId,
+            position: multiModelPosition,
+            columnKind: compareKind,
+            compareId,
+          }
+        : undefined,
+    [browserWorkspaceId, multiModelPosition, compareKind, compareId],
   );
   const {
     messages,
@@ -591,6 +629,7 @@ export function MultiModelPlaygroundCard({
     pluginContextReferences: currentLaneContext,
     // A comparison column never shares the member's one personal computer.
     comparePane: true,
+    multiModelColumn,
     prepareAuthRecovery,
     authRecoveryPaused: recoveryStatus !== "ready",
     selectedServers,
@@ -614,6 +653,7 @@ export function MultiModelPlaygroundCard({
     fixedReasoningEffort: reasoningEffort ?? null,
     // Undefined preserves the orchestrator's automatic policy.
     progressiveToolDiscovery: hostCapsResolver?.progressiveToolDiscovery,
+    runUnloadedToolCalls: hostCapsResolver?.runUnloadedToolCalls,
     respectToolVisibility: hostCapsResolver?.respectToolVisibility,
     modelVisibleMcpToolResults: resolvedModelVisibleMcpToolResults,
     onReset: () => {
