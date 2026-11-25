@@ -72,6 +72,8 @@ interface EventsTabProps {
   connectionStatus?: string;
   /** The Convex project (hosted registry and viewer tokens). */
   projectId?: string | null;
+  /** The app's own project id, for a local project without a Convex one. */
+  localProjectId?: string | null;
   /** The playground's active client; the default client to subscribe as. */
   activeHostId?: string | null;
   /** Its saved config, which decides the delivery modes it receives. */
@@ -84,10 +86,14 @@ export function EventsTab({
   isActive = true,
   connectionStatus,
   projectId = null,
+  localProjectId = null,
   activeHostId = null,
   activeHost = null,
 }: EventsTabProps) {
   const hosted = isHostedMode();
+  // The local runtime scopes subscriptions and the feed by project, keyed
+  // like the Playground's: the Convex project, else the local one.
+  const localScope = projectId ?? localProjectId;
   const hasServer = Boolean(serverConfig && serverName);
   const connected =
     connectionStatus === undefined || connectionStatus === "connected";
@@ -211,10 +217,15 @@ export function EventsTab({
     [],
   );
 
+  // Another project's subscriptions are not this one's.
+  useEffect(() => {
+    setLocalSubscriptions(new Map());
+  }, [localScope]);
+
   useEffect(() => {
     if (hosted || !serverName || !declared) return;
     let cancelled = false;
-    listLocalEventSubscriptions(serverName)
+    listLocalEventSubscriptions(serverName, localScope)
       .then((subscriptions) => {
         if (cancelled) return;
         upsertLocal(subscriptions);
@@ -230,7 +241,7 @@ export function EventsTab({
     return () => {
       cancelled = true;
     };
-  }, [hosted, serverName, declared, upsertLocal]);
+  }, [hosted, serverName, declared, localScope, upsertLocal]);
 
   const hostNames = useMemo(
     () =>
@@ -284,7 +295,7 @@ export function EventsTab({
 
   const feed = useEventsFeed({
     hosted,
-    projectId,
+    projectId: hosted ? projectId : localScope,
     enabled:
       isActive &&
       declared &&
@@ -319,8 +330,8 @@ export function EventsTab({
     onSubscription: (subscription) => upsertLocal([subscription]),
   });
 
-  // The feed is the inbox's (project- or runtime-wide); show this server's
-  // entries, and entries no known subscription claims.
+  // The feed is the project's; show this server's entries, and entries no
+  // known subscription claims.
   const visibleEntries = useMemo(
     () =>
       feed.entries.filter((entry) => {
@@ -417,6 +428,7 @@ export function EventsTab({
         },
         local: async () => {
           const subscription = await createLocalEventSubscription({
+            ...(localScope ? { projectId: localScope } : {}),
             serverId: serverName,
             eventName: event.name,
             arguments: value.arguments,

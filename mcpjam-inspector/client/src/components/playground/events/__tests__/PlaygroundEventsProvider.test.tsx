@@ -166,6 +166,14 @@ describe("Playground Events lifecycle", () => {
     });
     expect(runtime?.bindings[0].enabled).toBe(false);
   });
+  it("subscribes and reads the local feed in its project", async () => {
+    render(tree());
+    await act(add);
+    expect(mocks.watermark).toHaveBeenCalledWith(0, "project");
+    expect(mocks.create).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "project", serverId: "demo" }),
+    );
+  });
   it("rejects a duplicate binding instead of silently losing new instructions", async () => {
     render(tree());
     await act(add);
