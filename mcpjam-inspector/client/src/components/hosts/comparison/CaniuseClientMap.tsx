@@ -52,11 +52,11 @@ export function groupResults(coverage: CapabilityCoverage) {
   return RESULT_GROUPS.map((group) => ({
     ...group,
     title:
-      coverage.reporting && group.status === "supported"
-        ? "Reported"
+      group.status === "supported"
+        ? supportedResultLabel(coverage)
         : coverage.reporting && group.status === "unsupported"
           ? "Not reported"
-        : group.title,
+          : group.title,
     clients: orderPublicClients(
       coverage.rows
         .filter(({ status }) => status === group.status)
@@ -206,7 +206,7 @@ export function CapabilityReference({
             const label = capabilityResultLabel(
               status,
               field.id,
-              coverage.reporting,
+              coverage,
             );
             return (
               <tr key={subject.hostId}>
@@ -248,9 +248,16 @@ export function CapabilityReference({
 export function capabilityResultLabel(
   status: CapabilityCoverage["rows"][number]["status"],
   fieldId: string | undefined,
-  reporting: boolean,
+  coverage: CapabilityCoverage,
 ) {
-  if (reporting && status === "supported") return "Reported";
-  if (reporting && status === "unsupported") return "Not reported";
+  if (status === "supported" && (coverage.reporting || coverage.eventsMode === "any"))
+    return supportedResultLabel(coverage);
+  if (coverage.reporting && status === "unsupported") return "Not reported";
   return getCaniuseSupportLabel(status, fieldId);
+}
+
+function supportedResultLabel(coverage: CapabilityCoverage) {
+  if (coverage.reporting) return "Reported";
+  if (coverage.eventsMode === "any") return "Supports at least one delivery mode";
+  return "Supported";
 }

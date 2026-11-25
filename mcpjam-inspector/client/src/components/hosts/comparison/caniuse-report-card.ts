@@ -38,10 +38,15 @@ export function shareResultLabel(
   status: string,
   count: number,
   reporting: boolean,
+  anyEventsMode: boolean,
 ) {
   if (status === "supported") {
     if (reporting)
       return count === 1 ? "1 reports a value" : `${count} report a value`;
+    if (anyEventsMode)
+      return count === 1
+        ? "1 supports a delivery mode"
+        : `${count} support a delivery mode`;
     return count === 1 ? "1 supports" : `${count} support`;
   }
   if (status === "unsupported" && reporting)
@@ -137,7 +142,11 @@ export async function drawCaniuseReportCard(
   );
   font(600, 22);
   text(
-    coverage.reporting ? "Reporting coverage" : "Client adoption",
+    coverage.eventsMode
+      ? "Of clients with results"
+      : coverage.reporting
+        ? "Reporting coverage"
+        : "Client adoption",
     CARD_WIDTH - INSET,
     147,
     "--muted-foreground",
@@ -173,7 +182,12 @@ export async function drawCaniuseReportCard(
       ),
     );
   for (const { status, clients, token } of shown) {
-    const label = shareResultLabel(status, clients.length, coverage.reporting);
+    const label = shareResultLabel(
+      status,
+      clients.length,
+      coverage.reporting,
+      coverage.eventsMode === "any",
+    );
     font(600, 20);
     ctx.globalAlpha = 0.28;
     fill(INSET, y, ctx.measureText(label).width + 52, 32, 16, token);

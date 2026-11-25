@@ -9,7 +9,11 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { Input } from "@mcpjam/design-system/input";
 import { buildCaniuseCapabilityPath } from "./caniuse-capability-catalog";
-import { sliceLabel, type CapabilityCoverage } from "./caniuse-coverage";
+import {
+  eventsSupportSummary,
+  sliceLabel,
+  type CapabilityCoverage,
+} from "./caniuse-coverage";
 import {
   CARD_WIDTH,
   CARD_HEIGHT,
@@ -41,13 +45,15 @@ export function CaniuseShareDialog({
   const [showLink, setShowLink] = useState(false);
   const [canvas, setCanvas] = useState<HTMLCanvasElement | null>(null);
   const url = buildCapabilityShareUrl(slug, slice);
-  const label = slice ? sliceLabel(slice) : "";
+  const label = sliceLabel(coverage.eventsMode ?? slice);
   const post = [
     title,
     label,
     coverage.score === null
       ? "No published client results yet"
-      : `${coverage.score}% ${coverage.reporting ? "reporting coverage" : "client adoption"}`,
+      : coverage.eventsMode
+        ? eventsSupportSummary(coverage)
+        : `${coverage.score}% ${coverage.reporting ? "reporting coverage" : "client adoption"}`,
   ]
     .filter(Boolean)
     .join(" · ");

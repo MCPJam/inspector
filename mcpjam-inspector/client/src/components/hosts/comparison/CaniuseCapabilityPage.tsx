@@ -21,6 +21,7 @@ import {
   caniuseTitle,
   capabilityCoverage,
   capabilitySlices,
+  eventsSupportSummary,
   sliceLabel,
 } from "./caniuse-coverage";
 import { CaniuseSite } from "./CaniuseSite";
@@ -120,6 +121,11 @@ export function CaniuseCapabilityPage({
   const title = capability
     ? caniuseTitle(capability.field)
     : "Capability not found";
+  const coverageLabel = coverage?.eventsMode
+    ? "Support among clients with results"
+    : coverage?.reporting
+      ? "Reporting coverage"
+      : "Client adoption";
   const activeGroup = capability ? groupCapability(capability) : "Extensions";
 
   useSurfaceAgentBridge({
@@ -136,7 +142,7 @@ export function CaniuseCapabilityPage({
             supportLabel: capabilityResultLabel(
               status,
               capability?.field.id,
-              coverage.reporting,
+              coverage,
             ),
           })) ?? [],
       }),
@@ -232,16 +238,12 @@ export function CaniuseCapabilityPage({
                 )}
               </p>
               <section
-                aria-label={
-                  coverage.reporting ? "Reporting coverage" : "Client adoption"
-                }
+                aria-label={coverageLabel}
                 className="caniuse-glow mt-6 overflow-hidden rounded-xl border border-border bg-card text-card-foreground"
               >
                 <div className="px-5 py-6 sm:px-7 sm:py-7">
                   <p className="text-sm font-medium text-muted-foreground">
-                    {coverage.reporting
-                      ? "Reporting coverage"
-                      : "Client adoption"}
+                    {coverageLabel}
                   </p>
                   <div className="mt-2 text-5xl font-semibold tracking-tight tabular-nums sm:text-6xl">
                     {coverage.score === null ? "—" : `${coverage.score}%`}
@@ -249,10 +251,18 @@ export function CaniuseCapabilityPage({
                   <p className="mt-2 text-sm text-muted-foreground">
                     {coverage.score === null
                       ? "No published client results yet."
-                      : coverage.reporting
-                        ? `${coverage.full} of ${coverage.measured} tracked clients report a value.`
-                        : `${coverage.full} of ${coverage.measured} clients with published results fully support this capability.`}
+                      : coverage.eventsMode
+                        ? eventsSupportSummary(coverage)
+                        : coverage.reporting
+                          ? `${coverage.full} of ${coverage.measured} tracked clients report a value.`
+                          : `${coverage.full} of ${coverage.measured} clients with published results fully support this capability.`}
                   </p>
+                  {coverage.eventsMode && coverage.score !== null && (
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {coverage.measured} of {coverage.rows.length} tracked clients
+                      have published results.
+                    </p>
+                  )}
                 </div>
                 {slices.length > 0 && (
                   <div

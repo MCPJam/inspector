@@ -51,6 +51,22 @@ describe("CaniuseCapabilityPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows measured Events support and how many tracked clients have results", () => {
+    renderCapability("event-delivery");
+    const score = within(
+      screen.getByRole("region", { name: "Support among clients with results" }),
+    );
+    expect(
+      score.getByText(/clients with published results support at least one delivery mode/),
+    ).toBeVisible();
+    expect(
+      score.getByText(/of \d+ tracked clients have published results/),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("region", { name: "Supports at least one delivery mode" }),
+    ).toBeVisible();
+  });
+
   it("restores a mode from the URL, shares the same mode and prepares the PNG", async () => {
     renderCapability("event-delivery", "?slice=poll&view=reference");
     expect(screen.getByRole("button", { name: /poll/i })).toHaveAttribute(
@@ -67,6 +83,10 @@ describe("CaniuseCapabilityPage", () => {
       const href = screen.getByRole<HTMLAnchorElement>("link", { name }).href;
       expect(new URL(href).searchParams.get("url")).toBe(url);
     }
+    const x = screen.getByRole<HTMLAnchorElement>("link", { name: "Post to X" });
+    expect(new URL(x.href).searchParams.get("text")).toMatch(
+      /clients with published results support poll delivery/,
+    );
   });
 
   it("shows Tasks without claiming any published results", () => {
