@@ -42,6 +42,21 @@ describe("loadBaselineEvidence", () => {
     expect(JSON.stringify(evidence)).not.toContain("validation-only-case");
   });
 
+  it("finds the steering cases of a suite built over REST, whose keys are generated and iterations carry only the stored row id", async () => {
+    const d = deps(
+      Array.from({ length: 20 }, (_, index) =>
+        iteration(`it${index}`, "ui_Aof40t4hiL", index < 18 ? { result: "passed", firstFailedStage: undefined, failureCategory: undefined, stageResults: [] } : {}),
+      ),
+    );
+    const row = climbRow({ groups: { ...climbRow().groups, steeringCases: [{ key: "ui_Aof40t4hiL", tool: "no_tools" }] } });
+    const { evidence } = await loadBaselineEvidence(d, row as never, scope());
+    expect(evidence).toHaveLength(20);
+    expect(evidence.filter((item) => item.outcome === "passed")).toHaveLength(18);
+    const read = await readClimbInFull(d, row as never);
+    expect(read.climbFor!.find((option) => option.id === "tokens")!.number).toMatchObject({ value: 1000, unit: "tokens" });
+    expect(read.climbFor!.find((option) => option.id === "pass_rate")!.failedRuns).toHaveLength(2);
+  });
+
   it("marks a tool a case expects that the server no longer lists", async () => {
     const d = deps([iteration("it1", "search-basic")]);
     const { evidence } = await loadBaselineEvidence(d, climbRow() as never, scope(["fetch"]));
@@ -49,7 +64,7 @@ describe("loadBaselineEvidence", () => {
   });
 
   it("reads past the first page", async () => {
-    const d = deps([]);
+    const d = deps([iteration("a", "search-basic"), iteration("b", "fetch-one")]);
     d.client.listEvalRunIterations = vi
       .fn()
       .mockResolvedValueOnce({ items: [iteration("a", "search-basic")], nextCursor: "c2" })

@@ -14,6 +14,7 @@ import type { PlatformApiClient, PlatformClimb } from "@mcpjam/sdk/platform";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { convexErrorData } from "../../routes/v1/convex-errors.js";
 import { climbFns, translateClimbReadError } from "./backend.js";
+import { readCaseKeys } from "./case-keys.js";
 import { readRunGroups } from "./run-groups.js";
 
 const PAGE = 100;
@@ -23,7 +24,7 @@ const REFUSAL = "Only iterations of the climb's steering cases can be read. Take
 
 export type TraceFenceDeps = {
   convex: Pick<ConvexHttpClient, "query">;
-  client: Pick<PlatformApiClient, "listEvalRunIterations">;
+  client: Pick<PlatformApiClient, "listEvalRunIterations" | "listEvalCases">;
   projectId: string;
   climbId: string;
 };
@@ -39,11 +40,15 @@ export function createTraceFence(deps: TraceFenceDeps): (input: Record<string, u
     if (!groups?.some((group) => group.launchedRunIds.includes(runId))) return REFUSAL;
     const climb: PlatformClimb = await convex.query(climbFns.get, { climbId });
     const steering = new Set(climb.groups.steeringCases.map((entry) => entry.key));
+    const caseKeyOf = await readCaseKeys(client, { projectId, suiteId: climb.suiteId });
     let cursor: string | undefined;
     for (let page = 0; page < MAX_PAGES; page += 1) {
       const result = await client.listEvalRunIterations({ projectId, runId, cursor, limit: PAGE });
       const found = result.items.find((iteration) => iteration.id === iterationId);
-      if (found) return [found.caseId, found.testCaseId].some((key) => !!key && steering.has(key)) ? undefined : REFUSAL;
+      if (found) {
+        const key = caseKeyOf(found);
+        return key !== undefined && steering.has(key) ? undefined : REFUSAL;
+      }
       cursor = result.nextCursor ?? undefined;
       if (!cursor) break;
     }

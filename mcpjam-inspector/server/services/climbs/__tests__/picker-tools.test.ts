@@ -21,10 +21,13 @@ function rig(options: { climb?: Record<string, unknown>; groups?: unknown; itera
     },
   });
   const listEvalRunIterations = vi.fn(async () => ({
-    items: options.iterations ?? [{ id: "it_steer", caseId: "search-basic" }, { id: "it_valid", caseId: "case_validation" }],
+    items: options.iterations ?? [{ id: "it_steer", testCaseId: "row_search" }, { id: "it_valid", testCaseId: "row_valid" }],
     nextCursor: undefined,
   }));
-  const client = { listEvalRunIterations } as never;
+  const listEvalCases = vi.fn(async () => ({
+    items: [{ id: "row_search", key: "search-basic" }, { id: "row_valid", key: "case_validation" }, { id: "fetch-one", key: "fetch-one" }],
+  }));
+  const client = { listEvalRunIterations, listEvalCases } as never;
   const rule = createPickerRule({ convex, client, projectId: PROJECT, climbId: CLIMB });
   return { rule, called, listEvalRunIterations };
 }
@@ -78,7 +81,7 @@ describe("the fence on transcripts", () => {
     expect(await rig({ groups: null }).rule("get_eval_iteration_trace", read("it_steer"))).toMatch(/steering cases/);
   });
 
-  it("reads an iteration by the case's key or its id, as the failed runs name them", async () => {
+  it("reads an iteration of a case that has no key of its own, which the climb names by its row id", async () => {
     const { rule } = rig({ iterations: [{ id: "it_a", testCaseId: "fetch-one" }] });
     expect(await rule("get_eval_iteration_trace", read("it_a"))).toBeUndefined();
   });

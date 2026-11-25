@@ -38,7 +38,7 @@ const WRITES = new Set<string>(["create_mock_server", "update_mock_server", "sub
 
 type PickerRuleDeps = {
   convex: Pick<ConvexHttpClient, "query">;
-  client: Pick<PlatformApiClient, "listEvalRunIterations">;
+  client: Pick<PlatformApiClient, "listEvalRunIterations" | "listEvalCases">;
   projectId: string;
   climbId: string;
 };

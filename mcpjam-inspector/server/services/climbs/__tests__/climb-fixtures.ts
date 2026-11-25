@@ -51,8 +51,8 @@ export const climbRow = (over: Record<string, unknown> = {}) => ({
 
 export const iteration = (id: string, caseId: string, over: Record<string, unknown> = {}) => ({
   id,
+  // A UI-authored case declares no id, so an iteration names it only by its stored row.
   testCaseId: `row-${caseId}`,
-  caseId,
   title: `Case ${caseId}`,
   status: "completed",
   result: "failed",
@@ -97,5 +97,9 @@ export function fakeClient(iterations: any[]) {
     cancelEvalRun: vi.fn(),
     getEvalRun: vi.fn(async () => ({ environment: { id: "env_a" } })),
     listEvalRunIterations: vi.fn(async () => ({ items: iterations })),
+    // The suite's cases: each row id above belongs to the case key it was built from.
+    listEvalCases: vi.fn(async () => ({
+      items: [...new Set(iterations.map((entry) => String(entry.testCaseId)))].map((id) => ({ id, key: id.replace(/^row-/, "") })),
+    })),
   } as never;
 }

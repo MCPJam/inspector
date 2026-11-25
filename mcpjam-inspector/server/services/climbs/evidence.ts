@@ -10,6 +10,7 @@ import { buildAppPermalink, type PlatformEvalIteration } from "@mcpjam/sdk/platf
 import type { ClimbEvidence } from "@mcpjam/sdk/climbs";
 import type { PlatformClimb } from "@mcpjam/sdk/platform";
 import type { ClimbDeps } from "./deps.js";
+import { readCaseKeys } from "./case-keys.js";
 import { readRunGroups } from "./run-groups.js";
 
 const PAGE = 100;
@@ -33,6 +34,7 @@ export async function loadBaselineEvidence(
   const groups = await readRunGroups(deps.convex, climb.climbId);
   if (!groups) return { evidence: [], available: false };
   const steering = new Map(climb.groups.steeringCases.map((entry) => [entry.key, entry.tool]));
+  const caseKeyOf = await readCaseKeys(deps.client, { projectId: scope.projectId, suiteId: climb.suiteId });
   const evidence: ClimbEvidence[] = [];
   const baselineRuns = groups.filter((group) => group.unitKey.startsWith("baseline:")).flatMap((group) => group.launchedRunIds);
   for (const runId of baselineRuns) {
@@ -43,8 +45,8 @@ export async function loadBaselineEvidence(
     for (let page = 0; page < MAX_PAGES; page += 1) {
       const result = await deps.client.listEvalRunIterations({ projectId: scope.projectId, runId, cursor, limit: PAGE });
       for (const iteration of result.items) {
-        const key = [iteration.caseId, iteration.testCaseId].find((candidate): candidate is string => !!candidate && steering.has(candidate));
-        if (!key) continue;
+        const key = caseKeyOf(iteration);
+        if (!key || !steering.has(key)) continue;
         evidence.push(toEvidence(iteration, { runId, environmentId, key, tool: steering.get(key), climb, scope }));
       }
       cursor = result.nextCursor ?? undefined;
