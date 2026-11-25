@@ -680,5 +680,20 @@ describe("Compare pane settings", () => {
         serverNames: null,
       });
     });
+
+    it.each([
+      ["hidden", { ...environment, visible: false }],
+      ["without a preview", { ...environment, preview: null }],
+    ])("reports no server count for an environment pane %s", (_, entry) => {
+      render(
+        <EnvHarness
+          spies={spies()}
+          paneEnvironments={new Map([["env_1", entry]])}
+        />,
+      );
+      expect(
+        useComparePaneStore.getState().panes[0].serverSummary,
+      ).toBeUndefined();
+    });
   });
 });

@@ -5,6 +5,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
+import { Badge } from "@mcpjam/design-system/badge";
 import {
   useComparePaneStore,
   type ComparePaneOption,
@@ -57,31 +58,22 @@ export function ComparePaneSelect({
                 key={pane.paneId}
                 value={pane.paneId}
                 textValue={name}
-                className="min-h-12 data-[state=checked]:bg-accent/60 [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1"
+                className="min-h-12"
+                description={pane.modelName}
+                leading={
+                  <img
+                    src={pane.logoSrc ?? UNKNOWN_HOST_LOGO}
+                    alt=""
+                    className="size-5 shrink-0 object-contain"
+                  />
+                }
+                trailing={
+                  pane.serverSummary && (
+                    <Badge variant="outline">{pane.serverSummary}</Badge>
+                  )
+                }
               >
-                <img
-                  src={pane.logoSrc ?? UNKNOWN_HOST_LOGO}
-                  alt=""
-                  className="size-5 shrink-0 object-contain"
-                />
-                <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate font-medium" title={name}>
-                    {name}
-                  </span>
-                  {pane.modelName && (
-                    <span
-                      className="truncate text-xs text-muted-foreground"
-                      title={pane.modelName}
-                    >
-                      {pane.modelName}
-                    </span>
-                  )}
-                </span>
-                {pane.serverSummary && (
-                  <span className="shrink-0 rounded-sm border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
-                    {pane.serverSummary}
-                  </span>
-                )}
+                {name}
               </SelectItem>
             );
           })}
