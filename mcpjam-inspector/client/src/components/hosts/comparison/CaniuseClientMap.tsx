@@ -110,7 +110,11 @@ export function ClientMap({ coverage }: { coverage: CapabilityCoverage }) {
                       open={openClient === client.hostId}
                       onOpenChange={(open) =>
                         setOpenClient((current) =>
-                          open ? client.hostId : current === client.hostId ? null : current,
+                          open
+                            ? client.hostId
+                            : current === client.hostId
+                              ? null
+                              : current,
                         )
                       }
                     >
@@ -120,11 +124,13 @@ export function ClientMap({ coverage }: { coverage: CapabilityCoverage }) {
                           tabIndex={0}
                           onClick={(event) => {
                             const pointer = event.nativeEvent;
-                            if ("pointerType" in pointer && pointer.pointerType === "touch") {
+                            if (
+                              "pointerType" in pointer &&
+                              pointer.pointerType === "touch"
+                            ) {
                               event.preventDefault();
-                              setOpenClient((current) =>
-                                current === client.hostId ? null : client.hostId,
-                              );
+                              // Touch can focus the tile before delivering its click.
+                              setOpenClient(client.hostId);
                             }
                           }}
                           aria-label={`${client.hostName}. ${date}`}

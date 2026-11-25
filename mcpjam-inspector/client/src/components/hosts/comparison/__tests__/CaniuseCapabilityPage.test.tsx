@@ -82,6 +82,21 @@ describe("CaniuseCapabilityPage", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("keeps verification details open when a touch tap first focuses a tile", async () => {
+    renderCapability("event-delivery", "?slice=poll");
+    const tile = screen.getByRole("img", { name: /^ChatGPT\. Last checked/ });
+    fireEvent.focus(tile);
+    fireEvent(
+      tile,
+      new PointerEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        pointerType: "touch",
+      }),
+    );
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(/Last checked/);
+  });
+
   it("retains navigation on a missing capability", () => {
     renderCapability("not-a-capability");
     expect(
