@@ -39,7 +39,7 @@ describe("each kind is its own kind", () => {
 
 describe("who reads each kind", () => {
   it.each<[string, string, ReadField, string, string]>([
-    // [name, path, field, mcpjam, harness client]
+    // [name, path, field, mcpjam, a harness client no run has measured (Codex)]
     ["greet", "description", "promptContent", "ignores", "unconfirmed"],
     ["file:///notes.md", "text", "resourceContent", "ignores", "unconfirmed"],
     ["file:///logs/{name}", "description", "templateContent", "ignores", "unconfirmed"],
@@ -48,7 +48,7 @@ describe("who reads each kind", () => {
   ])("%s at %s is %s", (name, path, field, mcpjam, harness) => {
     expect(fieldOfChange(by(name), path)).toBe(field);
     expect(readsOf("mcpjam", field)).toBe(mcpjam);
-    expect(readsOf("claude-code", field)).toBe(harness);
+    expect(readsOf("codex", field)).toBe(harness);
   });
 
   it.each([
@@ -62,10 +62,10 @@ describe("who reads each kind", () => {
     expect(fieldOfChange(change!, "hidden")).toBe(field);
   });
 
-  it("refuses a round of prompt edits for MCPJam's client alone, and lets a harness client read it", () => {
+  it("refuses a round of prompt edits for MCPJam's client alone, and lets a harness client no run has measured read it", () => {
     const prompt = [by("greet")];
     expect(refuseUnreadChange(prompt, ["mcpjam"])?.unread[0]).toMatchObject({ field: "promptContent" });
-    expect(refuseUnreadChange(prompt, ["mcpjam", "claude-code"])).toBeUndefined();
+    expect(refuseUnreadChange(prompt, ["mcpjam", "codex"])).toBeUndefined();
     expect(refuseUnreadChange([by("ui://card")], ["mcpjam"])).toBeUndefined();
     expect(ALL_CLIENTS).toContain("opencode");
   });

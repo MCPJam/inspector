@@ -3,10 +3,12 @@
  * only what no client in the climb reads.
  *
  * The table starts from the engineering spec's "What a mock carries" and is
- * kept by hand. A fact is `reads` or `ignores` when the spec states it, and
- * `unconfirmed` when it only says what a client is passed, not what its model
- * sees. Scenario V7 runs each unconfirmed row and moves it. A refusal relies on
- * `ignores` alone, so an unconfirmed row never blocks a round.
+ * kept by hand. A fact is `reads` or `ignores` when the spec states it or QA
+ * measured it, and `unconfirmed` when it only says what a client is passed, not
+ * what its model sees. Scenario V7 ran prompts, resources and skills on
+ * MCPJam's own client and on Claude Code; the rest stay
+ * unconfirmed until a run moves them. A refusal relies on `ignores` alone, so
+ * an unconfirmed row never blocks a round.
  */
 import type { MockChange } from "../mocks/change-list.js";
 import type { ChangeReader, ClimbClient } from "./types.js";
@@ -35,6 +37,9 @@ export type ReadField =
   | "appListing"
   | "appContent";
 
+/** When QA measured the rows V7 moved to `reads` or `ignores`. */
+export const V7_CONFIRMATION = "confirmed by QA, 2026-11-24";
+
 type Reads = ChangeReader["reads"];
 const HARNESS: readonly ClimbClient[] = ["claude-code", "codex", "cursor", "copilot-cli", "opencode"];
 
@@ -54,14 +59,16 @@ const MCPJAM: Record<ReadField, Reads> = {
   toolIcons: "ignores",
   toolMeta: "ignores",
   toolResult: "reads",
-  // "Not in MCPJam's eval loop."
+  // "Not in MCPJam's eval loop." Confirmed by QA (V7, an eval, 2
+  // iterations each): a mock sent a prompt, a resource and a skill, and the
+  // model reached none of them ("no tool to get prompts/resources/skills").
   promptListing: "ignores",
   promptContent: "ignores",
   resourceListing: "ignores",
   resourceContent: "ignores",
   templateListing: "ignores",
   templateContent: "ignores",
-  // "MCPJam's client uses a pinned set in eval runs."
+  // "MCPJam's client uses a pinned set in eval runs." Confirmed by QA (V7).
   skillListing: "ignores",
   skillContent: "ignores",
   // "Playground; eval widget steps": whether an eval's model-facing loop reads an app is what V7 measures.
@@ -84,7 +91,7 @@ const HARNESS_READS: Record<ReadField, Reads> = {
   toolIcons: "unconfirmed",
   toolMeta: "unconfirmed",
   toolResult: "reads",
-  // "Passed to harness clients": whether the model sees them is what V7 measures.
+  // "Passed to harness clients": only Claude Code was measured (see CLAUDE_CODE_READS).
   promptListing: "unconfirmed",
   promptContent: "unconfirmed",
   resourceListing: "unconfirmed",
@@ -99,6 +106,21 @@ const HARNESS_READS: Record<ReadField, Reads> = {
   appContent: "unconfirmed",
 };
 
+/**
+ * What QA measured on Claude Code, over the harness defaults (V7, a chat turn
+ * through a tunnel): the model quoted the mock's resource (through
+ * its resource-reading tool) and its skill, and could not reach the prompt (no
+ * tool lists prompts). Not run: listing a resource
+ * or a template, and the other harness clients, which stay unconfirmed.
+ */
+const CLAUDE_CODE_READS: Partial<Record<ReadField, Reads>> = {
+  promptListing: "ignores",
+  promptContent: "ignores",
+  resourceContent: "reads",
+  skillListing: "reads",
+  skillContent: "reads",
+};
+
 export const CLIENT_LABELS: Readonly<Record<ClimbClient, string>> = {
   mcpjam: "MCPJam's own client",
   "claude-code": "Claude Code",
@@ -109,7 +131,9 @@ export const CLIENT_LABELS: Readonly<Record<ClimbClient, string>> = {
 };
 
 export function readsOf(client: ClimbClient, field: ReadField): Reads {
-  return client === "mcpjam" ? MCPJAM[field] : HARNESS_READS[field];
+  if (client === "mcpjam") return MCPJAM[field];
+  if (client === "claude-code") return CLAUDE_CODE_READS[field] ?? HARNESS_READS[field];
+  return HARNESS_READS[field];
 }
 
 export function readersOf(field: ReadField, clients: readonly ClimbClient[]): ChangeReader[] {
