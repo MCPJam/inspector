@@ -2517,6 +2517,7 @@ export function EventsRoute() {
   const {
     selectedMCPConfig,
     appState,
+    activeProjectId,
     convexProjectId,
     activeHost,
     activeHostId,
@@ -2536,6 +2537,7 @@ export function EventsRoute() {
           appState.servers[appState.selectedServer]?.connectionStatus
         }
         projectId={convexProjectId ?? null}
+        localProjectId={activeProjectId ?? null}
         activeHostId={activeHostId ?? null}
         activeHost={activeHost ?? null}
       />

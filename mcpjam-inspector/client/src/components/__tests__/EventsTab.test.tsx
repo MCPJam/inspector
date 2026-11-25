@@ -48,8 +48,8 @@ vi.mock("@/lib/apis/mcp-events-api", async (importOriginal) => ({
   fetchLocalEventsFeed: vi
     .fn()
     .mockResolvedValue({ entries: [], nextAfter: 0 }),
-  localEventsStreamUrl: (after: number) =>
-    `/api/mcp/events/stream?after=${after}`,
+  localEventsStreamUrl: (after: number, projectId: string | null) =>
+    `/api/mcp/events/stream?after=${after}${projectId ? `&projectId=${projectId}` : ""}`,
 }));
 
 vi.mock("@/hooks/useClients", () => ({
@@ -664,6 +664,64 @@ describe("EventsTab (local)", () => {
     expect(
       within(rejections).getByText("headers: webhook-id, webhook-signature"),
     ).toBeInTheDocument();
+  });
+
+  it("reads and subscribes in the current project, and starts over in another", async () => {
+    mockLoadEventsCatalog.mockResolvedValue(catalog([issueCreated]));
+    mockCreateLocal.mockResolvedValue(subscriptionView({ mode: "poll" }));
+    const tab = (projectId: string | null) => (
+      <EventsTab
+        serverConfig={serverConfig()}
+        serverName={SERVER}
+        projectId={projectId}
+        localProjectId="local_project"
+      />
+    );
+    const { rerender } = render(tab(null));
+
+    // Without a Convex project, the local project scopes the registry and feed.
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    expect(FakeEventSource.instances[0]!.url).toBe(
+      "/api/mcp/events/stream?after=0&projectId=local_project",
+    );
+    await waitFor(() =>
+      expect(mockListLocal).toHaveBeenCalledWith(SERVER, "local_project"),
+    );
+    await openEventType("issue.created");
+    fireEvent.change(await screen.findByPlaceholderText("Enter repo"), {
+      target: { value: "octo/hello" },
+    });
+    fireEvent.click(subscribeButton());
+    await waitFor(() =>
+      expect(mockCreateLocal).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: "local_project", serverId: SERVER }),
+      ),
+    );
+    emitFrame({
+      type: "entry",
+      entry: {
+        seq: 1,
+        kind: "event",
+        origin: "push",
+        namespace: "live",
+        logicalSubscriptionId: "esub_1",
+        receivedAt: Date.now(),
+      },
+    });
+    expect(screen.getByRole("tab", { name: /^Occurrences/ })).toHaveTextContent("1");
+
+    // A Convex project wins, and nothing from the previous project carries over.
+    rerender(tab("convex_project"));
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(2));
+    expect(FakeEventSource.instances[0]!.closed).toBe(true);
+    expect(FakeEventSource.instances[1]!.url).toBe(
+      "/api/mcp/events/stream?after=0&projectId=convex_project",
+    );
+    await waitFor(() =>
+      expect(mockListLocal).toHaveBeenCalledWith(SERVER, "convex_project"),
+    );
+    expect(screen.getByRole("tab", { name: /^Occurrences/ })).toHaveTextContent("0");
+    expect(screen.getByRole("tab", { name: /^Subscriptions/ })).toHaveTextContent("0");
   });
 
   it("renders event data as text, never as HTML", async () => {
