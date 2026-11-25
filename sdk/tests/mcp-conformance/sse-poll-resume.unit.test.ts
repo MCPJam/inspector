@@ -60,7 +60,9 @@ type ResumeMode =
   /** Replay the answer and keep the stream open. */
   | "replay-open"
   | "405"
-  | "500";
+  | "500"
+  /** One event with a new id and a new `retry`, then the stream breaks. */
+  | "break-once";
 
 interface Sent {
   /** `POST <method>`, `GET`, `DELETE`. */
@@ -76,13 +78,30 @@ function json(body: unknown, init: ResponseInit = {}): Response {
   });
 }
 
-function sse(text: string, status = 200): Response {
+function sse(
+  text: string,
+  status = 200,
+  sessionId: string | null = SESSION
+): Response {
   return new Response(text, {
     status,
     headers: {
       "content-type": "text/event-stream",
-      "mcp-session-id": SESSION,
+      ...(sessionId ? { "mcp-session-id": sessionId } : {}),
     },
+  });
+}
+
+/** A stream that sends `text`, then fails mid-read. */
+function brokenSse(text: string): Response {
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(text));
+      setTimeout(() => controller.error(new Error("connection reset")), 5);
+    },
+  });
+  return new Response(body, {
+    headers: { "content-type": "text/event-stream" },
   });
 }
 
@@ -118,7 +137,10 @@ function scriptedServer(options: {
   resume?: ResumeMode;
   retryMs?: number;
   answeredVersion?: string;
+  /** The session id comes only on the call-back that carries the answer. */
+  sessionOnCallback?: boolean;
 }): typeof fetch {
+  let gets = 0;
   const retry =
     options.retryMs === undefined ? "" : `retry: ${options.retryMs}\n`;
   return async (_input, init) => {
@@ -130,7 +152,12 @@ function scriptedServer(options: {
       if (httpMethod !== "GET" || !lastEventId) {
         return new Response(null, { status: 405 });
       }
+      gets += 1;
       switch (options.resume ?? "replay") {
+        case "break-once":
+          return gets === 1
+            ? brokenSse("id: moved-1\nretry: 40\ndata: \n\n")
+            : new Response(null, { status: 405 });
         case "405":
           return new Response(null, { status: 405 });
         case "500":
@@ -144,7 +171,9 @@ function scriptedServer(options: {
             return new Response(null, { status: 405 });
           }
           return sse(
-            `id: 2\nevent: message\ndata: ${JSON.stringify(decode(lastEventId))}\n\n`
+            `id: 2\nevent: message\ndata: ${JSON.stringify(decode(lastEventId))}\n\n`,
+            200,
+            options.sessionOnCallback ? "from-callback" : SESSION
           );
       }
     }
@@ -183,7 +212,11 @@ function scriptedServer(options: {
           `id: 1\nevent: message\ndata: ${JSON.stringify(message)}\n\n`
         );
       case "poll":
-        return sse(`id: poll.${encode(message)}\n${retry}data: \n\n`);
+        return sse(
+          `id: poll.${encode(message)}\n${retry}data: \n\n`,
+          200,
+          options.sessionOnCallback ? null : SESSION
+        );
       case "poll-500":
         return sse(`id: poll.${encode(message)}\n${retry}data: \n\n`, 500);
       case "no-response":
@@ -282,6 +315,7 @@ describe("resumePolledStream", () => {
       attempts: [200],
       lastEventId: get.headers.get("last-event-id"),
       gotResponse: true,
+      sessionId: SESSION,
     });
   });
 
@@ -373,6 +407,25 @@ describe("resumePolledStream", () => {
     expect(gets(sent)).toHaveLength(2);
     expect(result.resumed).toMatchObject({
       attempts: [500, 500],
+      gotResponse: false,
+    });
+  });
+
+  it("after a call-back breaks, the next one resumes from its newest event at its retry time", async () => {
+    const sent: Sent[] = [];
+    const ctx = context(
+      scriptedServer({ sent, answer: "poll", resume: "break-once", retryMs: 1 })
+    );
+    const result = await resumePolledStream(ctx, await postToolsList(ctx));
+
+    const [first, second] = gets(sent);
+    expect(gets(sent)).toHaveLength(2);
+    expect(first.headers.get("last-event-id")).toMatch(/^poll\./);
+    expect(second.headers.get("last-event-id")).toBe("moved-1");
+    expect(second.at - first.at).toBeGreaterThanOrEqual(35);
+    expect(result.resumed).toMatchObject({
+      attempts: [expect.stringContaining("stream error"), 405],
+      lastEventId: "moved-1",
       gotResponse: false,
     });
   });
@@ -477,6 +530,23 @@ describe("raw probes on a server that hands its streams to polling", () => {
     expect(sent.map((entry) => entry.line)).not.toContain(
       "POST nonexistent/method_that_does_not_exist"
     );
+  });
+
+  it("keeps a session id that only the call-back carries", async () => {
+    const sent: Sent[] = [];
+    const ctx = context(
+      scriptedServer({
+        sent,
+        answer: "poll",
+        retryMs: 1,
+        sessionOnCallback: true,
+      })
+    );
+    const handshake = await legacyInitialize(ctx);
+
+    expect(handshake.result.headers["mcp-session-id"]).toBeUndefined();
+    expect(handshake.sessionId).toBe("from-callback");
+    expect(handshake.result.resumed?.sessionId).toBe("from-callback");
   });
 
   it("reads the negotiated version through a call-back", async () => {
