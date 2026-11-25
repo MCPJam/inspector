@@ -3088,12 +3088,14 @@ export async function prepareEvalRun(
     namedHostId,
   );
 
-  const replayConfigsToStore = data.evalAccounts ? [] : filterAndRemapReplayConfigs(
-    clientManager.getServerReplayConfigs(),
-    resolvedServerIds,
-    persistedServerRefs,
-    (serverId) => clientManager.getServerConfig(serverId),
-  );
+  const replayConfigsToStore = request.evalAccounts
+    ? []
+    : filterAndRemapReplayConfigs(
+        clientManager.getServerReplayConfigs(),
+        resolvedServerIds,
+        persistedServerRefs,
+        (serverId) => clientManager.getServerConfig(serverId),
+      );
   if (replayConfigsToStore.length > 0) {
     try {
       await storeReplayConfig(runId, replayConfigsToStore, convexAuthToken);
