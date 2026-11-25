@@ -21,9 +21,15 @@
 }
 
 .caniuse-hero {
-  font-size: clamp(2.15rem, 5.8vw, 4.25rem);
+  font-size: clamp(1.875rem, 5.8vw, 3.75rem);
   line-height: 1.13;
   letter-spacing: -0.04em;
+}
+
+.caniuse-byline {
+  font-size: clamp(0.875rem, 1.6vw, 1.0625rem);
+  font-weight: 450;
+  line-height: 1.5;
 }
 
 .caniuse-hero input::placeholder {

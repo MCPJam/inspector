@@ -239,7 +239,7 @@ export function CaniuseComparePage() {
               className="min-w-0 max-w-[13em] flex-[1_1_9em] border-b border-primary/40 bg-transparent pb-1 text-primary focus-visible:border-ring focus-visible:outline-none"
             />
           </div>
-          <p className="mt-5 text-sm text-muted-foreground sm:text-base">
+          <p className="caniuse-byline mt-5 text-muted-foreground">
             Compare MCP client support for protocol versions, features, and
             extensions.
           </p>
@@ -251,9 +251,21 @@ export function CaniuseComparePage() {
         />
         <section aria-labelledby="caniuse-matrix-heading" className="min-w-0 rounded-xl border border-border bg-card">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-3 sm:px-5">
-            <h2 id="caniuse-matrix-heading" className="mr-auto basis-full font-bold sm:basis-auto">
-              Capability matrix
-            </h2>
+            <div className="flex basis-full items-center gap-2 sm:mr-auto sm:basis-auto">
+              <h2 id="caniuse-matrix-heading" className="font-bold">
+                Capability matrix
+              </h2>
+              {selected.length > 0 && (
+                <ShareComparisonDialog
+                  selectedHostIds={selectedIds}
+                  searchQuery={query}
+                  fields={fields}
+                  preserveQuery
+                  copyOnShare
+                  iconOnly
+                />
+              )}
+            </div>
             <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-muted-foreground">
               <Switch
                 checked={showDescriptions}
@@ -261,7 +273,7 @@ export function CaniuseComparePage() {
               />{" "}
               Show descriptions
             </label>
-            <div className="relative min-w-36 flex-1 sm:max-w-xs">
+            <div className="relative min-w-28 flex-1 sm:min-w-36 sm:max-w-xs">
               <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 className="pl-9"
@@ -277,17 +289,6 @@ export function CaniuseComparePage() {
                 <option key={field.id} value={caniuseTitle(field)} />
               ))}
             </datalist>
-            {selected.length > 0 && (
-              <div>
-                <ShareComparisonDialog
-                  selectedHostIds={selectedIds}
-                  searchQuery={query}
-                  fields={fields}
-                  preserveQuery
-                  copyOnShare
-                />
-              </div>
-            )}
           </div>
           {selected.length > 0 && (
             <div className="min-w-0 [&>div]:rounded-t-none [&>div]:border-x-0 [&>div]:border-b-0">
