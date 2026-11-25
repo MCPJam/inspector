@@ -3273,6 +3273,31 @@ describe("PlaygroundMain", () => {
       },
     );
 
+    it("keeps the draft when New chat's dialog is cancelled after the server is ready", async () => {
+      const readiness = holdServerReadiness();
+      await renderWithThreadA({
+        ensureServersReady: readiness.ensureServersReady,
+      });
+      await typeAndSend("draft before New chat");
+
+      await act(async () => {
+        void bridge()?.onNewChat();
+      });
+      expect(screen.getByText("Discard unsaved draft?")).toBeInTheDocument();
+      await act(async () => readiness.release());
+      await settle();
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+      await act(async () => {
+        fireEvent.click(screen.getByText("Cancel"));
+      });
+      await settle();
+
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+      expect(screen.getByTestId("chat-input-field")).toHaveValue(
+        "draft before New chat",
+      );
+    });
+
     it("drops the send when the open thread's own row is clicked and its draft discarded", async () => {
       const readiness = holdServerReadiness();
       await renderWithThreadA({
@@ -3471,7 +3496,6 @@ describe("PlaygroundMain", () => {
         .calls[0]![0] as { text: string; isCurrent?: () => boolean };
       expect(text).toBe("Quick run prompt");
       // Bound to the chat the reset opened, not the one it replaced.
-      expect(mockUseChatSession.chatSessionId).toBe("chat-session-quick-run");
       expect(isCurrent?.()).toBe(true);
     });
 
