@@ -1210,7 +1210,7 @@ describe("useServerState hosted OAuth callback guards", () => {
     mockReconnectServer.mockResolvedValueOnce({
       success: false,
       error:
-        'Server "srv_asana" requires OAuth authentication. Please complete the OAuth flow first.',
+        'Server "srv_asana" requires OAuth authentication. Go to the Connect tab to complete the OAuth flow and try again.',
     });
     mockEnsureAuthorizedForReconnect.mockResolvedValueOnce({
       kind: "error",
@@ -1241,7 +1241,7 @@ describe("useServerState hosted OAuth callback guards", () => {
   it("also falls back to interactive OAuth when hosted reconnect throws the same auth error", async () => {
     mockReconnectServer.mockRejectedValueOnce(
       new Error(
-        'Server "srv_asana" requires OAuth authentication. Please complete the OAuth flow first.',
+        'Server "srv_asana" requires OAuth authentication. Go to the Connect tab to complete the OAuth flow and try again.',
       ),
     );
     mockEnsureAuthorizedForReconnect.mockResolvedValueOnce({
@@ -1305,7 +1305,7 @@ describe("useServerState hosted OAuth callback guards", () => {
     mockReconnectServer.mockResolvedValueOnce({
       success: false,
       error:
-        'Server "srv_asana" requires OAuth authentication. Please complete the OAuth flow first.',
+        'Server "srv_asana" requires OAuth authentication. Go to the Connect tab to complete the OAuth flow and try again.',
     });
     mockEnsureAuthorizedForReconnect.mockResolvedValueOnce({
       kind: "redirect",
@@ -1329,7 +1329,7 @@ describe("useServerState hosted OAuth callback guards", () => {
     mockReconnectServer.mockResolvedValueOnce({
       success: false,
       error:
-        'Server "srv_asana" requires OAuth authentication. Please complete the OAuth flow first.',
+        'Server "srv_asana" requires OAuth authentication. Go to the Connect tab to complete the OAuth flow and try again.',
     });
     mockEnsureAuthorizedForReconnect.mockResolvedValueOnce({
       kind: "reauth_required",
