@@ -3165,6 +3165,7 @@ export default function App() {
     barePathname.startsWith(`${routePaths.conformanceShared}/`);
   const isBareCaniuseRoute =
     barePathname === routePaths.embedHostCompare ||
+    barePathname === routePaths.caniuseCompare ||
     barePathname === routePaths.embedScore ||
     barePathname === routePaths.embedBench ||
     // `/embed/bench/<runId>` is the same chrome-less screen resumed, so the

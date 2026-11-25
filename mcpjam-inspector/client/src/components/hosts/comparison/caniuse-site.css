@@ -1,0 +1,73 @@
+@font-face {
+  font-family: "Caniuse Instrument Sans";
+  src: url("/caniuse-instrument-sans.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+}
+
+.caniuse-site,
+.caniuse-dialog {
+  font-family: "Caniuse Instrument Sans", var(--font-sans);
+}
+
+.caniuse-nav-link {
+  display: flex;
+  align-items: center;
+  border-bottom: 2px solid transparent;
+  color: var(--muted-foreground);
+}
+
+.caniuse-nav-link:hover,
+.caniuse-nav-link[aria-current="page"] {
+  color: var(--foreground);
+}
+
+.caniuse-nav-link[aria-current="page"] {
+  border-bottom-color: var(--primary);
+}
+
+.caniuse-glow {
+  background-image: radial-gradient(
+    ellipse at 90% 0%,
+    color-mix(in oklab, var(--primary) 12%, transparent),
+    transparent 68%
+  );
+}
+
+.caniuse-dialog {
+  box-shadow: 0 0 50px color-mix(in oklab, var(--primary) 19%, transparent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .caniuse-brand:hover img {
+    animation: caniuse-wiggle 450ms ease;
+  }
+  .caniuse-reveal {
+    animation: caniuse-reveal 380ms ease both;
+  }
+  .caniuse-prompt {
+    animation: caniuse-reveal 480ms ease both;
+  }
+}
+
+@keyframes caniuse-wiggle {
+  25%,
+  75% {
+    transform: rotate(-8deg);
+  }
+  50% {
+    transform: rotate(8deg);
+  }
+}
+
+@keyframes caniuse-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

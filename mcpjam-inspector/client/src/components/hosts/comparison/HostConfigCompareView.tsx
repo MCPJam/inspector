@@ -161,7 +161,7 @@ function capabilityForSearchQuery(
   return null;
 }
 
-function fieldSearchQueryFromParams(searchParams: URLSearchParams): string {
+export function fieldSearchQueryFromParams(searchParams: URLSearchParams): string {
   const capability = getCaniuseCapabilityBySlug(
     searchParams.get(CAPABILITY_QUERY_PARAM)
   );
@@ -1413,7 +1413,7 @@ function CompareSearchBar({
   );
 }
 
-function ShareComparisonDialog({
+export function ShareComparisonDialog({
   selectedHostIds,
   searchQuery,
   fields,

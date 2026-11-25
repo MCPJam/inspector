@@ -44,6 +44,7 @@ import {
 
 interface HostConfigComparisonMatrixProps {
   subjects: ReadonlyArray<HostComparisonSubject>;
+  renderFieldSummary?: (field: HostConfigFieldDef) => React.ReactNode;
   fields?: ReadonlyArray<HostConfigFieldDef>;
   /** When true, hide rows whose value is identical across every host. */
   divergingOnly?: boolean;
@@ -82,6 +83,7 @@ interface HostConfigComparisonMatrixProps {
  */
 export function HostConfigComparisonMatrix({
   subjects,
+  renderFieldSummary,
   fields = HOST_CONFIG_FIELDS,
   divergingOnly = false,
   supportFilter = "all",
@@ -289,6 +291,7 @@ export function HostConfigComparisonMatrix({
                   visibleFieldIds={visibleFieldIds}
                   showDescriptions={showDescriptions}
                   mobileOptimized={mobileOptimized}
+                  renderFieldSummary={renderFieldSummary}
                 />
               );
             })}
@@ -353,6 +356,7 @@ function VerifiedAtRow({
 }
 
 interface SectionRowsProps {
+  renderFieldSummary?: HostConfigComparisonMatrixProps["renderFieldSummary"];
   index: number;
   sectionLabel: string;
   divergeCount: number;
@@ -369,6 +373,7 @@ interface SectionRowsProps {
 }
 
 function SectionRows({
+  renderFieldSummary,
   index,
   sectionLabel,
   divergeCount,
@@ -436,6 +441,7 @@ function SectionRows({
             colSpan={colSpan}
             showDescriptions={showDescriptions}
             mobileOptimized={mobileOptimized}
+            renderFieldSummary={renderFieldSummary}
           />
         );
       })}
@@ -444,6 +450,7 @@ function SectionRows({
 }
 
 function SubsectionRows({
+  renderFieldSummary,
   label,
   fields,
   subjects,
@@ -453,6 +460,7 @@ function SubsectionRows({
   showDescriptions,
   mobileOptimized,
 }: {
+  renderFieldSummary?: HostConfigComparisonMatrixProps["renderFieldSummary"];
   label: string;
   fields: ReadonlyArray<HostConfigFieldDef>;
   subjects: ReadonlyArray<HostComparisonSubject>;
@@ -479,6 +487,7 @@ function SubsectionRows({
           diverges={divergingIds.has(field.id)}
           showDescriptions={showDescriptions}
           mobileOptimized={mobileOptimized}
+          summary={renderFieldSummary?.(field)}
         />
       ))}
     </>
@@ -486,6 +495,7 @@ function SubsectionRows({
 }
 
 function FieldRow({
+  summary,
   field,
   subjects,
   coverageSubjects,
@@ -493,6 +503,7 @@ function FieldRow({
   showDescriptions,
   mobileOptimized,
 }: {
+  summary?: React.ReactNode;
   field: HostConfigFieldDef;
   subjects: ReadonlyArray<HostComparisonSubject>;
   coverageSubjects: ReadonlyArray<HostComparisonSubject>;
@@ -502,7 +513,7 @@ function FieldRow({
 }) {
   // caniuse "global support" equivalent — only meaningful when comparing ≥2 hosts.
   const coverage =
-    coverageSubjects.length >= 2
+    summary === undefined && coverageSubjects.length >= 2
       ? rowCoverage(
           field,
           coverageSubjects.map((s) => s.config),
@@ -568,6 +579,7 @@ function FieldRow({
             </Tooltip>
           )}
         </div>
+        {summary}
         {field.description && showDescriptions && (
           <div className="mt-1 text-[11px] leading-snug text-muted-foreground">
             {field.description}

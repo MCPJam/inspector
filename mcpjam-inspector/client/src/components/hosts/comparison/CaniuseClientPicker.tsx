@@ -1,0 +1,167 @@
+import { useRef, useState } from "react";
+import { ChevronDown, Plus, X } from "lucide-react";
+import { Button } from "@mcpjam/design-system/button";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@mcpjam/design-system/command";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogTrigger,
+} from "@mcpjam/design-system/dialog";
+import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
+import { orderPublicClients, publicClientIdentity } from "./caniuse-coverage";
+import { clientLogo } from "./CaniuseSite";
+
+export function CaniuseClientPicker({
+  clients,
+  selected,
+  onChange,
+}: {
+  clients: readonly HostComparisonSubject[];
+  selected: readonly HostComparisonSubject[];
+  onChange: (ids: string[]) => void;
+}) {
+  const [picker, setPicker] = useState<string | null>(null);
+  const opener = useRef<HTMLButtonElement | null>(null);
+  const ids = selected.map(({ hostId }) => hostId);
+  const available = orderPublicClients(
+    clients.filter(({ hostId }) => !ids.includes(hostId)),
+  );
+  const groups = new Map<string, HostComparisonSubject[]>();
+  for (const client of available) {
+    const { surface } = publicClientIdentity(client);
+    const group = groups.get(surface) ?? [];
+    group.push(client);
+    groups.set(surface, group);
+  }
+
+  function select(id: string) {
+    onChange(
+      picker === "add"
+        ? [...ids, id]
+        : ids.map((previous) => (previous === picker ? id : previous)),
+    );
+    setPicker(null);
+  }
+
+  return (
+    <Dialog
+      open={picker !== null}
+      onOpenChange={(open) => {
+        if (!open) setPicker(null);
+      }}
+    >
+      <div className="mb-5 flex items-stretch gap-2">
+        {selected.length > 0 && (
+          <div className="flex min-w-0 flex-nowrap gap-2 overflow-x-auto rounded-md pb-1 pr-1">
+            {selected.map((client) => (
+              <div
+                key={client.hostId}
+                className="flex shrink-0 items-center rounded-lg border border-border bg-card text-card-foreground"
+              >
+                <Button
+                  variant="ghost"
+                  disabled={!available.length}
+                  className="h-auto justify-start gap-3 px-3 py-2 text-left"
+                  onClick={(event) => {
+                    opener.current = event.currentTarget;
+                    setPicker(client.hostId);
+                  }}
+                  aria-label={`Replace ${client.hostName}`}
+                >
+                  <img
+                    src={clientLogo(client)}
+                    alt=""
+                    className="size-7 rounded object-contain"
+                  />
+                  <span>
+                    <span className="block">{client.hostName}</span>
+                    <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">
+                      {publicClientIdentity(client).surface}
+                    </span>
+                  </span>
+                  <ChevronDown className="size-3.5 text-muted-foreground" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="mr-1 size-7 text-muted-foreground"
+                  aria-label={`Remove ${client.hostName}`}
+                  onClick={() =>
+                    onChange(ids.filter((id) => id !== client.hostId))
+                  }
+                >
+                  <X className="size-3.5" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+        <DialogTrigger asChild>
+          <Button
+            variant="outline"
+            disabled={!available.length}
+            onClick={() => {
+              opener.current = null;
+              setPicker("add");
+            }}
+            className="min-h-12 shrink-0 self-start"
+          >
+            <Plus className="size-4" /> Add client
+          </Button>
+        </DialogTrigger>
+      </div>
+      <DialogContent
+        className="dark caniuse-dialog gap-3 border-0 bg-card text-card-foreground"
+        aria-describedby={undefined}
+        onCloseAutoFocus={(event) => {
+          if (opener.current?.isConnected) {
+            event.preventDefault();
+            opener.current.focus();
+          }
+        }}
+      >
+        <DialogTitle>
+          {picker === "add" ? "Add client" : "Replace client"}
+        </DialogTitle>
+        <Command>
+          <CommandInput placeholder="Search clients…" />
+          <CommandList className="max-h-[min(360px,55dvh)]">
+            <CommandEmpty>No matching clients.</CommandEmpty>
+            {[...groups].map(([surface, options]) => (
+              <CommandGroup key={surface} heading={surface}>
+                {options.map((client) => (
+                  <CommandItem
+                    key={client.hostId}
+                    value={client.hostId}
+                    keywords={[
+                      client.hostName,
+                      surface,
+                      publicClientIdentity(client).mode,
+                    ]}
+                    onSelect={() => select(client.hostId)}
+                    className="gap-3 py-2"
+                  >
+                    <img
+                      src={clientLogo(client)}
+                      alt=""
+                      className="size-6 rounded object-contain"
+                    />
+                    {client.hostName}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            ))}
+          </CommandList>
+        </Command>
+      </DialogContent>
+    </Dialog>
+  );
+}
