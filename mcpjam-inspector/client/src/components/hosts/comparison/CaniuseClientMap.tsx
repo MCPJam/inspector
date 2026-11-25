@@ -5,7 +5,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import type { HostConfigFieldDef } from "@/lib/host-config-field-schema";
 import { formatVerifiedAt } from "../verified-at";
 import { getCaniuseSupportLabel } from "./caniuse-capability-catalog";
 import {
@@ -14,8 +13,6 @@ import {
   type CapabilityCoverage,
 } from "./caniuse-coverage";
 import { clientLogo } from "./CaniuseSite";
-import { FieldCell } from "./host-config-comparison-matrix";
-import { SupportChip } from "./support-chip";
 
 export const RESULT_GROUPS = [
   {
@@ -89,17 +86,17 @@ export function ClientMap({ coverage }: { coverage: CapabilityCoverage }) {
           <section
             key={status}
             aria-label={title}
-            className="rounded-xl border border-border bg-card px-4 py-4 text-card-foreground sm:px-6 sm:py-5"
+            className={`caniuse-map-group grid items-start gap-2.5 rounded-lg border border-border/75 p-3 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-4 ${tint}`}
           >
             <h2
-              className={`mb-4 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${tint}`}
+              className="flex items-center gap-1.5 text-xs font-semibold sm:flex-wrap"
             >
               <Icon className="size-3.5" /> {title}{" "}
-              <span className="tabular-nums text-muted-foreground">
+              <span className="text-lg font-bold tabular-nums sm:w-full sm:text-2xl">
                 {clients.length}
               </span>
             </h2>
-            <ul className="flex flex-wrap gap-2 sm:gap-2.5">
+            <ul className="flex flex-wrap gap-1.5">
               {clients.map((client) => {
                 const badges = clientBadges(client, coverage);
                 const date = client.verifiedAt
@@ -143,25 +140,29 @@ export function ClientMap({ coverage }: { coverage: CapabilityCoverage }) {
                             }
                           }}
                           aria-label={`${client.hostName}. ${date}`}
-                          className="flex h-[72px] w-[76px] flex-col items-center justify-center gap-1.5 rounded-lg border border-border bg-background py-2 text-foreground focus-visible:outline-2 focus-visible:outline-ring sm:h-20 sm:w-[90px]"
+                          className="flex h-14 min-w-14 flex-col items-center justify-center gap-1 rounded-md border border-border bg-card px-1 text-card-foreground focus-visible:outline-2 focus-visible:outline-ring"
                         >
                           <img
                             src={clientLogo(client)}
                             alt=""
-                            className="size-8 rounded object-contain sm:size-9"
+                            className="size-6 rounded object-contain"
                             loading="lazy"
                           />
                           {badges.length > 0 && (
                             <span
                               aria-hidden="true"
-                              className="max-w-full truncate rounded bg-muted px-1 text-[9px] font-semibold text-muted-foreground"
+                              className="flex gap-0.5 text-[9px] font-semibold leading-tight"
                             >
-                              {badges.join(" · ")}
+                              {badges.map((badge, index) => (
+                                <span key={badge} className={index ? "rounded bg-accent px-1 text-accent-foreground" : "rounded bg-muted px-1 text-muted-foreground"}>
+                                  {badge}
+                                </span>
+                              ))}
                             </span>
                           )}
                         </div>
                       </TooltipTrigger>
-                      <TooltipContent variant="muted" className="dark">
+                      <TooltipContent variant="muted" className="dark caniuse-dialog">
                         <span className="block font-semibold">
                           {client.hostName}
                         </span>
@@ -174,82 +175,6 @@ export function ClientMap({ coverage }: { coverage: CapabilityCoverage }) {
             </ul>
           </section>
         ))}
-    </div>
-  );
-}
-
-export function CapabilityReference({
-  coverage,
-  field,
-  slice,
-}: {
-  coverage: CapabilityCoverage;
-  field: HostConfigFieldDef;
-  slice: string;
-}) {
-  return (
-    <div className="overflow-auto rounded-xl border border-border bg-card text-card-foreground">
-      <table className="w-full min-w-[440px] text-left text-sm">
-        <thead className="bg-muted text-xs text-muted-foreground">
-          <tr>
-            <th scope="col" className="px-4 py-3">
-              Client
-            </th>
-            <th scope="col" className="px-4 py-3">
-              Status
-            </th>
-            <th scope="col" className="px-4 py-3">
-              Last checked
-            </th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border">
-          {coverage.rows.map(({ subject, status }) => {
-            const value = field.read(subject.config);
-            const displayValue =
-              (!slice || slice === "any") &&
-              Array.isArray(value) &&
-              value.every((item) => typeof item === "string")
-                ? value.join(", ")
-                : "";
-            const label = capabilityResultLabel(
-              status,
-              field.id,
-              coverage,
-            );
-            return (
-              <tr key={subject.hostId}>
-                <th scope="row" className="px-4 py-2.5 font-medium">
-                  <span className="flex items-center gap-2">
-                    <img
-                      alt=""
-                      src={clientLogo(subject)}
-                      className="size-5 shrink-0 rounded object-contain"
-                    />
-                    {subject.hostName}
-                  </span>
-                </th>
-                <td className="px-4 py-2.5">
-                  <SupportChip level={status} label={label} />
-                  {coverage.reporting && status === "supported" && (
-                    <div className="mt-1 max-w-80">
-                      <FieldCell field={field} subject={subject} mobileOptimized />
-                    </div>
-                  )}
-                  {displayValue && (
-                    <span className="mt-1 block max-w-80 break-words text-xs text-muted-foreground">
-                      {displayValue}
-                    </span>
-                  )}
-                </td>
-                <td className="whitespace-nowrap px-4 py-2.5 text-xs tabular-nums text-muted-foreground">
-                  {formatVerifiedAt(subject.verifiedAt)}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
     </div>
   );
 }

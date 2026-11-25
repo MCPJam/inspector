@@ -22,33 +22,18 @@ function renderCapability(slug: string, search = "") {
 }
 
 describe("CaniuseCapabilityPage", () => {
-  it("defaults to Client map and offers the reference table with catalog dates", () => {
-    renderCapability("sampling");
-    expect(
-      screen.getByRole("heading", { name: "Sampling" }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Client map" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+  it("shows the Client map and catalog dates on old reference links", () => {
+    renderCapability("sampling", "?view=reference");
+    expect(screen.getByRole("heading", { name: "Sampling" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Client map" })).toBeVisible();
+    expect(screen.queryByRole("table")).toBeNull();
     expect(
       screen.getAllByLabelText(/Last checked \d{4}-\d{2}-\d{2}/).length,
     ).toBeGreaterThan(0);
-    expect(
-      screen.getByRole("link", { name: "Compare clients" }),
-    ).toHaveAttribute("href", "/compare");
-
-    fireEvent.click(screen.getByRole("button", { name: "Reference table" }));
-    const reference = within(screen.getByRole("table"));
-    expect(
-      reference.getByRole("columnheader", { name: "Last checked" }),
-    ).toBeInTheDocument();
-    expect(
-      reference.getByRole("rowheader", { name: "Claude Code" }),
-    ).toBeInTheDocument();
-    expect(
-      reference.getByRole("rowheader", { name: "Codex" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Compare" })).toHaveAttribute(
+      "href",
+      "/compare",
+    );
   });
 
   it("shows measured Events support and how many tracked clients have results", () => {
@@ -60,7 +45,7 @@ describe("CaniuseCapabilityPage", () => {
       score.getByText(/clients with published results support at least one delivery mode/),
     ).toBeVisible();
     expect(
-      score.getByText(/of \d+ tracked clients have published results/),
+      score.getByText("Published results"),
     ).toBeVisible();
     expect(
       screen.getByRole("region", { name: "Supports at least one delivery mode" }),
@@ -73,7 +58,7 @@ describe("CaniuseCapabilityPage", () => {
       "aria-pressed",
       "true",
     );
-    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Client map" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
     const download = await screen.findByRole("button", { name: "Download image" });
     await vi.waitFor(() => expect(download).toBeEnabled());

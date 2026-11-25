@@ -54,6 +54,10 @@
   );
 }
 
+.caniuse-map-group {
+  background-image: linear-gradient(110deg, transparent, var(--card) 58%);
+}
+
 .caniuse-dialog {
   box-shadow: 0 0 50px color-mix(in oklab, var(--primary) 19%, transparent);
 }

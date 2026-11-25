@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Link, useSearchParams } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { ArrowUpRight, ChevronDown } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
@@ -25,11 +25,7 @@ import {
   sliceLabel,
 } from "./caniuse-coverage";
 import { CaniuseSite } from "./CaniuseSite";
-import {
-  ClientMap,
-  CapabilityReference,
-  capabilityResultLabel,
-} from "./CaniuseClientMap";
+import { ClientMap, capabilityResultLabel } from "./CaniuseClientMap";
 import { CaniuseShareDialog } from "./CaniuseShareDialog";
 
 const GROUPS = [
@@ -107,10 +103,10 @@ export function CaniuseCapabilityPage({
       ? resolved
       : null;
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
   const slices = capability ? capabilitySlices(capability.field, clients) : [];
   const requested = params.get("slice") ?? "";
   const selected = slices.includes(requested) ? requested : "";
-  const view = params.get("view") === "reference" ? "reference" : "map";
   const coverage = useMemo(
     () =>
       capability
@@ -148,62 +144,86 @@ export function CaniuseCapabilityPage({
       }),
   });
 
-  function select(key: "view" | "slice", value: string) {
+  function selectSlice(value: string) {
     const next = new URLSearchParams(params);
-    if (value) next.set(key, value);
-    else next.delete(key);
+    next.delete("view");
+    if (value) next.set("slice", value);
+    else next.delete("slice");
     setParams(next);
   }
 
+  const groups = GROUPS.map((name) => ({
+    name,
+    entries: capabilities.filter((entry) => groupCapability(entry) === name),
+  })).filter(({ entries }) => entries.length);
+  groups
+    .find(({ name }) => name === "Extensions")
+    ?.entries.sort(
+      (a, b) => EXTENSIONS.indexOf(a.field.id) - EXTENSIONS.indexOf(b.field.id),
+    );
+
   return (
     <CaniuseSite current="capabilities">
-      <div className="grid gap-6 py-6 md:grid-cols-[232px_minmax(0,1fr)] lg:gap-10 lg:py-8">
+      <div className="grid gap-5 py-6 md:grid-cols-[220px_minmax(0,1fr)] lg:gap-8 lg:py-9">
+        <label className="grid min-w-0 gap-1.5 text-xs text-muted-foreground md:hidden">
+          Browse capabilities
+          <select
+            className="min-h-11 w-full min-w-0 truncate rounded-lg border border-border bg-card px-3 text-sm text-card-foreground"
+            value={capability?.slug ?? ""}
+            onChange={(event) =>
+              navigate(buildCaniuseCapabilityPath(event.target.value))
+            }
+          >
+            {!capability && (
+              <option value="" disabled>
+                Choose a capability
+              </option>
+            )}
+            {groups.map(({ name, entries }) => (
+              <optgroup key={name} label={name}>
+                {entries.map(({ slug, field }) => (
+                  <option key={slug} value={slug}>
+                    {caniuseTitle(field)}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </label>
         <nav
           aria-label="Browse capabilities"
-          className="min-w-0 self-start rounded-xl border border-border bg-card text-card-foreground md:sticky md:top-4 md:max-h-[calc(100dvh-2rem)] md:overflow-auto"
+          className="hidden min-w-0 self-start rounded-xl border border-border bg-card text-card-foreground md:sticky md:top-4 md:block md:max-h-[calc(100dvh-2rem)] md:overflow-auto"
         >
-          {GROUPS.map((group) => {
-            const entries = capabilities.filter(
-              (entry) => groupCapability(entry) === group,
-            );
-            if (!entries.length) return null;
-            if (group === "Extensions")
-              entries.sort(
-                (a, b) =>
-                  EXTENSIONS.indexOf(a.field.id) -
-                  EXTENSIONS.indexOf(b.field.id),
-              );
-            return (
-              <details
-                key={group}
-                open={group === activeGroup}
-                className="group border-b border-border last:border-b-0"
-              >
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold hover:bg-muted focus-visible:outline-ring">
-                  {group}{" "}
-                  <ChevronDown className="size-3.5 text-muted-foreground group-open:rotate-180" />
-                </summary>
-                <div className="grid gap-0.5 px-2 pb-2">
-                  {entries.map(({ slug, field }) => (
-                    <Link
-                      key={slug}
-                      to={buildCaniuseCapabilityPath(slug)}
-                      aria-current={
-                        slug === capability?.slug ? "page" : undefined
-                      }
-                      className="rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground aria-[current=page]:bg-primary/15 aria-[current=page]:font-semibold aria-[current=page]:text-foreground"
-                    >
-                      {caniuseTitle(field)}
-                    </Link>
-                  ))}
+          {groups.map(({ name: group, entries }) => (
+            <details
+              key={group}
+              open={group === activeGroup}
+              className="group border-b border-border last:border-b-0"
+            >
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold hover:bg-muted focus-visible:outline-ring">
+                {group}{" "}
+                <ChevronDown className="size-3.5 text-muted-foreground group-open:rotate-180" />
+              </summary>
+              <div className="grid gap-0.5 px-2 pb-2">
+                {entries.map(({ slug, field }) => (
+                  <Link
+                    key={slug}
+                    to={buildCaniuseCapabilityPath(slug)}
+                    aria-current={
+                      slug === capability?.slug ? "page" : undefined
+                    }
+                    className="rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground aria-[current=page]:bg-accent aria-[current=page]:font-semibold aria-[current=page]:text-accent-foreground"
+                  >
+                    {caniuseTitle(field)}
+                  </Link>
+                ))}
                 </div>
               </details>
-            );
-          })}
+          ))}
         </nav>
         <div className="min-w-0">
           <div className="flex items-start justify-between gap-3">
-            <h1 className="break-words text-3xl font-semibold tracking-tight sm:text-4xl">
+            <h1 className="min-w-0 break-words text-3xl font-bold tracking-tight sm:text-4xl">
               {title}
             </h1>
             {capability && coverage && (
@@ -239,34 +259,40 @@ export function CaniuseCapabilityPage({
               </p>
               <section
                 aria-label={coverageLabel}
-                className="caniuse-glow mt-6 overflow-hidden rounded-xl border border-border bg-card text-card-foreground"
+                className="caniuse-glow mt-5 overflow-hidden rounded-xl border border-primary/25 bg-card text-card-foreground"
               >
-                <div className="px-5 py-6 sm:px-7 sm:py-7">
-                  <p className="text-sm font-medium text-muted-foreground">
-                    {coverageLabel}
-                  </p>
-                  <div className="mt-2 text-5xl font-semibold tracking-tight tabular-nums sm:text-6xl">
-                    {coverage.score === null ? "—" : `${coverage.score}%`}
-                  </div>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    {coverage.score === null
-                      ? "No published client results yet."
-                      : coverage.eventsMode
-                        ? eventsSupportSummary(coverage)
-                        : coverage.reporting
-                          ? `${coverage.full} of ${coverage.measured} tracked clients report a value.`
-                          : `${coverage.full} of ${coverage.measured} clients with published results fully support this capability.`}
-                  </p>
-                  {coverage.eventsMode && coverage.score !== null && (
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      {coverage.measured} of {coverage.rows.length} tracked clients
-                      have published results.
+                <div className="grid sm:grid-cols-2">
+                  <div className="px-5 py-5 sm:px-7 sm:py-6">
+                    <p className="text-sm font-medium text-muted-foreground">
+                      {coverageLabel}
                     </p>
-                  )}
+                    <div className="mt-1 text-5xl font-bold tracking-[-0.06em] text-primary tabular-nums sm:text-7xl">
+                      {coverage.score === null ? "—" : `${coverage.score}%`}
+                    </div>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      {coverage.score === null
+                        ? "No published client results yet."
+                        : coverage.eventsMode
+                          ? eventsSupportSummary(coverage)
+                          : coverage.reporting
+                            ? `${coverage.full} of ${coverage.measured} tracked clients report a value.`
+                            : `${coverage.full} of ${coverage.measured} clients with published results fully support this capability.`}
+                    </p>
+                  </div>
+                  <div className="border-t border-primary/15 px-5 py-4 sm:border-l sm:border-t-0 sm:px-7 sm:py-6">
+                    <p className="text-sm font-medium text-muted-foreground">
+                      Published results
+                    </p>
+                    <p className="mt-1 text-3xl font-bold tracking-tight tabular-nums sm:text-5xl">
+                      <span className="text-primary">{coverage.measured}</span>
+                      <span className="text-muted-foreground"> / {coverage.rows.length}</span>
+                    </p>
+                    <p className="mt-2 text-sm text-muted-foreground">Tracked clients</p>
+                  </div>
                 </div>
                 {slices.length > 0 && (
                   <div
-                    className="flex flex-wrap gap-2 border-t border-border px-4 py-3 sm:px-6"
+                    className="flex flex-wrap gap-1.5 border-t border-primary/20 bg-card/85 px-4 py-2 sm:px-7"
                     role="group"
                     aria-label="Coverage breakdown"
                   >
@@ -278,11 +304,12 @@ export function CaniuseCapabilityPage({
                         return (
                           <Button
                             key={slice}
-                            variant={active ? "secondary" : "outline"}
+                            variant="outline"
                             size="sm"
+                            className="h-10 bg-muted text-xs aria-pressed:border-primary/65 aria-pressed:bg-accent aria-pressed:text-accent-foreground sm:h-8"
                             aria-pressed={active}
                             onClick={() =>
-                              select("slice", slice === "any" ? "" : slice)
+                              selectSlice(slice === "any" ? "" : slice)
                             }
                           >
                             {slice ? sliceLabel(slice) : "All versions"}
@@ -293,45 +320,22 @@ export function CaniuseCapabilityPage({
                   </div>
                 )}
               </section>
-              <div className="my-5 flex flex-wrap items-center justify-between gap-3">
-                <div
-                  className="flex gap-1 rounded-lg border border-border bg-card p-1 text-card-foreground"
-                  role="group"
-                  aria-label="Coverage view"
-                >
-                  <Button
-                    variant={view === "map" ? "secondary" : "ghost"}
-                    size="sm"
-                    aria-pressed={view === "map"}
-                    onClick={() => select("view", "")}
-                  >
+              <section
+                className="mt-4 rounded-xl border border-border bg-card p-3 sm:p-5"
+                aria-labelledby="caniuse-map-heading"
+              >
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                  <h2 id="caniuse-map-heading" className="text-xl font-bold tracking-tight">
                     Client map
-                  </Button>
-                  <Button
-                    variant={view === "reference" ? "secondary" : "ghost"}
-                    size="sm"
-                    aria-pressed={view === "reference"}
-                    onClick={() => select("view", "reference")}
-                  >
-                    Reference table
+                  </h2>
+                  <Button asChild variant="ghost" size="sm" className="-ml-2 sm:ml-0">
+                    <a href="https://app.mcpjam.com">
+                      Verify against your server <ArrowUpRight className="size-3.5" />
+                    </a>
                   </Button>
                 </div>
-                <Button asChild variant="ghost" size="sm">
-                  <a href="https://app.mcpjam.com">
-                    Verify against your server{" "}
-                    <ArrowUpRight className="size-3.5" />
-                  </a>
-                </Button>
-              </div>
-              {view === "map" ? (
                 <ClientMap coverage={coverage} />
-              ) : (
-                <CapabilityReference
-                  coverage={coverage}
-                  field={capability.field}
-                  slice={selected}
-                />
-              )}
+              </section>
             </>
           ) : (
             <p className="mt-3 text-sm text-muted-foreground">

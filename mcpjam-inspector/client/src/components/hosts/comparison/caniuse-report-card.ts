@@ -119,7 +119,7 @@ export async function drawCaniuseReportCard(
   glow.addColorStop(0, color("--primary"));
   glow.addColorStop(1, "transparent");
   ctx.fillStyle = glow;
-  ctx.globalAlpha = 0.2;
+  ctx.globalAlpha = 0.16;
   ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
   ctx.globalAlpha = 1;
 
@@ -163,10 +163,11 @@ export async function drawCaniuseReportCard(
     (sum, { clients }) => sum + Math.ceil(clients.length / columns),
     0,
   );
+  const groupSpacing = 68;
   const tileHeight = Math.min(
     76,
     Math.floor(
-      (370 - 55 * shown.length - 8 * (rows - shown.length)) / Math.max(1, rows),
+      (370 - groupSpacing * shown.length - 8 * (rows - shown.length)) / Math.max(1, rows),
     ),
   );
   let y =
@@ -175,7 +176,7 @@ export async function drawCaniuseReportCard(
       0,
       Math.floor(
         (370 -
-          55 * shown.length -
+          groupSpacing * shown.length -
           8 * (rows - shown.length) -
           tileHeight * rows) /
           2,
@@ -200,7 +201,7 @@ export async function drawCaniuseReportCard(
     );
     font(600, 20);
     text(label, INSET + 36, y + 22);
-    const top = y + 41;
+    const top = y + 50;
     clients.forEach((client, index) => {
       const x = INSET + (index % columns) * (tileWidth + gap);
       const rowY = top + Math.floor(index / columns) * (tileHeight + 8);
@@ -257,7 +258,7 @@ export async function drawCaniuseReportCard(
         ctx.textAlign = "left";
       }
     });
-    y = top + Math.ceil(clients.length / columns) * (tileHeight + 8) + 6;
+    y = top + Math.ceil(clients.length / columns) * (tileHeight + 8) + 10;
   }
 
   font(500, 19);

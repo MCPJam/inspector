@@ -115,13 +115,13 @@ export function CaniuseShareDialog({
       }}
     >
       <DialogTrigger asChild>
-        <Button variant="outline" size="sm" className="shrink-0">
+        <Button variant="outline" size="sm" className="shrink-0 border-primary/50 bg-accent hover:border-primary">
           <Share2 className="size-4" /> Share
         </Button>
       </DialogTrigger>
       <DialogContent
         aria-describedby={undefined}
-        className="dark caniuse-dialog max-h-[calc(100dvh-2rem)] overflow-auto border-0 bg-card text-card-foreground sm:max-w-[680px]"
+        className="dark caniuse-dialog caniuse-glow max-h-[calc(100dvh-2rem)] overflow-auto border-0 bg-card text-card-foreground sm:max-w-[680px]"
       >
         <DialogTitle>Share capability</DialogTitle>
         <div className="relative aspect-[1200/630] overflow-hidden rounded-lg bg-background">
