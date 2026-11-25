@@ -43,6 +43,7 @@ export function PlaygroundServerConnectButton({
   const [query, setQuery] = useState("");
   const [pendingName, setPendingName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const inFlight = useRef(false);
   const mounted = useRef(true);
   // The shared selection and pane overrides can change during the handshake.
@@ -72,6 +73,8 @@ export function PlaygroundServerConnectButton({
 
   const connect = async (name: string) => {
     if (inFlight.current || !ensureServersReady) return;
+    // The picker disables its server buttons during the handshake.
+    searchRef.current?.focus();
     inFlight.current = true;
     setPendingName(name);
     setError(null);
@@ -166,6 +169,7 @@ export function PlaygroundServerConnectButton({
           <div className="space-y-2 border-b border-border p-3">
             <p className="text-sm font-medium">Connect a saved server</p>
             <SearchInput
+              ref={searchRef}
               value={query}
               onValueChange={setQuery}
               placeholder="Search servers…"

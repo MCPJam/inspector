@@ -374,7 +374,7 @@ describe("PlaygroundLeftRail — zero-server Tools body", () => {
     ).toBeEnabled();
   });
 
-  it("keeps the server search and connection result when OAuth is declined", async () => {
+  it("keeps the server search, focus, and connection result when OAuth is declined", async () => {
     const user = userEvent.setup();
     withSavedServer();
     playgroundState.ensureServersReady.mockImplementationOnce(async () => {
@@ -403,7 +403,9 @@ describe("PlaygroundLeftRail — zero-server Tools body", () => {
     );
     await user.click(screen.getByRole("button", { name: "Not now" }));
 
-    expect(screen.getByRole("searchbox")).toHaveValue("stateless");
+    const search = screen.getByRole("searchbox");
+    expect(search).toHaveValue("stateless");
+    await waitFor(() => expect(search).toHaveFocus());
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Could not connect to stateless-mcp.",
     );
