@@ -18,9 +18,11 @@ export function clientLogo(subject: HostComparisonSubject) {
 export function CaniuseSite({
   current,
   children,
+  footer,
 }: {
   current: "compare" | "capabilities";
   children: ReactNode;
+  footer?: ReactNode;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const { pathname } = useLocation();
@@ -32,9 +34,10 @@ export function CaniuseSite({
     <div
       ref={scroller}
       className="dark caniuse-site h-full min-w-0 overflow-auto bg-background text-foreground"
+      data-page={current}
     >
-      <div className="mx-auto min-h-full max-w-[1440px] px-4 pb-10 sm:px-8">
-        <header className="flex h-16 items-center gap-5 border-b border-border sm:gap-8">
+      <header className="border-b border-border/65 bg-card">
+        <div className="caniuse-wrap flex h-16 items-center gap-5 sm:gap-8">
           <a
             className="caniuse-brand rounded-md focus-visible:outline-2 focus-visible:outline-ring"
             href="https://www.mcpjam.com/"
@@ -50,14 +53,14 @@ export function CaniuseSite({
           </a>
           <nav
             aria-label="Can I use MCP"
-            className="flex h-full items-stretch gap-5 text-sm font-semibold sm:gap-7"
+            className="flex h-full items-stretch gap-5 text-sm sm:gap-7"
           >
             <Link
               to={routePaths.caniuseCompare}
               aria-current={current === "compare" ? "page" : undefined}
               className="caniuse-nav-link"
             >
-              Compare clients
+              Compare
             </Link>
             <Link
               to={CANIUSE_CAPABILITIES_HOME}
@@ -67,9 +70,18 @@ export function CaniuseSite({
               Capabilities
             </Link>
           </nav>
-        </header>
-        <main>{children}</main>
-      </div>
+        </div>
+      </header>
+      <main className="caniuse-wrap pb-10">{children}</main>
+      <footer className="caniuse-wrap flex flex-wrap items-center justify-between gap-2 pb-8 text-xs text-muted-foreground">
+        <div className="flex items-center gap-4">{footer}</div>
+        <a className="hover:text-primary" href="https://www.mcpjam.com/">
+          By{" "}
+          <strong className="text-foreground">
+            MCP<span className="text-primary">Jam</span>
+          </strong>
+        </a>
+      </footer>
     </div>
   );
 }

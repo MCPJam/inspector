@@ -848,7 +848,7 @@ function ThemeToggleButton() {
   );
 }
 
-function NotifyButton() {
+export function NotifyButton({ footer = false }: { footer?: boolean }) {
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<
@@ -891,17 +891,17 @@ function NotifyButton() {
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <Button
         type="button"
-        variant="outline"
+        variant={footer ? "link" : "outline"}
         size="sm"
         aria-label="Notify me of client changes"
         title="Notify me of client changes"
-        className={cn("gap-1.5", CANIUSE_ACTION_BUTTON_CLASS)}
+        className={footer ? "h-9 px-0 text-muted-foreground" : cn("gap-1.5", CANIUSE_ACTION_BUTTON_CLASS)}
         onClick={() => setOpen(true)}
       >
-        <Bell className="size-3.5" />
-        <span>Notify</span>
+        {!footer && <Bell className="size-3.5" />}
+        <span>{footer ? "Notify Me" : "Notify"}</span>
       </Button>
-      <DialogContent className="sm:max-w-[420px]">
+      <DialogContent className={cn("sm:max-w-[420px]", footer && "dark caniuse-dialog border-0")}>
         {status === "succeeded" ? (
           <>
             <DialogHeader>
@@ -963,7 +963,7 @@ function NotifyButton() {
   );
 }
 
-function ReportInconsistencyDialog() {
+export function ReportInconsistencyDialog({ footer = false }: { footer?: boolean }) {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [status, setStatus] = useState<
@@ -1004,20 +1004,17 @@ function ReportInconsistencyDialog() {
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <Button
         type="button"
-        variant="outline"
+        variant={footer ? "link" : "outline"}
         size="sm"
         aria-label="Report inconsistency"
         title="Report inconsistency"
-        className={cn(
-          "gap-1.5",
-          CANIUSE_ACTION_BUTTON_CLASS
-        )}
+        className={footer ? "h-9 px-0 text-muted-foreground" : cn("gap-1.5", CANIUSE_ACTION_BUTTON_CLASS)}
         onClick={() => setOpen(true)}
       >
-        <Flag className="size-3.5" />
+        {!footer && <Flag className="size-3.5" />}
         <span>Report</span>
       </Button>
-      <DialogContent className="sm:max-w-[440px]">
+      <DialogContent className={cn("sm:max-w-[440px]", footer && "dark caniuse-dialog border-0")}>
         {status === "succeeded" ? (
           <>
             <DialogHeader>
@@ -1423,11 +1420,13 @@ export function ShareComparisonDialog({
   searchQuery,
   fields,
   preserveQuery = false,
+  copyOnShare = false,
 }: {
   selectedHostIds: ReadonlyArray<string>;
   searchQuery: string;
   fields: ReadonlyArray<HostConfigFieldDef>;
   preserveQuery?: boolean;
+  copyOnShare?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -1441,13 +1440,12 @@ export function ShareComparisonDialog({
     try {
       await navigator.clipboard.writeText(shareUrl);
     } catch {
-      // Clipboard blocked (e.g. insecure context) — the URL stays visible in
-      // the field, so the user can still select and copy it manually.
+      if (copyOnShare) setOpen(true);
       return;
     }
     setCopied(true);
     window.setTimeout(() => setCopied(false), 2000);
-  }, [shareUrl]);
+  }, [copyOnShare, shareUrl]);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -1457,14 +1455,20 @@ export function ShareComparisonDialog({
         size="sm"
         aria-label="Share"
         title="Share"
-        onClick={() => setOpen(true)}
+        onClick={() => (copyOnShare ? void handleCopy() : setOpen(true))}
         className={cn(
           "gap-1.5",
           CANIUSE_ACTION_BUTTON_CLASS
         )}
       >
-        <Share2 className="size-3.5" />
-        <span>Share</span>
+        {copyOnShare && copied ? (
+          <Check className="size-3.5" />
+        ) : (
+          <Share2 className="size-3.5" />
+        )}
+        <span aria-live="polite">
+          {copyOnShare && copied ? "Link copied" : "Share"}
+        </span>
       </Button>
       <DialogContent className="sm:max-w-[460px]">
         <DialogHeader>

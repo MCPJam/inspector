@@ -9,6 +9,7 @@ import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
 import { useAnnouncementSlot } from "@/components/announcement-slot";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { FLAG_GATED_HOST_IDS } from "@/lib/host-compat/feature-visibility";
+import { useServerSupportsFeature } from "@/lib/server-capabilities";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { buildHostCompareSnapshot } from "@/lib/webmcp/review-surface-snapshots";
 import type { HostConfigFieldDef } from "@/lib/host-config-field-schema";
@@ -35,6 +36,8 @@ import { clientLogo, CaniuseSite } from "./CaniuseSite";
 import { HostConfigComparisonMatrix } from "./host-config-comparison-matrix";
 import {
   fieldSearchQueryFromParams,
+  NotifyButton,
+  ReportInconsistencyDialog,
   ShareComparisonDialog,
 } from "./HostConfigCompareView";
 import { fieldMatchesQuery } from "./support-level";
@@ -49,6 +52,7 @@ let introSeen = false;
 
 export function CaniuseComparePage() {
   const { catalog } = useHostCatalog();
+  const publicSiteRelays = useServerSupportsFeature("public-site-relays");
   const source = catalog ?? bundledHostCompatCatalog();
   const { hosts, subjects } = useMemo(
     () => buildPresetCompareEntries(source),
@@ -175,16 +179,16 @@ export function CaniuseComparePage() {
   if (showIntro && intro !== null) {
     const prompt = INTRO_PROMPTS[intro];
     return (
-      <div className="dark caniuse-site grid h-full place-items-center bg-background px-4 text-center text-foreground">
-        <div ref={introRef}>
+      <div className="dark caniuse-site h-full overflow-auto bg-background text-foreground" data-page="compare">
+        <div ref={introRef} className="caniuse-wrap pt-24 sm:pt-36">
           <div
-            className="flex flex-wrap items-center justify-center gap-3 text-4xl font-semibold tracking-tight sm:text-6xl"
+            className="caniuse-hero flex flex-wrap items-baseline gap-x-[0.23em] gap-y-1 font-bold"
             aria-hidden="true"
           >
             <span className="caniuse-reveal">Can I use</span>
             <span
               key={intro}
-              className="caniuse-prompt inline-flex flex-wrap items-center justify-center gap-3"
+              className="caniuse-prompt inline-flex min-w-0 flex-wrap items-center gap-x-[0.21em] gap-y-1"
             >
               <span className="text-primary">{prompt.name}</span> in
               {prompt.clients.map(
@@ -214,26 +218,29 @@ export function CaniuseComparePage() {
   }
 
   return (
-    <CaniuseSite current="compare">
+    <CaniuseSite
+      current="compare"
+      footer={publicSiteRelays !== false && (
+        <>
+          <ReportInconsistencyDialog footer />
+          <NotifyButton footer />
+        </>
+      )}
+    >
       <div className="caniuse-reveal">
-        <div className="py-10 text-center sm:py-14">
-          <div className="flex flex-wrap items-baseline justify-center gap-x-3 gap-y-1">
-            <h1 className="text-4xl font-semibold tracking-tight sm:text-6xl">
-              Can I use
-            </h1>
-            <div className="flex min-w-0 items-baseline text-4xl font-semibold tracking-tight sm:text-6xl">
-              <input
-                aria-label="Type a capability"
-                placeholder="MCP Apps"
-                value={query}
-                onChange={(event) => updateQuery(event.target.value)}
-                list="caniuse-suggestions"
-                className="w-[min(54vw,8ch)] border-b border-primary/50 bg-transparent pb-1 text-primary placeholder:text-primary/75 focus-visible:outline-none focus-visible:border-ring"
-              />
-              <span aria-hidden="true">?</span>
-            </div>
+        <div className="pb-10 pt-12 sm:pb-14 sm:pt-20">
+          <div className="caniuse-hero flex flex-wrap items-baseline gap-x-[0.23em] gap-y-1 font-bold">
+            <h1 className="whitespace-nowrap">Can I use</h1>
+            <input
+              aria-label="Type a capability"
+              placeholder="type a capability…"
+              value={query}
+              onChange={(event) => updateQuery(event.target.value)}
+              list="caniuse-suggestions"
+              className="min-w-0 max-w-[13em] flex-[1_1_9em] border-b border-primary/40 bg-transparent pb-1 text-primary focus-visible:border-ring focus-visible:outline-none"
+            />
           </div>
-          <p className="mt-5 text-sm text-muted-foreground">
+          <p className="mt-5 text-sm text-muted-foreground sm:text-base">
             Compare MCP client support for protocol versions, features, and
             extensions.
           </p>
@@ -243,60 +250,66 @@ export function CaniuseComparePage() {
           selected={selected}
           onChange={updateSelection}
         />
-        <div className="mb-3 flex flex-wrap items-center gap-2 sm:gap-4">
-          <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-muted-foreground">
-            <Switch
-              checked={showDescriptions}
-              onCheckedChange={setShowDescriptions}
-            />{" "}
-            Show descriptions
-          </label>
-          <div className="relative min-w-36 flex-1 sm:max-w-xs">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              className="pl-9"
-              aria-label="Search capabilities"
-              placeholder="Search capabilities…"
-              value={query}
-              onChange={(event) => updateQuery(event.target.value)}
-              list="caniuse-suggestions"
-            />
+        <section aria-labelledby="caniuse-matrix-heading" className="min-w-0 rounded-xl border border-border bg-card">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-3 sm:px-5">
+            <h2 id="caniuse-matrix-heading" className="mr-auto basis-full font-bold sm:basis-auto">
+              Capability matrix
+            </h2>
+            <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+              <Switch
+                checked={showDescriptions}
+                onCheckedChange={setShowDescriptions}
+              />{" "}
+              Show descriptions
+            </label>
+            <div className="relative min-w-36 flex-1 sm:max-w-xs">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                aria-label="Search capabilities"
+                placeholder="Search capabilities…"
+                value={query}
+                onChange={(event) => updateQuery(event.target.value)}
+                list="caniuse-suggestions"
+              />
+            </div>
+            <datalist id="caniuse-suggestions">
+              {fields.map((field) => (
+                <option key={field.id} value={caniuseTitle(field)} />
+              ))}
+            </datalist>
+            {selected.length > 0 && (
+              <div>
+                <ShareComparisonDialog
+                  selectedHostIds={selectedIds}
+                  searchQuery={query}
+                  fields={fields}
+                  preserveQuery
+                  copyOnShare
+                />
+              </div>
+            )}
           </div>
-          <datalist id="caniuse-suggestions">
-            {fields.map((field) => (
-              <option key={field.id} value={caniuseTitle(field)} />
-            ))}
-          </datalist>
           {selected.length > 0 && (
-            <div className="sm:ml-auto">
-              <ShareComparisonDialog
-                selectedHostIds={selectedIds}
-                searchQuery={query}
-                fields={fields}
-                preserveQuery
+            <div className="min-w-0 [&>div]:rounded-t-none [&>div]:border-x-0 [&>div]:border-b-0">
+              <HostConfigComparisonMatrix
+                subjects={selected}
+                fields={matchingFields}
+                showDescriptions={showDescriptions}
+                themeMode="dark"
+                mobileOptimized
+                verifyBaseUrl="https://app.mcpjam.com"
+                disabledVerifyTemplateIds={FLAG_GATED_HOST_IDS}
+                renderFieldSummary={(field) => {
+                  const summary = summaries.get(field.id);
+                  return (
+                    summary && <MatrixAdoption field={field} summary={summary} />
+                  );
+                }}
               />
             </div>
           )}
-        </div>
-        {selected.length > 0 && (
-          <div className="min-w-0">
-            <HostConfigComparisonMatrix
-              subjects={selected}
-              fields={matchingFields}
-              showDescriptions={showDescriptions}
-              themeMode="dark"
-              mobileOptimized
-              verifyBaseUrl="https://app.mcpjam.com"
-              disabledVerifyTemplateIds={FLAG_GATED_HOST_IDS}
-              renderFieldSummary={(field) => {
-                const summary = summaries.get(field.id);
-                return (
-                  summary && <MatrixAdoption field={field} summary={summary} />
-                );
-              }}
-            />
-          </div>
-        )}
+        </section>
       </div>
     </CaniuseSite>
   );
@@ -325,13 +338,13 @@ function MatrixAdoption({
   return (
     <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
       {overall.reporting || field.id === "supportedProtocolVersions" ? (
-        <span className="rounded border border-border bg-muted px-1.5 font-semibold text-foreground">
+        <span className="font-bold text-primary">
           {label}
         </span>
       ) : (
         <Link
           to={path}
-          className="rounded border border-border bg-muted px-1.5 font-semibold text-foreground hover:border-primary"
+          className="font-bold text-primary hover:underline"
           title={
             overall.score === null
               ? "No published results"
