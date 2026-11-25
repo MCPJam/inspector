@@ -4,7 +4,6 @@ import {
   hostConfigField,
   type HostComparisonSubject,
 } from "@/lib/host-config-field-schema";
-import { CANIUSE_TASKS } from "../caniuse-capability-catalog";
 import { capabilityCoverage, capabilitySlices } from "../caniuse-coverage";
 import { buildPresetCompareEntries } from "../host-compare-presets";
 
@@ -12,6 +11,22 @@ const { subjects } = buildPresetCompareEntries(bundledHostCompatCatalog());
 const clients = Object.values(subjects);
 
 describe("caniuse adoption", () => {
+  it("leaves unmeasured CSP subtypes out of the adoption denominator", () => {
+    const field = hostConfigField("appsCap.cspConnectDomains.fetch");
+    expect(
+      capabilityCoverage({ ...field, read: () => undefined }, clients),
+    ).toMatchObject({ measured: 0, score: null });
+  });
+
+  it("counts inline-only widget rendering for its slice but not for full display-mode support", () => {
+    const field = {
+      ...hostConfigField("appsCap.availableDisplayModes"),
+      read: () => ["inline"],
+    };
+    expect(capabilityCoverage(field, clients).score).toBe(0);
+    expect(capabilityCoverage(field, clients, "inline").score).toBe(100);
+  });
+
   it("omits the MCPJam baseline and untested clients, and keeps partial results in the denominator", () => {
     const sampling = hostConfigField("capabilities.sampling");
     const values = [true, undefined, false, true, true];
@@ -39,11 +54,6 @@ describe("caniuse adoption", () => {
       "unsupported",
       "supported",
     ]);
-    expect(capabilityCoverage(CANIUSE_TASKS.field, clients)).toMatchObject({
-      full: 0,
-      measured: 0,
-      score: null,
-    });
   });
 
   it("treats any published Events mode as adoption and measures individual modes independently", () => {

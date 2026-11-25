@@ -7,6 +7,7 @@ import { Input } from "@mcpjam/design-system/input";
 import { Switch } from "@mcpjam/design-system/switch";
 import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
+import { FLAG_GATED_HOST_IDS } from "@/lib/host-compat/feature-visibility";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { buildHostCompareSnapshot } from "@/lib/webmcp/review-surface-snapshots";
 import type { HostConfigFieldDef } from "@/lib/host-config-field-schema";
@@ -273,6 +274,7 @@ export function CaniuseComparePage() {
                 selectedHostIds={selectedIds}
                 searchQuery={query}
                 fields={fields}
+                preserveQuery
               />
             </div>
           )}
@@ -286,6 +288,7 @@ export function CaniuseComparePage() {
               themeMode="dark"
               mobileOptimized
               verifyBaseUrl="https://app.mcpjam.com"
+              disabledVerifyTemplateIds={FLAG_GATED_HOST_IDS}
               renderFieldSummary={(field) => {
                 const summary = summaries.get(field.id);
                 return (
@@ -314,21 +317,29 @@ function MatrixAdoption({
   if (!capability) return null;
   const path = buildCaniuseCapabilityPath(capability.slug);
   const { overall, slices } = summary;
+  const label =
+    overall.score === null
+      ? "No results"
+      : `${overall.score}% ${overall.reporting ? "reported" : "adoption"}`;
   return (
     <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-      <Link
-        to={path}
-        className="rounded border border-border bg-muted px-1.5 font-semibold text-foreground hover:border-primary"
-        title={
-          overall.score === null
-            ? "No published results"
-            : `${overall.full} of ${overall.measured} clients ${overall.reporting ? "reported a value" : "support this capability"}`
-        }
-      >
-        {overall.score === null
-          ? "No results"
-          : `${overall.score}% ${overall.reporting ? "reported" : "adoption"}`}
-      </Link>
+      {overall.reporting || field.id === "supportedProtocolVersions" ? (
+        <span className="rounded border border-border bg-muted px-1.5 font-semibold text-foreground">
+          {label}
+        </span>
+      ) : (
+        <Link
+          to={path}
+          className="rounded border border-border bg-muted px-1.5 font-semibold text-foreground hover:border-primary"
+          title={
+            overall.score === null
+              ? "No published results"
+              : `${overall.full} of ${overall.measured} clients support this capability`
+          }
+        >
+          {label}
+        </Link>
+      )}
       {slices.map(({ slice, score }) => (
         <Link
           key={slice}

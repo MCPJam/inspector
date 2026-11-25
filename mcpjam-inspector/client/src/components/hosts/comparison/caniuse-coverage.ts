@@ -46,7 +46,11 @@ export function capabilityCoverage(
               ? ("supported" as const)
               : ("unknown" as const),
         };
-      if (field.id === PROTOCOL || field.kind.kind === "mode-set") {
+      if (
+        field.id === PROTOCOL ||
+        field.id === "eventsDeliveryModes" ||
+        (field.kind.kind === "mode-set" && slice && slice !== "any")
+      ) {
         const status = Array.isArray(value)
           ? (
               slice && slice !== "any"
