@@ -37,6 +37,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+          package-manager-cache: false
 
       - name: OAuth login (headless)
         run: |
@@ -88,6 +89,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+          package-manager-cache: false
 
       - name: Run doctor
         run: |
@@ -129,6 +131,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+          package-manager-cache: false
 
       - name: Run doctor
         run: npx -y @mcpjam/cli@latest server doctor --url ${{ secrets.MCP_SERVER_URL }} --access-token ${{ secrets.MCP_API_KEY }} --format json
@@ -159,6 +162,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+          package-manager-cache: false
 
       - name: Run doctor
         run: npx -y @mcpjam/cli@latest server doctor --url ${{ secrets.MCP_SERVER_URL }} --format json
