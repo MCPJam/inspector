@@ -24,6 +24,7 @@ import {
   PROTOCOL_VERSION_ERAS,
   READINESS_ERAS,
   RENAMED_MCP_TASKS_CHECK_IDS,
+  taskCheckUsesInput,
   isTasksToolCheck,
   type MCPAppsCheckId,
   type MCPCheckId,
@@ -200,7 +201,7 @@ function isProtocolProbe(key: ConformanceProbeKey): key is ProtocolProbeKey {
   return key !== "tasksProbe";
 }
 
-/** The check that sends the Tasks answers, so its row shows the answers box. */
+/** The check that grades the tasks/update acknowledgment. */
 export const TASK_ANSWERS_CHECK =
   "tasks-update-ack-shape" satisfies MCPTasksCheckId;
 
@@ -420,8 +421,7 @@ export function protocolRunOptions(
 /**
  * What a Tasks run sends for the picked checks and advice: those lists, the
  * tool that creates the task (and its arguments) only when a picked check
- * calls it, and the input answers only when the update acknowledgement check
- * runs: the SDK submits them through `tasks/update` for any task that asks.
+ * calls it, and the prefilled answers for each selected polling check.
  */
 export function tasksRunOptions(
   probes: ConformanceProbes,
@@ -436,12 +436,15 @@ export function tasksRunOptions(
     if (override && (!checkIds || checkIds.includes(id)))
       checkOverrides[id] = {
         toolName: override.toolName,
+        ...(taskCheckUsesInput(id) && override.inputResponses
+          ? { inputResponses: override.inputResponses }
+          : {}),
         ...(override.arguments ? { toolArguments: override.arguments } : {}),
       };
   }
-  const update = probes.tasksOverrides?.[TASK_ANSWERS_CHECK] ?? probe;
-  const sendsAnswers =
-    checkIds === undefined || checkIds.includes(TASK_ANSWERS_CHECK);
+  const sendsAnswers = MCP_TASKS_TOOL_CHECK_IDS.some(
+    (id) => taskCheckUsesInput(id) && (!checkIds || checkIds.includes(id)) && !checkOverrides[id],
+  );
   return {
     ...(checkIds ? { checkIds } : {}),
     ...(readinessIds ? { readinessIds } : {}),
@@ -452,8 +455,8 @@ export function tasksRunOptions(
         }
       : {}),
     ...(Object.keys(checkOverrides).length ? { checkOverrides } : {}),
-    ...(sendsAnswers && update?.inputResponses
-      ? { inputResponses: update.inputResponses }
+    ...(sendsAnswers && probe?.inputResponses
+      ? { inputResponses: probe.inputResponses }
       : {}),
   };
 }
