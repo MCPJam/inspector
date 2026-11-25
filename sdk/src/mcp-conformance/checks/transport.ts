@@ -22,6 +22,7 @@ import {
   modernRequestBody,
   rawHeadersProbe,
   rawRequest,
+  resumePolledStream,
   versionStopDetails,
   type LegacyVersionStop,
   type RawHttpResult,
@@ -511,15 +512,15 @@ export async function runTransportChecks(
 
     if (needsMultiStreamChecks) {
       const activeSessionId = sessionId;
+      const streamVersion =
+        ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION;
       const multiStreamStartedAt = Date.now();
       const settledResponses = await Promise.allSettled(
         Array.from({ length: 3 }).map((_, index) =>
           rawRequest(ctx, {
             headers: {
               ...legacyHeaders({
-                protocolVersion:
-                  ctx.config.protocolVersion ??
-                  DEFAULT_LEGACY_PROTOCOL_VERSION,
+                protocolVersion: streamVersion,
                 sessionId: activeSessionId,
               }),
               Accept: "text/event-stream, application/json",
@@ -530,7 +531,14 @@ export async function runTransportChecks(
               method: "tools/list",
               params: {},
             },
-          }),
+          }).then((response) =>
+            // A stream handed to polling carries its answer only after a
+            // call-back; the three wait for theirs at the same time.
+            resumePolledStream(ctx, response, {
+              sessionId: activeSessionId,
+              protocolVersion: streamVersion,
+            }),
+          ),
         ),
       );
 
@@ -636,6 +644,13 @@ export async function runTransportChecks(
             !responseFailures &&
             readErrors.every((error) => error === undefined) &&
             eventCounts.every((count) => count > 0);
+          // Which streams got their answer only through a call-back, so a
+          // reader can tell a polled stream from one that answered at once.
+          const resumedStreams = sseResponses
+            .filter(({ response }) => response.resumed?.gotResponse)
+            .map(({ index }) => index);
+          const resumedDetail =
+            resumedStreams.length > 0 ? { resumedStreams } : {};
 
           results.push(
             allStreamsReadable
@@ -645,6 +660,7 @@ export async function runTransportChecks(
                   {
                     eventCounts,
                     sseStreamCount: sseResponses.length,
+                    ...resumedDetail,
                   },
                 )
               : failedResult(
@@ -659,6 +675,7 @@ export async function runTransportChecks(
                     readErrors,
                     sseStreamCount: sseResponses.length,
                     sseResponseIndexes: sseResponses.map(({ index }) => index),
+                    ...resumedDetail,
                   },
                 ),
           );

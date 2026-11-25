@@ -19,6 +19,7 @@ import {
   modernHeaders,
   modernRequestBody,
   rawRequest,
+  resumePolledStream,
   versionStopDetails,
   type LegacyVersionStop,
   type RawHttpResult,
@@ -86,24 +87,28 @@ async function sendInvalidMethodProbe(
     // not sent: there is no session on that version to send it on.
     return { versionStop };
   }
-  return await rawRequest(ctx, {
+  const protocolVersion =
+    negotiatedVersion ??
+    ctx.config.protocolVersion ??
+    DEFAULT_LEGACY_PROTOCOL_VERSION;
+  const response = await rawRequest(ctx, {
     // Only the method name is the test. 2025-06-18 and later require the
     // version header on every request after initialize, so it is sent here
     // like on any other request, with the version the server agreed to: a
     // server that answered an older version may refuse the one we asked for.
-    headers: legacyHeaders({
-      protocolVersion:
-        negotiatedVersion ??
-        ctx.config.protocolVersion ??
-        DEFAULT_LEGACY_PROTOCOL_VERSION,
-      sessionId,
-    }),
+    headers: legacyHeaders({ protocolVersion, sessionId }),
     body: {
       jsonrpc: "2.0",
       id: 99,
       method: INVALID_METHOD,
       params: {},
     },
+  });
+  // A server may hand the error to polling; grading the empty stream it
+  // closed would fail it for an answer it did send.
+  return await resumePolledStream(ctx, response, {
+    sessionId,
+    protocolVersion,
   });
 }
 

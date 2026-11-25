@@ -13,7 +13,9 @@ import { needsSetupDetails } from "../conformance-input.js";
  * The harness NEVER negotiates and NEVER repairs. It does not run an
  * `initialize` prelude, does not add a protocol-version header of its own, and
  * does not retry: a check that wants any of that asks for it explicitly (see
- * {@link modernEnvelope} / {@link modernHeaders}, which a check opts into). That
+ * {@link modernEnvelope} / {@link modernHeaders}, which a check opts into, and
+ * {@link resumePolledStream}, which calls back for an answer a 2025 server
+ * handed to polling). That
  * is what makes it usable for hostile framing — the whole point of the raw
  * track is to send exactly the bytes the check intends, including the wrong
  * ones.
@@ -38,6 +40,8 @@ import { isKnownProtocolVersion } from "../mcp-client-manager/mcp-protocol-versi
 import type { RawHttpCheckContext } from "./types.js";
 import {
   createCapturingFetch,
+  drainFrames,
+  sseRetryMs,
   type RawExchange,
   type RawSseEvent,
 } from "./raw-capture.js";
@@ -248,6 +252,22 @@ export interface RawHttpResult {
   sse?: RawSseEvent[];
   /** The full captured exchange (request side included). */
   exchange: RawExchange;
+  /**
+   * Set by {@link resumePolledStream} when it called the server back for this
+   * answer. `sse` then also holds the events the call-backs read; every other
+   * field is still the original request's.
+   */
+  resumed?: PolledStreamResume;
+}
+
+/** What {@link resumePolledStream} did to get an answer back. */
+export interface PolledStreamResume {
+  /** One entry per call-back GET: its HTTP status, or why it failed. */
+  attempts: Array<number | string>;
+  /** The `Last-Event-ID` the last call-back sent. */
+  lastEventId: string;
+  /** Whether a JSON-RPC response arrived on a call-back. */
+  gotResponse: boolean;
 }
 
 export interface JsonRpcErrorShape {
@@ -459,7 +479,7 @@ export async function legacyInitialize(ctx: RawHttpCheckContext): Promise<{
 }> {
   const requestedVersion =
     ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION;
-  const result = await rawRequest(ctx, {
+  const posted = await rawRequest(ctx, {
     headers: legacyHeaders({}),
     body: {
       jsonrpc: "2.0",
@@ -471,6 +491,11 @@ export async function legacyInitialize(ctx: RawHttpCheckContext): Promise<{
         clientInfo: { ...CONFORMANCE_CLIENT_INFO },
       },
     },
+  });
+  // The answer may have been handed to polling; without it the version below
+  // cannot be read. No version header yet: nothing is negotiated until then.
+  const result = await resumePolledStream(ctx, posted, {
+    sessionId: posted.headers["mcp-session-id"],
   });
 
   const answeredVersion = jsonRpcResult(result)?.protocolVersion;
@@ -602,6 +627,252 @@ export async function rawRequest(
     json: options.decode === "text" ? undefined : response.json,
     sse: options.decode === "text" ? undefined : response.sse,
     exchange,
+  };
+}
+
+// How the normal client paces its call-backs (`@modelcontextprotocol/client`,
+// DEFAULT_STREAMABLE_HTTP_RECONNECTION_OPTIONS): wait what the server asked
+// for with `retry`, else back off from 1 s, and give up after two failed tries
+// in a row. The cap on call-backs is ours: a probe must end even when a
+// server keeps handing out new event ids.
+const RESUME_INITIAL_DELAY_MS = 1_000;
+const RESUME_MAX_DELAY_MS = 30_000;
+const RESUME_DELAY_GROW_FACTOR = 1.5;
+const RESUME_MAX_FAILED_ATTEMPTS = 2;
+const RESUME_MAX_ATTEMPTS = 5;
+
+/** A JSON-RPC response (result or error), which is what ends a request's stream. */
+function isJsonRpcResponse(message: unknown): boolean {
+  const record = asRecord(message);
+  return (
+    record !== undefined &&
+    "id" in record &&
+    ("result" in record || "error" in record)
+  );
+}
+
+/** The id of the last complete event that had one: the next `Last-Event-ID`. */
+function lastEventIdOf(events: readonly RawSseEvent[]): string | undefined {
+  let lastEventId: string | undefined;
+  for (const event of events) {
+    if (event.terminated && event.id) lastEventId = event.id;
+  }
+  return lastEventId;
+}
+
+function waitMs(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/**
+ * One call-back GET, read frame by frame until a JSON-RPC response arrives,
+ * the stream ends, or `deadline` passes. Read incrementally rather than
+ * through {@link rawRequest}: a server may keep the resumed stream open, and a
+ * capture that waits for the end would only time out and lose the text.
+ */
+async function readCallBack(
+  ctx: RawHttpCheckContext,
+  headers: Headers,
+  deadline: number
+): Promise<{ status: number | string; events: RawSseEvent[]; text: string }> {
+  const events: RawSseEvent[] = [];
+  let text = "";
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(),
+    Math.max(0, deadline - Date.now())
+  );
+  try {
+    const response = await withAbortSignalFetch(ctx.fetchFn, ctx.config.signal)(
+      ctx.serverUrl,
+      { method: "GET", headers, signal: controller.signal }
+    );
+    const isStream = (response.headers.get("content-type") ?? "").includes(
+      "text/event-stream"
+    );
+    if (response.status < 200 || response.status >= 300 || !isStream) {
+      await response.body?.cancel().catch(() => undefined);
+      return { status: response.status, events, text };
+    }
+    if (!response.body) return { status: response.status, events, text };
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        const piece = decoder.decode(chunk.value, { stream: true });
+        text += piece;
+        buffer += piece;
+        const drained = drainFrames(buffer);
+        buffer = drained.rest;
+        events.push(...drained.frames);
+        if (drained.frames.some((frame) => isJsonRpcResponse(frame.json))) {
+          break;
+        }
+      }
+    } catch (error) {
+      // The stream broke or ran out of time; the frames read so far still count.
+      ctx.config.signal?.throwIfAborted();
+      if (!events.some((event) => isJsonRpcResponse(event.json))) {
+        return { status: `stream error: ${errorText(error)}`, events, text };
+      }
+    } finally {
+      await reader.cancel().catch(() => undefined);
+    }
+    return { status: response.status, events, text };
+  } catch (error) {
+    ctx.config.signal?.throwIfAborted();
+    return { status: `request error: ${errorText(error)}`, events, text };
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+  }
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Call a 2025 server back for an answer it handed to polling.
+ *
+ * 2025-11-25 Transports, Sending Messages to the Server: after an event with
+ * an ID the server "MAY close the connection (without terminating the SSE
+ * stream)", and the client "SHOULD then 'poll' the SSE stream by attempting
+ * to reconnect", waiting the `retry` time first ("The client MUST respect the
+ * retry field"). Resumability and Redelivery: the client resumes with "an
+ * HTTP GET to the MCP endpoint" carrying `Last-Event-ID`; 2025-06-18 and
+ * 2025-03-26 have the same section. 2026-07-28 streams are not resumable
+ * ("Resumable SSE streams via Last-Event-ID are not supported"), so a modern
+ * run is never called back.
+ *
+ * The rule for when to call back is the normal client's: the answer was an
+ * SSE stream, it ended without a JSON-RPC response, and an event carried an
+ * id. Anything else returns `result` unchanged without a request.
+ *
+ * The answer joins `sse`, so {@link jsonRpcError} and {@link jsonRpcResult}
+ * find it; status, headers, body and exchange stay the original request's,
+ * so a check that judges the request itself sees what it always saw. The
+ * answer also enters the wire record against the request it answers.
+ *
+ * Never throws, except when the run itself is cancelled: a failed call-back
+ * leaves `result` as the server sent it.
+ */
+export async function resumePolledStream(
+  ctx: RawHttpCheckContext,
+  result: RawHttpResult,
+  options: { sessionId?: string; protocolVersion?: string } = {}
+): Promise<RawHttpResult> {
+  if (ctx.config.era === "modern") return result;
+  const request = asRecord(result.exchange.request.json);
+  const requestId = request?.id;
+  const requestMethod =
+    typeof request?.method === "string" ? request.method : undefined;
+  if (
+    requestMethod === undefined ||
+    requestId === undefined ||
+    requestId === null ||
+    result.status < 200 ||
+    result.status >= 300 ||
+    !result.sse ||
+    result.sse.some((event) => isJsonRpcResponse(event.json))
+  ) {
+    return result;
+  }
+  let lastEventId = lastEventIdOf(result.sse);
+  if (lastEventId === undefined) return result;
+  let retryMs = sseRetryMs(result.bodyText);
+
+  const deadline = Date.now() + ctx.config.checkTimeout;
+  const attempts: Array<number | string> = [];
+  const resumedEvents: RawSseEvent[] = [];
+  let failures = 0;
+  let gotResponse = false;
+  while (attempts.length < RESUME_MAX_ATTEMPTS) {
+    const delay =
+      retryMs ??
+      Math.min(
+        RESUME_INITIAL_DELAY_MS * RESUME_DELAY_GROW_FACTOR ** failures,
+        RESUME_MAX_DELAY_MS
+      );
+    // Calling back sooner than the server asked would break the MUST, so a
+    // wait that does not fit in the time left means no call-back at all.
+    if (Date.now() + delay >= deadline) break;
+    await waitMs(delay, ctx.config.signal);
+
+    let headers: Headers;
+    try {
+      headers = new Headers(baseHeaders(ctx));
+      headers.set("Accept", "text/event-stream");
+      headers.set("Last-Event-ID", lastEventId);
+      if (options.sessionId) headers.set("mcp-session-id", options.sessionId);
+      if (options.protocolVersion) {
+        headers.set("mcp-protocol-version", options.protocolVersion);
+      }
+    } catch (error) {
+      // An event id that is not a legal header value cannot be sent back.
+      attempts.push(`not sent: ${errorText(error)}`);
+      break;
+    }
+
+    const callBack = await readCallBack(ctx, headers, deadline);
+    attempts.push(callBack.status);
+    resumedEvents.push(...callBack.events);
+    if (callBack.events.some((event) => isJsonRpcResponse(event.json))) {
+      gotResponse = true;
+      break;
+    }
+    // A GET the server does not offer; the normal client stops here too.
+    if (callBack.status === 405) break;
+    if (
+      typeof callBack.status === "number" &&
+      callBack.status >= 200 &&
+      callBack.status < 300
+    ) {
+      // The resumed stream ended without the answer. Call back again only if
+      // it moved the stream on, like the normal client does.
+      const newer = lastEventIdOf(callBack.events);
+      if (newer === undefined || newer === lastEventId) break;
+      lastEventId = newer;
+      retryMs = sseRetryMs(callBack.text) ?? retryMs;
+      failures = 0;
+      continue;
+    }
+    failures += 1;
+    if (failures >= RESUME_MAX_FAILED_ATTEMPTS) break;
+  }
+
+  if (attempts.length === 0) return result;
+  const messages = resumedEvents
+    .map((event) => event.json)
+    .filter((json): json is unknown => json !== undefined);
+  if (messages.length > 0) {
+    ctx.recorder?.recordStreamMessages(messages, {
+      origin: `GET (resumed ${requestMethod})`,
+      requestMethod,
+      requestId: requestId as string | number,
+    });
+  }
+  return {
+    ...result,
+    sse: [...result.sse, ...resumedEvents],
+    resumed: { attempts, lastEventId, gotResponse },
   };
 }
 
