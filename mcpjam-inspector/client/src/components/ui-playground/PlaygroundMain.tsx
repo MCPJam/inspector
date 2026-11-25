@@ -5309,6 +5309,7 @@ export function PlaygroundMain({
     ensureThreadReadyForSend,
     ensureLocalHarnessReadyForSend,
     handleSendFollowUp,
+    beginThreadSend,
     broadcastSequence,
     onAutoRunStarted,
     onAutoRunSent,

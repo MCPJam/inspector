@@ -49,6 +49,10 @@ interface PlaygroundAutoRunOptions {
   ensureThreadReadyForSend: () => Promise<boolean>;
   ensureLocalHarnessReadyForSend: () => Promise<boolean>;
   handleSendFollowUp: (text: string) => Promise<boolean>;
+  beginThreadSend: (restore: () => void) => {
+    isCurrent: () => boolean;
+    refuse: () => void;
+  };
   broadcastSequence: { current: number };
   onAutoRunStarted?: () => void;
   onAutoRunSent?: () => void;
@@ -76,6 +80,7 @@ export function usePlaygroundAutoRun({
   ensureThreadReadyForSend,
   ensureLocalHarnessReadyForSend,
   handleSendFollowUp,
+  beginThreadSend,
   broadcastSequence,
   onAutoRunStarted,
   onAutoRunSent,
@@ -126,12 +131,15 @@ export function usePlaygroundAutoRun({
     if (isCompareMode) {
       const prompt = autoRunInput as string;
       const turn = { text: prompt, widgetModelContext: modelContextQueue };
+      const { isCurrent, refuse } = beginThreadSend(() =>
+        composer.setInput(prompt),
+      );
       void (async () => {
         const gated =
           (await ensureSelectedServerReadyForChat()) &&
           (await ensureThreadReadyForSend()) &&
           (await ensureLocalHarnessReadyForSend());
-        if (!gated) return composer.setInput(prompt);
+        if (!gated || !isCurrent()) return refuse();
         const queued = { ...turn, prependMessages: [] };
         if (!sendCompareAutoRun(queued, broadcastSequence))
           autoRanRef.current = false;
@@ -160,6 +168,7 @@ export function usePlaygroundAutoRun({
     ensureThreadReadyForSend,
     ensureLocalHarnessReadyForSend,
     handleSendFollowUp,
+    beginThreadSend,
     broadcastSequence,
     onAutoRunStarted,
     onAutoRunSent,

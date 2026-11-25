@@ -2202,6 +2202,58 @@ describe("PlaygroundMain — multi-host render path", () => {
     ]);
   });
 
+  it("drops the compare auto-run when New chat is clicked while its server connects", async () => {
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = {
+      "h-A": makeHost("h-A", "Host A", { hostStyle: "chatgpt" }),
+      "h-B": makeHost("h-B", "Host B", { hostStyle: "claude" }),
+    };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+    let release!: () => void;
+    const ensureServersReady = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          release = () =>
+            resolve({
+              readyServerNames: ["test-server"],
+              missingServerNames: [],
+              failedServerNames: [],
+              reauthServerNames: [],
+            });
+        }),
+    );
+    mockSharedAppState.servers["test-server"] = {
+      connectionStatus: "disconnected",
+    };
+    render(
+      <PlaygroundMain
+        {...defaultProps}
+        autoRunInput="What can this server do?"
+        ensureServersReady={ensureServersReady}
+      />,
+    );
+    await waitFor(() => expect(ensureServersReady).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      void usePlaygroundChatHistoryBridgeStore.getState().bridge?.onNewChat();
+    });
+    await act(async () => release());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(
+      mockMultiModelPlaygroundCard.mock.calls.some(
+        ([cardProps]) => cardProps.broadcastRequest,
+      ),
+    ).toBe(false);
+    expect(mockChatInput.mock.calls.at(-1)?.[0].value).toBe("");
+  });
+
   it("holds the auto-run until every compare card finishes setup", async () => {
     multiHostFixture.hostList = [
       { hostId: "h-A", name: "Host A" },
