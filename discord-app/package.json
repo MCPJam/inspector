@@ -16,7 +16,7 @@
 		"dotenv": "~18.0.5"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.5.14",
+		"@biomejs/biome": "^2.6.8",
 		"typescript": "^7.0.2"
 	}
 }
