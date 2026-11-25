@@ -13,13 +13,22 @@
  * worker's own bundle.
  */
 
-import { mcpClientFamily } from "@mcpjam/sdk/internal/telemetry";
+import {
+  mcpClientFamily,
+  telemetryRecord,
+} from "@mcpjam/sdk/internal/telemetry";
 import { SKILLS_BUNDLE_ENTRIES } from "./generated/SkillsBundle.generated.js";
 
 const POSTHOG_CAPTURE_URL = "https://us.i.posthog.com/i/v0/e/";
 const CLIENT_INFO_META_KEY = "io.modelcontextprotocol/clientInfo";
 const PROTOCOL_VERSION_META_KEY = "io.modelcontextprotocol/protocolVersion";
 const PROTOCOL_VERSION_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+/**
+ * A client's first message: the 2025 handshake, or the 2026 discovery call
+ * that selects a 2026 protocol version. A 2026 client names itself on every
+ * request, so only these count as a session starting.
+ */
+const FIRST_CONTACT_METHODS = new Set(["initialize", "server/discover"]);
 /** A JSON-RPC body worth reading for these facts is small; skip anything else. */
 const MAX_INSPECTED_BODY_BYTES = 64 * 1024;
 
@@ -28,95 +37,108 @@ export type WorkerEvent =
   | "mcp_skill_read"
   | "mcp_request_rejected";
 
-export type RejectionReason = "invalid_token" | "guest_mint_failed";
-
 /** What one `/mcp` request says about its client, read from its body. */
 export type McpRequestFacts = {
   method?: string;
   clientName?: string;
-  clientVersion?: string;
   protocolVersion?: string;
-  /** True when the client identified itself on this request (initialize or a 2026 `_meta`). */
-  identified: boolean;
-  /** A skill from this worker's bundle that the request reads. */
+  /** The client's first message, naming itself. */
+  startsSession: boolean;
+  /** A skill from this worker's bundle whose `SKILL.md` the request reads. */
   skillName?: string;
 };
-
-type Json = Record<string, unknown>;
-
-function record(value: unknown): Json | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Json)
-    : undefined;
-}
 
 function text(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function skillNameFor(uri: string | undefined): string | undefined {
-  if (!uri?.startsWith("skill://")) return undefined;
-  const entry = SKILLS_BUNDLE_ENTRIES.find(
-    (skill) =>
-      skill.uri === uri ||
-      uri.startsWith(skill.uri.slice(0, -"SKILL.md".length))
-  );
+/** Only the skill's own `SKILL.md` counts, so one use is one read. */
+function skillNameFor(method: string | undefined, uri: unknown) {
+  if (method !== "skills/get" && method !== "resources/read") return undefined;
+  const entry = SKILLS_BUNDLE_ENTRIES.find((skill) => skill.uri === uri);
   return text(entry?.frontmatter.name);
 }
 
 /**
- * Reads the request's JSON-RPC message from a clone, so the MCP handler still
- * gets the untouched body. A batch, a non-JSON body or an oversized one yields
- * no facts rather than an error: these are labels, never a reason to refuse.
+ * The body of a clone, so the MCP handler still reads the untouched request.
+ * Stops at the size cap whether or not the request declared a length.
+ */
+async function readBoundedBody(request: Request): Promise<string | undefined> {
+  const declared = request.headers.get("content-length");
+  if (declared !== null && !(Number(declared) <= MAX_INSPECTED_BODY_BYTES)) {
+    return undefined;
+  }
+  const body = request.clone().body;
+  if (!body) return undefined;
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_INSPECTED_BODY_BYTES) {
+      // Not awaited: cancelling one branch of a tee settles only once the
+      // handler has read the other, which happens after this returns.
+      reader.cancel().catch((error: unknown) => {
+        console.debug("[mcp] analytics could not cancel a body read", String(error));
+      });
+      return undefined;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+/**
+ * Reads the request's JSON-RPC message. A batch, a non-JSON body or an
+ * oversized one yields no facts rather than an error: these are labels, never
+ * a reason to refuse.
  */
 export async function readMcpRequestFacts(
   request: Request
 ): Promise<McpRequestFacts> {
-  const none: McpRequestFacts = { identified: false };
+  const none: McpRequestFacts = { startsSession: false };
   if (request.method !== "POST") return none;
-  // No declared length (a chunked upload) is skipped rather than buffered: a
-  // label is not worth reading an unbounded body for.
-  const declared = request.headers.get("content-length");
-  if (declared === null) return none;
-  const length = Number(declared);
-  if (!Number.isFinite(length) || length > MAX_INSPECTED_BODY_BYTES) {
-    return none;
-  }
-  let message: Json | undefined;
+  let message: Record<string, unknown>;
   try {
-    message = record(await request.clone().json());
-  } catch {
-    // Not JSON: the handler answers that; there is nothing to count.
+    const body = await readBoundedBody(request);
+    if (body === undefined) return none;
+    message = telemetryRecord(JSON.parse(body));
+  } catch (error) {
+    // The handler answers a body it cannot read; there is nothing to count.
+    console.debug("[mcp] analytics skipped an unreadable body", String(error));
     return none;
   }
-  if (!message) return none;
 
   const method = text(message.method);
-  const params = record(message.params);
-  const meta = record(params?._meta);
+  const params = telemetryRecord(message.params);
+  const meta = telemetryRecord(params._meta);
   const initialize = method === "initialize";
-  const clientInfo = record(
-    initialize ? params?.clientInfo : meta?.[CLIENT_INFO_META_KEY]
+  const clientInfo = telemetryRecord(
+    initialize ? params.clientInfo : meta[CLIENT_INFO_META_KEY]
   );
   const protocolVersion = text(
-    initialize ? params?.protocolVersion : meta?.[PROTOCOL_VERSION_META_KEY]
+    initialize ? params.protocolVersion : meta[PROTOCOL_VERSION_META_KEY]
   );
-  const skillName = skillNameFor(
-    method === "skills/get" || method === "resources/read"
-      ? text(params?.uri)
-      : undefined
-  );
-  const clientName = text(clientInfo?.name);
-  const clientVersion = text(clientInfo?.version);
+  const clientName = text(clientInfo.name);
+  const skillName = skillNameFor(method, params.uri);
 
   return {
     ...(method ? { method } : {}),
     ...(clientName ? { clientName } : {}),
-    ...(clientVersion ? { clientVersion } : {}),
     ...(protocolVersion && PROTOCOL_VERSION_PATTERN.test(protocolVersion)
       ? { protocolVersion }
       : {}),
-    identified: Boolean(clientName),
+    startsSession: Boolean(
+      clientName && method && FIRST_CONTACT_METHODS.has(method)
+    ),
     ...(skillName ? { skillName } : {}),
   };
 }
@@ -128,12 +150,6 @@ export interface WorkerAnalytics {
     event: WorkerEvent,
     distinctId: string | undefined,
     properties: Properties
-  ): void;
-  /** Like `capture`, once `properties` resolves, without holding the response. */
-  captureAfter(
-    event: WorkerEvent,
-    distinctId: string | undefined,
-    properties: Promise<Properties>
   ): void;
 }
 
@@ -156,15 +172,8 @@ export function createWorkerAnalytics(
   ctx: Pick<ExecutionContext, "waitUntil">
 ): WorkerAnalytics {
   const key = env.POSTHOG_PROJECT_KEY;
-  if (!key) return { capture: () => {}, captureAfter: () => {} };
-  const analytics: WorkerAnalytics = {
-    captureAfter(event, distinctId, properties) {
-      ctx.waitUntil(
-        properties.then((resolved) =>
-          analytics.capture(event, distinctId, resolved)
-        )
-      );
-    },
+  if (!key) return { capture: () => {} };
+  return {
     capture(event, distinctId, properties) {
       const body = JSON.stringify({
         api_key: key,
@@ -197,7 +206,6 @@ export function createWorkerAnalytics(
       );
     },
   };
-  return analytics;
 }
 
 /** What the MCP server needs from this request's analytics. */
@@ -208,7 +216,7 @@ export type McpCaller = {
 };
 
 /**
- * Counts one served `/mcp` request: a client identifying itself, and a skill
+ * Counts one served `/mcp` request: a client's first contact, and a skill
  * read. Returns what the tools need to label and report the rest.
  */
 export function recordMcpRequest(
@@ -224,7 +232,7 @@ export function recordMcpRequest(
     ...clientProperties(facts, request.headers.get("user-agent")),
     is_guest: isGuest,
   };
-  if (facts.identified) {
+  if (facts.startsSession) {
     analytics.capture("mcp_session_started", distinctId, shared);
   }
   if (facts.skillName) {

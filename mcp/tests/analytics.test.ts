@@ -9,7 +9,9 @@ import worker from "../src/index.js";
 import {
   createWorkerAnalytics,
   readMcpRequestFacts,
+  recordMcpRequest,
 } from "../src/analytics.js";
+import { GUEST_ISSUER } from "../src/auth.js";
 import { SKILLS_BUNDLE_ENTRIES } from "../src/generated/SkillsBundle.generated.js";
 
 const ORIGIN = "https://mcp.test";
@@ -78,14 +80,14 @@ function harness() {
   return { captured, ctx, settle };
 }
 
-async function authkitToken(): Promise<string> {
+async function authkitToken(expiresAt: string | number = "1h"): Promise<string> {
   return new SignJWT({})
     .setProtectedHeader({ alg: "RS256", kid: "authkit" })
     .setIssuer(AUTHKIT_ISSUER)
     .setAudience(`${ORIGIN}/mcp`)
     .setSubject("user_123")
-    .setIssuedAt()
-    .setExpirationTime("1h")
+    .setIssuedAt(Math.floor(Date.now() / 1000) - 7200)
+    .setExpirationTime(expiresAt)
     .sign(authkitKey);
 }
 
@@ -161,6 +163,19 @@ describe("worker usage events", () => {
     });
   });
 
+  it("does not count an expired token, which the client refreshes", async () => {
+    const { captured, ctx, settle } = harness();
+    const expired = await authkitToken(Math.floor(Date.now() / 1000) - 3600);
+    const response = await worker.fetch(
+      mcpRequest("initialize", INITIALIZE, expired),
+      makeEnv(),
+      ctx
+    );
+    expect(response.status).toBe(401);
+    await settle();
+    expect(captured).toEqual([]);
+  });
+
   it("does not count the OAuth challenge a new client gets", async () => {
     const { captured, ctx, settle } = harness();
     const response = await worker.fetch(
@@ -186,6 +201,25 @@ describe("worker usage events", () => {
     expect(captured[0]!.properties.skill_name).toBe(skill.frontmatter.name);
   });
 
+  it("counts a 2026 client's session once, on server/discover", async () => {
+    const { captured, ctx, settle } = harness();
+    const meta = {
+      _meta: {
+        "io.modelcontextprotocol/clientInfo": { name: "cursor-vscode" },
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      },
+    };
+    const token = await authkitToken();
+    await worker.fetch(mcpRequest("server/discover", meta, token), makeEnv(), ctx);
+    await worker.fetch(mcpRequest("tools/list", meta, token), makeEnv(), ctx);
+    await settle();
+    expect(captured.map((c) => c.event)).toEqual(["mcp_session_started"]);
+    expect(captured[0]!.properties).toMatchObject({
+      mcp_client: "cursor",
+      protocol_version: "2026-07-28",
+    });
+  });
+
   it("sends nothing without a PostHog key", async () => {
     const { captured, ctx, settle } = harness();
     await worker.fetch(
@@ -199,15 +233,46 @@ describe("worker usage events", () => {
 
   it("never lets a failed capture reach the request", async () => {
     const { ctx, settle } = harness();
-    vi.mocked(fetch).mockRejectedValueOnce(new Error("PostHog down"));
+    const served = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (target, init) => {
+      if (String(target) === CAPTURE_URL) throw new Error("PostHog down");
+      return served(target, init);
+    });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    createWorkerAnalytics(makeEnv(), ctx).capture(
-      "mcp_session_started",
-      "user_123",
-      {}
+    const response = await worker.fetch(
+      mcpRequest("initialize", INITIALIZE, await authkitToken()),
+      makeEnv(),
+      ctx
     );
-    await expect(settle()).resolves.toBeDefined();
-    expect(warn).toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    await expect(settle()).resolves.toBeGreaterThan(0);
+    expect(warn).toHaveBeenCalledWith(
+      "[mcp] analytics capture failed",
+      "Error: PostHog down"
+    );
+  });
+
+  it("counts a failed guest mint against the guest", async () => {
+    const { captured, ctx, settle } = harness();
+    const caller = recordMcpRequest(
+      createWorkerAnalytics(makeEnv(), ctx),
+      { startsSession: false, clientName: "claude-code" },
+      mcpRequest("tools/call", {}),
+      { sub: "guest_abc", iss: GUEST_ISSUER },
+      GUEST_ISSUER
+    );
+    caller.onGuestMintFailed();
+    await settle();
+    expect(captured).toHaveLength(1);
+    expect(captured[0]).toMatchObject({
+      event: "mcp_request_rejected",
+      distinct_id: "guest_abc",
+      properties: {
+        reason: "guest_mint_failed",
+        mcp_client: "claude-code",
+        is_guest: true,
+      },
+    });
   });
 });
 
@@ -225,21 +290,43 @@ describe("readMcpRequestFacts", () => {
       method: "tools/list",
       clientName: "cursor-vscode",
       protocolVersion: "2026-07-28",
-      identified: true,
+      startsSession: false,
     });
   });
 
-  it("names no skill outside this worker's bundle", async () => {
-    const facts = await readMcpRequestFacts(
-      mcpRequest("resources/read", { uri: "skill://someone/else/SKILL.md" })
+  it("names no skill outside this worker's bundle, and counts only SKILL.md", async () => {
+    const skill = SKILLS_BUNDLE_ENTRIES[0]!;
+    const reference = skill.uri.replace(/SKILL\.md$/, "references/guide.md");
+    for (const [method, uri] of [
+      ["resources/read", "skill://someone/else/SKILL.md"],
+      ["resources/read", reference],
+      ["skills/get", reference],
+    ]) {
+      const facts = await readMcpRequestFacts(mcpRequest(method!, { uri }));
+      expect(facts.skillName).toBeUndefined();
+    }
+    const entry = await readMcpRequestFacts(
+      mcpRequest("resources/read", { uri: skill.uri })
     );
-    expect(facts.skillName).toBeUndefined();
+    expect(entry.skillName).toBe(skill.frontmatter.name);
   });
 
-  it("does not buffer a body with no declared length", async () => {
+  it("reads a body with no declared length, up to the cap", async () => {
     const request = mcpRequest("initialize", INITIALIZE);
     request.headers.delete("content-length");
-    expect(await readMcpRequestFacts(request)).toEqual({ identified: false });
+    expect(await readMcpRequestFacts(request)).toMatchObject({
+      clientName: "claude-code",
+      startsSession: true,
+    });
+
+    const oversized = new Request(`${ORIGIN}/mcp`, {
+      method: "POST",
+      body: JSON.stringify({ method: "initialize", pad: "x".repeat(70_000) }),
+    });
+    expect(await readMcpRequestFacts(oversized)).toEqual({
+      startsSession: false,
+    });
+    expect((await oversized.text()).length).toBeGreaterThan(70_000);
   });
 
   it("leaves the body for the handler, and shrugs at non-JSON", async () => {
@@ -248,7 +335,10 @@ describe("readMcpRequestFacts", () => {
       headers: { "content-length": "8" },
       body: "not json",
     });
-    expect(await readMcpRequestFacts(request)).toEqual({ identified: false });
+    vi.spyOn(console, "debug").mockImplementation(() => {});
+    expect(await readMcpRequestFacts(request)).toEqual({
+      startsSession: false,
+    });
     expect(await request.text()).toBe("not json");
   });
 });

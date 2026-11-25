@@ -269,6 +269,9 @@ export default {
       // Pass-through auth: the v2 handler verifies nothing itself, so this
       // stays the single place a bearer is checked. `authInfo` left undefined
       // means anonymous, which only `servesAnonymous` allows.
+      // Read once, from a clone, before the response can leave: the Workers
+      // runtime refuses a body read after it has.
+      const facts = await readMcpRequestFacts(request);
       let authInfo: AuthInfo | undefined;
       if (request.headers.has("authorization") || !servesAnonymous) {
         // A presented bearer must verify (AuthKit, or guest under `mixed`); a
@@ -281,18 +284,14 @@ export default {
           origin,
         );
         if (!result.ok) {
-          // A missing token is the OAuth challenge every new client gets, not
-          // a failure; only a presented token that did not verify counts.
-          // Counted after the 401 leaves, so a refusal never waits on it.
-          if (request.headers.has("authorization")) {
-            analytics.captureAfter(
-              "mcp_request_rejected",
-              undefined,
-              readMcpRequestFacts(request).then((facts) => ({
-                ...clientProperties(facts, request.headers.get("user-agent")),
-                reason: "invalid_token",
-              }))
-            );
+          // A missing token is the OAuth challenge every new client gets, and
+          // an expired one is a routine refresh; neither is a failure. Only a
+          // presented token that did not verify for another reason counts.
+          if (request.headers.has("authorization") && !result.expired) {
+            analytics.capture("mcp_request_rejected", undefined, {
+              ...clientProperties(facts, request.headers.get("user-agent")),
+              reason: "invalid_token",
+            });
           }
           return withMcpCors(result.response);
         }
@@ -301,14 +300,14 @@ export default {
 
       const caller = recordMcpRequest(
         analytics,
-        await readMcpRequestFacts(request),
+        facts,
         request,
         authInfo?.extra?.claims as { sub?: unknown; iss?: unknown } | undefined,
         GUEST_ISSUER
       );
 
-      // No `parsedBody`: nothing above reads the request body, so there is no
-      // first read to hand the handler — let it read the raw request. The
+      // No `parsedBody`: the analytics read above used a clone, so the handler
+      // still reads the raw request itself. The
       // handler does no path routing of its own, so `/mcp/...` is served too.
       return withMcpCors(
         await handleMcpRequest(
