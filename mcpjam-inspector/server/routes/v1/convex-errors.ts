@@ -108,6 +108,15 @@ const CI_OWNED_SUITE_READ_ONLY_MESSAGE =
   "This suite is managed by CI. Edit the test file in your repository and run it again, or duplicate the suite to get an editable copy.";
 
 /**
+ * The backend's refusal of a marker on a suite SDK ingest created, which has
+ * no suite file to name, mirrored for the same reason. The pre-check uses it
+ * for every write to such a suite (PLB-458): the generic copy above sends the
+ * caller to a test file that does not exist.
+ */
+export const SDK_SUITE_READ_ONLY_MESSAGE =
+  "This suite was created by the MCPJam SDK and has no suite file to declare. Report changes through the SDK, or duplicate the suite to get an editable copy.";
+
+/**
  * The one 409 a configuration write to a CI-owned suite answers with, whether
  * the route refused it up front (`assertSuiteWritableViaApi` in `ci-owned-suite.ts`)
  * or the backend did (the translator below). One builder, so the two cannot
@@ -118,16 +127,26 @@ const CI_OWNED_SUITE_READ_ONLY_MESSAGE =
  * is editing the source of truth, or taking a copy. A 403 would send someone
  * to ask their admin for access they already have.
  *
- * The message names the two remedies an app user has; the hint adds the third,
- * which only an API caller has — send `declaredSuiteId` and write AS the file.
+ * The message names the remedies anyone has. `fileSyncHint` adds the one only
+ * a suite-file sync has, writing AS the file, and is set only where it can
+ * work: a route that takes `declaredSuiteId`, on a suite that has a file.
  */
 export function ciOwnedSuiteReadOnlyError(
-  message: string = CI_OWNED_SUITE_READ_ONLY_MESSAGE,
+  options: { message?: string; fileSyncHint?: boolean } = {},
 ): WebRouteError {
-  return new WebRouteError(409, ErrorCode.CONFLICT, message, {
-    reason: CI_OWNED_SUITE_READ_ONLY_CODE,
-    hint: "Edit the suite file in your repository (and send its suite id as declaredSuiteId), or duplicate the suite to get an editable copy.",
-  });
+  return new WebRouteError(
+    409,
+    ErrorCode.CONFLICT,
+    options.message ?? CI_OWNED_SUITE_READ_ONLY_MESSAGE,
+    {
+      reason: CI_OWNED_SUITE_READ_ONLY_CODE,
+      ...(options.fileSyncHint
+        ? {
+            hint: "To write this suite as its suite file, send the file's suite.id in the declaredSuiteId query parameter.",
+          }
+        : {}),
+    },
+  );
 }
 
 const GATE_WAIVER_REFUSAL_CODES: ReadonlySet<string> = new Set([
@@ -483,8 +502,15 @@ export function translateConvexWriteError(
   // sniffing below, which reads `error.message` — the JSON of a ConvexError's
   // data — and either loses the message on a 500 or matches a pattern by
   // accident and answers with the wrong status.
+  //
+  // The file-sync hint stays on, except under the backend's SDK message: the
+  // refusal the routes predict least is a marker naming the wrong id, which
+  // only reaches here on a route that takes one.
   if (code === CI_OWNED_SUITE_READ_ONLY_CODE) {
-    return ciOwnedSuiteReadOnlyError(structuredMessage);
+    return ciOwnedSuiteReadOnlyError({
+      message: structuredMessage,
+      fileSyncHint: structuredMessage !== SDK_SUITE_READ_ONLY_MESSAGE,
+    });
   }
 
   // ── Import eligibility (mcpjam-backend lib/evalImportEligibility.ts) ─────

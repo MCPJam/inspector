@@ -1074,7 +1074,7 @@ describe("v1 write routes", () => {
         expect(prepareEvalRunMock).not.toHaveBeenCalled();
       });
 
-      // PLB-238 (D11): a launch that writes the suite is refused up front on a
+      // PLB-238: a launch that writes the suite is refused up front on a
       // CI-owned suite, before any connection; a launch that only runs it is not.
       describe("on a CI-owned suite", () => {
         const RUNS =
@@ -1104,16 +1104,31 @@ describe("v1 write routes", () => {
           [
             "inline tests",
             { suiteId: SUITE_ID, serverIds: ["s_alpha"], tests: [inlineTest] },
+            [],
+          ],
+          [
+            // An environment launch writes no snapshot, but still upserts
+            // inline tests, so it is refused like any other.
+            "inline tests in an environment",
+            { suiteId: SUITE_ID, tests: [inlineTest] },
+            ["env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
           ],
           [
             "refreshSnapshot",
             { suiteId: SUITE_ID, suiteRerun: true, refreshSnapshot: true },
+            [],
+          ],
+          [
+            // Not a regression: Convex refused this snapshot write before.
+            "refreshSnapshot on a bare rerun",
+            { suiteId: SUITE_ID, refreshSnapshot: true },
+            [],
           ],
         ])(
           "refuses a launch that writes the suite (%s)",
-          async (_label, body) => {
+          async (_label, body, environmentIds) => {
             mockHappyCreate();
-            mockCiSuite();
+            mockCiSuite(environmentIds);
             const res = await request(makeApp(), "POST", RUNS, body);
             expect(res.status).toBe(409);
             expect(
@@ -1128,7 +1143,17 @@ describe("v1 write routes", () => {
 
         it.each([
           ["a bare rerun", { suiteId: SUITE_ID }, []],
-          ["the CLI's rerun", { suiteId: SUITE_ID, suiteRerun: true }, []],
+          ["an explicit rerun", { suiteId: SUITE_ID, suiteRerun: true }, []],
+          [
+            // What `eval run --file` sends after syncing the suite.
+            "the CLI's file launch",
+            {
+              suiteId: SUITE_ID,
+              caseIds: ["case1xxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+              sourceHash: "a".repeat(64),
+            },
+            [],
+          ],
           [
             "an environment rerun with refreshSnapshot",
             { suiteId: SUITE_ID, suiteRerun: true, refreshSnapshot: true },

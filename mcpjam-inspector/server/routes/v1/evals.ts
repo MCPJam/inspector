@@ -4676,8 +4676,8 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
         ? { ephemeralEnvironment: true }
         : {}),
     });
-  // A launch that writes the suite (D11) meets the same refusal as the case
-  // routes, before any server connects. It takes no marker: the run path
+  // A launch that writes the suite meets the same refusal as the case routes
+  // (PLB-238), before any server connects. It takes no marker: the run path
   // writes without one, so the platform would refuse it anyway.
   if (
     suite &&
@@ -8610,7 +8610,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   }
   requireProjectMatch(suite, projectId, "Eval suite");
   const declaredSuiteId = declaredSuiteIdOf(c, body);
-  assertSuiteWritableViaApi(suite!, declaredSuiteId);
+  assertSuiteWritableViaApi(suite!, { declaredSuiteId });
 
   // Precheck the one environment rejection a caller is likely to hit, before
   // any of the edits below commit — this handler applies several mutations in
@@ -9142,7 +9142,7 @@ evals.delete("/projects/:projectId/eval-suites/:suiteId", async (c) => {
     await convexClient.mutation("testSuites:deleteTestSuite" as any, {
       suiteId,
       // Query param, for the same reason the case delete uses one.
-      ...fileSyncArg(c.req.query("declaredSuiteId")),
+      ...fileSyncArg(declaredSuiteIdOf(c)),
     });
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -9186,7 +9186,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
   }
   requireProjectMatch(suite, projectId, "Eval suite");
   const declaredSuiteId = declaredSuiteIdOf(c, body);
-  assertSuiteWritableViaApi(suite!, declaredSuiteId);
+  assertSuiteWritableViaApi(suite!, { declaredSuiteId });
   // Enabling reuses the suite's saved interval when none is supplied (one-click
   // re-enable after a disable). Only require an interval when there's no saved
   // one to fall back to.
@@ -9348,7 +9348,7 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
   }
   requireProjectMatch(suite, projectId, "Eval suite");
   const declaredSuiteId = declaredSuiteIdOf(c, body);
-  assertSuiteWritableViaApi(suite!, declaredSuiteId);
+  assertSuiteWritableViaApi(suite!, { declaredSuiteId });
   assertCasePolicyFieldsSupported(
     suite,
     body,
@@ -9440,7 +9440,7 @@ evals.post(
     }
     requireProjectMatch(suite, projectId, "Eval suite");
     const declaredSuiteId = declaredSuiteIdOf(c, body);
-    assertSuiteWritableViaApi(suite!, declaredSuiteId);
+    assertSuiteWritableViaApi(suite!, { declaredSuiteId });
     // Checked for EVERY case before any of them is authored, like
     // `assertCreatableCase` above: rejecting case 42 after 41 siblings landed
     // leaves the caller reconciling a partial write it cannot retry cleanly.
@@ -9572,30 +9572,26 @@ evals.patch(
       "preflight",
     );
     // The CASE was loaded above; the SUITE was not. It is read for the
-    // CI-owned pre-check and for the policy-field check (both create paths
-    // already read it for their scope guard, so a PATCH was the one door
-    // through which an inert `repetitions` could still reach storage) — and
-    // only when one of them applies, so a file sync's ordinary title edit does
-    // not pay for a second round trip.
+    // CI-owned pre-check, which needs it even for a file sync (a marker on an
+    // SDK-created suite can never succeed), and for the policy-field check
+    // (both create paths already read it for their scope guard, so a PATCH was
+    // the one door through which an inert `repetitions` could still reach
+    // storage).
     const declaredSuiteId = declaredSuiteIdOf(c, body);
-    const hasPolicyFields =
-      body.repetitions !== undefined || body.passThreshold !== undefined;
-    if (hasPolicyFields || !fileSyncArg(declaredSuiteId).fileSync) {
-      const suite = await readSuiteInProject(
-        token,
-        projectId,
-        suiteId,
-        "authorized",
+    const suite = await readSuiteInProject(
+      token,
+      projectId,
+      suiteId,
+      "authorized",
+    );
+    assertSuiteWritableViaApi(suite, { declaredSuiteId });
+    if (body.repetitions !== undefined || body.passThreshold !== undefined) {
+      assertCasePolicyFieldsSupported(
+        suite,
+        body,
+        "",
+        countFieldNames(vocabularyOf(c)),
       );
-      assertSuiteWritableViaApi(suite, declaredSuiteId);
-      if (hasPolicyFields) {
-        assertCasePolicyFieldsSupported(
-          suite,
-          body,
-          "",
-          countFieldNames(vocabularyOf(c)),
-        );
-      }
     }
     const args = buildCaseMutationArgs(body, {
       forCreate: false,
@@ -9656,12 +9652,10 @@ evals.delete(
     // one route a body-carrying delete while its siblings have none is a shape
     // callers get wrong.
     const declaredSuiteId = declaredSuiteIdOf(c);
-    // The suite is read only for the pre-check, which a file sync skips.
-    if (!fileSyncArg(declaredSuiteId).fileSync) {
-      assertSuiteWritableViaApi(
-        await readSuiteInProject(token, projectId, suiteId, "authorized"),
-      );
-    }
+    assertSuiteWritableViaApi(
+      await readSuiteInProject(token, projectId, suiteId, "authorized"),
+      { declaredSuiteId },
+    );
     const { convexClient } = createConvexClients(token);
     try {
       await convexClient.mutation("testSuites:deleteTestCase" as any, {

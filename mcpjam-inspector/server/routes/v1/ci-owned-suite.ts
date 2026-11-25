@@ -6,10 +6,19 @@
  */
 
 import { z } from "zod";
-import { ciOwnedSuiteReadOnlyError } from "./convex-errors.js";
+import {
+  ciOwnedSuiteReadOnlyError,
+  SDK_SUITE_READ_ONLY_MESSAGE,
+} from "./convex-errors.js";
 
 /** The two suite fields the lock reads; any suite document has them. */
 type SuiteOwnership = { declaredSuiteId?: unknown; source?: unknown };
+
+/** A committed suite file owns it: the backend's `isFileOwnedSuite`. */
+function isFileOwnedSuiteDoc(suite: SuiteOwnership): boolean {
+  const declared = suite.declaredSuiteId;
+  return typeof declared === "string" && declared.length > 0;
+}
 
 /**
  * Whether the platform will refuse configuration writes to this suite.
@@ -17,20 +26,16 @@ type SuiteOwnership = { declaredSuiteId?: unknown; source?: unknown };
  * MIRRORS the backend's `isCiOwnedSuite`, deliberately and with the same two
  * clauses — a committed suite file's `declaredSuiteId`, or `source: 'sdk'` from
  * ingest. Convex stays the guard. This copy lets the DTO say so before the
- * caller finds out from a 409, and lets the write routes refuse up front what
- * Convex would refuse anyway (`assertSuiteWritableViaApi`, which also names
- * the ceiling of a mirrored predicate).
+ * caller finds out from a 409, and lets the write routes refuse up front
+ * (`assertSuiteWritableViaApi`, which also names the ceiling of a mirrored
+ * predicate).
  *
  * NOT `lastSdkRunAt`. CI reporting a result into a UI-authored suite does not
  * make that suite CI-owned, and saying otherwise here would advertise a lock
  * the platform does not apply.
  */
 export function isCiOwnedSuiteDoc(suite: SuiteOwnership): boolean {
-  const declared = suite.declaredSuiteId;
-  return (
-    (typeof declared === "string" && declared.length > 0) ||
-    suite.source === "sdk"
-  );
+  return isFileOwnedSuiteDoc(suite) || suite.source === "sdk";
 }
 
 /**
@@ -115,11 +120,19 @@ export function declaredSuiteIdOf(
  * editing a CI-owned suite in a loop reopened Sentry CONVEX-2AT with refusals
  * that were working as designed, and buried the alert that issue exists for —
  * a regression like mcpjam-backend#1776 (PLB-238). Refused here, the caller
- * gets the identical 409 and Sentry sees nothing.
+ * gets the same 409 and Sentry sees nothing.
  *
- * STANDS ASIDE for a file-sync marker: that is `mcpjam cloud eval run --file`
- * writing as the file, and whether the id it names is the suite's own is the
- * backend's call — a mismatch is worth the event.
+ * `fileSync` is passed by every route that accepts the marker, even when the
+ * request sent none; a route that takes no marker omits it. Only those routes
+ * get the hint to send `declaredSuiteId`.
+ *
+ * An SDK-created suite is refused whatever the request carries, with the
+ * backend's SDK message: it has no file, so neither editing one nor naming
+ * one can work, and the backend refuses every marker on it.
+ *
+ * STANDS ASIDE for a marker on a file-owned suite: that is `mcpjam cloud eval
+ * run --file` writing as the file, and whether the id it names is the suite's
+ * own is the backend's call — a mismatch is worth the event.
  *
  * The ceiling of a mirrored predicate: if the backend ever relaxes what counts
  * as CI-owned, this refuses a write the platform would accept until
@@ -127,14 +140,18 @@ export function declaredSuiteIdOf(
  * suite this copy calls writable still meets the lock in Convex.
  *
  * It also refuses two requests that would write nothing, which the platform
- * answered 200 before this check: a PATCH carrying only, say,
- * `expectedRevisionNumber`, and the environment launch `evalLaunchWritesSuite`
- * describes.
+ * accepted before this check: a PATCH carrying only, say,
+ * `expectedRevisionNumber` (200), and the environment launch
+ * `evalLaunchWritesSuite` describes (202).
  */
 export function assertSuiteWritableViaApi(
   suite: SuiteOwnership,
-  declaredSuiteId?: string | null,
+  fileSync?: { declaredSuiteId: string | undefined },
 ): void {
-  if (fileSyncArg(declaredSuiteId).fileSync) return;
-  if (isCiOwnedSuiteDoc(suite)) throw ciOwnedSuiteReadOnlyError();
+  if (!isCiOwnedSuiteDoc(suite)) return;
+  if (!isFileOwnedSuiteDoc(suite)) {
+    throw ciOwnedSuiteReadOnlyError({ message: SDK_SUITE_READ_ONLY_MESSAGE });
+  }
+  if (fileSyncArg(fileSync?.declaredSuiteId).fileSync) return;
+  throw ciOwnedSuiteReadOnlyError({ fileSyncHint: fileSync !== undefined });
 }

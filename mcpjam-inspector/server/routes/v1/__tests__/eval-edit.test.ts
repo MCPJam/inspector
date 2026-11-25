@@ -4779,9 +4779,10 @@ describe("v1 eval-edit routes", () => {
  * The platform decides: Convex guards every write. What these routes owe the
  * caller is (a) a way to write AS the file, and (b) a refusal they can act on
  * instead of a 500. Since PLB-238 they also refuse the predictable case UP
- * FRONT — a CI-owned suite with no marker — so an API caller editing one in a
- * loop no longer reopens Sentry CONVEX-2AT with refusals that are working as
- * designed. The mutation is never called for those.
+ * FRONT — a CI-owned suite with no marker, or an SDK-created one with any — so
+ * an API caller editing one in a loop no longer reopens Sentry CONVEX-2AT with
+ * refusals that are working as designed. The mutation is never called for
+ * those.
  *
  * 409, not 403. The caller's ROLE is fine and no amount of privilege changes
  * the answer; what changes it is editing the source of truth or taking a copy.
@@ -4826,12 +4827,14 @@ describe("v1 eval-edit — CI-owned suites", () => {
       "PATCH",
       "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
       { name: "renamed" },
+      true,
     ],
     [
       "PATCH schedule",
       "PATCH",
       "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/schedule",
       { enabled: true, intervalMinutes: 60 },
+      true,
     ],
     [
       "POST case",
@@ -4841,12 +4844,14 @@ describe("v1 eval-edit — CI-owned suites", () => {
         title: "added",
         steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
       },
+      true,
     ],
     [
       "PATCH case",
       "PATCH",
       "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
       { title: "renamed" },
+      true,
     ],
     [
       "POST case batch",
@@ -4860,22 +4865,25 @@ describe("v1 eval-edit — CI-owned suites", () => {
           },
         ],
       },
+      true,
     ],
     [
       "POST environment",
       "POST",
       "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/environments",
       { environmentId: "js7abc0def1ghj2klm3nop4qrs5tuv6w" },
+      false,
     ],
     [
       "DELETE case",
       "DELETE",
       "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
       undefined,
+      true,
     ],
   ] as const)(
     "refuses %s without the marker, as a 409 naming the remedy",
-    async (_label, method, path, body) => {
+    async (_label, method, path, body, takesMarker) => {
       const res = await request(method, path, body ? { ...body } : undefined);
       expect(res.status).toBe(409);
       // Refused by the route, not by Convex: the mutation was never sent, so
@@ -4891,8 +4899,13 @@ describe("v1 eval-edit — CI-owned suites", () => {
       // The platform's own copy survives the trip — it names the two remedies
       // an app user has.
       expect(json.message).toMatch(/duplicate/i);
-      // …and the hint names the third one, which only an API caller has.
-      expect(json.details?.hint).toContain("declaredSuiteId");
+      // …and the hint names the third one, which only a suite-file sync has,
+      // on the routes that take the marker and nowhere else.
+      if (takesMarker) {
+        expect(json.details?.hint).toContain("declaredSuiteId");
+      } else {
+        expect(json.details).not.toHaveProperty("hint");
+      }
     },
   );
 
@@ -5079,7 +5092,8 @@ describe("v1 eval-edit — CI-owned suites", () => {
 
   it("refuses an SDK-ingested suite up front too — the lock's second clause", async () => {
     // No declared id to name, so no marker can ever authorize this write; it
-    // is refused before the mutation like the file-owned case above.
+    // is refused before the mutation like the file-owned case above, with
+    // copy that sends the caller to the SDK rather than to a suite file.
     convexQueryMock.mockImplementation((name: string) => {
       if (name === "testSuites:getTestSuite")
         return Promise.resolve({ ...SUITE_DOC, source: "sdk" });
@@ -5091,8 +5105,13 @@ describe("v1 eval-edit — CI-owned suites", () => {
       { title: "renamed" },
     );
     expect(res.status).toBe(409);
-    const json = (await res.json()) as { details?: { reason?: string } };
+    const json = (await res.json()) as {
+      message?: string;
+      details?: { reason?: string };
+    };
     expect(json.details?.reason).toBe("CI_OWNED_SUITE_READ_ONLY");
+    expect(json.message).toMatch(/created by the MCPJam SDK/);
+    expect(json.details).not.toHaveProperty("hint");
     expect(convexMutationMock).not.toHaveBeenCalled();
   });
 
@@ -5210,7 +5229,7 @@ describe("v1 eval-edit — CI-owned suites", () => {
     },
   );
 
-  // D4: refused even though the platform would have written nothing.
+  // PLB-238: refused even though the platform would have written nothing.
   it("refuses a PATCH that would write nothing", async () => {
     const res = await request("PATCH", SUITE_PATH, {
       expectedRevisionNumber: 0,
@@ -5219,14 +5238,128 @@ describe("v1 eval-edit — CI-owned suites", () => {
     expect(convexMutationMock).not.toHaveBeenCalled();
   });
 
-  it("sends a wrong marker on, and maps the platform's refusal to the 409", async () => {
-    const res = await request("PATCH", `${CASE_PATH}?declaredSuiteId=s_other`, {
-      title: "renamed",
+  /** Every route that takes the marker, with the mutation it ends in. */
+  const MARKER_WRITES = [
+    [
+      "PATCH suite",
+      "PATCH",
+      SUITE_PATH,
+      { name: "renamed" },
+      "testSuites:updateTestSuite",
+    ],
+    [
+      "PATCH schedule",
+      "PATCH",
+      `${SUITE_PATH}/schedule`,
+      { enabled: true, intervalMinutes: 60 },
+      "testSuites:setSuiteSchedule",
+    ],
+    [
+      "POST case",
+      "POST",
+      `${SUITE_PATH}/cases`,
+      { title: "added", steps: [{ id: "s1", kind: "prompt", prompt: "hi" }] },
+      "testSuites:createTestCases",
+    ],
+    [
+      "POST case batch",
+      "POST",
+      `${SUITE_PATH}/cases/batch`,
+      {
+        cases: [
+          {
+            title: "added",
+            steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+          },
+        ],
+      },
+      "testSuites:createTestCases",
+    ],
+    [
+      "PATCH case",
+      "PATCH",
+      CASE_PATH,
+      { title: "renamed" },
+      "testSuites:updateTestCase",
+    ],
+    [
+      "DELETE case",
+      "DELETE",
+      CASE_PATH,
+      undefined,
+      "testSuites:deleteTestCase",
+    ],
+  ] as const;
+
+  // A wrong id is the backend's call: the route stands aside, the marker
+  // reaches the mutation unchanged, and the platform's refusal is the 409.
+  it.each(MARKER_WRITES)(
+    "sends a wrong marker on %s, and maps the platform's refusal to the 409",
+    async (_label, method, path, body, mutation) => {
+      const res = await request(
+        method,
+        `${path}?declaredSuiteId=s_other`,
+        body ? { ...body } : undefined,
+      );
+      expect(res.status).toBe(409);
+      const json = (await res.json()) as { details?: { reason?: string } };
+      expect(json.details?.reason).toBe("CI_OWNED_SUITE_READ_ONLY");
+      const call = convexMutationMock.mock.calls.find(
+        ([name]: [string]) => name === mutation,
+      );
+      expect(call?.[1]).toMatchObject({
+        fileSync: { declaredSuiteId: "s_other" },
+      });
+    },
+  );
+
+  // An SDK-created suite has no file, so the backend refuses every marker. The
+  // route refuses it first, and does not suggest sending one.
+  it.each(MARKER_WRITES)(
+    "refuses any marker on %s for an SDK-created suite, before the mutation",
+    async (_label, method, path, body) => {
+      convexQueryMock.mockImplementation((name: string) => {
+        if (name === "testSuites:getTestSuite")
+          return Promise.resolve({ ...SUITE_DOC, source: "sdk" });
+        return defaultQueryImpl(name);
+      });
+      const res = await request(
+        method,
+        `${path}?declaredSuiteId=s_from_file`,
+        body ? { ...body } : undefined,
+      );
+      expect(res.status).toBe(409);
+      const json = (await res.json()) as {
+        message?: string;
+        details?: { reason?: string; hint?: string };
+      };
+      expect(json.details?.reason).toBe("CI_OWNED_SUITE_READ_ONLY");
+      expect(json.message).toMatch(/created by the MCPJam SDK/);
+      expect(json.details).not.toHaveProperty("hint");
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    },
+  );
+
+  // The file sync's path through the policy-field check: a v2 suite accepts
+  // `passThreshold`, and the marker carries the edit past the pre-check.
+  it("lets a file sync set passThreshold on its own suite", async () => {
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getTestSuite")
+        return Promise.resolve({ ...CI_SUITE, verdictPolicyVersion: 2 });
+      return defaultQueryImpl(name);
     });
-    expect(res.status).toBe(409);
-    const json = (await res.json()) as { details?: { reason?: string } };
-    expect(json.details?.reason).toBe("CI_OWNED_SUITE_READ_ONLY");
-    expect(convexMutationMock).toHaveBeenCalledTimes(1);
+    const res = await request(
+      "PATCH",
+      `${CASE_PATH}?declaredSuiteId=s_from_file`,
+      { passThreshold: 0.5 },
+    );
+    expect(res.status).toBe(200);
+    const call = convexMutationMock.mock.calls.find(
+      ([name]: [string]) => name === "testSuites:updateTestCase",
+    );
+    expect(call?.[1]).toMatchObject({
+      fileSync: { declaredSuiteId: "s_from_file" },
+    });
   });
 
   it("refuses POST environments even with the suite's own marker", async () => {
@@ -5237,18 +5370,6 @@ describe("v1 eval-edit — CI-owned suites", () => {
     );
     expect(res.status).toBe(409);
     expect(convexMutationMock).not.toHaveBeenCalled();
-  });
-
-  it("deletes a case with a marker without reading the suite", async () => {
-    const res = await request(
-      "DELETE",
-      `${CASE_PATH}?declaredSuiteId=s_from_file`,
-    );
-    expect(res.status).toBe(200);
-    expect(convexQueryMock).not.toHaveBeenCalledWith(
-      "testSuites:getTestSuite",
-      expect.anything(),
-    );
   });
 
   // Scope before ownership: a suite from another project is "not found", not
@@ -5340,6 +5461,33 @@ describe("v1 eval-edit — CI-owned suites", () => {
     expect(json.message).toMatch(/duplicate/i);
     expect(json.details?.hint).toContain("declaredSuiteId");
     expect(convexMutationMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops the hint when the platform's refusal is its SDK-suite copy", async () => {
+    convexQueryMock.mockImplementation((name: string) =>
+      defaultQueryImpl(name),
+    );
+    convexMutationMock.mockImplementation(() => {
+      throw Object.assign(new Error("ci owned"), {
+        data: {
+          code: "CI_OWNED_SUITE_READ_ONLY",
+          action: "suite.edit",
+          message:
+            "This suite was created by the MCPJam SDK and has no suite file " +
+            "to declare. Report changes through the SDK, or duplicate the " +
+            "suite to get an editable copy.",
+        },
+      });
+    });
+    const res = await request("PATCH", SUITE_PATH, { name: "renamed" });
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as {
+      message?: string;
+      details?: { reason?: string };
+    };
+    expect(json.details?.reason).toBe("CI_OWNED_SUITE_READ_ONLY");
+    expect(json.message).toMatch(/created by the MCPJam SDK/);
+    expect(json.details).not.toHaveProperty("hint");
   });
 });
 

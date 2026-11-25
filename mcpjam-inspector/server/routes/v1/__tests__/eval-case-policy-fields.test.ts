@@ -210,9 +210,9 @@ describe("per-case verdict-policy fields", () => {
       ).toHaveLength(1);
     });
 
-    it("does not read the suite for a file sync's ordinary edit", async () => {
-      // The sync writes every changed case; a suite read per case would make
-      // `eval run --file` pay for a check the backend does for it anyway.
+    it("reads the suite once for a file sync's ordinary edit too", async () => {
+      // The pre-check needs it even with a marker: a marker on an SDK-created
+      // suite can never succeed, and is refused before the mutation.
       const res = await request(
         "PATCH",
         `${SUITE_PATH}/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx?declaredSuiteId=s_from_file`,
@@ -225,7 +225,7 @@ describe("per-case verdict-policy fields", () => {
         convexQueryMock.mock.calls.filter(
           (c) => c[0] === "testSuites:getTestSuite",
         ),
-      ).toHaveLength(0);
+      ).toHaveLength(1);
     });
   });
 
