@@ -12,6 +12,7 @@ import {
   type MockListChangedKind,
   type MockRealServer,
 } from "@mcpjam/sdk/mocks";
+import { logger } from "../../utils/logger.js";
 
 /** The skills extension's methods are not spec methods, so they go through the client's schema-checked request. */
 const LOOSE_RESULT = z.looseObject({});
@@ -58,14 +59,7 @@ export function realServerOn(manager: MCPClientManager, id: string): PooledRealS
       return tools as never;
     },
     callTool: async ({ name, arguments: args, signal, logLevel, onProgress, onLog }) => {
-      if (logLevel) {
-        // One level per connection: per request on 2026-07-28, once per session before it.
-        if (manager.getLoggingMechanism(id) === "per-request-meta") {
-          manager.setPerRequestLogLevel(id, logLevel);
-        } else {
-          await manager.setLoggingLevel(id, logLevel);
-        }
-      }
+      if (logLevel) await askForLogs(manager, id, logLevel);
       const logHandler = (n: { params?: Record<string, unknown> }) =>
         onLog?.({
           level: n.params?.level as never,
@@ -106,4 +100,32 @@ export function realServerOn(manager: MCPClientManager, id: string): PooledRealS
       return () => removers.forEach((remove) => remove());
     },
   };
+}
+
+type LogLevel = NonNullable<Parameters<MockRealServer["callTool"]>[0]["logLevel"]>;
+
+/**
+ * Asks the real server for log records at the caller's level, the way its
+ * connection takes one: per request on 2026-07-28, `logging/setLevel` before
+ * it, and nothing when it does not log. A level only adds logs, so a server
+ * that refuses one must not fail the call it rode on: the refusal is logged
+ * and the call goes on. (Callers send a level on every turn since the
+ * Playground and evals show a tool call's logs; a 2026-07-28 server refuses
+ * `logging/setLevel`, and that refusal used to fail every call through a mock.)
+ */
+async function askForLogs(manager: MCPClientManager, id: string, level: LogLevel): Promise<void> {
+  const mechanism = manager.getLoggingMechanism(id);
+  if (mechanism === "per-request-meta") {
+    manager.setPerRequestLogLevel(id, level);
+    return;
+  }
+  if (mechanism !== "setLevel") return;
+  try {
+    await manager.setLoggingLevel(id, level);
+  } catch (error) {
+    logger.warn("[mock-route] the real server refused a log level; the call goes on without its logs", {
+      serverId: id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
