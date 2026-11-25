@@ -2,6 +2,7 @@ import { Command } from "commander";
 import {
   buildToolCallValidationReport,
   isCallToolResultError,
+  isMCPTasksWireError,
   validateToolCallResult,
 } from "@mcpjam/sdk";
 import type { HttpExchangeLogEvent, MCPServerConfig } from "@mcpjam/sdk";
@@ -355,10 +356,9 @@ async function runTaskAugmentedToolCall(args: {
 
         // A 2025-11-25 server reaches the legacy wire by declaring ANY of
         // `tasks.list`/`cancel`/`requests`, so the wire alone does not mean it
-        // accepts task-augmented tool calls — and the manager's guard checks
-        // only the wire. Without this, the CLI sends an opt-in the server never
-        // advertised and the user debugs a protocol error instead of reading
-        // the reason.
+        // accepts task-augmented tool calls. The manager's guard refuses that
+        // call too, but checking here first gives the user a CLI error with a
+        // clear reason and hint instead of a generic wire error.
         assertWireCapability(
           support,
           "toolCalls",
@@ -409,7 +409,17 @@ async function runTaskAugmentedToolCall(args: {
                   request: { signal },
                 });
         } catch (error) {
-          if (!signal.aborted) throw error;
+          if (!signal.aborted) {
+            // The manager refused the call before sending it (for example, a
+            // 2025-11-25 tool with no taskSupport). A server condition, not
+            // an internal error, the same mapping `tasks result` uses.
+            if (isMCPTasksWireError(error)) {
+              throw cliError("TASKS_UNSUPPORTED", error.message, 1, {
+                wire: error.wire,
+              });
+            }
+            throw error;
+          }
           // No task exists yet, so there is no watch envelope to report and no
           // task id to name. `phase` says where the interrupt landed.
           return {

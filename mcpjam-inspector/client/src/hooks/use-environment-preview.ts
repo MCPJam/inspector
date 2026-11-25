@@ -69,6 +69,7 @@ export interface EnvironmentPreview {
     requireToolApproval: boolean | null;
     respectToolVisibility: boolean | null;
     progressiveToolDiscovery: boolean | null;
+    runUnloadedToolCalls: boolean | null;
     builtInToolIds: string[];
     hasComputer: boolean;
     serverCount: number;

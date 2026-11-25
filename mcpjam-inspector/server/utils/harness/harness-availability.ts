@@ -44,6 +44,7 @@ import {
 } from "@/shared/harness-connection-api";
 import { isGatewayModelId } from "@/shared/harness-gateway-model";
 import {
+  HARNESS_DESCRIPTORS,
   harnessSurfaceRefusal,
   type HarnessSurface,
 } from "@/shared/harness-descriptors";
@@ -173,6 +174,16 @@ export function harnessModelRefusal(args: {
   warning?: string;
 } {
   const { adapter } = args;
+  if (adapter.webAccount) {
+    // The vendor's app picks the model on the account; the host's model only
+    // has to be the vendor's own, so a run is never recorded under another's.
+    const verdict = adapter.modelSupport(
+      getCanonicalModelId(args.hostModelId ?? args.model.id, args.model.provider),
+    );
+    return verdict.status === "supported"
+      ? {}
+      : { refusal: { kind: "model-unsupported", reason: verdict.reason } };
+  }
   if (adapter.modelAccess === "external-account") {
     const reason = externalAccountHostModelRefusalReason({
       harnessId: adapter.id,
@@ -332,7 +343,7 @@ export function externalAccountHostModelRefusalReason(args: {
   requestedModelId?: string;
 }): string | undefined {
   const adapter = getHarnessAdapter(args.harnessId);
-  if (adapter.modelAccess !== "external-account") return undefined;
+  if (adapter.modelAccess !== "external-account" || adapter.webAccount) return undefined;
   const modelId = isRuntimeAccountModel(args.modelId) ? args.requestedModelId : args.modelId;
   if (modelId === undefined || isRuntimeAccountModel(modelId)) return undefined;
   return (
@@ -428,6 +439,22 @@ export function harnessReasoningEffortRefusalReason(args: {
         "Remove the reasoning effort from this model or choose another client."
     : `The ${name} client does not support the "${reasoningEffort}" reasoning ` +
         `effort. Choose ${adapter.supportedReasoningEfforts.map((level) => `"${level}"`).join(" or ")}.`;
+}
+
+/**
+ * Why a harness turn must not run with this system prompt, or `undefined`
+ * when it may. A web client's app runs on its own instructions, and typed
+ * into the user's message a prompt would change the chat being measured, so
+ * it is refused rather than dropped. Called from the pre-flight gate and the
+ * web turn itself, so the two can never disagree.
+ */
+export function harnessSystemPromptRefusalReason(args: {
+  adapter: HarnessRuntimeAdapter;
+  systemPrompt?: string;
+}): string | undefined {
+  const { adapter, systemPrompt } = args;
+  if (!adapter.webAccount || !systemPrompt?.trim()) return undefined;
+  return `${adapter.displayName} uses ${HARNESS_DESCRIPTORS[adapter.id].runtimeName}'s own instructions, so it can't take a system prompt. Clear this client's system prompt or choose another client.`;
 }
 
 /**
@@ -605,6 +632,12 @@ export function checkHarnessRuntimeAvailable(args: {
    */
   reasoningEffort?: ModelReasoningEffort;
   /**
+   * The host's system prompt, when the caller has it. Refused with
+   * `setting-unsupported` for a runtime that can't take one. Absent ⇒ not
+   * checked here; the turn still refuses it.
+   */
+  systemPrompt?: string;
+  /**
    * The turn's saved model selection, when it has one. A `source: 'org'`
    * selection naming a connection that serves this harness's API is
    * admitted on the organization's own key instead of `model-not-hosted`;
@@ -698,6 +731,13 @@ export function checkHarnessRuntimeAvailable(args: {
   });
   if (effortRefusal) {
     return { ok: false, kind: "setting-unsupported", reason: effortRefusal };
+  }
+  const promptRefusal = harnessSystemPromptRefusalReason({
+    adapter,
+    systemPrompt: args.systemPrompt,
+  });
+  if (promptRefusal) {
+    return { ok: false, kind: "setting-unsupported", reason: promptRefusal };
   }
 
   // There is no MCP gate. Every adapter delivers the host's selected servers

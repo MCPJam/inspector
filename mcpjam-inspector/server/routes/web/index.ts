@@ -228,12 +228,14 @@ if (HOSTED_MODE) {
 // authz). Guests are closed out HERE and not left to the backend: every
 // endpoint on this router resolves a `signedIn*` function, so a guest bearer
 // could only ever be refused — the guest-reachable `*ForRuntimeExecution`
-// variants are used by the harness path, never by these routes.
+// variants are used by the harness path, never by these routes. Verify the
+// caller here because skill creation parses a document before calling Convex.
 web.use(
   "/skills/*",
   bearerAuthMiddleware,
   guestRateLimitMiddleware,
   denyGuests("Cloud Skills"),
+  requireVerifiedAuth(),
 );
 web.use(
   "/browser-profiles/*",

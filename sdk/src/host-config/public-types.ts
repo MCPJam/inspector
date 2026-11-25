@@ -27,6 +27,7 @@ import type {
   McpToolResultImageRenderingPolicy,
   McpToolResultImageRenderPlacement,
   ModelVisibleMcpToolResults,
+  ModelVisibleStructuredContent,
   OpenAiAppsCapabilities,
   ServerId,
   ToolParamHeaderMirroring,
@@ -47,6 +48,7 @@ export type {
   OpenAiAppsCapabilities,
   McpAppsCapabilities,
   ModelVisibleMcpToolResults,
+  ModelVisibleStructuredContent,
   ToolParamHeaderMirroring,
   PaginationTraversalMode,
   MrtrSupport,
@@ -132,6 +134,7 @@ export interface HostJson {
   requireNativeToolDiscovery?: boolean;
   progressiveToolDiscovery?: boolean;
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   /** Human-facing rendering policy for MCP tool-returned images. */
   mcpToolResultImageRendering?: McpToolResultImageRendering;
@@ -202,6 +205,7 @@ export interface HostInit {
   progressiveToolDiscovery?: boolean;
   /** SEP-1865 `_meta.ui.visibility` filtering. Undefined → spec default. */
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   /** Host policy for model visibility of MCP tool-result content/resources. */
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   /** Human-facing rendering policy for MCP tool-returned images. */

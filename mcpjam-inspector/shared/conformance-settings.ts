@@ -337,6 +337,29 @@ export function probeInputStatus(
   return probe?.toolName ? "set" : "missing";
 }
 
+/** A first run can expose inputs that the previous revision never offered. */
+export function hasNewProtocolInputs(
+  previous: McpProtocolVersion,
+  next: McpProtocolVersion,
+  selection: ConformanceSelection,
+  probes: ConformanceProbes,
+): boolean {
+  const { protocol, protocolAdvice } = runnableSelection(selection, next) ?? {};
+  // Advice runs only when at least one Protocol check will run.
+  if (protocol?.length === 0) return false;
+  const inputs = protocolProbesFor(probes, protocol);
+  return PROBE_KEYS.some(
+    (key) =>
+      isProtocolProbe(key) &&
+      PROTOCOL_PROBE_CHECKS[key].some(
+        (id) =>
+          !runsWithPin(id, previous, protocol, protocolAdvice) &&
+          runsWithPin(id, next, protocol, protocolAdvice) &&
+          probeInputStatus(id, inputs) === "missing",
+      ),
+  );
+}
+
 /**
  * Only the probes a run's protocol checks and advice call. A tool is called
  * only for one that runs, so one named for checks left out is not sent at

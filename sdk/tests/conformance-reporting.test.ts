@@ -524,6 +524,53 @@ describe("report advisories", () => {
     );
   });
 
+  it("saves advice the server met apart from the advice to act on", () => {
+    const report = toConformanceReport(
+      createProtocolResult({
+        readiness: [warning("readiness-session-termination")],
+        passedAdvice: [
+          {
+            id: "readiness-tool-order-deterministic",
+            title: "Deterministic Tool Order",
+            specStrength: "SHOULD",
+          },
+        ],
+      } as Partial<MCPConformanceResult>)
+    );
+
+    expect(report.advisories?.map(({ id }) => id)).toEqual([
+      "readiness-session-termination",
+    ]);
+    expect(report.passedAdvisories).toEqual([
+      {
+        id: "readiness-tool-order-deterministic",
+        title: "Deterministic Tool Order",
+        group: "mcp-1",
+        status: "SHOULD",
+      },
+    ]);
+    expect("passedAdvisories" in toConformanceReport(createProtocolResult())).toBe(
+      false
+    );
+  });
+
+  it("does not save a matrix pass that another run warned about", () => {
+    const suite = createProtocolSuiteResult();
+    const met = {
+      id: "readiness-a",
+      title: "readiness-a title",
+      specStrength: "SHOULD",
+    };
+    suite.results[0]!.passedAdvice = [met, { ...met, id: "readiness-b" }] as never;
+    suite.results[1]!.readiness = [warning("readiness-a")] as never;
+
+    const report = toConformanceReport(suite);
+    expect(report.advisories?.map(({ id }) => id)).toEqual(["readiness-a"]);
+    expect(report.passedAdvisories?.map(({ id }) => id)).toEqual([
+      "readiness-b",
+    ]);
+  });
+
   it("lists matrix advice once, under the first run that raised it", () => {
     const suite = createProtocolSuiteResult();
     suite.results[0]!.readiness = [warning("readiness-a")] as never;

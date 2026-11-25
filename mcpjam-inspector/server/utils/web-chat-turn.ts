@@ -1,3 +1,4 @@
+import { isWebClientRuntimeId } from "../../shared/web-clients.js";
 import type { TurnAuthorization } from "../services/turn-authorization.js";
 import type { TurnTiming } from "./turn-timing.js";
 import { takeEarly, type EarlyStart } from "./early-start.js";
@@ -85,6 +86,7 @@ import {
   type OrgProviderRuntime,
 } from "./org-model-config.js";
 import { type ModelDefinition } from "@/shared/types";
+import type { EventToolsSnapshot } from "@/shared/event-agent-tools";
 import { decideTurnRail, harnessTurnRail, forwardableSelection } from "./selection-rail.js";
 import { backendModelSelection } from "./model-resolution-local.js";
 import {
@@ -110,7 +112,6 @@ import {
 } from "./harness/runtime-secrets.js";
 import { createSecretScrubber } from "./secrets/secret-scrubber.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
-import { type RuntimeSkill } from "./harness/runtime-skills.js";
 import type { BoxSkillsResult } from "./harness/box-skills-writer.js";
 import { getHarnessAdapter } from "./harness/registry.js";
 import {
@@ -130,6 +131,7 @@ import {
 import type { TurnSkillProvenance } from "../services/environments/runtime.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
+import { HarnessToolNameCollisionError } from "./harness/harness-tool-names.js";
 import { asAiRefusalRouteError } from "./ai-refusal-route-error.js";
 import { readUrlElicitations } from "@/shared/http-tool-calls";
 import { wrapToolsWithScopeStepUp } from "./insufficient-scope-step-up.js";
@@ -157,7 +159,7 @@ import {
   type ScopeStepUpCancelRequest,
   type ScopeStepUpResumeRequest,
 } from "@/shared/scope-step-up";
-import type { ChatRewind } from "@/shared/chat-v2";
+import type { ChatMultiModelColumn, ChatRewind } from "@/shared/chat-v2";
 import { buildServerNamesById } from "./../routes/web/auth.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getSpendClientIp } from "./client-ip.js";
@@ -276,6 +278,8 @@ export interface WebChatTurnPersistContext {
   directVisibility?: "private" | "project";
   /** Direct-chat lineage when this session was created by message edit. */
   rewind?: ChatRewind;
+  /** Direct-chat only: this chat is a column of a multi-model session. */
+  multiModel?: ChatMultiModelColumn;
   /**
    * Optimistic-concurrency baseline for a resumed thread: the session version
    * the client believes it is continuing from. The client has always sent it;
@@ -343,27 +347,12 @@ export interface WebChatTurnPersistContext {
    */
   captureToolSnapshot?: boolean;
   /**
-   * This turn's skills, HARNESS side: what its box writer writes. Forwarded
-   * verbatim to `handleMCPJamFreeChatModel` → `runHarnessTurn`, where presence
-   * (even empty) is authoritative; absent, the box keeps the skills it has.
-   *
-   * It lives on the persist context rather than the prepare inputs because the
-   * harness path is reached through the persist/stream half of this helper —
-   * the same place `harness` and `executionScope` already travel.
-   */
-  runtimeSkillsOverride?: RuntimeSkill[];
-  /**
-   * The same turn's `EffectiveCapabilitySet`, HARNESS side (INS-7). Paired with
-   * `runtimeSkillsOverride`: the flat list is what the adapter writes to disk,
-   * this is what the Computer delivery path needs on top of it — the resolved
-   * per-skill supporting files (including plugin ones) and the pinned plugin
-   * versions that make a resumed sandbox with stale plugin material
-   * ineligible.
+   * The same turn's `EffectiveCapabilitySet`, HARNESS side (INS-7). It carries
+   * the pinned plugin versions that make a resumed sandbox with stale plugin
+   * material ineligible, and the plugins' server origins. The turn's skills
+   * reach the harness through the plan (`prepare.skills`), not through this.
    */
   effectiveCapabilities?: EffectiveCapabilitySet;
-  /** A client's or a study's turn, whose connected servers may offer their
-   *  own skills (`MCPJamHandlerOptions.liveTurn`). */
-  liveTurn?: boolean;
   /**
    * The Project Environment this turn resolved, if any — the GRANT BOUNDARY for
    * project secrets.
@@ -418,9 +407,9 @@ export interface WebChatTurnPersistContext {
    * `{environmentAtTurn, skillsAtTurn}` from `turnSkillProvenance`, computed
    * from the turn's skill plan so it reflects what actually ran.
    *
-   * Separate from `runtimeSkillsOverride` and `effectiveCapabilities` on
-   * purpose: those decide what reaches the model, this only decides what gets
-   * written down. Delivery is byte-identical whether this is present or not.
+   * Separate from the skill plan on purpose: the plan decides what reaches the
+   * model, this only decides what gets written down. Delivery is byte-identical
+   * whether this is present or not.
    */
   turnProvenance?: TurnSkillProvenance;
   setupEnvironment?: ResolvedEnvironmentRuntime;
@@ -483,6 +472,7 @@ export interface WebChatTurnPrepareInputs {
   explicitTemperature?: number;
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   /**
    * MCP tool names this surface declines to advertise, whichever selected
    * server offers them. See `PrepareChatV2Options.excludeMcpToolNames`.
@@ -525,6 +515,8 @@ export interface WebChatTurnPrepareInputs {
    * can exist: the model would call it and the turn would strand.
    */
   pageTools?: PageToolEntry[];
+  /** MCP Events agent tools; the caller validates `body.eventTools`. */
+  eventTools?: EventToolsSnapshot;
   /** Server-side built-in tools (e.g. web_search) to merge into the tool set. */
   builtInTools?: ToolSet;
   /**
@@ -551,8 +543,8 @@ export interface WebChatTurnPrepareInputs {
   /**
    * The turn's skill plan (`resolveTurnSkills`), made for the engine that runs
    * it. MCPJam's agent gets the tools it describes; a harness plan gives the
-   * agent none, since the box gets the skills
-   * (`WebChatTurnPersistContext.runtimeSkillsOverride`). Absent: a live plan
+   * agent none, since the box gets the skills (a harness turn carries the same
+   * plan out, `MCPJamHandlerOptions.skillPlan`). Absent: a live plan
    * with none of its own, so MCPJam's agent gets only the connected servers'
    * own skills, as MCPJam's docs agent does.
    */
@@ -890,6 +882,7 @@ export async function streamChatTurn(
         : {}),
       requireToolApproval: prepare.requireToolApproval,
       respectToolVisibility: prepare.respectToolVisibility,
+      runUnloadedToolCalls: prepare.runUnloadedToolCalls,
       ...(prepare.excludeMcpToolNames
         ? { excludeMcpToolNames: prepare.excludeMcpToolNames }
         : {}),
@@ -897,7 +890,6 @@ export async function streamChatTurn(
       ...(prepare.toolCallCancellation !== undefined
         ? { toolCallCancellation: prepare.toolCallCancellation }
         : {}),
-      customProviders: prepare.customProviders,
       // Nothing has been streamed yet, so a hung MCP server would otherwise
       // hold the request past the edge's first-byte limit (a Cloudflare 524).
       toolListingTimeoutMs: WEB_CHAT_TOOL_LISTING_TIMEOUT_MS,
@@ -910,6 +902,7 @@ export async function streamChatTurn(
       appTools: prepare.appTools,
       uiTools: prepare.uiTools,
       pageTools: prepare.pageTools,
+      eventTools: prepare.eventTools,
       builtInTools: prepare.builtInTools,
       // The prompt section that explains `webmcp_*` tools has to be there
       // BEFORE a navigation adds them; the refresher's presence is the fact.
@@ -937,9 +930,8 @@ export async function streamChatTurn(
           }),
     });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    if (msg.includes("Invalid tool name(s) for Anthropic")) {
-      throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, msg);
+    if (error instanceof HarnessToolNameCollisionError) {
+      throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, error.message);
     }
     throw error;
   }
@@ -1214,6 +1206,12 @@ export async function streamChatTurn(
   ]
     .filter((section) => section.trim().length > 0)
     .join("\n\n");
+  // The prompt the turn runs on, and so the one it records. A web client's
+  // vendor receives only the user message; its settings check needs the
+  // project prompt, before MCPJam adds instructions for its own model.
+  const executionSystemPrompt = isWebClientRuntimeId(persist.harness)
+    ? (persist.systemPrompt ?? "")
+    : effectiveEnhancedSystemPrompt;
 
   const hostedChatSessionId = persist.chatSessionId;
   if (runtime.executionBinding) await takeEarly(runtime.executionBinding);
@@ -1378,7 +1376,7 @@ export async function streamChatTurn(
       maxSteps,
       secretsUnavailable,
       modelVenue,
-      systemPrompt: effectiveEnhancedSystemPrompt,
+      systemPrompt: executionSystemPrompt,
       serverIds: prepare.selectedServerIds.filter(
         (id) =>
           (typeof manager.hasServer !== "function" || manager.hasServer(id)) &&
@@ -1446,7 +1444,7 @@ export async function streamChatTurn(
         });
         authorizationFailure = { status };
       }
-      return await persistChatSessionToConvex({
+      const persistOptions: Parameters<typeof persistChatSessionToConvex>[0] = {
         chatSessionId: hostedChatSessionId,
         authorizationFailure,
         retryOwner: persist.retryOwner,
@@ -1489,7 +1487,7 @@ export async function streamChatTurn(
         // reset" long after the fact is the confabulation `resumeConfig`'s raw
         // prompt exists to prevent. Hence two fields, both already on the
         // ingest contract — the local route has always filled this one.
-        systemPrompt: effectiveEnhancedSystemPrompt,
+        systemPrompt: executionSystemPrompt,
         sessionMessages: preservePluginMessageTitles(
           stampSenderUserIdsOnSessionMessages(
             stripUiContextModelParts(
@@ -1524,6 +1522,9 @@ export async function streamChatTurn(
           ? {
               directVisibility: persist.directVisibility,
               ...(persist.rewind ? { rewind: persist.rewind } : {}),
+              ...(persist.multiModel
+                ? { multiModel: persist.multiModel }
+                : {}),
               resumeConfig: {
                 ...(persist.executionTarget
                   ? { executionTarget: persist.executionTarget }
@@ -1538,6 +1539,7 @@ export async function streamChatTurn(
                 requireToolApproval: persist.requireToolApproval,
                 requireNativeToolDiscovery: persist.requireNativeToolDiscovery,
                 respectToolVisibility: persist.respectToolVisibility,
+                runUnloadedToolCalls: prepare.runUnloadedToolCalls,
                 modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
                 mcpToolResultImageRendering:
                   persist.mcpToolResultImageRendering,
@@ -1605,7 +1607,8 @@ export async function streamChatTurn(
         // the transcript inside the ingest mutation.
         ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
         forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
-      });
+      };
+      return await persistChatSessionToConvex(persistOptions, c);
     };
   };
 
@@ -1977,7 +1980,7 @@ export async function streamChatTurn(
     chatSessionId: hostedChatSessionId,
     ...(persist.hostId ? { hostId: persist.hostId } : {}),
     sourceType: persist.sourceType,
-    systemPrompt: effectiveEnhancedSystemPrompt,
+    systemPrompt: executionSystemPrompt,
     temperature: resolvedTemperature,
     // Hosted `/stream`: the top-level body field. Harness: the typed field its
     // adapter's declared efforts gate (refused, never dropped).
@@ -2048,18 +2051,15 @@ export async function streamChatTurn(
       ? { harnessSandboxBinding: persist.scenarioBox.binding }
       : {}),
     ...(persist.scenarioParticipant ? { scenarioParticipant: true } : {}),
-    // Presence is semantic (even an empty array): it is the turn's whole set,
-    // and absent leaves the box's skills as they are.
-    ...(persist.runtimeSkillsOverride !== undefined
-      ? { runtimeSkillsOverride: persist.runtimeSkillsOverride }
-      : {}),
+    // The turn's skill plan, which the harness carries out: its box's skills, a
+    // live turn's servers' own, and "leave the box as it is" for a turn that
+    // read none.
+    ...(persist.harness && plannedSkills ? { skillPlan: plannedSkills } : {}),
     ...(persist.effectiveCapabilities
       ? { effectiveCapabilities: persist.effectiveCapabilities }
       : {}),
-    ...(persist.liveTurn ? { liveTurn: true } : {}),
     ...(persist.environmentId ? { environmentId: persist.environmentId } : {}),
-    // Presence is semantic, exactly like `runtimeSkillsOverride`: supplied
-    // (even empty) means "this turn's secrets are already resolved".
+    // Presence is semantic: supplied (even empty) means "this turn's secrets are already resolved".
     //
     // ABSENT MEANS NO SECRETS ARE DELIVERED — it does not mean somebody else
     // fetches them. `run-harness-turn` takes the list from its caller and never

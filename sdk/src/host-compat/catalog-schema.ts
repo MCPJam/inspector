@@ -217,6 +217,7 @@ const hostConfigTemplateSchema = z.object({
   requireToolApproval: z.boolean(),
   respectToolVisibility: z.boolean(),
   progressiveToolDiscovery: z.boolean().optional(),
+  runUnloadedToolCalls: z.boolean().optional(),
   serverIds: z.array(z.string()),
   optionalServerIds: z.array(z.string()),
   builtInToolIds: z.array(z.string()),

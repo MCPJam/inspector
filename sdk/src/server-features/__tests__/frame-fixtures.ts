@@ -288,12 +288,31 @@ export const FRAME_FIXTURES: readonly FrameFixture[] = [
     ],
   },
   {
+    // The only cancellation 2026-07-28 lets a server send; it ends the
+    // stream and says nothing about cancelling a request.
     name: "server ends a listen stream on stdio",
     direction: S2C,
     era: "modern",
     request: answering("subscriptions/listen"),
     message: notification("notifications/cancelled", { requestId: 3 }),
-    expect: ["request-control.cancellation", "subscriptions.stream-end"],
+    expect: ["subscriptions.stream-end"],
+  },
+  {
+    name: "server cancels its own request on a legacy revision",
+    direction: S2C,
+    era: "legacy",
+    request: answering("sampling/createMessage"),
+    message: notification("notifications/cancelled", { requestId: 3 }),
+    expect: ["request-control.cancellation"],
+  },
+  {
+    // 2026-07-28 forbids this, so it is not evidence of cancellation.
+    name: "server cancels a request on 2026-07-28",
+    direction: S2C,
+    era: "modern",
+    request: answering("tools/call"),
+    message: notification("notifications/cancelled", { requestId: 3 }),
+    expect: [],
   },
   {
     name: "progress",

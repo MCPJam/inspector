@@ -22,7 +22,16 @@ vi.mock("@/hooks/useProjectComputer", () => ({
   useMintConversationBrowserToken: () => mintConversation,
 }));
 
-vi.mock("../BrowserStream", () => ({ BrowserStream: () => null }));
+// Renders nothing, but keeps the props so a test can play the stream's part.
+const stream = vi.hoisted(() => ({
+  props: undefined as undefined | { onInput: () => void; viewOnly: boolean },
+}));
+vi.mock("../BrowserStream", () => ({
+  BrowserStream: (props: { onInput: () => void; viewOnly: boolean }) => {
+    stream.props = props;
+    return null;
+  },
+}));
 // The real save button, not a stub: it is a menu item, and stubbing it hid a
 // panel that crashed the page the moment a browser connected.
 vi.mock("@/lib/browser-profiles/availability", () => ({
@@ -95,6 +104,139 @@ describe("BrowserPanel token discipline", () => {
       (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length,
     ).toBeGreaterThanOrEqual(2);
     expect(mintProject).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([true, false])("reconnects a sleeping browser with lease ownership %s", async (yours) => {
+    mintProject.mockResolvedValue({ token: "tok", expiresAt: Date.now() + 600_000 });
+    let asleep = false;
+    let leaseState = "held";
+    const actions: string[] = [];
+    let wakes = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      if (url.endsWith("/lease")) {
+        const { action } = JSON.parse(String(init.body));
+        actions.push(action);
+        if (action === "heartbeat") asleep = true;
+        if (action === "acquire") leaseState = "held";
+      }
+      if (url.endsWith("?ensure=1")) {
+        wakes++;
+        asleep = false;
+        leaseState = "parked";
+      }
+      return asleep
+        ? Response.json({ error: "no_browser_session" }, { status: 409 })
+        : Response.json({ sessionId: "s1", bootId: "b1", yours: wakes === 0 || yours,
+          lease: { state: leaseState, holder: "member" } });
+    }));
+    render(<BrowserPanel projectId="p1" />);
+    await act(async () => {});
+    expect(screen.getByText("You have control")).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(screen.queryByText("You have control")).toBeNull();
+    expect(wakes).toBe(0);
+
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Reconnect browser" })); });
+    expect(wakes).toBe(1);
+    expect(actions).toEqual(yours ? ["heartbeat", "acquire"] : ["heartbeat"]);
+    expect(screen.getByText(yours ? "You have control" : "Watching")).toBeTruthy();
+  });
+
+  it("keeps control when the lease can't be read right after taking it", async () => {
+    mintProject.mockResolvedValue({ token: "tok", expiresAt: Date.now() + 600_000 });
+    let reads = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.endsWith("/lease")) {
+        return Response.json({ ok: true, lease: { state: "held", holder: "member" } });
+      }
+      reads++;
+      // After the acquire, the server could not read the lease this time.
+      return Response.json({ sessionId: "s1", bootId: "b1", yours: false,
+        lease: reads === 1 ? { state: "free" } : { state: "unknown" } });
+    }));
+    render(<BrowserPanel projectId="p1" />);
+    await act(async () => {});
+    expect(screen.getByText("Watching")).toBeTruthy();
+
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Take control" })); });
+    expect(reads).toBe(2);
+    expect(screen.getByText("You have control")).toBeTruthy();
+    expect(stream.props?.viewOnly).toBe(false);
+  });
+
+  it("keeps control when a read from before taking it lands after", async () => {
+    mintProject.mockResolvedValue({
+      token: "tok",
+      expiresAt: Date.now() + 600_000,
+    });
+    let held = false;
+    let landLate: (() => void) | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/lease")) {
+          held = true;
+          return Response.json({
+            ok: true,
+            lease: { state: "held", holder: "member" },
+          });
+        }
+        // Each read answers with the lease as it was when the read started.
+        const answer = Response.json({
+          sessionId: "s1",
+          bootId: "b1",
+          yours: held,
+          lease: held ? { state: "held", holder: "member" } : { state: "free" },
+        });
+        // The first read that `ensure` starts is slow, and lands last.
+        if (url.endsWith("?ensure=1") && !landLate) {
+          return new Promise<Response>((resolve) => {
+            landLate = () => resolve(answer);
+          });
+        }
+        return answer;
+      }),
+    );
+    const { rerender } = render(<BrowserPanel projectId="p1" />);
+    await act(async () => {});
+    rerender(<BrowserPanel projectId="p1" ensure />);
+    await act(async () => {});
+    expect(landLate).toBeDefined();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Take control" }));
+    });
+    expect(screen.getByText("You have control")).toBeTruthy();
+    await act(async () => landLate!());
+    expect(screen.getByText("You have control")).toBeTruthy();
+    expect(stream.props?.viewOnly).toBe(false);
+  });
+
+  it("pings /input-ping for the stream's input at most once a minute", async () => {
+    mintProject.mockResolvedValue({ token: "tok", expiresAt: Date.now() + 600_000 });
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    const pings = () =>
+      fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/input-ping")).length;
+    render(<BrowserPanel projectId="p1" />);
+    await act(async () => {});
+
+    await act(async () => { stream.props!.onInput(); stream.props!.onInput(); });
+    expect(pings()).toBe(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    await act(async () => { stream.props!.onInput(); });
+    expect(pings()).toBe(2);
+  });
+
+  it("leaves input to the pane's own ping when the pane passes one", async () => {
+    mintProject.mockResolvedValue({ token: "tok", expiresAt: Date.now() + 600_000 });
+    const paneInput = vi.fn();
+    render(<BrowserPanel projectId="p1" onInput={paneInput} />);
+    await act(async () => {});
+
+    await act(async () => { stream.props!.onInput(); });
+    expect(paneInput).toHaveBeenCalledOnce();
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/input-ping"))).toBe(false);
   });
 
   it("stops polling and says so when the browser goes away", async () => {
