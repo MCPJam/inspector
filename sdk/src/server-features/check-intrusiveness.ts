@@ -83,7 +83,8 @@ export const PROTOCOL_CHECK_INTRUSIVENESS = {
   "protocol-invalid-method-error": "side-effecting",
   // Sends initialize with a forged Host and Origin.
   "localhost-host-rebinding-rejected": "side-effecting",
-  // Sends its own initialize, which opens a session it never closes.
+  // Sends its own initialize, finishes the handshake and ends the session
+  // with DELETE.
   "localhost-host-valid-accepted": "side-effecting",
   // The raw transport family opens its own sessions and concurrent streams
   // and ends them with DELETE.

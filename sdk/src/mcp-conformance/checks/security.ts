@@ -9,11 +9,16 @@ import type {
 import { CHECK_ERAS } from "../types.js";
 import {
   eraSkipMessage,
+  errorMessage,
   failedResult,
   notApplicableResult,
   passedResult,
 } from "./helpers.js";
-import { planHandshakeFollowUp } from "./security-handshake.js";
+import { isEventStream, parseSseEvents } from "../raw-capture.js";
+import {
+  followUpTimeoutMs,
+  planHandshakeFollowUp,
+} from "./security-handshake.js";
 
 const LOCALHOST_SECURITY_CHECK_IDS = [
   "localhost-host-rebinding-rejected",
@@ -33,7 +38,10 @@ interface RawSendOptions {
   headers: Record<string, string>;
   /** The JSON-RPC message to send. Left out for a request with no body. */
   message?: unknown;
+  /** A limit on the whole exchange, not on the gap between two chunks. */
   timeoutMs: number;
+  /** Stops the request when the run is cancelled. */
+  signal?: AbortSignal;
   /**
    * Settle on the status line and drop the connection without reading the
    * body. For the requests that close the handshake, where only "did it
@@ -95,9 +103,30 @@ function parseResponseBody(text: string): unknown {
 }
 
 /**
+ * Whether an event stream already carries the answer to request `id`. A
+ * server may keep the stream open after it (with comments, or with nothing),
+ * and a client that has its answer does not wait for the end.
+ */
+function answeredOnStream(bodyText: string, id: unknown): boolean {
+  return parseSseEvents(bodyText).some((event) => {
+    if (!event.terminated) return false;
+    const message = event.json;
+    return (
+      message !== null &&
+      typeof message === "object" &&
+      (message as { id?: unknown }).id === id &&
+      ("result" in message || "error" in message)
+    );
+  });
+}
+
+/**
  * One hand-built request over `node:http`. `fetch` forbids setting `Host`,
  * which the host-header probes have to forge, so everything these checks send
  * goes through here.
+ *
+ * It always settles: on the answer, on the end of the body, on a connection
+ * that drops before the end, on a cancel, or at `timeoutMs`.
  */
 async function sendRaw(
   serverUrl: string,
@@ -107,15 +136,28 @@ async function sendRaw(
   const requestImpl = target.protocol === "https:" ? httpsRequest : httpRequest;
   const body =
     options.message === undefined ? undefined : JSON.stringify(options.message);
+  const requestId =
+    options.message !== null && typeof options.message === "object"
+      ? (options.message as { id?: unknown }).id
+      : undefined;
 
   return await new Promise<RawHttpResponse>((resolve, reject) => {
+    let settled = false;
+    const settle = (outcome: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      outcome();
+    };
     const req = requestImpl(
       {
         protocol: target.protocol,
-        hostname: target.hostname,
+        // `URL` keeps the brackets of an IPv6 literal; the resolver wants none.
+        hostname: target.hostname.replace(/^\[|\]$/g, ""),
         port: target.port,
         path: `${target.pathname}${target.search}`,
         method: options.method,
+        signal: options.signal,
         headers: {
           ...(body === undefined ? {} : { "Content-Type": "application/json" }),
           Accept: "application/json, text/event-stream",
@@ -127,35 +169,60 @@ async function sendRaw(
       },
       (res) => {
         if (options.statusOnly) {
-          resolve({
-            statusCode: res.statusCode ?? 0,
-            headers: res.headers,
-            body: undefined,
-            bodyText: "",
-          });
+          settle(() =>
+            resolve({
+              statusCode: res.statusCode ?? 0,
+              headers: res.headers,
+              body: undefined,
+              bodyText: "",
+            }),
+          );
           res.destroy();
           return;
         }
         const chunks: Buffer[] = [];
+        const stream = isEventStream(String(res.headers["content-type"] ?? ""));
+        const answered = () => {
+          const bodyText = Buffer.concat(chunks).toString("utf8");
+          settle(() =>
+            resolve({
+              statusCode: res.statusCode ?? 0,
+              headers: res.headers,
+              body: parseResponseBody(bodyText),
+              bodyText,
+            }),
+          );
+        };
         res.on("data", (chunk) => {
           chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          if (
+            stream &&
+            requestId !== undefined &&
+            answeredOnStream(Buffer.concat(chunks).toString("utf8"), requestId)
+          ) {
+            answered();
+            res.destroy();
+          }
         });
-        res.on("end", () => {
-          const bodyText = Buffer.concat(chunks).toString("utf8");
-          resolve({
-            statusCode: res.statusCode ?? 0,
-            headers: res.headers,
-            body: parseResponseBody(bodyText),
-            bodyText,
-          });
-        });
+        res.on("end", answered);
+        // `close` after `end` finds the promise settled and does nothing.
+        res.on("close", () =>
+          settle(() =>
+            reject(
+              new Error("The connection closed before the response ended"),
+            ),
+          ),
+        );
       },
     );
 
-    req.setTimeout(options.timeoutMs, () => {
-      req.destroy(new Error(`Request timed out after ${options.timeoutMs}ms`));
-    });
-    req.on("error", reject);
+    const deadline = setTimeout(() => {
+      settle(() =>
+        reject(new Error(`Request timed out after ${options.timeoutMs}ms`)),
+      );
+      req.destroy();
+    }, options.timeoutMs);
+    req.on("error", (error) => settle(() => reject(error)));
     if (body !== undefined) {
       req.write(body);
     }
@@ -168,11 +235,13 @@ async function sendRequest(
   headers: Record<string, string>,
   timeoutMs: number,
   protocolVersion: string,
+  signal?: AbortSignal,
 ): Promise<RawHttpResponse> {
   return await sendRaw(serverUrl, {
     method: "POST",
     headers,
     timeoutMs,
+    signal,
     message: {
       jsonrpc: "2.0",
       id: 1,
@@ -189,6 +258,16 @@ async function sendRequest(
   });
 }
 
+/** Why no notification followed an `initialize` answer, for the details. */
+const NOT_SENT_REASON = {
+  refused:
+    "The server did not accept initialize, so there was no handshake to finish.",
+  "error-answer":
+    "The server answered initialize with a JSON-RPC error, so the handshake was not finished.",
+  "no-result":
+    "The initialize answer carried no result, so initialization was not confirmed.",
+} as const;
+
 /**
  * Finish the handshake the valid-host probe opened, then close its session.
  *
@@ -196,7 +275,7 @@ async function sendRequest(
  * never sees it and never completes it. "After successful initialization, the
  * client MUST send an `initialized` notification", so this sends it, with the
  * same Host and Origin the probe used, and then a DELETE when the server gave a
- * session id.
+ * session id. A session an unsuccessful 2xx answer opened is closed as well.
  *
  * Returns what happened, for the check's details. It never changes the
  * verdict: the check is about whether the server accepted a valid Host, and
@@ -212,64 +291,63 @@ async function finishHandshake(
   requestedVersion: string,
 ): Promise<Record<string, unknown>> {
   const plan = planHandshakeFollowUp(answer, requestedVersion);
-  if (plan.kind === "none") {
-    return {
-      initialized: "not sent",
-      reason:
-        plan.reason === "refused"
-          ? "The server did not accept initialize, so there was no handshake to finish."
-          : "The initialize answer carried no result, so initialization was not confirmed.",
-    };
-  }
-
   const outcome: Record<string, unknown> = {};
   const sessionHeaders = {
     ...probeHeaders,
-    // The version header rides on every request after initialize and carries
-    // the version the server agreed to.
-    "mcp-protocol-version":
-      plan.kind === "complete" ? plan.protocolVersion : plan.answeredVersion,
+    // The version the run asked for. On a disconnect the server's own answer
+    // is not used: it is a version the run does not speak, and a server can
+    // put anything in it, including what is not a legal header value.
+    "mcp-protocol-version": requestedVersion,
     ...(plan.sessionId ? { "mcp-session-id": plan.sessionId } : {}),
+  };
+  /** One best-effort request. Not sent, and not caught, once the run is cancelled. */
+  const followUp = async (
+    method: "POST" | "DELETE",
+    message?: unknown,
+  ): Promise<{ status: number } | { error: string }> => {
+    ctx.config.signal?.throwIfAborted();
+    try {
+      const response = await sendRaw(ctx.serverUrl, {
+        method,
+        headers: sessionHeaders,
+        message,
+        timeoutMs: followUpTimeoutMs(ctx.config.checkTimeout),
+        signal: ctx.config.signal,
+        statusOnly: true,
+      });
+      return { status: response.statusCode };
+    } catch (error) {
+      ctx.config.signal?.throwIfAborted();
+      return { error: errorMessage(error) };
+    }
   };
 
   if (plan.kind === "complete") {
-    try {
-      const response = await sendRaw(ctx.serverUrl, {
-        method: "POST",
-        headers: sessionHeaders,
-        message: { jsonrpc: "2.0", method: "notifications/initialized" },
-        timeoutMs: ctx.config.checkTimeout,
-        statusOnly: true,
-      });
+    const sent = await followUp("POST", {
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+    });
+    if ("status" in sent) {
       outcome.initialized = "sent";
-      outcome.initializedStatus = response.statusCode;
-    } catch (error) {
-      ctx.config.signal?.throwIfAborted();
+      outcome.initializedStatus = sent.status;
+    } else {
       outcome.initialized = "not delivered";
-      outcome.initializedError =
-        error instanceof Error ? error.message : String(error);
+      outcome.initializedError = sent.error;
     }
   } else {
     outcome.initialized = "not sent";
-    outcome.reason = `The server answered initialize with protocol version "${plan.answeredVersion}", which MCPJam does not support. A client should disconnect in that case.`;
+    outcome.reason =
+      plan.kind === "disconnect"
+        ? `The server answered initialize with protocol version ${JSON.stringify(plan.answeredVersion)}, not the ${requestedVersion} this run uses, so the client disconnects.`
+        : NOT_SENT_REASON[plan.reason];
   }
 
   if (plan.sessionId) {
-    try {
-      const response = await sendRaw(ctx.serverUrl, {
-        method: "DELETE",
-        headers: sessionHeaders,
-        timeoutMs: ctx.config.checkTimeout,
-        statusOnly: true,
-      });
-      outcome.sessionCloseStatus = response.statusCode;
-    } catch (error) {
-      // Closing is best effort: a server may answer 405, and one that drops
-      // the connection has closed it anyway.
-      ctx.config.signal?.throwIfAborted();
-      outcome.sessionCloseError =
-        error instanceof Error ? error.message : String(error);
-    }
+    // Closing is best effort: a server may answer 405, and one that drops
+    // the connection has closed it anyway.
+    const closed = await followUp("DELETE");
+    if ("status" in closed) outcome.sessionCloseStatus = closed.status;
+    else outcome.sessionCloseError = closed.error;
   }
   return outcome;
 }
@@ -356,6 +434,7 @@ export async function runSecurityChecks(
         },
         ctx.config.checkTimeout,
         protocolVersion,
+        ctx.config.signal,
       );
       // 2025-11-25 sharpened the requirement (changelog PR #1439): "If the
       // Origin header is present and invalid, servers MUST respond with HTTP
@@ -422,6 +501,7 @@ export async function runSecurityChecks(
         probeHeaders,
         ctx.config.checkTimeout,
         protocolVersion,
+        ctx.config.signal,
       );
       const accepted =
         response.statusCode >= 200 && response.statusCode < 300;

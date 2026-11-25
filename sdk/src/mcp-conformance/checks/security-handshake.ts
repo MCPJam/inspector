@@ -11,8 +11,8 @@
  */
 
 import type { IncomingHttpHeaders } from "node:http";
-import { isKnownProtocolVersion } from "../../mcp-client-manager/mcp-protocol-version.js";
-import { parseSseEvents } from "../raw-capture.js";
+import { decodeResponseBody } from "../raw-capture.js";
+import { jsonRpcError, jsonRpcResult } from "../raw-http.js";
 
 /** The `initialize` answer, as much of it as the decision needs. */
 export interface InitializeAnswer {
@@ -24,61 +24,44 @@ export interface InitializeAnswer {
 
 export type HandshakeFollowUp =
   /**
-   * Initialization did not succeed, so there is no notification to send and no
-   * session to close. `refused`: a status outside 2xx, or a JSON-RPC error.
-   * `no-result`: a 2xx answer with no JSON-RPC result to read.
+   * Initialization did not succeed, so there is no notification to send.
+   * `refused`: a status outside 2xx. `error-answer`: a 2xx that carries a
+   * JSON-RPC error. `no-result`: a 2xx with no JSON-RPC result to read.
+   *
+   * `sessionId` is set when a 2xx answer came with one. A server can hand out
+   * the session id before its `initialize` handler runs (the official
+   * TypeScript SDK does), so an answer that failed can still have opened a
+   * session, and that session is closed.
    */
-  | { kind: "none"; reason: "refused" | "no-result" }
+  | {
+      kind: "none";
+      reason: "refused" | "error-answer" | "no-result";
+      sessionId?: string;
+    }
   /**
-   * The server answered with a version MCPJam does not support. "If the client
-   * does not support the version in the server's response, it SHOULD
-   * disconnect", so nothing is sent but the DELETE that closes the session.
+   * The server answered with a version other than the one the run asked for.
+   * It only does that when it does not support the one it was asked for, and
+   * a run is about one version: MCPJam's pinned client refuses that answer,
+   * and so do the other hand-built probes. Nothing is sent but the DELETE that
+   * closes the session.
    */
   | { kind: "disconnect"; sessionId?: string; answeredVersion: string }
   /**
-   * Initialization succeeded: send `notifications/initialized`, then close the
-   * session. `protocolVersion` is the negotiated version, which goes in
-   * `MCP-Protocol-Version` on both.
+   * Initialization succeeded on the version the run asked for: send
+   * `notifications/initialized`, then close the session.
    */
-  | { kind: "complete"; sessionId?: string; protocolVersion: string };
+  | { kind: "complete"; sessionId?: string };
 
 function header(headers: IncomingHttpHeaders, name: string): string | undefined {
   const value = headers[name];
   return Array.isArray(value) ? value[0] : value;
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-/** Every JSON-RPC message in the body, whether it came as JSON or as SSE. */
-function jsonRpcMessages(answer: InitializeAnswer): Record<string, unknown>[] {
-  const contentType = header(answer.headers, "content-type") ?? "";
-  const parsed: unknown[] = [];
-  if (contentType.toLowerCase().includes("text/event-stream")) {
-    for (const event of parseSseEvents(answer.bodyText)) {
-      if (event.json !== undefined) parsed.push(event.json);
-    }
-  } else if (answer.bodyText !== "") {
-    try {
-      parsed.push(JSON.parse(answer.bodyText));
-    } catch {
-      // Not JSON: there is no message to read, which the caller reports as
-      // "no-result". Nothing else to do with a body that does not parse.
-    }
-  }
-  return parsed
-    .map(asRecord)
-    .filter((message): message is Record<string, unknown> => message !== undefined);
-}
-
 /**
  * Decide what follows an `initialize` answer.
  *
- * `requestedVersion` is the version the probe sent. It stands in for the
- * negotiated one when the answer names none.
+ * `requestedVersion` is the version the probe sent, which is the version the
+ * run is about.
  */
 export function planHandshakeFollowUp(
   answer: InitializeAnswer,
@@ -87,25 +70,34 @@ export function planHandshakeFollowUp(
   if (answer.statusCode < 200 || answer.statusCode >= 300) {
     return { kind: "none", reason: "refused" };
   }
-  const messages = jsonRpcMessages(answer);
-  if (messages.some((message) => asRecord(message.error) !== undefined)) {
-    return { kind: "none", reason: "refused" };
-  }
-  const result = messages
-    .map((message) => asRecord(message.result))
-    .find((payload) => payload !== undefined);
-  if (result === undefined) {
-    return { kind: "none", reason: "no-result" };
-  }
-
   const sessionId = header(answer.headers, "mcp-session-id");
   const session = sessionId ? { sessionId } : {};
-  const answeredVersion = result.protocolVersion;
-  if (typeof answeredVersion !== "string") {
-    return { kind: "complete", ...session, protocolVersion: requestedVersion };
+  // The same decoder the other raw checks read their answers with.
+  const body = decodeResponseBody(
+    header(answer.headers, "content-type") ?? "",
+    answer.bodyText,
+  );
+  if (jsonRpcError(body) !== undefined) {
+    return { kind: "none", reason: "error-answer", ...session };
   }
-  if (!isKnownProtocolVersion(answeredVersion)) {
+  const result = jsonRpcResult(body);
+  if (result === undefined) {
+    return { kind: "none", reason: "no-result", ...session };
+  }
+
+  const answeredVersion = result.protocolVersion;
+  if (typeof answeredVersion === "string" && answeredVersion !== requestedVersion) {
     return { kind: "disconnect", ...session, answeredVersion };
   }
-  return { kind: "complete", ...session, protocolVersion: answeredVersion };
+  return { kind: "complete", ...session };
+}
+
+/**
+ * How long one follow-up may wait for its status line. The notification and
+ * the DELETE are best effort, so a server that never answers them must not
+ * hold the check for its whole timeout, twice. The same bound the readiness
+ * probe gives its own closing DELETE.
+ */
+export function followUpTimeoutMs(checkTimeout: number): number {
+  return Math.min(checkTimeout, 3_000);
 }
