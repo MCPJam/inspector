@@ -163,14 +163,24 @@ async function readPolicyRefusal(
  *
  * The refusal's structured `recovery` gives the one action for THIS account —
  * upgrade on Free, buy credits on paid — with its exact link; rendering it keeps
- * the message right for both. Without one (an older backend), a plan-neutral
- * line, because a Free account cannot buy credits and must never be told to.
+ * the message right for both. A locked wallet without one is a support hold
+ * that no purchase lifts, so it names support. Otherwise (an older backend), a
+ * plan-neutral line, because a Free account cannot buy credits and must never
+ * be told to.
  */
 async function readCreditRefusalMessage(res: Response): Promise<string> {
   try {
-    const recovery = creditRecoveryOfRefusal(await res.clone().json());
+    const body: unknown = await res.clone().json();
+    const recovery = creditRecoveryOfRefusal(body);
     if (recovery) {
       return `Out of MCPJam credits. ${formatCreditRecovery(recovery)}`;
+    }
+    if (
+      body &&
+      typeof body === "object" &&
+      (body as { code?: unknown }).code === "WALLET_LOCKED"
+    ) {
+      return "Web search is unavailable because this organization's MCPJam wallet is locked. Contact MCPJam support to resolve it.";
     }
   } catch {
     // Body was not JSON (a proxy error page, say); fall through to the
