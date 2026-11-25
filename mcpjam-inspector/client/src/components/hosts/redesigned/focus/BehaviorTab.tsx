@@ -1,3 +1,4 @@
+import { UnloadedToolCallsField } from "./UnloadedToolCallsField";
 import { effectiveHarnessId } from "@/shared/harness-descriptors";
 import { useMemo, useState, type ReactNode } from "react";
 import { Info } from "lucide-react";
@@ -620,6 +621,15 @@ export function BehaviorTab({
             </ToggleGroup>
           }
         />
+
+        {progressiveState.enforced && (
+          <UnloadedToolCallsField
+            value={draft.runUnloadedToolCalls ?? true}
+            disabled={readOnly || progressiveTriValue === "off"}
+            discoveryOff={progressiveTriValue === "off"}
+            onChange={(value) => update({ runUnloadedToolCalls: value })}
+          />
+        )}
 
         <div className="space-y-2.5 border-t border-border/60 pt-2.5">
           <div className="min-w-0">

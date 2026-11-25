@@ -27,6 +27,7 @@ import {
 import { registerShowServersTool } from "./tools/showServers.js";
 import { DEFAULT_MCPJAM_APP_ORIGIN } from "@mcpjam/sdk/platform";
 import { GUEST_ISSUER } from "./auth.js";
+import type { McpCaller } from "./analytics.js";
 import { mintGuestToken, type GuestMintFailure } from "./guestMint.js";
 
 const SERVER_INFO = {
@@ -69,17 +70,23 @@ export interface PlatformToolContext {
    * worker declares `launcher: { kind: "mcp" }` to fix that, and this is the
    * best answer it has for WHICH agent.
    *
-   * NOT the MCP `initialize` handshake's `clientInfo`, which is where a client
-   * properly identifies itself: `createMcpHandler` builds a fresh `McpServer`
-   * per HTTP request, so by the time a tool call arrives there is no session
-   * that remembers the handshake. The inbound `user-agent` is what this
-   * request actually carries.
+   * The fallback for `callerClientName`: `createMcpHandler` builds a fresh
+   * `McpServer` per HTTP request, so a 2025-era tool call carries no
+   * `clientInfo` (only its `initialize` did). A 2026 request carries it in
+   * `_meta`, and then `callerClientName` names the agent instead.
    *
    * Caller-controlled text, treated as such: it is a display label beside a
    * server-stamped `source` and a platform-minted attribution, never an
    * authorization input, and the platform caps it before storing it.
    */
   callerUserAgent?: string;
+  /**
+   * The agent's own `clientInfo.name`, read from this request's body at the
+   * edge (`analytics.ts`), preferred over `callerUserAgent` when present.
+   */
+  callerClientName?: string;
+  /** Counts a guest mint failure; it never reaches the Platform API. */
+  onGuestMintFailed?: () => void;
   /**
    * Whether this request runs as an ANONYMOUS guest: no bearer at all (a guest
    * is minted on first use), or a verified guest-issuer token.
@@ -186,7 +193,11 @@ export async function getBearerToken(
  * request (for either era), so it must register the same surface every time —
  * keep it side-effect-free apart from the registrations themselves.
  */
-function buildServer(env: Env, ctx: McpRequestContext): McpServer {
+function buildServer(
+  env: Env,
+  ctx: McpRequestContext,
+  caller?: McpCaller
+): McpServer {
   // `authInfo` is strict pass-through from `index.ts`, which has already
   // verified the bearer (AuthKit or guest). Absent → anonymous request.
   const verifiedToken = ctx.authInfo?.token;
@@ -227,6 +238,8 @@ function buildServer(env: Env, ctx: McpRequestContext): McpServer {
       MCPJAM_APP_ORIGIN: resolveAppOrigin(env),
     },
     ...(callerUserAgent ? { callerUserAgent } : {}),
+    ...(caller?.clientName ? { callerClientName: caller.clientName } : {}),
+    ...(caller ? { onGuestMintFailed: caller.onGuestMintFailed } : {}),
     isGuestSession,
   };
 
@@ -266,10 +279,11 @@ function buildServer(env: Env, ctx: McpRequestContext): McpServer {
 export function handleMcpRequest(
   request: Request,
   env: Env,
-  options?: McpHandlerRequestOptions
+  options?: McpHandlerRequestOptions,
+  caller?: McpCaller
 ): Promise<Response> {
   const handler = createMcpHandler(
-    (ctx) => buildServer(env, ctx),
+    (ctx) => buildServer(env, ctx, caller),
     // The default posture, spelled out: one handler serves the modern era and,
     // through the stateless fallback, 2025-era clients. Legacy clients get no
     // `Mcp-Session-Id` and a spec-compliant 405 on GET/DELETE.

@@ -162,6 +162,21 @@ describe("POST /api/web/auth-session/revoke", () => {
     expect(eventMock).not.toHaveBeenCalled();
   });
 
+  it("records a token Convex refused, which leaves no durable revocation", async () => {
+    revokeSessionMock.mockResolvedValue({
+      revoked: false,
+      reason: "token_refused",
+    });
+
+    const res = await post("authkit_jwt");
+
+    expect(await res.json()).toEqual({
+      revoked: false,
+      reason: "token_refused",
+    });
+    expect(eventMock).toHaveBeenCalledWith("auth.session.revoke_refused", {});
+  });
+
   it("meters a signed-in bearer with the per-credential passthrough budget", async () => {
     revokeSessionMock.mockResolvedValue({ revoked: true });
     for (let i = 0; i < PASSTHROUGH_TOKEN_LIMIT; i++) {
