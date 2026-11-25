@@ -262,6 +262,9 @@ export const options = {
     dropInjectedScriptException,
     stampPostHogEvent,
     (event: CaptureResult | null) => { scrubPostHogPersistence(); return event; },
+    // A withdrawal the browser would not store leaves posthog-js reading the
+    // earlier stored grant, so it keeps capturing; the page's choice wins here.
+    (event: CaptureResult | null) => (hasAnalyticsConsent() ? event : null),
   ],
   // Fragments carry access tokens (`#token=`) and OAuth implicit responses;
   // no event, replay URL or heatmap needs one.

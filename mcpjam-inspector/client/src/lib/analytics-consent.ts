@@ -141,8 +141,13 @@ if (
     if (event.key !== STORAGE_KEY && event.key !== null) return;
     pageChoice = null;
     const consent = getAnalyticsConsent();
-    if (consent !== null && followedClient) {
-      applyToClient(followedClient, consent);
+    if (followedClient) {
+      if (consent !== null) applyToClient(followedClient, consent);
+      // A cleared store leaves posthog-js on the grant it applied earlier; a
+      // visitor who must opt in is undecided again, so capture stops.
+      else if (isAnalyticsConsentRequired()) {
+        applyToClient(followedClient, "denied");
+      }
     }
     notify();
   });

@@ -171,12 +171,54 @@ describe("analytics consent", () => {
   it("applies a withdrawal on this page when storage refuses it", () => {
     window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = true;
     window.localStorage.setItem("mcpjam-analytics-consent", "granted");
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
       throw new Error("quota exceeded");
     });
     setAnalyticsConsent(client(), "denied");
     expect(getAnalyticsConsent()).toBe("denied");
     expect(hasAnalyticsConsent()).toBe(false);
+  });
+
+  it("stops posthog-js capturing after a withdrawal storage refused", async () => {
+    window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{}")),
+    );
+    const { PostHog } = await import("posthog-js");
+    const posthog = new PostHog();
+    posthog.init("phc_consent_readonly_test", {
+      ...options,
+      api_host: window.location.origin,
+      persistence: "memory",
+      advanced_disable_flags: true,
+      disable_session_recording: true,
+      capture_pageview: false,
+      autocapture: false,
+    });
+    // posthog-js stores this grant under its own key.
+    setAnalyticsConsent(posthog, "granted");
+    expect(posthog.capture("before_withdrawal")).toBeDefined();
+
+    vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
+      throw new Error("quota exceeded");
+    });
+    setAnalyticsConsent(posthog, "denied");
+
+    expect(posthog.capture("after_withdrawal")).toBeUndefined();
+  });
+
+  it("stops capture when another tab clears a grant a visitor must give", () => {
+    window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = true;
+    const posthog = client();
+    setAnalyticsConsent(posthog, "granted");
+    followAnalyticsConsentAcrossTabs(posthog);
+
+    window.localStorage.clear();
+    window.dispatchEvent(new StorageEvent("storage", { key: null }));
+
+    expect(getAnalyticsConsent()).toBeNull();
+    expect(posthog.opt_out_capturing).toHaveBeenCalledTimes(1);
   });
 
   it("applies a withdrawal made in another tab", () => {
