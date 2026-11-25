@@ -256,7 +256,7 @@ Removing a prompt with assertions under it asks first: they would move to the pr
 
 ## Answer a server's question
 
-Some tools stop and ask the person a question before they finish, such as "Delete note 7?". A run has no person to ask, so a case carries the replies. They live in the suite file, under `inputAnswers`, and apply only to that case.
+Some tools stop and ask the person a question before they finish, such as "Delete note 7?". A run has no person to ask, so a case carries the replies. They live in the suite file, under `inputAnswers`, and apply only to that case. A case you add with `mcpjam cloud eval cases create` or the `create_eval_case` tool takes the same list as `inputAnswers` in its JSON, or with `--input-answers`; `get_eval_case` shows it back.
 
 ```yaml
 cases:

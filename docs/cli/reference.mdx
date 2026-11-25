@@ -2540,6 +2540,7 @@ Add a test case to a suite (definition via `--file`/`--json`).
 | `--file <path>` | No | Case JSON body (or `-` for stdin) |
 | `--json <json>` | No | Inline case JSON (or `@file`, or `-`) |
 | `--title <title>` | No | Case title (overrides the body) |
+| `--input-answers <json>` | No | What the run answers when a server asks a question: a JSON array of replies, e.g. `'[{"action":"accept","content":{"name":"Ada"}}]'` |
 
 #### `cloud eval cases update`
 
@@ -2553,6 +2554,7 @@ Edit a test case (definition via `--file`/`--json`).
 | `--file <path>` | No | Case JSON body (or `-` for stdin) |
 | `--json <json>` | No | Inline case JSON (or `@file`, or `-`) |
 | `--title <title>` | No | Rename the case |
+| `--input-answers <json>` | No | Replace the replies the run gives a server's question: a JSON array of replies, or `null` to clear them |
 
 #### `cloud eval cases delete`
 
