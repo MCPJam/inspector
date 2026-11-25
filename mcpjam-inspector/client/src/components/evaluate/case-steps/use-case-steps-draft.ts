@@ -198,6 +198,7 @@ export function useCaseStepsDraft({
         suiteId,
         models,
         caseId: mintCaseId(),
+        requireUniqueTitle: true,
         ...buildCaseSavePayload(form, {
           isNegativeTest: form.toolsChoice === "noTool",
         }),

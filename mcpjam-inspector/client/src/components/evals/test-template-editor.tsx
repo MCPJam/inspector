@@ -2696,6 +2696,7 @@ export function TestTemplateEditor({
         // validates. It lands in `declaredCaseId`; the row's storage `caseKey`
         // stays the platform's own random `ui_*` value and is untouched.
         caseId: mintCaseId(),
+        requireUniqueTitle: true,
         ...savePayload,
       });
       track("eval_test_case_created", {
