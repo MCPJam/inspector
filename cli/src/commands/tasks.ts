@@ -810,7 +810,7 @@ export function addTasksToolOptions(command: Command): Command {
     )
     .option(
       "--input-responses <json>",
-      'Prefilled answers for Tasks probes on the 2026-07-28 extension wire. Only requested keys are sent: {"name":{"action":"accept","content":{"name":"Ada"}}}. Without it the run stops as soon as the task parks on input_required, and the tasks/update acknowledgement check is not applicable.'
+      'Prefilled answers for Tasks probes on the 2026-07-28 extension wire. Only requested keys are sent: {"name":{"action":"accept","content":{"name":"Ada"}}}. A check can also use answers from its own --check-overrides entry. Without answers for that check, it stops when the task waits for input. Supply matching answers to exercise the tasks/update acknowledgement check.'
     )
     .option(
       "--poll-timeout <ms>",

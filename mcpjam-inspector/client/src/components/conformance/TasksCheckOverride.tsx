@@ -78,7 +78,7 @@ export function TasksSuiteDefaults({
           probe={probes.tasksProbe}
           onChange={(probe) => onChange({ ...probes, tasksProbe: probe })}
           onInvalidChange={(invalid) =>
-            onValidChange("tasksProbe:answers", !invalid)
+            onValidChange("tasksProbeAnswers", !invalid)
           }
         />
       )}

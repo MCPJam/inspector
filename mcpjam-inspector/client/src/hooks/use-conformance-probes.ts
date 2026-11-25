@@ -192,7 +192,7 @@ export function useConformanceProbeStore(): {
 
 /** Only selected inputs can block Run, including a default used by at least one check. */
 export function taskProbePartIsSelected(part: string, probes: ConformanceProbes, selected?: readonly string[]): boolean {
-  if (part === "tasksProbe" || part === "tasksProbe:answers") {
+  if (part === "tasksProbe" || part === "tasksProbeAnswers") {
     return MCP_TASKS_TOOL_CHECK_IDS.some(id =>
       (!selected || selected.includes(id)) &&
       !probes.tasksOverrides?.[id] &&
