@@ -3475,18 +3475,33 @@ export function PlaygroundMain({
     appMessageDraft.clear();
   }, [composer, fileAttachments, appMessageDraft.clear]);
 
-  const cancelPendingHistorySelection = useCallback(() => {
-    historySelectionRequestIdRef.current += 1;
-    invalidatePendingReactiveHistoryLoad();
-    setLoadingHistorySessionId(null);
-    setActiveHistorySessionId(null);
-    setLoadedThreadOwnerUserId(null);
-    setViewingHistoryReplay(false);
-    // No persisted conversation is open any more, so there is nothing left to
-    // disclose about one — and leaving the flag set would gate sends on a
-    // fresh chat the user just started.
-    setRestoredConversation(null);
-  }, [invalidatePendingReactiveHistoryLoad]);
+  const {
+    isCurrentTarget: isCurrentHistoryTarget,
+    begin: beginThreadSend,
+    leave: leaveThreadSend,
+  } = useThreadSend(
+    chatSessionId,
+    convexProjectId,
+    historySelectionRequestIdRef,
+  );
+
+  // A chat change the user did not choose (`stay`) keeps a dropped prompt.
+  const cancelPendingHistorySelection = useCallback(
+    ({ stay = false } = {}) => {
+      if (!stay) leaveThreadSend();
+      historySelectionRequestIdRef.current += 1;
+      invalidatePendingReactiveHistoryLoad();
+      setLoadingHistorySessionId(null);
+      setActiveHistorySessionId(null);
+      setLoadedThreadOwnerUserId(null);
+      setViewingHistoryReplay(false);
+      // No persisted conversation is open any more, so there is nothing left to
+      // disclose about one — and leaving the flag set would gate sends on a
+      // fresh chat the user just started.
+      setRestoredConversation(null);
+    },
+    [invalidatePendingReactiveHistoryLoad, leaveThreadSend],
+  );
 
   // Reopens a multi-model session through the sign-in recovery path: the
   // layout effect applies the lineup and each remounted column loads its chat.
@@ -3872,7 +3887,7 @@ export function PlaygroundMain({
   const detachHistorySession = useCallback(
     (toastMessage: string, opts?: { silent?: boolean }) => {
       resumedThreadSendBaselineRef.current = null;
-      cancelPendingHistorySelection();
+      cancelPendingHistorySelection({ stay: true });
       // The fork re-mints the session id with an empty transcript, so with no
       // active thread the URL restore effect would reopen
       // `?conversation=<old id>` over it. Clear the param first, as
@@ -4009,16 +4024,6 @@ export function PlaygroundMain({
     resumedVersion,
   ]);
 
-  const {
-    isCurrentTarget: isCurrentHistoryTarget,
-    begin: beginThreadSend,
-    leave: leaveThreadSend,
-  } = useThreadSend(
-    chatSessionId,
-    convexProjectId,
-    historySelectionRequestIdRef,
-  );
-
   const refreshCurrentHistorySession = useCallback(
     async ({ retries = 0, markRead = false, isCurrent = () => true } = {}) => {
       if (!activeHistorySessionId && !chatSessionId) return null;
@@ -4110,8 +4115,7 @@ export function PlaygroundMain({
       return true;
     }
 
-    // Every sender but plugin messages checks its thread just before this
-    // call, so a check taken here covers the read.
+    // Every sender but plugin messages checked its thread just before this.
     const { isCurrent } = beginThreadSend();
     let detail: Awaited<ReturnType<typeof refreshCurrentHistorySession>> = null;
     try {
@@ -4324,6 +4328,7 @@ export function PlaygroundMain({
     async (conversationId: string): Promise<ConversationRestoreOutcome> => {
       const selectionRequestId = historySelectionRequestIdRef.current + 1;
       historySelectionRequestIdRef.current = selectionRequestId;
+      leaveThreadSend();
       // Same as picking the thread from the rail: the restored transcript
       // lives on the single chat session, so the compare grid must stand down
       // rather than render over it.
@@ -4420,6 +4425,7 @@ export function PlaygroundMain({
     [
       adoptRestoredConversationTarget,
       convexProjectId,
+      leaveThreadSend,
       loadHistorySession,
       openMultiModelSessionFromHistory,
       restoreHistoryServerSelection,
@@ -5188,7 +5194,7 @@ export function PlaygroundMain({
         // follow-up on a reopened conversation would otherwise be the FIRST
         // thing that runs on a target the transcript never used, with no user
         // action in between to make that a choice.
-        const { isCurrent: isThreadCurrent } = beginThreadSend();
+        const { isCurrent: isThreadCurrent, left } = beginThreadSend();
         const isCurrent = () => isCallerCurrent() && isThreadCurrent();
         if (!isCurrent() || conversationSendBlockedRef.current) {
           return false;
@@ -5231,13 +5237,12 @@ export function PlaygroundMain({
           metadata: outgoingSenderMetadata,
           widgetModelContext: sentContext,
           // The gates above can finish and this call can still await server
-          // preparation. The thread and the study block are read again at
-          // dispatch.
+          // preparation. The thread and study block are read again at dispatch.
           isCurrent: () => isCurrent() && !conversationSendBlockedRef.current,
         });
         // A refused send runs no turn: keep the text, and the queue as it is.
         if (!sent) {
-          composer.setInput(text);
+          if (!left()) composer.setInput(text);
           return false;
         }
         // A success drops only the objects this request carried: a widget can
@@ -6311,11 +6316,9 @@ export function PlaygroundMain({
       // clicked while a submit is being prepared would wipe that submit's
       // attachments and the submit would still send its draft.
       void composerSend.run(async () => {
-        const { isCurrent, left } = beginThreadSend();
-        // A prompt is not put in the thread or new chat the user moved to.
-        const refuse = () => {
-          if (!left()) composer.setInput(prompt);
-        };
+        const { isCurrent, refuse } = beginThreadSend(() =>
+          composer.setInput(prompt),
+        );
         if (!(await ensureSelectedServerReadyForChat()) || !isCurrent()) {
           refuse();
           return;
@@ -6407,11 +6410,9 @@ export function PlaygroundMain({
         composer.setInput(text);
         return;
       }
-      const { isCurrent, left } = beginThreadSend();
-      // A prompt is not put in the thread or new chat the user moved to.
-      const refuse = () => {
-        if (!left()) composer.setInput(text);
-      };
+      const { isCurrent, refuse } = beginThreadSend(() =>
+        composer.setInput(text),
+      );
       if (!(await ensureSelectedServerReadyForChat()) || !isCurrent()) {
         refuse();
         return;

@@ -3135,6 +3135,164 @@ describe("PlaygroundMain", () => {
       },
     );
 
+    it.each([
+      {
+        sender: '"Ask agent to run"',
+        change: "Clear chat",
+        messages: transcript,
+        trigger: () =>
+          useAgentToolPromptBridge.getState().requestRun("Run the tool for me"),
+        leave: () => {
+          fireEvent.click(screen.getByRole("button", { name: "Clear chat" }));
+          fireEvent.click(
+            within(screen.getByTestId("confirm-dialog")).getByRole("button", {
+              name: "Confirm",
+            }),
+          );
+        },
+      },
+      {
+        sender: "a starter chip",
+        change: "Archive all",
+        messages: [],
+        trigger: () =>
+          fireEvent.click(screen.getByRole("button", { name: "Starter chip" })),
+        leave: () =>
+          act(async () => {
+            bridge()?.onArchiveAllComplete(true);
+          }),
+      },
+    ])(
+      "does not put $sender back in the composer after $change while the server connects",
+      async ({ messages, trigger, leave }) => {
+        const readiness = holdServerReadiness();
+        const props = { ensureServersReady: readiness.ensureServersReady };
+        const view = await renderWithThreadA(props);
+        mockUseChatSession.messages = messages as never;
+        view.rerender(<PlaygroundMain {...defaultProps} {...props} />);
+        await act(async () => {
+          trigger();
+        });
+        expect(readiness.ensureServersReady).toHaveBeenCalledTimes(1);
+
+        await leave();
+        fireEvent.change(screen.getByTestId("chat-input-field"), {
+          target: { value: "typed after the change" },
+        });
+        await act(async () => readiness.release());
+        await settle();
+
+        expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+        expect(screen.getByTestId("chat-input-field")).toHaveValue(
+          "typed after the change",
+        );
+      },
+    );
+
+    it("does not put a starter chip back after a URL restore opens another chat", async () => {
+      const readiness = holdServerReadiness();
+      mockUseChatSession.messages = [];
+      window.history.replaceState(null, "", "/playground");
+      try {
+        render(
+          <PlaygroundMain
+            {...defaultProps}
+            syncConversationToUrl
+            ensureServersReady={readiness.ensureServersReady}
+          />,
+        );
+        await waitFor(() => expect(bridge()).not.toBe(null));
+        await act(async () => {
+          fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+        });
+        expect(readiness.ensureServersReady).toHaveBeenCalledTimes(1);
+
+        mockReadHistory.mockImplementation(() => new Promise(() => {}));
+        await act(async () => {
+          window.history.pushState(null, "", "/playground?conversation=other");
+          window.dispatchEvent(new PopStateEvent("popstate"));
+        });
+        await waitFor(() => expect(mockReadHistory).toHaveBeenCalled());
+        await act(async () => readiness.release());
+        await settle();
+
+        expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+        expect(screen.getByTestId("chat-input-field")).toHaveValue("");
+      } finally {
+        window.history.replaceState(null, "", "/");
+      }
+    });
+
+    const retry = () => fireEvent.click(screen.getByTestId("error-box-retry"));
+    const appMessage = () =>
+      void mockThread.mock.calls
+        .at(-1)![0]
+        .sendFollowUpMessage("Message from the App");
+    it.each([
+      { sender: "Retry", trigger: retry, newChat: true, left: "" },
+      {
+        sender: "an App message",
+        trigger: appMessage,
+        newChat: true,
+        left: "",
+      },
+      { sender: "Retry", trigger: retry, newChat: false, left: "Hello" },
+    ])(
+      "leaves $left in the composer when sendMessage refuses $sender (New chat: $newChat)",
+      async ({ trigger, newChat, left }) => {
+        let refuse!: () => void;
+        vi.mocked(mockUseChatSession.sendMessage).mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              refuse = () => resolve(false as never);
+            }) as never,
+        );
+        mockUseChatSession.messages = transcript as never;
+        mockUseChatSession.error = Object.assign(
+          new Error("The organization's AI provider is unavailable."),
+          { formatted: { code: "provider_unavailable" } },
+        ) as never;
+        render(<PlaygroundMain {...defaultProps} />);
+        await waitFor(() => expect(bridge()).not.toBe(null));
+        await act(async () => {
+          trigger();
+        });
+        await waitFor(() =>
+          expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1),
+        );
+
+        if (newChat) {
+          await act(async () => {
+            void bridge()?.onNewChat();
+          });
+        }
+        await act(async () => refuse());
+        await settle();
+
+        expect(screen.getByTestId("chat-input-field")).toHaveValue(left);
+      },
+    );
+
+    it("drops the send when the open thread's own row is clicked and its draft discarded", async () => {
+      const readiness = holdServerReadiness();
+      await renderWithThreadA({
+        ensureServersReady: readiness.ensureServersReady,
+      });
+      await typeAndSend("draft for A");
+
+      await act(async () => {
+        void bridge()?.onSelectThread(sessionA);
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByText("Discard and continue"));
+      });
+      await act(async () => readiness.release());
+      await settle();
+
+      // The row reloads the same thread: only the selection counter moved.
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    });
+
     it("lets the send go out when the open thread's own row is clicked and the dialog is cancelled", async () => {
       const readiness = holdServerReadiness();
       await renderWithThreadA({
