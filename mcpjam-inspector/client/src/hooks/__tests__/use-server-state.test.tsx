@@ -21,6 +21,7 @@ import { useClientConfigStore } from "@/stores/client-config-store";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { authFetch } from "@/lib/session-token";
 import { readCliSignInReturnPath } from "@/lib/cli-signin-return-path";
+import { useAutoOAuthAuthorizationStore } from "@/lib/oauth/auto-oauth-escalation";
 import { injectHostedServerMapping } from "@/lib/apis/web/context";
 import {
   captureOAuthCallbackFromUrl,
@@ -4272,6 +4273,42 @@ describe("useServerState auth mode regressions", () => {
     unmount();
   });
 
+  it("cancels a pending Auto authorization when the server disconnects", async () => {
+    const { deleteServer } = await import("@/state/mcp-api");
+    vi.mocked(deleteServer).mockResolvedValue({ success: true });
+    testConnectionMock.mockResolvedValueOnce({
+      success: false,
+      error: "Authorization required",
+      oauthRequired: true,
+    });
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+    let connect: Promise<void> | undefined;
+    act(() => {
+      connect = result.current.handleConnect({
+        name: "auto-server",
+        type: "http",
+        url: "https://auto.example.com/mcp",
+        useOAuth: true,
+        authMethod: "auto",
+      });
+    });
+    await waitFor(() => {
+      expect(useAutoOAuthAuthorizationStore.getState().queue).toHaveLength(1);
+    });
+
+    await act(async () => {
+      await result.current.handleDisconnect("auto-server");
+      await connect;
+    });
+
+    expect(useAutoOAuthAuthorizationStore.getState().queue).toHaveLength(0);
+    expect(initiateOAuthMock).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "CONNECT_FAILURE" }),
+    );
+  });
+
   it("lets an inline surface own Auto's OAuth authorization prompt", async () => {
     testConnectionMock.mockResolvedValueOnce({
       success: false,
@@ -6868,4 +6905,3 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
     expect(mockCreateServerIfMissing).toHaveBeenCalledTimes(1);
   });
 });
-

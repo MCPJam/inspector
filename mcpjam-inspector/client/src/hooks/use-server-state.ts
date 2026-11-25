@@ -1019,6 +1019,13 @@ export function useServerState({
 
   const oauthCallbackHandledRef = useRef(new Set<string>());
   const opTokenRef = useRef<Map<string, number>>(new Map());
+  const autoOAuthPromptRef = useRef(new Map<string, AbortController>());
+  const nextOpToken = useCallback((name: string) => {
+    const next = (opTokenRef.current.get(name) ?? 0) + 1;
+    opTokenRef.current.set(name, next);
+    autoOAuthPromptRef.current.get(name)?.abort();
+    return next;
+  }, []);
   // The op token each project's server was removed at. A connect holding that
   // token deletes the row its in-flight save creates, which the removal missed.
   // A later connect for it clears that: both saves land on one row.
@@ -1027,7 +1034,7 @@ export function useServerState({
   useEffect(
     () =>
       serverCheckQueue.onCancel((_projectId, name) => {
-        opTokenRef.current.set(name, (opTokenRef.current.get(name) ?? 0) + 1);
+        nextOpToken(name);
         const currentScope = tryResolveProjectServer(name);
         if (currentScope?.projectId === _projectId)
           dispatch({
@@ -1036,14 +1043,14 @@ export function useServerState({
             wasConnected: checkWasConnectedRef.current.get(name) ?? false,
           });
       }),
-    [dispatch],
+    [dispatch, nextOpToken],
   );
-  const nextOpToken = (name: string) => {
-    const current = opTokenRef.current.get(name) ?? 0;
-    const next = current + 1;
-    opTokenRef.current.set(name, next);
-    return next;
-  };
+  useEffect(() => {
+    const prompts = autoOAuthPromptRef.current;
+    return () => {
+      for (const name of prompts.keys()) nextOpToken(name);
+    };
+  }, [nextOpToken]);
 
   const failPendingOAuthConnection = useCallback(
     (errorMessage: string, oauthTrace?: OAuthTrace) => {
@@ -1123,8 +1130,25 @@ export function useServerState({
     },
     [dispatch],
   );
-  const isStaleOp = (name: string, token: number) =>
-    (opTokenRef.current.get(name) ?? 0) !== token;
+  const isStaleOp = useCallback(
+    (name: string, token: number) => (opTokenRef.current.get(name) ?? 0) !== token,
+    [],
+  );
+  const requestAutoOAuthAuthorization = useCallback(
+    async (name: string, token: number) => {
+      if (isStaleOp(name, token)) return false;
+      const controller = new AbortController();
+      autoOAuthPromptRef.current.set(name, controller);
+      try {
+        return await confirmAutoOAuthEscalation(name, controller.signal);
+      } finally {
+        if (autoOAuthPromptRef.current.get(name) === controller) {
+          autoOAuthPromptRef.current.delete(name);
+        }
+      }
+    },
+    [isStaleOp],
+  );
 
   // Pins the org/project/server the OAuth flow starts from so the callback
   // can write back to the same rows. Written in BOTH hosted and local modes:
@@ -4208,9 +4232,9 @@ export function useServerState({
               showConnectionError(errorMessage);
               return;
             }
-            const requestOAuthAuthorization =
-              options?.requestOAuthAuthorization ?? confirmAutoOAuthEscalation;
-            const proceed = await requestOAuthAuthorization(formData.name);
+            const proceed = options?.requestOAuthAuthorization
+              ? await options.requestOAuthAuthorization(formData.name)
+              : await requestAutoOAuthAuthorization(formData.name, token);
             if (isStaleOp(formData.name, token)) return;
             if (!proceed) {
               failWithoutEscalation(
@@ -4626,6 +4650,7 @@ export function useServerState({
       guardedTestConnection,
       updateServerOAuthTrace,
       withProjectConnectionDefaults,
+      requestAutoOAuthAuthorization,
     ],
   );
 
@@ -6100,7 +6125,7 @@ export function useServerState({
             "reauth",
           );
         }
-        const proceed = await confirmAutoOAuthEscalation(serverName);
+        const proceed = await requestAutoOAuthAuthorization(serverName, token);
         // A newer op superseded this one while the prompt sat open — don't
         // write ITS marker state (that would poison the newer attempt).
         if (isStaleOp(serverName, token)) {
@@ -6413,6 +6438,7 @@ export function useServerState({
       mergeWithProjectHeaders,
       updateServerOAuthTrace,
       withProjectConnectionDefaults,
+      requestAutoOAuthAuthorization,
     ],
   );
 

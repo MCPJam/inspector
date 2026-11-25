@@ -137,4 +137,34 @@ describe("AutoOAuthAuthorizationDialog", () => {
       ],
     ]);
   });
+
+  it("drops canceled prompts whether they are visible or still queued", async () => {
+    const active = new AbortController();
+    const queued = new AbortController();
+    const visible = confirmAutoOAuthEscalation("First", active.signal);
+    const unseen = confirmAutoOAuthEscalation("Second", queued.signal);
+    const third = confirmAutoOAuthEscalation("Third");
+    const firstId = useAutoOAuthAuthorizationStore.getState().queue[0].id;
+    render(<AutoOAuthAuthorizationDialog />);
+
+    act(() => queued.abort());
+    await expect(unseen).resolves.toBe(false);
+    expect(track).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("alertdialog")).toHaveAccessibleName(
+      'Authorize "First"?',
+    );
+
+    act(() => active.abort());
+    await expect(visible).resolves.toBe(false);
+    expect(track).toHaveBeenCalledWith("server_auto_oauth_prompt_resolved", {
+      location,
+      prompt_id: firstId,
+      decision: "superseded",
+    });
+    expect(screen.getByRole("alertdialog")).toHaveAccessibleName(
+      'Authorize "Third"?',
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Not now" }));
+    await expect(third).resolves.toBe(false);
+  });
 });

@@ -32,7 +32,7 @@ const product = {
 };
 
 describe("strict PostHog reconstruction", () => {
-  it("joins Auto OAuth prompt events across policies without forwarding caller data", () => {
+  it.each(["not_now", "superseded"])("joins Auto OAuth %s events across policies without forwarding caller data", (decisionValue) => {
     const promptId = "00112233445566778899aabbccddeeff";
     const properties = {
       location: "auto_oauth_authorization_dialog",
@@ -48,7 +48,7 @@ describe("strict PostHog reconstruction", () => {
     const resolved = {
       ...product,
       event: "server_auto_oauth_prompt_resolved",
-      properties: { ...properties, decision: "not_now" },
+      properties: { ...properties, decision: decisionValue },
     };
     const impression = applyEventPolicy(
       shown,
@@ -66,7 +66,7 @@ describe("strict PostHog reconstruction", () => {
     });
     expect(decision).toMatchObject({
       event: resolved.event,
-      properties: { prompt_id: forwardedId, decision: "not_now" },
+      properties: { prompt_id: forwardedId, decision: decisionValue },
     });
     expect(JSON.stringify([impression, decision])).not.toContain("SENTINEL");
     expect(

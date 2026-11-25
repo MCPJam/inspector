@@ -103,7 +103,7 @@ type AuthorizationDecision = "continue" | "not_now" | "dismiss";
 interface AuthorizationPromptState {
   queue: AuthorizationPrompt[];
   shownPromptId: string | null;
-  request: (serverName: string) => Promise<boolean>;
+  request: (serverName: string, signal?: AbortSignal) => Promise<boolean>;
   markShown: (id: string) => void;
   settle: (id: string, decision: AuthorizationDecision) => void;
 }
@@ -111,43 +111,73 @@ interface AuthorizationPromptState {
 const promptLocation = "auto_oauth_authorization_dialog";
 
 export const useAutoOAuthAuthorizationStore = create<AuthorizationPromptState>(
-  (set, get) => ({
-    queue: [],
-    shownPromptId: null,
-    request: (serverName) =>
-      new Promise<boolean>((resolve) => {
-        const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
-          byte.toString(16).padStart(2, "0"),
-        ).join("");
-        set(({ queue }) => ({
-          queue: [...queue, { id, serverName, resolve }],
-        }));
-      }),
-    markShown: (id) => {
+  (set, get) => {
+    const finish = (id: string, decision: AuthorizationDecision | "superseded") => {
       const { queue, shownPromptId } = get();
-      if (queue[0]?.id !== id || shownPromptId === id) return;
-      set({ shownPromptId: id });
-      track("server_auto_oauth_prompt_shown", {
-        location: promptLocation,
-        prompt_id: id,
+      const prompt = queue.find((entry) => entry.id === id);
+      if (!prompt) return;
+      const shown = shownPromptId === id;
+      set({
+        queue: queue.filter((entry) => entry !== prompt),
+        shownPromptId: shown ? null : shownPromptId,
       });
-    },
-    settle: (id, decision) => {
-      const [prompt, ...queue] = get().queue;
-      // A dialog's close event may follow its confirm click.
-      if (prompt?.id !== id) return;
-      set({ queue, shownPromptId: null });
-      track("server_auto_oauth_prompt_resolved", {
-        location: promptLocation,
-        prompt_id: id,
-        decision,
-      });
+      if (shown) {
+        track("server_auto_oauth_prompt_resolved", {
+          location: promptLocation,
+          prompt_id: id,
+          decision,
+        });
+      }
       prompt.resolve(decision === "continue");
-    },
-  }),
+    };
+    return {
+      queue: [],
+      shownPromptId: null,
+      request: (serverName, signal) =>
+        new Promise<boolean>((resolve) => {
+          if (signal?.aborted) {
+            resolve(false);
+            return;
+          }
+          const id = Array.from(
+            crypto.getRandomValues(new Uint8Array(16)),
+            (byte) => byte.toString(16).padStart(2, "0"),
+          ).join("");
+          const cancel = () => finish(id, "superseded");
+          const prompt: AuthorizationPrompt = {
+            id,
+            serverName,
+            resolve: (confirmed) => {
+              signal?.removeEventListener("abort", cancel);
+              resolve(confirmed);
+            },
+          };
+          signal?.addEventListener("abort", cancel, { once: true });
+          set(({ queue }) => ({
+            queue: [...queue, prompt],
+          }));
+        }),
+      markShown: (id) => {
+        const { queue, shownPromptId } = get();
+        if (queue[0]?.id !== id || shownPromptId === id) return;
+        set({ shownPromptId: id });
+        track("server_auto_oauth_prompt_shown", {
+          location: promptLocation,
+          prompt_id: id,
+        });
+      },
+      settle: (id, decision) => {
+        // A dialog's close event may follow its confirm click.
+        if (get().queue[0]?.id === id) finish(id, decision);
+      },
+    };
+  },
 );
 
 /** Ask before redirecting a connection configured with Auto authentication. */
-export function confirmAutoOAuthEscalation(serverName: string): Promise<boolean> {
-  return useAutoOAuthAuthorizationStore.getState().request(serverName);
+export function confirmAutoOAuthEscalation(
+  serverName: string,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  return useAutoOAuthAuthorizationStore.getState().request(serverName, signal);
 }

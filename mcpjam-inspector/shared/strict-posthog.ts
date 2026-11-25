@@ -123,7 +123,7 @@ const CATALOG: Readonly<Record<string, Readonly<Record<string, Rule>>>> = {
   server_auto_oauth_prompt_shown: AUTO_OAUTH_PROMPT,
   server_auto_oauth_prompt_resolved: {
     ...AUTO_OAUTH_PROMPT,
-    decision: ["continue", "not_now", "dismiss"],
+    decision: ["continue", "not_now", "dismiss", "superseded"],
   },
   $pageview: {},
   $pageleave: {},
