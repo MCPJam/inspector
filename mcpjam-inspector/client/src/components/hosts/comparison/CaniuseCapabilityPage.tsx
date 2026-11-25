@@ -13,7 +13,6 @@ import {
   caniuseFieldHasPresetData,
   getCaniuseCapabilityBySlug,
   getCaniuseCapabilityForField,
-  getCaniuseSupportLabel,
   publicCaniuseFieldsWithData,
   sortCaniusePresetHosts,
   type CaniuseCapability,
@@ -25,7 +24,11 @@ import {
   sliceLabel,
 } from "./caniuse-coverage";
 import { CaniuseSite } from "./CaniuseSite";
-import { ClientMap, CapabilityReference } from "./CaniuseClientMap";
+import {
+  ClientMap,
+  CapabilityReference,
+  capabilityResultLabel,
+} from "./CaniuseClientMap";
 import { CaniuseShareDialog } from "./CaniuseShareDialog";
 
 const GROUPS = [
@@ -125,11 +128,16 @@ export function CaniuseCapabilityPage({
       buildCaniuseCapabilitySnapshot({
         capabilitySlug: capability?.slug,
         capabilityLabel: capability ? title : null,
+        slice: selected && selected !== "any" ? selected : null,
         rows:
           coverage?.rows.map(({ subject, status }) => ({
             hostName: subject.hostName,
             supportLevel: status,
-            supportLabel: getCaniuseSupportLabel(status, capability?.field.id),
+            supportLabel: capabilityResultLabel(
+              status,
+              capability?.field.id,
+              coverage.reporting,
+            ),
           })) ?? [],
       }),
   });
