@@ -76,13 +76,13 @@ export function capabilityCoverage(
     })
     .filter(({ subject }) => subject.hostId !== BASELINE);
   const full = rows.filter(({ status }) => status === "supported").length;
-  const measured = reporting
-    ? rows.length
-    : rows.filter(({ status }) => status !== "unknown").length;
+  const published = rows.filter(({ status }) => status !== "unknown").length;
+  const measured = reporting ? rows.length : published;
   return {
     rows,
     full,
     measured,
+    published,
     reporting,
     eventsMode,
     score: measured ? Math.round((full / measured) * 100) : null,

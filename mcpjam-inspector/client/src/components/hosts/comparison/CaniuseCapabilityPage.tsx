@@ -284,7 +284,7 @@ export function CaniuseCapabilityPage({
                       Published results
                     </p>
                     <p className="mt-1 text-3xl font-bold tracking-tight tabular-nums sm:text-5xl">
-                      <span className="text-primary">{coverage.measured}</span>
+                      <span className="text-primary">{coverage.published}</span>
                       <span className="text-muted-foreground"> / {coverage.rows.length}</span>
                     </p>
                     <p className="mt-2 text-sm text-muted-foreground">Tracked clients</p>

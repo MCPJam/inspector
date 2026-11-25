@@ -20,6 +20,7 @@ describe("caniuse adoption", () => {
     };
     const result = capabilityCoverage(field, [subjects["preset:claude"], subjects["preset:cursor"]]);
     expect(result.rows.map(({ status }) => status)).toEqual(["unsupported", "unknown"]);
+    expect(result).toMatchObject({ full: 0, published: 1, measured: 2, score: 0 });
   });
 
   it("leaves unmeasured CSP subtypes out of the adoption denominator", () => {
