@@ -73,15 +73,11 @@ export function CaniuseSite({
         </div>
       </header>
       <main className="caniuse-wrap pb-10">{children}</main>
-      <footer className="caniuse-wrap flex flex-wrap items-center justify-between gap-2 pb-8 text-xs text-muted-foreground">
-        <div className="flex items-center gap-4">{footer}</div>
-        <a className="hover:text-primary" href="https://www.mcpjam.com/">
-          By{" "}
-          <strong className="text-foreground">
-            MCP<span className="text-primary">Jam</span>
-          </strong>
-        </a>
-      </footer>
+      {footer && (
+        <footer className="caniuse-wrap flex flex-wrap items-center gap-4 pb-8 text-muted-foreground">
+          {footer}
+        </footer>
+      )}
     </div>
   );
 }
