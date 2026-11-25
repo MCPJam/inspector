@@ -284,6 +284,7 @@ import {
   type MrtrLegSender,
   type MrtrLegMiddleware,
 } from "./mrtr-driver.js";
+import { http1Fetch } from "../http1-fetch.js";
 
 /**
  * Manages multiple MCP server connections with support for tools, resources,
@@ -3276,9 +3277,10 @@ export class MCPClientManager {
             input: Parameters<typeof fetch>[0],
             init?: RequestInit
           ) => {
-            // Resolve the default at request time so fetch instrumentation
-            // added after startup still observes established connections.
-            const baseFetch = configuredFetch ?? globalThis.fetch;
+            // `http1Fetch` resolves the global fetch at request time, so fetch
+            // instrumentation added after startup still observes established
+            // connections.
+            const baseFetch = configuredFetch ?? http1Fetch;
             const caller = startupSignal;
             if (!caller) return baseFetch(input, init);
             caller.throwIfAborted();
@@ -4828,8 +4830,9 @@ export class MCPClientManager {
     // `baseFetch` is the INNERMOST layer, under the logger: the guard has to
     // see the request that actually leaves, including the routing headers
     // added above it, and the logger has to record the bytes that guard sent.
-    // Absent ⇒ both wrappers fall back to `globalThis.fetch` exactly as before.
-    const baseFetch = config.baseFetch ?? this.defaultBaseFetch;
+    // Absent ⇒ `http1Fetch`: the global fetch, kept on HTTP/1.1 where it
+    // would negotiate HTTP/2 (see `http1-fetch.ts`).
+    const baseFetch = config.baseFetch ?? this.defaultBaseFetch ?? http1Fetch;
     const betaCatalogVersion = () => config.eventsWireProfile === "legacy"
       ? undefined
       : this.eventsCapabilityCapture.betaCatalogVersion(serverId);

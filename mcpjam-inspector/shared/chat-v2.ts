@@ -17,8 +17,20 @@ import type {
 
 export interface ChatRewind {
   parentChatSessionId: string;
+  /** The edited message, or for a multi-model column the last message kept. */
   rewoundFromMessageId: string;
-  reason: "message_edit";
+  reason: "message_edit" | "multi_model_column";
+}
+
+/**
+ * One column of a Playground multi-model session. The columns of one session
+ * share `groupId`; `position` only grows, so a replaced column never reuses one.
+ */
+export interface ChatMultiModelColumn {
+  groupId: string;
+  position: number;
+  columnKind: "model" | "host";
+  compareId: string;
 }
 
 /**
@@ -149,6 +161,7 @@ export interface ChatV2Request {
    * the request is scenario-bound, so the host value wins.
    */
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   /** Host-level MCP tool-result content/resource visibility policy. */
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   /** Host-level UI rendering policy for MCP tool-returned images. */

@@ -245,7 +245,7 @@ function useRuntime(
     for (let page = 0; page < 100; page += 1) {
       const result = token
         ? await fetchHostedEventsFeed({ ...token, after })
-        : await fetchLocalEventsFeed(after);
+        : await fetchLocalEventsFeed(after, projectId);
       if (result.nextAfter <= after) return after;
       after = result.nextAfter;
       if (result.entries.length === 0) return after;
@@ -308,6 +308,7 @@ function useRuntime(
       subscription = hostedSubscriptionRowToView(row);
     } else {
       subscription = await createLocalEventSubscription({
+        ...(projectId ? { projectId } : {}),
         serverId: server.serverName,
         eventName: event.name,
         arguments: value.arguments,

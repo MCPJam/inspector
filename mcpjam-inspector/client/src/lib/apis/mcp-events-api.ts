@@ -5,8 +5,8 @@
  *
  *   - LOCAL (`/api/mcp/events/*`): the local inspector's singleton manager
  *     and its in-memory events runtime. The registry, the inbox and the feed
- *     all live in the local server; the feed is an SSE stream of
- *     `EventsStreamFrame`s.
+ *     all live in the local server, scoped by the project each call names;
+ *     the feed is an SSE stream of `EventsStreamFrame`s.
  *   - HOSTED (`/api/web/events/*`): server operations run over an ephemeral
  *     connection; the registry is Convex, which the tab reads and writes
  *     directly (`EVENT_SUBSCRIPTIONS_API` below, used through
@@ -238,13 +238,19 @@ export async function loadEventsCatalog(
 
 // ── local registry ─────────────────────────────────────────────────────────
 
+/** The `projectId` query a local registry or feed read is scoped by. */
+function localProjectQuery(projectId: string | null): string {
+  return projectId ? `&projectId=${encodeURIComponent(projectId)}` : "";
+}
+
 export async function listLocalEventSubscriptions(
   serverName: string,
+  projectId: string | null,
 ): Promise<EventsSubscriptionView[]> {
   const body = await localEventsRequest<{
     subscriptions: EventsSubscriptionView[];
   }>(
-    `/api/mcp/events/subscriptions?serverId=${encodeURIComponent(serverName)}`,
+    `/api/mcp/events/subscriptions?serverId=${encodeURIComponent(serverName)}${localProjectQuery(projectId)}`,
     { method: "GET" },
     "Could not load subscriptions. Try again.",
   );
@@ -360,11 +366,19 @@ export function normalizeFeedEntry(raw: unknown): EventsFeedEntryView | null {
   } as EventsFeedEntryView;
 }
 
-export function localEventsStreamUrl(after: number): string {
-  return addTokenToUrl(`/api/mcp/events/stream?after=${after}`);
+export function localEventsStreamUrl(
+  after: number,
+  projectId: string | null,
+): string {
+  return addTokenToUrl(
+    `/api/mcp/events/stream?after=${after}${localProjectQuery(projectId)}`,
+  );
 }
 
-export async function fetchLocalEventsFeed(after: number): Promise<{
+export async function fetchLocalEventsFeed(
+  after: number,
+  projectId: string | null,
+): Promise<{
   entries: EventsFeedEntryView[];
   nextAfter: number;
 }> {
@@ -372,7 +386,7 @@ export async function fetchLocalEventsFeed(after: number): Promise<{
     entries?: unknown[];
     nextAfter?: number;
   }>(
-    `/api/mcp/events/feed?after=${after}`,
+    `/api/mcp/events/feed?after=${after}${localProjectQuery(projectId)}`,
     { method: "GET" },
     "Could not read the events feed. Try again.",
   );

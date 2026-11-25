@@ -471,6 +471,7 @@ export interface WebChatTurnPrepareInputs {
   explicitTemperature?: number;
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   /**
    * MCP tool names this surface declines to advertise, whichever selected
    * server offers them. See `PrepareChatV2Options.excludeMcpToolNames`.
@@ -878,6 +879,7 @@ export async function streamChatTurn(
         : {}),
       requireToolApproval: prepare.requireToolApproval,
       respectToolVisibility: prepare.respectToolVisibility,
+      runUnloadedToolCalls: prepare.runUnloadedToolCalls,
       ...(prepare.excludeMcpToolNames
         ? { excludeMcpToolNames: prepare.excludeMcpToolNames }
         : {}),
@@ -1533,6 +1535,7 @@ export async function streamChatTurn(
                 requireToolApproval: persist.requireToolApproval,
                 requireNativeToolDiscovery: persist.requireNativeToolDiscovery,
                 respectToolVisibility: persist.respectToolVisibility,
+                runUnloadedToolCalls: prepare.runUnloadedToolCalls,
                 modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
                 mcpToolResultImageRendering:
                   persist.mcpToolResultImageRendering,
