@@ -4257,7 +4257,7 @@ describe("ConformanceTab", () => {
     mockStartOAuth.mockResolvedValue({
       phase: "authorization_needed",
       sessionId: "session-1",
-      authorizationUrl: "https://auth.example.com/authorize",
+      authorizationUrl: "https://auth.example.com/authorize?state=st-1",
     });
     mockSubmitCode.mockResolvedValue({ success: true });
     mockCompleteOAuth.mockReturnValue(poll.promise);
@@ -4273,7 +4273,7 @@ describe("ConformanceTab", () => {
     window.dispatchEvent(
       new MessageEvent("message", {
         origin: window.location.origin,
-        data: { type: "OAUTH_CALLBACK", code: "auth-code" },
+        data: { type: "OAUTH_CALLBACK", code: "auth-code", state: "st-1" },
       }),
     );
 
@@ -4388,7 +4388,7 @@ describe("ConformanceTab", () => {
     );
     expect(openSpy).toHaveBeenLastCalledWith(
       "https://auth.example.com/authorize",
-      "oauth_conformance_auth",
+      expect.stringMatching(/^oauth_authorization_/),
       expect.any(String),
     );
     await screen.findByText("Waiting for browser authorization...");
@@ -4446,7 +4446,7 @@ describe("ConformanceTab", () => {
     mockStartOAuth.mockResolvedValue({
       phase: "authorization_needed",
       sessionId: "session-1",
-      authorizationUrl: "https://auth.example.com/authorize",
+      authorizationUrl: "https://auth.example.com/authorize?state=st-1",
     });
     mockSubmitCode.mockReturnValue(submit.promise);
     mockCompleteOAuth.mockResolvedValue({
@@ -4461,7 +4461,7 @@ describe("ConformanceTab", () => {
     window.dispatchEvent(
       new MessageEvent("message", {
         origin: window.location.origin,
-        data: { type: "OAUTH_CALLBACK", code: "auth-code" },
+        data: { type: "OAUTH_CALLBACK", code: "auth-code", state: "st-1" },
       }),
     );
     await waitFor(() => expect(mockSubmitCode).toHaveBeenCalled());

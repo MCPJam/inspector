@@ -55,6 +55,15 @@ export interface FakeOAuthMcpServerOptions {
    * any number of times, which tests that post the callback themselves rely on.
    */
   authorizationCodeLifetimeMs?: number;
+  /**
+   * Serve `/authorize` as a page with this `Cross-Origin-Opener-Policy` that
+   * then redirects to the callback, the way Clerk's sign-in page does. Chrome
+   * cuts the popup off from its opener (`window.opener` and `window.name`
+   * both reset) for the rest of the popup's life.
+   *
+   * Omitted by default: `/authorize` answers with a plain 302.
+   */
+  authorizePageCrossOriginOpenerPolicy?: string;
 }
 
 /** Shallow merge where an explicit `null` removes the key. */
@@ -132,6 +141,20 @@ function sendRedirect(response: ServerResponse, location: string) {
     "Access-Control-Allow-Origin": "*",
   });
   response.end();
+}
+
+function sendRedirectPage(
+  response: ServerResponse,
+  location: string,
+  crossOriginOpenerPolicy: string,
+) {
+  response.writeHead(200, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Cross-Origin-Opener-Policy": crossOriginOpenerPolicy,
+  });
+  response.end(
+    `<!doctype html><script>location.replace(${JSON.stringify(location)});</script>`,
+  );
 }
 
 function parseBody(rawBody: string, contentType: string | undefined): unknown {
@@ -292,6 +315,14 @@ export async function startFakeOAuthMcpServer(
         callbackUrl.searchParams.set("code", code);
         if (state) {
           callbackUrl.searchParams.set("state", state);
+        }
+        if (options.authorizePageCrossOriginOpenerPolicy) {
+          sendRedirectPage(
+            response,
+            callbackUrl.toString(),
+            options.authorizePageCrossOriginOpenerPolicy,
+          );
+          return;
         }
         sendRedirect(response, callbackUrl.toString());
         return;
