@@ -3915,8 +3915,8 @@ function buildCaseMutationArgs(
         : { goalCompletion: body.judge };
 
   // The case body is the `steps` contract. Project it onto the internal case
-  // fields. The derived kind (render-check ⇔ a single model-free `toolCall`
-  // step) is IMMUTABLE after create — updateTestCase doesn't accept caseType,
+  // fields. The derived model-free or prompt kind is immutable after
+  // create — updateTestCase doesn't accept caseType,
   // so reject a real change on update and never forward caseType there.
   if (body.steps !== undefined) {
     const steps = normalizeStepRolesForVocabulary(
@@ -3926,9 +3926,8 @@ function buildCaseMutationArgs(
     ) as TestStep[];
     args.steps = steps;
     const derived = stepsToInternalCaseFields(steps);
-    isModelFreeStepsCase = derived.caseType === "widget_probe";
-    const derivedKind =
-      derived.caseType === "widget_probe" ? "render-check" : "prompt";
+    isModelFreeStepsCase = isModelFree(steps);
+    const derivedKind = isModelFreeStepsCase ? "render-check" : "prompt";
     // Recognize the persisted kind from EITHER the legacy `caseType` OR the
     // shape of the stored `steps` (a model-free case is render-check), so
     // step-native render-checks without a `caseType` aren't misread as prompt.
@@ -4483,10 +4482,11 @@ async function launchEvalRun(params: {
         : {}),
     },
   );
-  const groups = plan ? await openEvalAccountGroups(plan, async (sets) => (await open(sets)).manager) : undefined;
-  const manager = groups?.first ?? (await open(
-    await loadSuiteConnectionIdSets(convexClient, { suiteId: body.suiteId }),
-  )).manager;
+  const connectionIdSets = await loadSuiteConnectionIdSets(convexClient, { suiteId: body.suiteId, serverIds });
+  const groups = plan
+    ? await openEvalAccountGroups(plan, async (sets) => (await open(sets)).manager, connectionIdSets)
+    : undefined;
+  const manager = groups?.first ?? (await open(connectionIdSets)).manager;
   const close = () => groups ? groups.close() : manager.disconnectAllServers();
 
   let prepared: PreparedEvalRun;

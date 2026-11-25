@@ -12,6 +12,7 @@ import {
   serverIdsForRefs,
   type AccountProblem,
   type RunsAsEntry,
+  type SuiteAccountsServer,
 } from "@/lib/evals/eval-accounts";
 import {
   buildSuiteHostRunPlans,
@@ -21,6 +22,8 @@ import type { EvalSuite } from "../evals/types";
 
 /** The account half of the Set up run preflight. Each field is absent until there is something to say. */
 export type AccountPreflight = {
+  sharedServers?: SuiteAccountsServer[];
+  sharedServerName?: (serverId: string) => string;
   /** Chosen accounts the launch would refuse: removed, or needing reconnect. */
   accountProblems?: AccountProblem[];
   /** The accounts the run will use for the person, on servers they choose for. */
@@ -28,7 +31,7 @@ export type AccountPreflight = {
   /** Both, for only the servers these refs (ids or names) name. */
   accountsFor?: (
     refs: readonly string[],
-  ) => Pick<AccountPreflight, "accountProblems" | "runsAs">;
+  ) => Pick<AccountPreflight, "accountProblems" | "runsAs" | "sharedServers" | "sharedServerName">;
 };
 
 /**
@@ -53,9 +56,11 @@ export function useSuiteAccountPreflight({
     serverRefs?: readonly string[];
   };
 }): AccountPreflight {
+  const plannedRefs = planned &&
+    (planned.serverRefs ?? environmentServerRefs(suite, planned.environmentIds));
   const serverIds = useMemo(
-    () => serverIdsForRefs(getEffectiveSuiteServers(suite), projectServers),
-    [suite, projectServers],
+    () => serverIdsForRefs(plannedRefs ?? getEffectiveSuiteServers(suite), projectServers),
+    [suite, plannedRefs, projectServers],
   );
   const { view } = useSuiteAccountsView({ suiteId: suite._id, serverIds });
   if (!view) return {};
@@ -64,18 +69,16 @@ export function useSuiteAccountPreflight({
     const ids = new Set(serverIdsForRefs(refs, projectServers));
     const kept = {
       ...view,
-      servers: view.servers.filter((s) => ids.has(s.serverId)),
+      servers: view.servers.filter((s) => ids.has(s.serverId) && s.mode !== "shared"),
     };
     const accountProblems = chosenAccountProblems(kept, serverName);
     return {
       ...(accountProblems.length ? { accountProblems } : {}),
       runsAs: runsAsEntries(kept, serverName),
+      sharedServers: view.servers.filter((s) => ids.has(s.serverId) && s.mode === "shared"),
+      sharedServerName: serverName,
     };
   };
-  const plannedRefs =
-    planned &&
-    (planned.serverRefs ??
-      environmentServerRefs(suite, planned.environmentIds));
   return { ...accountsFor(plannedRefs ?? serverIds), accountsFor };
 }
 
@@ -118,8 +121,7 @@ export function scopeAccountPreflight<T extends AccountPreflight>(
           .flatMap((plan) => plan.serverIds)
       : undefined;
   if (!refs || !preflight.accountsFor) return preflight;
-  const { accountProblems, runsAs } = preflight.accountsFor(refs);
-  return { ...preflight, accountProblems, runsAs };
+  return { ...preflight, accountProblems: undefined, ...preflight.accountsFor(refs) };
 }
 
 /**

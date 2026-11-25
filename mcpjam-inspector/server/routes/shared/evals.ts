@@ -333,6 +333,10 @@ export const passCriteriaSchema = z
 export const RunEvalsRequestSchema = z.object({
   projectId: z.string().optional(),
   suiteId: z.string().optional(),
+  runAccounts: z.array(z.object({
+    serverId: z.string().min(1),
+    connectionId: z.string().min(1),
+  }).strict()).min(1).max(32).optional(),
   suiteName: z.string().optional(),
   suiteDescription: z.string().optional(),
   toolPolicy: evalSuiteFileToolPolicySchema.optional(),
@@ -3084,7 +3088,7 @@ export async function prepareEvalRun(
     namedHostId,
   );
 
-  const replayConfigsToStore = filterAndRemapReplayConfigs(
+  const replayConfigsToStore = data.evalAccounts ? [] : filterAndRemapReplayConfigs(
     clientManager.getServerReplayConfigs(),
     resolvedServerIds,
     persistedServerRefs,

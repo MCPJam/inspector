@@ -103,10 +103,13 @@ describe("per-case eval accounts", () => {
       ));
       return manager;
     });
-    const groups = await openEvalAccountGroups(plan, open);
+    const groups = await openEvalAccountGroups(plan, open, {
+      billing: ["legacy"],
+      asana: ["personal"],
+    });
     expect(open.mock.calls).toEqual([
-      [{ billing: ["auditor"], crm: ["support"] }],
-      [{ billing: ["admin"], crm: ["support"] }],
+      [{ billing: ["auditor"], crm: ["support"], asana: ["personal"] }],
+      [{ billing: ["admin"], crm: ["support"], asana: ["personal"] }],
     ]);
     expect(groups.forCase("inherits")).not.toBe(groups.forCase("pinned"));
     expect(() => groups.forCase("unknown")).toThrow(/missing from the authorized account plan/i);

@@ -8,7 +8,7 @@ import { sourceRevision } from "./jamroom-source.mjs";
 
 const [envPath, fixturePath] = process.argv.slice(2);
 if (!envPath || !fixturePath) {
-  throw new Error("Pass a Jamroom agent env file and a JSON fixture with suite, case, server, and account IDs.");
+  throw new Error("Pass a Jamroom agent env file and a JSON fixture with suite, case, server, account IDs, and expected whoami identities.");
 }
 const env = parseEnv(readFileSync(envPath, "utf8"));
 const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
@@ -34,6 +34,10 @@ for (const value of [
   fixture.billingServerId, fixture.crmServerId, fixture.viewerAccountId,
   fixture.auditorAccountId, fixture.adminAccountId, fixture.supportAccountId,
 ]) assert(/^[a-z0-9]+$/i.test(value ?? ""), "Invalid fixture ID.");
+const { viewerIdentity, auditorIdentity, adminIdentity, supportIdentity } = fixture;
+for (const value of [viewerIdentity, auditorIdentity, adminIdentity, supportIdentity]) {
+  assert(typeof value === "string" && value.length > 0, "Missing expected whoami identity.");
+}
 
 const path = "/projects/" + projectId;
 const suitePath = path + "/eval-suites/" + fixture.suiteId;
@@ -49,17 +53,17 @@ delete childEnv.MCPJAM_BASE_URL;
 async function request(route, method = "GET", body) {
   const response = await fetch(apiUrl + route, {
     method,
-    headers: { authorization: "Bearer " + apiKey, "content-type": "application/json" },
+    headers: { authorization: "Bearer " + apiKey, "content-type": "application/json", connection: "close" },
     body: body === undefined ? undefined : JSON.stringify(body),
     redirect: "error",
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(90_000),
   });
   assert(response.ok, method + " " + route + " returned HTTP " + response.status);
   return response.json();
 }
 
 function cliJson(args) {
-  const response = spawnSync(process.execPath, [cli, "--format", "json", ...args], {
+  const response = spawnSync(process.execPath, [cli, "--format", "json", "--timeout", "90000", ...args], {
     env: childEnv, encoding: "utf8", timeout: 120_000, maxBuffer: 8 * 1024 * 1024,
   });
   if (response.error) throw response.error;
@@ -99,34 +103,57 @@ async function check(label, runId, billing, selectedCases = cases) {
   const sorted = (rows) => rows.map((row) =>
     [row.testCaseId, row.serverId, row.accountId, row.source].join(":")).sort();
   assert.deepEqual(sorted(observed), sorted(expected), label);
+  const iterations = path + "/eval-runs/" + runId + "/iterations";
+  const { items } = await request(iterations);
+  assert.equal(items.length, selectedCases.length, label + " iteration count");
+  for (const item of items) {
+    const { items: steps } = await request(iterations + "/" + item.id + "/steps");
+    assert.deepEqual(steps.map(({ kind, status }) => [kind, status]), [
+      ["toolCall", "ok"], ["assert", "ok"],
+      ["toolCall", "ok"], ["assert", "ok"],
+    ], label + " pinned whoami assertions");
+  }
   return { surface: label, runId };
+}
+
+function setIdentityAssertions(caseId, billingIdentity) {
+  const call = (serverName, needle) => [
+    { id: serverName + "-whoami", kind: "toolCall", toolName: "whoami", serverName, arguments: {} },
+    { id: serverName + "-identity", kind: "assert", assertion: { type: "toolResultContains", toolName: "whoami", needle } },
+  ];
+  return request(suitePath + "/cases/" + caseId, "PATCH", {
+    steps: [...call("Billing", billingIdentity), ...call("CRM", supportIdentity)],
+  });
 }
 
 await request(suitePath, "PATCH", { accounts: [viewer, support] });
 await request(suitePath + "/cases/" + fixture.pinnedCaseId, "PATCH", { accounts: [admin] });
+await setIdentityAssertions(fixture.inheritedCaseId, auditorIdentity);
+await setIdentityAssertions(fixture.pinnedCaseId, adminIdentity);
 const results = [];
 const launch = (accounts) => request(path + "/eval-runs", "POST", {
   suiteId: fixture.suiteId,
   caseIds: cases,
-  serverIds: [viewer.serverId, support.serverId],
   idempotencyKey: randomUUID(),
   ...(accounts ? { accounts } : {}),
 });
-results.push(await check("REST", (await launch([auditor])).runId, auditor));
-const fromCli = cliJson([
-  "eval", "run", "--suite", fixture.suiteId, "--project", projectId,
-  "--account", auditor.serverId + "=" + auditor.accountId, "--api-url", apiUrl,
-]);
-results.push(await check("CLI suite", fromCli.runId, auditor));
 const fromMcp = mcpCall("run_eval_suite", {
   project: projectId, suite: fixture.suiteId, cases,
   accounts: [auditor], idempotencyKey: randomUUID(),
 });
-results.push(await check("MCP suite", fromMcp.runId, auditor));
 const single = mcpCall("run_eval_case", {
   project: projectId, suite: fixture.suiteId, case: fixture.pinnedCaseId,
   accounts: [auditor], idempotencyKey: randomUUID(),
 });
+const rest = await launch([auditor]);
+const fromCli = cliJson([
+  "cloud", "eval", "run", "--suite", fixture.suiteId, "--project", projectId,
+  "--account", auditor.serverId + "=" + auditor.accountId, "--api-url", apiUrl,
+]);
+results.push(await check("REST", rest.runId, auditor));
+results.push(await check("CLI suite", fromCli.runId, auditor));
+results.push(await check("MCP suite", fromMcp.runId, auditor));
 results.push(await check("MCP case", single.runId, auditor, [fixture.pinnedCaseId]));
+await setIdentityAssertions(fixture.inheritedCaseId, viewerIdentity);
 results.push(await check("REST saved choices after overrides", (await launch()).runId, viewer));
 console.log(JSON.stringify({ inspector: env.JAMROOM_INSPECTOR_COMMIT, results }));

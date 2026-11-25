@@ -20,11 +20,12 @@ import {
   checkedAccountIds,
   choosesAccounts,
   SET_SUITE_ACCOUNT_SELECTION_MUTATION,
+  type SharedEvalAccountSelection,
   type SuiteAccountsServer,
   type SuiteAccountsView,
 } from "@/lib/evals/eval-accounts";
 import { SuiteSettingsRow } from "./suite-settings-row";
-import type { EvalSuite } from "./types";
+import type { EvalCase, EvalSuite } from "./types";
 
 const setSuiteAccountSelection = makeFunctionReference<
   "mutation",
@@ -36,23 +37,26 @@ const setSuiteAccountSelection = makeFunctionReference<
 const SHARED_TAG = "Shared with the project";
 
 export const SUITE_ACCOUNTS_HINT =
-  "Each run uses the accounts of the person who starts it. A schedule uses its owner's accounts, and an API or CLI run uses the key owner's.";
+  "Set a default for each shared MCP server. A case can pin a different account.";
+
+type SharedDefaultsDraft = {
+  value: SharedEvalAccountSelection[] | undefined;
+  onChange: (value: SharedEvalAccountSelection[]) => void;
+  disabled: boolean;
+};
 
 /**
- * Suite settings → Accounts: which accounts this suite runs with for the
- * person, per server (their own, or on a shared server the project's), beside
- * the project's fixed connections and the accounts each schedule owner's runs
- * use.
- *
- * The choice belongs to the person, not the suite, so it is not part of the
- * settings draft: each checkbox saves right away, like "Where it runs".
+ * Shared server defaults participate in the settings draft. Personal server
+ * and web-client preferences still save to the person who owns them.
  */
 export function SuiteAccountsRow({
   suite,
   projectId,
+  sharedDefaults,
 }: {
   suite: EvalSuite;
   projectId?: string | null;
+  sharedDefaults?: SharedDefaultsDraft;
 }) {
   const enabled = useEvalAccountSelectionEnabled();
   // Web accounts follow their own flag alone, with or without server accounts.
@@ -67,6 +71,7 @@ export function SuiteAccountsRow({
         suite={suite}
         projectId={project}
         webAccounts={webClients}
+        sharedDefaults={sharedDefaults}
       />
     );
   if (!webClients) return null;
@@ -92,10 +97,12 @@ function SuiteAccountsSection({
   suite,
   projectId,
   webAccounts,
+  sharedDefaults,
 }: {
   suite: EvalSuite;
   projectId: string;
   webAccounts: boolean;
+  sharedDefaults?: SharedDefaultsDraft;
 }) {
   const { view, error, loading, serverIds, serverName } = useSuiteAccounts(
     suite,
@@ -110,7 +117,7 @@ function SuiteAccountsSection({
     >
       {error ? (
         <p className="text-xs text-destructive">
-          Could not load your accounts. Reload the page to try again.
+          Could not load MCP server accounts. Reload the page to try again.
         </p>
       ) : loading ? (
         <p className="text-xs text-muted-foreground">Loading accounts…</p>
@@ -119,6 +126,7 @@ function SuiteAccountsSection({
           suiteId={suite._id}
           view={view}
           serverName={serverName}
+          sharedDefaults={sharedDefaults}
         />
       ) : (
         <p className="text-xs text-muted-foreground">
@@ -226,20 +234,32 @@ export function SuiteAccountGroups({
   suiteId,
   view,
   serverName,
+  sharedDefaults,
 }: {
   suiteId: string;
   view: SuiteAccountsView;
   serverName: (serverId: string) => string;
+  sharedDefaults?: SharedDefaultsDraft;
 }) {
   const save = useMutation(setSuiteAccountSelection);
   // A save in flight shows its result at once; the query then confirms it,
   // and a failure falls back to what the query says.
   const [pending, setPending] = useState<Record<string, string[]>>({});
-  // A shared server's project accounts are chosen per person like their own,
-  // so they sit with them rather than with the fixed connections.
-  const own = view.servers.filter(choosesAccounts);
+  const own = view.servers.filter((server) =>
+    sharedDefaults ? server.mode === "accounts" : choosesAccounts(server),
+  );
+  const shared = sharedDefaults
+    ? view.servers.filter((server) => server.mode === "shared")
+    : [];
   const project = view.servers.filter((server) => server.mode === "xaa");
-  if (!own.length && !project.length && !view.scheduleOwners.length) {
+  const personalServers = new Set(own.map((server) => server.serverId));
+  const scheduleOwners = view.scheduleOwners.flatMap((owner) => {
+    const servers = sharedDefaults
+      ? owner.servers.filter((server) => personalServers.has(server.serverId))
+      : owner.servers;
+    return servers.length ? [{ ...owner, servers }] : [];
+  });
+  if (!own.length && !shared.length && !project.length && !scheduleOwners.length) {
     return (
       <p className="text-xs text-muted-foreground">
         None of this suite's servers use an account.
@@ -269,6 +289,18 @@ export function SuiteAccountGroups({
 
   return (
     <div className="space-y-4">
+      {shared.length && sharedDefaults ? (
+        <AccountGroup testId="suite-accounts-shared" title="Shared MCP servers">
+          <SharedServerAccountRows
+            servers={shared}
+            serverName={serverName}
+            selections={sharedDefaults.value}
+            onChange={sharedDefaults.onChange}
+            disabled={sharedDefaults.disabled}
+            inheritLabel="Use project server default"
+          />
+        </AccountGroup>
+      ) : null}
       {own.length ? (
         <AccountGroup
           testId="suite-accounts-mine"
@@ -314,7 +346,7 @@ export function SuiteAccountGroups({
           ))}
         </AccountGroup>
       ) : null}
-      {view.scheduleOwners.map((owner, index) => (
+      {scheduleOwners.map((owner, index) => (
         <AccountGroup
           key={`${owner.name}:${index}`}
           testId="suite-accounts-schedule-owner"
@@ -336,6 +368,106 @@ export function SuiteAccountGroups({
       ))}
     </div>
   );
+}
+
+export function CaseServerAccounts({
+  suite,
+  projectId,
+  selections,
+  onChange,
+  disabled,
+}: {
+  suite: EvalSuite;
+  projectId?: string | null;
+  selections?: SharedEvalAccountSelection[];
+  onChange: (value: SharedEvalAccountSelection[]) => void;
+  disabled: boolean;
+}) {
+  const { view, serverName } = useSuiteAccounts(suite, projectId ?? suite.projectId);
+  const servers = view?.servers.filter((server) => server.mode === "shared");
+  if (!servers?.length) return null;
+  return (
+    <details className="mx-4 my-2 shrink-0 text-xs sm:mx-6">
+      <summary className="cursor-pointer">MCP server accounts</summary>
+      <div className="mt-2">
+        <AccountGroup testId="case-accounts-shared" title="Case account overrides">
+          <SharedServerAccountRows
+            servers={servers}
+            serverName={serverName}
+            selections={selections}
+            onChange={onChange}
+            disabled={disabled}
+            inheritLabel="Inherit run account"
+          />
+        </AccountGroup>
+      </div>
+    </details>
+  );
+}
+
+export function SharedServerAccountRows({
+  servers,
+  serverName,
+  selections,
+  onChange,
+  disabled,
+  inheritLabel,
+  suiteDefaults,
+  cases,
+}: {
+  servers: SuiteAccountsServer[];
+  serverName: (serverId: string) => string;
+  selections?: SharedEvalAccountSelection[];
+  onChange: (value: SharedEvalAccountSelection[]) => void;
+  disabled: boolean;
+  inheritLabel: string;
+  suiteDefaults?: SharedEvalAccountSelection[];
+  cases?: readonly EvalCase[];
+}) {
+  return servers.map((server) => {
+    const { serverId, accounts } = server;
+    const name = serverName(serverId);
+    const selected = selections?.find((entry) => entry.serverId === serverId)?.connectionId ?? "";
+    const labelFor = (connectionId: string) =>
+      accounts.find((account) => account.connectionId === connectionId)?.name ?? "Account unavailable";
+    const suiteAccount = suiteDefaults?.find((entry) => entry.serverId === serverId)?.connectionId;
+    const casePins = cases?.flatMap((test) => {
+      const pin = test.accounts?.find((entry) => entry.serverId === serverId);
+      return pin ? [{ caseId: test._id, title: test.title, name: labelFor(pin.connectionId) }] : [];
+    });
+    return (
+      <AccountServerRow key={serverId} name={name}>
+        <select
+          aria-label={`${name} account`}
+          className="max-w-full rounded-md border border-input bg-background px-2 py-1 text-xs"
+          disabled={disabled}
+          value={selected}
+          onChange={(event) => {
+            const remaining = (selections ?? []).filter((entry) => entry.serverId !== serverId);
+            const connectionId = event.target.value;
+            onChange(connectionId ? [...remaining, { serverId, connectionId }] : remaining);
+          }}
+        >
+          <option value="">{suiteAccount ? `Suite default · ${labelFor(suiteAccount)}` : inheritLabel}</option>
+          {selected && !accounts.some((account) => account.connectionId === selected) ? (
+            <option value={selected} disabled>Account unavailable</option>
+          ) : null}
+          {accounts.map((account) => (
+            <option key={account.connectionId} value={account.connectionId} disabled={account.needsReauth}>
+              {account.needsReauth ? `${account.name} (needs reconnect)` : account.name}
+            </option>
+          ))}
+        </select>
+        {casePins?.length ? (
+          <ul className="mt-1.5 space-y-1 text-xs text-muted-foreground">
+            {casePins.map((pin) => (
+              <li key={pin.caseId}>{pin.title || "Untitled case"} · {pin.name} · case override</li>
+            ))}
+          </ul>
+        ) : null}
+      </AccountServerRow>
+    );
+  });
 }
 
 function AccountChoices({
@@ -482,7 +614,7 @@ export function NeedsReconnectTag({
   );
 }
 
-function AccountGroup({
+export function AccountGroup({
   testId,
   title,
   tag,
@@ -494,7 +626,7 @@ function AccountGroup({
   testId: string;
   title: string;
   tag?: string;
-  description: string;
+  description?: string;
   footer?: string;
   /** What each row names. */
   column?: string;
@@ -518,7 +650,7 @@ function AccountGroup({
             </Badge>
           ) : null}
         </h4>
-        <p className="text-xs text-muted-foreground">{description}</p>
+        {description ? <p className="text-xs text-muted-foreground">{description}</p> : null}
       </div>
       <table className="w-full table-fixed border-collapse text-left text-sm">
         <thead className="text-xs text-muted-foreground">

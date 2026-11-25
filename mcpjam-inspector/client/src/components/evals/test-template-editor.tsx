@@ -12,10 +12,12 @@ import {
   useEvalToolMetadata,
 } from "@/lib/mcpjam-agent/eval-tool-metadata";
 import { DEFAULTS, EVAL_DESTRUCTIVE_BUTTON_CLASS } from "./constants";
+import { CaseServerAccounts } from "./suite-accounts-row";
 import {
   advancedConfigForUpdate,
   buildCaseSavePayload,
   buildDraftTestCase,
+  caseAccountsChanged,
   normalizeAdvancedConfig,
   useCaseSaveMutations,
   type CaseSaveForm,
@@ -2018,6 +2020,7 @@ export function TestTemplateEditor({
   const simpleToolsBlock =
     workspaceToolsQuestion === "unset" ? UNSET_TOOLS_BLOCK_REASON : null;
 
+  const accountOverridesChanged = caseAccountsChanged(editForm, currentTestCase);
   const hasUnsavedChanges = useMemo(() => {
     if (!editForm || !currentTestCase) return false;
 
@@ -2078,6 +2081,7 @@ export function TestTemplateEditor({
 
     return (
       editForm.title !== currentTestCase.title ||
+      accountOverridesChanged ||
       editForm.runs !== currentTestCase.runs ||
       normalizedScenario !== normalizedCurrentScenario ||
       normalizedSteps !== normalizedCurrentSteps ||
@@ -2094,6 +2098,7 @@ export function TestTemplateEditor({
     currentAdvancedConfig,
     currentSteps,
     currentTestCase,
+    accountOverridesChanged,
     useWorkspace,
     workspaceIsNegative,
   ]);
@@ -2767,6 +2772,7 @@ export function TestTemplateEditor({
       await updateTestCaseMutation({
         testCaseId: currentTestCase._id,
         ...savePayload,
+        ...(accountOverridesChanged ? { accounts: editForm.accounts } : {}),
         // Pass `null` (not undefined) so the mutation knows to clear a
         // previously-persisted case-level override when the user resets it.
         matchOptions: savePayload.matchOptions ?? null,
@@ -4297,6 +4303,15 @@ export function TestTemplateEditor({
   // (see `casePinnedOnly` below).
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+      {suite && editForm && !isDraft && !checksPage ? (
+        <CaseServerAccounts
+          suite={suite}
+          projectId={projectId}
+          selections={editForm.accounts ?? currentTestCase?.accounts}
+          disabled={readOnly}
+          onChange={(accounts) => setEditForm((current) => current ? { ...current, accounts } : current)}
+        />
+      ) : null}
       {simpleCaseEditorEnabled && editForm && evalAgent.change && (
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-2 text-xs">
           <span className="text-muted-foreground" aria-live="polite">
@@ -4653,7 +4668,7 @@ export function TestTemplateEditor({
                         environments: projectEnvironmentViews,
                         hostNamesById,
                       })}
-                      cases={[currentTestCase]}
+                      cases={[editForm?.accounts === undefined ? currentTestCase : { ...currentTestCase, accounts: editForm.accounts }]}
                       caseTitle={editForm?.title || currentTestCase.title}
                       initialIterations={
                         editForm?.runs ?? DEFAULTS.RUNS_PER_TEST

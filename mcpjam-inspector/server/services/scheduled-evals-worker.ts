@@ -202,7 +202,8 @@ export async function executeClaimedRun(
     suiteId: claimed.suiteId,
     suiteName: claimed.suiteName,
   };
-  if (!claimed.projectId) {
+  const { projectId, environmentId } = claimed;
+  if (!projectId) {
     await reportComplete({
       triggerId: claimed.triggerId,
       ok: false,
@@ -232,14 +233,14 @@ export async function executeClaimedRun(
       serverIds: string[];
       serverNames: string[];
       resolvedEnvironment?: ResolvedEnvironmentForLaunch;
-    } = claimed.environmentId
+    } = environmentId
       ? await (async () => {
           const resolved = await resolveEnvironmentForLaunch(
             convex,
             {
               serverSource: EVAL_LAUNCH_SERVER_SOURCE,
-              projectId: claimed.projectId!,
-              environmentId: claimed.environmentId!,
+              projectId,
+              environmentId,
             },
           );
           return {
@@ -281,7 +282,7 @@ export async function executeClaimedRun(
     const open = (connectionIdSets?: ConnectionIdSets) => createAuthorizedManager(
       {},
       bearer,
-      claimed.projectId,
+      projectId,
       selection.serverIds,
       WEB_CALL_TIMEOUT_MS,
       undefined,
@@ -294,13 +295,15 @@ export async function executeClaimedRun(
         xaaPolicy: xaaPolicyFromMcpProfile(hostConfig.mcpProfile),
       },
     );
+    const connectionIdSets = await loadSuiteConnectionIdSets(convex, {
+      suiteId: claimed.suiteId,
+      serverIds: selection.serverIds,
+    });
     const groups = accountPlan
-      ? await openEvalAccountGroups(accountPlan, async (sets) => (await open(sets)).manager)
+      ? await openEvalAccountGroups(accountPlan, async (sets) => (await open(sets)).manager, connectionIdSets)
       : undefined;
     closeAccounts = groups?.close;
-    manager = groups?.first ?? (await open(await loadSuiteConnectionIdSets(convex, {
-      suiteId: claimed.suiteId,
-    }))).manager;
+    manager = groups?.first ?? (await open(connectionIdSets)).manager;
 
     let prepared: PreparedEvalRun;
     try {

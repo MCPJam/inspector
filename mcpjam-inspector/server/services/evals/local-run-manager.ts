@@ -47,6 +47,7 @@ import {
   loadSuiteConnectionIdSets,
   openEvalAccountGroups,
   type EvalAccountPlan,
+  type EvalAccountSelection,
 } from "./suite-account-choices.js";
 import type { ConnectionIdSets } from "../../utils/oauth-account-sets.js";
 
@@ -78,6 +79,7 @@ export type LocalEvalRun = {
     resolvedEnvironment?: ResolvedEnvironmentForLaunch;
     evalAccounts?: {
       plan: EvalAccountPlan;
+      requested?: EvalAccountSelection[];
       managerForCase: (caseId: string | undefined) => MCPClientManager;
     };
   };
@@ -266,6 +268,7 @@ export async function openLocalEvalRun(
     /** A quick run names only its case. */
     testCaseId?: string;
     caseIds?: string[];
+    runAccounts?: EvalAccountSelection[];
     serverIds?: string[];
     storageServerIds?: string[];
     environmentId?: string;
@@ -362,8 +365,15 @@ export async function openLocalEvalRun(
     suiteId,
     serverIds: servers.serverIds,
     ...(caseIds?.length ? { caseIds } : {}),
+    ...(target.runAccounts ? { runAccounts: target.runAccounts } : {}),
   }) : null;
-  const groups = plan ? await openEvalAccountGroups(plan, open) : undefined;
+  if (target.runAccounts && !plan) {
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "Run account choices require a saved suite and connected MCP servers.");
+  }
+  const scopedChoices = connectionIdSets && Object.fromEntries(
+    Object.entries(connectionIdSets).filter(([serverId]) => servers.serverIds.includes(serverId)),
+  );
+  const groups = plan ? await openEvalAccountGroups(plan, open, scopedChoices) : undefined;
   const manager = groups?.first ?? await open(connectionIdSets);
   return {
     manager,
@@ -376,7 +386,7 @@ export async function openLocalEvalRun(
           storageServerIds: target.storageServerIds ?? servers.refs,
         }),
       ...(plan && groups ? {
-        evalAccounts: { plan, managerForCase: groups.forCase },
+        evalAccounts: { plan, requested: target.runAccounts, managerForCase: groups.forCase },
       } : {}),
     },
     close: () =>

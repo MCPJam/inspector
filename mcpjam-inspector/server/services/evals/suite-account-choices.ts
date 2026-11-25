@@ -63,6 +63,7 @@ export async function loadEvalRunAccountPlan(
 export async function openEvalAccountGroups(
   plan: EvalAccountPlan,
   open: (connectionIdSets: ConnectionIdSets) => Promise<MCPClientManager>,
+  savedPersonalAccounts?: ConnectionIdSets,
 ) {
   const caseSets = new Map<string, Map<string, string>>();
   for (const { testCaseId, serverId, connectionId } of plan) {
@@ -83,9 +84,12 @@ export async function openEvalAccountGroups(
         if (groups.size >= 8) {
           throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "Choose at most eight account combinations per run.");
         }
-        manager = await open(Object.fromEntries(
-          [...servers].map(([serverId, accountId]) => [serverId, [accountId]]),
-        ));
+        manager = await open({
+          ...savedPersonalAccounts,
+          ...Object.fromEntries(
+            [...servers].map(([serverId, accountId]) => [serverId, [accountId]]),
+          ),
+        });
         groups.set(key, manager);
         const connected = new Map(managerAccountsAtRun(manager).map(
           (entry) => [entry.serverId, entry.connectionIds],
@@ -135,7 +139,11 @@ export async function loadSuiteConnectionIdSets(
   const named = (value: unknown) =>
     typeof value === "string" && value ? value : undefined;
   const testCaseId = named(target.testCaseId);
+  const serverIds = Array.isArray(target.serverIds)
+    ? target.serverIds.filter((id): id is string => typeof id === "string")
+    : undefined;
   let rows: Array<{ serverId: string; connectionIds: string[] }>;
+  let plan: EvalAccountPlan | null = null;
   try {
     // A quick run names only its case; the case's suite holds the choice.
     const suiteId =
@@ -144,30 +152,29 @@ export async function loadSuiteConnectionIdSets(
         ? named((await convex.query(getTestCase, { testCaseId }))?.testSuiteId)
         : undefined);
     if (!suiteId) return undefined;
-    if (testCaseId && Array.isArray(target.serverIds)) {
-      const plan = await loadEvalRunAccountPlan(convex, {
+    if (testCaseId && serverIds?.length) {
+      plan = await loadEvalRunAccountPlan(convex, {
         suiteId,
         caseIds: [testCaseId],
-        serverIds: target.serverIds.filter((id): id is string => typeof id === "string"),
+        serverIds,
       });
-      if (plan) return Object.fromEntries(plan.map(
-        ({ serverId, connectionId }) => [serverId, [connectionId]],
-      ));
     }
     rows = await convex.query(getMySuiteAccountChoices, { suiteId });
   } catch (error) {
-    if (/Could not find public function/i.test(String(error))) return undefined;
+    if (!plan && /Could not find public function.*getMySuiteAccountChoices/i.test(String(error))) {
+      return undefined;
+    }
     throw new WebRouteError(
       503,
       ErrorCode.INTERNAL_ERROR,
       "MCPJam couldn't load the accounts chosen for this suite, so the run didn't start. Try again in a few minutes.",
     );
   }
-  const sets = Object.fromEntries(
-    (Array.isArray(rows) ? rows : []).map((row) => [
-      row.serverId,
-      row.connectionIds,
-    ]),
-  );
+  const sets = Object.fromEntries([
+    ...(Array.isArray(rows) ? rows : [])
+      .filter((row) => !serverIds || serverIds.includes(row.serverId))
+      .map((row) => [row.serverId, row.connectionIds] as const),
+    ...(plan ?? []).map(({ serverId, connectionId }) => [serverId, [connectionId]] as const),
+  ]);
   return Object.keys(sets).length ? sets : undefined;
 }

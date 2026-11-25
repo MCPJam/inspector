@@ -10,6 +10,8 @@ export type SuiteAccount = {
   needsReauth: boolean;
 };
 
+export type SharedEvalAccountSelection = { serverId: string; connectionId: string };
+
 /**
  * `accounts`: the person's own accounts, one or more of which they choose.
  * `shared`: the project's accounts on a server shared with the project, which

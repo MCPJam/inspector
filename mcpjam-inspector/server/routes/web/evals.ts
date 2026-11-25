@@ -243,15 +243,23 @@ evals.post("/run", async (c) =>
               suiteId: parsed.suiteId,
               serverIds: parsed.serverIds,
               ...(parsed.caseIds?.length ? { caseIds: parsed.caseIds } : {}),
+              ...(parsed.runAccounts ? { runAccounts: parsed.runAccounts } : {}),
             },
           )
         : null;
+      if (parsed.runAccounts && !plan) {
+        throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "Run account choices require a saved suite and connected MCP servers.");
+      }
+      const personalAccounts = plan ? await loadSuiteConnectionIdSets(
+        createConvexClient(await getConvexBearerForRequest(c)),
+        { suiteId: parsed.suiteId, serverIds: parsed.serverIds },
+      ) : undefined;
       let connection: Awaited<ReturnType<typeof open>> | undefined;
       const groups = plan ? await openEvalAccountGroups(plan, async (sets) => {
         const current = await open(sets);
         connection ??= current;
         return current.manager;
-      }) : undefined;
+      }, personalAccounts) : undefined;
       const { manager, body, convexAuthToken } = connection ?? await open();
       const close = () => groups ? groups.close() : manager.disconnectAllServers();
       let prepared: PreparedEvalRun;
@@ -260,7 +268,7 @@ evals.post("/run", async (c) =>
         prepared = await prepareEvalRun(manager, {
           ...body,
           ...(groups && plan ? {
-            evalAccounts: { plan, managerForCase: groups.forCase },
+            evalAccounts: { plan, requested: parsed.runAccounts, managerForCase: groups.forCase },
           } : {}),
           ...((await anyUnattendedLocalHarness(c.req.header("authorization"), typeof rawBody.projectId === "string" ? rawBody.projectId : undefined)) ? { runtimeVenue: "local" as const } : {}),
           convexAuthToken,

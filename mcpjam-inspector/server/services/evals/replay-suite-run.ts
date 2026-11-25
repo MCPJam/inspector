@@ -39,6 +39,7 @@ import {
   type BuiltPinnedSkillSource,
 } from "./pinned-skill-source.js";
 import type { RunPinnedPluginVersion } from "./run-plugin-snapshot.js";
+import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 
 export type ExecuteSuiteReplayFromRunParams = {
   convexClient: ConvexHttpClient;
@@ -112,6 +113,14 @@ export async function prepareSuiteReplayFromRun(
     "testSuites:getRunReplayMetadata" as any,
     { runId: sourceRunId },
   );
+
+  if (replayMetadata?.hasPerCaseAccounts) {
+    throw new WebRouteError(
+      409,
+      ErrorCode.VALIDATION_ERROR,
+      "This run used per-case MCP accounts. Start a new run to select its accounts.",
+    );
+  }
 
   if (!replayMetadata?.hasServerReplayConfig) {
     throw new Error("This run does not have stored replay config");

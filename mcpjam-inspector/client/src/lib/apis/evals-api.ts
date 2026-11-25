@@ -58,6 +58,7 @@ type ToolListResponse = {
 type RunEvalsRequest = EvalRequestWithServers & {
   idempotencyKey?: string;
   suiteId?: string;
+  runAccounts?: import("@/lib/evals/eval-accounts").SharedEvalAccountSelection[];
   suiteName?: string;
   suiteDescription?: string;
   tests: Array<Record<string, unknown>>;
