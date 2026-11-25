@@ -4178,7 +4178,7 @@ export function PlaygroundMain({
     branchFromThread,
     detachForBranch: () => {
       resumedThreadSendBaselineRef.current = null;
-      cancelPendingHistorySelection();
+      cancelPendingHistorySelection({ stay: true });
       syncResumedVersion(null);
       pendingRestoredModelRef.current = null;
       clearConversationUrlRef.current();
@@ -4209,12 +4209,15 @@ export function PlaygroundMain({
     (message: Parameters<typeof sendMessage>[0]) => {
       if (!sendInColumn) return sendMessage(message);
       const context = message.widgetModelContext ?? [];
+      // Callers just checked the thread, which the branch leaves on purpose.
+      const { left } = beginThreadSend();
       return sendInColumn({
         ...message,
+        isCurrent: () => !left() && !conversationSendBlockedRef.current,
         onDispatchRefused: () => restoreModelContext(context),
       });
     },
-    [sendInColumn, restoreModelContext, sendMessage],
+    [sendInColumn, restoreModelContext, sendMessage, beginThreadSend],
   );
   const recoveryReads = useRecoveryColumnReads(comparisonRecovery);
   // What a compare column needs to restore its chat and to save its place.

@@ -4227,6 +4227,58 @@ describe("PlaygroundMain", () => {
       );
     });
 
+    it("keeps a send that branches the column current past the branch's own detach, until New chat", async () => {
+      await openColumnAlone();
+      let branched: { isCurrent?: () => boolean } | undefined;
+      // What `forkAndSend` does before it sends: the real detach, then a new
+      // chat.
+      vi.mocked(mockUseChatSession.branchFromThread).mockImplementation(
+        async (options: { onBeforeBranch?: () => void }) => {
+          options.onBeforeBranch?.();
+          mockUseChatSession.chatSessionId = "branch-session";
+          branched = options;
+          return { previousChatSessionId: "column-session" };
+        },
+      );
+      // The pre-send read finds the open chat (the mock keeps its id).
+      mockGetChatHistoryState.mockResolvedValueOnce({
+        ok: true,
+        session: { ...column, chatSessionId: "chat-session-1" },
+      });
+      try {
+        fireEvent.change(screen.getByTestId("chat-input-field"), {
+          target: { value: "next message" },
+        });
+        await act(async () => {
+          fireEvent.submit(screen.getByTestId("chat-input"));
+        });
+        await waitFor(() => {
+          expect(mockUseChatSession.branchFromThread).toHaveBeenCalledTimes(1);
+        });
+        expect(branched?.isCurrent?.()).toBe(true);
+
+        // The study and view-only block still apply to the branch's send.
+        act(() =>
+          useActiveChatSessionStore
+            .getState()
+            .setRestoredSession({ sessionId: "branch-session", origin: "api" }),
+        );
+        expect(branched?.isCurrent?.()).toBe(false);
+        act(() =>
+          useActiveChatSessionStore.setState({ restoredSession: null }),
+        );
+        expect(branched?.isCurrent?.()).toBe(true);
+
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await act(async () => {
+          void bridge?.onNewChat();
+        });
+        expect(branched?.isCurrent?.()).toBe(false);
+      } finally {
+        mockUseChatSession.chatSessionId = "chat-session-1";
+      }
+    });
+
     it("keeps the column open alone when the edit is refused", async () => {
       // Refused before any branch is minted: `onBeforeBranch` never runs.
       mockUseChatSession.rewindToMessage = vi.fn().mockResolvedValue(null);
