@@ -30,8 +30,8 @@ const PRESENTATION: Record<ShownKind, { Icon: LucideIcon; label: string }> = {
     Icon: MessageSquareQuote,
     label: "Prompt example (assistant)",
   },
-  // An MCP event a trigger ran on. Its data is untrusted and shown only as
-  // the plain text the model read.
+  // An MCP event a trigger or a Playground event connection ran on. Its data
+  // is untrusted and shown only as the plain text the model read.
   event: { Icon: Radio, label: "Event" },
 };
 
