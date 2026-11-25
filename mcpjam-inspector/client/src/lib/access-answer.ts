@@ -1,9 +1,7 @@
 /**
  * What `/api/session-token` answered. Only a body that starts with `{` is
- * parsed: a proxy's error page or another program on the port must not raise
- * a SyntaxError of its own. PLB-523's production report included one that
- * `.catch` had already handled; how it was captured was not reproduced, so the
- * error is never created at all.
+ * parsed, so a proxy's error page or another program on the port never creates
+ * a SyntaxError.
  */
 export interface AccessAnswer {
   ok: boolean;

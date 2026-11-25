@@ -247,7 +247,7 @@ describe("session-token module", () => {
       expect(await sessionToken.initializeSessionToken()).toBe(token);
       expect(fetch).toHaveBeenCalledTimes(1);
     });
-    // PLB-523: something other than the Inspector (a proxy's error page,
+    // Something other than the Inspector (a proxy's error page,
     // another program on the port) can answer this request.
     const htmlPage =
       "<!doctype html><html><body><h1>502 Bad Gateway</h1></body></html>";

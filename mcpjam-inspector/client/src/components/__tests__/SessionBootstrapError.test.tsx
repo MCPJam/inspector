@@ -58,7 +58,7 @@ describe("resolveBootstrapErrorScreen", () => {
     expect(screen.getByText("MCPJam couldn't start")).toBeInTheDocument();
   });
 
-  it("non-Inspector answer: reports its status and content type (PLB-523)", () => {
+  it("non-Inspector answer: reports its status and content type", () => {
     const { report, extra } = resolveBootstrapErrorScreen(
       new SessionTokenError(502, { restarted: true, contentType: "text/html" }),
     );
