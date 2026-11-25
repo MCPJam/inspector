@@ -261,10 +261,8 @@ export function getCaniuseSupportLevel(
       field.id === "eventsDeliveryModes" ||
       // A catalog row reads `undefined` for an app or image value its probe
       // did not measure (see `untestedCatalogAppValue`), rather than the
-      // client style's default. The CSP subtype rows keep their own reading.
-      (field.id.startsWith("appsCap.") &&
-        !field.id.startsWith("appsCap.cspConnectDomains.") &&
-        !field.id.startsWith("appsCap.cspResourceDomains.")) ||
+      // client style's default. Missing resolved CSP subtypes are untested too.
+      field.id.startsWith("appsCap.") ||
       field.id.startsWith("modelVisibleMcpToolResults.") ||
       field.id.startsWith("mcpToolResultImageRendering")) &&
     field.read(config) === undefined
