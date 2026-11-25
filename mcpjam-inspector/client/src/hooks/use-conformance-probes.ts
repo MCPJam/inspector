@@ -21,6 +21,7 @@
  */
 import { useCallback, useRef, useState } from "react";
 import {
+  taskCheckUsesInput,
   MCP_LOG_LEVELS,
   MCP_TASKS_TOOL_CHECK_IDS,
   isTasksToolCheck,
@@ -191,7 +192,13 @@ export function useConformanceProbeStore(): {
 
 /** Only selected inputs can block Run, including a default used by at least one check. */
 export function taskProbePartIsSelected(part: string, probes: ConformanceProbes, selected?: readonly string[]): boolean {
-  if (part === "tasksProbe") return MCP_TASKS_TOOL_CHECK_IDS.some(id => (!selected || selected.includes(id)) && !probes.tasksOverrides?.[id]);
+  if (part === "tasksProbe" || part === "tasksProbe:answers") {
+    return MCP_TASKS_TOOL_CHECK_IDS.some(id =>
+      (!selected || selected.includes(id)) &&
+      !probes.tasksOverrides?.[id] &&
+      (part === "tasksProbe" || taskCheckUsesInput(id))
+    );
+  }
   const check = part.replace(/:answers$/, "");
   return !isTasksToolCheck(check) || !selected || selected.includes(check);
 }

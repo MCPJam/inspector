@@ -216,15 +216,25 @@ export class TaskOperations {
     taskId: string,
     task: Record<string, unknown>,
     /** Live rpc-log window, so the ack can be judged as it arrived. */
-    received: unknown[]
+    received: unknown[],
+    alreadyAnswered: Set<string>
   ): Promise<InputRequiredLeg> {
     const requested = isRecord(task.inputRequests)
       ? Object.keys(task.inputRequests)
       : [];
-    const responses = this.config.inputResponses;
+    const responses = Object.fromEntries(
+      Object.entries(this.config.inputResponses ?? {}).filter(
+        ([key]) => requested.includes(key) && !alreadyAnswered.has(key)
+      )
+    );
 
-    if (!responses || Object.keys(responses).length === 0) {
-      return { outcome: "no-responses-configured", requested };
+    if (Object.keys(responses).length === 0) {
+      return {
+        outcome: Object.keys(this.config.inputResponses ?? {}).length
+          ? "no-matching-responses"
+          : "no-responses-configured",
+        requested,
+      };
     }
 
     const answered = Object.keys(responses);
@@ -454,7 +464,10 @@ export class TaskOperations {
     serverId: string,
     wire: TasksWire,
     taskId: string,
-    options?: { stopOnInputRequired?: boolean }
+    options?: {
+      stopOnInputRequired?: boolean;
+      continueAfterInput?: (task: Record<string, unknown>) => Promise<boolean>;
+    }
   ): Promise<{
     task?: Record<string, unknown>;
     error?: unknown;
@@ -502,7 +515,9 @@ export class TaskOperations {
       ) {
         consecutiveInputRequired += 1;
         if (consecutiveInputRequired >= PARKED_INPUT_REQUIRED_POLLS) {
-          return { task: last, inputRequired: true };
+          if (!(await options.continueAfterInput?.(last)))
+            return { task: last, inputRequired: true };
+          consecutiveInputRequired = 0;
         }
       } else {
         consecutiveInputRequired = 0;
