@@ -2,7 +2,7 @@ import type {
   MCPClientCheckContext,
   MCPClientCheckDefinition,
 } from "../types.js";
-import { caughtErrorResult, couldNotRunResult, failedResult, passedResult } from "./helpers.js";
+import { caughtErrorResult, failedResult, passedResult } from "./helpers.js";
 
 function selectCompletionReference(ctx: Parameters<
   MCPClientCheckDefinition["run"]
@@ -242,26 +242,6 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
           this,
           Date.now() - startedAt,
           "Initialization info is unavailable after connecting to the server",
-        );
-      }
-
-      if (!ctx.handshakeReply) {
-        return couldNotRunResult(
-          this,
-          "The initial server/discover reply is unavailable",
-        );
-      }
-      const { resultType } = ctx.handshakeReply;
-      // Missing means complete. No extension we support adds a discovery result type.
-      if (
-        resultType !== undefined &&
-        resultType !== "complete" &&
-        resultType !== "input_required"
-      ) {
-        return failedResult(
-          this,
-          Date.now() - startedAt,
-          `Unrecognized resultType ${JSON.stringify(resultType)} in server/discover reply`,
         );
       }
 

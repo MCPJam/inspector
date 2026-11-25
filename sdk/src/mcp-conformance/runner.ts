@@ -1,3 +1,4 @@
+import { DiscoveryResultError } from "../discovery-result.js";
 import {
   buildOutcomeSummary,
   decideConformanceOutcome,
@@ -355,10 +356,6 @@ async function runClientChecks(
         }
 
         const initializationInfo = manager.getInitializationInfo(serverId);
-        // Later discover() calls replace the SDK's per-connection snapshot.
-        const handshakeReply = selectedCheckIds.has("modern-client-handshake")
-          ? manager.getClient(serverId)?.getDiscoverResult()
-          : undefined;
         const negotiatedProtocolVersion = initializationInfo?.protocolVersion;
         const effectiveConfig: NormalizedMCPConformanceConfig =
           config.protocolVersion === undefined &&
@@ -422,7 +419,6 @@ async function runClientChecks(
           serverId,
           config: effectiveConfig,
           initializationInfo,
-          handshakeReply,
           connectDurationMs,
           availableTools: surface.toolNames,
           availablePrompts: surface.promptNames,
@@ -460,6 +456,26 @@ async function runClientChecks(
 
   } catch (error) {
     config.signal?.throwIfAborted();
+    if (error instanceof DiscoveryResultError) {
+      const version = error.protocolVersion;
+      if (version && isKnownProtocolVersion(version)) {
+        config = { ...config, protocolVersion: version, era: eraForProtocolVersion(version) };
+      }
+      negotiationProbes.settle(config.era);
+      const handshake = selectedClientChecks.find(check => check.id === "modern-client-handshake");
+      return {
+        config,
+        readiness: [],
+        checks: selectedClientChecks.map(check => {
+          if (check === handshake) {
+            return failedResult(check, Date.now() - connectStartedAt, error.message);
+          }
+          return eraGate(check, config.era, config.protocolVersion) ??
+            (handshake ? blockedResult(check, handshake) : couldNotRunResult(check, error.message));
+        }),
+        connectFailedCheck: handshake && { id: handshake.id, title: handshake.title },
+      };
+    }
     // Refused for credentials on an Auto run: the connection that would have
     // negotiated the era never completed, so the era is UNKNOWN — not the
     // legacy default. Gating against that default would report the other
