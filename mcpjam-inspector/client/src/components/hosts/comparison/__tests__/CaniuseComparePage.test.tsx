@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
@@ -54,17 +55,23 @@ describe("CaniuseComparePage", () => {
     );
   });
 
-  it("shares the exact field query and hides verification for gated clients", () => {
+  it("copies the exact comparison on the first click and hides gated verification", async () => {
     const query = "toolResult.content.image";
+    const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, "writeText");
     render(
       <MemoryRouter initialEntries={[`/compare?hosts=preset:claude-code&q=${query}`]}>
         <CaniuseComparePage />
       </MemoryRouter>,
     );
     expect(screen.queryByRole("link", { name: /Verify Claude Code/ })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Share" }));
-    const input = screen.getByRole<HTMLInputElement>("textbox", { name: "Shareable link" });
-    expect(new URL(input.value).searchParams.get("q")).toBe(query);
+    await user.click(screen.getByRole("button", { name: "Share" }));
+    expect(await screen.findByText("Link copied")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const params = new URL(writeText.mock.calls[0][0]).searchParams;
+    expect(params.get("q")).toBe(query);
+    expect(params.get("hosts")).toBe("preset:claude-code");
+    writeText.mockRestore();
   });
 
   it("opens a pinned comparison, keeps adoption stable when clients change, and allows removing the last client", () => {

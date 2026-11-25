@@ -60,16 +60,16 @@ export function CaniuseClientPicker({
     >
       <div className="mb-5 flex items-stretch gap-2">
         {selected.length > 0 && (
-          <div className="flex min-w-0 flex-nowrap gap-2 overflow-x-auto rounded-md pb-1 pr-1">
+          <div className="flex min-w-0 flex-1 flex-nowrap gap-2 overflow-x-auto rounded-md">
             {selected.map((client) => (
               <div
                 key={client.hostId}
-                className="flex shrink-0 items-center rounded-lg border border-border bg-card text-card-foreground"
+                className="flex min-w-36 flex-1 shrink-0 items-center rounded-lg border border-border bg-card text-card-foreground"
               >
                 <Button
                   variant="ghost"
                   disabled={!available.length}
-                  className="h-auto justify-start gap-3 px-3 py-2 text-left"
+                  className="h-full min-w-0 flex-1 justify-start gap-2 px-2.5 py-2 text-left"
                   onClick={(event) => {
                     opener.current = event.currentTarget;
                     setPicker(client.hostId);
@@ -79,20 +79,20 @@ export function CaniuseClientPicker({
                   <img
                     src={clientLogo(client)}
                     alt=""
-                    className="size-7 rounded object-contain"
+                  className="size-7 shrink-0 rounded object-contain"
                   />
-                  <span>
-                    <span className="block">{client.hostName}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate">{client.hostName}</span>
                     <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">
                       {publicClientIdentity(client).surface}
                     </span>
                   </span>
-                  <ChevronDown className="size-3.5 text-muted-foreground" />
+                  <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
                 </Button>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="mr-1 size-7 text-muted-foreground"
+                  className="mr-1 size-8 shrink-0 text-muted-foreground"
                   aria-label={`Remove ${client.hostName}`}
                   onClick={() =>
                     onChange(ids.filter((id) => id !== client.hostId))
@@ -106,20 +106,19 @@ export function CaniuseClientPicker({
         )}
         <DialogTrigger asChild>
           <Button
-            variant="outline"
             disabled={!available.length}
             onClick={() => {
               opener.current = null;
               setPicker("add");
             }}
-            className="min-h-12 shrink-0 self-start"
+            className="h-auto min-h-12 shrink-0 px-2.5 sm:px-4"
           >
             <Plus className="size-4" /> Add client
           </Button>
         </DialogTrigger>
       </div>
       <DialogContent
-        className="dark caniuse-dialog gap-3 border-0 bg-card text-card-foreground"
+        className="dark caniuse-dialog caniuse-glow gap-3 border-0 bg-card text-card-foreground"
         aria-describedby={undefined}
         onCloseAutoFocus={(event) => {
           if (opener.current?.isConnected) {

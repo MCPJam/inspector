@@ -11,6 +11,25 @@
   font-family: "Caniuse Instrument Sans", var(--font-sans);
 }
 
+.caniuse-site[data-page="compare"] {
+  background-color: var(--caniuse-compare-background);
+}
+
+.caniuse-wrap {
+  width: min(1320px, calc(100% - clamp(32px, 6.1vw, 88px)));
+  margin-inline: auto;
+}
+
+.caniuse-hero {
+  font-size: clamp(2.15rem, 5.8vw, 4.25rem);
+  line-height: 1.13;
+  letter-spacing: -0.04em;
+}
+
+.caniuse-hero input::placeholder {
+  color: color-mix(in oklab, var(--muted-foreground) 72%, var(--primary));
+}
+
 .caniuse-nav-link {
   display: flex;
   align-items: center;
@@ -29,9 +48,9 @@
 
 .caniuse-glow {
   background-image: radial-gradient(
-    ellipse at 90% 0%,
-    color-mix(in oklab, var(--primary) 12%, transparent),
-    transparent 68%
+    ellipse at 16% 110%,
+    color-mix(in oklab, var(--primary) 18%, transparent),
+    transparent 72%
   );
 }
 
