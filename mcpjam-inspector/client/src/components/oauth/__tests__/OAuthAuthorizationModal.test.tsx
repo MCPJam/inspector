@@ -41,12 +41,12 @@ describe("OAuthAuthorizationModal", () => {
         open={true}
         onOpenChange={onOpenChange}
         authorizationUrl="https://auth.example.com/authorize"
-      />
+      />,
     );
 
     await waitFor(() => {
       expect(openExternal).toHaveBeenCalledWith(
-        "https://auth.example.com/authorize"
+        "https://auth.example.com/authorize",
       );
     });
     await waitFor(() => {
@@ -73,13 +73,13 @@ describe("OAuthAuthorizationModal", () => {
         open={true}
         onOpenChange={onOpenChange}
         authorizationUrl="https://auth.example.com/authorize"
-      />
+      />,
     );
 
     try {
       await waitFor(() => {
         expect(openExternal).toHaveBeenCalledWith(
-          "https://auth.example.com/authorize"
+          "https://auth.example.com/authorize",
         );
       });
       await waitFor(() => {
@@ -89,7 +89,7 @@ describe("OAuthAuthorizationModal", () => {
       expect(openSpy).toHaveBeenCalledWith(
         "https://auth.example.com/authorize",
         expect.stringMatching(/^oauth_authorization_/),
-        expect.any(String)
+        expect.any(String),
       );
       expect(consoleErrorSpy).toHaveBeenCalled();
       expect(onOpenChange).not.toHaveBeenCalled();
@@ -113,7 +113,7 @@ describe("OAuthAuthorizationModal", () => {
         open={true}
         onOpenChange={onOpenChange}
         authorizationUrl="https://auth.example.com/authorize"
-      />
+      />,
     );
 
     await waitFor(() => {
@@ -226,6 +226,91 @@ describe("OAuthAuthorizationModal callback hint", () => {
         code: undefined,
       }),
     );
+  });
+
+  // Mirrors OAuthFlowTab: Authorize sets `open`, or asks for a reopen while
+  // the modal is already open.
+  function AuthorizeHarness({
+    url = "https://auth.example.com/authorize?state=flow-state",
+  }) {
+    const [open, setOpen] = useState(false);
+    const [reopenRequest, setReopenRequest] = useState(0);
+    return (
+      <>
+        <button
+          onClick={() =>
+            open ? setReopenRequest((request) => request + 1) : setOpen(true)
+          }
+        >
+          Authorize
+        </button>
+        <span data-testid="open">{String(open)}</span>
+        <OAuthAuthorizationModal
+          open={open}
+          onOpenChange={setOpen}
+          authorizationUrl={url}
+          onCallback={onCallback}
+          reopenRequest={reopenRequest}
+        />
+      </>
+    );
+  }
+
+  function clickAuthorize(getByText: (text: string) => HTMLElement) {
+    act(() => {
+      getByText("Authorize").click();
+    });
+  }
+
+  it("reopens the popup when Authorize is clicked again while sign-in is pending", () => {
+    const { getByText } = render(<AuthorizeHarness />);
+    clickAuthorize(getByText);
+    expect(window.open).toHaveBeenCalledTimes(1);
+
+    // The user closed the popup, or COOP makes it read as closed.
+    popup.closed = true;
+    clickAuthorize(getByText);
+
+    expect(window.open).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(window.open).mock.calls[1][0]).toBe(
+      "https://auth.example.com/authorize?state=flow-state",
+    );
+    expect(readOAuthPopupMarker("flow-state")).not.toBeNull();
+    postCallback({ type: "OAUTH_CALLBACK", code: "code", state: "flow-state" });
+    expect(onCallback).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes at the deadline so Authorize starts a new sign-in", () => {
+    const { getByText, getByTestId } = render(<AuthorizeHarness />);
+    clickAuthorize(getByText);
+    popup.closed = true;
+
+    act(() => {
+      vi.advanceTimersByTime(OAUTH_POPUP_MARKER_TTL_MS);
+    });
+    expect(getByTestId("open").textContent).toBe("false");
+    expect(hint.showOAuthCallbackHint).toHaveBeenCalledWith("try again");
+
+    clickAuthorize(getByText);
+    expect(getByTestId("open").textContent).toBe("true");
+    expect(window.open).toHaveBeenCalledTimes(2);
+    postCallback({ type: "OAUTH_CALLBACK", code: "code", state: "flow-state" });
+    expect(onCallback).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores an answer with no state when the URL had none", () => {
+    render(
+      <OAuthAuthorizationModal
+        open
+        onOpenChange={() => {}}
+        authorizationUrl="https://auth.example.com/authorize"
+        onCallback={onCallback}
+      />,
+    );
+
+    postCallback({ type: "OAUTH_CALLBACK", code: "code" });
+
+    expect(onCallback).not.toHaveBeenCalled();
   });
 
   it("writes the state marker before the popup opens and deletes it once used", () => {
