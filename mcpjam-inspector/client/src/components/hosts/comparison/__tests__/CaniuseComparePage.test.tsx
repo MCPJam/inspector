@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { MemoryRouter } from "react-router";
@@ -109,5 +109,22 @@ describe("CaniuseComparePage", () => {
     expect(
       screen.getByRole("button", { name: "Add client" }),
     ).toBeInTheDocument();
+  });
+
+  it("keeps a removed client out when the search changes in the same update", () => {
+    render(
+      <MemoryRouter initialEntries={["/compare?hosts=preset:claude,preset:cursor"]}>
+        <CaniuseComparePage />
+      </MemoryRouter>,
+    );
+    const search = screen.getByRole("combobox", { name: "Search capabilities" });
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Remove Claude" }));
+      fireEvent.change(search, { target: { value: "Events" } });
+    });
+
+    expect(search).toHaveValue("Events");
+    expect(screen.queryByRole("button", { name: "Replace Claude" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Replace Cursor" })).toBeVisible();
   });
 });
