@@ -10,6 +10,7 @@ const mockState = vi.hoisted(() => ({
   getCachedGuestId: vi.fn(),
   getCachedGuestSession: vi.fn(),
   getOrCreateGuestSession: vi.fn(),
+  hasCachedGuestSession: vi.fn(),
   subscribeGuestSessionChanges: vi.fn(),
 }));
 
@@ -21,6 +22,7 @@ vi.mock("@/lib/guest-session", () => ({
   getCachedGuestId: mockState.getCachedGuestId,
   getCachedGuestSession: mockState.getCachedGuestSession,
   getOrCreateGuestSession: mockState.getOrCreateGuestSession,
+  hasCachedGuestSession: mockState.hasCachedGuestSession,
   subscribeGuestSessionChanges: mockState.subscribeGuestSessionChanges,
 }));
 
@@ -32,6 +34,10 @@ describe("useActorKey", () => {
     mockState.getCachedGuestId.mockReset();
     mockState.getCachedGuestId.mockImplementation(
       () => mockState.getCachedGuestSession()?.guestId ?? null,
+    );
+    mockState.hasCachedGuestSession.mockReset();
+    mockState.hasCachedGuestSession.mockImplementation(
+      () => mockState.getCachedGuestSession() !== null,
     );
     mockState.getOrCreateGuestSession.mockReset();
     mockState.getOrCreateGuestSession.mockResolvedValue(null);
@@ -143,6 +149,36 @@ describe("useActorKey", () => {
     act(() => notify());
 
     expect(result.current).toBe("guest_2");
+  });
+
+  // A configured guest authority may answer a renewal with a token and no
+  // guestId; keeping the old guest would scope the new token's state to it.
+  it("drops the guest when a replacement session has no guest id", async () => {
+    let notify = () => {};
+    mockState.subscribeGuestSessionChanges.mockImplementation(
+      (listener: () => void) => {
+        notify = listener;
+        return () => {};
+      },
+    );
+    mockState.getCachedGuestSession.mockReturnValue({
+      guestId: "guest_1",
+      token: "token_1",
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const { result } = renderHook(() => useActorKey());
+    expect(result.current).toBe("guest_1");
+
+    mockState.getCachedGuestSession.mockReturnValue({
+      token: "token_2",
+      expiresAt: Date.now() + 60_000,
+    });
+    act(() => notify());
+
+    await waitFor(() => {
+      expect(result.current).toBeNull();
+    });
   });
 });
 

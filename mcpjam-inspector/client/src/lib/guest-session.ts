@@ -544,6 +544,16 @@ export function getCachedGuestId(): string | null {
 }
 
 /**
+ * Whether the in-memory cache holds a session, inside the expiry buffer or
+ * not. It tells a cleared cache apart from a session cached without a
+ * `guestId`, which a configured guest authority may omit; for both,
+ * `getCachedGuestId()` returns null.
+ */
+export function hasCachedGuestSession(): boolean {
+  return cachedSession !== null;
+}
+
+/**
  * Look up an existing guest bearer token without creating a new guest.
  * Used by post-login flows (e.g. registry-star merge) so signing in does
  * not accidentally mint a brand-new guest just to merge nothing.

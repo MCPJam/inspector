@@ -4,6 +4,7 @@ import {
   getCachedGuestId,
   getCachedGuestSession,
   getOrCreateGuestSession,
+  hasCachedGuestSession,
   subscribeGuestSessionChanges,
 } from "@/lib/guest-session";
 import { shouldSkipGuestSession } from "@/lib/vanity-landing-hosts";
@@ -36,8 +37,11 @@ export function useActorKey(): string | null {
       // sign-out effect after this one drops the guest.
       // getCachedGuestId() skips the expiry buffer, so a rotation to another
       // guest is followed even when the browser clock runs ahead.
+      // A session cached without a guestId replaced the old guest's token,
+      // and nothing ties it to that guest, so the old guest is dropped instead
+      // of staying the key for its actor-scoped storage.
       const nextGuestId = getCachedGuestId();
-      if (nextGuestId) setGuestId(nextGuestId);
+      if (nextGuestId || hasCachedGuestSession()) setGuestId(nextGuestId);
     });
   }, []);
 
