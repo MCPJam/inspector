@@ -29,6 +29,7 @@ import { toast } from "@/lib/toast";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
+import { AccountCreatedToast } from "./components/sidebar/sidebar-guest-signup-prompt";
 import { TrialDecisionDialog } from "./components/billing/TrialDecisionDialog";
 import { AnnouncementQueueProvider } from "./components/announcement-slot";
 import { StdioCommandApprovalDialog } from "./components/connection/StdioCommandApprovalDialog";
@@ -2517,6 +2518,7 @@ export function EventsRoute() {
   const {
     selectedMCPConfig,
     appState,
+    activeProjectId,
     convexProjectId,
     activeHost,
     activeHostId,
@@ -2536,6 +2538,7 @@ export function EventsRoute() {
           appState.servers[appState.selectedServer]?.connectionStatus
         }
         projectId={convexProjectId ?? null}
+        localProjectId={activeProjectId ?? null}
         activeHostId={activeHostId ?? null}
         activeHost={activeHost ?? null}
       />
@@ -6888,6 +6891,7 @@ export default function App() {
             <DarkDefaultNudge enabled={announcementsEnabled} />
             <MCPJamLimitDialog />
             <PlanLimitDialog />
+            <AccountCreatedToast />
             <StdioCommandApprovalDialog />
             <LauncherProjectChoiceDialog />
             <UnavailableOrganizationDialog

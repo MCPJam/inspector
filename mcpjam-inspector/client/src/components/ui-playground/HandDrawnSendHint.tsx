@@ -1,7 +1,10 @@
+import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
 import { getScenarioHostFamily } from "@/lib/scenario-client-style";
 import { cn } from "@/lib/utils";
 
-const HINT_LABEL = "Try this prompt with Excalidraw and compare across clients";
+const EXCALIDRAW_HINT_LABEL =
+  "Try this prompt with Excalidraw and compare across clients";
+const HINT_LABEL = "Try this prompt and compare across clients";
 
 const hintFontStyle = {
   fontFamily: "'Caveat', cursive",
@@ -15,6 +18,8 @@ const ARROW_PATH_D =
 interface HandDrawnSendHintProps {
   hostStyle?: string;
   theme?: "light" | "dark";
+  /** The chat's server. Only the Excalidraw demo is named in the hint. */
+  serverName?: string;
 }
 
 /**
@@ -24,6 +29,7 @@ interface HandDrawnSendHintProps {
 export function HandDrawnSendHint({
   hostStyle,
   theme = "light",
+  serverName,
 }: HandDrawnSendHintProps) {
   const hostFamily = getScenarioHostFamily(hostStyle);
   const inkColor =
@@ -87,7 +93,9 @@ export function HandDrawnSendHint({
           )}
           style={hintFontStyle}
         >
-          {HINT_LABEL}
+          {serverName === EXCALIDRAW_SERVER_NAME
+            ? EXCALIDRAW_HINT_LABEL
+            : HINT_LABEL}
         </p>
       </div>
     </div>

@@ -148,7 +148,15 @@ describe("McpjamAgentThread refusal copy", () => {
   });
 
   it("explains oversized input and restores the rejected prompt for editing", () => {
-    sessionState.messages = [{ id: "rejected", role: "user", parts: [] }];
+    // The refused paste holds most of the estimate: dropping it leaves about
+    // 27,000 of 37,002 tokens, well under the 32,000 limit.
+    sessionState.messages = [
+      {
+        id: "rejected",
+        role: "user",
+        parts: [{ type: "text", text: "x".repeat(30000) }],
+      },
+    ];
     const body = {
       code: "guest_input_too_large",
       estimatedInputTokens: 37002,
