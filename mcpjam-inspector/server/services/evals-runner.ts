@@ -1,3 +1,4 @@
+import { serverRefusalText } from "../utils/listing-refusal.js";
 import { credentialFailureMessage } from "../routes/web/errors.js";
 import { assertNativeDiscovery } from "../utils/harness/native-discovery.js";
 import { mergeViewToolEvidence } from "./evals/view-tool-evidence.js";
@@ -1099,24 +1100,6 @@ class EvalSetupPhaseError extends WebRouteError {
     this.serverId = args.serverId;
     this.phase = args.phase;
   }
-}
-
-/** Longest refusal text a launch error carries; the run group's failure line is capped near 500. */
-const SERVER_REFUSAL_MAX_CHARS = 300;
-
-/**
- * What the server itself said when it answered a request with a JSON-RPC error
- * (a mock names the tool it edits that the real server lost). The MCP client
- * words such an answer "MCP error <code>: <text>", which a transport failure
- * never is, so only that shape is passed on and the rest keeps the generic
- * wording.
- */
-function serverRefusalText(error: unknown): string | undefined {
-  if (!(error instanceof Error)) return undefined;
-  const refused = /^MCP error -?\d+:\s*(.+)$/s.exec(error.message.trim());
-  const text = refused?.[1]?.trim();
-  if (!text) return undefined;
-  return text.length > SERVER_REFUSAL_MAX_CHARS ? `${text.slice(0, SERVER_REFUSAL_MAX_CHARS - 1)}…` : text;
 }
 
 function throwSetupPhaseError(args: {
