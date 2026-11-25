@@ -13,6 +13,7 @@ import {
   notApplicableResult,
   passedResult,
 } from "./helpers.js";
+import { planHandshakeFollowUp } from "./security-handshake.js";
 
 const LOCALHOST_SECURITY_CHECK_IDS = [
   "localhost-host-rebinding-rejected",
@@ -23,7 +24,24 @@ type RawHttpResponse = {
   statusCode: number;
   headers: IncomingHttpHeaders;
   body: unknown;
+  /** The response body, verbatim. Empty for a `statusOnly` request. */
+  bodyText: string;
 };
+
+interface RawSendOptions {
+  method: "POST" | "DELETE";
+  headers: Record<string, string>;
+  /** The JSON-RPC message to send. Left out for a request with no body. */
+  message?: unknown;
+  timeoutMs: number;
+  /**
+   * Settle on the status line and drop the connection without reading the
+   * body. For the requests that close the handshake, where only "did it
+   * arrive" matters: a server that answers a notification with a stream that
+   * never ends must not hold the check until its timeout.
+   */
+  statusOnly?: boolean;
+}
 
 // Exported so `tests/conformance-catalog.test.ts` can assert the browser-safe
 // catalog still matches these canonical strings.
@@ -76,27 +94,19 @@ function parseResponseBody(text: string): unknown {
   }
 }
 
-async function sendRequest(
+/**
+ * One hand-built request over `node:http`. `fetch` forbids setting `Host`,
+ * which the host-header probes have to forge, so everything these checks send
+ * goes through here.
+ */
+async function sendRaw(
   serverUrl: string,
-  headers: Record<string, string>,
-  timeoutMs: number,
-  protocolVersion: string,
+  options: RawSendOptions,
 ): Promise<RawHttpResponse> {
   const target = new URL(serverUrl);
   const requestImpl = target.protocol === "https:" ? httpsRequest : httpRequest;
-  const body = JSON.stringify({
-    jsonrpc: "2.0",
-    id: 1,
-    method: "initialize",
-    params: {
-      protocolVersion,
-      capabilities: {},
-      clientInfo: {
-        name: "mcpjam-sdk-conformance",
-        version: "1.0.0",
-      },
-    },
-  });
+  const body =
+    options.message === undefined ? undefined : JSON.stringify(options.message);
 
   return await new Promise<RawHttpResponse>((resolve, reject) => {
     const req = requestImpl(
@@ -105,36 +115,163 @@ async function sendRequest(
         hostname: target.hostname,
         port: target.port,
         path: `${target.pathname}${target.search}`,
-        method: "POST",
+        method: options.method,
         headers: {
-          "Content-Type": "application/json",
+          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
           Accept: "application/json, text/event-stream",
-          "Content-Length": String(Buffer.byteLength(body)),
-          ...headers,
+          ...(body === undefined
+            ? {}
+            : { "Content-Length": String(Buffer.byteLength(body)) }),
+          ...options.headers,
         },
       },
       (res) => {
+        if (options.statusOnly) {
+          resolve({
+            statusCode: res.statusCode ?? 0,
+            headers: res.headers,
+            body: undefined,
+            bodyText: "",
+          });
+          res.destroy();
+          return;
+        }
         const chunks: Buffer[] = [];
         res.on("data", (chunk) => {
           chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
         });
         res.on("end", () => {
+          const bodyText = Buffer.concat(chunks).toString("utf8");
           resolve({
             statusCode: res.statusCode ?? 0,
             headers: res.headers,
-            body: parseResponseBody(Buffer.concat(chunks).toString("utf8")),
+            body: parseResponseBody(bodyText),
+            bodyText,
           });
         });
       },
     );
 
-    req.setTimeout(timeoutMs, () => {
-      req.destroy(new Error(`Request timed out after ${timeoutMs}ms`));
+    req.setTimeout(options.timeoutMs, () => {
+      req.destroy(new Error(`Request timed out after ${options.timeoutMs}ms`));
     });
     req.on("error", reject);
-    req.write(body);
+    if (body !== undefined) {
+      req.write(body);
+    }
     req.end();
   });
+}
+
+async function sendRequest(
+  serverUrl: string,
+  headers: Record<string, string>,
+  timeoutMs: number,
+  protocolVersion: string,
+): Promise<RawHttpResponse> {
+  return await sendRaw(serverUrl, {
+    method: "POST",
+    headers,
+    timeoutMs,
+    message: {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion,
+        capabilities: {},
+        clientInfo: {
+          name: "mcpjam-sdk-conformance",
+          version: "1.0.0",
+        },
+      },
+    },
+  });
+}
+
+/**
+ * Finish the handshake the valid-host probe opened, then close its session.
+ *
+ * The probe is a session of its own: it is built by hand, so the normal client
+ * never sees it and never completes it. "After successful initialization, the
+ * client MUST send an `initialized` notification", so this sends it, with the
+ * same Host and Origin the probe used, and then a DELETE when the server gave a
+ * session id.
+ *
+ * Returns what happened, for the check's details. It never changes the
+ * verdict: the check is about whether the server accepted a valid Host, and
+ * that was decided by the `initialize` answer.
+ *
+ * NOT called for the rebinding probe. That one sends a bad Host on purpose and
+ * expects to be refused; there is no handshake to finish.
+ */
+async function finishHandshake(
+  ctx: RawHttpCheckContext,
+  probeHeaders: Record<string, string>,
+  answer: RawHttpResponse,
+  requestedVersion: string,
+): Promise<Record<string, unknown>> {
+  const plan = planHandshakeFollowUp(answer, requestedVersion);
+  if (plan.kind === "none") {
+    return {
+      initialized: "not sent",
+      reason:
+        plan.reason === "refused"
+          ? "The server did not accept initialize, so there was no handshake to finish."
+          : "The initialize answer carried no result, so initialization was not confirmed.",
+    };
+  }
+
+  const outcome: Record<string, unknown> = {};
+  const sessionHeaders = {
+    ...probeHeaders,
+    // The version header rides on every request after initialize and carries
+    // the version the server agreed to.
+    "mcp-protocol-version":
+      plan.kind === "complete" ? plan.protocolVersion : plan.answeredVersion,
+    ...(plan.sessionId ? { "mcp-session-id": plan.sessionId } : {}),
+  };
+
+  if (plan.kind === "complete") {
+    try {
+      const response = await sendRaw(ctx.serverUrl, {
+        method: "POST",
+        headers: sessionHeaders,
+        message: { jsonrpc: "2.0", method: "notifications/initialized" },
+        timeoutMs: ctx.config.checkTimeout,
+        statusOnly: true,
+      });
+      outcome.initialized = "sent";
+      outcome.initializedStatus = response.statusCode;
+    } catch (error) {
+      ctx.config.signal?.throwIfAborted();
+      outcome.initialized = "not delivered";
+      outcome.initializedError =
+        error instanceof Error ? error.message : String(error);
+    }
+  } else {
+    outcome.initialized = "not sent";
+    outcome.reason = `The server answered initialize with protocol version "${plan.answeredVersion}", which MCPJam does not support. A client should disconnect in that case.`;
+  }
+
+  if (plan.sessionId) {
+    try {
+      const response = await sendRaw(ctx.serverUrl, {
+        method: "DELETE",
+        headers: sessionHeaders,
+        timeoutMs: ctx.config.checkTimeout,
+        statusOnly: true,
+      });
+      outcome.sessionCloseStatus = response.statusCode;
+    } catch (error) {
+      // Closing is best effort: a server may answer 405, and one that drops
+      // the connection has closed it anyway.
+      ctx.config.signal?.throwIfAborted();
+      outcome.sessionCloseError =
+        error instanceof Error ? error.message : String(error);
+    }
+  }
+  return outcome;
 }
 
 function buildBaseHeaders(ctx: RawHttpCheckContext): Record<string, string> {
@@ -275,35 +412,47 @@ export async function runSecurityChecks(
   if (applicable.has("localhost-host-valid-accepted")) {
     const startedAt = Date.now();
     try {
+      const probeHeaders = {
+        ...baseHeaders,
+        Host: validHost,
+        Origin: `http://${validHost}`,
+      };
       const response = await sendRequest(
         ctx.serverUrl,
-        {
-          ...baseHeaders,
-          Host: validHost,
-          Origin: `http://${validHost}`,
-        },
+        probeHeaders,
         ctx.config.checkTimeout,
         protocolVersion,
       );
       const accepted =
         response.statusCode >= 200 && response.statusCode < 300;
+      // The verdict is settled here. What follows only ends the session this
+      // probe opened, the way any client would.
+      const durationMs = Date.now() - startedAt;
+      const handshake = await finishHandshake(
+        ctx,
+        probeHeaders,
+        response,
+        protocolVersion,
+      );
       results.push(
         accepted
           ? passedResult(
               SECURITY_CHECK_METADATA["localhost-host-valid-accepted"],
-              Date.now() - startedAt,
+              durationMs,
               {
                 statusCode: response.statusCode,
                 body: response.body as Record<string, unknown> | string | undefined,
+                handshake,
               },
             )
           : failedResult(
               SECURITY_CHECK_METADATA["localhost-host-valid-accepted"],
-              Date.now() - startedAt,
+              durationMs,
               `Expected a 2xx response for valid localhost headers, got ${response.statusCode}`,
               {
                 statusCode: response.statusCode,
                 body: response.body as Record<string, unknown> | string | undefined,
+                handshake,
               },
             ),
       );
