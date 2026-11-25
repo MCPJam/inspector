@@ -146,6 +146,9 @@ export function ServerConfigSaveButton({ controller }: ControllerProps) {
       )}
       <Button
         ref={form.saveButtonRef}
+        // The modal footer changes visibility with the tab. Do not transition
+        // inherited visibility, so the button can take focus as Config opens.
+        className="transition-colors"
         type={form.offersReconnect ? "button" : "submit"}
         onClick={
           form.offersReconnect
