@@ -140,6 +140,23 @@ describe("useEnsureDbUser", () => {
     expect(mockState.ensureUser).toHaveBeenCalledTimes(2);
   });
 
+  it("offers recovery if the socket never confirms this account and accepts a late confirmation", async () => {
+    vi.useFakeTimers();
+    mockState.auth.user = { id: "expected-user" };
+    mockState.socketSubject = "previous-user";
+    const { result, rerender } = renderHook(() => useEnsureDbUser());
+    expect(result.current.setupFailed).toBe(false);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(result.current.setupFailed).toBe(true);
+    expect(mockState.ensureUser).not.toHaveBeenCalled();
+    mockState.socketSubject = "expected-user";
+    await act(async () => rerender());
+    expect(result.current.setupFailed).toBe(false);
+    expect(result.current.isUserReady).toBe(true);
+  });
+
   it("waits for the socket to confirm the signed-in account", async () => {
     mockState.auth.user = { id: "workos-new" };
     mockState.socketSubject = "previous-account";

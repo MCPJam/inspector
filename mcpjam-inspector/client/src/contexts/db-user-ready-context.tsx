@@ -38,7 +38,12 @@ export function DbUserReadyProvider({
   }, [isUserReady, authConfirmed]);
   return (
     <DbUserReadyContext.Provider
-      value={{ accountSetupComplete: isUserReady, setupFailed, isEnsuringUser, isUserReady: isUserReady && !queriesPaused }}
+      value={{
+        accountSetupComplete: isUserReady,
+        setupFailed,
+        isEnsuringUser,
+        isUserReady: isUserReady && !queriesPaused,
+      }}
     >
       {children}
     </DbUserReadyContext.Provider>

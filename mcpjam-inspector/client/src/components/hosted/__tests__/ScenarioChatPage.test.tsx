@@ -613,12 +613,22 @@ describe("ScenarioChatPage", () => {
   });
 
   it("keeps a tokenless reload in the loading state during account setup", async () => {
+    const body = await (await mockAuthFetch()).json();
+    mockAuthFetch.mockResolvedValue(createFetchResponse({
+      ...body,
+      bootstrap: { ...body.bootstrap, requiresSignIn: true },
+    }));
+    const initial = render(<ScenarioChatPage pathToken="account-token" />);
+    await waitFor(() => expect(readScenarioSession()?.payload.requiresSignIn).toBe(true));
+    initial.unmount();
+    mockAuthFetch.mockClear();
     dbSetup.ready = false;
     try {
       render(<ScenarioChatPage />);
       await act(async () => {});
       expect(screen.queryByText(/link unavailable/i)).not.toBeInTheDocument();
       expect(document.querySelector(".animate-spin")).toBeInTheDocument();
+      expect(mockAuthFetch).not.toHaveBeenCalled();
     } finally {
       dbSetup.ready = true;
     }
@@ -641,13 +651,18 @@ describe("ScenarioChatPage", () => {
     render(<ScenarioChatPage pathToken="account-token" />);
     await waitFor(() => expect(readScenarioSession()?.authenticatedUserId).toBe("user_123"));
     const calls = mockAuthFetch.mock.calls.length;
-    await act(async () => useSessionRefreshStore.getState().pauseQueries());
-    expect(useSessionRefreshStore.getState().queriesPaused).toBe(true);
-    await act(async () => useSessionRefreshStore.setState({ authConfirmed: true }));
-    expect(useSessionRefreshStore.getState().queriesPaused).toBe(false);
-    expect(mockAuthFetch).toHaveBeenCalledTimes(calls);
-    expect(readScenarioSession()?.authenticatedUserId).toBe("user_123");
-    useSessionRefreshStore.setState({ authConfirmed: false });
+    const { authConfirmed, queriesPaused } = useSessionRefreshStore.getState();
+    try {
+      await act(async () => useSessionRefreshStore.getState().pauseQueries());
+      expect(useSessionRefreshStore.getState().queriesPaused).toBe(true);
+      await act(async () => useSessionRefreshStore.setState({ authConfirmed: true }));
+      expect(useSessionRefreshStore.getState().queriesPaused).toBe(false);
+      await act(async () => {});
+      expect(mockAuthFetch).toHaveBeenCalledTimes(calls);
+      expect(readScenarioSession()?.authenticatedUserId).toBe("user_123");
+    } finally {
+      await act(async () => useSessionRefreshStore.setState({ authConfirmed, queriesPaused }));
+    }
   });
 
   it("clears protected preview data on logout and re-redeems after account changes", async () => {

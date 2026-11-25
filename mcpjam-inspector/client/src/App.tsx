@@ -594,7 +594,6 @@ function BillingHandoffLoading({ overlay = false }: { overlay?: boolean }) {
 
 const GUEST_ROW_RELOAD_KEY = "mcpjam:guest-row-reload";
 
-
 function resolveDeletedOrganizationFallbackId(
   organizations: ReadonlyArray<{ _id: string; myRole?: string }>,
 ): string | undefined {
@@ -3172,7 +3171,7 @@ export default function App() {
   const locationContext = useContext(UNSAFE_LocationContext);
   const routeOrganizationId = currentOrgRoute?.orgId;
   const routeOrganizationSection = currentOrgRoute?.orgSection;
-  const { isEnsuringUser, isUserReady } = useDbUserBootstrapStatus();
+  const { isEnsuringUser, isUserReady, setupFailed } = useDbUserBootstrapStatus();
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
   // The org list once it is authoritative. Its membership key resets the
@@ -6316,6 +6315,15 @@ export default function App() {
 
   if (isLoading && !isHostedChatRoute && !isFirstRunOAuthReturnActive) {
     return <StartupScreen />;
+  }
+
+  if (
+    setupFailed &&
+    isAuthenticated &&
+    !isHostedChatRoute &&
+    !isFirstRunOAuthReturnActive
+  ) {
+    return <UserSetupError className="min-h-screen" />;
   }
 
   const shouldShowBillingHandoffOverlay =

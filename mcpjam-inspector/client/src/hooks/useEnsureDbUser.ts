@@ -229,6 +229,21 @@ export function useEnsureDbUser() {
   const isUserReady =
     identityKey !== null && ensuredIdentityKey === identityKey;
 
+  const awaitingConfirmation =
+    !isLoading && isAuthenticated && !workosSetupConfirmed ? workosKey : null;
+  const [confirmationTimedOut, setConfirmationTimedOut] = useState<
+    string | null
+  >(null);
+  useEffect(() => {
+    setConfirmationTimedOut(null);
+    if (!awaitingConfirmation) return;
+    const timer = window.setTimeout(
+      () => setConfirmationTimedOut(awaitingConfirmation),
+      30_000,
+    );
+    return () => window.clearTimeout(timer);
+  }, [awaitingConfirmation]);
+
   // Reset cache on Convex logout so we re-run for the next login in the same session.
   useEffect(() => {
     if (!isAuthenticated) {
@@ -520,6 +535,9 @@ export function useEnsureDbUser() {
     isEnsuringUser,
     isUserReady,
     hasIdentity: identityKey !== null,
-    setupFailed: identityKey !== null && failedIdentity === identityKey,
+    setupFailed:
+      (identityKey !== null && failedIdentity === identityKey) ||
+      (awaitingConfirmation !== null &&
+        confirmationTimedOut === awaitingConfirmation),
   };
 }
