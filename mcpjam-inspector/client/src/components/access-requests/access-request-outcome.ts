@@ -22,10 +22,14 @@ export function outcomeOfJoinDecision(
   result: DecisionResult,
 ): Outcome {
   if (result.status === "declined") {
+    // Declining a request does not remove a membership they hold already.
     return {
       billing: false,
       title: "Request declined",
-      body: `${who} was not added to ${organizationName}.`,
+      body:
+        result.access === "granted"
+          ? `You declined this request. ${who} is still a member of ${organizationName}.`
+          : "You declined this request.",
     };
   }
   if (result.access === "pending" && result.seatPaymentIntentId) {
@@ -36,10 +40,14 @@ export function outcomeOfJoinDecision(
     };
   }
   if (result.access === "pending") {
+    // The backend does not say whether a seat payment or an invitation is
+    // still open (a repeat decision returns no payment id), so name both, as
+    // the project request copy does. Only an owner can pay; an admin may
+    // have approved.
     return {
-      billing: false,
-      title: "Approved, waiting on the invitation",
-      body: `${who} joins ${organizationName} once they accept the invitation.`,
+      billing: true,
+      title: "Approved, not a member yet",
+      body: `${who} joins ${organizationName} after an organization owner finishes an open seat payment in organization billing, or after they accept the invitation.`,
     };
   }
   return {

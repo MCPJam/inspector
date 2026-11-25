@@ -127,7 +127,7 @@ describe("JoinRequestRows", () => {
       { status: "declined", access: "pending" },
       "success",
       "Request declined",
-      "Jo Chen was not added to Acme.",
+      "You declined this request.",
     ],
     [
       "waiting on a seat payment",
@@ -138,12 +138,12 @@ describe("JoinRequestRows", () => {
       "An organization owner has to finish the seat payment in organization billing. Jo Chen joins Acme after that.",
     ],
     [
-      "waiting on the invitation",
+      "not a member yet",
       "approve",
       { status: "approved", access: "pending", seatPaymentIntentId: null },
       "info",
-      "Approved, waiting on the invitation",
-      "Jo Chen joins Acme once they accept the invitation.",
+      "Approved, not a member yet",
+      "Jo Chen joins Acme after an organization owner finishes an open seat payment in organization billing, or after they accept the invitation.",
     ],
   ] as const)(
     "toasts the %s result",

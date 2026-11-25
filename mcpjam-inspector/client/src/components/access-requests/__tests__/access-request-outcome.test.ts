@@ -54,9 +54,9 @@ describe("organization join outcomes", () => {
         access: "pending",
       }),
     ).toEqual({
-      billing: false,
-      title: "Approved, waiting on the invitation",
-      body: "Jo Chen joins Acme once they accept the invitation.",
+      billing: true,
+      title: "Approved, not a member yet",
+      body: "Jo Chen joins Acme after an organization owner finishes an open seat payment in organization billing, or after they accept the invitation.",
     });
     expect(
       outcomeOfJoinDecision("Jo Chen", "Acme", {
@@ -66,8 +66,14 @@ describe("organization join outcomes", () => {
     ).toEqual({
       billing: false,
       title: "Request declined",
-      body: "Jo Chen was not added to Acme.",
+      body: "You declined this request.",
     });
+    expect(
+      outcomeOfJoinDecision("Jo Chen", "Acme", {
+        status: "declined",
+        access: "granted",
+      }).body,
+    ).toBe("You declined this request. Jo Chen is still a member of Acme.");
   });
 
   it("uses the join wording for a decision on the approve page", () => {
@@ -115,9 +121,11 @@ describe("organization join outcomes", () => {
     expect(
       outcomeOfDecision(PROJECT_REQUEST, {
         status: "declined",
-        access: "pending",
+        access: "granted",
       }).body,
-    ).toBe("Jo Chen does not have access to Support bot.");
+    ).toBe(
+      "You declined this request. Jo Chen still has access to Support bot.",
+    );
     expect(
       outcomeOfEarlierDecision({ ...PROJECT_REQUEST, status: "declined" }).body,
     ).toBe("Jo Chen was declined for Support bot.");
