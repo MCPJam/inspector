@@ -17,6 +17,7 @@ import {
 } from "./host-compare-selection";
 import {
   buildCaniuseCapabilityPath,
+  CANIUSE_TASKS,
   getCaniuseCapabilityForField,
   publicCaniuseFieldsWithData,
   sortCaniusePresetHosts,
@@ -56,7 +57,7 @@ export function CaniuseComparePage() {
     [hosts, subjects],
   );
   const fields = useMemo(
-    () => publicCaniuseFieldsWithData(subjects),
+    () => [...publicCaniuseFieldsWithData(subjects), CANIUSE_TASKS.field],
     [subjects],
   );
   const [params, setParams] = useSearchParams();
@@ -329,9 +330,13 @@ function MatrixAdoption({
           : `${overall.score}% ${overall.reporting ? "reported" : "adoption"}`}
       </Link>
       {slices.map(({ slice, score }) => (
-        <span key={slice} className="px-1">
+        <Link
+          key={slice}
+          to={`${path}?slice=${encodeURIComponent(slice)}`}
+          className="rounded px-1 hover:bg-muted hover:text-foreground"
+        >
           {sliceLabel(slice)} {score === null ? "–" : `${score}%`}
-        </span>
+        </Link>
       ))}
     </div>
   );

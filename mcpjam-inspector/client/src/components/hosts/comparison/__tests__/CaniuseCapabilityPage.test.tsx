@@ -1,70 +1,87 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { CaniuseCapabilityPage } from "../CaniuseCapabilityPage";
 
-vi.mock("posthog-js/react", () => ({
-  useFeatureFlagEnabled: () => false,
-}));
-
 vi.mock("@/lib/host-compat/use-host-catalog", async () => {
   const { bundledHostCompatCatalog } = await import("@mcpjam/sdk/host-compat");
-  return {
-    useHostCatalog: () => ({
-      status: "live",
-      catalog: bundledHostCompatCatalog(),
-      version: 1,
-      source: "live",
-    }),
-  };
+  return { useHostCatalog: () => ({ catalog: bundledHostCompatCatalog() }) };
 });
 
-vi.mock("@/stores/preferences/preferences-provider", () => ({
-  usePreferencesStore: (selector: (state: { themeMode: "light" }) => unknown) =>
-    selector({ themeMode: "light" }),
-}));
+function renderCapability(slug: string, search = "") {
+  return render(
+    <MemoryRouter initialEntries={[`/capabilities/${slug}${search}`]}>
+      <CaniuseCapabilityPage capabilitySlug={slug} />
+    </MemoryRouter>,
+  );
+}
 
 describe("CaniuseCapabilityPage", () => {
-  it("renders a capability permalink page with definition, statuses, and verified dates", () => {
-    render(<CaniuseCapabilityPage capabilitySlug="sampling" />);
-
+  it("defaults to Client map and offers the reference table with catalog dates", () => {
+    renderCapability("sampling");
     expect(
       screen.getByRole("heading", { name: "Sampling" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Server-initiated LLM calls.")).toBeInTheDocument();
-    expect(screen.getByText("/capabilities/sampling")).toBeInTheDocument();
-    expect(screen.getByText("ChatGPT")).toBeInTheDocument();
-    expect(screen.getByText("Claude")).toBeInTheDocument();
-    expect(screen.getAllByText("2026-08-14").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Client map" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     expect(
-      screen.getAllByText(/Supported|Partial|Not supported/).length,
+      screen.getAllByLabelText(/Last checked \d{4}-\d{2}-\d{2}/).length,
     ).toBeGreaterThan(0);
     expect(
-      screen.getByRole("link", { name: "Verify against your server" }),
-    ).toHaveAttribute("href", "https://app.mcpjam.com");
-    expect(screen.getByRole("link", { name: "Full matrix" })).toHaveAttribute(
-      "href",
-      "/embed/host-compare",
+      screen.getByRole("link", { name: "Compare clients" }),
+    ).toHaveAttribute("href", "/compare");
+
+    fireEvent.click(screen.getByRole("button", { name: "Reference table" }));
+    const reference = within(screen.getByRole("table"));
+    expect(
+      reference.getByRole("columnheader", { name: "Last checked" }),
+    ).toBeInTheDocument();
+    expect(
+      reference.getByRole("rowheader", { name: "Claude Code" }),
+    ).toBeInTheDocument();
+    expect(
+      reference.getByRole("rowheader", { name: "Codex" }),
+    ).toBeInTheDocument();
+  });
+
+  it("restores a mode from the URL and shares the same mode on X and LinkedIn", () => {
+    renderCapability("event-delivery", "?slice=poll&view=reference");
+    expect(screen.getByRole("button", { name: /poll/i })).toHaveAttribute(
+      "aria-pressed",
+      "true",
     );
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+
+    const url = "https://caniuse.dev/capabilities/event-delivery?slice=poll";
+    for (const name of ["Post to X", "Post to LinkedIn"]) {
+      const href = screen.getByRole<HTMLAnchorElement>("link", { name }).href;
+      expect(new URL(href).searchParams.get("url")).toBe(url);
+    }
   });
 
-  it("shows the flag-gated hosts — the flags gate creation, not this page", () => {
-    // `useFeatureFlagEnabled` is mocked false above: the anonymous-visitor
-    // case, and the one that used to hide these two from caniuse entirely.
-    render(<CaniuseCapabilityPage capabilitySlug="sampling" />);
-
-    expect(screen.getByText("Claude Code")).toBeInTheDocument();
-    expect(screen.getByText("Codex")).toBeInTheDocument();
+  it("shows Tasks without claiming any published results", () => {
+    renderCapability("mcp-tasks");
+    expect(
+      screen.getByRole("heading", { name: "MCP Tasks" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("No published client results yet."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Not supported" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("renders a not-found state for unknown capability slugs", () => {
-    render(<CaniuseCapabilityPage capabilitySlug="not-a-capability" />);
-
+  it("retains navigation on a missing capability", () => {
+    renderCapability("not-a-capability");
     expect(
       screen.getByRole("heading", { name: "Capability not found" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Full matrix" })).toHaveAttribute(
-      "href",
-      "/embed/host-compare",
-    );
+    expect(
+      screen.getByRole("link", { name: "Compare clients" }),
+    ).toHaveAttribute("href", "/compare");
   });
 });

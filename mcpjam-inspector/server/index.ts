@@ -853,7 +853,8 @@ if (process.env.NODE_ENV === "production") {
   app.use("/*", async (c, next) => {
     const host = (c.req.header("Host") ?? "").toLowerCase().split(":")[0];
     if (CANIUSE_LANDING_HOSTS.has(host) && c.req.path === "/") {
-      return c.redirect("/embed/host-compare", 302);
+      const { search } = new URL(c.req.url);
+      return c.redirect(`/compare${search}`, 302);
     }
     // score.mcpjam.com rides the same service: its root lands on the
     // conformance-score runner. `/results/<token>` deep links fall through so
