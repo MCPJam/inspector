@@ -27,8 +27,8 @@ inputs:
   wait-timeout-ms:
     description: Positive wait limit in milliseconds. Omit to retain CLI defaults.
   cli-version:
-    description: Exact published CLI version.
-    default: "5.7.1"
+    description: CLI major release line (automatically follows new releases), or an exact published version.
+    default: "6"
   idempotency-key:
     description: Optional retry key, at most 256 characters. Otherwise derived from the workflow invocation.
 outputs:

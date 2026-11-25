@@ -152,8 +152,15 @@ either way.
 | `baseline-run`          | None        | Baseline run ID; requires gates.                                             |
 | `baseline-sha`          | None        | Stored baseline commit SHA; requires gates. Cannot accompany `baseline-run`. |
 | `wait-timeout-ms`       | CLI default | Positive integer; applied to run and gate waits.                             |
-| `cli-version`           | `5.7.1`     | Exact published version, not `latest` or a URL.                              |
+| `cli-version`           | `6`         | Track the newest stable CLI 6 release, or use an exact published version.                              |
 | `idempotency-key`       | Derived     | Optional stable retry key, at most 256 characters.                           |
+
+The default follows new CLI 6 releases automatically. Hosted mode resolves the
+newest stable release from npm once, then uses that exact version for both the
+run and its gates. The log records the selected version. Set `cli-version` to an
+exact version to reproduce a run; a future major requires an explicit change.
+Registry lookup failures stop before starting an eval. This input does not
+upgrade the repository SDK used by `command` mode.
 
 ### Targeting a non-production deployment
 
@@ -215,7 +222,7 @@ The `Evals action tests` workflow runs these checks on action changes.
 `evals-v1` points at, ignoring `README.md`, and when they differ it runs
 `Evals action live smoke` against the release commit. Only if that smoke passes
 does it create the next immutable `evals-v1.X.Y` and force-move `evals-v1` to
-the same commit. The smoke verifies the pinned CLI is published, runs the helper
+the same commit. The smoke verifies the CLI 6 release line is published, runs the helper
 tests, executes the local action and uploads real reports — it spends eval
 credits, which is why a release that did not touch the folder skips both jobs.
 

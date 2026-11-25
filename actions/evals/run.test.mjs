@@ -26,6 +26,7 @@ async function fixture(t, overrides = {}) {
   t.after(() => rm(root, { recursive: true, force: true }));
   const env = {
     MCPJAM_API_KEY: "sk-test-secret",
+    MCPJAM_ACTION_CLI_VERSION: "6.4.1",
     MCPJAM_ACTION_PROJECT: "Project",
     MCPJAM_ACTION_SUITE: "Suite",
     MCPJAM_ACTION_INVOCATION: "MCPJaminspectoractions-evals",
@@ -139,7 +140,7 @@ test("runs a suite, retains CI metadata, publishes output IDs and a report direc
   assert.deepEqual(result.runIds, ["run1"]);
   assert.equal(f.calls.length, 1);
   assert.equal(f.calls[0].env.GITHUB_RUN_ATTEMPT, "1");
-  assert.ok(f.calls[0].args.includes("@mcpjam/cli@5.7.1"));
+  assert.ok(f.calls[0].args.includes("@mcpjam/cli@6.4.1"));
   assert.ok(f.calls[0].args.includes("--wait"));
   assert.ok(!f.calls[0].args.some((arg) => arg.includes("wait-timeout")));
   assert.match(

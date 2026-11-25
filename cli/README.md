@@ -5,8 +5,12 @@ Test, debug, and validate MCP servers locally, or manage MCPJam Cloud via `mcpja
 ## Install
 
 ```bash
-npm i -g @mcpjam/cli
+npm i -g @mcpjam/cli@latest
 ```
+
+Use a Node version supported by the package's `engines` field. An untagged
+install can select an older CLI compatible with your Node version; `@latest`
+requests the current release and lets npm report any engine mismatch.
 
 Or run without installing:
 

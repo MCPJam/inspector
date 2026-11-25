@@ -204,7 +204,7 @@ test("checkForUpdates prints a fresh newer cached version to stderr", () => {
     });
 
     assert.match(stderr, /Update available: @mcpjam\/cli 3\.0\.0 -> 3\.1\.0/);
-    assert.match(stderr, /Run npm install -g @mcpjam\/cli to update/);
+    assert.match(stderr, /Run npm install -g @mcpjam\/cli@latest to update/);
     assert.deepEqual(spawns, []);
   });
 });
@@ -239,7 +239,7 @@ test("checkForUpdates stays quiet for fresh same or older cached versions", () =
   });
 });
 
-test("checkForUpdates prints stale newer cache and refreshes in the background", () => {
+test("checkForUpdates refreshes stale newer cache without advertising an expired target", () => {
   withTempDir((directory) => {
     const staleCachePath = join(directory, "stale.json");
     const spawns: string[] = [];
@@ -266,7 +266,7 @@ test("checkForUpdates prints stale newer cache and refreshes in the background",
       spawnBackgroundFetch: spawn,
     });
 
-    assert.match(stderr, /Update available: @mcpjam\/cli 3\.0\.0 -> 3\.1\.0/);
+    assert.equal(stderr, "");
     assert.deepEqual(spawns, [staleCachePath]);
   });
 });
@@ -392,4 +392,22 @@ test("spawnBackgroundFetch starts a detached node process with positional args",
   });
   assert.equal(registeredEvent, "error");
   assert.equal(unrefCalled, true);
+});
+
+
+test("a future-dated cache refreshes without advertising its target", () => {
+  withTempDir((directory) => {
+    const cachePath = join(directory, "future.json");
+    writeCache(cachePath, { latestVersion: "99.0.0", checkedAt: 2_000 });
+    let notices = "";
+    const paths: string[] = [];
+    checkForUpdates("6.4.1", {
+      cachePath, env: {}, now: 1_000,
+      stderr: { write(chunk) { notices += chunk; } },
+      spawnBackgroundFetch(path) { paths.push(path); },
+    });
+    assert.equal(notices, "");
+    assert.deepEqual(paths, [cachePath]);
+    assert.equal(isUpdateCacheFresh({ latestVersion: "99.0.0", checkedAt: 2_000 }, 1_000), false);
+  });
 });
