@@ -6992,6 +6992,7 @@ export function PlaygroundMain({
                         <HandDrawnSendHint
                           hostStyle={hostStyle}
                           theme={effectiveThreadTheme}
+                          serverName={serverName}
                         />
                       )}
                     </div>
