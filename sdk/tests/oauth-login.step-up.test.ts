@@ -13,6 +13,16 @@ afterEach(() => vi.unstubAllGlobals());
 
 it.each([
   { scenario: "step-up succeeds", retry: true, passed: true },
+  {
+    scenario: "metadata is on another public origin",
+    retry: true,
+    passed: true,
+  },
+  {
+    scenario: "metadata points at a private origin",
+    retry: false,
+    passed: false,
+  },
   { scenario: "step-up is refused again", retry: true, passed: false },
   { scenario: "an unrelated 403", retry: false, passed: false },
   { scenario: "the challenge adds no scope", retry: false, passed: false },
@@ -20,11 +30,27 @@ it.each([
 ])("$scenario", async ({ scenario, retry, passed }) => {
   const authorizations: URL[] = [];
   const calls: { token: string | null; params: unknown }[] = [];
+  const challengedMetadataUrl =
+    scenario === "metadata is on another public origin"
+      ? "https://metadata.example.com/resource"
+      : scenario === "metadata points at a private origin"
+        ? "http://127.0.0.1/resource"
+        : metadataUrl;
+  let fetchedCrossOriginMetadata = false;
+  let fetchedPrivateMetadata = false;
   let registrations = 0;
   let tokenExchanges = 0;
   const fetchFn: typeof fetch = async (input, init) => {
     const url = String(input);
-    if (url === metadataUrl) {
+    if (url === "http://127.0.0.1/resource") fetchedPrivateMetadata = true;
+    if (
+      url === metadataUrl ||
+      url === "https://metadata.example.com/resource"
+    ) {
+      if (url !== metadataUrl) {
+        fetchedCrossOriginMetadata = true;
+        expect(new Headers(init?.headers).get("Authorization")).toBeNull();
+      }
       return Response.json({
         resource: server,
         authorization_servers: [
@@ -108,7 +134,7 @@ it.each([
         scenario === "an unrelated 403"
           ? {}
           : {
-              "WWW-Authenticate": `Bearer error="insufficient_scope", scope="${scope}", resource_metadata="${metadataUrl}"`,
+              "WWW-Authenticate": `Bearer error="insufficient_scope", scope="${scope}", resource_metadata="${challengedMetadataUrl}"`,
             },
     });
   };
@@ -134,6 +160,10 @@ it.each([
   );
 
   expect(result.completed).toBe(true);
+  expect(fetchedCrossOriginMetadata).toBe(
+    scenario === "metadata is on another public origin"
+  );
+  expect(fetchedPrivateMetadata).toBe(false);
   expect(
     result.verification?.listTools?.passed,
     result.verification?.listTools?.error

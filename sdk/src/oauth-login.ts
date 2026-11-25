@@ -295,7 +295,7 @@ function buildResult(
     completed: state.currentStep === "complete" && !error,
     serverUrl: config.serverUrl,
     protocolVersion: config.protocolVersion,
-    registrationStrategy: config.registrationStrategy,
+    registrationStrategy: authorizationPlan.registrationStrategy,
     protocolMode: authorizationPlan.protocolMode,
     registrationMode: authorizationPlan.registrationMode,
     authMode: config.auth.mode,
@@ -469,6 +469,9 @@ export async function runOAuthLogin(
       ) =>
         runOAuthStateMachine({
           ...machineConfig,
+          registrationStrategy:
+            authorizationPlan.registrationStrategy ??
+            config.registrationStrategy,
           state: getState(),
           customScopes,
           resourceMetadataUrl: migration?.resourceMetadataUrl,
@@ -555,7 +558,6 @@ export async function runOAuthLogin(
           initial.unauthorizedChallenge
         );
         if (migration) {
-          const registrationMode = authorizationPlan.registrationMode;
           // Start with no tokens or registration from the previous issuer.
           state = cloneEmptyFlowState();
           if (config.registrationStrategy === "preregistered") {
@@ -563,14 +565,12 @@ export async function runOAuthLogin(
               "OAuth issuer changed. Configure credentials registered with the new authorization server."
             );
           }
-          authorizationPlan = {
-            ...resolveAuthorizationPlan({
-              ...toAuthorizationPlanInput(input),
-              registrationMode: config.registrationStrategy,
-              discovery: migration.discovery,
-            }),
-            registrationMode,
-          };
+          authorizationPlan = resolveAuthorizationPlan({
+            ...toAuthorizationPlanInput(input),
+            clientId: undefined,
+            clientSecret: undefined,
+            discovery: migration.discovery,
+          });
           if (authorizationPlan.status !== "ready") {
             throw new Error(
               authorizationPlan.blockers[0] ?? authorizationPlan.summary

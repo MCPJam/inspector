@@ -9,7 +9,6 @@ export function discoverLoginChallengeMetadata(
   if (resourceMetadataUrl) {
     const pointer = new URL(resourceMetadataUrl);
     if (
-      pointer.origin !== new URL(config.serverUrl).origin ||
       (pointer.protocol !== "https:" && pointer.protocol !== "http:") ||
       pointer.username ||
       pointer.password ||
