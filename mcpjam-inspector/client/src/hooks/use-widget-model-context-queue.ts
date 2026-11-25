@@ -36,5 +36,17 @@ export function useWidgetModelContextQueue() {
       ),
     [setQueue],
   );
-  return [queue, setQueue, update] as const;
+  // Puts back context a send never delivered. An App that updated since then
+  // keeps its newer entry.
+  const restore = useCallback(
+    (unsent: readonly WidgetModelContextEntry[]) => {
+      const queued = current.current;
+      const missing = unsent.filter(
+        (entry) => !queued.some((next) => next.toolCallId === entry.toolCallId),
+      );
+      if (missing.length > 0) setQueue([...missing, ...queued]);
+    },
+    [setQueue],
+  );
+  return [queue, setQueue, update, restore] as const;
 }

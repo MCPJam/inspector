@@ -1,3 +1,4 @@
+import { inspectorDiscoveryRunMetadata } from "../discovery-run-metadata";
 import { createHostToolCancellation } from "./host-tool-cancellation";
 import { startEarly, takeEarly, type EarlyStart } from "../early-start.js";
 import { overlapMcpConfigWithBroker } from "./startup-overlap.js";
@@ -5066,7 +5067,10 @@ export async function runHarnessTurn(
     ) {
       // Stream start (matches the span offset base) so rehydrated traces align
       // with the live ones — see traceBaseMs.
-      const trace: PersistedTurnTrace = driver.buildPersistedTrace();
+      const trace: PersistedTurnTrace = {
+        ...driver.buildPersistedTrace(),
+        ...inspectorDiscoveryRunMetadata(undefined, true),
+      };
       capturedTurnTrace = trace;
       // §3: hand the resume-state commit to onConversationComplete so it rides
       // /ingest-chat atomically with the transcript. On success the backend

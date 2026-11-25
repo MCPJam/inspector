@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
@@ -412,6 +413,58 @@ describe("PlaygroundLeftRail — zero-server Tools body", () => {
     expect(
       screen.getByRole("button", { name: "Connect stateless-mcp" }),
     ).toBeEnabled();
+  });
+
+  it("shows details for each comparison pane without expanding the trigger", async () => {
+    const user = userEvent.setup();
+    useComparePaneStore.getState().publishPanes([
+      {
+        paneId: "a",
+        label: "Claude",
+        logoSrc: "/claude_logo.png",
+        modelName: "Sonnet",
+        serverSummary: "No servers",
+        hostId: "claude",
+        environmentId: null,
+        serverNames: [],
+      },
+      {
+        paneId: "b",
+        label: "Claude",
+        logoSrc: "/claude_logo.png",
+        modelName: "Haiku",
+        serverSummary: "1 server",
+        hostId: "claude",
+        environmentId: null,
+        serverNames: ["stateless-mcp"],
+      },
+    ]);
+    render(<PlaygroundLeftRail />);
+
+    const trigger = screen.getByRole("combobox", { name: "Pane" });
+    expect(trigger).toHaveTextContent("Claude (1)");
+    expect(trigger.querySelector("img")).toHaveAttribute(
+      "src",
+      "/claude_logo.png",
+    );
+    expect(trigger).not.toHaveTextContent("Sonnet");
+
+    await user.click(trigger);
+    const first = screen.getByRole("option", { name: /Claude \(1\)/ });
+    const second = screen.getByRole("option", { name: /Claude \(2\)/ });
+    expect(within(first).getByText("Sonnet")).toBeVisible();
+    expect(within(first).getByText("No servers")).toBeVisible();
+    expect(within(second).getByText("Haiku")).toBeVisible();
+    expect(within(second).getByText("1 server")).toBeVisible();
+    expect(second.querySelector("img")).toHaveAttribute(
+      "src",
+      "/claude_logo.png",
+    );
+
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(trigger).toHaveTextContent("Claude (2)");
+    expect(trigger).not.toHaveTextContent("Haiku");
+    expect(useComparePaneStore.getState().selectedPaneId).toBe("b");
   });
 
   it("adds the reconnected server only to the selected comparison pane", async () => {

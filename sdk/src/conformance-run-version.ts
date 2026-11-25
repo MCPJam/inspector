@@ -11,6 +11,7 @@ import {
 } from "./conformance-login.js";
 import { withEphemeralClient } from "./operations.js";
 import { withAbortSignalFetch } from "./abort-signal.js";
+import { http1Fetch } from "./http1-fetch.js";
 import {
   isKnownProtocolVersion,
   type McpProtocolVersion,
@@ -52,7 +53,7 @@ export async function resolveRunProtocolVersion(
     {
       ...server,
       baseFetch: withAbortSignalFetch(
-        config.protocol?.fetchFn ?? serverConfigFetch(server) ?? fetch,
+        config.protocol?.fetchFn ?? serverConfigFetch(server) ?? http1Fetch,
         config.protocol?.signal
       ),
       timeout: server.timeout ?? config.protocol?.checkTimeout,

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import {
   checkCallbackUrl,
   DEFAULT_LOCAL_WEBHOOK_TTL_MS,
@@ -100,10 +100,11 @@ export function useSubscribeForm({
   busy: boolean;
   onSubscribe: (value: SubscribeFormValue) => void | Promise<void>;
 }): SubscribeForm {
+  const [formFor, setFormFor] = useState<string | null>(null);
   const [fields, setFields] = useState<FormField[]>([]);
   const [rawMode, setRawMode] = useState(false);
   const [rawJson, setRawJson] = useState("{}");
-  const [mode, setMode] = useState<EventsDeliveryModeView | null>(null);
+  const [pickedMode, setMode] = useState<EventsDeliveryModeView | null>(null);
   const callback = useCallbackPreference(projectId, hosted ? undefined : serverId);
   const { draft } = callback;
   const [acknowledged, setAcknowledged] = useState(false);
@@ -115,12 +116,17 @@ export function useSubscribeForm({
   const submitting = useRef(false);
 
   // Keyed on the event's identity alone, so a catalog refresh does not wipe
-  // what the user typed: the schema is read through a ref.
-  const inputSchemaRef = useRef(event?.inputSchema);
-  inputSchemaRef.current = event?.inputSchema;
-  const eventName = event?.name;
-  useEffect(() => {
-    const next = generateFormFieldsFromSchema(inputSchemaRef.current);
+  // what the user typed. Reset while rendering, not in an effect: React
+  // re-renders before committing, so no frame shows an empty form ("No
+  // parameters required") or the previous event type's fields.
+  const formKey = JSON.stringify([
+    event?.name ?? null,
+    projectId ?? null,
+    serverId ?? null,
+  ]);
+  if (formFor !== formKey) {
+    const next = generateFormFieldsFromSchema(event?.inputSchema);
+    setFormFor(formKey);
     setFields(next);
     setRawMode(next.length === 0);
     setRawJson("{}");
@@ -129,11 +135,14 @@ export function useSubscribeForm({
     setTtlMs("");
     setNoExpiry(false);
     setFormError(null);
-  }, [eventName, projectId, serverId]);
+  }
 
-  useEffect(() => {
-    if (mode === null || !modes.includes(mode)) setMode(modes[0] ?? null);
-  }, [modes, mode]);
+  // The user's pick while it is still allowed, else the first allowed mode.
+  // Derived, so the first render already names a mode instead of none.
+  const mode =
+    pickedMode !== null && modes.includes(pickedMode)
+      ? pickedMode
+      : (modes[0] ?? null);
 
   const localWebhook = !hosted && mode === "webhook";
   const custom = localWebhook && draft.kind === "custom";

@@ -61,6 +61,7 @@
             "icon": "bug",
             "pages": [
               "inspector/playground",
+              "inspector/events",
               {
                 "group": "Test MCP Apps",
                 "icon": "app-window",
@@ -146,6 +147,7 @@
                 "group": "Use with other tools",
                 "icon": "plug",
                 "pages": [
+                  "inspector/use-mcpjam-in-chatgpt",
                   "hosted/mcp-server",
                   "inspector/docs-server",
                   "inspector/launch-from-code"
@@ -154,7 +156,7 @@
               {
                 "group": "Enterprise admin",
                 "icon": "building-2",
-                "pages": ["hosted/sso", "hosted/network"]
+                "pages": ["hosted/sso", "hosted/entra-id", "hosted/network"]
               },
               "inspector/telemetry-privacy"
             ]
@@ -509,10 +511,6 @@
     {
       "source": "/inspector/plugins",
       "destination": "/inspector/skills"
-    },
-    {
-      "source": "/inspector/events",
-      "destination": "/cli/events"
     },
     {
       "source": "/inspector/workspaces",

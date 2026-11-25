@@ -10,6 +10,17 @@ import { createInspectorOAuthStateMachine } from "@/lib/oauth/debug-state-machin
 import { redeemAuthorizationCode } from "@/lib/oauth/code-redemption";
 import { OAuthSequenceDiagram } from "@/components/oauth/OAuthSequenceDiagram";
 import { OAuthAuthorizationModal } from "@/components/oauth/OAuthAuthorizationModal";
+import type { OAuthCallbackMessage } from "@/lib/oauth/popup-handoff";
+import { providerErrorMessage } from "@/lib/oauth/provider-error-message";
+
+function issuerCheckInputs(state: OAuthFlowState) {
+  return {
+    recordedIssuer: state.recordedIssuer,
+    issParameterSupported:
+      state.authorizationServerMetadata
+        ?.authorization_response_iss_parameter_supported,
+  };
+}
 import { OAuthFlowLayout, type OAuthView } from "./oauth/OAuthFlowLayout";
 import { track } from "@/lib/analytics";
 import {
@@ -248,6 +259,18 @@ export const OAuthFlowTab = ({
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   // Remount key for the auth modal, bumped per regenerated authorization request.
   const [authModalAttempt, setAuthModalAttempt] = useState(0);
+  const [authPopupReopenRequest, setAuthPopupReopenRequest] = useState(0);
+  const isAuthModalOpenRef = useRef(isAuthModalOpen);
+  isAuthModalOpenRef.current = isAuthModalOpen;
+  // While a sign-in is pending the modal is already open, so setting `open`
+  // again does nothing: ask it to reopen the popup instead.
+  const openAuthorizationPopup = useCallback(() => {
+    if (isAuthModalOpenRef.current) {
+      setAuthPopupReopenRequest((request) => request + 1);
+    } else {
+      setIsAuthModalOpen(true);
+    }
+  }, []);
   // Continue is in flight. Purely presentational — the flow state machine
   // remains the source of truth for where the flow actually is.
   const [isAdvancing, setIsAdvancing] = useState(false);
@@ -408,6 +431,10 @@ export const OAuthFlowTab = ({
 
   const processedCodeRef = useRef<string | null>(null);
   const exchangeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const processOAuthCallbackRef = useRef<
+    | ((code: string, state: string | undefined, iss?: string | null) => void)
+    | null
+  >(null);
   // Unmount only: the callback effect re-runs whenever the machine is rebuilt,
   // and a scheduled redemption has to survive that.
   useEffect(
@@ -557,7 +584,7 @@ export const OAuthFlowTab = ({
         if (oauthFlowState.currentStep === "generate_pkce_parameters") {
           await proceedToNextStep();
         }
-        setIsAuthModalOpen(true);
+        openAuthorizationPopup();
       } else {
         await proceedToNextStep();
       }
@@ -577,6 +604,7 @@ export const OAuthFlowTab = ({
   }, [
     hasProfile,
     oauthFlowState.currentStep,
+    openAuthorizationPopup,
     proceedToNextStep,
     profile.serverUrl,
     protocolVersion,
@@ -714,7 +742,7 @@ export const OAuthFlowTab = ({
           await proceedToNextStep();
           return buildAdvanceResult(previousStep, oauthFlowStateRef.current);
         }
-        setIsAuthModalOpen(true);
+        openAuthorizationPopup();
         return {
           status: "authorization_modal_opened",
           currentStep: oauthFlowStateRef.current.currentStep,
@@ -909,22 +937,7 @@ export const OAuthFlowTab = ({
       }, 500);
     };
 
-    const handleMessage = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin) {
-        return;
-      }
-
-      if (event.data?.type === "OAUTH_CALLBACK" && event.data?.code) {
-        // `event.data` is untyped: older callback pages (and any page reading
-        // URLSearchParams directly) send `iss: null` when the param is absent.
-        // Coalesce so the machine sees absence, not a null "present" value.
-        processOAuthCallback(
-          event.data.code,
-          event.data.state,
-          event.data.iss ?? undefined,
-        );
-      }
-    };
+    processOAuthCallbackRef.current = processOAuthCallback;
 
     const handleElectronOAuthCallback = (event: Event) => {
       const callbackUrl = (event as CustomEvent<string>).detail;
@@ -947,7 +960,14 @@ export const OAuthFlowTab = ({
           }
 
           updateOAuthFlowState({
-            error: errorDescription ?? error,
+            error: providerErrorMessage(
+              {
+                error,
+                errorDescription: errorDescription ?? undefined,
+                iss: parsed.searchParams.get("iss") ?? undefined,
+              },
+              issuerCheckInputs(oauthFlowStateRef.current),
+            ),
           });
           return;
         }
@@ -967,36 +987,47 @@ export const OAuthFlowTab = ({
       }
     };
 
-    let channel: BroadcastChannel | null = null;
-    try {
-      channel = new BroadcastChannel("oauth_callback_channel");
-      channel.onmessage = (event) => {
-        if (event.data?.type === "OAUTH_CALLBACK" && event.data?.code) {
-          processOAuthCallback(
-            event.data.code,
-            event.data.state,
-            event.data.iss ?? undefined
-          );
-        }
-      };
-    } catch (error) {
-      // BroadcastChannel not supported; fallback to window message only
-    }
-
-    window.addEventListener("message", handleMessage);
     window.addEventListener(
       "electron-oauth-callback",
       handleElectronOAuthCallback as EventListener,
     );
     return () => {
-      window.removeEventListener("message", handleMessage);
       window.removeEventListener(
         "electron-oauth-callback",
         handleElectronOAuthCallback as EventListener,
       );
-      channel?.close();
     };
   }, [oauthStateMachine, updateOAuthFlowState]);
+
+  // The browser popup's answer, already checked for origin and `state` by
+  // the popup handoff.
+  const handlePopupCallback = useCallback(
+    (message: OAuthCallbackMessage) => {
+      if (message.error) {
+        clearTimeout(exchangeTimeoutRef.current ?? undefined);
+        exchangeTimeoutRef.current = null;
+        updateOAuthFlowState({
+          error: providerErrorMessage(
+            {
+              error: message.error,
+              errorDescription: message.errorDescription,
+              iss: message.iss,
+            },
+            issuerCheckInputs(oauthFlowStateRef.current),
+          ),
+        });
+        return;
+      }
+      if (message.code) {
+        processOAuthCallbackRef.current?.(
+          message.code,
+          message.state ?? undefined,
+          message.iss,
+        );
+      }
+    },
+    [updateOAuthFlowState],
+  );
 
   useEffect(() => {
     track("oauth_flow_tab_viewed", {
@@ -1123,7 +1154,9 @@ export const OAuthFlowTab = ({
           key={authModalAttempt}
           open={isAuthModalOpen}
           onOpenChange={setIsAuthModalOpen}
+          reopenRequest={authPopupReopenRequest}
           authorizationUrl={oauthFlowState.authorizationUrl}
+          onCallback={handlePopupCallback}
         />
       )}
 
