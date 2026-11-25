@@ -40,7 +40,13 @@ export async function loadEvalRunAccountPlan(
   input: AccountPlanInput,
 ): Promise<EvalAccountPlan | null> {
   try {
-    return await convex.query(getEvalRunAccountPlan, input);
+    const plan = await convex.query(getEvalRunAccountPlan, input);
+    if (plan !== null || !input.runAccounts?.length) return plan;
+    throw new WebRouteError(
+      409,
+      ErrorCode.VALIDATION_ERROR,
+      "The backend did not resolve the requested run accounts. Check the accounts and try again.",
+    );
   } catch (error) {
     if (/Could not find public function.*getEvalRunAccountPlan/i.test(String(error))) {
       if (!input.runAccounts?.length) return null;
