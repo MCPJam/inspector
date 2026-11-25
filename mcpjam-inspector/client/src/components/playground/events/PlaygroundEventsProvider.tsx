@@ -40,6 +40,15 @@ export interface PlaygroundEventBinding extends EventBinding {
   subscription?: EventsSubscriptionView;
   lastResult?: string;
   ownerScope: string;
+  /** A short name the agent gave it (`mcpjam_subscribe_to_event`). */
+  title?: string;
+  /** Who connected it: the agent from the conversation, or the user. */
+  createdBy?: "agent" | "user";
+}
+/** How `add` was reached. The agent subscribes from inside its own turn. */
+export interface AddEventOptions {
+  title?: string;
+  fromAgent?: boolean;
 }
 export interface ServerEventCatalog {
   serverName: string;
@@ -195,6 +204,32 @@ function useRuntime(
     };
   }, []);
 
+  /** One server's whole catalog, every page. Errors become `error`. */
+  const loadCatalog = async (
+    serverName: string,
+  ): Promise<ServerEventCatalog> => {
+    try {
+      const catalog = await loadEventsCatalog(serverName);
+      let cursor = catalog.nextCursor;
+      const seen = new Set<string>();
+      while (cursor && !seen.has(cursor)) {
+        seen.add(cursor);
+        const page = await loadEventsCatalog(serverName, cursor);
+        catalog.events.push(...page.events);
+        cursor = page.nextCursor;
+      }
+      return { serverName, catalog };
+    } catch (error) {
+      return {
+        serverName,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Could not load events. Reconnect this server and retry.",
+      };
+    }
+  };
+
   const refresh = async () => {
     const revision = ++catalogRevision.current;
     const ownerScope = current.current.scope;
@@ -203,30 +238,7 @@ function useRuntime(
     const names = Object.keys(current.current.servers).filter(
       (name) => current.current.servers[name].connectionStatus === "connected",
     );
-    const result = await Promise.all(
-      names.map(async (serverName): Promise<ServerEventCatalog> => {
-        try {
-          const catalog = await loadEventsCatalog(serverName);
-          let cursor = catalog.nextCursor;
-          const seen = new Set<string>();
-          while (cursor && !seen.has(cursor)) {
-            seen.add(cursor);
-            const page = await loadEventsCatalog(serverName, cursor);
-            catalog.events.push(...page.events);
-            cursor = page.nextCursor;
-          }
-          return { serverName, catalog };
-        } catch (error) {
-          return {
-            serverName,
-            error:
-              error instanceof Error
-                ? error.message
-                : "Could not load events. Reconnect this server and retry.",
-          };
-        }
-      }),
-    );
+    const result = await Promise.all(names.map(loadCatalog));
     if (
       alive.current &&
       generation === lifecycle.current &&
@@ -237,6 +249,18 @@ function useRuntime(
       setLoading(false);
     }
   };
+
+  // The agent's Events tools are offered for servers whose catalog is known
+  // (`event-agent-tools.ts`), so keep it current as servers come and go.
+  const connectedServers = Object.keys(state.servers)
+    .filter((name) => state.servers[name].connectionStatus === "connected")
+    .sort()
+    .join("\n");
+  const refreshCatalogs = useRef(refresh);
+  refreshCatalogs.current = refresh;
+  useEffect(() => {
+    if (enabled) void refreshCatalogs.current();
+  }, [connectedServers, scope, enabled]);
 
   const watermark = async () => {
     const token =
@@ -258,7 +282,8 @@ function useRuntime(
     event: EventDescriptorView,
     value: SubscribeFormValue,
     instructions: string,
-  ) => {
+    options: AddEventOptions = {},
+  ): Promise<PlaygroundEventBinding> => {
     if (
       !host ||
       host.missing ||
@@ -271,7 +296,10 @@ function useRuntime(
     const targetAgent = useEventAgentBridge.getState().agent;
     if (!targetAgent)
       throw new Error("Open an agent conversation before connecting an event.");
-    if (targetAgent.blockedReason) throw new Error(targetAgent.blockedReason);
+    // The agent subscribes from inside its own running turn, which is what
+    // makes it "busy"; each event turn still checks the agent when it lands.
+    if (targetAgent.blockedReason && !options.fromAgent)
+      throw new Error(targetAgent.blockedReason);
     const isCurrent = () =>
       alive.current &&
       generation === lifecycle.current &&
@@ -337,25 +365,26 @@ function useRuntime(
       throw new Error(
         "This event is already connected. Use Edit instructions to change what the agent should do.",
       );
-    setBindings((previous) => {
-      return [
-        ...previous,
-        {
-          id: crypto.randomUUID(),
-          subscriptionId: subscription.id,
-          logicalId: logicalIdOf(subscription),
-          serverName: server.serverName,
-          eventName: event.name,
-          instructions,
-          event,
-          subscription,
-          enabled: true,
-          afterSeq,
-          agentScope: targetAgent.scope,
-          ownerScope,
-        },
-      ];
-    });
+    const binding: PlaygroundEventBinding = {
+      id: crypto.randomUUID(),
+      subscriptionId: subscription.id,
+      logicalId: logicalIdOf(subscription),
+      serverName: server.serverName,
+      eventName: event.name,
+      instructions,
+      event,
+      subscription,
+      enabled: true,
+      afterSeq,
+      agentScope: targetAgent.scope,
+      ownerScope,
+      createdBy: options.fromAgent ? "agent" : "user",
+      ...(options.title ? { title: options.title } : {}),
+    };
+    // Readable by the next agent tool call before React renders it.
+    current.current.bindings = [...current.current.bindings, binding];
+    setBindings((previous) => [...previous, binding]);
+    return binding;
   };
   const addTest = (
     server: ServerEventCatalog,
@@ -387,6 +416,7 @@ function useRuntime(
         afterSeq: 0,
         agentScope: target.scope,
         ownerScope: scope,
+        createdBy: "user",
       },
     ]);
   };
@@ -467,6 +497,7 @@ function useRuntime(
     catalogs,
     loading,
     refresh,
+    loadCatalog,
     add,
     addTest,
     edit,

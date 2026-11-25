@@ -311,6 +311,11 @@ import {
   snapshotPageToolsForTurn,
 } from "@/lib/webmcp-inspector/chat-dispatch";
 import { pageToolCallNeedsApproval } from "@/shared/client-fulfilled-tools";
+import {
+  isEventAgentToolName,
+  type EventAgentToolName,
+  type EventToolsSnapshot,
+} from "@/shared/event-agent-tools";
 import { createUiAwareApprovalResponseHandler } from "@/lib/webmcp/ui-tool-approval";
 import { respondToChatElicitation } from "@/lib/apis/elicitation-api";
 import {
@@ -706,6 +711,19 @@ export interface UseChatSessionOptions {
    * run code on a third-party site.
    */
   usePageTools?: boolean;
+  /**
+   * The Playground's MCP Events agent tools (`event-agent-tools.ts`):
+   * `snapshot` is read at POST time to advertise them, and `execute` fulfils
+   * each call. Absent on surfaces with no Events pane.
+   */
+  eventAgentTools?: {
+    snapshot: () => EventToolsSnapshot | undefined;
+    execute: (
+      name: EventAgentToolName,
+      toolCallId: string,
+      input: unknown,
+    ) => Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }>;
+  };
   /** Callback when chat is reset */
   onReset?: (reason?: ChatSessionResetReason) => void;
 }
@@ -2553,6 +2571,8 @@ export function useChatSession(
   // not the one captured when the transport was memoized.
   const usePageToolsRef = useRef(false);
   usePageToolsRef.current = options.usePageTools === true;
+  const eventAgentToolsRef = useRef(options.eventAgentTools);
+  eventAgentToolsRef.current = options.eventAgentTools;
   const isHostedGuest = HOSTED_MODE && !workOsUser && !isWorkOsLoading;
   const sharedGuestMode =
     isHostedGuest && !isAuthLoading && !!hostedProjectId && !!hostedScenarioId;
@@ -4255,6 +4275,9 @@ export function useChatSession(
           rewindRef.current?.chatSessionId === chatSessionIdRef.current
             ? rewindRef.current.lineage
             : undefined;
+        // MCP Events agent tools, for the servers whose catalog says they
+        // declare Events right now.
+        const eventTools = eventAgentToolsRef.current?.snapshot();
         return {
           harnessStartupRequestId: harnessStartupRequestRef.current,
           ...(ownerRequestId
@@ -4414,6 +4437,7 @@ export function useChatSession(
           ...(usePageToolsRef.current
             ? { pageTools: snapshotPageToolsForTurn() }
             : {}),
+          ...(eventTools ? { eventTools } : {}),
           // MCPJam UI tools are agent-surface-only; the only uiTools sender
           // is agent-chat-instances.ts (/api/web/mcpjam-agent).
           ...(widgetModelContext && widgetModelContext.length > 0
@@ -4582,6 +4606,24 @@ export function useChatSession(
             addToolOutput,
           });
         }
+        return;
+      }
+
+      // MCP Events agent tools: exact names, run by the Playground's events
+      // runtime. A turn always gets an output, or the stream would wait.
+      if (isEventAgentToolName(toolName)) {
+        const executor = eventAgentToolsRef.current;
+        const output = executor
+          ? await executor.execute(toolName, pageToolCallId, pageToolInput)
+          : {
+              content: [{ type: "text" as const, text: "MCP Events aren't available in this chat." }],
+              isError: true,
+            };
+        addToolOutput({
+          tool: toolName,
+          toolCallId: pageToolCallId,
+          output,
+        } as Parameters<typeof addToolOutput>[0]);
         return;
       }
 
