@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { confirmAutoOAuthEscalation } from "@/lib/oauth/auto-oauth-escalation";
+import { indexProjectServersByName } from "@/lib/project-servers-by-name";
 import type { RemoteServer } from "./useProjects";
 
 export function useServerConnectionOperations(
@@ -45,8 +46,10 @@ export function useServerConnectionOperations(
     if (previous?.projectId !== projectId) return;
 
     // A deletion in another tab never calls this tab's disconnect handler.
+    if (prompts.current.size === 0) return;
+    const previousByName = indexProjectServersByName(previous.servers, projectId);
     for (const name of prompts.current.keys()) {
-      const row = previous.servers.find((server) => server.name === name);
+      const row = previousByName.get(name);
       if (
         row &&
         !servers.some((server) => server._id === row._id && server.name === name)

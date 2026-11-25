@@ -4309,16 +4309,23 @@ describe("useServerState auth mode regressions", () => {
     );
   });
 
-  it("cancels a saved server's Auto authorization when its remote row disappears", async () => {
+  it("cancels Auto authorization only when the displayed server disappears from the catalog", async () => {
     reconnectServerMock.mockResolvedValueOnce({
       success: false,
       error: "Authorization required",
       oauthRequired: true,
     });
     const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
     appState.projects.default.servers["demo-server"].authMethod = "auto";
+    const server = {
+      _id: "srv_demo",
+      name: "demo-server",
+      projectId: "project_default",
+    };
+    const sibling = { ...server, _id: "srv_sibling", projectId: "project_sibling" };
     const options = {
-      activeProjectServersFlat: [{ _id: "srv_demo", name: "demo-server" }],
+      activeProjectServersFlat: [sibling, server],
     };
     const dispatch = vi.fn();
     const { result, rerender } = renderUseServerState(
@@ -4336,7 +4343,13 @@ describe("useServerState auth mode regressions", () => {
       expect(useAutoOAuthAuthorizationStore.getState().queue).toHaveLength(1);
     });
 
-    options.activeProjectServersFlat = [];
+    options.activeProjectServersFlat = [server];
+    rerender();
+    expect(useAutoOAuthAuthorizationStore.getState().queue).toHaveLength(1);
+
+    options.activeProjectServersFlat = [sibling, server];
+    rerender();
+    options.activeProjectServersFlat = [sibling];
     rerender();
 
     expect(useAutoOAuthAuthorizationStore.getState().queue).toHaveLength(0);

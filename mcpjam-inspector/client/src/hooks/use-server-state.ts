@@ -1020,7 +1020,8 @@ export function useServerState({
   const oauthCallbackHandledRef = useRef(new Set<string>());
   const { getOpToken, nextOpToken, isStaleOp, requestAutoOAuthAuthorization } =
     useServerConnectionOperations(
-      effectiveActiveProjectId,
+      effectiveProjects[effectiveActiveProjectId]?.sharedProjectId ??
+        effectiveActiveProjectId,
       activeProjectServersFlat,
     );
   // The op token each project's server was removed at. A connect holding that
