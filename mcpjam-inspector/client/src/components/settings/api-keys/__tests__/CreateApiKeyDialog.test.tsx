@@ -243,6 +243,29 @@ describe("CreateApiKeyDialog active organization", () => {
     ).toHaveTextContent("Beta");
   });
 
+  it("switches to the active organization once it is listed", () => {
+    const { rerender } = renderDialog([twoOrgs[0]], "org-b");
+    expect(
+      screen.getByRole("combobox", { name: "Organization" }),
+    ).toHaveTextContent("Acme");
+
+    rerender(
+      <CreateApiKeyDialog
+        open
+        onOpenChange={vi.fn()}
+        isCreating={false}
+        organizations={twoOrgs}
+        orgsLoading={false}
+        activeOrganizationId="org-b"
+        onCreate={onCreate}
+      />,
+    );
+
+    expect(
+      screen.getByRole("combobox", { name: "Organization" }),
+    ).toHaveTextContent("Beta");
+  });
+
   it("asks for an organization when the active one is not listed", () => {
     renderDialog(twoOrgs, "org-gone");
 

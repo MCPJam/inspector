@@ -63,34 +63,30 @@ export function CreateApiKeyDialog({
   onCreate,
 }: CreateApiKeyDialogProps) {
   const [name, setName] = useState("");
-  const [organizationId, setOrganizationId] = useState("");
+  const [pickedOrgId, setPickedOrgId] = useState<string | null>(null);
   const [expiresInDays, setExpiresInDays] = useState(
     DEFAULT_API_KEY_EXPIRY_DAYS,
   );
-
-  const activeOrganizationListed =
-    !!activeOrganizationId &&
-    organizations.some((o) => o._id === activeOrganizationId);
 
   // Reset the form on open.
   useEffect(() => {
     if (!open) return;
     setName("");
     setExpiresInDays(DEFAULT_API_KEY_EXPIRY_DAYS);
-    setOrganizationId("");
+    setPickedOrgId(null);
   }, [open]);
 
-  // Keep a selection that is still listed; otherwise pre-select the active
-  // org, or the only org.
-  useEffect(() => {
-    if (!open) return;
-    setOrganizationId((prev) => {
-      if (prev && organizations.some((o) => o._id === prev)) return prev;
-      if (activeOrganizationListed) return activeOrganizationId;
-      if (organizations.length === 1) return organizations[0]._id;
-      return "";
-    });
-  }, [open, organizations, activeOrganizationId, activeOrganizationListed]);
+  // The user's pick while it is still listed; otherwise the active org, or
+  // the only org.
+  const isListed = (id: string | null | undefined): id is string =>
+    !!id && organizations.some((o) => o._id === id);
+  const organizationId = isListed(pickedOrgId)
+    ? pickedOrgId
+    : isListed(activeOrganizationId)
+      ? activeOrganizationId
+      : organizations.length === 1
+        ? organizations[0]._id
+        : "";
 
   useSettingsDraft(
     open && !!name,
@@ -178,7 +174,7 @@ export function CreateApiKeyDialog({
           ) : (
             <Select
               value={organizationId}
-              onValueChange={setOrganizationId}
+              onValueChange={setPickedOrgId}
               disabled={isCreating || singleOrg}
             >
               <SelectTrigger id="api-key-org-select">
