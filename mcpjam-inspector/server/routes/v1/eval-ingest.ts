@@ -1,3 +1,4 @@
+import { cliUpgradeResponse, requireCurrentEvalCli } from "./eval-cli-version.js";
 /**
  * Public v1 eval-result ingestion — thin proxies over the Convex
  * `/v1/evals/ingest/*` surface.
@@ -26,6 +27,7 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1Error } from "./envelope.js";
 
 const evalIngest = new Hono();
+evalIngest.use("*", requireCurrentEvalCli);
 
 // The backend enforces its own 5 MiB payload cap (MAX_SDK_EVALS_REQUEST_BYTES);
 // this slightly larger guard only keeps a hostile body from buffering
@@ -95,6 +97,11 @@ async function proxyIngest(c: Context, suffix: string): Promise<Response> {
     payload = parsed as Record<string, unknown>;
   } catch {
     return v1Error(c, "VALIDATION_ERROR", "Invalid JSON body");
+  }
+
+  if (suffix === "start-run" && payload.surface === "cli") {
+    const refusal = cliUpgradeResponse(c, payload.clientVersion);
+    if (refusal) return refusal;
   }
 
   // `default` is the zero-config alias: omit projectId so the backend

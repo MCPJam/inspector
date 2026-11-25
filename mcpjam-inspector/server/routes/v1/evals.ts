@@ -1,3 +1,4 @@
+import { requireCurrentEvalCli } from "./eval-cli-version.js";
 import { logLegacyEvalRequest } from "../../services/evals/legacy-eval-telemetry.js";
 import { loadSuiteConnectionIdSets } from "../../services/evals/suite-account-choices.js";
 import {
@@ -322,6 +323,7 @@ evals.use("*", async (c, next) => {
   }
   await next();
 });
+evals.use("*", requireCurrentEvalCli);
 
 // ── Public authoring contract: TestStep[] ↔ internal case fields ──────
 //
