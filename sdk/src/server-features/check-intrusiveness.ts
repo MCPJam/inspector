@@ -88,7 +88,6 @@ export const PROTOCOL_CHECK_INTRUSIVENESS = {
   // The raw transport family opens its own sessions and concurrent streams
   // and ends them with DELETE.
   "server-sse-polling-session": "side-effecting",
-  "server-accepts-multiple-post-streams": "side-effecting",
   "server-sse-streams-functional": "side-effecting",
   "notification-post-accepted": "side-effecting",
   "get-stream-or-405": "side-effecting",

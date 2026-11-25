@@ -103,7 +103,6 @@ describe("CHECK_ERAS map", () => {
       "ping",
       "logging-set-level",
       "server-sse-polling-session",
-      "server-accepts-multiple-post-streams",
       "server-sse-streams-functional",
       "notification-post-accepted",
       "get-stream-or-405",
@@ -370,7 +369,6 @@ describe("raw legacy-only checks are era-skipped on a modern run", () => {
     const config = normalize({ fetchFn, protocolVersion: "2026-07-28" });
     const selected = new Set<MCPCheckId>([
       "server-sse-polling-session",
-      "server-accepts-multiple-post-streams",
       "server-sse-streams-functional",
     ]);
     const results = await runTransportChecks(
@@ -379,7 +377,7 @@ describe("raw legacy-only checks are era-skipped on a modern run", () => {
     );
 
     expect(fetchCalled).toBe(false);
-    expect(results).toHaveLength(3);
+    expect(results).toHaveLength(2);
     for (const result of results) {
       expect(result.status).toBe("skipped");
       expect(result.error?.message).toMatch(/Not applicable to the modern era/);

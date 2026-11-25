@@ -1,6 +1,6 @@
 /**
- * The request Multiple POST Streams and Functional SSE Streams send three
- * times at once on a 2025-era session.
+ * The request Functional SSE Streams sends three times at once on a 2025-era
+ * session.
  *
  * "Both parties MUST ... only use capabilities that were successfully
  * negotiated" (SHOULD in 2025-03-26). The probes sent `tools/list` to every
@@ -33,7 +33,6 @@ const LEGACY_VERSIONS: LegacyVersion[] = [
   "2025-06-18",
   "2025-03-26",
 ];
-const POSTS: MCPCheckId = "server-accepts-multiple-post-streams";
 const SSE: MCPCheckId = "server-sse-streams-functional";
 
 describe("concurrentProbe picks a request the server agreed to", () => {
@@ -96,7 +95,7 @@ async function run(
     serverUrl: config.serverUrl,
     fetchFn: config.fetchFn,
   };
-  const results = await runTransportChecks(ctx, new Set([POSTS, SSE]));
+  const results = await runTransportChecks(ctx, new Set([SSE]));
   const byId = (id: MCPCheckId): MCPCheckResult => {
     const found = results.find((result) => result.id === id);
     if (!found) throw new Error(`check ${id} not in results`);
@@ -112,8 +111,8 @@ describe.each(LEGACY_VERSIONS)("the concurrent probes on %s", (version) => {
     const { byId, sent } = await run({ capabilities: { tools: {} } }, version);
 
     expect(sent("tools/list")).toBe(3);
-    expect(byId(POSTS).status).toBe("passed");
-    expect(byId(POSTS).details).toMatchObject({ probeMethod: "tools/list" });
+    expect(byId(SSE).status).toBe("passed");
+    expect(byId(SSE).details).toMatchObject({ probeMethod: "tools/list" });
   });
 
   it("send the listing it declared to a server with no tools", async () => {
@@ -122,17 +121,16 @@ describe.each(LEGACY_VERSIONS)("the concurrent probes on %s", (version) => {
       version
     );
 
-    // The server answers 404 to tools/list. Three of those used to fail
-    // Multiple POST Streams: "Expected all concurrent POST requests to return
-    // 2xx, got 404, 404, 404".
+    // The server answers 404 to tools/list. Three of those used to fail the
+    // check: "One or more concurrent POST requests failed before any SSE
+    // stream could be validated".
     expect(sent("tools/list")).toBe(0);
     expect(sent("prompts/list")).toBe(3);
-    expect([byId(POSTS).status, byId(POSTS).error?.message]).toEqual([
+    expect([byId(SSE).status, byId(SSE).error?.message]).toEqual([
       "passed",
       undefined,
     ]);
-    expect(byId(POSTS).details).toMatchObject({ probeMethod: "prompts/list" });
-    expect(byId(SSE).status).toBe("passed");
+    expect(byId(SSE).details).toMatchObject({ probeMethod: "prompts/list" });
   });
 
   it("send a ping to a server that declares nothing to list", async () => {
@@ -149,8 +147,7 @@ describe.each(LEGACY_VERSIONS)("the concurrent probes on %s", (version) => {
     for (const body of bodies.filter((entry) => entry.method === "ping")) {
       expect(body).not.toHaveProperty("params");
     }
-    expect(byId(POSTS).status).toBe("passed");
-    expect(byId(POSTS).details).toMatchObject({ probeMethod: "ping" });
+    expect(byId(SSE).details).toMatchObject({ probeMethod: "ping" });
   });
 });
 

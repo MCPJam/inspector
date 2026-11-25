@@ -81,6 +81,17 @@ test("buildConfig accepts a retired check id, which the SDK runs as advice", () 
   assert.deepEqual(config.checkIds, ["modern-log-level-filtering"]);
 });
 
+test("buildConfig accepts a removed check id, which the SDK drops", () => {
+  const config = buildConfig({
+    url: "https://example.com/mcp",
+    checkId: ["ping", "server-accepts-multiple-post-streams"],
+  });
+  assert.deepEqual(config.checkIds, [
+    "ping",
+    "server-accepts-multiple-post-streams",
+  ]);
+});
+
 test("buildConfig preserves validated conformance filters", () => {
   const config = buildConfig({
     url: "https://example.com/mcp",

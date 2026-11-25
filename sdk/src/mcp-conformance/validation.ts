@@ -6,6 +6,7 @@ import {
   MCP_LOG_LEVELS,
   MCP_READINESS_IDS,
   PROTOCOL_VERSION_ERAS,
+  REMOVED_MCP_CHECK_IDS,
   RETIRED_MCP_CHECK_IDS,
   type MCPCheckCategory,
   type MCPCheckEra,
@@ -51,6 +52,36 @@ function normalizeCheckIds(
   }
 
   return normalized;
+}
+
+/**
+ * Picks without the check ids that were removed with nothing in their place.
+ * The other picks run as asked. A list of ONLY removed ids has nothing left to
+ * run, and an emptied list would run every check instead, so it is refused
+ * with the reason the check went away.
+ */
+function dropRemovedCheckIds(
+  checkIds: MCPConformanceConfig["checkIds"],
+): Exclude<MCPConformanceConfig["checkIds"], undefined> | undefined {
+  if (checkIds === undefined) {
+    return undefined;
+  }
+  const removed = checkIds.filter((id) =>
+    Object.hasOwn(REMOVED_MCP_CHECK_IDS, id),
+  ) as (keyof typeof REMOVED_MCP_CHECK_IDS)[];
+  if (removed.length === 0) {
+    return checkIds;
+  }
+  const kept = checkIds.filter(
+    (id) => !Object.hasOwn(REMOVED_MCP_CHECK_IDS, id),
+  );
+  if (kept.length === 0) {
+    const [id] = removed;
+    throw new Error(
+      `MCP conformance check ${id} was removed and nothing runs in its place. ${REMOVED_MCP_CHECK_IDS[id!]} Pick another check, or leave checkIds out to run every check.`,
+    );
+  }
+  return kept;
 }
 
 /**
@@ -290,7 +321,10 @@ export function normalizeMCPConformanceConfig(
   }
 
   const categories = normalizeCategories(config.categories);
-  const picks = resolveRetiredCheckIds(config.checkIds, config.readinessIds);
+  const picks = resolveRetiredCheckIds(
+    dropRemovedCheckIds(config.checkIds),
+    config.readinessIds,
+  );
   const checkIds = normalizeCheckIds(picks.checkIds);
   const readinessIds = normalizeReadinessIds(picks.readinessIds);
   const { protocolVersion, era } = normalizeProtocolVersion(

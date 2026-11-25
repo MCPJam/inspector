@@ -126,7 +126,6 @@ const STOP_MESSAGE = `The server answered initialize with protocol version "${UN
 
 /** The checks that need more requests on the session after `initialize`. */
 const NEEDS_SESSION: MCPCheckId[] = [
-  "server-accepts-multiple-post-streams",
   "server-sse-streams-functional",
   "notification-post-accepted",
   "get-stream-or-405",

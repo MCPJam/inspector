@@ -1,9 +1,9 @@
 /**
- * The request Multiple POST Streams and Functional SSE Streams send three
- * times at once on a 2025-era session.
+ * The request Functional SSE Streams sends three times at once on a 2025-era
+ * session.
  *
- * Any request would test "accepts concurrent POSTs", but it has to be one the
- * server agreed to: "Both parties MUST ... only use capabilities that were
+ * Any request would open three streams, but it has to be one the server
+ * agreed to: "Both parties MUST ... only use capabilities that were
  * successfully negotiated" (a SHOULD in 2025-03-26). So it is the listing of a
  * capability the server's `initialize` answer declared, and a `ping`, which
  * needs no capability, when it declared none of them.

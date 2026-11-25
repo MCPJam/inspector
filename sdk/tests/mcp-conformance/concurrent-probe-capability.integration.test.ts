@@ -1,5 +1,5 @@
 /**
- * Multiple POST Streams and Functional SSE Streams against a real HTTP server
+ * Functional SSE Streams against a real HTTP server
  * that answers only what its `initialize` declared. A listing it did not
  * declare gets HTTP 404, as from a server without that feature.
  *
@@ -16,7 +16,6 @@ import {
   type CapabilityServerOptions,
 } from "../support/capability-server.js";
 
-const POSTS: MCPCheckId = "server-accepts-multiple-post-streams";
 const SSE: MCPCheckId = "server-sse-streams-functional";
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -31,7 +30,7 @@ async function run(options: CapabilityServerOptions) {
     serverUrl: served.url,
     protocolVersion: "2025-11-25",
     checkTimeout: 5_000,
-    checkIds: [POSTS, SSE],
+    checkIds: [SSE],
     readinessIds: [],
   }).run();
   const find = (id: MCPCheckId) =>
@@ -48,7 +47,7 @@ async function run(options: CapabilityServerOptions) {
 }
 
 describe("a server that declares prompts and no tools", () => {
-  it("is sent three prompts/list, never a tools/list, and passes both checks", async () => {
+  it("is sent three prompts/list, never a tools/list, and passes", async () => {
     const { sent, verdict } = await run({
       capabilities: { prompts: {} },
       listings: "sse",
@@ -56,9 +55,8 @@ describe("a server that declares prompts and no tools", () => {
 
     expect(sent("tools/list")).toBe(0);
     expect(sent("prompts/list")).toBe(3);
-    // With tools/list the three requests are answered 404 and both checks
-    // fail a server that did nothing wrong.
-    expect(verdict(POSTS)).toEqual(["passed", undefined, undefined]);
+    // With tools/list the three requests are answered 404 and the check
+    // fails a server that did nothing wrong.
     expect(verdict(SSE)).toEqual(["passed", undefined, undefined]);
   });
 });
@@ -69,7 +67,6 @@ describe("a server that declares nothing to list", () => {
 
     expect(sent("tools/list")).toBe(0);
     expect(sent("ping")).toBe(3);
-    expect(verdict(POSTS)).toEqual(["passed", undefined, undefined]);
     expect(verdict(SSE)).toEqual([
       "skipped",
       "not-applicable",
@@ -87,7 +84,6 @@ describe("a server that declares tools", () => {
 
     expect(sent("tools/list")).toBe(3);
     expect(sent("prompts/list")).toBe(0);
-    expect(verdict(POSTS)).toEqual(["passed", undefined, undefined]);
     expect(verdict(SSE)).toEqual(["passed", undefined, undefined]);
   });
 });

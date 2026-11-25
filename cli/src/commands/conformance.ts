@@ -14,6 +14,7 @@ import {
   MCP_LOG_LEVELS,
   MCP_PROTOCOL_VERSIONS,
   MCP_READINESS_IDS,
+  REMOVED_MCP_CHECK_IDS,
   RETIRED_MCP_CHECK_IDS,
   type MCPConformanceConfig,
   type MCPLogLevel,
@@ -521,6 +522,7 @@ export function buildProtocolRunConfig(
   const invalidCheckIds = collectInvalidEntries(checkIds, [
     ...MCP_CHECK_IDS,
     ...Object.keys(RETIRED_MCP_CHECK_IDS),
+    ...Object.keys(REMOVED_MCP_CHECK_IDS),
   ]);
   if (invalidCheckIds.length > 0) {
     throw usageError(
@@ -532,6 +534,15 @@ export function buildProtocolRunConfig(
     if (Object.hasOwn(RETIRED_MCP_CHECK_IDS, id)) {
       process.stderr.write(
         `Note: check ${id} is now the ${RETIRED_MCP_CHECK_IDS[id as keyof typeof RETIRED_MCP_CHECK_IDS]} advice. Running that instead.\n`,
+      );
+    }
+  }
+
+  // A removed id runs nothing (the SDK drops it); say why it went away.
+  for (const id of checkIds ?? []) {
+    if (Object.hasOwn(REMOVED_MCP_CHECK_IDS, id)) {
+      process.stderr.write(
+        `Note: check ${id} was removed. ${REMOVED_MCP_CHECK_IDS[id as keyof typeof REMOVED_MCP_CHECK_IDS]} Skipping it.\n`,
       );
     }
   }
