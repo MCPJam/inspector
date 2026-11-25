@@ -34,6 +34,10 @@ import type { SubscribeFormValue } from "@/components/events/use-subscribe-form"
 import { logicalIdOf } from "@/components/events/event-utils";
 import { createEventDispatcher, type EventBinding } from "./event-dispatch";
 import { useEventAgentBridge } from "./event-agent-bridge";
+import {
+  createEventAgentToolExecutor,
+  type EventAgentToolExecutor,
+} from "./event-agent-tools";
 
 export interface PlaygroundEventBinding extends EventBinding {
   event: EventDescriptorView;
@@ -277,13 +281,16 @@ function useRuntime(
     throw new Error("The event feed is busy. Wait a moment and try again.");
   };
 
-  const add = async (
+  /**
+   * The one create path. Connect event, the agent's subscribe and the agent's
+   * update with new triggers all reach the registry through here.
+   */
+  const createSubscription = async (
     server: ServerEventCatalog,
     event: EventDescriptorView,
     value: SubscribeFormValue,
-    instructions: string,
-    options: AddEventOptions = {},
-  ): Promise<PlaygroundEventBinding> => {
+    options: AddEventOptions,
+  ) => {
     if (
       !host ||
       host.missing ||
@@ -357,11 +364,23 @@ function useRuntime(
       throw new Error(
         "The client changed. Connect the event again for the selected client.",
       );
-    if (
-      current.current.bindings.some(
-        (binding) => binding.subscriptionId === subscription.id,
-      )
-    )
+    return { subscription, afterSeq, targetAgent, ownerScope };
+  };
+  const alreadyConnected = (subscriptionId: string, except?: string) =>
+    current.current.bindings.some(
+      (binding) =>
+        binding.subscriptionId === subscriptionId && binding.id !== except,
+    );
+  const add = async (
+    server: ServerEventCatalog,
+    event: EventDescriptorView,
+    value: SubscribeFormValue,
+    instructions: string,
+    options: AddEventOptions = {},
+  ): Promise<PlaygroundEventBinding> => {
+    const { subscription, afterSeq, targetAgent, ownerScope } =
+      await createSubscription(server, event, value, options);
+    if (alreadyConnected(subscription.id))
       throw new Error(
         "This event is already connected. Use Edit instructions to change what the agent should do.",
       );
@@ -385,6 +404,51 @@ function useRuntime(
     current.current.bindings = [...current.current.bindings, binding];
     setBindings((previous) => [...previous, binding]);
     return binding;
+  };
+  /**
+   * Move a connection to another event or other arguments, keeping its id,
+   * title, instructions and pause state: the agent's update with new triggers
+   * (a new trip). The old registry subscription stays, as on Disconnect: it
+   * may be shared.
+   */
+  const retarget = async (
+    id: string,
+    server: ServerEventCatalog,
+    event: EventDescriptorView,
+    value: SubscribeFormValue,
+  ): Promise<PlaygroundEventBinding> => {
+    if (!current.current.bindings.some((binding) => binding.id === id))
+      throw new Error("This event connection no longer exists.");
+    const { subscription, afterSeq, targetAgent } = await createSubscription(
+      server,
+      event,
+      value,
+      { fromAgent: true },
+    );
+    if (alreadyConnected(subscription.id, id))
+      throw new Error(
+        "Another connection already watches this event with these arguments.",
+      );
+    dispatcher.current?.invalidate(id);
+    const move = (binding: PlaygroundEventBinding): PlaygroundEventBinding =>
+      binding.id === id
+        ? {
+            ...binding,
+            subscriptionId: subscription.id,
+            logicalId: logicalIdOf(subscription),
+            serverName: server.serverName,
+            eventName: event.name,
+            event,
+            subscription,
+            afterSeq,
+            agentScope: targetAgent.scope,
+          }
+        : binding;
+    current.current.bindings = current.current.bindings.map(move);
+    setBindings((previous) => previous.map(move));
+    const moved = current.current.bindings.find((binding) => binding.id === id);
+    if (!moved) throw new Error("This event connection no longer exists.");
+    return moved;
   };
   const addTest = (
     server: ServerEventCatalog,
@@ -423,7 +487,9 @@ function useRuntime(
 
   const edit = async (
     id: string,
-    fields: Partial<Pick<PlaygroundEventBinding, "enabled" | "instructions">>,
+    fields: Partial<
+      Pick<PlaygroundEventBinding, "enabled" | "instructions" | "title">
+    >,
   ) => {
     dispatcher.current?.invalidate(id);
     const target = useEventAgentBridge.getState().agent?.scope;
@@ -499,6 +565,7 @@ function useRuntime(
     refresh,
     loadCatalog,
     add,
+    retarget,
     addTest,
     edit,
     remove,
@@ -512,6 +579,12 @@ function useRuntime(
 }
 
 const Context = createContext<ReturnType<typeof useRuntime> | null>(null);
+/**
+ * The agent's Events tools, in a context of their own whose value never
+ * changes: the chat that runs them must not re-render on every runtime render,
+ * and reads the CURRENT runtime only when it advertises or runs a tool.
+ */
+const AgentToolsContext = createContext<EventAgentToolExecutor | null>(null);
 export function PlaygroundEventsProvider({
   children,
   projectId,
@@ -525,12 +598,23 @@ export function PlaygroundEventsProvider({
 }) {
   const enabled = useEventsEnabledState() === true;
   const runtime = useRuntime(projectId, hostId, host, enabled);
+  const latest = useRef<ReturnType<typeof useRuntime> | null>(null);
+  latest.current = enabled ? runtime : null;
+  const [agentTools] = useState(() =>
+    createEventAgentToolExecutor(() => latest.current),
+  );
   return (
-    <Context.Provider value={enabled ? runtime : null}>
-      {children}
-    </Context.Provider>
+    <AgentToolsContext.Provider value={agentTools}>
+      <Context.Provider value={enabled ? runtime : null}>
+        {children}
+      </Context.Provider>
+    </AgentToolsContext.Provider>
   );
 }
 export function usePlaygroundEvents() {
   return useContext(Context);
+}
+/** The stable Events agent-tools executor, or null outside a Playground. */
+export function usePlaygroundEventAgentTools() {
+  return useContext(AgentToolsContext);
 }

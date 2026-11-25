@@ -4,7 +4,9 @@
  * the Playground events runtime, so a subscription the agent creates goes
  * through `add`, the same path as "Connect event", and is the same object: it
  * shows in the Events pane and the Events tab, and wakes the agent in this
- * conversation through the existing dispatcher.
+ * conversation through the existing dispatcher. Pause, resume and edits use the
+ * pane's own `edit`; moving a watch to new params (`retarget`) reaches the
+ * registry through the same create code as `add`.
  *
  * The host, not the model, picks the delivery mode, exactly as Connect event
  * defaults it (the first mode the runtime, the event type and the client all
@@ -22,6 +24,7 @@ import {
   parseEventAgentToolCall,
   type EventAgentCall,
   type EventAgentToolName,
+  type EventAgentTrigger,
   type EventToolsSnapshot,
 } from "@/shared/event-agent-tools";
 import type {
@@ -32,6 +35,7 @@ import { bindingStatus } from "./binding-status";
 import { checkEventArguments } from "./event-arguments";
 import type {
   PlaygroundEventBinding,
+  ServerEventCatalog,
   usePlaygroundEvents,
 } from "./PlaygroundEventsProvider";
 
@@ -46,6 +50,7 @@ export type EventAgentRuntime = Pick<
   | "feed"
   | "loadCatalog"
   | "add"
+  | "retarget"
   | "edit"
   | "remove"
 >;
@@ -117,24 +122,28 @@ function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/** A subscription in the tools' own field names (`subscription_id`, `prompt`, …). */
 function describe(runtime: EventAgentRuntime, binding: PlaygroundEventBinding) {
   return {
-    id: binding.id,
+    subscription_id: binding.id,
     ...(binding.title ? { title: binding.title } : {}),
     server: binding.serverName,
-    event: binding.eventName,
-    ...(binding.subscription
-      ? {
-          arguments: binding.subscription.arguments,
-          delivery: binding.subscription.mode,
-        }
-      : {}),
-    instructions: binding.instructions,
+    triggers: [
+      {
+        event: binding.eventName,
+        ...(binding.subscription
+          ? { params: binding.subscription.arguments }
+          : {}),
+      },
+    ],
+    prompt: binding.instructions,
+    is_enabled: binding.enabled,
     status: bindingStatus(binding, {
       connected: connected(runtime, binding.serverName),
       feedStatus: runtime.feed.status,
     }).toLowerCase(),
-    createdBy: binding.createdBy ?? "user",
+    ...(binding.subscription ? { delivery: binding.subscription.mode } : {}),
+    created_by: binding.createdBy ?? "user",
   };
 }
 
@@ -153,9 +162,15 @@ function pickMode(
   event: EventDescriptorView,
 ): { mode: EventsDeliveryModeView } | { error: string } {
   const host = runtime.host;
-  if (!host) return { error: "Client settings are still loading. Try again in a moment." };
+  if (!host)
+    return {
+      error: "Client settings are still loading. Try again in a moment.",
+    };
   if (host.missing)
-    return { error: "The selected client no longer exists, so nothing can subscribe as it." };
+    return {
+      error:
+        "The selected client no longer exists, so nothing can subscribe as it.",
+    };
   const availability = subscribableModes({
     host: null,
     hostModes: host.modes,
@@ -186,12 +201,17 @@ async function listEventTypes(runtime: EventAgentRuntime, server?: string) {
       entry.error
         ? { server: entry.serverName, error: entry.error }
         : !entry.catalog?.support.declared
-          ? { server: entry.serverName, error: "This server doesn't declare MCP Events." }
+          ? {
+              server: entry.serverName,
+              error: "This server doesn't declare MCP Events.",
+            }
           : {
               server: entry.serverName,
               eventTypes: entry.catalog.events.map((event) => ({
                 name: event.name,
-                ...(event.description ? { description: event.description } : {}),
+                ...(event.description
+                  ? { description: event.description }
+                  : {}),
                 delivery: event.delivery,
                 inputSchema: event.inputSchema ?? { type: "object" },
               })),
@@ -200,85 +220,175 @@ async function listEventTypes(runtime: EventAgentRuntime, server?: string) {
   });
 }
 
+/**
+ * A trigger resolved against the server's live catalog and checked against
+ * the event's inputSchema, or the error the model should see. Nothing has
+ * been sent to the server yet.
+ */
+async function resolveTrigger(
+  runtime: EventAgentRuntime,
+  serverName: string,
+  trigger: EventAgentTrigger,
+  tool: string,
+): Promise<
+  | { server: ServerEventCatalog; event: EventDescriptorView }
+  | { error: EventAgentToolResult }
+> {
+  if (!connected(runtime, serverName)) {
+    return {
+      error: failure(
+        `"${serverName}" isn't connected. Servers with events: ${eventServers(runtime).join(", ") || "none"}.`,
+      ),
+    };
+  }
+  const server = await runtime.loadCatalog(serverName);
+  if (server.error)
+    return {
+      error: failure(
+        `Couldn't load the event types of "${serverName}": ${server.error}`,
+      ),
+    };
+  if (!server.catalog?.support.declared)
+    return { error: failure(`"${serverName}" doesn't declare MCP Events.`) };
+  const event = server.catalog.events.find(
+    (entry) => entry.name === trigger.event,
+  );
+  if (!event) {
+    return {
+      error: failure(
+        `"${serverName}" has no event type "${trigger.event}". Its event types: ${server.catalog.events.map((entry) => entry.name).join(", ") || "none"}.`,
+      ),
+    };
+  }
+  const check = checkEventArguments(event.inputSchema, trigger.params);
+  if (check.valid === false) {
+    return {
+      error: failure(
+        `The params don't match the inputSchema of ${event.name}, so nothing was sent to the server. Fix them and call ${tool} again.`,
+        {
+          issues: check.issues,
+          ...(check.hint ? { hint: check.hint } : {}),
+          inputSchema: event.inputSchema ?? { type: "object" },
+        },
+      ),
+    };
+  }
+  return { server, event };
+}
+
+const sameTrigger = (
+  binding: PlaygroundEventBinding,
+  serverName: string,
+  trigger: EventAgentTrigger,
+) =>
+  binding.serverName === serverName &&
+  binding.eventName === trigger.event &&
+  !!binding.subscription &&
+  canonical(binding.subscription.arguments) === canonical(trigger.params);
+
 async function subscribe(
   runtime: EventAgentRuntime,
   call: Extract<EventAgentCall, { tool: "subscribe" }>,
 ) {
-  if (!connected(runtime, call.server)) {
-    return failure(
-      `"${call.server}" isn't connected. Servers with events: ${eventServers(runtime).join(", ") || "none"}.`,
-    );
-  }
-  const server = await runtime.loadCatalog(call.server);
-  if (server.error) return failure(`Couldn't load the event types of "${call.server}": ${server.error}`);
-  if (!server.catalog?.support.declared)
-    return failure(`"${call.server}" doesn't declare MCP Events.`);
-  const event = server.catalog.events.find((entry) => entry.name === call.event);
-  if (!event) {
-    return failure(
-      `"${call.server}" has no event type "${call.event}". Its event types: ${server.catalog.events.map((entry) => entry.name).join(", ") || "none"}.`,
-    );
-  }
-  const check = checkEventArguments(event.inputSchema, call.arguments);
-  if (check.valid === false) {
-    return failure(
-      `The arguments don't match the inputSchema of ${event.name}, so nothing was sent to the server. Fix them and call mcpjam_subscribe_to_event again.`,
-      {
-        issues: check.issues,
-        ...(check.hint ? { hint: check.hint } : {}),
-        inputSchema: event.inputSchema ?? { type: "object" },
-      },
-    );
-  }
-  const duplicate = runtime.bindings.find(
-    (binding) =>
-      binding.serverName === call.server &&
-      binding.eventName === call.event &&
-      binding.subscription &&
-      canonical(binding.subscription.arguments) === canonical(call.arguments),
+  const resolved = await resolveTrigger(
+    runtime,
+    call.server,
+    call.trigger,
+    "mcpjam_subscribe_to_events",
   );
-  if (duplicate) {
-    return failure(
-      "This event is already connected with these arguments. Use mcpjam_list_event_subscriptions to see it, or resume it if it's paused.",
-      { subscription: describe(runtime, duplicate) },
-    );
+  if ("error" in resolved) return resolved.error;
+  // The same event and params again is the same watch with a new prompt: update
+  // it rather than add a second one.
+  const existing = runtime.bindings.find((binding) =>
+    sameTrigger(binding, call.server, call.trigger),
+  );
+  if (existing) {
+    const fields = {
+      instructions: call.prompt,
+      title: call.title,
+      enabled: true,
+    };
+    await runtime.edit(existing.id, fields);
+    return success({
+      subscription: describe(runtime, { ...existing, ...fields }),
+      updated: true,
+      message:
+        "A subscription already watched this event with these params, so it was updated with the new title and prompt instead of adding a second one.",
+    });
   }
-  const picked = pickMode(runtime, event);
+  const picked = pickMode(runtime, resolved.event);
   if ("error" in picked) return failure(picked.error);
   const binding = await runtime.add(
-    server,
-    event,
-    { arguments: call.arguments, mode: picked.mode },
-    call.instructions,
+    resolved.server,
+    resolved.event,
+    { arguments: call.trigger.params, mode: picked.mode },
+    call.prompt,
     { title: call.title, fromAgent: true },
   );
   return success({
     subscription: describe(runtime, binding),
-    message: `Subscribed. When ${event.name} arrives, MCPJam starts a new turn in this conversation with the event data and your instructions.`,
+    message: `Subscribed. When ${resolved.event.name} arrives, MCPJam starts a new turn in this conversation with the event and your prompt.`,
   });
 }
 
-async function updateState(
+function findBinding(runtime: EventAgentRuntime, id: string) {
+  return runtime.bindings.find((entry) => entry.id === id);
+}
+
+const unknownId = (id: string) =>
+  failure(
+    `No event subscription has the subscription_id "${id}". Call mcpjam_list_event_subscriptions for the current ids.`,
+  );
+
+async function update(
   runtime: EventAgentRuntime,
-  call: Extract<EventAgentCall, { tool: "pause" | "resume" | "delete" }>,
+  call: Extract<EventAgentCall, { tool: "update" }>,
 ) {
-  const binding = runtime.bindings.find((entry) => entry.id === call.subscriptionId);
-  if (!binding) {
-    return failure(
-      `No event subscription has the id "${call.subscriptionId}". Call mcpjam_list_event_subscriptions for the current ids.`,
+  let binding = findBinding(runtime, call.subscriptionId);
+  if (!binding) return unknownId(call.subscriptionId);
+  if (call.trigger && !sameTrigger(binding, binding.serverName, call.trigger)) {
+    const resolved = await resolveTrigger(
+      runtime,
+      binding.serverName,
+      call.trigger,
+      "mcpjam_update_event_subscription",
+    );
+    if ("error" in resolved) return resolved.error;
+    const picked = pickMode(runtime, resolved.event);
+    if ("error" in picked) return failure(picked.error);
+    binding = await runtime.retarget(
+      binding.id,
+      resolved.server,
+      resolved.event,
+      {
+        arguments: call.trigger.params,
+        mode: picked.mode,
+      },
     );
   }
-  if (call.tool === "delete") {
-    runtime.remove(binding.id);
-    return success({
-      deleted: binding.id,
-      message:
-        "Its events no longer start turns here. The server subscription stays in the Events tab.",
-    });
-  }
-  const enabled = call.tool === "resume";
-  await runtime.edit(binding.id, { enabled });
-  return success({ subscription: describe(runtime, { ...binding, enabled }) });
+  const fields = {
+    ...(call.prompt !== undefined ? { instructions: call.prompt } : {}),
+    ...(call.title !== undefined ? { title: call.title } : {}),
+    ...(call.isEnabled !== undefined ? { enabled: call.isEnabled } : {}),
+  };
+  if (Object.keys(fields).length > 0) await runtime.edit(binding.id, fields);
+  return success({
+    subscription: describe(runtime, { ...binding, ...fields }),
+  });
+}
+
+async function remove(
+  runtime: EventAgentRuntime,
+  call: Extract<EventAgentCall, { tool: "delete" }>,
+) {
+  const binding = findBinding(runtime, call.subscriptionId);
+  if (!binding) return unknownId(call.subscriptionId);
+  runtime.remove(binding.id);
+  return success({
+    deleted: binding.id,
+    message:
+      "Its events no longer start turns here. The server subscription stays in the Events tab.",
+  });
 }
 
 export async function runEventAgentTool(
@@ -300,18 +410,22 @@ export async function runEventAgentTool(
         return await listEventTypes(runtime, call.server);
       case "subscribe":
         return await subscribe(runtime, call);
+      case "update":
+        return await update(runtime, call);
       case "list_subscriptions":
         return success({
-          subscriptions: runtime.bindings.map((binding) => describe(runtime, binding)),
+          subscriptions: runtime.bindings.map((binding) =>
+            describe(runtime, binding),
+          ),
         });
-      case "pause":
-      case "resume":
       case "delete":
-        return await updateState(runtime, call);
+        return await remove(runtime, call);
     }
   } catch (error) {
     return failure(
-      error instanceof Error ? error.message : "The events request failed. Try again.",
+      error instanceof Error
+        ? error.message
+        : "The events request failed. Try again.",
     );
   }
 }

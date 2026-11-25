@@ -1661,7 +1661,7 @@ export async function prepareChatV2(
       Object.prototype.hasOwnProperty.call(finalSkillTools, name)
     ) {
       throw new Error(
-        `Built-in tool '${name}' collides with an existing app, UI, page, event, or skill tool.`,
+        `Built-in tool '${name}' collides with an existing app, UI, page, or skill tool.`,
       );
     }
   }
