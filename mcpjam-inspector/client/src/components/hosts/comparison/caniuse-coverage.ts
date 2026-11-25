@@ -7,6 +7,7 @@ import { NOT_SUPPORTED } from "@/lib/host-config-field-schema";
 
 const BASELINE = "preset:mcpjam";
 const PROTOCOL = "supportedProtocolVersions";
+const EVENTS = "eventsDeliveryModes";
 
 export function capabilitySlices(
   field: HostConfigFieldDef,
@@ -32,6 +33,7 @@ export function capabilityCoverage(
   subjects: readonly HostComparisonSubject[],
   slice?: string,
 ) {
+  const eventsMode = field.id === EVENTS ? slice || "any" : null;
   const reporting =
     field.id === "clientInfo.version" || field.id.startsWith("styles.");
   const rows = subjects
@@ -50,7 +52,7 @@ export function capabilityCoverage(
         };
       if (
         field.id === PROTOCOL ||
-        field.id === "eventsDeliveryModes" ||
+        eventsMode !== null ||
         (field.kind.kind === "mode-set" && slice && slice !== "any")
       ) {
         const status = Array.isArray(value)
@@ -82,15 +84,22 @@ export function capabilityCoverage(
     full,
     measured,
     reporting,
+    eventsMode,
     score: measured ? Math.round((full / measured) * 100) : null,
   };
 }
 
 export type CapabilityCoverage = ReturnType<typeof capabilityCoverage>;
 
+export function eventsSupportSummary(coverage: CapabilityCoverage) {
+  const { full, measured, eventsMode } = coverage;
+  const mode = eventsMode === "any" ? "at least one delivery mode" : `${eventsMode} delivery`;
+  return `${full} of ${measured} clients with published results support ${mode}.`;
+}
+
 export function caniuseTitle(field: HostConfigFieldDef) {
   if (field.id === PROTOCOL) return "Protocol versions";
-  if (field.id === "eventsDeliveryModes") return "MCP Events";
+  if (field.id === EVENTS) return "MCP Events";
   if (field.id === "capabilities.uiExtension") return "MCP Apps";
   return field.label;
 }

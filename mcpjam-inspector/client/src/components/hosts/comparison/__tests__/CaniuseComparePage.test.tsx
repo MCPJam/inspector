@@ -1,6 +1,11 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import { useState } from "react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
+import {
+  AnnouncementQueueProvider,
+  useAnnouncementSlot,
+} from "@/components/announcement-slot";
 import { CaniuseComparePage } from "../CaniuseComparePage";
 
 vi.mock("@/lib/host-compat/use-host-catalog", async () => {
@@ -9,6 +14,46 @@ vi.mock("@/lib/host-compat/use-host-catalog", async () => {
 });
 
 describe("CaniuseComparePage", () => {
+  it("waits for the announcement slot before showing the skippable intro", () => {
+    function PriorAnnouncement() {
+      const [eligible, setEligible] = useState(true);
+      const { open } = useAnnouncementSlot(eligible);
+      return open ? (
+        <button onClick={() => setEligible(false)}>Dismiss announcement</button>
+      ) : null;
+    }
+
+    render(
+      <MemoryRouter initialEntries={["/compare"]}>
+        <AnnouncementQueueProvider>
+          <PriorAnnouncement />
+          <CaniuseComparePage />
+        </AnnouncementQueueProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole("button", { name: "Skip intro" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss announcement" }));
+    fireEvent.click(screen.getByRole("button", { name: "Skip intro" }));
+    expect(
+      screen.getByRole("combobox", { name: "Search capabilities" }),
+    ).toBeVisible();
+  });
+
+  it("qualifies the Events score with its published-results denominator", () => {
+    render(
+      <MemoryRouter initialEntries={["/compare?capability=event-delivery"]}>
+        <CaniuseComparePage />
+      </MemoryRouter>,
+    );
+    const score = screen.getByRole("link", { name: /% of \d+ with results/ });
+    expect(score).toHaveAttribute(
+      "title",
+      expect.stringMatching(
+        /clients with published results support at least one delivery mode/,
+      ),
+    );
+  });
+
   it("shares the exact field query and hides verification for gated clients", () => {
     const query = "toolResult.content.image";
     render(
