@@ -92,6 +92,7 @@ vi.mock("../text-part", () => ({
 
 import { ToolPart } from "../tool-part";
 import { useHarnessLiveOutputStore } from "@/stores/harness-live-output-store";
+import { useToolNotificationStore } from "@/stores/tool-notification-store";
 
 const part = (
   input: Record<string, unknown>,
@@ -172,5 +173,28 @@ describe("ToolPart harness step label", () => {
     );
     rerender(<ToolPart part={part({ command: "npm test" })} />);
     expect(screen.queryByTestId("harness-live-output")).toBeNull();
+  });
+
+  it("a running MCP tool call shows its server's progress and log lines until it settles", () => {
+    toolNameState.name = "run_task";
+    useToolNotificationStore.setState({ runs: {} });
+    const apply = useToolNotificationStore.getState().apply;
+    apply({ toolCallId: "call-1", kind: "progress", progress: 1, total: 2, message: "half" });
+    apply({ toolCallId: "call-1", kind: "log", level: "info", logger: "job", text: "working on it" });
+    try {
+      const { rerender } = render(
+        <ToolPart part={part({}, { state: "input-available" })} serverId="srv" />,
+      );
+      expect(screen.getByTestId("tool-run-progress").textContent).toContain(
+        "Progress 1 of 2: half",
+      );
+      expect(screen.getByTestId("tool-run-log").textContent).toContain(
+        "info job: working on it",
+      );
+      rerender(<ToolPart part={part({})} serverId="srv" />);
+      expect(screen.queryByTestId("tool-run-notes")).toBeNull();
+    } finally {
+      toolNameState.name = "bash";
+    }
   });
 });

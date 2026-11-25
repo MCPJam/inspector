@@ -64,6 +64,7 @@ import type {
 import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import { observeConnectionFetch } from "../../services/connection-failure-context.js";
 import { observeMockAnswered } from "../../services/mock/answer-marks.js";
+import { reportToolProgress } from "../../services/chat-turn/tool-notifications.js";
 import { hostedFeatureObserver } from "../../services/server-canvas/observation-recorders.js";
 import { hostedMcpBackpressureFetch } from "../../utils/mcp-backpressure.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
@@ -3072,6 +3073,8 @@ export async function createAuthorizedManager(
         }
       : {}),
     httpLogger: options?.httpLogger,
+    // Sends a progress token with each tool call, and hands what comes back to the call's card.
+    progressHandler: (event) => void reportToolProgress(event),
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
     extensionRequestHandlers: options?.extensionRequestHandlers,
     // THE FIX FOR MJ-001. Every server in this batch carries a URL a caller

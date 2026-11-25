@@ -1,4 +1,6 @@
 import { withToolCallScope } from "./input-answers.js";
+import { withToolNotifications } from "../chat-turn/tool-notifications.js";
+import type { ToolNotification } from "../../../shared/tool-notification.js";
 import {
   mockAnswerSpan,
   withMockAnswerSink,
@@ -97,6 +99,8 @@ export type AiSdkEvalTraceContext = {
   recordedResponseMessageCount: number;
   /** Answers a server's request for the iteration's model; set by the turn that knows the model. */
   answerModelRequest?: ModelRequestAnswerer;
+  /** Where the progress and logs a server sends during a tool call go (the chat stream); absent for evals. */
+  onToolNotification?: (notification: ToolNotification) => void;
 };
 
 type BackendStepToolPhase = {
@@ -326,7 +330,15 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
             () =>
               withMockAnswerSink(
                 (marks) => mockMarks.push(...marks),
-                () => origExecute(input, options),
+                () => {
+                  const emit = ctx.onToolNotification;
+                  return emit
+                    ? withToolNotifications(
+                        { toolCallId, serverId, emit },
+                        () => origExecute(input, options),
+                      )
+                    : origExecute(input, options);
+                },
               ),
           );
           policyBlocked = isToolPolicyBlockResult(result);

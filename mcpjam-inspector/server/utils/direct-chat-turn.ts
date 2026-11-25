@@ -1,3 +1,4 @@
+import type { ToolNotification } from "../../shared/tool-notification.js";
 import { buildResolvedModelRequestPayload } from "./model-request-payload";
 import { withPageToolAttributionMetadata } from "./page-tool-call-attribution";
 import {
@@ -208,6 +209,8 @@ export interface DirectChatTurnTraceEvents {
   onRequestPayload?: (event: DirectChatTurnRequestPayloadInfo) => void;
   /** Fired for every text-delta chunk. */
   onTextDelta?: (event: DirectChatTurnTextDelta) => void;
+  /** Fired for each progress or log record a server sends while a tool call runs. */
+  onToolNotification?: (notification: ToolNotification) => void;
   /** Fired for every tool-call chunk. */
   onToolCallChunk?: (event: DirectChatTurnToolCallChunk) => void;
   /** Fired for every tool-result chunk. */
@@ -647,6 +650,7 @@ export function runDirectChatTurn(
     turnCalls: [],
   };
   const traceContext = createAiSdkEvalTraceContext(traceAnchor);
+  traceContext.onToolNotification = traceEvents?.onToolNotification;
   const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
   let currentStepIndex = 0;
   // Time-to-first-chunk capture (OTel gen_ai.response.time_to_first_chunk):
