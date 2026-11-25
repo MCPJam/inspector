@@ -12,6 +12,9 @@ export type NotificationType =
   // the automatic seat charge needs them. Here the actor is the SUBJECT — the
   // person waiting on the seat — not whoever performed an action.
   | "organization_seat_payment_required"
+  // Approver-targeted: someone asked to join a project. `entityId` is the
+  // access request, `entityName` the project, and the actor the requester.
+  | "project_access_requested"
   | "scheduled_eval_failed"
   | "scheduled_eval_paused"
   // Org-wide, and addressed to the people who can act: the organization

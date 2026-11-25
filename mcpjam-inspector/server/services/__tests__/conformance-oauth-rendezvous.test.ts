@@ -137,7 +137,12 @@ function rawResult(): ConformanceResult {
 const awaiting = { ok: true, rendezvous: { status: "awaiting_code" } };
 const submitted = {
   ok: true,
-  rendezvous: { status: "code_submitted", code: "auth-code", state: "st-1" },
+  rendezvous: {
+    status: "code_submitted",
+    code: "auth-code",
+    state: "st-1",
+    iss: "https://auth.example",
+  },
 };
 
 let randomSpy: ReturnType<typeof vi.spyOn>;
@@ -200,6 +205,7 @@ describe("running replica: waiting for the code", () => {
     expect(session.controller.deliverCode).toHaveBeenCalledWith({
       code: "auth-code",
       state: "st-1",
+      iss: "https://auth.example",
     });
     expect(http.paths()).toEqual([
       "/conformance-oauth/poll",
@@ -333,6 +339,7 @@ describe("any replica: the browser's calls", () => {
       await submitRendezvousCode("Bearer user-jwt", {
         sessionId: "oauth-conf-1",
         code: "auth-code",
+        iss: "https://auth.example",
       }),
     ).toBe("accepted");
     expect(setAuth).toHaveBeenCalledWith("user-jwt");
@@ -342,6 +349,7 @@ describe("any replica: the browser's calls", () => {
     expect(mutation).toHaveBeenCalledWith(expect.anything(), {
       sessionId: "oauth-conf-1",
       code: "auth-code",
+      iss: "https://auth.example",
     });
 
     mutation.mockResolvedValueOnce({ ok: false, reason: "not_found" });

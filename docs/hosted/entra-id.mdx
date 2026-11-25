@@ -1,0 +1,68 @@
+---
+title: "Microsoft Entra ID SSO & SCIM"
+description: "Connect Microsoft Entra ID to MCPJam with SAML or OpenID Connect, then verify optional SCIM provisioning and offboarding with a pilot user."
+icon: "key-round"
+---
+
+Use Microsoft Entra ID to sign your team in to MCPJam. Start with one user and one MCPJam workspace. Choose SAML or OpenID Connect (OIDC) for sign-in. Add SCIM if you also want Entra to create users, update their profiles, and remove access when they leave.
+
+## Before you begin
+
+Your MCPJam organization needs enterprise SSO enabled. If you plan to use SCIM, ask your MCPJam contact to enable provisioning as well.
+
+Ask MCPJam support for a setup invitation. Include your MCPJam organization name, the work email domain your users sign in with, and the work email of the Entra administrator who will configure the connection. Your MCPJam contact will help verify the domain and provide an organization-specific setup link. [Contact MCPJam support](mailto:support@mcpjam.com)
+
+Choose a pilot user in that domain and a workspace they should be able to open. The Entra administrator needs permission to configure the application and assign the pilot. Keep the MCPJam setup portal open alongside the Microsoft Entra admin center.
+
+## Set up SAML sign-in
+
+1. In the MCPJam setup portal, select **Entra ID SAML**. In Entra, open **Enterprise applications → New application → Create your own application**. Name it **MCPJam** and choose the non-gallery application option.
+2. In the new enterprise application, open **Single sign-on → SAML → Basic SAML Configuration**. Copy the two values from your MCPJam setup portal into these Entra fields.
+
+   | MCPJam setup portal | Microsoft Entra |
+   | --- | --- |
+   | Entity ID | Identifier (Entity ID) |
+   | ACS URL | Reply URL (Assertion Consumer Service URL) |
+
+3. Under **Attributes & Claims**, confirm that the email claim contains the pilot’s work email and that the given name and surname claims are populated. Under **SAML Certificates**, copy the **App Federation Metadata URL** into the MCPJam setup portal and save.
+4. Under **Users and groups**, assign the pilot to the enterprise application. Complete the connection test in the portal, then verify a sign-in to your workspace as described below. [WorkOS Entra SAML field reference](https://workos.com/docs/integrations/entra-id-saml)
+
+## Set up OIDC sign-in
+
+Use this path if your organization prefers OIDC. You can skip the SAML steps.
+
+1. Select **Entra ID OIDC** in your MCPJam setup portal. In Entra, open **App registrations → New registration**. Choose **Accounts in this organizational directory only**, select **Web**, and paste the redirect URI from the setup portal.
+2. Copy the **Application (client) ID** from **Overview**. Under **Endpoints**, copy the tenant-specific **OpenID Connect metadata document** URL. Its path should contain your tenant ID.
+3. Under **Certificates & secrets**, create a client secret. Enter its **Value**, the client ID, and the metadata URL in the setup portal. Record the expiry so your team can rotate the secret before sign-in is interrupted.
+4. Under **Token configuration**, add the optional ID token claims `email`, `given_name`, and `family_name`. Enable the delegated email and profile permissions when prompted. Assign the pilot under the corresponding enterprise application’s **Users and groups**, then complete the portal test. [WorkOS Entra OIDC field reference](https://workos.com/docs/integrations/entra-id-oidc)
+
+## Verify sign-in from MCPJam
+
+In a private browser window, open MCPJam and sign in with the pilot’s work email. Complete the Microsoft sign-in, select your MCPJam organization, and open the pilot workspace. If that email belongs to multiple organizations, ask your MCPJam contact for the sign-in link for this organization. [Open MCPJam](https://app.mcpjam.com)
+
+## Add SCIM provisioning
+
+1. Request a provisioning setup link for the same MCPJam organization. Open it, choose **Entra ID**, and copy the full SCIM endpoint and the credential it supplies.
+2. In the Entra enterprise application, open **Provisioning** and configure automatic provisioning. Paste the full endpoint, including any query string, into **Tenant URL**. For a bearer-token connection, paste the token into **Secret Token**. Select **Test Connection**, then save.
+3. Under **Attribute mapping**, map Entra `objectId` to SCIM `externalId`. Confirm that the SCIM work email matches the pilot’s SSO email. If the Entra user’s `mail` attribute is empty, map a populated work email attribute to `emails[type eq "work"].value`. Use `userPrincipalName` only when it is the user’s work email. Keep the mappings for given name, family name, and account status.
+4. Set **Scope** to **Sync only assigned users and groups**. Assign the pilot to the provisioning application if you use separate apps for SSO and SCIM. Run **Provision on demand** for the pilot and check the result in **Provisioning logs**.
+5. Start provisioning and check that the initial cycle completes. Run the lifecycle checks below before assigning more users. [WorkOS Entra SCIM field reference](https://workos.com/docs/integrations/entra-id-scim)
+
+## Verify offboarding and reactivation
+
+Use a dedicated test account for this check. Disabling an Entra account affects its other applications as well.
+
+| Action in Entra | What to check in MCPJam |
+| --- | --- |
+| Assign and provision the pilot. | The pilot can sign in and open the intended workspace. |
+| Change the pilot’s given name or surname and sync. | The updated name appears in the connected directory. |
+| Disable a dedicated test account and sync. | Once the change is processed, the existing signed-in session loses access to the organization’s workspace. |
+| Re-enable the test account and sync. | The same user can sign in again and open the workspace. |
+
+Organization owners manage workspace access and MCPJam roles in MCPJam.
+
+## Troubleshooting
+
+- **SAML certificate error on a new app.** Reopen **SAML Certificates** in Entra, confirm the app’s signing certificate is available, then refresh the connection from that app’s federation metadata URL in the setup portal.
+- **SCIM connection test passes but the user is missing.** Check the provisioning app assignment, its scope, the user’s work email mapping, and the last provisioning log for that user. The connection test checks credentials. **Provision on demand** shows what happened to the individual account.
+- **Microsoft sign-in succeeds but the workspace is missing.** Confirm the email, MCPJam organization, and pilot assignment with your MCPJam contact. Include the time of the attempt and the error displayed. Enter tokens and client secrets only in the designated configuration fields.

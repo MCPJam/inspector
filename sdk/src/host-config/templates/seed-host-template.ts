@@ -3718,7 +3718,7 @@ export function seedFromHostTemplate(
   opts?: SeedHostTemplateOptions
 ): SeededHostConfigInput {
   const template = HOST_TEMPLATES.find((t) => t.id === id) ?? HOST_TEMPLATES[0];
-  return template.seed(opts);
+  return { ...template.seed(opts), runUnloadedToolCalls: template.id !== "vscode" };
 }
 
 export const seedHostTemplate = seedFromHostTemplate;

@@ -126,7 +126,14 @@ describe("subscriptions/listen with the relay on", () => {
       params: { requestId: 41 },
     });
     expect(cancel.status).toBe(202);
-    expect((await reader.read()).done).toBe(true);
+    // The cancel ends the stream. A frame already in flight (such as the
+    // closing result) may arrive first, so read to the end rather than
+    // expecting the very next read to be it.
+    let ended = false;
+    for (let reads = 0; reads < 5 && !ended; reads++) {
+      ended = (await reader.read()).done;
+    }
+    expect(ended).toBe(true);
     expect(upstream.handle.close).toHaveBeenCalled();
     await vi.waitFor(() =>
       expect(upstream.manager.disconnectAllServers).toHaveBeenCalled(),

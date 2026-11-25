@@ -29,6 +29,7 @@ import { toast } from "@/lib/toast";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
+import { AccountCreatedToast } from "./components/sidebar/sidebar-guest-signup-prompt";
 import { TrialDecisionDialog } from "./components/billing/TrialDecisionDialog";
 import { AnnouncementQueueProvider } from "./components/announcement-slot";
 import { StdioCommandApprovalDialog } from "./components/connection/StdioCommandApprovalDialog";
@@ -301,6 +302,7 @@ import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-co
 import { type ProjectSignInReturnRecoveryIntent } from "./lib/project-route-recovery";
 import {
   captureAppSignInReturnPath,
+  isAccessRequestPathname,
   writeAppSignInReturnPath,
 } from "./lib/app-signin-return-path";
 import { isHostedTabBlocked } from "./lib/hosted-tab-policy";
@@ -2517,6 +2519,7 @@ export function EventsRoute() {
   const {
     selectedMCPConfig,
     appState,
+    activeProjectId,
     convexProjectId,
     activeHost,
     activeHostId,
@@ -2536,6 +2539,7 @@ export function EventsRoute() {
           appState.servers[appState.selectedServer]?.connectionStatus
         }
         projectId={convexProjectId ?? null}
+        localProjectId={activeProjectId ?? null}
         activeHostId={activeHostId ?? null}
         activeHost={activeHost ?? null}
       />
@@ -3182,6 +3186,9 @@ export default function App() {
   // visitor to Playground mid-sign-in, stranding exactly the enterprise entry
   // point this route exists to fix.
   const isLoginInitiationRoute = barePathname === routePaths.login;
+  // An owner opening a request email, often signed out in a fresh browser,
+  // has to stay on the request instead of being sent to Home's welcome.
+  const isAccessRequestRoute = isAccessRequestPathname(barePathname);
 
   const defaultHubRoute = useMemo((): "home" | "connect" | "servers" => {
     return "home";
@@ -6002,6 +6009,7 @@ export default function App() {
     pendingCheckoutIntent === null &&
     !isBareCaniuseRoute &&
     !isLoginInitiationRoute &&
+    !isAccessRequestRoute &&
     !hasHostTemplateVerifyParam &&
     isProjectScopedFirstRunDestinationReady &&
     !isWorkOsLoading &&
@@ -6040,6 +6048,7 @@ export default function App() {
     !isHostedChatRoute &&
     !isBareCaniuseRoute &&
     !isLoginInitiationRoute &&
+    !isAccessRequestRoute &&
     !hasHostTemplateVerifyParam;
   const shouldShowFirstRunOverlay =
     shouldKeepFirstRunOverlayOpen ||
@@ -6888,6 +6897,7 @@ export default function App() {
             <DarkDefaultNudge enabled={announcementsEnabled} />
             <MCPJamLimitDialog />
             <PlanLimitDialog />
+            <AccountCreatedToast />
             <StdioCommandApprovalDialog />
             <LauncherProjectChoiceDialog />
             <UnavailableOrganizationDialog

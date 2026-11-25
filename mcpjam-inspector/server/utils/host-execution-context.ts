@@ -81,6 +81,7 @@ export interface ExecutionOverrides {
   temperature?: number;
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   progressiveToolDiscovery?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
@@ -125,6 +126,7 @@ export interface ResolvedExecutionContext {
   requireToolApproval: boolean;
   requireNativeToolDiscovery?: boolean;
   respectToolVisibility: boolean | undefined;
+  runUnloadedToolCalls: boolean | undefined;
   progressiveToolDiscovery: boolean | undefined;
   modelId: string | undefined;
   /** Which real agent harness runs the turn (host-level). Absent ⇒ emulated. */
@@ -373,6 +375,7 @@ export function resolveExecutionContext(args: {
       temperature: overrides.temperature,
       requireToolApproval: overrides.requireToolApproval ?? false,
       respectToolVisibility: overrides.respectToolVisibility,
+      runUnloadedToolCalls: overrides.runUnloadedToolCalls,
       progressiveToolDiscovery: overrides.progressiveToolDiscovery,
       modelId: overrides.modelId,
       harness: undefined,
@@ -400,6 +403,7 @@ export function resolveExecutionContext(args: {
     temperature: readNumber(hostConfig, "temperature"),
     requireToolApproval: readBoolean(hostConfig, "requireToolApproval"),
     respectToolVisibility: readBoolean(hostConfig, "respectToolVisibility"),
+    runUnloadedToolCalls: readBoolean(hostConfig, "runUnloadedToolCalls"),
     progressiveToolDiscovery: readProgressiveToolDiscovery(hostConfig),
     modelVisibleMcpToolResults: readModelVisibleMcpToolResults(hostConfig),
     mcpToolResultImageRendering: readMcpToolResultImageRendering(hostConfig),
@@ -444,6 +448,14 @@ export function resolveExecutionContext(args: {
     precedence,
   );
   if (respectToolVisibility.drift) drift.push(respectToolVisibility.drift);
+
+  const runUnloadedToolCalls = pickField(
+    "runUnloadedToolCalls",
+    overrides.runUnloadedToolCalls,
+    hostFields.runUnloadedToolCalls,
+    precedence,
+  );
+  if (runUnloadedToolCalls.drift) drift.push(runUnloadedToolCalls.drift);
 
   const progressiveToolDiscovery = pickField(
     "progressiveToolDiscovery",
@@ -523,6 +535,7 @@ export function resolveExecutionContext(args: {
     requireToolApproval: requireToolApprovalPick.value ?? false,
     ...(hostConfig.requireNativeToolDiscovery !== undefined ? { requireNativeToolDiscovery: hostConfig.requireNativeToolDiscovery } : {}),
     respectToolVisibility: respectToolVisibility.value,
+    runUnloadedToolCalls: runUnloadedToolCalls.value,
     progressiveToolDiscovery: progressiveToolDiscovery.value,
     modelId: modelId.value,
     harness: readHarness(hostConfig),
