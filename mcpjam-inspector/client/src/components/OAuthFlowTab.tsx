@@ -259,6 +259,18 @@ export const OAuthFlowTab = ({
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   // Remount key for the auth modal, bumped per regenerated authorization request.
   const [authModalAttempt, setAuthModalAttempt] = useState(0);
+  const [authPopupReopenRequest, setAuthPopupReopenRequest] = useState(0);
+  const isAuthModalOpenRef = useRef(isAuthModalOpen);
+  isAuthModalOpenRef.current = isAuthModalOpen;
+  // While a sign-in is pending the modal is already open, so setting `open`
+  // again does nothing: ask it to reopen the popup instead.
+  const openAuthorizationPopup = useCallback(() => {
+    if (isAuthModalOpenRef.current) {
+      setAuthPopupReopenRequest((request) => request + 1);
+    } else {
+      setIsAuthModalOpen(true);
+    }
+  }, []);
   // Continue is in flight. Purely presentational — the flow state machine
   // remains the source of truth for where the flow actually is.
   const [isAdvancing, setIsAdvancing] = useState(false);
@@ -572,7 +584,7 @@ export const OAuthFlowTab = ({
         if (oauthFlowState.currentStep === "generate_pkce_parameters") {
           await proceedToNextStep();
         }
-        setIsAuthModalOpen(true);
+        openAuthorizationPopup();
       } else {
         await proceedToNextStep();
       }
@@ -592,6 +604,7 @@ export const OAuthFlowTab = ({
   }, [
     hasProfile,
     oauthFlowState.currentStep,
+    openAuthorizationPopup,
     proceedToNextStep,
     profile.serverUrl,
     protocolVersion,
@@ -729,7 +742,7 @@ export const OAuthFlowTab = ({
           await proceedToNextStep();
           return buildAdvanceResult(previousStep, oauthFlowStateRef.current);
         }
-        setIsAuthModalOpen(true);
+        openAuthorizationPopup();
         return {
           status: "authorization_modal_opened",
           currentStep: oauthFlowStateRef.current.currentStep,
@@ -1141,6 +1154,7 @@ export const OAuthFlowTab = ({
           key={authModalAttempt}
           open={isAuthModalOpen}
           onOpenChange={setIsAuthModalOpen}
+          reopenRequest={authPopupReopenRequest}
           authorizationUrl={oauthFlowState.authorizationUrl}
           onCallback={handlePopupCallback}
         />

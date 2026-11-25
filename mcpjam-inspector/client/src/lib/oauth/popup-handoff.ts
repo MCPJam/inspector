@@ -42,6 +42,8 @@ export interface OAuthPopupHandoffOptions {
   onResult: (message: OAuthCallbackMessage) => void;
   /** Stop waiting and show the hint after this long. Omit to rely on `expire`. */
   deadlineMs?: number;
+  /** Called once if the deadline passes, or `expire` runs, with no answer. */
+  onExpire?: () => void;
   /** Ends the hint's sentence: "run again" or "try again". */
   retryLabel?: string;
 }
@@ -91,7 +93,8 @@ export function startOAuthPopupHandoff(
 
   const deliver = (data: unknown) => {
     const message = parseOAuthCallbackMessage(data);
-    if (!message || message.state !== expectedState) return;
+    // Our flows always send `state`; without one, no answer can be matched.
+    if (!message || !expectedState || message.state !== expectedState) return;
     if (!finish()) return;
     dismissOAuthCallbackHint();
     onResult(message);
@@ -116,7 +119,9 @@ export function startOAuthPopupHandoff(
   }
 
   const expire = () => {
-    if (finish()) showOAuthCallbackHint(options.retryLabel);
+    if (!finish()) return;
+    showOAuthCallbackHint(options.retryLabel);
+    options.onExpire?.();
   };
 
   if (options.deadlineMs !== undefined) {
@@ -160,6 +165,10 @@ export function useOAuthPopupHandoff() {
         onResult: (message) => {
           if (handoffRef.current === handoff) handoffRef.current = null;
           options.onResult(message);
+        },
+        onExpire: () => {
+          if (handoffRef.current === handoff) handoffRef.current = null;
+          options.onExpire?.();
         },
       });
       handoffRef.current = handoff;
