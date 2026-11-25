@@ -751,7 +751,6 @@ footer,
   padding: 1rem 1.5rem !important;
   min-height: 0 !important;
   height: auto !important;
-  margin: 0 !important;
 }
 
 /* Collapse any inner wrappers that would otherwise force a tall slab */
@@ -759,6 +758,17 @@ footer > *,
 [role="contentinfo"] > * {
   min-height: 0 !important;
   height: auto !important;
+}
+
+/* Mintlify's inner wrapper ships py-16/md:py-20/lg:py-28 and gap-12, and the
+   logo column adds md:gap-y-24. Tighten all three. */
+#footer > div {
+  padding-top: 1.5rem !important;
+  padding-bottom: 1.5rem !important;
+  gap: 1.25rem !important;
+}
+#footer [class~="md:gap-y-24"] {
+  row-gap: 0 !important;
 }
 
 /* Footer links — muted resting, orange on hover */

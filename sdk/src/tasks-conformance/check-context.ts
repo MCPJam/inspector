@@ -12,6 +12,8 @@ import type { InputRequiredLeg, RawTaskResponse } from "./evidence.js";
 export interface TaskCheckContext {
   operations: TaskOperations;
   wire: TasksWire;
+  inputSnapshots: Record<string, unknown>[];
+  repeatedInputKeys?: string[];
   finalTask?: Record<string, unknown>;
   createdTaskId?: string;
   noTask: (id: MCPTasksCheckId) => MCPTasksCheckResult;

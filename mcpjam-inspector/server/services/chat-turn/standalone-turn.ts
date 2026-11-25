@@ -23,6 +23,7 @@ import {
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { getSpendClientIp } from "../../utils/client-ip.js";
 import { streamChatTurn } from "../../utils/web-chat-turn.js";
+import { eventToolsFromBody } from "./event-tools-body.js";
 import {
   parseScopeStepUpResumeRequest,
   parseScopeStepUpCancelRequest,
@@ -126,6 +127,7 @@ export async function runStandaloneTurn(
       temperature: body.temperature,
       requireToolApproval: body.requireToolApproval,
       respectToolVisibility: body.respectToolVisibility,
+      runUnloadedToolCalls: body.runUnloadedToolCalls,
       progressiveToolDiscovery: body.progressiveToolDiscovery,
       modelVisibleMcpToolResults: body.modelVisibleMcpToolResults,
       mcpToolResultImageRendering: body.mcpToolResultImageRendering,
@@ -177,6 +179,7 @@ export async function runStandaloneTurn(
         requireToolApproval,
         requireNativeToolDiscovery: execution.requireNativeToolDiscovery,
         respectToolVisibility: execution.respectToolVisibility,
+        runUnloadedToolCalls: execution.runUnloadedToolCalls,
         modelVisibleMcpToolResults: execution.modelVisibleMcpToolResults,
         customProviders: body.customProviders,
         ...(rail !== "hosted"
@@ -195,6 +198,7 @@ export async function runStandaloneTurn(
         pageTools: WEBMCP_INSPECTOR_ENABLED
           ? validatePageToolEntries(body.pageTools)
           : [],
+        eventTools: eventToolsFromBody(body.eventTools),
         widgetModelContext: validateWidgetModelContextEntries(
           body.widgetModelContext,
         ),

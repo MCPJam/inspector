@@ -25,6 +25,7 @@ import { gradeCallerVerdict } from "./platform-gate-scores.js";
  */
 export class PromptResult {
   readonly recordedContext?: PromptResultData["recordedContext"];
+  readonly #malformedToolCalls: NonNullable<PromptResultData["malformedToolCalls"]>;
   /** The original prompt/query that was sent */
   readonly prompt: string;
 
@@ -64,6 +65,7 @@ export class PromptResult {
    */
   constructor(data: PromptResultData) {
     this.recordedContext = data.recordedContext;
+    this.#malformedToolCalls = data.malformedToolCalls ?? [];
     this.prompt = data.prompt;
     this._messages = data.messages;
     this.text = data.text;
@@ -196,6 +198,11 @@ export class PromptResult {
    */
   getToolCalls(): ToolCall[] {
     return [...this._toolCalls];
+  }
+
+  /** Malformed attempts retained for evidence, outside the executed call list. */
+  getMalformedToolCalls() {
+    return [...this.#malformedToolCalls];
   }
 
   /**

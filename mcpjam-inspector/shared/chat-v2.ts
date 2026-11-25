@@ -1,6 +1,7 @@
 import { UIMessage } from "ai";
 import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
 import type { ModelDefinition } from "./types";
+import type { EventToolsSnapshot } from "./event-agent-tools";
 import type {
   McpToolResultImageRenderingPolicy,
   ModelReasoningEffort,
@@ -17,8 +18,20 @@ import type {
 
 export interface ChatRewind {
   parentChatSessionId: string;
+  /** The edited message, or for a multi-model column the last message kept. */
   rewoundFromMessageId: string;
-  reason: "message_edit";
+  reason: "message_edit" | "multi_model_column";
+}
+
+/**
+ * One column of a Playground multi-model session. The columns of one session
+ * share `groupId`; `position` only grows, so a replaced column never reuses one.
+ */
+export interface ChatMultiModelColumn {
+  groupId: string;
+  position: number;
+  columnKind: "model" | "host";
+  compareId: string;
 }
 
 /**
@@ -149,6 +162,7 @@ export interface ChatV2Request {
    * the request is scenario-bound, so the host value wins.
    */
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   /** Host-level MCP tool-result content/resource visibility policy. */
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   /** Host-level UI rendering policy for MCP tool-returned images. */
@@ -194,6 +208,13 @@ export interface ChatV2Request {
    * process, so a hosted turn has nothing to resolve these against.
    */
   pageTools?: PageToolSnapshotEntry[];
+  /**
+   * MCP Events agent tools: the connected servers that declare Events, sent by
+   * a Playground that can run `mcpjam_subscribe_to_event` and its siblings
+   * (`event-agent-tools.ts`). Client-fulfilled like `appTools`; absent means
+   * the turn advertises none.
+   */
+  eventTools?: EventToolsSnapshot;
   /**
    * SEP-1865 `ui/update-model-context` snapshots for the next model turn.
    *

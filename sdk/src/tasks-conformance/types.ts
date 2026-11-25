@@ -63,7 +63,17 @@ export type MCPTasksToolCheckId = (typeof MCP_TASKS_TOOL_CHECK_IDS)[number];
 export function isTasksToolCheck(id: string): id is MCPTasksToolCheckId {
   return MCP_TASKS_TOOL_CHECK_IDS.some((check) => check === id);
 }
+export function taskCheckUsesInput(id: string): boolean {
+  return [
+    "tasks-ttl-shape",
+    "tasks-inline-result",
+    "tasks-status-payload-shape",
+    "tasks-ttl-integer-shape",
+    "tasks-update-ack-shape",
+  ].includes(id);
+}
 export interface MCPTasksToolSetup {
+  inputResponses?: Record<string, unknown>;
   toolName: string;
   toolArguments?: Record<string, unknown>;
 }

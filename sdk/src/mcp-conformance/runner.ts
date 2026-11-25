@@ -1,3 +1,4 @@
+import { DiscoveryResultError } from "../discovery-result.js";
 import {
   buildOutcomeSummary,
   decideConformanceOutcome,
@@ -455,6 +456,34 @@ async function runClientChecks(
 
   } catch (error) {
     config.signal?.throwIfAborted();
+    if (error instanceof DiscoveryResultError) {
+      const version = error.protocolVersion;
+      if (version && isKnownProtocolVersion(version)) {
+        config = { ...config, protocolVersion: version, era: eraForProtocolVersion(version) };
+      }
+      negotiationProbes.settle(config.era);
+      const handshake = selectedClientChecks.find(check => check.id === "modern-client-handshake");
+      // If every client check is era-skipped, one must still carry the
+      // discovery error or the report can say "passed" without connecting.
+      const discoveryBlocker = selectedClientChecks.some(
+        check => !eraGate(check, config.era, config.protocolVersion),
+      ) ? undefined : selectedClientChecks[0];
+      return {
+        config,
+        readiness: [],
+        checks: selectedClientChecks.map(check => {
+          if (check === handshake) {
+            return failedResult(check, Date.now() - connectStartedAt, error.message);
+          }
+          if (check === discoveryBlocker) {
+            return couldNotRunResult(check, error.message);
+          }
+          return eraGate(check, config.era, config.protocolVersion) ??
+            (handshake ? blockedResult(check, handshake) : couldNotRunResult(check, error.message));
+        }),
+        connectFailedCheck: handshake && { id: handshake.id, title: handshake.title },
+      };
+    }
     // Refused for credentials on an Auto run: the connection that would have
     // negotiated the era never completed, so the era is UNKNOWN — not the
     // legacy default. Gating against that default would report the other

@@ -1584,11 +1584,19 @@ describe("eval runner reads saved model selections", () => {
       expect(streamTextMock).toHaveBeenCalledOnce();
       // The turn's model asks again before each attempt and runs it on the
       // config that answer carries.
-      const attemptModel = { specificationVersion: "v4", provider: "ollama", modelId: "llama3", supportedUrls: {}, doGenerate: vi.fn(), doStream: vi.fn(async () => ({ stream: "from-fresh-config" })) };
+      const chunk = { type: "text-delta", id: "reply", delta: "from-fresh-config" };
+      const attemptModel = {
+        specificationVersion: "v4", provider: "ollama", modelId: "llama3", supportedUrls: {},
+        doGenerate: vi.fn(),
+        doStream: vi.fn(async () => ({ stream: new ReadableStream({
+          start(controller) { controller.enqueue(chunk); controller.close(); },
+        }) })),
+      };
       admittedFactory.mockClear();
       admittedFactory.mockReturnValueOnce(attemptModel as never);
       const model = (streamTextMock.mock.calls[0][0] as any).model;
-      await expect(model.doStream({ prompt: [] })).resolves.toEqual({ stream: "from-fresh-config" });
+      const { stream } = await model.doStream({ prompt: [] });
+      await expect(stream.getReader().read()).resolves.toEqual({ value: chunk, done: false });
       expect(admittedFactory).toHaveBeenCalledWith(fresh, "llama3", { fetch: expect.any(Function) });
     });
 

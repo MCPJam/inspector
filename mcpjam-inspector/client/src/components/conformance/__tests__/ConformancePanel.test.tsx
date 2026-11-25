@@ -29,7 +29,8 @@ vi.mock("posthog-js/react", () => ({
 // Home cards subscribe to each run for suite scores. These tests render
 // the home without a Convex client, so the suite rows stay empty.
 vi.mock("convex/react", () => ({
-  useQuery: () => undefined,
+  useQuery: (_query: unknown, args: Record<string, unknown> | "skip") =>
+    args !== "skip" && args.protocolVersion ? { page: [] } : undefined,
 }));
 
 vi.mock("../PersistConformanceRun", () => ({ PersistConformanceRun: () => null }));
@@ -1647,7 +1648,7 @@ describe("ConformanceTab", () => {
 
     const card = screen.getByRole("list", { name: "Servers" });
     expect(card).toHaveTextContent("alpha");
-    expect(card).toHaveTextContent("· Protocol Auto");
+    expect(card).toHaveTextContent("Protocol · Auto");
     expect(card).toHaveTextContent(/Last run/);
     expect(
       within(card).getByRole("img", { name: "100%. 22 passed of 22" }),
@@ -1665,6 +1666,198 @@ describe("ConformanceTab", () => {
     await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
     expect(mockRunTasks).not.toHaveBeenCalled();
     expect(mockStartOAuth).not.toHaveBeenCalled();
+  });
+
+  it("runs the protocol revision chosen on an Overview card with saved checks", async () => {
+    const user = userEvent.setup();
+    setupSuccessfulRunMocks();
+    const server = createHttpServer({ name: "alpha" });
+    const load = vi.fn(async () => ({
+      selection: { protocol: ["ping" as const], apps: [], tasks: [], oauth: false },
+      inputs: {},
+    }));
+    render(
+      <ConformanceTab
+        server={server}
+        servers={[server]}
+        onSelectServer={vi.fn()}
+        lastRuns={{ alpha: createRunListItem("srv_a") }}
+        onViewRun={vi.fn()}
+        onLoadServerDefaults={load}
+      />,
+    );
+    await user.click(
+      screen.getByRole("combobox", { name: "Protocol version for alpha" }),
+    );
+    await user.click(screen.getByRole("option", { name: "2025-03-26" }));
+    await user.click(screen.getByRole("button", { name: "Run alpha" }));
+
+    expect(load).toHaveBeenCalledWith("alpha");
+    expect(checkConformanceConnection).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      "2025-03-26",
+    );
+    await waitFor(() =>
+      expect(mockRunProtocol).toHaveBeenCalledWith(
+        "alpha",
+        expect.objectContaining({
+          checkIds: ["ping"],
+          protocolVersion: "2025-03-26",
+        }),
+      ),
+    );
+  });
+
+  it.each([false, true])("opens checks for a new protocol input only when it is unset (saved: %s)", async (saved) => {
+    const user = userEvent.setup();
+    setupSuccessfulRunMocks();
+    const server = createHttpServer({ name: "alpha" });
+    render(
+      <ConformanceTab
+        server={server}
+        servers={[server]}
+        onSelectServer={vi.fn()}
+        lastRuns={{ alpha: createRunListItem("srv_a") }}
+        onViewRun={vi.fn()}
+        onLoadServerDefaults={async () => ({
+          selection: {
+            protocol: ["modern-tool-output-schema-conformant"],
+            protocolAdvice: [],
+            apps: [],
+            tasks: [],
+            oauth: false,
+          },
+          inputs: saved ? { toolCallProbe: { toolName: "echo" } } : {},
+        })}
+      />,
+    );
+    await user.click(
+      screen.getByRole("combobox", { name: "Protocol version for alpha" }),
+    );
+    await user.click(screen.getByRole("option", { name: "2026-07-28" }));
+    await user.click(screen.getByRole("button", { name: "Run alpha" }));
+
+    if (!saved) {
+      expect(
+        await screen.findByRole("heading", { name: "Set what you'd like to test" }),
+      ).toBeVisible();
+      expect(mockRunProtocol).not.toHaveBeenCalled();
+      const run = screen.getByRole("button", { name: RUN_LABEL });
+      await waitFor(() => expect(run).toBeEnabled());
+      await user.click(run);
+    }
+    await waitFor(() =>
+      expect(mockRunProtocol).toHaveBeenCalledWith(
+        "alpha",
+        expect.objectContaining({
+          protocolVersion: "2026-07-28",
+          checkIds: ["modern-tool-output-schema-conformant"],
+        }),
+      ),
+    );
+  });
+
+  it("blocks Run and hides a rejected revision only on that server's Overview card", async () => {
+    const user = userEvent.setup();
+    const server = createHttpServer({ name: "alpha" });
+    const beta = createHttpServer({ name: "beta" });
+    vi.mocked(checkConformanceConnection).mockResolvedValueOnce({
+      status: "unsupported",
+      protocolVersion: "2026-07-28",
+      supportedVersions: ["2025-11-25"],
+    });
+    render(
+      <ConformanceTab
+        server={server}
+        servers={[server, beta]}
+        onSelectServer={vi.fn()}
+        lastRuns={{
+          alpha: createRunListItem("srv_a"),
+          beta: createRunListItem("srv_b"),
+        }}
+        onViewRun={vi.fn()}
+      />,
+    );
+    const picker = screen.getByRole("combobox", {
+      name: "Protocol version for alpha",
+    });
+    expect(checkConformanceConnection).not.toHaveBeenCalled();
+    await user.click(picker);
+    await user.click(screen.getByRole("option", { name: "2026-07-28" }));
+
+    expect(
+      await screen.findByText(
+        "alpha doesn’t support 2026-07-28. Server offers: 2025-11-25.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Run alpha" })).toBeDisabled();
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+
+    await user.click(picker);
+    expect(screen.queryByRole("option", { name: "2026-07-28" })).toBeNull();
+    expect(screen.getByRole("option", { name: "2025-06-18" })).toBeVisible();
+    await user.click(screen.getByRole("option", { name: "2025-11-25" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Run alpha" })).toBeEnabled(),
+    );
+    await user.click(picker);
+    expect(screen.queryByRole("option", { name: "2026-07-28" })).toBeNull();
+    await user.keyboard("{Escape}");
+    await user.click(
+      screen.getByRole("combobox", { name: "Protocol version for beta" }),
+    );
+    expect(screen.getByRole("option", { name: "2026-07-28" })).toBeVisible();
+  });
+
+  it.each([
+    {
+      version: "2025-03-26",
+      protocol: ["tools-x-mcp-header-declarations-valid"],
+      tasks: [],
+    },
+    {
+      version: "2025-03-26",
+      protocol: ["tools-x-mcp-header-declarations-valid"],
+      tasks: ["tasks-update-ack-shape"],
+    },
+    { version: "2026-07-28", protocol: ["ping"], tasks: [] },
+  ] as const)("keeps Overview open when saved checks do not apply ($version, $tasks)", async ({ version, protocol, tasks }) => {
+    const user = userEvent.setup();
+    const error = vi.spyOn(toast, "error");
+    enabledFlags.delete("conformance-tasks-update-check");
+    const server = createHttpServer({ name: "alpha" });
+    render(
+      <ConformanceTab
+        server={server}
+        servers={[server]}
+        onSelectServer={vi.fn()}
+        lastRuns={{ alpha: createRunListItem("srv_a") }}
+        onViewRun={vi.fn()}
+        onLoadServerDefaults={async () => ({
+          selection: {
+            protocol: [...protocol],
+            apps: [],
+            tasks: [...tasks],
+            oauth: false,
+          },
+          inputs: {},
+        })}
+      />,
+    );
+    const picker = screen.getByRole("combobox", {
+      name: "Protocol version for alpha",
+    });
+    await user.click(picker);
+    await user.click(screen.getByRole("option", { name: version }));
+    await user.click(screen.getByRole("button", { name: "Run alpha" }));
+
+    await waitFor(() =>
+      expect(error).toHaveBeenCalledWith(
+        "No selected checks can run on this protocol version. Open Run conformance checks to choose checks.",
+      ),
+    );
+    expect(picker).toBeVisible();
+    expect(mockRunProtocol).not.toHaveBeenCalled();
   });
 
   it("shows a server's logo on its card, and initials without one", () => {
@@ -1691,7 +1884,7 @@ describe("ConformanceTab", () => {
       "src",
       "https://example.test/alpha.png",
     );
-    expect(alphaCard).toHaveTextContent("Protocol 2025-11-25");
+    expect(alphaCard).toHaveTextContent("Protocol · 2025-11-25");
     expect(betaCard!.querySelector("img")).toBeNull();
     expect(betaCard).toHaveTextContent("Be");
   });
@@ -2899,7 +3092,7 @@ describe("ConformanceTab", () => {
       ).toBeInTheDocument();
     });
 
-    it("asks once for the Tasks tool on any pin, and for answers under the update check", async () => {
+    it("asks once for the shared Tasks tool and its answers", async () => {
       const user = userEvent.setup();
       setupSuccessfulRunMocks();
       await toStep2("auto");
@@ -2958,7 +3151,7 @@ describe("ConformanceTab", () => {
       );
     });
 
-    it("hides the flagged update check and its answers box", async () => {
+    it("keeps the shared answers box when the flagged update check is hidden", async () => {
       enabledFlags.delete("conformance-tasks-update-check");
       const user = userEvent.setup();
       setupSuccessfulRunMocks();
@@ -2980,7 +3173,7 @@ describe("ConformanceTab", () => {
         screen.queryByRole("textbox", {
           name: "Answers to the task's questions (optional)",
         }),
-      ).toBeNull();
+      ).toBeInTheDocument();
     });
 
     it("lists the tools once for every field, across pages", async () => {
@@ -4064,7 +4257,7 @@ describe("ConformanceTab", () => {
     mockStartOAuth.mockResolvedValue({
       phase: "authorization_needed",
       sessionId: "session-1",
-      authorizationUrl: "https://auth.example.com/authorize",
+      authorizationUrl: "https://auth.example.com/authorize?state=st-1",
     });
     mockSubmitCode.mockResolvedValue({ success: true });
     mockCompleteOAuth.mockReturnValue(poll.promise);
@@ -4080,7 +4273,7 @@ describe("ConformanceTab", () => {
     window.dispatchEvent(
       new MessageEvent("message", {
         origin: window.location.origin,
-        data: { type: "OAUTH_CALLBACK", code: "auth-code" },
+        data: { type: "OAUTH_CALLBACK", code: "auth-code", state: "st-1" },
       }),
     );
 
@@ -4195,7 +4388,7 @@ describe("ConformanceTab", () => {
     );
     expect(openSpy).toHaveBeenLastCalledWith(
       "https://auth.example.com/authorize",
-      "oauth_conformance_auth",
+      expect.stringMatching(/^oauth_authorization_/),
       expect.any(String),
     );
     await screen.findByText("Waiting for browser authorization...");
@@ -4253,7 +4446,7 @@ describe("ConformanceTab", () => {
     mockStartOAuth.mockResolvedValue({
       phase: "authorization_needed",
       sessionId: "session-1",
-      authorizationUrl: "https://auth.example.com/authorize",
+      authorizationUrl: "https://auth.example.com/authorize?state=st-1",
     });
     mockSubmitCode.mockReturnValue(submit.promise);
     mockCompleteOAuth.mockResolvedValue({
@@ -4268,7 +4461,7 @@ describe("ConformanceTab", () => {
     window.dispatchEvent(
       new MessageEvent("message", {
         origin: window.location.origin,
-        data: { type: "OAUTH_CALLBACK", code: "auth-code" },
+        data: { type: "OAUTH_CALLBACK", code: "auth-code", state: "st-1" },
       }),
     );
     await waitFor(() => expect(mockSubmitCode).toHaveBeenCalled());

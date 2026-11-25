@@ -37,6 +37,7 @@ import type {
   ModelSelection,
 } from "../host-config/model-selection.js";
 import { PlatformApiError } from "./errors.js";
+import { asciiJson, clientDeclarationHeaders } from "./client-declaration.js";
 import { readSdkVersion } from "../sdk-version.js";
 import type {
   PlatformScenarioSummary,
@@ -486,7 +487,7 @@ function buildLaunchHeaders(
       MAX_LAUNCHER_FIELD_CHARS
     );
     const serialized = withinHeaderCap(
-      JSON.stringify({
+      asciiJson({
         kind,
         ...(client ? { client } : {}),
         ...(version ? { version } : {}),
@@ -736,6 +737,8 @@ export class PlatformApiClient extends DirectoryReviewerAttemptClient {
    * them.
    */
   private readonly launchHeaders?: Record<string, string>;
+  /** `x-mcpjam-client`, from the same launcher, for every request. */
+  private readonly clientHeaders?: Record<string, string>;
   /** The vocabulary every request declares; `1` sends no header. */
   private readonly evalVocabulary: 1 | 2;
   /** The noun-value vocabulary every request declares; `1` sends no header. */
@@ -766,6 +769,9 @@ export class PlatformApiClient extends DirectoryReviewerAttemptClient {
       ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
       : DEFAULT_PLATFORM_USER_AGENT;
     this.launchHeaders = buildLaunchHeaders(options);
+    this.clientHeaders = clientDeclarationHeaders(
+      this.launchHeaders?.[RUN_LAUNCH_HEADERS.launcher]
+    );
     // Lower-cased at construction so `request` cannot end up with two spellings
     // of one header — HTTP names are case-insensitive, but a plain object's
     // keys are not, and `{Authorization, authorization}` would send both.
@@ -6678,6 +6684,7 @@ export class PlatformApiClient extends DirectoryReviewerAttemptClient {
     headers[HOST_CONFIG_FEATURES_HEADER] = HOST_CONFIG_FEATURES;
     // After `extraHeaders`, like every other header this client owns: an edge
     // authenticator's credential must not be able to relabel a run's origin.
+    if (this.clientHeaders) Object.assign(headers, this.clientHeaders);
     if (init.declareLaunch && this.launchHeaders) {
       Object.assign(headers, this.launchHeaders);
     }

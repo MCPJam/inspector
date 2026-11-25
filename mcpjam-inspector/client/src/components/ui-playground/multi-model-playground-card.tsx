@@ -653,6 +653,7 @@ export function MultiModelPlaygroundCard({
     fixedReasoningEffort: reasoningEffort ?? null,
     // Undefined preserves the orchestrator's automatic policy.
     progressiveToolDiscovery: hostCapsResolver?.progressiveToolDiscovery,
+    runUnloadedToolCalls: hostCapsResolver?.runUnloadedToolCalls,
     respectToolVisibility: hostCapsResolver?.respectToolVisibility,
     modelVisibleMcpToolResults: resolvedModelVisibleMcpToolResults,
     onReset: () => {

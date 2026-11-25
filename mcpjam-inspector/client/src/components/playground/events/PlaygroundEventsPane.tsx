@@ -20,6 +20,7 @@ import { EventDataView } from "@/components/events/EventsFeedPanel";
 import { ReachabilityHeader } from "@/components/events/ReachabilityHeader";
 import { hasInsecureLocalReceiver, simulationDataFromSchema } from "@/components/events/event-utils";
 import { AddPlaygroundEvent } from "./AddPlaygroundEvent";
+import { bindingStatus } from "./binding-status";
 import {
   usePlaygroundEvents,
   type PlaygroundEventBinding,
@@ -60,24 +61,21 @@ export function PlaygroundEventsPane() {
             const connected =
               runtime.servers[binding.serverName]?.connectionStatus ===
               "connected";
-            const status = !binding.enabled
-              ? "Paused"
-              : !connected
-                ? "Disconnected"
-                : !binding.subscription
-                  ? "Test only"
-                  : binding.subscription.observedState !== "active"
-                    ? binding.subscription.observedState
-                    : runtime.feed.status === "live" ||
-                        runtime.feed.status === "polling"
-                      ? "Listening"
-                      : runtime.feed.status;
+            const status = bindingStatus(binding, {
+              connected,
+              feedStatus: runtime.feed.status,
+            });
             return (
               <section
                 key={binding.id}
                 className="space-y-2 rounded-md border border-border p-3"
                 aria-label={`${binding.eventName} connection`}
               >
+                {binding.title ? (
+                  <p className="truncate text-xs font-medium">
+                    {binding.title}
+                  </p>
+                ) : null}
                 <div className="flex items-center gap-2">
                   <Radio className="size-3.5 text-muted-foreground" />
                   <span className="truncate font-mono text-xs">

@@ -103,9 +103,10 @@ vi.mock("../chat-helpers", async () => {
   };
 });
 
-vi.mock("../mcpjam-tool-helpers", () => ({
-  serializeToolsForConvex: vi.fn(() => []),
-}));
+vi.mock("../mcpjam-tool-helpers", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../mcpjam-tool-helpers")>();
+  return { ...actual, serializeToolsForConvex: vi.fn(actual.serializeToolsForConvex) };
+});
 
 // The handler imports exactly one function from the harness runner, and that
 // module pulls in `@ai-sdk/harness/agent` at load time. Nothing in this suite
@@ -334,7 +335,7 @@ describe("mcpjam-stream-handler", () => {
     expect(Object.keys(requestPayload.payload.tools)).toEqual(["search"]);
   });
 
-  it("forces search_mcp_tools on the first progressive-discovery request", async () => {
+  it("sends deferred definitions separately without forcing search", async () => {
     const toolDef = (description: string) => ({
       description,
       inputSchema: { type: "object" } as any,
@@ -392,10 +393,8 @@ describe("mcpjam-stream-handler", () => {
     const fetchBody = JSON.parse(
       ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}",
     );
-    expect(fetchBody.toolChoice).toEqual({
-      type: "tool",
-      toolName: "search_mcp_tools",
-    });
+    expect(fetchBody.toolChoice).toBeUndefined();
+    expect(fetchBody.hiddenTools.map((tool: { name: string }) => tool.name)).toEqual(["show_squad"]);
     expect(
       (fetchBody.tools as Array<{ name: string }>).map((t) => t.name),
     ).toEqual(["search_mcp_tools", "load_mcp_tools"]);
@@ -883,7 +882,7 @@ describe("mcpjam-stream-handler", () => {
       messages: [{ role: "user", content: "List my servers" }] as any,
       modelId: "gpt-4.1-mini",
       systemPrompt: "You are helpful",
-      tools: {},
+      tools: { list_servers: {} },
       mcpClientManager: {
         getAllToolsMetadata: vi.fn().mockReturnValue({}),
       } as any,
@@ -1617,6 +1616,7 @@ describe("mcpjam-stream-handler", () => {
       },
     });
 
+    await vi.waitFor(() => expect(resolveFetch).toBeDefined());
     resolveFetch?.(
       createSseResponse([
         {

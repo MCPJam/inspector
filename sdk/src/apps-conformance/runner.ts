@@ -1,5 +1,6 @@
 import { readUiResources } from "./resource-reads.js";
 import { withAbortSignalFetch } from "../abort-signal.js";
+import { http1Fetch } from "../http1-fetch.js";
 import { captureConformanceRun } from "../telemetry.js";
 import { isAuthorizationRefusal } from "../conformance-authorization.js";
 import { credentialsFromServerConfig } from "../conformance-login.js";
@@ -155,7 +156,7 @@ export class MCPAppsConformanceTest {
         ? {
             ...serverConfig,
             baseFetch: withAbortSignalFetch(
-              serverConfig.baseFetch ?? fetch,
+              serverConfig.baseFetch ?? http1Fetch,
               signal
             ),
           }

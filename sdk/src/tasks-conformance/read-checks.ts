@@ -51,7 +51,17 @@ export async function runReadChecks(context: TaskCheckContext) {
     if (!finalTask) {
       checks.push(noTask("tasks-ttl-shape"));
     } else {
-      const verdict = validateTaskTtlShape(wire, finalTask);
+      const observed = [...context.inputSnapshots, finalTask].map((task) =>
+        validateTaskTtlShape(wire, task)
+      );
+      const verdict = {
+        violations: [
+          ...new Set(observed.flatMap((result) => result.violations)),
+        ],
+        warnings: [
+          ...new Set(observed.flatMap((result) => result.warnings ?? [])),
+        ],
+      };
       checks.push(
         verdict.violations.length === 0
           ? passed(
@@ -78,7 +88,9 @@ export async function runReadChecks(context: TaskCheckContext) {
       checks.push(
         couldNotRun(
           "tasks-inline-result",
-          `task did not reach a terminal status within ${
+          context.repeatedInputKeys
+            ? `The server kept requesting keys this run already answered: ${JSON.stringify(context.repeatedInputKeys)}. The task was still waiting for input at the polling deadline.`
+            : `task did not reach a terminal status within ${
             operations.config.pollTimeoutMs
           }ms (last status: ${String(
             finalTask.status
@@ -170,8 +182,17 @@ export async function runReadChecks(context: TaskCheckContext) {
           "tasks-update-ack-shape",
           `task requested input for ${JSON.stringify(
             inputLeg?.requested ?? []
-          )} but no inputResponses were configured; supply inputResponses to exercise tasks/update`
+          )} but no matching inputResponses were configured; supply inputResponses to exercise tasks/update`
         )
+      );
+    } else if (inputLeg.outcome === "no-matching-responses") {
+      const message =
+        "The prefilled answers did not match any key the task requested.";
+      checks.push(
+        couldNotRun("tasks-update-ack-shape", message, {
+          requested: inputLeg.requested,
+          ...needsSetupDetails("tasksProbe", message),
+        })
       );
     } else if (inputLeg.outcome === "update-rejected") {
       // The MUST is conditioned on success, and the answers are

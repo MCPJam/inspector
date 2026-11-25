@@ -16,6 +16,10 @@
  *     like polled and webhook ones;
  *   - a broadcaster of `EventsStreamFrame`s for the Events tab.
  *
+ * Subscriptions, the feed and the stream are scoped by project, like the
+ * hosted registry and its one inbox per project: an entry belongs to its
+ * subscription's project, and a request sees only its own project's.
+ *
  * There is no trigger dispatcher locally (triggers run hosted), so every
  * journal entry is acknowledged as it lands: the inbox's undispatched
  * counter — which is what applies backpressure — stays meaningful.
@@ -65,7 +69,7 @@ import {
   type LocalOverride,
 } from "./views.js";
 
-/** Records are keyed by project; the local app has exactly one. */
+/** The project of a request that names none. */
 export const LOCAL_EVENTS_PROJECT_ID = "local";
 /** Whose credentials a local binding uses: the local user's own. */
 export const LOCAL_CREDENTIAL_OWNER = "local";
@@ -113,6 +117,10 @@ export interface LocalEventsRuntimeOptions {
 
 type Listener = (frame: EventsStreamFrame) => void;
 
+function projectScope(projectId?: string): string {
+  return projectId || LOCAL_EVENTS_PROJECT_ID;
+}
+
 export class LocalEventsRuntime {
   readonly inbox: MemoryEventInbox;
   private readonly manager: MCPClientManager;
@@ -121,7 +129,8 @@ export class LocalEventsRuntime {
   private readonly coordinator: EventsCoordinator;
   private readonly subscriptions = new Map<string, LocalSubscription>();
   private readonly inFlight = new Set<string>();
-  private readonly listeners = new Set<Listener>();
+  /** Each stream listener with the project it reads. */
+  private readonly listeners = new Map<Listener, string>();
   private readonly pushRuntimes = new Map<string, EventsPushRuntime>();
   private readonly concurrency: number;
   private readonly pushOptions: LocalEventsRuntimeOptions["pushOptions"];
@@ -197,8 +206,9 @@ export class LocalEventsRuntime {
   // Broadcast
   // -------------------------------------------------------------------------
 
-  private emit(frame: EventsStreamFrame): void {
-    for (const listener of [...this.listeners]) {
+  private emit(projectId: string, frame: EventsStreamFrame): void {
+    for (const [listener, scope] of [...this.listeners]) {
+      if (scope !== projectId) continue;
       try {
         listener(frame);
       } catch {
@@ -212,11 +222,12 @@ export class LocalEventsRuntime {
     // No local dispatcher: acknowledge so backpressure counts only real
     // backlog (see the module header).
     this.inbox.ackDispatch(entry.seq);
-    this.emit({ type: "entry", entry: feedEntryView(entry) });
+    const local = this.subscriptions.get(entry.logicalSubscriptionId);
+    // Records are never dropped, so every local entry has an owner.
+    if (local) this.emit(local.record.projectId, { type: "entry", entry: feedEntryView(entry) });
     // A delivery landing on a removed webhook slot re-arms the removal step
     // (C4: one more unsubscribe after a late delivery).
     if (entry.origin === "webhook") {
-      const local = this.subscriptions.get(entry.logicalSubscriptionId);
       if (!local) return;
       if (local.record.desiredState === "removed" && local.record.mode === "webhook") {
         local.record = { ...local.record, nextActionAt: this.clock.now() };
@@ -242,24 +253,32 @@ export class LocalEventsRuntime {
   }
 
   private publish(local: LocalSubscription): void {
-    this.emit({ type: "subscription", subscription: this.view(local) });
+    this.emit(local.record.projectId, { type: "subscription", subscription: this.view(local) });
+  }
+
+  private ownedBy(entry: JournalEntry, projectId: string): boolean {
+    return this.subscriptions.get(entry.logicalSubscriptionId)?.record.projectId === projectId;
   }
 
   /**
-   * Register a stream listener. Returns the snapshot frame to send first and
-   * the backlog after `after`; backlog and live registration happen in one
-   * synchronous step, so nothing falls between them.
+   * Register a stream listener for one project. Returns the snapshot frame to
+   * send first and the backlog after `after`; backlog and live registration
+   * happen in one synchronous step, so nothing falls between them.
    */
   openStream(
     after: number,
     listener: Listener,
+    projectId?: string,
   ): { snapshot: EventsStreamFrame; backlog: EventsFeedEntryView[]; close: () => void } {
-    const backlog = this.inbox.read(after, Number.MAX_SAFE_INTEGER).entries;
-    this.listeners.add(listener);
+    const scope = projectScope(projectId);
+    const backlog = this.inbox
+      .read(after, Number.MAX_SAFE_INTEGER)
+      .entries.filter((entry) => this.ownedBy(entry, scope));
+    this.listeners.set(listener, scope);
     return {
       snapshot: {
         type: "snapshot",
-        subscriptions: this.list(),
+        subscriptions: this.list(undefined, scope),
         nextAfter: Math.max(after, this.head),
       },
       backlog: backlog.map((entry) => feedEntryView(entry)),
@@ -273,9 +292,13 @@ export class LocalEventsRuntime {
   // Registry
   // -------------------------------------------------------------------------
 
-  list(serverId?: string): EventsSubscriptionView[] {
+  list(serverId?: string, projectId?: string): EventsSubscriptionView[] {
+    const scope = projectScope(projectId);
     return [...this.subscriptions.values()]
-      .filter((local) => !serverId || local.record.serverId === serverId)
+      .filter(
+        (local) =>
+          local.record.projectId === scope && (!serverId || local.record.serverId === serverId),
+      )
       .map((local) => this.view(local));
   }
 
@@ -290,8 +313,9 @@ export class LocalEventsRuntime {
     return local;
   }
 
-  /** Idempotent: one LIVE subscription per (server, event, arguments, mode). */
+  /** Idempotent: one LIVE subscription per (project, server, event, arguments, mode). */
   create(request: EventsCreateSubscriptionRequest): EventsSubscriptionView {
+    const projectId = projectScope(request.projectId);
     let receiver: LocalWebhookReceiver | undefined;
     if (request.mode === "webhook") {
       const resolved = resolveWebhookReceiver(
@@ -311,6 +335,7 @@ export class LocalEventsRuntime {
     for (const existing of this.subscriptions.values()) {
       if (
         existing.record.desiredState !== "removed" &&
+        existing.record.projectId === projectId &&
         existing.record.serverId === request.serverId &&
         existing.record.eventName === request.eventName &&
         existing.record.mode === request.mode &&
@@ -346,7 +371,7 @@ export class LocalEventsRuntime {
     const now = this.clock.now();
     const record: SubscriptionRecord = {
       id: `esub_${randomUUID().replace(/-/g, "")}`,
-      projectId: LOCAL_EVENTS_PROJECT_ID,
+      projectId,
       environmentId: null,
       bindingKey: computeBindingKey({
         serverId: request.serverId,
@@ -485,9 +510,23 @@ export class LocalEventsRuntime {
     return feedEntryView(entry);
   }
 
-  feed(after = 0, limit = 200): { entries: EventsFeedEntryView[]; nextAfter: number } {
-    const { entries, nextAfter } = this.inbox.read(after, Math.min(Math.max(limit, 1), 1000));
-    return { entries: entries.map((entry) => feedEntryView(entry)), nextAfter };
+  feed(
+    after = 0,
+    limit = 200,
+    projectId?: string,
+  ): { entries: EventsFeedEntryView[]; nextAfter: number } {
+    const max = Math.min(Math.max(limit, 1), 1000);
+    const scope = projectScope(projectId);
+    const { entries, nextAfter: head } = this.inbox.read(after, Number.MAX_SAFE_INTEGER);
+    const own = entries.filter((entry) => this.ownedBy(entry, scope));
+    const page = own.slice(0, max);
+    // A full page resumes after its last entry; otherwise every entry up to
+    // the head was read, other projects' included.
+    const last = page.at(-1);
+    return {
+      entries: page.map((entry) => feedEntryView(entry)),
+      nextAfter: own.length > max && last ? last.seq : head,
+    };
   }
 
   /**
@@ -518,7 +557,7 @@ export class LocalEventsRuntime {
     // new ones start by identity rather than by length alone.
     const start = lastBefore ? rejections.lastIndexOf(lastBefore) + 1 : 0;
     for (const rejection of rejections.slice(start)) {
-      this.emit({ type: "rejection", rejection: rejectionView(rejection) });
+      this.emit(local.record.projectId, { type: "rejection", rejection: rejectionView(rejection) });
     }
     if (local.record.slotId === args.slotId && this.inbox.slotState(args.slotId)?.verifiedAt !== slot?.verifiedAt) {
       this.publish(local);

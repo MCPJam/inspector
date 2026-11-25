@@ -126,6 +126,8 @@ export interface ChatHistoryWidgetSnapshot {
 }
 
 export interface ChatHistoryTurnTrace {
+  runUnloadedToolCalls?: boolean;
+  engineVersion?: string;
   turnId: string;
   promptIndex: number;
   startedAt: number;
@@ -368,6 +370,18 @@ export async function chatHistoryGroupAction(
       groupId,
       ...(title !== undefined ? { title } : {}),
     },
+    requestOptions,
+  );
+}
+
+/** A column left its multi-model session; it stays listed but never reopens. */
+export async function markMultiModelColumnRemoved(
+  chatSessionId: string,
+  requestOptions?: ChatHistoryRequestOptions,
+): Promise<{ ok: boolean }> {
+  return webPost<Record<string, unknown>, { ok: boolean }>(
+    "/api/web/chat-history/action",
+    { action: "multi-model-column-removed", chatSessionId },
     requestOptions,
   );
 }

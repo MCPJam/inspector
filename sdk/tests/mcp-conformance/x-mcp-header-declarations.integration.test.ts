@@ -67,7 +67,7 @@ async function serveTools(
       };
       if (frame.method === "server/discover") {
         reply({
-          resultType: "server/discover",
+          resultType: "complete",
           protocolVersions: [MODERN],
           capabilities: options.capabilities ?? { tools: {} },
           serverInfo: { name: "x-mcp-header-fixture", version: "1.0.0" },

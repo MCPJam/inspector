@@ -31,6 +31,7 @@ export type HostRuntimeConfig = RuntimeExecutionFields & {
   hostStyle: string;
   hostCapabilitiesOverride?: Record<string, unknown>;
   progressiveToolDiscovery?: boolean;
+  runUnloadedToolCalls?: boolean;
   requireNativeToolDiscovery?: boolean;
   builtInToolIds?: string[];
   /** Shared local-only preference; never added to hosted tool configuration. */

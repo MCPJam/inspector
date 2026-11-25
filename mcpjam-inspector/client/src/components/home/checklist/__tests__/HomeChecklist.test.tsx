@@ -26,7 +26,7 @@ const panelTitle = () => screen.getByRole("heading", { level: 3 });
 
 it("shows the first unfinished step, then the step the user picks", () => {
   render(<HomeChecklist onFinished={vi.fn()} />);
-  expect(screen.getByText("Finish setting up Default")).toBeVisible();
+  expect(screen.getByText("Finish setting up your project")).toBeVisible();
   expect(panelTitle()).toHaveTextContent("Connect your server");
   const agent = screen.getByRole("button", { name: /Add MCPJam to your coding agent/ });
   fireEvent.click(agent);
