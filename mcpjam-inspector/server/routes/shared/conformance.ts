@@ -487,6 +487,8 @@ export interface SubmitOAuthConformanceCodeInput {
   sessionId: string;
   code: string;
   state?: string;
+  /** RFC 9207 `iss` from the callback, for the runner's issuer check. */
+  iss?: string;
   /** The caller that started the run; see `StartOAuthConformanceInput.owner`. */
   owner?: string;
 }
@@ -500,6 +502,7 @@ export function submitOAuthConformanceCode(
     input.code,
     input.state,
     input.owner,
+    input.iss,
   );
 }
 

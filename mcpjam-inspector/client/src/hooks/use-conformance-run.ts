@@ -376,10 +376,11 @@ export function useConformanceRun({
       runToken: number,
       serverName: string,
       state?: string,
+      iss?: string,
     ) => {
       if (!isOAuthRunActive(runToken, serverName)) return;
       try {
-        await submitOAuthConformanceCode({ sessionId, code, state }, ...(runBudget().signal ? [{ signal: runBudget().signal }] : []));
+        await submitOAuthConformanceCode({ sessionId, code, state, ...(iss ? { iss } : {}) }, ...(runBudget().signal ? [{ signal: runBudget().signal }] : []));
         if (!isOAuthRunActive(runToken, serverName)) return;
         setOAuth((prev) => ({
           ...prev,
@@ -441,6 +442,7 @@ export function useConformanceRun({
             runToken,
             serverName,
             message.state ?? undefined,
+            message.iss ?? undefined,
           );
         },
       });

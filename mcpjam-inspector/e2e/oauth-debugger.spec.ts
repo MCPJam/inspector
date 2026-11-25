@@ -573,8 +573,10 @@ test.describe("OAuth sign-in through a COOP authorization page", () => {
     test.setTimeout(150_000);
     const fakeOAuthServer = await startFakeOAuthMcpServer({
       authorizePageCrossOriginOpenerPolicy: "same-origin",
+      authorizationResponseIss: true,
     });
-    const submitted: Array<{ code?: string; state?: string }> = [];
+    const submitted: Array<{ code?: string; state?: string; iss?: string }> =
+      [];
     const state = "conformance-e2e-state";
 
     try {
@@ -621,6 +623,8 @@ test.describe("OAuth sign-in through a COOP authorization page", () => {
           sessionId: "conformance-e2e-session",
           code: FAKE_OAUTH_AUTH_CODE,
           state,
+          // RFC 9207: the runner needs it for the issuer check.
+          iss: fakeOAuthServer.origin,
         }),
       ]);
     } finally {
