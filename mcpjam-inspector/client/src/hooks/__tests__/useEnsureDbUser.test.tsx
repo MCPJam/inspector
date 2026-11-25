@@ -717,7 +717,7 @@ describe("useEnsureDbUser", () => {
     mockState.actorKey = "workos-user-1";
     mockState.posthog = { is_capturing: () => true };
     vi.stubGlobal("location", new URL("https://app.mcpjam.com/"));
-    const expiresAt = Date.now() + 900_000;
+    const expiresAt = Date.now() + 1_905_000; // Website clock is two minutes ahead.
     websiteVisit(expiresAt);
     let receipt = "";
     vi.spyOn(document, "cookie", "get").mockImplementation(() => receipt);
@@ -725,7 +725,7 @@ describe("useEnsureDbUser", () => {
     mockState.ensureUser.mockImplementationOnce(async () => {
       if (optOut) mockState.posthog = { is_capturing: () => false };
       websiteVisit(expiresAt + 1000, "linkedin/winter_launch");
-      return "user-row";
+      return { userId: "user-row", campaignApplied: true };
     });
     try {
       const { result } = renderHook(() => useEnsureDbUser());
@@ -757,7 +757,7 @@ describe("useEnsureDbUser", () => {
     }
   });
 
-  it.each(["revoked session", "opt-out before retry"])("retains the campaign after %s", async (scenario) => {
+  it.each(["revoked session", "returning user", "opt-out before retry"])("retains the campaign after %s", async (scenario) => {
     mockState.auth.user = { id: "workos-user-1" };
     mockState.actorKey = "workos-user-1";
     const capturing = vi.fn(() => true);
@@ -767,6 +767,8 @@ describe("useEnsureDbUser", () => {
     const write = vi.spyOn(document, "cookie", "set").mockImplementation(() => {});
     if (scenario === "revoked session") {
       mockState.ensureUser.mockResolvedValueOnce(null);
+    } else if (scenario === "returning user") {
+      mockState.ensureUser.mockResolvedValueOnce({ userId: "existing" });
     } else {
       mockState.ensureUser.mockImplementationOnce(async () => {
         capturing.mockReturnValue(false);

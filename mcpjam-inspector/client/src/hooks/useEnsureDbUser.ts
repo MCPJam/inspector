@@ -46,7 +46,7 @@ type EnsureUserArgs = {
   posthogAnonDistinctId?: string;
 };
 
-type EnsureUserMutation = (args: EnsureUserArgs) => Promise<unknown>;
+type EnsureUserMutation = (args: EnsureUserArgs) => Promise<{ campaignApplied?: boolean } | null>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -134,8 +134,10 @@ async function ensureUserWithRetry(
     try {
       const signupCampaign = await getCampaign();
       if (!shouldContinue()) return;
-      const id = await ensureUser(signupCampaign ? { ...args, signupCampaign: signupCampaign.label } : args);
-      if (typeof id === "string" && signupCampaign && shouldContinue()) {
+      const outcome = await ensureUser(
+        signupCampaign ? { ...args, signupCampaign: signupCampaign.label } : args
+      );
+      if (outcome?.campaignApplied && signupCampaign && shouldContinue()) {
         acknowledgeSignupCampaign(signupCampaign);
       }
       return;
@@ -174,7 +176,7 @@ export function useEnsureDbUser() {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const actorKey = useActorKey();
   const ensureUser = useMutation(
-    "users:ensureUser" as any
+    "users:ensureUserWithOutcome" as any
   ) as EnsureUserMutation;
   // Three refs coordinate dedup, cancellation, and shared in-flight calls.
   // They are deliberately distinct — collapsing any two reintroduces a race:

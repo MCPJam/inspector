@@ -55,8 +55,7 @@ async function fromWebsite(
       typeof label === "string" &&
       /^[a-z0-9][a-z0-9_-]{0,63}\/[a-z0-9][a-z0-9_-]{0,63}$/.test(label) &&
       Number.isSafeInteger(expiresAt) &&
-      expiresAt > Date.now() &&
-      expiresAt <= Date.now() + 1_800_000
+      expiresAt > 0
     ) {
       return { label, expiresAt };
     }
@@ -82,7 +81,6 @@ export async function readSignupCampaign(
       .sort((a, b) => b.expiresAt - a.expiresAt)[0];
     if (
       latest &&
-      latest.expiresAt > Date.now() &&
       latest.expiresAt > consumedThrough()
     )
       return latest;
@@ -93,15 +91,14 @@ export async function readSignupCampaign(
 
 export function acknowledgeSignupCampaign({ expiresAt }: SignupCampaign) {
   try {
-    const seconds = Math.ceil((expiresAt - Date.now()) / 1000);
-    if (seconds <= 0 || consumedThrough() >= expiresAt) return;
+    // The website has already checked expiry against its own clock. Keep the
+    // watermark for one full visit window. Newer visits still pass immediately.
+    if (consumedThrough() >= expiresAt) return;
     document.cookie =
       receiptName +
       "=" +
       expiresAt +
-      "; Path=/; Max-Age=" +
-      seconds +
-      "; Secure; SameSite=Lax";
+      "; Path=/; Max-Age=1800; Secure; SameSite=Lax";
   } catch {
     /* Receipt storage is best effort. */
   }
