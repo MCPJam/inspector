@@ -65,6 +65,7 @@ type HistoryEvent = {
 
 const dayFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
 const timeFormat = new Intl.DateTimeFormat(undefined, { timeStyle: "short" });
+const REVISION_HISTORY_LIMIT = 50;
 
 function groupHistoryByDay(
   changes: ServerUrlChangeEvent[],
@@ -77,7 +78,7 @@ function groupHistoryByDay(
       timestamp: change.timestamp,
       change,
     })),
-    ...revisions.map((revision, index) => ({
+    ...revisions.slice(0, REVISION_HISTORY_LIMIT).map((revision, index) => ({
       kind: "revision" as const,
       key: `revision-${revision.revisionNumber}`,
       timestamp: revision.capturedAt,
@@ -107,7 +108,8 @@ export function ServerHistoryContent({
     {
       projectId,
       serverId,
-      limit: 50,
+      // Keep one extra revision to detect truncation and diff the last row.
+      limit: REVISION_HISTORY_LIMIT + 1,
     } as never
   ) as RevisionSummary[] | undefined;
   const { changes, isLoading, hasError } = useServerUrlChangeEvents(serverId);
@@ -139,6 +141,11 @@ export function ServerHistoryContent({
       {hasError && (
         <p role="status" className="text-sm text-muted-foreground">
           Server URL and command changes unavailable
+        </p>
+      )}
+      {revisions.length > REVISION_HISTORY_LIMIT && (
+        <p className="text-xs text-muted-foreground">
+          Only the latest {REVISION_HISTORY_LIMIT} inspection revisions are shown.
         </p>
       )}
       {[...days].map(([day, events]) => (

@@ -89,7 +89,8 @@ function renderableChanges(events: ServerUrlChangeEvent[] | undefined) {
 }
 
 export function useServerUrlChangeEvents(serverId: string) {
-  // MJ-003 AC3 makes server URL changes available to project members on every plan, independent of the auditLog entitlement.
+  // Project members can see server URL changes on every plan, independently
+  // of the auditLog entitlement.
   // Revisions remain available when the audit query fails. The Convex
   // subscription reports the failure independently of this view.
   const { data, error } = useSoftQuery<ServerUrlChangeEvent[]>(
@@ -142,7 +143,7 @@ export function ServerUrlChangeDetails({
             </>
           )}
           <dt className="text-muted-foreground">
-            {sameOrigin ? "Within" : "To"}
+            {sameOrigin ? "Origin" : "To"}
           </dt>
           <dd className="font-mono [overflow-wrap:anywhere]">
             {nextOrigin}

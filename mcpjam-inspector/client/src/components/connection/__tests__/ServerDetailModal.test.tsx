@@ -1144,23 +1144,33 @@ describe("ServerDetailModal", () => {
     expect(screen.getByText("Save your changes to connect.")).toBeVisible();
   });
 
-  it("keeps the disconnect draft and clears the hint when edits are reverted", async () => {
+  it("disconnects without saving or dropping a draft", async () => {
     const user = userEvent.setup();
     const onDisconnect = vi.fn();
-    render(<ServerDetailModal {...defaultProps} onDisconnect={onDisconnect} />);
+    const props = { ...defaultProps, onDisconnect };
+    const { rerender } = render(<ServerDetailModal {...props} />);
     const url = screen.getByDisplayValue("https://example.com/mcp");
     fireEvent.change(url, { target: { value: "https://example.com/mcp/v2" } });
     const connection = screen.getByRole("switch", { name: "Server connection" });
 
     await user.click(connection);
-    expect(onDisconnect).not.toHaveBeenCalled();
-    expect(url).toHaveValue("https://example.com/mcp/v2");
-    expect(screen.getByText("Save your changes before disconnecting.")).toBeVisible();
-
-    fireEvent.change(url, { target: { value: "https://example.com/mcp" } });
-    expect(screen.queryByText("Save your changes before disconnecting.")).toBeNull();
-    await user.click(connection);
     expect(onDisconnect).toHaveBeenCalledExactlyOnceWith("test-server");
+    expect(defaultProps.onSubmit).not.toHaveBeenCalled();
+
+    rerender(
+      <ServerDetailModal
+        {...props}
+        server={createServer({ connectionStatus: "disconnected" })}
+      />
+    );
+    expect(connection).not.toBeChecked();
+    expect(url).toHaveValue("https://example.com/mcp/v2");
+    expect(screen.getByRole("button", { name: "Save & Connect" })).toBeEnabled();
+
+    await user.click(connection);
+    expect(screen.getByText("Save your changes to connect.")).toBeVisible();
+    fireEvent.change(url, { target: { value: "https://example.com/mcp" } });
+    expect(screen.queryByText("Save your changes to connect.")).toBeNull();
   });
 
   it("does not submit when Enter is pressed in tools metadata", async () => {

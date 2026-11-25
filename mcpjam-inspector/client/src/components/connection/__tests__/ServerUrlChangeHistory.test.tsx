@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { getFunctionName } from "convex/server";
 
 const { useQueriesMock, useQueryMock } = vi.hoisted(() => ({
@@ -200,7 +200,9 @@ describe("Server History", () => {
     expect(rows[0]).toHaveTextContent(/Revision 3\+2 tools/);
     expect(rows[1]).toHaveTextContent("Server URL changed");
     expect(rows[2]).toHaveTextContent("Revision 2");
-    expect(rows[3]).toHaveTextContent("Within");
+    expect(within(rows[3]).getByText("Origin").nextElementSibling).toHaveTextContent(
+      "https://new.example.com"
+    );
     expect(rows[3]).not.toHaveTextContent("Cleared");
     expect(rows[4]).toHaveTextContent("Revision 1");
 
@@ -220,6 +222,28 @@ describe("Server History", () => {
     fireEvent.click(latest);
     expect(latest).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("No tools")).not.toBeInTheDocument();
+  });
+
+  it("explains the revision limit and keeps older URL changes visible", () => {
+    const revisions = Array.from({ length: 51 }, (_, index) => ({
+      revisionNumber: 51 - index,
+      capturedAt: urlChange.timestamp + (51 - index) * 60_000,
+      counts: { tools: 1 },
+    }));
+    useQueryMock.mockReturnValue(revisions);
+    useQueriesMock.mockReturnValue({ result: [urlChange] });
+
+    render(history);
+
+    expect(useQueryMock).toHaveBeenCalledWith("serverInspections:listInspectionRevisions", {
+      projectId: "proj_1",
+      serverId: "srv_1",
+      limit: 51,
+    });
+    expect(screen.getByText("Only the latest 50 inspection revisions are shown.")).toBeVisible();
+    expect(screen.getAllByRole("listitem")).toHaveLength(51);
+    expect(screen.queryByRole("button", { name: /^Revision 1\b/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Server URL changed")).toBeVisible();
   });
 
   it.each([PROD_DARK_SHIP, DEV_DARK_SHIP])(

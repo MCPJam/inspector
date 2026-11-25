@@ -379,6 +379,7 @@ export function useServerDetailController({
   const saveHintRef = useRef<HTMLParagraphElement>(null);
   const focusSaveOnConfig = useRef(false);
   const [saveHint, setSaveHint] = useState<string | null>(null);
+  const isConnected = server.connectionStatus === "connected";
   const focusSaveAction = useCallback(() => {
     const button = saveButtonRef.current;
     const target = button?.disabled ? saveHintRef.current : button;
@@ -387,7 +388,7 @@ export function useServerDetailController({
     target.focus();
   }, []);
   useEffect(() => {
-    if (!isOpen || !formState.hasChanges) {
+    if (!isOpen || isConnected || !formState.hasChanges) {
       focusSaveOnConfig.current = false;
       setSaveHint(null);
     } else if (
@@ -397,7 +398,14 @@ export function useServerDetailController({
     ) {
       focusSaveAction();
     }
-  }, [isOpen, activeTab, formState.hasChanges, saveHint, focusSaveAction]);
+  }, [
+    isOpen,
+    isConnected,
+    activeTab,
+    formState.hasChanges,
+    saveHint,
+    focusSaveAction,
+  ]);
   const trimmedName = formState.name.trim();
   const isDuplicateServerName =
     trimmedName !== "" &&
@@ -405,7 +413,6 @@ export function useServerDetailController({
     existingServerNames.includes(trimmedName);
   const tools = useToolsMetadata(isOpen, server);
 
-  const isConnected = server.connectionStatus === "connected";
   /** See ServerConnectionCard: unreadable is not the same claim as offline. */
   const { label: connectionStatusLabel, indicatorClassName } =
     isConnectionStatus(server.connectionStatus)
@@ -491,7 +498,8 @@ export function useServerDetailController({
       const finalFormData = formState.buildFormData({
         ...(revealedHeaders ? { revealedHeaders } : {}),
       });
-      await onSubmit(finalFormData, server.name);
+      const result = await onSubmit(finalFormData, server.name);
+      if (result.ok) formState.reloadSavedValues();
       // The surface stays open after a save, and the save may have replaced
       // the token or headers the Auth tab revealed; make it look them up again.
       serverAuthReveal.reset();
@@ -526,19 +534,15 @@ export function useServerDetailController({
   };
 
   const toggleConnection = (connected: boolean) => {
-    if (formState.hasChanges) {
-      focusSaveOnConfig.current = true;
-      setSaveHint(
-        connected
-          ? "Save your changes to connect."
-          : "Save your changes before disconnecting."
-      );
-      if (activeTab === "configuration") focusSaveAction();
-      else selectTab("configuration");
-      return;
-    }
     if (!connected) {
       handleDisconnect();
+      return;
+    }
+    if (formState.hasChanges) {
+      focusSaveOnConfig.current = true;
+      setSaveHint("Save your changes to connect.");
+      if (activeTab === "configuration") focusSaveAction();
+      else selectTab("configuration");
       return;
     }
     // A server that needs OAuth and has no tokens can only connect through
