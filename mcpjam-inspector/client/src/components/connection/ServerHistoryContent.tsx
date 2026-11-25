@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@mcpjam/design-system/cn";
@@ -110,6 +111,7 @@ export function ServerHistoryContent({
     } as never
   ) as RevisionSummary[] | undefined;
   const { changes, isLoading, hasError } = useServerUrlChangeEvents(serverId);
+  const { user } = useAuth();
 
   const [expanded, setExpanded] = useState<number | null>(null);
 
@@ -173,7 +175,10 @@ export function ServerHistoryContent({
                   )}
                 >
                   {event.kind === "urlChange" ? (
-                    <ServerUrlChangeDetails event={event.change}>
+                    <ServerUrlChangeDetails
+                      event={event.change}
+                      viewerEmail={user?.email}
+                    >
                       {time}
                     </ServerUrlChangeDetails>
                   ) : (

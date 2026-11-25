@@ -12,6 +12,10 @@ vi.mock("convex/react", () => ({
   useQuery: (...args: unknown[]) => useQueryMock(...args),
 }));
 
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: { email: "viewer@example.com" } }),
+}));
+
 import {
   SERVER_URL_CHANGES_QUERY,
   isServerUrlHistoryUnavailable,
@@ -76,15 +80,32 @@ describe("Server History", () => {
     const [{ result }] = useQueriesMock.mock.calls[0];
     expect(getFunctionName(result.query)).toBe(SERVER_URL_CHANGES_QUERY);
     expect(result.args).toEqual({ serverId: "srv_1" });
-    expect(screen.getByText("https://old.example.com")).toBeInTheDocument();
-    expect(screen.getByText("https://new.example.com")).toBeInTheDocument();
-    expect(screen.getByText(/editor@example\.com/)).toBeInTheDocument();
+    expect(screen.getByText("From").nextElementSibling).toHaveTextContent(
+      "https://old.example.com"
+    );
+    expect(screen.getByText("To").nextElementSibling).toHaveTextContent(
+      "https://new.example.com"
+    );
+    expect(screen.getByText("Changed by editor@example.com")).toBeInTheDocument();
     // Duplicate labels collapse, and the clear that accompanies a url repoint
     // does not get a second row — one edit, one row.
     expect(
       screen.getByText("Cleared request headers and bearer token.")
     ).toBeInTheDocument();
     expect(screen.getAllByRole("listitem")).toHaveLength(1);
+  });
+
+  it("labels the viewer's own changes and preserves their audit email", () => {
+    useQueriesMock.mockReturnValue({
+      result: [{ ...urlChange, actorEmail: "Viewer@example.com" }],
+    });
+
+    render(history);
+
+    expect(screen.getByText("Changed by you")).toHaveAttribute(
+      "title",
+      "Viewer@example.com"
+    );
   });
 
   it("renders a stdio command swap, which writes no url event at all", () => {

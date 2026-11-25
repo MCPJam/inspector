@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { ArrowRight, TriangleAlert } from "lucide-react";
+import { TriangleAlert } from "lucide-react";
 import { useSoftQuery } from "@/hooks/use-soft-query";
 import { isConvexQueryNotServed } from "@/lib/convex-error";
 
@@ -105,9 +105,11 @@ export function useServerUrlChangeEvents(serverId: string) {
 
 export function ServerUrlChangeDetails({
   event,
+  viewerEmail,
   children,
 }: {
   event: ServerUrlChangeEvent;
+  viewerEmail?: string;
   children: ReactNode;
 }) {
   const { previousOrigin, nextOrigin, viaTransportFlip, clearedOnOriginChange } =
@@ -116,6 +118,10 @@ export function ServerUrlChangeDetails({
   const cleared = commandChanged || clearedOnOriginChange === true;
   const clearedKinds = clearedCredentialLabels(event);
   const sameOrigin = previousOrigin != null && previousOrigin === nextOrigin;
+  const { actorEmail } = event;
+  const changedByViewer =
+    actorEmail !== null &&
+    actorEmail.toLowerCase() === viewerEmail?.toLowerCase();
   let title = "Server URL changed";
   if (commandChanged) title = "Server command changed";
   else if (viaTransportFlip) title = "Switched to a local command";
@@ -126,32 +132,33 @@ export function ServerUrlChangeDetails({
         {children}
       </div>
       {nextOrigin && !viaTransportFlip && !commandChanged && (
-        <div className="flex flex-wrap items-center gap-x-1.5 text-xs">
-          {sameOrigin && <span className="text-muted-foreground">Within</span>}
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-0.5 text-xs">
           {previousOrigin && !sameOrigin && (
             <>
-              <span className="font-mono [overflow-wrap:anywhere]">
+              <dt className="text-muted-foreground">From</dt>
+              <dd className="font-mono [overflow-wrap:anywhere]">
                 {previousOrigin}
-              </span>
-              <span className="sr-only">to</span>
-              <ArrowRight
-                aria-hidden="true"
-                className="size-3 text-muted-foreground"
-              />
+              </dd>
             </>
           )}
-          <span className="font-mono [overflow-wrap:anywhere]">
+          <dt className="text-muted-foreground">
+            {sameOrigin ? "Within" : "To"}
+          </dt>
+          <dd className="font-mono [overflow-wrap:anywhere]">
             {nextOrigin}
-          </span>
-        </div>
+          </dd>
+        </dl>
       )}
       {viaTransportFlip && (
         <p className="text-xs text-muted-foreground">
           The saved URL is no longer used.
         </p>
       )}
-      <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-        {event.actorEmail ?? "Unknown user"}
+      <p
+        className="text-xs text-muted-foreground [overflow-wrap:anywhere]"
+        title={changedByViewer ? actorEmail : undefined}
+      >
+        Changed by {changedByViewer ? "you" : (actorEmail ?? "an unknown user")}
       </p>
       {cleared && (
         <p className="flex items-start gap-1.5 text-xs">
