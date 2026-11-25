@@ -4,7 +4,7 @@ import { useRunsIterations } from "../evals/use-runs-iterations";
 import { runGroupsQuery, type RunGroup } from "./climb-queries";
 import type { Climb } from "./climb-types";
 import type { PaneData } from "./pane-card";
-import { iterationOf, planPanes, runIn } from "./round-panes-model";
+import { caseTitlesOf, iterationOf, planPanes, runIn } from "./round-panes-model";
 
 export type PaneMode = "version" | "environment";
 
@@ -30,13 +30,7 @@ export function useRoundPanes(input: {
   const loading = groups === undefined || isLoading;
 
   return useMemo(() => {
-    const caseTitles: Record<string, string> = {};
-    for (const iterations of byRun.values()) {
-      for (const iteration of iterations) {
-        const key = iteration.testCaseId ?? iteration.testCaseSnapshot?.caseKey;
-        if (key && iteration.testCaseSnapshot?.title) caseTitles[key] = iteration.testCaseSnapshot.title;
-      }
-    }
+    const caseTitles = caseTitlesOf(byRun.values());
     const show = (runId: string | undefined) => (runId && caseKey ? iterationOf(byRun.get(runId), caseKey) : undefined);
     if (mode === "environment") {
       const panes = climb.environmentIds.map((id): PaneData => ({

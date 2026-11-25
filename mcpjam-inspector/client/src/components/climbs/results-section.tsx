@@ -15,7 +15,7 @@ const range = (from: number | null, to: number | null) =>
   from === null || to === null ? "None" : `${rateText(from)} → ${rateText(to)}`;
 
 /** Steering and validation results, labeled as the cases that helped pick the result. */
-export function ResultsSection({ summary, labels }: { summary: ClimbSummary; labels: Record<string, string> }) {
+export function ResultsSection({ summary, labels, nothingKept }: { summary: ClimbSummary; labels: Record<string, string>; nothingKept: boolean }) {
   const measured = summary.measure !== "pass_rate";
   const validation = new Map(summary.validation.environments.map((env) => [env.environmentId, env]));
   return (
@@ -51,7 +51,8 @@ export function ResultsSection({ summary, labels }: { summary: ClimbSummary; lab
           </TableBody>
         </Table>
       </Card>
-      <p className="text-xs text-muted-foreground">Both groups helped pick this result.</p>
+      {/* With no round kept nothing was picked, so there is no result the groups helped pick. */}
+      {nothingKept ? null : <p className="text-xs text-muted-foreground">Both groups helped pick this result.</p>}
     </section>
   );
 }

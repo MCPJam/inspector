@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RunGroup } from "../climb-queries";
-import { iterationOf, planPanes, runIn } from "../round-panes-model";
+import { caseTitlesOf, iterationOf, planPanes, runIn } from "../round-panes-model";
 import { makeClimb, makeRound } from "./fixtures";
 
 const group = (unitKey: string, role: string, runs: string[]): RunGroup => ({
@@ -56,5 +56,21 @@ describe("runIn and iterationOf", () => {
     expect(iterationOf(iterations as never, "c1")?._id).toBe("i1");
     expect(iterationOf(iterations as never, "none")).toBeUndefined();
     expect(iterationOf(undefined, "c1")).toBeUndefined();
+  });
+});
+
+describe("caseTitlesOf", () => {
+  const iteration = (testCaseId: string | undefined, caseKey: string, title: string) =>
+    ({ testCaseId, testCaseSnapshot: { caseKey, title } }) as never;
+
+  it("finds a title by the climb's case key even when the iteration also carries the stored case's id", () => {
+    const titles = caseTitlesOf([[iteration("jd7abc", "ui_lGe3hA-H8G", "Counts projects")], [iteration(undefined, "ui_other", "Lists servers")]]);
+    expect(titles["ui_lGe3hA-H8G"]).toBe("Counts projects");
+    expect(titles.jd7abc).toBe("Counts projects");
+    expect(titles.ui_other).toBe("Lists servers");
+  });
+
+  it("names nothing for an iteration with no title", () => {
+    expect(caseTitlesOf([[{ testCaseId: "x", testCaseSnapshot: { caseKey: "k" } } as never]])).toEqual({});
   });
 });

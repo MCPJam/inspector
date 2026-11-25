@@ -89,8 +89,15 @@ export function summarizeClimb(input: {
   return {
     measure: climb.measure,
     stoppedBecause: climb.stopReason ? (STOPPED[climb.stopReason] ?? climb.stopReason) : "it has not stopped",
-    steering: { label: "Steering cases: the climb learned from them and they helped pick this result", environments: environmentOf("steering") },
-    validation: { label: "Validation cases: every round ran them, so they helped pick this result too (totals only)", environments: environmentOf("validation") },
+    // With no round kept nothing was picked, so the labels say nothing about picking.
+    steering: {
+      label: kept.length === 0 ? "Steering cases" : "Steering cases: the climb learned from them and they helped pick this result",
+      environments: environmentOf("steering"),
+    },
+    validation: {
+      label: kept.length === 0 ? "Validation cases (totals only)" : "Validation cases: every round ran them, so they helped pick this result too (totals only)",
+      environments: environmentOf("validation"),
+    },
     rounds: settled.map((round) => ({
       number: round.number,
       standing: standing(round) ?? "not_decided",

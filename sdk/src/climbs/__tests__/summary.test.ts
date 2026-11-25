@@ -55,6 +55,13 @@ describe("summarizeClimb", () => {
     expect(JSON.stringify(summary)).not.toContain("interval");
   });
 
+  it("says nothing about picking a result when no round was kept", () => {
+    const summary = summarizeClimb({ climb: base(), rounds: [round(1, "reverted")] });
+    expect(summary.steering.label).toBe("Steering cases");
+    expect(summary.validation.label).not.toContain("pick");
+    expect(JSON.stringify(summary)).not.toMatch(/helped pick|both groups/i);
+  });
+
   it("says nothing is kept when no round improved on the baseline", () => {
     const summary = summarizeClimb({ climb: base(), rounds: [round(1, "reverted")] });
     expect(summary.established).toEqual(["No round improved on the baseline, so nothing is kept."]);

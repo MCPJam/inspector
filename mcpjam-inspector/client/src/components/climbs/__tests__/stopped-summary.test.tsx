@@ -89,6 +89,7 @@ describe("StoppedSummary", () => {
     stopClimb.mockResolvedValue({ ...stoppedResult(), kept: [], prompt: "" });
     show();
     expect(await screen.findByText("No round was kept, so there is nothing to verify.")).toBeInTheDocument();
+    expect(screen.queryByText("Both groups helped pick this result.")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Verify" })).not.toBeInTheDocument();
   });
 

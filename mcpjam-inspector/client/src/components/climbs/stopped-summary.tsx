@@ -79,7 +79,7 @@ export function StoppedSummary({
         )
       ) : (
         <>
-          <ResultsSection summary={stopped.summary} labels={labels} />
+          <ResultsSection summary={stopped.summary} labels={labels} nothingKept={stopped.kept.length === 0} />
           <ConfirmationSection
             climb={climb}
             summary={stopped.summary}

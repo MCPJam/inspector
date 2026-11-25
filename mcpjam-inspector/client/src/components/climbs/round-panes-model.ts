@@ -59,3 +59,23 @@ export function iterationOf(
     .filter((iteration) => iteration.testCaseId === caseKey || iteration.testCaseSnapshot?.caseKey === caseKey)
     .sort((a, b) => a.iterationNumber - b.iterationNumber)[0];
 }
+
+/**
+ * Each case's title, found under every name a case goes by. The climb names a
+ * case by its key, while an iteration carries the stored case's id as well as
+ * the snapshot's key: a title filed only under the id is never found by the
+ * climb's key, and the screen falls back to the key's tail.
+ */
+export function caseTitlesOf(runs: Iterable<readonly EvalIteration[]>): Record<string, string> {
+  const titles: Record<string, string> = {};
+  for (const iterations of runs) {
+    for (const iteration of iterations) {
+      const title = iteration.testCaseSnapshot?.title;
+      if (!title) continue;
+      for (const key of [iteration.testCaseId, iteration.testCaseSnapshot?.caseKey]) {
+        if (key) titles[key] = title;
+      }
+    }
+  }
+  return titles;
+}

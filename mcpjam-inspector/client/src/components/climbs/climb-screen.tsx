@@ -18,6 +18,8 @@ import { useMockServers } from "./use-mock-servers";
 import { useRoundChanges } from "./use-round-changes";
 
 const POLL_MS = 5_000;
+/** A ready climb waits for a person or an agent; a round submitted from the CLI or MCP is noticed within this. */
+const READY_POLL_MS = 20_000;
 
 /** A climb is read again while anything of it is still moving: the baseline, a round, MCPJam's turn, or the end. */
 function stillMoving(climb: Climb | undefined): boolean {
@@ -56,7 +58,8 @@ export function ClimbScreen({
   onBack: () => void;
 }) {
   const read = useAsyncRead((signal) => getClimb({ projectId, climbId }, signal), `${projectId}:${climbId}`, {
-    pollMs: (climb) => (stillMoving(climb) ? POLL_MS : null),
+    // A stopped climb takes no more rounds, so it is read once.
+    pollMs: (climb) => (stillMoving(climb) ? POLL_MS : climb?.state === "ready" ? READY_POLL_MS : null),
   });
   const climb = read.data;
   // A round that ran a saved server that is no mock is a code round; the project's servers say which.

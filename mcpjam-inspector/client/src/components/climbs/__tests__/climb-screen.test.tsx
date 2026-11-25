@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const getClimb = vi.fn();
@@ -119,5 +119,48 @@ describe("ClimbScreen", () => {
     expect(await screen.findByText("The climb did not load")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Back to climbs" }));
     expect(onBack).toHaveBeenCalled();
+  });
+
+  describe("reading a climb again", () => {
+    const afterSeconds = async (seconds: number) => {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(seconds * 1000);
+      });
+    };
+
+    it("notices a round submitted from outside while the climb is ready, slowly", async () => {
+      vi.useFakeTimers();
+      try {
+        getClimb.mockResolvedValue(makeClimb({ state: "ready" }));
+        show();
+        await afterSeconds(0);
+        expect(getClimb).toHaveBeenCalledTimes(1);
+        await afterSeconds(10);
+        expect(getClimb).toHaveBeenCalledTimes(1);
+        getClimb.mockResolvedValue(makeClimb({ state: "ready", rounds: [makeRound({ number: 1, status: "running" })] }));
+        await afterSeconds(9);
+        expect(getClimb).toHaveBeenCalledTimes(1);
+        await afterSeconds(1);
+        expect(getClimb).toHaveBeenCalledTimes(2);
+        // The round now runs, so the usual quick reads take over.
+        await afterSeconds(5);
+        expect(getClimb).toHaveBeenCalledTimes(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does not read a stopped climb again", async () => {
+      vi.useFakeTimers();
+      try {
+        getClimb.mockResolvedValue(makeClimb({ state: "stopped", stopReason: "round_limit" }));
+        show();
+        await afterSeconds(0);
+        await afterSeconds(120);
+        expect(getClimb).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });
