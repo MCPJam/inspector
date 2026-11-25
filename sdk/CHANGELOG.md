@@ -1,5 +1,11 @@
 # `@mcpjam/sdk` changelog
 
+## 10.15.1
+
+### Patch Changes
+
+- [#8166](https://github.com/MCPJam/inspector/pull/8166) [`82a6acb`](https://github.com/MCPJam/inspector/commit/82a6acb5ee5f5ad28d8c9e26e0991a1dbc29657e) Thanks [@sophiemarinavo](https://github.com/sophiemarinavo)! - OAuth conformance on 2026-07-28 now checks the authorization response's `iss` (RFC 9207) before the token request. A missing `iss` from a server that advertises `iss` support, or an `iss` that doesn't match the recorded issuer, now fails the run. A callback with no `state` is rejected when the run expected one.
+
 ## 10.15.0
 
 ### Minor Changes
