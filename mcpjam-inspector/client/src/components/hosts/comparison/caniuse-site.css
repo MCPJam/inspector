@@ -32,6 +32,12 @@
   line-height: 1.5;
 }
 
+@media (any-pointer: coarse) and (not (any-pointer: fine)) {
+  .caniuse-client-strip {
+    scrollbar-width: none;
+  }
+}
+
 .caniuse-hero input::placeholder {
   color: color-mix(in oklab, var(--muted-foreground) 72%, var(--primary));
 }

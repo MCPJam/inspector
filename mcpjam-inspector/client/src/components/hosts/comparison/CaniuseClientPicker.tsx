@@ -60,7 +60,7 @@ export function CaniuseClientPicker({
     >
       <div className="mb-5 flex min-h-[47px] items-stretch gap-2 sm:min-h-[57px]">
         {selected.length > 0 && (
-          <div className="flex min-w-0 flex-1 flex-nowrap gap-2 overflow-x-auto rounded-md max-sm:[scrollbar-width:none]">
+          <div className="caniuse-client-strip flex min-w-0 flex-1 flex-nowrap gap-2 overflow-x-auto rounded-md">
             {selected.map((client) => (
               <div
                 key={client.hostId}
