@@ -4,7 +4,7 @@ description: "Which MCP capabilities MCPJam supports, from tools and OAuth to MC
 icon: "list-checks"
 ---
 
-This page lists each capability in the MCP specification and its extensions, whether MCPJam supports it, and where to test it.
+Check whether MCPJam can test the MCP feature you care about, and where to test it. This page lists each capability in the MCP specification and its extensions.
 
 - ✅ **Supported**: MCPJam can exercise this against your server today.
 - ◐ **Partial**: part of the capability works, or it works on one surface only. The row says which.
@@ -86,7 +86,7 @@ This page lists each capability in the MCP specification and its extensions, whe
 | --- | --- | --- |
 | MCP Apps (SEP-1865, `io.modelcontextprotocol/ui`, `ui://` resources) | ✅ Supported | **Playground** renders widgets in a sandboxed iframe. See [Playground](/inspector/playground) and [MCP Apps conformance](/cli/apps-conformance). |
 | OpenAI Apps SDK (`openai/outputTemplate`, `window.openai`) | ✅ Supported | **Playground** injects the `window.openai` shim for hosts that use it, such as ChatGPT. See [Host compatibility](/inspector/host-compat). |
-| Skills | ◐ Partial | **Skills** tab, then use them in **Playground**. Always shown in the local inspector; in the hosted app it appears only where Skills has rolled out. See [Skills](/inspector/skills). |
+| Skills | ◐ Partial | **Skills** tab, then use them in **Playground**. Always shown in the local inspector; the hosted app may not show it yet. See [Skills](/inspector/skills). |
 | Skills over MCP (SEP-2640, `io.modelcontextprotocol/skills`, `skill://`) | ✅ Supported | Turn on **Skills over MCP** for the client. See [Skills over MCP](/inspector/skills#skills-over-mcp-server-provided-skills). |
 | Tasks (2025-11-25 `tasks/*`) | ✅ Supported | **Tasks** tab and `mcpjam` CLI. See [MCP Tasks](/cli/tasks) and [MCP Tasks conformance](/cli/tasks-conformance). |
 | Tasks extension (SEP-2663, `io.modelcontextprotocol/tasks`) | ✅ Supported | **Tasks** tab and `mcpjam` CLI. See [MCP Tasks](/cli/tasks) and [MCP Tasks conformance](/cli/tasks-conformance). |

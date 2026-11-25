@@ -4,7 +4,7 @@ description: "Start a run of a suite or a single case, cancel it, and fix whatev
 icon: "play"
 ---
 
-A run executes every case in a suite once per iteration, on each client and model pair you pick. A run of 3 cases at 2 iterations on 2 pairs produces 12 iterations.
+A run sends every case in a suite to each client and model pair you pick, as many times as you set. Each of those attempts is one iteration, so 3 cases run twice on 2 pairs make 12 iterations.
 
 ## What a run needs
 
@@ -17,19 +17,17 @@ A run executes every case in a suite once per iteration, on each client and mode
 | Eval iterations | Your organization's eval iteration allowance. Every iteration counts against it. |
 | MCPJam identity | CLI and SDK runs need an MCPJam login or an `sk_` API key, even when the model runs on your own provider key. See [eval identity](/cli/local-evals#eval-identity-and-local-data). |
 
-A suite saved without clients, such as one created by the SDK, shows a **Servers** picker in the sheet instead. Pick the server group the run should use; the suite itself is not changed.
-
 ## Start a run
 
 <Warning>
-  Every iteration calls a real model and a real server. Hosted runs spend your organization's MCPJam credits or its provider keys, local and SDK runs spend the provider key you export, and the model's tool calls reach your server with the credentials it is given. A run's size is cases × iterations per case × client/model pairs; the **Set up run** sheet shows that total before you start.
+  Every iteration calls a real model and a real server. Hosted runs spend your organization's MCPJam credits or its provider keys, local and SDK runs spend the provider key you export, and the model's tool calls reach your server with the credentials it is given.
 </Warning>
 
 <Tabs>
   <Tab title="Inspector">
     <Steps>
       <Step title="Open the suite">
-        In the Evaluate tab, open **Suites** and pick a suite, then click **Run**. You can also click **Run** on **Overview** and choose the suite from the list. The Set up run sheet opens with the suite name in its title.
+        In the Evaluate tab, open **Suites** and pick a suite, then click **Run**. The Set up run sheet opens with the suite name in its title.
       </Step>
       <Step title="Set the iteration count">
         **Iterations per case** takes 1 to 10. It starts at the count you last used for this suite, or the suite's default, and never below the suite's minimum.
@@ -72,8 +70,6 @@ A suite saved without clients, such as one created by the SDK, shows a **Servers
       --reporter junit-xml \
       --out reports/notes.xml
     ```
-
-    `mcpjam test` runs a suite file on your machine, but without the judge, so it can check assertions only and refuses a file whose judge is Required. See [Local evals](/cli/local-evals).
 
     <Accordion title="Example suite file">
       ```yaml .mcpjam/evals/notes.yaml
@@ -213,8 +209,6 @@ A suite saved without clients, such as one created by the SDK, shows a **Servers
 <Tabs>
   <Tab title="Inspector">
     Open the case and click **Run** in the case editor. Pick the iterations and the clients and models in the "Set up run" sheet, then click **Run test case**. Unsaved edits are saved first; a new case has to be saved once before it can run.
-
-    Guests get a simpler sheet: the iteration count and one client with its models, with no **Suite settings** button.
   </Tab>
   <Tab title="CLI">
     ```bash Hosted case
@@ -316,6 +310,13 @@ A server that is in the project but not connected does not block the run. The sh
 ## Time and retry limits
 
 **Suite settings** caps how long a run may take with **Per-turn timeout**, **Per-tool-call timeout**, **Per-iteration timeout** and **Whole-run timeout**, and sets **Model call retries**. An empty field inherits the platform default. An iteration that runs out of time fails alone; the others keep going. Defaults, ranges and API fields are in the [suite settings reference](/evaluate/reference/suite-settings#time-and-retry-limits).
+
+## Good to know
+
+- **Start from Overview.** Click **Run** on **Overview** and choose the suite from the list.
+- **The suite has no clients**, such as one created by the SDK. The sheet shows a **Servers** picker instead. Pick the server group the run should use; the suite itself is not changed.
+- **Not signed in.** The sheet for running one case is simpler: the iteration count and one client with its models, with no **Suite settings** button.
+- **Running a suite file on your machine.** `mcpjam test` runs without the judge, so it checks assertions only and refuses a file whose judge is Required. See [Local evals](/cli/local-evals).
 
 ## Next steps
 

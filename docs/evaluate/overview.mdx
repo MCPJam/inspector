@@ -4,12 +4,7 @@ description: "Test that users get what they ask for from your MCP server, across
 icon: "flask-conical"
 ---
 
-An eval is an end-to-end test of your MCP server from the user's side. Given a user prompt, it sends the request through a real client, its agent harness and a model you pick, to your server and back, then checks whether the outcome you expected happened.
-
-<Frame caption="Stages are checked in order, and the first one that fails points at a likely owner.">
-  <img className="block dark:hidden" src="/images/evaluate/user-value-chain-light.svg" alt="Six stages, connection to user value, with a break marked at selection and the likely owner under each stage" width="760" />
-  <img className="hidden dark:block" src="/images/evaluate/user-value-chain-dark.svg" alt="Six stages, connection to user value, with a break marked at selection and the likely owner under each stage" width="760" />
-</Frame>
+An eval tells you whether users get what they ask for when a model uses your MCP server. It sends a realistic user prompt through a real client and a model you pick, to your server and back, then checks whether the outcome you expected happened.
 
 <Note>
 Evals test what a user gets end to end. To call tools by hand, use the [Playground](/inspector/playground). To check your server against the MCP spec, use the [CLI conformance commands](/cli/overview#local-mcp-testing).
@@ -27,13 +22,18 @@ Your server never meets a user directly. A user types into a client; the client'
 - **Case**: one user prompt, or a short conversation, plus the outcome you expect.
   - Example: given "What does note 7 say?", the reply contains note 7's text.
 - **Client**: the MCP client configuration the run emulates, such as a desktop chat app or an IDE agent.
-- **Harness**: the agent loop that sends the prompt to the model, runs the tool calls the model asks for, and returns the results: MCPJam Harness, or a vendor's own, such as Claude Code's or Codex's (in limited rollout). See [the client environment](/evaluate/how-evals-work#where-a-case-runs-the-client-environment).
+- **Harness**: the agent loop that sends the prompt to the model, runs the tool calls the model asks for, and returns the results: MCPJam Harness, or a vendor's own, such as Claude Code's or Codex's. See [the client environment](/evaluate/how-evals-work#where-a-case-runs-the-client-environment).
 - **Model**: any model you pick, from MCPJam or your own provider.
 - **Suite**: a group of cases, run on each client and model pair you choose, several times each.
 
 ## What an eval checks
 
-The [user-value chain](/sdk/concepts/user-value-chain) breaks a request into six stages, from the client reaching your server to the user getting what they asked for. Together they define what a successful request looks like. MCPJam grades every iteration along the chain and reports the first stage that failed, which points at a likely owner: the connection, your tool catalog, the model's choice, or your server's answer.
+The [user-value chain](/sdk/concepts/user-value-chain) breaks a request into six stages, from the client reaching your server to the user getting what they asked for. Each time a case runs, MCPJam grades it along the chain and reports the first stage that failed, which points at a likely owner: the connection, your tool catalog, the model's choice, or your server's answer.
+
+<Frame caption="Stages are checked in order, and the first one that fails points at a likely owner.">
+  <img className="block dark:hidden" src="/images/evaluate/user-value-chain-light.svg" alt="Six stages, connection to user value, with a break marked at selection and the likely owner under each stage" width="760" />
+  <img className="hidden dark:block" src="/images/evaluate/user-value-chain-dark.svg" alt="Six stages, connection to user value, with a break marked at selection and the likely owner under each stage" width="760" />
+</Frame>
 
 | Stage | The question it answers |
 |---|---|
@@ -70,14 +70,14 @@ Pick the surface by where you want the suite to live.
     Click **Run** on the **Evaluate** tab. The suite lives in your MCPJam project. [Run your first eval](/evaluate/run-your-first-eval) creates one from a connected server and runs it.
   </Tab>
   <Tab title="CLI">
-    Install the CLI and sign in. In CI, set `MCPJAM_API_KEY` to an `sk_` key instead of signing in.
+    Install the CLI and sign in.
 
     ```bash Install and sign in
     npm i -g @mcpjam/cli
     mcpjam cloud login
     ```
 
-    `mcpjam test <file>` runs a suite file in your repository, such as `.mcpjam/evals/example.yaml`, on your machine. Results stay on your machine. A local run checks assertions only; the judge that grades a case's expected outcome runs hosted. See [Local evals](/cli/local-evals).
+    `mcpjam test <file>` runs a suite file in your repository, such as `.mcpjam/evals/example.yaml`, on your machine. Results stay on your machine. A local run checks assertions only: the judge, the model that grades whether a case's expected outcome happened, runs only in your MCPJam project. See [Local evals](/cli/local-evals).
 
     ```bash Local run
     export ANTHROPIC_API_KEY=sk-ant-...

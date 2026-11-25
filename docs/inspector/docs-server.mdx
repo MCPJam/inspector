@@ -1,16 +1,12 @@
 ---
 title: "MCP Docs Server"
-description: "Connect AI applications to MCPJam documentation"
+description: "Ask your AI coding tool about MCPJam, answered from these docs."
 icon: "server"
 ---
 
-## Overview
-
-MCPJam provides an MCP (Model Context Protocol) server that gives AI applications direct access to our documentation. Get contextual help about MCPJam features while working in your AI-powered development tools.
+Connect the MCPJam docs server to your AI coding tool and ask it about MCPJam without leaving your editor. Answers come from the current docs.
 
 ## MCP Server URL
-
-Use the following URL to connect AI applications to the MCPJam documentation:
 
 ```
 https://docs.mcpjam.com/mcp
@@ -18,7 +14,7 @@ https://docs.mcpjam.com/mcp
 
 ## Supported Applications
 
-You can use this MCP server with any application that supports the Model Context Protocol, including:
+It works with any MCP client, including:
 
 - Claude Desktop
 - Claude Code
@@ -28,14 +24,13 @@ You can use this MCP server with any application that supports the Model Context
 
 ## Getting Started
 
-1. Copy the MCP server URL above
-2. In your AI application, add a new MCP server connection
-3. Paste the URL: `https://docs.mcpjam.com/mcp`
-4. Start asking questions about MCPJam Inspector, MCP Evals, or contributing!
+1. In your AI application, add a new MCP server.
+2. Paste the URL: `https://docs.mcpjam.com/mcp`
+3. Ask a question about MCPJam.
 
 ## What You Can Ask
 
-Once connected, you can ask questions like:
+For example:
 
 - "How do I connect to an MCP server in Inspector?"
 - "What are the available transport protocols?"
@@ -43,21 +38,14 @@ Once connected, you can ask questions like:
 - "Show me how to run evals"
 - "What LLM providers are supported?"
 
-## Benefits
-
-- **Always Up-to-Date**: Documentation is served in real-time from our latest docs
-- **Contextual Help**: Get answers specific to your current task
-- **Fits Your Workflow**: Works inside the tools you already develop in
-- **No Context Switching**: Stay in your editor while accessing documentation
-
 ## Troubleshooting
 
 If you're having trouble connecting:
 
-1. Verify your AI application supports MCP
-2. Check that the URL is entered correctly
-3. Ensure you have an active internet connection
-4. Refer to your application's MCP setup documentation
+1. Check that your AI application supports remote MCP servers.
+2. Check the URL for typos.
+3. Check your internet connection.
+4. Follow your application's MCP setup docs.
 
 ## Contributing
 

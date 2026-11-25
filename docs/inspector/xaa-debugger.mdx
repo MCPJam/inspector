@@ -1,6 +1,6 @@
 ---
 title: "XAA Debugger"
-description: "Configure and debug Cross-App Access flows with MCPJam as the test identity provider and client/agent"
+description: "Test whether your MCP server and authorization server accept Cross-App Access, with MCPJam as the identity provider and the agent."
 icon: "shield-check"
 ---
 
@@ -12,9 +12,7 @@ icon: "shield-check"
   allowFullScreen
 ></iframe>
 
-The XAA (Cross-App Access) Debugger tests an MCP server and its authorization setup.
-
-MCPJam acts as both:
+The XAA (Cross-App Access) Debugger tests whether your MCP server and its authorization server accept Cross-App Access, and shows where the flow breaks. MCPJam acts as both:
 
 - The **identity provider**, which signs the ID token and ID-JAG.
 - The **client/agent**, which presents the ID-JAG and uses the access token.
@@ -40,7 +38,7 @@ The XAA Flow header shows three URLs:
 | **OpenID Config** | Metadata describing the issuer and its signing keys. |
 | **JWKS URL**      | MCPJam's public signing keys.                        |
 
-Configure your authorization server with the values it requests. The **Issuer URL** identifies MCPJam's test identity provider, the **OpenID Config** URL provides discovery metadata, and the **JWKS URL** provides the public signing keys.
+Configure your authorization server to trust MCPJam, using whichever of these values it asks for.
 
 ### Local and hosted issuers
 
@@ -90,9 +88,7 @@ Select **Configure Server to Test** (or **Add Server**), enter the MCP server na
   - **Confidential (private_key_jwt):** MCPJam holds a private key and signs
     each token request with it, proving it owns the identity. Choose this when
     your authorization server requires a confidential client. In the hosted
-    inspector, this option requires you to be signed in with an active
-    organization; MCPJam probes for the capability automatically and blocks
-    Start/Run with a clear message if the requirement is not met.
+    inspector, it needs you to be signed in with an active organization.
 - **Open dynamic registration (DCR):** MCPJam registers a client during the
   test. Your authorization server must provide an open registration endpoint.
 
@@ -149,10 +145,9 @@ built-in demo user (`user-12345` / `demo.user@example.com`).
 </Frame>
 
 Before MCPJam sends the ID-JAG to the authorization server, the right panel
-opens the **ID-JAG Inspector**. Use it to inspect exactly what MCPJam created
-and identify problems before the token exchange. MCPJam checks each piece of
-information inside the ID-JAG and shows whether it looks correct or broken. It
-also shows the relevant RFC or ID-JAG requirement for each check.
+opens the **ID-JAG Inspector**, so you can catch problems before the token
+exchange. It checks each part of the ID-JAG, marks it correct or broken, and
+cites the RFC or ID-JAG requirement behind each check.
 
 ### Header
 
@@ -193,7 +188,7 @@ public signing keys.
   />
 </Frame>
 
-Checks that your authorization server rejects broken ID-JAGs. Run a successful
+Check that your authorization server rejects broken ID-JAGs. Run a successful
 flow first, then click **Run negative tests**. A strict check passes when the
 authorization server rejects the broken assertion. The MCP server is not called
 during these checks.
@@ -215,8 +210,8 @@ It also reports two policy probes:
 - Unknown Subject
 - Scope Denial
 
-No pass or fail here. Your server can accept or reject an unknown user, and can
-trim the scopes it grants. Just confirm the result is what you expect.
+These don't pass or fail. Your server may accept or reject an unknown user, and
+may trim the scopes it grants. Check that the result is what you expect.
 
 These are targeted security and policy checks, not a full conformance test.
 
@@ -233,9 +228,8 @@ The debugger shows the flow in the sequence diagram and logs each request and re
 
 ## Debugging Failures
 
-The right panel shows each flow step, its request and response details, and any
-available token information. If a step fails, it also provides guidance for
-diagnosing the problem. This may include:
+The right panel shows each flow step, its request and response, and any token
+information. If a step fails, it suggests likely causes, such as:
 
 - The authorization server does not advertise or accept the JWT-bearer grant.
 - MCPJam's issuer or signing keys are not trusted.

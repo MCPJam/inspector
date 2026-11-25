@@ -1,6 +1,6 @@
 ---
 title: "Local Evals"
-description: "Run an MCPJam eval suite file on your machine with mcpjam test with local results and an MCPJam identity"
+description: "Run an MCPJam eval suite file on your machine with mcpjam test. Results stay local."
 icon: "flask"
 ---
 
@@ -8,17 +8,9 @@ icon: "flask"
 
 Results are **never uploaded**. The command writes results to your terminal and, if you ask, to a report file. It records the run start with MCPJam. Like every command, it sends the CLI's single anonymous [telemetry](/cli/telemetry) event, which `--no-telemetry` or `DO_NOT_TRACK=1` turns off; the run adds no telemetry of its own.
 
-## Eval identity and local data
-
-Run `mcpjam cloud login` locally, or set `MCPJAM_API_KEY` to an organization `sk_` key in CI. The SDK also accepts `apiKey` or `mcpjamAuth` in run options. Explicit credentials take precedence over `MCPJAM_API_KEY`, which takes precedence over the saved CLI login. An invalid explicit credential never falls back to another account. CI never starts an interactive login. Ask an organization admin for a key if you cannot create one.
-
-Every logical run needs an online start response. MCPJam retries transient failures within ten seconds, then stops before execution. A prior successful run does not enable offline execution. The CLI resolves the project using its existing `--project`, environment, and linked-project settings; a key can only access its own organization.
-
-With results uploads disabled, the start-run request sends only the credential in the authorization header, any MCPJam API headers you configure through the SDK's `inference.resolveMcpjam`, project selection, a new run-start ID, client version and surface (SDK, CLI, or Vitest), planned iteration count, provider names, and whether a client profile is used (`unknown` for custom executors). The server resolves the organization and account. The start-run request sends no prompts, outputs, tool calls, or server URLs. MCPJam-hosted inference still sends prompts through MCPJam to the model, as before. Retries reuse the same ID. Planned iterations are intent, not completed usage or a charge. This release adds no debit, quota draw, or balance refusal.
-
-`DO_NOT_TRACK`, `MCPJAM_TELEMETRY_DISABLED`, and CLI telemetry settings disable analytics, not the required run-start request. Results remain local unless result uploading is enabled separately.
-
 ## Quick start
+
+You need an MCPJam login (`mcpjam cloud login`) and a model provider key, such as `ANTHROPIC_API_KEY`.
 
 ### 1. Write a suite
 
@@ -101,6 +93,16 @@ mcpjam test .mcpjam/evals/example.yaml --case c_reads_a_note --reporter junit-xm
 
 `--case` takes the exact authored id and is repeatable.
 
+## Eval identity and local data
+
+Run `mcpjam cloud login` locally, or set `MCPJAM_API_KEY` to an organization `sk_` key in CI. The SDK also accepts `apiKey` or `mcpjamAuth` in run options. Explicit credentials take precedence over `MCPJAM_API_KEY`, which takes precedence over the saved CLI login. An invalid explicit credential never falls back to another account. CI never starts an interactive login. Ask an organization admin for a key if you cannot create one.
+
+Every logical run needs an online start response. MCPJam retries transient failures within ten seconds, then stops before execution. A prior successful run does not enable offline execution. The CLI resolves the project using its existing `--project`, environment, and linked-project settings; a key can only access its own organization.
+
+With results uploads disabled, the start-run request sends only the credential in the authorization header, any MCPJam API headers you configure through the SDK's `inference.resolveMcpjam`, project selection, a new run-start ID, client version and surface (SDK, CLI, or Vitest), planned iteration count, provider names, and whether a client profile is used (`unknown` for custom executors). The server resolves the organization and account. The start-run request sends no prompts, outputs, tool calls, or server URLs. MCPJam-hosted inference still sends prompts through MCPJam to the model. Retries reuse the same ID. Planned iterations are intent, not completed usage or a charge.
+
+`DO_NOT_TRACK`, `MCPJAM_TELEMETRY_DISABLED`, and CLI telemetry settings disable analytics, not the required run-start request. Results remain local unless result uploading is enabled separately.
+
 ## Server bindings
 
 For each target server name, the first source with an entry wins; the whole entry, never a field-level merge:
@@ -139,10 +141,10 @@ MCPJam-hosted inference uses the Cloud credential precedence (`--api-key` > `MCP
 
 ## Reasoning effort
 
-A local suite file does **not** take a reasoning effort yet: `defaults` has no
+A local suite file does **not** take a reasoning effort: `defaults` has no
 `reasoningEffort` key, so the value is rejected as an
-unknown key rather than accepted and ignored. Ways to run a local suite at an
-effort today:
+unknown key rather than accepted and ignored. To run a local suite at an
+effort:
 
 - Run it against a **saved client** with `runWithClient`: the client's hosted
   model selection carries `settings.reasoningEffort`, and the runner applies it
@@ -175,7 +177,7 @@ mcpjam test .mcpjam/evals/imported.yaml \
 | Deterministic assertions (steps and `assertions`) | Graded with the hosted assertion engine |
 | Direct `toolCall` steps | Refused before anything runs: use a prompt, or run hosted |
 | `interact` steps, widget/render and tool-discovery assertions | Refused before anything runs |
-| Gating assertions on tool results or per-call latency (`toolResultContains`, `toolResultMatches`, `toolResultMatchesSchema`, `toolResultSizeUnder`, `toolLatencyUnder`) | Refused before anything runs: a local run does not capture tool results or timings yet. An advisory one is reported as not measured |
+| Gating assertions on tool results or per-call latency (`toolResultContains`, `toolResultMatches`, `toolResultMatchesSchema`, `toolResultSizeUnder`, `toolLatencyUnder`) | Refused before anything runs: a local run does not capture tool results or timings. An advisory one is reported as not measured |
 | An enabled gating or required judge | Refused before anything runs |
 | An advisory judge (including the hosted default) | Not run; the report says so |
 | `suppressedSuiteStandardCheckIds` | Refused: a local run has no suite-standard registry |

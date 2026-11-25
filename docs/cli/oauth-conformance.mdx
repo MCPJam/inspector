@@ -169,7 +169,7 @@ mcpjam oauth conformance \
 
 <Note>
   `--scopes` sets what you **request** from the auth server. The runner does
-  not currently verify that granted scopes match requested scopes. When
+  not verify that granted scopes match requested scopes. When
   `--scopes` is omitted, the runner prefers the `scope=` value from the initial
   `WWW-Authenticate` challenge and falls back to `scopes_supported`.
 </Note>
@@ -212,7 +212,7 @@ These 6 checks run after the main flow by default, as they do in the Inspector U
 - **DCR**: the default for quick testing; works everywhere, no pre-configuration needed.
 - **Preregistered**: use when the auth server doesn't support DCR, or for `client_credentials` M2M flows.
 
-When `cimd` is used without `--client-metadata-url`, the runner falls back to mcpjam's public metadata document at `https://www.mcpjam.com/.well-known/oauth/client-metadata.json`.
+When `cimd` is used without `--client-metadata-url`, the runner falls back to MCPJam's public metadata document at `https://www.mcpjam.com/.well-known/oauth/client-metadata.json`.
 
 ## Auth modes
 

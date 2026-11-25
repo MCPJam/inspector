@@ -37,7 +37,7 @@ mcpjam tasks capabilities --url https://your-server.com/mcp
 Pass `--wire legacy` or `--wire extension` to any command to assert the wire you expect; a mismatch exits `1` rather than quietly running against the other one.
 
 <Note>
-  On the legacy wire the sub-capabilities are independent: a server that declares only `tasks.cancel` still resolves to `wire: "legacy"`. Commands check the specific capability they need and exit `1` with `TASKS_UNSUPPORTED` if the server never declared it, rather than issuing a request it did not advertise. `tasks list` is the one that would otherwise mislead; the SDK turns a method-unavailable response into an empty list, which reads as "no tasks running" when the truth is "this server cannot tell you".
+  On the legacy wire the sub-capabilities are independent: a server that declares only `tasks.cancel` still resolves to `wire: "legacy"`. Commands check the specific capability they need and exit `1` with `TASKS_UNSUPPORTED` if the server never declared it, rather than issuing a request it did not advertise.
 </Note>
 
 ## Creating a task
@@ -61,9 +61,9 @@ mcpjam tools call \
 
 If the server decides the call is cheap enough to answer synchronously, legal on the extension wire, you get the ordinary tool result instead, plus a note on stderr that no task materialized. A synchronous answer keeps the ordinary `tools call` exit contract: a result with `isError: true` exits `1`, exactly as it would without `--task`. The 0-on-`isError` rule below applies only to a task that completed.
 
-`--task-ttl <ms>` requests a TTL. It applies only to the legacy wire; on the extension wire it is a usage error (exit `2`), because SEP-2663 gives the client no say in the TTL.
+`--task-ttl <ms>` requests a TTL. It applies only to the legacy wire; on the extension wire it is a usage error (exit `2`).
 
-`--task` cannot be combined with `--ui`, `--reporter`, `--validate-response`, or `--expect-success`: a task-creation envelope is not a `CallToolResult`, and those flags all assume one.
+`--task` cannot be combined with `--ui`, `--reporter`, `--validate-response`, or `--expect-success`.
 
 ## Inspecting a task
 
@@ -130,16 +130,16 @@ Interrupting before the task exists (Ctrl-C while the `tools/call` is still in f
 
 ### Interactivity
 
-`--interactive` answers the task's elicitations from the terminal. Like every other interactive verb, it needs a real TTY on stdin: piped or redirected stdin, `--yes`, `CI`, or `MCPJAM_NON_INTERACTIVE` all make it decline cleanly rather than prompt into the void. A declined or unanswered input ends the watch with exit `6`, and you can answer out of band with `tasks update` and watch again.
+`--interactive` answers the task's elicitations from the terminal. Like every other interactive verb, it needs a real TTY on stdin: piped or redirected stdin, `--yes`, `CI`, or `MCPJAM_NON_INTERACTIVE` all make it decline instead of prompting. A declined or unanswered input ends the watch with exit `6`, and you can answer out of band with `tasks update` and watch again.
 
 <Warning>
-  **`--interactive` answers task input on the extension wire only.** The legacy wire has no `tasks/update`, and its `Task` carries no `inputRequests`; the request arrives out of band as an `elicitation/create` stamped with `relatedTaskId`, which a polling loop cannot correlate with the task it is watching. `tasks watch` therefore reports `input_required` on that wire and exits `6` rather than polling an unchanging status until `--duration-ms` runs out. Drive a legacy task that needs input from the Inspector UI, which reads the elicitation off a live stream.
+  **`--interactive` answers task input on the extension wire only.** On the legacy wire, `tasks watch` reports `input_required` and exits `6` instead of polling until `--duration-ms` runs out. Drive a legacy task that needs input from the Inspector UI.
 </Warning>
 
 Ctrl-C (or `SIGTERM`) aborts the watch cleanly: you still get an envelope, with `"outcome": "aborted"` and exit `130`.
 
 <Note>
-  `tasks watch` does not consult the host tasks policy. Like the Inspector's Tools tab, it is a debugging affordance; the policy is a modelling concern for hosts, not a boundary on manual testing.
+  `tasks watch` does not consult the host tasks policy.
 </Note>
 
 ### Watch exit codes

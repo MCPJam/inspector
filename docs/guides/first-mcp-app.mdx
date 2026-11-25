@@ -4,7 +4,7 @@ description: "Build a simple Reservation MCP App from scratch"
 icon: "sparkles"
 ---
 
-We're going to create a simple Reservation MCP App for a restaurant called Jammy Wammy!
+Build a reservation MCP App for a restaurant called Jammy Wammy: a tool that renders a React view in the chat, and a second tool the view can trigger. Then test it in MCPJam Inspector.
 
 ## Setting up your environment
 
@@ -95,7 +95,7 @@ export default defineConfig({
 
 ## Creating your first View
 
-Now let's create the HTML file and React component that will be displayed when the MCP tool is called.
+Create the HTML file and React component that are displayed when the MCP tool is called.
 
 ### Create reservation-app.html
 
@@ -250,7 +250,7 @@ createRoot(document.getElementById("root")!).render(
 
 ## Setting up the MCP Server
 
-Now let's create the server that will register your tools and serve the UI.
+Create the server that registers your tools and serves the UI.
 
 ### Create server.ts
 
@@ -415,9 +415,8 @@ registerAppTool(server,
 );
 ```
 
-This is the tool that will be directly called by the LLM to render your tool.
-We give it our `resourceUri` in the `_meta` field allowing us to have multiple tools to render different UI.
-We can also return text content to the LLM as well to give it more context about our View.
+The LLM calls this tool to render your View. Its `_meta` field points at your `resourceUri`, so different tools can render different UIs.
+The tool can also return text content to give the LLM more context about the View.
 
 #### Registering a Regular Tool (without UI)
 
@@ -453,8 +452,6 @@ This connects your server to STDIO transport, allowing it to communicate with MC
 
 ## Building and Running Your App
 
-Now that everything is set up, let's build and run your MCP App!
-
 ### Build the app
 
 The build process uses Vite to bundle your React component and the HTML file into a single, self-contained HTML file:
@@ -463,7 +460,7 @@ The build process uses Vite to bundle your React component and the HTML file int
 npm run build
 ```
 
-This will create a `dist/reservation-app.html` file with all your JavaScript and CSS inlined - perfect for serving through MCP.
+This creates `dist/reservation-app.html`, with all your JavaScript and CSS inlined, ready to serve through MCP.
 
 ### Run the server
 
@@ -473,17 +470,17 @@ Start your MCP server:
 npm start
 ```
 
-Your server is now running and communicating via STDIO. It's ready to be connected to an MCP client like MCPJam Inspector!
+Your server is now running over STDIO, ready for an MCP client such as MCPJam Inspector.
 
 ### Testing with MCPJam Inspector
 
-The easiest way to test your app is using MCPJam Inspector:
+Start MCPJam Inspector:
 
 ```bash
 npx @mcpjam/inspector
 ```
 
-On first launch MCPJam shows a server-connection overlay. Open the **Servers** tab and add your own server, then head to the **Playground** to render widgets, debug CSP/device behavior, and drive your app with an LLM.
+When MCPJam asks you to connect, enter the command that starts your server and click **Connect**. Then open the **Playground** to render widgets, debug CSP and device behavior, and drive your app with an LLM.
 
 ### What's next?
 
@@ -492,5 +489,3 @@ Now that your server is running, you can:
 1. **Test the flow** - Call the `get-reservation` tool to see your UI
 2. **Try the menu button** - Click "What's on the menu?" and watch the LLM call the `get-menu` tool
 3. **Iterate and expand** - Add more tools, improve the UI, or build something completely new!
-
-Congratulations! You've built your first MCP App! 🎉

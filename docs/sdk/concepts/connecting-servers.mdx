@@ -1,10 +1,10 @@
 ---
 title: "Connecting to MCP Servers"
-description: "Learn how to connect to local and remote MCP servers"
+description: "Connect to local and remote MCP servers with MCPClientManager"
 icon: "plug"
 ---
 
-The `MCPClientManager` is your gateway to MCP servers. It handles connections, manages multiple servers, and provides a unified interface for calling tools, reading resources, and accessing prompts.
+`MCPClientManager` connects your code to one or more MCP servers and gives you one interface for calling their tools, reading resources, and getting prompts.
 
 ## When to Use MCPClientManager
 
@@ -43,7 +43,7 @@ const manager = new MCPClientManager({
 - Servers requiring local resources
 
 <Note>
-Unconfigured stdio connections auto-negotiate the MCP era: the SDK probes `server/discover` on a sibling process to detect 2026 support, then falls back to the legacy `initialize` handshake if the server doesn't respond. This means your server binary may be spawned a second time during the probe. The probe is bounded (at most one extra spawn) and only occurs when no explicit protocol version pin is set.
+When you don't pin a protocol version, the SDK may spawn your stdio server one extra time to detect which MCP version it supports.
 </Note>
 
 ### HTTP Servers (Remote)
@@ -78,7 +78,7 @@ For HTTP servers, `MCPClientManager` supports four auth patterns:
 - `authProvider` when you need to provide a custom MCP SDK OAuth provider
 - `onUnauthorized` for custom 401 recovery when you manage tokens externally
 
-If you already have a refresh token, you can let the SDK handle access token exchange and refresh for you:
+If you already have a refresh token, the SDK can exchange it for access tokens and refresh them for you:
 
 ```typescript
 const manager = new MCPClientManager({
@@ -99,14 +99,13 @@ With this configuration, the SDK:
 
 <Warning>
 **A refresh token is usually single-use, so persist the rotation or the next
-run cannot authorize.** Most authorization servers hand back a new refresh
-token on every exchange and immediately invalidate the old one. The SDK keeps
-using the newest one for as long as the connection that received it lives. It
-can do no more than that: the value you passed as `refreshToken` is spent, so a
-long-lived caller configured from a secret (a CI job, a cron, a worker)
-authorizes once and then fails, with nothing in the logs to say a credential
-was replaced. A reconnect after `disconnectServer` starts from the
-`refreshToken` on the config as well, so it needs the persisted value too.
+run cannot authorize.** Most authorization servers return a new refresh token
+on every exchange and invalidate the old one. The SDK uses the newest one only
+for the life of the connection that received it. The value you passed as
+`refreshToken` is spent, so a caller configured from a secret (a CI job, a
+cron, a worker) authorizes once and then fails, with nothing in the logs to
+say a credential was replaced. A reconnect after `disconnectServer` also starts
+from the `refreshToken` on the config, so it needs the persisted value too.
 
 Use `onTokensRotated` to store the replacement wherever the original came from:
 
@@ -123,13 +122,13 @@ const manager = new MCPClientManager({
 });
 ```
 
-It fires only when the token actually changed, and it is awaited before the
-connection completes, so a job that exits the moment it finishes still gets
-the write, and a handler that never settles stalls the connection. It never
-fails a connection that has already authorized: an error from your handler is
-swallowed and **nothing is logged**, so log it yourself, and if the write has
-to be reliable do it somewhere it can be retried. The payload carries the
-access token alongside the refresh token, so keep it out of shared logs.
+It fires only when the token changed. The connection waits for it to finish,
+so a job that exits right away still gets the write, and a handler that never
+settles stalls the connection. An error from your handler is swallowed and
+**nothing is logged**, and it never fails a connection that has already
+authorized, so log errors yourself and make the write retryable if it has to be
+reliable. The payload carries the access token alongside the refresh token, so
+keep it out of shared logs.
 </Warning>
 
 <Note>
@@ -285,8 +284,6 @@ try {
   await manager.connectToServer("myServer");
 }
 ```
-
-`pingServer` is era-aware: on a modern (2026-07-28) connection it probes with `server/discover`; on a legacy connection it uses `ping`. Callers don't need to handle the difference.
 
 ## Next Steps
 

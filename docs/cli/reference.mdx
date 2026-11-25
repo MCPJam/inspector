@@ -825,7 +825,7 @@ If someone else changed the environment in between, the write fails with a `CONF
 
 ### `cloud environments resolve`
 
-Preview what the environment resolves to right now: the host's current config and the closed server set. Fails with `CONFLICT` when the environment can't currently produce a runnable configuration; `details.code` carries the specific reason.
+Preview what the environment resolves to right now: the host's current config and the closed server set. Fails with `CONFLICT` when the environment can't produce a runnable configuration; `details.code` carries the specific reason.
 
 | Flag | Required | Description |
 |------|----------|-------------|
@@ -1379,7 +1379,7 @@ By default the command prints a launch receipt and returns immediately. `--wait`
 
 No infrastructure condition ever maps to `1`; see the same rule under `eval gate` below. A multi-target launch merges these worst-of across every waited run, in the order `1 > 3 > 4 > 5 > 0`: a real verdict failure is never masked by a sibling's infrastructure noise, and a credential failure (which may be *why* other targets show no verdict) outranks a plain connection failure.
 
-This six-code contract is new and deliberately **different** from `eval gate`'s four codes below; see that command's own doc for why the two are not unified. An invalid suite file exits **2** either way; `eval validate` still exits 1 for the same contract failure, because it is a verdict on the file and this command is not.
+This six-code contract is **different** from `eval gate`'s four codes below. An invalid suite file exits **2** either way; `eval validate` still exits 1 for the same contract failure, because it is a verdict on the file and this command is not.
 
 | Flag | Required | Description |
 |------|----------|-------------|
@@ -1431,9 +1431,7 @@ publish the capability.
 
 <Warning>
   **With `--save-targets`, this edits the suite.** The composed environment is
-  appended to the suite's environment list, deliberately, because an
-  environment the suite does not list is one nobody can re-run from the app
-  afterwards. Without it the stack is ephemeral and the suite is untouched,
+  appended to the suite's environment list. Without it the stack is ephemeral and the suite is untouched,
   except on a deployment with no ephemeral-launch support, where a
   single-target compose still attaches. The result reports both writes
   (`composed.environment.created`, `composed.attachment.attached`) even when
@@ -1544,14 +1542,14 @@ and case bodies spelled canonically: `iterations` (the exact count),
 `legacyIterations` (the legacy floor, the same number) and `assertions`
 instead of `repetitions` / `iterations` / `checks`. A deployment without the
 capability block, or without the capabilities route at all, is spoken to in
-vocabulary 1, byte-for-byte as before. Nothing in the file changes either way:
+vocabulary 1. Nothing in the file changes either way:
 the dialect of the file and the vocabulary of the wire are independent.
 
 Cases are synced in batches of at most 100 (`create_eval_cases`). Every
 declared case is created or updated, including `disabled: true` rows. A case
 the file **no longer declares** is deleted from the hosted suite before
 launch. A case the file still declares but marks `disabled: true` is **kept,
-with its history**; it is simply left out of the launch, so parking a flaky
+with its history**; it is left out of the launch, so parking a flaky
 test does not destroy its past results and re-enabling it later resumes the
 same case.
 The run is scoped to the enabled cases either way. A file with no enabled
@@ -1563,9 +1561,9 @@ disabled case with the same override is ignored, matching how repetitions
 are checked. Authored
 `defaults.toolPolicy` and non-empty `defaults.validity` gates are refused at
 hosted CLI launch (`TOOL_POLICY_UNSUPPORTED` / the corresponding validity
-refusal). Hosted platform-authored suites do not currently have a
-tool-policy field or enforcement path, so the CLI does not upload a suite that
-would claim those guarantees. When supported by an eval runner, `toolPolicy`
+refusal). Hosted platform-authored suites have no tool-policy field or
+enforcement path, so the CLI does not upload a suite that would claim those
+guarantees. When supported by an eval runner, `toolPolicy`
 is enforced at execution time with denied tools kept visible but blocked;
 server annotations are advisory and **UNTRUSTED**. The file's default count
 (`defaults.repetitions`, or `defaults.iterations` in `schemaVersion: "2"`) is
@@ -1948,10 +1946,7 @@ the deterministic per-case regression gate is exempt and can still fail
 (exit `1`) on a matching case.
 
 The two are **mutually exclusive**; passing both is a usage error (exit `2`).
-There is deliberately no single flag that guesses which kind you meant: a
-run ID is an opaque string with no documented format, and an
-abbreviated commit SHA is indistinguishable from one by construction, so the
-kind is named by the flag rather than inferred. A commit SHA passed to
+A commit SHA passed to
 `--baseline` is rejected with a pointer to `--baseline-sha` instead of being
 sent as a doomed run lookup.
 
@@ -1976,7 +1971,7 @@ user, on the record, until an expiry they name; see
 [`cloud eval gate waive`](#cloud-eval-gate-waive) below. When a waiver is in
 force, `eval gate` reports the outcome as **`waived`** and exits `0`.
 
-`waived` is deliberately not the same as `passed`. The run keeps its own failed
+`waived` is not the same as `passed`. The run keeps its own failed
 result, the failing verdicts stay in the report, and the waiver (**who** granted
 it, **why**, and **until when**) is named in every output format: the human
 report, `json-summary`, `junit-xml` (as a `<skipped>` element on the gate
@@ -2028,14 +2023,11 @@ run) or `eligible` goes through the ordinary verdict logic unchanged. A server
 that reports no eligibility at all behaves exactly as it did before the field
 existed.
 
-No infrastructure condition ever maps to `1`. A job that fails a release because
-a network call flaked, and reports it as a regression, teaches people to ignore
-the gate, so retry on `3`, and treat `1` as a real finding about the server.
+No infrastructure condition ever maps to `1`. Retry on `3`, and treat `1` as a
+real finding about the server.
 
-These four are deliberately **not** the same set `eval run --wait` uses (see
-that command above): `gate`'s exit `3` means "incomplete / non-gateable", and
-remapping it to the six-code scheme would invert pipelines that already
-retry on `3`.
+These four are **not** the same set `eval run --wait` uses (see that command
+above): `gate`'s exit `3` means "incomplete / non-gateable".
 
 ### `cloud eval gate waive`
 
@@ -2303,7 +2295,7 @@ than the dashboard runs. When any part of a suite is not representable it emits
 `UNSUPPORTED_SUITE_EXPORT` findings, exits `1`, and writes **no file at all**,
 not a partial one, not one with a warning comment. Every finding names the field
 it is about, so the command's output is the authoritative list; the constructs
-that refuse today include:
+that refuse include:
 
 - several attached project environments, or legacy servers combined with an
   attached environment (the suite file can name one environment);
@@ -2395,7 +2387,7 @@ it writes `settings.minimumAccuracy: 90`; on a per-case suite it writes
 `settings.passThreshold: 0.9`. Grading flag edits carry the revision read from
 the suite, and unchanged edits skip the write.
 
-Changing the criterion is not offered by the app, CLI or MCP today. It requires
+Changing the criterion is not offered by the app, CLI or MCP. It requires
 a direct API `PATCH` with both `settings.repetitions` and `settings.passThreshold`.
 
 ### `cloud eval revisions`

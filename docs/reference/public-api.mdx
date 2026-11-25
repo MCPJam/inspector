@@ -6,12 +6,10 @@ tag: "Preview"
 ---
 
 <Warning>
-**The MCPJam API is in preview.** It works today and we use it ourselves, but
-it has not been generally announced and the surface may change, including in
-breaking ways, while we finish the design. Pin your integration to the
-behaviors documented on this page, build a [tolerant
-reader](#versioning--stability), and expect to revisit it. Feedback is very
-welcome on [Discord](https://discord.gg/JEnDtz8X6z) or
+**The MCPJam API is in preview.** The surface may change, including in
+breaking ways. Pin your integration to the behaviors documented on this page,
+build a [tolerant reader](#versioning--stability), and expect to revisit it.
+Send feedback on [Discord](https://discord.gg/JEnDtz8X6z) or
 [GitHub](https://github.com/MCPJam/inspector/issues).
 </Warning>
 
@@ -29,7 +27,7 @@ The MCPJam API lets you operate the MCP servers saved in your
 [hosted](/hosted/overview) projects (from CI, scripts, or your own agents)
 without opening the UI.
 
-What you can do with it today:
+What you can do with it:
 
 - **Discover your resources**: list your projects, their servers, eval
   suites, and chat sessions, so every ID the other routes need is
@@ -44,11 +42,7 @@ What you can do with it today:
 - **Manage a project's clients**: list, read, **create** (from a built-in
   template like `claude`/`chatgpt`/`cursor`, or from a full config), edit,
   duplicate, and delete the named, reusable configurations that define how
-  MCPJam connects to and talks to your MCP servers. Edits are compare-and-set:
-  read the client, then send its `configId` back as `expectedConfigId` for a
-  config change and its `name` back as `expectedName` for a rename (a rename
-  does not rotate the config, so the config token cannot detect a concurrent
-  one), and a concurrent edit is rejected rather than silently reverted
+  MCPJam connects to and talks to your MCP servers
 - **Manage a project's environments**: list, read, and archive the named
   execution bundles (host + optional server group) that eval
   suites and goals run against,
@@ -100,10 +94,9 @@ curl -X POST \
 
 ### Creating a key
 
-1. Open [**Settings → API keys**](https://app.mcpjam.com/settings/api-keys)
-   in the hosted app (the card at the top of this page takes you there
-   directly).
-2. Click **Create API key**, name it, and pick the **organization** it will act in.
+1. Open [**Settings → API Keys**](https://app.mcpjam.com/settings/api-keys)
+   in the hosted app.
+2. Click **Create API key**, name it, and pick the organization it will act in.
 3. Copy the key (`sk_…`) immediately; **it is shown exactly once** and never
    stored by MCPJam in retrievable form.
 
@@ -118,7 +111,7 @@ only succeeds if the key's owner can access that project and server. A key
 can never reach projects outside its organization.
 
 <Note>
-Two deliberate restrictions while in preview:
+Two restrictions apply:
 
 - **API keys cannot manage API keys.** Requests to the key-management surface
   with an `sk_…` bearer fail with `403 FORBIDDEN`. Create and revoke keys in
@@ -135,7 +128,7 @@ Treat an API key like a password:
 - Scope keys narrowly: one key per integration, named so you can tell them apart.
 - Rotate by creating a replacement key, switching traffic, then revoking the old one.
 - If a key leaks, revoke it immediately in
-  [**Settings → API keys**](https://app.mcpjam.com/settings/api-keys).
+  [**Settings → API Keys**](https://app.mcpjam.com/settings/api-keys).
 
 If you see `401 UNAUTHORIZED` with `details.reason: "ORPHANED_KEY"`, the key
 is no longer bound to an organization and cannot be used; create a new key
@@ -167,6 +160,12 @@ is the async counterpart: it validates and creates a run synchronously, then
 detaches execution and responds `202` with a `runId`. Poll
 `GET /eval-runs/{runId}` until `status` is `completed`, `failed`,
 `cancelled`, or `timed_out`.
+
+**Client edits.** Edits to a client are compare-and-set: read the client, then
+send its `configId` back as `expectedConfigId` for a config change and its
+`name` back as `expectedName` for a rename (a rename does not rotate the
+config, so the config token cannot detect a concurrent one). A concurrent edit
+is rejected rather than silently reverted.
 
 **IDs.** Every identifier the API takes is discoverable through the API
 itself: `GET /projects` lists your projects, `GET /projects/{projectId}/servers`
@@ -955,8 +954,7 @@ already has, and is refused (`send modelSelection`) when there is none.
 
 ## Not in the API yet
 
-To set expectations while in preview, these are **not** available over the API
-today (most exist in the hosted inspector UI):
+These are **not** available over the API (most exist in the hosted inspector UI):
 
 - Creating or revoking API keys (UI-only by design; see [Authentication](#authentication))
 - Chat and conformance suites
@@ -964,8 +962,7 @@ today (most exist in the hosted inspector UI):
   then upload the token to one of the server's [accounts](#server-accounts))
 
 If one of these blocks you, tell us on
-[Discord](https://discord.gg/JEnDtz8X6z); it directly shapes what we
-stabilize first.
+[Discord](https://discord.gg/JEnDtz8X6z).
 
 ## Versioning & stability
 

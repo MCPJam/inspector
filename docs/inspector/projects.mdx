@@ -1,47 +1,31 @@
 ---
 title: "Projects"
-description: "Group your MCP servers into projects, with the ability to share them with your team"
+description: "Keep a set of MCP servers in a project and share it, so your whole team tests with the same setup."
 icon: "folder"
 ---
 
-Each project saves its own set of MCP servers. Switch between projects with one click, connect multiple servers in each, and share any project with teammates so everyone works with the same configuration.
-
-## Key Features
-
-- **Multiple Servers** - Connect to several MCP servers within a single project
-- **Save Your Setup** - Store all your server configurations in one place
-- **Share Instantly** - Invite team members via email to access the same project
-- **Real-Time Sync** - Changes update automatically for all project members
-- **Switch Contexts** - Jump between different project setups with one click
+A project saves a set of MCP servers and their configuration. Share it, and everyone on your team connects to the same servers with the same settings, and sees each other's changes as they happen.
 
 ## Getting Started
 
-The combined org and project switcher sits at the top of the sidebar. The trigger shows your active **organization** in bold on the first line and the active **project** beneath it.
+The switcher at the top of the sidebar shows your active organization on the first line and your active project beneath it.
 
-1. **Click the switcher** at the top of the sidebar to open the context menu
-2. **Create a project** - Click **Create project** at the bottom of the list, give it a name, and choose which organization it belongs to
-3. **Add your servers** - Configure your MCP servers in the Connect tab
-4. **Auto-connect** - The **Auto-connect** switch in the Connect tab header (on by default) connects every project server for you in the Playground and debugger tabs. It is a personal setting for your browser. Anyone can flip it, and it does not change the project
-5. **Share with your team** - Click the share button and invite collaborators
+1. Click the switcher.
+2. Click **Create project** at the bottom of the list, give the project a name, and choose its organization.
+3. Add your MCP servers on the Connect tab. See [Connecting servers](/inspector/connecting-servers).
+4. Share the project with your team. See [How to Share a Project](#how-to-share-a-project).
 
-<Info>
-When you switch projects, all servers disconnect automatically to give you a clean slate.
-</Info>
+When you switch projects, every server disconnects, so you start clean.
 
 ## Switching Organizations
 
-Opening the switcher lands on the **projects view** for your active organization. The organization name appears as a header row at the top of the list.
+The switcher opens on the projects in your active organization, with the organization's name at the top of the list.
 
-- **Drill into the org list**: click the organization header row to replace the projects view with a list of all your organizations. Click any row to switch to that organization; the URL updates to a project in the new org and the sidebar reloads with its projects.
-- **Back**: click the **Organizations** back header to return to the projects view without switching.
-- **New organization**: appears at the bottom of the org list when you can create another.
-- Organization settings are accessed through **Settings › Organization**, not from the switcher.
+- To switch organizations, click the organization's name. Pick one from the list, and the sidebar reloads with its projects.
+- To go back without switching, click the **Organizations** header.
+- To create an organization, click **New organization** at the bottom of the list, if you can create another.
 
-If you were invited to a paid-seat organization but the seat hasn't been paid for yet, that organization appears greyed out in the list with a **Seat not paid yet** tooltip. You cannot open it until the org owner completes payment for your seat.
-
-<Info>
-After completing an OAuth flow, you are returned to the organization you were in when the flow started, so you never land on the wrong organization after authenticating.
-</Info>
+Organization settings are in **Settings**, not in the switcher.
 
 ## Creating and deleting projects
 
@@ -49,14 +33,14 @@ After completing an OAuth flow, you are returned to the organization you were in
 
 Click **Create project** at the bottom of the switcher's projects view. A dialog opens with:
 
-- **Name**: prefilled with a free name (e.g. "Project 3"). Edit it before confirming.
-- **Organization**: a dropdown to choose which organization the project belongs to. Organizations where you don't have permission to create projects, or where your seat is still pending, are not shown.
+- **Name**: prefilled with an unused name, such as "Project 3".
+- **Organization**: the organization the project belongs to. Only organizations where you can create projects are listed.
 
-Click **Create** (or press Enter) to create the project and switch to it automatically.
+Click **Create** or press Enter. MCPJam creates the project and switches to it.
 
 ### Deleting a project
 
-Hover over any project row in the switcher to reveal the **trash icon**. Clicking it opens a confirmation dialog showing the project name. Click **Delete** to confirm. This removes the project and all its servers permanently.
+Hover a project in the switcher and click its trash icon, then click **Delete** to confirm.
 
 <Warning>
 Deleting a project is irreversible. All servers, sessions, and eval suites in the project are removed.
@@ -64,7 +48,7 @@ Deleting a project is irreversible. All servers, sessions, and eval suites in th
 
 ## Credits
 
-A **See credits** row in the sidebar footer shows your organization's credit usage. Clicking it opens the organization billing page where you can see the full breakdown, your plan, and reset timing. The row is only visible when you are signed in and belong to an organization. When your credit balance drops to 10% or below, the meter turns red and a **Low credits** label appears next to it.
+The credits meter in the sidebar footer shows your organization's credit usage. Click it for the full breakdown, your plan and when credits reset. At 10% or less remaining, the meter turns red and shows **Low credits**.
 
 <iframe
   className="w-full aspect-video rounded-xl"
@@ -76,100 +60,91 @@ A **See credits** row in the sidebar footer shows your organization's credit usa
 
 ## Leaving an organization
 
-If you are a member (not an owner or admin) of an organization, you will see an **Access restricted** screen when you open the organization settings. From that screen you can leave the organization:
+If you're a member, not an owner or admin, opening the organization settings shows **Access restricted**. To leave the organization from there:
 
-1. Click **Leave organization** below the "Go to Servers" button.
-2. Confirm in the dialog that appears.
+1. Click **Leave organization**.
+2. Confirm in the dialog.
 
-You will lose access to the organization immediately and be redirected to the Servers page. To rejoin, you need to be re-invited by an admin or owner.
+You lose access immediately. To rejoin, an admin or owner has to invite you again.
 
 <Note>
-Owners cannot leave an organization. Transfer ownership or delete the organization instead.
+Owners can't leave an organization. Transfer ownership or delete the organization instead.
 </Note>
+
 ## Sharing Projects
 
-Project sharing lets your entire team work with the same servers. Set up your project once, invite your team by email, and everyone gets access to the same servers with the same configurations instantly.
+Set up a project once and invite your team by email. Everyone gets the same servers with the same configuration.
 
 ### What Gets Shared
 
-Members get access to every server in the project with the same configuration. Per-server overrides (headers, timeout, protocol version) set from the Servers tab apply across every host in the project. Auto-connect is not shared: each member decides for their own browser whether servers connect automatically.
+Members get every server in the project with the same configuration. Per-server overrides, such as headers, timeout and protocol version, apply to every client in the project.
 
 <Note>
-For security, authorization headers and OAuth tokens are never shared. Each team member authenticates with their own credentials when connecting to servers that require authentication.
+Authorization headers and OAuth tokens are never shared. Each member signs in with their own credentials.
 </Note>
 
 ## Secret storage for env vars and headers
 
-When you save a server that has **environment variables** (stdio) or **custom HTTP headers**, those values are stored as encrypted secrets. The next time you open the server's edit form, each row shows its name with the value masked behind a fixed placeholder.
+When you save a server's environment variables (stdio) or custom HTTP headers, MCPJam stores the values as encrypted secrets. In the server's edit form, each row shows its name with the value masked.
 
 ### Viewing a saved value
 
-Click the **eye icon** on a row to reveal that row's value. The eye toggles the value back to masked when you click it again. Only the row you click is uncovered. Other rows stay masked.
-
-When you first expand the Environment Variables or Connection overrides section on a saved server, the inspector fetches the variable and header names so each row can show which keys are configured. No values are fetched at that point; a value only travels to the browser when you click its eye.
+Click the eye icon on a row to reveal its value, and click it again to hide it. Only that row is revealed. A value reaches your browser only when you click its eye.
 
 <Warning>
-If you want to change the **authentication type** (for example, switching from Bearer Token to a different method) on an HTTP server that has hidden headers, you must reveal the relevant header rows first. Saving an auth change without revealing will show a validation error to prevent accidentally overwriting hidden headers.
+To change the authentication type of an HTTP server with hidden headers, for example away from Bearer Token, reveal the header rows first. Otherwise saving shows an error, so you don't overwrite headers you can't see.
 </Warning>
 
 ### How updates work
 
-- **Env vars**: Any edit to the env vars section (add, remove, or change a value) replaces the stored secret with the new set of values on save.
-- **Custom headers**: Any edit to headers or the authentication type replaces the stored headers secret on save.
-- If you save without revealing or editing a secret section, the existing stored secret is left unchanged.
+- Environment variables: any edit to the section, whether you add, remove or change a value, replaces all stored values on save.
+- Custom headers: any edit to the headers or the authentication type replaces all stored headers on save.
+- If you save without revealing or editing a section, its stored values stay as they are.
 
 ### Changing a server's destination
 
-Two edits cause the backend to clear a server's stored credentials: changing an HTTP server's **origin**, or changing a stdio server's **command**.
+Two edits clear a server's stored credentials: changing an HTTP server's origin, or changing a stdio server's command.
 
-**HTTP servers: origin changes**
+- **HTTP servers.** Changing the path of the URL, such as `/mcp` to `/mcp/v2`, keeps credentials. Changing the origin (scheme, host or port) clears every credential saved for the server: headers, environment variables, the bearer token, and any OAuth access token, refresh token and client secret.
+- **Stdio servers.** Changing the command or its arguments clears the server's stored environment variables.
 
-Editing the path portion of a server's URL (for example, `/mcp` to `/mcp/v2`) keeps all saved credentials intact.
-
-Changing the **origin** (the scheme, host, or port) clears every credential saved against that server: request headers, environment variables, the bearer token, and any OAuth access token, refresh token, and client secret. The edit form warns you before this happens and names both the old and new origin. You must check the acknowledgement box before Save becomes available.
-
-**Stdio servers: command changes**
-
-Changing the **command** (or its arguments) on a stdio server that has stored environment variables clears those variables. The edit form warns you before this happens and shows both the old and new invocation. You must check the acknowledgement box before Save becomes available.
-
-**Both cases**
-
-The warning applies to credentials that other project members may have added and that you may not be able to see. After the save, each member who had credentials saved for that server needs to re-enter them.
+Before either change, the edit form shows the old and new values, and you have to check an acknowledgement box to save. This includes credentials other members added that you may not see. After the save, each member who had credentials for the server has to enter them again.
 
 ### Destination history
 
-The server detail panel includes a **Destination history** section that shows every time the server's destination was changed, who made the change, and whether saved credentials were cleared as a result. This covers HTTP origin changes, stdio command swaps, and switches between transport types. It is visible to all project members regardless of plan, so anyone whose credentials were removed can see what happened and who made the edit.
+The **Destination history** section in the server's details shows every change to its origin, command or transport, who made it, and whether credentials were cleared. Every project member can see it, on any plan.
 
 ### Real-Time Sync
 
-Changes sync instantly between all project members. New servers and configuration changes update automatically for everyone.
+New servers and configuration changes appear for every project member as soon as they're saved.
 
 ### How to Share a Project
 
-1. **Sign in** - Sharing requires authentication
-2. **Click the member avatars** in the header (or the share button)
-3. **Enter an email address** of the person you want to invite
-4. **Click "Invite"** to send the invitation
+1. Sign in to MCPJam.
+2. Click the member avatars in the header, or the share button.
+3. Enter the email address of the person you want to invite.
+4. Click **Invite**.
 
-Once they sign in with that email address, the shared project will appear in their project list.
+When they sign in with that email address, the project appears in their project list.
 
 ### Managing Members
 
-If you created the project, you can remove any member by clicking the X next to their name.
-
-If you're not the creator, you can leave the project at any time. The creator can also remove you from the project.
+If you created the project, remove a member by clicking the X next to their name. Anyone else can leave the project at any time.
 
 ## Project Settings
 
-Open **Project Settings** (gear icon in the header) to manage project-level configuration.
+Open the project's settings with the gear icon in the header.
 
 ### Default host config
 
-The **Default Host Config** section sets the seed configuration applied to new scenarios, eval suites, and direct chat tabs when they are created. It controls the default model, system prompt, temperature, tool approval, connection settings, capabilities, and host context for anything new in the project.
+The default host config is the starting configuration for new scenarios, eval suites and chat tabs in the project: the default model, system prompt, temperature, tool approval, connection settings, capabilities and host context.
 
-Editing the default host config does **not** change existing scenarios or eval suites. Each owns its own config once created.
+Editing it doesn't change existing scenarios or eval suites; each keeps its own config once created. Members who can't manage the project see it read-only.
 
-The editor is only visible when you are signed in and have a saved project. Members without manage permissions see the editor in read-only mode.
+## Good to know
+
+- **Auto-connect is personal.** The **Auto-connect** switch in the Connect header, on by default, connects every project server for you in your browser. Flipping it doesn't change the project for anyone else.
+- **Unpaid seats.** If you were invited to an organization but your seat isn't paid yet, the organization appears greyed out with a **Seat not paid yet** tooltip, and isn't offered when you create a project. You can open it once the owner pays for your seat.
 
 ## What's Next
 

@@ -4,7 +4,7 @@ description: "Command-path and flag changes when account-bound mcpjam commands m
 icon: "arrow-right-arrow-left"
 ---
 
-`@mcpjam/cli` 4.0 separates local MCP operations from account-bound Cloud operations. Most account-bound commands live under `mcpjam cloud`; hosted readiness is the intentional root-level exception because it targets publisher directory checks and does not use Cloud project links. There are no compatibility aliases for the old Cloud command paths.
+`@mcpjam/cli` 4.0 moves account-bound commands under `mcpjam cloud`. Local MCP commands stay at the top level, and so does hosted `readiness`. The old Cloud command paths have no aliases.
 
 ```bash
 mcpjam server probe --url https://example.com/mcp       # local
@@ -52,7 +52,3 @@ mcpjam cloud tunnel --server dev -- npm start           # local target, Cloud re
 Project-selection precedence: `--project` > explicit `project` in `--file`/`--json` > `MCPJAM_PROJECT` > nearest `.mcpjam/project.json` > automatic (most recently updated). `MCPJAM_PROJECT_ID` does not select a Cloud CLI project.
 
 `mcpjam cloud link` writes `.mcpjam/project.json`; use `mcpjam cloud link --remove` to remove the nearest link. `mcpjam cloud status` is zero-network.
-
-## Local MCP identity
-
-`mcpjam mcp` still announces protocol name `mcpjam`. The display title is `MCPJam CLI`. Instructions say this is the local testing engine, not the hosted Cloud MCP at `mcp.mcpjam.com`.

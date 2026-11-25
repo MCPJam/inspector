@@ -4,7 +4,7 @@ description: "Get test cases without writing each one: describe a behavior, gene
 icon: "sparkles"
 ---
 
-Evaluate can draft cases from a description, from your servers' tools, from a test plan, or from a chat session you ran. Each gives you a starting case to review and tighten.
+Get a suite's first cases without writing each one. MCPJam drafts them from a description, your servers' tools, a test plan or a chat session you ran, and you review and tighten each draft.
 
 ## Where cases can come from
 
@@ -13,10 +13,10 @@ Use the **Add case** menu on a suite's **Test Cases** card. An empty suite shows
 | Source | What it does |
 | --- | --- |
 | **Describe** | Opens a new case beside the MCPJam chat. Describe the behavior to test and the chat fills in the case. Edit it, then click **Save case**. |
-| **Generate** | Discovers the suite's servers and drafts a batch of cases from their tools. Signed in only. |
+| **Generate** | Discovers the suite's servers and drafts a batch of cases from their tools. |
 | **Import** | Reads one text document, such as a test plan in Markdown, CSV or JSON, and drafts cases from it. |
 | **Add manually** | Opens a blank case. See [Write a case](/evaluate/write-a-case). |
-| **Promote to test case** | Turns a chat session from the Playground or Swarms into a case. Signed in only. |
+| **Promote to test case** | Turns a chat session from the Playground or Swarms into a case. |
 
 <Warning>
   Generated and imported cases are written by a model. Their prompts may not sound like your users, and their assertions can be loose enough to pass almost anything. Tighten the checks before you trust a suite's pass rate.
@@ -41,18 +41,14 @@ Use the **Add case** menu on a suite's **Test Cases** card. An empty suite shows
       </Step>
     </Steps>
 
-    <Info>
-      Generating requires sign-in. Guests see "Sign in to generate test cases. You can still add test cases manually." When **Generate** is disabled for another reason, the menu says why, for example that a suite server is not connected.
-    </Info>
-
     {/* Screenshot: suite page during generation, with three drafts listed, one expanded in the case editor, and the Add to suite and Review case buttons */}
 
     Drafts do not run until you add them. **Check before saving** marks a draft with a problem, such as a tool your server does not have or arguments the tool does not take. Hover the badge for the reason, then fix the steps, or click **Save anyway** if the draft is right.
 
-    When every draft is saved or discarded, the page reads "Every generated case has been reviewed." If none was written, it reads "No cases were generated." Either way, a **Back to** button followed by the suite's name returns to the suite page.
+    When you have saved or discarded every draft, click **Back to** followed by the suite's name to return to the suite page.
   </Tab>
   <Tab title="CLI">
-    Sign in with `mcpjam cloud login`, or set `MCPJAM_API_KEY` to an `sk_` key. Then generate cases for a suite in your project and list what was added:
+    Sign in with `mcpjam cloud login`, then generate cases for a suite in your project and list what was added:
 
     ```bash
     mcpjam cloud eval cases generate --suite "Notes server" --simple 5 --negative 2
@@ -141,6 +137,12 @@ A promoted session gives a case whose prompts a person actually typed. Unlike ge
 | --- | --- |
 | "No tools are marked read-only on these servers." | Retrying fails the same way. Click **Change generation settings** and pick **Read and write**, or add read-only annotations to your tools. |
 | Any other failure, including "No read-only cases matched the selected scope." | Click **Retry generation**; a second attempt can succeed. |
+
+## Good to know
+
+- **Not signed in.** **Generate** and **Promote to test case** need a sign-in. You can still add cases by hand.
+- **Generate is disabled.** The menu says why, for example that a suite server is not connected.
+- **Generating from CI.** Skip `mcpjam cloud login` and set `MCPJAM_API_KEY` to an `sk_` key instead.
 
 ## Next steps
 

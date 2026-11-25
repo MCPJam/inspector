@@ -1,44 +1,39 @@
 ---
 title: "Host Compatibility"
-description: "See which hosts your MCP server will work in (Claude, ChatGPT, Cursor, Copilot) the moment you connect"
+description: "See which hosts your MCP server works in, such as Claude, ChatGPT, Cursor and Copilot, the moment you connect it."
 icon: "circle-check"
 ---
 
-When you connect an MCP server, MCPJam automatically evaluates how well it will work in each major host and shows the result directly on the server card. No extra steps required. The data comes from what the inspector already captures at connect time.
+Connect your MCP server and MCPJam tells you, on the server card, how well it will work in each major host. You don't have to run anything.
 
 ## The support pill
 
-Once a server is connected, a **support pill** appears at the bottom of its card. It shows a supporter count ("Supported by N") alongside up to three client logos. ChatGPT and Claude lead the stack when they support the server, since they're what most people are checking for first.
+Once a server is connected, a support pill appears at the bottom of its card, reading "Supported by N" with up to three client logos. ChatGPT and Claude come first when they support the server.
 
 - **Supported**: the pill shows the count and up to three client logos.
-- **No supporters**: once analysis has settled, the pill reads "No clients support this server" in a red-tinted style. Mid-analysis ("Checking compatibility…") and failed checks ("Compatibility checks unavailable") are shown instead when the result isn't known yet.
+- **No supporters**: the pill reads "No clients support this server" in red. While the check runs it reads "Checking compatibility…", and if the check fails, "Compatibility checks unavailable".
 
-A client counts as a supporter when its compat status is green, meaning the host profile covers all of the server's relevant requirements. A `works` verdict that carries a blocking or protocol-mismatch finding is not counted.
+A client counts as a supporter when its host profile covers all of the server's relevant requirements. A `works` verdict with a blocking or protocol-mismatch finding doesn't count.
 
-Click the pill to open the **Clients** tab in the server detail modal for the full per-host breakdown.
+Click the pill for the full breakdown by host on the server's **Clients** tab.
 
 ## The Clients tab
 
-The server detail modal has a **Clients** tab (alongside Config, Overview, Tools, and History). It shows a per-host breakdown:
+The **Clients** tab in the server's details shows, for each host:
 
 - **Verdict**: Works / Degraded / Blocked / Unknown, with a colored dot.
-- **Provenance**: How trustworthy the host profile is. Hover the verdict dot to see one of:
-  - *Verified from vendor docs*: the profile is based on a published vendor capability table.
-  - *Probe-captured from a real client*: the profile was captured from a live client session.
-  - *Best-effort preset, unverified*: the profile is a best-effort estimate.
+- **Provenance**: How far to trust the host profile. Hover the verdict dot to see whether it comes from a published vendor capability table, was captured from a live client session, or is a best-effort estimate.
 - **Findings**: Click the summary line to expand the full list of findings for that host. Each finding shows:
   - A severity icon (blocker, degraded, or info).
   - A title and detail explaining what's affected and why.
-  - A **remediation** hint where one exists (for example, "Declare an MCP Apps template alongside the OpenAI one").
-- **Test button**: Creates a new host pre-configured for that host's template with your server already attached, then opens the Playground. This is the one-click path from "degraded in Copilot" to testing the fix.
+  - A remediation hint where one exists, for example "Declare an MCP Apps template alongside the OpenAI one".
+- **Test**: Opens the Playground in a new client set up like that host, with your server attached. See [Test in an emulated host](#test-in-an-emulated-host).
 
 ## What the report checks
 
-The report is computed from data already on the client at connect time. No extra network calls beyond the normal tool list fetch.
-
 ### Widget rendering
 
-The most common source of findings. The report checks whether each host can render the widget bridges your server's tools declare:
+Most findings come from here. The report checks whether each host can render the widget bridges your server's tools declare:
 
 - **MCP Apps** (`_meta.ui.resourceUri`), rendered by Claude, ChatGPT, Cursor, and Copilot.
 - **OpenAI Apps** (`openai/outputTemplate`), rendered by ChatGPT and Copilot via the `window.openai` shim. Not rendered by Claude or Cursor.
@@ -46,16 +41,16 @@ The most common source of findings. The report checks whether each host can rend
 
 When a host can't render a widget, the verdict is **Degraded** (the tool falls back to its plain-text result). If the tool is declared app-only (`_meta.ui.visibility` excludes `"model"`), there is no text fallback and the verdict is **Blocked**.
 
-### Widget capability gaps (L1 scan)
+### Widget capability gaps
 
-For each widget, the inspector reads the widget's HTML via `resources/read` and scans it for the host APIs it actually calls, for example, `ui/message`, `tools/call`, `window.openai.sendFollowUpMessage`. A capability finding fires only when:
+For each widget, MCPJam reads its HTML with `resources/read` and looks for the host APIs it calls, such as `ui/message`, `tools/call` or `window.openai.sendFollowUpMessage`. A finding appears only when:
 
 1. A widget in your server actually uses a capability, **and**
 2. The host's capability matrix doesn't support it.
 
-This means findings are server-specific, not generic host knowledge. If your widget doesn't call `ui/message`, you won't see a "follow-up messages won't work" finding even on a host that lacks it.
+So the findings are about your server, not the host in general. If your widget doesn't call `ui/message`, you won't see a "follow-up messages won't work" finding, even on a host that lacks it.
 
-If the widget HTML can't be read (the `resources/read` call fails), the capability dimension stays **Unknown** rather than showing a false Works verdict.
+If `resources/read` fails, the capability check stays **Unknown** instead of claiming **Works**.
 
 ## Verdicts in detail
 
@@ -73,10 +68,10 @@ One or more features will be lost, but the server still connects and the model c
 
 ### Blocked
 
-A hard blocker makes the server unusable in this host. Currently this only fires when a widget tool is declared app-only and the host can't render it: the tool is hidden from the model and has no text fallback, so it's effectively dead.
+The server is unusable in this host. This happens only when a widget tool is app-only and the host can't render it: the model can't see the tool and there's no text fallback.
 
 <Note>
-Transport and auth blockers (for example, a local stdio server that a cloud host can't reach) are intentionally omitted from the report. A local dev server is expected not to be reachable from ChatGPT or Copilot, flagging it would be noise during development.
+The report doesn't flag transport or auth problems, such as a local stdio server that a cloud host can't reach.
 </Note>
 
 ### Unknown
@@ -86,7 +81,7 @@ The report doesn't have enough information. This happens when:
 - The tool list hasn't loaded yet (the pill shows "Checking compatibility…" briefly after connect).
 - Every `resources/read` call for the server's widgets failed, so the capability scan couldn't run.
 
-Unknown is not the same as Works: the report withholds a verdict rather than guess.
+Unknown doesn't mean Works. The report just doesn't guess.
 
 ## Provenance and confidence
 
@@ -98,7 +93,7 @@ Host profiles are best-effort. The provenance label on each verdict tells you ho
 | Probe | Captured from a live client session (e.g. Cursor 3.21.16) | High, but versioned |
 | Assumed | Best-effort preset judgment | Lower. Treat as a starting point |
 
-The report comes from static checks, not a live test against the real host. Use the **Test** button to open the Playground and verify behavior under the host's emulated environment.
+The report comes from static checks, not a live test against the real host. To check behavior, click **Test** and try your server in the Playground.
 
 ## Acting on findings
 
@@ -106,20 +101,20 @@ The report comes from static checks, not a live test against the real host. Use 
 
 If a widget is degraded because the host doesn't render its bridge, the finding includes a remediation hint:
 
-- **MCP Apps widget on an OpenAI-only host**: add an `openai/outputTemplate` key alongside `_meta.ui.resourceUri` so the tool has both bridges.
-- **OpenAI Apps widget on an MCP-Apps-only host**: add a `_meta.ui.resourceUri` key alongside `openai/outputTemplate`.
+- MCP Apps widget on an OpenAI-only host: add an `openai/outputTemplate` key alongside `_meta.ui.resourceUri` so the tool has both bridges.
+- OpenAI Apps widget on an MCP-Apps-only host: add a `_meta.ui.resourceUri` key alongside `openai/outputTemplate`.
 
-After updating your server, reconnect and the support pill will re-evaluate.
+After you update your server, reconnect it and the support pill updates.
 
 ### Test in an emulated host
 
 Click **Test** next to any host in the Clients tab to:
 
-1. Create a new host pre-configured from that host's template (Claude, ChatGPT, Cursor, or Copilot).
-2. Attach your server to it automatically.
-3. Open the Playground with that host selected.
+1. Create a new client from that host's template (Claude, ChatGPT, Cursor, or Copilot).
+2. Attach your server to it.
+3. Open the Playground with that client selected.
 
-From there you can chat with your server under the host's emulated capabilities and sandbox policy to verify the fix.
+Chat with your server there to check the fix under the host's capabilities and sandbox policy.
 
 ## Related
 

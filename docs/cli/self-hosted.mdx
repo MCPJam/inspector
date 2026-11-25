@@ -4,7 +4,7 @@ description: "Point the CLI and SDK at your organization's MCPJam server, lock i
 icon: "server"
 ---
 
-The CLI and the SDK's Node entry points choose one MCPJam server by the same rules, send a saved login only to the server it was made against, and can be locked to your organization's server by a file IT installs.
+Point the CLI and the SDK at your organization's MCPJam server, and optionally lock them to it with a file IT installs. Both choose a server by the same rules and send a saved login only to the server it was made against.
 
 **Requirements:** `@mcpjam/cli` 6.1.0 or later on Node.js 22 or later, and `@mcpjam/sdk` 10.3.0 or later. Older releases ignore the settings file, so pin these versions where the lock matters.
 
@@ -43,7 +43,7 @@ Make the file writable only by administrators, for example `root`-owned with mod
 
 | File | What the CLI and SDK do |
 |------|-------------------------|
-| No file | Today's behavior |
+| No file | Rows 2, 3, 4 and 6 of [Which server](#which-server) apply |
 | `"lock": true` | `apiUrl` is the only MCPJam server. A flag, variable, SDK option or `compat --catalog-url` naming another server exits `2` (`DEPLOYMENT_LOCKED`) before any request. MCPJam telemetry, the SDK's error reporting and the update check are off. |
 | `"lock": false` | `apiUrl` is the organization default (row 5 above). Users can still choose another server, and telemetry follows their own settings. |
 | Invalid | Commands that can contact MCPJam exit `2` (`MANAGED_SETTINGS_INVALID`), naming the file and the problem. Nothing is sent to MCPJam or its telemetry. Other commands still run. |
@@ -77,7 +77,7 @@ The file is invalid when it is not JSON, when `version`, `apiUrl` or `lock` is m
 
 ## Corporate proxy
 
-When `HTTPS_PROXY` or `HTTP_PROXY` is set (either case), the CLI process sends its `fetch` requests through the proxy and honors `NO_PROXY`: MCPJam's API, model providers and MCP servers over HTTP. `HTTPS_PROXY` covers `https` destinations and `HTTP_PROXY` covers `http` ones; with only `HTTP_PROXY` set, `https` requests use it too. `localhost`, `127.0.0.1` and `[::1]` always connect directly, so local MCP servers and the local Inspector keep working. A value without a scheme, such as `proxy.corp.com:8080`, means `http://`; a value that is not an http(s) URL is ignored with a warning. Two connections do not use the proxy yet: the relay connection of `mcpjam cloud tunnel` and the `mcpjam oauth` debugging proxy.
+When `HTTPS_PROXY` or `HTTP_PROXY` is set (either case), the CLI process sends its `fetch` requests through the proxy and honors `NO_PROXY`: MCPJam's API, model providers and MCP servers over HTTP. `HTTPS_PROXY` covers `https` destinations and `HTTP_PROXY` covers `http` ones; with only `HTTP_PROXY` set, `https` requests use it too. `localhost`, `127.0.0.1` and `[::1]` always connect directly, so local MCP servers and the local Inspector keep working. A value without a scheme, such as `proxy.corp.com:8080`, means `http://`; a value that is not an http(s) URL is ignored with a warning. Two connections do not use the proxy: the relay connection of `mcpjam cloud tunnel` and the `mcpjam oauth` debugging proxy.
 
 The update check runs in a separate short-lived process that uses Node.js's own proxy support. On Node.js older than 22.21, or 24.x older than 24.5, the check is skipped while a proxy is set rather than sent directly.
 

@@ -4,11 +4,11 @@ description: "API reference for running an MCPJam suite file locally from code"
 icon: "book"
 ---
 
-<Note>
-SDK 10, CLI 6, Vitest 0.3, and later versions require an MCPJam login or `sk_` API key for every eval, including BYOK runs with uploads disabled. Earlier versions do not.
-</Note>
-
 `runSuiteFile(sourceText, options)` runs an MCPJam suite file locally and decides it with the v2 verdict policy. It is the engine behind [`mcpjam test`](/cli/local-evals), exposed for code that wants the same run without the CLI.
+
+<Note>
+Every eval needs an MCPJam login or `sk_` API key, including runs that use your own provider key with uploads turned off. See [Eval authentication](#eval-authentication).
+</Note>
 
 It takes **explicit** configuration: server bindings, provider keys, and an optional callback that returns an MCPJam connection. Every run resolves MCPJam identity; when the callback is absent, it uses the SDK credential resolver. It does not discover suite files, print, write artifacts or exit the process. It never uploads results and sends no usage telemetry; that belongs to the caller.
 

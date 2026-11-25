@@ -4,21 +4,13 @@ description: "Share a server's sign-in with your project, upload each test user'
 icon: "users"
 ---
 
-Some MCP servers can't be signed in to from a browser on a schedule, for example because the test user needs a password and a passkey every day. Your CI can sign each test user in itself and upload the token to MCPJam. Eval runs then act as that user, and each run records which account it used.
+Run your evals as a real test user, even on a server you can't sign in to from a browser on a schedule, for example because it asks for a password and a passkey every day. Your CI signs each test user in and uploads the token to MCPJam. Eval runs then act as that user, and each run records which account it used.
 
 A project admin shares the server's sign-in, CI uploads each test user's token, and each person chooses which account their runs of a suite use.
 
-<Note>
-  Sharing a server's sign-in, the suite **Accounts** setting and the run
-  page's **Credentials** line are rolling out gradually. If you don't see
-  them, they aren't on for your account yet. Uploading tokens to your own
-  accounts and the `accounts` field in the API and CLI are available to
-  everyone.
-</Note>
-
 ## Before you start
 
-- The server is saved in a project, signs in with OAuth and, if it is remote, uses HTTPS. Shared and uploaded accounts are refused over plain HTTP; loopback development addresses are allowed.
+- Save the server in a project. It must sign in with OAuth and, if it is remote, use HTTPS.
 - Use dedicated test accounts with the least access your tests need. Every project member can run as every shared account.
 
 ## Share the server's sign-in
@@ -31,7 +23,7 @@ A project admin does this once per server.
   </Step>
   <Step title="Turn on Share sign-in with the project">
     MCPJam asks you to confirm, because members' local apps will receive the
-    access tokens of the accounts admins connect here. Click **Share sign-in**.
+    access tokens of the accounts you connect here. Click **Share sign-in**.
   </Step>
   <Step title="Add the project accounts">
     Connect accounts here, or upload them from CI as described below. A server
@@ -39,9 +31,9 @@ A project admin does this once per server.
   </Step>
 </Steps>
 
-While sharing is on, members' runs act as the project accounts, and members' own accounts on this server aren't used. Members see the project accounts but can't change them. Sharing also turns on **Allow local runs** for the server, so members' local Inspectors can use the accounts too.
+While sharing is on, members' runs act as the project accounts instead of their own accounts on this server. Members see the project accounts but can't change them. Sharing also turns on **Allow local runs** for the server, so members' local Inspectors can use the accounts too.
 
-Turning sharing on or off clears every suite's saved account choice for this server, because the choices name accounts of the other kind. Turning it off also deletes the project accounts and asks the sign-in provider to revoke their tokens.
+Turning sharing on or off clears every suite's saved account choice for this server. Turning it off also deletes the project accounts and asks the sign-in provider to revoke their tokens.
 
 ## Upload each test user's token from CI
 
@@ -136,8 +128,13 @@ MCPJam asks the profile tool when a shared or uploaded account connects, in the 
 
 - **No browser reveals.** The token of a shared or uploaded account can't be revealed in the browser or sent to a sandbox.
 - **Allow local runs.** A project admin can turn it off for each shared server on its **Auth** tab. Members' local apps then stop receiving the accounts' tokens from their next connection or run.
-- **Allow credential export.** Organization owners and admins can turn it off under **Organization settings → Security**. MCPJam-hosted connections keep working, and local apps, the CLI, sandboxes and browser reveals are refused. It covers every saved credential in the organization, not only test accounts. Members can view the setting but can't change it.
+- **Allow credential export.** Organization owners and admins can turn it off under **Security** in the organization's settings. MCPJam-hosted connections keep working, and local apps, the CLI, sandboxes and browser reveals are refused. It covers every saved credential in the organization, not only test accounts. Members can view the setting but can't change it.
 
 Turning either switch off stops new deliveries only. A token already delivered keeps working until it expires, and API keys or secrets already sent keep working until you rotate them.
 
-The organization audit log records each delivery of a shared or uploaded account's token, each refusal, and each change to **Allow credential export**. Whether you can view the audit log depends on your plan.
+The organization audit log records each delivery of a shared or uploaded account's token, each refusal, and each change to **Allow credential export**.
+
+## Good to know
+
+- **Local development servers.** Shared and uploaded accounts are refused over plain HTTP, except on loopback addresses.
+- **Audit log access.** Whether you can view the organization audit log depends on your plan.

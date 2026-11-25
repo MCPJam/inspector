@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 400" width="840" height="400" role="img">
+<circle cx="55" cy="170" r="15" fill="none" stroke="#f2f2f2" stroke-width="1.8"/>
+<path d="M27,222 q0,-30 28,-30 q28,0 28,30" fill="none" stroke="#f2f2f2" stroke-width="1.8"/>
+<text x="55" y="245" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#f2f2f2" text-anchor="middle">You</text>
+<rect x="255" y="40" width="280" height="320" rx="14" fill="#141414" stroke="#e6e6e6" stroke-width="1.5"/>
+<text x="395" y="66" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#f2f2f2" text-anchor="middle">MCPJam Playground</text>
+<rect x="275" y="84" width="240" height="110" rx="10" fill="#141414" stroke="#e6e6e6" stroke-width="1.5"/>
+<text x="395" y="108" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#f2f2f2" text-anchor="middle">Client: ChatGPT</text>
+<text x="395" y="130" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#b0b0b0" text-anchor="middle">behaves like the real host:</text>
+<text x="395" y="148" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#b0b0b0" text-anchor="middle">capabilities, device, theme,</text>
+<text x="395" y="166" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#b0b0b0" text-anchor="middle">renders widgets as it would</text>
+<rect x="275" y="226" width="240" height="114" rx="10" fill="#141414" stroke="#e6e6e6" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="395" y="250" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#f2f2f2" text-anchor="middle">Inspect every step</text>
+<text x="395" y="272" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#b0b0b0" text-anchor="middle">Chat · Trace · Raw</text>
+<text x="395" y="290" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#b0b0b0" text-anchor="middle">Logs: every JSON-RPC message</text>
+<text x="395" y="308" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#b0b0b0" text-anchor="middle">Widget: Data · State · Sandbox</text>
+<text x="395" y="326" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#b0b0b0" text-anchor="middle">Edit input or output, re-render</text>
+<rect x="660" y="60" width="160" height="90" rx="10" fill="#141414" stroke="#e6e6e6" stroke-width="1.5"/>
+<text x="740" y="98" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#f2f2f2" text-anchor="middle">Model</text>
+<text x="740" y="118" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#b0b0b0" text-anchor="middle">Claude Haiku 4.5</text>
+<rect x="660" y="250" width="160" height="90" rx="10" fill="#141414" stroke="#e6e6e6" stroke-width="1.5"/>
+<text x="740" y="288" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#f2f2f2" text-anchor="middle">Your MCP server</text>
+<text x="740" y="308" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#b0b0b0" text-anchor="middle">notes</text>
+<line x1="92" y1="160" x2="247" y2="160" stroke="#f2f2f2" stroke-width="1.5"/><path d="M255,160 l-9,-5 v10 z" fill="#f2f2f2"/><text x="173.5" y="153" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#f2f2f2" text-anchor="middle">1. “What does note 7 say?”</text>
+<line x1="255" y1="205" x2="100" y2="205" stroke="#f2f2f2" stroke-width="1.5"/><path d="M92,205 l9,-5 v10 z" fill="#f2f2f2"/><text x="173.5" y="198" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#f2f2f2" text-anchor="middle">6. answer + widget</text>
+<line x1="535" y1="92" x2="652" y2="92" stroke="#f2f2f2" stroke-width="1.5"/><path d="M660,92 l-9,-5 v10 z" fill="#f2f2f2"/><text x="597.5" y="85" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#f2f2f2" text-anchor="middle">2. prompt + tools</text>
+<line x1="660" y1="128" x2="543" y2="128" stroke="#f2f2f2" stroke-width="1.5"/><path d="M535,128 l9,-5 v10 z" fill="#f2f2f2"/><text x="597.5" y="121" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#f2f2f2" text-anchor="middle">3. call get_note(7)</text>
+<line x1="535" y1="282" x2="652" y2="282" stroke="#f2f2f2" stroke-width="1.5"/><path d="M660,282 l-9,-5 v10 z" fill="#f2f2f2"/><text x="597.5" y="275" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#f2f2f2" text-anchor="middle">4. tools/call</text>
+<line x1="660" y1="318" x2="543" y2="318" stroke="#f2f2f2" stroke-width="1.5"/><path d="M535,318 l9,-5 v10 z" fill="#f2f2f2"/><text x="597.5" y="311" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#f2f2f2" text-anchor="middle">5. note + widget</text>
+</svg>

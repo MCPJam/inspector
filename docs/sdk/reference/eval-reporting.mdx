@@ -5,7 +5,7 @@ icon: "book"
 ---
 
 <Warning>
-Reporting authenticates with **MCPJam API keys (`sk_…`)** from Settings → API keys and uploads through the [MCPJam public API](/reference/public-api) (`/api/v1/projects/:projectId/eval-ingest/*`). The legacy project API keys (`mcpjam_…`) and their `/sdk/v1/evals/*` endpoints are retired; old SDK versions pointing there receive `410 Gone`. Upgrade `@mcpjam/sdk` to keep uploading.
+Reporting authenticates with **MCPJam API keys (`sk_…`)** from **Settings → API Keys** and uploads through the [MCPJam public API](/reference/public-api) (`/api/v1/projects/:projectId/eval-ingest/*`). If an upload returns `410 Gone`, upgrade `@mcpjam/sdk`.
 </Warning>
 
 The SDK provides APIs to save eval results to MCPJam for visualization in the CI Evals dashboard. Results can be saved automatically via `EvalTest`/`EvalSuite`, or manually using the APIs below.
@@ -14,7 +14,7 @@ The SDK provides APIs to save eval results to MCPJam for visualization in the CI
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `MCPJAM_API_KEY` | Yes | - | An MCPJam API key (`sk_…`) from Settings → API keys |
+| `MCPJAM_API_KEY` | Yes | - | An MCPJam API key (`sk_…`) from **Settings → API Keys** |
 | `MCPJAM_PROJECT_ID` | No | org's Default project | Project the results are filed under |
 | `MCPJAM_BASE_URL` | No | `https://app.mcpjam.com` | MCPJam API base URL override |
 
@@ -459,7 +459,7 @@ Automatically detected when `ci` is omitted for supported CI services. An explic
 
 Predicates add a deterministic, state-based assertion layer on top of tool-call matching. Each predicate is a pure function of the iteration transcript (same transcript, same verdict), which makes it suitable as a CI release gate.
 
-Predicates can be authored two ways: on a hosted suite or case (in the corpus JSON, or through the Inspector's per-case **Checks** editor), or **code-first** from SDK 3.0 onward by passing `predicates` to [`EvalTest`](/sdk/reference/eval-test) or [`EvalSuite`](/sdk/reference/eval-suite). Either way the runner evaluates them and persists per-predicate verdicts under [`metadata.predicates`](#predicate-results-in-metadata). A case passes the predicate gate iff every **required** predicate passes. A check's `role` is `"required"` (legacy spelling: `"gating"`) or `"advisory"`; absent means required. A predicate authored `role: "advisory"`, which every observation kind must be, is recorded and surfaced, and never fails the case, including when its `status` is `"error"`. A **required** check that could not be scored is the opposite: it holds the gate shut, because a check that never ran is not a check that passed (see [A predicate never passes by default](#a-predicate-never-passes-by-default)); its `onError` / `onSkipped` policy is what decides, and for a required role both default to `"fail"`. An absent or empty list means no predicate gate (the case is judged solely by tool-call matching and `failOnToolError`).
+Predicates can be authored two ways: on a hosted suite or case (in the corpus JSON, or through the Inspector's per-case **Checks** editor), or **code-first** by passing `predicates` to [`EvalTest`](/sdk/reference/eval-test) or [`EvalSuite`](/sdk/reference/eval-suite). Either way the runner evaluates them and persists per-predicate verdicts under [`metadata.predicates`](#predicate-results-in-metadata). A case passes the predicate gate iff every **required** predicate passes. A check's `role` is `"required"` (legacy spelling: `"gating"`) or `"advisory"`; absent means required. A predicate authored `role: "advisory"`, which every observation kind must be, is recorded and surfaced, and never fails the case, including when its `status` is `"error"`. A **required** check that could not be scored is the opposite: it holds the gate shut, because a check that never ran is not a check that passed (see [A predicate never passes by default](#a-predicate-never-passes-by-default)); its `onError` / `onSkipped` policy is what decides, and for a required role both default to `"fail"`. An absent or empty list means no predicate gate (the case is judged solely by tool-call matching and `failOnToolError`).
 
 The three widget predicates (`widgetRendered`, `widgetRenderLatencyUnder`, `widgetNoConsoleErrors`) read render observations that only a hosted run captures, and they fail closed. `EvalTest` therefore **rejects them at construction** rather than failing every iteration with a confusing reason; move those cases to a hosted suite.
 

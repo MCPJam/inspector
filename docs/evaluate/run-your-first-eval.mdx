@@ -1,91 +1,60 @@
 ---
 title: "Run your first eval"
-description: "Generate cases from a connected server, run them against a model, and read why a case failed."
+description: "Find out whether a model can use your MCP server to get users what they ask for."
 icon: "play"
 ---
 
-In about five minutes you create a suite from a connected server, generate cases from its tools, run them against one model, and open a failing iteration to see which stage broke.
-
-## Before you start
-
-- **Inspector**
-  - Sign in to MCPJam. As a guest, the **Generate test cases** dialog asks you to sign in; you can still add cases by hand.
-  - Connect at least one server to your project. See [Connecting servers](/inspector/connecting-servers).
-- **CLI or SDK**
-  - Have a model provider key, such as `ANTHROPIC_API_KEY`.
-  - Have an MCPJam login or `sk_` API key. See [eval identity](/cli/local-evals#eval-identity-and-local-data).
-
-<Warning>
-  A run calls real models. Each iteration spends MCPJam credits when MCPJam serves the model, or tokens on your provider account when you bring your own key. One model and one iteration per case keeps a first run small.
-</Warning>
+An eval sends realistic user prompts to a model connected to your server, then checks whether each user got what they asked for. In about five minutes you generate cases from your server's tools, run them, and see why one failed.
 
 <Tabs>
   <Tab title="Inspector">
+    Sign in to MCPJam and connect a server to your project. See [Connecting servers](/inspector/connecting-servers).
+
     <Steps>
-      <Step title="Open Evaluate and pick a server">
-        Open **Evaluate** in the sidebar. With no suites yet, the page reads "Automate the checks you'd run by hand" and shows a card for each server. Click **Eval my server** on the server you want to test. If the project already has suites, click **Create suite** instead and pick the server in the form.
+      <Step title="Open Evaluate">
+        Open **Evaluate** in the sidebar and click **Eval my server** on the server you want to test.
 
-        {/* Screenshot: Evaluate empty state with server cards labelled "Eval my server" and the "Try sample suite" button */}
-
-        To start from a finished example, click **Try sample suite**. It creates an "Excalidraw quickstart" suite with cases written against the hosted Excalidraw demo server. Continue from step 5.
-
-        A short tour may start the first time you open an empty Evaluate tab. Skip it or step through it; it ends on the form in the next step.
+        {/* Screenshot: Evaluate empty state with server cards labelled "Eval my server" */}
       </Step>
       <Step title="Create the suite">
-        The "Create a new eval suite" form opens with the suite name and server filled in. Under "Where it runs", choose a client and one model, which keeps the first run small. Click **Continue**.
+        The "Create a new eval suite" form opens with your server filled in. Under "Where it runs", choose a client and one model. Click **Continue**.
       </Step>
       <Step title="Generate cases">
-        The new suite opens with no cases. Click the **Generate** card. In **Generate test cases**, keep **Quick set** and **Read-only**, then click **Generate cases**. **Read-only** leaves out workflows that change data on your server.
+        Click the **Generate** card. In **Generate test cases**, keep **Quick set** and **Read-only**, then click **Generate cases**. **Read-only** leaves out workflows that change data on your server.
 
         {/* Screenshot: Generate test cases dialog with Quick set and Read-only selected */}
       </Step>
-      <Step title="Review the generated cases">
-        Drafts appear under "Review generated cases" as they are written. A draft is not in your suite, and won't run, until you add it.
+      <Step title="Keep the good cases">
+        Drafts appear under "Review generated cases". Only the ones you add will run.
 
-        - **Keep realistic prompts**
-          - Keep cases whose prompt reads like something a real user would type.
-          - Remove the rest, or fix a prompt's wording under **Review case**.
-        - **Keep a no-tool case**
-          - Keep at least one case where the right answer uses no tool; the quick set includes some.
-          - Open one with **Review case** and check that it says **No tool should be called**.
-          - Without one, the suite can't catch a model calling tools it shouldn't.
+        - Keep cases whose prompt reads like something a real user would type.
+        - Keep at least one case marked **No tool should be called**, so the suite catches a model that calls a tool it shouldn't.
 
-        Click **Add to suite** on each case you keep, or **Add all to suite**. When every draft is handled, the page reads "Every generated case has been reviewed." Click **Back to** followed by your suite's name to return to the suite.
+        Click **Add to suite** on each case you keep, or **Add all to suite**, then go back to your suite.
 
         {/* Screenshot: Review generated cases panel with one draft expanded via Review case */}
       </Step>
       <Step title="Start the run">
-        On the suite page, click **Run**. The "Set up run ·" sheet opens, titled with your suite's name.
+        Click **Run**. Leave **Iterations per case** at 1, confirm the client and model, and click **Start run**.
 
-        1. Leave **Iterations per case** at 1 for a first run.
-        2. Under "Where it runs", confirm the client and model.
-        3. Check the total at the bottom: cases × repetitions × client:model combos, then the number of iterations the run will execute.
-        4. Click **Start run**.
+        A run calls a real model, so it uses MCPJam credits, or tokens on your provider account if you added your own key.
 
-        {/* Screenshot: Set up run sheet showing Iterations per case, the client and model, and the iteration total above Start run */}
+        {/* Screenshot: Set up run sheet showing Iterations per case, the client and model, and Start run */}
       </Step>
-      <Step title="Read the run page">
-        You land on "Run #1 of" your suite. The header shows **Running**, then **Grading** while finished iterations are scored.
-
-        The results grid below has one row per case and one column per client and model. Each column header shows iterations passed, p95 latency and cost. Each cell reads **Pass** or **Fail** with the number of iterations that passed. Set the **Status** filter to **Failures** to see only failing cases.
+      <Step title="Read the results">
+        The run page shows one row per case, each marked **Pass** or **Fail**. Set the **Status** filter to **Failures** to see only the failing ones.
 
         {/* Screenshot: Run page results grid with one failing cell */}
       </Step>
-      <Step title="Open a failing iteration">
-        Click a **Fail** cell. A side sheet lists the case's averages and its iterations. Click an iteration to open its report on the **Scorecard** tab.
+      <Step title="See why a case failed">
+        Click a **Fail** cell, then click an iteration. Its **Scorecard** lists each check with **Expected** next to **Actual**. Start with the first row that failed. **Chat**, **Tool Calls** and **Trace** show the conversation and every step the model took.
 
-        The scorecard groups evaluators by stage, from Connection to User value. Each row pairs **Expected** (what the evaluator checks for) with **Actual** (what the run recorded). Read the row of the first stage that failed. **Chat**, **Tool Calls** and **Trace** show the conversation, the expected and actual tool calls, and every step of the run.
-
-        {/* Screenshot: Iteration report on the Scorecard tab with a failed Selection row showing Expected and Actual */}
-
-        <Tip>
-          If a case fails at Selection because the model called a different tool, compare that tool's description with the expected tool's. Two near-identical descriptions can produce a Selection failure whose cause is in Discovery, in how the tools are described.
-        </Tip>
+        {/* Screenshot: Iteration report on the Scorecard tab with a failed row showing Expected and Actual */}
       </Step>
     </Steps>
   </Tab>
   <Tab title="CLI">
-    `mcpjam cloud eval run --file` uploads a suite file to your MCPJam project and runs it there, with the judge that grades each case's expected outcome.
+    You need a model provider key, such as `ANTHROPIC_API_KEY`, and an MCPJam login.
 
     <Steps>
       <Step title="Install the CLI and sign in">
@@ -93,8 +62,6 @@ In about five minutes you create a suite from a connected server, generate cases
         npm i -g @mcpjam/cli
         mcpjam cloud login
         ```
-
-        In CI, skip the login and set `MCPJAM_API_KEY` to an `sk_` key instead.
       </Step>
       <Step title="Write the suite">
         Save this as `.mcpjam/evals/example.yaml`. Each case pairs a user prompt with the outcome the user should get. The second case also guards against deleting anything when the user only asked for a summary:
@@ -146,14 +113,14 @@ In about five minutes you create a suite from a connected server, generate cases
         ```
       </Step>
       <Step title="Save the server in your project">
-        The judge runs hosted, so the run happens in your MCPJam project. The file's `notes` server must be saved there under that name, such as by connecting it in the Inspector.
+        Connect your server to your MCPJam project in the Inspector, named `notes`. The suite file refers to it by that name.
       </Step>
       <Step title="Run the suite">
         ```bash
         mcpjam cloud eval run --file .mcpjam/evals/example.yaml --wait
         ```
 
-        `--file` uploads the file as a suite and runs it. With `--wait`, the command exits `1` when the run's verdict is failed.
+        The command uploads the file as a suite, runs it in your project and waits for the result. It exits `1` if the run fails.
       </Step>
       <Step title="Rerun one case with a report">
         After a fix, rerun just that case and keep a JUnit report:
@@ -166,13 +133,11 @@ In about five minutes you create a suite from a connected server, generate cases
       </Step>
     </Steps>
 
-    <Note>
-      `mcpjam test` runs a suite file on your machine, but it does not run judges, so it refuses this file. Locally it can check assertions only. See [Local evals](/cli/local-evals).
-    </Note>
-
     See [`cloud eval run`](/cli/reference#cloud-eval-run) for every flag and exit code.
   </Tab>
   <Tab title="SDK">
+    You need a model provider key, such as `ANTHROPIC_API_KEY`, and an MCPJam login or `sk_` API key.
+
     Install the SDK and Vitest:
 
     ```bash
@@ -263,6 +228,15 @@ In about five minutes you create a suite from a connected server, generate cases
     With `MCPJAM_API_KEY` set, the suite's results are also saved to your project; see [Saving results](/sdk/concepts/saving-results). The [SDK quickstart](/sdk/quickstart) covers each step.
   </Tab>
 </Tabs>
+
+## Good to know
+
+- **Try it without your own server.** On the **Evaluate** page, click **Try sample suite** for a ready-made suite against the hosted Excalidraw demo server, then start from **Start the run**.
+- **Your project already has suites.** Click **Create suite** instead of **Eval my server**, and pick the server in the form.
+- **Not signed in.** You can add cases by hand, but generating them needs a sign-in.
+- **The model called the wrong tool.** Compare that tool's description with the one you expected. Two tools with near-identical descriptions often confuse the model.
+- **Running in CI.** Skip `mcpjam cloud login` and set `MCPJAM_API_KEY` to an `sk_` key instead.
+- **Running offline.** `mcpjam test` runs a suite file on your machine but can't use the judge that grades `expectedOutput`, so it only checks assertions. See [Local evals](/cli/local-evals).
 
 ## Next steps
 

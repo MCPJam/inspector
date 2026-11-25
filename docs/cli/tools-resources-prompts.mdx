@@ -4,7 +4,7 @@ description: "List, read, and call MCP server tools, resources, and prompts"
 icon: "wrench"
 ---
 
-Once connected (with or without auth), the `tools`, `resources`, and `prompts` command groups let you explore and exercise what the server exposes.
+The `tools`, `resources`, and `prompts` command groups let you list, read, and call everything a server exposes.
 
 ## Running commands as a host
 
@@ -49,6 +49,19 @@ mcpjam tools list --url https://your-server.com/mcp --access-token $TOKEN
 
 Returns every tool the server exposes, including names, descriptions, and input schemas.
 
+For a local stdio server:
+
+```bash
+mcpjam tools list \
+  --command npx \
+  --args -y @modelcontextprotocol/server-everything \
+  --cwd $PWD \
+  -e DEBUG=1
+```
+
+Stdio child processes inherit the parent shell environment by default. Use
+`-e/--env` to add values or override inherited ones for local subprocesses.
+
 ### Call a tool
 
 ```bash
@@ -69,8 +82,7 @@ Tool arguments can be inline JSON, `@path`, `-` for stdin, or `--tool-args-stdin
 ### Calling as a less-capable client
 
 Real MCP clients differ from each other, and from the spec. Two flags let you
-call a server as one of those clients, without authoring a host first, the
-same behaviors a `--host` carries via its `mcpProfile`:
+call a server the way some of those clients do, without setting up a host first:
 
 ```bash
 # Read only the first page of tools/list, like the hosts that never follow
@@ -84,16 +96,12 @@ mcpjam tools call --url https://your-server.com/mcp \
   --tool-name confirm_delete --tool-args '{"id":"42"}' --no-mrtr
 ```
 
-Unlike the header flags below, neither is HTTP-only, pagination truncation and
-the MRTR knob both work over stdio, so they mean the same thing with
-`--command`.
+Unlike the header flags below, both work over stdio as well as HTTP.
 
-`--first-page-only` has a second-order effect worth knowing on `2026-07-28`:
-the SEP-2243 mirroring source is the aggregated tool list the client cached, so
-a tool from page two is called with **no** `Mcp-Param-*` headers and a strict
-server answers `-32020`. That is not a bug in the flag; it is exactly how a
-real first-page-only client fails, and it is often the reason a tool "works in
-the inspector but not in that host".
+On `2026-07-28`, `--first-page-only` also affects `Mcp-Param-*` headers: a tool
+from page two is called with **no** `Mcp-Param-*` headers, and a strict server
+answers `-32020`. A real first-page-only client fails the same way, which often
+explains a tool that works in the Inspector but not in that host.
 
 ### Debugging `Mcp-Param-*` headers (SEP-2243)
 
@@ -115,11 +123,7 @@ mirrored value routinely contains `:`. Repeat it for several headers; the last
 occurrence of a name wins.
 
 Supplying any `Mcp-Param-*` header turns the automatic mirroring **off** for
-that call, so the headers you pass are the only `Mcp-Param-*` ones sent. This
-is not a convenience; it is what makes the override work at all: the MCP
-client merges the mirrored values *over* caller-supplied headers, so with
-mirroring left on your deliberately wrong value would be silently replaced by
-the correct one and no `-32020` would ever occur. Headers outside the
+that call, so the headers you pass are the only `Mcp-Param-*` ones sent. Headers outside the
 `Mcp-Param-*` family (`Mcp-Method`, `Mcp-Name`, …) are unaffected and do not
 change mirroring.
 
@@ -131,8 +135,7 @@ a clean machine-readable result:
 Mcp-Param-*: Mcp-Param-Region=us-east
 ```
 
-Both flags are HTTP-only: SEP-2243 mirroring is a Streamable HTTP concern, so
-using them with `--command` is a usage error rather than a silent no-op.
+Both flags are HTTP-only; using them with `--command` is a usage error.
 
 ### Render a tool result in Inspector
 
@@ -149,16 +152,6 @@ mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
 Without `--ui`, `tools call` returns the raw tool result. With `--ui`, it opens Inspector by default in a TTY and returns an envelope containing the raw `result`, `inspectorBrowserUrl`, and compact `inspectorRender` evidence. `inspectorRender.status` is the UI signal: `rendered` means Inspector accepted the render, `skipped` means the tool succeeded but the active browser client, a render precondition, or the render wait was missing, and `error` means a non-recoverable Inspector render command failed. `inspectorRender.remediation` is always present and is one of `open_browser`, `retry`, `reconnect_server`, or `none`. Skipped renders emit a stable root `warning` plus `inspectorRender.warning` with `code`, `message`, `remediation`, and optional `browserUrl`, `hasActiveClient`, and `inspectorStarted` fields. Stable skipped-render codes are `no_active_client`, `timeout`, `disconnected_server`, and `unsupported_in_mode`. Pass `--require-render` when a skipped render should become a hard error instead of a warning. Browser automation can open `inspectorBrowserUrl` itself and pass `--no-open`; `--inspector-url` is the local Inspector backend/API base URL. If you already know the Inspector browser/client URL, pass `--frontend-url <url>` to use it directly and skip health-advertised frontend checks and local dev port discovery.
 
 For agent/browser automation, either let `--ui` open Inspector automatically in a TTY, or open `http://127.0.0.1:6274/#playground` in the automation browser first and run `tools call --ui --no-open --quiet --format json`. Add `--attach-only` when startup, browser opening, and discovery should be disallowed. Agents should confirm `inspectorRender.status === "rendered"` before assuming the UI is visible, and use `inspectorRender.remediation` to recover from skipped renders. Default non-TTY `--ui` runs do not open a browser unless `--open` is passed. TTY stderr runs print the Playground URL and initial wait message unless `--quiet` is set; the elapsed-seconds heartbeat only appears when stderr is a TTY. The normal JSON output is compact; pass `--debug-out <path>` for the full render envelope.
-
-For a local stdio server:
-
-```bash
-mcpjam tools list \
-  --command npx \
-  --args -y @modelcontextprotocol/server-everything \
-  --cwd $PWD \
-  -e DEBUG=1
-```
 
 ## Resources
 
@@ -266,6 +259,3 @@ mcpjam tools list --url https://mcp.excalidraw.com/mcp
 mcpjam tools call --url https://mcp.excalidraw.com/mcp \
   --tool-name read_me
 ```
-
-Stdio child processes inherit the parent shell environment by default. Use
-`-e/--env` to add values or override inherited ones for local subprocesses.

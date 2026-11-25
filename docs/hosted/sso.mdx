@@ -4,27 +4,21 @@ description: "Install MCPJam from the Okta Integration Network and configure SAM
 icon: "key-round"
 ---
 
-This guide covers the **MCPJam SAML 2.0 and SCIM 2.0 integration** in the
-Okta Integration Network (OIN). Okta manages user provisioning and
-organization access; MCPJam manages application roles separately.
-
-<Note>
-  The MCPJam catalog submission is under review. The catalog installation steps
-  below apply once the listing is published. If MCPJam is not available in your
-  catalog, contact [support@mcpjam.com](mailto:support@mcpjam.com) for assisted
-  setup. Do not select a similarly named application or a generic SCIM test app.
-</Note>
+Let your team sign in to MCPJam through Okta, and let Okta add and remove
+their access to your MCPJam organization. This guide sets up the MCPJam SAML
+2.0 and SCIM 2.0 integration from the Okta Integration Network (OIN). Okta
+manages user provisioning and organization access; roles stay in MCPJam.
 
 ## Prerequisites
 
-- An MCPJam organization with enterprise SSO and provisioning enabled.
-- An Okta administrator who can add applications, assign users and configure
-  provisioning.
-- Organization-specific SSO and provisioning setup links from your MCPJam
-  contact. Keep their credentials private.
-- Your users' email domain verified for your MCPJam organization. Your MCPJam
-  contact helps configure this before the pilot.
-- A pilot user with a work email address in that domain.
+- Have enterprise SSO and provisioning enabled for your MCPJam organization.
+- Have an Okta administrator who can add applications, assign users and
+  configure provisioning.
+- Get your organization's SSO and provisioning setup links from your MCPJam
+  contact, and keep their credentials private.
+- Verify your users' email domain for your MCPJam organization. Your MCPJam
+  contact helps with this.
+- Pick a pilot user with a work email address in that domain.
 
 ## Supported features
 
@@ -48,9 +42,8 @@ Complete SAML setup and a pilot sign-in before enabling SCIM provisioning.
 
 ### Before you begin: open your organization's setup portal
 
-MCPJam uses a separate, organization-specific setup portal for your identity
-provider configuration. Signing in to the MCPJam application as an organization
-admin does not itself open this portal.
+You configure your identity provider in a setup portal made for your
+organization, not in the MCPJam app.
 
 1. Contact [support@mcpjam.com](mailto:support@mcpjam.com) with your MCPJam
    organization name and the work email address of the Okta administrator who
@@ -58,22 +51,20 @@ admin does not itself open this portal.
    Do not send passwords, API tokens or client secrets.
 2. Open the setup invitation sent to that administrator. Check that it is for
    the intended MCPJam organization, then choose **Okta SAML**.
-3. Keep the portal open alongside your Okta Admin Console. The portal provides
-   the MCPJam service-provider values used below. Enter your Okta application's
-   **Metadata URL** in this portal to connect your Okta organization to MCPJam.
+3. Keep the portal open alongside your Okta Admin Console. It shows the MCPJam
+   service-provider values you'll use below.
 4. Complete SAML setup and verify a pilot sign-in. Then request the provisioning
    setup invitation for the same organization to obtain its SCIM endpoint and
    bearer token.
 
-You do not need a WorkOS dashboard account. Use the setup invitation supplied
-for your organization; do not reuse another organization's setup link or
-credentials. If the invitation is missing or expired, ask MCPJam support for a
-replacement before continuing.
+You don't need a WorkOS dashboard account. Use only the setup invitation issued
+for your organization, never another organization's link or credentials.
 
 ### 1. Add MCPJam from the OIN catalog
 
 1. In the Okta Admin Console, open **Applications → Applications**.
 2. Select **Browse App Catalog**, search for **MCPJam**, and open its listing.
+   Don't select a similarly named application or a generic SCIM test app.
 3. Select **Add Integration**, enter an application label and continue.
 4. Open the SSO setup link supplied by MCPJam and select **Okta SAML**.
 5. Copy your complete **SP Entity ID** into the integration's **SP Entity ID**
@@ -169,9 +160,9 @@ required authentication and verify access to your MCPJam organization.
 
 ## Roles and limitations
 
-MCPJam has separate **owner**, **admin**, **member** and **guest** roles.
+MCPJam has separate owner, admin, member and guest roles.
 Organization owners manage role assignments in MCPJam. SCIM provisions and
-removes organization access, but this integration does not currently
+removes organization access, but this integration does not
 synchronize Okta group or role changes into MCPJam admin/member permissions.
 
 Deactivation applies to the connected organization. It does not delete the
