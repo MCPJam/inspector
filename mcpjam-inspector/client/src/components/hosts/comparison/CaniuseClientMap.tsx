@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Check, CircleHelp, Minus, X } from "lucide-react";
 import {
   Tooltip,
@@ -80,6 +80,7 @@ export function clientBadges(
 
 export function ClientMap({ coverage }: { coverage: CapabilityCoverage }) {
   const [openClient, setOpenClient] = useState<string | null>(null);
+  const wasOpenAtTouchStart = useRef(false);
   return (
     <div className="grid gap-3">
       {groupResults(coverage)
@@ -122,6 +123,13 @@ export function ClientMap({ coverage }: { coverage: CapabilityCoverage }) {
                         <div
                           role="img"
                           tabIndex={0}
+                          onPointerDownCapture={(event) => {
+                            if (event.pointerType === "touch") {
+                              // Radix can close on pointer down and reopen on focus.
+                              wasOpenAtTouchStart.current =
+                                openClient === client.hostId;
+                            }
+                          }}
                           onClick={(event) => {
                             const pointer = event.nativeEvent;
                             if (
@@ -129,8 +137,9 @@ export function ClientMap({ coverage }: { coverage: CapabilityCoverage }) {
                               pointer.pointerType === "touch"
                             ) {
                               event.preventDefault();
-                              // Touch can focus the tile before delivering its click.
-                              setOpenClient(client.hostId);
+                              setOpenClient(
+                                wasOpenAtTouchStart.current ? null : client.hostId,
+                              );
                             }
                           }}
                           aria-label={`${client.hostName}. ${date}`}

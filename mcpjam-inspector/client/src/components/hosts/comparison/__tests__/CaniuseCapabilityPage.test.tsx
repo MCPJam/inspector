@@ -102,19 +102,27 @@ describe("CaniuseCapabilityPage", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("keeps verification details open when a touch tap first focuses a tile", async () => {
+  it("opens verification details on the first tap and dismisses them on the second", async () => {
     renderCapability("event-delivery", "?slice=poll");
     const tile = screen.getByRole("img", { name: /^ChatGPT\. Last checked/ });
-    fireEvent.focus(tile);
-    fireEvent(
-      tile,
-      new PointerEvent("click", {
-        bubbles: true,
-        cancelable: true,
-        pointerType: "touch",
-      }),
-    );
+    function tap(focus = false) {
+      fireEvent.pointerDown(tile, { pointerType: "touch" });
+      fireEvent.pointerUp(tile, { pointerType: "touch" });
+      if (focus) fireEvent.focus(tile);
+      fireEvent(
+        tile,
+        new PointerEvent("click", {
+          bubbles: true,
+          cancelable: true,
+          pointerType: "touch",
+        }),
+      );
+    }
+
+    tap(true);
     expect(await screen.findByRole("tooltip")).toHaveTextContent(/Last checked/);
+    tap();
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
 
   it("retains navigation on a missing capability", () => {
