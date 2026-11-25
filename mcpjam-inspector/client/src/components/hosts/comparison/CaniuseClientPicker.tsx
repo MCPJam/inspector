@@ -69,7 +69,7 @@ export function CaniuseClientPicker({
                 <Button
                   variant="ghost"
                   disabled={!available.length}
-                  className="h-full min-w-0 flex-1 justify-start gap-2 px-2.5 py-2 text-left"
+                  className="h-full min-w-0 flex-1 justify-start gap-1.5 px-2 py-2 text-left sm:gap-2 sm:px-2.5"
                   onClick={(event) => {
                     opener.current = event.currentTarget;
                     setPicker(client.hostId);
@@ -79,10 +79,12 @@ export function CaniuseClientPicker({
                   <img
                     src={clientLogo(client)}
                     alt=""
-                  className="size-7 shrink-0 rounded object-contain"
+                    className="size-7 shrink-0 rounded object-contain"
                   />
                   <span className="min-w-0 flex-1">
-                    <span className="block whitespace-normal wrap-break-word">{client.hostName}</span>
+                    <span className="block whitespace-normal wrap-break-word">
+                      {client.hostName}
+                    </span>
                     <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">
                       {publicClientIdentity(client).surface}
                     </span>
@@ -92,7 +94,7 @@ export function CaniuseClientPicker({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="mr-1 size-8 shrink-0 text-muted-foreground"
+                  className="size-8 shrink-0 text-muted-foreground sm:mr-1"
                   aria-label={`Remove ${client.hostName}`}
                   onClick={() =>
                     onChange(ids.filter((id) => id !== client.hostId))

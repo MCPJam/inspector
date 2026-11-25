@@ -77,10 +77,11 @@ export function CaniuseSite({
         {footer}
         <a
           href="https://www.mcpjam.com/"
+          aria-label="By MCPJam"
           className="ml-auto inline-flex items-center gap-1.5 rounded-sm text-sm hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
         >
           <span>By</span>
-          <img src="/mcp_jam_dark.png" alt="MCPJam" width="84" height="14" />
+          <img src="/mcp_jam_dark.png" alt="" width="84" height="14" />
         </a>
       </footer>
     </div>
