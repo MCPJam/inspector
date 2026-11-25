@@ -6,6 +6,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Switch } from "@mcpjam/design-system/switch";
 import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
+import { useAnnouncementSlot } from "@/components/announcement-slot";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { FLAG_GATED_HOST_IDS } from "@/lib/host-compat/feature-visibility";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
@@ -26,6 +27,7 @@ import {
   caniuseTitle,
   capabilityCoverage,
   capabilitySlices,
+  eventsSupportSummary,
   sliceLabel,
 } from "./caniuse-coverage";
 import { CaniuseClientPicker } from "./CaniuseClientPicker";
@@ -66,6 +68,9 @@ export function CaniuseComparePage() {
   const reduceMotion = useReducedMotion();
   const [intro, setIntro] = useState(() =>
     !introSeen && !params.size && !reduceMotion ? 0 : null,
+  );
+  const { open: showIntro, contentRef: introRef } = useAnnouncementSlot(
+    intro !== null && !params.size && !reduceMotion,
   );
   const known = new Set(clients.map(({ hostId }) => hostId));
   const pinnedIds = reconcileHostCompareSelection(
@@ -138,18 +143,16 @@ export function CaniuseComparePage() {
   });
 
   useEffect(() => {
-    if (intro === null) return;
+    if (!showIntro || intro === null) return;
     introSeen = true;
     const timer = window.setTimeout(
       () => {
-        setIntro(
-          intro + 1 < INTRO_PROMPTS.length && !reduceMotion ? intro + 1 : null,
-        );
+        setIntro(intro + 1 < INTRO_PROMPTS.length ? intro + 1 : null);
       },
-      reduceMotion ? 0 : 1050,
+      1050,
     );
     return () => window.clearTimeout(timer);
-  }, [intro, reduceMotion]);
+  }, [intro, showIntro]);
 
   function updateQuery(value: string) {
     setParams(
@@ -172,11 +175,11 @@ export function CaniuseComparePage() {
     });
   }
 
-  if (intro !== null) {
+  if (showIntro && intro !== null) {
     const prompt = INTRO_PROMPTS[intro];
     return (
       <div className="dark caniuse-site grid h-full place-items-center bg-background px-4 text-center text-foreground">
-        <div>
+        <div ref={introRef}>
           <div
             className="flex flex-wrap items-center justify-center gap-3 text-4xl font-semibold tracking-tight sm:text-6xl"
             aria-hidden="true"
@@ -319,7 +322,9 @@ function MatrixAdoption({
   const label =
     overall.score === null
       ? "No results"
-      : `${overall.score}% ${overall.reporting ? "reported" : "adoption"}`;
+      : overall.eventsMode
+        ? `${overall.score}% of ${overall.measured} with results`
+        : `${overall.score}% ${overall.reporting ? "reported" : "adoption"}`;
   return (
     <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
       {overall.reporting || field.id === "supportedProtocolVersions" ? (
@@ -333,7 +338,9 @@ function MatrixAdoption({
           title={
             overall.score === null
               ? "No published results"
-              : `${overall.full} of ${overall.measured} clients support this capability`
+              : overall.eventsMode
+                ? eventsSupportSummary(overall)
+                : `${overall.full} of ${overall.measured} clients support this capability`
           }
         >
           {label}
