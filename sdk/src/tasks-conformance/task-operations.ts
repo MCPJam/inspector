@@ -473,6 +473,7 @@ export class TaskOperations {
     error?: unknown;
     /** Set when polling stopped because the task parked on `input_required`. */
     inputRequired?: boolean;
+    timedOut?: boolean;
   }> {
     const deadline = Date.now() + this.config.pollTimeoutMs;
     let last: Record<string, unknown> | undefined;
@@ -538,7 +539,7 @@ export class TaskOperations {
       });
     }
 
-    return { task: last };
+    return { task: last, timedOut: true };
   }
 }
 

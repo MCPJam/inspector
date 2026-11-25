@@ -89,7 +89,7 @@ export async function runReadChecks(context: TaskCheckContext) {
         couldNotRun(
           "tasks-inline-result",
           context.repeatedInputKeys
-            ? `The server kept requesting keys this run already answered: ${JSON.stringify(context.repeatedInputKeys)}. The task stayed on input_required.`
+            ? `The server kept requesting keys this run already answered: ${JSON.stringify(context.repeatedInputKeys)}. The task was still waiting for input at the polling deadline.`
             : `task did not reach a terminal status within ${
             operations.config.pollTimeoutMs
           }ms (last status: ${String(

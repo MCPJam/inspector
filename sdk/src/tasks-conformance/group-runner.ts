@@ -513,8 +513,6 @@ export class TaskGroupRunner extends TaskOperations {
           this.config.signal?.throwIfAborted();
           let inputRequiredTask: Record<string, unknown> | undefined;
           let inputLeg: InputRequiredLeg | undefined;
-          let allowRepeatedKeys = false;
-          let repeatedInputKeys: string[] | undefined;
           const answered = new Set<string>();
           const inputSnapshots: Record<string, unknown>[] = [];
           const polled =
@@ -543,14 +541,8 @@ export class TaskGroupRunner extends TaskOperations {
                       ) {
                         inputLeg ??= leg;
                         // The server can repeat acknowledged keys until the update takes effect.
-                        if (!leg.requested.length || !leg.requested.every(key => answered.has(key)))
-                          return false;
-                        if (allowRepeatedKeys) {
-                          allowRepeatedKeys = false;
-                          return true;
-                        }
-                        repeatedInputKeys = leg.requested;
-                        return false;
+                        return leg.requested.length > 0 &&
+                          leg.requested.every(key => answered.has(key));
                       }
                       // T12 grades actual acknowledgments. A later rejection cannot erase one.
                       if (
@@ -559,7 +551,6 @@ export class TaskGroupRunner extends TaskOperations {
                       )
                         inputLeg = leg;
                       if (leg.outcome !== "updated") return false;
-                      allowRepeatedKeys = true;
                       inputSnapshots.push(task);
                       for (const key of leg.answered ?? []) answered.add(key);
                       return true;
@@ -569,6 +560,13 @@ export class TaskGroupRunner extends TaskOperations {
               : {};
 
           const finalTask = polled.task;
+          const pendingKeys =
+            polled.timedOut && finalTask?.status === "input_required" &&
+            finalTask !== inputSnapshots.at(-1) && isRecord(finalTask.inputRequests)
+              ? Object.keys(finalTask.inputRequests)
+              : [];
+          const repeatedInputKeys = pendingKeys.length && pendingKeys.every(key => answered.has(key))
+            ? pendingKeys : undefined;
           // Distinguishes "there was never a task" from "polling the task
           // failed", so no dependent check skips under a message that hides a
           // broken read. Every branch here leaves the check UNEXERCISED, so the

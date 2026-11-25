@@ -461,7 +461,7 @@ describe("tasks-update-ack-shape", () => {
     const phases = defaultTaskPhases();
     const gate = phases.find((phase) => phase.status === "input_required")!;
     gate.extra = { inputRequests: gate.inputRequests, ttlMs: 1.5 };
-    gate.polls = 8;
+    gate.polls = 16;
     const fixture = await serve(phases);
     const result = await run(
       fixture,
@@ -477,17 +477,17 @@ describe("tasks-update-ack-shape", () => {
     expect(result.checks.some((entry) => entry.id === ID)).toBe(false);
   });
 
-  it("stops early when the server keeps requesting an answered key", async () => {
+  it("reports the answered key at timeout without sending it twice", async () => {
     const gate = defaultTaskPhases().find(phase => phase.status === "input_required")!;
     const fixture = await serve([{ ...gate, extra: { inputRequests: gate.inputRequests } }]);
     const id = "tasks-inline-result";
-    const entry = check(await run(fixture, [id], { inputResponses: RESPONSES }), id);
+    const entry = check(await run(fixture, [id], { inputResponses: RESPONSES, pollTimeoutMs: 1000 }), id);
     expect(entry.skipReason).toBe("could-not-run");
     expect(entry.error?.message).toContain("already answered");
     expect(entry.error?.message).toContain(DEFAULT_INPUT_REQUEST_KEY);
     expect(entry.error?.message).not.toContain("--poll-timeout");
     expect(fixture.received.filter(r => r.method === "tasks/update")).toHaveLength(1);
-    expect(fixture.received.filter(r => r.method === "tasks/get").length).toBeLessThan(12);
+    expect(entry.error?.message).toContain("polling deadline");
   });
 
   it("stops without sending an unrelated answer", async () => {
