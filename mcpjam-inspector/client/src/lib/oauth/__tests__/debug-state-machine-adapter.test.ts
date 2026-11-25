@@ -289,7 +289,7 @@ describe("Inspector OAuth debug proxy failures", () => {
     const message = () =>
       createDebugRequestExecutor()(request).catch((e: Error) => e.message);
     const summary = (status: number, named = "") =>
-      `Backend debug proxy error: ${status} : An HTML page${named} answered instead of MCPJam's server`;
+      `Backend debug proxy error: ${status} : Couldn't reach MCPJam's server because an HTML page${named} answered instead`;
     const expectStart = (text: string, prefix: string) =>
       expect(text.slice(0, prefix.length)).toBe(prefix);
 
@@ -322,9 +322,8 @@ describe("Inspector OAuth debug proxy failures", () => {
 
       const text = await message();
       expect(text).toContain(
-        "something between your browser and MCPJam stopped the request",
+        "Retry, or contact your network admin or MCPJam support if it keeps happening.",
       );
-      expect(text).toContain("contact your network admin or MCPJam support");
       expect(text).not.toContain("on your network");
     });
 
@@ -335,7 +334,7 @@ describe("Inspector OAuth debug proxy failures", () => {
     ])("leaves the title out when the page has %s", async (_label, body) => {
       failWith(body);
 
-      expectStart(await message(), `${summary(503)},`);
+      expectStart(await message(), `${summary(503)}.`);
     });
 
     it("puts a long title on one line and cuts it at 80 characters", async () => {

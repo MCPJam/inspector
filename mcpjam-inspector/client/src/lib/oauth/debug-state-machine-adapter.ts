@@ -132,7 +132,7 @@ function describeHtmlPage(html: string): string {
     title && !/[<>]/.test(title)
       ? ` ("${title.slice(0, MAX_PAGE_TITLE_CHARS).trimEnd()}")`
       : "";
-  return `An HTML page${named} answered instead of MCPJam's server, so something between your browser and MCPJam stopped the request. Retry, and if it keeps happening, contact your network admin or MCPJam support.`;
+  return `Couldn't reach MCPJam's server because an HTML page${named} answered instead. Retry, or contact your network admin or MCPJam support if it keeps happening.`;
 }
 
 /**
