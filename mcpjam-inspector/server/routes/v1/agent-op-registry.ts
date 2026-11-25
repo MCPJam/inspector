@@ -46,6 +46,9 @@ import {
   backtestEvalRunOperation,
   backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
+  requestEvalRunInsightsOperation,
+  cancelEvalRunInsightsOperation,
+  buildEvalRunFindingsOperation,
   listEvalGithubReposOperation,
   connectEvalGithubRepoOperation,
   listEvalCheckReposOperation,
@@ -2150,6 +2153,42 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       "- `request_eval_run_judge` returns a pending receipt, not results. Read the grades from `get_eval_run`'s `judges.goalCompletion` once its `status` is `completed`; requesting again only spends again.",
     ],
   },
+  { operation: cancelEvalRunInsightsOperation, tier: "direct" },
+  {
+    operation: buildEvalRunFindingsOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Build findings for eval run ${named(input, "runId") ?? "(unnamed)"}${
+          input.force === true ? " again" : ""
+        }`,
+      buttonLabel: "Build them",
+      kind: "generate",
+      // The build makes no model call, but on a run never analyzed a
+      // finished build starts the automatic analysis, which takes a unit of
+      // the shared daily insight quota. Gated on that quota, like the
+      // request below; there is no money to warn about.
+      confirmSeverity: "none",
+    },
+  },
+  {
+    operation: requestEvalRunInsightsOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Analyze eval run ${named(input, "runId") ?? "(unnamed)"}${
+          input.force === true ? " again" : ""
+        } with a model`,
+      buttonLabel: "Analyze it",
+      kind: "generate",
+      // Platform-paid; gated on the shared daily quota, like
+      // `request_swarm_run_insights`.
+      confirmSeverity: "none",
+    },
+    promptNotes: [
+      "- `request_eval_run_insights` consumes no credits, but it counts against a daily insight QUOTA shared with goal, study and user-testing insights. Most finished runs are analyzed automatically: read `get_eval_run`'s `insights` first. The findings are `currentFindings`, and `unifiedFindings.snapshot.enrichment.status` says whether a model explained them. Request only when there is no explanation or it is `stale`, and never when `unifiedFindings.job.errorCode` is `org_model_unavailable`: that analysis cannot run until the organization's AI key policy changes.",
+    ],
+  },
   {
     operation: proposeEvalDescriptionRewriteOperation,
     tier: "gated",
@@ -2497,7 +2536,9 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     tier: "gated",
     proposal: {
       describe: (input) =>
-        `Analyze wave ${named(input, "wave") ?? "(unnamed)"} with a model`,
+        `Analyze swarm run ${
+          named(input, "swarmRun") ?? named(input, "wave") ?? "(unnamed)"
+        } with a model`,
       buttonLabel: "Analyze it",
       kind: "generate",
       // The insight model call is on MCPJam, so there is no money to warn
@@ -2507,7 +2548,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       confirmSeverity: "none",
     },
     promptNotes: [
-      "- `request_swarm_run_insights` consumes no credits, but it counts against a daily insight QUOTA shared with user-testing insights — a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure without a model pass.",
+      "- `request_swarm_run_insights` consumes no credits, but it counts against a daily insight QUOTA shared with study, user-testing and eval run insights — a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure without a model pass.",
       "- Included operations (generation and insights) can be refused with `RATE_LIMITED`. `canTopUp` is false on those refusals: tell the user when it lifts (`retryAfterSeconds`, or 00:00 UTC for a daily budget), and do not retry sooner, suggest topping up credits, or switch identities to get around it.",
     ],
   },
@@ -2546,7 +2587,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     proposal: {
       describe: (input) =>
         `Analyze user testing on ${
-          named(input, "scenario") ?? "(unnamed)"
+          named(input, "study") ?? named(input, "scenario") ?? "(unnamed)"
         } with a model`,
       buttonLabel: "Analyze it",
       kind: "generate",
@@ -2776,6 +2817,8 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
  * `AGENT_OP_REGISTRY` with a tier, or add it below with a reason.
  */
 export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
+  create_reviewer_handoff:
+    "The response contains a single-use browser sign-in link for the requester. Create it from Readiness or a direct API or CLI call so it does not enter the agent transcript.",
   // Swarms operations the agent may not even PROPOSE. All three are
   // `risk: destructive` in the SDK catalog, and the rule this surface applies
   // is the one the gated block above states: a proposal makes spend

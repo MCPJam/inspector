@@ -16,8 +16,11 @@ import type { ReviewerAttempt } from "@/lib/apis/reviewer-attempts-api";
 
 export type ReviewerStage = ReviewerAttempt["stages"][number];
 
-/** What the rehearsal puts before a stage it read off a page it only approximates. */
-export const APPROXIMATED_PREFIX = "Approximated: ";
+/**
+ * What earlier rehearsals put before a stage read off a page they only
+ * approximated. Stripped from their details; the agent never writes it.
+ */
+const APPROXIMATED_PREFIX = "Approximated: ";
 
 export const PATH_STATUS_WORDS = {
   established: "Established",
@@ -34,20 +37,22 @@ export const PATH_STATUS_WORDS = {
 
 export type PathStatus = keyof typeof PATH_STATUS_WORDS;
 
-/** A moment of the run's recording, which the rehearsal names as a frame. */
-export interface Frame {
-  recordingId: string;
-  seconds: number;
-}
+/**
+ * A stage's picture: a stored screenshot, or (on earlier rehearsals) a
+ * moment of the run's recording.
+ */
+export type Frame =
+  | { screenshotId: string }
+  | { recordingId: string; seconds: number };
 
 export interface PathRow {
   key: string;
   label: string;
   status: PathStatus;
   detail?: string;
-  /** Read off a sign-in page by a general rule, not one MCPJam knows. */
-  approximated?: boolean;
   frame?: Frame;
+  /** Why the stage has no picture, when it says. */
+  pictureNote?: string;
 }
 
 export interface ReviewerPathRows {
@@ -77,12 +82,27 @@ const SIGN_IN = [
 const IDENTITY_CHECK = "both.reviewer.identity";
 const FRAME = /^(.+)#t=(\d+(?:\.\d+)?)$/;
 
-/** `<reservation id>#t=<seconds>`, the rehearsal's name for a frame. */
+/** A stored screenshot's id, or `<reservation id>#t=<seconds>` from earlier rehearsals. */
 export function frameOf(id: string | undefined): Frame | undefined {
-  const match = id ? FRAME.exec(id) : null;
+  if (!id) return undefined;
+  const match = FRAME.exec(id);
   return match
     ? { recordingId: match[1], seconds: Number(match[2]) }
-    : undefined;
+    : { screenshotId: id };
+}
+
+/** Why a stage has no picture: a credential was typed, or none was taken. */
+function pictureNoteOf(stage: ReviewerStage): string | undefined {
+  const evidence = stage.evidence;
+  if (!evidence?.screenshotStatus || evidence.screenshotStatus === "captured") {
+    return undefined;
+  }
+  return (
+    evidence.screenshotNote ??
+    (evidence.screenshotStatus === "suppressed"
+      ? "A credential was typed on this page, so MCPJam did not picture it."
+      : "No picture was taken during this step.")
+  );
 }
 
 /** The run the rows show, the one working now or else the last, and its stages. */
@@ -113,11 +133,9 @@ export function stageStatus(
 }
 
 function unprefixed(detail: string | undefined) {
-  const approximated = detail?.startsWith(APPROXIMATED_PREFIX) ?? false;
-  return {
-    detail: approximated ? detail?.slice(APPROXIMATED_PREFIX.length) : detail,
-    approximated,
-  };
+  return detail?.startsWith(APPROXIMATED_PREFIX)
+    ? detail.slice(APPROXIMATED_PREFIX.length)
+    : detail;
 }
 
 /** A row no stage of the shown run fills, by how far the attempt got. */
@@ -202,8 +220,9 @@ export function reviewerPathRows(
     key: stage.stage,
     label,
     status: stageStatus(stage.status, stage === stop),
-    ...unprefixed(stage.detail),
+    detail: unprefixed(stage.detail),
     frame: frameOf(stage.evidence?.screenshotArtifactId),
+    pictureNote: pictureNoteOf(stage),
   });
   const credentials = latest("credentials");
   const rows = SIGN_IN.flatMap(({ stage: name, label, shown }, index) => {
@@ -227,7 +246,6 @@ export function reviewerPathRows(
 export interface Handover {
   /** What the page asked for, in the rehearsal's words. */
   asked: string;
-  approximated: boolean;
   frame?: Frame;
   /** Who can change the sign-in. */
   finisher: string;
@@ -236,28 +254,12 @@ export interface Handover {
   since: number;
 }
 
-/** What works today: a resumed run signs in afresh, so the sign-in must change. */
+/** The requester completes sign-in before a resumed run grades the account. */
 const NEXT_STEPS = {
-  verification: {
-    finisher: "Whoever manages the reviewer account.",
-    action:
-      "Turn off the verification step for the reviewer account, or save credentials for an account without one. Then resume this attempt.",
-  },
-  "bot-check": {
-    finisher: "Whoever manages your server's sign-in.",
-    action:
-      "Turn the bot check off for the reviewer account or its sign-in. Then resume this attempt.",
-  },
-  consent: {
-    finisher: "Whoever manages your server's sign-in.",
-    action:
-      "Give the consent page one button that approves access, such as Allow. Then resume this attempt.",
-  },
-  other: {
-    finisher: "Whoever manages your server's sign-in.",
-    action:
-      "Change the sign-in so it asks the reviewer only for an email and password. Then resume this attempt.",
-  },
+  verification: { finisher: "The person who started this sign-in.", action: "Open Finish reviewer sign-in, complete the verification, then resume this attempt." },
+  "bot-check": { finisher: "The person who started this sign-in.", action: "Open Finish reviewer sign-in, complete the browser check, then resume this attempt." },
+  consent: { finisher: "The person who started this sign-in.", action: "Open Finish reviewer sign-in, approve access, then resume this attempt." },
+  other: { finisher: "The person who started this sign-in.", action: "Open Finish reviewer sign-in, sign in as the reviewer, then resume this attempt." },
 };
 
 /** What a person needs to know when the rehearsal stopped for one. */
@@ -267,7 +269,7 @@ export function handoverOf(attempt: ReviewerAttempt | null): Handover | null {
   }
   const { reason, since } = attempt.waitingFor;
   const stop = shownRun(attempt).stages.at(-1);
-  const { detail, approximated } = unprefixed(reason);
+  const detail = unprefixed(reason);
   // The rehearsal files a bot check as a verification step; the page says which.
   const kind =
     stop?.stage === "verification"
@@ -279,7 +281,6 @@ export function handoverOf(attempt: ReviewerAttempt | null): Handover | null {
         : "other";
   return {
     asked: detail ?? reason,
-    approximated,
     frame: frameOf(stop?.evidence?.screenshotArtifactId),
     ...NEXT_STEPS[kind],
     since,

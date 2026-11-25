@@ -40,6 +40,7 @@
  * compatibility catalog; the last two are the MCP-protocol client. None of them
  * are renamed here, and nothing inside the opaque config blob is touched.
  */
+import { hostConfigForCaller } from "./host-config-compat.js";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
@@ -162,7 +163,7 @@ function toLegacyHostDto(row: HostListRow) {
   };
 }
 
-function toClientDetailDto(detail: HostDetailRow) {
+function toClientDetailDto(c: Context, detail: HostDetailRow) {
   return {
     id: detail.hostId,
     name: detail.name,
@@ -172,7 +173,7 @@ function toClientDetailDto(detail: HostDetailRow) {
     ...(detail.hostConfigId === undefined
       ? {}
       : { configId: detail.hostConfigId }),
-    config: detail.config,
+    config: hostConfigForCaller(c, detail.config),
     ...(detail.versionId
       ? { versionId: detail.versionId, versionNumber: detail.versionNumber }
       : {}),
@@ -189,8 +190,12 @@ function toClientDetailDto(detail: HostDetailRow) {
 }
 
 /** The `/hosts` alias detail projection — id, name, config, and nothing else. */
-function toLegacyHostDetailDto(detail: HostDetailRow) {
-  return { id: detail.hostId, name: detail.name, config: detail.config };
+function toLegacyHostDetailDto(c: Context, detail: HostDetailRow) {
+  return {
+    id: detail.hostId,
+    name: detail.name,
+    config: hostConfigForCaller(c, detail.config),
+  };
 }
 
 /** The `/clients` successor every `/hosts` alias response points at. */
@@ -613,6 +618,7 @@ const clientSetSchema = z
       .optional(),
     respectToolVisibility: z.boolean().nullable().optional(),
     progressiveToolDiscovery: z.boolean().nullable().optional(),
+    runUnloadedToolCalls: z.boolean().nullable().optional(),
     harness: z.enum(HARNESS_IDS).nullable().optional(),
     computer: z
       .strictObject({
@@ -815,9 +821,9 @@ async function resolveSelector(
 function detailResponse(c: Context, detail: HostDetailRow, legacy: boolean) {
   if (legacy) {
     markDeprecated(c);
-    return v1Resource(c, toLegacyHostDetailDto(detail));
+    return v1Resource(c, toLegacyHostDetailDto(c, detail));
   }
-  return v1Resource(c, toClientDetailDto(detail));
+  return v1Resource(c, toClientDetailDto(c, detail));
 }
 
 async function getHandler(c: Context, surface: Surface) {
@@ -876,9 +882,9 @@ async function createHandler(c: Context, surface: Surface) {
   );
   if (surface.legacy) {
     markDeprecated(c);
-    return v1Resource(c, toLegacyHostDetailDto(detail), 201);
+    return v1Resource(c, toLegacyHostDetailDto(c, detail), 201);
   }
-  return v1Resource(c, toClientDetailDto(detail), 201);
+  return v1Resource(c, toClientDetailDto(c, detail), 201);
 }
 
 /**
@@ -970,6 +976,7 @@ async function updateClientHandler(c: Context) {
   return v1Resource(
     c,
     toClientDetailDto(
+      c,
       await readHostDetail(token, projectId, clientId, "readBack"),
     ),
   );
@@ -1001,6 +1008,7 @@ async function updateHostAliasHandler(c: Context) {
   return v1Resource(
     c,
     toLegacyHostDetailDto(
+      c,
       await readHostDetail(token, projectId, hostId, "readBack"),
     ),
   );
@@ -1079,9 +1087,9 @@ async function duplicateHandler(c: Context, surface: Surface) {
   );
   if (surface.legacy) {
     markDeprecated(c);
-    return v1Resource(c, toLegacyHostDetailDto(detail), 201);
+    return v1Resource(c, toLegacyHostDetailDto(c, detail), 201);
   }
-  return v1Resource(c, toClientDetailDto(detail), 201);
+  return v1Resource(c, toClientDetailDto(c, detail), 201);
 }
 
 async function deleteHandler(c: Context, surface: Surface) {

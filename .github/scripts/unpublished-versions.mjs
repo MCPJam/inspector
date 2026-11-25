@@ -7,10 +7,10 @@ import { pathToFileURL } from "node:url";
  * yet — which is what a release ships, and exactly what `changeset publish`
  * will publish.
  *
- * A release no longer versions anything itself. `changeset version` runs in
- * the PR prepare-release.yml opens, and that PR merges into `main` like any
- * other change, so by the time release.yml runs the versions are already
- * committed. Pending changesets say nothing about the release in flight; the
+ * Release does not version anything itself. Start release
+ * (prepare-release.yml) runs `changeset version` and pushes the result to
+ * `main` before dispatching it, so by the time release.yml runs the versions
+ * are already committed. Pending changesets say nothing about the release in flight; the
  * registry does.
  */
 export function unpublishedVersions(

@@ -27,7 +27,7 @@ import {
   type MCPClientManager,
 } from "@mcpjam/sdk";
 import type { EventsProfileId } from "@mcpjam/sdk/events";
-import { checkCallbackUrl, parseListenAddress, redactSecrets } from "./events-cli.js";
+import { requireCallbackUrl, parseListenAddress, redactSecrets } from "./events-cli.js";
 import { usageError } from "./output.js";
 import { parseJsonRecord } from "./server-config.js";
 
@@ -130,12 +130,12 @@ export function planConformanceReceiver(options: {
   let publicOrigin: string | undefined;
   let insecure = !tls && insecureFlag;
   if (options.publicUrl !== undefined) {
-    const checked = checkCallbackUrl(options.publicUrl, {
+    const checked = requireCallbackUrl(options.publicUrl, {
       flag: "--public-url",
       insecureFlag: "--insecure-local-receiver",
       allowInsecure: insecureFlag,
     });
-    if (checked.url.pathname !== "/" || checked.url.search || checked.url.hash) {
+    if (checked.url.pathname !== "/") {
       throw usageError(
         "--public-url must be a bare origin (the conformance receiver serves /i/<inbox>/s/<slot> at the root).",
       );
@@ -188,6 +188,8 @@ export async function runEventsConformanceForCli(
       );
     }
     return await runEventsConformance({
+      // The CLI counts the run itself, under its own opt-outs.
+      __suppressTelemetry: true,
       manager: args.manager,
       serverId: args.serverId,
       profile: args.profile,

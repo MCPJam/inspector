@@ -1,17 +1,9 @@
 /**
  * The sign-up sheet a guest opens from the Swarms or User Testing preview
- * (REEV-10).
+ * (REEV-10). It needs no marker: the return path is the creation flow named
+ * by its CTA, or, on a shared swarm or study permalink, that permalink itself.
  *
- * Sibling of {@link InviteTeamSignUpDialog}, and deliberately not a
- * generalisation of it. That one exists to reopen the invite dialog after the
- * WorkOS round trip, so it plants `markPendingInviteDialog()` and the sidebar
- * consumes the marker on return. A gated tab needs no marker: the return path
- * is the creation flow named by its CTA, or, on a shared swarm or study
- * permalink, that permalink itself. Folding both into one component
- * would mean a "should I leave a marker" flag whose two settings have
- * nothing else in common.
- *
- * What it does share is the ordering that matters on every button:
+ * The ordering that matters on every button:
  *   1. writeAppSignInReturnPath(returnPath) — remember where to come back to,
  *      in sessionStorage, before WorkOS navigates away;
  *   2. signUp/signIn(permalinkSignInOptions(returnPath)) — the navigation itself.
@@ -125,8 +117,7 @@ export function FeatureSignUpNudgeDialog({
         </DialogHeader>
         {/* Primary first in the DOM so Radix's focus scope lands on it — Enter
             creates the account instead of signing in — and flex-row-reverse
-            restores the usual visual order. Same trick, same reason, as
-            InviteTeamSignUpDialog. */}
+            restores the usual visual order. */}
         <div className="flex flex-col-reverse gap-2 sm:flex-row-reverse">
           <Button onClick={handleSignUp} className="flex-1">
             Create free account

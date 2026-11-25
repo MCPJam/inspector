@@ -1,4 +1,6 @@
 import { runOpenAIProfileChecks } from "./checks/profile.js";
+import { openAIPackageSubmissionAnswers, openAIPackageCountries } from "./package/submission-answers.js";
+import { gradeOpenAISubmissionAnswers } from "./checks/submission-answers.js";
 /**
  * The composite readiness run, split into two halves that do not resemble each
  * other.
@@ -185,6 +187,8 @@ export interface OpenAIReadinessEvidence extends DirectoryReviewerRunInput {
   package?: OpenAIPluginPackageEvidence;
   /** Raw submission profile, validated during grading so issues become findings. */
   submissionProfile?: unknown;
+  /** Saved portal answers, including partial submissions. */
+  submissionAnswers?: readonly import("../directory-readiness/flows/types.js").DirectoryAnswer[];
   /** Tools observed carrying a destructive or open-world annotation. */
   annotatedTools?: string[];
   /** UI frame domains observed on the wire. */
@@ -453,7 +457,7 @@ export function gradeOpenAIReadiness(
   // down the "no input" branch would hide a caller's mistake behind a status
   // that reads like our limitation.
   const parsedProfile =
-    evidence.submissionProfile === undefined
+    evidence.submissionAnswers !== undefined || evidence.submissionProfile === undefined
       ? {
           profile: undefined as OpenAISubmissionProfile | undefined,
           issues: [],
@@ -467,6 +471,21 @@ export function gradeOpenAIReadiness(
     parsedProfile.profile?.hasPublishedVersion ??
     evidence.hasPublishedVersion ??
     false;
+
+  const packageAnswers = openAIPackageSubmissionAnswers(evidence.package, evidence.submissionAnswers);
+  const packageKeys = new Set(packageAnswers.map((answer) => answer.key));
+  const submissionAnswers = evidence.submissionAnswers === undefined
+    ? undefined
+    : [...evidence.submissionAnswers.filter((answer) => !packageKeys.has(answer.key)), ...packageAnswers];
+  const listingKeys = ["listing.displayName", "listing.shortDescription", "listing.description"];
+  const listingCopy = submissionAnswers?.flatMap((answer) =>
+    listingKeys.includes(answer.key) && typeof answer.value === "string" && answer.value.trim()
+      ? [{ field: answer.key, text: answer.value }] : []
+  );
+
+  const answerToken = submissionAnswers?.find(
+    (answer) => answer.key === "mcp.verificationToken"
+  )?.value;
 
   const shape = OPENAI_SUBMISSION_MODE_SHAPES[evidence.mode];
 
@@ -490,7 +509,12 @@ export function gradeOpenAIReadiness(
         ...runOpenAIDomainVerificationChecks(
           {
             evidence: evidence.domainVerification,
-            declaredToken: parsedProfile.profile?.domainVerificationToken,
+            declaredTokenInput: evidence.submissionAnswers ? "mcp.verificationToken" : undefined,
+            declaredToken: evidence.submissionAnswers
+              ? typeof answerToken === "string"
+                ? answerToken
+                : undefined
+              : parsedProfile.profile?.domainVerificationToken,
           },
           stamp
         ),
@@ -560,6 +584,7 @@ export function gradeOpenAIReadiness(
       ...runOpenAIPolicyChecks(
         {
           profile: parsedProfile.profile,
+          listingMetadata: submissionAnswers ? listingCopy : undefined,
           packageMetadata: packageSelfDescription(evidence.package),
           hasCommerce: evidence.hasCommerce,
         },
@@ -585,16 +610,31 @@ export function gradeOpenAIReadiness(
             }
           : undefined
       ),
-      ...runOpenAISubmissionChecks(
-        {
-          profile: parsedProfile.profile,
-          profileIssues: parsedProfile.issues,
-          annotatedTools,
-          frameDomains: evidence.frameDomains,
-          hasPublishedVersion,
-        },
-        stamp
-      ),
+      ...(evidence.submissionAnswers
+        ? gradeOpenAISubmissionAnswers(
+            runOpenAISubmissionChecks(
+              {
+                profileIssues: [],
+                annotatedTools,
+                frameDomains: evidence.frameDomains,
+                hasPublishedVersion,
+              },
+              stamp
+            ),
+            submissionAnswers ?? [],
+            stamp,
+            { hasPublishedVersion, countries: openAIPackageCountries(evidence.package), annotatedTools: evidence.toolListingComplete === false ? undefined : annotatedTools, frameDomains: evidence.frameDomains }
+          )
+        : runOpenAISubmissionChecks(
+            {
+              profile: parsedProfile.profile,
+              profileIssues: parsedProfile.issues,
+              annotatedTools,
+              frameDomains: evidence.frameDomains,
+              hasPublishedVersion,
+            },
+            stamp
+          )),
       // LAST, and inside the capability gate like everything else. The mapper
       // can only emit `heuristic`/`manual-review` findings in
       // `experience-insights`, which `decideLaneStatus` does not consult — so
@@ -607,7 +647,12 @@ export function gradeOpenAIReadiness(
       ),
     ],
     evidence.capabilities
-  ).map(withPortalCode);
+  ).map(withPortalCode).map((finding) => {
+    const reads = CHATGPT_PLUGIN_FLOW.placements.find((placement) => placement.checkId === finding.id)?.reads ?? [];
+    return submissionAnswers && (reads.some((key) => packageKeys.has(key)) || (finding.id === "openai.submission.geography" && openAIPackageCountries(evidence.package) !== undefined))
+      ? { ...finding, details: { ...finding.details, packageDerived: true } }
+      : finding;
+  });
   const findings = holdToReviewerAccount(
     graded,
     CHATGPT_PLUGIN_FLOW,

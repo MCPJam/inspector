@@ -222,6 +222,54 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
     await expect(consumeDirectChatTurnHeadless(handle)).resolves.toBeDefined();
   });
 
+  it("prices each step's call with the caller's pricer, on the llm span only", async () => {
+    let engine: any;
+    streamTextMock.mockImplementationOnce((options: any) => {
+      engine = options;
+      return defaultStreamTextReturn();
+    });
+    const cost = {
+      calculationVersion: 1,
+      currency: "USD" as const,
+      completeness: "complete" as const,
+      amountUsd: 0.0123,
+      source: "provider_reported" as const,
+      funding: "customer" as const,
+    };
+    const priceStepCall = vi.fn(async () => cost);
+    const snapshotSpans: any[][] = [];
+    const handle = runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "anthropic/claude-sonnet-4.5",
+      messageHistory: [{ role: "user", content: "Hi" } as any],
+      systemPrompt: "s",
+      tools: {} as any,
+      priceStepCall,
+      traceEvents: {
+        onStepSnapshot: ({ traceTurn }) =>
+          snapshotSpans.push(traceTurn.turnSpans.map((span) => ({ ...span }))),
+      },
+    });
+
+    await engine.prepareStep({ stepNumber: 0, messages: [] });
+    const usage = { inputTokens: 3, outputTokens: 2, totalTokens: 5 };
+    const providerMetadata = { openrouter: { usage: { cost: 0.0123 } } };
+    await engine.onStepFinish({
+      usage,
+      providerMetadata,
+      response: { messages: [] },
+      finishReason: "stop",
+      toolCalls: [],
+    });
+
+    expect(priceStepCall).toHaveBeenCalledWith({ usage, providerMetadata });
+    const priced = handle.traceContext.recordedSpans.filter((span) => span.cost);
+    expect(priced).toEqual([expect.objectContaining({ category: "llm", cost })]);
+    // The step's live snapshot already carries it.
+    expect(snapshotSpans.at(-1)?.find((span) => span.category === "llm")?.cost).toEqual(cost);
+    handle.cleanup();
+  });
+
   it("threads progressive-discovery `activeTools` through `prepareStep`", async () => {
     // PR 4a invariant: the chat-side active-tool gating from PR 1
     // carries over to the shared helper so eval (PR 4b) gets it for
@@ -278,7 +326,7 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
     expect(Array.isArray((await prepareStepReturn).activeTools)).toBe(true);
   });
 
-  it("forces the initial progressive-discovery step to search tools", async () => {
+  it("allows eligible unloaded calls without forcing an initial search", async () => {
     let prepareStepReturn: any;
     streamTextMock.mockImplementationOnce((options: any) => {
       prepareStepReturn = options.prepareStep({ stepNumber: 0 });
@@ -332,9 +380,9 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
         "search_mcp_tools",
         "load_mcp_tools",
       ]),
-      toolChoice: { type: "tool", toolName: "search_mcp_tools" },
     });
-    expect((await prepareStepReturn).activeTools).not.toContain("show_squad");
+    expect(await prepareStepReturn).not.toHaveProperty("toolChoice");
+    expect((await prepareStepReturn).activeTools).toContain("show_squad");
   });
 
   it("preserves explicit toolChoice instead of forcing initial progressive search", async () => {

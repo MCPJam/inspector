@@ -3,11 +3,10 @@
  *
  * Single dispatch route for every production deploy Soundcheck triggers:
  *
- *   - action "start": prepare-release.yml, which opens the version PR.
- *     Merging that PR is the release; release-trigger.yml runs release.yml
- *     once main is green.
+ *   - action "start": prepare-release.yml, which versions the pending
+ *     changesets, pushes the version commit to main and starts release.yml.
  *   - action "publish": release.yml directly. The retry path, for versions
- *     already merged whose automatic run failed or never started.
+ *     already on main whose run failed or never started.
  *   - deploy-mcp-prod.yml when deploy_mcp_production === true, alongside
  *     either or on its own (action "none").
  *
@@ -142,8 +141,8 @@ export async function POST(request: Request) {
 
   const releaseWorkflow = ACTION_WORKFLOW[parsed.action];
   const runsMcp = parsed.deploy_mcp_production;
-  // For "publish" this skips release.yml's gates now; for "start" it is ticked
-  // in the version PR, so the release starts on merge without waiting.
+  // Skips release.yml's staging and test gates, for both actions: "start"
+  // passes it on to the release it starts.
   const effectiveSkipVerify = releaseWorkflow !== null && parsed.skip_verify;
   if (!releaseWorkflow && !runsMcp) {
     return NextResponse.json(
@@ -208,16 +207,14 @@ export async function POST(request: Request) {
 
   if (releaseWorkflow) {
     // Workflow dispatch inputs go over the wire as strings. The flags mean the
-    // same thing to both workflows: prepare-release.yml writes them into the
-    // version PR as checkboxes, release.yml acts on them directly.
+    // same thing to both workflows: prepare-release.yml passes them on to the
+    // release.yml run it starts.
     const inputs: Record<string, string> = {
       deploy_backend_prod: String(parsed.deploy_backend_prod),
       deploy_webapp: String(parsed.deploy_webapp),
-      skip_verify: String(effectiveSkipVerify)
+      skip_verify: String(effectiveSkipVerify),
+      requested_by: requestedBy
     };
-    // prepare-release.yml declares no such input, and GitHub rejects a
-    // dispatch with one. Its release names whoever merges the version PR.
-    if (releaseWorkflow === "release.yml") inputs.requested_by = requestedBy;
     try {
       await dispatchWorkflow(
         "MCPJam",
@@ -302,8 +299,8 @@ export async function POST(request: Request) {
   const message = failed.length
     ? `${successLabel} dispatched. ${failedLabel} failed — check Soundcheck server logs.`
     : parsed.action === "start"
-      ? `${successLabel} dispatched. The version PR opens in about a minute; merging it releases.`
-      : `${successLabel} dispatched. The progress tile will pick it up within ~10s.`;
+      ? `${successLabel} dispatched. The release starts in about two minutes.`
+      : `${successLabel} dispatched. The card picks it up within about 10 seconds.`;
 
   return NextResponse.json({
     ok: true,

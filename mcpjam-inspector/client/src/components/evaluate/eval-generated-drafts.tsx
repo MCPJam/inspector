@@ -1,6 +1,7 @@
 import { useAvailableModels } from "@/hooks/use-available-models";
 import { RunIterationControl } from "./run-iteration-control";
-import { EvalModelChoices } from "./eval-target-matrix";
+import { EvalModelChoices } from "./eval-model-choices";
+import { useSuiteHarnessTargets } from "@/hooks/use-suite-harness-targets";
 import { explicitModelIds } from "@/components/environment-composer/environment-stack";
 import type { GeneratedDraft } from "@/lib/mcpjam-agent/eval-workspace";
 import { EVAL_DESCRIBE_ONLY_AGENT } from "@/shared/eval-agent-scope";
@@ -24,6 +25,8 @@ import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Input } from "@mcpjam/design-system/input";
 import { CaseSpine } from "./case-spine/case-spine";
+import { GeneratedDraftSteps } from "./case-steps/draft-case-steps";
+import { useTestCaseStepsEditorEnabled } from "@/hooks/use-test-case-steps-editor-enabled";
 import { caseViewModel } from "./case-workspace/case-view-model";
 import {
   useEvalGeneration,
@@ -138,6 +141,7 @@ export function EvalGeneratedDrafts({
   };
   const [reviewing, setReviewing] = useState<string | null>(null);
   const state = useEvalGeneration((s) => s.suites[evalSuiteKey(scope)]);
+  const stepsEditor = useTestCaseStepsEditorEnabled() === true;
   useEffect(() => {
     if (state?.authoringJobId)
       void followAuthoringJob({ projectId, suiteId }, state.authoringJobId);
@@ -405,36 +409,45 @@ export function EvalGeneratedDrafts({
                         disabled={locked}
                       />
                     )}
-                    <CaseSpine
-                      steps={caseViewModel("draft", draft.input).steps}
-                      matchOptions={draft.input.matchOptions}
-                      onMatchOptionsChange={(matchOptions) =>
-                        editGeneratedDraft(scope, draft.id, draft.revision, {
-                          matchOptions,
-                        })
-                      }
-                      expectedOutput={draft.input.expectedOutput}
-                      onExpectedOutputChange={(expectedOutput) =>
-                        editGeneratedDraft(scope, draft.id, draft.revision, {
-                          expectedOutput,
-                        })
-                      }
-                      predicates={draft.input.predicates}
-                      onPredicatesChange={(predicates) =>
-                        editGeneratedDraft(scope, draft.id, draft.revision, {
-                          predicates,
-                        })
-                      }
-                      availableTools={state?.availableTools ?? []}
-                      suiteServers={state?.suiteServers ?? []}
-                      evalValidationBorderClass="border-border"
-                      readOnly={locked}
-                      onStepsChange={(steps) =>
-                        editGeneratedDraft(scope, draft.id, draft.revision, {
-                          steps,
-                        })
-                      }
-                    />
+                    {stepsEditor ? (
+                      <GeneratedDraftSteps
+                        scope={scope}
+                        generated={draft}
+                        availableTools={state?.availableTools ?? []}
+                        readOnly={locked}
+                      />
+                    ) : (
+                      <CaseSpine
+                        steps={caseViewModel("draft", draft.input).steps}
+                        matchOptions={draft.input.matchOptions}
+                        onMatchOptionsChange={(matchOptions) =>
+                          editGeneratedDraft(scope, draft.id, draft.revision, {
+                            matchOptions,
+                          })
+                        }
+                        expectedOutput={draft.input.expectedOutput}
+                        onExpectedOutputChange={(expectedOutput) =>
+                          editGeneratedDraft(scope, draft.id, draft.revision, {
+                            expectedOutput,
+                          })
+                        }
+                        predicates={draft.input.predicates}
+                        onPredicatesChange={(predicates) =>
+                          editGeneratedDraft(scope, draft.id, draft.revision, {
+                            predicates,
+                          })
+                        }
+                        availableTools={state?.availableTools ?? []}
+                        suiteServers={state?.suiteServers ?? []}
+                        evalValidationBorderClass="border-border"
+                        readOnly={locked}
+                        onStepsChange={(steps) =>
+                          editGeneratedDraft(scope, draft.id, draft.revision, {
+                            steps,
+                          })
+                        }
+                      />
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -525,12 +538,18 @@ function AuthoringDraftSettings({
   draft: GeneratedDraft;
   disabled: boolean;
 }) {
+  // A draft's models run on every client the suite runs on, so the catalog
+  // loads what they need (a Cursor client's account models) and locks for them.
+  const harnessTargets = useSuiteHarnessTargets(
+    scope.projectId,
+    scope.suiteId,
+  );
   const {
     availableModels,
     requireOrgKeys,
     onManageOrgProviders,
     onAddProvider,
-  } = useAvailableModels({ projectId: scope.projectId });
+  } = useAvailableModels({ projectId: scope.projectId, harnessTargets });
   return (
     <div className="space-y-4">
       <RunIterationControl
@@ -564,6 +583,7 @@ function AuthoringDraftSettings({
         // Drafts store model ids alone, so an effort picked here would be lost.
         effortEditable={false}
         availableModels={availableModels}
+        harnessTargets={harnessTargets}
         requireOrgKeys={requireOrgKeys}
         onManageOrgProviders={onManageOrgProviders}
         onAddProvider={onAddProvider}

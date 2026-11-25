@@ -7,8 +7,7 @@ import { SignInSharingControl } from "../SignInSharingControl";
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
 
-const HOSTED_RUNS =
-  /hosted runs can act as.* Nobody can get their tokens out\./;
+const MEMBER_RUNS = /runs can act as|hosted runs act as/;
 
 function mount(shared: boolean, accountCount = 0) {
   const onChange = vi.fn().mockResolvedValue(undefined);
@@ -31,18 +30,20 @@ describe("SignInSharingControl", () => {
   beforeEach(() => vi.clearAllMocks());
   afterEach(cleanup);
 
-  it("says who can act as the accounts and that nobody gets their tokens out", () => {
+  it("says who can act as the accounts, and no longer promises tokens stay put", () => {
     mount(false);
     expect(
       screen.getByRole("switch", { name: "Share sign-in with the project" }),
     ).not.toBeChecked();
-    expect(screen.getByText(HOSTED_RUNS)).toBeTruthy();
+    expect(screen.getByText(MEMBER_RUNS)).toBeTruthy();
+    expect(screen.getByText(/in their local apps/)).toBeTruthy();
     cleanup();
     mount(true, 2);
     expect(
       screen.getByRole("switch", { name: "Shared with the project" }),
     ).toBeChecked();
-    expect(screen.getByText(HOSTED_RUNS)).toBeTruthy();
+    expect(screen.getByText(/Local runs follow the switch below/)).toBeTruthy();
+    expect(screen.queryByText(/Nobody can get their tokens out/)).toBeNull();
   });
 
   it("shares only once the admin confirms what it means", async () => {
@@ -53,7 +54,7 @@ describe("SignInSharingControl", () => {
       "Share this server's sign-in with the project?",
     );
     expect(dialog).toHaveTextContent(
-      "Every member's hosted runs will be able to act as the accounts admins connect here, and nobody can get their tokens out.",
+      "Members' local apps will receive the access tokens of the accounts admins connect here. A token already sent keeps working until it expires.",
     );
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onChange).not.toHaveBeenCalled();

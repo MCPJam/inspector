@@ -3,6 +3,7 @@
  * portal's label, placeholder, counter, helper and error line, then MCPJam's
  * results for the checks that read it.
  */
+import { PreviewServerIcon } from "./PreviewServerIcon";
 import { useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 import type {
@@ -325,6 +326,7 @@ function Control(props: ControlProps) {
           aria-labelledby={`${id}-label`}
           className="flex items-center gap-4 rounded-xl bg-card px-4 py-3 text-sm"
         >
+          <PreviewServerIcon className="size-8 rounded-md" />
           <span className="min-w-0 flex-1 truncate">
             {serverName ? (
               <span className="block font-medium">{serverName}</span>

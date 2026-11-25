@@ -17,6 +17,7 @@ import {
 import type { RequestLogContext } from "./log-events.js";
 import { resolveEnvironment } from "./log-events.js";
 import { HOSTED_MODE } from "../config.js";
+import { scrubDeliveredSecretsDeep } from "../../shared/delivered-secret-registry.js";
 import {
   resolveFeatureFlagSource,
   rolloutAnswerWithoutPostHog,
@@ -159,7 +160,7 @@ export function captureServerEventForActor(
       event,
       distinctId: actor.distinctId,
       properties: {
-        ...properties,
+        ...scrubDeliveredSecretsDeep(properties),
         // Retry-dedupe key: posthog-node may resend on transient failures.
         $insert_id: randomUUID(),
         platform: serverPlatform(),
@@ -182,10 +183,10 @@ export function captureServerEventForActor(
  * caller's force-exit timer is the backstop).
  */
 /** Rollout evaluation does not emit exposure events or trust client flags. */
-export async function evaluateBrowserRollout(
-  key: "local-browser-enabled" | "hosted-browser-enabled",
+export async function evaluateHostedBrowserRollout(
   distinctId: string,
 ): Promise<boolean> {
+  const key = "hosted-browser-enabled";
   if (!rolloutActorId(distinctId)) return false;
   const answer = rolloutAnswerWithoutPostHog(key);
   if (answer !== undefined) return answer;
@@ -193,9 +194,6 @@ export async function evaluateBrowserRollout(
     return (
       (await getClient(true)?.isFeatureEnabled(key, distinctId, {
         sendFeatureFlagEvents: false,
-        ...(key === "local-browser-enabled"
-          ? { personProperties: { local_browser_security_version: "1" } }
-          : {}),
       })) === true
     );
   } catch {
@@ -210,18 +208,56 @@ export async function evaluateLocalHarnessRollout(
   trustedEmail?: string,
   flagKey: LocalHarnessRolloutFlag = "local-harness-enabled",
 ): Promise<boolean> {
+  return evaluateServerRollout(
+    flagKey,
+    distinctId,
+    { deployment: "self_hosted" },
+    trustedEmail,
+  );
+}
+
+/**
+ * A boolean rollout the server enforces, from the same flag source and person
+ * properties `GET /api/web/flags` uses. No exposure events; any failure is off.
+ */
+export async function evaluateServerRollout(
+  flagKey: string,
+  distinctId: string,
+  personProperties: Record<string, string>,
+  trustedEmail?: string,
+): Promise<boolean> {
+  return (
+    (await serverRolloutAnswer(
+      flagKey,
+      distinctId,
+      personProperties,
+      trustedEmail,
+    )) === true
+  );
+}
+
+/**
+ * {@link evaluateServerRollout}'s decision, or `undefined` when there was
+ * none to read: the PostHog request failed or did not evaluate the flag. A
+ * caller that keeps answers keeps only a definite one.
+ */
+export async function serverRolloutAnswer(
+  flagKey: string,
+  distinctId: string,
+  personProperties: Record<string, string>,
+  trustedEmail?: string,
+): Promise<boolean | undefined> {
   if (!rolloutActorId(distinctId)) return false;
   const answer = rolloutAnswerWithoutPostHog(flagKey);
   if (answer !== undefined) return answer;
   try {
-    return (
-      (await getClient(true)?.isFeatureEnabled(flagKey, distinctId, {
-        sendFeatureFlagEvents: false,
-        personProperties: rolloutPersonProperties({ deployment: "self_hosted" }, trustedEmail),
-      })) === true
-    );
+    return await getClient(true)?.isFeatureEnabled(flagKey, distinctId, {
+      sendFeatureFlagEvents: false,
+      personProperties: rolloutPersonProperties(personProperties, trustedEmail),
+    });
   } catch {
-    return false;
+    // A request that failed is no answer; callers read it as off.
+    return undefined;
   }
 }
 

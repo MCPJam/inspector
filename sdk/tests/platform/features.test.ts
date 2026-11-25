@@ -240,6 +240,7 @@ describe("disabledOperations", () => {
         "update_directory_submission",
         // A reviewer sign-in starts a run too.
         "create_reviewer_attempt",
+        "create_reviewer_handoff",
         "resume_reviewer_attempt",
         "record_directory_submission_status",
         "record_directory_submission_snapshot",

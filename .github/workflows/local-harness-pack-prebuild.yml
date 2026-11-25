@@ -1,21 +1,24 @@
 name: Local harness pack prebuild
 
-# Builds local-harness runtime packs IN THE BACKGROUND, ahead of the release
-# that pins them. When a push to main can move a pack input (a vendor version,
-# Node, the build scripts), this runs `local-harness-pack-pipeline.yml` for
-# every harness: one whose inputs did not move is up to date in a minute; one
-# whose inputs moved is built, signed, published and conformance-tested.
+# Builds local-harness runtime packs and proposes the pins that select them.
+# When a push to main can move a pack input (a vendor version, Node, the build
+# scripts), this runs `local-harness-pack-pipeline.yml` for every harness: one
+# whose inputs did not move is up to date in a minute; one whose inputs moved
+# is built, signed, published (or found byte-identical and recorded as an
+# equivalence) and conformance-tested.
 #
-# Nothing here reaches users or main: no PR, no pin. Starting a release
-# (`prepare-release.yml`) runs the same pipeline, finds the pack already
-# published from these inputs and ADOPTS it, so no build sits in the release's
-# path. A failure opens the harness's failure issue days before anyone starts a
-# release, instead of during one.
+# Each pipeline hands back a pin artifact. Once every harness's pipeline has
+# finished, `pin-pr` applies them all and opens, or refreshes, ONE pin PR
+# (`bot/local-harness-pack-pins`). Publishing reaches no user: a pack is
+# selectable only once that PR merges, and its review is the one human gate on
+# which binaries users download. When every harness is up to date there is
+# nothing to commit and no PR. A failure opens the harness's failure issue, and
+# no pin PR opens until every harness's pipeline succeeds; running this
+# workflow again resumes from wherever it stopped.
 #
-# One pipeline per harness at a time: it shares the `local-harness-pack-<id>`
-# concurrency group with prepare-release's `packs` job, and stands down while a
-# release is being prepared (that run does this work itself). The nightly run is
-# a safety net for an input the path filter missed; when nothing moved, it costs
+# One pipeline per harness at a time (the `local-harness-pack-<id>`
+# concurrency group), and one pin PR update at a time. The nightly run is a
+# safety net for an input the path filter missed; when nothing moved, it costs
 # one planning job per harness.
 
 on:
@@ -49,37 +52,29 @@ jobs:
       actions: read
     outputs:
       list: ${{ steps.list.outputs.list }}
-      release_in_progress: ${{ steps.release.outputs.in_progress }}
+      stand_down: ${{ steps.signing.outputs.stand_down }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      # A release being prepared runs this same pipeline; queueing behind it
-      # would only re-plan to "up to date", and a second pending run in the
-      # group would cancel the release's own pending job.
-      - name: Stand down while a release is being prepared, or signing needs a person
-        id: release
+      # Signing that waits for a person would hold the per-harness group for
+      # as long as nobody approves, and the next run would queue behind it.
+      # While the environment requires a reviewer, building in the background
+      # is not background, so stand down.
+      - name: Stand down while signing needs a person
+        id: signing
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          count="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow prepare-release.yml --limit 20 \
-            --json status --jq '[.[] | select(.status != "completed")] | length')"
-          # Signing that waits for a person would hold the per-harness group
-          # for as long as nobody approves, and the next release would queue
-          # behind it. While the environment requires a reviewer, building in
-          # the background is not background, so leave it to the release.
           reviewers="$(gh api "repos/$GITHUB_REPOSITORY/environments/local-harness-pack-release" \
             --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length' 2>/dev/null || echo unknown)"
-          if [ "$count" != "0" ]; then
-            echo "A release is being prepared; it builds any pack itself." >> "$GITHUB_STEP_SUMMARY"
-            echo "in_progress=true" >> "$GITHUB_OUTPUT"
-          elif [ "$reviewers" != "0" ]; then
-            echo "Signing (local-harness-pack-release) requires a reviewer ($reviewers rule(s)); the release will build the pack." >> "$GITHUB_STEP_SUMMARY"
-            echo "in_progress=true" >> "$GITHUB_OUTPUT"
+          if [ "$reviewers" != "0" ]; then
+            echo "Signing (local-harness-pack-release) requires a reviewer ($reviewers rule(s)); no pack is built in the background." >> "$GITHUB_STEP_SUMMARY"
+            echo "stand_down=true" >> "$GITHUB_OUTPUT"
           else
-            echo "in_progress=false" >> "$GITHUB_OUTPUT"
+            echo "stand_down=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Harnesses with a pack recipe
@@ -93,7 +88,7 @@ jobs:
   prebuild:
     name: ${{ matrix.harness }} pack
     needs: harnesses
-    if: needs.harnesses.outputs.release_in_progress == 'false'
+    if: needs.harnesses.outputs.stand_down == 'false'
     strategy:
       fail-fast: false
       matrix:
@@ -112,3 +107,103 @@ jobs:
     with:
       harness: ${{ matrix.harness }}
     secrets: inherit
+
+  # Every harness's pin (a new pack, an equivalence record, or "up to date"),
+  # applied to this commit and proposed as one PR. All harnesses or none:
+  # `apply-pins` needs an intent from every harness, and the reviewed
+  # fingerprints it re-records are one file shared by all of them.
+  pin-pr:
+    needs: prebuild
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: local-harness-pack-pins
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      # The consistency gate verifies the pinned packs' build provenance.
+      attestations: read
+    steps:
+      # No credential persisted into the checkout (the install below runs
+      # package scripts); local-harness-bot-pr.sh authenticates git for its
+      # push from its own GH_TOKEN.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: mcpjam-inspector/.nvmrc
+          cache: npm
+
+      # A clean install, so the fingerprints `apply-pins` re-records are
+      # exactly what a fresh checkout computes.
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Collect the local runtime pins
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: local-harness-pin-*
+          path: ${{ runner.temp }}/pins
+
+      - name: Pin the local runtime packs
+        run: |
+          node mcpjam-inspector/scripts/local-harness-publication.mjs apply-pins \
+            --dir "$RUNNER_TEMP/pins" --summary "$RUNNER_TEMP/packs.md"
+
+      # release.yml runs this same gate in its preflight. Running it here
+      # checks exactly what the pin PR pins before anyone is asked to review it.
+      - name: Local harness release consistency
+        working-directory: mcpjam-inspector
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/check-local-harness-release.mjs --assets --verify-attestations --version "$(jq -r .version package.json)"
+
+      # Runs from two commits can finish out of order. The pin branch is built
+      # on the commit its run applied to; a run from an OLDER commit than that
+      # must not replace newer pins with its own.
+      - name: Is a newer commit's pin already proposed?
+        id: newer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # No branch yet (404) means nothing newer; any other failure stops.
+          # The branches endpoint, because commits/<ref> answers a missing
+          # branch with 422 "No commit found", not 404.
+          if ! base="$(gh api "repos/$GITHUB_REPOSITORY/branches/bot/local-harness-pack-pins" --jq '.commit.parents[0].sha' 2>"$RUNNER_TEMP/branch.err")"; then
+            grep -q "HTTP 404" "$RUNNER_TEMP/branch.err" || { cat "$RUNNER_TEMP/branch.err" >&2; exit 1; }
+            base=""
+          fi
+          status=""
+          if [ -n "$base" ]; then
+            status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$base...$GITHUB_SHA" --jq .status)"
+          fi
+          if [ "$status" = "behind" ]; then
+            echo "The pin branch was applied to $base, which is newer than $GITHUB_SHA; leaving it alone." >> "$GITHUB_STEP_SUMMARY"
+            echo "stand_down=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "stand_down=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Only the files `apply-pins` writes. A new equivalence record is an
+      # untracked file, so the directory is added by name.
+      - name: Open or refresh the pin PR
+        if: steps.newer.outputs.stand_down == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PUSH_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          git add \
+            mcpjam-inspector/server/utils/harness/local/runtime-compat.generated.json \
+            mcpjam-inspector/server/utils/harness/local/pack-inputs.generated.json \
+            mcpjam-inspector/scripts/local-harness-pack-equivalence
+          git status --short
+          text="$(jq -n --rawfile packs "$RUNNER_TEMP/packs.md" --arg run "$RUN_URL" --arg sha "$GITHUB_SHA" '{
+            branch: "bot/local-harness-pack-pins",
+            title: "chore(local-harness): pin runtime packs",
+            body: ($packs + "\nApplied to " + $sha + " by " + $run + ".\n\nReview the pinned digests and fingerprints: this review decides which runtime packs users download.")
+          }')"
+          bash .github/scripts/local-harness-bot-pr.sh "$text"

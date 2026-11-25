@@ -3,6 +3,7 @@ import type { TasksWire } from "../mcp-client-manager/tasks-dispatch.js";
 import type {
   MCPTasksCheckId,
   MCPTasksCheckResult,
+  MCPTasksPassedAdvice,
   MCPTasksReadinessWarning,
   MCPTasksUncheckedAdvice,
 } from "./types.js";
@@ -25,4 +26,6 @@ export interface TaskCheckContext {
   rawCreation?: RawTaskResponse;
   readiness: MCPTasksReadinessWarning[];
   uncheckedAdvice: MCPTasksUncheckedAdvice[];
+  /** Advice the run checked and the server already meets. */
+  passedAdvice: MCPTasksPassedAdvice[];
 }

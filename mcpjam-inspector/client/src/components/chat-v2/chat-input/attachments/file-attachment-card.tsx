@@ -1,4 +1,3 @@
-import { FileOpenWith } from "@/components/host-workspace/file-actions";
 import { useState } from "react";
 import { X, FileText, Image, FileSpreadsheet, File } from "lucide-react";
 import { formatFileSize, isImageFile } from "@/lib/chat-utils";
@@ -103,7 +102,6 @@ export function FileAttachmentCard({
           </TooltipContent>
         </Tooltip>
 
-        <FileOpenWith reference={attachment.resource} />
         {/* Remove button */}
         <button
           type="button"
@@ -161,7 +159,6 @@ export function FileAttachmentCard({
         </span>
       </div>
 
-      <FileOpenWith reference={attachment.resource} />
       {/* Remove button */}
       <button
         type="button"

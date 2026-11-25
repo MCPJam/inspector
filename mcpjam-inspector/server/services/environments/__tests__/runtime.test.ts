@@ -11,6 +11,10 @@ import {
   type ResolvedEnvironmentRuntime,
 } from "../runtime";
 
+/** What production Convex sends for any failure that is not a ConvexError. */
+const REDACTED =
+  "[CONVEX Q(projectEnvironments:resolveEnvironmentForRuntime)] [Request ID: 7d1b] Server Error";
+
 const SPEC: ResolvedEnvironmentRuntime = {
   specVersion: 1,
   environmentRef: { environmentId: "env_1", name: "Staging", revision: 7 },
@@ -226,9 +230,8 @@ describe("resolveEnvironmentForRuntime", () => {
       query: async (_ref: unknown, args: Record<string, unknown>) => {
         calls.push(args);
         if ("skillScope" in args) {
-          throw new Error(
-            "ArgumentValidationError: Object contains extra field `skillScope` that is not in the validator.",
-          );
+          // What production sends for the refusal: the detail is redacted.
+          throw new Error(REDACTED);
         }
         return SPEC;
       },
@@ -260,6 +263,67 @@ describe("resolveEnvironmentForRuntime", () => {
     } finally {
       now.mockRestore();
     }
+  });
+
+  it("keeps sending the scope after an outage the retry also hits", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    let down = true;
+    const client = {
+      query: async (_ref: unknown, args: Record<string, unknown>) => {
+        calls.push(args);
+        if (down) throw new Error(REDACTED);
+        return SPEC;
+      },
+    } as unknown as Parameters<typeof resolveEnvironmentForRuntime>[0];
+    const args = {
+      projectId: "p_1",
+      environmentId: "env_1",
+      skillScope: "visible" as const,
+    };
+    await expect(
+      resolveEnvironmentForRuntime(client, args),
+    ).rejects.toMatchObject({ status: 502 });
+    expect(calls.map((call) => "skillScope" in call)).toEqual([true, false]);
+    // Not paused: once the backend is back, the scope is asked for again.
+    down = false;
+    await resolveEnvironmentForRuntime(client, args);
+    expect(calls.slice(2).map((call) => "skillScope" in call)).toEqual([true]);
+  });
+
+  it("does not retry a failure that never reached Convex", async () => {
+    const calls: unknown[] = [];
+    const client = {
+      query: async (_ref: unknown, args: unknown) => {
+        calls.push(args);
+        throw new TypeError("fetch failed");
+      },
+    } as unknown as Parameters<typeof resolveEnvironmentForRuntime>[0];
+    await expect(
+      resolveEnvironmentForRuntime(client, {
+        projectId: "p_1",
+        environmentId: "env_1",
+        skillScope: "visible",
+      }),
+    ).rejects.toMatchObject({ status: 502 });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("does not retry a string-payload ConvexError that reads like a redaction", async () => {
+    const calls: unknown[] = [];
+    const client = {
+      query: async (_ref: unknown, args: unknown) => {
+        calls.push(args);
+        throw new ConvexError(REDACTED);
+      },
+    } as unknown as Parameters<typeof resolveEnvironmentForRuntime>[0];
+    await expect(
+      resolveEnvironmentForRuntime(client, {
+        projectId: "p_1",
+        environmentId: "env_1",
+        skillScope: "visible",
+      }),
+    ).rejects.toMatchObject({ status: 502 });
+    expect(calls).toHaveLength(1);
   });
 
   it("does not retry any other refusal", async () => {

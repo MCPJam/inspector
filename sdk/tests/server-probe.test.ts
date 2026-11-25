@@ -57,6 +57,94 @@ describe("probeMcpServer", () => {
     expect(result.oauth.optional).toBe(false);
   });
 
+  it("reads the initialize result from an event-stream answer and leaves the stream", async () => {
+    const serverUrl = "https://mcp.example.com/mcp";
+    let cancelled = false;
+    const fetchFn: typeof fetch = jest.fn(async (input) => {
+      if (String(input) !== serverUrl) return jsonResponse({}, 404);
+      const message = JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        result: {
+          protocolVersion: "2025-11-25",
+          serverInfo: { name: "stream-server", version: "2.0.0" },
+          capabilities: { tools: {} },
+        },
+      });
+      // The server keeps the stream open after its answer.
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(`event: message\ndata: ${message}\n\n`)
+          );
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    }) as typeof fetch;
+
+    const result = await probeMcpServer({ url: serverUrl, fetchFn });
+
+    expect(result.status).toBe("ready");
+    expect(result.initialize).toMatchObject({
+      protocolVersion: "2025-11-25",
+      serverInfo: { name: "stream-server", version: "2.0.0" },
+      contentType: "text/event-stream",
+    });
+    expect(cancelled).toBe(true);
+  });
+
+  it("skips what the server sends before its initialize response on the stream", async () => {
+    const serverUrl = "https://mcp.example.com/mcp";
+    const frames = [
+      {
+        jsonrpc: "2.0",
+        method: "notifications/message",
+        params: { level: "info", data: "starting" },
+      },
+      // The server's own request, with an id that collides with the client's.
+      { jsonrpc: "2.0", id: 1, method: "ping" },
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        result: {
+          protocolVersion: "2025-11-25",
+          serverInfo: { name: "chatty-server", version: "3.0.0" },
+          capabilities: { tools: {} },
+        },
+      },
+    ];
+    const fetchFn: typeof fetch = jest.fn(async (input) => {
+      if (String(input) !== serverUrl) return jsonResponse({}, 404);
+      const events = frames
+        .map((frame) => `event: message\ndata: ${JSON.stringify(frame)}\n\n`)
+        .join("");
+      // The server keeps the stream open after its answer.
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(events));
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    }) as typeof fetch;
+
+    const result = await probeMcpServer({ url: serverUrl, fetchFn });
+
+    expect(result.status).toBe("ready");
+    expect(result.initialize).toMatchObject({
+      protocolVersion: "2025-11-25",
+      serverInfo: { name: "chatty-server", version: "3.0.0" },
+    });
+  });
+
   it("reports a ready server that publishes PRM as anonymous access with OAuth optional", async () => {
     // The lazy-authentication shape: initialize is served without a token,
     // and Protected Resource Metadata still names an authorization server for

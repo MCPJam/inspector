@@ -25,13 +25,12 @@ import {
   writeSessionFiles,
   type SnapshotFileSession,
 } from "./snapshot-bundle.js";
+import { harnessConversationState } from "../registry.js";
 import { sessionFileSpec } from "./session-files.js";
 
 /** The backend's own ceiling on a stored snapshot, plus room for headers. */
 const MAX_DOWNLOAD_BYTES = 16 * 1024 * 1024 + 64 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
-/** Runtimes whose files this knows how to place; the backend decides which it serves. */
-const RESTORABLE = new Set(["claude-code", "codex"]);
 
 /** What the model is told on the first prompt of a restored session. */
 export const SESSION_RESTORED_NOTE =
@@ -110,7 +109,9 @@ export function startSessionSnapshotRestore(args: {
     state.awaitingApproval ||
     stateVersion === undefined ||
     !sandboxId ||
-    !RESTORABLE.has(owner.harnessId) ||
+    // Only a runtime that declares its conversation files can have them
+    // placed; the backend decides which it serves.
+    !harnessConversationState(owner.harnessId) ||
     getHarnessResumeEligibility({
       state,
       computerId: args.computerId,
@@ -155,9 +156,13 @@ export function startSessionSnapshotRestore(args: {
       const bytes = armed;
       armed = null;
       if (!bytes) return;
-      const home = await boxHome(session);
+      // The turn's own signal only: the download timeout would cut off a box
+      // whose cold start outlasted it.
+      const turnSignal = args.abortSignal;
+      const home = await boxHome(session, turnSignal);
       const spec = sessionFileSpec({
         harnessId: owner.harnessId,
+        conversationState: harnessConversationState(owner.harnessId),
         harnessSessionId: state.harnessSessionId,
         resumeState: state.resumeState,
         home,
@@ -173,7 +178,12 @@ export function startSessionSnapshotRestore(args: {
       if (bundle.workDir && bundle.workDir !== workDir) {
         throw new Error("The saved session belongs to another working folder.");
       }
-      await writeSessionFiles({ session, home, files: bundle.files });
+      await writeSessionFiles({
+        session,
+        home,
+        files: bundle.files,
+        ...(turnSignal ? { abortSignal: turnSignal } : {}),
+      });
       logger.info(
         `[harness][snapshot] restored ${bundle.files.length} files after ${Date.now() - startedAt}ms`,
         { harnessId: owner.harnessId },
