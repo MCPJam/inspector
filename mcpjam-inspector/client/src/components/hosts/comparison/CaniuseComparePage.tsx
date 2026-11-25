@@ -145,12 +145,9 @@ export function CaniuseComparePage() {
   useEffect(() => {
     if (!showIntro || intro === null) return;
     introSeen = true;
-    const timer = window.setTimeout(
-      () => {
-        setIntro(intro + 1 < INTRO_PROMPTS.length ? intro + 1 : null);
-      },
-      1050,
-    );
+    const timer = window.setTimeout(() => {
+      setIntro(intro + 1 < INTRO_PROMPTS.length ? intro + 1 : null);
+    }, 1050);
     return () => window.clearTimeout(timer);
   }, [intro, showIntro]);
 
