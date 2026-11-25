@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@mcpjam/sdk": "file:../../../sdk",
-    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "zod": "^4.1.13"
   },
   "devDependencies": {
