@@ -304,4 +304,27 @@ export const tokensCss: string = `@theme {
      from the chrome behind it, it does not lift a pane off the app. */
   --shadow-chrome-tab: 0 -2px 6px hsl(0 0% 0% / 0.07);
 }
+
+/* Public caniuse.dev surfaces and their portaled dialogs. */
+.dark.caniuse-site,
+.dark.caniuse-dialog {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.96 0.01 86);
+  --card: oklch(0.175 0 0);
+  --card-foreground: var(--foreground);
+  --popover: oklch(0.21 0.005 55);
+  --popover-foreground: var(--foreground);
+  --muted: oklch(0.215 0.004 55);
+  --muted-foreground: oklch(0.769 0.015 70);
+  --border: oklch(0.31 0.006 65);
+  --input: var(--border);
+  --primary: oklch(0.786 0.148 48);
+  --primary-foreground: oklch(0.19 0.026 52);
+  --ring: var(--primary);
+  --accent: oklch(0.259 0.041 48);
+  --accent-foreground: var(--primary);
+  --secondary: var(--muted);
+  --secondary-foreground: var(--foreground);
+  --caniuse-compare-background: oklch(0 0 0);
+}
 `;
