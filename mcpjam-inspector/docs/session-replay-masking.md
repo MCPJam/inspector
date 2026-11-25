@@ -40,7 +40,7 @@ telemetry exit, at every level, and never recorded at all. See
 | -------- | ------------------------------------------------------------------ | ---------------------------------------------------- |
 | `off`    | Nothing. No recorder runs.                                         | Unchanged on an `off` surface; masked when the backend answered `off` |
 | `masked` | Layout and interaction only (see [Masked profile](#masked-profile)) | Element text and attributes masked; names scrubbed from URLs |
-| `full`   | Layout and interaction, masked as at `masked`; network requests keep their path minus credentials | Unchanged                                            |
+| `full`   | Layout, interaction and page text (`maskReplayTextFull`: secret surfaces masked, credential URLs scrubbed); inputs, media and attributes masked as at `masked`; network requests keep their path minus credentials | Unchanged                                            |
 
 ## Who gets which level
 
@@ -467,9 +467,9 @@ monitor reports platform and version so those rows are told apart.
 
 ## Masking a secret
 
-PostHog replay masks every text node and input at every level. Secrets
-rendered as **text** still need an annotation for autocapture and Sentry
-Replay: OAuth access/refresh tokens in the flow diagram, the one-time API-key
+PostHog replay masks every input at every level, and every text node at
+`masked`. Secrets rendered as **text** need an annotation for PostHog replay
+at `full`, autocapture and Sentry Replay: OAuth access/refresh tokens in the flow diagram, the one-time API-key
 reveal, the SDK quickstart snippet.
 
 There is **one** annotation for those, and it does double duty:

@@ -568,7 +568,7 @@ test.describe("telemetry privacy in the browser", () => {
     expect(snapshotEvents(captured).length).toBeGreaterThanOrEqual(before);
   });
 
-  test("a verified non-private context records at full, its text masked: the positive control", async ({
+  test("a verified non-private context records at full, its text kept: the positive control", async ({
     page,
   }) => {
     const captured = await intercept(page);
@@ -578,9 +578,9 @@ test.describe("telemetry privacy in the browser", () => {
 
     const snapshots = snapshotEvents(captured);
     expect(snapshots.length).toBeGreaterThan(0);
-    // Replay runs at `full`, and PostHog masks the page's words there too.
+    // Replay runs at `full` with the page's words; attributes stay masked.
     const replay = JSON.stringify(snapshots);
-    expect(replay).not.toContain(SYNTHETIC_PII.domText);
+    expect(replay).toContain(SYNTHETIC_PII.domText);
     expect(replay).not.toContain(SYNTHETIC_PII.title);
     const events = captured.posthog.flatMap((r) => posthogEvents(r.json));
     for (const event of captured.ingress.flatMap((request) => posthogEvents(request.json))) {

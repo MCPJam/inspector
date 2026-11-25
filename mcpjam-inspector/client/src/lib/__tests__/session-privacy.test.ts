@@ -229,7 +229,7 @@ describe("profiles", () => {
     });
   });
 
-  it("full: text, inputs and media masked as at masked, console off, network URLs kept", async () => {
+  it("full: text kept minus secrets, inputs and media masked, console off, network URLs kept", async () => {
     const {
       posthogPrivacyConfig,
       SESSION_RECORDING_OPTIONS,
@@ -248,7 +248,7 @@ describe("profiles", () => {
       maskCapturedNetworkRequestFn: maskReplayRequestFull,
     });
     expect(SESSION_RECORDING_OPTIONS.maskTextFn("Summarise my chat")).toBe(
-      "********* ** ****",
+      "Summarise my chat",
     );
     expect(SESSION_RECORDING_OPTIONS.maskAttributeFn("title", "Q3 plan")).toBe(
       "***",

@@ -117,7 +117,7 @@ describe("replay callbacks", () => {
 
     const text = recording.maskTextFn(`Share link: ${encoded}`);
     expect(text).not.toContain(SECRET);
-    expect(text).toMatch(/^\*+ \*+ \*+$/);
+    expect(text).toContain("Share link: %2Fresults%2F");
     expect(recording.maskAttributeFn("data-link", encoded)).toBe("***");
     const kept = recording.maskAttributeFn("class", `btn ${encoded}`);
     expect(kept).not.toContain(SECRET);
