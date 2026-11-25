@@ -1,4 +1,5 @@
 import type { ReactElement } from "react";
+import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -79,6 +80,25 @@ vi.mock("convex/react", () => ({
   // does not — the failure lands as a heap OOM, not a React warning.
   useConvex: () => convexClientMock,
 }));
+
+vi.mock("sonner", () => ({
+  toast: { error: vi.fn(), success: vi.fn() },
+}));
+
+vi.mock("../case-save-payload", async (original) => {
+  const actual = await original<typeof import("../case-save-payload")>();
+  return {
+    ...actual,
+    buildDraftTestCase: (
+      ...args: Parameters<typeof actual.buildDraftTestCase>
+    ) => ({
+      ...actual.buildDraftTestCase(...args),
+      query: "List workspaces",
+      isNegativeTest: true,
+      expectedOutput: "Lists the workspaces",
+    }),
+  };
+});
 
 describe("getStepsBlockReason", () => {
   it("returns guidance when a single step has no prompt", () => {
@@ -506,6 +526,71 @@ describe("TestTemplateEditor prompt validation UI", () => {
     await userEvent.setup().hover(runButton.parentElement!);
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
       "Out of MCPJam credits · resets in 3h",
+    );
+  });
+});
+
+describe("draft test name conflicts", () => {
+  it("keeps a rejected draft editable and saves after renaming without an unhandled rejection", async () => {
+    vi.clearAllMocks();
+    const message =
+      'A test named "Existing test" already exists in this suite. Give this test a different name.';
+    const create = vi.fn().mockRejectedValue(
+      Object.assign(new Error("Server Error"), {
+        data: { code: "CONFLICT", field: "title", message },
+      }),
+    );
+    useMutationMock.mockReturnValue(create);
+    const cases: never[] = [];
+    const suite = { _id: "suite-1", environment: { servers: [] } };
+    useQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:listTestCases") return cases;
+      if (name === "testSuites:getTestSuite") return suite;
+      return undefined;
+    });
+    const saved = vi.fn();
+    const run = vi.fn();
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteId="suite-1"
+        selectedTestCaseId="draft:prompt"
+        connectedServerNames={new Set()}
+        projectId={null}
+        suiteIterations={[]}
+        availableModels={[]}
+        onDraftSaved={saved}
+        onRunCase={run}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: "Untitled test case" }),
+    );
+    const initialTitle = screen.getByDisplayValue("Untitled test case");
+    await user.clear(initialTitle);
+    await user.type(initialTitle, "Existing test");
+    await user.keyboard("{Enter}");
+    const save = await screen.findByRole("button", { name: /^Save$/ });
+    await waitFor(() => expect(save).toBeEnabled());
+    await user.click(save);
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(message));
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ requireUniqueTitle: true }),
+    );
+    expect(saved).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+    await waitFor(() => expect(save).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Existing test" }));
+    const title = screen.getByDisplayValue("Existing test");
+    await user.clear(title);
+    await user.type(title, "A different name");
+    await user.keyboard("{Enter}");
+    create.mockResolvedValue("created-case");
+    await user.click(save);
+    await waitFor(() => expect(saved).toHaveBeenCalledWith("created-case"));
+    expect(create).toHaveBeenLastCalledWith(
+      expect.objectContaining({ title: "A different name" }),
     );
   });
 });
