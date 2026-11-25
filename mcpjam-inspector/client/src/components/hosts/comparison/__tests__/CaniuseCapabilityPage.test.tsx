@@ -116,7 +116,7 @@ describe("CaniuseCapabilityPage", () => {
       screen.getByRole("heading", { name: "Capability not found" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: "Compare clients" }),
+      screen.getByRole("link", { name: "Compare" }),
     ).toHaveAttribute("href", "/compare");
   });
 });
