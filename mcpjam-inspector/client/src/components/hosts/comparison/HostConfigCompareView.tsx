@@ -197,13 +197,18 @@ function writeFieldSearchParams(
 function buildShareComparisonUrl(
   hostIds: ReadonlyArray<string>,
   query: string,
-  fields: ReadonlyArray<HostConfigFieldDef>
+  fields: ReadonlyArray<HostConfigFieldDef>,
+  preserveQuery: boolean
 ): string {
   const params = new URLSearchParams();
   if (hostIds.length > 0) {
     params.set(HOSTS_QUERY_PARAM, hostIds.join(","));
   }
-  writeFieldSearchParams(params, query, fields);
+  if (preserveQuery) {
+    if (query) params.set(SEARCH_QUERY_PARAM, query);
+  } else {
+    writeFieldSearchParams(params, query, fields);
+  }
   const search = params.toString();
   if (typeof window === "undefined") {
     return search ? `?${search}` : "";
@@ -1417,17 +1422,19 @@ export function ShareComparisonDialog({
   selectedHostIds,
   searchQuery,
   fields,
+  preserveQuery = false,
 }: {
   selectedHostIds: ReadonlyArray<string>;
   searchQuery: string;
   fields: ReadonlyArray<HostConfigFieldDef>;
+  preserveQuery?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const shareUrl = useMemo(
-    () => buildShareComparisonUrl(selectedHostIds, searchQuery, fields),
-    [selectedHostIds, searchQuery, fields]
+    () => buildShareComparisonUrl(selectedHostIds, searchQuery, fields, preserveQuery),
+    [selectedHostIds, searchQuery, fields, preserveQuery]
   );
 
   const handleCopy = useCallback(async () => {

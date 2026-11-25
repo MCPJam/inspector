@@ -9,6 +9,19 @@ vi.mock("@/lib/host-compat/use-host-catalog", async () => {
 });
 
 describe("CaniuseComparePage", () => {
+  it("shares the exact field query and hides verification for gated clients", () => {
+    const query = "toolResult.content.image";
+    render(
+      <MemoryRouter initialEntries={[`/compare?hosts=preset:claude-code&q=${query}`]}>
+        <CaniuseComparePage />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole("link", { name: /Verify Claude Code/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    const input = screen.getByRole<HTMLInputElement>("textbox", { name: "Shareable link" });
+    expect(new URL(input.value).searchParams.get("q")).toBe(query);
+  });
+
   it("opens a pinned comparison, keeps adoption stable when clients change, and allows removing the last client", () => {
     render(
       <MemoryRouter
