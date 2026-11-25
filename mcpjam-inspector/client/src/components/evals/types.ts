@@ -929,6 +929,10 @@ export type EvalSuiteRunSummary = {
  */
 export type EvalRunAccount = {
   serverId: string;
+  cases?: Array<{
+    testCaseId: string;
+    source: "case" | "run" | "suite" | "default";
+  }>;
   /** A person's own account, a shared server's project account, or an XAA identity. */
   kind: "account" | "shared" | "xaa";
   connectionId?: string;

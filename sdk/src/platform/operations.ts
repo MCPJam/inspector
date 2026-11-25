@@ -5773,6 +5773,7 @@ const declaredSuiteIdField = z
 // never happened. A refusal that names the key is the honest answer.
 const updateEvalSuiteInput = z
   .strictObject({
+    accounts: evalAccountSelectionsSchema.nullable().optional(),
     project: z
       .string()
       .trim()
@@ -5785,7 +5786,6 @@ const updateEvalSuiteInput = z
     description: z.string().trim().optional(),
     environment: z
       .object({
-    accounts: evalAccountSelectionsSchema.nullable().optional(),
         servers: z
           .array(z.string().trim().min(1))
           .optional()

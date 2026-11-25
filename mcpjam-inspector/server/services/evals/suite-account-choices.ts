@@ -130,7 +130,7 @@ export async function openEvalAccountGroups(
  */
 export async function loadSuiteConnectionIdSets(
   convex: Pick<ConvexHttpClient, "query">,
-  target: { suiteId?: unknown; testCaseId?: unknown },
+  target: { suiteId?: unknown; testCaseId?: unknown; serverIds?: unknown },
 ): Promise<ConnectionIdSets | undefined> {
   const named = (value: unknown) =>
     typeof value === "string" && value ? value : undefined;
@@ -144,6 +144,16 @@ export async function loadSuiteConnectionIdSets(
         ? named((await convex.query(getTestCase, { testCaseId }))?.testSuiteId)
         : undefined);
     if (!suiteId) return undefined;
+    if (testCaseId && Array.isArray(target.serverIds)) {
+      const plan = await loadEvalRunAccountPlan(convex, {
+        suiteId,
+        caseIds: [testCaseId],
+        serverIds: target.serverIds.filter((id): id is string => typeof id === "string"),
+      });
+      if (plan) return Object.fromEntries(plan.map(
+        ({ serverId, connectionId }) => [serverId, [connectionId]],
+      ));
+    }
     rows = await convex.query(getMySuiteAccountChoices, { suiteId });
   } catch (error) {
     if (/Could not find public function/i.test(String(error))) return undefined;
