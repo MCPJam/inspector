@@ -1,4 +1,5 @@
 import { usePublishEventAgent } from "@/components/playground/events/event-agent-bridge";
+import { usePlaygroundEventAgentTools } from "@/components/playground/events/PlaygroundEventsProvider";
 import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 import {
   hasComparisonAuthRecoveryRequest,
@@ -1418,6 +1419,16 @@ export function PlaygroundMain({
     [hostStyle, previewedHost?.config?.agentLoop, previewedHost?.config?.harness, previewedHost?.config?.mcpProfile],
   );
   const pluginExtensionsEnabled = pluginExtensions.enabled;
+  // The MCPJam client lets its agent subscribe to MCP Events from the
+  // conversation (ChatGPT's behaviour). Other client styles keep their own
+  // tool surface, and a harness or a study has no Events pane to run them.
+  const eventAgentToolExecutor = usePlaygroundEventAgentTools();
+  const eventAgentTools =
+    hostStyle === "mcpjam" &&
+    !tester &&
+    !(previewedHost?.config?.agentLoop ?? previewedHost?.config?.harness)
+      ? (eventAgentToolExecutor ?? undefined)
+      : undefined;
   // ChatGPT's or Claude's rules for this client's Apps: how they choose a
   // display mode, and where an entry App that can't go fullscreen opens.
   const pluginExtensionHost = {
@@ -1569,6 +1580,7 @@ export function PlaygroundMain({
     // Opt-in from the Tools panel's Page tools section. Off unless the user
     // ticked it for the page they currently have open in the WebMCP tab.
     usePageTools: webmcpPageToolsEnabled,
+    ...(eventAgentTools ? { eventAgentTools } : {}),
     directVisibility: pendingDirectVisibility,
     hostedOrgModelConfig,
     inheritedEnvironmentModel: isEnvironmentMode ? playgroundEnvironment.preview?.host : undefined,

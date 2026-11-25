@@ -18,6 +18,7 @@ import { toMintedPageToolRecords } from "@/shared/declared-tools";
 import { type Context } from "hono";
 import { HOSTED_MODE } from "../../config.js";
 import { advertisedPageToolsOnly } from "../../utils/chat-v2-orchestration.js";
+import { eventToolsFromBody } from "./event-tools-body.js";
 import { buildDirectHostConfig } from "../../utils/chat-ingestion.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
 import { captureServerEvent } from "../../utils/analytics.js";
@@ -499,6 +500,10 @@ export async function handleManagedChatTurn(
             : {}),
           appTools: validatedAppTools,
           pageTools: validatedPageTools,
+          // The Playground's own conversation only: a study has no Events pane.
+          ...(isDirectChat
+            ? { eventTools: eventToolsFromBody(body.eventTools) }
+            : {}),
           widgetModelContext: validatedWidgetModelContext,
           ...(builtInTools ? { builtInTools } : {}),
           // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
