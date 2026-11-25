@@ -6999,8 +6999,9 @@ export default function App() {
     </PreferencesStoreProvider>
   );
 
+  const isPublicCompare = barePathname === routePaths.caniuseCompare;
   return (
-    <AnnouncementQueueProvider enabled={announcementsEnabled}>
+    <AnnouncementQueueProvider enabled={announcementsEnabled || isPublicCompare}>
       {shell}
     </AnnouncementQueueProvider>
   );
