@@ -64,6 +64,7 @@ import {
 } from "./pinned-call-grading";
 import type { PinnedCallEvidence } from "./pinned-turn";
 import { extractTranscriptEvidence } from "./transcript-evidence";
+import { currentIterationExchanges } from "./input-answers.js";
 import { logger } from "../../utils/logger.js";
 
 /** Accumulated token usage in AI-SDK-canonical shape. */
@@ -363,6 +364,11 @@ function snapshotTranscript(
       state.widgetRenderObservations,
     ),
     toolErrors: state.toolErrors,
+    // The questions a server asked so far in this iteration. Left out, an
+    // `inputAnswered` assert step failed "no question was recorded" while the
+    // trace showed the question; the case-level verdict read them, this
+    // point-in-time one did not.
+    inputExchanges: [...currentIterationExchanges()],
     // Counted here rather than passed as a `trace`: a trace would also feed
     // its tool errors in, double-counting `state.toolErrors`.
     turnCount: state.messages.filter((m) => m.role === "user").length,
