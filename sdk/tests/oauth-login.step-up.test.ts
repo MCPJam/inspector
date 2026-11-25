@@ -27,7 +27,9 @@ it.each([
   { scenario: "an unrelated 403", retry: false, passed: false },
   { scenario: "the challenge adds no scope", retry: false, passed: false },
   { scenario: "the issuer changes", retry: false, passed: false },
+  { scenario: "the user declines step-up", retry: false, passed: false },
 ])("$scenario", async ({ scenario, retry, passed }) => {
+  const declined = scenario === "the user declines step-up";
   const authorizations: URL[] = [];
   const calls: { token: string | null; params: unknown }[] = [];
   const challengedMetadataUrl =
@@ -154,12 +156,25 @@ it.each([
     {
       completeHeadlessAuthorization: async ({ authorizationUrl }) => {
         authorizations.push(new URL(authorizationUrl));
+        if (declined && authorizations.length === 2)
+          throw new Error("User declined additional scopes.");
         return { code: "auth-code" };
       },
     }
   );
 
-  expect(result.completed).toBe(true);
+  const failedStepUp =
+    declined ||
+    scenario === "the issuer changes" ||
+    scenario === "metadata points at a private origin";
+  expect(result.completed).toBe(!failedStepUp);
+  if (failedStepUp) {
+    expect(result.error?.message).toBeTruthy();
+    expect(result.error?.message).toBe(result.verification?.callTool?.error);
+  }
+  if (declined) {
+    expect(result.error?.message).toBe("User declined additional scopes.");
+  }
   expect(fetchedCrossOriginMetadata).toBe(
     scenario === "metadata is on another public origin"
   );
@@ -172,7 +187,7 @@ it.each([
   expect(registrations).toBe(1);
   expect(tokenExchanges).toBe(retry ? 2 : 1);
   expect(authorizations.map((url) => url.searchParams.get("scope"))).toEqual(
-    retry ? ["mcp:read", "mcp:read mcp:write"] : ["mcp:read"]
+    retry || declined ? ["mcp:read", "mcp:read mcp:write"] : ["mcp:read"]
   );
   expect(calls.map(({ token }) => token)).toEqual(
     retry
