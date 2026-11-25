@@ -13,6 +13,7 @@ import {
   type CapabilityCoverage,
 } from "./caniuse-coverage";
 import { clientLogo } from "./CaniuseSite";
+import { FieldCell } from "./host-config-comparison-matrix";
 import { SupportChip } from "./support-chip";
 
 export const RESULT_GROUPS = [
@@ -52,6 +53,8 @@ export function groupResults(coverage: CapabilityCoverage) {
     title:
       coverage.reporting && group.status === "supported"
         ? "Reported"
+        : coverage.reporting && group.status === "unsupported"
+          ? "Not reported"
         : group.title,
     clients: orderPublicClients(
       coverage.rows
@@ -171,17 +174,16 @@ export function CapabilityReference({
           {coverage.rows.map(({ subject, status }) => {
             const value = field.read(subject.config);
             const displayValue =
-              coverage.reporting && typeof value === "string"
-                ? value
-                : (!slice || slice === "any") &&
-                    Array.isArray(value) &&
-                    value.every((item) => typeof item === "string")
-                  ? value.join(", ")
-                  : "";
-            const label =
-              coverage.reporting && status === "supported"
-                ? "Reported"
-                : getCaniuseSupportLabel(status, field.id);
+              (!slice || slice === "any") &&
+              Array.isArray(value) &&
+              value.every((item) => typeof item === "string")
+                ? value.join(", ")
+                : "";
+            const label = capabilityResultLabel(
+              status,
+              field.id,
+              coverage.reporting,
+            );
             return (
               <tr key={subject.hostId}>
                 <th scope="row" className="px-4 py-2.5 font-medium">
@@ -196,6 +198,11 @@ export function CapabilityReference({
                 </th>
                 <td className="px-4 py-2.5">
                   <SupportChip level={status} label={label} />
+                  {coverage.reporting && status === "supported" && (
+                    <div className="mt-1 max-w-80">
+                      <FieldCell field={field} subject={subject} mobileOptimized />
+                    </div>
+                  )}
                   {displayValue && (
                     <span className="mt-1 block max-w-80 break-words text-xs text-muted-foreground">
                       {displayValue}
@@ -212,4 +219,14 @@ export function CapabilityReference({
       </table>
     </div>
   );
+}
+
+export function capabilityResultLabel(
+  status: CapabilityCoverage["rows"][number]["status"],
+  fieldId: string | undefined,
+  reporting: boolean,
+) {
+  if (reporting && status === "supported") return "Reported";
+  if (reporting && status === "unsupported") return "Not reported";
+  return getCaniuseSupportLabel(status, fieldId);
 }

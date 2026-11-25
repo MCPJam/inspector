@@ -602,7 +602,7 @@ function FieldRow({
   );
 }
 
-function FieldCell({
+export function FieldCell({
   field,
   subject,
   mobileOptimized,

@@ -42,9 +42,11 @@ export function capabilityCoverage(
         return {
           subject,
           status:
-            value != null && value !== NOT_SUPPORTED && value !== ""
-              ? ("supported" as const)
-              : ("unknown" as const),
+            value === NOT_SUPPORTED
+              ? ("unsupported" as const)
+              : value != null && value !== ""
+                ? ("supported" as const)
+                : ("unknown" as const),
         };
       if (
         field.id === PROTOCOL ||

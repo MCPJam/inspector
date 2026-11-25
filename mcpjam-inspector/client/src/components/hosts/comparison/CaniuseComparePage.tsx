@@ -323,23 +323,17 @@ function MatrixAdoption({
       : `${overall.score}% ${overall.reporting ? "reported" : "adoption"}`;
   return (
     <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-      {overall.reporting || field.id === "supportedProtocolVersions" ? (
-        <span className="rounded border border-border bg-muted px-1.5 font-semibold text-foreground">
-          {label}
-        </span>
-      ) : (
-        <Link
-          to={path}
-          className="rounded border border-border bg-muted px-1.5 font-semibold text-foreground hover:border-primary"
-          title={
-            overall.score === null
-              ? "No published results"
-              : `${overall.full} of ${overall.measured} clients support this capability`
-          }
-        >
-          {label}
-        </Link>
-      )}
+      <Link
+        to={path}
+        className="rounded border border-border bg-muted px-1.5 font-semibold text-foreground hover:border-primary"
+        title={
+          overall.score === null
+            ? "No published results"
+            : `${overall.full} of ${overall.measured} clients ${overall.reporting ? "reported a value" : "support this capability"}`
+        }
+      >
+        {label}
+      </Link>
       {slices.map(({ slice, score }) => (
         <Link
           key={slice}

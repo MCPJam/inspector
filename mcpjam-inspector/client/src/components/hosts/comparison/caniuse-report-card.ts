@@ -44,6 +44,8 @@ export function shareResultLabel(
       return count === 1 ? "1 reports a value" : `${count} report a value`;
     return count === 1 ? "1 supports" : `${count} support`;
   }
+  if (status === "unsupported" && reporting)
+    return count === 1 ? "1 didn’t report a value" : `${count} didn’t report a value`;
   if (status === "unsupported")
     return count === 1 ? "1 doesn’t support" : `${count} don’t support`;
   return `${count} with partial support`;
