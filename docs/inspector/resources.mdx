@@ -1,0 +1,54 @@
+---
+title: "Resources"
+description: "Browse and read MCP resources, test resource templates, and watch resource subscriptions."
+icon: "book-open"
+---
+
+Use the **Resources** tab to check what data your server makes available and what it returns for a specific URI.
+
+1. [Connect your server](/inspector/connecting-servers) and open **Inspect** → **Resources**. Select the server you want to test.
+2. Select a resource to inspect its name, URI, and MIME type. Read it to see the content returned by the server.
+3. In the local Inspector, you can also select a resource template, fill in its URI parameters, and click **Read Resource** to check the resolved URI and content.
+4. Open the [traffic log](/inspector/debugging#json-rpc-logging) to see the underlying `resources/list`, `resources/templates/list`, or `resources/read` exchange.
+
+If a resource read returns `input_required` on MCP 2026-07-28, answer the [input dialog](/inspector/tools#multi-round-input-mcp-2026-07-28-input_required). Inspector retries the read with your answers.
+
+## Subscription stream panel
+
+When connected to a local server, the Resources tab shows a **Subscriptions** panel at the bottom. The panel lets you observe and control the subscription lifecycle the local manager owns.
+
+<Note>
+The subscription panel is only available in local (non-hosted) mode and only when a server is connected.
+</Note>
+
+The panel branches on the negotiated protocol era:
+
+**Modern era (`subscriptions/listen`, MCP 2026-07-28)**
+
+The server supports a single `subscriptions/listen` stream. Because a listen filter is immutable for the life of a subscription, changing the desired filter closes the current stream and opens a new one automatically. The panel shows:
+
+- **Desired filter**: checkboxes for `tools/list_changed`, `prompts/list_changed`, and `resources/list_changed`, plus per-URI watch toggles for each resource. Toggling any checkbox posts the new desired interests; the coordinator performs the close and reopen.
+- **Stream details**: status (`Opening`, `Active`, `Closed by server (graceful)`, `Connection lost (remote close)`, `Cancelled locally`, `Error`), the MCP subscription id and whether it was `reported` or `observed`, the requested filter next to the acknowledged filter, any interests the server did not honor, the close reason, and the re-listen attempt count.
+- **Cancel stream**: ends the current stream as a local abort.
+
+**Legacy era (`resources/subscribe`)**
+
+The server uses per-URI subscribe RPCs. The panel shows the same stream details but replaces the desired-filter checkboxes with per-URI **Subscribe** / **Unsubscribe** buttons backed by `resources/subscribe` and `resources/unsubscribe`.
+
+**History**
+
+Both eras append a History log below the stream list. Each entry records the kind of transition:
+
+| Entry kind | Meaning |
+|---|---|
+| `opened` | A new stream was requested |
+| `acknowledged` | The server confirmed the filter |
+| `reconnected` | A re-listen attempt was made |
+| `closed-graceful` | The server closed the stream gracefully |
+| `closed-remote` | The connection was lost (remote close) |
+| `cancelled` | The stream was cancelled locally |
+| `error` | The stream ended with an error |
+| `notification` | A subscription notification arrived |
+| `rejected` | A notification arrived for an interest the server did not agree to send |
+
+Graceful and remote closes are always distinct entries. They are never flattened into a single "disconnected" event. Rejected notifications are shown rather than silently dropped, so you can see the absence the server chose.

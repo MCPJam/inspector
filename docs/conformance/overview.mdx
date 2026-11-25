@@ -1,0 +1,40 @@
+---
+title: "Overview"
+description: "Run MCP conformance checks against your server and see which protocol requirements it meets."
+icon: "shield-check"
+---
+
+Conformance checks how your MCP server behaves against a selected protocol revision. MCPJam connects to the server, makes requests, and checks the responses against the rules for that revision. Run it after changing your server's transport, capabilities, authentication, or extensions to see which behavior you need to fix.
+
+To test whether a model and client use your server to satisfy a user's request, use [Evaluate](/evaluate/overview). To try individual operations interactively, use the [Inspector guides](/inspector/tools-prompts-resources).
+
+## What Conformance checks
+
+| Suite | What it checks |
+| --- | --- |
+| **Protocol** | Connection and discovery, advertised capabilities, and core operations such as listing tools, resources, and prompts. |
+| **Apps** | MCP App tools, their UI metadata, and the HTML resources they reference. |
+| **Tasks** | Task creation and lifecycle behavior, using the task protocol the server offers. |
+| **OAuth** | Authorization discovery, client registration where applicable, and making an authorized MCP request. |
+
+Protocol and OAuth require an HTTP endpoint. In the local Inspector, Apps and Tasks can also run against a STDIO server. The checks that apply depend on the protocol version, the server's capabilities, and the inputs you supply.
+
+## Run your first check in Inspector
+
+1. [Add your server](/inspector/connecting-servers). Use the local Inspector for a server running on your machine.
+2. In the sidebar, open **Verify** → **Conformance** and click **Run conformance checks**.
+3. Choose your server and a protocol version. Use **Auto (negotiated)** to let MCPJam resolve the version, or choose a specific revision to test it directly. Click **Continue**.
+4. Select your suites and checks. Some checks ask for input, such as a tool name and arguments. Use a test tool you can safely call again when you rerun the checks.
+5. Click **Run conformance checks**. If you selected OAuth and are prompted to sign in, complete the authorization flow to continue those checks.
+
+If MCPJam can't connect, use **Sign in** if prompted, or **Edit connection** to check the server URL and authentication settings before retrying.
+
+## Read your results
+
+Expand a suite, then a check, to see what MCPJam expected and the details it captured. Start with failed checks. If a check could not run, its details explain what prevented it from running, such as missing input or a timeout. A suite can also be inapplicable, such as OAuth on an endpoint that requires no sign-in. **Advice** highlights recommendations outside the conformance score.
+
+After fixing an issue, rerun the checks with the same protocol version and inputs. For runs saved in a project, open **History** to return to the results. Filter by server or search by protocol version.
+
+## Run Conformance in CI
+
+Use [`mcpjam conformance run`](/cli/reference#conformance-run) from a shell or CI. It can produce JSON or JUnit XML reports. To run checks from a TypeScript test suite, see the [Protocol](/sdk/reference/protocol-conformance), [Apps](/sdk/reference/apps-conformance), [Tasks](/sdk/reference/tasks-conformance), and [OAuth](/sdk/reference/oauth-conformance) SDK references.

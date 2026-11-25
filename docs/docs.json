@@ -86,9 +86,17 @@
                 ]
               },
               {
-                "group": "Inspect your server",
+                "group": "Inspector",
                 "icon": "search",
-                "pages": ["inspector/tools-prompts-resources", "inspector/debugging"]
+                "pages": [
+                  "inspector/tools-prompts-resources",
+                  "inspector/tasks",
+                  "inspector/tools",
+                  "inspector/resources",
+                  "inspector/prompts",
+                  "inspector/skills",
+                  "inspector/debugging"
+                ]
               }
             ]
           },
@@ -132,6 +140,11 @@
             ]
           },
           {
+            "group": "Conformance",
+            "icon": "shield-check",
+            "pages": ["conformance/overview"]
+          },
+          {
             "group": "Configure",
             "icon": "settings",
             "pages": [
@@ -142,7 +155,6 @@
                 "pages": ["inspector/projects", "inspector/home"]
               },
               "inspector/protocol-versions",
-              "inspector/skills",
               {
                 "group": "Use with other tools",
                 "icon": "plug",
