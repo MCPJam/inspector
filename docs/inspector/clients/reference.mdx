@@ -1,0 +1,90 @@
+---
+title: "Clients reference"
+sidebarTitle: "Reference"
+description: "Every client setting and its effect, plus who can change clients, sharing, servers for evals, and comparing hosts."
+icon: "user-cog"
+hideFooterPagination: true
+---
+
+Look up a client setting here. To create your first client, see [Clients](/inspector/clients).
+
+In the app, clients are also called hosts, for example in the **Compare** view and its URL. Built-in clients such as ChatGPT Desktop or Claude Desktop come from templates; [Host presets](/inspector/host-templates) explains what each template captures.
+
+## Where clients live
+
+In the sidebar, select **Connect**. The top of the page switches between **Servers** and **Client**, and has a **Compare** view.
+
+- **Client view:** **Add client** opens the **New Client** dialog. Select the switcher next to it to change the active client.
+- **Servers view:** the same switcher, plus the project's servers.
+- The client view shows a diagram of the client on the left and its settings on the right, in four tabs: **Agent**, **MCP Protocol**, **Apps** and **Tools**. When the browser tool is available to your account, a **Browser** tab also appears.
+
+## Agent tab
+
+How the model works with tools during a chat.
+
+- **Model** and **Reasoning effort**: the model the client runs, and how hard it thinks.
+- **Temperature.**
+- **Require tool approval**: pauses before tool calls so you can approve or deny each one. It only raises the bar: some calls always pause, and read-only lookups of your own project never do.
+- **Respect tool visibility**: honors the SEP-1865 `_meta.ui.visibility` field. When on, tools whose visibility is `["app"]` are hidden from the model. When off, every tool goes to the model, like hosts that don't filter by visibility.
+- **Progressive tools** (`Auto`, `On`, `Off`): when on, the model gets `search_mcp_tools` and `load_mcp_tools` instead of the full tool list and loads only the tools it needs. **Auto** turns it on once the client has about 30 tools, 10k tokens of tool definitions, or 3% of the model's context window; **On** always uses it; **Off** never does.
+- **MCP tool-result images** and **UI placement**: whether images in tool results reach the model and where previews appear.
+
+## MCP Protocol tab
+
+What MCPJam advertises when it connects to your server, and how it handles requests.
+
+- **Supported protocol versions**: the versions the client offers. The first is sent as `protocolVersion`; the rest form the accept set.
+- **`clientInfo`**: the `name`, `version` and other fields sent in `initialize`. Match a real host's identifier when your server branches on it.
+- **Client capabilities**: the capabilities object sent in `initialize` (sampling, roots, elicitation, extensions). Turn one off to test what your server does without it.
+- **Elicitation**: off removes the `elicitation` key. On advertises `{ form: {} }`; the **URL mode** option adds `{ url: {} }`.
+- **Advertise EMA support by default**: EMA is enterprise-managed authorization. This adds the `io.modelcontextprotocol/enterprise-managed-authorization` extension to the stored capabilities. Connections configured for XAA (cross-app access) always advertise it; see [XAA Debugger](/inspector/xaa-debugger).
+- **Mirror tool params into `Mcp-Param-*` headers (SEP-2243)**: **Mirror** (default) copies tool arguments marked `x-mcp-header` into `Mcp-Param-{Name}` headers on `tools/call`, as MCP 2026-07-28 requires. **Omit** simulates a client that doesn't, so you can see your server's response (a conforming server answers `-32020 HeaderMismatch`).
+- **Mid-session sign-in**: how the client reacts when one call asks for sign-in (an HTTP `401`, or a tool result with `_meta["mcp/www_authenticate"]`): **Prompt to sign in**, **Notify** or **Pass through**. See [Mid-session sign-in](/inspector/lazy-authentication).
+- **Request timeout**: in milliseconds, applies to every MCP call. The default is `10000`. **Default headers**: added to every HTTP request.
+
+### Per-server overrides
+
+To change the timeout or headers for one server only, open **Servers**, select the server's **⋯** menu, choose **Configure**, and expand **Connection overrides**. Other servers keep the client's defaults. See [Request timeout](/inspector/connecting-servers#request-timeout).
+
+## Apps tab
+
+How the client renders and sandboxes MCP App views (`ui://` resources). These settings only matter when your server returns a view.
+
+- **MCP App support**: advertises the MCP UI extension (`io.modelcontextprotocol/ui`). Views render only when the advertised extension includes `text/html;profile=mcp-app` in `mimeTypes`; the built-in templates do.
+- **`app.*` capabilities**: the host capabilities sent in `ui/initialize`, such as `openLinks`, `serverTools`, `serverResources`, `logging`, `updateModelContext` and `message`. Templates follow each host's published set.
+- **Display modes**: which of `inline`, `fullscreen` and `pip` the client offers, and how it answers a view's display-mode requests.
+- **Inject window.openai**: adds the OpenAI Apps SDK `window.openai` shim to the view. On by default for ChatGPT, Copilot and MCPJam templates; off for Claude and Cursor.
+- **Browser storage** and **Same-origin app iframe**: when off, the view runs with no origin, so storage throws and fetches send `Origin: null`.
+- **Widget tool results**: which parts of a tool result (structured content, content, text, audio) reach a view that called the tool. Turn one off to emulate a host that drops it.
+- **OpenAI plugin extensions**: which ChatGPT plugin extensions the client offers (Sidebar Apps, Conversation panels, File viewers, Forms and others). ChatGPT and Codex templates turn all of them on; Claude templates turn on Sidebar Apps and Display modes.
+- **Sandbox**: CSP mode, CSP restrictions per directive, custom CSP directives, and the Permissions Policy (`camera`, `microphone`, `geolocation`, `clipboard-write`).
+- **Style tokens**: the theme variables the client passes to views.
+
+## Tools tab
+
+Built-in tools the client offers in addition to your MCP servers, such as web search. Check a tool to make it available in every chat that uses this client.
+
+## Browser tab
+
+Appears only when the browser tool is available to your account, or when the client already has a browser set up.
+
+- **Browser**: turns the browser tool on or off for every chat that uses this client.
+- **Browser profile**: optionally pins a saved browser profile. Without one, new chats use your own default profile.
+
+## Managing clients
+
+- **Create**: **Add client** → pick a template or start empty → **Create**.
+- **Who can change clients**: only project **Admins** can create, edit, duplicate or delete clients. **Editors** can use them. An Admin changes your role from the project's **Share** dialog; see [Sharing Projects](/inspector/projects#sharing-projects).
+- **Duplicate** a client to make a variant without changing the original.
+- **Delete** can be disabled for two reasons, shown as the button's tooltip:
+  - "You need at least one client.": it's the project's last client. Create another client first.
+  - "In use by a test suite.": an eval suite still runs on it. Open each suite's **Suite settings** and remove the client under **Where it runs**. See [Run a suite](/evaluate/run-a-suite).
+- Clients belong to the project. Everyone in a shared project sees the same list, and saves sync.
+
+## Servers for evals
+
+Each client in an eval suite connects its own server group, chosen in **Suite settings** under **Where it runs**. A client with no server group connects no servers, so the run won't start. See [How evals work](/evaluate/how-evals-work).
+
+## Comparing hosts
+
+The **Compare** view shows several clients side by side, so you can spot differences in capabilities, sandbox policies and protocol settings. Toggle the clients you want; the URL updates with a `?hosts=` list of them. Copy the URL to share that comparison with anyone in the same project.
