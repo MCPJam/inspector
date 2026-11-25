@@ -88,6 +88,10 @@ describe("CaniuseComparePage", () => {
       name: "Search capabilities",
     });
     expect(search).toHaveValue("Elicitation");
+    expect(screen.getByRole("link", { name: "By MCPJam" })).toHaveAttribute(
+      "href",
+      "https://www.mcpjam.com/",
+    );
     expect(
       screen.getByRole("button", { name: "Replace Claude" }),
     ).toBeInTheDocument();

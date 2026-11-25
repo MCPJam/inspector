@@ -73,11 +73,16 @@ export function CaniuseSite({
         </div>
       </header>
       <main className="caniuse-wrap pb-10">{children}</main>
-      {footer && (
-        <footer className="caniuse-wrap flex flex-wrap items-center gap-4 pb-8 text-muted-foreground">
-          {footer}
-        </footer>
-      )}
+      <footer className="caniuse-wrap flex flex-wrap items-center gap-4 pb-8 text-muted-foreground">
+        {footer}
+        <a
+          href="https://www.mcpjam.com/"
+          className="ml-auto inline-flex items-center gap-1.5 rounded-sm text-sm hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+        >
+          <span>By</span>
+          <img src="/mcp_jam_dark.png" alt="MCPJam" width="84" height="14" />
+        </a>
+      </footer>
     </div>
   );
 }
