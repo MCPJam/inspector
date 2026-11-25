@@ -2,6 +2,7 @@ import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
 import { describe, expect, it } from "vitest";
 import {
   hostConfigField,
+  NOT_SUPPORTED,
   type HostComparisonSubject,
 } from "@/lib/host-config-field-schema";
 import { capabilityCoverage, capabilitySlices } from "../caniuse-coverage";
@@ -11,6 +12,16 @@ const { subjects } = buildPresetCompareEntries(bundledHostCompatCatalog());
 const clients = Object.values(subjects);
 
 describe("caniuse adoption", () => {
+  it("distinguishes missing observations from styles measured as absent", () => {
+    const field = {
+      ...hostConfigField("styles.--color-background-primary"),
+      read: (config: HostComparisonSubject["config"]) =>
+        config.id === "preset:claude" ? NOT_SUPPORTED : undefined,
+    };
+    const result = capabilityCoverage(field, [subjects["preset:claude"], subjects["preset:cursor"]]);
+    expect(result.rows.map(({ status }) => status)).toEqual(["unsupported", "unknown"]);
+  });
+
   it("leaves unmeasured CSP subtypes out of the adoption denominator", () => {
     const field = hostConfigField("appsCap.cspConnectDomains.fetch");
     expect(

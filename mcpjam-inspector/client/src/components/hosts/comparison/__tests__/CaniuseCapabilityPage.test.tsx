@@ -8,6 +8,11 @@ vi.mock("@/lib/host-compat/use-host-catalog", async () => {
   return { useHostCatalog: () => ({ catalog: bundledHostCompatCatalog() }) };
 });
 
+vi.mock("../caniuse-report-card", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../caniuse-report-card")>()),
+  drawCaniuseReportCard: vi.fn().mockResolvedValue(undefined),
+}));
+
 function renderCapability(slug: string, search = "") {
   return render(
     <MemoryRouter initialEntries={[`/capabilities/${slug}${search}`]}>
@@ -46,7 +51,7 @@ describe("CaniuseCapabilityPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("restores a mode from the URL and shares the same mode on X and LinkedIn", () => {
+  it("restores a mode from the URL, shares the same mode and prepares the PNG", async () => {
     renderCapability("event-delivery", "?slice=poll&view=reference");
     expect(screen.getByRole("button", { name: /poll/i })).toHaveAttribute(
       "aria-pressed",
@@ -54,6 +59,8 @@ describe("CaniuseCapabilityPage", () => {
     );
     expect(screen.getByRole("table")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    const download = await screen.findByRole("button", { name: "Download image" });
+    await vi.waitFor(() => expect(download).toBeEnabled());
 
     const url = "https://caniuse.dev/capabilities/event-delivery?slice=poll";
     for (const name of ["Post to X", "Post to LinkedIn"]) {
