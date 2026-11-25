@@ -118,7 +118,7 @@ export function SettingsTab({
             </fieldset>
             <fieldset className="space-y-4">
               <legend className="text-base font-semibold">Sidebar</legend>
-              <label className="flex cursor-pointer items-start justify-between gap-4 rounded-lg border border-input bg-background p-4 hover:bg-accent/50">
+              <label className="flex cursor-pointer items-start justify-between gap-4">
                 <span className="space-y-1">
                   <span className="block text-sm font-medium">
                     Auto-collapse sidebar
