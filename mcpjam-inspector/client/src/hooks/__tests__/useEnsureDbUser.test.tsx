@@ -11,7 +11,7 @@ import {
 import { setSessionPrivacy } from "@/lib/session-privacy";
 
 const mockState = vi.hoisted(() => ({
-  socketSubject: undefined as string | undefined,
+  socketSubject: undefined as string | null | undefined,
   actorKey: "guest-1" as string | null,
   auth: {
     user: null as {
@@ -42,7 +42,7 @@ const mockState = vi.hoisted(() => ({
 
 vi.mock("@/stores/session-refresh-store", () => ({
   useSessionRefreshStore: (select: (state: { confirmedSubject: string | null }) => unknown) =>
-    select({ confirmedSubject: mockState.socketSubject ?? mockState.auth.user?.id ?? null }),
+    select({ confirmedSubject: mockState.socketSubject === undefined ? mockState.auth.user?.id ?? null : mockState.socketSubject }),
 }));
 
 vi.mock("convex/react", () => ({
@@ -114,6 +114,30 @@ describe("useEnsureDbUser", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
+  });
+
+  it("keeps completed setup across refresh but waits for confirmation after switching accounts", async () => {
+    mockState.auth.user = { id: "first" };
+    const { result, rerender } = renderHook(() => useEnsureDbUser());
+    await waitFor(() => expect(result.current.isUserReady).toBe(true));
+    mockState.socketSubject = null;
+    rerender();
+    expect(result.current.isUserReady).toBe(true);
+    mockState.socketSubject = "first";
+    rerender();
+    expect(result.current.isUserReady).toBe(true);
+    expect(mockState.ensureUser).toHaveBeenCalledTimes(1);
+
+    mockState.socketSubject = null;
+    mockState.auth.user = { id: "second" };
+    rerender();
+    await act(async () => {});
+    expect(result.current.isUserReady).toBe(false);
+    expect(mockState.ensureUser).toHaveBeenCalledTimes(1);
+    mockState.socketSubject = "second";
+    rerender();
+    await waitFor(() => expect(result.current.isUserReady).toBe(true));
+    expect(mockState.ensureUser).toHaveBeenCalledTimes(2);
   });
 
   it("waits for the socket to confirm the signed-in account", async () => {

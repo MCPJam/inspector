@@ -211,11 +211,16 @@ export function useEnsureDbUser() {
   const confirmedSubject = useSessionRefreshStore(
     (state) => state.confirmedSubject
   );
+  const workosKey = workosUserId ? `workos:${workosUserId}` : null;
+  // A refresh can briefly clear the socket subject after setup has succeeded.
+  const workosSetupConfirmed =
+    confirmedSubject === workosUserId ||
+    (confirmedSubject === null && ensuredIdentityKey === workosKey);
   const identityKey =
     !isLoading && isAuthenticated
       ? workosUserId
-        ? confirmedSubject === workosUserId
-          ? `workos:${workosUserId}`
+        ? workosSetupConfirmed
+          ? workosKey
           : null
         : actorKey
         ? `guest:${actorKey}`
