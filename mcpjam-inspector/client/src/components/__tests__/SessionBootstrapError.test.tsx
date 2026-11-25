@@ -14,7 +14,7 @@ import { SessionTokenError } from "@/lib/session-token";
 describe("resolveBootstrapErrorScreen", () => {
   it("403 host-denial: renders NetworkAccessError and does not report", () => {
     const { report, element } = resolveBootstrapErrorScreen(
-      new SessionTokenError(403),
+      new SessionTokenError(403, { code: "HOST_NOT_ALLOWED" }),
     );
 
     expect(report).toBe(false);
@@ -26,16 +26,41 @@ describe("resolveBootstrapErrorScreen", () => {
 
   it("access link required: renders AccessRequired and does not report", () => {
     const { report, extra } = resolveBootstrapErrorScreen(
-      new SessionTokenError(401, "ACCESS_LINK_REQUIRED"),
+      new SessionTokenError(401, { code: "ACCESS_LINK_REQUIRED" }),
     );
 
     expect(report).toBe(false);
     expect(extra).toBeUndefined();
   });
 
+  it("ACCESS_LINK_REQUIRED on a 200: reports it instead of asking for the link", () => {
+    const { report, element, extra } = resolveBootstrapErrorScreen(
+      new SessionTokenError(200, {
+        code: "ACCESS_LINK_REQUIRED",
+        contentType: "application/json",
+      }),
+    );
+
+    expect(report).toBe(true);
+    expect(extra).toEqual({ httpStatus: 200, contentType: "application/json" });
+    render(element);
+    expect(screen.getByText("MCPJam couldn't start")).toBeInTheDocument();
+  });
+
+  it("403 page from another program: reports it instead of the network screen", () => {
+    const { report, element, extra } = resolveBootstrapErrorScreen(
+      new SessionTokenError(403, { contentType: "text/html" }),
+    );
+
+    expect(report).toBe(true);
+    expect(extra).toEqual({ httpStatus: 403, contentType: "text/html" });
+    render(element);
+    expect(screen.getByText("MCPJam couldn't start")).toBeInTheDocument();
+  });
+
   it("non-Inspector answer: reports its status and content type (PLB-523)", () => {
     const { report, extra } = resolveBootstrapErrorScreen(
-      new SessionTokenError(502, undefined, true, "text/html"),
+      new SessionTokenError(502, { restarted: true, contentType: "text/html" }),
     );
 
     expect(report).toBe(true);

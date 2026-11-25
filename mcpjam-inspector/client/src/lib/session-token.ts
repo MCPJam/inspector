@@ -32,50 +32,22 @@ import {
   rememberAccessToken,
   isAccessToken,
 } from "./access-link";
-import { readAccessAnswer } from "./access-answer";
+import {
+  isAccessLinkRequired,
+  readAccessAnswer,
+  SessionTokenError,
+} from "./access-answer";
+
+// Session-token errors live beside the answer they classify; importers keep
+// reading them from here.
+export {
+  SessionTokenError,
+  isAccessLinkRequired,
+  isSessionTokenHostDenied,
+} from "./access-answer";
 
 let cachedToken: string | null = null;
 let initPromise: Promise<string> | null = null;
-
-/**
- * Error thrown when `/api/session-token` responds non-OK, carrying the HTTP
- * status so the bootstrap can tell the EXPECTED host-denial (403) apart from a
- * genuine failure.
- *
- * A 403 here is not a bug: the server withholds the token from any host that
- * isn't localhost or in `MCPJAM_ALLOWED_HOSTS` (see server/utils/localhost-check.ts).
- * A self-hosted user reaching the inspector over the network hits exactly this,
- * and it has a self-service fix (allowlist their host) — so it gets a tailored
- * screen and is NOT reported to Sentry, unlike a real 5xx/transport failure.
- */
-export class SessionTokenError extends Error {
-  readonly status: number;
-  readonly code?: string;
-  readonly restarted: boolean;
-  readonly contentType?: string;
-  constructor(
-    status: number,
-    code?: string,
-    restarted = false,
-    contentType?: string,
-  ) {
-    super(`Failed to get session token: ${status}`);
-    this.name = "SessionTokenError";
-    this.status = status;
-    this.code = code;
-    this.restarted = restarted;
-    this.contentType = contentType;
-  }
-}
-
-/**
- * Whether `error` is the expected "host not allowed" session-token denial (403).
- * These are self-inflicted-by-config, not defects: the caller renders guidance
- * instead of a generic error and skips error reporting.
- */
-export function isSessionTokenHostDenied(error: unknown): boolean {
-  return error instanceof SessionTokenError && error.status === 403;
-}
 
 type AuthFetchSurface = "scenario";
 
@@ -184,12 +156,11 @@ export async function confirmAccessToken(
   });
   const answer = await readAccessAnswer(response);
   if (!response.ok || !answer.ok || !isAccessToken(token)) {
-    throw new SessionTokenError(
-      response.status,
-      answer.code,
-      !!token,
-      answer.contentType,
-    );
+    throw new SessionTokenError(response.status, {
+      code: answer.code,
+      restarted: !!token,
+      contentType: answer.contentType,
+    });
   }
   cachedToken = token;
   rememberAccessToken(token);
@@ -213,10 +184,7 @@ export async function refreshSessionToken(): Promise<string | null> {
   try {
     return await confirmAccessToken(readAccessToken(true));
   } catch (error) {
-    if (
-      error instanceof SessionTokenError &&
-      error.code === "ACCESS_LINK_REQUIRED"
-    ) {
+    if (isAccessLinkRequired(error)) {
       window.dispatchEvent(
         new CustomEvent(ACCESS_REQUIRED_EVENT, {
           detail: { restarted: error.restarted },

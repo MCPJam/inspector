@@ -317,6 +317,19 @@ describe("session-token module", () => {
         { name: "SessionTokenError", status: 503 },
       );
     });
+    it("reports a 200 JSON answer without ok: true as SessionTokenError", async () => {
+      localStorage.setItem("mcpjam.local-access", token);
+      vi.mocked(fetch).mockResolvedValue(
+        answer(200, JSON.stringify({ ok: false }), "application/json"),
+      );
+      await expect(sessionToken.initializeSessionToken()).rejects.toMatchObject(
+        {
+          name: "SessionTokenError",
+          status: 200,
+          contentType: "application/json",
+        },
+      );
+    });
     it("accepts the Inspector's JSON answer after leading whitespace", async () => {
       localStorage.setItem("mcpjam.local-access", token);
       vi.mocked(fetch).mockResolvedValue(
@@ -337,9 +350,18 @@ describe("session-token module", () => {
   });
 
   describe("isSessionTokenHostDenied", () => {
-    it("is true for a 403 SessionTokenError (host not allowed)", async () => {
-      const error = new sessionToken.SessionTokenError(403);
+    it("is true for the Inspector's 403 HOST_NOT_ALLOWED answer", async () => {
+      const error = new sessionToken.SessionTokenError(403, {
+        code: "HOST_NOT_ALLOWED",
+      });
       expect(sessionToken.isSessionTokenHostDenied(error)).toBe(true);
+    });
+
+    it("is false for a 403 without HOST_NOT_ALLOWED (another program's page)", async () => {
+      const error = new sessionToken.SessionTokenError(403, {
+        contentType: "text/html",
+      });
+      expect(sessionToken.isSessionTokenHostDenied(error)).toBe(false);
     });
 
     it("is false for other session-token statuses", async () => {
@@ -355,6 +377,28 @@ describe("session-token module", () => {
         false,
       );
       expect(sessionToken.isSessionTokenHostDenied(undefined)).toBe(false);
+    });
+  });
+
+  describe("isAccessLinkRequired", () => {
+    it("is true for the Inspector's 401 ACCESS_LINK_REQUIRED answer", async () => {
+      expect(
+        sessionToken.isAccessLinkRequired(
+          new sessionToken.SessionTokenError(401, {
+            code: "ACCESS_LINK_REQUIRED",
+          }),
+        ),
+      ).toBe(true);
+    });
+
+    it("is false when the code arrives with another status", async () => {
+      expect(
+        sessionToken.isAccessLinkRequired(
+          new sessionToken.SessionTokenError(200, {
+            code: "ACCESS_LINK_REQUIRED",
+          }),
+        ),
+      ).toBe(false);
     });
   });
 
