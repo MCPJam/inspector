@@ -27,6 +27,10 @@ describe("CaniuseCapabilityPage", () => {
     expect(screen.getByRole("heading", { name: "Sampling" })).toBeVisible();
     expect(screen.getByRole("region", { name: "Client map" })).toBeVisible();
     expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.getByRole("link", { name: "Test this capability" })).toHaveAttribute(
+      "href",
+      "https://app.mcpjam.com/playground",
+    );
     expect(
       screen.getAllByLabelText(/Last checked \d{4}-\d{2}-\d{2}/).length,
     ).toBeGreaterThan(0);
@@ -38,6 +42,10 @@ describe("CaniuseCapabilityPage", () => {
 
   it("shows measured Events support and how many tracked clients have results", () => {
     renderCapability("event-delivery");
+    expect(screen.getByRole("link", { name: "Test this capability" })).toHaveAttribute(
+      "href",
+      "https://app.mcpjam.com/events",
+    );
     const score = within(
       screen.getByRole("region", { name: "Support among clients with results" }),
     );

@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router";
 import { ArrowUpRight, ChevronDown } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
+import { routePaths } from "@/lib/app-navigation";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { buildCaniuseCapabilitySnapshot } from "@/lib/webmcp/review-surface-snapshots";
@@ -222,18 +223,27 @@ export function CaniuseCapabilityPage({
           ))}
         </nav>
         <div className="min-w-0">
-          <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
             <h1 className="min-w-0 break-words text-3xl font-bold tracking-tight sm:text-4xl">
               {title}
             </h1>
             {capability && coverage && (
-              <CaniuseShareDialog
-                key={`${capability.slug}/${selected}`}
-                title={title}
-                slug={capability.slug}
-                slice={selected}
-                coverage={coverage}
-              />
+              <div className="flex flex-wrap items-center gap-2">
+                <Button asChild variant="outline">
+                  <a
+                    href={`https://app.mcpjam.com${capability.field.id === "eventsDeliveryModes" ? routePaths.events : routePaths.playground}`}
+                  >
+                    Test this capability <ArrowUpRight className="size-4" />
+                  </a>
+                </Button>
+                <CaniuseShareDialog
+                  key={`${capability.slug}/${selected}`}
+                  title={title}
+                  slug={capability.slug}
+                  slice={selected}
+                  coverage={coverage}
+                />
+              </div>
             )}
           </div>
           {capability && coverage ? (
@@ -324,16 +334,9 @@ export function CaniuseCapabilityPage({
                 className="mt-4 rounded-xl border border-border bg-card p-3 sm:p-5"
                 aria-labelledby="caniuse-map-heading"
               >
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-                  <h2 id="caniuse-map-heading" className="text-xl font-bold tracking-tight">
-                    Client map
-                  </h2>
-                  <Button asChild variant="ghost" size="sm" className="-ml-2 sm:ml-0">
-                    <a href="https://app.mcpjam.com">
-                      Verify against your server <ArrowUpRight className="size-3.5" />
-                    </a>
-                  </Button>
-                </div>
+                <h2 id="caniuse-map-heading" className="mb-3 text-xl font-bold tracking-tight">
+                  Client map
+                </h2>
                 <ClientMap coverage={coverage} />
               </section>
             </>
