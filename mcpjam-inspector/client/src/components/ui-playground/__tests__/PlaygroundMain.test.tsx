@@ -4539,8 +4539,9 @@ describe("PlaygroundMain", () => {
       const hint = screen.getByTestId("playground-send-nux-hint");
       const chatInput = screen.getByTestId("chat-input");
       expect(hint).toHaveTextContent(
-        "Try this prompt with Excalidraw and compare across clients"
+        "Try this prompt and compare across clients"
       );
+      expect(hint).not.toHaveTextContent("Excalidraw");
       expect(hint.closest('[data-testid="chat-input"]')).toBeNull();
       expect(
         chatInput.compareDocumentPosition(hint) &
@@ -4558,6 +4559,22 @@ describe("PlaygroundMain", () => {
         <PlaygroundMain
           {...defaultProps}
           initialInput="Draw me an MCP architecture diagram"
+          initialInputTypewriter={true}
+          blockSubmitUntilServerConnected={true}
+        />
+      );
+
+      expect(screen.getByTestId("playground-send-nux-hint")).toHaveTextContent(
+        "Try this prompt and compare across clients"
+      );
+    });
+
+    it("names Excalidraw in the send NUX hint only for the Excalidraw demo server", () => {
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          serverName="Excalidraw (App)"
+          initialInput="What can this server do?"
           initialInputTypewriter={true}
           blockSubmitUntilServerConnected={true}
         />
