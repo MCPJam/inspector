@@ -6,7 +6,7 @@ Start from the failed runs behind a `climbFor` option, not from a list of ideas.
 |---|---|---|
 | The model picked the wrong tool, or none (`selection`) | The tool's `description`: say when to use it and when not to, in the words the case's prompt uses | Descriptions are read by every client. Cheapest and safest first change. |
 | The model called the right tool with wrong arguments (`arguments`) | The parameter's description (`params.<name>.description`) or the input schema | Hide a parameter only if it is never the caller's to set; `fixed` sends a value on every call. Hiding a required parameter without fixing it is refused. |
-| The tool answered, the answer was not what the user wanted (`serverData`, `userValue`) | A tool result needs saved answers, which are not built yet. Change the description to set expectations, or the instructions | Say so rather than faking it. |
+| The tool answered, the answer was not what the user wanted (`serverData`, `userValue`) | A saved answer for that input (`tools.<name>.answer` with `from: "saved"` and its `cases`), to test what a better result would do; or the description, to set expectations | A saved answer shows what to build; the server's code still has to return it. |
 | Too many tokens, cost or tool calls with every case passing | Hide tools no case calls; shorten descriptions that do not change behavior | Climb for the measure, not pass rate. Check the round's pass rate did not move. |
 | A case expects a tool the server does not list | Not a mock change. Tell the person the server lacks it | `missing_capability` in `climbFor`. |
 
