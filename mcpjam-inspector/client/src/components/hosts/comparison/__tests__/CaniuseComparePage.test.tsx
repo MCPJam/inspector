@@ -47,6 +47,11 @@ describe("CaniuseComparePage", () => {
       </MemoryRouter>,
     );
     const score = screen.getByRole("link", { name: /% of \d+ with results/ });
+    const adoptionHeader = screen.getByRole("columnheader", {
+      name: "Client adoption",
+    });
+    expect(screen.getAllByRole("columnheader")[1]).toBe(adoptionHeader);
+    expect(score.closest("tr")?.children[1]).toContainElement(score);
     expect(score).toHaveAttribute(
       "title",
       expect.stringMatching(
@@ -104,7 +109,7 @@ describe("CaniuseComparePage", () => {
     ).toBeInTheDocument();
     const adoption = () =>
       within(screen.getByRole("table"))
-        .getAllByRole("link", { name: /% adoption/ })
+        .getAllByRole("link", { name: /^\d+%$/ })
         .find(
           (link) => link.getAttribute("href") === "/capabilities/elicitation",
         );

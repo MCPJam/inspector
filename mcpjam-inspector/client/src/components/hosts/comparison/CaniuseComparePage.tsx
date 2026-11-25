@@ -300,11 +300,16 @@ export function CaniuseComparePage() {
                 mobileOptimized
                 verifyBaseUrl="https://app.mcpjam.com"
                 disabledVerifyTemplateIds={FLAG_GATED_HOST_IDS}
-                renderFieldSummary={(field) => {
-                  const summary = summaries.get(field.id);
-                  return (
-                    summary && <MatrixAdoption field={field} summary={summary} />
-                  );
+                summaryColumn={{
+                  label: "Client adoption",
+                  render: (field) => {
+                    const summary = summaries.get(field.id);
+                    return (
+                      summary && (
+                        <MatrixAdoption field={field} summary={summary} />
+                      )
+                    );
+                  },
                 }}
               />
             </div>
@@ -334,9 +339,9 @@ function MatrixAdoption({
       ? "No results"
       : overall.eventsMode
         ? `${overall.score}% of ${overall.measured} with results`
-        : `${overall.score}% ${overall.reporting ? "reported" : "adoption"}`;
+        : `${overall.score}%${overall.reporting ? " reported" : ""}`;
   return (
-    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+    <div className="flex flex-col items-center gap-0.5 text-xs tabular-nums text-muted-foreground">
       {overall.reporting || field.id === "supportedProtocolVersions" ? (
         <span className="font-bold text-primary">
           {label}
@@ -357,7 +362,7 @@ function MatrixAdoption({
         </Link>
       )}
       {slices.map(({ slice, score }) => (
-        <span key={slice} className="px-1">
+        <span key={slice} className="text-[11px]">
           {sliceLabel(slice)} {score === null ? "–" : `${score}%`}
         </span>
       ))}
