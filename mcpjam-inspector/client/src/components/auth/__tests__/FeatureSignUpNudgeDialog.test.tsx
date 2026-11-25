@@ -18,6 +18,7 @@ import {
 } from "@/lib/permalink-signin-return";
 import { track } from "@/lib/analytics";
 import { readAppSignInReturnPath } from "@/lib/app-signin-return-path";
+import { consumePendingSignUpToast } from "@/lib/pending-signup-toast";
 import { GATED_FEATURE_COPY } from "@/components/guest-preview/feature-highlights";
 import { expectLegalConsentLinks } from "@/test/legal-consent";
 import { FeatureSignUpNudgeDialog } from "../FeatureSignUpNudgeDialog";
@@ -139,6 +140,27 @@ describe("FeatureSignUpNudgeDialog", () => {
       "sign_up_button_clicked",
       expect.objectContaining({ location: "swarms_guest_preview" }),
     );
+  });
+
+  // Same confirmation as the sidebar sign-up card: the app-wide toast shows
+  // "Account created" only for an account made after this click.
+  it("Create free account leaves the sign-up toast marker; Sign in does not", () => {
+    let markedBeforeNavigation: number | null = null;
+    signUpMock.mockImplementation(() => {
+      markedBeforeNavigation = consumePendingSignUpToast();
+    });
+    const { unmount } = render(
+      <FeatureSignUpNudgeDialog feature="swarms" isOpen onClose={vi.fn()} />,
+    );
+    screen.getByRole("button", { name: "Create free account" }).click();
+    expect(markedBeforeNavigation).not.toBeNull();
+    unmount();
+
+    render(
+      <FeatureSignUpNudgeDialog feature="swarms" isOpen onClose={vi.fn()} />,
+    );
+    screen.getByRole("button", { name: "Sign in" }).click();
+    expect(consumePendingSignUpToast()).toBeNull();
   });
 
   it("the existing-account path returns to the swarm creation flow", () => {

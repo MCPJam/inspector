@@ -1,7 +1,7 @@
 /**
- * The sign-up sheet a guest opens from the Swarms or User Testing preview
- * (REEV-10). It needs no marker: the return path is the creation flow named
- * by its CTA, or, on a shared swarm or study permalink, that permalink itself.
+ * The sign-up sheet a guest opens from the Swarms or User Testing preview.
+ * Sign-in returns to the creation flow named by its CTA, or, on a shared swarm
+ * or study permalink, to that permalink itself.
  *
  * The ordering that matters on every button:
  *   1. writeAppSignInReturnPath(returnPath) — remember where to come back to,
@@ -29,6 +29,7 @@ import { JamIllustration } from "@/components/billing/JamIllustration";
 import { track } from "@/lib/analytics";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { writeAppSignInReturnPath } from "@/lib/app-signin-return-path";
+import { markPendingSignUpToast } from "@/lib/pending-signup-toast";
 import { buildProjectPath, parseProjectPath } from "@/lib/project-route";
 import {
   GATED_FEATURE_COPY,
@@ -89,6 +90,7 @@ export function FeatureSignUpNudgeDialog({
   const handleSignUp = () => {
     track("sign_up_button_clicked", { location });
     const returnPath = signInReturnPath(copy.createPath);
+    markPendingSignUpToast();
     writeAppSignInReturnPath(returnPath);
     signUp(permalinkSignInOptions(returnPath));
   };
