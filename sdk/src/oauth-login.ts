@@ -33,12 +33,11 @@ import type {
   ClientCredentialsResult,
   NormalizedOAuthConformanceConfig,
   OAuthConformanceConfig,
-  OAuthVerificationConfig,
   TrackedRequestFn,
   VerificationResult,
 } from "./oauth-conformance/types.js";
-import type { HttpServerConfig } from "./mcp-client-manager/index.js";
-import { listTools, withEphemeralClient } from "./operations.js";
+import { runLoginVerification } from "./oauth/login-verification.js";
+import { resolveLoginStepUpScopes } from "./oauth/login-step-up.js";
 import { discoverStatelessLoginMetadata } from "./oauth/stateless-login-discovery.js";
 import { probeMcpServer } from "./server-probe.js";
 
@@ -283,94 +282,6 @@ function mergeDynamicRegistration(
   return merged;
 }
 
-async function runVerification(
-  config: NormalizedOAuthConformanceConfig,
-  state: OAuthFlowState,
-  verificationConfig: OAuthVerificationConfig,
-): Promise<VerificationResult | undefined> {
-  if (!verificationConfig.listTools || !state.accessToken) {
-    return undefined;
-  }
-
-  const result: VerificationResult = {};
-  const verifyConfig: HttpServerConfig = {
-    url: config.serverUrl,
-    accessToken: state.accessToken,
-    requestInit: config.customHeaders
-      ? { headers: config.customHeaders }
-      : undefined,
-    timeout: verificationConfig.timeout ?? 30_000,
-    // Post-auth verification must speak the negotiated wire era. For 2026 the
-    // MCP endpoint is stateless (no initialize), so pin the transport; older
-    // OAuth flows keep the legacy default (unset) they used before.
-    ...(config.protocolVersion === "2026-07-28"
-      ? { mcpProtocolVersion: "2026-07-28" as const }
-      : {}),
-  };
-
-  try {
-    await withEphemeralClient(
-      verifyConfig,
-      async (manager, serverId) => {
-        const listStartedAt = Date.now();
-        try {
-          const toolsResult = await listTools(manager, { serverId });
-          result.listTools = {
-            passed: true,
-            toolCount: toolsResult.tools.length,
-            durationMs: Date.now() - listStartedAt,
-          };
-        } catch (error) {
-          result.listTools = {
-            passed: false,
-            durationMs: Date.now() - listStartedAt,
-            error: error instanceof Error ? error.message : String(error),
-          };
-          return;
-        }
-
-        if (!verificationConfig.callTool) {
-          return;
-        }
-
-        const callStartedAt = Date.now();
-        try {
-          await manager.executeTool(
-            serverId,
-            verificationConfig.callTool.name,
-            verificationConfig.callTool.params ?? {},
-          );
-          result.callTool = {
-            passed: true,
-            toolName: verificationConfig.callTool.name,
-            durationMs: Date.now() - callStartedAt,
-          };
-        } catch (error) {
-          result.callTool = {
-            passed: false,
-            toolName: verificationConfig.callTool.name,
-            durationMs: Date.now() - callStartedAt,
-            error: error instanceof Error ? error.message : String(error),
-          };
-        }
-      },
-      {
-        timeout: verificationConfig.timeout ?? 30_000,
-      },
-    );
-  } catch (error) {
-    if (!result.listTools) {
-      result.listTools = {
-        passed: false,
-        durationMs: 0,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-  }
-
-  return result;
-}
-
 function buildResult(
   config: NormalizedOAuthConformanceConfig,
   authorizationPlan: ResolvedAuthorizationPlan,
@@ -547,44 +458,51 @@ export async function runOAuthLogin(
     } as const;
 
     if (config.auth.mode !== "client_credentials") {
-      const flowResult = await runOAuthStateMachine({
-        ...machineConfig,
-        maxSteps: 40,
-        onAuthorizationRequest: async ({ authorizationUrl, state: flowState }) => {
-          try {
-            config.onProgress("Opening browser for authorization...");
-            const authorizationResult =
-              config.auth.mode === "interactive"
-                ? await interactiveSession!.authorize({
-                    authorizationUrl,
-                    expectedState: flowState.state,
-                    timeoutMs: config.stepTimeout,
-                    openUrl: config.auth.openUrl,
-                  })
-                : await (
-                    deps.completeHeadlessAuthorization ??
-                    completeHeadlessAuthorization
-                  )({
-                    authorizationUrl,
-                    redirectUrl,
-                    expectedState: flowState.state,
-                    request: trackedRequest,
-                  });
+      const runAuthorization = (customScopes = config.scopes) =>
+        runOAuthStateMachine({
+          ...machineConfig,
+          state: getState(),
+          customScopes,
+          maxSteps: 40,
+          onAuthorizationRequest: async ({
+            authorizationUrl,
+            state: flowState,
+          }) => {
+            try {
+              config.onProgress("Opening browser for authorization...");
+              const authorizationResult =
+                config.auth.mode === "interactive"
+                  ? await interactiveSession!.authorize({
+                      authorizationUrl,
+                      expectedState: flowState.state,
+                      timeoutMs: config.stepTimeout,
+                      openUrl: config.auth.openUrl,
+                    })
+                  : await (
+                      deps.completeHeadlessAuthorization ??
+                      completeHeadlessAuthorization
+                    )({
+                      authorizationUrl,
+                      redirectUrl,
+                      expectedState: flowState.state,
+                      request: trackedRequest,
+                    });
 
-            config.onProgress("Authorization received, exchanging token...");
-            return {
-              type: "authorization_code" as const,
-              authorizationCode: authorizationResult.code,
-            };
-          } catch (error) {
-            updateState({
-              error: error instanceof Error ? error.message : String(error),
-            });
-            throw error;
-          }
-        },
-      });
+              config.onProgress("Authorization received, exchanging token...");
+              return {
+                type: "authorization_code" as const,
+                authorizationCode: authorizationResult.code,
+              };
+            } catch (error) {
+              updateState({
+                error: error instanceof Error ? error.message : String(error),
+              });
+              throw error;
+            }
+          },
+        });
 
+      const flowResult = await runAuthorization();
       if (flowResult.error) {
         const resultState =
           flowResult.state.currentStep === "authorization_request" &&
@@ -603,21 +521,62 @@ export async function runOAuthLogin(
           redirectUrl,
           resultState,
           undefined,
-          flowResult.error.message,
+          flowResult.error.message
         );
       }
 
-      const verification = await runVerification(
-        config,
-        flowResult.state,
-        config.verification,
-      );
+      const initial = await runLoginVerification(config, flowResult.state);
+      let verification = initial.verification;
+      let resultState = flowResult.state;
+      const firstCall = verification?.callTool;
+      if (
+        config.protocolVersion === "2026-07-28" &&
+        initial.toolChallenge &&
+        firstCall
+      ) {
+        try {
+          const scopes = await resolveLoginStepUpScopes(
+            config,
+            flowResult.state,
+            initial.toolChallenge
+          );
+          if (scopes) {
+            config.onProgress("Requesting additional OAuth scopes...");
+            updateState({
+              currentStep: "received_client_credentials",
+              accessToken: undefined,
+              refreshToken: undefined,
+              authorizationResponseIss: undefined,
+            });
+            const stepUp = await runAuthorization(scopes);
+            if (!stepUp.completed) {
+              throw new Error(
+                stepUp.error?.message ?? "OAuth step-up did not complete."
+              );
+            }
+            resultState = stepUp.state;
+            ({ verification } = await runLoginVerification(
+              config,
+              resultState,
+              verification
+            ));
+          }
+        } catch (error) {
+          verification = {
+            ...initial.verification,
+            callTool: {
+              ...firstCall,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          };
+        }
+      }
       return buildResult(
         config,
         authorizationPlan,
         redirectUrl,
-        flowResult.state,
-        verification,
+        resultState,
+        verification
       );
     }
 
@@ -741,11 +700,7 @@ export async function runOAuthLogin(
     if (config.verification.listTools) {
       config.onProgress("Verifying token with server...");
     }
-    const verification = await runVerification(
-      config,
-      state,
-      config.verification,
-    );
+    const { verification } = await runLoginVerification(config, state);
     return buildResult(
       config,
       authorizationPlan,
