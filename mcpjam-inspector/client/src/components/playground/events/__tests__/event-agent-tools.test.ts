@@ -135,7 +135,7 @@ beforeEach(() => {
         },
       }),
     ),
-    edit: vi.fn(async () => undefined),
+    edit: vi.fn(async () => true),
     remove: vi.fn(),
   };
 });
@@ -205,7 +205,11 @@ describe("mcpjam_subscribe_to_events", () => {
       flightEvent,
       { arguments: trip, mode: "poll" },
       subscribeInput.prompt,
-      { title: subscribeInput.title, fromAgent: true },
+      {
+        title: subscribeInput.title,
+        fromAgent: true,
+        agentScope: "chat:model:",
+      },
     );
     expect(payload(result).subscription).toMatchObject({
       subscription_id: "binding-new",
@@ -300,11 +304,15 @@ describe("mcpjam_subscribe_to_events", () => {
     );
     expect(result.isError).toBeUndefined();
     expect(runtime.add).not.toHaveBeenCalled();
-    expect(runtime.edit).toHaveBeenCalledWith("binding-1", {
-      instructions: subscribeInput.prompt,
-      title: subscribeInput.title,
-      enabled: true,
-    });
+    expect(runtime.edit).toHaveBeenCalledWith(
+      "binding-1",
+      {
+        instructions: subscribeInput.prompt,
+        title: subscribeInput.title,
+        enabled: true,
+      },
+      "chat:model:",
+    );
     expect(payload(result)).toMatchObject({
       updated: true,
       subscription: { subscription_id: "binding-1", is_enabled: true },
@@ -362,7 +370,11 @@ describe("managing subscriptions", () => {
       EVENT_AGENT_TOOL_NAMES.update,
       { subscription_id: "binding-1", is_enabled: false },
     );
-    expect(runtime.edit).toHaveBeenCalledWith("binding-1", { enabled: false });
+    expect(runtime.edit).toHaveBeenCalledWith(
+      "binding-1",
+      { enabled: false },
+      "chat:model:",
+    );
     expect(payload(paused).subscription).toMatchObject({
       is_enabled: false,
       status: "paused",
@@ -372,9 +384,11 @@ describe("managing subscriptions", () => {
       EVENT_AGENT_TOOL_NAMES.update,
       { subscription_id: "binding-1", is_enabled: true },
     );
-    expect(runtime.edit).toHaveBeenLastCalledWith("binding-1", {
-      enabled: true,
-    });
+    expect(runtime.edit).toHaveBeenLastCalledWith(
+      "binding-1",
+      { enabled: true },
+      "chat:model:",
+    );
     expect(payload(resumed).subscription.status).toBe("listening");
     expect(runtime.retarget).not.toHaveBeenCalled();
   });
@@ -395,10 +409,13 @@ describe("managing subscriptions", () => {
       catalog("flights", [flightEvent]),
       flightEvent,
       { arguments: newTrip, mode: "poll" },
+      { agentScope: "chat:model:" },
     );
-    expect(runtime.edit).toHaveBeenCalledWith("binding-1", {
-      instructions: "Watch the new trip.",
-    });
+    expect(runtime.edit).toHaveBeenCalledWith(
+      "binding-1",
+      { instructions: "Watch the new trip." },
+      "chat:model:",
+    );
     expect(payload(result).subscription).toMatchObject({
       subscription_id: "binding-1",
       triggers: [{ event: "flight.status_changed", params: newTrip }],
@@ -523,8 +540,22 @@ describe("one conversation's reach", () => {
       subscribeInput,
     );
     expect(payload(result).message).toContain(
-      "only while this conversation is open",
+      "while this conversation is open",
     );
     expect(payload(result).message).toContain("skipped");
+  });
+});
+
+describe("changes that don't land", () => {
+  it("reports an edit the provider dropped instead of claiming it applied", async () => {
+    runtime.bindings = [binding()];
+    vi.mocked(runtime.edit).mockResolvedValueOnce(false);
+    const result = await runEventAgentTool(
+      runtime,
+      EVENT_AGENT_TOOL_NAMES.update,
+      { subscription_id: "binding-1", is_enabled: true },
+    );
+    expect(result.isError).toBe(true);
+    expect(payload(result).error).toContain("wasn't applied");
   });
 });

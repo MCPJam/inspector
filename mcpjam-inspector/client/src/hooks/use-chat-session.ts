@@ -4645,7 +4645,7 @@ export function useChatSession(
               eventToolServersRef.current,
             )
           : {
-              content: [{ type: "text" as const, text: "MCP Events aren't available in this chat." }],
+              content: [{ type: "text" as const, text: "MCP Events aren't available in this chat. Open the Events pane to use them." }],
               isError: true,
             };
         addToolOutput({
@@ -4873,7 +4873,7 @@ export function useChatSession(
               eventToolServersRef.current,
             )
           : {
-              content: [{ type: "text" as const, text: "MCP Events aren't available in this chat." }],
+              content: [{ type: "text" as const, text: "MCP Events aren't available in this chat. Open the Events pane to use them." }],
               isError: true,
             };
         addToolOutput({

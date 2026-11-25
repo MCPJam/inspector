@@ -53,6 +53,12 @@ export interface PlaygroundEventBinding extends EventBinding {
 export interface AddEventOptions {
   title?: string;
   fromAgent?: boolean;
+  /**
+   * The conversation that must own the new connection: the one an agent's
+   * tool call came from. If another conversation is active by the time the
+   * connection is created, it fails rather than attaching there.
+   */
+  agentScope?: string;
 }
 export interface ServerEventCatalog {
   serverName: string;
@@ -303,6 +309,13 @@ function useRuntime(
     const targetAgent = useEventAgentBridge.getState().agent;
     if (!targetAgent)
       throw new Error("Open an agent conversation before connecting an event.");
+    if (
+      options.agentScope !== undefined &&
+      targetAgent.scope !== options.agentScope
+    )
+      throw new Error(
+        "The conversation changed before the watch was set up. Ask again in the conversation that should own it.",
+      );
     // The agent subscribes from inside its own running turn, which is what
     // makes it "busy"; each event turn still checks the agent when it lands.
     if (targetAgent.blockedReason && !options.fromAgent)
@@ -427,14 +440,17 @@ function useRuntime(
     server: ServerEventCatalog,
     event: EventDescriptorView,
     value: SubscribeFormValue,
+    options: Pick<AddEventOptions, "agentScope"> = {},
   ): Promise<PlaygroundEventBinding> => {
     if (!current.current.bindings.some((binding) => binding.id === id))
-      throw new Error("This event subscription no longer exists.");
+      throw new Error(
+        "This event subscription was removed. Subscribe again from the Events tab.",
+      );
     const { subscription, afterSeq, targetAgent } = await createSubscription(
       server,
       event,
       value,
-      { fromAgent: true },
+      { fromAgent: true, ...options },
     );
     if (alreadyConnected(subscription.id, targetAgent.scope, id))
       throw new Error(
@@ -458,7 +474,10 @@ function useRuntime(
     current.current.bindings = current.current.bindings.map(move);
     setBindings((previous) => previous.map(move));
     const moved = current.current.bindings.find((binding) => binding.id === id);
-    if (!moved) throw new Error("This event subscription no longer exists.");
+    if (!moved)
+      throw new Error(
+        "This event subscription was removed. Subscribe again from the Events tab.",
+      );
     return moved;
   };
   const addTest = (
@@ -496,14 +515,21 @@ function useRuntime(
     ]);
   };
 
+  /**
+   * Apply an edit. Resolves false when it was dropped: a newer edit of the same
+   * connection, a changed client or project, or (with `expectedScope`) another
+   * conversation than the one that asked.
+   */
   const edit = async (
     id: string,
     fields: Partial<
       Pick<PlaygroundEventBinding, "enabled" | "instructions" | "title">
     >,
-  ) => {
+    expectedScope?: string,
+  ): Promise<boolean> => {
     dispatcher.current?.invalidate(id);
     const target = useEventAgentBridge.getState().agent?.scope;
+    if (expectedScope !== undefined && target !== expectedScope) return false;
     const ownerScope = current.current.scope;
     const generation = lifecycle.current;
     const revision = (editRevisions.current.get(id) ?? 0) + 1;
@@ -523,8 +549,8 @@ function useRuntime(
       useEventAgentBridge.getState().agent?.scope !== target ||
       editRevisions.current.get(id) !== revision
     )
-      return;
-    setBindings((previous) =>
+      return false;
+    const apply = (previous: PlaygroundEventBinding[]) =>
       previous.map((binding) =>
         binding.id === id
           ? {
@@ -540,12 +566,19 @@ function useRuntime(
                 : {}),
             }
           : binding,
-      ),
-    );
+      );
+    // The live collection first, as add and retarget do, so a read before the
+    // next render sees the edit.
+    current.current.bindings = apply(current.current.bindings);
+    setBindings(apply);
+    return true;
   };
   const remove = (id: string) => {
     dispatcher.current?.invalidate(id);
-    setBindings((previous) => previous.filter((binding) => binding.id !== id));
+    const drop = (previous: PlaygroundEventBinding[]) =>
+      previous.filter((binding) => binding.id !== id);
+    current.current.bindings = drop(current.current.bindings);
+    setBindings(drop);
   };
   const trigger = async (
     binding: PlaygroundEventBinding,
@@ -577,6 +610,8 @@ function useRuntime(
     loadCatalog,
     add,
     retarget,
+    /** The live connections, ahead of the next render. */
+    liveBindings: () => current.current.bindings,
     addTest,
     edit,
     remove,
@@ -612,7 +647,11 @@ export function PlaygroundEventsProvider({
   const latest = useRef<ReturnType<typeof useRuntime> | null>(null);
   latest.current = enabled ? runtime : null;
   const [agentTools] = useState(() =>
-    createEventAgentToolExecutor(() => latest.current),
+    createEventAgentToolExecutor(() => {
+      const runtime = latest.current;
+      // Writes land in the live collection before React renders them.
+      return runtime ? { ...runtime, bindings: runtime.liveBindings() } : null;
+    }),
   );
   return (
     <AgentToolsContext.Provider value={agentTools}>

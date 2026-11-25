@@ -324,9 +324,16 @@ const sameTrigger = (
   !!binding.subscription &&
   canonical(binding.subscription.arguments) === canonical(trigger.params);
 
+/** An edit the provider dropped, such as a newer change to the same watch. */
+const notApplied = () =>
+  failure(
+    "The change wasn't applied because this subscription changed at the same time. List your event subscriptions and try again.",
+  );
+
 async function subscribe(
   runtime: EventAgentRuntime,
   call: Extract<EventAgentCall, { tool: "subscribe" }>,
+  scope: string | undefined,
 ) {
   const resolved = await resolveTrigger(
     runtime,
@@ -346,7 +353,7 @@ async function subscribe(
       title: call.title,
       enabled: true,
     };
-    await runtime.edit(existing.id, fields);
+    if (!(await runtime.edit(existing.id, fields, scope))) return notApplied();
     return success({
       subscription: describe(runtime, { ...existing, ...fields }),
       updated: true,
@@ -361,11 +368,12 @@ async function subscribe(
     resolved.event,
     { arguments: call.trigger.params, mode: picked.mode },
     call.prompt,
-    { title: call.title, fromAgent: true },
+    // The watch belongs to the conversation that made the call, or it fails.
+    { title: call.title, fromAgent: true, agentScope: scope },
   );
   return success({
     subscription: describe(runtime, binding),
-    message: `Subscribed. When ${resolved.event.name} arrives, MCPJam starts a new turn in this conversation with the event and your prompt. Events start turns only while this conversation is open in the Playground, and an event that arrives during another turn is skipped.`,
+    message: `Subscribed to ${resolved.event.name}. New events start a turn here while this conversation is open in the Playground; an event that arrives during another turn is skipped.`,
   });
 }
 
@@ -381,6 +389,7 @@ const unknownId = (id: string) =>
 async function update(
   runtime: EventAgentRuntime,
   call: Extract<EventAgentCall, { tool: "update" }>,
+  scope: string | undefined,
 ) {
   let binding = findBinding(runtime, call.subscriptionId);
   if (!binding) return unknownId(call.subscriptionId);
@@ -402,6 +411,7 @@ async function update(
         arguments: call.trigger.params,
         mode: picked.mode,
       },
+      { agentScope: scope },
     );
   }
   const fields = {
@@ -409,7 +419,11 @@ async function update(
     ...(call.title !== undefined ? { title: call.title } : {}),
     ...(call.isEnabled !== undefined ? { enabled: call.isEnabled } : {}),
   };
-  if (Object.keys(fields).length > 0) await runtime.edit(binding.id, fields);
+  if (
+    Object.keys(fields).length > 0 &&
+    !(await runtime.edit(binding.id, fields, scope))
+  )
+    return notApplied();
   return success({
     subscription: describe(runtime, { ...binding, ...fields }),
   });
@@ -443,19 +457,22 @@ export async function runEventAgentTool(
   const parsed = parseEventAgentToolCall(name, input);
   if (!parsed.ok) return failure(parsed.error);
   const call = parsed.call;
+  // The conversation that made the call, captured now: a watch it creates or
+  // changes belongs to it, even if the user switches chats while this runs.
+  const agentScope =
+    chat.agentScope ?? useEventAgentBridge.getState().agent?.scope;
   const runtime = forChat(source, {
     selectedServers: chat.selectedServers,
-    // The conversation running the call, as the provider's own `add` sees it.
-    agentScope: chat.agentScope ?? useEventAgentBridge.getState().agent?.scope,
+    agentScope,
   });
   try {
     switch (call.tool) {
       case "list_event_types":
         return await listEventTypes(runtime, call.server);
       case "subscribe":
-        return await subscribe(runtime, call);
+        return await subscribe(runtime, call, agentScope);
       case "update":
-        return await update(runtime, call);
+        return await update(runtime, call, agentScope);
       case "list_subscriptions":
         return success({
           subscriptions: runtime.bindings.map((binding) =>
