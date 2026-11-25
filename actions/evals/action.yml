@@ -1,5 +1,5 @@
 name: MCPJam evals
-description: Run MCPJam evals, publish a checks summary, and optionally comment on a pull request.
+description: Run MCPJam evals, publish a checks summary, and comment on a pull request by default.
 inputs:
   api-key:
     description: MCPJam API key, supplied from GitHub Actions secrets.
@@ -11,8 +11,8 @@ inputs:
   command:
     description: Local command that runs and uploads SDK evals. Cannot accompany project or suite.
   comment:
-    description: Post or update the MCPJam result comment on pull requests.
-    default: "false"
+    description: Post or update the MCPJam result comment on pull requests. Requires pull-requests write permission.
+    default: "true"
   github-token:
     description: GitHub token used for PR comments. Defaults to the workflow token.
   gate:

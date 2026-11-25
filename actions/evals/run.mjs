@@ -17,6 +17,7 @@ import {
   publishPullRequestComment,
   readActionReceipts,
   renderReports,
+  failedTestCount,
   truncateMarkdown,
 } from "./report.mjs";
 
@@ -39,7 +40,7 @@ export function parseInputs(env) {
     cliVersion: get("CLI_VERSION") || "5.7.1",
     idempotencyKey: get("IDEMPOTENCY_KEY"),
     command: get("COMMAND"),
-    comment: get("COMMENT") || "false",
+    comment: get("COMMENT") || "true",
   };
   for (const key of ["apiKey"]) {
     if (!inputs[key])
@@ -335,6 +336,9 @@ async function publishDetailedReports({
   fetchImpl,
   outcome,
 }) {
+  const failures = failedTestCount(bundles);
+  if (outcome.result === "failed" && failures)
+    outcome.message = `${failures} ${outcome.message}`;
   const reports = renderReports(bundles, outcome);
   await writeFile(join(directory, "eval-report.md"), `${reports.summary}\n`);
   await writeFile(
@@ -351,7 +355,7 @@ async function publishDetailedReports({
       log(`MCPJam PR comment ${published}.`);
     } catch {
       log(
-        "::warning::Could not publish the MCPJam PR comment. Check pull-requests: write permission.",
+        "::warning::Could not publish the MCPJam PR comment. Grant pull-requests: write in the workflow; fork PR tokens may be read-only. Results remain in the job summary and artifacts.",
       );
     }
   }
