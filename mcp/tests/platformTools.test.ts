@@ -7,6 +7,7 @@ import {
   listProjectServersOperation,
   listProjectsOperation,
   listStudiesOperation,
+  getClimbOperation,
   runEvalSuiteOperation,
   showServersOperation,
 } from "@mcpjam/sdk/platform";
@@ -1129,6 +1130,26 @@ describe("runPlatformOperation", () => {
       (result.structuredContent as { items: Array<{ description: string }> })
         .items[0]!.description
     ).toBe(hugeDescription);
+  });
+
+  it("puts a long field after the short ones, so a climb's state and suite check survive the cut", async () => {
+    const climb = {
+      // First, as a long field can arrive: the cut must not take what follows it.
+      whatCanChange: Array.from({ length: 300 }, (_, index) => ({ rank: index + 1, current: "d".repeat(300) })),
+      baseline: { environments: [] },
+      climbId: "climb-1",
+      limits: { roundsLeft: 3, creditsLeft: 400 },
+      state: "ready",
+      suiteCheck: { ready: true, canShowChange: true },
+      notes: [],
+    };
+    const operation = { ...getClimbOperation, execute: async () => ({ ...climb, project: { id: "p" } }) } as unknown as typeof getClimbOperation;
+    const result = (await runPlatformOperation(fakeToolContext({ bearerToken: "user-jwt" }), operation, { climb: "climb-1" })) as ToolResult;
+    const text = result.content[0]!.text;
+    expect(text).toContain("…[truncated");
+    for (const field of ['"state"', '"limits"', '"suiteCheck"']) expect(text).toContain(field);
+    expect(text.indexOf('"suiteCheck"')).toBeLessThan(text.indexOf('"whatCanChange"'));
+    expect((result.structuredContent as { whatCanChange: unknown[] }).whatCanChange).toHaveLength(300);
   });
 
   it("calls the configured platform API with the agent bearer and returns structured content", async () => {

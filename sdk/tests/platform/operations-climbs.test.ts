@@ -210,6 +210,28 @@ describe("update_climb, get_climb and list_climbs", () => {
     expect(list.items).toHaveLength(1);
   });
 
+  it("keeps a large server's change list to its top entries, with the count and where the rest is", async () => {
+    const entry = (rank: number) => ({ where: { kind: "tool", tool: `t${rank}`, field: "description", mockPath: `tools.t${rank}.description` }, current: "d".repeat(400), rank });
+    const all = Array.from({ length: 2000 }, (_, index) => entry(index + 1));
+    const { client } = clientWith({ [`GET ${CLIMBS}/climb-1`]: { ...CLIMB, notes: ["kept"], whatCanChange: all } });
+    const read = await getClimbOperation.execute({ climb: "climb-1" }, { client, ...CONTEXT });
+    expect(read.whatCanChange!.length).toBeGreaterThan(0);
+    expect(read.whatCanChange!.length).toBeLessThanOrEqual(15);
+    expect(read.whatCanChange!.map((item) => item.rank)).toEqual(read.whatCanChange!.map((_, index) => index + 1));
+    expect(read.whatCanChangeTotal).toBe(2000);
+    expect(read.notes).toEqual(["kept", expect.stringContaining(`top ${read.whatCanChange!.length} of 2000`)]);
+    expect(read.notes!.at(-1)).toContain("get_mock_server");
+    expect(JSON.stringify(read).length).toBeLessThan(15_000);
+  });
+
+  it("leaves a short change list whole", async () => {
+    const list = [{ where: { kind: "server", field: "instructions", mockPath: "instructions" }, current: "Use it.", rank: 1 }];
+    const { client } = clientWith({ [`GET ${CLIMBS}/climb-1`]: { ...CLIMB, whatCanChange: list } });
+    const read = await getClimbOperation.execute({ climb: "climb-1" }, { client, ...CONTEXT });
+    expect(read.whatCanChange).toEqual(list);
+    expect(read.whatCanChangeTotal).toBeUndefined();
+  });
+
   it("declares what each costs and puts every one behind climbs", () => {
     expect(startClimbOperation).toMatchObject({ readOnly: false, risk: "spend" });
     expect(updateClimbOperation).toMatchObject({ readOnly: false, risk: "none" });

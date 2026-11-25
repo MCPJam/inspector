@@ -171,6 +171,8 @@ export type PlatformClimb = PlatformClimbBase & {
   suiteCheck?: SuiteCheck;
   climbFor?: ClimbForOption[];
   whatCanChange?: ChangeEntry[];
+  /** How many entries the server could change, when `whatCanChange` holds only the top of them. */
+  whatCanChangeTotal?: number;
   /** Once a confirmation has settled: its per-environment difference and 95% interval, computed on read. */
   confirmationResult?: ConfirmationSummary;
   /** Each verification as a reader wants it: whether the gain holds, both gains, the baseline then and now, the commit. */

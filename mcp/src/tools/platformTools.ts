@@ -1635,6 +1635,17 @@ export function compactInsightsForModel<T extends object>(payload: T): T {
   return changed ? (out as T) : payload;
 }
 
+/** The payload's top-level fields, shortest rendering first. Only the text a model reads is ordered this way. */
+function shortestFieldsFirst(payload: object): object {
+  const length = (value: unknown) => JSON.stringify(value)?.length ?? 0;
+  return Object.fromEntries(
+    Object.entries(payload)
+      .map(([key, value], index) => ({ key, value, index, size: length(value) }))
+      .sort((a, b) => a.size - b.size || a.index - b.index)
+      .map(({ key, value }) => [key, value])
+  );
+}
+
 /**
  * @param permalinks Rendered as ONE concise line each, above the JSON.
  *
@@ -1652,6 +1663,11 @@ function toolSuccess(payload: object, permalinks: PlatformPermalink[] = []) {
     ? `${formatPermalinkLines(permalinks)}\n\n`
     : "";
   let text = `${header}${JSON.stringify(payload, null, 2)}`;
+  if (text.length > MODEL_TEXT_CAP) {
+    // The cut keeps the start, so the long fields go last: a climb's state,
+    // limits and suite check must not be the part that gets sliced off.
+    text = `${header}${JSON.stringify(shortestFieldsFirst(payload), null, 2)}`;
+  }
   if (text.length > MODEL_TEXT_CAP) {
     text = `${text.slice(0, MODEL_TEXT_CAP)}\n…[truncated ${
       text.length - MODEL_TEXT_CAP

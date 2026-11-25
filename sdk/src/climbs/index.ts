@@ -2,6 +2,7 @@ export * from "./types.js";
 export { suiteCheck } from "./suite-check.js";
 export { climbForOptions } from "./climb-for.js";
 export { whatCanChange } from "./what-can-change.js";
+export { topChanges } from "./top-changes.js";
 export { climbPrompt } from "./prompt.js";
 export { MAX_FAILED_RUNS, failureReason, pickFailedRuns, toFailedRun } from "./failed-runs.js";
 export {
