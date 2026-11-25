@@ -1,4 +1,9 @@
 import { withToolCallScope } from "./input-answers.js";
+import {
+  mockAnswerSpan,
+  withMockAnswerSink,
+  type MockAnswerMark,
+} from "../mock/answer-marks.js";
 import type { ModelRequestAnswerer } from "./input-answers.js";
 import { exchangeSpan } from "../../../shared/eval-input-exchange.js";
 import { toolOrigin } from "@/shared/tool-origin";
@@ -296,6 +301,8 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
         // record is a step span with no tool identity, so no reader counts it
         // as a tool call.
         let asked = 0;
+        // Who answered, when a mock did: read off the connection's responses.
+        const mockMarks: MockAnswerMark[] = [];
         try {
           const result = await withToolCallScope(
             {
@@ -316,7 +323,11 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
                 );
               },
             },
-            () => origExecute(input, options),
+            () =>
+              withMockAnswerSink(
+                (marks) => mockMarks.push(...marks),
+                () => origExecute(input, options),
+              ),
           );
           policyBlocked = isToolPolicyBlockResult(result);
           if (policyBlocked) return result;
@@ -377,6 +388,19 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
               });
             }
             ctx.recordedSpans.push(toolSpan);
+            if (mockMarks.length > 0) {
+              ctx.recordedSpans.push(
+                mockAnswerSpan(mockMarks, {
+                  id: `mock-${toolCallId}`,
+                  parentId: toolSpan.id,
+                  promptIndex: resolvedPromptIndex,
+                  stepIndex: stepNumber,
+                  serverId,
+                  startMs: toolSpan.startMs,
+                  endMs: toolSpan.endMs,
+                }),
+              );
+            }
             if (!success) {
               ctx.recordedSpans.push({
                 id: `tool-err-${toolCallId}`,

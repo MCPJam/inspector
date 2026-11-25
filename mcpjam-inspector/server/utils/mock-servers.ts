@@ -15,6 +15,7 @@ import type { HttpServerConfig } from "@mcpjam/sdk";
 import { registerDeliveredSecret } from "../../shared/delivered-secret-registry.js";
 import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 import type { ManagerCallerContext } from "../routes/web/auth.js";
+import { observeMockAnswered } from "../services/mock/answer-marks.js";
 import { mockRefusalResponse, type MockRefusalKind } from "../services/mock/refusal.js";
 import { getMockInProcessHandler, type MockDialProfile } from "../services/mock/registry.js";
 import { logger } from "./logger.js";
@@ -145,7 +146,7 @@ export function dispatchMockInProcess(
     return inflight;
   };
 
-  const baseFetch: typeof fetch = async (input, init) => {
+  const dispatch: typeof fetch = async (input, init) => {
     const handler = getMockInProcessHandler();
     // Never falls through to the network: the placeholder address resolves nowhere.
     if (!handler) return mockRefusalResponse("unavailable");
@@ -168,6 +169,8 @@ export function dispatchMockInProcess(
     });
   };
 
+  // The route's mark that it answered a call itself goes to the running tool call.
+  const baseFetch = observeMockAnswered(dispatch);
   const headers = new Headers(config.requestInit?.headers);
   headers.set("Authorization", `Bearer ${grant.token}`);
   return {

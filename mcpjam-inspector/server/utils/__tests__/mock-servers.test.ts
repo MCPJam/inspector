@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HttpServerConfig } from "@mcpjam/sdk";
 import { scrubDeliveredSecrets } from "../../../shared/delivered-secret-registry.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
+import { withMockAnswerSink } from "../../services/mock/answer-marks.js";
 import { registerMockInProcessHandler } from "../../services/mock/registry.js";
 import {
   dispatchMockInProcess,
@@ -87,6 +88,17 @@ describe("dispatchMockInProcess", () => {
     const doors = handler.mock.calls.map((call) => (call as unknown as [string, Request, Record<string, unknown>])[2]);
     expect(doors[0]).not.toHaveProperty("runKey");
     expect(doors[1]).toMatchObject({ runKey: "run-42" });
+  });
+
+  it("hands the route's answered mark to the tool call that is running", async () => {
+    const { handler, call } = setup(async () => entry("unused", NOW));
+    handler.mockResolvedValueOnce(
+      new Response("{}", { status: 200, headers: { "x-mcpjam-mock-answered": "echo=saved" } }),
+    );
+    const seen: unknown[] = [];
+    await withMockAnswerSink((marks) => seen.push(...marks), call);
+    await call();
+    expect(seen).toEqual([{ tool: "echo", source: "saved" }]);
   });
 
   it("registers the grant with the scrubber, so no error body carries it", () => {

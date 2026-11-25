@@ -63,6 +63,7 @@ import type {
 } from "@mcpjam/sdk";
 import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import { observeConnectionFetch } from "../../services/connection-failure-context.js";
+import { observeMockAnswered } from "../../services/mock/answer-marks.js";
 import { hostedFeatureObserver } from "../../services/server-canvas/observation-recorders.js";
 import { hostedMcpBackpressureFetch } from "../../utils/mcp-backpressure.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
@@ -3021,7 +3022,11 @@ export async function createAuthorizedManager(
           id,
           {
             ...connectionConfig,
-            baseFetch: observeConnectionFetch(withServerCheckSignal(fetchFn)),
+            // A mock dialed at its address marks the calls it answered itself on a response header.
+            // Inside `observeConnectionFetch`, whose result is how a failure finds its capture.
+            baseFetch: observeConnectionFetch(
+              observeMockAnswered(withServerCheckSignal(fetchFn)),
+            ),
           },
         ],
       ];

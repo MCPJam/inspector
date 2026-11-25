@@ -220,6 +220,28 @@ describe("harness span metadata", () => {
     expect(codeEl.textContent).not.toContain("JSON-RPC error code");
   });
 
+  it("says on a tool call that the mock answered it, and says nothing on one it did not", () => {
+    const spans: EvalTraceSpan[] = [
+      { id: "step-0", name: "Step 1", category: "step", startMs: 0, endMs: 500, stepIndex: 0 },
+      { id: "tool-a", parentId: "step-0", name: "echo", category: "tool", startMs: 100, endMs: 300, stepIndex: 0, toolCallId: "a", toolName: "echo", toolOrigin: "mcp" },
+      { id: "mock-a", parentId: "tool-a", name: "Answered by the mock: its saved answer", category: "step", startMs: 100, endMs: 300, stepIndex: 0 },
+      { id: "tool-b", parentId: "step-0", name: "other", category: "tool", startMs: 300, endMs: 400, stepIndex: 0, toolCallId: "b", toolName: "other", toolOrigin: "mcp" },
+    ];
+    render(<TraceTimeline recordedSpans={spans} transcriptMessages={[]} />);
+    const open = (name: string) =>
+      fireEvent.click(
+        within(
+          screen.getAllByTestId("trace-row").find((el) => el.textContent?.includes(name))!,
+        ).getByTestId("trace-row-label-button"),
+      );
+    open("echo");
+    expect(screen.getByTestId("trace-span-metadata").textContent).toContain(
+      "Answered by: the mock: its saved answer",
+    );
+    open("other");
+    expect(screen.queryByTestId("trace-span-metadata")).toBeNull();
+  });
+
   it("omits the error-code line when no mcpErrorCode is present", () => {
     const spans: EvalTraceSpan[] = [
       { id: "step-0", name: "Step 1", category: "step", startMs: 0, endMs: 500, stepIndex: 0 },
