@@ -231,7 +231,11 @@ export function CaniuseCapabilityPage({
               <div className="flex flex-wrap items-center gap-2">
                 <Button asChild variant="outline">
                   <a
-                    href={`https://app.mcpjam.com${capability.field.id === "eventsDeliveryModes" ? routePaths.events : routePaths.playground}`}
+                    href={`https://app.mcpjam.com${
+                      capability.field.id === "eventsDeliveryModes"
+                        ? `${routePaths.events}?fallback=playground`
+                        : routePaths.playground
+                    }`}
                   >
                     Test this capability <ArrowUpRight className="size-4" />
                   </a>

@@ -44,7 +44,7 @@ describe("CaniuseCapabilityPage", () => {
     renderCapability("event-delivery");
     expect(screen.getByRole("link", { name: "Test this capability" })).toHaveAttribute(
       "href",
-      "https://app.mcpjam.com/events",
+      "https://app.mcpjam.com/events?fallback=playground",
     );
     const score = within(
       screen.getByRole("region", { name: "Support among clients with results" }),
