@@ -7,6 +7,8 @@ Draft for the Poteto pilot. An engineer is ready to request review when they can
 - Fill in the task, spec, and plan in the [PR template](pull_request_template.md). State the behavior the change is meant to preserve or improve, including the failure path when it matters.
 - List the applicable commands from [AGENTS.md](../AGENTS.md) and their outcomes in the PR. Link to the CI run or include the relevant output. If a required check is blocked, name it and state what still needs verification.
 - Tie each acceptance criterion to a test, capture, or check result. For a bug fix, show the failure before the change and the same check passing after it when the original failure is reproducible.
+- Capture evidence on the PR's head commit and name that commit next to it. Recapture after any later commit that changes what the evidence shows.
+- Attach images and recordings on GitHub, in the PR description or a PR comment. Links to an agent's own servers, local file paths, and a Kestral link on its own don't count.
 
 ## Evidence by change type
 

@@ -6,12 +6,14 @@ Macro: `!mcpjam-bug`
 
 Take a bug report (GitHub issue, Sentry event, Slack thread or a description),
 reproduce it, fix the cause, and open one focused PR against `MCPJam/inspector`.
+The evidence rules are in
+[`.github/agent-pr-definition-of-done.md`](../../.github/agent-pr-definition-of-done.md).
 
 ## What's Needed From User
 
 - The bug report: link or text, and the expected behavior.
-- Whether the bug needs a signed-in account to reproduce. Devin can only use
-  guest mode.
+- Whether the bug needs a signed-in account to reproduce. Signed-in checks
+  follow the QA steps in `AGENTS.md`.
 
 ## Procedure
 
@@ -19,26 +21,30 @@ reproduce it, fix the cause, and open one focused PR against `MCPJam/inspector`.
    should happen, and where.
 2. Find the code path. Search for the error text, the route or the component
    name before reading broadly.
-3. Reproduce the bug.
+3. Reproduce the bug and keep the evidence of the failure.
    - Logic bug: write a failing test in the `__tests__/` directory next to the
-     source.
-   - Visible bug: run the app with the `run-inspector` skill and screenshot it.
+     source, and keep its failing output.
+   - Visible bug: run the app with the `run-inspector` skill and capture it.
 4. Fix the cause, not the symptom. Keep the diff to what the fix needs.
-5. Make the failing test pass, and run the checks from the `verify-before-pr`
-   skill for the files you changed.
+5. Run the same check again and show it passing: the test from step 3, or the
+   same screen and steps in the running app. Then run the checks from the
+   `verify-before-pr` skill for the files you changed.
 6. Add a changeset if the fix is user-visible in a releasable package.
 7. Open a PR titled in Conventional Commits form (`fix(client): ...`). The
    description says what was wrong, why, and how you verified the fix, with
-   screenshots for anything visible.
+   the failure before and the passing check after. Captures of anything
+   visible are attached on GitHub and name the commit they were taken on.
 8. Watch CI. On a red check, use the `fix-ci` skill.
 
 ## Specifications
 
-- A test that fails before the fix and passes after it, unless the bug is
-  purely visual.
+- The failure shown before the fix and the same check passing after it,
+  unless the original failure can't be reproduced; then say so.
 - One PR, one bug. No drive-by refactors.
 - All CI checks green, or each remaining failure explained in the PR as
   pre-existing or unrelated.
+- Any acceptance criterion you couldn't check is marked "unverified" with the
+  reason, and its box stays unticked.
 
 ## Advice and Pointers
 
@@ -55,3 +61,5 @@ reproduce it, fix the cause, and open one focused PR against `MCPJam/inspector`.
   `docs/style.css` and `chat-ui/src/styles.css`, or `browserd/dist/` by hand.
 - Do not add `console.*` to server code.
 - Do not push to `main` or merge your own PR.
+- Do not tick the checklist box "I can explain every line of this diff without
+  the agent that wrote it". That box is the human's.
