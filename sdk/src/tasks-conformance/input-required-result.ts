@@ -377,6 +377,18 @@ export class InputRequiredResultLeg {
     return last?.outcome === "returned" ? { result: last.result } : undefined;
   }
 
+  /**
+   * The JSON-RPC error the last call got, when it got one. It is the task's
+   * final result only if the task then reads as ended without completing;
+   * while the task is still open it is an early refusal.
+   */
+  returnedError(): { code: number; message: string } | undefined {
+    const last = this.calls.at(-1);
+    return last?.outcome === "error"
+      ? { code: last.code, message: last.message }
+      : undefined;
+  }
+
   /** `details` for a check, or `undefined` when nothing was asked or called. */
   details(): Record<string, unknown> | undefined {
     const last = this.calls.at(-1);

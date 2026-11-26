@@ -381,6 +381,8 @@ describe("InputRequiredResultLeg: when polling goes on after the call", () => {
       await run(leg, vi.fn().mockRejectedValue(rpcError(-32603, "failed"))),
     ).toBe("reread");
     expect(leg.returnedResult()).toBeUndefined();
+    // Kept, so a task that then reads as failed is graded on it.
+    expect(leg.returnedError()).toEqual({ code: -32603, message: "failed" });
   });
 
   it("stops when nothing came back and nothing was answered: the task is parked", async () => {

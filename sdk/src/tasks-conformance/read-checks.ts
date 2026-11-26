@@ -17,6 +17,7 @@ import {
 } from "./shapes.js";
 import {
   TERMINAL_STATUSES,
+  METHOD_NOT_FOUND,
   findRawTaskStates,
   findRawCreationTask,
   isRawTaskShaped,
@@ -147,47 +148,64 @@ export async function runReadChecks(context: TaskCheckContext) {
         })
       );
     } else {
-      // A call that returned already holds the final result: grade that one
-      // rather than ask for it again.
+      // "it MUST return the final result of the underlying request, whether
+      // that is a successful result or a JSON-RPC error" (2025-11-25
+      // tasks.mdx:464). For a task that failed or was cancelled, the
+      // JSON-RPC error IS that result, as the extension branch above grades.
+      // Not -32601: that says the server never ran `tasks/result` at all.
+      const isFinalError = (code: number | undefined): code is number =>
+        code !== undefined &&
+        code !== METHOD_NOT_FOUND &&
+        finalTask.status !== "completed";
+      // A call that already brought the final result (or, for a task that
+      // ended without completing, its final error) is graded as it came,
+      // rather than asked for again.
       const held = leg?.returnedResult();
-      try {
-        const result = held
-          ? held.result
-          : await manager.getTaskResult(serverId, createdTaskId);
+      const heldError = leg?.returnedError();
+      if (!held && heldError && isFinalError(heldError.code)) {
         checks.push(
-          isRecord(result)
-            ? passed("tasks-inline-result", Date.now() - stepStartedAt, {
-                status: finalTask.status,
-                ...resultCall,
-              })
-            : failed(
-                "tasks-inline-result",
-                Date.now() - stepStartedAt,
-                "legacy tasks/result must return the original request's result",
-                resultCall
-              )
+          passed("tasks-inline-result", Date.now() - stepStartedAt, {
+            status: finalTask.status,
+            errorCode: heldError.code,
+            ...resultCall,
+          })
         );
-      } catch (error) {
-        // "it MUST return the final result of the underlying request, whether
-        // that is a successful result or a JSON-RPC error" (2025-11-25
-        // tasks.mdx:464). For a task that failed or was cancelled, the
-        // JSON-RPC error IS that result, as the extension branch above grades.
-        const code = errorCode(error);
-        checks.push(
-          code !== undefined && finalTask.status !== "completed"
-            ? passed("tasks-inline-result", Date.now() - stepStartedAt, {
-                status: finalTask.status,
-                errorCode: code,
-                ...resultCall,
-              })
-            : failed(
-                "tasks-inline-result",
-                Date.now() - stepStartedAt,
-                `legacy tasks/result failed: ${errorMessage(error)}`,
-                resultCall,
-                error
-              )
-        );
+      } else {
+        try {
+          const result = held
+            ? held.result
+            : await manager.getTaskResult(serverId, createdTaskId);
+          checks.push(
+            isRecord(result)
+              ? passed("tasks-inline-result", Date.now() - stepStartedAt, {
+                  status: finalTask.status,
+                  ...resultCall,
+                })
+              : failed(
+                  "tasks-inline-result",
+                  Date.now() - stepStartedAt,
+                  "legacy tasks/result must return the original request's result",
+                  resultCall
+                )
+          );
+        } catch (error) {
+          const code = errorCode(error);
+          checks.push(
+            isFinalError(code)
+              ? passed("tasks-inline-result", Date.now() - stepStartedAt, {
+                  status: finalTask.status,
+                  errorCode: code,
+                  ...resultCall,
+                })
+              : failed(
+                  "tasks-inline-result",
+                  Date.now() - stepStartedAt,
+                  `legacy tasks/result failed: ${errorMessage(error)}`,
+                  resultCall,
+                  error
+                )
+          );
+        }
       }
     }
   }

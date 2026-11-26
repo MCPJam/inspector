@@ -100,6 +100,8 @@ async function serveParkedTask(options: {
   parkedPollInterval?: unknown;
   /** For `ask`: fail the task even after an answer that fits. */
   failAfterAnswer?: boolean;
+  /** `tasks/result` is not implemented: every call gets -32601. */
+  resultMethodNotFound?: boolean;
   /** For `ask`: what the server needs, in order. */
   questions?: Question[];
   /** For `ask`: how long the task works after the last answer. */
@@ -291,7 +293,9 @@ async function serveParkedTask(options: {
           reply({ result: task() });
           return;
         case "tasks/result":
-          if (status === "completed") {
+          if (options.resultMethodNotFound) {
+            reply({ error: { code: -32601, message: "Method not found" } });
+          } else if (status === "completed") {
             reply({ result: finalResult });
           } else if (status === "failed") {
             reply({ error: TASK_FAILED });
@@ -656,6 +660,9 @@ describe("2025-11-25, answers configured: the client answers over tasks/result",
     expect(inline.status).toBe("passed");
     expect(inline.details).toMatchObject({ status: "failed", errorCode: -32603 });
     expect(inline.details).not.toHaveProperty("missingInput");
+    // The held call already brought that final error: it is not asked again,
+    // so a second request cannot lose it.
+    expect(resultCalls(fixture)).toBe(1);
   });
 
   it("still grades the parked frames when polling goes on after the answer", async () => {
@@ -803,6 +810,22 @@ describe("tasks that are not parked on the 2025-11-25 wire", () => {
     const inline = check(result, "tasks-inline-result");
     expect(inline.status).toBe("passed");
     expect(inline.details).toMatchObject({ status: "failed", errorCode: -32603 });
+  });
+
+  it("does not pass a failed task when tasks/result is not implemented", async () => {
+    // -32601 says the server never ran tasks/result, so it did not return the
+    // task's final error.
+    const fixture = await serveParkedTask({
+      onResult: "hold",
+      neverParks: true,
+      neverParksAs: "failed",
+      resultMethodNotFound: true,
+    });
+    const result = await run(fixture);
+
+    const inline = check(result, "tasks-inline-result");
+    expect(inline.status).toBe("failed");
+    expect(inline.error?.message).toContain("legacy tasks/result failed");
   });
 
   it("sends no tasks/result on the extension wire", async () => {
