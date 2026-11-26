@@ -19,6 +19,7 @@ import {
   callResultWhileInputRequired,
   describeResultCall,
   inputRequiredResultWaitMs,
+  serverConfigForAnswers,
   taskInputAnswersFor,
 } from "../../src/tasks-conformance/input-required-result.js";
 import { TaskOperations } from "../../src/tasks-conformance/task-operations.js";
@@ -67,7 +68,11 @@ describe("callResultWhileInputRequired", () => {
     expect(getTaskResult).toHaveBeenCalledWith("server", "task-1", {
       timeout: 1_234,
     });
-    expect(call).toMatchObject({ outcome: "returned", answered: [] });
+    expect(call).toMatchObject({
+      outcome: "returned",
+      result: { content: [] },
+      answered: [],
+    });
   });
 
   it.each([
@@ -123,7 +128,7 @@ describe("callResultWhileInputRequired", () => {
     });
 
     expect(call.answered).toEqual([
-      { message: "Which meal?", key: "meal", action: "accept" },
+      { message: "Which meal?", key: "meal", action: "accept", fits: true },
     ]);
   });
 });
@@ -167,6 +172,68 @@ describe("TaskInputAnswers", () => {
     expect(await answers.handler(form("seat", ["window", "aisle"]))).toEqual(
       accept({ seat: "roof" }),
     );
+    // Recorded as not fitting, so the report can say which answer to fix.
+    expect(answers.log).toEqual([
+      { message: "seat?", key: "seat", action: "accept", fits: false },
+    ]);
+  });
+
+  it("does not let an answer for another question fit a form whose fields are optional", async () => {
+    // Schema validation alone passes `{ seat }` against an optional `notes`
+    // form. Its keys are not the form's, so it is not that form's answer.
+    const answers = new TaskInputAnswers({
+      seat: accept({ seat: "aisle" }),
+      notes: accept({ notes: "none" }),
+    });
+    const optionalNotes = {
+      message: "Any notes?",
+      requestedSchema: {
+        type: "object",
+        properties: { notes: { type: "string" } },
+      },
+    } as never;
+
+    expect(await answers.handler(optionalNotes)).toEqual(
+      accept({ notes: "none" }),
+    );
+    expect(await answers.handler(form("seat", ["window", "aisle"]))).toEqual(
+      accept({ seat: "aisle" }),
+    );
+  });
+
+  it("says it has no answer to a URL-mode request, and keeps its answers", async () => {
+    const answers = new TaskInputAnswers({ seat: accept({ seat: "aisle" }) });
+
+    expect(
+      await answers.handler({
+        mode: "url",
+        message: "Sign in on this page",
+        url: "https://example.test/consent",
+        elicitationId: "e-1",
+      } as never),
+    ).toEqual({ action: "cancel" });
+    expect(answers.log).toEqual([
+      { message: "Sign in on this page", action: "cancel", mode: "url" },
+    ]);
+    // The form that comes next still gets its answer.
+    expect(await answers.handler(form("seat", ["aisle"]))).toEqual(
+      accept({ seat: "aisle" }),
+    );
+  });
+
+  it("skips configured answers the client could not send", async () => {
+    // No `action`, or content that is not flat: the SDK would refuse to send
+    // either, so neither is used up or reported as an answer.
+    const answers = new TaskInputAnswers({
+      noAction: { content: { seat: "aisle" } },
+      nested: accept({ seat: { code: "A" } }),
+      seat: accept({ seat: "aisle" }),
+    });
+
+    expect(await answers.handler(form("seat", ["window"]))).toEqual(
+      accept({ seat: "aisle" }),
+    );
+    expect(answers.log.map((entry) => entry.key)).toEqual(["seat"]);
   });
 
   it("sends a configured decline as written", async () => {
@@ -234,6 +301,9 @@ describe("taskInputAnswersFor: when the run declares it will answer", () => {
   it.each([
     ["no answers", undefined],
     ["an empty set of answers", {}],
+    // Declaring elicitation for these would only lead to `cancel` answers.
+    ["answers that are not objects", { seat: "aisle" }],
+    ["answers with no action", { seat: { content: { seat: "aisle" } } }],
   ])("does not answer with %s", (_label, inputResponses) => {
     const pinned = config("2025-11-25", inputResponses);
 
@@ -252,22 +322,65 @@ describe("taskInputAnswersFor: when the run declares it will answer", () => {
   });
 });
 
+describe("serverConfigForAnswers: the client says it can answer", () => {
+  const answers = new TaskInputAnswers({ seat: accept({ seat: "aisle" }) });
+  const base = { url: "https://example.test/mcp" } as never;
+
+  it("adds elicitation to an exact capability set that lacks it", () => {
+    // An exact set is advertised as written, so without this the server
+    // would never be told the client can answer.
+    const config = serverConfigForAnswers(
+      { ...(base as object), clientCapabilities: { extensions: {} } } as never,
+      answers,
+    );
+
+    expect(config.clientCapabilities).toEqual({
+      extensions: {},
+      elicitation: {},
+    });
+  });
+
+  it("leaves a set that already declares elicitation as it is", () => {
+    const declared = {
+      ...(base as object),
+      clientCapabilities: { elicitation: { form: {} } },
+    } as never;
+
+    expect(serverConfigForAnswers(declared, answers)).toBe(declared);
+  });
+
+  it("changes nothing for a run that does not answer, or has no exact set", () => {
+    const exact = {
+      ...(base as object),
+      clientCapabilities: { extensions: {} },
+    } as never;
+
+    expect(serverConfigForAnswers(exact, undefined)).toBe(exact);
+    expect(serverConfigForAnswers(base, answers)).toBe(base);
+  });
+});
+
 describe("InputRequiredResultLeg: when polling goes on after the call", () => {
   const run = (leg: InputRequiredResultLeg, getTaskResult: ReturnType<typeof vi.fn>) =>
     leg.run(fakeManager(getTaskResult), "server", "task-1", 2_000);
 
-  it("goes on when the server returned: the task has ended", async () => {
+  it("reads the task again at once when the server returned: the task has ended", async () => {
     const leg = new InputRequiredResultLeg();
 
-    expect(await run(leg, vi.fn().mockResolvedValue({ content: [] }))).toBe(true);
+    expect(await run(leg, vi.fn().mockResolvedValue({ content: [] }))).toBe(
+      "reread",
+    );
+    // The final result is in hand, so tasks-inline-result need not ask again.
+    expect(leg.returnedResult()).toEqual({ result: { content: [] } });
   });
 
-  it("goes on when the server answered with an error", async () => {
+  it("reads the task again at once when the server answered with an error", async () => {
     const leg = new InputRequiredResultLeg();
 
     expect(
       await run(leg, vi.fn().mockRejectedValue(rpcError(-32603, "failed"))),
-    ).toBe(true);
+    ).toBe("reread");
+    expect(leg.returnedResult()).toBeUndefined();
   });
 
   it("stops when nothing came back and nothing was answered: the task is parked", async () => {
@@ -284,7 +397,7 @@ describe("InputRequiredResultLeg: when polling goes on after the call", () => {
       throw sdkTimeout();
     });
 
-    expect(await run(leg, getTaskResult)).toBe(true);
+    expect(await run(leg, getTaskResult)).toBe("reread");
   });
 
   it("gives the call what is left of the poll budget, capped at 5 s", async () => {
@@ -319,7 +432,7 @@ describe("InputRequiredResultLeg: when polling goes on after the call", () => {
       .fn()
       .mockRejectedValue(rpcError(-32602, "not finished"));
 
-    expect(await run(leg, getTaskResult)).toBe(true);
+    expect(await run(leg, getTaskResult)).toBe("reread");
     expect(await run(leg, getTaskResult)).toBe(false);
     expect(getTaskResult).toHaveBeenCalledTimes(1);
   });
@@ -341,8 +454,8 @@ describe("InputRequiredResultLeg: when polling goes on after the call", () => {
         return {};
       });
 
-    expect(await run(leg, getTaskResult)).toBe(true);
-    expect(await run(leg, getTaskResult)).toBe(true);
+    expect(await run(leg, getTaskResult)).toBe("reread");
+    expect(await run(leg, getTaskResult)).toBe("reread");
     expect(getTaskResult).toHaveBeenCalledTimes(2);
     // The report carries the last call and every answer.
     expect(leg.details()).toEqual({
@@ -351,11 +464,28 @@ describe("InputRequiredResultLeg: when polling goes on after the call", () => {
         waitedMs: expect.any(Number),
         calls: 2,
         answered: [
-          { message: "Seat?", key: "seat", action: "accept" },
-          { message: "Meal?", key: "meal", action: "accept" },
+          { message: "Seat?", key: "seat", action: "accept", fits: true },
+          { message: "Meal?", key: "meal", action: "accept", fits: true },
         ],
       },
     });
+  });
+
+  it("reports an answer given outside any call", async () => {
+    // A server may ask on the GET stream (tasks.mdx:439). The answer still
+    // belongs in the report, though no tasks/result was open.
+    const answers = new TaskInputAnswers({ seat: accept({ seat: "aisle" }) });
+    const leg = new InputRequiredResultLeg(answers);
+    await answers.handler(form("seat", ["aisle"], "Seat?"));
+
+    expect(leg.details()).toEqual({
+      resultWhileInputRequired: {
+        answered: [
+          { message: "Seat?", key: "seat", action: "accept", fits: true },
+        ],
+      },
+    });
+    expect(leg.couldNotAnswer()).toBe(false);
   });
 });
 
@@ -366,7 +496,12 @@ describe("InputRequiredResultLeg: what the report says", () => {
 
   it("reports each outcome without inventing fields", () => {
     expect(
-      describeResultCall({ outcome: "returned", waitedMs: 12, answered: [] }),
+      describeResultCall({
+        outcome: "returned",
+        result: { content: [] },
+        waitedMs: 12,
+        answered: [],
+      }),
     ).toEqual({ outcome: "returned", waitedMs: 12 });
     expect(
       describeResultCall({
@@ -430,7 +565,7 @@ describe("InputRequiredResultLeg: what the report says", () => {
       });
     });
 
-    it("points at the answers in setup when they were sent", async () => {
+    it("names the answer in setup that does not fit", async () => {
       const answers = new TaskInputAnswers({ seat: accept({ seat: "roof" }) });
       const leg = new InputRequiredResultLeg(answers);
       await leg.run(
@@ -445,9 +580,43 @@ describe("InputRequiredResultLeg: what the report says", () => {
         100,
       );
 
+      expect(leg.couldNotAnswer()).toBe(true);
       const reason = leg.unfinishedReason("failed");
       expect(reason.setup).toBe(true);
-      expect(reason.message).toContain("Check the answers in setup");
+      expect(reason.message).toContain('"seat"');
+      expect(reason.message).toContain("doesn't fit what the task asked");
+    });
+
+    it("is not the run's doing when every answer fit", async () => {
+      // The server got what it asked for and still failed the task: that is
+      // graded like any finished task, not excused as setup.
+      const answers = new TaskInputAnswers({ seat: accept({ seat: "aisle" }) });
+      const leg = new InputRequiredResultLeg(answers);
+      await leg.run(
+        fakeManager(
+          vi.fn().mockImplementation(async () => {
+            await answers.handler(form("seat", ["aisle"]));
+            throw rpcError(-32603, "failed");
+          }),
+        ),
+        "server",
+        "task-1",
+        100,
+      );
+
+      expect(leg.couldNotAnswer()).toBe(false);
+    });
+
+    it("is the run's doing when it was asked for a URL-mode action", async () => {
+      const answers = new TaskInputAnswers({ seat: accept({ seat: "aisle" }) });
+      const leg = new InputRequiredResultLeg(answers);
+      await answers.handler({ mode: "url", message: "Sign in" } as never);
+
+      expect(leg.couldNotAnswer()).toBe(true);
+      expect(leg.unfinishedReason("failed")).toMatchObject({
+        message: expect.stringContaining("URL mode"),
+        setup: false,
+      });
     });
 
     it("says an answer is missing when the task asked for more than was configured", async () => {
@@ -500,5 +669,75 @@ describe("TaskOperations.pollToTerminal: one budget for the whole step", () => {
     const [, remainingMs] = continueAfterInput.mock.calls[0]!;
     expect(remainingMs).toBeGreaterThan(1_500);
     expect(remainingMs).toBeLessThan(2_000);
+  });
+
+  it("reads again at once after the callback says the task moved", async () => {
+    // The last parked read asks for a 60 s wait. A task that ended during
+    // the callback must be read now, not after that wait (which would run
+    // past the 2 s deadline and report the stale parked frame).
+    const parked = (pollInterval: number) => ({
+      taskId: "task-1",
+      status: "input_required",
+      pollInterval,
+    });
+    const getTask = vi
+      .fn()
+      .mockResolvedValueOnce(parked(1))
+      .mockResolvedValueOnce(parked(1))
+      .mockResolvedValueOnce(parked(60_000))
+      .mockResolvedValue({ taskId: "task-1", status: "completed" });
+    const operations = new TaskOperations(
+      normalizeMCPTasksConformanceConfig({
+        url: "https://example.test/mcp",
+        pollTimeoutMs: 2_000,
+      }),
+    );
+    const startedAt = Date.now();
+
+    const polled = await operations.pollToTerminal(
+      { getTask } as unknown as MCPClientManager,
+      "server",
+      "legacy",
+      "task-1",
+      {
+        stopOnInputRequired: true,
+        continueAfterInput: vi.fn().mockResolvedValue("reread"),
+      },
+    );
+
+    expect(polled.task?.status).toBe("completed");
+    expect(getTask).toHaveBeenCalledTimes(4);
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+  });
+
+  it("after a re-read that is still parked, asks the callback again without three more reads", async () => {
+    const getTask = vi.fn().mockResolvedValue({
+      taskId: "task-1",
+      status: "input_required",
+      pollInterval: 1,
+    });
+    const operations = new TaskOperations(
+      normalizeMCPTasksConformanceConfig({
+        url: "https://example.test/mcp",
+        pollTimeoutMs: 2_000,
+      }),
+    );
+    const continueAfterInput = vi
+      .fn()
+      .mockResolvedValueOnce("reread")
+      .mockResolvedValue(false);
+
+    const polled = await operations.pollToTerminal(
+      { getTask } as unknown as MCPClientManager,
+      "server",
+      "legacy",
+      "task-1",
+      { stopOnInputRequired: true, continueAfterInput },
+    );
+
+    expect(polled.inputRequired).toBe(true);
+    // Three reads to see it parked, one more after the callback.
+    expect(getTask).toHaveBeenCalledTimes(4);
+    expect(continueAfterInput).toHaveBeenCalledTimes(2);
   });
 });

@@ -90,10 +90,16 @@ interface Fixture {
 
 async function serveParkedTask(options: {
   onResult: ResultMode;
-  /** Start `completed` instead of parked. */
+  /** Start finished instead of parked. */
   neverParks?: boolean;
+  /** With `neverParks`: how the task has finished. */
+  neverParksAs?: "completed" | "failed";
   /** `pollInterval` on every task read. */
   pollInterval?: number;
+  /** `pollInterval` on reads while the task is parked, when it differs. */
+  parkedPollInterval?: unknown;
+  /** For `ask`: fail the task even after an answer that fits. */
+  failAfterAnswer?: boolean;
   /** For `ask`: what the server needs, in order. */
   questions?: Question[];
   /** For `ask`: how long the task works after the last answer. */
@@ -109,7 +115,9 @@ async function serveParkedTask(options: {
   let closing = false;
   let taskStartedAt = 0;
   let resultAnswered = false;
-  let status = options.neverParks ? "completed" : "input_required";
+  let status = options.neverParks
+    ? (options.neverParksAs ?? "completed")
+    : "input_required";
   /** The open `tasks/result`, when the server is holding one. */
   let held: { res: http.ServerResponse; id: unknown } | undefined;
   const questions = [...(options.questions ?? [SEAT])];
@@ -121,7 +129,10 @@ async function serveParkedTask(options: {
     createdAt: "2026-07-27T00:00:00Z",
     lastUpdatedAt: "2026-07-27T00:00:00Z",
     ttl: 60_000,
-    pollInterval: options.pollInterval ?? 5,
+    pollInterval:
+      status === "input_required" && "parkedPollInterval" in options
+        ? options.parkedPollInterval
+        : (options.pollInterval ?? 5),
   });
   const related = { [RELATED_TASK]: { taskId: TASK_ID } };
   const finalResult = {
@@ -180,7 +191,7 @@ async function serveParkedTask(options: {
     const fits =
       answer.result?.action === "accept" &&
       question.values.includes(String(content?.[question.property]));
-    if (!fits) return endTask("failed");
+    if (!fits || options.failAfterAnswer) return endTask("failed");
     if (asked < questions.length) return ask();
     status = "working";
     const timer = setTimeout(
@@ -262,7 +273,15 @@ async function serveParkedTask(options: {
           return;
         case "tools/call":
           taskStartedAt = Date.now();
-          reply({ result: { task: { ...task(), status: "working" } } });
+          reply({
+            result: {
+              task: {
+                ...task(),
+                status: "working",
+                pollInterval: options.pollInterval ?? 5,
+              },
+            },
+          });
           return;
         case "tasks/get":
           if (options.failGetAfterResult && resultAnswered) {
@@ -420,13 +439,13 @@ describe("2025-11-25, no answers configured: a task parked on input_required", (
     expect(fixture.clientCapabilities()).not.toHaveProperty("elicitation");
   });
 
-  it("lets go of the held call when it stops waiting", async () => {
+  it("does not leave the held call open after the run", async () => {
     const fixture = await serveParkedTask({ onResult: "hold" });
     await run(fixture);
 
-    // The server sees its held response close. Asserted on the socket, not on
-    // a `notifications/cancelled` POST: that one is sent without being waited
-    // for, so the run's teardown can abort it before it is written.
+    // On 2025-11-25 the SDK does not close a timed-out request's stream; the
+    // run's teardown does. So this pins that the run lets go of the call by
+    // the time it ends, not that the time limit itself closes it.
     await vi.waitFor(() => expect(fixture.heldClosedByClient()).toBe(1), {
       timeout: 2_000,
     });
@@ -576,8 +595,99 @@ describe("2025-11-25, answers configured: the client answers over tasks/result",
       outcome: "returned",
       answered: [{ message: "Window or aisle?", key: "seat", action: "accept" }],
     });
-    // One call to receive the question, one to read the finished result.
-    expect(resultCalls(fixture)).toBe(2);
+    // The call that received the question also brought the final result, so
+    // tasks-inline-result grades that one instead of asking again.
+    expect(resultCalls(fixture)).toBe(1);
+  });
+
+  it("declares elicitation even when the run sends an exact capability set", async () => {
+    // Every Inspector run sends `clientCapabilities`, which is advertised as
+    // written. Without elicitation in it, the answers would never be asked for.
+    const fixture = await serveParkedTask({ onResult: "ask" });
+    const result = await run(fixture, {
+      pollTimeoutMs: 3_000,
+      inputResponses: SEAT_ANSWER,
+      clientCapabilities: { extensions: {} },
+    });
+
+    expect(fixture.clientCapabilities()).toHaveProperty("elicitation");
+    expect(fixture.answers[0]).toMatchObject({
+      result: { action: "accept", content: { seat: "aisle" } },
+    });
+    expect(check(result, "tasks-inline-result").status).toBe("passed");
+  });
+
+  it("reads the finished task even when it ends close to the deadline", async () => {
+    // Parked after three reads 400 ms apart. The task ends about 450 ms into
+    // the call, leaving less than one poll interval of the 1.5 s budget. The
+    // task must be read at once, not after that interval, which would run
+    // past the deadline and report the parked frame from before the call.
+    const fixture = await serveParkedTask({
+      onResult: "ask",
+      pollInterval: 400,
+      finishAfterMs: 450,
+    });
+    const result = await run(fixture, {
+      pollTimeoutMs: 1_500,
+      inputResponses: SEAT_ANSWER,
+    });
+
+    const inline = check(result, "tasks-inline-result");
+    expect([inline.status, inline.details?.status]).toEqual([
+      "passed",
+      "completed",
+    ]);
+  });
+
+  it("grades a task that failed after every answer fit, as the spec reads it", async () => {
+    // The server got what it asked for and failed the task anyway, then
+    // returned the task's JSON-RPC error from tasks/result as it MUST
+    // (tasks.mdx:464). That is not setup to fix, and it is not a fault.
+    const fixture = await serveParkedTask({
+      onResult: "ask",
+      failAfterAnswer: true,
+    });
+    const result = await run(fixture, {
+      pollTimeoutMs: 1_500,
+      inputResponses: SEAT_ANSWER,
+    });
+
+    const inline = check(result, "tasks-inline-result");
+    expect(inline.status).toBe("passed");
+    expect(inline.details).toMatchObject({ status: "failed", errorCode: -32603 });
+    expect(inline.details).not.toHaveProperty("missingInput");
+  });
+
+  it("still grades the parked frames when polling goes on after the answer", async () => {
+    // The parked frames carry a bad pollInterval and the finished one a good
+    // one. tasks-ttl-shape grades every frame, so the bad ones still count.
+    const fixture = await serveParkedTask({
+      onResult: "ask",
+      parkedPollInterval: "soon",
+    });
+    const result = await run(fixture, {
+      pollTimeoutMs: 3_000,
+      inputResponses: SEAT_ANSWER,
+    });
+
+    expect(check(result, "tasks-inline-result").status).toBe("passed");
+    expect(check(result, "tasks-ttl-shape").status).toBe("failed");
+  });
+
+  it("makes no call and sends no answers in a group that does not grade the result", async () => {
+    // Only tasks-inline-result reads what the call brings. Answering here
+    // would drive a real task to its side effect for nothing.
+    const fixture = await serveParkedTask({ onResult: "ask" });
+    const result = await run(fixture, {
+      pollTimeoutMs: 1_000,
+      inputResponses: SEAT_ANSWER,
+      checkIds: ["tasks-ttl-shape"],
+    });
+
+    expect(resultCalls(fixture)).toBe(0);
+    expect(fixture.answers).toEqual([]);
+    expect(fixture.clientCapabilities()).not.toHaveProperty("elicitation");
+    expect(check(result, "tasks-ttl-shape").status).toBe("passed");
   });
 
   it("answers two questions on one held call, each with the answer that fits it", async () => {
@@ -672,6 +782,27 @@ describe("tasks that are not parked on the 2025-11-25 wire", () => {
     const inline = check(result, "tasks-inline-result");
     expect(inline.status).toBe("passed");
     expect(inline.details).not.toHaveProperty("resultWhileInputRequired");
+  });
+
+  it("passes a task that failed, when tasks/result returns its JSON-RPC error", async () => {
+    // "it MUST return the final result of the underlying request, whether
+    // that is a successful result or a JSON-RPC error" (tasks.mdx:464). The
+    // same rule the extension wire is graded by.
+    const fixture = await serveParkedTask({
+      onResult: "hold",
+      neverParks: true,
+      neverParksAs: "failed",
+    });
+    const result = await run(fixture);
+
+    expect(taskWire(fixture)).toEqual([
+      "tools/call",
+      "tasks/get",
+      "tasks/result",
+    ]);
+    const inline = check(result, "tasks-inline-result");
+    expect(inline.status).toBe("passed");
+    expect(inline.details).toMatchObject({ status: "failed", errorCode: -32603 });
   });
 
   it("sends no tasks/result on the extension wire", async () => {

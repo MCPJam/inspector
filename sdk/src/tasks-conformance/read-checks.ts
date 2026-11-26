@@ -2,6 +2,7 @@ import { TASKS_READINESS_CATALOG } from "../conformance-catalog.js";
 
 import {
   isRecord,
+  errorCode,
   errorMessage,
   passed,
   failed,
@@ -84,7 +85,8 @@ export async function runReadChecks(context: TaskCheckContext) {
     const stepStartedAt = Date.now();
     // 2025-11-25: the `tasks/result` this run sent while the task was asking
     // for input. Shown on every verdict, so the report says it came first.
-    const resultCall = context.resultLeg?.details();
+    const leg = context.resultLeg;
+    const resultCall = leg?.details();
     if (!finalTask || !createdTaskId) {
       checks.push(noTask("tasks-inline-result"));
     } else if (!TERMINAL_STATUSES.has(String(finalTask.status))) {
@@ -124,12 +126,17 @@ export async function runReadChecks(context: TaskCheckContext) {
               { status: finalTask.status }
             )
       );
-    } else if (resultCall && finalTask.status !== "completed") {
-      // The task was waiting on this run and ended without a result. Whether
-      // the run answered or could not, that is not the server breaking a rule.
-      const reason = context.resultLeg!.unfinishedReason(
-        String(finalTask.status)
-      );
+    } else if (
+      leg &&
+      resultCall &&
+      finalTask.status !== "completed" &&
+      leg.couldNotAnswer()
+    ) {
+      // The task was waiting on an answer this run could not give, and ended
+      // without a result. That is not the server breaking a rule. When every
+      // question got an answer that fits, the task is graded below like any
+      // other finished task.
+      const reason = leg.unfinishedReason(String(finalTask.status));
       checks.push(
         couldNotRun("tasks-inline-result", reason.message, {
           status: finalTask.status,
@@ -140,8 +147,13 @@ export async function runReadChecks(context: TaskCheckContext) {
         })
       );
     } else {
+      // A call that returned already holds the final result: grade that one
+      // rather than ask for it again.
+      const held = leg?.returnedResult();
       try {
-        const result = await manager.getTaskResult(serverId, createdTaskId);
+        const result = held
+          ? held.result
+          : await manager.getTaskResult(serverId, createdTaskId);
         checks.push(
           isRecord(result)
             ? passed("tasks-inline-result", Date.now() - stepStartedAt, {
@@ -156,14 +168,25 @@ export async function runReadChecks(context: TaskCheckContext) {
               )
         );
       } catch (error) {
+        // "it MUST return the final result of the underlying request, whether
+        // that is a successful result or a JSON-RPC error" (2025-11-25
+        // tasks.mdx:464). For a task that failed or was cancelled, the
+        // JSON-RPC error IS that result, as the extension branch above grades.
+        const code = errorCode(error);
         checks.push(
-          failed(
-            "tasks-inline-result",
-            Date.now() - stepStartedAt,
-            `legacy tasks/result failed: ${errorMessage(error)}`,
-            resultCall,
-            error
-          )
+          code !== undefined && finalTask.status !== "completed"
+            ? passed("tasks-inline-result", Date.now() - stepStartedAt, {
+                status: finalTask.status,
+                errorCode: code,
+                ...resultCall,
+              })
+            : failed(
+                "tasks-inline-result",
+                Date.now() - stepStartedAt,
+                `legacy tasks/result failed: ${errorMessage(error)}`,
+                resultCall,
+                error
+              )
         );
       }
     }

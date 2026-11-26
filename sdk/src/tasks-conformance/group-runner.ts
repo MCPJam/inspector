@@ -64,6 +64,7 @@ import { TaskOperations } from "./task-operations.js";
 import {
   InputRequiredResultLeg,
   answersNeedPin,
+  serverConfigForAnswers,
   taskInputAnswersFor,
 } from "./input-required-result.js";
 import { runReadChecks } from "./read-checks.js";
@@ -100,16 +101,25 @@ export class TaskGroupRunner extends TaskOperations {
     const profile = conformanceProfile("mcp-tasks");
     // 2025-11-25: the answers to the questions a server sends over
     // `tasks/result`. Decided here because a client that answers has to say
-    // so in `initialize`.
-    const inputAnswers = taskInputAnswersFor(this.config);
+    // so in `initialize`. Only tasks-inline-result reads what the call brings,
+    // so a group without it neither calls nor answers: answering would drive
+    // a second real task to its side effect for a check that cannot use it.
+    const legacyCallUsed = selected.has("tasks-inline-result");
+    const inputAnswers = legacyCallUsed
+      ? taskInputAnswersFor(this.config)
+      : undefined;
     const resultLeg = new InputRequiredResultLeg(
       inputAnswers,
-      answersNeedPin(this.config)
+      legacyCallUsed && answersNeedPin(this.config)
+    );
+    const serverConfig = serverConfigForAnswers(
+      this.config.serverConfig,
+      inputAnswers
     );
 
     try {
       return await withTasksClient(
-        this.config.serverConfig,
+        serverConfig,
         async (manager, serverId) => {
           this.config.signal?.throwIfAborted();
           const support = manager.getTasksSupport(serverId);
@@ -540,16 +550,19 @@ export class TaskGroupRunner extends TaskOperations {
                     continueAfterInput: async (task, remainingMs) => {
                       inputRequiredTask ??= task;
                       // 2025-11-25 answers over `tasks/result`, not `tasks/update`.
-                      if (wire !== "extension")
-                        return (
-                          wire === "legacy" &&
-                          resultLeg.run(
-                            manager,
-                            serverId,
-                            createdTaskId,
-                            remainingMs
-                          )
+                      if (wire !== "extension") {
+                        if (wire !== "legacy" || !legacyCallUsed) return false;
+                        const next = await resultLeg.run(
+                          manager,
+                          serverId,
+                          createdTaskId,
+                          remainingMs
                         );
+                        // Polling goes on past this frame: keep it, so the
+                        // checks that grade every frame still see it.
+                        if (next) inputSnapshots.push(task);
+                        return next;
+                      }
                       const leg = await this.runInputRequiredLeg(
                         manager,
                         serverId,
