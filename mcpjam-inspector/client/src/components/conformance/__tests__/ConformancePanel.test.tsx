@@ -461,10 +461,10 @@ describe("ConformanceTab", () => {
       result: createTasksResult({
         checks: [
           {
-            id: "tasks-wire-resolvable",
-            category: "dispatch",
-            title: "Tasks Wire Resolvable",
-            description: "wire",
+            id: "tasks-invalid-task-id-rejected",
+            category: "lifecycle",
+            title: "Invalid Task Id Rejected",
+            description: "unknown task id",
             status: "passed",
             durationMs: 1,
           },
@@ -519,7 +519,10 @@ describe("ConformanceTab", () => {
       success: true,
       result: createTasksResult({
         checks: [
-          { ...notApplicable("tasks-wire-resolvable"), category: "dispatch" },
+          {
+            ...notApplicable("tasks-invalid-task-id-rejected"),
+            category: "lifecycle",
+          },
         ],
       }),
     });

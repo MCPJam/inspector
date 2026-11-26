@@ -40,10 +40,12 @@ import {
   createCapturingFetch,
   type RawExchange,
   type RawSseEvent,
+  type DecodedBody,
 } from "./raw-capture.js";
 import {
   pollingOutcome,
   resumePolledStream,
+  streamAnswersRequest,
   unreadPolledAnswerMessage,
   type PolledStreamResume,
 } from "./raw-poll-resume.js";
@@ -51,6 +53,7 @@ import {
 export {
   pollingOutcome,
   resumePolledStream,
+  streamAnswersRequest,
   unreadPolledAnswerMessage,
   type PolledStreamResume,
 };
@@ -576,7 +579,7 @@ export async function rawHeadersProbe(
 }
 
 /** Every JSON-RPC message on the response, whether it arrived as JSON or SSE. */
-export function jsonRpcMessages(result: RawHttpResult): unknown[] {
+export function jsonRpcMessages(result: DecodedBody): unknown[] {
   if (result.sse) {
     return result.sse
       .map((event) => event.json)
@@ -598,7 +601,7 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
  * two independent facts.
  */
 export function jsonRpcError(
-  result: RawHttpResult
+  result: DecodedBody
 ): JsonRpcErrorShape | undefined {
   for (const message of jsonRpcMessages(result)) {
     const error = asRecord(asRecord(message)?.error);
@@ -619,7 +622,7 @@ export function jsonRpcError(
 
 /** The in-band JSON-RPC `result` payload, if the response carried one. */
 export function jsonRpcResult(
-  result: RawHttpResult
+  result: DecodedBody
 ): Record<string, unknown> | undefined {
   for (const message of jsonRpcMessages(result)) {
     const payload = asRecord(asRecord(message)?.result);

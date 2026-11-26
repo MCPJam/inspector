@@ -243,6 +243,39 @@ async function captureRequest(
   return request;
 }
 
+/** A response body as the raw checks read it: one JSON document, or SSE frames. */
+export interface DecodedBody {
+  /** Parsed body when it is a single JSON document. */
+  json?: unknown;
+  /** Parsed SSE frames when the content type is `text/event-stream`. */
+  sse?: RawSseEvent[];
+}
+
+/**
+ * Whether a `Content-Type` names an event stream. Media types are compared
+ * without regard to case, so `Text/Event-Stream` is one too.
+ */
+export function isEventStream(contentType: string): boolean {
+  return contentType.toLowerCase().includes("text/event-stream");
+}
+
+/**
+ * Decode a response body from its content type and text. The ONE place that
+ * decides "SSE frames or a JSON document", so a check that reads a body it
+ * fetched some other way (the host-header probes use `node:http`) reads it
+ * exactly as the capture does.
+ */
+export function decodeResponseBody(
+  contentType: string,
+  bodyText: string
+): DecodedBody {
+  if (isEventStream(contentType)) {
+    return { sse: parseSseEvents(bodyText) };
+  }
+  const parsed = bodyText ? tryJson(bodyText) : undefined;
+  return parsed === undefined ? {} : { json: parsed };
+}
+
 async function captureResponse(
   response: Response,
   options: { skipStreamBodies?: boolean } = {}
@@ -253,7 +286,7 @@ async function captureResponse(
   // `clone.text()` resolves only when the stream ENDS, and a server is entitled
   // to hold one open for the life of the connection. Record the head and let
   // the real consumer have the stream.
-  if (options.skipStreamBodies && contentType.includes("text/event-stream")) {
+  if (options.skipStreamBodies && isEventStream(contentType)) {
     return {
       status: response.status,
       statusText: response.statusText,
@@ -282,12 +315,9 @@ async function captureResponse(
     bodyText,
   };
   if (bodyError !== undefined) raw.bodyError = bodyError;
-  if (contentType.includes("text/event-stream")) {
-    raw.sse = parseSseEvents(bodyText);
-  } else if (bodyText) {
-    const parsed = tryJson(bodyText);
-    if (parsed !== undefined) raw.json = parsed;
-  }
+  const decoded = decodeResponseBody(contentType, bodyText);
+  if (decoded.sse !== undefined) raw.sse = decoded.sse;
+  if (decoded.json !== undefined) raw.json = decoded.json;
   return raw;
 }
 

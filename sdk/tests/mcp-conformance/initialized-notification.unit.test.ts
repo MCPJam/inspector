@@ -214,7 +214,6 @@ describe("the session-termination advice", () => {
 
 describe("the checks that use the session", () => {
   const USES_SESSION: MCPCheckId[] = [
-    "server-accepts-multiple-post-streams",
     "server-sse-streams-functional",
     "notification-post-accepted",
     "get-stream-or-405",
@@ -296,7 +295,6 @@ const TRANSPORT: MCPCheckId[] = [
   "server-sse-polling-session",
   "post-response-content-type",
   "session-id-visible-ascii",
-  "server-accepts-multiple-post-streams",
   "server-sse-streams-functional",
   "notification-post-accepted",
   "get-stream-or-405",

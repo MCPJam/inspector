@@ -48,7 +48,6 @@ import {
   decideOutcome,
   toolTaskSupport,
   resolveProbeTool,
-  findDeclarationViolations,
   type ProbeToolResolution,
 } from "./metadata.js";
 import { validateCreateTaskShape } from "./shapes.js";
@@ -61,6 +60,12 @@ import {
   InputRequiredLeg,
 } from "./evidence.js";
 import { TaskOperations } from "./task-operations.js";
+import {
+  InputRequiredResultLeg,
+  answersNeedPin,
+  serverConfigForAnswers,
+  taskInputAnswersFor,
+} from "./input-required-result.js";
 import { runReadChecks } from "./read-checks.js";
 import { runMutationChecks } from "./mutation-checks.js";
 export class TaskGroupRunner extends TaskOperations {
@@ -93,35 +98,33 @@ export class TaskGroupRunner extends TaskOperations {
     // exists for: a reader comparing two runs must be able to tell whether they
     // asked the same questions, and "failed to connect" is still a run.
     const profile = conformanceProfile("mcp-tasks");
+    // 2025-11-25: the answers to the questions a server sends over
+    // `tasks/result`. Decided here because a client that answers has to say
+    // so in `initialize`. Only tasks-inline-result reads what the call brings,
+    // so a group without it neither calls nor answers: answering would drive
+    // a second real task to its side effect for a check that cannot use it.
+    const legacyCallUsed = selected.has("tasks-inline-result");
+    const inputAnswers = legacyCallUsed
+      ? taskInputAnswersFor(this.config)
+      : undefined;
+    const resultLeg = new InputRequiredResultLeg(
+      inputAnswers,
+      legacyCallUsed && answersNeedPin(this.config)
+    );
+    const serverConfig = serverConfigForAnswers(
+      this.config.serverConfig,
+      inputAnswers
+    );
 
     try {
       return await withTasksClient(
-        this.config.serverConfig,
+        serverConfig,
         async (manager, serverId) => {
           this.config.signal?.throwIfAborted();
           const support = manager.getTasksSupport(serverId);
           const wire = support.wire;
           const protocolVersion =
             manager.getNegotiatedProtocolVersion(serverId);
-
-          if (selected.has("tasks-wire-resolvable")) {
-            const stepStartedAt = Date.now();
-            // Listing the extension on 2025-11-25 is not judged: nothing
-            // forbids it, and SEP-2663 only forbids USING it there.
-            checks.push(
-              protocolVersion
-                ? passed("tasks-wire-resolvable", Date.now() - stepStartedAt, {
-                    protocolVersion,
-                    wire,
-                    support,
-                  })
-                : failed(
-                    "tasks-wire-resolvable",
-                    Date.now() - stepStartedAt,
-                    'server did not expose a negotiated protocol version; tasks dispatch fails closed to "none"'
-                  )
-            );
-          }
 
           const needsTool = [...selected].some(isTasksToolCheck);
           const tools = needsTool
@@ -524,9 +527,22 @@ export class TaskGroupRunner extends TaskOperations {
                   createdTaskId,
                   {
                     stopOnInputRequired: true,
-                    continueAfterInput: async (task) => {
+                    continueAfterInput: async (task, remainingMs) => {
                       inputRequiredTask ??= task;
-                      if (wire !== "extension") return false;
+                      // 2025-11-25 answers over `tasks/result`, not `tasks/update`.
+                      if (wire !== "extension") {
+                        if (wire !== "legacy" || !legacyCallUsed) return false;
+                        const next = await resultLeg.run(
+                          manager,
+                          serverId,
+                          createdTaskId,
+                          remainingMs
+                        );
+                        // Polling goes on past this frame: keep it, so the
+                        // checks that grade every frame still see it.
+                        if (next) inputSnapshots.push(task);
+                        return next;
+                      }
                       const leg = await this.runInputRequiredLeg(
                         manager,
                         serverId,
@@ -646,6 +662,8 @@ export class TaskGroupRunner extends TaskOperations {
             serverId,
             inputRequiredTask,
             inputLeg,
+            resultLeg,
+            pollError: polled.error,
             received,
             sent,
             rawCreation,
@@ -658,24 +676,6 @@ export class TaskGroupRunner extends TaskOperations {
           this.config.signal?.throwIfAborted();
           await runMutationChecks(context);
           this.config.signal?.throwIfAborted();
-          if (selected.has("tasks-declaration-hygiene")) {
-            const stepStartedAt = Date.now();
-            const violations = findDeclarationViolations(wire, sent);
-            checks.push(
-              violations.length === 0
-                ? passed(
-                    "tasks-declaration-hygiene",
-                    Date.now() - stepStartedAt,
-                    { inspectedRequests: sent.length, wire }
-                  )
-                : failed(
-                    "tasks-declaration-hygiene",
-                    Date.now() - stepStartedAt,
-                    `${violations.length} declaration hygiene violation(s)`,
-                    { violations }
-                  )
-            );
-          }
 
           // Which of these the `mcp-tasks` profile scores. A check outside the
           // frozen manifest still ran and still shows its verdict in `checks`,
@@ -762,6 +762,12 @@ export class TaskGroupRunner extends TaskOperations {
           rpcLogger: captureRpc,
           signal: this.config.signal,
           onRequest: this.requestHeaders.observe,
+          ...(inputAnswers
+            ? {
+                beforeConnect: (manager, serverId) =>
+                  manager.setElicitationHandler(serverId, inputAnswers.handler),
+              }
+            : {}),
         }
       );
     } catch (error) {

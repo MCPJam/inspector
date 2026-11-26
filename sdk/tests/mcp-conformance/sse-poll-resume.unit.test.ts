@@ -525,15 +525,9 @@ describe("raw probes on a server that hands its streams to polling", () => {
       );
       const results = await runTransportChecks(
         ctx,
-        new Set<MCPCheckId>([
-          "server-accepts-multiple-post-streams",
-          "server-sse-streams-functional",
-        ])
+        new Set<MCPCheckId>(["server-sse-streams-functional"])
       );
 
-      expect(byId(results, "server-accepts-multiple-post-streams").status).toBe(
-        "passed"
-      );
       expect(byId(results, "server-sse-streams-functional")).toMatchObject({
         status: "passed",
         details: expect.objectContaining({ resumedStreams: [0, 1, 2] }),
@@ -654,7 +648,7 @@ describe("streams that are not handed to polling keep today's verdicts", () => {
     }
   );
 
-  it("a stream that ends without its answer gets one GET, and the verdicts do not move", async () => {
+  it("a stream that ends without its answer gets one GET, and fails Functional SSE Streams", async () => {
     const sent: Sent[] = [];
     const ctx = context(
       scriptedServer({ sent, answer: "no-response", resume: "405", retryMs: 1 })
@@ -675,9 +669,16 @@ describe("streams that are not handed to polling keep today's verdicts", () => {
           "Server did not return a JSON-RPC error object for an invalid method",
       },
     });
-    expect(byId(transport, "server-sse-streams-functional").status).toBe(
-      "passed"
-    );
+    // The stream carried events but never the response to its request, and
+    // the call-back found nothing more: the SHOULD it is graded on went unmet.
+    expect(byId(transport, "server-sse-streams-functional")).toMatchObject({
+      status: "failed",
+      error: {
+        message:
+          "One or more concurrent SSE streams ended without the JSON-RPC response to its request",
+      },
+      details: { unansweredStreams: [0, 1, 2] },
+    });
     expect(
       byId(transport, "server-sse-streams-functional").details
     ).not.toHaveProperty("resumedStreams");

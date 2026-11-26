@@ -145,7 +145,6 @@ describe("the checks on a server that refuses the pinned version", () => {
   const TRANSPORT: MCPCheckId[] = [
     "server-sse-polling-session",
     "session-id-visible-ascii",
-    "server-accepts-multiple-post-streams",
     "server-sse-streams-functional",
     "notification-post-accepted",
     "get-stream-or-405",

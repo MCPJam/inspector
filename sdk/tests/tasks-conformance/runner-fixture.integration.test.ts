@@ -204,8 +204,6 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
       result.checks.map((entry) => [entry.id, entry.status])
     );
     expect(verdicts).toEqual({
-      "tasks-wire-resolvable": "passed",
-      "tasks-declaration-hygiene": "passed",
       "tasks-result-type-discipline": "passed",
       "tasks-undeclared-creation-refused": "passed",
       "tasks-undeclared-capability-rejected": "passed",
@@ -330,11 +328,7 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
         .filter((entry) => entry.status === "passed")
         .map((entry) => entry.id)
         .sort()
-    ).toEqual([
-      "tasks-declaration-hygiene",
-      "tasks-invalid-task-id-rejected",
-      "tasks-wire-resolvable",
-    ]);
+    ).toEqual(["tasks-invalid-task-id-rejected"]);
     expect(unrunChecks(result)).toHaveLength(11);
     expect(
       result.checks.filter(
@@ -463,7 +457,9 @@ describe("MCPTasksConformanceTest against the 2025-11-25 legacy fixture", () => 
         pollTimeoutMs: 5_000,
       } as never).run();
 
-      expect(check(result, "tasks-wire-resolvable").status).toBe("passed");
+      // The connection reached the legacy wire: the checks below are about
+      // what was sent on it, not about a failed connect.
+      expect(result.discovery.wire).toBe("legacy");
       expect(
         fixture.received.filter(
           (entry) =>
@@ -499,7 +495,9 @@ describe("MCPTasksConformanceTest against the 2025-11-25 legacy fixture", () => 
         pollTimeoutMs: 5_000,
       } as never).run();
 
-      expect(check(result, "tasks-wire-resolvable").status).toBe("passed");
+      // The connection reached the legacy wire: the checks below are about
+      // what was sent on it, not about a failed connect.
+      expect(result.discovery.wire).toBe("legacy");
       expect(
         fixture.received.filter(
           (entry) =>

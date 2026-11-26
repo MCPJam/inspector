@@ -2,6 +2,7 @@ import { TASKS_READINESS_CATALOG } from "../conformance-catalog.js";
 
 import {
   isRecord,
+  errorCode,
   errorMessage,
   passed,
   failed,
@@ -16,6 +17,7 @@ import {
 } from "./shapes.js";
 import {
   TERMINAL_STATUSES,
+  METHOD_NOT_FOUND,
   findRawTaskStates,
   findRawCreationTask,
   isRawTaskShaped,
@@ -82,19 +84,28 @@ export async function runReadChecks(context: TaskCheckContext) {
 
   if (selected.has("tasks-inline-result")) {
     const stepStartedAt = Date.now();
+    // 2025-11-25: the `tasks/result` this run sent while the task was asking
+    // for input. Shown on every verdict, so the report says it came first.
+    const leg = context.resultLeg;
+    const resultCall = leg?.details();
     if (!finalTask || !createdTaskId) {
       checks.push(noTask("tasks-inline-result"));
     } else if (!TERMINAL_STATUSES.has(String(finalTask.status))) {
       checks.push(
         couldNotRun(
           "tasks-inline-result",
-          context.repeatedInputKeys
+          context.pollError !== undefined
+            ? `reading task ${createdTaskId} failed before it reached a terminal status (last status: ${String(
+                finalTask.status
+              )}): ${errorMessage(context.pollError)}`
+            : context.repeatedInputKeys
             ? `The server kept requesting keys this run already answered: ${JSON.stringify(context.repeatedInputKeys)}. The task was still waiting for input at the polling deadline.`
             : `task did not reach a terminal status within ${
             operations.config.pollTimeoutMs
           }ms (last status: ${String(
             finalTask.status
-          )}); raise --poll-timeout (SDK: pollTimeoutMs) or probe a shorter-lived task`
+          )}); raise --poll-timeout (SDK: pollTimeoutMs) or probe a shorter-lived task`,
+          resultCall
         )
       );
     } else if (wire === "extension") {
@@ -116,30 +127,85 @@ export async function runReadChecks(context: TaskCheckContext) {
               { status: finalTask.status }
             )
       );
+    } else if (
+      leg &&
+      resultCall &&
+      finalTask.status !== "completed" &&
+      leg.couldNotAnswer()
+    ) {
+      // The task was waiting on an answer this run could not give, and ended
+      // without a result. That is not the server breaking a rule. When every
+      // question got an answer that fits, the task is graded below like any
+      // other finished task.
+      const reason = leg.unfinishedReason(String(finalTask.status));
+      checks.push(
+        couldNotRun("tasks-inline-result", reason.message, {
+          status: finalTask.status,
+          ...resultCall,
+          ...(reason.setup
+            ? needsSetupDetails("tasksProbe", reason.message)
+            : {}),
+        })
+      );
     } else {
-      try {
-        const result = await manager.getTaskResult(serverId, createdTaskId);
+      // "it MUST return the final result of the underlying request, whether
+      // that is a successful result or a JSON-RPC error" (2025-11-25
+      // tasks.mdx:464). For a task that failed or was cancelled, the
+      // JSON-RPC error IS that result, as the extension branch above grades.
+      // Not -32601: that says the server never ran `tasks/result` at all.
+      const isFinalError = (code: number | undefined): code is number =>
+        code !== undefined &&
+        code !== METHOD_NOT_FOUND &&
+        finalTask.status !== "completed";
+      // A call that already brought the final result (or, for a task that
+      // ended without completing, its final error) is graded as it came,
+      // rather than asked for again.
+      const held = leg?.returnedResult();
+      const heldError = leg?.returnedError();
+      if (!held && heldError && isFinalError(heldError.code)) {
         checks.push(
-          isRecord(result)
-            ? passed("tasks-inline-result", Date.now() - stepStartedAt, {
-                status: finalTask.status,
-              })
-            : failed(
-                "tasks-inline-result",
-                Date.now() - stepStartedAt,
-                "legacy tasks/result must return the original request's result"
-              )
+          passed("tasks-inline-result", Date.now() - stepStartedAt, {
+            status: finalTask.status,
+            errorCode: heldError.code,
+            ...resultCall,
+          })
         );
-      } catch (error) {
-        checks.push(
-          failed(
-            "tasks-inline-result",
-            Date.now() - stepStartedAt,
-            `legacy tasks/result failed: ${errorMessage(error)}`,
-            undefined,
-            error
-          )
-        );
+      } else {
+        try {
+          const result = held
+            ? held.result
+            : await manager.getTaskResult(serverId, createdTaskId);
+          checks.push(
+            isRecord(result)
+              ? passed("tasks-inline-result", Date.now() - stepStartedAt, {
+                  status: finalTask.status,
+                  ...resultCall,
+                })
+              : failed(
+                  "tasks-inline-result",
+                  Date.now() - stepStartedAt,
+                  "legacy tasks/result must return the original request's result",
+                  resultCall
+                )
+          );
+        } catch (error) {
+          const code = errorCode(error);
+          checks.push(
+            isFinalError(code)
+              ? passed("tasks-inline-result", Date.now() - stepStartedAt, {
+                  status: finalTask.status,
+                  errorCode: code,
+                  ...resultCall,
+                })
+              : failed(
+                  "tasks-inline-result",
+                  Date.now() - stepStartedAt,
+                  `legacy tasks/result failed: ${errorMessage(error)}`,
+                  resultCall,
+                  error
+                )
+          );
+        }
       }
     }
   }

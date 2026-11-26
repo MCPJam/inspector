@@ -81,7 +81,7 @@ const test = new MCPTasksConformanceTest({
   toolName: "long_job",
   toolArguments: { seconds: 1 },
   pollTimeoutMs: 10_000,
-  checkIds: ["tasks-wire-resolvable", "tasks-ttl-shape"],
+  checkIds: ["tasks-result-type-discipline", "tasks-ttl-shape"],
 });
 ```
 
@@ -89,14 +89,16 @@ const test = new MCPTasksConformanceTest({
 
 | Check id | Category | What it asserts |
 |---|---|---|
-| `tasks-wire-resolvable` | `dispatch` | The negotiated protocol version and capabilities resolve to exactly one tasks wire. |
-| `tasks-declaration-hygiene` | `dispatch` | Outbound requests carry `params.task` only on the legacy wire and the extension declaration only on the extension wire. |
 | `tasks-result-type-discipline` | `creation` | A task-eligible `tools/call` returns either a normal tool result or a flat `CreateTaskResult` with `resultType: "task"` and a non-empty `taskId`. The discriminator is required whether absent or wrong; it is the only signal that separates a task from a standard result. |
 | `tasks-undeclared-creation-refused` | `creation` | On the extension wire, a `tools/call` that did not carry the extension declaration must not come back as a `CreateTaskResult`. |
 | `tasks-ttl-shape` | `lifecycle` | TTL and poll interval use the era-native shapes: `ttlMs`/`pollIntervalMs` on the extension, `ttl`/`pollInterval` on the legacy wire. |
 | `tasks-inline-result` | `lifecycle` | A completed extension task carries its result inline on `tasks/get`; a legacy task exposes it via `tasks/result`. |
 | `tasks-mcp-name-routing` | `lifecycle` | Over HTTP, `tasks/get` is sent with `Mcp-Name` set to the task id. |
 | `tasks-undeclared-capability-rejected` | `lifecycle` | `tasks/get`, `tasks/update`, `tasks/cancel` and a task-filtered `subscriptions/listen` sent WITHOUT the extension declaration must each be rejected with `-32021` (Missing Required Client Capability). Per-method outcomes are reported in the check's `details.probes`. |
+
+<Note>
+  `tasks-wire-resolvable` and `tasks-declaration-hygiene` were removed. Both graded MCPJam's own client, not the server: the first passed whenever a protocol version was negotiated, and the second read only the requests MCPJam sent. Their rules now run as client tests in MCPJam's CI. A `--check-id` or `checkIds` list that still names them runs its other checks; a list that names only them is refused with the reason.
+</Note>
 
 ## Result shape
 
@@ -111,7 +113,7 @@ const test = new MCPTasksConformanceTest({
 | `checks` | `MCPTasksCheckResult[]` | Individual check results. |
 | `summary` | `string` | Human-readable summary. |
 | `durationMs` | `number` | Total duration. |
-| `categorySummary` | `Record<"dispatch" \| "creation" \| "lifecycle", ...>` | Per-category `total`, `passed`, `failed`, `skipped`, and `couldNotRun` counts. |
+| `categorySummary` | `Record<"creation" \| "lifecycle", ...>` | Per-category `total`, `passed`, `failed`, `skipped`, and `couldNotRun` counts. |
 | `discovery` | object | Wire, protocol version, and tool counts discovered during the run. |
 
 The `discovery` object includes:
