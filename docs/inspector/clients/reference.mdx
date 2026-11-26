@@ -27,7 +27,7 @@ How the model works with tools during a chat.
 - **Require tool approval**: pauses before tool calls so you can approve or deny each one. Turning it off doesn't skip every pause: calls that change your project always pause, and read-only lookups of your own project never do. See [Workspace tools](/inspector/playground#workspace-tools) for which project tools pause.
 - **Respect tool visibility**: honors the SEP-1865 `_meta.ui.visibility` field. When on, tools whose visibility is `["app"]` are hidden from the model. When off, every tool goes to the model, like hosts that don't filter by visibility.
 - **Progressive tools** (`Auto`, `On`, `Off`): when on, the model gets `search_mcp_tools` and `load_mcp_tools` instead of the full tool list and loads only the tools it needs. **Auto** turns it on once the client has about 30 tools, 10k tokens of tool definitions, or 3% of the model's context window; **On** always uses it; **Off** never does.
-- **Tool results sent to the model**: which parts of a tool result the model receives. Each part (`content`, `structuredContent`, `_meta`) is a toggle; select or clear it. The line under the setting describes the current choice.
+- **Tool results sent to the model**: which parts of a tool result the model receives. Choose one of the four combinations below by selecting `content`, `structuredContent`, or `_meta`. Selecting `_meta` selects all three parts, and at least one part stays selected. The line under the setting describes the current choice.
   - With all three on (the default), the model gets the whole result as one JSON string.
   - With `content` and `structuredContent` on, the model gets each of them once, without `_meta`.
   - With only `content` on, the model gets `content`. If `content` is empty, it gets `structuredContent` instead.
@@ -90,7 +90,11 @@ Appears only when the browser tool is available to your account, or when the cli
 
 ## Servers for evals
 
-Each client in an eval suite connects its own server group, chosen in **Suite settings** under **Where it runs**. A client with no server group connects no servers, so the run won't start. See [How evals work](/evaluate/how-evals-work).
+Each client in an eval suite connects its own server group, chosen in **Suite settings** under **Where it runs**. A client with no server group connects no servers, so the run won't start.
+
+To run a suite against staging only, open **Suite settings** → **Where it runs** → **Servers** and select your saved staging server. MCPJam selects or creates a group that contains only that server. This changes the server group for every client in the suite.
+
+See [How evals work](/evaluate/how-evals-work).
 
 ## Comparing hosts
 
