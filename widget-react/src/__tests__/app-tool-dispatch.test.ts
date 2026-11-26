@@ -65,4 +65,90 @@ describe("app tool dispatch", () => {
     controller.abort(new Error("closed"));
     await expect(pending).rejects.toThrow("closed");
   });
+  it.each(["success", "tool-error", "rejected"] as const)(
+    "observes a late %s after cancellation without dispatching again",
+    async (outcome) => {
+      const f = fixture();
+      let resolve!: (value: typeof f.result) => void;
+      let reject!: (reason: Error) => void;
+      const promise = new Promise<typeof f.result>((accept, fail) => {
+        resolve = accept;
+        reject = fail;
+      });
+      f.call.mockReturnValueOnce(promise);
+      const controller = new AbortController();
+      const onSettled = vi.fn();
+      const pending = dispatchAppToolCall(f.entry, {}, {
+        signal: controller.signal,
+        onSettled,
+      });
+      controller.abort(new Error("closed"));
+      await expect(pending).rejects.toThrow("closed");
+      expect(onSettled).not.toHaveBeenCalled();
+      if (outcome === "rejected") {
+        const error = new Error("late failure");
+        reject(error);
+        await Promise.resolve();
+        expect(onSettled).toHaveBeenCalledExactlyOnceWith({
+          status: "rejected",
+          reason: error,
+        });
+      } else {
+        const value = { ...f.result, isError: outcome === "tool-error" };
+        resolve(value);
+        await Promise.resolve();
+        expect(onSettled).toHaveBeenCalledExactlyOnceWith({
+          status: "fulfilled",
+          value,
+        });
+      }
+      expect(f.call).toHaveBeenCalledOnce();
+    },
+  );
+  it("does not report or dispatch an already cancelled call", async () => {
+    const f = fixture();
+    const controller = new AbortController();
+    const onSettled = vi.fn();
+    controller.abort(new Error("closed"));
+    await expect(
+      dispatchAppToolCall(f.entry, {}, {
+        signal: controller.signal,
+        onSettled,
+      }),
+    ).rejects.toThrow("closed");
+    expect(f.call).not.toHaveBeenCalled();
+    expect(onSettled).not.toHaveBeenCalled();
+  });
+  it("reports synchronous bridge failure exactly once", async () => {
+    const f = fixture();
+    const error = new Error("sync failure");
+    f.call.mockImplementation(() => {
+      throw error;
+    });
+    const onSettled = vi.fn();
+    await expect(
+      dispatchAppToolCall(f.entry, {}, { onSettled }),
+    ).rejects.toBe(error);
+    expect(onSettled).toHaveBeenCalledExactlyOnceWith({
+      status: "rejected",
+      reason: error,
+    });
+    expect(f.call).toHaveBeenCalledOnce();
+  });
+  it("observes WebMCP outcomes without forwarding the observer to the bridge", async () => {
+    const f = fixture("webmcp");
+    const controller = new AbortController();
+    const onSettled = vi.fn();
+    const raw = await dispatchAppToolCall(f.entry, {}, {
+      signal: controller.signal,
+      onSettled,
+    });
+    expect(f.request.mock.calls[0][2]).toEqual({ signal: controller.signal });
+    expect(onSettled).toHaveBeenCalledExactlyOnceWith({
+      status: "fulfilled",
+      value: raw,
+    });
+    expect(f.request).toHaveBeenCalledOnce();
+    expect(f.call).not.toHaveBeenCalled();
+  });
 });

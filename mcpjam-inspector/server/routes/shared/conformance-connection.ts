@@ -14,6 +14,7 @@ import {
 import { HOSTED_MODE, WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
 import { describeHostedConnectFailure } from "../../utils/hosted-connect-failure.js";
 import { createConformanceFetch } from "./conformance.js";
+import { deliveredCredentialBinding } from "../../utils/delivered-oauth-credential.js";
 import { isProtocolVersionPinFailure } from "../../../shared/protocol-version-pin.js";
 
 /** A separate client keeps a draft run's pin out of the main connection. */
@@ -31,7 +32,10 @@ export async function checkConformanceConnection(
         supportedProtocolVersions:
           protocolVersion === "auto" ? undefined : [protocolVersion],
         timeout: WEB_CONNECT_TIMEOUT_MS,
-        baseFetch: deadlineFetch(createConformanceFetch("MCP server"), signal),
+        baseFetch: deadlineFetch(
+          createConformanceFetch("MCP server", deliveredCredentialBinding(config)),
+          signal,
+        ),
       },
       async (manager, serverId): Promise<ConformanceConnectionResult> => {
         const negotiated = manager.getNegotiatedProtocolVersion(serverId);

@@ -37,6 +37,7 @@ import {
 } from "../shared/conformance-probes";
 import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 import { checkConformanceConnection } from "../shared/conformance-connection.js";
+import { deliveredCredentialBinding } from "../../utils/delivered-oauth-credential.js";
 
 const conformance = new Hono();
 
@@ -66,6 +67,7 @@ function toHttpResolved(config: HttpServerConfig) {
     customHeaders: config.requestInit?.headers as
       | Record<string, string>
       | undefined,
+    credentialBinding: deliveredCredentialBinding(config),
   };
 }
 
@@ -110,6 +112,10 @@ conformance.post("/connection-check", async (c) => {
           url: http.serverUrl,
           accessToken: http.accessToken,
           requestInit: { headers: http.customHeaders },
+          credentialSource: (resolved.config as HttpServerConfig)
+            .credentialSource,
+          credentialHeaderNames: (resolved.config as HttpServerConfig)
+            .credentialHeaderNames,
         },
         parsed.data.protocolVersion,
       { requestStartedAt, signal: c.req.raw.signal, runTimeoutSeconds: parsed.data.runTimeoutSeconds, remainingRunTimeoutMs: parsed.data.remainingRunTimeoutMs },
@@ -383,6 +389,7 @@ conformance.post("/oauth/start", async (c) => {
       remainingRunTimeoutMs: parsed.data.remainingRunTimeoutMs,
       defaultServerUrl: http.serverUrl,
       defaultCustomHeaders: http.customHeaders,
+      credentialBinding: http.credentialBinding,
       redirectUrl: `${callbackOrigin.replace(/\/$/, "")}/oauth/callback/debug`,
       oauthProfile,
       readinessIds,
@@ -413,6 +420,7 @@ const oauthAuthorizeSchema = z.object({
   sessionId: z.string().min(1),
   code: z.string().min(1),
   state: z.string().optional(),
+  iss: z.string().optional(),
 });
 
 conformance.post("/oauth/authorize", async (c) => {
@@ -616,6 +624,7 @@ conformance.post("/readiness/:publisher", async (c) => {
       submissionMode: parsed.data.submissionMode,
       accessToken: http.accessToken,
       customHeaders: http.customHeaders,
+      credentialBinding: http.credentialBinding,
     });
     return c.json({ success: true, result });
   } catch (error) {

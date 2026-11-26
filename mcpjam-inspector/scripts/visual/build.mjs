@@ -21,7 +21,7 @@ execFileSync(process.execPath, ["scripts/bundle-sandbox-proxy-html.js"], {
   env,
   stdio: "inherit",
 });
-for (const hosted of [false, true]) {
+for (const hosted of process.argv.includes("--hosted-only") ? [true] : [false, true]) {
   env.VITE_MCPJAM_HOSTED_MODE = String(hosted);
   env.VITE_MCPJAM_SANDBOX_ORIGIN = "https://sandbox.visual.invalid";
   execFileSync(

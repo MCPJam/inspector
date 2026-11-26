@@ -159,14 +159,14 @@ window.openai.setOpenInAppUrl({ href: "https://app.example.com/item/42" });
 
 Only `http` and `https` URLs are accepted. The link opens in a new tab with `noopener,noreferrer`.
 
-This capability is optional — hosts can turn it off, in which case `window.openai.setOpenInAppUrl` won't be defined. Guard for it before calling, for example `window.openai.setOpenInAppUrl?.({ href: "https://app.example.com/item/42" })`.
+This capability is optional; hosts can turn it off, in which case `window.openai.setOpenInAppUrl` won't be defined. Guard for it before calling, for example `window.openai.setOpenInAppUrl?.({ href: "https://app.example.com/item/42" })`.
 
 ### Content Security Policy (CSP)
 
 Widgets run in a sandboxed iframe, so you need to declare which external domains your widget can interact with. Configure these permissions in your resource's `_meta` using one of two formats:
 
-- **`_meta.ui.csp`** (preferred) — uses camelCase field names and is the standard MCP Apps format
-- **`_meta["openai/widgetCSP"]`** (legacy) — the original ChatGPT Apps format, still supported
+- **`_meta.ui.csp`** (preferred): uses camelCase field names and is the standard MCP Apps format
+- **`_meta["openai/widgetCSP"]`** (legacy): the original ChatGPT Apps format, still supported
 
 When both are present, `ui.csp` values take precedence field-by-field; any field absent from `ui.csp` falls back to `openai/widgetCSP`.
 
@@ -184,7 +184,7 @@ Without declaring a domain in your CSP, the sandbox will block the request. Only
 
 #### Third-party APIs with referrer or origin restrictions
 
-Some APIs (such as Google Maps with a referrer-restricted key) validate the page URL before serving a response. Widgets run at a real sandbox URL, so you can allowlist it in your API provider's dashboard. Locally that is `http://localhost:*` **and** `http://127.0.0.1:*` — the sandbox uses whichever of the two you did not open the Inspector with — and `https://sandbox.mcpjam.com` when hosted. See [View origins](/inspector/view-origins) for how to read the exact value.
+Some APIs (such as Google Maps with a referrer-restricted key) validate the page URL before serving a response. Widgets run at a real sandbox URL, so you can allowlist it in your API provider's dashboard. Locally that is `http://localhost:*` **and** `http://127.0.0.1:*`, the sandbox uses whichever of the two you did not open the Inspector with, and `https://sandbox.mcpjam.com` when hosted. See [View origins](/inspector/view-origins) for how to read the exact value.
 
 You still need to declare the API's domains in `_meta.ui.csp`:
 - Add script and asset CDN domains to `resourceDomains`

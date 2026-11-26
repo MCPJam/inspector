@@ -7,6 +7,8 @@ import gooseLogoDark from "/goose_logo_dark.png";
 import gooseLogoLight from "/goose_logo_light.png";
 import cursorLogo from "/cursor_logo.png";
 import copilotLogo from "/copilot_logo.png";
+import githubCopilotLogoDark from "/github_copilot_logo_dark.png";
+import githubCopilotLogoLight from "/github_copilot_logo_light.png";
 import codexLogo from "/codex-logo.svg";
 import vscodeLogo from "/vscode_logo.svg";
 import bedrockLogo from "/bedrock_logo.svg";
@@ -80,66 +82,40 @@ import { PerplexityMarkIndicator } from "./indicators/perplexity-mark";
 import { ClineMarkIndicator } from "./indicators/cline-mark";
 import { NotionShimmerIndicator } from "./indicators/notion-shimmer";
 import { MistralSpinnerIndicator } from "./indicators/mistral-spinner";
-import type {
-  HostStyleDefinition,
-  ResolvedOpenAiAppsCapabilities,
-} from "./types";
+import type { HostStyleDefinition, HostThemeMode } from "./types";
 import { HOST_STYLE_CAPABILITIES } from "@/shared/host-style-capabilities";
+import {
+  OPENAI_APPS_COPILOT_SURFACE,
+  OPENAI_APPS_FULL_SURFACE,
+} from "./openai-apps-surfaces";
+import {
+  CHATGPT_DESKTOP_HOST_STYLE,
+  CHATGPT_WORK_DESKTOP_HOST_STYLE,
+  CHATGPT_WORK_HOST_STYLE,
+  CLAUDE_CODE_DESKTOP_HOST_STYLE,
+  CLAUDE_CODE_WEB_HOST_STYLE,
+  CODEX_CLI_HOST_STYLE,
+  GROKBOT_HOST_STYLE,
+  MUSE_HOST_STYLE,
+  OPENCODE_HOST_STYLE,
+} from "./variant-host-styles";
 
-/**
- * Full `window.openai.*` method surface — every method on, every display
- * mode allowed. This is what ChatGPT (the original Apps SDK host) and the
- * MCPJam dev shim advertise.
- *
- * `selectFiles` is `true` here for type completeness and forward
- * compatibility, but the SDK runtime in
- * `sdk/src/McpAppsOpenAICompatibleRuntime.ts` does NOT install it yet —
- * widgets that feature-detect on it must see `typeof
- * window.openai.selectFiles === "undefined"` to take their fallback path.
- * `setOpenInAppUrl` is implemented by the runtime and host fullscreen
- * chrome.
- */
-export const OPENAI_APPS_FULL_SURFACE: ResolvedOpenAiAppsCapabilities = {
-  callTool: true,
-  sendFollowUpMessage: true,
-  setWidgetState: true,
-  requestDisplayMode: "all",
-  notifyIntrinsicHeight: true,
-  openExternal: true,
-  setOpenInAppUrl: true,
-  requestModal: true,
-  uploadFile: true,
-  selectFiles: true,
-  getFileDownloadUrl: true,
-  requestCheckout: true,
-  requestClose: true,
-};
-
-/**
- * Microsoft 365 Copilot's published per-method surface, verbatim from
- * the "Supported MCP Apps capabilities in Copilot" → "Component bridge"
- * table at
- * https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps
- *
- * Diffs from FULL: `requestDisplayMode` is fullscreen-only;
- * `requestModal`, `uploadFile`, `getFileDownloadUrl`, `requestCheckout`,
- * `selectFiles` are off. Everything else is on.
- */
-export const OPENAI_APPS_COPILOT_SURFACE: ResolvedOpenAiAppsCapabilities = {
-  callTool: true,
-  sendFollowUpMessage: true,
-  setWidgetState: true,
-  requestDisplayMode: "fullscreen-only",
-  notifyIntrinsicHeight: true,
-  openExternal: true,
-  setOpenInAppUrl: true,
-  requestModal: false,
-  uploadFile: false,
-  selectFiles: false,
-  getFileDownloadUrl: false,
-  requestCheckout: false,
-  requestClose: true,
-};
+export {
+  OPENAI_APPS_COPILOT_SURFACE,
+  OPENAI_APPS_DESKTOP_SURFACE,
+  OPENAI_APPS_FULL_SURFACE,
+} from "./openai-apps-surfaces";
+export {
+  CHATGPT_DESKTOP_HOST_STYLE,
+  CHATGPT_WORK_DESKTOP_HOST_STYLE,
+  CHATGPT_WORK_HOST_STYLE,
+  CLAUDE_CODE_DESKTOP_HOST_STYLE,
+  CLAUDE_CODE_WEB_HOST_STYLE,
+  CODEX_CLI_HOST_STYLE,
+  GROKBOT_HOST_STYLE,
+  MUSE_HOST_STYLE,
+  OPENCODE_HOST_STYLE,
+} from "./variant-host-styles";
 
 export {
   MCP_APPS_FULL_SURFACE,
@@ -152,6 +128,20 @@ export {
   MCP_APPS_SLACK_SURFACE,
   MCP_APPS_GEMINI_SURFACE,
 } from "@/shared/host-style-capabilities";
+
+// Composer chrome is keyed by visual family, not host id, so every host in the
+// claude/chatgpt family shares these.
+export const CLAUDE_COMPOSER_CLASSES: Record<HostThemeMode, string> = {
+  light:
+    "border border-[#DFDFDB] bg-white shadow-[0_1px_2px_rgba(0,0,0,0.05),0_4px_20px_rgba(110,110,110,0.08)]",
+  dark: "border-[#4b463d] bg-[#30302E] shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_22px_rgba(120,120,120,0.12)]",
+};
+
+export const CHATGPT_COMPOSER_CLASSES: Record<HostThemeMode, string> = {
+  light:
+    "border border-neutral-200/90 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04),0_4px_22px_rgba(100,100,100,0.08)]",
+  dark: "border border-white/10 bg-[#303030] shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_24px_rgba(130,130,130,0.14)]",
+};
 
 // NOTE: capability presets are best-effort mocks of what each vendor publicly
 // supports today. Treat them as starting points — verify against vendor docs
@@ -235,7 +225,6 @@ export const CLAUDE_CODE_HOST_STYLE: HostStyleDefinition = {
     loadingIndicator: ClaudeCodeCliIndicator,
   },
 };
-
 
 export const CHATGPT_HOST_STYLE: HostStyleDefinition = {
   id: "chatgpt",
@@ -758,6 +747,9 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   MCPJAM_HOST_STYLE,
   CLAUDE_HOST_STYLE,
   CHATGPT_HOST_STYLE,
+  CHATGPT_DESKTOP_HOST_STYLE,
+  CHATGPT_WORK_HOST_STYLE,
+  CHATGPT_WORK_DESKTOP_HOST_STYLE,
   MISTRAL_HOST_STYLE,
   GOOSE_HOST_STYLE,
   SLACK_HOST_STYLE,
@@ -772,12 +764,27 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
       ...HOST_STYLE_CAPABILITIES["copilot-cli"],
       resolveStyleVariables: getChatGPTStyleVariables,
     },
-    chatUi: { ...COPILOT_HOST_STYLE.chatUi, label: "GitHub Copilot CLI",
-      shortLabel: "GitHub Copilot CLI", pickerDescription: "GitHub Copilot CLI in a hosted sandbox" },
+    chatUi: {
+      ...COPILOT_HOST_STYLE.chatUi,
+      label: "GitHub Copilot CLI",
+      shortLabel: "GitHub Copilot CLI",
+      pickerDescription: "GitHub Copilot CLI in a hosted sandbox",
+      // GitHub Copilot's own mark, not Microsoft 365 Copilot's. It is a flat
+      // silhouette, so it flips with the theme like Goose's.
+      logoSrc: githubCopilotLogoLight,
+      logoSrcByTheme: {
+        light: githubCopilotLogoLight,
+        dark: githubCopilotLogoDark,
+      },
+    },
   },
   COPILOT_HOST_STYLE,
   CODEX_HOST_STYLE,
+  CODEX_CLI_HOST_STYLE,
+  OPENCODE_HOST_STYLE,
   CLAUDE_CODE_HOST_STYLE,
+  CLAUDE_CODE_DESKTOP_HOST_STYLE,
+  CLAUDE_CODE_WEB_HOST_STYLE,
   CLAUDE_DESKTOP_HOST_STYLE,
   VSCODE_HOST_STYLE,
   AGENTCORE_HOST_STYLE,
@@ -786,4 +793,6 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   PERPLEXITY_HOST_STYLE,
   CLINE_HOST_STYLE,
   NOTION_HOST_STYLE,
+  MUSE_HOST_STYLE,
+  GROKBOT_HOST_STYLE,
 ];

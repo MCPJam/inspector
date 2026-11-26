@@ -27,10 +27,25 @@ export function releasePacks(record = readRuntimeCompat()) {
     claude_permitted: one("claude-code", "permitted"),
     codex_permitted: one("codex", "permitted"),
   };
+  // Every other local runtime's packs, as the `<harnessId>=<version>` pairs
+  // the conformance workflow's `runtime_pack_versions` takes.
+  const runtimes = Object.keys(record.harnesses).filter((id) => id !== "claude-code" && id !== "codex").sort();
+  const pairs = (role) => runtimes.filter((id) => one(id, role)).map((id) => `${id}=${one(id, role)}`);
+  const runtimeDesired = pairs("desired").join(",");
+  const runtimePermitted = pairs("permitted");
+  const key = [packs.claude_desired, packs.codex_desired, packs.claude_permitted, packs.codex_permitted];
+  // Only once such a runtime has a pack, so the key of today's packs is unchanged.
+  if (runtimeDesired || runtimePermitted.length > 0) key.push(runtimeDesired, runtimePermitted.join(","));
   return {
     ...packs,
-    permitted_harnesses: [packs.claude_permitted && "claude-code", packs.codex_permitted && "codex"].filter(Boolean).join(","),
-    key: [packs.claude_desired, packs.codex_desired, packs.claude_permitted, packs.codex_permitted].join("/"),
+    runtime_desired: runtimeDesired,
+    runtime_permitted: runtimePermitted.join(","),
+    permitted_harnesses: [
+      packs.claude_permitted && "claude-code",
+      packs.codex_permitted && "codex",
+      ...runtimePermitted.map((pair) => pair.split("=")[0]),
+    ].filter(Boolean).join(","),
+    key: key.join("/"),
   };
 }
 

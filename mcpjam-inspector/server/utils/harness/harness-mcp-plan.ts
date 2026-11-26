@@ -60,9 +60,11 @@ export type HarnessMcpPlanFacts = {
   evalIterationId?: string;
   journeyRunId?: string;
   localExecution: boolean;
-  /** The client tests the runtime's own MCP client: a turn with servers that
-   *  cannot pass through is refused instead of taking another route. */
-  requiredForwarding?: "pass-through";
+  /**
+   * The adapter declares `mcpNativeDelivery: "web-connector"`: the vendor's
+   * own app dials MCPJam's forwarding endpoint through a connector.
+   */
+  webConnector?: boolean;
   /** The capability check, run once and only for a forwarding candidate. */
   admit: () => HarnessForwardingAdmission;
 };
@@ -77,9 +79,6 @@ export type HarnessMcpPlan = {
   candidate: boolean;
   gaps: string[];
   reasons: HarnessMcpPlanReason[];
-  /** A forward-only turn with servers that cannot pass through. The runner
-   *  stops before minting any credential or starting the runtime. */
-  refused?: true;
 };
 
 /** Hosted chat turns only: scenarios, evals, journeys and local runs never forward. */
@@ -99,9 +98,33 @@ export function hostedForwardingSurface(facts: {
   );
 }
 
+/**
+ * A web client's own route, on every surface. The exclusion list above exists
+ * because a CLI runtime that is not forwarded still has MCPJam's proxy to fall
+ * back to; a website has no such route, so its vendor's MCP client always
+ * reaches the servers through the forwarding endpoint, which gates, records
+ * and forwards each call. Admission is not asked: there is nothing to bridge.
+ *
+ * So none of the planner's reasons applies to it, the forwarding flag,
+ * enrollment, the plane and an empty server list included: with no servers
+ * there is simply nothing to forward. Its off switch is `web-clients-enabled`,
+ * which the forwarding endpoint checks on every request to a connector, not
+ * `HARNESS_NATIVE_FORWARDING`.
+ */
+const WEB_CONNECTOR_PLAN: HarnessMcpPlan = {
+  upstream: "harness",
+  delivery: "mcp-endpoint",
+  forwardingKind: "pass-through",
+  surface: true,
+  candidate: true,
+  gaps: [],
+  reasons: [],
+};
+
 export function resolveHarnessMcpPlan(
   facts: HarnessMcpPlanFacts,
 ): HarnessMcpPlan {
+  if (facts.webConnector) return { ...WEB_CONNECTOR_PLAN, gaps: [], reasons: [] };
   const configuredHarnessClient = facts.dispatch.mcpClient === "harness";
   const reasons: HarnessMcpPlanReason[] = [];
   const refuse = (blocked: boolean, reason: HarnessMcpPlanReason) => {
@@ -120,13 +143,12 @@ export function resolveHarnessMcpPlan(
   refuse(facts.selectedServerCount === 0, "no servers selected");
   refuse(!configuredHarnessClient && facts.accountRouting, "account routing");
   const candidate = reasons.length === 0;
+  // Decided once, before anything is dispatched: a turn never moves to
+  // another route after a call has gone out.
   const admission: HarnessForwardingAdmission = candidate
     ? facts.admit()
     : { gaps: [] };
-  const delivery =
-    admission.delivery === "bridge" && facts.forwardingRuntime?.passThroughOnly
-      ? undefined
-      : admission.delivery;
+  const delivery = admission.delivery;
   refuse(
     candidate && delivery === undefined,
     "forwarding not admitted; configured route retained",
@@ -137,10 +159,6 @@ export function resolveHarnessMcpPlan(
       : delivery === "bridge"
         ? "profiled"
         : undefined;
-  const refused =
-    facts.requiredForwarding === "pass-through" &&
-    facts.selectedServerCount > 0 &&
-    forwardingKind !== "pass-through";
   return {
     upstream: forwardingKind === "pass-through" ? "harness" : "mcpjam",
     delivery:
@@ -152,37 +170,7 @@ export function resolveHarnessMcpPlan(
     candidate,
     gaps: admission.gaps,
     reasons,
-    ...(refused ? { refused: true as const } : {}),
   };
-}
-
-const REFUSAL_NEXT_STEP: Partial<Record<HarnessMcpPlanReason, string>> = {
-  "plane is not web-authorized":
-    "Open this client in the signed-in hosted Playground.",
-  "scenario turn":
-    "Use this client with MCP servers in the signed-in hosted Playground.",
-  "eval iteration":
-    "Use this client with MCP servers in the signed-in hosted Playground.",
-  "journey run":
-    "Use this client with MCP servers in the signed-in hosted Playground.",
-  "local execution target":
-    "Open this client in the signed-in hosted Playground.",
-  "no host id": "Open this client in the signed-in hosted Playground.",
-  "account routing": "Choose one account for each server, then try again.",
-};
-
-/** Why a forward-only turn was refused, with the step that unblocks it. */
-export function requiredForwardingRefusal(
-  plan: Pick<HarnessMcpPlan, "reasons" | "gaps">,
-  runtimeName: string,
-): string {
-  const reason = plan.reasons[0];
-  const next =
-    reason === "forwarding not admitted; configured route retained"
-      ? `Change these server settings or choose another client: ${plan.gaps.join(", ")}.`
-      : ((reason && REFUSAL_NEXT_STEP[reason]) ??
-        "Ask an admin to turn on native forwarding for your organization, or choose another client.");
-  return `${runtimeName} calls MCP servers only through its own client, and this turn cannot forward them. ${next}`;
 }
 
 /** The label the discovery evidence table records routes under. */

@@ -1,4 +1,5 @@
 import { PromoRedemptionPage } from "./components/promo/PromoRedemptionPage";
+import { AccessRequestPage } from "./components/access-requests/AccessRequestPage";
 import { LegacyEvalRedirect } from "./components/routing/legacy-eval-redirect";
 import { LegacyEvalCaseRedirect } from "./components/routing/legacy-eval-case-redirect";
 import { ByokCreditsPage } from "./components/billing/ByokCreditsPage";
@@ -22,7 +23,6 @@ import App, {
   CompatibilityRoute,
   ComputerRoute,
   EvalRunSharedRoute,
-  EvalsRoute,
   EvaluateRoute,
   EventsRoute,
   EventTriggersRoute,
@@ -54,11 +54,13 @@ import App, {
   XAAFlowRoute,
 } from "./App";
 import { LoginInitiationRoute } from "./components/auth/login-initiation-route";
+import { ReadinessRoute } from "./components/readiness/ReadinessPage";
 import LoadingScreen from "./components/LoadingScreen";
 import { getFirstRunOAuthReturnServerName } from "./lib/first-run-oauth-return";
 import { ProjectRouteBoundary } from "./components/routing/project-route-boundary";
 import { LegacyProjectRouteNormalizer } from "./components/routing/legacy-project-route-normalizer";
 import { NotFoundRoute } from "./components/routing/not-found-route";
+import { WebAccountReconnectPage } from "./components/web-clients/WebAccountReconnectPage";
 import { getAppRouter, setAppRouter } from "./router-ref";
 import {
   buildHostsPath,
@@ -150,6 +152,9 @@ const ROUTE_ELEMENTS: Record<
     loader: ({ params }: any) => redirect(buildHostsPath(params.hostId)),
   },
   "host-compare": { element: <HostCompareRoute /> },
+  "web-accounts/:webAccountId/reconnect": {
+    element: <WebAccountReconnectPage />,
+  },
   // Chrome-less host-compare surface for vanity domains (caniuse.dev):
   // App renders this full-bleed (no sidebar/header) and skips the
   // first-run onboarding redirect. `bare` forces the no-sub-nav render
@@ -187,6 +192,7 @@ const ROUTE_ELEMENTS: Record<
   "conformance/runs/:runId": { element: <ConformanceRunDetailRoute /> },
   "conformance/shared/:token": { element: <ConformanceSharedRoute /> },
   compatibility: { element: <CompatibilityRoute /> },
+  readiness: { element: <ReadinessRoute /> },
   "oauth-flow": { element: <OAuthFlowRoute /> },
   "xaa-flow": { element: <XAAFlowRoute /> },
   tracing: { element: <TracingRoute /> },
@@ -282,6 +288,7 @@ const ROUTE_ELEMENTS: Record<
   "organizations/:orgId/api-keys": { element: <OrganizationsRoute /> },
   "organizations/:orgId/plans": { element: <OrganizationsRoute /> },
   "organizations/:orgId/data-management": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/security": { element: <OrganizationsRoute /> },
   "organizations/:orgId/audit-log": { element: <OrganizationsRoute /> },
   "organizations/:orgId/integrations": { element: <OrganizationsRoute /> },
   organizations: { element: <OrganizationsRoute /> },
@@ -295,24 +302,22 @@ const ROUTE_ELEMENTS: Record<
     loader: ({ params }) => redirect(`/organizations/${params.orgId}/billing`),
   },
   "evals/shared/:token": { element: <EvalRunSharedRoute /> },
-  evals: { element: <EvalsRoute /> },
-  "evals/create": { element: <EvalsRoute /> },
-  "evals/suite/:suiteId": { element: <EvalsRoute /> },
-  "evals/suite/:suiteId/runs/:runId": { element: <EvalsRoute /> },
+  evals: { element: <LegacyEvalRedirect /> },
+  "evals/create": { element: <LegacyEvalRedirect /> },
+  "evals/suite/:suiteId": { element: <LegacyEvalRedirect /> },
+  "evals/suite/:suiteId/runs/:runId": { element: <LegacyEvalRedirect /> },
   "evals/suite/:suiteId/test/:testId": { element: <LegacyEvalCaseRedirect /> },
   "evals/suite/:suiteId/test/:testId/edit": { element: <LegacyEvalCaseRedirect /> },
-  "evals/suite/:suiteId/settings": { element: <EvalsRoute /> },
-  "evals/suite/:suiteId/settings/evaluators": { element: <EvalsRoute /> },
+  "evals/suite/:suiteId/settings": { element: <LegacyEvalRedirect /> },
+  "evals/suite/:suiteId/settings/evaluators": { element: <LegacyEvalRedirect /> },
   "evals/suite/:suiteId/edit": { loader: redirectSuiteEditToSettings },
-  // Runs mode. `mode` comes from the route table rather than sniffing the URL
-  // inside the component, so the two lenses stay one route element with one
-  // billing gate.
-  "evals/runs": { element: <EvalsRoute mode="runs" /> },
-  "evals/runs/create": { element: <EvalsRoute mode="runs" /> },
+  // Retired Runs links keep their artifact context through the redirect.
+  "evals/runs": { element: <LegacyEvalRedirect /> },
+  "evals/runs/create": { element: <LegacyEvalRedirect /> },
   "evals/runs/commit/:commitSha": { element: <LegacyEvalRedirect /> },
-  "evals/runs/suite/:suiteId": { element: <EvalsRoute mode="runs" /> },
+  "evals/runs/suite/:suiteId": { element: <LegacyEvalRedirect /> },
   "evals/runs/suite/:suiteId/runs/:runId": {
-    element: <EvalsRoute mode="runs" />,
+    element: <LegacyEvalRedirect />,
   },
   "evals/runs/suite/:suiteId/test/:testId": {
     element: <LegacyEvalCaseRedirect />,
@@ -320,12 +325,12 @@ const ROUTE_ELEMENTS: Record<
   "evals/runs/suite/:suiteId/test/:testId/edit": {
     element: <LegacyEvalCaseRedirect />,
   },
-  "evals/runs/suite/:suiteId/settings": { element: <EvalsRoute mode="runs" /> },
+  "evals/runs/suite/:suiteId/settings": { element: <LegacyEvalRedirect /> },
   "evals/runs/suite/:suiteId/settings/evaluators": {
-    element: <EvalsRoute mode="runs" />,
+    element: <LegacyEvalRedirect />,
   },
   "evals/runs/suite/:suiteId/edit": { loader: redirectSuiteEditToSettings },
-  // Public Evaluate routes. Legacy access above is separately flagged.
+  // Public Evaluate routes. Legacy links above redirect here.
   evaluate: { element: <EvaluateRoute /> },
   "evaluate/create": { element: <EvaluateRoute /> },
   "evaluate/eval-server/:serverId": { element: <EvaluateRoute /> },
@@ -356,6 +361,7 @@ const ROUTE_ELEMENTS: Record<
   // component of its own rather than Servers: it must call `signIn()` so
   // authkit-js writes a PKCE verifier before the code lands on `/callback`.
   redeem: { element: <PromoRedemptionPage /> },
+  "access-requests/:requestId": { element: <AccessRequestPage /> },
   login: { element: <LoginInitiationRoute /> },
   callback: { element: <AppEntryLandingRoute /> },
   "oauth/callback/*": { element: <AppEntryLandingRoute /> },
@@ -552,6 +558,15 @@ export function createAppRouter(): AppRouter {
           {
             path: "__e2e/oauth-debugger",
             lazy: async () => {
+              if (
+                new URLSearchParams(window.location.search).get("surface") ===
+                "conformance"
+              ) {
+                const { ConformanceOAuthE2EHarness } = await import(
+                  "./components/e2e/ConformanceOAuthE2EHarness"
+                );
+                return { Component: ConformanceOAuthE2EHarness };
+              }
               const { OAuthDebuggerE2EHarness } =
                 await import("./components/e2e/OAuthDebuggerE2EHarness");
               return { Component: OAuthDebuggerE2EHarness };

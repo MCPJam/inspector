@@ -6,6 +6,7 @@ import {
   Inbox,
   Wallet,
 } from "lucide-react";
+import type { KeyboardEvent } from "react";
 import { useConvexAuth } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { PopoverContent } from "@mcpjam/design-system/popover";
@@ -17,6 +18,15 @@ import {
   NotificationType,
 } from "@/hooks/useNotifications";
 import { cn } from "@/lib/utils";
+import { useAppNavigate } from "@/lib/app-navigation";
+import { accessRequestPath } from "@/components/access-requests/access-request-api";
+
+/** Notifications that ask the reader to act, and so open a page on click. */
+function actionPath(notification: Notification): string | null {
+  return notification.type === "project_access_requested"
+    ? accessRequestPath(notification.entityId)
+    : null;
+}
 
 function formatTimeAgo(timestamp: number): string {
   const now = Date.now();
@@ -56,6 +66,8 @@ function getNotificationMessage(notification: Notification): string {
   switch (type) {
     case "project_added":
       return `${actor} added you to project "${entityName}"`;
+    case "project_access_requested":
+      return `${actor} asked for access to project "${entityName}"`;
     case "project_removed":
       return `${actor} removed you from project "${entityName}"`;
     case "organization_added":
@@ -85,14 +97,21 @@ function getNotificationMessage(notification: Notification): string {
 function NotificationItem({
   notification,
   onMarkAsRead,
+  onNavigate,
 }: {
   notification: Notification;
   onMarkAsRead: (id: string) => void;
+  onNavigate?: () => void;
 }) {
+  const navigate = useAppNavigate();
+  const path = actionPath(notification);
   const handleClick = () => {
     if (!notification.isRead) {
       onMarkAsRead(notification._id);
     }
+    if (!path) return;
+    navigate(path, { unscoped: true });
+    onNavigate?.();
   };
 
   return (
@@ -102,11 +121,24 @@ function NotificationItem({
         !notification.isRead && "bg-muted/30"
       )}
       onClick={handleClick}
+      // A row that opens a page is a link for keyboard and screen readers too.
+      {...(path
+        ? {
+            role: "link",
+            tabIndex: 0,
+            onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+              if (event.key !== "Enter") return;
+              event.preventDefault();
+              handleClick();
+            },
+          }
+        : {})}
     >
       <div
         className={cn(
           "flex items-center justify-center h-8 w-8 rounded-full shrink-0",
-          notification.type === "organization_seat_payment_required"
+          notification.type === "organization_seat_payment_required" ||
+            notification.type === "project_access_requested"
             ? "bg-primary/10 text-primary"
             : notification.type.includes("added")
               ? "bg-success/10 text-success"
@@ -133,6 +165,8 @@ function NotificationItem({
 interface NotificationsPanelContentProps {
   side?: "top" | "right" | "bottom" | "left";
   align?: "start" | "center" | "end";
+  /** After a row opens a page, so the caller can close what covers it. */
+  onNavigate?: () => void;
 }
 
 /**
@@ -143,6 +177,7 @@ interface NotificationsPanelContentProps {
 export function NotificationsPanelContent({
   side = "right",
   align = "end",
+  onNavigate,
 }: NotificationsPanelContentProps) {
   const { isAuthenticated } = useConvexAuth();
   const { notifications, isLoading } = useNotifications({
@@ -225,6 +260,7 @@ export function NotificationsPanelContent({
                 key={notification._id}
                 notification={notification}
                 onMarkAsRead={handleMarkAsRead}
+                onNavigate={onNavigate}
               />
             ))}
           </div>

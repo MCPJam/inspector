@@ -1,3 +1,4 @@
+import { withoutStructuredContentRule } from "@mcpjam/sdk";
 import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch";
 import { authorizeManagedProject } from "./turn-authorization.js";
 import { resolveHostedChatSetup } from "./resolve-hosted-chat-setup.js";
@@ -33,6 +34,7 @@ import {
 } from "../../utils/chat-reasoning-effort.js";
 import { checkAgentLoopGuard, refuseAgentLoop } from "../../utils/agent-loop-guard.js";
 import { DEFAULT_TURN_MAX_STEPS } from "@/shared/turn-step-budget";
+import { appliedToolApproval } from "@/shared/tool-approval";
 import {
   hostedChatSchema,
   parseWithSchema,
@@ -91,6 +93,8 @@ export async function resolveManagedTurnSetup(args: {
   bearerToken: string;
   localIngress: boolean;
   rpcCollector: ReturnType<typeof createHostedRpcLogCollector>;
+  /** A box preparation (`/web/chat/prepare`): the first message is not sent yet. */
+  preparation?: boolean;
 }) {
   const { c, rawBody, bearerToken, localIngress, rpcCollector } = args;
   const hostedBody = parseWithSchema(hostedChatSchema, rawBody);
@@ -141,7 +145,10 @@ export async function resolveManagedTurnSetup(args: {
   }
   const executionTarget = normalizedTarget.target;
   const isScenarioRequest = executionTarget.kind === "scenario";
-  if (!Array.isArray(messages) || messages.length === 0) {
+  if (
+    !args.preparation &&
+    (!Array.isArray(messages) || messages.length === 0)
+  ) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
@@ -283,6 +290,7 @@ export async function resolveManagedTurnSetup(args: {
       temperature: bodyTemperature,
       requireToolApproval: bodyRequireToolApproval,
       respectToolVisibility: bodyRespectToolVisibility,
+      runUnloadedToolCalls: body.runUnloadedToolCalls,
       progressiveToolDiscovery: body.progressiveToolDiscovery,
       modelVisibleMcpToolResults: body.modelVisibleMcpToolResults,
       mcpToolResultImageRendering: body.mcpToolResultImageRendering,
@@ -292,6 +300,10 @@ export async function resolveManagedTurnSetup(args: {
     },
     precedence: turnMode === "recorded" ? "host-wins" : "override-wins",
   });
+  const requireToolApproval = appliedToolApproval(
+    "chat",
+    resolvedExecution.requireToolApproval,
+  );
   const explicitContinuation =
     rawBody.mrtrResume !== undefined ||
     rawBody.scopeStepUpResume !== undefined ||
@@ -351,7 +363,7 @@ export async function resolveManagedTurnSetup(args: {
     configuration: toolConfiguration,
     configurationUnavailable: toolConfigurationUnavailable,
     workspaceToolsBarred,
-    requestedToolApproval: resolvedExecution.requireToolApproval,
+    requestedToolApproval: requireToolApproval,
     loadProjectAccess: async () =>
       authorized?.projectAccess ??
       ((await createConvexClient(await getConvexBearerForRequest(c)).query(
@@ -415,7 +427,7 @@ export async function resolveManagedTurnSetup(args: {
   if (resolvedExecution.harness) {
     // User Testing boxes never receive the org's vendor key: refused first.
     if (externalAccountHarnessTurn && turnMode === "recorded") {
-      throw orgKeyHarnessSurfaceError(resolvedExecution.harness, "study");
+      throw orgKeyHarnessSurfaceError(resolvedExecution.harness);
     }
     const hostModelRefusal = externalAccountHostModelRefusalReason({
       harnessId: resolvedExecution.harness,
@@ -502,12 +514,15 @@ export async function resolveManagedTurnSetup(args: {
       ...(reasoningEffort === undefined ? { temperature } : {}),
     });
   }
-  const requireToolApproval = resolvedExecution.requireToolApproval;
   const respectToolVisibility = resolvedExecution.respectToolVisibility;
   const resolvedProgressiveToolDiscovery =
     resolvedExecution.progressiveToolDiscovery;
-  const { modelVisibleMcpToolResults, mcpToolResultImageRendering } =
-    resolvedExecution.hostPolicy;
+  const { mcpToolResultImageRendering } = resolvedExecution.hostPolicy;
+  // A harness host keeps today's projection, including on a step-up resume
+  // that runs MCPJam's own engine (KES-1007).
+  const modelVisibleMcpToolResults = resolvedExecution.harness
+    ? withoutStructuredContentRule(resolvedExecution.hostPolicy.modelVisibleMcpToolResults)
+    : resolvedExecution.hostPolicy.modelVisibleMcpToolResults;
   let harnessExecutionTarget: LocalHarnessExecutionTarget | undefined;
   if (
     (await shouldUseLocalHarness(
@@ -536,6 +551,7 @@ export async function resolveManagedTurnSetup(args: {
           scope: "attended",
           harnessId: localHarnessId,
           requireToolApproval,
+          reuseCredentials: true,
         })
       ).target;
     } catch (error) {
@@ -573,7 +589,6 @@ export async function resolveManagedTurnSetup(args: {
       mcpClient: resolveAgentLoop(hostRuntimeConfig ?? { harness: resolvedExecution.harness }).mcpClient,
       harnessId: resolvedExecution.harness,
       surface: turnMode === "recorded" ? "user-testing" : "playground",
-      agentLoop: hostRuntimeConfig?.agentLoop !== undefined,
       localExecution: Boolean(harnessExecutionTarget),
       ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
       requireToolApproval,
@@ -686,7 +701,7 @@ export async function resolveManagedTurnSetup(args: {
             runtime,
             modelContextTokens: modelDefinition.contextLength,
           }),
-          live: true,
+          environmentSkillCount: 0,
         };
   return {
     value: {

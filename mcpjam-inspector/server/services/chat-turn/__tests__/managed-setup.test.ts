@@ -181,6 +181,20 @@ describe("managed setup local runtime policy", () => {
     }
   });
 
+  it.each([
+    ["Playground", "interactive"],
+    ["User Testing", "recorded"],
+  ] as const)("keeps the host's approval switch on a %s turn", async (_label, mode) => {
+    m.hostedSetup.mockResolvedValue(
+      hostedSetup(mode, { requireToolApproval: true }),
+    );
+    const { setup } = await resolveSetup({ requireToolApproval: true });
+    expect(setup.value?.requireToolApproval).toBe(true);
+    expect(m.builtInPolicy).toHaveBeenCalledWith(
+      expect.objectContaining({ requestedToolApproval: true }),
+    );
+  });
+
   it("checks auto-approve consent before a local Claude Code turn starts", async () => {
     m.hostedSetup.mockResolvedValue(
       hostedSetup("interactive", { harness: "claude-code" }),
@@ -189,7 +203,7 @@ describe("managed setup local runtime policy", () => {
     m.ensure.mockRejectedValue(new LocalAutoApproveConsentRequiredError());
     const { response } = await resolveSetup({ requireToolApproval: false });
     expect(m.ensure).toHaveBeenCalledWith(
-      expect.objectContaining({ requireToolApproval: false }),
+      expect.objectContaining({ requireToolApproval: false, reuseCredentials: true }),
     );
     expect(response.status).toBe(409);
     expect(await response.json()).toEqual({
@@ -232,7 +246,8 @@ describe("managed setup local runtime policy", () => {
     expect(setup.value?.turnSkills.skills.agent).toEqual({
       kind: "environment",
     });
-    expect(setup.value?.turnSkills.live).toBe(false);
+    // A named environment captured its own server skills.
+    expect(setup.value?.turnSkills.skills.agent?.kind).not.toBe("live");
   });
 
   it("never gives a recorded scenario turn this machine's skills", async () => {
@@ -281,11 +296,9 @@ describe("managed setup local runtime policy", () => {
     expect(
       setup.value?.turnSkills.skills.delivered.map((ref) => ref.ref),
     ).toEqual(["onboarding"]);
-    expect(setup.value?.turnSkills.box?.skills.map((s) => s.name)).toEqual([
-      "onboarding",
-    ]);
-    // Its servers are connected now, on a harness too.
-    expect(setup.value?.turnSkills.live).toBe(true);
+    expect(setup.value?.turnSkills.environmentSkillCount).toBe(1);
+    // Its servers are connected now, so their own skills join.
+    expect(setup.value?.turnSkills.skills.agent).toEqual({ kind: "live" });
   });
 });
 
@@ -333,7 +346,7 @@ describe("a Cursor CLI client", () => {
     expect(thrown).toMatchObject({
       status: 422,
       message:
-        "Cursor CLI runs only in the Playground, evals and swarms. " +
+        "Cursor CLI runs only in the Playground, evals, swarms and the API. " +
         "Choose a different client for this study.",
       details: { reason: "HARNESS_UNAVAILABLE", harness: "cursor" },
     });

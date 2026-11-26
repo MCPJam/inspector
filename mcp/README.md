@@ -60,13 +60,51 @@ beta; they are listed [after the table](#held-tools).
 | `get_server_skill` | Fetch one skill from a saved MCP server by uri, verified against its manifest digest, advertised frontmatter, and uri identity before any content is returned. | — |
 | `read_server_skill_file` | Read one supporting file of a server-served skill, checked against that skill's own manifest for byte length and digest. | — |
 | `check_host_compatibility` | Check whether a saved MCP server's tools and widgets work on each AI host (Claude, ChatGPT, Cursor, Copilot, Codex, Goose, Mistral, n8n, Perplexity, Cline). | — |
+| `start_claude_readiness_run` | Grade a saved MCP server against Anthropic's connector-directory rules, and get a run id to poll. In beta: refused for organizations outside it. | — |
+| `start_openai_readiness_run` | Grade a saved MCP server against OpenAI's app-directory rules for a declared submission mode, and get a run id to poll. In beta. | — |
+| `start_muse_readiness_run` | Grade a saved MCP server against Meta's Muse connector guidelines, and get a run id to poll. In beta. | — |
+| `get_readiness_run` | Read one readiness run: whether it finished, its grade, the optional model pass, and per-lane coverage. | — |
+| `list_readiness_runs` | List a project's readiness runs, newest first, optionally for one publisher or one server. | — |
+| `cancel_readiness_run` | Stop a readiness run that is still going. The run's final state arrives on a later read. | — |
+| `resume_readiness_run` | Run again a readiness run that stopped on the server, when a read reports it `resumable`. Only the person who started it can. In beta. | — |
+| `get_readiness_report` | Read a finished readiness run's findings, capped and ordered most consequential first, without raw evidence. | — |
+| `list_directory_flows` | List the directory submission forms MCPJam can rehearse, such as Anthropic's connector directory, with their steps. | — |
+| `get_directory_flow` | Read one directory's submission form field by field (labels, limits, defaults, the portal's error lines), or one step of it. | — |
+| `create_directory_submission` | Start a rehearsal of a directory's form for a saved server, prefilled from your account. Nothing is sent to the directory. In beta. | — |
+| `list_directory_submissions` | List a project's directory submissions, newest first, optionally for one server or one flow. | — |
+| `get_directory_submission` | Read one submission: each answer with who set it and whether it was confirmed, the portal's checks, and the latest results by step. | — |
+| `update_directory_submission` | Save answers to a submission, or its gate: which checks fail a run. A stale revision is refused only for the fields someone else changed since. In beta. | — |
+| `delete_directory_submission` | Delete a directory submission and its answers. | — |
+| `start_directory_submission_run` | Grade a submission's server and saved answers, and get a run to poll. In beta. | — |
+| `get_directory_submission_results` | Read a submission's results grouped by the portal's steps, with findings whose answers changed since marked stale, and the run's verdict under the submission's gate. | — |
+| `create_reviewer_attempt` | Start MCPJam signing in to a submission's server as the directory's reviewer, with credentials named as project secrets, never their values. In beta. | — |
+| `list_reviewer_attempts` | List a submission's reviewer sign-in attempts, newest first, with their state and stages. | — |
+| `get_reviewer_attempt` | Read one reviewer sign-in attempt: its state, each stage with its evidence, and what it waits for. | — |
+| `resume_reviewer_attempt` | Continue a reviewer sign-in attempt that waits for a person, in a new run. In beta. | — |
+| `cancel_reviewer_attempt` | Stop a reviewer sign-in attempt that is running or waiting for a person. | — |
+| `get_directory_submission_handoff` | The first call when resuming a submission from its id or a link: status, blockers, missing answers, next actions and what only a person can still do in the portal. | — |
+| `list_directory_submission_findings` | Page through a submission's findings by status, step or lane; every finding is reachable however many there are. | — |
+| `get_directory_submission_finding` | Read one check's result on a submission with the evidence behind it. | — |
+| `export_directory_submission` | Export a submission's pack as JSON or Markdown, the same bytes the page and the CLI save, with no secret in it. | — |
+| `list_directory_submission_events` | List the statuses, snapshots and directory findings recorded about a submission, with who recorded each and how they knew. | — |
+| `record_directory_submission_status` | Record a submission's status in the directory, reported or observed, in the directory's own words. In beta. | — |
+| `record_directory_submission_snapshot` | Record which server revision a copy of the catalog holds, such as what the directory's client still has. In beta. | — |
+| `import_directory_finding` | Keep what a directory said about a submission, word for word, apart from MCPJam's own findings. In beta. | — |
+| `get_directory_submission_test_plan` | Read a submission's saved test plan: what each tool's calls may change, which run, the cases in order, the budget and cleanup, and what keeps it from running. | — |
+| `draft_directory_submission_test_plan` | Draft a test plan that calls every tool the server lists, destructive calls last, with what still needs filling in. Saves nothing. | — |
+| `save_directory_submission_test_plan` | Save a submission's test plan as its next revision, at the revision you read; a plan saved since is never overwritten. In beta. | — |
+| `get_directory_submission_tool_tests` | Read what a run's test plan calls showed, tool by tool, valid input apart from expected refusals, with the calls that may have changed data named. | — |
+| `get_directory_submission_evals` | Read the eval suite holding a submission's test cases, its linked run, and each case's result there: how it was graded, whether the judge's verdict counts, and the client that ran it. | — |
+| `set_directory_submission_evals` | Link a submission to the eval suite in its project that holds its test cases, or to the run that last ran them, at the revision you read. In beta. | — |
+| `import_directory_submission_test_cases` | Import the review test cases a ChatGPT plugin package declares into the submission's linked suite; importing a version again writes nothing. In beta. | — |
+| `export_directory_submission_test_cases` | Export the linked suite's cases as the successful and graceful-failure lists ChatGPT's form takes, as a JSON file's exact bytes. | — |
 | `start_conformance_run` | Start a conformance run on a saved MCP server with the checks and tool inputs saved for it, and get a run id to poll. Costs no MCPJam credits, but may call the server's tools. | — |
 | `get_conformance_run` | Get a conformance run's status, outcome and score: whether it finished, its grade, and the number are three separate answers. | — |
 | `list_conformance_runs` | List a project's conformance runs, newest first, optionally for one saved server; pass `nextCursor` back as `cursor` for older runs. | — |
 | `get_conformance_report` | Page through a conformance run's failing checks, 50 at a time, each with the suite and id to read it in full. | — |
 | `get_conformance_check` | Read one conformance check in full: its failure, duration, and stored details and output, each capped at 16 KB. | — |
 | `list_eval_suites` | List the eval suites saved in an MCPJam project, with latest-run summaries and pass-rate trends. | ✅ |
-| `list_eval_suite_runs` | List recent runs of an eval suite, newest first, with status, pass/fail result, and summary counts. | ✅ |
+| `list_eval_suite_runs` | List recent runs of an eval suite, newest first, with status, pass/fail result, and summary counts. Without a suite, lists the one holding the project's most recent run; when no listed run has finished, adds the newest one that has. | ✅ |
 | `run_eval_case` | Start an asynchronous run of ONE case in an existing eval suite — a persisted, fully-queryable run scoped to just that case (inspect it with get_eval_run / list_eval_run_iterations / get_eval_run_steps, same as a full run). | — |
 | `run_eval_suite` | Start an asynchronous rerun of an existing eval suite, against one target or several. Fan-out is explicit: a suite with several attached targets refuses with TARGET_REQUIRED unless you name targets or pass allAttached, and each target is one PAID run. | — |
 | `create_eval_suite` | Create a runnable eval suite from authored test cases. | — |
@@ -99,6 +137,9 @@ beta; they are listed [after the table](#held-tools).
 | `backtest_eval_run` | Preview draft assertions against stored evidence; reports missing capture and never changes saved results. | — |
 | `backtest_eval_run_judge` | Preview a draft judge rubric against recorded evidence. Spends model budget without changing saved verdicts; supports continuation. | — |
 | `request_eval_run_judge` | Run LLM-as-judge grading over a finished eval run: each case's final answer is scored against its expected output. SPENDS the organization's model budget; read the results from `get_eval_run`'s `judges.goalCompletion`. | — |
+| `build_eval_run_findings` | Build a settled eval run's findings from its recorded evidence: no model call, no quota. On a run never analyzed, a finished build starts the analysis. | — |
+| `request_eval_run_insights` | Start the findings analysis the app's run page runs. Included with MCPJam (no credits); counts against the daily insight quota. Read the result from `get_eval_run`'s `insights.findings`. | — |
+| `cancel_eval_run_insights` | Stop a running eval run analysis, the recovery path for a run stuck pending. | — |
 | `list_project_environments` | List the project environments in an MCPJam project. | — |
 | `get_project_environment` | Show one project environment: its host, optional standalone server group, pinned skill selection, pinned plugin versions, and its current `revision` (which you pass as `expectedRevision` when updating it). | — |
 | `resolve_project_environment` | Resolve a project environment to the exact execution inputs a run would use right now: the host's current config, the closed server set (including servers contributed by pinned plugin versions), and the resolved plugin versions. | — |
@@ -190,9 +231,6 @@ is resolved per caller, these are held off this surface for **everyone**
 (`HELD_WHILE_IN_BETA` in `src/tools/platformTools.ts`, which also writes their
 `EXCLUDED_FROM_CATALOG` reasons). REST, the SDK and the CLI are unaffected.
 
-- Readiness: `start_claude_readiness_run`, `start_openai_readiness_run`,
-  `start_muse_readiness_run`, `get_readiness_run`, `list_readiness_runs`,
-  `cancel_readiness_run`, `get_readiness_report`
 - Unified sessions: `search_sessions`
 - Registry directory: `search_registry_directory`,
   `get_registry_directory_server`, `list_registry_directory_sources`,
@@ -402,6 +440,9 @@ For developing against the **Home/MCPJam agent** locally, use `npm run dev:local
 (`http://localhost:6274/api/v1`). The inspector's own `npm run dev` starts this
 `dev:local` worker automatically (see `CONTRIBUTING.md`), so you normally don't
 run it by hand.
+`dev`, `dev:local` and `start` first rebuild `../sdk` when its `dist/` is older
+than its sources (`MCPJAM_SKIP_SDK_BUILD=1` skips that), since the worker bundles
+`@mcpjam/sdk/platform` from there.
 Both tenants must have **Client ID Metadata Document** enabled under
 *Connect → Configuration* in the WorkOS dashboard — it's off by default, and
 without it dynamic-client-registration MCP clients will fail to connect.

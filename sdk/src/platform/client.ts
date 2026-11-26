@@ -1,6 +1,6 @@
 import { MCPJAM_CLOUD_API_URL } from "../deployment/address.js";
 import { widgetSessionPath } from "./widget-session-types.js";
-import { ServerAccountClient } from "./server-account-client.js";
+import { DirectoryReviewerAttemptClient } from "./directory-reviewer-attempt-client.js";
 import type {
   PlatformWidgetSessionTarget,
   PlatformWidgetSessionCreateBody,
@@ -37,6 +37,7 @@ import type {
   ModelSelection,
 } from "../host-config/model-selection.js";
 import { PlatformApiError } from "./errors.js";
+import { asciiJson, clientDeclarationHeaders } from "./client-declaration.js";
 import { readSdkVersion } from "../sdk-version.js";
 import type {
   PlatformScenarioSummary,
@@ -73,6 +74,8 @@ import type {
   PlatformEvalRunGate,
   PlatformGateWaiverRead,
   PlatformGateWaiverWriteResult,
+  PlatformEvalRunFindingsBuildRequested,
+  PlatformEvalRunInsightsCanceled,
   PlatformEvalRunInsightsRequested,
   PlatformAdhocEnvironmentBody,
   PlatformAdhocEnvironmentEnsured,
@@ -408,6 +411,10 @@ export const EVAL_VOCABULARY_HEADER = "x-mcpjam-eval-vocabulary";
  */
 export const API_VOCABULARY_HEADER = "x-mcpjam-api-vocabulary";
 
+/** Host-config keys this SDK understands, so a `/v1` server can return them. */
+export const HOST_CONFIG_FEATURES_HEADER = "x-mcpjam-host-config-features";
+export const HOST_CONFIG_FEATURES = "model-visible-structured-content";
+
 /**
  * `study` → `scenario`, the stored spelling, before a noun VALUE goes on the
  * wire.
@@ -480,7 +487,7 @@ function buildLaunchHeaders(
       MAX_LAUNCHER_FIELD_CHARS
     );
     const serialized = withinHeaderCap(
-      JSON.stringify({
+      asciiJson({
         kind,
         ...(client ? { client } : {}),
         ...(version ? { version } : {}),
@@ -714,7 +721,7 @@ function isBrowserPage(): boolean {
   return scope.window !== undefined && scope.document !== undefined;
 }
 
-export class PlatformApiClient extends ServerAccountClient {
+export class PlatformApiClient extends DirectoryReviewerAttemptClient {
   private readonly baseUrl: string;
   private readonly getAuth: () => string | Promise<string>;
   private readonly fetchFn: typeof fetch;
@@ -730,6 +737,8 @@ export class PlatformApiClient extends ServerAccountClient {
    * them.
    */
   private readonly launchHeaders?: Record<string, string>;
+  /** `x-mcpjam-client`, from the same launcher, for every request. */
+  private readonly clientHeaders?: Record<string, string>;
   /** The vocabulary every request declares; `1` sends no header. */
   private readonly evalVocabulary: 1 | 2;
   /** The noun-value vocabulary every request declares; `1` sends no header. */
@@ -760,6 +769,9 @@ export class PlatformApiClient extends ServerAccountClient {
       ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
       : DEFAULT_PLATFORM_USER_AGENT;
     this.launchHeaders = buildLaunchHeaders(options);
+    this.clientHeaders = clientDeclarationHeaders(
+      this.launchHeaders?.[RUN_LAUNCH_HEADERS.launcher]
+    );
     // Lower-cased at construction so `request` cannot end up with two spellings
     // of one header — HTTP names are case-insensitive, but a plain object's
     // keys are not, and `{Authorization, authorization}` would send both.
@@ -2797,9 +2809,9 @@ export class PlatformApiClient extends ServerAccountClient {
   }
 
   /**
-   * Request (or with `force`, regenerate) the eval run's insights —
-   * serverQuality behind the common envelope. SPENDS the org's model budget;
-   * poll `getEvalRun().insights` rather than re-requesting.
+   * Start (or with `force`, rerun) the run's findings analysis, the one the
+   * app's run page runs. Included with MCPJam; counts against the daily
+   * insight quota. Poll `getEvalRun().insights` rather than re-requesting.
    */
   requestEvalRunInsights(
     params: { projectId: string; runId: string; force?: boolean },
@@ -2810,6 +2822,36 @@ export class PlatformApiClient extends ServerAccountClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/eval-runs/${encodeURIComponent(params.runId)}/insights`,
+      { body: params.force ? { force: true } : {} },
+      options
+    );
+  }
+
+  /** Cancel a running analysis; a 409 when none is running. */
+  cancelEvalRunInsights(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRunInsightsCanceled> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/insights`,
+      {},
+      options
+    );
+  }
+
+  /** Build (or with `force`, rebuild) the findings an analysis explains. */
+  buildEvalRunFindings(
+    params: { projectId: string; runId: string; force?: boolean },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRunFindingsBuildRequested> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/findings/build`,
       { body: params.force ? { force: true } : {} },
       options
     );
@@ -3309,6 +3351,25 @@ export class PlatformApiClient extends ServerAccountClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/readiness-runs/${encodeURIComponent(params.runId)}/cancel`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Run again a run that stopped on the server and was re-queued, which a
+   * read reports as `resumable`. Only the person who started it can: the
+   * server is authorized again with their credentials. Poll the run after.
+   */
+  resumeReadinessRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformReadinessRunReceipt> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/readiness-runs/${encodeURIComponent(params.runId)}/resume`,
       {},
       options
     );
@@ -6618,8 +6679,12 @@ export class PlatformApiClient extends ServerAccountClient {
     } else {
       delete headers[API_VOCABULARY_HEADER];
     }
+    // This SDK's canonicalizer understands these host-config keys; a server
+    // leaves them out of the configs it returns to a client that doesn't say so.
+    headers[HOST_CONFIG_FEATURES_HEADER] = HOST_CONFIG_FEATURES;
     // After `extraHeaders`, like every other header this client owns: an edge
     // authenticator's credential must not be able to relabel a run's origin.
+    if (this.clientHeaders) Object.assign(headers, this.clientHeaders);
     if (init.declareLaunch && this.launchHeaders) {
       Object.assign(headers, this.launchHeaders);
     }

@@ -32,19 +32,18 @@ describe("original-operation form source links", () => {
   it("keeps immutable snapshots and returns an opaque stable handle with no request ports", () => {
     const registry = new PluginFormSourceRegistry(() => now);
     const input = fixture();
-    const lease = registry.bind(input);
+    const lease = registry.bind(input, "subject");
     expect(lease.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(registry.bind(fixture()).token).toBe(lease.token);
+    expect(registry.bind(fixture(), "subject").token).toBe(lease.token);
     input.hostRevision = "changed";
     const returned = registry.get(
       lease.token,
-      fixture().owner,
-      fixture().parent,
-    );
+      { ...fixture().owner, subject: "subject" },
+      fixture().parent);
     expect(returned.source).toEqual(fixture());
     returned.source.owner.actorId = "changed";
     expect(
-      registry.get(lease.token, fixture().owner, fixture().parent).source.owner
+      registry.get(lease.token, { ...fixture().owner, subject: "subject" }, fixture().parent).source.owner
         .actorId,
     ).toBe("actor");
     expect(Object.keys(returned.source).sort()).toEqual(
@@ -53,20 +52,19 @@ describe("original-operation form source links", () => {
     lease.release();
     expect(returned.signal.aborted).toBe(true);
     expect(() =>
-      registry.get(lease.token, fixture().owner, fixture().parent),
+      registry.get(lease.token, { ...fixture().owner, subject: "subject" }, fixture().parent),
     ).toThrow("FORM_SOURCE_UNAVAILABLE");
   });
   it.each(["actorId", "projectId", "workspaceId"] as const)(
     "refuses a foreign %s",
     (key) => {
       const registry = new PluginFormSourceRegistry(() => now);
-      const lease = registry.bind(fixture());
+      const lease = registry.bind(fixture(), "subject");
       expect(() =>
         registry.get(
           lease.token,
-          { ...fixture().owner, [key]: "foreign" },
-          fixture().parent,
-        ),
+          { ...{ ...fixture().owner, [key]: "foreign" }, subject: "subject" },
+          fixture().parent),
       ).toThrow("FORM_SOURCE_UNAVAILABLE");
     },
   );
@@ -75,8 +73,8 @@ describe("original-operation form source links", () => {
     { kind: "mrtr", id: "rendezvous", round: 1, inputRequestKey: "input" },
   ] as const)("refuses another parent or transport %j", (parent) => {
     const registry = new PluginFormSourceRegistry(() => now);
-    const lease = registry.bind(fixture());
-    expect(() => registry.get(lease.token, fixture().owner, parent)).toThrow(
+    const lease = registry.bind(fixture(), "subject");
+    expect(() => registry.get(lease.token, { ...fixture().owner, subject: "subject" }, parent)).toThrow(
       "FORM_SOURCE_UNAVAILABLE",
     );
   });
@@ -88,8 +86,8 @@ describe("original-operation form source links", () => {
     "hostId",
   ] as const)("cannot replace immutable %s on the same parent", (key) => {
     const registry = new PluginFormSourceRegistry(() => now);
-    registry.bind(fixture());
-    expect(() => registry.bind({ ...fixture(), [key]: "changed" })).toThrow(
+    registry.bind(fixture(), "subject");
+    expect(() => registry.bind({ ...fixture(), [key]: "changed" }, "subject")).toThrow(
       "FORM_SOURCE_UNAVAILABLE",
     );
   });
@@ -106,60 +104,58 @@ describe("original-operation form source links", () => {
     };
     const b = { ...a, parent: { ...a.parent, inputRequestKey: "b" } };
     const next = { ...a, parent: { ...a.parent, round: 2 } };
-    const leases = [a, b, next].map((value) => registry.bind(value));
-    expect(() => registry.get(leases[0].token, a.owner, b.parent)).toThrow(
+    const leases = [a, b, next].map((value) => registry.bind(value, "subject"));
+    expect(() => registry.get(leases[0].token, { ...a.owner, subject: "subject" }, b.parent)).toThrow(
       "FORM_SOURCE_UNAVAILABLE",
     );
-    expect(() => registry.get(leases[0].token, a.owner, next.parent)).toThrow(
+    expect(() => registry.get(leases[0].token, { ...a.owner, subject: "subject" }, next.parent)).toThrow(
       "FORM_SOURCE_UNAVAILABLE",
     );
     registry.closeRound(a.owner, a.invocationId, a.parent.id, 1);
     for (const [i, source] of [a, b].entries())
       expect(() =>
-        registry.get(leases[i].token, source.owner, source.parent),
+        registry.get(leases[i].token, { ...source.owner, subject: "subject" }, source.parent),
       ).toThrow("FORM_SOURCE_UNAVAILABLE");
-    const { signal } = registry.get(leases[2].token, next.owner, next.parent);
+    const { signal } = registry.get(leases[2].token, { ...next.owner, subject: "subject" }, next.parent);
     registry.closeOperation(a.owner, a.invocationId);
     expect(signal.aborted).toBe(true);
   });
   it("expires and aborts reads, then frees its capacity; restart fails closed", () => {
     let clock = now;
     const registry = new PluginFormSourceRegistry(() => clock, 1);
-    const lease = registry.bind(fixture());
+    const lease = registry.bind(fixture(), "subject");
     const { signal } = registry.get(
       lease.token,
-      fixture().owner,
-      fixture().parent,
-    );
+      { ...fixture().owner, subject: "subject" },
+      fixture().parent);
     expect(() =>
       registry.bind({
         ...fixture(),
         parent: { kind: "legacy", id: "another", round: 0 },
-      }),
+      }, "subject"),
     ).toThrow("FORM_SOURCE_LIMIT");
     clock += 1000;
     expect(() =>
-      registry.get(lease.token, fixture().owner, fixture().parent),
+      registry.get(lease.token, { ...fixture().owner, subject: "subject" }, fixture().parent),
     ).toThrow("FORM_SOURCE_UNAVAILABLE");
     expect(signal.aborted).toBe(true);
     const next = { ...fixture(), expiresAt: clock + 1000 };
-    registry.bind(next);
+    registry.bind(next, "subject");
     expect(() =>
       new PluginFormSourceRegistry(() => clock).get(
         lease.token,
-        next.owner,
-        next.parent,
-      ),
+        { ...next.owner, subject: "subject" },
+        next.parent),
     ).toThrow("FORM_SOURCE_UNAVAILABLE");
   });
   it("bounds schema UTF-8 bytes and total retained bytes", () => {
     const value = fixture();
     value.requestedSchema = { type: "object", description: "π".repeat(131072) };
-    expect(() => new PluginFormSourceRegistry(() => now).bind(value)).toThrow(
+    expect(() => new PluginFormSourceRegistry(() => now).bind(value, "subject")).toThrow(
       "FORM_SOURCE_UNAVAILABLE",
     );
     expect(() =>
-      new PluginFormSourceRegistry(() => now, 10, 1).bind(fixture()),
+      new PluginFormSourceRegistry(() => now, 10, 1).bind(fixture(), "subject"),
     ).toThrow("FORM_SOURCE_LIMIT");
   });
   it("requires the original live instance, exact generation/binding and credential subject", async () => {
@@ -205,8 +201,8 @@ describe("original-operation form source links", () => {
       owner: opened.instance.owner,
       expiresAt: Date.now() + 10000,
     };
-    const lease = pluginFormSources.bind(source);
-    const { signal } = pluginFormSources.get(lease.token, actor, source.parent);
+    const lease = pluginFormSources.bind(source, "subject");
+    const { signal } = pluginFormSources.get(lease.token, { ...actor, subject: "subject" }, source.parent);
     expect(instances.getFormOwner(source.owner, actor)).toBe(opened.instance);
     for (const owner of [
       { ...source.owner, generation: 2 },
@@ -232,7 +228,7 @@ describe("original-operation form source links", () => {
       "FORM_SOURCE_UNAVAILABLE",
     );
     expect(() =>
-      pluginFormSources.get(lease.token, actor, source.parent),
+      pluginFormSources.get(lease.token, { ...actor, subject: "subject" }, source.parent),
     ).toThrow("FORM_SOURCE_UNAVAILABLE");
   });
 });

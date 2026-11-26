@@ -382,6 +382,16 @@ function submitLaunchEnabled() {
     .disabled;
 }
 
+/**
+ * A failed launch returns to a freshly mounted Confirm whose goals now exist,
+ * so Start swarm stays disabled until that mount's funding preview lands. The
+ * alert renders before the preview does, and a click in between hits a
+ * disabled button and launches nothing.
+ */
+async function waitForRetryEnabled() {
+  await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
+}
+
 function fillDescribe(text = "Support agents answering refunds") {
   fireEvent.change(screen.getByTestId("new-swarm-describe-input"), {
     target: { value: text },
@@ -1236,6 +1246,71 @@ describe("SwarmsTab — New swarm create flow", () => {
     ).toBeInTheDocument();
   });
 
+  it("opens the planned matrix before preparation and shows accepted runs while other launches wait", async () => {
+    let finishPreparation!: (value: { _id: string }) => void;
+    let finishFirst!: (value: { runId: string }) => void;
+    let failSecond!: (reason: Error) => void;
+    createSwarmMock.mockReturnValue(
+      new Promise((resolve) => {
+        finishPreparation = resolve;
+      }),
+    );
+    launchJourneyRunMock
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishFirst = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            failSecond = reject;
+          }),
+      );
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+    fireEvent.click(screen.getByRole("button", { name: "Start swarm" }));
+
+    expect(
+      screen.queryByTestId("new-swarm-confirm-step"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("new-swarm-running-title")).toHaveTextContent(
+      "Starting swarm",
+    );
+    expect(screen.getByText("Queued: Refund a charge")).toBeVisible();
+    expect(launchJourneyRunMock).not.toHaveBeenCalled();
+    expect(
+      screen.getByTestId("new-swarm-running-open-findings"),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Leave" })).toBeDisabled();
+
+    finishPreparation({ _id: "swarm-1" });
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("Starting: Refund a charge")).toBeVisible();
+    finishFirst({ runId: "run-first" });
+    await screen.findByText("Pending: Refund a charge");
+    expect(
+      screen.getByText("Starting: Wire up the subscription webhook"),
+    ).toBeVisible();
+    expect(screen.getByText("1 of 2 goals started")).toBeVisible();
+    expect(
+      screen.queryByTestId("new-swarm-running-progress"),
+    ).not.toBeInTheDocument();
+
+    failSecond(new Error("Client connection failed"));
+    await screen.findByText("Failed: Wire up the subscription webhook");
+    expect(screen.getByText("Client connection failed")).toBeVisible();
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("new-swarm-running-open-findings"),
+      ).not.toBeDisabled(),
+    );
+    expect(screen.getByText("Pending: Refund a charge")).toBeVisible();
+  });
+
   it("writes nothing until Launch, then creates personas, journeys, and one run each", async () => {
     openDescribe();
     fillDescribe();
@@ -1295,9 +1370,11 @@ describe("SwarmsTab — New swarm create flow", () => {
     ).toBeGreaterThan(0);
     // No run/session has arrived in this fixture yet; pending is evidence-based.
     expect(screen.getByText(/Pending: Refund a charge/)).toBeInTheDocument();
-    const swarmRunGroupId = (launchJourneyRunMock.mock.calls[0]![0] as {
-      swarmRunGroupId: string;
-    }).swarmRunGroupId;
+    const swarmRunGroupId = (
+      launchJourneyRunMock.mock.calls[0]![0] as {
+        swarmRunGroupId: string;
+      }
+    ).swarmRunGroupId;
     fireEvent.click(screen.getByTestId("new-swarm-running-open-findings"));
     await waitFor(() =>
       expect(navigateMock).toHaveBeenCalledWith(`/swarms/${swarmRunGroupId}`),
@@ -1512,6 +1589,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     launchJourneyRunMock.mockImplementation(async () => ({
       runId: `run-retry-${++retrySeq}`,
     }));
+    await waitForRetryEnabled();
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(4));
@@ -1606,7 +1684,7 @@ describe("SwarmsTab — New swarm create flow", () => {
       () =>
         new Promise((_resolve, reject) => {
           rejectGenerate = reject;
-        })
+        }),
     );
     openDescribe();
     fillDescribe();
@@ -1614,21 +1692,21 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await waitFor(() =>
       expect(screen.getByTestId("new-swarm-continue")).toHaveTextContent(
-        /generating/i
-      )
+        /generating/i,
+      ),
     );
 
     rejectGenerate(
       // `limitDialogRaised` is what `postGenerate` sets once the dialog has
       // taken the error over.
-      new SwarmGenerateError(429, "Daily MCPJam model limit reached.", true)
+      new SwarmGenerateError(429, "Daily MCPJam model limit reached.", true),
     );
 
     // Back to idle, so the catch has run and had its chance to set a message.
     await waitFor(() =>
       expect(screen.getByTestId("new-swarm-continue")).toHaveTextContent(
-        "Continue"
-      )
+        "Continue",
+      ),
     );
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
@@ -1872,6 +1950,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     launchJourneyRunMock.mockImplementation(async () => ({
       runId: `run-${(n += 1)}`,
     }));
+    await waitForRetryEnabled();
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
     await waitFor(() =>
       expect(launchJourneyRunMock.mock.calls.length).toBeGreaterThan(0),
@@ -1952,6 +2031,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     launchJourneyRunMock.mockImplementation(async () => ({
       runId: `run-retry-${(retryRun += 1)}`,
     }));
+    await waitForRetryEnabled();
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     await waitFor(() =>
@@ -2293,6 +2373,25 @@ describe("SwarmsTab create flow — survives a remount", () => {
     render(createFlowTab());
   }
 
+  it("restores Confirm with a retry message if startup was interrupted before a run started", async () => {
+    createSwarmMock.mockImplementation(() => new Promise(() => {}));
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    expect(screen.getByTestId("new-swarm-running-title")).toHaveTextContent(
+      "Starting swarm",
+    );
+
+    remount();
+    await screen.findByTestId("new-swarm-confirm-step");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Swarm startup was interrupted. Press Start swarm to retry.",
+    );
+    expect(screen.getByTestId("new-swarm-launch")).not.toBeDisabled();
+  });
+
   it("keeps a description-only edit, and keeps its draft, across repeated remounts", async () => {
     openDescribe();
     fireEvent.change(screen.getByTestId("new-swarm-describe-input"), {
@@ -2541,10 +2640,7 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
     expect(toast.info).toHaveBeenCalledWith("New swarm draft discarded");
   });
 
-  it("disables the ← Swarms exit while a launch is in flight, and clicking it fires no toast", async () => {
-    // Hold the launch open so `launching` stays true and the header link sits
-    // in its disabled window — the exact state the guard exists for. This is
-    // the behaviour the PR description promises.
+  it("disables Leave on the run screen while a launch is in flight", async () => {
     launchJourneyRunMock.mockImplementation(() => new Promise(() => {}));
     openDescribe();
     fillDescribe();
@@ -2552,7 +2648,7 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
     await screen.findByTestId("new-swarm-proposed-personas");
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
-    const back = await screen.findByTestId("new-swarm-back-to-swarms");
+    const back = screen.getByRole("button", { name: "Leave" });
     await waitFor(() => expect(back).toBeDisabled());
     // A disabled control ignores the click: no discard toast over a live launch.
     fireEvent.click(back);
@@ -2613,16 +2709,16 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
     // fail if a later change skipped resolveTargets or routed to the other
     // bail-out. The ensureAdhoc call confirms the ad-hoc resolve path ran at all
     // rather than the preflight guard short-circuiting it.
-    expect(await screen.findByRole("alert")).toHaveTextContent("resolve failed");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "resolve failed",
+    );
     expect(ensureAdhocEnvironmentsMock).toHaveBeenCalled();
     expect(
       screen.queryByTestId("new-swarm-running-step"),
     ).not.toBeInTheDocument();
     // The whole point of moving the latch ahead of the await: the finally
     // re-enabled the exit instead of stranding it disabled with no way out.
-    expect(
-      screen.getByTestId("new-swarm-back-to-swarms"),
-    ).not.toBeDisabled();
+    expect(screen.getByTestId("new-swarm-back-to-swarms")).not.toBeDisabled();
   });
 
   it("names the swarm from the date suggestion, not from the description paragraph", async () => {
@@ -2671,9 +2767,7 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-proposed-personas");
 
-    const counter = screen.getAllByTestId(
-      "new-swarm-persona-iterations",
-    )[0];
+    const counter = screen.getAllByTestId("new-swarm-persona-iterations")[0];
     fireEvent.change(counter, { target: { value: "" } });
 
     expect(
@@ -2874,7 +2968,9 @@ describe("SwarmsTab — Confirm personas (Production Redesign)", () => {
         /select a user persona for details, or remove anything that doesn.{0,3}t fit/i,
       ),
     ).toBeVisible();
-    expect(screen.getByTestId("new-swarm-conversation-total")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("new-swarm-conversation-total"),
+    ).toBeInTheDocument();
     expect(
       screen.queryByText(/run \d+ sessions? total in this swarm/i),
     ).not.toBeInTheDocument();
@@ -2981,11 +3077,11 @@ describe("SwarmsTab — Confirm personas (Production Redesign)", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("names the primary Continue, with Back beside it", async () => {
+  it("names the primary Start swarm, with Back beside it", async () => {
     await reachConfirm();
 
     expect(screen.getByTestId("new-swarm-launch")).toHaveTextContent(
-      "Continue",
+      "Start swarm",
     );
     expect(screen.getByRole("button", { name: /^back$/i })).toBeVisible();
   });
@@ -3236,7 +3332,9 @@ describe("SwarmsTab — Confirm keeps reused personas in their cards", () => {
         screen.queryByText(/Different server group/),
       ).not.toBeInTheDocument();
 
-      fireEvent.click(within(personas).getByTestId("new-swarm-persona-compact"));
+      fireEvent.click(
+        within(personas).getByTestId("new-swarm-persona-compact"),
+      );
       const detail = await screen.findByTestId("new-swarm-persona-detail");
       expect(within(detail).getByLabelText("Goal")).toHaveValue("Reconcile");
     },
@@ -3349,7 +3447,9 @@ describe("SwarmsTab: Confirm with the environments flag off", () => {
 
     expect(
       await screen.findByTestId("new-swarm-confirm-env-move-warning"),
-    ).toHaveTextContent("Some existing goals were written for a different setup");
+    ).toHaveTextContent(
+      "Some existing goals were written for a different setup",
+    );
     const personas = screen.getByTestId("new-swarm-reused-personas");
     await waitFor(() => expect(personas).toHaveTextContent("1 goal"));
     expect(
@@ -3468,9 +3568,9 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     );
     await openReusedConfirm();
 
-    expect(await screen.findByTestId("new-swarm-funding-split")).toHaveTextContent(
-      "1 sponsored · 1 uses org credits",
-    );
+    expect(
+      await screen.findByTestId("new-swarm-funding-split"),
+    ).toHaveTextContent("1 sponsored · 1 uses org credits");
     // Why some use credits: the allowance ran short.
     expect(
       screen.getByTestId("new-swarm-funding-explanation"),
@@ -3505,9 +3605,9 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     });
     await openReusedConfirm();
 
-    expect(await screen.findByTestId("new-swarm-funding-split")).toHaveTextContent(
-      "2 conversations use org credits",
-    );
+    expect(
+      await screen.findByTestId("new-swarm-funding-split"),
+    ).toHaveTextContent("2 conversations use org credits");
     expect(
       screen.getByTestId("new-swarm-funding-explanation"),
     ).toHaveTextContent(
@@ -3517,9 +3617,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
 
   it("shows nothing when sponsorship does not apply, and launches without an expected count", async () => {
     await openReusedConfirm();
-    expect(
-      screen.queryByTestId("new-swarm-funding"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("new-swarm-funding")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
@@ -3568,7 +3666,9 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fundingPreviewMock.mockResolvedValue(supported([previewRun(0, 1)]));
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
-    expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
+    expect(
+      await screen.findByTestId("new-swarm-funding-notice"),
+    ).toHaveTextContent(
       /1 conversation will now use org credits[\s\S]*press continue to launch/i,
     );
     expect(launchJourneyRunMock).not.toHaveBeenCalled();
@@ -3595,7 +3695,9 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fundingPreviewMock.mockRejectedValue(new Error("network down"));
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
-    expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
+    expect(
+      await screen.findByTestId("new-swarm-funding-notice"),
+    ).toHaveTextContent(
       /couldn't confirm the sponsored conversations[\s\S]*nothing has launched/i,
     );
     expect(launchJourneyRunMock).not.toHaveBeenCalled();
@@ -3614,7 +3716,9 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     });
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
-    expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
+    expect(
+      await screen.findByTestId("new-swarm-funding-notice"),
+    ).toHaveTextContent(
       /couldn't confirm the sponsored conversations[\s\S]*nothing has launched/i,
     );
     expect(launchJourneyRunMock).not.toHaveBeenCalled();
@@ -3733,7 +3837,9 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     );
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
-    expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
+    expect(
+      await screen.findByTestId("new-swarm-funding-notice"),
+    ).toHaveTextContent(
       /1 conversation from existing goals will now use org credits/i,
     );
     expect(launchJourneyRunMock).not.toHaveBeenCalled();
@@ -3748,7 +3854,9 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     await screen.findByTestId("new-swarm-running-step");
-    expect(launchArgs().map((args) => args.expectedSponsored)).toEqual([0, 1, 1]);
+    expect(launchArgs().map((args) => args.expectedSponsored)).toEqual([
+      0, 1, 1,
+    ]);
     expect(createJourneyMock).toHaveBeenCalledTimes(2);
   });
 
@@ -3759,9 +3867,9 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fundingPreviewMock.mockRejectedValue(new Error("network down"));
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
-    expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
-      /couldn't confirm the sponsored conversations/i,
-    );
+    expect(
+      await screen.findByTestId("new-swarm-funding-notice"),
+    ).toHaveTextContent(/couldn't confirm the sponsored conversations/i);
     expect(launchJourneyRunMock).not.toHaveBeenCalled();
   });
 
@@ -3776,10 +3884,12 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fundingPreviewMock.mockRejectedValue(new Error("network down"));
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
-    expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
-      /couldn't confirm the sponsored conversations/i,
+    expect(
+      await screen.findByTestId("new-swarm-funding-notice"),
+    ).toHaveTextContent(/couldn't confirm the sponsored conversations/i);
+    await waitFor(() =>
+      expect(alertText()).toMatch(/Goal service unavailable/),
     );
-    await waitFor(() => expect(alertText()).toMatch(/Goal service unavailable/));
     expect(launchJourneyRunMock).not.toHaveBeenCalled();
   });
 
@@ -3792,7 +3902,9 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
-    expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
+    expect(
+      await screen.findByTestId("new-swarm-funding-notice"),
+    ).toHaveTextContent(
       /nothing was launched and nothing was moved to org credits/i,
     );
     // Not retried into a paid path: one attempt, no second.
@@ -3806,7 +3918,9 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
         readsBefore + 1,
       ),
     );
-    expect(screen.queryByText(/no runs were launched/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/no runs were launched/i),
+    ).not.toBeInTheDocument();
   });
 
   it("on a 409 after some runs launched: keeps them, stops the rest, and says so", async () => {
@@ -3869,7 +3983,10 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     expect(launchArgs()[0].expectedSponsored).toBe(1);
     await waitFor(() =>
       expect(
-        [alertText(), ...vi.mocked(toast.warning).mock.calls.map((c) => String(c[0]))].join(" "),
+        [
+          alertText(),
+          ...vi.mocked(toast.warning).mock.calls.map((c) => String(c[0])),
+        ].join(" "),
       ).toMatch(/Goal service unavailable/),
     );
   });
@@ -3957,12 +4074,11 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(3));
     // The goals were created once and stay created.
     expect(createJourneyMock).toHaveBeenCalledTimes(2);
-    expect(launchArgs()
-      .slice(1)
-      .map((a) => a.sessionsPerTarget)).toEqual([
-      2,
-      undefined,
-    ]);
+    expect(
+      launchArgs()
+        .slice(1)
+        .map((a) => a.sessionsPerTarget),
+    ).toEqual([2, undefined]);
   });
 
   it("sends no iterations override for a goal whose counter was never changed", async () => {

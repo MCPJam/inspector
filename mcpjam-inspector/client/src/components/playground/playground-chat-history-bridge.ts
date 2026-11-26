@@ -23,7 +23,11 @@ export interface PlaygroundChatHistoryBridge {
   projectId: string | null | undefined;
   enabled: boolean;
   refreshSignal: number;
-  onSelectThread: (session: ChatHistorySession) => void | Promise<void>;
+  /** `siblings` is the row's section, where a multi-model session finds its columns. */
+  onSelectThread: (
+    session: ChatHistorySession,
+    siblings?: readonly ChatHistorySession[],
+  ) => void | Promise<void>;
   /** Hover prefetch — warms detail + blob caches so click is near-instant. */
   onPrefetchThread?: (session: ChatHistorySession) => void;
   onNewChat: (options?: {

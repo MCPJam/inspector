@@ -21,6 +21,28 @@ import type { PlatformProject, PlatformProjectServer } from "./types.js";
 export const PROJECT_SELECTOR_DESCRIPTION =
   "Project name or ID. Defaults to the most recently updated accessible project.";
 
+// Unlike the listing operations, the run-polling reads do NOT default the
+// project: a run is an existing resource in one specific project, and
+// guessing "most recently updated" makes a run in any other project read as
+// NOT_FOUND. run_eval_suite and list_eval_suite_runs return the resolved
+// project precisely so callers can address the polls exactly.
+export const RUN_PROJECT_DESCRIPTION =
+  "Project the run belongs to (name or ID), as returned by run_eval_suite or list_eval_suite_runs.";
+
+/** One eval run, addressed in its own project. */
+export const evalRunScopedInput = z.object({
+  project: z.string().trim().min(1).describe(RUN_PROJECT_DESCRIPTION),
+  runId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Eval run ID, as returned by run_eval_suite or list_eval_suite_runs."
+    ),
+});
+
+export type EvalRunScopedInput = z.infer<typeof evalRunScopedInput>;
+
 /**
  * Resolve the caller's project selector, and REPORT what it resolved to.
  *

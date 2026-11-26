@@ -19,6 +19,7 @@ import {
   type EventRunInput,
 } from "../backend-client.js";
 import { persistEventRunTranscript, type TranscriptPort } from "../run-transcript.js";
+import { defaultPrepareChat } from "../executor-deps.js";
 import { ErrorCode, WebRouteError } from "../../../routes/web/errors.js";
 import {
   EventRunHaltError,
@@ -462,6 +463,24 @@ describe("executeClaimedEventRun", () => {
     );
   });
 
+  it("runs no harness: every runtime it resolves names none", async () => {
+    // Events has no harness executor, and no runtime declares the surface
+    // off any more, so the only guarantee is that a run never selects one.
+    const { deps } = await liveDeps();
+    const scripted = deps.resolveRuntime!;
+    resolveTurnRuntimeMock.mockImplementation((args) => scripted(args));
+    const outcome = await executeClaimedEventRun(claim(), {
+      ...deps,
+      resolveRuntime: undefined,
+    });
+
+    expect(outcome.status).toBe("completed");
+    expect(resolveTurnRuntimeMock).toHaveBeenCalled();
+    for (const [args] of resolveTurnRuntimeMock.mock.calls) {
+      expect(args).not.toHaveProperty("harness");
+    }
+  });
+
   it("connects with the subscription's pinned OAuth connection", async () => {
     const { connect, deps } = await liveDeps();
     const pinned = claim();
@@ -572,6 +591,27 @@ describe("executeClaimedEventRun", () => {
     expect(backend.checkpointRun).toHaveBeenCalledWith(
       expect.objectContaining({ runId: "run_1", token: "run_lease_1", step: 3 }),
     );
+  });
+
+  it("builds tools without the host's approval switch, as the event row of the approval policy says", async () => {
+    const backend = fakeBackend();
+    const { deps } = await liveDeps(backend);
+    const prepareChat = vi.fn(defaultPrepareChat);
+    const runTurn = vi.fn(async (options: any) => ({
+      messages: options.messages, newMessages: [], toolCalls: [], toolResults: [], aborted: false,
+    }));
+    await executeClaimedEventRun(claim(), {
+      ...deps,
+      resolveServers: async () => ({
+        serverIds: [SERVER_ID],
+        hostConfig: { requireToolApproval: true },
+      }),
+      resolveRuntime: async () => ({ runtime: { kind: "hosted", endpointPath: "/stream" } }),
+      prepareChat,
+      runTurn,
+    });
+    expect(prepareChat.mock.calls[0]![0].requireToolApproval).toBe(false);
+    expect(runTurn.mock.calls[0]![0].approvalMode).toBe("auto-deny");
   });
 
   it("fails a claim with no frozen input", async () => {

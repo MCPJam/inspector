@@ -112,19 +112,22 @@ vi.mock("../harness-session-state.js", async (importOriginal) => ({
 
 vi.mock("../harness-model-broker.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../harness-model-broker.js")>()),
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => ({ ok: true })),
   startHarnessModelBroker: vi.fn(async () => {
     throw new Error("an external-account turn must never start a model lease");
   }),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 import { runHarnessTurn } from "../run-harness-turn";
 import { revokeHarnessModelBroker } from "../harness-model-broker.js";
 import { harnessServerKeyToName, toAcpMcpServers, type HarnessMcpJson } from "../mcp-config";
 import { unsealHarnessProxyToken } from "../harness-proxy-policy-seal";
+import { sessionPolicyDigest } from "../session-mcp-config";
 import { setManagerOrganization } from "../../mcp-connections";
 import { extractToolErrors } from "@/shared/eval-matching";
 
@@ -136,6 +139,7 @@ const KEY = Object.keys(harnessServerKeyToName([{ name: "srv-a" }]))[0]!;
 function manager(config: Record<string, unknown>, capabilities: object = {}) {
   const value = {
     getServerConfig: vi.fn(() => config),
+    getAllToolAnnotations: vi.fn(() => ({})),
     getInitializationInfo: vi.fn(() => ({
       transport: "streamable-http",
       protocolVersion: "2025-11-25",
@@ -374,6 +378,70 @@ describe("the Cursor CLI on pass-through forwarding", () => {
       ]),
     );
     expect(posted("/web/harness/forwarding/start")).toHaveLength(0);
+  });
+});
+
+describe("the Cursor CLI on the profiled bridge", () => {
+  /** A client declaring only MCP Apps, on a 2026-07-28 connection: native
+   * admission bridges it, so MCPJam's client carries its profile. */
+  const APPS = {
+    extensions: {
+      "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] },
+    },
+  };
+  function appsManager() {
+    const value = {
+      getServerConfig: vi.fn(() => ({
+        url: "https://server.test/mcp",
+        timeout: 300_000,
+        clientCapabilities: APPS,
+      })),
+      getAllToolAnnotations: vi.fn(() => ({})),
+      getInitializationInfo: vi.fn(() => ({
+        transport: "streamable-http",
+        protocolVersion: "2026-07-28",
+        clientCapabilities: APPS,
+        serverCapabilities: { tools: {} },
+      })),
+    };
+    setManagerOrganization(value as never, "org_1");
+    return value;
+  }
+
+  it("takes it on the external-account path when admitted, through the lane's session envelope", async () => {
+    const { receipt } = await record(
+      turn({
+        mcpClientManager: appsManager(),
+        harnessHostCapabilities: { capabilities: {}, gaps: [] },
+      }),
+    );
+    expect(receipt).toMatchObject({
+      upstream: "mcpjam",
+      delivery: "mcp-endpoint",
+      forwarding: { kind: "profiled" },
+    });
+    // Still no model lease: the forwarding grant alone carries the turn.
+    expect(posted("/web/harness/forwarding/start")).toHaveLength(1);
+    const entry = configs()[0]!.mcpServers[KEY]!;
+    expect(new URL(entry.url).searchParams.get("native")).toBe("1");
+    const opened = unsealHarnessProxyToken(
+      entry.headers!["X-MCPJam-Forwarding-Context"],
+      "srv-a",
+    );
+    expect(opened).toMatchObject({
+      session: true,
+      delivery: "bridge",
+      token: HANDLE,
+      profile: { clientCapabilities: APPS, mcpProtocolVersion: "2026-07-28" },
+    });
+    // The turn binds the digest the route recomputes from that envelope.
+    const [bind] = posted("/web/harness/session-state/bind-turn");
+    expect(bind!.servers).toEqual([
+      expect.objectContaining({
+        serverId: "srv-a",
+        policyDigest: sessionPolicyDigest("srv-a", opened!.policy, opened!.profile),
+      }),
+    ]);
   });
 });
 

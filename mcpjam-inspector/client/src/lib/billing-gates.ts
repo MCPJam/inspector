@@ -1,5 +1,4 @@
 import { useConvexAuth } from "convex/react";
-import { useFeatureFlagEnabled } from "posthog-js/react";
 import {
   useOrganizationBilling,
   type BillingFeatureName,
@@ -57,7 +56,6 @@ export interface ResolvedBillingGate {
 }
 
 interface ResolveBillingGateStateParams {
-  billingUiEnabled: boolean;
   organizationId: string | null;
   billingStatus?: OrganizationBillingStatus;
   premiumness?: PremiumnessState;
@@ -69,7 +67,6 @@ export function resolveBillingGateState(
   params: ResolveBillingGateStateParams,
 ): ResolvedBillingGate {
   const {
-    billingUiEnabled,
     organizationId,
     billingStatus,
     premiumness,
@@ -84,9 +81,7 @@ export function resolveBillingGateState(
     "free";
   const canManageBilling = billingStatus?.canManageBilling ?? false;
   const isDenied =
-    billingUiEnabled &&
-    isBillingEnforcementActive(premiumness) &&
-    decision?.canAccess === false;
+    isBillingEnforcementActive(premiumness) && decision?.canAccess === false;
   const denialMessage =
     isDenied && decision?.kind === "limit"
       ? formatBillingLimitReachedMessage(
@@ -121,13 +116,7 @@ export function useProjectBillingGate({
   gate,
 }: UseProjectBillingGateParams): ResolvedBillingGate {
   const { isAuthenticated } = useConvexAuth();
-  const billingUiFlag = useFeatureFlagEnabled("billing-entitlements-ui");
-  const billingUiEnabled = billingUiFlag === true;
-  const shouldResolve =
-    isAuthenticated &&
-    billingUiFlag !== false &&
-    !!projectId &&
-    !!organizationId;
+  const shouldResolve = isAuthenticated && !!projectId && !!organizationId;
   const resolvedOrganizationId = shouldResolve ? organizationId : null;
   const {
     billingStatus,
@@ -145,13 +134,11 @@ export function useProjectBillingGate({
       : organizationPremiumness;
   const isLoadingGate =
     shouldResolve &&
-    (billingUiFlag === undefined ||
-      isLoadingBilling ||
+    (isLoadingBilling ||
       isLoadingProjectPremiumness ||
       isLoadingOrganizationPremiumness);
 
   return resolveBillingGateState({
-    billingUiEnabled,
     organizationId: resolvedOrganizationId,
     billingStatus,
     premiumness,

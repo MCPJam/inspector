@@ -854,6 +854,41 @@ describe("web chat-v2 — scenario ephemeral sandbox", () => {
     });
   });
 
+  it("counts creating or waking the conversation's box toward the harness turn's box wake", async () => {
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: scenarioConfig(
+        { mode: "ephemeral", harness: true },
+        { harness: "claude-code" }
+      ),
+    });
+    let acquiredIn = 0;
+    provisionScenarioSandboxMock.mockImplementationOnce(async () => {
+      const startedAt = performance.now();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      acquiredIn = performance.now() - startedAt;
+      return {
+        ok: true,
+        value: {
+          sandboxId: "sbx_conversation_1",
+          sandboxRowId: "row_1",
+          workdir: "/srv/app",
+          notices: [],
+          noticeAckPending: false,
+        },
+      };
+    });
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+    expect(response.status).toBe(200);
+    const options = handleMCPJamFreeChatModelMock.mock.calls.at(-1)?.[0];
+    expect(acquiredIn).toBeGreaterThanOrEqual(25);
+    expect(options?.turnTiming.boxAcquisitionMs()).toBeGreaterThanOrEqual(
+      Math.floor(acquiredIn)
+    );
+  });
+
   it("an OLD backend (no marker) leaves a harness scenario exactly as it was", async () => {
     fetchScenarioRuntimeConfigMock.mockResolvedValue({
       ok: true,

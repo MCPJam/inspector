@@ -126,9 +126,9 @@ describe("openaiPolicySource", () => {
   it("propagates a null revision rather than hiding it", () => {
     // A finding graded against an unpinned page must SAY so; a citation that
     // silently dropped the null would read as pinned.
-    const ref = openaiPolicySource("app-guidelines", "§Overview");
+    const ref = openaiPolicySource("plugin-guidelines", "§Overview");
     expect(ref.revision).toBe(
-      OPENAI_POLICY_MANIFEST["app-guidelines"].revision,
+      OPENAI_POLICY_MANIFEST["plugin-guidelines"].revision
     );
   });
 });

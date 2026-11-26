@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { ChevronRight, FolderOpen, Laptop, Loader2 } from "lucide-react";
+import { DEFAULT_LOCAL_HARNESS_ID } from "@/shared/harness-descriptors";
+import { LOCAL_RUNTIME_COPY } from "./local-runtime-copy";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import {
@@ -91,7 +93,7 @@ export function LocalHarnessTrustDialog({
 
   const availability = controller.availability;
   const name = controller.harnessName ?? "Claude Code";
-  const isCodex = controller.harnessId === "codex";
+  const copy = LOCAL_RUNTIME_COPY[controller.harnessId ?? DEFAULT_LOCAL_HARNESS_ID];
   const expectedPack = availability?.expectedPack ?? null;
   const suggested = availability?.suggestedWorkspace ?? null;
   const displayRoot =
@@ -265,19 +267,9 @@ export function LocalHarnessTrustDialog({
           </DialogTitle>
           <DialogDescription asChild>
             <div className="space-y-2 text-left leading-relaxed">
-              {isCodex ? (
-                <>
-                  <p>Codex runs with your account’s permissions. With Tool Approval on, commands, file changes and reads need your approval.</p>
-                  <p>Personal Codex and ChatGPT subscriptions don’t cover usage here.</p>
-                  <p>See Details for eval and swarm restrictions.</p>
-                </>
-              ) : (
-                <>
-                  <p>Claude Code can read and change any files your account can access, including files outside this folder.</p>
-                  <p>With Tool Approval on, chat commands and file changes need your approval.</p>
-                  <p>Usage is billed through MCPJam credits or your organization’s API key. Personal Claude subscriptions don’t apply.</p>
-                </>
-              )}
+              {copy.trust.map((line) => (
+                <p key={line}>{line}</p>
+              ))}
             </div>
           </DialogDescription>
         </DialogHeader>
@@ -365,7 +357,7 @@ export function LocalHarnessTrustDialog({
             <dt>Permissions</dt>
             <dd>
               Turning Tool Approval off requires a separate confirmation, then commands and changes run without asking.
-              {isCodex && " Evals and swarms run locally only on verified platforms. Commands can write only the run folder and a private temp folder, and have no network. Reads are unrestricted. MCP tools run outside that sandbox under your tool policy. Elsewhere, evals and swarms run in the cloud."}
+              {copy.permissions ? ` ${copy.permissions}` : null}
             </dd>
             <dt>Policy</dt>
             <dd className="font-mono">{availability?.policyVersion ?? "—"}</dd>

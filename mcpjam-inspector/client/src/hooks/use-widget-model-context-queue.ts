@@ -14,15 +14,45 @@ import {
 export function useWidgetModelContextQueue() {
   const [queue, setQueueState] = useState<WidgetModelContextEntry[]>([]);
   const current = useRef(queue);
-  const setQueue = useCallback((next: WidgetModelContextEntry[]) => {
-    current.current = next;
-    setQueueState(next);
-  }, []);
+  const restorableToolCallIds = useRef<Set<string> | null>(null);
+  const setQueue = useCallback(
+    (
+      next:
+        | WidgetModelContextEntry[]
+        | ((
+            current: WidgetModelContextEntry[],
+          ) => WidgetModelContextEntry[]),
+    ) => {
+      // An updater reads the ref, not the render that started an in-flight
+      // send. That send's snapshot is already on the wire.
+      const resolved = typeof next === "function" ? next(current.current) : next;
+      current.current = resolved;
+      setQueueState(resolved);
+    },
+    [],
+  );
   const update = useCallback(
-    (toolCallId: string, context: WidgetModelContextUpdate["context"]) =>
+    (toolCallId: string, context: WidgetModelContextUpdate["context"]) => {
       setQueue(
         upsertWidgetModelContextEntry(current.current, toolCallId, context),
-      ),
+      );
+      restorableToolCallIds.current?.add(toolCallId);
+    },
+    [setQueue],
+  );
+  // Puts back context a send never delivered. An App that updated since then
+  // keeps its newer entry.
+  const restore = useCallback(
+    (unsent: readonly WidgetModelContextEntry[]) => {
+      const queued = current.current;
+      const missing = unsent.filter(
+        (entry) =>
+          (restorableToolCallIds.current === null ||
+            restorableToolCallIds.current.has(entry.toolCallId)) &&
+          !queued.some((next) => next.toolCallId === entry.toolCallId),
+      );
+      if (missing.length > 0) setQueue([...missing, ...queued]);
+    },
     [setQueue],
   );
   const retainForMessages = useCallback(
@@ -36,11 +66,14 @@ export function useWidgetModelContextQueue() {
           ),
         ),
       );
+      // A send can be refused after hydration has removed its App, even
+      // when that send already cleared the visible queue.
+      restorableToolCallIds.current = toolCallIds;
       setQueue(
         current.current.filter((entry) => toolCallIds.has(entry.toolCallId)),
       );
     },
     [setQueue],
   );
-  return [queue, setQueue, update, retainForMessages] as const;
+  return [queue, setQueue, update, restore, retainForMessages] as const;
 }

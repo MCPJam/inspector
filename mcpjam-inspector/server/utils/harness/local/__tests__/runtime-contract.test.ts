@@ -13,9 +13,15 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 // eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
-import { parseRuntimeCompat } from "../../../../../scripts/local-harness-pack-tables.mjs";
+import {
+  parseRuntimeCompat,
+  readAdvertisedTargets,
+  type RuntimeCompatRecordJson,
+} from "../../../../../scripts/local-harness-pack-tables.mjs";
 // eslint-disable-next-line import/extensions -- plain ESM script
 import { planConformance } from "../../../../../scripts/plan-local-harness-conformance.mjs";
+// eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
+import { releasePacks } from "../../../../../scripts/local-harness-release-packs.mjs";
 // eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
 import { computeConformanceInputsDigest } from "../../../../../scripts/conformance-inputs-digest.mjs";
 import { inspectorLayerDigest } from "../inspector-layer.js";
@@ -148,6 +154,12 @@ describe("which conformance legs run", () => {
     expect(quiet).toMatchObject({ run_claude: "false", run_codex: "false", run_windows: "false" });
     const release = planConformance({ event: "workflow_call", claudeVersion: "1.0.0", inputsUnchanged: true, record });
     expect(release).toMatchObject({ run_claude: "true", run_codex: "true" });
+    // Even read as a push (a called run's github context is its caller's), a
+    // run that names packs checks them: no push run ever did.
+    const named = planConformance({ event: "push", claudeVersion: "1.0.7", codexVersion: "1.0.3", inputsUnchanged: true, record });
+    expect(named).toMatchObject({ run_claude: "true", run_codex: "true", run_windows: "true" });
+    const candidate = planConformance({ event: "push", codexVersion: "1.0.4", harnesses: "codex", inputsUnchanged: true, record });
+    expect(candidate).toMatchObject({ run_claude: "false", run_codex: "true" });
   });
 
   it("runs darwin-x64 as x64 Node on an Apple Silicon runner", () => {
@@ -156,6 +168,87 @@ describe("which conformance legs run", () => {
       const leg = JSON.parse(matrix).find((entry: { platform_key: string }) => entry.platform_key === "darwin-x64");
       expect(leg).toMatchObject({ runner: "macos-latest", node_arch: "x64", node_dist: "darwin-x64" });
     }
+  });
+
+  it("moves every macOS leg, and only those, to the runner a release names", () => {
+    const runnersByTarget = (plan: { posix_matrix: string; codex_matrix: string; runtime_matrix: string }) =>
+      [plan.posix_matrix, plan.codex_matrix, plan.runtime_matrix]
+        .flatMap((matrix) => JSON.parse(matrix) as Array<{ platform_key: string; runner: string }>)
+        .map(({ platform_key, runner }) => [platform_key, runner]);
+    const github = runnersByTarget(planConformance({ event: "push", record }));
+    const moved = runnersByTarget(planConformance({ event: "push", record, macosRunner: "blacksmith-6vcpu-macos-latest" }));
+    expect(moved.length).toBe(github.length);
+    expect(moved.some(([target]) => target.startsWith("darwin-"))).toBe(true);
+    moved.forEach(([target, runner], index) => {
+      expect(runner, target).toBe(target.startsWith("darwin-") ? "blacksmith-6vcpu-macos-latest" : github[index][1]);
+    });
+    expect(() => planConformance({ event: "push", record, macosRunner: "macos-latest\nrm -rf" })).toThrow(/not a runner label/);
+  });
+
+  describe("every other local runtime", () => {
+    const legs = (plan: { runtime_matrix: string }) =>
+      (JSON.parse(plan.runtime_matrix) as Array<{ harness: string; platform_key: string; pack_version: string }>)
+        .filter((leg) => leg.harness === "copilot-cli");
+
+    it("runs the gateway turn on each target its definition advertises, from source on a main push", () => {
+      const plan = legs(planConformance({ event: "push", record }));
+      expect(plan.map((leg) => leg.platform_key).sort()).toEqual([...readAdvertisedTargets("copilot-cli")].sort());
+      expect(plan.every((leg) => leg.pack_version === "")).toBe(true);
+    });
+
+    it("runs a pull request on Linux x64, against its pinned pack or one built from source", () => {
+      const pinned = Object.values(record.harnesses["copilot-cli"]?.targets ?? {})[0]?.desired.packVersion ?? "";
+      expect(legs(planConformance({ event: "pull_request", record }))).toMatchObject([
+        { platform_key: "linux-x64", pack_version: pinned },
+      ]);
+    });
+
+    it("runs a call only against the pack it names", () => {
+      expect(legs(planConformance({ event: "workflow_call", record }))).toEqual([]);
+      const named = legs(planConformance({ event: "workflow_call", harnesses: "copilot-cli", runtimeVersions: "copilot-cli=1.2.3", record }));
+      expect(named.length).toBeGreaterThan(0);
+      expect(named.every((leg) => leg.pack_version === "1.2.3")).toBe(true);
+      expect(legs(planConformance({ event: "workflow_call", harnesses: "codex", runtimeVersions: "copilot-cli=1.2.3", record }))).toEqual([]);
+    });
+
+    it.each([["codex=1.0.0"], ["copilot-cli=1.0"], ["copilot-cli=1.0.0=2"], ["copilot-cli"]])(
+      "refuses %s as another runtime's pack",
+      (runtimeVersions) => {
+        expect(() => planConformance({ event: "workflow_call", runtimeVersions, record })).toThrow(/not a/);
+      },
+    );
+  });
+});
+
+describe("the packs a release selects", () => {
+  // Built here rather than read from the committed record, which gains a pin
+  // for each runtime as its first pack is released.
+  const slot = (desired: string, permitted?: string) => ({
+    desired: { packVersion: desired, treeDigest: A },
+    ...(permitted ? { permitted: { packVersion: permitted, treeDigest: B } } : {}),
+  });
+  const baseline: RuntimeCompatRecordJson = {
+    schema: 1,
+    harnesses: {
+      "claude-code": { conformance: { version: "" }, targets: { "linux-x64": slot("1.0.7", "1.0.6") } },
+      codex: { conformance: { version: "" }, targets: { "linux-x64": slot("1.0.3") } },
+      "copilot-cli": { conformance: { version: "" }, targets: {} },
+    },
+  };
+
+  it("names every other local runtime's packs as pairs, and keeps the key unchanged until one has a pack", () => {
+    const today = releasePacks(baseline);
+    expect(today).toMatchObject({ runtime_desired: "", runtime_permitted: "", key: "1.0.7/1.0.3/1.0.6/" });
+
+    const pinned = structuredClone(baseline);
+    pinned.harnesses["copilot-cli"] = {
+      conformance: { version: "" },
+      targets: { "linux-x64": { desired: { packVersion: "1.0.1", treeDigest: A }, permitted: { packVersion: "1.0.0", treeDigest: B } } },
+    };
+    const packs = releasePacks(pinned);
+    expect(packs).toMatchObject({ runtime_desired: "copilot-cli=1.0.1", runtime_permitted: "copilot-cli=1.0.0" });
+    expect(packs.permitted_harnesses.split(",")).toContain("copilot-cli");
+    expect(packs.key).toBe(`${today.key}/copilot-cli=1.0.1/copilot-cli=1.0.0`);
   });
 });
 
@@ -174,10 +267,14 @@ describe("the release gate's conformance evidence", () => {
     await rm(dir, { recursive: true, force: true });
     const { mkdir } = await import("node:fs/promises");
     await mkdir(dir, { recursive: true });
-    const advertised: Record<string, string[]> = {
-      "claude-code": ["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64", "win32-x64"],
-      codex: ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"],
-    };
+    // Every harness the record pins a pack for, on every target its manifest
+    // advertises: the gate asks for exactly that, so a harness's first pin
+    // must not need this fixture edited.
+    const advertised: Record<string, string[]> = Object.fromEntries(
+      Object.entries(RUNTIME_COMPAT.harnesses)
+        .filter(([, harness]) => Object.keys(harness.targets).length > 0)
+        .map(([harnessId]) => [harnessId, readAdvertisedTargets(harnessId)]),
+    );
     for (const [harnessId, targets] of Object.entries(advertised)) {
       for (const target of targets) {
         if (opts.skip === `${harnessId}/${target}`) continue;

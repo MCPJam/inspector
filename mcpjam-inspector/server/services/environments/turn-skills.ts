@@ -10,7 +10,9 @@
  * The plan states what the code does, so it is computed with the calls the
  * engines make: the skill list MCPJam's agent puts in its prompt, under the same
  * budget, and on a harness the box writer's plan (`planBoxSkills`) over the
- * copies the harness turn writes to its box.
+ * copies the harness turn writes to its box. A harness whose descriptor says
+ * `harness-tools` takes captured MCP-server skills through MCPJam's skill tools
+ * instead, so they are delivered and none of them is on its box.
  *
  * A delivery that fails while the turn runs is not part of the plan. It belongs
  * on the turn's result ({@link TurnSkillsResult}), so a preview of the plan
@@ -20,6 +22,10 @@ import type { PaneSkillReason } from "../../../shared/pane-skills-preview.js";
 import { effectiveHarnessId } from "../../../shared/harness-descriptors.js";
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
 import { skillCatalogOmissions } from "../../utils/computers/effective-skill-tools.js";
+import {
+  unnamedSkills,
+  type HarnessSkillDelivery,
+} from "./harness-skill-delivery.js";
 import {
   boxVerdicts,
   pinnedBox,
@@ -33,9 +39,11 @@ import {
   pinnedSkillMeta,
   type RunPinnedSkill,
 } from "../evals/run-plugin-snapshot.js";
+import type { LiveServerSkills } from "../../utils/computers/live-server-skills.js";
 import {
   allEffectiveSkills,
   buildLiveEffectiveCapabilities,
+  withLiveServerSkills,
   type EffectiveCapabilitySet,
 } from "./effective-capabilities.js";
 
@@ -77,28 +85,28 @@ export interface SkillExclusion {
 }
 
 /**
- * How MCP-server skills reach the engine on this turn. `box-files` is the
- * plain-file copy a harness gets in a pinned run.
+ * How MCP-server skills reach the engine on this turn. `harness-tools` is
+ * MCPJam's skill tools on a harness, in live and frozen turns alike;
+ * `box-files` is the plain-file copy a frozen run gives a harness that takes
+ * them no other way.
  */
 export type ServerSkillsVia =
   "agent-tools" | "harness-tools" | "box-files" | "none";
 
 /**
- * How MCPJam's agent serves the plan, as its skill tools behave today:
+ * How MCPJam's agent serves the plan, as its skill tools behave today. No
+ * kind's skill tools ask for approval, whatever the switch says
+ * (`effective-skill-tools.ts`):
  *  - `frozen`: a run's pinned skills, addressed by ref, whatever the run
- *    pinned. The approval switch does not apply: they are content frozen at
- *    run start, and eval runs and swarm sessions deny every approval. A
- *    captured server skill's load still asks on its own
- *    (`effective-skill-tools.ts`), which they deny.
- *  - `environment`: an environment's skills, by ref. Loads follow the switch,
- *    so a person watching their own turn gets the prompt they configured.
- *  - `live`: the skills a person has right now, by ref, under the switch, plus
- *    the connected servers' own skills. Those join the set when the prompt is
- *    built, once the servers are connected (`withLiveServerSkills` in
- *    `prepareChatV2`), so they are not in this plan's `delivered`. They load
- *    under the switch, by ref or by skill URI. Only a live set adds them: an
- *    environment's server skills were captured with it, and fetching more
- *    would make the set stop describing the turn.
+ *    pinned: content frozen at run start.
+ *  - `environment`: an environment's skills, by ref.
+ *  - `live`: the skills a person has right now, by ref, plus the connected
+ *    servers' own skills. Those join the set when the prompt is built, once
+ *    the servers are connected (`withLiveServerSkills` in `prepareChatV2`),
+ *    so they are not in this plan's `delivered`. They load by ref or by skill
+ *    URI. Only a live set adds them: an environment's server skills were
+ *    captured with it, and fetching more would make the set stop describing
+ *    the turn.
  */
 export type AgentSkillTools =
   | { kind: "frozen" }
@@ -117,9 +125,15 @@ export interface TurnSkills {
   /** What it is not handed, and why. */
   excluded: SkillExclusion[];
   serverSkillsVia: ServerSkillsVia;
-  /** How MCPJam's agent serves the plan; null when it gets no skill tools, as
-   *  on a harness turn, whose box gets the skills. */
+  /** How MCPJam's agent serves the plan; null on a harness turn, whose box
+   *  gets the skills and whose server skills come as `serverSkillsVia` says. */
   agent: AgentSkillTools | null;
+  /**
+   * What a harness turn executes of this plan: the box writer's input, its
+   * supporting files and whether the turn is live. The runner carries this out
+   * rather than choosing a source of its own. Absent on MCPJam's agent turns.
+   */
+  harness?: HarnessSkillDelivery;
 }
 
 /** What happened to a plan once its turn ran. A skill that failed to arrive is
@@ -190,6 +204,16 @@ export function resolveTurnSkills({
       excluded: [],
       serverSkillsVia: "none",
       agent: null,
+      ...(runtime.kind === "harness"
+        ? {
+            // A run that froze no skills delivers none, which clears its box;
+            // a turn with no source leaves the box as it is.
+            harness:
+              source.kind === "none"
+                ? unnamedSkills()
+                : { mode: "pinned", skills: [], files: [], live: false },
+          }
+        : {}),
     };
   }
   const listedAs = refsBySkillId(source.set);
@@ -223,6 +247,54 @@ function planSource(
       ? planBox(runtime, set, refs, box)
       : planAgentSet(set, [...refs, ...agentOnly], agent, modelContextTokens);
   return { ...plan, excluded: [...excluded, ...plan.excluded] };
+}
+
+/**
+ * A live plan once its connected servers' own skills have joined its set: what
+ * MCPJam's agent holds, which the plan cannot say, since only a connected
+ * server can say which skills it serves (`prepareChatV2`). Those skills are
+ * delivered after the plan's own, and the ones the prompt's skill list leaves
+ * out are marked as the plan marks its own. A skill MCPJam lists but declines
+ * to load (`unloadable`) is not delivered.
+ *
+ * The plan itself stays as it was: `skillsAtTurn` is recorded from it, and a
+ * skill read now rather than captured has no row to record.
+ */
+export function planWithLiveServerSkills(
+  plan: TurnSkills,
+  live: LiveServerSkills,
+  modelContextTokens?: number,
+): TurnSkills {
+  const set = withLiveServerSkills(plan.set, live);
+  return {
+    ...plan,
+    set,
+    delivered: [...plan.delivered, ...liveServerSkillRefs(set, modelContextTokens)],
+  };
+}
+
+/**
+ * The connected servers' own skills a set holds once they have joined it, as
+ * the refs a plan names: the skills MCPJam will load, with the ones the
+ * prompt's skill list leaves out marked. Both engines count a live turn's
+ * server skills from this, so the agent's plan and a harness's report cannot
+ * disagree about them.
+ */
+export function liveServerSkillRefs(
+  set: EffectiveCapabilitySet,
+  modelContextTokens?: number,
+): SkillRef[] {
+  const omitted = new Set(skillCatalogOmissions(set, modelContextTokens));
+  return (set.liveServerSkills?.skills ?? []).flatMap(
+    ({ skillUri, ref, name, unloadable }): SkillRef[] =>
+      unloadable
+        ? []
+        : [
+            omitted.has(ref)
+              ? { skillId: skillUri, ref, name, omittedFromCatalog: true }
+              : { skillId: skillUri, ref, name },
+          ],
+  );
 }
 
 /**
@@ -304,20 +376,26 @@ function planAgentSet(
   };
 }
 
-/** A harness gets its skills on its box (`boxVerdicts`), never as tools. */
+/** A harness gets its skills on its box (`boxVerdicts`), and captured server
+ *  skills through MCPJam's skill tools when its descriptor says so; never
+ *  MCPJam's agent's tools. */
 function planBox(
   runtime: { kind: "harness"; harnessId: string },
   set: EffectiveCapabilitySet,
   refs: SkillRef[],
   box: BoxInput,
 ): TurnSkills {
-  const { reasonFor, serverSkillsVia } = boxVerdicts(runtime.harnessId, box);
+  const { reasonFor, serverSkillsVia, delivery } = boxVerdicts(
+    runtime.harnessId,
+    box,
+  );
   return {
     runtime,
     set,
     agent: null,
     ...partition(refs, reasonFor),
     serverSkillsVia,
+    harness: delivery,
   };
 }
 

@@ -103,6 +103,19 @@ export interface EvalIterationVerdictInput {
   agentActivity?: AgentActivityAssessment;
 }
 
+/**
+ * The gate inputs the verdict read, handed out for the platform score rows.
+ * Declared here, not beside the rows, so this module still never sees the
+ * score contract: the rows are built FROM this, never read back by it.
+ */
+export type PlatformGateEvidence = {
+  failOnToolError: boolean;
+  trace: FinalizeTrace;
+  pinnedToolErrors: readonly ToolErrorRecord[];
+  iterationError: string | undefined;
+  scriptedCheckFailures: ReadonlyArray<{ toolName: string; reason: string }>;
+};
+
 export interface EvalIterationVerdict {
   /**
    * The matcher result. `passed` is the MATCHER verdict (un-gated) — mirroring
@@ -115,6 +128,11 @@ export interface EvalIterationVerdict {
   passed: boolean;
   /** `[…case-level, …per-turn]` — the persisted `metadata.predicates` ordering. */
   predicateResults: PredicateResult[];
+  /**
+   * The gate inputs the checks above read, for the platform score rows. Rows
+   * built from the same evidence cannot disagree with this verdict.
+   */
+  platformGates: PlatformGateEvidence;
 }
 
 export function buildEvalIterationVerdict(
@@ -179,12 +197,19 @@ export function buildEvalIterationVerdict(
   let passed = finalizePassedForEval({
     matchPassed: evaluation.passed,
     trace: input.trace,
-    // A failed per-turn cycle (`iterationError`) must not sneak through as a
-    // pass on negative / zero-expected-tool cases.
     iterationError: input.iterationError,
     failOnToolError: input.failOnToolError,
     predicateResults,
   });
+
+  // A failed per-turn cycle (`iterationError`) must not sneak through as a
+  // pass on negative / zero-expected-tool cases. Checked here on its own
+  // because the shared gate skips it whenever `failOnToolError` is false, and
+  // turning that off forgives a tool that answered with an error, not a turn
+  // that never finished.
+  if (passed && input.iterationError?.trim()) {
+    passed = false;
+  }
 
   // A pinned (model-free) tool call's error never enters the trace, so the
   // `failOnToolError` trace gate is blind to it — apply it explicitly.
@@ -205,5 +230,16 @@ export function buildEvalIterationVerdict(
     passed = false;
   }
 
-  return { evaluation, passed, predicateResults };
+  return {
+    evaluation,
+    passed,
+    predicateResults,
+    platformGates: {
+      failOnToolError: input.failOnToolError,
+      trace: input.trace,
+      pinnedToolErrors: input.pinnedToolErrors,
+      iterationError: input.iterationError,
+      scriptedCheckFailures: input.scriptedCheckFailures,
+    },
+  };
 }

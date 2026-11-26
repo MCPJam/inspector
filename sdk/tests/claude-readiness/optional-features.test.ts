@@ -190,6 +190,9 @@ describe("lazy authentication", () => {
     expect(entry.detail).toMatch(
       /Claude starts sign-in only on HTTP 401 with WWW-Authenticate/,
     );
+    // The server answered 401, not a 200 isError result, so that clause
+    // would describe a mistake it did not make.
+    expect(entry.detail).not.toMatch(/isError/);
   });
 
   it("is unsupported for a _meta-only challenge, which Claude treats as an ordinary failure", () => {

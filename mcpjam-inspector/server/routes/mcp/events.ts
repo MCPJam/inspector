@@ -10,16 +10,18 @@
  *                                    (200, `events: []`, `support.declared:
  *                                    false` for a server without events)
  *   POST poll                        EventsPollRequest → EventsPollResponse (one-off)
- *   GET  subscriptions?serverId=     → {subscriptions}
- *   POST subscriptions               EventsCreateSubscriptionRequest → {subscription}
+  *   GET  subscriptions?serverId=&projectId=  → {subscriptions}
+ *   POST subscriptions               EventsCreateSubscriptionRequest (+ projectId?) → {subscription}
  *   POST subscriptions/:id/state     {desiredState} → {subscription}
  *   POST subscriptions/:id/rotate    → {subscription}
  *   POST simulate                    EventsSimulateRequest → {entry}
- *   GET  feed?after=&limit=          → {entries, nextAfter}
- *   GET  stream?after=               SSE of EventsStreamFrame
- *   POST hooks/i/:inboxId/s/:slotId  the development receiver (no session;
- *                                    Standard-Webhooks signature-verified on
- *                                    the RAW body; `insecure-local-receiver`)
+ *   GET  feed?after=&limit=&projectId=  → {entries, nextAfter}
+ *   GET  stream?after=&projectId=       SSE of EventsStreamFrame
+ *   POST hooks/:serverId/i/:inboxId/s/:slotId  signed webhook delivery
+ *
+ * Subscriptions, the feed and the stream belong to the `projectId` the client
+ * sends (the runtime's default project when it sends none), as the hosted
+ * registry and inbox belong to one project.
  *
  * Errors answer `{code, message}` with the `EventsRouteErrorCode` set.
  */
@@ -28,7 +30,8 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import { describeModeRefusal, isEventDeliveryMode, subscribableModes } from "@mcpjam/sdk";
-import { isEventsProfileId } from "@mcpjam/sdk/events";
+import { isEventsProfileId, MAX_DELIVERY_BODY_BYTES } from "@mcpjam/sdk/events";
+import { LOCAL_EVENTS_HOOK_ROUTE, LOCAL_EVENTS_HOOKS_PATH } from "@/shared/local-events-hooks";
 import type {
   EventsCreateSubscriptionRequest,
   EventsHostSelection,
@@ -42,11 +45,10 @@ import {
   LocalEventsError,
   LocalEventsRuntime,
 } from "../../services/events/local-runtime.js";
+import { parseReceiverChoice } from "../../services/events/receivers.js";
 import { classifyEventsRouteError } from "../../services/events/route-errors.js";
+import { streamEventCatalogChanges } from "../../services/events/catalog-changes.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
-
-/** Receiver bodies are capped by the inbox too; refuse obvious floods early. */
-const MAX_HOOK_BODY_BYTES = 262_144 + 1;
 
 export interface LocalEventsRouterOptions {
   /** Callback URL origin. Default `http://127.0.0.1:<SERVER_PORT>/api/mcp/events/hooks`. */
@@ -63,16 +65,18 @@ function toSupportView(
 ): { support: EventsSupportView; rawCapabilities?: Record<string, unknown>; protocolVersion?: string } {
   const support = manager.getEventsSupport(serverId);
   const captured = manager.getCapturedEventsCapability(serverId);
+  const protocolVersion = manager.getNegotiatedProtocolVersion?.(serverId) ?? captured?.protocolVersion;
   return {
     support: {
       handshakeObserved: support.handshakeObserved,
       declared: support.declared,
+      ...(support.beta ? { beta: true } : {}),
       listChanged: support.listChanged,
       ...(support.capability ? { capability: support.capability } : {}),
       ...(support.source ? { source: support.source } : {}),
     },
     ...(captured?.rawCapabilities ? { rawCapabilities: captured.rawCapabilities } : {}),
-    ...(captured?.protocolVersion ? { protocolVersion: captured.protocolVersion } : {}),
+    ...(protocolVersion ? { protocolVersion } : {}),
   };
 }
 
@@ -107,6 +111,11 @@ async function readBoundedBody(request: Request, maxBytes: number): Promise<Uint
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The project a request names, if any. */
+function projectIdOf(value: unknown): string | undefined {
+  return typeof value === "string" && value ? value : undefined;
 }
 
 /** How the built-in host is named in messages. */
@@ -169,7 +178,7 @@ export function createLocalEventsRouter(options: LocalEventsRouterOptions = {}):
   const router = new Hono();
   const runtimes = new WeakMap<MCPClientManager, LocalEventsRuntime>();
   const publicOrigin =
-    options.publicOrigin ?? (() => `http://127.0.0.1:${SERVER_PORT}/api/mcp/events/hooks`);
+    options.publicOrigin ?? (() => `http://127.0.0.1:${SERVER_PORT}${LOCAL_EVENTS_HOOKS_PATH}`);
 
   const runtimeFor = (manager: MCPClientManager): LocalEventsRuntime => {
     let runtime = runtimes.get(manager);
@@ -185,6 +194,13 @@ export function createLocalEventsRouter(options: LocalEventsRouterOptions = {}):
   };
 
   // --- Server operations ------------------------------------------------------
+
+  router.post("/catalog-changes", async (c) => {
+    const body = await readBody(c);
+    const serverId = typeof body.serverId === "string" ? body.serverId : "";
+    if (!serverId) return eventsError(c, 400, "EVENTS_NOT_FOUND", "serverId is required");
+    return streamEventCatalogChanges(c, c.mcpClientManager, serverId);
+  });
 
   router.post("/support", async (c) => {
     const body = await readBody(c);
@@ -218,6 +234,7 @@ export function createLocalEventsRouter(options: LocalEventsRouterOptions = {}):
       const result = await manager.listServerEvents(serverId, cursor ? { cursor } : undefined);
       const response: EventsListResponse = {
         events: result.events as EventsListResponse["events"],
+        localCallbackBase: publicOrigin(),
         ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
         ...toSupportView(manager, serverId),
       };
@@ -261,7 +278,8 @@ export function createLocalEventsRouter(options: LocalEventsRouterOptions = {}):
 
   router.get("/subscriptions", (c) => {
     const serverId = c.req.query("serverId") || undefined;
-    return c.json({ subscriptions: runtimeFor(c.mcpClientManager).list(serverId) });
+    const projectId = projectIdOf(c.req.query("projectId"));
+    return c.json({ subscriptions: runtimeFor(c.mcpClientManager).list(serverId, projectId) });
   });
 
   router.post("/subscriptions", async (c) => {
@@ -308,12 +326,19 @@ export function createLocalEventsRouter(options: LocalEventsRouterOptions = {}):
           `This client doesn't receive events by ${mode}. Pick another mode or client.`,
       );
     }
+    const receiver = parseReceiverChoice(body.receiver);
+    if (!receiver || (body.receiver !== undefined && mode !== "webhook")) {
+      return eventsError(c, 400, "EVENTS_UNAVAILABLE", "Choose This machine or Custom URL for webhook delivery.");
+    }
+    const projectId = projectIdOf(body.projectId);
     const request: EventsCreateSubscriptionRequest = {
+      ...(projectId ? { projectId } : {}),
       serverId: body.serverId,
       eventName: body.eventName,
       arguments: isRecord(body.arguments) ? body.arguments : {},
       mode,
       host,
+      ...(mode === "webhook" ? { receiver } : {}),
       ...(isEventsProfileId(body.profile) ? { profile: body.profile } : {}),
       ...(typeof body.maxAgeMs === "number" ? { maxAgeMs: body.maxAgeMs } : {}),
       ...(typeof body.ttlMs === "number" || body.ttlMs === null
@@ -334,7 +359,7 @@ export function createLocalEventsRouter(options: LocalEventsRouterOptions = {}):
           400,
           "EVENTS_UNDECLARED",
           support.handshakeObserved
-            ? `"${request.serverId}" did not declare capabilities.events.`
+            ? `"${request.serverId}" did not declare an MCP Events capability.`
             : `The handshake with "${request.serverId}" was not observed, so its events capability is unknown.`,
           { handshakeObserved: support.handshakeObserved },
         );
@@ -408,6 +433,7 @@ export function createLocalEventsRouter(options: LocalEventsRouterOptions = {}):
       runtimeFor(c.mcpClientManager).feed(
         Number.isFinite(after) && after > 0 ? Math.floor(after) : 0,
         Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 200,
+        projectIdOf(c.req.query("projectId")),
       ),
     );
   });
@@ -415,6 +441,7 @@ export function createLocalEventsRouter(options: LocalEventsRouterOptions = {}):
   router.get("/stream", (c) => {
     const afterParam = Number(c.req.query("after") ?? 0);
     const after = Number.isFinite(afterParam) && afterParam > 0 ? Math.floor(afterParam) : 0;
+    const projectId = projectIdOf(c.req.query("projectId"));
     const runtime = runtimeFor(c.mcpClientManager);
     const encoder = new TextEncoder();
     let cleanup: (() => void) | undefined;
@@ -437,7 +464,7 @@ export function createLocalEventsRouter(options: LocalEventsRouterOptions = {}):
             close();
           }
         }, 25_000);
-        const opened = runtime.openStream(after, send);
+        const opened = runtime.openStream(after, send, projectId);
         function close() {
           if (closed) return;
           closed = true;
@@ -472,17 +499,18 @@ export function createLocalEventsRouter(options: LocalEventsRouterOptions = {}):
 
   // --- The development receiver ----------------------------------------------------
 
-  router.post("/hooks/i/:inboxId/s/:slotId", async (c) => {
+  router.post(LOCAL_EVENTS_HOOK_ROUTE, async (c) => {
     const declared = Number(c.req.header("content-length") ?? "");
-    if (Number.isFinite(declared) && declared > MAX_HOOK_BODY_BYTES) {
+    if (Number.isFinite(declared) && declared > MAX_DELIVERY_BODY_BYTES) {
       return c.json({ error: "body_too_large" }, 413);
     }
     // The RAW bytes, before anything parses them: the signature covers
     // exactly what was sent. Read with a ceiling, so a chunked body that lies
     // about (or omits) its length cannot make this process buffer it all.
-    const body = await readBoundedBody(c.req.raw, MAX_HOOK_BODY_BYTES);
+    const body = await readBoundedBody(c.req.raw, MAX_DELIVERY_BODY_BYTES);
     if (!body) return c.json({ error: "body_too_large" }, 413);
     const result = await runtimeFor(c.mcpClientManager).receive({
+      serverSegment: c.req.param("serverId"),
       inboxId: c.req.param("inboxId"),
       slotId: c.req.param("slotId"),
       headers: c.req.raw.headers,

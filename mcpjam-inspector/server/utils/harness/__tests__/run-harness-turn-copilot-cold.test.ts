@@ -103,6 +103,10 @@ vi.mock("../harness-session-state.js", async (importOriginal) => ({
   commitHarnessSessionState: vi.fn(async () => true),
   heartbeatHarnessSessionState: vi.fn(async () => "ok"),
   releaseHarnessSessionState: vi.fn(async () => {}),
+  bindHarnessSessionTurn: vi.fn(async () => ({
+    ok: true,
+    handles: { orders: "orders-session-handle" },
+  })),
 }));
 
 vi.mock("../resolve-sandbox.js", () => ({
@@ -126,18 +130,32 @@ vi.mock("../reconcile-skill-dirs.js", () => ({
 }));
 
 vi.mock("../harness-model-broker.js", () => ({
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
-  startHarnessModelBroker: vi.fn(async () => ({
+  // Installs the lane's session grant when asked, as the backend does on the
+  // origin its egress injects for.
+  startHarnessModelBroker: vi.fn(async (args: { sessionGrant?: unknown }) => ({
     ok: true,
     proxyBaseUrl: "https://broker.example",
+    ...(args.sessionGrant ? { sessionGrantOrigin: "https://app.example" } : {}),
+  })),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
+}));
+vi.mock("../harness-proxy-token-client.js", () => ({
+  fetchHarnessProxyTokens: vi.fn(async () => ({
+    ok: true,
+    tokens: { orders: "minted-proxy-token" },
   })),
 }));
 
 import { runHarnessTurn } from "../run-harness-turn";
 import { getHarnessAdapter } from "../registry.js";
 import { releaseHarnessSessionState } from "../harness-session-state.js";
+import { startHarnessModelBroker } from "../harness-model-broker.js";
+import { fetchHarnessProxyTokens } from "../harness-proxy-token-client.js";
+import { unsealHarnessProxyToken } from "../harness-proxy-policy-seal";
 
 const ORDER = { content: [{ type: "text", text: "Order 42 shipped on Monday." }] };
 
@@ -156,6 +174,9 @@ const manager = {
     },
   })),
   getInitializationInfo: vi.fn(() => undefined),
+  listTools: vi.fn(async () => ({
+    tools: [{ name: "lookup_order", inputSchema: { type: "object" } }],
+  })),
 };
 
 /** What the swarm runner's save (the ingest) received, turn by turn. */
@@ -297,22 +318,41 @@ describe("GitHub Copilot CLI outside the warm Playground chat", () => {
     expect(agent.settings[0]!.harness).toMatchObject({ harnessId: "copilot-cli" });
   });
 
-  it("refuses the dedicated client with servers before its runtime starts", async () => {
-    // It reaches servers only through its own MCP client, which a journey
-    // never forwards.
-    const onEngineError = vi.fn();
+  it("gives the dedicated client's own MCP client MCPJam's proxy, on its lane's session handles, where a journey cannot forward", async () => {
+    vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "x".repeat(48));
+    vi.mocked(fetchHarnessProxyTokens).mockClear();
+    vi.mocked(startHarnessModelBroker).mockClear();
+    const createHarness = vi.spyOn(getHarnessAdapter("copilot-cli"), "createHarness");
+    agent.script = [
+      { type: "text-delta", delta: "Order 42 shipped on Monday." },
+      { type: "finish", finishReason: "stop" },
+    ];
 
-    await run("Where is order 42?", { agentLoop: undefined, onEngineError });
+    const result = await run("Where is order 42?", {
+      agentLoop: undefined,
+      harnessMcpProxy: { plane: "web-authorized", mode: "direct", publicBaseUrl: "https://app.example" },
+    });
 
-    expect(onEngineError).toHaveBeenCalledWith(
-      expect.objectContaining({
-        phase: "setup",
-        message: expect.stringContaining(
-          "GitHub Copilot CLI calls MCP servers only through its own client",
-        ),
-      }),
+    expect(result.aborted).toBe(false);
+    const args = createHarness.mock.calls[0]![0] as {
+      mcpJson: { mcpServers: Record<string, { url: string; headers?: Record<string, string> }> };
+    };
+    const [entry] = Object.values(args.mcpJson.mcpServers);
+    expect(entry?.url).toMatch(
+      /^https:\/\/app\.example\/api\/web\/harness-mcp\/orders\?mcpjam_tools=[a-f0-9]{16}$/,
     );
-    expect(agent.settings).toHaveLength(0);
+    // The lane's session envelope, the same on every turn, on a fresh
+    // connection per request; the turn's authority is its session grant.
+    expect(entry?.headers?.Connection).toBe("close");
+    expect(
+      unsealHarnessProxyToken(entry?.headers?.["X-MCPJam-Proxy-Token"], "orders"),
+    ).toMatchObject({ session: true, token: "orders-session-handle" });
+    expect(fetchHarnessProxyTokens).not.toHaveBeenCalled();
+    expect(vi.mocked(startHarnessModelBroker).mock.calls[0]![0]).toMatchObject({
+      sessionGrant: { laneId: "lane-1", leaseId: expect.any(String) },
+    });
+    // Not forwarded, so no forwarder correlation; and no host tool either.
+    expect(args).not.toHaveProperty("forwardingMcpJson");
     expect(lookupOrder).not.toHaveBeenCalled();
   });
 

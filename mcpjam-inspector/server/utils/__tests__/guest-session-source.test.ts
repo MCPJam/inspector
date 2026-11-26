@@ -239,7 +239,7 @@ describe("guest-session-source", () => {
     );
     const { fetchGuestSession } = await load();
     const result = await fetchGuestSession({ body: { mode: "lookup_only" } });
-    expect(result.kind).toBe("miss");
+    expect(result).toMatchObject({ kind: "miss", upstreamStatus: 404 });
   });
 
   it("returns kind:error for upstream 404 in lookup_or_create mode (not silent miss)", async () => {

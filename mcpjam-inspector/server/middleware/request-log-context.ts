@@ -16,6 +16,7 @@ import {
   agentCapturePolicy,
   isAgentRequestPath,
 } from "../utils/agent-failure-capture.js";
+import { recordV1Usage } from "../utils/v1-usage-event.js";
 
 /**
  * Whether the server sent a failure on this request to Sentry: `1` or `0`.
@@ -192,6 +193,12 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
   // this, SSE/MCP routes would generate zero telemetry.
   if (isStreaming(c) && !thrown) {
     reqLogger.event("http.stream.opened", { statusCode: status });
+    recordV1Usage(c, {
+      route: targetRoute ?? route,
+      status,
+      durationMs: Date.now() - startedAt,
+      streamed: true,
+    });
     // A stream fails AFTER these headers leave, so "0" here means only that
     // nothing failed before it opened. Its later failures say whether they
     // were captured on their own error trace events.
@@ -280,6 +287,13 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
       ? thrown.status
       : 500
     : status;
+
+  recordV1Usage(c, {
+    route: targetRoute ?? route,
+    status: effectiveStatus,
+    durationMs,
+    streamed: false,
+  });
 
   // Ask MCPJam: capture what nothing else did, and say so on the response.
   // A throw is left to `onError`, which reports it on its own path. A caller

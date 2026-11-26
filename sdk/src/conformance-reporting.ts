@@ -174,6 +174,22 @@ export interface ConformanceReport {
    * report, which is the property a version bump would otherwise be asserting.
    */
   advisories?: ConformanceReportAdvisory[];
+  /**
+   * SHOULD/MAY advice the run checked and the server already meets, kept apart
+   * from `advisories` so it never counts as advice to act on. Absent when
+   * there is none, and on reports saved before passes were recorded.
+   */
+  passedAdvisories?: ConformanceReportPassedAdvisory[];
+}
+
+/** One SHOULD/MAY the server met, as a saved report keeps it. */
+export interface ConformanceReportPassedAdvisory {
+  id: string;
+  title: string;
+  /** Id of the {@link ConformanceReportGroup} it was checked in. */
+  group: string;
+  /** The advice's spec strength: SHOULD, MAY or Deprecation Notice. */
+  status: string;
 }
 
 type SupportedSingleConformanceResult =
@@ -595,6 +611,7 @@ function createProtocolReport(
       ...readinessAdvisoryFields(
         result.results.map((entry, index) => ({
           readiness: entry.readiness,
+          passedAdvice: entry.passedAdvice,
           group: `mcp-${index + 1}`,
         }))
       ),
@@ -612,7 +629,11 @@ function createProtocolReport(
     durationMs: result.durationMs,
     groups: [mcpGroupFromResult(result, "MCP Protocol Conformance", 0)],
     ...readinessAdvisoryFields([
-      { readiness: result.readiness, group: "mcp-1" },
+      {
+        readiness: result.readiness,
+        passedAdvice: result.passedAdvice,
+        group: "mcp-1",
+      },
     ]),
   };
 }
@@ -635,6 +656,7 @@ function createAppsReport(
       ...readinessAdvisoryFields(
         result.results.map((entry, index) => ({
           readiness: entry.readiness,
+          passedAdvice: entry.passedAdvice,
           group: `apps-${index + 1}`,
         }))
       ),
@@ -651,7 +673,11 @@ function createAppsReport(
     durationMs: result.durationMs,
     groups: [appsGroupFromResult(result, "MCP Apps Conformance", 0)],
     ...readinessAdvisoryFields([
-      { readiness: result.readiness, group: "apps-1" },
+      {
+        readiness: result.readiness,
+        passedAdvice: result.passedAdvice,
+        group: "apps-1",
+      },
     ]),
   };
 }
@@ -732,6 +758,7 @@ function createOAuthReport(
       ...readinessAdvisoryFields(
         result.results.map((entry, index) => ({
           readiness: entry.readiness,
+          passedAdvice: entry.passedAdvice,
           group: `oauth-${index + 1}`,
         }))
       ),
@@ -758,7 +785,11 @@ function createOAuthReport(
       ),
     ],
     ...readinessAdvisoryFields([
-      { readiness: result.readiness, group: "oauth-1" },
+      {
+        readiness: result.readiness,
+        passedAdvice: result.passedAdvice,
+        group: "oauth-1",
+      },
     ]),
   };
 }
@@ -1183,7 +1214,11 @@ export function toConformanceReport(
         appsGroupFromResult(result, "MCP Tasks Conformance", 0, "tasks"),
       ],
       ...readinessAdvisoryFields([
-        { readiness: result.readiness, group: "tasks-1" },
+        {
+        readiness: result.readiness,
+        passedAdvice: result.passedAdvice,
+        group: "tasks-1",
+      },
       ]),
     };
   }

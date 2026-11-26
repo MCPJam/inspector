@@ -3,6 +3,11 @@ export type {
   PlatformReadinessStartBody,
   PlatformReadinessLazyAuthProbe,
 } from "./readiness-start-types.js";
+import type { PlatformEvalRunAccount } from "./eval-run-account-types.js";
+export type {
+  PlatformEvalRunAccount,
+  PlatformEvalRunAccountIdentity,
+} from "./eval-run-account-types.js";
 export type {
   PlatformConformanceCheck,
   PlatformConformanceReport,
@@ -66,6 +71,16 @@ export type {
   PlatformFindingsJobStatus,
   PlatformReadinessObservationReason,
 } from "./analysis-outcome-types.js";
+import type { PlatformEvalFindingsView } from "./findings-view-types.js";
+export type {
+  PlatformEvalFindingsView,
+  PlatformEvalFindingsViewStatus,
+  PlatformFindingExplanation,
+  PlatformFindingObservationOutcome,
+  PlatformFindingOption,
+  PlatformFindingOptionKind,
+  PlatformFindingProblem,
+} from "./findings-view-types.js";
 export type { PlatformBrowserToolPolicy } from "./browser-policy.js";
 export type PlatformSessionBrowserInput = {
   policy?: PlatformBrowserToolPolicy;
@@ -1125,6 +1140,12 @@ export interface PlatformEvalRun {
    * the credential carried no attribution claims.
    */
   attribution?: PlatformEvalRunAttribution;
+  /**
+   * The account the run used on each server, recorded when it started.
+   * ABSENT when the run recorded none (runs from before accounts were
+   * recorded); `[]` means it recorded that it used none.
+   */
+  accounts?: PlatformEvalRunAccount[];
   notes: string | null;
   /**
    * The project environment this run executed against, read from the run's
@@ -1954,8 +1975,9 @@ export interface PlatformEvalSuiteSettingsBase {
    * API deployments.
    *
    * A FLOOR, not a default: it RAISES a case's own count and never lowers it,
-   * where `verdictPolicyDefaults.repetitions` REPLACES it. A case at 7
-   * resolves to 7 under a floor of 3 and to 3 under a default count of 3.
+   * where `verdictPolicyDefaults.repetitions` applies only to a case that sets
+   * no count of its own. A case at 2 resolves to 3 under a floor of 3 and to 2
+   * under a default count of 3; a case at 7 resolves to 7 under either.
    */
   minimumIterations?: number | null;
   matchOptions: PublicMatchOptions | null;
@@ -5350,6 +5372,11 @@ export interface PlatformUnifiedFindings {
   };
   canBuild: boolean;
   canEnrich: boolean;
+  /**
+   * One problem per recorded observation, joined by the backend. Absent from
+   * older backends. Check `version` before rendering; render it alone.
+   */
+  findingsView?: PlatformEvalFindingsView;
 }
 
 export interface PlatformInsightsEnvelope {
@@ -5465,8 +5492,22 @@ export interface PlatformEvalCheckRepoConnected {
   outagePolicy: "fail_open" | "fail_closed";
 }
 
-/** Receipt for an eval-run insights (serverQuality) request. 202. */
+/** Receipt for an eval run analysis request. 202. */
 export interface PlatformEvalRunInsightsRequested {
+  runId: string;
+  projectId: string;
+  status: "pending";
+}
+
+/** Receipt for cancelling an eval run's analysis. */
+export interface PlatformEvalRunInsightsCanceled {
+  runId: string;
+  projectId: string;
+  canceled: true;
+}
+
+/** Receipt for a findings build. 202: poll `insights.unifiedFindings.job`. */
+export interface PlatformEvalRunFindingsBuildRequested {
   runId: string;
   projectId: string;
   status: "pending";
@@ -6020,6 +6061,12 @@ export interface PlatformReadinessRun {
   authMode: "headless" | "interactive" | "provided-token" | null;
   capabilities: string[];
   attemptCount: number;
+  /**
+   * The run stopped on the server and waits for the person who started it:
+   * `resumeReadinessRun` runs it again with their credentials. Only they can.
+   * Absent from deployments older than the field: read it as `false`.
+   */
+  resumable?: boolean;
   terminalReason: string | null;
   errorMessage: string | null;
   policySnapshotDate: string | null;
@@ -6029,6 +6076,14 @@ export interface PlatformReadinessRun {
   llmObservations: PlatformReadinessObservationState;
   hasReport: boolean;
   reportUrl: string | null;
+  /** The directory submission the run graded; `null` for a run started from a server. */
+  submissionId: string | null;
+  /** The submission's revision when the run was requested: the answers it graded. */
+  submissionRevision: number | null;
+  /** The stored plugin version a ChatGPT plugin submission's run grades; `null` otherwise. */
+  pluginVersionId: string | null;
+  /** The submission's test plan revision whose calls the run makes; `null` when it names none. */
+  testPlanRevision: number | null;
   createdAt: number;
   updatedAt: number;
 }

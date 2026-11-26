@@ -26,6 +26,7 @@ import {
   PINNED_CODEX_VERSION,
 } from "../../codex-appserver/local-identity.js";
 import { LOCAL_UNATTENDED_SANDBOX_POLICY } from "../../codex-appserver/shared/sandbox-policy.js";
+import { CODEX_APPSERVER_TOOL_NAMES } from "../../codex-appserver/shared/tool-names.js";
 import type { LocalRuntime } from "./types.js";
 
 const manifest: LocalHarnessCompatibility & { harnessId: "codex" } = {
@@ -107,6 +108,7 @@ export const codexLocalRuntime: LocalRuntime<"codex"> = {
         "'<bridgeStateDir>' --session-data-dir '<sessionDataDir>' --bootstrap-dir " +
         "'<bootstrapDir>'",
     ],
+    install: "pnpm install --frozen-lockfile --store-dir .pnpm-store",
     versionProbe: "node node_modules/@openai/codex/bin/codex.js --version",
     bridgeFlags: [
       "--workdir",
@@ -138,14 +140,29 @@ export const codexLocalRuntime: LocalRuntime<"codex"> = {
     version: { from: "package-json", path: ["node_modules", "@openai", "codex", "package.json"] },
   }),
   reservedSecretEnv: /^(CODEX_|OPENAI_|AI_GATEWAY_|BRIDGE_)/i,
+  bridgeEnv: ["CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL"],
   // `OPENAI_BASE_URL` is the gateway's BARE origin, no `/v1`: Codex appends
   // `/responses`, and the gateway forwards exactly `POST /responses` under the
   // broker's own OpenAI base path.
-  childAuth: (gateway) =>
-    ({
-      CODEX_API_KEY: gateway.sessionCapability,
-      OPENAI_BASE_URL: gateway.baseUrl,
-    }) as HarnessAuth,
+  credential: {
+    kind: "gateway",
+    childAuth: (gateway) =>
+      ({
+        CODEX_API_KEY: gateway.sessionCapability,
+        OPENAI_BASE_URL: gateway.baseUrl,
+      }) as HarnessAuth,
+  },
   // Codex runs its own shell, so Git Bash is neither looked up nor handed to it.
   gitBashOnWindows: false,
+  // The bridge keeps its `app-server` and thread between turns. A command is
+  // a `commandExecution` item (`exec_command`, a PTY that can outlive the
+  // turn, and the session a later `write_stdin` drives), surfaced as `bash`;
+  // a patch runs through the shell and surfaces as `fileChange` (PROBES.md).
+  // The bridge surfaces no other item that runs a process.
+  keptBetweenTurns: {
+    processTools: [
+      CODEX_APPSERVER_TOOL_NAMES.commandExecution,
+      CODEX_APPSERVER_TOOL_NAMES.fileChange,
+    ],
+  },
 };

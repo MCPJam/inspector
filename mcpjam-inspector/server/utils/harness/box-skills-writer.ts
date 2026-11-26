@@ -26,6 +26,7 @@ import {
   clearAdapterSkills,
   handOffLegacySkillDirs,
   preseedAdapterSkills,
+  seedSkillsManifestEnabled,
   type PreseedSession,
 } from "./preseed-adapter-skills.js";
 import {
@@ -120,6 +121,11 @@ export interface BoxSkillsResult {
   /** On the box but not whole (a supporting file is missing), or taken off
    *  because its SKILL.md couldn't be rewritten and may grant tools. */
   failed: Array<BoxSkillOutcome & { error: string }>;
+  /** Captured MCP-server skills the turn's skill tools served instead of the
+   *  box (`harness-server-skills.ts`). Set by the turn, never by the writer. */
+  servedByTools?: BoxSkillOutcome[];
+  /** Count-only delivery for server skills discovered after the box plan. */
+  liveDelivery?: { delivered: number; collisions: number; omittedFromCatalog: number };
 }
 
 /** The delivered skills' supporting files. A skill whose whole list `files`
@@ -177,6 +183,11 @@ export async function writeBoxSkills(args: {
   readFiles(): Promise<BoxSkillFiles>;
   /** The computer row whose upload quota downloads count against. */
   computerId?: string;
+  /**
+   * A hosted box, where the seed switch gives a missing adapter manifest its
+   * empty one. A local session's command translator refuses the seed command.
+   */
+  hostedBox?: boolean;
   signal?: AbortSignal;
 }): Promise<BoxSkillsResult> {
   const { session, descriptor, plan, signal } = args;
@@ -199,7 +210,8 @@ export async function writeBoxSkills(args: {
   }
   const skillsBase = boxSkillsFolder(descriptor, args.home);
   if (plan.deliver.length === 0) {
-    await clearSkillsFolder(session, skillsBase, signal);
+    const seed = args.hostedBox === true && seedSkillsManifestEnabled();
+    await clearSkillsFolder(session, skillsBase, signal, seed);
     return result;
   }
   if (signal?.aborted) return result;
@@ -260,11 +272,13 @@ async function clearSkillsFolder(
   session: BoxSkillsSession,
   skillsBase: string,
   signal: AbortSignal | undefined,
+  seedIfMissing = false,
 ): Promise<void> {
   await reconcileSkillDirs({ session, skills: [], skillsHash: "", skillsBase });
   await clearAdapterSkills({
     session,
     skillsBase,
+    seedIfMissing,
     ...(signal ? { signal } : {}),
   });
 }

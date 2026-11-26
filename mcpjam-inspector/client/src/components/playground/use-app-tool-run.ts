@@ -100,7 +100,7 @@ export function useAppToolRun() {
 
   useEffect(() => {
     if (!viewOnly) return;
-    // Permission revocation cancels execution, not this lifetime's detail state.
+    // Revoke waiting without erasing the dispatched operation's outcome.
     token.current += 1;
     busy.current = false;
     setInvoking(false);
@@ -164,13 +164,42 @@ export function useAppToolRun() {
     setResult(null);
     state.registerPendingCall(entry.instance.bridgeId, controller);
     const input = buildParametersFromFields(fields);
-    let success = false;
     try {
       entry.instance
         .getIframeElement?.()
         ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
       const raw = await dispatchAppToolCall(entry, input, {
         signal: controller.signal,
+        onSettled(outcome) {
+          const completed = outcome.status === "fulfilled" ? outcome.value : null;
+          try {
+            if (completed) {
+              recordAppToolInvocation(
+                {
+                  alias,
+                  rawName: entry.rawName,
+                  appName: entry.instance.appName,
+                  serverId: entry.instance.serverId,
+                  parentToolCallId: entry.instance.parentToolCallId,
+                  bridgeId: entry.instance.bridgeId,
+                  input,
+                  raw: completed,
+                  initiatedBy: "user",
+                  chatSessionId: invocationSessionId,
+                  appSessionScopeId: scope,
+                },
+                useTrafficLogStore.getState().addLog,
+              );
+            }
+          } finally {
+            track("app_builder_tool_executed", {
+              source: "app",
+              location: "playground_tools_rail",
+              toolName: entry.rawName,
+              success: completed !== null && !completed.isError,
+            });
+          }
+        },
       });
       const access = useActiveChatSessionStore.getState();
       if (
@@ -182,23 +211,6 @@ export function useAppToolRun() {
       ) {
         return;
       }
-      recordAppToolInvocation(
-        {
-          alias,
-          rawName: entry.rawName,
-          appName: entry.instance.appName,
-          serverId: entry.instance.serverId,
-          parentToolCallId: entry.instance.parentToolCallId,
-          bridgeId: entry.instance.bridgeId,
-          input,
-          raw,
-          initiatedBy: "user",
-          chatSessionId: invocationSessionId,
-          appSessionScopeId: scope,
-        },
-        useTrafficLogStore.getState().addLog,
-      );
-      success = !raw.isError;
       if (isCurrent()) setResult(appToolResult(raw));
     } catch (error) {
       if (isCurrent())
@@ -220,12 +232,6 @@ export function useAppToolRun() {
     } finally {
       state.unregisterPendingCall(entry.instance.bridgeId, controller);
       controllers.current.delete(controller);
-      track("app_builder_tool_executed", {
-        source: "app",
-        location: "playground_tools_rail",
-        toolName: entry.rawName,
-        success,
-      });
       if (isCurrent()) {
         busy.current = false;
         setInvoking(false);

@@ -6,10 +6,9 @@ on:
   # below it until that one merges — never matched `main` and was never built
   # or linted.
   pull_request:
-  # The merge queue tests the merged result before it lands on main; without
-  # this trigger the queue's required checks never report and entries time out.
-  # No `push: main`, for the reason in test.yml.
-  merge_group:
+  # Release (release.yml) calls this on the commit it is about to ship. No
+  # `push: main`, for the reason in test.yml.
+  workflow_call:
 
 # A newer push to the same branch makes in-flight runs obsolete — cancel them
 # so superseded runs don't keep burning a runner. Matters more now that this
@@ -25,7 +24,29 @@ env:
   ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
 
 jobs:
+  # Same scope as test.yml's: a docs-only PR skips the typecheck and build.
+  # A failed scope runs everything.
+  scope:
+    name: Build scope
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
+    timeout-minutes: 5
+    outputs:
+      build: ${{ steps.scope.outputs.build }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - id: scope
+        run: node .github/scripts/ci-scope.mjs
+
   build:
+    needs: scope
+    # A required check. A skipped job reports success, which is what a
+    # docs-only PR should get here.
+    if: >-
+      !cancelled() &&
+      (needs.scope.result != 'success' || needs.scope.outputs.build == 'true')
     # Blacksmith, and TEST_RUNNER to fall back: see test.yml.
     runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     # About 3x the slowest green run with a warm node_modules cache, so a cold
@@ -43,6 +64,9 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
+      - name: Check canonical error rules
+        run: npm run errors:check && node --test scripts/__tests__/error-rules.test.mjs
+
       - name: Verify Docker workspace dependency manifests
         run: node --test .github/scripts/docker-workspaces.test.mjs
 
@@ -52,7 +76,8 @@ jobs:
       - name: Verify the node_modules cache warmer matches its consumers
         run: node --test .github/scripts/warm-node-modules.test.mjs
 
-      # The scripts behind prepare-release.yml, release-trigger.yml and
+      # The scripts behind prepare-release.yml, main-push-guard.yml,
+      # release-trigger.yml and
       # release.yml's plan. Release itself runs rarely, so this is where a
       # break shows up first.
       - name: Release script tests
@@ -60,12 +85,14 @@ jobs:
           node --test \
             .github/scripts/unpublished-versions.test.mjs \
             .github/scripts/release-plan.test.mjs \
-            .github/scripts/release-pr.test.mjs \
+            .github/scripts/release-commit.test.mjs \
             .github/scripts/release-trigger.test.mjs \
+            .github/scripts/ci-scope.test.mjs \
             .github/scripts/release-evidence.test.mjs \
             .github/scripts/daily-release.test.mjs \
             .github/scripts/local-harness-bot-pr.test.mjs \
-            .github/scripts/check-workos-loopback.test.mjs
+            .github/scripts/check-workos-loopback.test.mjs \
+            .github/scripts/retry-worker-crash.test.mjs
 
       # Same node_modules cache as test.yml's jobs — the rationale lives on the
       # `test` job there. Different key prefix: this job runs on a bare
@@ -97,10 +124,11 @@ jobs:
       - name: Lint DESIGN.md against the pinned spec
         run: npm run design:lint
 
-      # Advisory: a moved fingerprint on a PR is what the next release will
-      # publish, not a defect. Starting that release (`prepare-release.yml`)
-      # builds the pack and pins it in the version PR, so this only says which
-      # harness moves (in the job summary). The release gate is still strict.
+      # Advisory: a moved fingerprint on a PR is what the pack prebuild will
+      # publish once it lands, not a defect. The prebuild
+      # (`local-harness-pack-prebuild.yml`) builds the pack and pins it in a
+      # reviewed pin PR, so this only says which harness moves (in the job
+      # summary). The release gate is still strict.
       - name: Report local runtime input fingerprints
         run: node mcpjam-inspector/scripts/check-local-harness-inputs.mjs --advisory
 
@@ -108,14 +136,20 @@ jobs:
       # PUBLISHED packs with this checkout, and packs publish only from main,
       # so a PR that changes a pack input could never pass it and had to merge
       # red. It also downloaded every pinned pack (~1.1 GB) on every PR. The
-      # published-asset check runs where it can be satisfied: before a release
-      # is versioned (prepare-release.yml) and before it publishes (release.yml).
+      # published-asset check runs where it can be satisfied: before a pin PR
+      # opens (local-harness-pack-prebuild.yml) and before a release publishes
+      # (release.yml).
 
       - name: Typecheck releasable packages
         run: npm run typecheck
 
       - name: Typecheck inspector client
         run: npm run typecheck:client -w @mcpjam/inspector
+
+      # A ratchet, like the server typecheck below: eslint-suppressions.json
+      # holds each file's existing violations, so only new ones fail.
+      - name: Lint inspector
+        run: npm run lint -w @mcpjam/inspector
 
       # A ratchet, not a clean gate: server/tsc-baseline.json holds each
       # server file's current error count, and a file may only go down. Runs

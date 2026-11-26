@@ -1,14 +1,20 @@
 import { localHarnessAccountEnabled } from "../../utils/harness/local/readiness.js";
 import { isLocalHarnessVenue } from "../../utils/harness/local/run-resources.js";
+import {
+  LOCAL_HARNESS_IDS,
+  localHarnessRolloutFlag,
+  type LocalHarnessId,
+} from "@/shared/harness-descriptors";
 import { Hono, type Context } from "hono";
 import { HOSTED_MODE } from "../../config.js";
-import { validateGuestTokenDetailedAsync } from "../../services/guest-token.js";
-import { verifyAuthKitToken } from "../../services/authkit-jwt.js";
-import { checkSessionRevocation } from "../../services/revoked-session-cache.js";
 import { sessionRevokedResponse } from "../../middleware/session-revocation.js";
 import { evaluateClientFeatureFlags } from "../../utils/analytics.js";
 import { getAttestedClientIp } from "../../utils/client-ip.js";
-import { flagAccountEmail } from "../../utils/flag-account.js";
+import {
+  NO_FLAGS_IDENTITY as NO_IDENTITY,
+  verifiedFlagIdentity,
+  type FlagsIdentity,
+} from "../../utils/flag-identity.js";
 import { logger } from "../../utils/logger.js";
 
 /**
@@ -42,45 +48,13 @@ const ANONYMOUS_ID_PATTERN =
 // Hosted is always "web".
 const LOCAL_PLATFORMS = new Set(["npm", "docker", "mac", "win", "electron"]);
 
-/** Whose flags a request gets: an id, nobody, or a signed-out session. */
-type FlagsIdentity =
-  | { kind: "id"; distinctId: string; member?: boolean; email?: string }
-  | { kind: "none" }
-  | { kind: "revoked" };
-
-const NO_IDENTITY: FlagsIdentity = { kind: "none" };
-
-async function verifiedIdentity(token: string): Promise<FlagsIdentity> {
-  try {
-    const guest = await validateGuestTokenDetailedAsync(token);
-    if (guest.valid && guest.guestId) {
-      return { kind: "id", distinctId: guest.guestId };
-    }
-  } catch {
-    // Guest token service unavailable; the AuthKit check below still runs.
-  }
-  let session: Awaited<ReturnType<typeof verifyAuthKitToken>>;
-  try {
-    session = await verifyAuthKitToken(token);
-  } catch {
-    return NO_IDENTITY;
-  }
-  // The check `bearerAuthMiddleware` applies to every AuthKit bearer: a
-  // session this process knows to be signed out is refused (MJ-011).
-  if (!checkSessionRevocation(session.sid, { requireFresh: false }).ok) {
-    return { kind: "revoked" };
-  }
-  return { kind: "id", distinctId: session.sub, member: true,
-    email: await flagAccountEmail(token, session.sub) };
-}
-
 async function resolveIdentity(c: Context): Promise<FlagsIdentity> {
   const authorization = c.req.header("authorization");
   if (authorization !== undefined) {
     const token = authorization.startsWith("Bearer ")
       ? authorization.slice("Bearer ".length).trim()
       : "";
-    return token ? verifiedIdentity(token) : NO_IDENTITY;
+    return token ? verifiedFlagIdentity(token) : NO_IDENTITY;
   }
   const anonymousId = c.req.query("distinct_id");
   return anonymousId && ANONYMOUS_ID_PATTERN.test(anonymousId)
@@ -99,7 +73,6 @@ function flagPersonProperties(c: Context): Record<string, string> {
     : undefined;
   return {
     deployment: HOSTED_MODE ? "hosted" : "self_hosted",
-    ...(!HOSTED_MODE ? { local_browser_security_version: "1" } : {}),
     ...(platform ? { platform } : {}),
   };
 }
@@ -180,7 +153,7 @@ clientFlags.get("/", async (c) => {
     const member = identity.kind === "id" && identity.member === true;
     // A failed account check answers that harness's flag OFF; it never fails
     // the whole response, which would take every other flag down with it.
-    const localFlag = async (harnessId: "claude-code" | "codex") => {
+    const localFlag = async (harnessId: LocalHarnessId) => {
       if (!member || !isLocalHarnessVenue(harnessId)) return false;
       try {
         return await localHarnessAccountEnabled(
@@ -196,8 +169,9 @@ clientFlags.get("/", async (c) => {
         return false;
       }
     };
-    flags["local-harness-enabled"] = await localFlag("claude-code");
-    flags["local-codex-enabled"] = await localFlag("codex");
+    for (const harnessId of LOCAL_HARNESS_IDS) {
+      flags[localHarnessRolloutFlag(harnessId)] = await localFlag(harnessId);
+    }
   }
   return c.json({ flags });
 });

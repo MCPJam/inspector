@@ -7,7 +7,7 @@ export function retainInjectedAppOverrides(
   messages: UIMessage[],
   persisted: Record<string, ToolRenderOverride>,
   persistedSnapshotToolCallIds: string[],
-) {
+): Record<string, ToolRenderOverride> {
   const live = new Set(
     messages.flatMap((message) =>
       message.parts.flatMap((part) =>
@@ -20,6 +20,9 @@ export function retainInjectedAppOverrides(
   const snapshots = new Set(persistedSnapshotToolCallIds);
   const entries = Object.entries(previous)
     .filter(([id]) => live.has(id) && !snapshots.has(id))
-    .map(([id, override]) => [id, { ...override, ...persisted[id] }]);
+    .map(([id, override]): [string, ToolRenderOverride] => [
+      id,
+      { ...override, ...persisted[id] },
+    ]);
   return Object.fromEntries(entries);
 }

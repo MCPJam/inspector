@@ -74,6 +74,39 @@ describe("one authorization store shared by every Inspector version", () => {
     expect(await readLocalHarnessAuthorization("user", "machine", "project", "codex")).toMatchObject({ workspaceGrantId: "moved" });
   });
 
+  /** How a build that knows only Claude Code and Codex reads the store: it
+   *  refuses the whole file over any other id in `harnessAuthorizations`. */
+  async function twoHarnessRead() {
+    const raw = JSON.parse(await readFile(storePath(), "utf8")) as {
+      harnessAuthorizations?: Array<{ harnessId: string }>;
+    };
+    if ((raw.harnessAuthorizations ?? []).some((a) => a.harnessId !== "codex" && a.harnessId !== "claude-code")) {
+      throw new Error("Local authorization could not be read");
+    }
+    return raw;
+  }
+
+  it("keeps every other runtime where builds that know two harnesses never read", async () => {
+    await authorizeLocalHarness(binding);
+    await authorizeLocalHarness({ ...binding, harnessId: "codex" });
+    await authorizeLocalHarness({ ...binding, harnessId: "copilot-cli" });
+    const raw = (await twoHarnessRead()) as { runtimeAuthorizations?: Array<{ harnessId: string }> };
+    expect(raw.runtimeAuthorizations?.map((a) => a.harnessId)).toEqual(["copilot-cli"]);
+    expect(await legacyRead("user", "machine", "project")).not.toHaveProperty("harnessId");
+    expect(await readLocalHarnessAuthorization("user", "machine", "project", "copilot-cli")).not.toBeNull();
+  });
+
+  it("keeps a newer build's runtime as written, and revokes it with its member", async () => {
+    await authorizeLocalHarness(binding);
+    const later = { ...binding, harnessId: "pi", policyVersion: LOCAL_HARNESS_POLICY_VERSION, authorizedAt: new Date().toISOString(), unattended: true, laterField: 1 };
+    const raw = JSON.parse(await readFile(storePath(), "utf8"));
+    await writeFile(storePath(), JSON.stringify({ ...raw, runtimeAuthorizations: [later] }));
+    await authorizeLocalHarness({ ...binding, projectId: "second" }); // any write
+    expect(JSON.parse(await readFile(storePath(), "utf8")).runtimeAuthorizations).toEqual([later]);
+    await revokeLocalHarnessAuthorization("user", "project");
+    expect(JSON.parse(await readFile(storePath(), "utf8")).runtimeAuthorizations).toEqual([]);
+  });
+
   it("moves a Codex record an earlier build left in the legacy list", async () => {
     await authorizeLocalHarness(binding);
     await writeFile(storePath(), JSON.stringify({

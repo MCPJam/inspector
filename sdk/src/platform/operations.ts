@@ -83,6 +83,10 @@ import {
   type RunTargetPlan,
 } from "./suite-run-plans.js";
 import {
+  latestFinishedRunFor,
+  resolveSuiteForRunListing,
+} from "./eval-suite-run-listing.js";
+import {
   evaluateMarketHosts,
   scanWidgetUsage,
   type CompatFinding,
@@ -100,14 +104,22 @@ import {
 } from "./show-servers.js";
 import {
   PROJECT_SELECTOR_DESCRIPTION,
+  evalRunScopedInput,
   resolveLiveServer,
   resolveProjectOrThrow,
+  resolveSavedServer,
   serverScopedInput,
   toSelectedProjectInfo,
   toServerInfo,
+  type EvalRunScopedInput,
   type ResolvedServerInfo,
   type ServerScopedInput,
 } from "./operation-support.js";
+import {
+  hostedReachRefusalForServer,
+  hostedReachRefusalFromError,
+  refusedDiagnosis,
+} from "./diagnose-server.js";
 import {
   getConformanceCheckOperation,
   getConformanceReportOperation,
@@ -127,6 +139,52 @@ import {
   updateServerAccountOperation,
   uploadServerAccountTokensOperation,
 } from "./server-account-operations.js";
+import {
+  createDirectorySubmissionOperation,
+  deleteDirectorySubmissionOperation,
+  getDirectoryFlowOperation,
+  getDirectorySubmissionOperation,
+  getDirectorySubmissionResultsOperation,
+  listDirectoryFlowsOperation,
+  listDirectorySubmissionsOperation,
+  startDirectorySubmissionRunOperation,
+  updateDirectorySubmissionOperation,
+} from "./directory-submission-operations.js";
+import {
+  cancelReviewerAttemptOperation,
+  createReviewerAttemptOperation,
+  createReviewerHandoffOperation,
+  getReviewerAttemptOperation,
+  listReviewerAttemptsOperation,
+  resumeReviewerAttemptOperation,
+} from "./directory-reviewer-attempt-operations.js";
+import {
+  exportDirectorySubmissionOperation,
+  getDirectorySubmissionFindingOperation,
+  getDirectorySubmissionHandoffOperation,
+  importDirectoryFindingOperation,
+  listDirectorySubmissionEventsOperation,
+  listDirectorySubmissionFindingsOperation,
+  recordDirectorySubmissionSnapshotOperation,
+  recordDirectorySubmissionStatusOperation,
+} from "./directory-submission-handoff-operations.js";
+import {
+  draftDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionToolTestsOperation,
+  saveDirectorySubmissionTestPlanOperation,
+} from "./directory-test-plan-operations.js";
+import {
+  exportDirectorySubmissionTestCasesOperation,
+  getDirectorySubmissionEvalsOperation,
+  importDirectorySubmissionTestCasesOperation,
+  setDirectorySubmissionEvalsOperation,
+} from "./directory-submission-eval-operations.js";
+import {
+  buildEvalRunFindingsOperation,
+  cancelEvalRunInsightsOperation,
+  requestEvalRunInsightsOperation,
+} from "./eval-run-insights-operations.js";
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
@@ -1004,16 +1062,27 @@ export const diagnoseServerOperation: PlatformOperation<
       { client, signal, onScopeResolved },
       input.project
     );
-    const server = await resolveLiveServer(
+    // A server hosted MCPJam will not dial is diagnosed, not refused: see
+    // `diagnose-server.ts`.
+    const server = await resolveSavedServer(
       client,
       project,
       input.server,
       signal
     );
-    const report = await client.doctorServer(
-      { projectId: project.id, serverId: server.id },
-      { signal }
-    );
+    const unreachable = hostedReachRefusalForServer(server);
+    if (unreachable) return refusedDiagnosis(project, server, unreachable);
+    let report: PlatformDoctorReport;
+    try {
+      report = await client.doctorServer(
+        { projectId: project.id, serverId: server.id },
+        { signal }
+      );
+    } catch (error) {
+      const refused = hostedReachRefusalFromError(error);
+      if (!refused) throw error;
+      return refusedDiagnosis(project, server, refused);
+    }
     return {
       project: toSelectedProjectInfo(project),
       server: toServerInfo(server),
@@ -1143,7 +1212,7 @@ export const listServerToolsOperation: PlatformOperation<
   name: "list_server_tools",
   title: "List MCPJam server tools",
   description:
-    "List the tools a saved MCP server exposes: names, descriptions, and input schemas. Paginated — pass nextCursor back as cursor for the next page.",
+    "List the tools a saved MCP server exposes: names, descriptions, and input schemas. A server's tools are the actions it offers, such as a documentation server's search, and call_server_tool runs one of them by name. Paginated — pass nextCursor back as cursor for the next page.",
   readOnly: true,
   permalink: derivePermalinks((result) => [serverRef(result)]),
   inputSchema: serverPagedInput,
@@ -1185,7 +1254,7 @@ export const listServerResourcesOperation: PlatformOperation<
   name: "list_server_resources",
   title: "List MCPJam server resources",
   description:
-    "List the resources a saved MCP server exposes: uris, names, and mime types. Paginated — pass nextCursor back as cursor for the next page.",
+    "List the resources a saved MCP server exposes: uris, names, and mime types. A resource is content the server publishes to be read whole by uri; searching or querying a server is one of its tools, which this listing does not include. Paginated — pass nextCursor back as cursor for the next page.",
   readOnly: true,
   permalink: derivePermalinks((result) => [serverRef(result)]),
   inputSchema: serverPagedInput,
@@ -1338,7 +1407,7 @@ export const callServerToolOperation: PlatformOperation<
   name: "call_server_tool",
   title: "Call MCPJam server tool",
   description:
-    "Execute a tool on a saved MCP server and return its result. Sends an MCP tools/call request (https://modelcontextprotocol.io/specification/2025-11-25/server/tools) with `toolName` and `parameters` exactly as given; the tool name and its parameter schema come from that server's own listing (list_server_tools). Runs with the caller's own authorization for that server and may have side effects there, including modifying or deleting data. If the server asks for sign-in on this call, the error is AUTH_REQUIRED (HTTP 403) with the parsed challenge in details.authChallenge; a completed result can also carry authChallenge beside it. Nothing signs in automatically: the user must connect the server with OAuth, then call again.",
+    "Execute a tool on a saved MCP server and return its result. This is how a saved server does work for the caller: searching a documentation server, for example, is a call to that server's search tool. Sends an MCP tools/call request (https://modelcontextprotocol.io/specification/2025-11-25/server/tools) with `toolName` and `parameters` exactly as given; the tool name and its parameter schema come from that server's own listing (list_server_tools). Runs with the caller's own authorization for that server and may have side effects there, including modifying or deleting data. If the server asks for sign-in on this call, the error is AUTH_REQUIRED (HTTP 403) with the parsed challenge in details.authChallenge; a completed result can also carry authChallenge beside it. Nothing signs in automatically: the user must connect the server with OAuth, then call again.",
   readOnly: false,
   mayBeDestructive: true,
   permalink: noPermalink(
@@ -1961,7 +2030,7 @@ export const startClaudeReadinessRunOperation: PlatformOperation<
   name: "start_claude_readiness_run",
   title: "Start a Claude directory readiness run",
   description:
-    "Grade a saved MCP server against Anthropic's connector-directory rules. Starts a durable run and returns its id; the verdict is available on the run after completion, not in this response. `includeLlmObservations` adds an optional model pass: included with MCPJam, so no customer credits are consumed either way; it is subject to MCPJam's daily analysis budget.",
+    "Grade a saved MCP server against Anthropic's connector-directory rules. Starts a durable run and returns its id; the verdict is available on the run after completion, not in this response. `includeLlmObservations` adds an optional model pass: included with MCPJam, so no customer credits are consumed either way; it is subject to MCPJam's daily analysis budget. In beta: an organization outside the beta is refused, and the error names the feature.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -2011,7 +2080,7 @@ export const startOpenAIReadinessRunOperation: PlatformOperation<
   name: "start_openai_readiness_run",
   title: "Start an OpenAI directory readiness run",
   description:
-    "Grade a saved MCP server against OpenAI's app-directory rules. Requires an explicit `submissionMode` — it is never inferred, because guessing turns a missing input into a clean bill of health. Starts a durable run and returns its id; the verdict is available on the run after completion. `includeLlmObservations` adds an optional model pass: included with MCPJam, so no customer credits are consumed either way; it is subject to MCPJam's daily analysis budget.",
+    "Grade a saved MCP server against OpenAI's app-directory rules. Requires an explicit `submissionMode` — it is never inferred, because guessing turns a missing input into a clean bill of health. Starts a durable run and returns its id; the verdict is available on the run after completion. `includeLlmObservations` adds an optional model pass: included with MCPJam, so no customer credits are consumed either way; it is subject to MCPJam's daily analysis budget. In beta: an organization outside the beta is refused, and the error names the feature.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -2060,7 +2129,7 @@ export const startMuseReadinessRunOperation: PlatformOperation<
   name: "start_muse_readiness_run",
   title: "Start a Muse directory readiness run",
   description:
-    "Grade a saved MCP server against Meta's Muse connector guidelines. Starts a durable run and returns its id; the verdict is available on the run after completion, not in this response. Free: Muse readiness has no AI observations. Muse reviews every submission by hand, so a ready verdict is a preflight, not a prediction of approval.",
+    "Grade a saved MCP server against Meta's Muse connector guidelines. Starts a durable run and returns its id; the verdict is available on the run after completion, not in this response. Free: Muse readiness has no AI observations. Muse reviews every submission by hand, so a ready verdict is a preflight, not a prediction of approval. In beta: an organization outside the beta is refused, and the error names the feature.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -2109,7 +2178,7 @@ export const getReadinessRunOperation: PlatformOperation<
   name: "get_readiness_run",
   title: "Get a directory readiness run",
   description:
-    "Read one readiness run. THREE SEPARATE ANSWERS: `status` says whether the run finished, `overallStatus` is the grade (a completed run can be `not-ready`), and `llmObservations` says whether the optional model pass ran — a `billing-blocked` observation leaves the grade complete and valid. `lanes` carries per-lane coverage and the inputs that would close each gap.",
+    "Read one readiness run. THREE SEPARATE ANSWERS: `status` says whether the run finished, `overallStatus` is the grade (a completed run can be `not-ready`), and `llmObservations` says whether the optional model pass ran — a `billing-blocked` observation leaves the grade complete and valid. `lanes` carries per-lane coverage and the inputs that would close each gap. Readiness is in beta; this stays open to every organization, so a run can always be found and stopped.",
   readOnly: true,
   permalink: noPermalink(
     "route-not-addressable",
@@ -2169,7 +2238,7 @@ export const listReadinessRunsOperation: PlatformOperation<
   name: "list_readiness_runs",
   title: "List directory readiness runs",
   description:
-    "List a project's readiness runs, newest first, optionally narrowed to one publisher or one server. Use it to find a run id when you have a server but not a run.",
+    "List a project's readiness runs, newest first, optionally narrowed to one publisher or one server. Use it to find a run id when you have a server but not a run. Readiness is in beta; this stays open to every organization, so a run can always be found and stopped.",
   readOnly: true,
   permalink: noPermalink(
     "route-not-addressable",
@@ -2204,7 +2273,7 @@ export const cancelReadinessRunOperation: PlatformOperation<
   name: "cancel_readiness_run",
   title: "Cancel a directory readiness run",
   description:
-    "Stop a readiness run that is still going. The executing node learns within about half a minute, so the run's real terminal state arrives on a later `get_readiness_run` — this response reports the request, not the outcome.",
+    "Stop a readiness run that is still going. The executing node learns within about half a minute, so the run's real terminal state arrives on a later `get_readiness_run` — this response reports the request, not the outcome. Readiness is in beta; this stays open to every organization, so a run can always be found and stopped.",
   // A write, and it declares its risk as every write must — but cancelling
   // STOPS work rather than starting it: it spends nothing, destroys no record,
   // and the run it interrupts is one somebody is paying to keep running.
@@ -2226,6 +2295,33 @@ export const cancelReadinessRunOperation: PlatformOperation<
       runId: result.runId,
       status: result.status,
     };
+  },
+};
+
+export const resumeReadinessRunOperation: PlatformOperation<
+  ReadinessRunScopedInput,
+  { project: SelectedProjectInfo; run: PlatformReadinessRunReceipt }
+> = {
+  name: "resume_readiness_run",
+  title: "Resume a directory readiness run",
+  description:
+    "Run again a readiness run that stopped on the server before it finished. Call it once when `get_readiness_run` reports `resumable: true`, then keep polling `get_readiness_run`. Only the person who started the run can resume it, because the server is graded with their credentials; it is refused for anyone else and for a run that is running, finished, or no longer waiting. Returns a receipt, not a verdict. Readiness is in beta: an organization outside the beta is refused, and the error names the feature.",
+  // The run's own requester finishing the run they started: nothing new is
+  // created and nothing is spent beyond what the start already allowed.
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: readinessRunScopedInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const run = await client.resumeReadinessRun(
+      { projectId: project.id, runId: input.run },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), run };
   },
 };
 
@@ -2286,7 +2382,7 @@ export const getReadinessReportOperation: PlatformOperation<
   name: "get_readiness_report",
   title: "Get a directory readiness report",
   description:
-    "Read a finished readiness run's findings: what each one requires, whether it was satisfied, violated or never evaluated, and how to fix it. Findings are capped and ordered most-consequential-first; `truncated` and `totalFindings` say when you are seeing a subset. Raw per-finding evidence is not included — read it in the app.",
+    "Read a finished readiness run's findings: what each one requires, whether it was satisfied, violated or never evaluated, and how to fix it. Findings are capped and ordered most-consequential-first; `truncated` and `totalFindings` say when you are seeing a subset. Raw per-finding evidence is not included — read it in the app. In beta: an organization outside the beta is refused, and the error names the feature.",
   readOnly: true,
   permalink: noPermalink(
     "route-not-addressable",
@@ -2421,6 +2517,14 @@ export type {
   UploadServerAccountTokensResult,
 } from "./server-account-operations.js";
 
+// Directory submission operations, from modules that export nothing else.
+export * from "./directory-submission-operations.js";
+export * from "./directory-reviewer-attempt-operations.js";
+export * from "./directory-submission-handoff-operations.js";
+export * from "./directory-test-plan-operations.js";
+export * from "./directory-submission-eval-operations.js";
+export * from "./eval-run-insights-operations.js";
+
 // ── Eval operations ──────────────────────────────────────────────────
 
 // Declared HERE, above the run operations that reference it, rather than beside
@@ -2454,13 +2558,6 @@ const ENVIRONMENT_SELECTOR_DESCRIPTION = "Project environment name or ID.";
 const SUITE_ENVIRONMENT_SELECTOR_DESCRIPTION =
   "Project environment name or ID. Must be one the suite has attached (set them with set_eval_suite_environments). Omit it when the suite has exactly one attached environment — that one is used; a suite with several requires naming one. Mutually exclusive with `servers`: an environment supplies its own closed server set.";
 
-// Unlike the listing operations, the run-polling reads do NOT default the
-// project: a run is an existing resource in one specific project, and
-// guessing "most recently updated" makes a run in any other project read as
-// NOT_FOUND. run_eval_suite and list_eval_suite_runs return the resolved
-// project precisely so callers can address the polls exactly.
-const RUN_PROJECT_DESCRIPTION =
-  "Project the run belongs to (name or ID), as returned by run_eval_suite or list_eval_suite_runs.";
 
 // ── client / host, one selector ─────────────────────────────────────────────
 //
@@ -3427,7 +3524,14 @@ const evalSuiteScopedInput = z.object({
     .min(1)
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
-  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  suite: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      `${SUITE_SELECTOR_DESCRIPTION} Omit it to list the suite holding the project's most recent run, so the first item is the project's newest run.`
+    ),
   limit: z
     .number()
     .int()
@@ -3443,6 +3547,8 @@ export type ListEvalSuiteRunsResult = {
   project: SelectedProjectInfo;
   suite: { id: string; name: string | null };
   items: PlatformEvalRun[];
+  /** Present only when none of `items` has finished; see `latestFinishedRunFor`. */
+  latestFinishedRun?: PlatformEvalRun | null;
 };
 
 export const listEvalSuiteRunsOperation: PlatformOperation<
@@ -3452,12 +3558,13 @@ export const listEvalSuiteRunsOperation: PlatformOperation<
   name: "list_eval_suite_runs",
   title: "List MCPJam eval suite runs",
   description:
-    "List recent runs of an eval suite, newest first, with status, pass/fail result, and summary counts. The suite is matched by name or ID within the project.",
+    "List recent runs of an eval suite, newest first, with status, pass/fail result, and summary counts. The suite is matched by name or ID within the project; without one, the suite holding the project's most recent run is used. A run still in progress has no result yet: when none of the listed runs has finished, `latestFinishedRun` is the newest one that has.",
   readOnly: true,
   permalink: derivePermalinks((result) =>
-    result.items.map((run) =>
-      evalRunRef(run.id, result.suite.id, result.project?.id)
-    )
+    [
+      ...result.items,
+      ...(result.latestFinishedRun ? [result.latestFinishedRun] : []),
+    ].map((run) => evalRunRef(run.id, result.suite.id, result.project?.id))
   ),
   inputSchema: evalSuiteScopedInput,
   async execute(input, { client, signal, onScopeResolved }) {
@@ -3465,15 +3572,30 @@ export const listEvalSuiteRunsOperation: PlatformOperation<
       { client, signal, onScopeResolved },
       input.project
     );
-    const suite = await resolveSuite(client, project, input.suite, signal);
-    const page = await client.listEvalSuiteRuns(
-      { projectId: project.id, suiteId: suite.id, limit: input.limit },
-      { signal }
+    const suite = await resolveSuiteForRunListing(
+      client,
+      project,
+      input.suite,
+      signal
+    );
+    const listRuns = async (limit: number | undefined) =>
+      (
+        await client.listEvalSuiteRuns(
+          { projectId: project.id, suiteId: suite.id, limit },
+          { signal }
+        )
+      ).items;
+    const items = await listRuns(input.limit);
+    const latestFinishedRun = await latestFinishedRunFor(
+      items,
+      input.limit,
+      listRuns
     );
     return {
       project: toSelectedProjectInfo(project),
       suite: { id: suite.id, name: suite.name },
-      items: page.items,
+      items,
+      ...(latestFinishedRun === undefined ? {} : { latestFinishedRun }),
     };
   },
 };
@@ -6960,18 +7082,7 @@ export const importEvalCasesOperation: PlatformOperation<
   },
 };
 
-const evalRunScopedInput = z.object({
-  project: z.string().trim().min(1).describe(RUN_PROJECT_DESCRIPTION),
-  runId: z
-    .string()
-    .trim()
-    .min(1)
-    .describe(
-      "Eval run ID, as returned by run_eval_suite or list_eval_suite_runs."
-    ),
-});
-
-export type EvalRunScopedInput = z.infer<typeof evalRunScopedInput>;
+export type { EvalRunScopedInput } from "./operation-support.js";
 
 /**
  * The diagnostics page size this operation asks for.
@@ -7025,7 +7136,7 @@ export const getEvalRunOperation: PlatformOperation<
   name: "get_eval_run",
   title: "Get MCPJam eval run",
   description:
-    "Get an eval run's status and verdict and, once the run is terminal, its `decisionSummary`: the verdict and where it came from (`verdictSource`); the counts and the population they count (`measurementUnit`: `caseVariant` under per-case grading, `trial` under a suite-wide accuracy threshold); the `decision` with the reasons a per-case-graded run passed, failed, or was withheld as inconclusive; and per-iteration `diagnostics` with the user-value chain, the first failed stage, the failure category, the evidence for that stage, and one suggested next action. `verdict: \"notEstablished\"` means no verdict exists (still running, stopped early, or undecidable); it is not a failure. The chain's stages, in order: connection → discovery → selection → call → response → userValue. Each diagnostic's `chain.status` is `verified` (the stored derivation validated, so `stages`, `firstFailedStage` and `failureCategory` are present), `unverified` (a derivation was stored but did not validate, so those fields are withheld), or `absent` (no derivation was stored). A stage row's `state` is `passed` or `failed` (measured), `notReached` (an earlier stage failed), `notMeasured` (the run captured nothing that could decide it), or `notApplicable` (the stage does not apply to the case); none of the last three says the stage was healthy. `firstFailedStage` is where the chain stopped, not its cause; that stage row's `reason` is the closest thing to a cause. `failureCategory` is a coarse bucket and can be present with no `firstFailedStage` (a setup abort or an evaluator error never reaches a stage). Diagnostics are paginated: pass diagnosticsCursor to continue; `diagnostics.complete: false` means the list is partial. Per-step results come from get_eval_run_steps and full transcripts from get_eval_iteration_trace. The result also carries an `insights` envelope of findings aggregated across iterations, with exemplar evidence. Each finding's `actionTarget` says what it concerns: only findings with actionTarget mcp_server and actionability ready describe a change to the server under test; the other targets describe agent, test or environment work.",
+    "Get an eval run's status and verdict and, once the run is terminal, its `decisionSummary`: the verdict and where it came from (`verdictSource`); the counts and the population they count (`measurementUnit`: `caseVariant` under per-case grading, `trial` under a suite-wide accuracy threshold); the `decision` with the reasons a per-case-graded run passed, failed, or was withheld as inconclusive; and per-iteration `diagnostics` with the user-value chain, the first failed stage, the failure category, the evidence for that stage, and one suggested next action. `verdict: \"notEstablished\"` means no verdict exists (still running, stopped early, or undecidable); it is not a failure. The chain's stages, in order: connection → discovery → selection → call → response → userValue. Each diagnostic's `chain.status` is `verified` (the stored derivation validated, so `stages`, `firstFailedStage` and `failureCategory` are present), `unverified` (a derivation was stored but did not validate, so those fields are withheld), or `absent` (no derivation was stored). A stage row's `state` is `passed` or `failed` (measured), `notReached` (an earlier stage failed), `notMeasured` (the run captured nothing that could decide it), or `notApplicable` (the stage does not apply to the case); none of the last three says the stage was healthy. `firstFailedStage` is where the chain stopped, not its cause; that stage row's `reason` is the closest thing to a cause. `failureCategory` is a coarse bucket and can be present with no `firstFailedStage` (a setup abort or an evaluator error never reaches a stage). Diagnostics are paginated: pass diagnosticsCursor to continue; `diagnostics.complete: false` means the list is partial. Per-step results come from get_eval_run_steps and full transcripts from get_eval_iteration_trace. The result also carries an `insights` envelope of findings aggregated across iterations, with exemplar evidence. `insights.currentFindings` lists the run's findings, as the run page does (MCP omits it when it repeats `insights.findings` and sets `currentFindingsSameAsFindings`); `insights.unifiedFindings.snapshot.enrichment.status` says whether a model's explanation applies to them (ready) or predates the latest evidence (stale); `insights.status` is the state of the latest analysis. To start, cancel or rebuild an analysis, use request_eval_run_insights, cancel_eval_run_insights and build_eval_run_findings. Each finding's `actionTarget` says what it concerns: only findings with actionTarget mcp_server and actionability ready describe a change to the server under test; the other targets describe agent, test or environment work.",
   readOnly: true,
   permalink: derivePermalinks((result) => [
     evalRunRef(result.run.id, result.run.suiteId, result.project?.id),
@@ -10100,6 +10211,7 @@ const clientFieldSet = z
       .nullable()
       .optional()
       .describe("null clears the host-level opt-in."),
+    runUnloadedToolCalls: z.boolean().nullable().optional(),
     progressiveToolDiscovery: z
       .boolean()
       .nullable()
@@ -16150,7 +16262,7 @@ export const requestSwarmRunInsightsOperation: PlatformOperation<
   name: "request_swarm_run_insights",
   title: "Request MCPJam swarm run insights",
   description:
-    "Ask a model to analyze a whole swarm run. Returns immediately with status pending; the analysis continues asynchronously. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with user-testing insights, so a request here takes one from there. Run scorecards (get_goal_run_scorecard) cost no quota.",
+    "Ask a model to analyze a whole swarm run. Returns immediately with status pending; the analysis continues asynchronously. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with study, user-testing and eval run insights, so a request here takes one from there. Run scorecards (get_goal_run_scorecard) cost no quota.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink("mutation-only"),
@@ -16269,7 +16381,7 @@ export const requestWaveInsightsOperation: PlatformOperation<
   name: "request_wave_insights",
   title: "Request MCPJam wave insights",
   description:
-    "DEPRECATED — use request_swarm_run_insights, which is this operation under the name the product uses. Asks a model to analyze a whole wave; returns immediately with status pending. Included with MCPJam; no customer credits consumed; it COUNTS against the organization's daily insight quota, which is SHARED with user-testing insights.",
+    "DEPRECATED — use request_swarm_run_insights, which is this operation under the name the product uses. Asks a model to analyze a whole wave; returns immediately with status pending. Included with MCPJam; no customer credits consumed; it COUNTS against the organization's daily insight quota, which is SHARED with study, user-testing and eval run insights.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink("mutation-only"),
@@ -19308,7 +19420,44 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
+  resumeReadinessRunOperation,
   getReadinessReportOperation,
+  // Directory submissions: one directory's form for a saved server, graded by runs.
+  listDirectoryFlowsOperation,
+  getDirectoryFlowOperation,
+  createDirectorySubmissionOperation,
+  listDirectorySubmissionsOperation,
+  getDirectorySubmissionOperation,
+  updateDirectorySubmissionOperation,
+  deleteDirectorySubmissionOperation,
+  startDirectorySubmissionRunOperation,
+  getDirectorySubmissionResultsOperation,
+  // A submission's reviewer sign-in attempts.
+  createReviewerAttemptOperation,
+  createReviewerHandoffOperation,
+  listReviewerAttemptsOperation,
+  getReviewerAttemptOperation,
+  resumeReviewerAttemptOperation,
+  cancelReviewerAttemptOperation,
+  // Resuming one from its id: the summary, findings, pack and the records.
+  getDirectorySubmissionHandoffOperation,
+  listDirectorySubmissionFindingsOperation,
+  getDirectorySubmissionFindingOperation,
+  exportDirectorySubmissionOperation,
+  listDirectorySubmissionEventsOperation,
+  recordDirectorySubmissionStatusOperation,
+  recordDirectorySubmissionSnapshotOperation,
+  importDirectoryFindingOperation,
+  // A submission's test plan: the calls its runs may make, and what they showed.
+  getDirectorySubmissionTestPlanOperation,
+  draftDirectorySubmissionTestPlanOperation,
+  saveDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionToolTestsOperation,
+  // A submission's test cases, as the eval suite that holds them.
+  getDirectorySubmissionEvalsOperation,
+  setDirectorySubmissionEvalsOperation,
+  importDirectorySubmissionTestCasesOperation,
+  exportDirectorySubmissionTestCasesOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -19353,6 +19502,9 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   backtestEvalRunOperation,
   backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
+  requestEvalRunInsightsOperation,
+  cancelEvalRunInsightsOperation,
+  buildEvalRunFindingsOperation,
   listEvalGithubReposOperation,
   connectEvalGithubRepoOperation,
   listEvalCheckReposOperation,

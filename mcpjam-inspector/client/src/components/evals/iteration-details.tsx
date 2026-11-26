@@ -37,6 +37,7 @@ import {
   parseScoreIntegrity,
 } from "./scores-list";
 import { TraceViewer } from "./trace-viewer";
+import { iterationCostContext } from "./trace-cost/iteration-model-calls";
 import type { TraceDetailPlacement } from "./use-trace-detail-direction";
 import type { HostSnapshot } from "@/lib/host-snapshot";
 import {
@@ -271,6 +272,7 @@ export function IterationDetails({
   traceDetailPlacement,
   activeTab,
   onTabChange,
+  executionEngine,
 }: {
   iteration: EvalIteration;
   /** undefined preserves ambient styling for existing chat callers. */
@@ -333,6 +335,8 @@ export function IterationDetails({
   /** Controls the tab; the reset on iteration change then stays off. */
   activeTab?: IterationReportMode;
   onTabChange?: (mode: IterationReportMode) => void;
+  /** The run's engine, when the host has the run; `harness:<id>` lists unmatched calls. */
+  executionEngine?: string;
 }) {
   // The Scores list prints the same judge number the review panel hides.
   // Own the flag here so hiding starts on first paint (before the panel's
@@ -1225,6 +1229,7 @@ export function IterationDetails({
               iterationResult={iteration.result}
               expectedToolCalls={expectedToolCalls}
               actualToolCalls={actualToolCalls}
+              iterationCost={iterationCostContext(iteration, executionEngine)}
             />
         )}
       </div>
@@ -1277,7 +1282,7 @@ export function IterationDetails({
           )}
         </div>
       ) : null}
-      {iterationError && <ErrorCard key={iteration._id} error={iterationError} variant="inline" />}
+      {iterationError && <ErrorCard key={iteration._id} error={iterationError} />}
 
       {!hasTrace && !scorecard && !isProbe && (
         <TranscriptEmptyState {...(iteration.status === "running" || iteration.status === "pending"

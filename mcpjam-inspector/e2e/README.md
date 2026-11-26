@@ -35,6 +35,20 @@ Set `PLAYWRIGHT_BASE_URL` to skip the local server and drive a deployed target:
 PLAYWRIGHT_BASE_URL=https://staging.mcpjam.com npm run test:e2e -w @mcpjam/inspector
 ```
 
+## App lifecycle across a chat conflict
+
+The App lifecycle check runs separately from the community-backend smoke tests:
+
+```bash
+npm run build:client:app-lifecycle -w @mcpjam/inspector
+npm run test:e2e:app-lifecycle -w @mcpjam/inspector
+```
+
+It drives the real hosted client, mounted counter App, iframe bridge and tool
+alias. Convex and chat responses are fixtures, so this does not prove real
+backend concurrency. The `telemetry-egress` job in `test.yml` runs it for fork
+PRs and the merge queue without a guest-session secret or visual approval.
+
 ## The local-access spec
 
 The smoke config signs every page in by seeding the `mcpjam.local-access` key,

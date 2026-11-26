@@ -2047,6 +2047,14 @@ describe("useProjectState first-paint server visibility", () => {
         createdAt: 1,
         updatedAt: 1,
       },
+      {
+        _id: "server-sibling",
+        projectId: "sibling-project",
+        name: "excalidraw",
+        enabled: true,
+        transportType: "http",
+        url: "https://example.com/sibling-mcp",
+      },
     ];
 
     const appState = createAppState({});
@@ -2061,7 +2069,8 @@ describe("useProjectState first-paint server visibility", () => {
     // convexActiveProjectId catches up to remoteProjects[0]._id.
     await waitFor(() => {
       const project = result.current.effectiveProjects["guest-project"];
-      expect(Object.keys(project?.servers ?? {}).length).toBe(1);
+      expect(Object.keys(project?.servers ?? {})).toEqual(["excalidraw"]);
+      expect(project?.servers.excalidraw).toMatchObject({ _id: "server-1" });
     });
   });
 });

@@ -13,7 +13,7 @@ vi.mock("convex/react", () => ({
 vi.mock("posthog-js/react", () => ({ useFeatureFlagEnabled: () => false }));
 vi.mock("@/hooks/useComputersEnabled", () => ({
   useLocalHarnessEnabled: () => false,
-  useLocalHarnessRollouts: () => ({ "claude-code": false, codex: false }),
+  useLocalHarnessRollouts: () => ({ "claude-code": false, codex: false, "copilot-cli": false }),
 }));
 vi.mock("@/hooks/use-is-member-actor", () => ({ useIsMemberActor: () => true }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
@@ -42,6 +42,10 @@ vi.mock("@/hooks/useCodexHostEnabled", () => ({
 vi.mock("@/hooks/useCursorHostEnabled", () => ({
   useCursorHostEnabled: () => true,
 }));
+const flags = vi.hoisted(() => ({ openCode: false }));
+vi.mock("@/hooks/useOpenCodeHostEnabled", () => ({
+  useOpenCodeHostEnabled: () => flags.openCode,
+}));
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (select: (s: { themeMode: string }) => unknown) =>
     select({ themeMode: "light" }),
@@ -50,13 +54,14 @@ vi.mock("@/lib/host-compat/use-host-catalog", async () => {
   const sdk = await vi.importActual<typeof import("@mcpjam/sdk/host-compat")>(
     "@mcpjam/sdk/host-compat",
   );
+  const catalogState = {
+    status: "live",
+    catalog: sdk.bundledHostCompatCatalog(),
+    version: 1,
+    source: "live",
+  };
   return {
-    useHostCatalog: () => ({
-      status: "live",
-      catalog: sdk.bundledHostCompatCatalog(),
-      version: 1,
-      source: "live",
-    }),
+    useHostCatalog: () => catalogState,
   };
 });
 vi.mock("@/hooks/use-available-models", () => ({
@@ -74,10 +79,105 @@ vi.mock("@/lib/toast", () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  flags.openCode = false;
   createHost.mockResolvedValue({ hostId: "host-1", hostConfigId: "cfg-1" });
 });
 
-describe("creating a Cursor CLI client", () => {
+describe("CreateHostDialog", () => {
+  it("constrains the dialog and scrolls only the responsive template grid", () => {
+    render(
+      <CreateHostDialog
+        isOpen
+        onClose={vi.fn()}
+        projectId="project-1"
+        onCreated={vi.fn()}
+      />,
+    );
+
+    const dialog = screen.getByRole("dialog");
+    const templates = screen.getByRole("group", {
+      name: "Start from template",
+    });
+    expect(dialog).toHaveClass(
+      "flex",
+      "max-h-[calc(100dvh-2rem)]",
+      "overflow-y-auto",
+    );
+    expect(templates).toHaveClass(
+      "min-h-0",
+      "overflow-y-auto",
+      "overscroll-contain",
+      "grid-cols-2",
+      "sm:grid-cols-3",
+    );
+    expect(templates).not.toContainElement(screen.getByLabelText("Name"));
+    expect(templates).not.toContainElement(
+      screen.getByRole("button", { name: "Create" }),
+    );
+    expect(templates).not.toContainElement(
+      screen.getByRole("button", { name: "Cancel" }),
+    );
+    expect(screen.getByRole("button", { name: "VS Code" })).toBeEnabled();
+  });
+
+  it("keeps the template a member picked when a rollout flag resolves", async () => {
+    const dialog = (
+      <CreateHostDialog
+        isOpen
+        onClose={vi.fn()}
+        projectId="project-1"
+        onCreated={vi.fn()}
+      />
+    );
+    const { rerender } = render(dialog);
+    await userEvent.click(screen.getByRole("button", { name: "VS Code" }));
+    // The OpenCode flag resolves after the dialog opened: the list grows.
+    flags.openCode = true;
+    rerender(
+      <CreateHostDialog
+        isOpen
+        onClose={vi.fn()}
+        projectId="project-1"
+        onCreated={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "OpenCode" })).toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "VS Code" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("keeps a custom name when switching templates and can cancel", async () => {
+    const onClose = vi.fn();
+    render(
+      <CreateHostDialog
+        isOpen
+        onClose={onClose}
+        projectId="project-1"
+        onCreated={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "VS Code" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Name")).toHaveValue("VS Code"),
+    );
+    await userEvent.clear(screen.getByLabelText("Name"));
+    await userEvent.type(screen.getByLabelText("Name"), "My test client");
+    await userEvent.click(screen.getByRole("button", { name: "Cursor CLI" }));
+    expect(screen.getByRole("button", { name: "Cursor CLI" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByLabelText("Name")).toHaveValue("My test client");
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(createHost).not.toHaveBeenCalled();
+  });
+
   it("never asks for a key: the client runs on the organization's", async () => {
     render(
       <CreateHostDialog
@@ -104,5 +204,30 @@ describe("creating a Cursor CLI client", () => {
     });
     expect(createProjectSecret).not.toHaveBeenCalled();
     expect(updateProjectSecret).not.toHaveBeenCalled();
+  });
+
+  it("keeps a creation error outside the template scroller and allows retry", async () => {
+    createHost.mockRejectedValueOnce(new Error("Unable to create client"));
+    render(
+      <CreateHostDialog
+        isOpen
+        onClose={vi.fn()}
+        projectId="project-1"
+        onCreated={vi.fn()}
+        initialTemplateId="cursor-cli"
+      />,
+    );
+
+    const create = screen.getByRole("button", { name: "Create" });
+    await waitFor(() => expect(create).toBeEnabled());
+    await userEvent.click(create);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Unable to create client",
+    );
+    expect(
+      screen.getByRole("group", { name: "Start from template" }),
+    ).not.toContainElement(screen.getByRole("alert"));
+    expect(create).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
   });
 });

@@ -175,7 +175,8 @@ localHarness.post("/consent/auto-approve", async (c) => {
   const actor = await resolveConsentActor(c);
   if (!actor.ok) return c.json({ error: actor.message }, actor.status);
   try {
-    await verifyLocalHarnessMember(c.req.header("authorization") ?? "", body.projectId);
+    // The runtime being acknowledged, whose own rollout must cover the member.
+    await verifyLocalHarnessMember(c.req.header("authorization") ?? "", body.projectId, undefined, runtime.harnessId);
     await acknowledgeLocalHarnessAutoApprove({ userId: actor.actor.userId, machineId: await getLocalMachineId(), projectId: body.projectId, harnessId: runtime.harnessId });
     return c.json({ autoApproveAcknowledged: true });
   } catch (error) {
