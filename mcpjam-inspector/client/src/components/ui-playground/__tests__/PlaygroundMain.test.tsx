@@ -69,8 +69,9 @@ vi.mock(
         ...args: Parameters<typeof actual.useAppMessageDraft>
       ) => {
         const draft = actual.useAppMessageDraft(...args);
+        const realHold = draft.hold;
         const hold = useCallback(() => {
-          const release = draft.hold();
+          const release = realHold();
           let held = true;
           appDraftHolds.active += 1;
           return () => {
@@ -78,7 +79,7 @@ vi.mock(
             held = false;
             release();
           };
-        }, [draft.hold]);
+        }, [realHold]);
         return { ...draft, hold };
       },
     };
