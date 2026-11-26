@@ -1,11 +1,6 @@
-import { useState } from "react";
+import { useId, useState, type KeyboardEvent } from "react";
+import { SearchIcon } from "lucide-react";
 import { cn } from "@mcpjam/design-system/cn";
-import {
-  Command,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@mcpjam/design-system/command";
 import type { HostConfigFieldDef } from "@/lib/host-config-field-schema";
 import { caniuseTitle } from "./caniuse-coverage";
 import { fieldMatchesQuery } from "./support-level";
@@ -29,64 +24,111 @@ export function CaniuseCapabilitySearch({
   hero?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const listId = useId();
+  const label = hero ? "Type a capability" : "Search capabilities";
   const suggestions = fields
     .filter((field) => matchesCaniuseQuery(field, query))
     .slice(0, 12);
   const expanded = open && suggestions.length > 0;
+  const currentIndex = Math.min(activeIndex, suggestions.length - 1);
+  const optionId = (index: number) => `${listId}-${index}`;
+
+  function openSuggestions() {
+    setActiveIndex(0);
+    setOpen(true);
+  }
+
+  function selectSuggestion(field: HostConfigFieldDef) {
+    onQueryChange(caniuseTitle(field));
+    setOpen(false);
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.nativeEvent.isComposing) return;
+    if (event.key === "Escape" && open) {
+      event.preventDefault();
+      setOpen(false);
+    } else if (event.key === "Enter" && expanded) {
+      event.preventDefault();
+      selectSuggestion(suggestions[currentIndex]);
+    } else if (
+      (event.key === "ArrowDown" || event.key === "ArrowUp") &&
+      suggestions.length > 0
+    ) {
+      event.preventDefault();
+      if (!expanded) {
+        openSuggestions();
+        return;
+      }
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      const nextIndex = Math.max(0, Math.min(currentIndex + step, suggestions.length - 1));
+      setActiveIndex(nextIndex);
+      document.getElementById(optionId(nextIndex))?.scrollIntoView({ block: "nearest" });
+    }
+  }
 
   return (
-    <Command
-      label={hero ? "Type a capability" : "Search capabilities"}
-      shouldFilter={false}
+    <div
       className={cn(
-        "relative h-auto overflow-visible",
+        "relative flex w-full flex-col rounded-md",
         hero
-          ? "min-w-0 max-w-[13em] flex-[1_1_9em] bg-transparent [&_[data-slot=command-input-wrapper]]:h-auto [&_[data-slot=command-input-wrapper]]:border-primary/40 [&_[data-slot=command-input-wrapper]]:px-0 [&_[data-slot=command-input-wrapper]>svg]:hidden"
-          : "min-w-28 flex-1 basis-full rounded-md border border-border bg-background sm:basis-40 [&_[data-slot=command-input-wrapper]]:border-b-0",
+          ? "min-w-0 max-w-[13em] flex-[1_1_9em] bg-transparent"
+          : "min-w-28 flex-1 basis-full border border-border bg-background sm:basis-40",
       )}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
       }}
-      onKeyDown={(event) => {
-        if (event.key === "Escape" && open) {
-          event.preventDefault();
-          setOpen(false);
-        } else if (event.key === "ArrowDown" && !open) {
-          setOpen(true);
-        } else if (event.key === "Enter" && !expanded) {
-          event.preventDefault();
-        }
-      }}
     >
-      <CommandInput
-        asChild
-        aria-label={hero ? "Type a capability" : "Search capabilities"}
-        placeholder={hero ? "type a capability…" : "Search capabilities…"}
-        className={hero ? "h-auto rounded-none pb-1 pt-0 text-[length:inherit] font-[weight:inherit] leading-[inherit] tracking-[inherit] text-primary" : undefined}
-        value={query}
-        onFocus={() => setOpen(true)}
-        onValueChange={(value) => {
-          onQueryChange(value);
-          setOpen(true);
-        }}
-      >
-        <input aria-expanded={expanded} />
-      </CommandInput>
-      {/* Keep items registered while collapsed so cmdk doesn't reselect during dismissal. */}
-      <CommandList
+      <div className={cn("flex items-center gap-2", hero ? "border-b border-primary/40" : "h-9 px-3")}>
+        {!hero && <SearchIcon aria-hidden="true" className="size-4 shrink-0 opacity-50" />}
+        <input
+          type="text"
+          role="combobox"
+          aria-label={label}
+          aria-autocomplete="list"
+          aria-expanded={expanded}
+          aria-controls={listId}
+          aria-activedescendant={expanded ? optionId(currentIndex) : undefined}
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck={false}
+          placeholder={hero ? "type a capability…" : "Search capabilities…"}
+          className={cn(
+            "flex w-full bg-transparent outline-hidden placeholder:text-muted-foreground",
+            hero
+              ? "pb-1 text-[length:inherit] font-[weight:inherit] leading-[inherit] tracking-[inherit] text-primary"
+              : "h-10 rounded-md py-3 text-sm",
+          )}
+          value={query}
+          onFocus={openSuggestions}
+          onClick={() => { if (!open) openSuggestions(); }}
+          onChange={(event) => {
+            onQueryChange(event.target.value);
+            openSuggestions();
+          }}
+          onKeyDown={handleKeyDown}
+        />
+      </div>
+      <div
+        id={listId}
+        role="listbox"
+        aria-label={label}
         hidden={!expanded}
-        className="absolute inset-x-0 top-full z-40 mt-2 max-h-64 rounded-lg border border-border bg-popover p-1 text-sm font-normal tracking-normal text-popover-foreground shadow-md"
+        className="absolute inset-x-0 top-full z-40 mt-2 max-h-64 overflow-y-auto rounded-lg border border-border bg-popover p-1 text-sm font-normal tracking-normal text-popover-foreground shadow-md"
         onMouseDown={(event) => event.preventDefault()}
       >
-        {suggestions.map((field) => (
-          <CommandItem
+        {suggestions.map((field, index) => (
+          <button
+            id={optionId(index)}
             key={field.id}
-            value={field.id}
-            className="flex-col items-start gap-0.5"
-            onSelect={() => {
-              onQueryChange(caniuseTitle(field));
-              setOpen(false);
-            }}
+            type="button"
+            role="option"
+            tabIndex={-1}
+            aria-selected={index === currentIndex}
+            className="flex w-full flex-col items-start gap-0.5 rounded-sm px-2 py-1.5 text-left aria-selected:bg-accent aria-selected:text-accent-foreground"
+            onPointerMove={(event) => { if (event.pointerType === "mouse") setActiveIndex(index); }}
+            onClick={() => selectSuggestion(field)}
           >
             <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
               <span className="font-semibold">{caniuseTitle(field)}</span>
@@ -97,9 +139,9 @@ export function CaniuseCapabilitySearch({
                 {field.description}
               </span>
             )}
-          </CommandItem>
+          </button>
         ))}
-      </CommandList>
-    </Command>
+      </div>
+    </div>
   );
 }
