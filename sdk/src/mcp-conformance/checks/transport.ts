@@ -547,9 +547,17 @@ export async function runTransportChecks(
       const contentTypes = responses.map(
         (response) => response?.headers["content-type"] ?? "",
       );
-      const responseFailures = responses.some(
-        (response) => response !== undefined && !isOk(response),
-      );
+      // What the server accepted. Refusals and request errors are reported in
+      // the details, never graded: a server may turn a concurrent POST away.
+      const answered = responses.filter(
+        (response) => response !== undefined && isOk(response),
+      ).length;
+      const acceptance = {
+        statuses,
+        ...(requestErrors.some((error) => error !== undefined)
+          ? { requestErrors }
+          : {}),
+      };
       const sseResponses = responses
         .map((response, index) => ({ response, index }))
         .filter(
@@ -566,16 +574,13 @@ export async function runTransportChecks(
       const polling = pollingOutcome(sseResponses);
       if (sseResponses.length === 0) {
         results.push(
-          requestErrors.some((error) => error !== undefined) || responseFailures
-            ? failedResult(
+          answered === 0
+            ? // Nothing came back to grade. Refusing concurrent requests is
+              // not a server fault, so this cannot fail the server.
+              couldNotRunResult(
                 TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
-                Date.now() - multiStreamStartedAt,
-                "One or more concurrent POST requests failed before any SSE stream could be validated",
-                {
-                  statuses,
-                  contentTypes,
-                  requestErrors,
-                },
+                "None of the three concurrent requests was answered, so no stream came back to check. A server does not have to accept concurrent requests.",
+                { ...acceptance, contentTypes },
               )
             : probe.capability === undefined
             ? notApplicableResult(
@@ -591,6 +596,7 @@ export async function runTransportChecks(
                     "Concurrent requests returned JSON responses instead of SSE streams",
                   probeMethod: probe.method,
                   contentTypes,
+                  ...acceptance,
                 },
               ),
         );
@@ -616,9 +622,9 @@ export async function runTransportChecks(
         const readErrors = sseResponses.map(
           ({ response }) => response.bodyError,
         );
+        // Only the streams that came back: each must be read to the end and
+        // carry at least one complete event.
         const allStreamsReadable =
-          requestErrors.every((error) => error === undefined) &&
-          !responseFailures &&
           readErrors.every((error) => error === undefined) &&
           eventCounts.every((count) => count > 0);
 
@@ -631,6 +637,7 @@ export async function runTransportChecks(
                   probeMethod: probe.method,
                   eventCounts,
                   sseStreamCount: sseResponses.length,
+                  ...acceptance,
                   ...polling.resumedDetail,
                 },
               )
@@ -639,9 +646,8 @@ export async function runTransportChecks(
                 Date.now() - multiStreamStartedAt,
                 "One or more concurrent SSE streams produced no readable events",
                 {
-                  statuses,
                   contentTypes,
-                  requestErrors,
+                  ...acceptance,
                   eventCounts,
                   readErrors,
                   sseStreamCount: sseResponses.length,

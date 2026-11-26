@@ -538,6 +538,20 @@ export function buildProtocolRunConfig(
     }
   }
 
+  // Only removed ids: dropping them would leave no check, which means "run
+  // every check". Refuse here, before any suite starts, so a mixed-suite run
+  // does not report the protocol suite as failed while the others carry on.
+  const removedOnly =
+    checkIds !== undefined &&
+    checkIds.length > 0 &&
+    checkIds.every((id) => Object.hasOwn(REMOVED_MCP_CHECK_IDS, id));
+  if (removedOnly) {
+    const [id] = checkIds as (keyof typeof REMOVED_MCP_CHECK_IDS)[];
+    throw usageError(
+      `Check ${id} was removed and nothing runs in its place. ${REMOVED_MCP_CHECK_IDS[id!]} Pick another check, or leave --check-id out to run every check.`,
+    );
+  }
+
   // A removed id runs nothing (the SDK drops it); say why it went away.
   for (const id of checkIds ?? []) {
     if (Object.hasOwn(REMOVED_MCP_CHECK_IDS, id)) {

@@ -92,6 +92,23 @@ test("buildConfig accepts a removed check id, which the SDK drops", () => {
   ]);
 });
 
+test("buildConfig refuses a selection of removed check ids only", () => {
+  // Dropping the only id would leave no selection, which runs every check.
+  assert.throws(
+    () =>
+      buildConfig({
+        url: "https://example.com/mcp",
+        checkId: ["server-accepts-multiple-post-streams"],
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.exitCode === 2 &&
+      error.message.includes(
+        "Check server-accepts-multiple-post-streams was removed and nothing runs in its place.",
+      ),
+  );
+});
+
 test("buildConfig preserves validated conformance filters", () => {
   const config = buildConfig({
     url: "https://example.com/mcp",
