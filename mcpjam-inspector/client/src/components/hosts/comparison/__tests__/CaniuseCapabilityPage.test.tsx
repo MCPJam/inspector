@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { CaniuseCapabilityPage } from "../CaniuseCapabilityPage";
 
@@ -23,9 +24,17 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
     selector({ themeMode: "light" }),
 }));
 
+function renderCapability(slug: string, search = "") {
+  render(
+    <MemoryRouter initialEntries={[`/capabilities/${slug}${search}`]}>
+      <CaniuseCapabilityPage capabilitySlug={slug} />
+    </MemoryRouter>,
+  );
+}
+
 describe("CaniuseCapabilityPage", () => {
   it("renders a capability permalink page with definition, statuses, and verified dates", () => {
-    render(<CaniuseCapabilityPage capabilitySlug="sampling" />);
+    renderCapability("sampling");
 
     expect(
       screen.getByRole("heading", { name: "Sampling" }),
@@ -50,14 +59,14 @@ describe("CaniuseCapabilityPage", () => {
   it("shows the flag-gated hosts — the flags gate creation, not this page", () => {
     // `useFeatureFlagEnabled` is mocked false above: the anonymous-visitor
     // case, and the one that used to hide these two from caniuse entirely.
-    render(<CaniuseCapabilityPage capabilitySlug="sampling" />);
+    renderCapability("sampling");
 
     expect(screen.getByText("Claude Code")).toBeInTheDocument();
     expect(screen.getByText("Codex")).toBeInTheDocument();
   });
 
   it("renders a not-found state for unknown capability slugs", () => {
-    render(<CaniuseCapabilityPage capabilitySlug="not-a-capability" />);
+    renderCapability("not-a-capability");
 
     expect(
       screen.getByRole("heading", { name: "Capability not found" }),
@@ -66,5 +75,15 @@ describe("CaniuseCapabilityPage", () => {
       "href",
       "/embed/host-compare",
     );
+  });
+
+  it("uses the protocol version from a matrix link to scope support", () => {
+    const query = "?slice=2026-07-28";
+    renderCapability("supported-protocol-versions", query);
+    expect(screen.getByText(`/capabilities/supported-protocol-versions${query}`)).toBeVisible();
+    const cursor = screen.getByText("Cursor").parentElement?.parentElement;
+    const claude = screen.getByText("Claude").parentElement?.parentElement;
+    expect(within(cursor!).getByText("Not supported")).toBeVisible();
+    expect(within(claude!).getByText("Supported")).toBeVisible();
   });
 });

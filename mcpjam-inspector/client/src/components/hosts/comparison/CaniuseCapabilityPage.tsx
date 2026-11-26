@@ -1,4 +1,5 @@
 import { useMemo, type ReactNode } from "react";
+import { useSearchParams } from "react-router";
 import { Button } from "@mcpjam/design-system/button";
 import { ChevronLeft } from "lucide-react";
 import { getScenarioHostLogo } from "@/lib/scenario-client-style";
@@ -19,6 +20,7 @@ import {
   getCaniuseSupportLevel,
   sortCaniusePresetHosts,
 } from "./caniuse-capability-catalog";
+import { capabilityCoverage, capabilitySlices } from "./caniuse-coverage";
 
 const INSPECTOR_CTA_URL = "https://app.mcpjam.com";
 const FULL_MATRIX_PATH = "/embed/host-compare";
@@ -61,6 +63,34 @@ export function CaniuseCapabilityPage({
         : null,
     [resolvedCapability, presets.subjects]
   );
+  const [params] = useSearchParams();
+  const requestedSlice = params.get("slice");
+  const subjects = hosts.map(({ hostId }) => presets.subjects[hostId]);
+  const slices = capability ? capabilitySlices(capability.field, subjects) : [];
+  const slice =
+    requestedSlice && slices.includes(requestedSlice) ? requestedSlice : undefined;
+  const coverage = capability
+    ? capabilityCoverage(capability.field, subjects, slice)
+    : null;
+  const scopedResults =
+    coverage &&
+    (slice || coverage.reporting || capability?.field.id === "supportedProtocolVersions")
+      ? new Map(
+          coverage.rows.map(({ subject, status }) => [subject.hostId, status]),
+        )
+      : null;
+  const results = capability
+    ? subjects.flatMap((subject) => {
+        const level = scopedResults
+          ? scopedResults.get(subject.hostId)
+          : getCaniuseSupportLevel(capability.field, subject.config);
+        if (!level) return [];
+        const label = coverage?.reporting
+          ? (level === "supported" ? "Reported" : "No published result")
+          : getCaniuseSupportLabel(level, capability.field.id);
+        return [{ subject, level, label }];
+      })
+    : [];
 
   // Agent bridge: SNAPSHOT-ONLY (no tools). This is the `host-compare` surface
   // on its single-capability permalink route (`capabilities/:slug`), where this
@@ -74,26 +104,11 @@ export function CaniuseCapabilityPage({
       buildCaniuseCapabilitySnapshot({
         capabilitySlug: capability?.slug,
         capabilityLabel: capability?.field.label ?? null,
-        rows: capability
-          ? hosts.flatMap((host) => {
-              const subject = presets.subjects[host.hostId];
-              if (!subject) return [];
-              const level = getCaniuseSupportLevel(
-                capability.field,
-                subject.config
-              );
-              return [
-                {
-                  hostName: subject.hostName,
-                  supportLevel: level,
-                  supportLabel: getCaniuseSupportLabel(
-                    level,
-                    capability.field.id
-                  ),
-                },
-              ];
-            })
-          : [],
+        rows: results.map(({ subject, level, label }) => ({
+          hostName: subject.hostName,
+          supportLevel: level,
+          supportLabel: label,
+        })),
       }),
   });
 
@@ -150,6 +165,7 @@ export function CaniuseCapabilityPage({
           Permalink:{" "}
           <code className="rounded bg-muted px-1.5 py-0.5 text-[11px]">
             {buildCaniuseCapabilityPath(capability.slug)}
+            {slice && `?slice=${encodeURIComponent(slice)}`}
           </code>
         </div>
       </header>
@@ -161,14 +177,7 @@ export function CaniuseCapabilityPage({
           <div>Last verified</div>
         </div>
         <div className="divide-y divide-border">
-          {hosts.map((host) => {
-            const subject = presets.subjects[host.hostId];
-            if (!subject) return null;
-            const level = getCaniuseSupportLevel(
-              capability.field,
-              subject.config
-            );
-            const label = getCaniuseSupportLabel(level, capability.field.id);
+          {results.map(({ subject, level, label }) => {
             const logoSrc = getScenarioHostLogo(
               subject.hostStyle,
               subject.config.chatUiOverride,
@@ -176,7 +185,7 @@ export function CaniuseCapabilityPage({
             );
             return (
               <div
-                key={host.hostId}
+                key={subject.hostId}
                 className="grid grid-cols-[minmax(0,1.5fr)_minmax(100px,0.7fr)_minmax(120px,0.8fr)] items-center gap-3 px-4 py-3 text-sm"
               >
                 <div className="flex min-w-0 items-center gap-2">
@@ -195,7 +204,7 @@ export function CaniuseCapabilityPage({
                     // reads as a verdict, and we have not measured this host.
                     <span
                       className="text-muted-foreground"
-                      title="Not yet tested"
+                      title={label}
                     >
                       —
                     </span>
