@@ -416,6 +416,50 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     expect(persisted?.[1].errorDetails).toContain("Insufficient credits");
   });
 
+  // A harness broker's spend cap: its sentence names no code, so only the
+  // engine's captured code says the cap is terminal.
+  it("stops a hosted run on the engine's spend-budget code", async () => {
+    const assistantTurnModule = await import("../../../utils/assistant-turn");
+    const runAssistantTurnSpy = vi
+      .spyOn(assistantTurnModule, "runAssistantTurn")
+      .mockImplementation(async (opts: any) => {
+        opts.onEngineError?.({
+          message:
+            "An owner or admin needs to raise this organization's budget to continue.",
+          code: "spend_budget_reached",
+          httpStatus: 402,
+          rawText:
+            '{"error":"An owner or admin needs to raise this organization\'s budget to continue."}',
+          promptIndex: 0,
+          stepIndex: 0,
+        });
+        return {
+          messages: [{ role: "user", content: "Hello" }],
+          assistantMessages: [],
+          toolCalls: [],
+          toolResults: [],
+        } as any;
+      });
+    try {
+      const config = buildQuickRunConfig();
+      config.config.tests[0].model = "claude-haiku-4.5";
+      config.config.tests[0].provider = "anthropic";
+      config.config.tests[0].runs = 3;
+      const result = await runEvalSuiteWithAiSdk({
+        ...config,
+        modelApiKeys: {},
+      } as any);
+
+      expect(runAssistantTurnSpy).toHaveBeenCalledTimes(1);
+      expect(result?.quickRunIterationOutcomes?.[0]).toMatchObject({
+        creditsExhausted: true,
+        creditRecovery: { action: "raise_budget", actor: "owner_or_admin" },
+      });
+    } finally {
+      runAssistantTurnSpy.mockRestore();
+    }
+  });
+
   it("redacts a key the provider's error message echoes before storing it", async () => {
     const keyTail = "x".repeat(32);
     streamTextMock.mockImplementationOnce(() => {

@@ -7647,10 +7647,13 @@ const runHostedIterationWithBrowser = async (
     uploadTarget: evalSnapshotUploadTarget(convexAuthToken, iterationId),
   });
   // An external-account turn spends no MCPJam credits, so its errors (the
-  // vendor's own words) never stop the run as if MCPJam's had run out.
+  // vendor's own words) never stop the run as if MCPJam's had run out. The
+  // engine's code goes in too: a harness broker's spend-cap sentence names no
+  // code, so without it a terminal cap let the remaining trials run.
   const creditRefusal = {
     message: iterationError,
     details: iterationErrorDetails,
+    ...(result.errorCode ? { code: result.errorCode } : {}),
   };
   const stopRefusal =
     modelSource !== "external-account"
