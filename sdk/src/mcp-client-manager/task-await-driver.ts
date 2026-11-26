@@ -40,6 +40,11 @@ import {
   type TaskInputRejection,
 } from "./task-input-driver.js";
 import { isRequestTimeoutError } from "../conformance-timeout.js";
+import {
+  inputCallWait,
+  serverErrorAnswer,
+  settleFromInputCall,
+} from "./legacy-input-result-call.js";
 
 /** How the drive ended. Every one is deterministic and reportable. */
 export type TaskAwaitOutcome =
@@ -186,7 +191,6 @@ function terminalOutcome(status: string): TaskAwaitOutcome {
 const DEFAULT_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_MAX_CONSECUTIVE_ERRORS = 5;
 const DEFAULT_MAX_INPUT_ROUNDS = 10;
-const DEFAULT_INPUT_REQUIRED_RESULT_WAIT_MS = 5_000;
 
 /**
  * Polls `identity` until it reaches a terminal state or a bounded exit.
@@ -578,16 +582,8 @@ export async function driveTaskToTerminal(
   > {
     const remainingMs = deadline - now();
     if (remainingMs <= 0) return TIMED_OUT;
-    // Only a caller that asked to wait for an answer can run into the
-    // deadline. With the short default, an unanswered call means "nobody here
-    // can answer", whichever bound was tighter.
     const callerWaitMs = args.inputRequiredResultWaitMs;
-    const waitMs = Math.min(
-      callerWaitMs ?? DEFAULT_INPUT_REQUIRED_RESULT_WAIT_MS,
-      remainingMs
-    );
-    const deadlineBound =
-      callerWaitMs !== undefined && callerWaitMs >= remainingMs;
+    const { waitMs, deadlineBound } = inputCallWait(callerWaitMs, remainingMs);
     const boundEnded = () => (deadlineBound ? TIMED_OUT : "parked");
     try {
       const fetched = await raceDeadline(
@@ -604,21 +600,10 @@ export async function driveTaskToTerminal(
       return "moved";
     } catch (error) {
       if (args.signal?.aborted) return ABORTED;
-      // A numeric code is a JSON-RPC error, so the server answered: the task
-      // ended without completing, and the next read says how. This client's
-      // own errors carry string codes (`REQUEST_TIMEOUT`, `CONNECTION_CLOSED`,
-      // an HTTP failure's `CLIENT_HTTP_*`).
-      const code = (error as { code?: unknown } | null)?.code;
-      if (typeof code === "number") {
-        const { message, data } = error as {
-          message?: unknown;
-          data?: unknown;
-        };
-        earlyError = {
-          code,
-          message: typeof message === "string" ? message : String(error),
-          ...(data !== undefined ? { data } : {}),
-        };
+      // The server answered with an error: the next read says how it ended.
+      const answer = serverErrorAnswer(error);
+      if (answer) {
+        earlyError = answer;
         return "moved";
       }
       lastError = error;
@@ -630,15 +615,8 @@ export async function driveTaskToTerminal(
 
   /**
    * After the input call returned the task's result or error, no exit may drop
-   * it: every return in the loop goes through here. The server only answers
-   * `tasks/result` once the task has ended (tasks.mdx:465), with exactly what
-   * its request returned (tasks.mdx:466), so an exit the server did not
-   * confirm is settled from that answer:
-   * - a result: `failed` when it is a tool error (`isError`, as the
-   *   2025-11-25 statuses define it, tasks.mdx:721), else `completed`;
-   * - a JSON-RPC error: `failed`, with that error. Except `-32602`, which on
-   *   `tasks/result` can also mean the task id is unknown (tasks.mdx:768), so
-   *   it is no proof the task failed.
+   * it: every return in the loop goes through here, and an exit the server did
+   * not confirm is settled from that answer (see `settleFromInputCall`).
    */
   function orEarly(result: TaskAwaitResult): TaskAwaitResult {
     // A status the server confirmed is kept as it is.
@@ -650,16 +628,8 @@ export async function driveTaskToTerminal(
       return result;
     }
     const last = result.task ?? engine.snapshot(identity);
-    if (!last) return result;
-    let settled: TaskLifecycleSnapshot;
-    if (earlyResult) {
-      const status = earlyResult.isError === true ? "failed" : "completed";
-      settled = { ...last, status, result: earlyResult };
-    } else if (earlyError && !isUnknownTaskError(earlyError)) {
-      settled = { ...last, status: "failed", error: earlyError };
-    } else {
-      return result;
-    }
+    const settled = last && settleFromInputCall(last, earlyResult, earlyError);
+    if (!settled) return result;
     // The state reporter sees the state the outcome reports.
     args.onState?.(settled);
     return {
