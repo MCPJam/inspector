@@ -3589,7 +3589,7 @@ function parseSchemaDraft(
     return {
       ok: false,
       parsed: null,
-      error: "a schema is a JSON object, not a string",
+      error: "remove the quotes and write the schema as JSON",
     };
   } catch (parseError) {
     return {
