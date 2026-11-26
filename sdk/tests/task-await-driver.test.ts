@@ -778,6 +778,101 @@ describe("poll discipline", () => {
     expect(result.task?.result).toEqual(toolError);
   });
 
+  it("keeps the error that call returned as the failed task's reason", async () => {
+    const clock = controlledClock();
+    const legacy = { serverId: "srv", wire: "legacy", taskId: "t1" } as const;
+    // tasks/result returns exactly the error the task's request ended with
+    // (tasks.mdx:466), and a failed legacy task is not fetched again.
+    const reads = scriptedReads([
+      { status: "input_required" },
+      { status: "failed" },
+    ]);
+    const result = await driveTaskToTerminal({
+      identity: legacy,
+      getTask: reads.getTask,
+      getResult: async () => {
+        throw Object.assign(new Error("nobody answered"), { code: -32603 });
+      },
+      now: clock.now,
+      sleep: async (ms) => clock.advance(ms),
+      engine: new TaskLifecycleEngine({ now: clock.now }),
+      timeoutMs: 10 * 60_000,
+    });
+    expect(result.outcome).toBe("failed");
+    expect(result.task?.error).toEqual({
+      code: -32603,
+      message: "nobody answered",
+    });
+  });
+
+  it("settles from that error when a stale read still says input_required", async () => {
+    const clock = controlledClock();
+    const legacy = { serverId: "srv", wire: "legacy", taskId: "t1" } as const;
+    const states: string[] = [];
+    const result = await driveTaskToTerminal({
+      identity: legacy,
+      getTask: async () => ({ status: "input_required" }),
+      getResult: async () => {
+        throw Object.assign(new Error("nobody answered"), { code: -32603 });
+      },
+      onState: (snapshot) => states.push(snapshot.status),
+      now: clock.now,
+      sleep: async (ms) => clock.advance(ms),
+      engine: new TaskLifecycleEngine({ now: clock.now }),
+      timeoutMs: 10 * 60_000,
+    });
+    expect(result.outcome).toBe("failed");
+    expect(result.task?.error?.code).toBe(-32603);
+    // The state reporter ends on the state the outcome reports.
+    expect(states.at(-1)).toBe("failed");
+  });
+
+  it("does not call a task failed on -32602, which can mean an unknown task id", async () => {
+    const clock = controlledClock();
+    const legacy = { serverId: "srv", wire: "legacy", taskId: "t1" } as const;
+    // tasks.mdx:768: -32602 on tasks/result is also "invalid or nonexistent
+    // taskId", so it is no proof the task failed.
+    const result = await driveTaskToTerminal({
+      identity: legacy,
+      getTask: async () => ({ status: "input_required" }),
+      getResult: async () => {
+        throw Object.assign(new Error("unknown task"), { code: -32602 });
+      },
+      now: clock.now,
+      sleep: async (ms) => clock.advance(ms),
+      engine: new TaskLifecycleEngine({ now: clock.now }),
+      timeoutMs: 10 * 60_000,
+    });
+    expect(result.outcome).toBe("input-required");
+  });
+
+  it("still fetches the result when that call returned null", async () => {
+    const clock = controlledClock();
+    const legacy = { serverId: "srv", wire: "legacy", taskId: "t1" } as const;
+    const reads = scriptedReads([
+      { status: "input_required" },
+      { status: "completed" },
+    ]);
+    const getResult = vi
+      .fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ content: [{ type: "text", text: "booked" }] });
+    const result = await driveTaskToTerminal({
+      identity: legacy,
+      getTask: reads.getTask,
+      getResult,
+      now: clock.now,
+      sleep: async (ms) => clock.advance(ms),
+      engine: new TaskLifecycleEngine({ now: clock.now }),
+      timeoutMs: 10 * 60_000,
+    });
+    expect(result.outcome).toBe("completed");
+    expect(result.task?.result).toEqual({
+      content: [{ type: "text", text: "booked" }],
+    });
+    expect(getResult).toHaveBeenCalledTimes(2);
+  });
+
   it("uses the result that call returned and does not fetch it twice", async () => {
     const clock = controlledClock();
     const legacy = { serverId: "srv", wire: "legacy", taskId: "t1" } as const;

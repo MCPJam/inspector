@@ -27,6 +27,7 @@ import {
   isTerminalLifecycleStatus,
   type TaskLifecycleIdentity,
   type TaskLifecycleObservation,
+  type TaskLifecycleError,
   type TaskLifecycleSnapshot,
 } from "./task-lifecycle.js";
 import {
@@ -219,7 +220,13 @@ export async function driveTaskToTerminal(
   /** Legacy: the `tasks/result` for `input_required` is sent once per drive. */
   let resultCalledForInput = false;
   /** Legacy: what that call returned, kept so the result is not fetched twice. */
-  let earlyResult: { value: Record<string, unknown> | null } | undefined;
+  let earlyResult: Record<string, unknown> | undefined;
+  /**
+   * Legacy: the JSON-RPC error that call returned. For a task that has ended,
+   * `tasks/result` returns exactly the error its request ended with
+   * (tasks.mdx:466), so this is the task's failure reason.
+   */
+  let earlyError: TaskLifecycleError | undefined;
   /**
    * Legacy: failures of that call in a row. Counted here, not on the engine: the
    * `tasks/get` between two calls succeeds and resets the engine's count.
@@ -592,7 +599,8 @@ export async function driveTaskToTerminal(
       );
       if (fetched === ABORTED) return ABORTED;
       if (fetched === TIMED_OUT) return boundEnded();
-      earlyResult = { value: fetched };
+      // A `null` payload is not kept, so the normal fetch still runs for it.
+      if (fetched !== null) earlyResult = fetched;
       return "moved";
     } catch (error) {
       if (args.signal?.aborted) return ABORTED;
@@ -601,7 +609,18 @@ export async function driveTaskToTerminal(
       // own errors carry string codes (`REQUEST_TIMEOUT`, `CONNECTION_CLOSED`,
       // an HTTP failure's `CLIENT_HTTP_*`).
       const code = (error as { code?: unknown } | null)?.code;
-      if (typeof code === "number") return "moved";
+      if (typeof code === "number") {
+        const { message, data } = error as {
+          message?: unknown;
+          data?: unknown;
+        };
+        earlyError = {
+          code,
+          message: typeof message === "string" ? message : String(error),
+          ...(data !== undefined ? { data } : {}),
+        };
+        return "moved";
+      }
       lastError = error;
       // Our own bound, raised by the request instead of by the race.
       if (isRequestTimeoutError(error)) return boundEnded();
@@ -610,14 +629,18 @@ export async function driveTaskToTerminal(
   }
 
   /**
-   * After the input call returned the task's result, no exit may drop that
-   * result: every return in the loop goes through here. The server only answers
-   * `tasks/result` once the task has ended (tasks.mdx:465), so the task is
-   * settled from it: `failed` when the tool result is an error, as the
-   * 2025-11-25 statuses define it, else `completed`.
+   * After the input call returned the task's result or error, no exit may drop
+   * it: every return in the loop goes through here. The server only answers
+   * `tasks/result` once the task has ended (tasks.mdx:465), with exactly what
+   * its request returned (tasks.mdx:466), so an exit the server did not
+   * confirm is settled from that answer:
+   * - a result: `failed` when it is a tool error (`isError`, as the
+   *   2025-11-25 statuses define it, tasks.mdx:721), else `completed`;
+   * - a JSON-RPC error: `failed`, with that error. Except `-32602`, which on
+   *   `tasks/result` can also mean the task id is unknown (tasks.mdx:768), so
+   *   it is no proof the task failed.
    */
   function orEarly(result: TaskAwaitResult): TaskAwaitResult {
-    if (!earlyResult || earlyResult.value === null) return result;
     // A status the server confirmed is kept as it is.
     if (
       result.outcome === "completed" ||
@@ -626,12 +649,22 @@ export async function driveTaskToTerminal(
     ) {
       return result;
     }
-    const value = earlyResult.value;
-    const status = value.isError === true ? "failed" : "completed";
     const last = result.task ?? engine.snapshot(identity);
+    if (!last) return result;
+    let settled: TaskLifecycleSnapshot;
+    if (earlyResult) {
+      const status = earlyResult.isError === true ? "failed" : "completed";
+      settled = { ...last, status, result: earlyResult };
+    } else if (earlyError && !isUnknownTaskError(earlyError)) {
+      settled = { ...last, status: "failed", error: earlyError };
+    } else {
+      return result;
+    }
+    // The state reporter sees the state the outcome reports.
+    args.onState?.(settled);
     return {
-      outcome: status,
-      ...(last ? { task: { ...last, status, result: value } } : {}),
+      outcome: settled.status === "failed" ? "failed" : "completed",
+      task: settled,
     };
   }
 
@@ -655,14 +688,18 @@ export async function driveTaskToTerminal(
     };
     if (
       earlyResult &&
-      earlyResult.value !== null &&
       snapshot.result === undefined &&
       (outcome === "completed" || outcome === "failed")
     ) {
       // Already in hand: the call made on `input_required` returned it. Kept
       // for a `failed` task too: a tool result with `isError` ends the task
       // as `failed` (tasks.mdx:721), and the payload is still its result.
-      return { ...base, task: { ...snapshot, result: earlyResult.value } };
+      return { ...base, task: { ...snapshot, result: earlyResult } };
+    }
+    if (outcome === "failed" && earlyError && snapshot.error === undefined) {
+      // The error that call returned is this task's failure reason
+      // (tasks.mdx:466); a `failed` legacy task is not fetched again.
+      return { ...base, task: { ...snapshot, error: earlyError } };
     }
     if (
       outcome !== "completed" ||
