@@ -660,6 +660,8 @@ export function ChatInput({
   const transcriptionAbortRef = useRef<TranscriptionAbortState | null>(null);
   const mountedRef = useRef(true);
   const valueRef = useRef(value);
+  // What the user last typed; a send's own trim does not count as an edit.
+  const typedRef = useRef<string | null>(null);
   const [caretIndex, setCaretIndex] = useState(0);
   // Extension forms for this chat take the composer's place. The draft and
   // every composer control stay mounted (hidden) underneath and come back
@@ -869,13 +871,14 @@ export function ChatInput({
 
   // Remove the "/" that opened the picker. A pick lands after its fetch: a
   // send may have cleared the text before it, so the box ends with the
-  // click's text. Any other change leaves the box as it is.
+  // click's text. A user edit or any other change leaves the box as it is.
   const removeSlashTrigger = useCallback(() => {
     const current = valueRef.current;
     const trigger = value.slice(0, caretIndex).match(/\/\s*$/);
     const end = current.length - (value.length - caretIndex);
     const start = end - (trigger?.[0].length ?? 0);
-    if (!trigger || !value.endsWith(current) || start < 0) return;
+    const edited = typedRef.current !== null && typedRef.current !== value;
+    if (!trigger || edited || !value.endsWith(current) || start < 0) return;
     onChange(current.slice(0, start) + current.slice(end));
   }, [value, caretIndex, onChange]);
 
@@ -1884,6 +1887,7 @@ export function ChatInput({
             value={textareaDisplayValue}
             onChange={(e) => {
               if (voiceInputState !== "idle") return;
+              typedRef.current = e.target.value;
               onChange(e.target.value);
               setCaretIndex(e.target.selectionStart);
             }}

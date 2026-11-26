@@ -2242,6 +2242,19 @@ describe("ChatInput", () => {
       expect(onChange).toHaveBeenLastCalledWith("tail");
     });
 
+    it("leaves a slash the user typed after clearing the draft", () => {
+      const { onChange, rerender } = renderLate({ value: "first /" });
+      const pickLater = promptsPopover.props!.onSkillSelected;
+      const field = screen.getByPlaceholderText("Type your message...");
+
+      fireEvent.change(field, { target: { value: "/" } });
+      rerender({ value: "/" });
+      onChange.mockClear();
+      act(() => pickLater(item("picked")));
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
     it.each([
       ["a different draft", "https://example.com/path/"],
       ["a box the send emptied with its slash", ""],
