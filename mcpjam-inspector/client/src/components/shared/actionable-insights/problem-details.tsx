@@ -23,6 +23,7 @@ import type { FindingEvidenceLocator } from "./finding-evidence";
 import {
   AffectedIterationsList,
   type AffectedIterationRow,
+  unloadedRow,
 } from "./affected-iterations-list";
 import { FindingText } from "./finding-text";
 import { ProblemRubric } from "./problem-rubric";
@@ -151,18 +152,7 @@ function rowsFor(
   problem: FindingProblem,
   iterationRows: Record<string, AffectedIterationRow>,
 ): AffectedIterationRow[] {
-  return problem.iterationIds.map(
-    (id) =>
-      iterationRows[id] ?? {
-        iterationId: id,
-        caseTitle: "Iteration not loaded on this page",
-        iterationNumber: null,
-        client: null,
-        model: null,
-        result: "unknown",
-        canOpen: false,
-      },
-  );
+  return problem.iterationIds.map((id) => iterationRows[id] ?? unloadedRow(id));
 }
 
 export function ProblemDetailsContent({

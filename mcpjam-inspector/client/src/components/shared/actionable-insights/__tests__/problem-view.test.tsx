@@ -601,6 +601,10 @@ describe("buildOptionPrompt", () => {
     expect(
       prompt.split("## Other explanations for these iterations")[1],
     ).toContain("stale id");
+    // Context sits outside every PROPOSAL block, so it never reads as work.
+    for (const block of prompt.split("<<<PROPOSAL").slice(1)) {
+      expect(block.split("<<<END PROPOSAL>>>")[0]).not.toContain("stale id");
+    }
   });
 
   it("names unresolved iterations instead of folding them into the cause", () => {

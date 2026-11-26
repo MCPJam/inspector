@@ -7,7 +7,10 @@
  */
 import type { EvalIteration } from "../evals/types";
 import { computeIterationResult } from "../evals/pass-criteria";
-import type { AffectedIterationRow } from "@/components/shared/actionable-insights/affected-iterations-list";
+import {
+  type AffectedIterationRow,
+  unloadedRow,
+} from "@/components/shared/actionable-insights/affected-iterations-list";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import type {
   EvalRunDecisionChain,
@@ -67,16 +70,7 @@ export function affectedRowsById(
   // A diagnostic for an iteration whose metadata did not load still carries
   // its verified stage, so the rubric can read it by id.
   for (const [id, chain] of fromDiagnostics) {
-    rows[id] ??= {
-      iterationId: id,
-      caseTitle: "Iteration not loaded on this page",
-      iterationNumber: null,
-      client: null,
-      model: null,
-      result: "unknown",
-      canOpen: false,
-      chain,
-    };
+    rows[id] ??= { ...unloadedRow(id), chain };
   }
   return rows;
 }

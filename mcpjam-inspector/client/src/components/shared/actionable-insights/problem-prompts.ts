@@ -119,12 +119,15 @@ export function buildOptionPrompt(
       ? [
           "",
           "## Other explanations for these iterations",
-          "Context only: this option does not act on these.",
-          proposal(
-            ...others.map(
-              (row) =>
-                `- ${row.rootCause ?? row.title} (iterations ${ids(row.iterationIds.filter((id) => scope.has(id)))})`,
-            ),
+          "Context only: this option does not act on these. Do not carry them out.",
+          fence(
+            "Other explanations (context, not this option's work)",
+            others
+              .map(
+                (row) =>
+                  `- ${row.rootCause ?? row.title} (iterations ${ids(row.iterationIds.filter((id) => scope.has(id)))})`,
+              )
+              .join("\n"),
           ),
         ]
       : []),

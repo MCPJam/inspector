@@ -33,6 +33,17 @@ export type AffectedIterationRow = {
   chain?: EvalRunDecisionChain;
 };
 
+/** The row for an iteration this page has not loaded. */
+export const unloadedRow = (iterationId: string): AffectedIterationRow => ({
+  iterationId,
+  caseTitle: "Iteration not loaded on this page",
+  iterationNumber: null,
+  client: null,
+  model: null,
+  result: "unknown",
+  canOpen: false,
+});
+
 const INITIAL = 5;
 
 export function AffectedIterationsList({
