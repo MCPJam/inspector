@@ -25,11 +25,17 @@ export function evidenceSection(body) {
   const start = lines.findIndex((line) => HEADING.test(line));
   if (start === -1) return null;
   const end = lines.findIndex((line, i) => i > start && /^#{1,2}\s/.test(line));
-  return lines
-    .slice(start + 1, end === -1 ? undefined : end)
-    .join("\n")
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .trim();
+  return stripComments(lines.slice(start + 1, end === -1 ? undefined : end).join("\n")).trim();
+}
+
+// Repeated until stable: one pass over "<!<!---->--" leaves "<!--" behind.
+function stripComments(text) {
+  let prev;
+  do {
+    prev = text;
+    text = text.replace(/<!--[\s\S]*?-->/g, "");
+  } while (text !== prev);
+  return text;
 }
 
 // The template's empty Before/After table, so an untouched one reads as empty.
@@ -54,14 +60,14 @@ const MEDIA_EXT = /\.(?:png|jpe?g|gif|webp|svg|mp4|mov|webm)(?:[?#]\S*)?$/i;
 
 /** Every image or video reference in the body: markdown, HTML, or a bare media path. */
 export function mediaRefs(body) {
-  const text = (body ?? "").replace(/<!--[\s\S]*?-->/g, "");
+  const text = stripComments(body ?? "");
   const refs = new Set();
   for (const m of text.matchAll(/!\[[^\]]*\]\(\s*<?([^)\s>]+)/g)) refs.add(m[1]);
   for (const m of text.matchAll(/<(?:img|video|source)\b[^>]*\bsrc\s*=\s*["']?([^"'\s>]+)/gi)) {
     refs.add(m[1]);
   }
   // A bare reference starts a token, so "0/2/4px" in alt text is not a path.
-  for (const m of text.matchAll(/(?<=^|[\s("'`=])(?:https?:\/\/|file:|~\/|\/|[A-Za-z]:\\)[^\s()[\]"'<>`|]+/gm)) {
+  for (const m of text.matchAll(/(?<=^|[\s("'`=])(?:https?:\/\/|file:|~\/|\/|[A-Za-z]:[\\/])[^\s()[\]"'<>`|]+/gm)) {
     if (MEDIA_EXT.test(m[0]) || /presigned_proxy/i.test(m[0])) refs.add(m[0]);
   }
   return [...refs];

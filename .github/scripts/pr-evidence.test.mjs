@@ -58,6 +58,13 @@ test("missing: a UI change that says None, or has no section, is flagged", async
   assert.deepEqual(await rules({ body: "## What this does\n\nText.", files: UI }), ["missing"]);
 });
 
+test("missing: a comment nested to survive one strip pass is still removed", async () => {
+  const pr = body("<!<!---->-- ![a](/home/u/a.png) -->");
+  assert.equal(evidenceSection(pr), "");
+  assert.deepEqual(mediaRefs(pr), []);
+  assert.deepEqual(await rules({ body: pr, files: UI }), ["missing"]);
+});
+
 test("missing near miss: a server-only change may say None", async () => {
   assert.deepEqual(await rules({ body: body("None: no UI change"), files: SERVER }), []);
 });
@@ -73,6 +80,7 @@ test("unreachable: Devin proxy, file: and local paths are flagged", async () => 
     '<img src="file:///Users/me/shot.png">',
     "/home/ubuntu/screenshots/after.png",
     "C:\\Users\\me\\Pictures\\after.png",
+    "C:/Users/me/Pictures/after.png",
   ]) {
     const findings = await evaluate({
       body: body(ref),
