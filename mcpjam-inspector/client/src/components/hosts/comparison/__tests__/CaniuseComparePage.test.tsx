@@ -35,13 +35,13 @@ describe("CaniuseComparePage", () => {
     expect(screen.queryByRole("button", { name: "Skip intro" })).toBeNull();
   });
 
-  it("qualifies the Events score with its published-results denominator", () => {
+  it("qualifies the Events score with the probed-client denominator", () => {
     render(
       <MemoryRouter initialEntries={["/compare?capability=event-delivery"]}>
         <CaniuseComparePage />
       </MemoryRouter>,
     );
-    const score = screen.getByRole("link", { name: /% of \d+ with results/ });
+    const score = screen.getByRole("link", { name: /% of \d+ probed clients/ });
     const adoptionHeader = screen.getByRole("columnheader", {
       name: "Client adoption",
     });
@@ -50,7 +50,7 @@ describe("CaniuseComparePage", () => {
     expect(score).toHaveAttribute(
       "title",
       expect.stringMatching(
-        /clients with published results support at least one delivery mode/,
+        /probed clients have confirmed support for at least one delivery mode/,
       ),
     );
   });

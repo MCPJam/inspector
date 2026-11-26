@@ -1,4 +1,5 @@
 import type {
+  HostConfigDtoWithCatalogFacts,
   HostComparisonSubject,
   HostConfigFieldDef,
 } from "@/lib/host-config-field-schema";
@@ -81,25 +82,32 @@ export function capabilityCoverage(
     subject,
     status: status === "neutral" ? ("unsupported" as const) : status,
   }));
-  const full = rows.filter(({ status }) => status === "supported").length;
-  const published = rows.filter(({ status }) => status !== "unknown").length;
-  const measured = reporting ? rows.length : published;
+  // Provenance identifies clients we've probed. An individual capability
+  // can still have no published result for a client in that cohort.
+  const probedRows = rows.filter(
+    ({ subject }) =>
+      (subject.config as HostConfigDtoWithCatalogFacts).provenance === "probe",
+  );
+  const probed = probedRows.length;
+  const full = probedRows.filter(({ status }) => status === "supported").length;
+  const published = probedRows.filter(({ status }) => status !== "unknown").length;
   return {
     rows,
+    probedRows,
     full,
-    measured,
+    probed,
     published,
     reporting,
     eventsMode,
-    score: measured ? Math.round((full / measured) * 100) : null,
+    score: probed ? Math.round((full / probed) * 100) : null,
   };
 }
 
 export type CapabilityCoverage = ReturnType<typeof capabilityCoverage>;
 
-export function eventsSupportSummary({ full, measured, eventsMode }: CapabilityCoverage) {
+export function eventsSupportSummary({ full, probed, eventsMode }: CapabilityCoverage) {
   const mode = eventsMode === "any" ? "at least one delivery mode" : `${eventsMode} delivery`;
-  return `${full} of ${measured} clients with published results support ${mode}.`;
+  return `${full} of ${probed} probed clients have confirmed support for ${mode}.`;
 }
 
 export function caniuseTitle(field: HostConfigFieldDef) {

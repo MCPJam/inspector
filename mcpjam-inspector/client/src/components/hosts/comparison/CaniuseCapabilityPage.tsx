@@ -119,7 +119,7 @@ export function CaniuseCapabilityPage({
     ? caniuseTitle(capability.field)
     : "Capability not found";
   const coverageLabel = coverage?.eventsMode
-    ? "Support among clients with results"
+    ? "Support among probed clients"
     : coverage?.reporting
       ? "Reporting coverage"
       : "Client adoption";
@@ -289,12 +289,14 @@ export function CaniuseCapabilityPage({
                     </div>
                     <p className="mt-2 text-sm text-foreground/85">
                       {coverage.score === null
-                        ? "No published client results yet."
+                        ? "No probed clients yet."
+                        : coverage.published === 0
+                          ? "No published client results yet."
                         : coverage.eventsMode
                           ? eventsSupportSummary(coverage)
                           : coverage.reporting
-                            ? `${coverage.full} of ${coverage.measured} tracked clients report a value.`
-                            : `${coverage.full} of ${coverage.measured} clients with published results fully support this capability.`}
+                            ? `${coverage.full} of ${coverage.probed} probed clients report a value.`
+                            : `${coverage.full} of ${coverage.probed} probed clients fully support this capability.`}
                     </p>
                   </div>
                   <div className="border-t border-primary/15 px-5 py-4 sm:border-l sm:border-t-0 sm:px-7 sm:py-6">
@@ -303,9 +305,9 @@ export function CaniuseCapabilityPage({
                     </p>
                     <p className="mt-1 text-3xl font-bold tracking-normal tabular-nums sm:text-5xl">
                       <span className="text-primary">{coverage.published}</span>
-                      <span className="text-foreground/85"> / {coverage.rows.length}</span>
+                      <span className="text-foreground/85"> / {coverage.probed}</span>
                     </p>
-                    <p className="mt-2 text-sm text-foreground/85">Tracked clients</p>
+                    <p className="mt-2 text-sm text-foreground/85">Probed clients</p>
                   </div>
                 </div>
                 {slices.length > 0 && (
@@ -345,6 +347,11 @@ export function CaniuseCapabilityPage({
                 <h2 id="caniuse-map-heading" className="mb-3 text-xl font-bold tracking-tight">
                   Client map
                 </h2>
+                {coverage.rows.length !== coverage.probed && (
+                  <p className="mb-3 text-sm text-muted-foreground">
+                    All tracked clients. Coverage scores use probed clients.
+                  </p>
+                )}
                 <ClientMap coverage={coverage} />
               </section>
             </>

@@ -40,7 +40,7 @@ export const RESULT_GROUPS = [
   },
 ] as const;
 
-export function groupResults(coverage: CapabilityCoverage) {
+export function groupResults(coverage: CapabilityCoverage, rows = coverage.rows) {
   return RESULT_GROUPS.map((group) => ({
     ...group,
     title:
@@ -50,7 +50,7 @@ export function groupResults(coverage: CapabilityCoverage) {
           ? "Not reported"
           : group.title,
     clients: orderPublicClients(
-      coverage.rows
+      rows
         .filter(({ status }) => status === group.status)
         .map(({ subject }) => subject),
     ),

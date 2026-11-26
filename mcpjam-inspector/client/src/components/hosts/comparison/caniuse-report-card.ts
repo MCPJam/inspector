@@ -118,7 +118,7 @@ export async function drawCaniuseReportCard(
     ctx.roundRect(x, y, w, h, radius);
     ctx.fill();
   };
-  const groups = groupResults(coverage);
+  const groups = groupResults(coverage, coverage.probedRows);
   const shown = groups.filter(
     ({ clients, status }) => status !== "unknown" && clients.length > 0,
   );
@@ -180,11 +180,7 @@ export async function drawCaniuseReportCard(
   );
   font(600, 22);
   text(
-    coverage.eventsMode
-      ? "Of clients with results"
-      : coverage.reporting
-        ? "Reporting coverage"
-        : "Client adoption",
+    coverage.reporting ? "Reporting coverage" : "Of probed clients",
     CARD_WIDTH - INSET,
     147,
     "--muted-foreground",
@@ -301,8 +297,7 @@ export async function drawCaniuseReportCard(
   }
 
   font(500, 19);
-  const unknown =
-    groups.find(({ status }) => status === "unknown")?.clients.length ?? 0;
+  const unknown = coverage.probed - coverage.published;
   text(
     unknown
       ? `caniuse.dev   ·   ${unknown} without a published result`

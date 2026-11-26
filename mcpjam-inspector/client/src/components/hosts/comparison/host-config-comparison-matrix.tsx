@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type FocusEvent } from "react";
 import { Info, TrendingUp, TriangleAlert, X } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
 import {
@@ -77,6 +77,20 @@ interface HostConfigComparisonMatrixProps {
   disabledVerifyTemplateIds?: ReadonlySet<string>;
 }
 
+function revealFocusedCell({ currentTarget: scrollBox, target }: FocusEvent<HTMLDivElement>) {
+  if (!target.matches(":focus-visible")) return;
+  const cell = target.closest<HTMLTableCellElement>("td, th");
+  const field = cell?.parentElement?.firstElementChild;
+  if (!cell || cell === field || !field) return;
+
+  // A browser can consider the focused element visible behind the sticky cell.
+  const left = field.getBoundingClientRect().right + 3;
+  const right = scrollBox.getBoundingClientRect().left + scrollBox.clientWidth - 3;
+  const bounds = target.getBoundingClientRect();
+  if (bounds.left < left) scrollBox.scrollLeft += Math.floor(bounds.left - left);
+  else if (bounds.right > right) scrollBox.scrollLeft += Math.ceil(bounds.right - right);
+}
+
 /**
  * WPT-style host comparison surface, but caniuse semantically: every row
  * is a hostConfig field, every column is a saved host, every cell shows
@@ -101,8 +115,6 @@ export function HostConfigComparisonMatrix({
 }: HostConfigComparisonMatrixProps) {
   const groups = useMemo(() => groupHostConfigFields(fields), [fields]);
   const configs = useMemo(() => subjects.map((s) => s.config), [subjects]);
-  const showVerifiedAtRow = verifyBaseUrl !== undefined;
-
   const divergingIds = useMemo(() => {
     const set = new Set<string>();
     for (const field of fields) {
@@ -205,6 +217,7 @@ export function HostConfigComparisonMatrix({
     >
       <div
         data-testid="compare-matrix-scroll"
+        onFocus={mobileOptimized && summaryColumn ? revealFocusedCell : undefined}
         className={cn(
           // No `flex-1` here either — this box shrinks to fit inside the
           // card's (possibly content-hugged) height, which is what lets
@@ -281,11 +294,10 @@ export function HostConfigComparisonMatrix({
           </thead>
 
           <tbody>
-            {showVerifiedAtRow ? (
+            {verifyBaseUrl !== undefined && !summaryColumn ? (
               <VerifiedAtRow
                 subjects={displaySubjects}
                 mobileOptimized={mobileOptimized}
-                hasSummaryColumn={Boolean(summaryColumn)}
               />
             ) : null}
             {groups.map((group, groupIndex) => {
@@ -325,11 +337,9 @@ export function HostConfigComparisonMatrix({
 function VerifiedAtRow({
   subjects,
   mobileOptimized,
-  hasSummaryColumn,
 }: {
   subjects: ReadonlyArray<HostComparisonSubject>;
   mobileOptimized: boolean;
-  hasSummaryColumn: boolean;
 }) {
   return (
     <tr className="border-b border-border bg-card">
@@ -343,7 +353,6 @@ function VerifiedAtRow({
           Verified at
         </span>
       </td>
-      {hasSummaryColumn && <td className="border-l border-border" />}
       {subjects.map((subject) => (
         <td
           key={subject.hostId}
@@ -721,7 +730,7 @@ export function FieldCell({
           <SupportChip level={level} label={compact && level === "partial" ? "Partial" : "Supported"} />
           <CapabilityInfoTooltip
             caveats={caveats}
-            value={keys.length > 0 ? value : undefined}
+            value={!compact && keys.length > 0 ? value : undefined}
           />
         </span>
       );
@@ -1001,6 +1010,8 @@ function HostColumnHeader({
     disabledVerifyTemplateIds,
   );
   const nameClassName = "min-w-0 max-w-[160px] text-center text-[14px] font-medium leading-tight";
+  const verifiedDate = formatVerifiedAt(subject.verifiedAt);
+  const stale = isVerifiedAtStale(subject.verifiedAt);
 
   return (
     <th className="sticky top-0 z-20 border-b border-l border-border bg-card px-3 py-3 text-center align-top sm:px-4 sm:py-4">
@@ -1071,6 +1082,16 @@ function HostColumnHeader({
           </Tooltip>
         ) : null}
       </motion.div>
+      {linkName && verifiedDate !== "—" && (
+        <time
+          dateTime={verifiedDate}
+          title={stale ? STALE_VERIFIED_AT_LABEL : undefined}
+          className="mt-1.5 inline-flex items-center justify-center gap-1 text-[10px] leading-tight font-normal text-muted-foreground"
+        >
+          {stale && <TriangleAlert className="size-3 shrink-0" aria-hidden />}
+          <span>Verified on {verifiedDate}</span>
+        </time>
+      )}
     </th>
   );
 }

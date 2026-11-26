@@ -40,17 +40,17 @@ describe("CaniuseCapabilityPage", () => {
     );
   });
 
-  it("shows measured Events support and how many tracked clients have results", () => {
+  it("shows Events support and published results among probed clients", () => {
     renderCapability("event-delivery");
     expect(screen.getByRole("link", { name: "Test this capability" })).toHaveAttribute(
       "href",
       "https://app.mcpjam.com/events?fallback=playground",
     );
     const score = within(
-      screen.getByRole("region", { name: "Support among clients with results" }),
+      screen.getByRole("region", { name: "Support among probed clients" }),
     );
     expect(
-      score.getByText(/clients with published results support at least one delivery mode/),
+      score.getByText(/probed clients have confirmed support for at least one delivery mode/),
     ).toBeVisible();
     expect(
       score.getByText("Published results"),
@@ -78,7 +78,7 @@ describe("CaniuseCapabilityPage", () => {
     }
     const x = screen.getByRole<HTMLAnchorElement>("link", { name: "Post to X" });
     expect(new URL(x.href).searchParams.get("text")).toMatch(
-      /clients with published results support poll delivery/,
+      /probed clients have confirmed support for poll delivery/,
     );
   });
 
