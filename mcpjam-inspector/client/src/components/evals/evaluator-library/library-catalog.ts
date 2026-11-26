@@ -1,5 +1,8 @@
 import type { Predicate } from "@mcpjam/sdk/predicates";
-import type { RubricCheckQuestion } from "@/components/shared/session-quality/judge-config";
+import {
+  MAX_RUBRIC_CHECK_QUESTIONS,
+  type RubricCheckQuestion,
+} from "@/components/shared/session-quality/judge-config";
 import {
   Braces,
   CircleCheck,
@@ -114,11 +117,11 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
     checks: [],
     questions: [
       {
-        slug: "invented",
-        label: "Answer invented a result a tool did not return",
+        slug: "reports-failures",
+        label: "Answer reports each tool failure",
         instructions:
-          "Compare the final answer with the tool results. Answer yes if the answer states a result that no tool returned, including after a tool error.",
-        passOn: "no",
+          "Find every tool call that failed or returned an error. Answer yes if no tool failed, or if the final answer tells the user about each failure instead of presenting a result that tool did not return. Answer no if any failure is left out or covered by an invented result.",
+        passOn: "yes",
       },
     ],
   },
@@ -252,6 +255,19 @@ export function isInSuite(
     missingChecks(evaluator, predicates).length === 0 &&
     taggedQuestions(evaluator).every((q) => ids.has(q.id))
   );
+}
+
+/**
+ * True when the suite has room for the questions this evaluator would add.
+ * Adding past the cap would drop them, so the library offers no Add then.
+ */
+export function hasRoomForQuestions(
+  evaluator: LibraryEvaluator,
+  questions: readonly RubricCheckQuestion[],
+): boolean {
+  const ids = new Set(questions.map((q) => q.id));
+  const adding = taggedQuestions(evaluator).filter((q) => !ids.has(q.id));
+  return questions.length + adding.length <= MAX_RUBRIC_CHECK_QUESTIONS;
 }
 
 /** True when this deployment accepts every check kind the evaluator adds. */

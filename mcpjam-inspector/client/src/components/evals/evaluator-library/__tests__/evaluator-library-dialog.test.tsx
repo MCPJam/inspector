@@ -249,3 +249,41 @@ describe("yes/no capability", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("question cap", () => {
+  it("offers no Add for a question evaluator when the suite is full", () => {
+    const full = Array.from({ length: 10 }, (_, i) => ({
+      id: `mine-${i}`,
+      kind: "yesno" as const,
+      label: `Mine ${i}`,
+      instructions: "Mine.",
+      pass: { answer: "yes" as const },
+    }));
+    const onAdd = vi.fn();
+    renderWithProviders(
+      <EvaluatorLibraryButton
+        predicates={[]}
+        questions={full}
+        canAskYesNo
+        onAdd={onAdd}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "From library" }));
+    expect(
+      screen.queryByRole("button", {
+        name: "Add Answer Grounded in Results to suite",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Add No Wasted Calls to suite" }),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Answer Grounded in Results" }),
+    );
+    expect(screen.getByRole("button", { name: "Add to suite" })).toBeDisabled();
+    expect(
+      screen.getByText(/already has 10 rubric-check questions/),
+    ).toBeInTheDocument();
+    expect(onAdd).not.toHaveBeenCalled();
+  });
+});

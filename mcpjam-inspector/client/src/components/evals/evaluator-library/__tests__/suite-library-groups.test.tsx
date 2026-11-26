@@ -146,11 +146,68 @@ describe("library catalog edits", () => {
     expect(predicates).toEqual([{ type: "noToolErrors" }]);
   });
 
+  it("keeps rubric checks off when an evaluator is removed or updated", () => {
+    const question = {
+      id: "answer-grounded-in-results-grounded",
+      kind: "yesno" as const,
+      label: "Every claim is backed by a tool result",
+      instructions: "Old wording.",
+      pass: { answer: "yes" as const },
+      evaluator: { id: "answer-grounded-in-results", version: 1 },
+    };
+    let judgeConfig: Parameters<typeof librarySuiteEdits>[1] = {
+      rubricChecks: { enabled: false, questions: [question] },
+    };
+    const edits = () =>
+      librarySuiteEdits(
+        { kind: "suite", predicates: [], onPredicatesChange: () => {} },
+        judgeConfig,
+        (next) => {
+          judgeConfig = next;
+        },
+      );
+    edits()?.update("answer-grounded-in-results");
+    expect(judgeConfig?.rubricChecks?.enabled).toBe(false);
+    expect(judgeConfig?.rubricChecks?.questions?.[0].instructions).not.toBe(
+      "Old wording.",
+    );
+    edits()?.remove("answer-grounded-in-results");
+    expect(judgeConfig?.rubricChecks?.enabled).toBe(false);
+  });
+
+  it("clears an evaluator's old questions when its new version has none", () => {
+    let judgeConfig: Parameters<typeof librarySuiteEdits>[1] = {
+      rubricChecks: {
+        questions: [
+          {
+            id: "no-wasted-calls-old",
+            kind: "yesno",
+            label: "Old question",
+            instructions: "Asked by an older version.",
+            pass: { answer: "yes" },
+            evaluator: { id: "no-wasted-calls", version: 0 },
+          },
+        ],
+      },
+    };
+    librarySuiteEdits(
+      { kind: "suite", predicates: [], onPredicatesChange: () => {} },
+      judgeConfig,
+      (next) => {
+        judgeConfig = next;
+      },
+    )?.update("no-wasted-calls");
+    expect(judgeConfig?.rubricChecks?.questions).toBeUndefined();
+  });
+
   it("maps a rubric-check row back to its library evaluator", () => {
     expect(
       evaluatorIdForQuestionKey("q:answer-grounded-in-results-grounded"),
     ).toBe("answer-grounded-in-results");
     expect(evaluatorIdForQuestionKey("q:my-own-question")).toBeUndefined();
+    expect(
+      evaluatorIdForQuestionKey("q:reports-tool-errors-mine"),
+    ).toBeUndefined();
     expect(evaluatorIdForQuestionKey("c:criterion")).toBeUndefined();
   });
 });

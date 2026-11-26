@@ -8,7 +8,10 @@ import {
   DialogTrigger,
 } from "@mcpjam/design-system/dialog";
 import type { Predicate } from "@mcpjam/sdk/predicates";
-import type { RubricCheckQuestion } from "@/components/shared/session-quality/judge-config";
+import {
+  MAX_RUBRIC_CHECK_QUESTIONS,
+  type RubricCheckQuestion,
+} from "@/components/shared/session-quality/judge-config";
 import { ArrowLeft, Library } from "lucide-react";
 import { useState } from "react";
 import { formatCriterion } from "@/shared/predicate-kinds";
@@ -16,6 +19,7 @@ import { EvaluatorCard } from "./evaluator-card";
 import { useEvaluatorLibraryEnabled } from "./evaluator-library-flag";
 import {
   builtFrom,
+  hasRoomForQuestions,
   isAuthorable,
   isInSuite,
   LIBRARY_EVALUATORS,
@@ -124,6 +128,7 @@ export function EvaluatorLibraryDialog({
           <EvaluatorDetail
             evaluator={selected}
             inSuite={isInSuite(selected, predicates, questions)}
+            hasRoom={hasRoomForQuestions(selected, questions)}
             onBack={() => setSelectedId(null)}
             onAdd={() => add(selected)}
           />
@@ -139,7 +144,11 @@ export function EvaluatorLibraryDialog({
                 builtFrom={builtFrom(evaluator)}
                 inSuite={isInSuite(evaluator, predicates, questions)}
                 onOpen={() => setSelectedId(evaluator.id)}
-                onAdd={() => add(evaluator)}
+                onAdd={
+                  hasRoomForQuestions(evaluator, questions)
+                    ? () => add(evaluator)
+                    : undefined
+                }
               />
             ))}
           </div>
@@ -152,11 +161,13 @@ export function EvaluatorLibraryDialog({
 function EvaluatorDetail({
   evaluator,
   inSuite,
+  hasRoom,
   onBack,
   onAdd,
 }: {
   evaluator: LibraryEvaluator;
   inSuite: boolean;
+  hasRoom: boolean;
   onBack: () => void;
   onAdd: () => void;
 }) {
@@ -194,12 +205,22 @@ function EvaluatorDetail({
           </li>
         ))}
       </ul>
+      {!inSuite && !hasRoom ? (
+        <p className="text-sm text-muted-foreground">
+          This suite already has {MAX_RUBRIC_CHECK_QUESTIONS} rubric-check
+          questions. Remove one to add this evaluator.
+        </p>
+      ) : null}
       <div className="flex justify-between gap-2">
         <Button type="button" variant="ghost" onClick={onBack}>
           <ArrowLeft aria-hidden />
           All evaluators
         </Button>
-        <Button type="button" onClick={onAdd} disabled={inSuite}>
+        <Button
+          type="button"
+          onClick={onAdd}
+          disabled={inSuite || !hasRoom}
+        >
           {inSuite ? "In this suite" : "Add to suite"}
         </Button>
       </div>

@@ -311,7 +311,7 @@ export function hasRubricChecksCapability(
  * template version 2 added them, so an older version would refuse the kind.
  */
 export function hasYesNoRubricQuestionsCapability(
-  capabilities: SuiteCapabilities | null | undefined,
+  capabilities: Pick<SuiteCapabilities, "judges"> | null | undefined,
 ): boolean {
   return (capabilities?.judges?.rubricChecks?.template.version ?? 0) >= 2;
 }

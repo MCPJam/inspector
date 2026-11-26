@@ -20,16 +20,26 @@ export function evaluatorIdForQuestionKey(
 ): string | undefined {
   if (!key?.startsWith("q:")) return undefined;
   const id = key.slice(2);
-  return LIBRARY_EVALUATORS.find((e) => id.startsWith(`${e.id}-`))?.id;
+  // Exact ids only: a hand-written question named like a library one, such
+  // as `reports-tool-errors-mine`, is not from the library.
+  return LIBRARY_EVALUATORS.find((e) =>
+    taggedQuestions(e).some((q) => q.id === id),
+  )?.id;
 }
 
+/**
+ * Only adding switches rubric checks on, because that is the author asking
+ * for questions to run; removing or updating an evaluator keeps the author's
+ * own on/off choice.
+ */
 function withQuestions(
   judgeConfig: EvalJudgeConfig | undefined,
   edit: (current: RubricCheckQuestion[]) => RubricCheckQuestion[],
+  turnOn: boolean,
 ): EvalJudgeConfig {
   const current = judgeConfig?.rubricChecks?.questions ?? [];
   return withRubricChecks(judgeConfig, {
-    enabled: true,
+    ...(turnOn ? { enabled: true } : {}),
     questions: edit(current).slice(0, MAX_RUBRIC_CHECK_QUESTIONS),
   });
 }
@@ -48,7 +58,8 @@ export function librarySuiteEdits(
   if (scope.kind !== "suite") return undefined;
   const setQuestions = (
     edit: (current: RubricCheckQuestion[]) => RubricCheckQuestion[],
-  ) => onJudgeConfigChange?.(withQuestions(judgeConfig, edit));
+    turnOn = false,
+  ) => onJudgeConfigChange?.(withQuestions(judgeConfig, edit, turnOn));
   return {
     add(
       checks: readonly Predicate[],
@@ -58,10 +69,13 @@ export function librarySuiteEdits(
         scope.onPredicatesChange((previous) => [...previous, ...checks]);
       }
       if (questions.length) {
-        setQuestions((current) => [
-          ...current,
-          ...questions.filter((q) => !current.some((c) => c.id === q.id)),
-        ]);
+        setQuestions(
+          (current) => [
+            ...current,
+            ...questions.filter((q) => !current.some((c) => c.id === q.id)),
+          ],
+          true,
+        );
       }
     },
     remove(evaluatorId: string) {
@@ -85,7 +99,12 @@ export function librarySuiteEdits(
         withEvaluatorUpdated(previous, evaluatorId),
       );
       const questions = taggedQuestions(entry);
-      if (questions.length) {
+      // A new version with fewer or no questions still clears the old ones,
+      // or the group would keep offering Update.
+      const hadQuestions = judgeConfig?.rubricChecks?.questions?.some(
+        (q) => q.evaluator?.id === evaluatorId,
+      );
+      if (questions.length || hadQuestions) {
         setQuestions((current) => [
           ...current.filter((q) => q.evaluator?.id !== evaluatorId),
           ...questions,

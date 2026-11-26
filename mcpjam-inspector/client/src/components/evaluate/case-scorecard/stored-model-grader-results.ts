@@ -1,3 +1,7 @@
+import {
+  rubricCheckVerdictQuestions,
+  type RubricCheckVerdictQuestion,
+} from "@/shared/rubric-check-verdict";
 import type { TrialRowEvidence, TrialRowResult } from "./trial-results";
 
 type StoredModelGraderResult = {
@@ -7,85 +11,55 @@ type StoredModelGraderResult = {
   evidence?: TrialRowEvidence;
 };
 
-function record(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
 function isUnitValue(value: unknown): value is number {
   return typeof value === "number" && value >= 0 && value <= 1;
 }
 
-function readResult(
-  entry: Record<string, unknown>,
-  reason: string | undefined,
-  threshold: unknown,
-): TrialRowResult | undefined {
+/**
+ * Mirrors what the server's projection would make of the question: a value
+ * outside 0 to 1, or a scored question with no value, is an error row, never
+ * a pass or a fail.
+ */
+function readResult(question: RubricCheckVerdictQuestion): TrialRowResult {
   const source = "modelVerdict";
-  if (entry.status === "skipped") {
+  const reason = question.rationale;
+  if (question.status === "skipped") {
     return { state: "skipped", source, reason };
   }
-  if (entry.status === "error") {
+  if (question.status === "error" || !isUnitValue(question.value)) {
     return {
       state: "error",
       source,
       reason:
         reason ||
-        (typeof entry.error === "string"
-          ? entry.error
-          : "The evaluator could not run. Rerun the suite to try again."),
+        question.error ||
+        "The evaluator could not run. Rerun the suite to try again.",
     };
   }
-  if (
-    entry.status !== "scored" ||
-    !isUnitValue(entry.value) ||
-    typeof entry.passed !== "boolean"
-  ) {
-    return undefined;
-  }
   return {
-    state: entry.passed ? "passed" : "failed",
+    state: question.value >= question.passThreshold ? "passed" : "failed",
     source,
-    value: entry.value,
+    value: question.value,
     reason,
-    ...(isUnitValue(threshold) ? { threshold } : {}),
+    ...(isUnitValue(question.passThreshold)
+      ? { threshold: question.passThreshold }
+      : {}),
   };
 }
 
-/** The job's saved verdicts are available even without score-row projection. */
+/**
+ * The job's saved verdicts, in the order the backend asked them, read with
+ * the server's own parser so both sides agree on which questions exist.
+ */
 export function readStoredRubricCheckResults(
   verdict: unknown,
 ): StoredModelGraderResult[] {
-  const entries = record(verdict)?.questions;
-  if (!Array.isArray(entries)) return [];
-  const results: StoredModelGraderResult[] = [];
-  for (const value of entries) {
-    const entry = record(value);
-    if (
-      !entry ||
-      typeof entry.key !== "string" ||
-      !/^[cq]:[A-Za-z0-9_-]{1,64}$/.test(entry.key) ||
-      typeof entry.label !== "string" ||
-      !entry.label
-    ) {
-      continue;
-    }
-    const result = readResult(
-      entry,
-      typeof entry.rationale === "string" ? entry.rationale : undefined,
-      entry.passThreshold,
-    );
-    if (!result) continue;
-    const scoreEvidence = Array.isArray(entry.evidence)
-      ? entry.evidence.filter((item): item is string => typeof item === "string")
-      : [];
-    results.push({
-      key: entry.key,
-      label: entry.label,
-      result,
-      ...(scoreEvidence.length > 0 ? { evidence: { scoreEvidence } } : {}),
-    });
-  }
-  return results;
+  return rubricCheckVerdictQuestions(verdict).map((question) => ({
+    key: question.key,
+    label: question.label,
+    result: readResult(question),
+    ...(question.evidence?.length
+      ? { evidence: { scoreEvidence: question.evidence } }
+      : {}),
+  }));
 }

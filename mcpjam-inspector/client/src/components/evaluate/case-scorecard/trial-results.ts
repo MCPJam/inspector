@@ -633,18 +633,23 @@ export function rubricCheckTrialRows(
     const evidence = scoreEvidence(score, definition, row);
     rows.set(scorerId, { ...row, ...(evidence ? { evidence } : {}) });
   }
+  // The verdict lists questions in the order the backend asked them, so it
+  // sets the order; a projected row wins over the saved verdict it came from.
+  const ordered: JoinedScorecardRow[] = [];
   for (const { key, label, result, evidence } of readStoredRubricCheckResults(
     metadata.rubricChecksVerdict,
   )) {
     const scorerId = hostedRubricCheckScorerId(key);
-    if (!rows.has(scorerId)) {
-      rows.set(scorerId, {
+    const projected = rows.get(scorerId);
+    rows.delete(scorerId);
+    ordered.push(
+      projected ?? {
         ...rubricCheckRow(key, label, result),
         ...(evidence ? { evidence } : {}),
-      });
-    }
+      },
+    );
   }
-  return [...rows.values()];
+  return [...ordered, ...rows.values()];
 }
 
 function rubricCheckRow(
