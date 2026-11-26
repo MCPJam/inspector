@@ -167,6 +167,65 @@ export function filterRequests(
   return Boolean(filter[SUBSCRIPTION_NOTIFICATION_FILTER_KEYS[method]]);
 }
 
+/** What comparing the acknowledged filter with the requested one found. */
+export interface AcknowledgedFilterComparison {
+  /** The filter the server confirmed, as it sent it. */
+  acknowledgedFilter: Record<string, unknown>;
+  /** Requested but left out of the acknowledgement: the server will not send these. */
+  notAcknowledged: Record<string, unknown>;
+  /** Acknowledged but never requested. */
+  acknowledgedNotRequested: Record<string, unknown>;
+}
+
+/**
+ * The members of `filter` that `other` does not have: a flag that is `true`
+ * only in `filter`, and the entries of a list that are missing from `other`'s.
+ */
+function filterDifference(
+  filter: Record<string, unknown>,
+  other: Record<string, unknown>
+): Record<string, unknown> {
+  const difference: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(filter)) {
+    if (value === true && other[key] !== true) {
+      difference[key] = true;
+    } else if (Array.isArray(value)) {
+      const others = Array.isArray(other[key]) ? other[key] : [];
+      const missing = value.filter((entry) => !others.includes(entry));
+      if (missing.length > 0) difference[key] = missing;
+    }
+  }
+  return difference;
+}
+
+/**
+ * Compare the filter the server acknowledged with the one the probe asked
+ * for. A client SHOULD do this (2026-07-28 subscriptions.mdx, Acknowledgment):
+ * the acknowledgement holds the subset the server agreed to honor, so a type
+ * missing from it will never arrive on the stream.
+ *
+ * Returns `undefined` when the stream carried no acknowledgement.
+ */
+export function compareAcknowledgedFilter(
+  observation: Pick<ListenObservation, "messages" | "requestedFilter">
+): AcknowledgedFilterComparison | undefined {
+  const ack = observation.messages.find(
+    (message) => message.method === SUBSCRIPTION_ACK_METHOD
+  );
+  if (!ack) return undefined;
+  const acknowledgedFilter =
+    asRecord(getWireField(ack, ["params", "notifications"])) ?? {};
+  const requestedFilter = { ...observation.requestedFilter };
+  return {
+    acknowledgedFilter,
+    notAcknowledged: filterDifference(requestedFilter, acknowledgedFilter),
+    acknowledgedNotRequested: filterDifference(
+      acknowledgedFilter,
+      requestedFilter
+    ),
+  };
+}
+
 /**
  * Open one `subscriptions/listen` stream and record it frame by frame.
  *
