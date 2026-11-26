@@ -82,6 +82,39 @@ test("buildResumeCommand: stopped run uses --resume-from and drops the key", () 
   assert.ok(!command.includes("--idempotency-key"));
 });
 
+test("buildResumeCommand: a refused resume replays as that resume", () => {
+  const command = buildResumeCommand(
+    {
+      suite: "suite-1",
+      project: "p1",
+      server: ["srv"],
+      case: ["enabled-case"],
+      resumeFrom: "run-original",
+    },
+    { idempotencyKey: "launch-1" },
+  );
+  assert.equal(
+    command,
+    "mcpjam cloud eval run --suite suite-1 --project p1 --idempotency-key launch-1 --resume --resume-from run-original",
+  );
+});
+
+test("buildResumeCommand: a refused --file - resume names no stdin cases", () => {
+  const command = buildResumeCommand(
+    {
+      file: "-",
+      project: "Alpha",
+      case: ["row_c_refund"],
+      resumeFrom: "run-original",
+    },
+    { idempotencyKey: "launch-1", suiteId: "suite-file-1" },
+  );
+  assert.equal(
+    command,
+    "mcpjam cloud eval run --suite suite-file-1 --project Alpha --idempotency-key launch-1 --resume --resume-from run-original",
+  );
+});
+
 test("buildResumeCommand: stopped run names no target, case or fan-out", () => {
   // The server picks a resume's cases (it refuses caseIds beside a resume)
   // and runs it on the source run's own target, so no selector is re-emitted.

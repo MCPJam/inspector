@@ -60,6 +60,7 @@ export interface EvalRunLaunchOptions {
   waitTimeout?: string;
   reporter?: string;
   out?: string;
+  resumeFrom?: string;
 }
 
 /** A non-empty string field of a launch error's `details`, or `undefined`. */
@@ -125,6 +126,11 @@ export function shellQuoteArg(arg: string): string {
  * since-detached environment). The key is dropped there because reusing it
  * would return the stopped run instead of starting the resume.
  *
+ * A refused launch that was itself `--resume-from` replays as that resume: the
+ * same key and source run, and no target or case, since the source run decides
+ * both. Without the source run the replay would start a fresh run and rerun
+ * the cases that already finished.
+ *
  * Secrets never appear: `--api-key`, `--api-header` and `--api-url` are not
  * reconstructed. Arguments are quoted so a value with spaces or JSON survives a
  * paste into a shell unchanged.
@@ -144,20 +150,22 @@ export function buildResumeCommand(
   };
 
   const stoppedResume = resume.sourceRunId !== undefined;
+  const sourceRunId = resume.sourceRunId ?? options.resumeFrom;
+  const resumesSource = sourceRunId !== undefined;
 
   // A stopped run already belongs to a suite, so its resume names that suite
   // by id: re-sending `--file` would re-upsert the cases first, and `--file -`
   // would wait on stdin that was consumed by the first launch.
   const bySuiteId =
-    resume.suiteId !== undefined && (stoppedResume || options.file === "-");
+    resume.suiteId !== undefined && (resumesSource || options.file === "-");
   if (bySuiteId) push("--suite", resume.suiteId!);
   else if (options.file) push("--file", options.file);
   else if (options.suite) push("--suite", options.suite);
   if (options.project) push("--project", options.project);
 
   // The server picks a stopped run's cases and target itself, and refuses
-  // `--case` beside a resume, so a stopped resume names neither.
-  if (!stoppedResume) {
+  // `--case` beside a resume, so a resume names neither.
+  if (!resumesSource) {
     pushEach("--server", options.server);
     pushEach("--environment", options.environment);
     // `--host` is the deprecated alias of `--client`; emit one canonical flag.
@@ -172,7 +180,7 @@ export function buildResumeCommand(
   if (options.minPassRate !== undefined)
     push("--min-pass-rate", String(options.minPassRate));
 
-  if (!stoppedResume) {
+  if (!resumesSource) {
     if (options.excludeSkills) push("--exclude-skills");
     if (options.refreshSnapshot) push("--refresh-snapshot");
     if (options.matchOptions !== undefined)
@@ -202,13 +210,12 @@ export function buildResumeCommand(
   if (options.reporter !== undefined) push("--reporter", options.reporter);
   if (options.out !== undefined) push("--out", options.out);
 
-  if (stoppedResume) {
-    push("--resume", "--resume-from", resume.sourceRunId!);
-  } else {
+  if (!stoppedResume) {
     const key = resume.idempotencyKey ?? options.idempotencyKey;
     if (key) push("--idempotency-key", key);
-    push("--resume");
   }
+  push("--resume");
+  if (sourceRunId !== undefined) push("--resume-from", sourceRunId);
 
   return argv.map(shellQuoteArg).join(" ");
 }

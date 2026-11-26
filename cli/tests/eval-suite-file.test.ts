@@ -2897,6 +2897,43 @@ describe("eval run --file", () => {
     }
   });
 
+  test("a refused --file - resume is still blocked and sends no file cases", async () => {
+    const fixture = await startFileRunFixture({
+      runCreditRefusal: BUY_CREDITS_RECOVERY,
+    });
+    try {
+      const run = await runCli(
+        [
+          "cloud",
+          "eval",
+          "run",
+          "--file",
+          "-",
+          "--project",
+          "Alpha",
+          "--resume-from",
+          "run-original",
+          "--api-key",
+          "sk_test",
+          "--api-url",
+          fixture.baseUrl,
+          "--format",
+          "json",
+        ],
+        VALID_SUITE_FILE
+      );
+      assert.equal(run.exitCode, 6, run.stderr);
+      const launched = fixture.runBodies[0] as Record<string, unknown>;
+      assert.equal(launched.resumeFromRunId, "run-original");
+      assert.equal(launched.caseIds, undefined);
+      const payload = JSON.parse(run.stdout);
+      assert.equal(payload.stillBlocked, true);
+      assert.equal(payload.resumeCommand, undefined);
+    } finally {
+      await fixture.close();
+    }
+  });
+
   test("a resume from a file leaves the case choice to the stopped run", async () => {
     const fixture = await startFileRunFixture();
     try {

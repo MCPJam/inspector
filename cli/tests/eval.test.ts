@@ -6734,6 +6734,55 @@ test("eval run --wait --reporter prints a credit stop's resume on stderr", async
   }
 });
 
+test("eval run --resume-from refused for credits is still blocked and starts nothing", async () => {
+  const fixture = await startEvalFixture({
+    singleRunLaunchError: {
+      code: "FORBIDDEN",
+      message: "Out of credits.",
+      status: 403,
+      details: {
+        recovery: {
+          version: 1,
+          reason: "allowance_exhausted",
+          action: "buy_credits",
+          actor: "caller",
+          url: "https://app.mcpjam.com/billing",
+        },
+      },
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--idempotency-key",
+          "launch-1",
+          "--resume-from",
+          "run-original",
+          "--format",
+          "human"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 6, run.stderr);
+    assert.match(
+      run.stderr,
+      /Still blocked: Buy credits to keep going: https:\/\/app\.mcpjam\.com\/billing\n/
+    );
+    assert.doesNotMatch(run.stderr, /Resume:/);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
 test("eval run maps every knob flag onto the request body", async () => {
   const fixture = await startEvalFixture();
   try {
