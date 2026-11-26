@@ -226,7 +226,7 @@ import {
   attachmentsToFileUIParts,
   revokeFileAttachmentUrls,
 } from "@/components/chat-v2/chat-input/attachments/file-utils";
-import { remainingText } from "@/components/chat-v2/composer-sent";
+import { remainingText, withoutSent } from "@/components/chat-v2/composer-sent";
 import {
   useUIPlaygroundStore,
   type DeviceType,
@@ -5926,7 +5926,9 @@ export function PlaygroundMain({
       if (composerText.trim()) {
         setCompareSentPrompts((prev) => [...prev, composerText]);
       }
-      setModelContextQueue([]);
+      setModelContextQueue((current) =>
+        withoutSent(current, modelContextQueue),
+      );
     } else {
       trackSendMessage({ single_model_send: true });
       // `sendMessage` writes the prompt and skill turns after its own
@@ -5944,24 +5946,26 @@ export function PlaygroundMain({
         isCurrent: () => !conversationSendBlockedRef.current,
       });
       if (!sent) return false;
-      composerMentions.clear();
+      composerMentions.discard(composerMentions.selections);
       appMessageDraft.discard(draftItems);
-      setModelContextQueue([]);
+      setModelContextQueue((current) =>
+        withoutSent(current, modelContextQueue),
+      );
     }
 
     // The box stayed editable during the send: keep what was added meanwhile.
     composer.setInput((current) => remainingText(current, sentText));
-    setMcpPromptResults([]);
-    setSkillResults([]);
+    setMcpPromptResults((current) => withoutSent(current, mcpPromptResults));
+    setSkillResults((current) => withoutSent(current, skillResults));
     revokeFileAttachmentUrls(fileAttachments);
-    setFileAttachments([]);
+    setFileAttachments((current) => withoutSent(current, fileAttachments));
     onFirstMessageSent?.();
     return true;
   }, [
     composer,
     composerHasContent,
     composerMentions.selections,
-    composerMentions.clear,
+    composerMentions.discard,
     appMessageDraft.snapshot,
     appMessageDraft.discard,
     mcpPromptResults,
@@ -6392,7 +6396,9 @@ export function PlaygroundMain({
           composer.setInput(text);
           return;
         }
-        setModelContextQueue([]);
+        setModelContextQueue((current) =>
+          withoutSent(current, modelContextQueue),
+        );
       } else {
         trackSendMessage({ single_model_send: true });
         const sent = await sendOrBranch({
@@ -6405,7 +6411,9 @@ export function PlaygroundMain({
           composer.setInput(text);
           return;
         }
-        setModelContextQueue([]);
+        setModelContextQueue((current) =>
+          withoutSent(current, modelContextQueue),
+        );
       }
       onFirstMessageSent?.();
     },

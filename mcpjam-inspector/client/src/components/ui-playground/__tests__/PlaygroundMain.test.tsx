@@ -2480,6 +2480,142 @@ describe("PlaygroundMain", () => {
       },
     );
 
+    const typeAndSubmit = async (text: string) => {
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: text },
+      });
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+    };
+
+    it("keeps files, prompts and skills added while the send prepares", async () => {
+      const revoke = vi
+        .spyOn(URL, "revokeObjectURL")
+        .mockImplementation(() => {});
+      type Update = (change: (current: unknown[]) => unknown[]) => void;
+      const items = () =>
+        composerProps() as unknown as Record<string, { id: string }[]> &
+          Record<
+            | "onChangeFileAttachments"
+            | "onChangeMcpPromptResults"
+            | "onChangeSkillResults",
+            Update
+          >;
+      const add = (id: string) =>
+        act(() => {
+          items().onChangeFileAttachments((c) => [
+            ...c,
+            {
+              id,
+              file: new File(["x"], `${id}.png`, { type: "image/png" }),
+              previewUrl: `blob:${id}`,
+            },
+          ]);
+          items().onChangeMcpPromptResults((c) => [
+            ...c,
+            {
+              id,
+              name: id,
+              namespacedName: `s/${id}`,
+              serverId: "s",
+              result: {},
+            },
+          ]);
+          items().onChangeSkillResults((c) => [
+            ...c,
+            { id, skillId: id, name: id, content: "body" },
+          ]);
+        });
+      const ids = (key: string) => items()[key].map((item) => item.id);
+      try {
+        await openSavedThread();
+        const releaseSync = holdPreSendSync();
+        add("sent");
+        await typeAndSubmit("first");
+        add("added");
+
+        await act(async () => releaseSync());
+
+        await waitFor(() => expect(composerProps().isSubmitting).toBe(false));
+        expect(sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            files: [expect.objectContaining({ filename: "sent.png" })],
+          }),
+        );
+        expect(ids("fileAttachments")).toEqual(["added"]);
+        expect(ids("mcpPromptResults")).toEqual(["added"]);
+        expect(ids("skillResults")).toEqual(["added"]);
+        expect(revoke).toHaveBeenCalledWith("blob:sent");
+        expect(revoke).not.toHaveBeenCalledWith("blob:added");
+
+        // The kept image is released once it is sent.
+        await typeAndSubmit("second");
+        await waitFor(() => expect(revoke).toHaveBeenCalledWith("blob:added"));
+      } finally {
+        revoke.mockRestore();
+      }
+    });
+
+    const thread = () =>
+      mockThread.mock.calls.at(-1)?.[0] as {
+        onModelContextUpdate: (
+          toolCallId: string,
+          context: { structuredContent: Record<string, unknown> },
+        ) => void;
+      };
+    const addContext = (toolCallId: string) =>
+      act(() =>
+        thread().onModelContextUpdate(toolCallId, {
+          structuredContent: { toolCallId },
+        }),
+      );
+    const sentContexts = () =>
+      sendMessage.mock.calls.map(([options]) =>
+        options.widgetModelContext.map(
+          (entry: { toolCallId: string }) => entry.toolCallId,
+        ),
+      );
+
+    it("keeps App context added while the send prepares", async () => {
+      await openSavedThread();
+      addContext("call_sent");
+      const releaseSync = holdPreSendSync();
+      await typeAndSubmit("first");
+      addContext("call_added");
+
+      await act(async () => releaseSync());
+      await waitFor(() => expect(composerProps().isSubmitting).toBe(false));
+      await typeAndSubmit("second");
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
+      expect(sentContexts()).toEqual([["call_sent"], ["call_added"]]);
+    });
+
+    it("keeps App context added while an 'Ask agent to run' send prepares", async () => {
+      await openSavedThread();
+      mockGetChatHistoryState.mockResolvedValue(detail);
+      let dispatch!: (sent: boolean) => void;
+      sendMessage.mockImplementationOnce(
+        () => new Promise<boolean>((done) => (dispatch = done)),
+      );
+      addContext("call_sent");
+      try {
+        await act(async () => {
+          useAgentToolPromptBridge.getState().requestRun("Run read_file");
+        });
+        await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+        addContext("call_added");
+        await act(async () => dispatch(true));
+        await typeAndSubmit("next");
+
+        await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
+        expect(sentContexts()).toEqual([["call_sent"], ["call_added"]]);
+      } finally {
+        useAgentToolPromptBridge.setState({ pending: null });
+      }
+    });
+
     it("keeps the draft and frees Send when the pre-send sync fails", async () => {
       await openSavedThread();
       mockGetChatHistoryState.mockRejectedValue(new Error("network down"));
