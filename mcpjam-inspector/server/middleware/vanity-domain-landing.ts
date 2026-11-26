@@ -2,7 +2,10 @@ import type { MiddlewareHandler } from "hono";
 import { CANIUSE_LANDING_HOSTS, SCORE_LANDING_HOSTS } from "../config.js";
 
 // Only the vanity domains' root URLs redirect. Deep links reach the SPA.
-export const vanityDomainLandingMiddleware: MiddlewareHandler = (c, next) => {
+export const vanityDomainLandingMiddleware: MiddlewareHandler = async (
+  c,
+  next,
+) => {
   if (c.req.path !== "/") return next();
 
   const host = (c.req.header("Host") ?? "").toLowerCase().split(":")[0];
