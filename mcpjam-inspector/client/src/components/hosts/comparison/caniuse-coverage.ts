@@ -28,7 +28,7 @@ export function sliceLabel(slice: string) {
   return slice === "any" ? "Any mode" : slice;
 }
 
-export function capabilityCoverage(
+export function capabilityResults(
   field: HostConfigFieldDef,
   subjects: readonly HostComparisonSubject[],
   slice?: string,
@@ -36,45 +36,51 @@ export function capabilityCoverage(
   const eventsMode = field.id === EVENTS ? slice || "any" : null;
   const reporting =
     field.id === "clientInfo.version" || field.id.startsWith("styles.");
-  const rows = subjects
-    .map((subject) => {
-      const value = field.read(subject.config);
-      const level = getCaniuseSupportLevel(field, subject.config);
-      if (reporting)
-        return {
-          subject,
-          status:
-            value === NOT_SUPPORTED
-              ? ("unsupported" as const)
-              : value != null && value !== ""
-                ? ("supported" as const)
-                : ("unknown" as const),
-        };
-      if (
-        field.id === PROTOCOL ||
-        eventsMode !== null ||
-        (field.kind.kind === "mode-set" && slice && slice !== "any")
-      ) {
-        const status = Array.isArray(value)
-          ? (
-              slice && slice !== "any"
-                ? value.includes(slice)
-                : value.length > 0
-            )
+  const rows = subjects.map((subject) => {
+    const value = field.read(subject.config);
+    if (reporting) {
+      const status =
+        value === NOT_SUPPORTED
+          ? "unsupported"
+          : value != null && value !== ""
             ? "supported"
-            : "unsupported"
-          : value === NOT_SUPPORTED
-            ? "unsupported"
             : "unknown";
-        return { subject, status } as const;
-      }
-      if (level === "unknown") return { subject, status: level };
-      return {
-        subject,
-        status: level === "neutral" ? ("unsupported" as const) : level,
-      };
-    })
-    .filter(({ subject }) => subject.hostId !== BASELINE);
+      return { subject, status } as const;
+    }
+    if (
+      field.id === PROTOCOL ||
+      eventsMode !== null ||
+      (field.kind.kind === "mode-set" && slice && slice !== "any")
+    ) {
+      const status = Array.isArray(value)
+        ? (slice && slice !== "any" ? value.includes(slice) : value.length > 0)
+          ? "supported"
+          : "unsupported"
+        : value === NOT_SUPPORTED
+          ? "unsupported"
+          : "unknown";
+      return { subject, status } as const;
+    }
+    return { subject, status: getCaniuseSupportLevel(field, subject.config) };
+  });
+  return { rows, reporting, eventsMode };
+}
+
+export function capabilityCoverage(
+  field: HostConfigFieldDef,
+  subjects: readonly HostComparisonSubject[],
+  slice?: string,
+) {
+  const results = capabilityResults(
+    field,
+    subjects.filter(({ hostId }) => hostId !== BASELINE),
+    slice,
+  );
+  const { reporting, eventsMode } = results;
+  const rows = results.rows.map(({ subject, status }) => ({
+    subject,
+    status: status === "neutral" ? ("unsupported" as const) : status,
+  }));
   const full = rows.filter(({ status }) => status === "supported").length;
   const published = rows.filter(({ status }) => status !== "unknown").length;
   const measured = reporting ? rows.length : published;
