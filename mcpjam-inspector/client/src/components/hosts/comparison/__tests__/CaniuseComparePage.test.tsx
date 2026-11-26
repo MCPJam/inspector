@@ -93,7 +93,7 @@ describe("CaniuseComparePage", () => {
     expect(screen.getAllByRole("option").length).toBeGreaterThan(0);
   });
 
-  it("highlights the first match when reopening suggestions from the keyboard", async () => {
+  it("shows the first match when reopening scrolled suggestions from the keyboard", async () => {
     const user = userEvent.setup();
     render(
       <MemoryRouter initialEntries={["/compare?q=resource"]}>
@@ -102,14 +102,17 @@ describe("CaniuseComparePage", () => {
     );
     const search = screen.getByRole("combobox", { name: "Type a capability" });
     await user.click(search);
+    const listbox = screen.getByRole("listbox");
     const options = screen.getAllByRole("option");
     expect(options.length).toBeGreaterThan(1);
     await user.keyboard("{ArrowDown}");
     expect(search).toHaveAttribute("aria-activedescendant", options[1].id);
+    listbox.scrollTop = 120;
     await user.keyboard("{Escape}");
     expect(search).not.toHaveAttribute("aria-activedescendant");
     await user.keyboard("{ArrowDown}");
     expect(search).toHaveAttribute("aria-activedescendant", options[0].id);
+    expect(screen.getByRole("listbox").scrollTop).toBe(0);
   });
 
   it("copies the exact comparison on the first click and hides gated verification", async () => {
