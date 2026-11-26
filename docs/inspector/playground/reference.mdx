@@ -1,0 +1,105 @@
+---
+title: "Playground reference"
+sidebarTitle: "Reference"
+description: "The Playground layout, panes, views, widget debugging, model picker, chat input, and the dialogs your server can open."
+icon: "joystick"
+hideFooterPagination: true
+---
+
+Look up a control or behavior here. For a guided start, see [Chat and inspect tool calls](/inspector/playground).
+
+## Layout
+
+The Playground has three areas. Drag a divider to resize a side rail.
+
+| Area | What it holds |
+| --- | --- |
+| **Left rail** | **Tools**: every tool from the servers in this chat, with a search box and **Run**. **Sessions**: past conversations. |
+| **Center** | One pane per client, side by side, and the chat box below them. **Clear chat** starts a new conversation. |
+| **Right rail** | The JSON-RPC log. |
+
+## Panes
+
+Each pane is one client answering the same conversation. A new session opens with **Claude**, **ChatGPT**, and **Cursor**.
+
+- **Choose clients:** select the client chips in the chat box. Select or clear a client's checkbox to add or remove its pane, up to three. To show one client alone, hover its row and select **Only**.
+- **Pane settings** (settings icon on the pane): **Client**, **Model**, **Servers for this chat**, **Display**, **Move left**, **Move right**. **Display** sets the pane's size (**Fill**, **Phone** 430×932, **Tablet** 820×1180, or **Desktop** 1280×800) and its **Light** or **Dark** theme.
+
+Use **Pane settings** when several clients are shown. With one client, the [single-client toolbar](#single-client-toolbar) has more options.
+
+## Single-client toolbar
+
+When only one client is shown, a toolbar above the conversation sets how that client renders widgets. It includes the display size (for example **Fill**), the locale (for example `en-US`), the time zone, the Content Security Policy mode (for example **Strict**), **Client Context**, **Host Capabilities**, and the light or dark theme.
+
+## Chat, Trace, and Raw
+
+Each pane has three views of its conversation:
+
+- **Chat**: messages, tool calls, and rendered widgets.
+- **Trace**: a timeline of each step (your message, model turns, tool calls) with its latency. **Prompt 1** summarizes total time and input and output tokens.
+- **Raw**: the JSON sent to the model: `system`, `tools` with their input schemas, and `messages`.
+
+## Tools rail
+
+Select a tool to see its **Description**, **Input Schema**, and **Annotations**. If the tool takes input, fill in **Parameters**: one field per input, with required fields marked **required**. Select an optional field's checkbox to include it, and enter objects and arrays as JSON. Then select **Run** to call the tool without a model. The result appears in the chat as **Invoked** followed by the tool name.
+
+## Widgets
+
+When a tool returns a widget, the pane renders it in the chat with a toolbar above it.
+
+| Icon | What it does |
+| --- | --- |
+| **Inline** | Shows the widget in the message. This is the default. |
+| **PiP** | Picture-in-picture display mode. |
+| **Fullscreen** | Fills the window. Select **Exit fullscreen** (×, at the right end of the top bar) to return. |
+| **Data** | The tool call's data. |
+| **Sandbox** | Blocked requests and the sandbox policy. A number on the icon counts blocked requests. |
+| **Edit input & output** | Opens the tool **INPUT** and **RESULT** as JSON. **Done editing** closes them. |
+| **Widget State** | ChatGPT Apps only: the state the widget saved. |
+| **Model Context** | MCP Apps only: the context the widget sent to the model, when it sent any. |
+
+### Sandbox panel
+
+The **Sandbox** panel has three tabs:
+
+- **Findings:** the blocked requests (or **No CSP violations recorded.**) and, when the widget declares one, its view domain and whether it is valid.
+- **Policy Diff:** the Content Security Policy at three points: **Requested** (from your server), **Effective** (applied by the client), and **Observed** (what the browser saw).
+- **Sandbox Stack:** how the widget is mounted: its view origin, sandbox attributes, permissions, and the CSP the client applied.
+
+Each blocked request shows its type (for example **CSP**), what was blocked (for example `eval`), why (for example `script-src does not allow this origin`), and the browser's error message.
+
+## JSON-RPC log
+
+The right rail streams every message between the Playground, your servers, and the widgets, newest first: HTTP requests, `tools/call` requests and results, widget messages such as `ui/initialize` and `ui/notifications/tool-result`, and `csp-violation` events. Select an entry to see its payload.
+
+Use the search box to find text in any entry. The source filter shows **All**, or only **Server**, **OAuth**, **HTTP**, or **Apps** (widget) messages. When a search finds entries the source filter is hiding, a banner offers **Clear filter**. If logs exist but none match, the log reads **No matches in this view**.
+
+## Model picker
+
+Pick a model in **Pane settings** → **Model**. Models are split into **Free models** (shown as **MCPJam models** on some plans), provided by MCPJam, and **Your providers**. **Your providers** lists models from AI providers your organization added, so it needs a signed-in organization with at least one provider.
+
+Guests see higher-priced models greyed out with **Sign in to use this model**. Selecting one shows *Sign in to use this model, or choose another model in Connect → Client.*
+
+## Chat input
+
+- **Servers:** select **+** to see the servers in this project, turn them on or off for the chat, or **Add server**.
+- **Attach files:** select **+** → **Attach files**, paste an image, or drag files onto the chat box. A pasted image without a name is saved as `pasted-image-1.png`, `pasted-image-2.png`, and so on.
+- **Message history:** press **Up** in the chat box to recall your last message, **Up** again to go further back, and **Down** to go forward. Inside a multi-line message, the arrow keys move the cursor instead.
+- **Voice input:** select **Start voice input** to dictate. The text is added to the composer.
+- **Context meter:** shows the token breakdown of the conversation. Before the first message it shows **MCP Tools (estimated)**; if a server or model can't count tokens it shows **Token count unavailable**.
+
+## Prompts
+
+Type `/` in the chat box to insert an MCP prompt from your servers. A selected prompt appears as a card above the input with its server, description, and arguments (required ones marked `*`), so you can review or remove it before sending.
+
+## Elicitation
+
+A server can pause a tool call to ask you for input. The Playground shows the request as a dialog and resumes the call when you answer. This works for model tool calls and for tool calls from a widget.
+
+- **Form:** the form takes the place of the chat box and asks one field at a time. Select **Next** to go to the next field and **Continue** on the last one to send your answers. On an optional field, **Skip for now** leaves out that field only. **Decline** refuses the whole request, and **×** cancels it.
+- **URL:** the dialog shows the full URL as plain text with the host emphasized, and warns about unencrypted `http://` links, punycode hosts, embedded credentials, and bare IP addresses. Non-`http(s)` schemes are blocked. Select **Open in new tab**. Consent is recorded only when the tab opens.
+- **URL-required notice:** when a call fails with MCP error `-32042`, the notice lists the URLs to open. Open them, then retry.
+
+## Sessions
+
+The **Sessions** tab in the left rail lists saved conversations in the project. Open one to continue it.
