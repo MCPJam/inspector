@@ -528,16 +528,23 @@ export const createSuiteRunRecorder = ({
           }
         }
 
+        const finalizeArgs = { runId, status, summary, notes, stopReason };
+        const update = (args: Record<string, unknown>) =>
+          convexClient.mutation("testSuites:updateTestSuiteRun" as any, args);
         try {
-          await convexClient.mutation("testSuites:updateTestSuiteRun" as any, {
-            runId,
-            status,
-            summary,
-            notes,
-            stopReason,
-            // Only present on a credit stop; a backend that predates the field
-            // ignores it, so an older deployment still falls back to the note.
-            ...(creditRecovery ? { creditRecovery } : {}),
+          // Only present on a credit stop. A backend that predates the field
+          // rejects the whole update, so the run is finalized again without it
+          // and keeps its terminal status and the note.
+          await update(
+            creditRecovery ? { ...finalizeArgs, creditRecovery } : finalizeArgs,
+          ).catch((error: unknown) => {
+            if (
+              !creditRecovery ||
+              !/extra field `?creditRecovery/.test(String(error))
+            ) {
+              throw error;
+            }
+            return update(finalizeArgs);
           });
         } catch (error) {
           const errorMessage =

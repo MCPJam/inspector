@@ -846,6 +846,47 @@ describe("createSuiteRunRecorder", () => {
     ).toBe(false);
   });
 
+  it("finalizes a credit stop without its recovery on a backend that predates the field", async () => {
+    const mutation = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new Error(
+          "ArgumentValidationError: Object contains extra field `creditRecovery` that is not in the validator.",
+        ),
+      )
+      .mockResolvedValue(undefined);
+    const recorder = createSuiteRunRecorder({
+      convexClient: { mutation } as any,
+      suiteId: "suite-1",
+      runId: "run-1",
+    });
+    const creditRecovery = {
+      version: 1 as const,
+      reason: "allowance_exhausted" as const,
+      action: "buy_credits" as const,
+      actor: "caller" as const,
+      url: "https://app.mcpjam.com/billing",
+    };
+
+    await recorder.finalize({
+      status: "failed",
+      notes: "Out of MCPJam credits.",
+      creditRecovery,
+    });
+
+    expect(mutation).toHaveBeenCalledTimes(2);
+    expect(mutation.mock.calls[0]).toEqual([
+      "testSuites:updateTestSuiteRun",
+      expect.objectContaining({ status: "failed", creditRecovery }),
+    ]);
+    expect(mutation.mock.calls[1]![1]).toMatchObject({
+      runId: "run-1",
+      status: "failed",
+      notes: "Out of MCPJam credits.",
+    });
+    expect(mutation.mock.calls[1]![1]).not.toHaveProperty("creditRecovery");
+  });
+
   it("records one attempt and closes timing before uploading iteration results", async () => {
     const query = vi.fn(async (ref: string) => {
       if (ref === "testSuites:getTestSuiteRun") return { status: "running" };
