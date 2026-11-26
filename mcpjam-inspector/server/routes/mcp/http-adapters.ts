@@ -1,16 +1,18 @@
 import { listBaseServers } from "../../utils/mcp-connections.js";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import "../../types/hono";
 import {
   handleJsonRpc,
   parseAndValidateJsonRpc,
   BridgeMode,
 } from "../../services/mcp-http-bridge";
+import { downstreamProtocolVersionOf } from "../../services/bridge-protocol-version.js";
 import {
   isCrossServerToolCall,
   pinMcpManagerToServer,
 } from "../../services/mcp-tool-call-target.js";
 import { recordTunnelRequest } from "../../services/tunnel-request-log";
+import { tunnelRefusal } from "../../utils/delivered-oauth-credential.js";
 import { getRequestLogger } from "../../utils/request-logger";
 import { createRequestStreamFailureReporter } from "../../utils/stream-failure-reporter.js";
 import { verifyHarnessProxyToken } from "../../utils/harness/harness-proxy-token";
@@ -128,7 +130,8 @@ function logTunnelRequest(
   } catch {}
 }
 
-function normalizeServerId(clientManager: any, serverId: string): string {
+/** The connection key a request names, matched case-insensitively as dispatch does. */
+export function normalizeServerId(clientManager: any, serverId: string): string {
   const availableServers = listBaseServers(clientManager)
     // `getClient()` is legacy-only. Use `getManagedClient()` so stateless
     // preview connections show up in the available-servers list.
@@ -152,6 +155,24 @@ function normalizeServerId(clientManager: any, serverId: string): string {
 // `?t=` query fallback is removed — tokens in URLs leak into edge/access logs.
 function readProxyToken(c: any): string | undefined {
   return c.req.header("x-mcpjam-proxy-token") || undefined;
+}
+
+/**
+ * A public tunnel caller reaching a shared or uploaded account, which the
+ * tunnel route refuses to publish: a reconnect can change the account under
+ * a live tunnel. The harness's per-turn token, checked before this, is exempt.
+ */
+function refusedTunnelCaller(
+  c: Context,
+  serverId: string,
+): Response | undefined {
+  if (c.get("bridgeCaller") !== "tunnel" || c.req.header("x-mcpjam-proxy-token"))
+    return undefined;
+  const refusal = tunnelRefusal(
+    c.mcpClientManager,
+    normalizeServerId(c.mcpClientManager, serverId),
+  );
+  return refusal ? c.json({ error: refusal }, 403) : undefined;
 }
 
 function readScopeStepUpCorrelationId(c: any): string | undefined {
@@ -194,6 +215,8 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
     if (proxyTok && !verifyHarnessProxyToken(proxyTok, serverId)) {
       return c.json({ error: "Unauthorized" }, 401);
     }
+    const refused = refusedTunnelCaller(c, serverId);
+    if (refused) return refused;
 
     // SSE endpoint for clients that probe/subscribe via GET; HEAD advertises event-stream
     if (method === "HEAD") {
@@ -252,6 +275,35 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
           : normalizeServerId(c.mcpClientManager, serverId);
       let relayPush: ((payload: string) => void) | undefined;
       let timer: any;
+      const endSession = () => {
+        try {
+          clearInterval(timer);
+        } catch {}
+        sessions.delete(`${serverId}:${sessionId}`);
+        // If this session was the latest for this server, clear pointer
+        if (
+          latestSessionByServer.get(`${callerKind}:${serverId}`) === sessionId
+        ) {
+          latestSessionByServer.delete(`${callerKind}:${serverId}`);
+        }
+        // Drop this stream from the notification relay set
+        if (relayPush) {
+          const relaySet = notificationRelays.get(relayServerId);
+          relaySet?.delete(relayPush);
+          if (relaySet && relaySet.size === 0) {
+            notificationRelays.delete(relayServerId);
+          }
+        }
+      };
+      // A public tunnel caller's stream ends once a reconnect moves the server
+      // onto a shared or uploaded account, as its requests are then refused.
+      const relayRefused = () =>
+        callerKind === "tunnel" &&
+        !readProxyToken(c) &&
+        tunnelRefusal(
+          c.mcpClientManager,
+          normalizeServerId(c.mcpClientManager, serverId),
+        ) !== undefined;
       const stream = new ReadableStream({
         start(controller) {
           const send = (event: string, data: string) => {
@@ -276,7 +328,11 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
           latestSessionByServer.set(`${callerKind}:${serverId}`, sessionId);
 
           // Relay real server notifications down this SSE stream.
-          relayPush = (payload: string) => send("message", payload);
+          relayPush = (payload: string) => {
+            if (!relayRefused()) return send("message", payload);
+            endSession();
+            close();
+          };
           let relaySet = notificationRelays.get(relayServerId);
           if (!relaySet) {
             relaySet = new Set();
@@ -307,24 +363,7 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
           }, 15000);
         },
         cancel() {
-          try {
-            clearInterval(timer);
-          } catch {}
-          sessions.delete(`${serverId}:${sessionId}`);
-          // If this session was the latest for this server, clear pointer
-          if (
-            latestSessionByServer.get(`${callerKind}:${serverId}`) === sessionId
-          ) {
-            latestSessionByServer.delete(`${callerKind}:${serverId}`);
-          }
-          // Drop this stream from the notification relay set
-          if (relayPush) {
-            const relaySet = notificationRelays.get(relayServerId);
-            relaySet?.delete(relayPush);
-            if (relaySet && relaySet.size === 0) {
-              notificationRelays.delete(relayServerId);
-            }
-          }
+          endSession();
         },
       });
       return c.body(stream as any, 200, {
@@ -349,6 +388,10 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
       return c.json(validation.response, validation.status as 400);
     }
     const body = validation.body;
+    // Again once the body is in: a slow body can outlast a reconnect onto a
+    // shared or uploaded account.
+    const late = refusedTunnelCaller(c, serverId);
+    if (late) return late;
 
     if (
       callerKind === "tunnel" &&
@@ -379,6 +422,7 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
       clientManager,
       mode,
       {
+        downstreamProtocolVersion: downstreamProtocolVersionOf(body),
         onToolCallError: (context) =>
           publishHarnessScopeStepUpFromToolError(
             readScopeStepUpCorrelationId(c),
@@ -410,6 +454,8 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
     if (proxyTok && !verifyHarnessProxyToken(proxyTok, serverId)) {
       return c.json({ error: "Unauthorized" }, 401);
     }
+    const refused = refusedTunnelCaller(c, serverId);
+    if (refused) return refused;
 
     const url = new URL(c.req.url);
     const sessionId = url.searchParams.get("sessionId") || "";
@@ -435,6 +481,8 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
         body = undefined;
       }
     }
+    const late = refusedTunnelCaller(c, serverId);
+    if (late) return late;
     const id = body?.id ?? null;
     const method = body?.method as string | undefined;
     const params = body?.params ?? {};
@@ -469,6 +517,7 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
               : c.mcpClientManager,
             mode,
             {
+              downstreamProtocolVersion: downstreamProtocolVersionOf({ method, params }),
               onToolCallError: (context) =>
                 publishHarnessScopeStepUpFromToolError(
                   readScopeStepUpCorrelationId(c) ?? sess.scopeStepUpCorrelationId,

@@ -46,6 +46,7 @@ export type SeededHostConfigInput = {
   requireNativeToolDiscovery?: boolean;
   respectToolVisibility: boolean;
   progressiveToolDiscovery?: boolean;
+  runUnloadedToolCalls?: boolean;
   serverIds: string[];
   optionalServerIds: string[];
   builtInToolIds: string[];
@@ -60,9 +61,9 @@ export type SeededHostConfigInput = {
   computer?: { kind: "personal"; workdir?: string };
   // Optional saved browser profile selected for hosted browser sessions.
   browserProfileId?: string;
-  // Real agent harness for this host. `"claude-code"` / `"codex"` / `"cursor"`
-  // run a real CLI runtime (requires an attached computer); absent ⇒ MCPJam's
-  // emulated engine.
+  // Real agent harness for this host. `"claude-code"` / `"codex"` / `"cursor"` /
+  // `"opencode"` run a real CLI runtime (requires an attached computer);
+  // absent ⇒ MCPJam's emulated engine.
   //
   // The canonical union, not a copy. This was a local literal justified as
   // keeping the module cross-import-free, which it never was — `../types.js`

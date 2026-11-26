@@ -150,6 +150,72 @@ vi.mock(
     };
   },
 );
+// Pass-through spies on which box each consumer of a paired run was handed.
+const boxSpies = vi.hoisted(() => ({
+  resolveHostTools: vi.fn(),
+  buildEvalBashTool: vi.fn(),
+  peekPageTools: vi.fn(async () => undefined),
+  buildHostedStepHandlers: vi.fn(),
+}));
+vi.mock("../step-handlers", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../step-handlers")>();
+  return {
+    ...actual,
+    buildHostedStepHandlers: (
+      ...args: Parameters<typeof actual.buildHostedStepHandlers>
+    ) => {
+      boxSpies.buildHostedStepHandlers(...args);
+      return actual.buildHostedStepHandlers(...args);
+    },
+  };
+});
+vi.mock("../../../utils/built-in-tools/registry.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("../../../utils/built-in-tools/registry.js")
+    >();
+  return {
+    ...actual,
+    resolveHostTools: (
+      ...args: Parameters<typeof actual.resolveHostTools>
+    ) => {
+      boxSpies.resolveHostTools(...args);
+      return actual.resolveHostTools(...args);
+    },
+  };
+});
+vi.mock(
+  "../../../utils/built-in-tools/sandbox-bash.js",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("../../../utils/built-in-tools/sandbox-bash.js")
+      >();
+    return {
+      ...actual,
+      buildEvalBashTool: (
+        ...args: Parameters<typeof actual.buildEvalBashTool>
+      ) => {
+        boxSpies.buildEvalBashTool(...args);
+        return actual.buildEvalBashTool(...args);
+      },
+    };
+  },
+);
+vi.mock("../../browserd/page-tools-peek.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../browserd/page-tools-peek.js")>()),
+  peekPageToolsForChatTurn: (...args: unknown[]) =>
+    boxSpies.peekPageTools(...(args as [])),
+}));
+vi.mock(
+  "../../../utils/secrets/browser-secrets.js",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("../../../utils/secrets/browser-secrets.js")
+    >()),
+    resolveBrowserSecrets: async () => [],
+  }),
+);
 import {
   isRunDeletedError,
   runEvalSuiteWithAiSdk,
@@ -831,6 +897,419 @@ describe("hosted iteration box heartbeat", () => {
     expect(release).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(2 * 30 * 60_000);
     expect(touch).not.toHaveBeenCalled();
+  });
+});
+
+describe("hosted iteration on a pinned box with a paired desktop", () => {
+  afterEach(() => {
+    harnessBoxOptionsOverride.current = undefined;
+    seedAttachmentsOverride.current = undefined;
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  });
+
+  /**
+   * One suite iteration that pins an image AND declares a browser. The
+   * control plane answers with the pinned terminal box and the desktop it
+   * paired with it; `answer` lets a test drop the desktop instead.
+   */
+  async function runPaired(
+    answer: "paired" | "terminal-only" = "paired",
+    harness?: string,
+  ) {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://example.convex.site");
+    vi.stubEnv("MCPJAM_EVAL_ISOLATED_ITERATION_TIMEOUT", "1");
+    vi.stubEnv("E2B_API_KEY", "test-key");
+    vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "test-secret");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-token");
+    // The runner's own provision call reaches the control plane; only the
+    // wire is stubbed, so the request body is what the runner really sends.
+    const bodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: unknown, init?: RequestInit) => {
+        const json = (body: unknown) =>
+          new Response(JSON.stringify(body), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        if (!String(url).endsWith("/evals/sandbox/provision")) return json({});
+        bodies.push(JSON.parse(String(init?.body)));
+        return json({
+          sandboxId: "sbx-pinned",
+          sandboxRowId: "row-pinned",
+          runtimeKind: "terminal",
+          workdir: "/workspace",
+          ...(answer === "paired"
+            ? {
+                browser: {
+                  sandboxId: "sbx-desktop",
+                  sandboxRowId: "row-desktop",
+                  runtimeKind: "desktop-browser",
+                },
+              }
+            : {}),
+        });
+      }),
+    );
+    const release = vi.fn(async () => {});
+    harnessBoxOptionsOverride.current = (options) => ({
+      ...options,
+      release,
+      touch: vi.fn(async () => "touched" as const),
+    });
+    seedAttachmentsOverride.current = async () => ({ note: null });
+    executeStepsMock.mockImplementation(async () => ({}));
+    const snapshot = {
+      title: "Case",
+      query: "Hello",
+      model: "gpt-5-mini",
+      provider: "openai",
+    };
+    const row: Record<string, any> = {
+      _id: "iter-1",
+      testCaseId: "case-1",
+      iterationNumber: 1,
+      testCaseSnapshot: snapshot,
+      status: "pending",
+      result: "pending",
+    };
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: "run-1",
+      recorder: {
+        startIteration: vi.fn(async () => row._id),
+        beginExecutionAttempt: vi.fn(async () => {}),
+        finishIteration: vi.fn(async (args) => Object.assign(row, args)),
+        finalize: vi.fn(async () => {}),
+      },
+      config: {
+        tests: [
+          {
+            ...snapshot,
+            runs: 1,
+            testCaseId: "case-1",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+          },
+        ],
+        environment: { servers: ["srv-1"], computerEnvironmentId: "env-1" },
+      },
+      suiteHostConfig: {
+        builtInToolIds: ["browser"],
+        browserToolPolicy: { mode: "allow_all" },
+        ...(harness ? { harness } : {}),
+      },
+      orgModelConfigTarget: { projectId: "project-1" },
+      modelApiKeys: { openai: "sk-test" },
+      convexClient: {
+        query: vi.fn(async (name) =>
+          name === "testSuites:getTestSuiteRunDetails"
+            ? { iterations: [row] }
+            : { status: "running" },
+        ),
+        mutation: vi.fn(async () => ({})),
+        action: vi.fn(async (name, args) => {
+          if (name === "testSuites:updateTestIteration")
+            Object.assign(row, args);
+        }),
+      },
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: {
+        getToolsForAiSdk: vi.fn(async () => ({})),
+        listTools: vi.fn(async () => ({ tools: [] })),
+        getAllToolAnnotations: vi.fn(() => ({})),
+        hasCachedToolAnnotations: vi.fn(() => true),
+        getConnectionStatus: vi.fn(() => "connected"),
+        listServers: vi.fn(() => ["srv-1"]),
+        getAllToolsMetadata: vi.fn(() => ({})),
+        executeTool: vi.fn(),
+      },
+      executionBudgets: defaultEvalExecutionBudgets(),
+    } as any);
+    return { row, release, bodies };
+  }
+
+  it("keeps the shell on the pinned box and Browser on the desktop, and releases both", async () => {
+    const { row, release, bodies } = await runPaired();
+    expect(bodies).toEqual([
+      {
+        runId: "run-1",
+        iterationId: "iter-1",
+        runtimeKind: "desktop-browser",
+        pairBrowser: true,
+      },
+    ]);
+    expect(row.status).toBe("completed");
+    const ctx = boxSpies.resolveHostTools.mock.calls[0]?.[1];
+    expect(ctx).toMatchObject({
+      sandboxBinding: { sandboxId: "sbx-pinned", runtimeKind: "terminal" },
+      browserSandboxBinding: {
+        sandboxRowId: "row-desktop",
+        sandboxId: "sbx-desktop",
+        runtimeKind: "desktop-browser",
+      },
+    });
+    // The out-of-band shell execs on the pinned image.
+    expect(boxSpies.buildEvalBashTool).toHaveBeenCalledWith({
+      sandboxId: "sbx-pinned",
+    });
+    // The page the run's browser shows lives on the desktop.
+    expect(boxSpies.peekPageTools).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row-desktop" }),
+    );
+    const released = release.mock.calls.map(([sandboxRowId]) => sandboxRowId);
+    expect(released.sort()).toEqual(["row-desktop", "row-pinned"]);
+  });
+
+  it("runs a harness on the pinned box, never the desktop", async () => {
+    const { row } = await runPaired("paired", "claude-code");
+    expect(row.error).toBeUndefined();
+    expect(
+      boxSpies.buildHostedStepHandlers.mock.calls[0]?.[0]
+        ?.harnessSandboxBinding,
+    ).toEqual({
+      sandboxRowId: "row-pinned",
+      sandboxId: "sbx-pinned",
+      runtimeKind: "terminal",
+      workdir: "/workspace",
+    });
+  });
+
+  it("still fails a desktop request that came back as a lone terminal box", async () => {
+    const { row, release } = await runPaired("terminal-only");
+    expect(row.status).toBe("setup_failed");
+    expect(String(row.error)).toContain("does not support per-run desktop");
+    expect(release).toHaveBeenCalledWith("row-pinned");
+  });
+});
+
+// PLB-579 (INSPECTOR-HONO-97): a Browser run with more cases than the backend
+// lets one run hold boxes. The wire is answered by the backend's per-run rule
+// (`PER_RUN_SANDBOX_CONCURRENCY`): a fifth box in flight is a 503 `at_capacity`
+// with `resource: "run"` and `Retry-After: 30`.
+describe("hosted Browser run with more cases than its box budget", () => {
+  afterEach(() => {
+    harnessBoxOptionsOverride.current = undefined;
+    seedAttachmentsOverride.current = undefined;
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  });
+
+  async function runBrowserSuite(args: {
+    cases: number;
+    runsPerCase: number;
+    holdMs: number;
+    /** The first box's release is lost, so the backend keeps counting it. */
+    leakFirstBox?: boolean;
+    runTimeoutMs?: number;
+  }) {
+    vi.useFakeTimers();
+    vi.stubEnv("CONVEX_HTTP_URL", "https://example.convex.site");
+    vi.stubEnv("MCPJAM_EVAL_ISOLATED_ITERATION_TIMEOUT", "1");
+    vi.stubEnv("E2B_API_KEY", "test-key");
+    vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "test-secret");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-token");
+    const perRunCap = 4;
+    const live = new Set<string>();
+    const wire = { booted: 0, refused: 0, peak: 0 };
+    let nextBox = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: unknown) => {
+        const json = (body: unknown, status = 200, headers = {}) =>
+          new Response(JSON.stringify(body), {
+            status,
+            headers: { "content-type": "application/json", ...headers },
+          });
+        if (!String(url).endsWith("/evals/sandbox/provision")) return json({});
+        if (live.size >= perRunCap) {
+          wire.refused++;
+          return json(
+            {
+              error: `This run already has ${perRunCap} sandboxes in flight. Wait for a session to finish.`,
+              code: "at_capacity",
+              resource: "run",
+            },
+            503,
+            { "retry-after": "30" },
+          );
+        }
+        nextBox++;
+        live.add(`row-${nextBox}`);
+        wire.booted++;
+        wire.peak = Math.max(wire.peak, live.size);
+        return json({
+          sandboxId: `sbx-${nextBox}`,
+          sandboxRowId: `row-${nextBox}`,
+          runtimeKind: "desktop-browser",
+          workdir: "/home/user",
+        });
+      }),
+    );
+    harnessBoxOptionsOverride.current = (options) => ({
+      ...options,
+      release: async (sandboxRowId: string) => {
+        if (args.leakFirstBox && sandboxRowId === "row-1") return;
+        live.delete(sandboxRowId);
+      },
+      touch: vi.fn(async () => "touched" as const),
+    });
+    seedAttachmentsOverride.current = async () => ({ note: null });
+    // Each iteration holds its desktop while its turn runs.
+    executeStepsMock.mockImplementation(
+      () =>
+        new Promise((resolve) => setTimeout(() => resolve({}), args.holdMs)),
+    );
+    const rows = new Map<string, Record<string, any>>();
+    const finalize = vi.fn(async () => {});
+    const tests = Array.from({ length: args.cases }, (_, index) => ({
+      title: `Case ${index + 1}`,
+      query: "Open the page",
+      model: "gpt-5-mini",
+      provider: "openai",
+      runs: args.runsPerCase,
+      testCaseId: `case-${index + 1}`,
+      expectedToolCalls: [],
+      promptTurns: [
+        { id: "turn-1", prompt: "Open the page", expectedToolCalls: [] },
+      ],
+    }));
+    const pending = runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: "run-1",
+      recorder: {
+        startIteration: vi.fn(async () => {
+          const id = `iter-${rows.size + 1}`;
+          rows.set(id, { _id: id, status: "pending", result: "pending" });
+          return id;
+        }),
+        beginExecutionAttempt: vi.fn(async () => {}),
+        finishIteration: vi.fn(async (update) =>
+          Object.assign(rows.get(update.iterationId) ?? {}, update),
+        ),
+        finalize,
+      },
+      config: { tests, environment: { servers: ["srv-1"] } },
+      suiteHostConfig: {
+        builtInToolIds: ["browser"],
+        browserToolPolicy: { mode: "allow_all" },
+      },
+      orgModelConfigTarget: { projectId: "project-1" },
+      modelApiKeys: { openai: "sk-test" },
+      convexClient: {
+        query: vi.fn(async (name) =>
+          name === "testSuites:getTestSuiteRunDetails"
+            ? { iterations: [...rows.values()] }
+            : { status: "running" },
+        ),
+        mutation: vi.fn(async () => ({})),
+        action: vi.fn(async (name, update) => {
+          if (name === "testSuites:updateTestIteration")
+            Object.assign(rows.get(update.iterationId) ?? {}, update);
+        }),
+      },
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: {
+        getToolsForAiSdk: vi.fn(async () => ({})),
+        listTools: vi.fn(async () => ({ tools: [] })),
+        getAllToolAnnotations: vi.fn(() => ({})),
+        hasCachedToolAnnotations: vi.fn(() => true),
+        getConnectionStatus: vi.fn(() => "connected"),
+        listServers: vi.fn(() => ["srv-1"]),
+        getAllToolsMetadata: vi.fn(() => ({})),
+        executeTool: vi.fn(),
+      },
+      executionBudgets: {
+        ...defaultEvalExecutionBudgets(),
+        ...(args.runTimeoutMs ? { runTimeoutMs: args.runTimeoutMs } : {}),
+      },
+    } as any);
+    let settled = false;
+    void pending.finally(() => {
+      settled = true;
+    });
+    while (!settled) await vi.advanceTimersByTimeAsync(1_000);
+    await pending;
+    const setupFailed = [...rows.values()].filter(
+      (row) => row.status === "setup_failed",
+    );
+    return { rows, wire, setupFailed, finalize };
+  }
+
+  it("queues cases at the run's box budget instead of failing them at setup", async () => {
+    // The incident's shape: twice the budget in cases, iterations that hold
+    // their desktop longer than four 30s capacity retries.
+    const { rows, wire, setupFailed } = await runBrowserSuite({
+      cases: 8,
+      runsPerCase: 4,
+      holdMs: 60_000,
+    });
+    expect(setupFailed.map((row) => row.error)).toEqual([]);
+    expect(rows.size).toBe(32);
+    expect(wire.booted).toBe(32);
+    expect(wire.peak).toBe(4);
+    expect(wire.refused).toBe(0);
+  });
+
+  it("does not spend a queued case's iteration clock while it waits", async () => {
+    // Two waves of 6-minute iterations against a 10-minute iteration clock:
+    // a clock started at launch would time the second wave out at 12 minutes.
+    const { rows, setupFailed } = await runBrowserSuite({
+      cases: 8,
+      runsPerCase: 1,
+      holdMs: 6 * 60_000,
+    });
+    expect(setupFailed).toEqual([]);
+    expect([...rows.values()].map((row) => row.status)).not.toContain(
+      "timed_out",
+    );
+  });
+
+  it("ends a run out of time with cases still queued, booting no box for them", async () => {
+    // The trade-off: three waves of 6-minute iterations against an 8-minute
+    // run clock. The third wave never leaves the queue; the run is finalized
+    // `timed_out` and the backend's timeout sweep closes those cases' rows.
+    const { rows, wire, setupFailed, finalize } = await runBrowserSuite({
+      cases: 12,
+      runsPerCase: 1,
+      holdMs: 6 * 60_000,
+      runTimeoutMs: 8 * 60_000,
+    });
+    expect(finalize).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "timed_out" }),
+    );
+    expect(wire.booted).toBe(8);
+    expect(rows.size).toBe(8);
+    expect(setupFailed).toEqual([]);
+  });
+
+  it("falls back to the capacity retry when a released box stays counted", async () => {
+    // The documented limit: a lost release leaves three slots for four
+    // cases until the backend stops counting the box, so some of the fourth
+    // case's iterations exhaust the retry. Each iteration either gets a box
+    // or fails on capacity, nothing else.
+    const { rows, wire, setupFailed } = await runBrowserSuite({
+      cases: 8,
+      runsPerCase: 4,
+      holdMs: 60_000,
+      leakFirstBox: true,
+    });
+    expect(rows.size).toBe(32);
+    expect(wire.refused).toBeGreaterThan(0);
+    expect(wire.peak).toBe(4);
+    expect(setupFailed.length).toBeGreaterThan(0);
+    expect(wire.booted + setupFailed.length).toBe(32);
+    for (const row of setupFailed) {
+      expect(row.error).toMatch(/^Waiting on sandbox capacity:/);
+    }
   });
 });
 

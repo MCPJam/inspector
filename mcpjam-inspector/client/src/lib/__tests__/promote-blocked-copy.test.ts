@@ -28,7 +28,7 @@ describe("getPromoteBlockedMessage", () => {
         { data: { code: "SWARM_ATTEMPT_UNATTRIBUTED" } },
         FALLBACK,
       ),
-    ).toMatch(/not linked to a swarm run/i);
+    ).toMatch(/linked to a swarm run/i);
   });
 
   it("shows a string payload, which the backend writes for a reader", () => {

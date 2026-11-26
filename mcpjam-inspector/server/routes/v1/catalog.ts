@@ -18,7 +18,10 @@
  */
 import { Hono } from "hono";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
-import { captureServerEvent } from "../../utils/analytics.js";
+import {
+  captureServerEvent,
+  fillAnalyticsActorFromBearer,
+} from "../../utils/analytics.js";
 import {
   fetchConvexV1Read,
   forwardQueryParams,
@@ -46,6 +49,46 @@ catalog.get("/projects/:projectId/servers", (c) =>
   proxyConvexV1Read(c, "/v1/project-servers", (target) =>
     target.searchParams.set("projectId", c.req.param("projectId")),
   ),
+);
+
+/** The project and server a revision read is scoped to, from the path. */
+function setServerScope(target: URL, projectId: string, serverId: string) {
+  target.searchParams.set("projectId", projectId);
+  target.searchParams.set("serverId", serverId);
+}
+
+// GET /v1/projects/:projectId/servers/:serverId/revisions?limit=&cursor=
+// A saved server's stored revisions (captures of its tools and server info),
+// newest first.
+catalog.get("/projects/:projectId/servers/:serverId/revisions", (c) =>
+  proxyConvexV1Read(c, "/v1/project-server-revisions", (target) => {
+    setServerScope(target, c.req.param("projectId"), c.req.param("serverId"));
+    forwardQueryParams(c, target, ["limit", "cursor"]);
+  }),
+);
+
+// GET /v1/projects/:projectId/servers/:serverId/revisions/:revisionNumber
+catalog.get(
+  "/projects/:projectId/servers/:serverId/revisions/:revisionNumber",
+  (c) =>
+    proxyConvexV1Read(c, "/v1/project-server-revision", (target) => {
+      setServerScope(target, c.req.param("projectId"), c.req.param("serverId"));
+      target.searchParams.set("revisionNumber", c.req.param("revisionNumber"));
+    }),
+);
+
+// GET /v1/projects/:projectId/servers/:serverId/revisions/:revisionNumber/diff?from=
+// Compares `from` (default: the revision before) with `revisionNumber`.
+catalog.get(
+  "/projects/:projectId/servers/:serverId/revisions/:revisionNumber/diff",
+  (c) =>
+    proxyConvexV1Read(c, "/v1/project-server-revision-diff", (target) => {
+      setServerScope(target, c.req.param("projectId"), c.req.param("serverId"));
+      target.searchParams.set("revisionNumber", c.req.param("revisionNumber"));
+      const from = c.req.query("from");
+      if (from !== undefined)
+        target.searchParams.set("fromRevisionNumber", from);
+    }),
 );
 
 // GET /v1/projects/:projectId/eval-suites
@@ -101,21 +144,9 @@ catalog.get("/projects/:projectId/sessions", async (c) => {
         scope?: string;
       };
       const sourceType = c.req.query("sourceType");
-      // API-key callers never pass the Convex authorize exchange that fills
-      // `userExternalId`, so without this the event has no distinct_id and
-      // `captureServerEvent` drops it — leaving the metric describing guests
-      // only, which is the opposite of the population it exists to measure.
-      // Same fill-in the v1 agent surface does (`agent.ts::captureTurnEvent`).
-      const logContext = c.var.requestLogContext as
-        | { userExternalId?: string | null }
-        | undefined;
-      const workosUserId = c.get("workosUserId");
-      if (logContext && !logContext.userExternalId && workosUserId) {
-        c.set("requestLogContext", {
-          ...logContext,
-          userExternalId: workosUserId,
-        });
-      }
+      // Without this an API-key caller's event has no distinct_id and is
+      // dropped, leaving the metric describing guests only.
+      fillAnalyticsActorFromBearer(c);
       captureServerEvent(c, "api_sessions_search", {
         // The honored scope, not the requested one — the upstream is the
         // authority on which search actually ran.

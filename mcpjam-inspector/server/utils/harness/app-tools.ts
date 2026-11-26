@@ -22,16 +22,19 @@ export interface AppToolStore {
   read: (id: string) => Promise<{ state: string; resultJson?: string }>;
   finish: (id: string, consumed: boolean) => Promise<unknown>;
 }
-export function convexAppToolStore(authHeader: string): AppToolStore {
+export function convexAppToolStore(authHeader: string, getAuthorization?: () => Promise<string>, getCleanupAuthorization?: () => Promise<string>): AppToolStore {
   const url = process.env.CONVEX_URL;
   if (!url) throw new Error("App tools require a configured backend.");
-  const client = new ConvexHttpClient(url);
-  client.setAuth(authHeader.replace(/^Bearer\s+/i, ""));
+  const authorizedClient = async (authorization = getAuthorization) => {
+    const client = new ConvexHttpClient(url);
+    client.setAuth((authorization ? await authorization() : authHeader).replace(/^Bearer\s+/i, ""));
+    return client;
+  };
   return {
-    create: (args) => client.mutation(appToolInvocations.create, args),
-    read: (id) => client.query(appToolInvocations.read, { id }),
-    finish: (id, consumed) =>
-      client.mutation(appToolInvocations.finish, { id, consumed }),
+    create: async (args) => (await authorizedClient()).mutation(appToolInvocations.create, args),
+    read: async (id) => (await authorizedClient()).query(appToolInvocations.read, { id }),
+    finish: async (id, consumed) =>
+      (await authorizedClient(getCleanupAuthorization ?? getAuthorization)).mutation(appToolInvocations.finish, { id, consumed }),
   };
 }
 const failed = () => ({
@@ -65,13 +68,15 @@ export function harnessAppTools(options: {
   chatSessionId: string;
   turnId: string;
   authHeader: string;
+  getAuthorization?: () => Promise<string>;
+  getCleanupAuthorization?: () => Promise<string>;
   signal?: AbortSignal;
   writer: { write: (chunk: UIMessageChunk) => void };
   store?: AppToolStore;
 }): ToolSet {
   const entries = options.entries.filter((entry) => !!entry.bridgeId);
   if (!entries.length) return {};
-  const store = options.store ?? convexAppToolStore(options.authHeader);
+  const store = options.store ?? convexAppToolStore(options.authHeader, options.getAuthorization, options.getCleanupAuthorization);
   const tools: ToolSet = {};
   for (const entry of entries) {
     const bridgeId = entry.bridgeId;

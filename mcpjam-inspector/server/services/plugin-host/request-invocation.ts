@@ -49,6 +49,7 @@ export class PluginToolCallFailure extends PluginInvocationError {
 export async function invokePluginRequest(
   c: Context,
   input: {
+    receiptOnly?: boolean;
     actor: PluginInstanceIdentity;
     owner: import("./invocation.js").TrustedInvocationOwner;
     admission: PluginWorkspaceAdmission;
@@ -126,6 +127,7 @@ export async function invokePluginRequest(
     }
     if (
       initial.requiresApproval &&
+      !input.receiptOnly &&
       !input.approval &&
       !input.resume &&
       !saved
@@ -215,19 +217,24 @@ export async function invokePluginRequest(
                 authorization: import("./invocation.js").ResolvedInvocationContext,
                 next: PluginToolCallParams,
                 signal: AbortSignal,
+                pending?: PluginInvocationSuspension,
               ) => {
                 ran();
                 if (!runtime.resumeMrtr)
                   throw new PluginInvocationError(
                     "CONTINUATION_PROTOCOL_DENIED",
                   );
-                return runtime.resumeMrtr(
+                const result = await runtime.resumeMrtr(
                   authorization,
                   input.invocationId,
                   next,
                   input.resume!,
                   signal,
+                  pending,
                 );
+                if (!(result instanceof PluginInvocationSuspension))
+                  validateResult?.(result);
+                return result;
               },
             },
           }

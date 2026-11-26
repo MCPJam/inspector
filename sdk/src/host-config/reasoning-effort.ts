@@ -68,7 +68,13 @@ export const HARNESS_REASONING_EFFORTS: Readonly<
   // app-server `turn/start effort`). none / minimal / max stay refused until
   // verified.
   codex: ["low", "medium", "high", "xhigh"],
+  "copilot-cli": [],
   cursor: [],
+  // Empty until an OpenCode reasoning-variant mapping is verified live.
+  opencode: [],
+  // The vendor's app picks the model and its effort on the signed-in account.
+  "claude-web": [],
+  "chatgpt-web": [],
 };
 
 /**

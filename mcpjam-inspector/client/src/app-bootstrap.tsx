@@ -82,7 +82,10 @@ import {
   updateThemePreset,
 } from "./lib/theme-utils";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
-import { useAppLoadStallReport } from "./lib/app-load-stall";
+import {
+  reportUserReadiness,
+  StartupStatusTracker,
+} from "./lib/startup-status";
 import { DbUserReadyProvider } from "./contexts/db-user-ready-context";
 import { LegalAcceptanceGate } from "./components/legal/LegalAcceptanceGate";
 import {
@@ -120,8 +123,11 @@ if (sandboxOriginFault) {
 }
 
 function AuthBootstrap({ children }: { children: ReactNode }) {
-  const { isEnsuringUser, isUserReady } = useEnsureDbUser();
-  useAppLoadStallReport(isUserReady);
+  const { isEnsuringUser, isUserReady, hasIdentity } = useEnsureDbUser();
+  useEffect(() => {
+    reportUserReadiness(isUserReady, hasIdentity);
+    return () => reportUserReadiness(false, false);
+  }, [isUserReady, hasIdentity]);
   useEffect(() => {
     authRefusalDiagnostics.update({ ready: isUserReady });
     return () => authRefusalDiagnostics.update({ ready: false });
@@ -435,9 +441,11 @@ if (isInIframe) {
       onRedirectCallback={({ state }) => {
         const carried = state as Record<string, unknown> | null;
         const promoReturn = promoSignInReturn(carried);
-        if (promoReturn && readAppSignInReturnPath() === "/redeem") {
-          consumeAppSignInReturnPath();
-        }
+        const savedPath = readAppSignInReturnPath();
+        const savedPromoReturn =
+          savedPath?.split("?")[0] === "/redeem"
+            ? consumeAppSignInReturnPath()
+            : null;
         const returnTo =
           takeHandoffSignInReturn(
             carried?.[HANDOFF_SIGN_IN_STATE_KEY],
@@ -453,9 +461,7 @@ if (isInIframe) {
             window.location.origin,
           ) ??
           promoReturn ??
-          (readAppSignInReturnPath() === "/redeem"
-            ? consumeAppSignInReturnPath()
-            : null);
+          savedPromoReturn;
         if (returnTo) {
           // A scoped return cannot navigate until App has the database user
           // and authoritative memberships. Keep it in same-origin storage and
@@ -473,6 +479,8 @@ if (isInIframe) {
       <HostedAuthEntry>
         <ConvexProviderWithAuth client={convex} useAuth={useUnifiedConvexAuth}>
           <GuestTabTransitionListener />
+          {/* Above both startup gates: the outer one blocks first. */}
+          <StartupStatusTracker />
           <SignOutBoundary>
             <AuthRecoveryBoundary>
               <AuthBootstrap>
@@ -520,9 +528,9 @@ if (isInIframe) {
       // can't be imported in a test. Expected host-denial 403s render guidance
       // and are NOT reported (the Sentry noise this feature removed); genuine
       // failures render the generic screen AND report.
-      const { report, element } = resolveBootstrapErrorScreen(error);
+      const { report, element, extra } = resolveBootstrapErrorScreen(error);
       if (report) {
-        reportCaught(error, { source: "session_token_bootstrap" });
+        reportCaught(error, { source: "session_token_bootstrap", extra });
       }
       root.render(<StrictMode>{element}</StrictMode>);
       return;

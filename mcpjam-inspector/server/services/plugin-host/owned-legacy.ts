@@ -24,6 +24,7 @@ import { OPENAI_FORM_CLIENT_EXTENSION_KEYS } from "@mcpjam/sdk/host-config/inter
 /** Shared owned legacy dispatch, independent of connection creation or execution origin. */
 export function createOwnedPluginLegacyForms(deps: {
   bearer: string;
+  getAuthorization?: () => Promise<string>;
   projectId: string;
   workspaceId: string;
   hostId: string;
@@ -62,6 +63,7 @@ export function createOwnedPluginLegacyForms(deps: {
   const serverNamesById = { [deps.serverId]: "MCP server" };
   const bridge = new HostedElicitationBridge({
     convexBearer: deps.bearer,
+    getConvexBearer: deps.getAuthorization,
     projectId: deps.projectId,
     pluginWorkspaceId: deps.workspaceId,
     serverNamesById,

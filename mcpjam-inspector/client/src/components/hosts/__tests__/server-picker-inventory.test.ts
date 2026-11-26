@@ -32,6 +32,12 @@ const ALLOWED: Record<string, string> = {
     "removing both is its own commit. Listed so the guard states what is " +
     "true now, not what was true when it was written.",
 
+  "components/evals/suite-accounts-row.tsx":
+    "Suite settings' Accounts row: one row per server the suite already " +
+    "runs on, with a checkbox per connected account. It chooses which of the " +
+    "person's accounts a run uses on each server, never which servers the " +
+    "suite uses, so it is an account choice, not a server picker.",
+
   "components/ActiveServerSelector.tsx":
     "The header's connection strip: multi-select by server NAME over runtime " +
     "state, with reconnect / hide / transport per tab and an Add Server entry. " +
@@ -71,6 +77,10 @@ const ALLOWED: Record<string, string> = {
     "Recovery actions, not a choice. The left rail's Apps list names each " +
     "server whose App discovery failed, with a Retry button that re-runs " +
     "discovery. Nothing is selected and no serverAttachmentId is written.",
+
+  "components/playground/events/AddPlaygroundEvent.tsx":
+    "Event selection. Connected servers are section headings, and each " +
+    "button selects an event to configure for the active Playground agent.",
 
   "components/plugins/PluginSettingsSection.tsx":
     "A plugin version's declared server components, listed with their setup " +

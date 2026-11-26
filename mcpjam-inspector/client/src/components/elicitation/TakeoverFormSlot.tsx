@@ -1,3 +1,4 @@
+import { useFormDialogFocus } from "./use-form-dialog-focus";
 import { useLayoutEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@mcpjam/design-system/dialog";
 import { ComposerFormStatus } from "@/components/chat-v2/chat-input/form-status";
@@ -21,10 +22,17 @@ export function TakeoverFormSlot({
       return registerComposerSlot(workspaceId, slot);
     }
   }, [workspaceId, slot]);
+  const returnFocus = useFormDialogFocus(
+    workspaceId, chatWorkspaceId, !!workspaceId,
+  );
   if (!workspaceId) return null;
   return (
     <Dialog open>
-      <DialogContent showCloseButton={false} className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent
+        onCloseAutoFocus={returnFocus}
+        showCloseButton={false}
+        className="max-h-[90vh] overflow-y-auto sm:max-w-2xl"
+      >
         <DialogHeader className="sr-only">
           <DialogTitle>App requests information</DialogTitle>
           <DialogDescription>Answer or cancel the form to return to the app.</DialogDescription>

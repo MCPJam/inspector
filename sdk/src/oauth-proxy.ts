@@ -9,6 +9,7 @@ import type { IncomingMessage } from "node:http";
 // `instanceof` check are unchanged.
 export { OAuthProxyError } from "./oauth-proxy-error.js";
 import { OAuthProxyError } from "./oauth-proxy-error.js";
+import { getDefaultUserAgent } from "./user-agent.js";
 
 export interface OAuthProxyRequest {
   url: string;
@@ -23,6 +24,8 @@ export interface OAuthProxyRequest {
    * Link-local and cloud-metadata addresses stay refused either way.
    */
   allowPrivateNetwork?: boolean;
+  /** Operator admission for each private destination, checked at socket pinning. */
+  admitPrivateDestination?: EgressPolicy["admitPrivateDestination"];
   /** Redirect handling. httpsOnly always forces "manual" (cannot be
    * weakened); otherwise an explicit value is honored and omission preserves
    * the historical "follow". */
@@ -180,7 +183,7 @@ function buildRequestHeaders(
     delete headers[name];
   }
 
-  headers["user-agent"] ??= "MCP-Inspector/1.0";
+  headers["user-agent"] ??= getDefaultUserAgent();
   // Raw http(s).request does not decompress automatically. Requesting identity
   // keeps response parsing deterministic and preserves fetch-like semantics.
   headers["accept-encoding"] = "identity";
@@ -301,7 +304,7 @@ export async function fetchPinnedPublicDocument(
       url,
       {
         method: "GET",
-        headers: { "User-Agent": "MCP-Inspector/1.0", ...(opts.headers ?? {}) },
+        headers: { "User-Agent": getDefaultUserAgent(), ...(opts.headers ?? {}) },
         lookup: pinningLookup,
         servername: url.hostname,
         signal: deadline,
@@ -550,6 +553,7 @@ async function executePinnedOAuthRequest(req: OAuthProxyRequest): Promise<{
   const policy = resolveEgressPolicy({
     httpsOnly: req.httpsOnly,
     allowPrivateNetwork: req.allowPrivateNetwork,
+    admitPrivateDestination: req.admitPrivateDestination,
     startUrl: initialUrl.toString(),
   });
   const redirectMode = req.httpsOnly ? "manual" : req.redirect ?? "follow";
@@ -909,7 +913,7 @@ async function requestPinnedOAuthMetadata(
         headers: {
           Accept: "application/json",
           "Accept-Encoding": "identity",
-          "User-Agent": "MCP-Inspector/1.0",
+          "User-Agent": getDefaultUserAgent(),
         },
         ...(pinnedAddresses
           ? { lookup: createPinnedLookup(pinnedAddresses) }

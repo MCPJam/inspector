@@ -10,6 +10,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runSuiteFile } from "../src/suite-file-run/run-suite-file.js";
+import * as telemetry from "../src/telemetry.js";
 import { SuiteFileRunError } from "../src/suite-file-run/errors.js";
 import {
   servePolicyTargetFixture,
@@ -158,6 +159,34 @@ afterEach(async () => {
 });
 
 describe("MCPJam-hosted inference", () => {
+  it("counts one sdk_run_completed per suite file, not one per case or iteration", async () => {
+    stubPlatform();
+    const outcomes: string[] = [];
+    const start = vi
+      .spyOn(telemetry, "startSdkRunTelemetry")
+      .mockImplementation(() => ({
+        finish: async (outcome) => {
+          outcomes.push(outcome);
+        },
+      }));
+    const result = await runSuiteFile(SUITE, {
+      servers: { notes: { config: { url: fixture.url } } },
+      inference: {
+        mode: "auto",
+        resolveMcpjam: async () => ({
+          baseUrl: PLATFORM,
+          projectId: "proj_123",
+          getAuth: async () => "tok",
+        }),
+      },
+    });
+    expect(result.verdict).toBe("passed");
+    expect(fixture.calls.read_note).toBe(2);
+    expect(start.mock.calls).toEqual([["suite_file"]]);
+    expect(outcomes[0]).toBe("passed");
+    start.mockRestore();
+  });
+
   it("pre-mints one lease, sends the refreshed bearer and headers to the platform only, and revokes", async () => {
     const sent = stubPlatform();
     let reads = 0;

@@ -181,7 +181,7 @@ describe("composer form card", () => {
 
   it.each([
     ["Decline", "decline"],
-    ["Close", "cancel"],
+    ["Cancel form", "cancel"],
   ])("%s sends %s without content", async (name, action) => {
     const respond = card(steps);
     fireEvent.change(screen.getByLabelText(/Name/), {
@@ -265,7 +265,7 @@ describe("composer form card", () => {
     // Same step, every control usable again.
     expect(screen.getByText("3 of 3")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Skip for now" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Close" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Cancel form" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Skip for now" }));
     await waitFor(() => expect(respond).toHaveBeenCalledTimes(2));
     expect(respond.mock.calls[1]).toEqual(respond.mock.calls[0]);

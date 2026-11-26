@@ -105,6 +105,20 @@ describe("chat-history routes", () => {
     app.route("/chat-history", chatHistoryModule.default);
   });
 
+  it("forwards only the explicit state view and never caches its response", async () => {
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ ok: true, session: { _id: "s1", version: 1 } })));
+    const res = await app.request("/chat-history/detail?chatSessionId=c1&projectId=p1&view=state", {
+      headers: { Authorization: "Bearer test-token" },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    expect(fetchMock.mock.calls[0][0]).toBe("https://convex.test/direct-chat/detail?chatSessionId=c1&projectId=p1&view=state");
+    await app.request("/chat-history/detail?chatSessionId=c1&view=unknown", {
+      headers: { Authorization: "Bearer test-token" },
+    });
+    expect(fetchMock.mock.calls[1][0]).toBe("https://convex.test/direct-chat/detail?chatSessionId=c1");
+  });
+
   describe("GET /chat-history/list", () => {
     it("proxies list request to Convex backend", async () => {
       fetchMock.mockResolvedValueOnce(
@@ -143,6 +157,34 @@ describe("chat-history routes", () => {
       });
 
       expect(res.status).toBe(401);
+    });
+  });
+
+  describe("GET /chat-history/group", () => {
+    it("proxies the group read with its project", async () => {
+      fetchMock.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ ok: true, groupId: "g1", sessions: [] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+      const res = await app.request("/chat-history/group?groupId=g1&projectId=p1", {
+        headers: { Authorization: "Bearer test-token" },
+      });
+      expect(res.status).toBe(200);
+      expect((await res.json()).groupId).toBe("g1");
+      const [fetchUrl] = fetchMock.mock.calls[0];
+      expect(fetchUrl).toContain("/direct-chat/group");
+      expect(fetchUrl).toContain("groupId=g1");
+      expect(fetchUrl).toContain("projectId=p1");
+    });
+
+    it("returns 400 without a groupId", async () => {
+      const res = await app.request("/chat-history/group", {
+        headers: { Authorization: "Bearer test-token" },
+      });
+      expect(res.status).toBe(400);
+      expect(fetchMock).not.toHaveBeenCalled();
     });
   });
 

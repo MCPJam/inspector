@@ -53,6 +53,8 @@ import {
   type SupportedLocalHarnessId,
 } from "./targets.js";
 import { createLocalStateMutationLock } from "./local-state-lock.js";
+import { localRuntimeOf } from "./runtimes/index.js";
+import { keptField, readByShippedBuilds, splitRuntimeRecords } from "./cross-version-store.js";
 
 export const LOCAL_HARNESS_GRANT_HEADER = "x-mcpjam-local-harness-grant";
 
@@ -111,14 +113,20 @@ interface PersistedHarnessGrant {
   expiresAt: string;
 }
 
+/**
+ * Every runtime's grants are in `harnessGrants` here. On disk, every other
+ * runtime than the two shipped builds read goes in `runtimeGrants`, and `kept`
+ * holds its entries this build cannot read (`cross-version-store.ts`).
+ */
 interface PersistedState {
   version: 1;
   workspaces: WorkspaceGrant[];
   harnessGrants: PersistedHarnessGrant[];
+  kept: unknown[];
 }
 
 function emptyState(): PersistedState {
-  return { version: 1, workspaces: [], harnessGrants: [] };
+  return { version: 1, workspaces: [], harnessGrants: [], kept: [] };
 }
 
 /** Grants are attended and short-lived by construction: local execution is not
@@ -204,7 +212,8 @@ function isHarnessGrantBinding(value: unknown): value is HarnessGrantBinding {
     binding.projectId.length > 0 &&
     typeof binding.workspaceGrantId === "string" &&
     binding.workspaceGrantId.length > 0 &&
-    (binding.harnessId === "claude-code" || binding.harnessId === "codex") &&
+    typeof binding.harnessId === "string" &&
+    localRuntimeOf(binding.harnessId) !== undefined &&
     (binding.targetKind === "local-native" ||
       binding.targetKind === "local-isolated") &&
     typeof binding.runtimeId === "string" &&
@@ -267,22 +276,29 @@ async function readState(): Promise<PersistedState> {
       "the local harness grant store is not an object",
     );
   }
-  const record = parsed as Partial<PersistedState>;
+  const record = parsed as Partial<PersistedState> & { runtimeGrants?: unknown };
   if (
     record.version !== 1 ||
     !Array.isArray(record.workspaces) ||
     !Array.isArray(record.harnessGrants) ||
+    (record.runtimeGrants !== undefined && !Array.isArray(record.runtimeGrants)) ||
     !record.workspaces.every(isWorkspaceGrant) ||
-    !record.harnessGrants.every(isPersistedHarnessGrant)
+    !record.harnessGrants.every(
+      (grant) => isPersistedHarnessGrant(grant) && readByShippedBuilds(grant.binding.harnessId),
+    )
   ) {
     throw new GrantStateUnreadableError(
       "the local harness grant store has an unrecognized or malformed shape",
     );
   }
+  const { records, kept } = splitRuntimeRecords((record.runtimeGrants ?? []) as unknown[], (grant) =>
+    isPersistedHarnessGrant(grant) ? grant : undefined,
+  );
   return {
     version: 1,
     workspaces: [...record.workspaces],
-    harnessGrants: [...record.harnessGrants],
+    harnessGrants: [...record.harnessGrants, ...records],
+    kept,
   };
 }
 
@@ -290,7 +306,13 @@ async function writeState(state: PersistedState): Promise<void> {
   const dir = localHarnessStateRoot();
   await mkdir(dir, { recursive: true, mode: 0o700 });
   await chmod(dir, 0o700).catch(() => {});
-  await persistCapabilityState(grantsFilePath(), state);
+  const shared = (grant: PersistedHarnessGrant) => readByShippedBuilds(grant.binding.harnessId);
+  await persistCapabilityState(grantsFilePath(), {
+    version: state.version,
+    workspaces: state.workspaces,
+    harnessGrants: state.harnessGrants.filter(shared),
+    runtimeGrants: [...state.kept, ...state.harnessGrants.filter((grant) => !shared(grant))],
+  });
 }
 
 /**
@@ -715,22 +737,26 @@ export function revokeLocalHarnessGrants(selector?: {
 }): Promise<number> {
   return withGrantLock(async () => {
     const state = await readState();
-    const before = state.harnessGrants.length;
+    const before = state.harnessGrants.length + state.kept.length;
     if (!selector) {
       state.harnessGrants = [];
+      state.kept = [];
     } else if (selector.userId) {
       state.harnessGrants = state.harnessGrants.filter(g => g.binding.userId !== selector.userId || (selector.projectId !== undefined && g.binding.projectId !== selector.projectId));
+      state.kept = state.kept.filter((grant) => keptField(grant, ["binding", "userId"]) !== selector.userId ||
+        (selector.projectId !== undefined && keptField(grant, ["binding", "projectId"]) !== selector.projectId));
     } else if (selector.grantId) {
       state.harnessGrants = state.harnessGrants.filter(
         (g) => g.grantId !== selector.grantId,
       );
+      state.kept = state.kept.filter((grant) => keptField(grant, ["grantId"]) !== selector.grantId);
     } else if (selector.binding) {
       const hash = hashGrantBinding(selector.binding);
       state.harnessGrants = state.harnessGrants.filter(
         (g) => g.bindingHash !== hash,
       );
     }
-    const removed = before - state.harnessGrants.length;
+    const removed = before - state.harnessGrants.length - state.kept.length;
     if (removed > 0) {
       await writeState(state);
       logger.info("[local-harness] consent revoked", { removed });
@@ -743,11 +769,15 @@ export function revokeLocalHarnessGrants(selector?: {
 export function pruneExpiredHarnessGrants(now = Date.now()): Promise<number> {
   return withGrantLock(async () => {
     const state = await readState();
-    const before = state.harnessGrants.length;
+    const before = state.harnessGrants.length + state.kept.length;
     state.harnessGrants = state.harnessGrants.filter(
       (g) => Date.parse(g.expiresAt) > now,
     );
-    const removed = before - state.harnessGrants.length;
+    state.kept = state.kept.filter((grant) => {
+      const expiresAt = keptField(grant, ["expiresAt"]);
+      return typeof expiresAt !== "string" || !(Date.parse(expiresAt) <= now);
+    });
+    const removed = before - state.harnessGrants.length - state.kept.length;
     if (removed > 0) await writeState(state);
     return removed;
   });
@@ -759,6 +789,7 @@ export function forgetWorkspaceGrant(workspaceGrantId: string): Promise<void> {
     const state = await readState();
     state.workspaces = state.workspaces.filter(w => w.workspaceGrantId !== workspaceGrantId);
     state.harnessGrants = state.harnessGrants.filter(g => g.binding.workspaceGrantId !== workspaceGrantId);
+    state.kept = state.kept.filter((grant) => keptField(grant, ["binding", "workspaceGrantId"]) !== workspaceGrantId);
     await writeState(state);
   });
 }

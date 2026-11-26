@@ -270,6 +270,61 @@ export async function verifyAuthKitToken(
   return sid ? { sub, orgId, sid } : { sub, orgId };
 }
 
+/**
+ * Verify an access token the AuthKit OAuth issuer gave an MCP client for one
+ * of `audiences`, the resource the client asked for (RFC 8707). Only that
+ * issuer mints these tokens, so its own JWKS is the only key set consulted,
+ * and a token for any other resource, MCPJam's own included, is refused.
+ *
+ * Throws `AuthKitVerificationError` for a token that fails, and
+ * `AuthKitConfigError` when AuthKit is not configured; a key set that cannot
+ * be fetched rethrows as is, because no verdict on the token was reached.
+ */
+export async function verifyAuthKitResourceToken(
+  token: string,
+  audiences: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<VerifiedSession> {
+  const clientId = resolveWorkosClientId(env);
+  const issuer = clientId ? resolveAuthkitIssuer(clientId, env) : undefined;
+  if (!issuer) {
+    throw new AuthKitConfigError("AuthKit is not configured on this server");
+  }
+  let unverifiedIssuer: unknown;
+  try {
+    unverifiedIssuer = decodeJwt(token).iss;
+  } catch {
+    throw new AuthKitVerificationError("Malformed access token");
+  }
+  if (unverifiedIssuer !== issuer) {
+    throw new AuthKitVerificationError("Untrusted access token issuer");
+  }
+  let payload: JWTPayload;
+  try {
+    ({ payload } = await jwtVerify(token, remoteJwks(`${issuer}/oauth2/jwks`), {
+      issuer,
+      audience: [...audiences],
+      algorithms: ["RS256"],
+      clockTolerance: 5,
+      requiredClaims: ["exp"],
+    }));
+  } catch (error) {
+    const code = (error as { code?: unknown } | null)?.code;
+    if (typeof code === "string" && TOKEN_REJECTION_CODES.has(code)) {
+      throw new AuthKitVerificationError(code);
+    }
+    throw error;
+  }
+  const sub = stringClaim(payload, "sub");
+  // An agent registration is not a user, so it can't stand for one here.
+  if (!sub || sub.startsWith(AGENT_REGISTRATION_SUBJECT_PREFIX)) {
+    throw new AuthKitVerificationError("Access token does not name a user");
+  }
+  const orgId = stringClaim(payload, "org_id");
+  const sid = stringClaim(payload, "sid");
+  return { sub, ...(orgId ? { orgId } : {}), ...(sid ? { sid } : {}) };
+}
+
 // ---------------------------------------------------------------------------
 // Gateway verification (`bearerAuthMiddleware`)
 // ---------------------------------------------------------------------------
@@ -280,7 +335,10 @@ export async function verifyAuthKitToken(
  *
  * - `verified` — signed by a trusted AuthKit issuer, unexpired, and issued for
  *   this environment's client id: the same set of tokens `verifyAuthKitToken`
- *   accepts.
+ *   accepts. An agent-registration token (`sub` = `agent_reg_…`, from WorkOS
+ *   Agent Registration / auth.md) also carries `agent`, and may instead be
+ *   issued for one of this environment's MCP resources. Its `sub` is the
+ *   registration, NOT a user: the approving user is `agent.userId` (`act.sub`).
  * - `invalid` — claims a trusted AuthKit issuer and fails verification: a bad
  *   signature, an unknown signing key, expired or not yet valid, malformed,
  *   no `sub`, or (for the `api.workos.com`-style issuers) an audience other
@@ -289,7 +347,8 @@ export async function verifyAuthKitToken(
  *   issuer, but for a different audience (the MCP worker's resource
  *   indicator, a Connect OAuth application such as the CLI). The backend
  *   accepts these on some paths, so the gateway lets them through for
- *   downstream to judge rather than rejecting a valid credential.
+ *   downstream to judge rather than rejecting a valid credential. `sub` rides
+ *   along for usage analytics only (`analyticsUserId`), never for access.
  * - `keys_unavailable` — the issuer is trusted but its signing keys could not
  *   be fetched. The gateway cannot decide; downstream still verifies.
  * - `not_authkit` — not a JWT, or not from an AuthKit issuer (MCPJam-minted
@@ -297,11 +356,30 @@ export async function verifyAuthKitToken(
  *   or AuthKit is not configured on this deployment.
  */
 export type AuthKitBearerVerdict =
-  | { kind: "verified"; sub: string; sid?: string; orgId?: string }
+  | {
+      kind: "verified";
+      sub: string;
+      sid?: string;
+      orgId?: string;
+      agent?: AgentRegistrationClaim;
+    }
   | { kind: "invalid"; reason: string }
-  | { kind: "foreign_audience" }
+  | { kind: "foreign_audience"; sub: string }
   | { kind: "keys_unavailable"; issuer: string; reason: string }
   | { kind: "not_authkit" };
+
+/**
+ * The agent half of a verified agent-registration token. `userId` is the WorkOS
+ * user who approved the agent, present only once the registration is claimed
+ * and only when it names a WorkOS user (`user_…`).
+ */
+export interface AgentRegistrationClaim {
+  registrationId: string;
+  userId?: string;
+}
+
+/** WorkOS agent-registration ids, the `sub` of every agent token. */
+export const AGENT_REGISTRATION_SUBJECT_PREFIX = "agent_reg_";
 
 export interface AuthKitGatewayDeps extends AuthKitVerifyDeps {
   /**
@@ -311,6 +389,12 @@ export interface AuthKitGatewayDeps extends AuthKitVerifyDeps {
    * the backend (see {@link AuthKitBearerVerdict}).
    */
   anyAudienceIssuers: ReadonlySet<string>;
+  /**
+   * MCP resources an agent-registration token from one of
+   * `anyAudienceIssuers` may be issued for instead of the client id (WorkOS
+   * sets `aud` to the `resource` the agent asked for).
+   */
+  agentResourceAudiences?: readonly string[];
 }
 
 function defaultGatewayDeps(): AuthKitGatewayDeps {
@@ -319,6 +403,7 @@ function defaultGatewayDeps(): AuthKitGatewayDeps {
   return {
     ...base,
     anyAudienceIssuers: new Set(oauthIssuer ? [oauthIssuer] : []),
+    agentResourceAudiences: resolveMcpResourceIndicator(base.clientId) ?? [],
   };
 }
 
@@ -355,6 +440,39 @@ const keysUnavailableUntil = new Map<string, number>();
 function stringClaim(payload: JWTPayload, name: string): string | undefined {
   const value = (payload as Record<string, unknown>)[name];
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function agentRegistrationVerdict(
+  payload: JWTPayload,
+  registrationId: string,
+  issuer: string,
+  audiences: readonly unknown[],
+  resolved: AuthKitGatewayDeps,
+): AuthKitBearerVerdict {
+  const accepted = new Set<string>([resolved.clientId]);
+  if (resolved.anyAudienceIssuers.has(issuer)) {
+    for (const resource of resolved.agentResourceAudiences ?? []) {
+      accepted.add(resource);
+    }
+  }
+  if (!audiences.some((aud) => typeof aud === "string" && accepted.has(aud))) {
+    return { kind: "invalid", reason: "audience" };
+  }
+  const act = (payload as Record<string, unknown>).act;
+  const actorSub =
+    act && typeof act === "object"
+      ? (act as Record<string, unknown>).sub
+      : undefined;
+  const userId =
+    typeof actorSub === "string" && actorSub.startsWith("user_")
+      ? actorSub
+      : undefined;
+  return {
+    kind: "verified",
+    sub: registrationId,
+    orgId: stringClaim(payload, "org_id"),
+    agent: { registrationId, ...(userId ? { userId } : {}) },
+  };
 }
 
 /**
@@ -433,6 +551,13 @@ export async function classifyAuthKitBearer(
       : Array.isArray(payload.aud)
         ? payload.aud
         : [];
+  // Decided on `sub` alone, before the audience split: an agent token must
+  // never fall through to the user path below, where its registration id
+  // would be treated as a user. `act` is not a signal on its own, because
+  // WorkOS impersonation tokens carry it too (holding the admin's email).
+  if (sub.startsWith(AGENT_REGISTRATION_SUBJECT_PREFIX)) {
+    return agentRegistrationVerdict(payload, sub, issuer, audiences, resolved);
+  }
   if (audiences.includes(resolved.clientId)) {
     return {
       kind: "verified",
@@ -442,6 +567,6 @@ export async function classifyAuthKitBearer(
     };
   }
   return resolved.anyAudienceIssuers.has(issuer)
-    ? { kind: "foreign_audience" }
+    ? { kind: "foreign_audience", sub }
     : { kind: "invalid", reason: "audience" };
 }

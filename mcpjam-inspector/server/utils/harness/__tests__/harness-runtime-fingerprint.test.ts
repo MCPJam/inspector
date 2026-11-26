@@ -4,6 +4,7 @@ import {
   warmHarnessRuntimeFingerprint,
   toToolResultOutput,
 } from "../run-harness-turn";
+import { harnessToolOutputError } from "../tool-result-output";
 import {
   LOCAL_UNATTENDED_SANDBOX_POLICY,
   sandboxPolicyFingerprint,
@@ -21,6 +22,13 @@ describe("harnessRuntimeFingerprint", () => {
     selectedServers: ["srv-b", "srv-a"],
     permissionMode: "allow-all",
   };
+
+  it("forks when the server skill catalog in retained instructions changes", () => {
+    const first = { ...base, serverSkillCatalog: "**docs/lookup**" };
+    expect(harnessRuntimeFingerprint(first)).not.toBe(
+      harnessRuntimeFingerprint({ ...first, serverSkillCatalog: "**docs/search**" }),
+    );
+  });
 
   it("retains the warm session across per-turn approval and sandbox changes", () => {
     const codex = { ...base, harnessId: "codex" };
@@ -142,6 +150,26 @@ describe("harnessRuntimeFingerprint", () => {
           networkAccess: true,
         }),
       }),
+    );
+  });
+
+  it("forks only OpenCode lanes on a bridge older than the one OpenCode needs", () => {
+    const lane = (harnessId: string) =>
+      harnessRuntimeFingerprint({
+        harnessId,
+        modelId: "anthropic/claude-haiku-4.5",
+        selectedServers: ["srv-a"],
+        permissionMode: "allow-all",
+      });
+    // The values these lanes had before the bump: they keep resuming.
+    expect(lane("claude-code")).toBe("claude-code|anthropic/claude-haiku-4.5|418da67");
+    expect(lane("codex")).toBe("codex|anthropic/claude-haiku-4.5|a62170c3");
+    expect(lane("cursor")).toBe("cursor|anthropic/claude-haiku-4.5|a62170c3");
+    // An OpenCode lane saved against a 1.0.119 bridge does not, nor one whose
+    // 1.0.160 bridge started reading other clients' skill folders too.
+    expect(lane("opencode")).not.toBe("opencode|anthropic/claude-haiku-4.5|a62170c3");
+    expect(lane("opencode")).not.toBe(
+      "opencode|anthropic/claude-haiku-4.5|75a8204",
     );
   });
 
@@ -289,6 +317,26 @@ describe("toToolResultOutput", () => {
       type: "error-text",
       value: JSON.stringify({ msg: "boom" }),
     });
+  });
+
+  it("renders an ACP runtime's `{ error }` result as that error's text", () => {
+    const timeout = "MCP error -32001: Request timed out";
+    expect(toToolResultOutput({ error: timeout }, true)).toEqual({
+      type: "error-text",
+      value: timeout,
+    });
+    expect(harnessToolOutputError({ error: timeout })).toBe(timeout);
+    // Only that exact shape: a result that merely carries an `error` field is
+    // not a failure report.
+    for (const output of [
+      { error: "" },
+      { error: { message: timeout } },
+      { error: timeout, content: [] },
+      [timeout],
+      timeout,
+      { success: true },
+    ])
+      expect(harnessToolOutputError(output)).toBeUndefined();
   });
 
   it("does not treat a bare {type} (no value) as already-typed", () => {

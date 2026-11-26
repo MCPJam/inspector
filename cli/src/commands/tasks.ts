@@ -1,4 +1,5 @@
 import { conformanceExitCode } from "../lib/conformance-exit-code.js";
+import { captureConformanceRunEvent } from "../lib/telemetry.js";
 import { Command } from "commander";
 import { reportReadiness, reportScore } from "../lib/conformance-exit-code.js";
 import {
@@ -6,6 +7,8 @@ import {
   MCP_TASKS_CHECK_IDS,
   MCP_TASKS_READINESS_IDS,
   MCPTasksConformanceTest,
+  REMOVED_MCP_TASKS_CHECK_CATEGORIES,
+  REMOVED_MCP_TASKS_CHECK_IDS,
   RENAMED_MCP_TASKS_CHECK_IDS,
   isKnownProtocolVersion,
   isMCPTasksWireError,
@@ -46,6 +49,7 @@ import {
   usageError,
   writeResult,
 } from "../lib/output.js";
+import { recordCommandOutcome } from "../lib/command-outcome.js";
 import {
   buildMrtrBeforeConnect,
   sanitizeTerminalText,
@@ -68,7 +72,6 @@ const TASKS_CHECK_IDS_BY_CATEGORY: Record<
   MCPTasksCheckCategory,
   readonly MCPTasksCheckId[]
 > = {
-  dispatch: ["tasks-wire-resolvable", "tasks-declaration-hygiene"],
   creation: [
     "tasks-result-type-discipline",
     "tasks-undeclared-creation-refused",
@@ -108,6 +111,34 @@ export interface TasksConformanceOptions extends SharedServerTargetOptions {
   protocolVersion?: string;
 }
 
+/**
+ * `values` without the removed ones, each reported with its reason. A list
+ * made only of removed values is a usage error: emptied, it would mean "run
+ * every check".
+ */
+function dropRemoved(
+  kind: "check" | "category",
+  values: string[] | undefined,
+  removed: Readonly<Record<string, string>>,
+  flag: string
+): string[] | undefined {
+  if (values === undefined) return undefined;
+  const gone = values.filter((value) => Object.hasOwn(removed, value));
+  if (gone.length === 0) return values;
+  const kept = values.filter((value) => !Object.hasOwn(removed, value));
+  if (kept.length === 0) {
+    throw usageError(
+      `Tasks ${kind} ${gone[0]} was removed and nothing runs in its place. ${removed[gone[0]!]} Pick another ${kind}, or leave ${flag} out to run every check.`
+    );
+  }
+  for (const value of gone) {
+    process.stderr.write(
+      `Note: tasks ${kind} ${value} was removed. ${removed[value]} Skipping it.\n`
+    );
+  }
+  return kept;
+}
+
 function collectInvalidEntries(
   values: string[] | undefined,
   allowed: readonly string[]
@@ -123,7 +154,14 @@ export function buildTasksConformanceConfig(
   options: TasksConformanceOptions,
   serverConfig: MCPServerConfig = parseServerConfig(options)
 ): MCPTasksConformanceConfig {
-  const categories = options.category?.filter(Boolean);
+  // A removed category runs nothing: drop it with the reason, and refuse a
+  // list of only removed ones, which would otherwise run every check.
+  const categories = dropRemoved(
+    "category",
+    options.category?.filter(Boolean),
+    REMOVED_MCP_TASKS_CHECK_CATEGORIES,
+    "--category"
+  );
   const invalidCategories = collectInvalidEntries(
     categories,
     MCP_TASKS_CHECK_CATEGORIES
@@ -136,8 +174,14 @@ export function buildTasksConformanceConfig(
     );
   }
 
-  // A renamed id runs under its current name; say what changed.
-  const checkIds = options.checkId?.filter(Boolean).map((id) => {
+  // A renamed id runs under its current name; say what changed. A removed id
+  // runs nothing: say why it went away.
+  const checkIds = dropRemoved(
+    "check",
+    options.checkId?.filter(Boolean),
+    REMOVED_MCP_TASKS_CHECK_IDS,
+    "--check-id"
+  )?.map((id) => {
     if (!Object.hasOwn(RENAMED_MCP_TASKS_CHECK_IDS, id)) return id;
     const current =
       RENAMED_MCP_TASKS_CHECK_IDS[
@@ -662,7 +706,10 @@ export async function withWatchSignals<T>(
   fn: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   const controller = new AbortController();
-  const onSignal = () => controller.abort();
+  const onSignal = () => {
+    recordCommandOutcome("interrupted");
+    controller.abort();
+  };
   process.on("SIGINT", onSignal);
   process.on("SIGTERM", onSignal);
   try {
@@ -805,7 +852,7 @@ export function addTasksToolOptions(command: Command): Command {
     )
     .option(
       "--input-responses <json>",
-      'Responses to submit when the probed task reports input_required, keyed by inputRequests key: {"name":{"result":{"action":"accept","content":{"name":"Ada"}}}}. Without it the run stops as soon as the task parks on input_required, and the tasks/update acknowledgement check is not applicable.'
+      'Prefilled answers for Tasks probes on the 2026-07-28 extension wire. Only requested keys are sent: {"name":{"action":"accept","content":{"name":"Ada"}}}. A check can also use answers from its own --check-overrides entry. Without answers for that check, it stops when the task waits for input. Supply matching answers to exercise the tasks/update acknowledgement check.'
     )
     .option(
       "--poll-timeout <ms>",
@@ -890,7 +937,13 @@ export function registerTasksCommands(program: Command): void {
       }),
       ...(collector ? { rpcLogger: collector.rpcLogger } : {}),
     };
-    const result = await new MCPTasksConformanceTest(config).run();
+    // The CLI counts the run itself, under its own opt-outs.
+    const test = new MCPTasksConformanceTest({
+      ...config,
+      __suppressTelemetry: true,
+    });
+    captureConformanceRunEvent("tasks", "single");
+    const result = await test.run();
 
     const outputResult = reporter
       ? result

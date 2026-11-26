@@ -170,7 +170,7 @@ describe("collector round-trip", () => {
 
     const res = submitMrtrResponses("op1", {
       q: { action: "accept", content: { answer: "Ada" } },
-    });
+    }, "op1:1");
     expect(res.ok).toBe(true);
 
     const responses = await promise;
@@ -183,11 +183,11 @@ describe("collector round-trip", () => {
     const collect = getCollector()!;
 
     const declineP = collect({ state: state("op-decline", 1), inputRequests: elicitRequest("x") });
-    submitMrtrResponses("op-decline", { q: { action: "decline" } });
+    submitMrtrResponses("op-decline", { q: { action: "decline" } }, "op-decline:1");
     await expect(declineP).resolves.toEqual({ q: { action: "decline" } });
 
     const cancelP = collect({ state: state("op-cancel", 1), inputRequests: elicitRequest("x") });
-    submitMrtrResponses("op-cancel", { q: { action: "cancel" } });
+    submitMrtrResponses("op-cancel", { q: { action: "cancel" } }, "op-cancel:1");
     await expect(cancelP).resolves.toEqual({ q: { action: "cancel" } });
   });
 
@@ -200,7 +200,7 @@ describe("collector round-trip", () => {
       state: state("op-url", 1),
       inputRequests: urlRequest("https://ex/consent"),
     });
-    submitMrtrResponses("op-url", { u: { action: "accept" } });
+    submitMrtrResponses("op-url", { u: { action: "accept" } }, "op-url:1");
     await expect(p).resolves.toEqual({ u: { action: "accept", content: {} } });
   });
 
@@ -211,14 +211,14 @@ describe("collector round-trip", () => {
 
     // Round 1
     const r1 = collect({ state: state("op-seq", 1), inputRequests: elicitRequest("first", "a") });
-    submitMrtrResponses("op-seq", { a: { action: "accept", content: { answer: "one" } } });
+    submitMrtrResponses("op-seq", { a: { action: "accept", content: { answer: "one" } } }, "op-seq:1");
     const resp1 = await r1;
     expect(Object.keys(resp1)).toEqual(["a"]);
 
     // Round 2 — a DIFFERENT key. The bridge holds no memory of round 1: the
     // second round's responses stand alone (replacement, not accumulation).
     const r2 = collect({ state: state("op-seq", 2), inputRequests: elicitRequest("second", "b") });
-    submitMrtrResponses("op-seq", { b: { action: "accept", content: { answer: "two" } } });
+    submitMrtrResponses("op-seq", { b: { action: "accept", content: { answer: "two" } } }, "op-seq:2");
     const resp2 = await r2;
     expect(Object.keys(resp2)).toEqual(["b"]);
     expect((resp2 as any).a).toBeUndefined();
@@ -238,7 +238,7 @@ describe("collector round-trip", () => {
     controller.abort();
     await expect(p).rejects.toBeInstanceOf(DOMException);
     // The pending round was cleared; a late submit finds nothing.
-    expect(submitMrtrResponses("op-abort", { q: { action: "accept", content: {} } }).ok).toBe(false);
+    expect(submitMrtrResponses("op-abort", { q: { action: "accept", content: {} } }, "op-abort:1").ok).toBe(false);
   });
 
   it("400s a round missing a required key and 404s an unknown op", () => {
@@ -247,14 +247,14 @@ describe("collector round-trip", () => {
     const collect = getCollector()!;
     void collect({ state: state("op-val", 1), inputRequests: elicitRequest("x", "needed") });
 
-    const missing = submitMrtrResponses("op-val", { wrong: { action: "accept", content: {} } });
+    const missing = submitMrtrResponses("op-val", { wrong: { action: "accept", content: {} } }, "op-val:1");
     expect(missing.ok).toBe(false);
     if (!missing.ok) expect(missing.status).toBe(400);
 
-    const unknown = submitMrtrResponses("nope", { q: { action: "accept", content: {} } });
+    const unknown = submitMrtrResponses("nope", { q: { action: "accept", content: {} } }, "nope:1");
     expect(unknown.ok).toBe(false);
     if (!unknown.ok) expect(unknown.status).toBe(404);
-    expect(submitMrtrResponses("op-val", { needed: { action: "cancel" } }).ok).toBe(true);
+    expect(submitMrtrResponses("op-val", { needed: { action: "cancel" } }, "op-val:1").ok).toBe(true);
   });
 });
 
@@ -335,34 +335,11 @@ describe("advertised elicitation capability", () => {
 });
 
 
-describe("pending round replay", () => {
-  it("recovers an unanswered round on late subscription and reconnect without another tool call", async () => {
-    const { manager, getCollector } = fakeManager();
-    registerLocalMrtrCollector(manager, "late-server");
-    const collect = getCollector()!;
-    const result = collect({ state: state("late-op", 1), inputRequests: elicitRequest("Late form") });
-    const open = async () => {
-      const response = await mrtr.request("/stream");
-      const reader = response.body!.getReader();
-      expect(new TextDecoder().decode((await reader.read()).value)).toContain("retry:");
-      return reader;
-    };
-    const first = await open();
-    const event = new TextDecoder().decode((await first.read()).value);
-    expect(event).toContain('"roundKey":"late-op:1"');
-    expect(event).toContain("Late form");
-    await first.cancel();
-    const second = await open();
-    expect(new TextDecoder().decode((await second.read()).value)).toBe(event);
-    expect(submitMrtrResponses("late-op", { q: { action: "accept", content: { answer: "ok", zero: 0, no: false } } }).ok).toBe(true);
-    await expect(result).resolves.toMatchObject({ q: { action: "accept", content: { zero: 0, no: false } } });
-    expect(new TextDecoder().decode((await second.read()).value)).toContain("mrtr_input_complete");
-    await second.cancel();
-    const afterCompletion = await open();
-    const next = afterCompletion.read();
-    await afterCompletion.cancel();
-    expect((await next).done).toBe(true);
-    expect(submitMrtrResponses("late-op", { q: { action: "cancel" } }).ok).toBe(false);
+describe("retired local HTTP form transport", () => {
+  it.each([["GET", "/stream"], ["POST", "/respond"]])("asks a stale %s client to reload", async (method, path) => {
+    const response = await mrtr.request(path, { method });
+    expect(response.status).toBe(410);
+    expect(await response.json()).toEqual({ error: "Reload the inspector to continue answering local forms." });
   });
 });
 

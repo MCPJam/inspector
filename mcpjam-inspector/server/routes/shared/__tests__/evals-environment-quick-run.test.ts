@@ -221,9 +221,12 @@ describe("environment quick runs", () => {
     expect(params.suiteHostConfig).toEqual(FROZEN_HOST_CONFIG);
     expect(params.selectedServers).toEqual(["srv-1"]);
     expect(params.projectEnvironmentId).toBe("env-1");
-    // An empty committed skill set stays empty on both channels.
-    expect(params.pinnedHarnessSkills).toEqual([]);
-    expect(params.pinnedSkillSource).toBeUndefined();
+    // An empty committed skill set stays empty, and clears a harness's box.
+    expect(params.pinnedSkillSource).toMatchObject({
+      kind: "pins",
+      pins: [],
+      harnessSkills: [],
+    });
     expect(params.environment.serverBindings).toEqual([
       { serverName: "billing", projectServerId: "srv-1" },
     ]);

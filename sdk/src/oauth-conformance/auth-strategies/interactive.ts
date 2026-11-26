@@ -38,9 +38,11 @@ function getBrowserOpenCommand(url: string): {
         args: [url],
       };
     case "win32":
+      // Not `cmd /c start`: cmd.exe reads `&` as a command separator, and the
+      // server under test chooses the authorization endpoint in this URL.
       return {
-        command: "cmd",
-        args: ["/c", "start", "", url],
+        command: "rundll32",
+        args: ["url.dll,FileProtocolHandler", url],
       };
     default:
       return {
@@ -51,6 +53,12 @@ function getBrowserOpenCommand(url: string): {
 }
 
 export async function openUrlInBrowser(url: string): Promise<void> {
+  // The system opener launches whatever handles the scheme, so only a web
+  // page may reach it.
+  const { protocol } = new URL(url);
+  if (protocol !== "https:" && protocol !== "http:") {
+    throw new Error(`Refusing to open a non-HTTP URL (${protocol})`);
+  }
   const { command, args } = getBrowserOpenCommand(url);
 
   await new Promise<void>((resolve, reject) => {
@@ -302,7 +310,7 @@ export async function createInteractiveAuthorizationSession(options?: {
   }
 
   let pendingResolve:
-    | ((value: { code: string; state?: string }) => void)
+    | ((value: { code: string; state?: string; iss?: string }) => void)
     | undefined;
   let pendingReject: ((error: unknown) => void) | undefined;
   let timeoutHandle: NodeJS.Timeout | undefined;
@@ -412,7 +420,8 @@ export async function createInteractiveAuthorizationSession(options?: {
       timeoutHandle = undefined;
     }
 
-    pendingResolve?.({ code, state });
+    const iss = requestUrl.searchParams.get("iss");
+    pendingResolve?.({ code, state, ...(iss ? { iss } : {}) });
     clearPending();
   });
 
@@ -449,8 +458,8 @@ export async function createInteractiveAuthorizationSession(options?: {
 
       const codePromise = new Promise<AuthorizationCodeResult>(
         (resolve, reject) => {
-          pendingResolve = ({ code }) => {
-            resolve({ code });
+          pendingResolve = ({ code, iss }) => {
+            resolve({ code, ...(iss ? { iss } : {}) });
           };
           pendingReject = reject;
           timeoutHandle = setTimeout(() => {

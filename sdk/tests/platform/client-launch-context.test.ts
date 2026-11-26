@@ -17,6 +17,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import {
+  CLIENT_DECLARATION_HEADER,
   PlatformApiClient,
   RUN_LAUNCH_HEADERS,
 } from "../../src/platform/index.js";
@@ -168,6 +169,20 @@ describe("declared launch context", () => {
     expect(headersOf(fetchMock, 1)[RUN_LAUNCH_HEADERS.launcher]).toBeDefined();
   });
 
+  it("rides them on a conformance start, and not on its reads", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => ok());
+    const client = makeClient(fetchMock, { launcher: { ...CLI_LAUNCHER } });
+
+    await client.startConformanceRun({ projectId: "p1", serverId: "s1" });
+    await client.getConformanceRun({ projectId: "p1", runId: "r1" });
+
+    expect(JSON.parse(headersOf(fetchMock, 0)[RUN_LAUNCH_HEADERS.launcher]!))
+      .toEqual(CLI_LAUNCHER);
+    expect(headersOf(fetchMock, 1)).not.toHaveProperty(
+      RUN_LAUNCH_HEADERS.launcher
+    );
+  });
+
   it("is absent from every call that is not a launch", async () => {
     const fetchMock = vi.fn().mockImplementation(async () => ok());
     const client = makeClient(fetchMock, { launcher: { ...CLI_LAUNCHER } });
@@ -189,6 +204,43 @@ describe("declared launch context", () => {
     }
   });
 
+  it("declares the client on every call for usage analytics, CI aside", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => ok());
+    const client = makeClient(fetchMock, {
+      launcher: { ...CLI_LAUNCHER },
+      ci: { provider: "github_actions", commitSha: "a1b2c3" },
+    });
+
+    await client.getMe();
+    await client.createEvalRun({ projectId: "p1", body: { suiteId: "s1" } });
+
+    for (let call = 0; call < 2; call += 1) {
+      const headers = headersOf(fetchMock, call);
+      expect(JSON.parse(headers[CLIENT_DECLARATION_HEADER]!)).toEqual({
+        kind: "cli",
+        client: "mcpjam-cli",
+        version: "8.2.0",
+      });
+    }
+    expect(headersOf(fetchMock, 0)).not.toHaveProperty(RUN_LAUNCH_HEADERS.ci);
+  });
+
+  it("escapes a non-ASCII launcher name so every request still sends", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => ok());
+    const client = makeClient(fetchMock, {
+      launcher: { kind: "mcp", client: "クライアント 🚀", version: "1.0" },
+    });
+
+    await client.getMe();
+
+    const headers = headersOf(fetchMock);
+    // The native constructor throws on any code unit above U+00FF.
+    const native = new Headers(headers);
+    expect(
+      JSON.parse(native.get(CLIENT_DECLARATION_HEADER)!)
+    ).toEqual({ kind: "mcp", client: "クライアント 🚀", version: "1.0" });
+  });
+
   it("sends nothing when the process declared nothing", async () => {
     const fetchMock = vi.fn().mockImplementation(async () => ok());
     await makeClient(fetchMock).createEvalRun({
@@ -199,6 +251,7 @@ describe("declared launch context", () => {
     const headers = headersOf(fetchMock);
     expect(headers).not.toHaveProperty(RUN_LAUNCH_HEADERS.launcher);
     expect(headers).not.toHaveProperty(RUN_LAUNCH_HEADERS.ci);
+    expect(headers).not.toHaveProperty(CLIENT_DECLARATION_HEADER);
   });
 
   it("drops a kind outside the allowlist rather than refusing to construct", async () => {

@@ -14,13 +14,21 @@ import {
 } from "../use-playground-client-initialization";
 import { playgroundClientInitNotice } from "../playground-client-init-notice";
 import {
-  loadSelectedHostIds,
-  saveSelectedHostIds,
-} from "@/lib/selected-host-storage";
+  loadComparePanes,
+  paneHostIds,
+  panesForHostIds,
+  saveComparePanes,
+} from "@/lib/compare-panes";
 import {
   loadPreviewedHostId,
   savePreviewedHostId,
 } from "@/lib/previewed-client-storage";
+
+// The lineup as the client chips read it: each pane's client, in order.
+const loadSelectedHostIds = (projectId: string) =>
+  paneHostIds(loadComparePanes(projectId));
+const saveSelectedHostIds = (projectId: string, hostIds: string[]) =>
+  saveComparePanes(projectId, panesForHostIds([], hostIds));
 
 const mocks = vi.hoisted(() => ({
   ensure: vi.fn(),
@@ -157,6 +165,26 @@ describe("usePlaygroundClientInitialization", () => {
       themeMode: "dark",
       initializeComparison: true,
     });
+  });
+
+  it("reports settling until the comparison lineup is in", async () => {
+    let resolve: (value: unknown) => void = () => {};
+    mocks.ensure.mockReturnValue(new Promise((r) => (resolve = r)));
+    const { result, update } = renderInit([MCPJAM]);
+    update({ hostListLoading: true });
+    expect(result.current.settling).toBe(true);
+    update({ hostListLoading: false });
+    await settle();
+    expect(result.current.settling).toBe(true);
+    await act(async () => resolve(CREATED_LINEUP));
+    expect(result.current.settling).toBe(false);
+  });
+
+  it("is settled for a member, who never asks for comparison", async () => {
+    mocks.role = { canManage: false, isLoading: false };
+    const { result } = renderInit([MCPJAM]);
+    await settle();
+    expect(result.current.settling).toBe(false);
   });
 
   it("selects a lineup the backend just created, Claude leading", async () => {

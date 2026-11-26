@@ -21,6 +21,9 @@ isolated `HOME`, not a test runner's shared one.
 | `run-native-turn.ts` | `no-launcher` | a pack without the loopback launcher is REFUSED — the exposure probe, not the launcher, is what enforces the guarantee |
 | `run-lifecycle.ts` | `abort` | aborting mid-turn takes the vendor CLI down with the bridge, and removes the session state |
 | `run-lifecycle.ts` | `orphan-a` / `orphan-b` | a tree orphaned by a crashed Inspector is reclaimed by the janitor on the next start |
+| `run-runtime-conformance.ts` | `<harnessId>` | any other local runtime, by its credential: `run-gateway-turn.ts` or `run-login-lifecycle.ts` (CI's runtime legs run this) |
+| `run-gateway-turn.ts` | `<harnessId>` | a gateway runtime: a turn through the loopback gateway with no key in any supervised process, a host tool, detach and resume, loopback only, nothing left after Stop |
+| `run-login-lifecycle.ts` | `<harnessId>` | a runtime on its vendor's login, started with a login the vendor refuses: every adapter command translates, the CLI checks the login and opens no browser, the login is in no file, loopback only, nothing left after Stop |
 | `timing-decomp.mts` | — | cost decomposition: bare bridge spawn, digest, session ready |
 | `probe-timing.mts` | — | the exposure probe stays inside its budget on a machine with link-local addresses |
 | `group-settle.mts` | — | the group-member snapshot settles a tree whose root exited first (takes an optional node path; defaults to the running one) |
@@ -143,9 +146,12 @@ HOME="$CONFORMANCE_ROOT/home" CONFORMANCE_ROOT="$CONFORMANCE_ROOT" \
 
 In CI these are the `codex-scenarios` legs of `local-harness-conformance.yml`,
 stamped separately (`codex_conformance_version`) so a Codex failure never
-withholds Claude Code's version or the reverse. The certified targets
-(`nativeTargets`: darwin-arm64, linux-x64) block; linux-arm64 and darwin-x64
-run without blocking. The unattended leg is evidence, not yet a gate: a target
+withholds Claude Code's version or the reverse. The certified targets (the
+manifest's `nativeTargets`, which the plan reads) block; the others, linux-arm64
+today, run without blocking, and only on a push to main: a release runs just
+the certified ones. The darwin-x64 legs run x64 Node under Rosetta 2 on an Apple
+Silicon runner, so every process in them is an x86_64 binary on the Darwin
+kernel an Intel Mac runs. The unattended leg is evidence, not yet a gate: a target
 is added to `unattendedSandboxTargets` only after it passes there, and until
 then unattended local Codex is refused on it. Ubuntu 24.04's AppArmor
 user-namespace restriction can stop bubblewrap from starting at all — the

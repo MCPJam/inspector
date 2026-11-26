@@ -3,6 +3,7 @@ import {
   MCPTasksConformanceTest,
   MCP_TASKS_CHECK_IDS,
   decideOutcome,
+  failedTaskLacksStatusMessage,
   findDeclarationViolations,
   findRawTaskStates,
   sentRequestIds,
@@ -18,6 +19,8 @@ import * as operations from "../../src/operations.js";
 import type { MCPServerConfig } from "../../src/mcp-client-manager/index.js";
 import {
   isMissingInputCheck,
+  missingInputForCheck,
+  missingInputMessage,
   noTaskCreatedMessage,
 } from "../../src/conformance-input.js";
 import { scoreFromTasksResult } from "../../src/conformance-score.js";
@@ -472,6 +475,18 @@ describe("completion acknowledgements", () => {
 });
 
 describe("shape validators", () => {
+  it("reads a failed task without a readable statusMessage as lacking one", () => {
+    for (const statusMessage of [undefined, null, 42, "", "  "]) {
+      expect(
+        failedTaskLacksStatusMessage({ status: "failed", statusMessage })
+      ).toBe(true);
+    }
+    expect(
+      failedTaskLacksStatusMessage({ status: "failed", statusMessage: "boom" })
+    ).toBe(false);
+    expect(failedTaskLacksStatusMessage({ status: "completed" })).toBe(false);
+  });
+
   it("requires a flat CreateTaskResult; extra fields are not judged", () => {
     expect(
       validateCreateTaskShape({ resultType: "task", taskId: "t" })
@@ -580,6 +595,38 @@ describe("pickProbeTool", () => {
       expect(resolved.reason).toContain("required_task");
     });
 
+    it("blocks a named legacy tool with no taskSupport, naming the tools that can", () => {
+      const resolved = resolveProbeTool("legacy", tools, "plain");
+      expect(resolved.tool).toBeUndefined();
+      expect(resolved.blocking).toBe(true);
+      expect(resolved.reason).toContain('"plain"');
+      expect(resolved.reason).toContain("tasks.mdx:115");
+      expect(resolved.reason).toContain("optional_task, required_task");
+      expect(resolved.setupMessage).toBe(
+        '"plain" has no taskSupport, so it can\'t run as a task. Select a tool that can in setup (optional_task, required_task), then run again.'
+      );
+    });
+
+    it("blocks a named legacy tool whose taskSupport is forbidden", () => {
+      const forbidden = {
+        name: "no_tasks",
+        inputSchema: {},
+        execution: { taskSupport: "forbidden" },
+      } as never;
+      const resolved = resolveProbeTool("legacy", [forbidden], "no_tasks");
+      expect(resolved.tool).toBeUndefined();
+      expect(resolved.blocking).toBe(true);
+      expect(resolved.setupMessage).toBe(
+        '"no_tasks" has taskSupport "forbidden", so it can\'t run as a task, and no tool on this server can. Add taskSupport to a tool, then run again.'
+      );
+    });
+
+    it("still resolves a named tool on the extension wire, where taskSupport is stripped", () => {
+      expect(resolveProbeTool("extension", tools, "plain").tool?.name).toBe(
+        "plain"
+      );
+    });
+
     it("is NOT blocking when there is no tasks wire at all", () => {
       const resolved = resolveProbeTool("none", tools);
       expect(resolved.tool).toBeUndefined();
@@ -673,8 +720,6 @@ describe("MCPTasksConformanceTest", () => {
 
     expect(result.checks).toHaveLength(MCP_TASKS_CHECK_IDS.length);
     expect(statusMap(result)).toEqual({
-      "tasks-wire-resolvable": "passed",
-      "tasks-declaration-hygiene": "passed",
       "tasks-result-type-discipline": "passed",
       "tasks-undeclared-creation-refused": "passed",
       "tasks-undeclared-capability-rejected": "passed",
@@ -955,6 +1000,17 @@ describe("MCPTasksConformanceTest", () => {
         update: false,
         inlineResult: false,
       }),
+      // On 2025-11-25 a tool needs `taskSupport` to be called as a task
+      // (tasks.mdx:115), so the probe tool declares it.
+      listTools: async () => ({
+        tools: [
+          {
+            name: "long_job",
+            inputSchema: {},
+            execution: { taskSupport: "optional" },
+          },
+        ],
+      }),
       executeTool: async () => ({
         task: { taskId: "task-1", status: "working", ttl: 60_000 },
       }),
@@ -970,11 +1026,11 @@ describe("MCPTasksConformanceTest", () => {
       config: { toolName: "long_job", pollTimeoutMs: 500 },
     });
 
-    const wireCheck = result.checks.find(
-      (c) => c.id === "tasks-wire-resolvable"
-    );
-    expect(wireCheck?.status).toBe("passed");
-    expect(wireCheck?.warnings).toBeUndefined();
+    // Listing the extension on 2025-11-25 is not judged: nothing forbids it,
+    // and SEP-2663 only forbids USING it there. The run stays on the legacy
+    // wire and no check warns about the listing.
+    expect(result.discovery.wire).toBe("legacy");
+    expect(result.checks.filter((c) => c.warnings?.length)).toEqual([]);
     expect(statusMap(result)["tasks-inline-result"]).toBe("passed");
     // Extension-only checks do not apply to the legacy wire.
     expect(statusMap(result)["tasks-undeclared-capability-rejected"]).toBe(
@@ -1068,16 +1124,150 @@ describe("MCPTasksConformanceTest", () => {
     expect(scoreFromTasksResult(result)).toMatchObject({ score: 100, outcome: "passed", failed: 0 });
   });
 
-  it("reports INCOMPLETE when the requested probe tool is not listed", async () => {
+  it("shows a call that fails on args its schema rejects as a setup gap", async () => {
+    const invalid = Object.assign(
+      new Error("Invalid params: city is required"),
+      { code: -32602 }
+    );
+    const manager = extensionManager({
+      listTools: async () => ({
+        tools: [
+          {
+            name: "long_job",
+            inputSchema: {
+              type: "object",
+              properties: { city: { type: "string" } },
+              required: ["city"],
+            },
+          },
+        ],
+      }),
+      executeTool: async () => {
+        throw invalid;
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", toolArguments: {}, pollTimeoutMs: 500 },
+    });
+
+    for (const id of ["tasks-result-type-discipline", "tasks-ttl-shape"]) {
+      const check = result.checks.find((c) => c.id === id)!;
+      expect(isMissingInputCheck(check), id).toBe(true);
+      expect(missingInputMessage(check), id).toMatch(
+        /^Your arguments for "long_job" don't match its input schema/
+      );
+    }
+    expect(scoreFromTasksResult(result)).toMatchObject({ failed: 0 });
+  });
+
+  it("reports a 401 on the task call as a login gap, not bad arguments", async () => {
+    const manager = extensionManager({
+      listTools: async () => ({
+        tools: [
+          {
+            name: "long_job",
+            inputSchema: { type: "object", required: ["city"] },
+          },
+        ],
+      }),
+      executeTool: async () => {
+        throw Object.assign(new Error("Unauthorized"), { status: 401 });
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", toolArguments: {}, pollTimeoutMs: 500 },
+    });
+
+    // A 401 is the login to fix: "Not run" at no cost, never bad arguments,
+    // and never a failure of the result-type check.
+    for (const id of ["tasks-result-type-discipline", "tasks-ttl-shape"]) {
+      const check = result.checks.find((c) => c.id === id)!;
+      expect(check.skipReason, id).toBe("could-not-run");
+      expect(missingInputForCheck(check), id).toBe("login");
+    }
+  });
+
+  it("tells a recorded 401 challenge from a 403 on the task call", async () => {
+    const withChallenge = (source: string) =>
+      extensionManager({
+        executeTool: async () => {
+          throw Object.assign(new Error("Unauthorized"), {
+            name: "UnauthorizedError",
+            authChallenge: { source, facets: { challengeHeader: "bearer" } },
+          });
+        },
+      });
+
+    const unauthorized = await runAgainst(withChallenge("http_401"), {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+    const ttl401 = unauthorized.checks.find((c) => c.id === "tasks-ttl-shape")!;
+    expect(missingInputForCheck(ttl401)).toBe("login");
+
+    const forbidden = await runAgainst(
+      withChallenge("http_403_insufficient_scope"),
+      { config: { toolName: "long_job", pollTimeoutMs: 500 } }
+    );
+    const ttl403 = forbidden.checks.find((c) => c.id === "tasks-ttl-shape")!;
+    expect(missingInputForCheck(ttl403)).toBeUndefined();
+  });
+
+  it("keeps a failing call on args that fit as the server's to answer for", async () => {
+    const broken = Object.assign(new Error("Internal error"), { code: -32603 });
+    const manager = extensionManager({
+      executeTool: async () => {
+        throw broken;
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    expect(statusMap(result)["tasks-result-type-discipline"]).toBe("failed");
+    const ttl = result.checks.find((c) => c.id === "tasks-ttl-shape")!;
+    expect(ttl.skipReason).toBe("could-not-run");
+    expect(isMissingInputCheck(ttl)).toBe(false);
+    expect(ttl.error?.message).toContain('calling "long_job" failed');
+  });
+
+  it("keeps a tool error on args that fit as the server's to answer for", async () => {
+    const manager = extensionManager({
+      executeTool: async () => ({
+        resultType: "complete",
+        isError: true,
+        content: [{ type: "text", text: "upstream down" }],
+      }),
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    const ttl = result.checks.find((c) => c.id === "tasks-ttl-shape")!;
+    expect(isMissingInputCheck(ttl)).toBe(false);
+    expect(ttl.error?.message).toContain("returned a tool error");
+  });
+
+  it("shows an unlisted probe tool as a setup gap, at no cost", async () => {
     const result = await runAgainst(extensionManager(), {
       config: { toolName: "nope", pollTimeoutMs: 500 },
     });
 
-    expect(result.outcome).toBe("incomplete");
-    expect(result.passed).toBe(false);
-    expect(result.incompleteReason).toContain('"nope"');
-    expect(result.incompleteReason).toContain("is not listed by this server");
-    expect(result.incompleteReason).toContain("long_job");
+    // Naming a tool the server does not list is the caller's setup to fix:
+    // every tool check is "Not run" and costs nothing.
+    const unlisted = result.checks.filter(isMissingInputCheck);
+    expect(unlisted.length).toBeGreaterThan(0);
+    expect(unlisted[0]!.error?.message).toContain('"nope"');
+    expect(unlisted[0]!.error?.message).toContain(
+      "is not listed by this server"
+    );
+    expect(missingInputMessage(unlisted[0]!)).toBe(
+      'This server doesn\'t list the tool "nope", so there was no task to check. Select a listed tool in setup, then run again.'
+    );
+    expect(scoreFromTasksResult(result)).toMatchObject({ failed: 0 });
   });
 
   it("reports INCOMPLETE when the probed tool never produced a task", async () => {
@@ -1092,20 +1282,23 @@ describe("MCPTasksConformanceTest", () => {
       config: { toolName: "long_job", pollTimeoutMs: 500 },
     });
 
-    // Result-type discipline DID run (a normal result is conformant); the
-    // lifecycle checks did not, and that is the run's verdict.
+    // Result-type discipline DID run (a normal result is conformant). The
+    // lifecycle checks did not, but the server may decline a task: picking a
+    // tool that makes one is setup, so they are "Not run" at no cost.
     expect(statusMap(result)["tasks-result-type-discipline"]).toBe("passed");
     expect(statusMap(result)["tasks-ttl-shape"]).toBe("skipped");
-    expect(result.outcome).toBe("incomplete");
-    expect(result.incompleteReason).toContain(
+    const ttl = result.checks.find((c) => c.id === "tasks-ttl-shape")!;
+    expect(isMissingInputCheck(ttl)).toBe(true);
+    expect(ttl.error?.message).toContain(
       '"long_job" returned a normal result instead of a task'
     );
-    expect(result.incompleteReason).toContain("--tool-name");
+    expect(ttl.error?.message).toContain("--tool-name");
     // The app swaps the CLI flags for setup copy.
-    const ttl = result.checks.find((c) => c.id === "tasks-ttl-shape")!;
-    expect(noTaskCreatedMessage(ttl)).toBe(
+    expect(missingInputMessage(ttl)).toBe(
       '"long_job" did not create a task, so there was nothing to check. Select a tool that creates a task in setup, or change its arguments so it does, then run again.'
     );
+    expect(noTaskCreatedMessage(ttl)).toBe(missingInputMessage(ttl));
+    expect(scoreFromTasksResult(result)).toMatchObject({ failed: 0 });
   });
 
   it("names a failed tool call instead of calling it a normal result", async () => {
@@ -1159,6 +1352,106 @@ describe("MCPTasksConformanceTest", () => {
     ).toBe(true);
   });
 
+  it("does not call a tool as a task when a 2025-11-25 server leaves out tasks.requests.tools.call", async () => {
+    // `tasks.cancel` alone puts the connection on the legacy wire, and the
+    // tool itself says `required`, but 2025-11-25 tasks.mdx:113 forbids the
+    // task call regardless of the tool's own `taskSupport`.
+    let toolCalls = 0;
+    const manager = extensionManager({
+      getNegotiatedProtocolVersion: () => "2025-11-25",
+      getServerCapabilities: () => ({ tools: {}, tasks: { cancel: {} } }),
+      getTasksSupport: () => ({
+        wire: "legacy",
+        toolCalls: false,
+        list: false,
+        cancel: true,
+        update: false,
+        inlineResult: false,
+      }),
+      listTools: async () => ({
+        tools: [
+          {
+            name: "long_job",
+            inputSchema: {},
+            execution: { taskSupport: "required" },
+          },
+        ],
+      }),
+      executeTool: async () => {
+        toolCalls += 1;
+        throw new Error("must not call a tool as a task");
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job" },
+    });
+
+    expect(toolCalls).toBe(0);
+    expect(result.passed).toBe(true);
+    for (const id of [
+      "tasks-result-type-discipline",
+      "tasks-ttl-shape",
+      "tasks-inline-result",
+    ]) {
+      const entry = result.checks.find((c) => c.id === id)!;
+      expect(entry.status).toBe("skipped");
+      expect(entry.skipReason).toBe("not-applicable");
+      expect(entry.error?.message).toContain("tasks.requests.tools.call");
+    }
+  });
+
+  it("does not call a named tool as a task when it has no taskSupport", async () => {
+    // 2025-11-25 tasks.mdx:115: a tool with no `taskSupport` MUST NOT be
+    // called as a task, even when the server accepts task tool calls.
+    let toolCalls = 0;
+    const manager = extensionManager({
+      getNegotiatedProtocolVersion: () => "2025-11-25",
+      getServerCapabilities: () => ({
+        tools: {},
+        tasks: { requests: { tools: { call: {} } } },
+      }),
+      getTasksSupport: () => ({
+        wire: "legacy",
+        toolCalls: true,
+        list: false,
+        cancel: false,
+        update: false,
+        inlineResult: false,
+      }),
+      listTools: async () => ({
+        tools: [
+          { name: "hello", inputSchema: {} },
+          {
+            name: "hello-task",
+            inputSchema: {},
+            execution: { taskSupport: "optional" },
+          },
+        ],
+      }),
+      executeTool: async () => {
+        toolCalls += 1;
+        throw new Error("must not call hello as a task");
+      },
+    });
+
+    const result = await runAgainst(manager, { config: { toolName: "hello" } });
+
+    expect(toolCalls).toBe(0);
+    for (const id of [
+      "tasks-result-type-discipline",
+      "tasks-ttl-shape",
+      "tasks-inline-result",
+    ]) {
+      const entry = result.checks.find((c) => c.id === id)!;
+      expect(entry.status).toBe("skipped");
+      expect(entry.skipReason).toBe("could-not-run");
+      expect(missingInputMessage(entry)).toBe(
+        '"hello" has no taskSupport, so it can\'t run as a task. Select a tool that can in setup (hello-task), then run again.'
+      );
+    }
+  });
+
   it("does not send the unknown-id mutations when their advice was not picked", async () => {
     const mutatedIds: string[] = [];
     const manager = extensionManager({
@@ -1184,14 +1477,49 @@ describe("MCPTasksConformanceTest", () => {
       "passed"
     );
     expect(mutatedIds).toEqual([]);
+    // Not asked, so neither warned about nor claimed as met.
+    expect(unpicked.passedAdvice).toBeUndefined();
 
-    await runAgainst(manager, {
+    const picked = await runAgainst(manager, {
       config: {
         ...config,
         readinessIds: ["tasks-readiness-unknown-task-id-mutations"],
       },
     });
     expect(mutatedIds).toHaveLength(2);
+    // Both mutations answered -32602, so the advice is met.
+    expect(picked.readiness).toBeUndefined();
+    expect(picked.passedAdvice).toEqual([
+      {
+        id: "tasks-readiness-unknown-task-id-mutations",
+        title: "Unknown Task Id On Update And Cancel",
+        specStrength: "SHOULD",
+      },
+    ]);
+  });
+
+  it("claims no unknown-id pass when one mutation never got an answer", async () => {
+    const manager = extensionManager({
+      updateTask: async () => {
+        throw rpcErrorValue(-32602, "unknown task");
+      },
+      cancelTaskExt: async () => {
+        // No JSON-RPC code: the call failed locally, so cancel judged nothing.
+        throw new Error("socket hang up");
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: {
+        toolName: "long_job",
+        pollTimeoutMs: 1000,
+        checkIds: ["tasks-invalid-task-id-rejected"],
+        readinessIds: ["tasks-readiness-unknown-task-id-mutations"],
+      },
+    });
+
+    expect(result.readiness).toBeUndefined();
+    expect(result.passedAdvice).toBeUndefined();
   });
 
   it("reports a connection failure as a failed run", async () => {

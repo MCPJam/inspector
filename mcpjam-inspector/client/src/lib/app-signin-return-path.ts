@@ -20,6 +20,7 @@
  *   - it expires, so a path stored days ago in a long-lived tab cannot
  *     hijack an unrelated sign-in later.
  */
+import { readPromoCampaign, redeemPath } from "./promo-intent";
 import { projectTransitionRecovery } from "./auth/project-transition-recovery";
 import { normalizeReturnTargetPath, routePaths } from "./app-navigation";
 import { isAppRelativeTarget, readProjectPathSegment } from "./project-route";
@@ -36,6 +37,28 @@ export const APP_SIGN_IN_RETURN_PATH_TTL_MS = 30 * 60 * 1000;
 interface StoredReturnPath {
   path: string;
   storedAt: number;
+}
+
+const ACCESS_REQUEST_PATHNAME = /^\/access-requests\/[A-Za-z0-9_-]+$/;
+
+/**
+ * `/access-requests/<id>`, the page an owner opens from a request email. It is
+ * a global special route, not a tab, so tab normalization would drop it.
+ */
+export function isAccessRequestPathname(pathname: string): boolean {
+  return ACCESS_REQUEST_PATHNAME.test(pathname);
+}
+
+/** The page plus the email's `decision` choice, and nothing else. */
+function accessRequestReturnPath(path: string): string | null {
+  const url = new URL(path, "https://app.mcpjam.com");
+  // The router opens the page with a trailing slash too; return it without.
+  const pathname = url.pathname.replace(/\/+$/, "");
+  if (!isAccessRequestPathname(pathname)) return null;
+  const decision = url.searchParams.get("decision");
+  return decision === "approve" || decision === "decline"
+    ? `${pathname}?decision=${decision}`
+    : pathname;
 }
 
 function isStorableReturnPath(path: string): boolean {
@@ -116,7 +139,15 @@ export function readAppSignInReturnPath(
     }
     if (!isStorableReturnPath(parsed.path)) return null;
     // The card entry is standalone and has no app navigation tab.
-    if (parsed.path === "/redeem") return parsed.path;
+    if (parsed.path.split(/[?#]/)[0] === "/redeem") {
+      const url = new URL(parsed.path, "https://app.mcpjam.com");
+      return redeemPath(
+        readPromoCampaign(url.search),
+        url.searchParams.get("manual") === "1",
+      );
+    }
+    const accessRequest = accessRequestReturnPath(parsed.path);
+    if (accessRequest) return accessRequest;
     // Re-normalized on the way out, not just on the way in: this value has
     // been sitting in storage where anything on the origin could rewrite it.
     const normalized = normalizeReturnTargetPath(parsed.path, routePaths.root);

@@ -1,4 +1,5 @@
 import { refreshAuthorization } from "../oauth/browser-auth.js";
+import { captureConformanceRun } from "../telemetry.js";
 import {
   captureOpenAIProfile,
   findOpenAIProfileTool,
@@ -11,6 +12,7 @@ import {
   getConformanceClientCredentialsDynamicRegistrationMetadata,
 } from "../oauth/client-identity.js";
 import { createOAuthStateMachine } from "../oauth/state-machines/factory.js";
+import { validateAuthorizationResponseIssuer } from "../oauth/state-machines/debug-oauth-2026-07-28.js";
 import { classifyUnauthenticatedProbe } from "../oauth/state-machines/shared/challenges.js";
 import { responseFailureFindingKey } from "../oauth/state-machines/shared/response-error.js";
 import { isLoopbackOAuthUrl } from "../oauth/ssrf-guard.js";
@@ -487,6 +489,7 @@ function mergeConformanceDynamicRegistration(
 export class OAuthConformanceTest {
   private readonly config: NormalizedOAuthConformanceConfig;
   private readonly deps: OAuthConformanceRunnerDependencies;
+  private readonly suppressTelemetry: boolean;
 
   constructor(
     config: OAuthConformanceConfig,
@@ -494,9 +497,13 @@ export class OAuthConformanceTest {
   ) {
     this.config = normalizeOAuthConformanceConfig(config);
     this.deps = deps;
+    // The normalized config drops it, so read it from the caller's config.
+    this.suppressTelemetry = config.__suppressTelemetry === true;
   }
 
   async run(): Promise<ConformanceResult> {
+    if (!this.suppressTelemetry)
+      void captureConformanceRun("sdk", { suite: "oauth", mode: "single" });
     const startedAt = Date.now();
     const steps: StepResult[] = [];
     let state = cloneEmptyFlowState();
@@ -876,9 +883,25 @@ export class OAuthConformanceTest {
                     request: trackedRequest,
                   });
 
+            // Versions are ISO dates, so string order is release order.
+            if (this.config.protocolVersion >= "2026-07-28") {
+              // RFC 9207, all four cases, before the code goes anywhere near
+              // the token endpoint. Earlier versions don't require it.
+              const issCheck = validateAuthorizationResponseIssuer({
+                recordedIssuer:
+                  state.recordedIssuer ?? state.authorizationServerMetadata?.issuer,
+                returnedIss: authorizationResult.iss,
+                issParameterSupported:
+                  state.authorizationServerMetadata
+                    ?.authorization_response_iss_parameter_supported,
+              });
+              if (!issCheck.ok) throw new Error(issCheck.reason);
+            }
+
             updateState({
               currentStep: "received_authorization_code",
               authorizationCode: authorizationResult.code,
+              authorizationResponseIss: authorizationResult.iss,
               error: undefined,
             });
 
@@ -1001,9 +1024,12 @@ export class OAuthConformanceTest {
 
           // A server the pre-flight found publishing this server's metadata
           // is graded from proactive discovery, so its 2xx is expected here.
+          // So is one the pre-flight saw challenge: a 401 proves it requires
+          // sign-in, and a later 2xx cannot make that not applicable.
           if (
             probe.kind === "anonymous_allowed" &&
-            authRequirement.requirement !== "optional"
+            authRequirement.requirement !== "optional" &&
+            authRequirement.requirement !== "required"
           ) {
             notApplicableReason = `the server answered a request without a token with HTTP ${probeStatus}`;
             // Replace the transition into the probe with the same single row

@@ -1,3 +1,7 @@
+import { originalMcpInputSchema } from "./original-mcp-input-schema.js";
+import { discoveryRunMetadata } from "./sdk-version.js";
+import { redactUnavailableToolError, validateDeferredToolInputs } from "./progressive-discovery/step.js";
+import { collectRejectedToolCalls, markRejectedCalls } from "./progressive-discovery/rejected-calls.js";
 /**
  * HostRunner - Runs LLM prompts with tool calling for evals
  */
@@ -24,7 +28,12 @@ import type {
 import type { CallToolResult } from "@modelcontextprotocol/client";
 import { resolveToolUiResourceUri } from "./widget-runtime/tool-ui-resource.js";
 import { createModelFromString, parseLLMString } from "./model-factory.js";
+import { withUniqueToolCallIds } from "./tool-call-ids.js";
 import { withProviderSafeToolNames } from "./provider-tool-names.js";
+import {
+  readDiscoveryMode,
+  startProgressiveTurn,
+} from "./progressive-discovery/turn.js";
 import { isToolPolicyBlockResult } from "./contract/tool-policy.js";
 
 /**
@@ -68,6 +77,10 @@ import {
   isAppOnlyTool,
 } from "./mcp-client-manager/tool-converters.js";
 import { mcpCallToolResultToModelOutput } from "./mcp-client-manager/model-output.js";
+import {
+  projectToolResultByRule,
+  structuredContentRuleOf,
+} from "./mcp-client-manager/tool-result-rule.js";
 import { assertCallToolResult } from "./mcp-client-manager/result-guards.js";
 import { buildMcpAppWidgetSnapshot } from "./widget-snapshots.js";
 import { injectOpenAICompat } from "./widget-helpers.js";
@@ -121,6 +134,13 @@ interface HostRunnerBaseConfig {
    * result's tool calls — the same projection hosted grading uses.
    */
   policyBlockedToolCallIds?: () => ReadonlySet<string>;
+  /**
+   * @internal How to read a host that leaves `progressiveToolDiscovery` unset.
+   * Saved clients and host templates mean Auto by it, as hosted runs read it,
+   * so `runWithClient` and the suite-file runner pass `"auto"`. A host built
+   * in code stays off unless it sets `true`.
+   */
+  progressiveToolDiscoveryWhenUnset?: "auto";
   baseUrls?: CreateModelOptions["baseUrls"];
   /** Tools to provide to the LLM (Tool[] from manager.getTools() or AiSdkTool from manager.getToolsForAiSdk()) */
   tools: Tool[] | AiSdkTool;
@@ -230,15 +250,23 @@ function convertToToolSet(
         const result = await tool.execute(args as Record<string, unknown>);
         return assertCallToolResult(result, `Tool "${tool.name}" result`);
       },
-      toModelOutput: ({ output }) =>
-        (mcpCallToolResultToModelOutput(output as CallToolResult, {
+      toModelOutput: ({ output }) => {
+        const rule = structuredContentRuleOf(options.modelVisibleMcpToolResults);
+        if (rule) {
+          return projectToolResultByRule(output as CallToolResult, rule, {
+            modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
+          });
+        }
+        return (mcpCallToolResultToModelOutput(output as CallToolResult, {
           modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
         }) ?? {
           type: "json" as const,
           value: output as any,
-        }) as any,
+        }) as any;
+      },
     });
 
+    Object.assign(converted, { [originalMcpInputSchema]: tool.inputSchema });
     // Preserve _serverId like getToolsForAiSdk() does
     if (tool._meta?._serverId) {
       (converted as any)._serverId = tool._meta._serverId;
@@ -364,6 +392,7 @@ export class HostRunner implements HostExecutor {
    * when no host was supplied (legacy explicit-model path).
    */
   private readonly hostPolicy: HostExecutionPolicy | undefined;
+  private readonly progressiveToolDiscoveryWhenUnset: "auto" | undefined;
   /**
    * Description rewrites applied after visibility filtering. Stored so
    * `withOptions` re-runs them against the raw `Tool[]` under a new host.
@@ -400,6 +429,8 @@ export class HostRunner implements HostExecutor {
           this.hostSnapshot as unknown as Record<string, unknown>
         )
       : undefined;
+    this.progressiveToolDiscoveryWhenUnset =
+      config.progressiveToolDiscoveryWhenUnset;
 
     // Resolve the model: explicit field wins; otherwise pull from host
     // snapshot; if neither, the discriminated-union types should have
@@ -832,7 +863,7 @@ export class HostRunner implements HostExecutor {
   async run(message: string, options?: PromptOptions): Promise<PromptResult> {
     const startTime = Date.now();
     const unavailable: string[] = [];
-    const toolDefinitions = Object.entries(this.tools).map(([name, tool]) => {
+    const describeTool = ([name, tool]: [string, ToolSet[string]]) => {
       try {
         const rawTool = isToolArray(this.rawTools)
           ? this.rawTools.find((candidate) => candidate.name === name)
@@ -848,8 +879,10 @@ export class HostRunner implements HostExecutor {
         unavailable.push(`toolDefinitions.${name}.inputSchema`);
         return { name, description: tool.description };
       }
-    });
+    };
+    const toolDefinitions = Object.entries(this.tools).map(describeTool);
     const recordedContext = {
+      ...discoveryRunMetadata(this.hostSnapshot?.runUnloadedToolCalls),
       toolDefinitions,
       systemPrompt: this.systemPrompt,
       model: this.model,
@@ -867,6 +900,8 @@ export class HostRunner implements HostExecutor {
     const pendingStepToolCalls: StartedToolCall[] = [];
     // Every completed step's response messages, in order. AI SDK 7's
     // `step.response.messages` holds only that step's, so they accumulate here.
+    const rejected = new Set<string>();
+    const malformedToolCalls: { toolName: string; input: string }[] = [];
     const completedStepMessages: ModelMessage[] = [];
     let partialInputTokens = 0;
     let partialOutputTokens = 0;
@@ -913,11 +948,9 @@ export class HostRunner implements HostExecutor {
         baseUrls: this.baseUrls,
         customProviders: this.customProviders,
       };
-      const model = withProviderSafeToolNames(
-        (this.createLanguageModel ?? createModelFromString)(
+      const model = (this.createLanguageModel ?? createModelFromString)(
           this.model,
           modelOptions
-        )
       );
       const stopAfterToolCallNames = this.normalizeStopAfterToolCall(
         options?.stopAfterToolCall
@@ -938,10 +971,34 @@ export class HostRunner implements HostExecutor {
       const contextMessages = this.buildContextMessages(options?.context);
       const userMessage: UserModelMessage = { role: "user", content: message };
       const resolvedTimeout = options?.timeout ?? options?.timeoutMs;
+      const discovery = startProgressiveTurn({
+        tools: this.tools,
+        mode: readDiscoveryMode(
+          this.hostSnapshot,
+          this.progressiveToolDiscoveryWhenUnset
+        ),
+        priorMessages: contextMessages,
+        runUnloadedToolCalls: this.hostSnapshot?.runUnloadedToolCalls,
+        onCallStarted: (call) =>
+          pendingStepToolCalls.push({ ...call, shortCircuited: false }),
+      });
+      if (discovery) {
+        toolDefinitions.push(
+          ...Object.entries(discovery.metaTools).map(describeTool)
+        );
+      }
 
       const generateTextOptions: any = {
-        model: model as any,
-        tools: instrumentedTools,
+        model: withUniqueToolCallIds(
+          withProviderSafeToolNames(model, () => discovery?.currentStep()?.shown),
+          contextMessages,
+        ),
+        tools: discovery ? { ...validateDeferredToolInputs(instrumentedTools, discovery.currentStep), ...discovery.metaTools } : instrumentedTools,
+        ...(discovery && {
+          repairToolCall: redactUnavailableToolError,
+          prepareStep: ({ stepNumber }: { stepNumber: number }) =>
+            discovery.prepareStep(stepNumber),
+        }),
         system: this.systemPrompt,
         // Use messages array for multi-turn, simple prompt for single-turn
         ...(contextMessages.length > 0
@@ -991,11 +1048,21 @@ export class HostRunner implements HostExecutor {
           partialInputTokens += stepResult.usage?.inputTokens ?? 0;
           partialOutputTokens += stepResult.usage?.outputTokens ?? 0;
           lastCompletedStepText = stepResult.text ?? "";
-          completedStepMessages.push(...(stepResult.response?.messages ?? []));
+          collectRejectedToolCalls(rejected, stepResult.toolCalls);
+          for (const call of stepResult.toolCalls) {
+            if (rejected.has(call.toolCallId) && typeof call.input === "string") {
+              malformedToolCalls.push({ toolName: call.toolName, input: call.input });
+            }
+          }
+          completedStepMessages.push(...markRejectedCalls(stepResult.response?.messages ?? [], rejected));
           const blocked = this.policyBlockedToolCallIds?.();
           completedToolCalls.push(
             ...stepResult.toolCalls
-              .filter((toolCall) => !blocked?.has(toolCall.toolCallId))
+              .filter(
+                (toolCall) =>
+                  !blocked?.has(toolCall.toolCallId) &&
+                  !rejected.has(toolCall.toolCallId)
+              )
               .map((toolCall) => ({
                 toolName: toolCall.toolName,
                 arguments: (toolCall.input ?? {}) as Record<string, unknown>,
@@ -1008,10 +1075,17 @@ export class HostRunner implements HostExecutor {
       const result = await generateText(generateTextOptions);
 
       const e2eMs = Date.now() - startTime;
-      const blockedToolCallIds = this.policyBlockedToolCallIds?.();
+      // Left out: calls a tool policy refused, and calls to tools discovery
+      // had not loaded. Neither reached a server.
+      const blockedToolCallIds = new Set([
+        ...(this.policyBlockedToolCallIds?.() ?? []),
+        ...rejected,
+      ]);
       const toolCalls = extractToolCalls(
         result,
-        blockedToolCallIds ? { excludeToolCallIds: blockedToolCallIds } : {}
+        blockedToolCallIds.size
+          ? { excludeToolCallIds: blockedToolCallIds }
+          : {}
       );
       const usage = result.totalUsage ?? result.usage;
       const inputTokens = usage?.inputTokens ?? 0;
@@ -1023,7 +1097,7 @@ export class HostRunner implements HostExecutor {
       // Add response messages (assistant + tool messages from agentic loop).
       // `responseMessages` spans every step; in AI SDK 7 `response` is only
       // the final step's.
-      messages.push(...(result.responseMessages ?? []));
+      messages.push(...markRejectedCalls(result.responseMessages ?? [], rejected));
 
       const recordedSpans = spanIntegration.getSpans();
       patchEvalSpansMessageRangesFromSteps(
@@ -1040,6 +1114,7 @@ export class HostRunner implements HostExecutor {
         messages,
         text: result.text,
         toolCalls,
+        malformedToolCalls,
         usage: {
           inputTokens,
           outputTokens,
@@ -1077,7 +1152,7 @@ export class HostRunner implements HostExecutor {
       const partialToolCalls = [
         ...completedToolCalls,
         ...pendingStepToolCalls
-          .filter((toolCall) => !blockedAtFailure?.has(toolCall.toolCallId))
+          .filter((toolCall) => !blockedAtFailure?.has(toolCall.toolCallId) && !rejected.has(toolCall.toolCallId))
           .map((toolCall) => ({
             toolName: toolCall.toolName,
             arguments: toolCall.arguments,
@@ -1091,6 +1166,7 @@ export class HostRunner implements HostExecutor {
         messages: partialMessages,
         text: lastCompletedStepText,
         toolCalls: partialToolCalls,
+        malformedToolCalls,
         usage: {
           inputTokens: partialInputTokens,
           outputTokens: partialOutputTokens,
@@ -1182,6 +1258,9 @@ export class HostRunner implements HostExecutor {
         options.createLanguageModel ?? this.createLanguageModel,
       policyBlockedToolCallIds:
         options.policyBlockedToolCallIds ?? this.policyBlockedToolCallIds,
+      progressiveToolDiscoveryWhenUnset:
+        options.progressiveToolDiscoveryWhenUnset ??
+        this.progressiveToolDiscoveryWhenUnset,
       baseUrls: options.baseUrls ?? this.baseUrls,
       maxSteps: options.maxSteps ?? this.maxSteps,
       customProviders: options.customProviders ?? this.customProviders,

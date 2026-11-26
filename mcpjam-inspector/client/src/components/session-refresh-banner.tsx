@@ -74,6 +74,12 @@ export function SessionRefreshBanner({
         </Button>
       )}
 
+      {!isSignedOut && (
+        <Button size="sm" variant="outline" onClick={handleSignIn}>
+          Sign in
+        </Button>
+      )}
+
       {dismissible && (
         <button
           type="button"

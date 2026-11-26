@@ -11,6 +11,8 @@ import {
 import { describeAsSlug, describeError } from "@mcpjam/sdk/browser";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import type { MCPJamLimitSurface } from "@/stores/mcpjam-limit-dialog-store";
+import { useNativeHarnessLimitDialogStore } from "@/stores/native-harness-limit-dialog-store";
+import { NATIVE_HARNESS_TRIAL_EXHAUSTED_CODE } from "@/shared/native-harness-trial";
 
 /**
  * The organization's admin-set spend budget is exhausted for the current
@@ -298,6 +300,26 @@ const hasFrontierSignInCode = (
   return Object.values(value).some((item) => hasFrontierSignInCode(item, seen));
 };
 
+const NATIVE_HARNESS_TRIAL_CODE_PATTERN = new RegExp(
+  `\\b${NATIVE_HARNESS_TRIAL_EXHAUSTED_CODE}\\b`,
+);
+
+/**
+ * The organization's native harness trial is used up. Read from the code at
+ * any depth, and from the text around it: a refusal reaches here as a JSON
+ * body, as the runner's "<sentence> (<code>, HTTP <status>)", or as a stored
+ * attempt's code beside a sentence that no longer carries it. The code is no
+ * English phrase, so finding it anywhere is the refusal.
+ */
+export const isNativeHarnessTrialRefusal = (
+  args: MCPJamLimitErrorInput,
+): boolean =>
+  args.code === NATIVE_HARNESS_TRIAL_EXHAUSTED_CODE ||
+  [args.message, ...collectStringValues(args.details)].some(
+    (value) =>
+      typeof value === "string" && NATIVE_HARNESS_TRIAL_CODE_PATTERN.test(value),
+  );
+
 export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
   // Authentication gating is not credit exhaustion: do not mark the wallet empty.
   if (
@@ -309,6 +331,21 @@ export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
     )
   ) {
     useFrontierSignInDialogStore.getState().open();
+    return true;
+  }
+  // Nor is the native harness trial: buying credits does not lift it.
+  if (isNativeHarnessTrialRefusal(args)) {
+    const organizationId = findMCPJamLimitOrganizationId(args);
+    useNativeHarnessLimitDialogStore.getState().open(
+      {
+        ...(organizationId ? { organizationId } : {}),
+        ...(args.surface === "scenario" ? { surface: "scenario" } : {}),
+      },
+      [
+        ...(args.runId ? [`run:${args.runId}`] : []),
+        ...(args.swarmRunGroupId ? [`wave:${args.swarmRunGroupId}`] : []),
+      ],
+    );
     return true;
   }
   if (
@@ -446,6 +483,10 @@ const describeBurstRetry = (retryAfterMs: number | undefined): string => {
   return `Too many Ask MCPJam turns in a row. Try again in ${seconds}s.`;
 };
 
+/** For a size refusal the next message can't fix: its turn must stay, or the chat is too large without it. */
+export const CONVERSATION_TOO_LARGE_MESSAGE =
+  "This conversation is too large to continue. Start a new chat to keep going.";
+
 export function isGuestInputTooLargeMessage(
   message: string | null | undefined,
 ): boolean {
@@ -455,13 +496,57 @@ export function isGuestInputTooLargeMessage(
   return codes.has("guest_input_too_large");
 }
 
+type GuestInputTooLargeNumbers = {
+  limit: number;
+  estimatedInputTokens: number;
+};
+
+/** Read from the object that carries the code, nested or not, like `collectCodes`. */
+const findGuestInputTooLargeNumbers = (
+  value: unknown,
+  seen: WeakSet<object>,
+): GuestInputTooLargeNumbers | null => {
+  if (typeof value === "string") {
+    for (const parsed of collectJsonCandidates(value)) {
+      const found = findGuestInputTooLargeNumbers(parsed, seen);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (!value || typeof value !== "object" || seen.has(value)) return null;
+  seen.add(value);
+  const { code, limit, estimatedInputTokens } = value as Record<
+    string,
+    unknown
+  >;
+  if (
+    code === "guest_input_too_large" &&
+    typeof limit === "number" &&
+    typeof estimatedInputTokens === "number"
+  ) {
+    return { limit, estimatedInputTokens };
+  }
+  for (const item of Array.isArray(value) ? value : Object.values(value)) {
+    const found = findGuestInputTooLargeNumbers(item, seen);
+    if (found) return found;
+  }
+  return null;
+};
+
+/** The guest size refusal's numbers, when its body carries them. */
+export function guestInputTooLargeNumbers(
+  message: string,
+): GuestInputTooLargeNumbers | null {
+  return findGuestInputTooLargeNumbers(message, new WeakSet());
+}
+
 /** Plain copy for an Ask MCPJam refusal, not its transport envelope. */
 export function describeAgentRefusalMessage(
   message: string | null | undefined,
 ): string | null {
   if (!message) return null;
   if (isGuestInputTooLargeMessage(message)) {
-    return "This conversation is too large to send. Shorten your message, start a new chat, or disconnect servers and try again.";
+    return "This conversation is too large to send. Shorten your message or start a new chat.";
   }
   const codes = new Set<string>();
   collectCodes(message, codes);

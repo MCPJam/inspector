@@ -26,7 +26,7 @@ import type {
   ClaudeCapabilityBadge,
   ClaudeReadinessFinding,
 } from "../types.js";
-import type { ClaudeAuthEvidence } from "./auth.js";
+import { claudeSignInTrigger, type ClaudeAuthEvidence } from "./auth.js";
 import {
   informational,
   notEvaluated,
@@ -172,7 +172,10 @@ function judgeLazyAuthProbe(
           : `answered ${call.outcome}${call.status ? ` (HTTP ${call.status})` : ""}`;
     return {
       state: "unsupported",
-      detail: `the protected tool "${call.toolName}" ${what}. Claude starts sign-in only on HTTP 401 with WWW-Authenticate; a 200 isError result is an ordinary tool failure to Claude.`,
+      detail: `the protected tool "${call.toolName}" ${what}. ${claudeSignInTrigger(
+        call.outcome !== "unauthorized" &&
+          call.challenge?.source === "tool_result_meta"
+      )}.`,
     };
   }
 

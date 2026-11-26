@@ -81,6 +81,8 @@ export type ReusedPersona = {
 /** One journey to launch, with the persona it belongs to (for the Running matrix). */
 export type LaunchTarget = {
   journeyId: string;
+  /** Local proposal identity until a launch returns a real run id. */
+  launchProgressKey?: string;
   label: string;
   /** Goal/journey name alone — Running-step cells lead with this. */
   goalLabel?: string;

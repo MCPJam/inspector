@@ -32,11 +32,29 @@ import {
   type ClaudeAuthEvidence,
 } from "./checks/auth.js";
 import type { DirectoryLazyAuthProbeEvidence } from "../directory-readiness/lazy-auth.js";
+import type { DirectoryDecisionScan } from "../directory-readiness/decisions/grade.js";
+import type { DirectoryAnswer } from "../directory-readiness/flows/types.js";
+import { CLAUDE_CONNECTOR_FLOW } from "../directory-readiness/flows/claude-connector.js";
+import {
+  directoryDeclaresNoSignIn,
+  type DirectoryReviewerRunInput,
+} from "../directory-readiness/reviewer/evidence.js";
+import { holdToReviewerAccount } from "../directory-readiness/reviewer/grade.js";
+import { claudeSubmissionEvidenceFromAnswers } from "./answers.js";
+import { runClaudeAnswerStepChecks } from "./checks/answer-steps.js";
+import { runClaudeCrossToolScan } from "./checks/cross-tool.js";
+import { runClaudeDecisionChecks } from "./checks/decisions.js";
+import { runClaudeDeclarationChecks } from "./checks/declarations.js";
 import {
   runClaudeEndpointChecks,
   type ClaudeEndpointEvidence,
 } from "./checks/endpoint.js";
 import { runClaudeOptionalFeatureChecks } from "./checks/optional-features.js";
+import { runClaudeReviewerChecks } from "./checks/reviewer.js";
+import {
+  blockOnServerFailure,
+  type ClaudeServerFailure,
+} from "./dependencies.js";
 import {
   CLAUDE_SUBMISSION_PROFILE_INPUT,
   runClaudeSubmissionChecks,
@@ -88,8 +106,10 @@ import type { Tool } from "@modelcontextprotocol/client";
  * and a live connection, and grading it needs neither. Splitting them means
  * the grading half is a pure function that a test can drive with a fixture and
  * a hosted surface cannot accidentally point at `169.254.169.254`.
+ *
+ * A submission run also brings its reviewer path and client-signature probe.
  */
-export interface ClaudeReadinessInput {
+export interface ClaudeReadinessInput extends DirectoryReviewerRunInput {
   /** The connector URL exactly as the user entered it. */
   enteredUrl: string;
   authMode: ClaudeReadinessAuthMode;
@@ -113,9 +133,23 @@ export interface ClaudeReadinessInput {
   toolListingComplete?: boolean;
   /** Why the tool listing is partial, in plain words. */
   toolListingError?: string;
+  /**
+   * Set when the run could not use the server. The checks that needed it
+   * say so with the failure as their reason; the others keep their verdicts.
+   */
+  serverFailure?: ClaudeServerFailure;
 
-  /** Raw submission profile, validated here so its issues become findings. */
+  /**
+   * Raw submission profile, validated here so its issues become findings.
+   *
+   * @deprecated Pass `submissionAnswers`; a profile is ignored beside them.
+   */
   submissionProfile?: unknown;
+  /**
+   * A `claude-connector` submission's stored answers. Graded with the
+   * portal's rules, and its Authentication answers are the declared auth mode.
+   */
+  submissionAnswers?: readonly DirectoryAnswer[];
   /** Features the submitter claimed, if any. */
   claimedFeatures?: {
     lazyAuthentication?: boolean;
@@ -146,6 +180,8 @@ export interface ClaudeReadinessInput {
    * if it wanted to.
    */
   llmObservations?: ClaudeObservationState;
+  /** What the decision scan asked and the answers. Absent, the scan is off. */
+  decisionScan?: DirectoryDecisionScan;
 
   /** Suite results consumed as evidence, named for the report. */
   evidenceSources?: string[];
@@ -219,8 +255,11 @@ export function gradeClaudeReadiness(
   // down the "no input" branch would hide a caller's mistake behind a status
   // that reads like our limitation — the very thing the parse result exists to
   // prevent.
+  const answers =
+    input.submissionAnswers &&
+    claudeSubmissionEvidenceFromAnswers(input.submissionAnswers);
   const parsedProfile =
-    input.submissionProfile === undefined
+    answers || input.submissionProfile === undefined
       ? { profile: undefined as ClaudeSubmissionProfile | undefined, issues: [] }
       : parseClaudeSubmissionProfile(input.submissionProfile);
 
@@ -248,7 +287,9 @@ export function gradeClaudeReadiness(
   const authEvidence = {
     ...input.auth,
     declaredAuthMode:
-      parsedProfile.profile?.declaredAuthMode ?? input.auth.declaredAuthMode,
+      answers?.declaredAuthMode ??
+      parsedProfile.profile?.declaredAuthMode ??
+      input.auth.declaredAuthMode,
     ...(lazyAuthProbe ? { lazyAuthProbe } : {}),
     ...(stepUpChallenge ? { insufficientScopeChallenge: stepUpChallenge } : {}),
   };
@@ -268,23 +309,34 @@ export function gradeClaudeReadiness(
     hasBorrowedAccessToken: input.authMode === "provided-token",
   });
 
-  const findings: ClaudeReadinessFinding[] = enforceCapabilityGate(
+  const listing = {
+    complete: input.toolListingComplete,
+    error: input.toolListingError,
+  };
+  const graded: ClaudeReadinessFinding[] = enforceCapabilityGate(
     [
     ...runClaudeEndpointChecks(input.endpoint, stamp),
     ...auth.findings,
-    ...runClaudeToolChecks(input.tools, stamp, {
-      complete: input.toolListingComplete,
-      error: input.toolListingError,
-    }),
+    ...runClaudeToolChecks(input.tools, stamp, listing),
+    runClaudeCrossToolScan(input.tools, stamp, listing),
+    ...runClaudeDecisionChecks(input, stamp, listing),
     ...runClaudeAppsChecks(input.apps, stamp),
     ...runClaudeSubmissionChecks(
       {
+        answers,
         profile: parsedProfile.profile,
         profileIssues: parsedProfile.issues,
         observedAuthMode: input.observedAuthMode,
+        auth: authEvidence,
       },
       stamp,
     ),
+    ...runClaudeDeclarationChecks(
+      { answers, tools: input.tools, listing },
+      stamp,
+    ),
+    ...runClaudeAnswerStepChecks(answers, stamp),
+    ...runClaudeReviewerChecks(input, stamp),
     ...optional.findings,
     ...gradeClaudeIntrusiveObservations(
       intrusiveMode,
@@ -296,10 +348,25 @@ export function gradeClaudeReadiness(
     // `experience-insights`, which is not a required lane — so their position
     // in this list cannot change a verdict. They are appended rather than
     // interleaved purely so a reader scanning the findings sees the
-    // deterministic inventory first.
-    ...mapClaudeObservationsToFindings(input.llmObservations?.envelope, stamp),
+    // deterministic inventory first. A model that read a server this run
+    // could not use read nothing, so its observations are not published.
+    ...mapClaudeObservationsToFindings(
+      input.serverFailure ? undefined : input.llmObservations?.envelope,
+      stamp,
+    ),
     ],
     input.capabilities,
+  );
+  // After the capability gate and the reviewer-only rule: when either applies
+  // beside a server failure, the server is the one to fix.
+  const findings = blockOnServerFailure(
+    holdToReviewerAccount(
+      graded,
+      CLAUDE_CONNECTOR_FLOW,
+      input.reviewerPath?.account,
+      directoryDeclaresNoSignIn(input.submissionAnswers ?? [])
+    ),
+    input.serverFailure
   );
 
   const badges: ClaudeCapabilityBadge[] = [...auth.badges, ...optional.badges];
@@ -323,7 +390,7 @@ export function gradeClaudeReadiness(
 
   return {
     status,
-    summary: buildRunSummary(status, lanes),
+    summary: buildRunSummary(status, lanes, input.serverFailure),
     context: {
       target: input.enteredUrl,
       authMode: input.authMode,
@@ -344,7 +411,14 @@ export function gradeClaudeReadiness(
 function buildRunSummary(
   status: ClaudeReadinessResult["status"],
   lanes: ClaudeReadinessLaneResult[],
+  serverFailure?: ClaudeServerFailure,
 ): string {
+  // An outage is the gap to close first: every input the lanes name is one
+  // the server would have supplied. A refused session is not summarized
+  // here, because a headless run against an OAuth server is refused by design.
+  if (serverFailure?.kind === "unreachable" && status === "incomplete") {
+    return `Readiness is undetermined: the server could not be reached (${serverFailure.detail}). Results that need no server stand. Check that the server is up and reachable, then run again.`;
+  }
   // From the shared constant, not a restated literal: `rollUpLaneStatus`
   // decides the verdict from `CLAUDE_REQUIRED_LANES`, and a second copy here
   // would let the summary name the wrong lanes after a change to that set.

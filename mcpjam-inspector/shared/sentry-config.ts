@@ -190,13 +190,16 @@ const TRACE_PROPAGATION_TARGETS: (string | RegExp)[] = [
  * String entries match by substring, so the bare-network spellings are
  * anchored: Chromium's "Failed to fetch dynamically imported module: <url>"
  * is a code-split chunk that no longer exists on the server, not the network
- * going away, and must keep reporting.
+ * going away, and must keep reporting. The SDK's fetch instrumentation
+ * appends the request host to these messages ("Failed to fetch
+ * (127.0.0.1:11434)") before `ignoreErrors` runs, so the anchor allows that
+ * suffix.
  */
 export const BROWSER_IGNORE_ERRORS: (string | RegExp)[] = [
   "ResizeObserver loop limit exceeded",
   "ResizeObserver loop completed with undelivered notifications",
   /^AbortError/,
-  /^(?:TypeError: )?Failed to fetch$/,
+  /^(?:TypeError: )?Failed to fetch(?: \([^()]*\))?$/,
   "NetworkError when attempting to fetch resource",
   "Load failed",
 ];

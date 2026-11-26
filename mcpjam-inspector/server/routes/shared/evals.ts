@@ -1,13 +1,14 @@
 import { localHarnessIdOf, shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
+import { freezeEvalRunWebAccounts } from "../../services/web-clients/web-client-run.js";
 import { localHarnessCapabilities } from "../../services/evals/runner-capabilities.js";
 import { casesAssertingWidgetRender, failRunBeforeExecution } from "../../services/evals/harness-admission.js";
 import { singleCaseHarnessBoxRefusal } from "../../services/evals/needs-ephemeral-sandbox.js";
 import { hostedBrowserAdvertisable } from "../../utils/computers/runtime-config.js";
-import { listBaseServers } from "../../utils/mcp-connections.js";
+import { listBaseServers, managerAccountsAtRun } from "../../utils/mcp-connections.js";
 import { suppressedSuiteStandardCheckIdsSchema } from "@mcpjam/sdk/contract";
 import { githubExecutionPolicy } from "../../services/github-checks/credential-policy.js";
 import { ConvexHttpClient } from "convex/browser";
-import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
+import type { MCPClientManager, MCPServerConfig, MCPServerReplayConfig } from "@mcpjam/sdk";
 import { readTasksPolicy } from "@mcpjam/sdk";
 import {
   caseIntentSchema,
@@ -48,10 +49,8 @@ import {
   defaultEvalExecutionBudgets,
   resolveSteps,
   runEvalSuiteWithAiSdk,
-  runFrozenSkillOptions,
   streamTestCase,
   throwIfEvalToolSnapshotFailed,
-  type EvalPinnedSkillSource,
   type EvalTestCase,
 } from "../../services/evals-runner";
 import {
@@ -83,6 +82,7 @@ import {
 } from "./eval-case-batch.js";
 import { logger } from "../../utils/logger";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { convexReadFetch } from "../v1/convex-read-errors.js";
 import {
   resolveOrgModelConfig,
   type ResolvedOrgModelConfig,
@@ -115,8 +115,8 @@ import {
   buildPinnedSkillSource,
   type BuiltPinnedSkillSource,
 } from "../../services/evals/pinned-skill-source.js";
+import type { PinnedSkillSource } from "../../services/environments/turn-skills.js";
 import { harnessToolPolicyLaunchRefusal } from "../../utils/harness/harness-proxy-policy-enforcement.js";
-import type { PinnedSkillArtifact } from "@/shared/skill-types";
 import type { LegacyModelSelection, ModelSelection } from "@mcpjam/sdk";
 import {
   readRoutingSelection,
@@ -142,6 +142,11 @@ import {
   casePredicatesSchema,
   type MatchOptionsDTO,
 } from "@/shared/eval-matching";
+import {
+  bearerNow,
+  followBearer,
+  type RunBearer,
+} from "../../utils/run-bearer.js";
 
 const toolChoiceSchema = z.union([
   z.enum(["auto", "none", "required"]),
@@ -643,7 +648,9 @@ export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
  * API callers cannot spoof run provenance. The pairing rule lives in
  * {@link EvalRunProvenance} beside the mutation call that has to honour it.
  */
-type RunEvalsWithManagerRequest = RunEvalsRequest & {
+type RunEvalsWithManagerRequest = Omit<RunEvalsRequest, "convexAuthToken"> & {
+  /** A scheduled run's job token renews while it runs (`run-bearer.ts`). */
+  convexAuthToken: RunBearer;
   runtimeVenue?: "local" | "hosted";
   /** Already resolved by the public inline-suite boundary. */
   hostAttachments?: Array<{
@@ -959,7 +966,7 @@ type RunTestCaseWithManagerRequest = RunTestCaseRequest & {
 export const MAX_TOTAL_LLM_CALLS = 300;
 
 export function assertSuiteRunWithinCap(
-  request: RunEvalsRequest,
+  request: Omit<RunEvalsRequest, "convexAuthToken">,
   configCount = 1,
 ) {
   const override = request.iterationOverride;
@@ -1313,7 +1320,7 @@ function buildRuntimeEnvironmentWithBindings(args: {
   };
 }
 
-export function createConvexClients(convexAuthToken: string) {
+export function createConvexClients(convexAuthToken: RunBearer) {
   const convexUrl = process.env.CONVEX_URL;
   if (!convexUrl) {
     throw new Error("CONVEX_URL is not set");
@@ -1324,8 +1331,10 @@ export function createConvexClients(convexAuthToken: string) {
     throw new Error("CONVEX_HTTP_URL is not set");
   }
 
-  const convexClient = new ConvexHttpClient(convexUrl);
-  convexClient.setAuth(convexAuthToken);
+  const convexClient = new ConvexHttpClient(convexUrl, {
+    fetch: convexReadFetch,
+  });
+  followBearer(convexAuthToken, (token) => convexClient.setAuth(token));
 
   return { convexClient, convexHttpUrl };
 }
@@ -1377,6 +1386,7 @@ export function filterAndRemapReplayConfigs(
   replayConfigs: MCPServerReplayConfig[],
   resolvedServerIds: string[],
   persistedServerIds: string[],
+  serverConfig?: (serverId: string) => MCPServerConfig | undefined,
 ): MCPServerReplayConfig[] {
   const persistedIdByResolvedId = new Map<string, string>();
 
@@ -1390,7 +1400,12 @@ export function filterAndRemapReplayConfigs(
 
   return replayConfigs.flatMap((config) => {
     const persistedServerId = persistedIdByResolvedId.get(config.serverId);
-    if (!persistedServerId) {
+    // A credential the backend delivered stays in this process, so its
+    // connection is never stored for replay.
+    if (
+      !persistedServerId ||
+      serverConfig?.(config.serverId)?.credentialSource === "mcpjam-backend"
+    ) {
       return [];
     }
 
@@ -2559,7 +2574,7 @@ export async function prepareEvalRun(
   // Unattended: an eval runs with nobody to approve anything, so a harness is
   // local only where its unattended evidence (Codex: its command sandbox) holds.
   let localAvailable = environmentHostConfig && venueProjectId
-    ? await shouldUseLocalHarness(harnessOfHostConfig(environmentHostConfig), convexAuthToken, venueProjectId, { scope: "unattended" })
+    ? await shouldUseLocalHarness(harnessOfHostConfig(environmentHostConfig), bearerNow(convexAuthToken), venueProjectId, { scope: "unattended" })
     : false;
   const requestedVenue = localAvailable ? "local" as const : "hosted" as const;
   // The ONE harness this launch will run locally, declared to the backend so
@@ -2723,7 +2738,7 @@ export async function prepareEvalRun(
     convexClient, resolvedSuiteId, environmentLaunch?.hostId ?? namedHostId,
   );
   if (!environmentId && venueProjectId) {
-    localAvailable = await shouldUseLocalHarness(harnessOfHostConfig(launchHostConfig), convexAuthToken, venueProjectId, { scope: "unattended" });
+    localAvailable = await shouldUseLocalHarness(harnessOfHostConfig(launchHostConfig), bearerNow(convexAuthToken), venueProjectId, { scope: "unattended" });
   }
   const launchVenue = localAvailable ? "local" as const : "hosted" as const;
   const launchLocalHarness = localAvailable
@@ -2791,6 +2806,7 @@ export async function prepareEvalRun(
     // and an approval that never arrives is reported to the caller as the
     // backend refusing a run they did approve.
     ...(importApprovals?.length ? { importApprovals } : {}),
+    accountsAtRun: managerAccountsAtRun(clientManager),
     // Same rule, same reason. Spread apart rather than as one `launchContext`
     // object because the recorder's parameter list is the mutation's argument
     // list, and the backend takes the two as siblings of `source`.
@@ -3000,6 +3016,13 @@ export async function prepareEvalRun(
       { reason: "HARNESS_UNAVAILABLE", harness: harnessAdmission.harness },
     );
   }
+  // A web client's run freezes the web accounts it runs on, before any turn.
+  await freezeEvalRunWebAccounts({
+    convexClient,
+    runId,
+    harness: harnessAdmission.harness,
+    failRun: (reason) => failRunBeforeExecution(convexClient, recorder, runId, { reason }),
+  });
   // A NATIVE-delivery harness makes its MCP calls out of process, so the policy
   // is enforced at the MCP proxy the generated `.mcp.json` points at — sealed
   // into the proxy token, so dropping the policy drops the credential. Refused
@@ -3062,10 +3085,15 @@ export async function prepareEvalRun(
     clientManager.getServerReplayConfigs(),
     resolvedServerIds,
     persistedServerRefs,
+    (serverId) => clientManager.getServerConfig(serverId),
   );
   if (replayConfigsToStore.length > 0) {
     try {
-      await storeReplayConfig(runId, replayConfigsToStore, convexAuthToken);
+      await storeReplayConfig(
+        runId,
+        replayConfigsToStore,
+        bearerNow(convexAuthToken),
+      );
     } catch (error) {
       logger.warn("[evals] Failed to store replay config for suite run", {
         runId,
@@ -3096,7 +3124,7 @@ export async function prepareEvalRun(
     if (orgConfigTarget) {
       try {
         const orgConfig = await resolveOrgModelConfig(orgConfigTarget, {
-          bearerToken: convexAuthToken,
+          bearerToken: bearerNow(convexAuthToken),
           scenarioId,
           accessVersion,
           serverIds: resolvedServerIds,
@@ -3130,20 +3158,7 @@ export async function prepareEvalRun(
   // Everything here happens BEFORE `execute()`, which is the whole point: a
   // setup failure must precede model execution and name the component that
   // caused it.
-  let pinnedSkillSource: EvalPinnedSkillSource | undefined;
-  /**
-   * The run's frozen skills in HARNESS shape (materialized on box), built here
-   * rather than per iteration because the supporting-file download is I/O that
-   * belongs in run preparation — where a failure fails the run cleanly, before
-   * any model call, naming the skill and path.
-   *
-   * Set for EVERY runId-bearing run, empty included. The harness selects its
-   * pinned source by PRESENCE, so `[]` says "this run delivers no skills" while
-   * `undefined` falls through to a live project-wide fetch of whatever the
-   * project holds right now — which would unfreeze a frozen run, and would hand
-   * the `skillsOverride: "exclude"` arm every skill in the project.
-   */
-  let pinnedHarnessSkills: PinnedSkillArtifact[] | undefined;
+  let pinnedSkillSource: PinnedSkillSource | undefined;
   /** The run's pinned plugin servers, re-gated just before execution. */
   let executionPluginServers: RunPluginServer[] = [];
   if (runId) {
@@ -3196,7 +3211,6 @@ export async function prepareEvalRun(
         effectiveServerIds: resolvedServerIds,
         ...(pinServerNames ? { serverNames: pinServerNames } : {}),
       });
-      pinnedHarnessSkills = built.pinnedHarnessSkills;
       pinnedSkillSource = built.pinnedSkillSource;
     } catch (error) {
       await failRunBeforeExecution(convexClient, recorder, runId, {
@@ -3270,9 +3284,6 @@ export async function prepareEvalRun(
       // no secrets at all.
       ...(environmentId ? { projectEnvironmentId: environmentId } : {}),
       ...(pinnedSkillSource ? { pinnedSkillSource } : {}),
-      // Presence is meaningful (empty ⇒ "no skills", absent ⇒ live fetch), so
-      // this checks for undefined rather than truthiness.
-      ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
       ...(toolPolicy ? { toolPolicy } : {}),
       // The SAME object, never a copy — see `extraHeaders` on the request type.
       ...(extraHeaders ? { extraHeaders } : {}),
@@ -3903,20 +3914,16 @@ function isTerminalIteration(iteration: unknown): boolean {
 function environmentExecutionOptions(prepared: PreparedSingleCaseExecution): {
   committedQuickRunIterationIds?: string[];
   projectEnvironmentId?: string;
-  pinnedSkillSource?: EvalPinnedSkillSource;
-  pinnedHarnessSkills?: PinnedSkillArtifact[];
+  pinnedSkillSource?: PinnedSkillSource;
 } {
   const environment = prepared.environment;
   if (!environment) return {};
   return {
     committedQuickRunIterationIds: environment.committed.iterationIds,
     projectEnvironmentId: environment.resolved.environmentRef.environmentId,
-    ...runFrozenSkillOptions({
-      ...(environment.frozenSkills?.pinnedSkillSource
-        ? { pinnedSkillSource: environment.frozenSkills.pinnedSkillSource }
-        : {}),
-      pinnedHarnessSkills: environment.frozenSkills?.pinnedHarnessSkills ?? [],
-    }),
+    ...(environment.frozenSkills?.pinnedSkillSource
+      ? { pinnedSkillSource: environment.frozenSkills.pinnedSkillSource }
+      : {}),
   };
 }
 

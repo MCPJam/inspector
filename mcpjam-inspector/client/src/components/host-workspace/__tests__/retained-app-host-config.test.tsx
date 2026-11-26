@@ -681,7 +681,7 @@ describe("a model App with pending user input", () => {
     expect(signal!.aborted).toBe(false);
     expect(f.loads).toHaveLength(loads);
     await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60_000); });
-    expect(host.renew).toHaveBeenCalledWith(handle, expect.any(AbortSignal));
+    expect(host.renew).toHaveBeenCalledWith({ ...JSON.parse(JSON.stringify(handle)), serverId: marker.serverId }, expect.any(AbortSignal));
     expect(f.bridges).toHaveLength(1);
     expect(signal!.aborted).toBe(false);
     await act(async () => { finish!(); await pending; });

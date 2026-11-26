@@ -1,7 +1,8 @@
 // Read and write the committed runtime compatibility record
 // (`server/utils/harness/local/runtime-compat.generated.json`) — and read the
-// release-relevant facts out of each harness's compatibility manifest entry —
-// without a TypeScript loader.
+// release-relevant facts out of each local runtime's definition
+// (`server/utils/harness/local/runtimes/<harnessId>.ts`) — without a
+// TypeScript loader.
 //
 // Shared by `write-pack-digests.mjs` (which rewrites one harness's entries),
 // `check-local-harness-release.mjs` (which reads every harness's) and the
@@ -12,7 +13,7 @@
 // The record used to be TypeScript, parsed back out with regexes. It is JSON
 // now precisely so that nothing here has to know how a TypeScript literal is
 // laid out.
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -193,44 +194,46 @@ export function rewriteHarnessPackTables(text, harnessId, version, digests, opti
   return renderRuntimeCompat(record);
 }
 
-/** Two-space-indented `"id": { ... },` or `id: { ... },` entries. */
-function harnessEntries(body) {
-  const entries = new Map();
-  const pattern = /^ {2}"?([a-z][a-z0-9-]*)"?: \{(?:\},$|\n([\s\S]*?)^ {2}\},$)/gm;
-  for (const match of body.matchAll(pattern)) {
-    entries.set(match[1], match[2] ?? "");
-  }
-  return entries;
-}
+/** Where each local runtime's definition lives, one file per runtime. */
+export const LOCAL_RUNTIMES_DIR = join(scriptDir, "../server/utils/harness/local/runtimes");
 
 /**
- * The release-relevant REVIEWED-POLICY fields of every harness's compatibility
- * manifest: `{ [harnessId]: { nativePlatforms, nativeTargets? } }`, where
- * `nativeTargets` (D8) is present only when the manifest narrows to exact pack
- * targets. Conformance is no longer typed into the manifest; it comes from the
- * generated record (`parsePackTables(...)[id].conformance`).
+ * The release-relevant REVIEWED-POLICY fields of one runtime's definition:
+ * `{ harnessId, nativePlatforms, nativeTargets? }`, where `nativeTargets` (D8)
+ * is present only when the manifest narrows to exact pack targets. Read from
+ * the manifest's own lines (`harnessId: "…"`, `nativePlatforms: [...]`,
+ * `nativeTargets: [...]`). Conformance is not typed into the manifest; it
+ * comes from the generated record (`parsePackTables(...)[id].conformance`).
  */
-export function parseManifestFacts(compatSource) {
-  const start = compatSource.indexOf("export const LOCAL_HARNESS_MANIFEST");
-  if (start < 0) throw new Error("could not find LOCAL_HARNESS_MANIFEST in compatibility.ts");
-  const open = compatSource.indexOf("= {\n", start);
-  const close = compatSource.indexOf("\n};", open);
-  const body = `${compatSource.slice(open + 4, close)}\n`;
+export function parseRuntimeManifestFacts(definitionSource) {
+  const harnessId = definitionSource.match(/\n\s*harnessId: "([a-z][a-z0-9-]*)",/)?.[1];
+  if (harnessId === undefined) return undefined;
+  const list = (name) => {
+    const match = definitionSource.match(new RegExp(`\\n\\s*${name}: \\[([^\\]]*)\\]`));
+    if (!match) return undefined;
+    return match[1]
+      .split(",")
+      .map((token) => token.trim().replace(/^"|"$/g, ""))
+      .filter((token) => token.length > 0);
+  };
+  const nativeTargets = list("nativeTargets");
+  return {
+    harnessId,
+    nativePlatforms: list("nativePlatforms") ?? [],
+    ...(nativeTargets !== undefined ? { nativeTargets } : {}),
+  };
+}
+
+/** Every local runtime's facts, from the committed definitions:
+ *  `{ [harnessId]: { nativePlatforms, nativeTargets? } }`. */
+export function readManifestFacts(runtimesDir = LOCAL_RUNTIMES_DIR) {
   const facts = {};
-  for (const [id, block] of harnessEntries(body)) {
-    const list = (name) => {
-      const match = block.match(new RegExp(`\\n {4}${name}: \\[([^\\]]*)\\]`));
-      if (!match) return undefined;
-      return match[1]
-        .split(",")
-        .map((token) => token.trim().replace(/^"|"$/g, ""))
-        .filter((token) => token.length > 0);
-    };
-    const nativeTargets = list("nativeTargets");
-    facts[id] = {
-      nativePlatforms: list("nativePlatforms") ?? [],
-      ...(nativeTargets !== undefined ? { nativeTargets } : {}),
-    };
+  for (const name of readdirSync(runtimesDir).sort()) {
+    if (!name.endsWith(".ts") || name === "index.ts" || name === "types.ts") continue;
+    const parsed = parseRuntimeManifestFacts(readFileSync(join(runtimesDir, name), "utf8"));
+    if (parsed === undefined) continue;
+    const { harnessId, ...rest } = parsed;
+    facts[harnessId] = rest;
   }
   return facts;
 }
@@ -249,8 +252,7 @@ export function advertisedTargetsOf(facts) {
     .filter((target) => !facts.nativeTargets || facts.nativeTargets.includes(target));
 }
 
-/** The targets one harness advertises, read from the committed `compatibility.ts`. */
+/** The targets one harness advertises, read from its committed definition. */
 export function readAdvertisedTargets(harnessId) {
-  const source = readFileSync(join(scriptDir, "../server/utils/harness/local/compatibility.ts"), "utf8");
-  return advertisedTargetsOf(parseManifestFacts(source)[harnessId]);
+  return advertisedTargetsOf(readManifestFacts()[harnessId]);
 }

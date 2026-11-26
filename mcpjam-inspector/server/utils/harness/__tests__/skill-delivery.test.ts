@@ -1,183 +1,115 @@
 import { describe, expect, it } from "vitest";
-import {
-  composeLivePlusSkills,
-  selectHarnessSkillSource,
-} from "../skill-delivery.js";
-import type { RuntimeSkill } from "../runtime-skills.js";
-import type { PinnedSkillArtifact } from "../../../../shared/skill-types.js";
+import { buildLiveEffectiveCapabilities } from "../../../services/environments/effective-capabilities.js";
+import type { TurnSkills } from "../../../services/environments/turn-skills.js";
+import { harnessTurnSkillsFromPlan } from "../skill-delivery.js";
+import { skillsFingerprint, type RuntimeSkill } from "../runtime-skills.js";
 
-const PINNED: PinnedSkillArtifact[] = [
-  {
-    skillId: "sk_pinned",
-    name: "pinned-skill",
-    description: "frozen",
-    content: "frozen body",
-    contentHash: "hash_pinned",
-  },
-];
+const SKILL: RuntimeSkill = {
+  skillId: "sk_env",
+  name: "env-skill",
+  description: "resolved",
+  content: "resolved body",
+  aggregateHash: "hash_env",
+};
 
-const RESOLVED: RuntimeSkill[] = [
-  {
-    skillId: "sk_env",
-    name: "env-skill",
-    description: "resolved",
-    content: "resolved body",
-    aggregateHash: "hash_env",
-  },
-];
-
-describe("selectHarnessSkillSource", () => {
-  it("prefers frozen run artifacts over an environment override", () => {
-    // Reproducibility outranks live resolution: a pinned run must re-execute
-    // identically, so nothing live may be consulted — not even an environment.
-    const source = selectHarnessSkillSource({
-      pinnedHarnessSkills: PINNED,
-      runtimeSkillsOverride: RESOLVED,
-    });
-    expect(source.mode).toBe("pinned");
-    expect("skills" in source && source.skills).toEqual([
-      {
-        skillId: "sk_pinned",
-        name: "pinned-skill",
-        description: "frozen",
-        content: "frozen body",
-        aggregateHash: "hash_pinned",
-      },
-    ]);
-  });
-
-  it("uses the environment override when there is no pinned set", () => {
-    const source = selectHarnessSkillSource({
-      runtimeSkillsOverride: RESOLVED,
-    });
-    expect(source.mode).toBe("environment");
-    expect("skills" in source && source.skills).toEqual(RESOLVED);
-  });
-
-  it("treats an EMPTY environment override as authoritative, not as absent", () => {
-    // The regression this locks: falling through to `live` here would deliver
-    // the whole project skill pool to a turn whose environment pinned none.
-    const source = selectHarnessSkillSource({ runtimeSkillsOverride: [] });
-    expect(source.mode).toBe("environment");
-    expect("skills" in source && source.skills).toEqual([]);
-  });
-
-  it("treats an EMPTY pinned set as authoritative too", () => {
-    const source = selectHarnessSkillSource({ pinnedHarnessSkills: [] });
-    expect(source.mode).toBe("pinned");
-    expect("skills" in source && source.skills).toEqual([]);
-  });
-
-  it("falls back to the live project-wide fetch only when neither is present", () => {
-    expect(selectHarnessSkillSource({})).toEqual({ mode: "live" });
-  });
-
-  it("selects live_plus only from the explicit input, on top of an environment override", () => {
-    expect(
-      selectHarnessSkillSource({
-        runtimeSkillsOverride: RESOLVED,
-        includeProjectSkills: true,
-      }),
-    ).toEqual({ mode: "live_plus", environmentSkills: RESOLVED });
-    // An empty environment still adds the pool: the turn stands in for a
-    // client turn, which delivers it.
-    expect(
-      selectHarnessSkillSource({
-        runtimeSkillsOverride: [],
-        includeProjectSkills: true,
-      }),
-    ).toEqual({ mode: "live_plus", environmentSkills: [] });
-    // A pinned run still outranks it.
-    expect(
-      selectHarnessSkillSource({
-        pinnedHarnessSkills: PINNED,
-        runtimeSkillsOverride: RESOLVED,
-        includeProjectSkills: true,
-      }).mode,
-    ).toBe("pinned");
-    // Without an environment there is nothing to add: the plain live fetch.
-    expect(selectHarnessSkillSource({ includeProjectSkills: true })).toEqual({
-      mode: "live",
-    });
-    // An environment override alone is never read as live_plus.
-    expect(
-      selectHarnessSkillSource({ runtimeSkillsOverride: RESOLVED }).mode,
-    ).toBe("environment");
-  });
-});
-
-function skill(skillId: string, name: string): RuntimeSkill {
+/** A plan for Claude Code that delivers what `harness` says, by hand: the
+ *  runner carries out whatever plan it is handed. */
+function plan(harness: TurnSkills["harness"]): TurnSkills {
   return {
-    skillId,
-    name,
-    description: "",
-    content: `${name} body`,
-    aggregateHash: `agg_${skillId}`,
+    runtime: { kind: "harness", harnessId: "claude-code" },
+    set: buildLiveEffectiveCapabilities({}),
+    delivered: [],
+    excluded: [],
+    serverSkillsVia: "none",
+    agent: null,
+    ...(harness ? { harness } : {}),
   };
 }
 
-describe("composeLivePlusSkills", () => {
-  it("delivers the environment's skills, then the project's pool", () => {
-    const composed = composeLivePlusSkills(
-      [skill("sk_notes", "notes")],
-      [skill("sk_plugin", "keycaps"), skill("sk_host", "release-notes")],
+describe("harnessTurnSkillsFromPlan", () => {
+  it("takes a run's frozen copies with the files that ride with them", async () => {
+    const turn = harnessTurnSkillsFromPlan(
+      plan({
+        mode: "pinned",
+        skills: [SKILL],
+        files: [{ skillId: "sk_env", path: "scripts/run.sh", content: "echo" }],
+        live: false,
+      }),
+      "claude-code",
     );
-    expect(composed.skills?.map((entry) => entry.skillId)).toEqual([
-      "sk_plugin",
-      "sk_host",
-      "sk_notes",
+    expect(turn.mode).toBe("pinned");
+    expect(turn.skills).toEqual([SKILL]);
+    expect(turn.skillsHash).toBe(skillsFingerprint([SKILL]));
+    const listing = await turn.readFiles();
+    expect(listing.files).toEqual([
+      { skillId: "sk_env", path: "scripts/run.sh", content: "echo" },
     ]);
-    expect([...composed.environmentSkillIds]).toEqual(["sk_plugin", "sk_host"]);
-    expect([...composed.projectSkillIds]).toEqual(["sk_notes"]);
-    expect(composed.problems).toEqual([]);
+    expect(listing.complete("sk_env")).toBe(true);
   });
 
-  it("does not add a project skill the environment already carries", () => {
-    // The client selected it, so it arrived on the host channel: the same
-    // skill, delivered once, as the environment's.
-    const composed = composeLivePlusSkills(
-      [skill("sk_host", "release-notes"), skill("sk_notes", "notes")],
-      [skill("sk_host", "release-notes")],
+  it("treats an EMPTY delivery as authoritative, not as absent", async () => {
+    // The regression this locks: reading an empty list as "no source" would
+    // leave a frozen run's box with the skills an earlier turn wrote, and
+    // would hand the without-skills arm those skills.
+    const turn = harnessTurnSkillsFromPlan(
+      plan({ mode: "pinned", skills: [], files: [], live: false }),
+      "claude-code",
     );
-    expect(composed.skills?.map((entry) => entry.skillId)).toEqual([
-      "sk_host",
-      "sk_notes",
-    ]);
-    expect([...composed.environmentSkillIds]).toEqual(["sk_host"]);
-    expect([...composed.projectSkillIds]).toEqual(["sk_notes"]);
-    expect(composed.problems).toEqual([]);
+    expect(turn.skills).toEqual([]);
+    expect(turn.skillsHash).toBe("");
+    expect((await turn.readFiles()).complete("anything")).toBe(true);
   });
 
-  it("knows nothing when the live fetch failed, so delivers nothing new", () => {
-    const composed = composeLivePlusSkills(null, [
-      skill("sk_plugin", "keycaps"),
-    ]);
-    expect(composed.skills).toBeNull();
-    expect(composed.environmentSkillIds.size).toBe(0);
-    expect(composed.projectSkillIds.size).toBe(0);
+  it("knows none of an environment's files when the plan could not read them", async () => {
+    const turn = harnessTurnSkillsFromPlan(
+      plan({ mode: "environment", skills: [SKILL], files: null, live: true }),
+      "claude-code",
+    );
+    expect(turn.skills).toEqual([SKILL]);
+    const listing = await turn.readFiles();
+    expect(listing.files).toEqual([]);
+    // Unknown, so the writer keeps each skill's other files as they are.
+    expect(listing.complete("sk_env")).toBe(false);
   });
 
-  it("keeps the environment's skill when two want one box folder, and reports the other", () => {
-    const composed = composeLivePlusSkills(
-      [skill("sk_personal", "keycaps"), skill("sk_notes", "notes")],
-      [skill("sk_plugin_a", "keycaps"), skill("sk_plugin_b", "keycaps")],
+  it("leaves the box as it is when the turn named no source", async () => {
+    for (const turn of [
+      harnessTurnSkillsFromPlan(undefined, "claude-code"),
+      harnessTurnSkillsFromPlan(
+        plan({ mode: "none", skills: null, files: null, live: false }),
+        "claude-code",
+      ),
+      harnessTurnSkillsFromPlan(plan(undefined), "claude-code"),
+    ]) {
+      expect(turn).toMatchObject({
+        mode: "none",
+        skills: null,
+        skillsHash: undefined,
+        live: false,
+      });
+      expect((await turn.readFiles()).files).toEqual([]);
+    }
+  });
+
+  it("keeps a live turn live even when it read no skills of its own", () => {
+    // A study whose Library could not be read still has its servers.
+    const turn = harnessTurnSkillsFromPlan(
+      plan({ mode: "none", skills: null, files: null, live: true }),
+      "claude-code",
     );
-    expect(composed.skills?.map((entry) => entry.skillId)).toEqual([
-      "sk_plugin_a",
-      "sk_notes",
-    ]);
-    expect(composed.problems).toEqual([
-      {
-        code: "skill_folder_collision",
-        skillId: "sk_plugin_b",
-        name: "keycaps",
-      },
-      {
-        code: "skill_folder_collision",
-        skillId: "sk_personal",
-        name: "keycaps",
-      },
-    ]);
-    expect(composed.projectSkillIds.has("sk_personal")).toBe(false);
+    expect(turn).toMatchObject({ mode: "none", skills: null, live: true });
+  });
+
+  it("fails before a box is written when the plan was made for another engine", () => {
+    const other = plan({ mode: "pinned", skills: [], files: [], live: false });
+    expect(() => harnessTurnSkillsFromPlan(other, "codex")).toThrow(
+      "made for claude-code, but codex is running it",
+    );
+    expect(() =>
+      harnessTurnSkillsFromPlan(
+        { ...other, runtime: { kind: "agent" }, harness: undefined },
+        "codex",
+      ),
+    ).toThrow("made for MCPJam's agent");
   });
 });

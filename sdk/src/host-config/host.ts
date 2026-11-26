@@ -207,6 +207,9 @@ export function canonicalToPublic(c: CanonicalHostConfigV2): HostJson {
   if (c.respectToolVisibility !== undefined) {
     out.respectToolVisibility = c.respectToolVisibility;
   }
+  if (c.runUnloadedToolCalls !== undefined) {
+    out.runUnloadedToolCalls = c.runUnloadedToolCalls;
+  }
   if (c.modelVisibleMcpToolResults !== undefined) {
     out.modelVisibleMcpToolResults = c.modelVisibleMcpToolResults;
   }
@@ -294,7 +297,12 @@ export class Host {
   requireToolApproval: boolean;
   requireNativeToolDiscovery?: boolean;
 
-  /** Opt into progressive MCP tool discovery (search/load meta-tools). */
+  /**
+   * Progressive MCP tool discovery (the search/load meta-tools). `true` on,
+   * `false` off. `HostRunner` reads unset as off; a saved client or host
+   * template means Auto by it, which `runWithClient` and `mcpjam test --host`
+   * apply: on once the tools reach 30 or about 10k tokens of definitions.
+   */
   progressiveToolDiscovery?: boolean;
 
   /**
@@ -303,6 +311,7 @@ export class Host {
    * implement visibility).
    */
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
 
   /** Host policy for model visibility of MCP tool-result content/resources. */
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
@@ -415,6 +424,7 @@ export class Host {
     this.requireNativeToolDiscovery = cfg.requireNativeToolDiscovery;
     this.progressiveToolDiscovery = cfg.progressiveToolDiscovery;
     this.respectToolVisibility = cfg.respectToolVisibility;
+    this.runUnloadedToolCalls = cfg.runUnloadedToolCalls;
     this.modelVisibleMcpToolResults = cfg.modelVisibleMcpToolResults;
     this.mcpToolResultImageRendering = cfg.mcpToolResultImageRendering;
     this.computer = cfg.computer;
@@ -474,6 +484,11 @@ export class Host {
 
   setProgressiveToolDiscovery(enabled: boolean): this {
     this.progressiveToolDiscovery = enabled;
+    return this;
+  }
+
+  setRunUnloadedToolCalls(value: boolean): this {
+    this.runUnloadedToolCalls = value;
     return this;
   }
 
@@ -598,6 +613,7 @@ export class Host {
       requireNativeToolDiscovery: this.requireNativeToolDiscovery,
       progressiveToolDiscovery: this.progressiveToolDiscovery,
       respectToolVisibility: this.respectToolVisibility,
+      runUnloadedToolCalls: this.runUnloadedToolCalls,
       modelVisibleMcpToolResults: this.modelVisibleMcpToolResults,
       mcpToolResultImageRendering: this.mcpToolResultImageRendering,
       computer: this.computer,
@@ -634,6 +650,9 @@ export class Host {
     }
     if (snap.respectToolVisibility !== undefined) {
       input.respectToolVisibility = snap.respectToolVisibility;
+    }
+    if (snap.runUnloadedToolCalls !== undefined) {
+      input.runUnloadedToolCalls = snap.runUnloadedToolCalls;
     }
     if (snap.modelVisibleMcpToolResults !== undefined) {
       input.modelVisibleMcpToolResults = snap.modelVisibleMcpToolResults;

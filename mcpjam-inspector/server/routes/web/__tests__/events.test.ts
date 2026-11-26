@@ -17,6 +17,19 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
   getConvexBearerForRequest: vi.fn().mockResolvedValue("convex-jwt"),
 }));
 
+// The Convex client the DEFAULT seams build, so a test can exercise the real
+// `authorizeFeed` seam instead of a stand-in.
+const { convexQuery, createConvexClient } = vi.hoisted(() => {
+  const convexQuery = vi.fn();
+  return {
+    convexQuery,
+    createConvexClient: vi.fn(() => ({ query: convexQuery })),
+  };
+});
+vi.mock("../../../services/evals/route-helpers.js", () => ({
+  createConvexClient,
+}));
+
 vi.mock("../auth.js", async () => {
   const actual =
     await vi.importActual<typeof import("../auth.js")>("../auth.js");
@@ -216,7 +229,7 @@ describe("hosted /api/web/events — inbox-backed routes", () => {
     key: process.env.EVENTS_INBOX_VIEWER_KEY,
     url: process.env.EVENTS_INBOX_URL,
   };
-  const projectAccess = vi.fn();
+  const authorizeFeed = vi.fn();
   const authorizeSimulation = vi.fn();
   const getSubscription = vi.fn();
   const ensureInbox = vi.fn();
@@ -232,9 +245,9 @@ describe("hosted /api/web/events — inbox-backed routes", () => {
     process.env.EVENTS_INBOX_VIEWER_KEY =
       "viewer-key-for-tests-0123456789abcdef";
     process.env.EVENTS_INBOX_URL = "https://hooks.test";
-    projectAccess
-      .mockReset()
-      .mockResolvedValue({ projectId: "p1", role: "member" });
+    authorizeFeed.mockReset().mockResolvedValue(undefined);
+    convexQuery.mockReset();
+    createConvexClient.mockClear();
     authorizeSimulation.mockReset().mockResolvedValue(undefined);
     ensureInbox
       .mockReset()
@@ -270,7 +283,7 @@ describe("hosted /api/web/events — inbox-backed routes", () => {
       ],
     });
     setWebEventsDepsForTests({
-      projectAccess,
+      authorizeFeed,
       authorizeSimulation,
       backend: () => ({ ensureInbox, getSubscription }) as never,
       inbox: () => inbox as never,
@@ -315,21 +328,68 @@ describe("hosted /api/web/events — inbox-backed routes", () => {
     expect(ensureInbox).toHaveBeenCalledWith("p1");
   });
 
-  it("refuses a viewer token to a guest without a project grant", async () => {
-    projectAccess.mockResolvedValue({
-      projectId: "p1",
-      role: "guest",
-      projectRole: null,
+  it("asks the backend's events gate, with the caller's bearer, before it signs", async () => {
+    // The real seam, not the stand-in: a renamed or mistyped function would
+    // otherwise only show up in production.
+    setWebEventsDepsForTests({
+      authorizeSimulation,
+      backend: () => ({ ensureInbox, getSubscription }) as never,
+      inbox: () => inbox as never,
+      now: () => Date.UTC(2026, 8, 30, 12, 0, 0),
     });
+    convexQuery.mockResolvedValue(null);
     const res = await post("/viewer-token", { projectId: "p1" });
-    expect(res.status).toBe(403);
-    expect(ensureInbox).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(createConvexClient).toHaveBeenCalledWith("convex-jwt");
+    expect(convexQuery).toHaveBeenCalledWith(
+      "eventSubscriptions:authorizeFeed",
+      { projectId: "p1" },
+    );
   });
 
-  it("answers 404 for a project the caller cannot see", async () => {
-    projectAccess.mockResolvedValue(null);
-    expect((await post("/viewer-token", { projectId: "p2" })).status).toBe(404);
-  });
+  it.each([
+    [
+      "a guest, even with a project grant",
+      new Error("Insufficient project permissions: requires member"),
+    ],
+    [
+      "a benchmark or scoped GitHub bearer",
+      new ConvexError({
+        code: "FORBIDDEN",
+        message: "Not a member of this project",
+      }),
+    ],
+    ["a stranger to the project", new Error("Not a member of this project")],
+    // Production Convex redacts a plain refusal to this.
+    ["a refusal production redacted", new Error("Server Error")],
+  ])(
+    "answers 404 and touches no inbox when the gate refuses %s",
+    async (_who, refusal) => {
+      setWebEventsDepsForTests({
+        authorizeSimulation,
+        backend: () => ({ ensureInbox, getSubscription }) as never,
+        inbox: () => inbox as never,
+        now: () => Date.UTC(2026, 8, 30, 12, 0, 0),
+      });
+      convexQuery.mockRejectedValue(refusal);
+      for (const [path, body] of [
+        ["/viewer-token", { projectId: "p1" }],
+        [
+          "/simulate",
+          { projectId: "p1", subscriptionId: "esub_1", event: { data: {} } },
+        ],
+        ["/slot-state", { projectId: "p1", subscriptionId: "esub_1" }],
+      ] as const) {
+        const res = await post(path, body);
+        expect(res.status, path).toBe(404);
+      }
+      expect(ensureInbox).not.toHaveBeenCalled();
+      expect(getSubscription).not.toHaveBeenCalled();
+      expect(inbox.getViewerEpoch).not.toHaveBeenCalled();
+      expect(inbox.simulate).not.toHaveBeenCalled();
+      expect(inbox.slotState).not.toHaveBeenCalled();
+    },
+  );
 
   it("simulates only into a subscription of the named project", async () => {
     const ok = await post("/simulate", {

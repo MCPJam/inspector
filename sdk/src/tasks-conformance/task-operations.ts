@@ -16,6 +16,7 @@ import {
   errorCode,
 } from "./metadata.js";
 import { ShapeVerdict, validateCompletionAck } from "./shapes.js";
+import { checkToolArgs } from "../conformance-tool-args.js";
 import {
   TERMINAL_STATUSES,
   PARKED_INPUT_REQUIRED_POLLS,
@@ -215,15 +216,25 @@ export class TaskOperations {
     taskId: string,
     task: Record<string, unknown>,
     /** Live rpc-log window, so the ack can be judged as it arrived. */
-    received: unknown[]
+    received: unknown[],
+    alreadyAnswered: Set<string>
   ): Promise<InputRequiredLeg> {
     const requested = isRecord(task.inputRequests)
       ? Object.keys(task.inputRequests)
       : [];
-    const responses = this.config.inputResponses;
+    const responses = Object.fromEntries(
+      Object.entries(this.config.inputResponses ?? {}).filter(
+        ([key]) => requested.includes(key) && !alreadyAnswered.has(key)
+      )
+    );
 
-    if (!responses || Object.keys(responses).length === 0) {
-      return { outcome: "no-responses-configured", requested };
+    if (Object.keys(responses).length === 0) {
+      return {
+        outcome: Object.keys(this.config.inputResponses ?? {}).length
+          ? "no-matching-responses"
+          : "no-responses-configured",
+        requested,
+      };
     }
 
     const answered = Object.keys(responses);
@@ -252,12 +263,17 @@ export class TaskOperations {
       // ZodError for a frame that is not a valid JSON-RPC message, and the
       // extension guard throws for a result that is not an object.
       if (!isMalformedResponseError(error)) {
+        const answersProblem = describeAnswersGap(
+          task.inputRequests,
+          responses
+        );
         return {
           outcome: "update-rejected",
           requested,
           answered,
           message: errorMessage(error),
           code: errorCode(error),
+          ...(answersProblem ? { answersProblem } : {}),
         };
       }
       ackVerdict = {
@@ -378,6 +394,8 @@ export class TaskOperations {
     detail: Record<string, unknown>;
     /** Set when the probe never produced a server verdict to grade. */
     unavailable?: string;
+    /** The task was already finished and forgotten: nothing left to cancel. */
+    taskGone?: true;
   }> {
     const problems: string[] = [];
     const warnings: string[] = [];
@@ -413,6 +431,7 @@ export class TaskOperations {
           detail: { taskId, cancelCode: code },
           unavailable:
             "The task was no longer available when cancellation was sent, so its acknowledgment could not be checked.",
+          taskGone: true,
         };
       }
       problems.push(
@@ -445,18 +464,34 @@ export class TaskOperations {
     serverId: string,
     wire: TasksWire,
     taskId: string,
-    options?: { stopOnInputRequired?: boolean }
+    options?: {
+      stopOnInputRequired?: boolean;
+      /**
+       * Called when the task is seen parked. `remainingMs` is what is left of
+       * the poll budget: whatever the callback does is paid for out of it.
+       * `false` stops on the parked task; `true` goes on polling; `"reread"`
+       * reads the task again at once (the one in hand is stale), even when
+       * the deadline has passed.
+       */
+      continueAfterInput?: (
+        task: Record<string, unknown>,
+        remainingMs: number
+      ) => Promise<boolean | "reread">;
+    }
   ): Promise<{
     task?: Record<string, unknown>;
     error?: unknown;
     /** Set when polling stopped because the task parked on `input_required`. */
     inputRequired?: boolean;
+    timedOut?: boolean;
   }> {
     const deadline = Date.now() + this.config.pollTimeoutMs;
     let last: Record<string, unknown> | undefined;
     let consecutiveInputRequired = 0;
+    let rereadNow = false;
 
-    while (Date.now() < deadline) {
+    while (rereadNow || Date.now() < deadline) {
+      rereadNow = false;
       this.config.signal?.throwIfAborted();
       try {
         const task =
@@ -493,7 +528,21 @@ export class TaskOperations {
       ) {
         consecutiveInputRequired += 1;
         if (consecutiveInputRequired >= PARKED_INPUT_REQUIRED_POLLS) {
-          return { task: last, inputRequired: true };
+          const next = await options.continueAfterInput?.(
+            last,
+            deadline - Date.now()
+          );
+          if (!next) return { task: last, inputRequired: true };
+          if (next === "reread") {
+            // The task in hand is from before the callback, and it has moved
+            // or will not: read it now, not a poll interval later, or a task
+            // that ended near the deadline is reported as never ending. If it
+            // is still parked, that read is enough to ask the callback again.
+            consecutiveInputRequired = PARKED_INPUT_REQUIRED_POLLS - 1;
+            rereadNow = true;
+            continue;
+          }
+          consecutiveInputRequired = 0;
         }
       } else {
         consecutiveInputRequired = 0;
@@ -514,6 +563,48 @@ export class TaskOperations {
       });
     }
 
-    return { task: last };
+    return { task: last, timedOut: true };
   }
+}
+
+/**
+ * Why the configured answers cannot satisfy what the task asked for, when we
+ * can tell: a request left unanswered, an answer to a request the task never
+ * made, or accepted elicitation content its `requestedSchema` rejects. A
+ * rejection of such answers is the caller's setup to fix, not a server fault.
+ */
+export function describeAnswersGap(
+  inputRequests: unknown,
+  responses: Record<string, unknown>
+): string | undefined {
+  if (!isRecord(inputRequests)) return undefined;
+  const missing = Object.keys(inputRequests).filter(
+    (key) => !Object.hasOwn(responses, key)
+  );
+  if (missing.length > 0) {
+    return `no answer for ${missing.map((key) => JSON.stringify(key)).join(", ")}`;
+  }
+  const extra = Object.keys(responses).filter(
+    (key) => !Object.hasOwn(inputRequests, key)
+  );
+  if (extra.length > 0) {
+    return `answers for requests the task did not make: ${extra
+      .map((key) => JSON.stringify(key))
+      .join(", ")}`;
+  }
+  for (const [key, request] of Object.entries(inputRequests)) {
+    if (!isRecord(request) || request.method !== "elicitation/create") continue;
+    const params = isRecord(request.params) ? request.params : undefined;
+    const response = responses[key];
+    if (!params?.requestedSchema || !isRecord(response)) continue;
+    if (response.action !== "accept") continue;
+    const verdict = checkToolArgs(
+      params.requestedSchema,
+      response.content ?? {}
+    );
+    if (verdict.verdict === "invalid") {
+      return `the answer to ${JSON.stringify(key)} doesn't match what it asked for (${verdict.message})`;
+    }
+  }
+  return undefined;
 }

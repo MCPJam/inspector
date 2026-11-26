@@ -2,14 +2,14 @@
  * Ownership pre-seed for the adapter's on-box skills write.
  *
  * Since the stable `@ai-sdk/harness` line, the ADAPTER re-writes its skills at
- * the start of EVERY prompt turn (`writeClaudeCodeSkills` in `doPromptTurn`,
- * same for Codex) through `writeSkills`, which tracks ownership in a
+ * the start of EVERY prompt turn (each adapter's `doPromptTurn`: Claude Code,
+ * Codex, OpenCode, ACP) through `writeSkills`, which tracks ownership in a
  * `.ai-sdk-harness-skills.json` manifest and REFUSES any pre-existing skill
- * dir that manifest does not list. That collides with MCPJam's own skill
- * passes, all of which run earlier (in `onSandboxSession`) and create or
- * rewrite exactly those dirs:
+ * dir that manifest does not list. That collides with the box writer's other
+ * steps (`box-skills-writer.ts`), all of which run earlier (in
+ * `onSandboxSession`) and create or rewrite exactly those dirs:
  *
- *   - `materializeSkillFiles` / `materializePinnedSkillFiles` write a skill's
+ *   - `materializeSkillFiles` writes a skill's
  *     supporting files (signed-URL blobs the `skills` param cannot carry),
  *     creating the dir before the adapter ever writes it → the adapter's
  *     "already exists and is not owned" refusal fails the whole turn;
@@ -27,18 +27,17 @@
  * survives because `writeSkills` never touches a hash-unchanged skill.
  *
  * VERSION LOCKSTEP: the no-op depends on this package's `@ai-sdk/harness`
- * hashing byte-identically to the copy nested inside each harness adapter
- * (one deduped 1.0.117 copy shared by all of them today). If they drift,
- * nothing breaks loudly — the adapter re-writes each skill once per session
- * and MCPJam's supporting files for it are lost until the next session — but
- * the drift should be closed, not
- * tolerated. `__tests__/preseed-adapter-skills.test.ts` asserts the no-op
- * against this package's copy; verify the nested versions on adapter bumps.
+ * hashing byte-identically to the copy each harness adapter resolves (one
+ * deduped 1.0.158 copy today; no adapter nests its own). If they drift,
+ * nothing breaks loudly, but the adapter re-writes every skill on every turn,
+ * so MCPJam's supporting files and preserved frontmatter never reach the
+ * runtime. `__tests__/preseed-adapter-skills.test.ts` asserts the no-op
+ * against this package's copy; check for a nested copy on adapter bumps.
  */
 import { writeSkills } from "@ai-sdk/harness/utils";
 import { posix } from "node:path";
 import { shellQuote } from "./shell-quote.js";
-import type { HarnessSkillPayload } from "./runtime-skills.js";
+import type { HarnessSkillPayload } from "./box-skills-writer.js";
 import { logger } from "../logger.js";
 
 /** Minimal structural view of the harness sandbox session (dual-`ai` boundary:
@@ -65,23 +64,44 @@ const ADAPTER_MANIFEST_BASENAME = ".ai-sdk-harness-skills.json";
 /** MCPJam's managed-dirs manifest (see `reconcile-skill-dirs.ts`). */
 const MCPJAM_MANIFEST_BASENAME = ".mcpjam-skills.json";
 
-async function readManifestNames(
+function adapterManifestNames(parsed: unknown): string[] {
+  const skills = (parsed as { skills?: Array<{ name?: unknown }> })?.skills;
+  return (Array.isArray(skills) ? skills : [])
+    .map((entry) => entry?.name)
+    .filter((name): name is string => typeof name === "string");
+}
+
+/** A manifest's text: null when the box has none, undefined when it can't be read. */
+async function readManifestText(
   session: PreseedSession,
   path: string,
-  extract: (parsed: unknown) => string[],
-): Promise<Set<string> | null> {
-  let raw: string | null;
+): Promise<string | null | undefined> {
   try {
-    raw = await session.readTextFile({ path });
+    return await session.readTextFile({ path });
   } catch {
-    return null; // unreadable ≠ empty: the caller must not treat this as "owns nothing"
+    return undefined; // unreadable ≠ empty: the caller must not treat this as "owns nothing"
   }
+}
+
+function manifestNames(
+  raw: string | null | undefined,
+  extract: (parsed: unknown) => string[],
+): Set<string> | null {
+  if (raw === undefined) return null;
   if (!raw) return new Set();
   try {
     return new Set(extract(JSON.parse(raw)));
   } catch {
     return null;
   }
+}
+
+async function readManifestNames(
+  session: PreseedSession,
+  path: string,
+  extract: (parsed: unknown) => string[],
+): Promise<Set<string> | null> {
+  return manifestNames(await readManifestText(session, path), extract);
 }
 
 /**
@@ -121,12 +141,7 @@ export async function handOffLegacySkillDirs(args: {
   const adapterOwned = await readManifestNames(
     session,
     `${skillsBase}/${ADAPTER_MANIFEST_BASENAME}`,
-    (parsed) => {
-      const skills = (parsed as { skills?: Array<{ name?: unknown }> })?.skills;
-      return (Array.isArray(skills) ? skills : [])
-        .map((entry) => entry?.name)
-        .filter((name): name is string => typeof name === "string");
-    },
+    adapterManifestNames,
   );
   if (adapterOwned === null) return { removed: [] };
 
@@ -169,9 +184,9 @@ export async function handOffLegacySkillDirs(args: {
  * Run the adapter's skills write ahead of it. Options MUST mirror the
  * adapter's own `writeSkills` invocation exactly (the per-adapter divergence —
  * Claude Code passes `trailingNewline: true`, Codex the default — travels on
- * `HarnessRuntimeAdapter.skillsWriteOptions`); the payload is the same object
- * handed to `HarnessAgent`'s `skills` param, so the projected content hash is
- * identical and the adapter's turn-time write is a no-op.
+ * the runtime's skills descriptor); the payload is the same object handed to
+ * `HarnessAgent`'s `skills` param, so the projected content hash is identical
+ * and the adapter's turn-time write is a no-op.
  *
  * Throws on a genuinely foreign colliding dir — the same "already exists and
  * is not owned" refusal the adapter itself would raise a moment later, just
@@ -180,7 +195,7 @@ export async function handOffLegacySkillDirs(args: {
 export async function preseedAdapterSkills(args: {
   session: PreseedSession;
   skillsBase: string;
-  payload: HarnessSkillPayload[];
+  payload: readonly HarnessSkillPayload[];
   trailingNewline: boolean;
   signal?: AbortSignal;
 }): Promise<void> {
@@ -199,4 +214,104 @@ export async function preseedAdapterSkills(args: {
     trailingNewline: args.trailingNewline,
     ...(args.signal ? { abortSignal: args.signal } : {}),
   });
+}
+
+/**
+ * Take every folder the adapter manifest in `skillsBase` lists off the box,
+ * through the adapter's own write, so the manifest stays true: a later write
+ * of any of those skills puts it back rather than finding it "unchanged". A
+ * folder whose manifest is missing, empty or unreadable is left exactly as it
+ * is: the adapter that owns it refuses that manifest on its own turn.
+ *
+ * Best-effort: a failed removal logs and never fails the turn.
+ */
+export async function clearAdapterSkills(args: {
+  session: PreseedSession;
+  skillsBase: string;
+  signal?: AbortSignal;
+  /** With no manifest on the box, put down the empty one the adapter writes. */
+  seedIfMissing?: boolean;
+}): Promise<void> {
+  const manifestPath = `${args.skillsBase}/${ADAPTER_MANIFEST_BASENAME}`;
+  const raw = await readManifestText(args.session, manifestPath);
+  if (raw === null && args.seedIfMissing) {
+    await seedEmptyAdapterManifest({ ...args, manifestPath });
+    return;
+  }
+  const owned = manifestNames(raw, adapterManifestNames);
+  if (!owned?.size) return;
+  try {
+    await preseedAdapterSkills({
+      session: args.session,
+      skillsBase: args.skillsBase,
+      ...(args.signal ? { signal: args.signal } : {}),
+      payload: [],
+      trailingNewline: false,
+    });
+  } catch (error) {
+    logger.warn("[preseed-adapter-skills] could not clear skills folder", {
+      skillsBase: args.skillsBase,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
+ * `MCPJAM_HARNESS_SEED_SKILLS_MANIFEST=1` (read per call): a turn with no
+ * skills, on a box with no adapter manifest, gets the empty manifest in one
+ * command before its runtime starts. The adapter's own write at dispatch then
+ * finds it and only reads, instead of five calls (mkdir, a pending manifest
+ * and a complete one, each written and moved) after the prompt is sent.
+ */
+export function seedSkillsManifestEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env.MCPJAM_HARNESS_SEED_SKILLS_MANIFEST === "1";
+}
+
+/**
+ * What the adapter's own `writeSkills` leaves on a box for a turn with no
+ * skills, byte for byte (VERSION LOCKSTEP above: the test runs this package's
+ * `writeSkills` on an empty box and compares).
+ */
+export const EMPTY_ADAPTER_MANIFEST = `${JSON.stringify(
+  { version: 1, state: "complete", skills: [] },
+  null,
+  2,
+)}\n`;
+
+/** Written to a temporary file and moved, as the adapter writes it. Best-effort:
+ *  if it fails the adapter writes the manifest itself, as without the seed. */
+async function seedEmptyAdapterManifest(args: {
+  session: PreseedSession;
+  skillsBase: string;
+  manifestPath: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  const temporary = `${args.manifestPath}.tmp`;
+  const command = [
+    `mkdir -p ${shellQuote(args.skillsBase)}`,
+    `printf '%s' ${shellQuote(EMPTY_ADAPTER_MANIFEST)} > ${shellQuote(temporary)}`,
+    `mv -f ${shellQuote(temporary)} ${shellQuote(args.manifestPath)}`,
+  ].join(" && ");
+  try {
+    const result = await args.session.run({
+      command,
+      ...(args.signal ? { abortSignal: args.signal } : {}),
+    });
+    if (result.exitCode !== 0) {
+      logger.warn(
+        "[preseed-adapter-skills] could not seed the skills manifest",
+        {
+          skillsBase: args.skillsBase,
+          exitCode: result.exitCode,
+        },
+      );
+    }
+  } catch (error) {
+    logger.warn("[preseed-adapter-skills] could not seed the skills manifest", {
+      skillsBase: args.skillsBase,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }

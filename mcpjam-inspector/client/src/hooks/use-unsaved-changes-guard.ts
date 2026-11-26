@@ -14,7 +14,19 @@
  */
 
 import { useCallback, useEffect, useRef } from "react";
-import { useBlocker } from "react-router";
+import { useBlocker, type Location, type NavigationType } from "react-router";
+
+type GuardLocation = Pick<Location, "pathname" | "search" | "hash">;
+
+/**
+ * A navigation the caller treats as staying on the same page, so the guard
+ * lets it through even with unsaved changes. The caller then owns asking.
+ */
+export type SamePageNavigation = (
+  current: GuardLocation,
+  next: GuardLocation,
+  historyAction: NavigationType,
+) => boolean;
 
 export function useUnsavedChangesGuard(
   hasUnsavedChanges: boolean,
@@ -30,6 +42,8 @@ export function useUnsavedChangesGuard(
   onDiscard?: () => void,
   message = "You have unsaved settings. Leave without saving?",
   pendingSave = false,
+  /** Navigations that stay on this page; the caller asks for these itself. */
+  isSamePage?: SamePageNavigation,
 ) {
   // Stable across renders that do not change the answer: react-router
   // re-registers the blocker whenever this function's identity moves, and this
@@ -38,15 +52,18 @@ export function useUnsavedChangesGuard(
     ({
       currentLocation,
       nextLocation,
+      historyAction,
     }: {
-      currentLocation: { pathname: string; search?: string; hash?: string };
-      nextLocation: { pathname: string; search?: string; hash?: string };
+      currentLocation: GuardLocation;
+      nextLocation: GuardLocation;
+      historyAction: NavigationType;
     }) =>
       hasUnsavedChanges &&
       (currentLocation.pathname !== nextLocation.pathname ||
         currentLocation.search !== nextLocation.search ||
-        currentLocation.hash !== nextLocation.hash),
-    [hasUnsavedChanges],
+        currentLocation.hash !== nextLocation.hash) &&
+      !isSamePage?.(currentLocation, nextLocation, historyAction),
+    [hasUnsavedChanges, isSamePage],
   );
   const blocker = useBlocker(shouldBlock);
 

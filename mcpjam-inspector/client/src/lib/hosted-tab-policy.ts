@@ -1,7 +1,15 @@
 import { listHostedBlockedNavSegments } from "@/shared/app-surfaces";
 
-const HASH_TAB_ALIASES = {
+/**
+ * The launcher accepts the same names with the same targets
+ * (`shared/launcher-tabs.ts`).
+ */
+export const HASH_TAB_ALIASES = {
   chat: "playground",
+  /** App Builder became Playground; old links and launcher configs name it. */
+  "app-builder": "playground",
+  /** Older launchers sent `chat` as `chat-v2`. */
+  "chat-v2": "playground",
   /** Public hash slug; in-app tab id is `clients`. */
   connect: "clients",
   /** Legacy alias: `/hosts` and `#hosts` map to the renamed clients tab. */

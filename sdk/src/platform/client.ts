@@ -1,5 +1,6 @@
 import { MCPJAM_CLOUD_API_URL } from "../deployment/address.js";
 import { widgetSessionPath } from "./widget-session-types.js";
+import { DirectoryReviewerAttemptClient } from "./directory-reviewer-attempt-client.js";
 import type {
   PlatformWidgetSessionTarget,
   PlatformWidgetSessionCreateBody,
@@ -36,6 +37,7 @@ import type {
   ModelSelection,
 } from "../host-config/model-selection.js";
 import { PlatformApiError } from "./errors.js";
+import { asciiJson, clientDeclarationHeaders } from "./client-declaration.js";
 import { readSdkVersion } from "../sdk-version.js";
 import type {
   PlatformScenarioSummary,
@@ -72,6 +74,8 @@ import type {
   PlatformEvalRunGate,
   PlatformGateWaiverRead,
   PlatformGateWaiverWriteResult,
+  PlatformEvalRunFindingsBuildRequested,
+  PlatformEvalRunInsightsCanceled,
   PlatformEvalRunInsightsRequested,
   PlatformAdhocEnvironmentBody,
   PlatformAdhocEnvironmentEnsured,
@@ -181,10 +185,14 @@ import type {
   PlatformReadinessRun,
   PlatformReadinessRunReceipt,
   PlatformReadinessStartBody,
+  PlatformConformanceCheck,
   PlatformConformanceReport,
   PlatformConformanceRun,
   PlatformConformanceRunReceipt,
   PlatformConformanceSuiteKind,
+  PlatformServerRevision,
+  PlatformServerRevisionDiff,
+  PlatformServerRevisionSummary,
   PlatformCatalogServer,
   PlatformCatalogSourceStatus,
   PlatformDirectorySearchPage,
@@ -403,6 +411,10 @@ export const EVAL_VOCABULARY_HEADER = "x-mcpjam-eval-vocabulary";
  */
 export const API_VOCABULARY_HEADER = "x-mcpjam-api-vocabulary";
 
+/** Host-config keys this SDK understands, so a `/v1` server can return them. */
+export const HOST_CONFIG_FEATURES_HEADER = "x-mcpjam-host-config-features";
+export const HOST_CONFIG_FEATURES = "model-visible-structured-content";
+
 /**
  * `study` → `scenario`, the stored spelling, before a noun VALUE goes on the
  * wire.
@@ -475,7 +487,7 @@ function buildLaunchHeaders(
       MAX_LAUNCHER_FIELD_CHARS
     );
     const serialized = withinHeaderCap(
-      JSON.stringify({
+      asciiJson({
         kind,
         ...(client ? { client } : {}),
         ...(version ? { version } : {}),
@@ -601,6 +613,11 @@ type ServerScope = {
   serverId: string;
 };
 
+function serverRevisionsPath(scope: ServerScope): string {
+  const { projectId, serverId } = scope;
+  return `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(serverId)}/revisions`;
+}
+
 /**
  * Minimal fetch-based client for the MCPJam Platform API. Runtime-agnostic
  * by construction (Workers/browser/Node): native fetch only, no Node
@@ -704,7 +721,7 @@ function isBrowserPage(): boolean {
   return scope.window !== undefined && scope.document !== undefined;
 }
 
-export class PlatformApiClient {
+export class PlatformApiClient extends DirectoryReviewerAttemptClient {
   private readonly baseUrl: string;
   private readonly getAuth: () => string | Promise<string>;
   private readonly fetchFn: typeof fetch;
@@ -720,6 +737,8 @@ export class PlatformApiClient {
    * them.
    */
   private readonly launchHeaders?: Record<string, string>;
+  /** `x-mcpjam-client`, from the same launcher, for every request. */
+  private readonly clientHeaders?: Record<string, string>;
   /** The vocabulary every request declares; `1` sends no header. */
   private readonly evalVocabulary: 1 | 2;
   /** The noun-value vocabulary every request declares; `1` sends no header. */
@@ -731,6 +750,7 @@ export class PlatformApiClient {
   private readonly constructorOptions: PlatformApiClientOptions;
 
   constructor(options: PlatformApiClientOptions) {
+    super();
     this.constructorOptions = options;
     this.evalVocabulary = options.evalVocabulary ?? 1;
     this.apiVocabulary = options.apiVocabulary ?? 1;
@@ -749,6 +769,9 @@ export class PlatformApiClient {
       ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
       : DEFAULT_PLATFORM_USER_AGENT;
     this.launchHeaders = buildLaunchHeaders(options);
+    this.clientHeaders = clientDeclarationHeaders(
+      this.launchHeaders?.[RUN_LAUNCH_HEADERS.launcher]
+    );
     // Lower-cased at construction so `request` cannot end up with two spellings
     // of one header — HTTP names are case-insensitive, but a plain object's
     // keys are not, and `{Authorization, authorization}` would send both.
@@ -2786,9 +2809,9 @@ export class PlatformApiClient {
   }
 
   /**
-   * Request (or with `force`, regenerate) the eval run's insights —
-   * serverQuality behind the common envelope. SPENDS the org's model budget;
-   * poll `getEvalRun().insights` rather than re-requesting.
+   * Start (or with `force`, rerun) the run's findings analysis, the one the
+   * app's run page runs. Included with MCPJam; counts against the daily
+   * insight quota. Poll `getEvalRun().insights` rather than re-requesting.
    */
   requestEvalRunInsights(
     params: { projectId: string; runId: string; force?: boolean },
@@ -2799,6 +2822,36 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/eval-runs/${encodeURIComponent(params.runId)}/insights`,
+      { body: params.force ? { force: true } : {} },
+      options
+    );
+  }
+
+  /** Cancel a running analysis; a 409 when none is running. */
+  cancelEvalRunInsights(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRunInsightsCanceled> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/insights`,
+      {},
+      options
+    );
+  }
+
+  /** Build (or with `force`, rebuild) the findings an analysis explains. */
+  buildEvalRunFindings(
+    params: { projectId: string; runId: string; force?: boolean },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRunFindingsBuildRequested> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/findings/build`,
       { body: params.force ? { force: true } : {} },
       options
     );
@@ -3304,6 +3357,25 @@ export class PlatformApiClient {
   }
 
   /**
+   * Run again a run that stopped on the server and was re-queued, which a
+   * read reports as `resumable`. Only the person who started it can: the
+   * server is authorized again with their credentials. Poll the run after.
+   */
+  resumeReadinessRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformReadinessRunReceipt> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/readiness-runs/${encodeURIComponent(params.runId)}/resume`,
+      {},
+      options
+    );
+  }
+
+  /**
    * The full report: every finding, with its class, provenance, citation and
    * remediation.
    *
@@ -3342,6 +3414,8 @@ export class PlatformApiClient {
       idempotencyKey?: string;
       protocolVersion?: string;
       engineVersion?: string;
+      /** `saved`, the default, runs the server's saved conformance settings. */
+      settings?: "saved" | "none";
     },
     options?: RequestOptions
   ): Promise<PlatformConformanceRunReceipt> {
@@ -3352,18 +3426,21 @@ export class PlatformApiClient {
       idempotencyKey,
       protocolVersion,
       engineVersion,
+      settings,
     } = params;
     const body: Record<string, unknown> = {};
     if (suites !== undefined) body.suites = suites;
     if (idempotencyKey !== undefined) body.idempotencyKey = idempotencyKey;
     if (protocolVersion !== undefined) body.protocolVersion = protocolVersion;
     if (engineVersion !== undefined) body.engineVersion = engineVersion;
+    if (settings !== undefined) body.settings = settings;
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(
         serverId
       )}/conformance-runs`,
-      { body },
+      // The launch headers say which client started the run, as for evals.
+      { body, declareLaunch: true },
       options
     );
   }
@@ -3401,7 +3478,7 @@ export class PlatformApiClient {
   }
 
   getConformanceReport(
-    params: { projectId: string; runId: string },
+    params: { projectId: string; runId: string; cursor?: string },
     options?: RequestOptions
   ): Promise<PlatformConformanceReport> {
     return this.request(
@@ -3409,7 +3486,29 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/conformance-runs/${encodeURIComponent(params.runId)}/report`,
-      {},
+      params.cursor ? { query: { cursor: params.cursor } } : {},
+      options
+    );
+  }
+
+  /** One check of a stored run in full; `suite` only when an id is in two. */
+  getConformanceCheck(
+    params: {
+      projectId: string;
+      runId: string;
+      checkId: string;
+      suite?: string;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformConformanceCheck> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/conformance-runs/${encodeURIComponent(
+        params.runId
+      )}/checks/${encodeURIComponent(params.checkId)}`,
+      params.suite ? { query: { suite: params.suite } } : {},
       options
     );
   }
@@ -3812,6 +3911,36 @@ export class PlatformApiClient {
     options?: RequestOptions
   ): Promise<Record<string, unknown>> {
     return this.serverOp(params, "export", options);
+  }
+
+  /** A saved server's stored revisions, newest first. */
+  listServerRevisions(
+    params: ServerScope & { limit?: number; cursor?: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformServerRevisionSummary>> {
+    const query = pageQuery(params);
+    return this.request("GET", serverRevisionsPath(params), { query }, options);
+  }
+
+  getServerRevision(
+    params: ServerScope & { revisionNumber: number },
+    options?: RequestOptions
+  ): Promise<PlatformServerRevision> {
+    const path = `${serverRevisionsPath(params)}/${params.revisionNumber}`;
+    return this.request("GET", path, {}, options);
+  }
+
+  /** Compares `fromRevisionNumber` (default: the one before) with `revisionNumber`. */
+  diffServerRevisions(
+    params: ServerScope & {
+      revisionNumber: number;
+      fromRevisionNumber?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformServerRevisionDiff> {
+    const path = `${serverRevisionsPath(params)}/${params.revisionNumber}/diff`;
+    const query = { from: params.fromRevisionNumber };
+    return this.request("GET", path, { query }, options);
   }
 
   listServerTools(
@@ -6487,7 +6616,7 @@ export class PlatformApiClient {
     return this.request("POST", path, { body: params.body ?? {} }, options);
   }
 
-  private async request<T>(
+  protected async request<T>(
     // PUT is here for idempotent creates — `publishScenario` is the first:
     // publishing an environment that is already published returns the existing
     // scenario rather than minting a second, which is PUT's semantics and not
@@ -6508,6 +6637,8 @@ export class PlatformApiClient {
        * this is the header that says which client that was.
        */
       declareLaunch?: boolean;
+      /** Told a successful answer's status, for a route where it is the answer. */
+      onStatus?: (status: number) => void;
     },
     options?: RequestOptions
   ): Promise<T> {
@@ -6548,8 +6679,12 @@ export class PlatformApiClient {
     } else {
       delete headers[API_VOCABULARY_HEADER];
     }
+    // This SDK's canonicalizer understands these host-config keys; a server
+    // leaves them out of the configs it returns to a client that doesn't say so.
+    headers[HOST_CONFIG_FEATURES_HEADER] = HOST_CONFIG_FEATURES;
     // After `extraHeaders`, like every other header this client owns: an edge
     // authenticator's credential must not be able to relabel a run's origin.
+    if (this.clientHeaders) Object.assign(headers, this.clientHeaders);
     if (init.declareLaunch && this.launchHeaders) {
       Object.assign(headers, this.launchHeaders);
     }
@@ -6675,6 +6810,7 @@ export class PlatformApiClient {
       );
     }
 
+    init.onStatus?.(response.status);
     // Empty success bodies (204 / no content) resolve to undefined.
     return parsed as T;
   }

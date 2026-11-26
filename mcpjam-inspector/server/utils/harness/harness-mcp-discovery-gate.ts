@@ -7,9 +7,9 @@
  */
 import type { MCPClientManager } from "@mcpjam/sdk";
 import type { HarnessHostCapabilityQualification } from "@/shared/harness-host-capabilities";
-import {
-  harnessOrgUpstream,
-  type HarnessDiscoveryRoute,
+import type {
+  HarnessDiscoveryRoute,
+  HarnessUpstreamProfile,
 } from "@/shared/harness-model-support";
 import { usesAppHostCapabilities } from "./forwarding/native-admission.js";
 import {
@@ -37,6 +37,8 @@ export function assertHarnessMcpDiscoveryGate(args: {
   plane: HarnessMcpProxyStrategy["plane"] | undefined;
   localExecution: boolean;
   brokeredEndpoint: string;
+  /** The turn's upstream (`OrgLeaseTurn.upstreamProfile`), not the harness's. */
+  upstreamProfile: HarnessUpstreamProfile;
 }): void {
   if (!args.required) return;
   const { plan, manager, serverIds } = args;
@@ -74,9 +76,7 @@ export function assertHarnessMcpDiscoveryGate(args: {
           ? "swarm"
           : "chat",
     funding: platform ? "platform" : "organization",
-    upstreamProfile: platform
-      ? "gateway"
-      : (harnessOrgUpstream(args.harnessId)?.profile ?? "gateway"),
+    upstreamProfile: args.upstreamProfile,
   };
   for (const serverId of serverIds) {
     assertNativeDiscovery({

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import {
   ciOwnedSuite,
   openSettingsRow,
@@ -28,7 +28,10 @@ vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
  *   - and a read-only suite that offers a save it cannot perform.
  */
 
-const capability = vi.hoisted(() => ({ canUpgrade: false }));
+const capability = vi.hoisted(() => ({
+  canUpgrade: false,
+  permissions: {} as Record<string, boolean>,
+}));
 
 const mocks = vi.hoisted(() => ({
   applySuiteSettings: vi.fn(async () => ({ revisionNumber: 4 })),
@@ -64,7 +67,7 @@ vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
       capabilities: capability.canUpgrade
         ? {
             verdictPolicyV2: { canUpgrade: true, deploymentMode: "enforce" },
-            permissions: {},
+            permissions: capability.permissions,
             features: {},
             judge: {
               role: "advisory",
@@ -113,7 +116,11 @@ vi.mock("@/hooks/useComputersEnabled", () => ({
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => true,
 }));
-vi.mock("posthog-js/react", () => ({ useFeatureFlagEnabled: () => true }));
+const flags = vi.hoisted(() => ({ suiteSettingsTabs: false }));
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: (flag: string) =>
+    flag === "eval-suite-settings-tabs" ? flags.suiteSettingsTabs : true,
+}));
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: () => [],
   useEnsureAdhocEnvironments: () => vi.fn(),
@@ -146,6 +153,8 @@ vi.mock("@mcpjam/design-system/popover", () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   capability.canUpgrade = false;
+  capability.permissions = {};
+  flags.suiteSettingsTabs = false;
 });
 
 describe("suite settings page", () => {
@@ -229,5 +238,271 @@ describe("suite settings page", () => {
     expect(screen.getByTestId("suite-settings-locked")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Back to suite" })).toBeEnabled();
     expect(screen.queryByRole("button", { name: "Save settings" })).toBeNull();
+  });
+});
+
+describe("suite settings page with the tabs flag", () => {
+  beforeEach(() => {
+    flags.suiteSettingsTabs = true;
+  });
+
+  const sectionHidden = (container: HTMLElement, key: string) =>
+    Boolean(
+      container
+        .querySelector(`[data-setting-key="${key}"]`)
+        ?.closest("[hidden]"),
+    );
+
+  it("opens on Settings with the eyebrow, subtitle and tabs, and no Back to suite", () => {
+    const { container } = renderSettingsSheet();
+    expect(screen.getByText("Suite settings")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "What this suite tests and how it grades. Changes apply to the next run.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Settings" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.queryByRole("button", { name: "Back to suite" })).toBeNull();
+    expect(sectionHidden(container, "policy")).toBe(false);
+    expect(sectionHidden(container, "passOrFail")).toBe(true);
+    expect(
+      container.querySelector('[data-settings-layout="inline"]'),
+    ).not.toBeNull();
+  });
+
+  it("opens Default evaluators from the address", () => {
+    const { container } = renderSettingsSheet({
+      route: { type: "suite-edit", suiteId: "suite-1", tab: "evaluators" },
+    });
+    expect(sectionHidden(container, "policy")).toBe(true);
+    expect(sectionHidden(container, "passOrFail")).toBe(false);
+  });
+
+  it("switches tab through the address when nothing is unsaved", () => {
+    renderSettingsSheet();
+    fireEvent.click(screen.getByRole("button", { name: "Default evaluators" }));
+    expect(noopNav.toSuiteEdit).toHaveBeenCalledWith(
+      "suite-1",
+      undefined,
+      "evaluators",
+      { replace: true },
+    );
+  });
+
+  it("asks before a renamed suite's change is dropped, and Discard clears it", async () => {
+    const { container } = renderSettingsSheet();
+    openSettingsRow(container, "name");
+    fireEvent.change(screen.getByRole("textbox", { name: "Suite name" }), {
+      target: { value: "Renamed suite" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Default evaluators" }));
+
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(
+      "You have unsaved changes. Discard them to open Default evaluators, or keep editing and save first.",
+    );
+    expect(noopNav.toSuiteEdit).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    await waitFor(() =>
+      expect(noopNav.toSuiteEdit).toHaveBeenCalledWith(
+        "suite-1",
+        undefined,
+        "evaluators",
+        { replace: true },
+      ),
+    );
+    expect(screen.queryByTestId("suite-settings-commit-bar")).toBeNull();
+  });
+});
+
+describe("suite settings delete button", () => {
+  const deleteButton = () =>
+    screen.queryByRole("button", { name: "Delete suite" });
+
+  it("offers a destructive trash button in Evaluate when the suite can be deleted", () => {
+    const onDelete = vi.fn();
+    renderSettingsSheet({ evaluateSettingsDelete: true, onDelete });
+    const button = deleteButton();
+    expect(button).toBeEnabled();
+    expect(button).toHaveClass("bg-destructive");
+    expect(button).not.toHaveClass("bg-destructive/50");
+    fireEvent.click(button!);
+    expect(onDelete).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: "suite-1" }),
+      { hasUnsavedEdits: false },
+    );
+  });
+
+  it("tells the delete there are unsaved edits", () => {
+    const onDelete = vi.fn();
+    const { container } = renderSettingsSheet({
+      evaluateSettingsDelete: true,
+      onDelete,
+    });
+    openSettingsRow(container, "name");
+    fireEvent.change(screen.getByRole("textbox", { name: "Suite name" }), {
+      target: { value: "Renamed suite" },
+    });
+    fireEvent.click(deleteButton()!);
+    expect(onDelete).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: "suite-1" }),
+      { hasUnsavedEdits: true },
+    );
+  });
+
+  it("sits to the right of Save settings, with or without unsaved changes", () => {
+    const { container } = renderSettingsSheet({ evaluateSettingsDelete: true });
+    const followsSave = () =>
+      Boolean(
+        screen
+          .getByRole("button", { name: "Save settings" })
+          .compareDocumentPosition(deleteButton()!) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+    expect(followsSave()).toBe(true);
+    openSettingsRow(container, "name");
+    fireEvent.change(screen.getByRole("textbox", { name: "Suite name" }), {
+      target: { value: "Renamed suite" },
+    });
+    expect(screen.getByTestId("suite-settings-commit-bar")).toBeInTheDocument();
+    expect(followsSave()).toBe(true);
+  });
+
+  it("leaves the legacy Evals settings header without it", () => {
+    renderSettingsSheet();
+    expect(deleteButton()).toBeNull();
+  });
+
+  it("hides it from someone who cannot delete the suite", () => {
+    renderSettingsSheet({ evaluateSettingsDelete: true, canDeleteSuite: false });
+    expect(deleteButton()).toBeNull();
+  });
+
+  it("offers it on a CI-owned suite, whose settings are read-only", () => {
+    // Deleting edits nothing a sync would undo, so the CI lock doesn't apply.
+    renderSettingsSheet({ evaluateSettingsDelete: true, suite: ciOwnedSuite });
+    expect(screen.queryByRole("button", { name: "Save settings" })).toBeNull();
+    expect(deleteButton()).toBeEnabled();
+  });
+
+  it("is disabled while this suite is being deleted", () => {
+    renderSettingsSheet({
+      evaluateSettingsDelete: true,
+      deletingSuiteId: "suite-1",
+    });
+    expect(deleteButton()).toBeDisabled();
+  });
+
+  it("stays enabled with unsaved changes and is disabled only while saving", async () => {
+    let finishSave: (value: { revisionNumber: number }) => void = () => {};
+    mocks.applySuiteSettings.mockImplementationOnce(
+      () => new Promise((resolve) => (finishSave = resolve)),
+    );
+    const { container } = renderSettingsSheet({ evaluateSettingsDelete: true });
+    openSettingsRow(container, "name");
+    fireEvent.change(screen.getByRole("textbox", { name: "Suite name" }), {
+      target: { value: "Renamed suite" },
+    });
+    expect(screen.getByTestId("suite-settings-commit-bar")).toBeInTheDocument();
+    expect(deleteButton()).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(deleteButton()).toBeDisabled());
+
+    finishSave({ revisionNumber: 4 });
+    await waitFor(() => expect(deleteButton()).toBeEnabled());
+  });
+
+  async function leaveWithEdits(
+    overrides: { deletingSuiteId: string | null; evaluateSettingsDelete?: boolean },
+  ) {
+    // jsdom has no `window.confirm`; spying makes the guard's prompt visible.
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const view = renderSettingsSheet({
+      evaluateSettingsDelete: true,
+      ...overrides,
+    });
+    openSettingsRow(view.container, "name");
+    fireEvent.change(screen.getByRole("textbox", { name: "Suite name" }), {
+      target: { value: "Renamed suite" },
+    });
+    // Not awaited: a blocked navigation never settles.
+    act(() => {
+      void view.router.navigate("/elsewhere");
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const result = {
+      left: screen.queryByTestId("elsewhere") !== null,
+      prompted: confirm.mock.calls.length > 0,
+    };
+    confirm.mockRestore();
+    return result;
+  }
+
+  it("still guards unsaved edits when no delete is in flight", async () => {
+    expect(await leaveWithEdits({ deletingSuiteId: null })).toEqual({
+      left: false,
+      prompted: true,
+    });
+  });
+
+  it("lets the post-delete navigation through unsaved edits", async () => {
+    expect(await leaveWithEdits({ deletingSuiteId: "suite-1" })).toEqual({
+      left: true,
+      prompted: false,
+    });
+  });
+
+  it("keeps the guard during a delete on mounts without the settings delete", async () => {
+    expect(
+      await leaveWithEdits({
+        deletingSuiteId: "suite-1",
+        evaluateSettingsDelete: false,
+      }),
+    ).toEqual({ left: false, prompted: true });
+  });
+
+  it("is disabled while another suite is being deleted", () => {
+    renderSettingsSheet({
+      evaluateSettingsDelete: true,
+      deletingSuiteId: "suite-2",
+    });
+    expect(deleteButton()).toBeDisabled();
+  });
+
+  it("hides it when the backend withholds suite.delete", () => {
+    capability.canUpgrade = true;
+    capability.permissions = { "suite.delete": false };
+    renderSettingsSheet({ evaluateSettingsDelete: true });
+    expect(deleteButton()).toBeNull();
+  });
+
+  it("won't start a save while this suite is being deleted", () => {
+    const { container } = renderSettingsSheet({
+      evaluateSettingsDelete: true,
+      deletingSuiteId: "suite-1",
+    });
+    openSettingsRow(container, "name");
+    fireEvent.change(screen.getByRole("textbox", { name: "Suite name" }), {
+      target: { value: "Renamed suite" },
+    });
+    expect(screen.getByRole("button", { name: "Save settings" })).toBeDisabled();
+    fireEvent.keyDown(window, { key: "s", metaKey: true });
+    expect(mocks.applySuiteSettings).not.toHaveBeenCalled();
+  });
+
+  it("shows on both tabs when the tabs flag is on", () => {
+    flags.suiteSettingsTabs = true;
+    const settings = renderSettingsSheet({ evaluateSettingsDelete: true });
+    expect(deleteButton()).toBeEnabled();
+    settings.unmount();
+    renderSettingsSheet({
+      evaluateSettingsDelete: true,
+      route: { type: "suite-edit", suiteId: "suite-1", tab: "evaluators" },
+    });
+    expect(deleteButton()).toBeEnabled();
   });
 });

@@ -104,6 +104,12 @@ declare module "hono" {
      */
     authMethod?:
       | "workos_api_key"
+      // A WorkOS AuthKit agent-registration token (auth.md): `sub` is the
+      // registration, `act.sub` the user who approved it, `org_id` the org
+      // they chose. Org-bound like `workos_api_key`; see
+      // `utils/org-bound-credential.ts`. `workosAgentRegistrationId` is set
+      // alongside the same identity vars.
+      | "workos_agent"
       | "slack_service"
       | "discord_service"
       // RESERVED, and currently UNREACHABLE: `surface-service-auth.ts` no
@@ -125,8 +131,17 @@ declare module "hono" {
       | "unverified_passthrough";
     /** WorkOS API key id (e.g. `api_key_…`). Set with `authMethod`. */
     workosApiKeyId?: string;
+    /** WorkOS agent registration id (`agent_reg_…`). Set with `workos_agent`. */
+    workosAgentRegistrationId?: string;
     /** WorkOS user externalId. Set with `authMethod`. */
     workosUserId?: string;
+    /**
+     * The `sub` of a correctly signed AuthKit token minted for another
+     * audience (the MCP worker, the CLI's Connect app). For usage analytics
+     * ONLY: the request is still `unverified_passthrough`, and no auth or route
+     * decision may read this. See `utils/v1-usage-event.ts`.
+     */
+    analyticsUserId?: string;
     /**
      * The AuthKit session (`sid` claim) of a gateway-verified `authkit_jwt`
      * bearer, when the token carries one. What revocation is keyed on

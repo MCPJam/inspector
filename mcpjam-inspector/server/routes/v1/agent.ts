@@ -114,8 +114,10 @@ import {
   AGENT_MAX_STEPS,
 } from "../../../shared/mcpjam-agent-model.js";
 import { resolveAgentModel } from "../../utils/agent-model.js";
-import { captureServerEvent } from "../../utils/analytics.js";
-import type { RequestLogContext } from "../../utils/log-events.js";
+import {
+  captureServerEvent,
+  fillAnalyticsActorFromBearer,
+} from "../../utils/analytics.js";
 import { logger } from "../../utils/logger.js";
 import { createProposedAction } from "../../services/slack-backend.js";
 import { getOrgAgentPolicyCached } from "../../utils/org-agent-policy.js";
@@ -1499,7 +1501,6 @@ agent.post("/projects/:projectId/agent", async (c) => {
       modelDefinition: agentModel.modelDefinition,
       systemPrompt: AGENT_API_SYSTEM_PROMPT,
       builtInTools,
-      skillsSource: { kind: "none" },
       // The toolset is small and fixed — discovery meta-tools would only
       // add search/load indirection steps and hide the op schemas.
       progressiveToolDiscovery: { enabled: false },
@@ -1830,14 +1831,7 @@ function captureTurnEvent(
     createdCount?: number;
   },
 ): void {
-  // API-key callers never pass the Convex authorize exchange that normally
-  // fills `userExternalId`; the WorkOS user id from bearer auth IS the
-  // actorKey the analytics identity contract requires.
-  const ctx = c.var.requestLogContext as RequestLogContext | undefined;
-  const workosUserId = c.get("workosUserId");
-  if (ctx && !ctx.userExternalId && workosUserId) {
-    c.set("requestLogContext", { ...ctx, userExternalId: workosUserId });
-  }
+  fillAnalyticsActorFromBearer(c);
   captureServerEvent(c, "api_agent_turn_completed", {
     surface: "api",
     outcome: data.outcome,

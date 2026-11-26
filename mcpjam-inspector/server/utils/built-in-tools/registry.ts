@@ -76,6 +76,11 @@ import {
   type ComputerEngine,
 } from "../computers/engine.js";
 import { buildSandboxBashTool } from "./sandbox-bash.js";
+import type { BrowserSuppressionCode } from "./browser-refusal.js";
+import {
+  personalComputerWorkspace,
+  type PreviewWorkspaceSource,
+} from "../../services/workspace-preview/workspace-tunnel.js";
 import {
   buildMcpjamTool,
   isMcpjamToolId,
@@ -93,6 +98,7 @@ import type {
   DeclaredToolProvider,
   MintedDeclaredTool,
 } from "@/shared/declared-tools";
+import type { AuthHeaderSource } from "../run-bearer.js";
 
 /**
  * A binding to an EPHEMERAL sandbox the caller has ALREADY PROVISIONED.
@@ -144,8 +150,11 @@ export interface TrustedSandboxBinding {
 }
 
 export interface BuiltInToolContext {
-  /** Bearer authorization forwarded to Convex. "Bearer " prefix optional. */
-  authHeader: string;
+  /**
+   * Bearer authorization forwarded to Convex. "Bearer " prefix optional. A
+   * function for a bearer that renews: each tool call reads it when sent.
+   */
+  authHeader: AuthHeaderSource;
   /** Project the built-in tool's usage bills against / executes in. */
   projectId: string;
   /**
@@ -243,6 +252,19 @@ export interface BuiltInToolContext {
    */
   sandboxBinding?: TrustedSandboxBinding;
   /**
+   * A desktop booted beside {@link sandboxBinding} for Browser alone, when an
+   * unattended run pins a terminal image. Bash stays on the pinned box, and
+   * Browser opens that box's apps at localhost. Set in-process only, like the
+   * shell's binding.
+   */
+  browserSandboxBinding?: TrustedSandboxBinding;
+  /**
+   * The workspace a watched conversation's browser opens at localhost, when
+   * the browser and the shell run on different boxes and this context cannot
+   * see the shell's binding (the public API attaches the browser first).
+   */
+  browserPreviewWorkspace?: PreviewWorkspaceSource;
+  /**
    * MATERIALIZED project secrets for this turn, exported into every `bash`
    * command's environment.
    *
@@ -275,7 +297,11 @@ export interface BuiltInToolContext {
    * missing tool reads as a host-config bug to whoever opens the run, so
    * surfaces that can show a notice wire this; the rest get log-only behavior.
    */
-  onToolSuppressed?: (info: { id: string; reason: string }) => void;
+  onToolSuppressed?: (info: {
+    id: string;
+    reason: string;
+    code?: BrowserSuppressionCode;
+  }) => void;
   /**
    * Platform API client for the MCPJam workspace tools, bound to the
    * caller's bearer (in the web chat it self-dispatches into this server's
@@ -474,7 +500,11 @@ export function resolveHostTools(
     );
   }
 
-  const authHeader = normalizeAuthHeader(ctx.authHeader);
+  const rawAuthHeader = ctx.authHeader;
+  const authHeader: AuthHeaderSource =
+    typeof rawAuthHeader === "function"
+      ? () => normalizeAuthHeader(rawAuthHeader())
+      : normalizeAuthHeader(rawAuthHeader);
   const computer = narrowHostComputer(config.computer);
   const out: ToolSet = {};
 
@@ -704,9 +734,10 @@ export function resolveHostTools(
       // A stale verdict is not checked for a run that already holds its own
       // desktop box: the runner asked before booking it, and refusing now
       // leaves that box paid for and idle until the run ends.
+      const runDesktop = ctx.browserSandboxBinding ?? ctx.sandboxBinding;
       const boxBooked =
-        ctx.sandboxBinding?.runtimeKind === "desktop-browser" &&
-        Boolean(ctx.sandboxBinding.sandboxRowId);
+        runDesktop?.runtimeKind === "desktop-browser" &&
+        Boolean(runDesktop.sandboxRowId);
       if (!isLocalBrowser && isHostedBrowserRefused({ boxBooked })) {
         // Said separately, because they are different facts and only one of
         // them is the backend's answer. A `null` verdict means we never got an
@@ -726,6 +757,7 @@ export function resolveHostTools(
         );
         ctx.onToolSuppressed?.({
           id,
+          code: answered ? "hosted_not_configured" : "hosted_transient",
           reason: answered
             ? "browser is not available on this deployment yet: the backend reports " +
               "the hosted browser runtime is not fully configured."
@@ -744,12 +776,44 @@ export function resolveHostTools(
       // project computer. Reading the binding first is what lets those gates
       // stay about the thing they describe instead of accumulating "…unless a
       // sandbox" clauses.
-      const sandboxBrowser =
-        !isLocalBrowser && ctx.sandboxBinding?.sandboxRowId
-          ? ctx.sandboxBinding
+      // A watched conversation whose shell runs on a terminal box keeps its
+      // own browser box; the shell's apps open there through the preview
+      // tunnel. An unattended run needs one box that can do both, or the
+      // desktop its runner paired with the pinned shell box.
+      const pairedBrowser =
+        !isLocalBrowser &&
+        ctx.browserSandboxBinding?.runtimeKind === "desktop-browser" &&
+        ctx.browserSandboxBinding.sandboxRowId
+          ? ctx.browserSandboxBinding
           : undefined;
+      const previewWorkspace: PreviewWorkspaceSource | undefined =
+        !isLocalBrowser &&
+        (pairedBrowser ||
+          (conversationBrowser?.kind === "conversation" &&
+            ctx.browserApprovalDelivery?.kind !== "unattended")) &&
+        ctx.sandboxBinding &&
+        ctx.sandboxBinding.runtimeKind !== "desktop-browser"
+          ? { sandboxId: ctx.sandboxBinding.sandboxId }
+          : (ctx.browserPreviewWorkspace ??
+            (!isLocalBrowser &&
+            conversationBrowser?.kind === "conversation" &&
+            computer &&
+            ctx.computerEngine !== "local" &&
+            ctx.localComputerRequested !== true
+              ? personalComputerWorkspace({
+                  authHeader,
+                  projectId: ctx.projectId,
+                  ...(ctx.executionScope ? { executionScope: ctx.executionScope } : {}),
+                })
+              : undefined));
+      const sandboxBrowser =
+        pairedBrowser ??
+        (!isLocalBrowser && !previewWorkspace && ctx.sandboxBinding?.sandboxRowId
+          ? ctx.sandboxBinding
+          : undefined);
       if (
         !isLocalBrowser &&
+        !previewWorkspace &&
         ctx.sandboxBinding &&
         (!sandboxBrowser ||
           ctx.sandboxBinding.runtimeKind !== "desktop-browser")
@@ -764,6 +828,7 @@ export function resolveHostTools(
         );
         ctx.onToolSuppressed?.({
           id,
+          code: "terminal_only",
           reason:
             "browser is not advertised: this run's sandbox is not a desktop " +
             "(browser) box, and a browser cannot run on a terminal image.",
@@ -855,6 +920,7 @@ export function resolveHostTools(
           ? { approvalDelivery: ctx.browserApprovalDelivery }
           : {}),
         ...(conversationBrowser ? { sessionScope: conversationBrowser } : {}),
+        ...(previewWorkspace ? { previewWorkspace } : {}),
         ...(ctx.browserProfileId
           ? { browserProfileId: ctx.browserProfileId }
           : {}),

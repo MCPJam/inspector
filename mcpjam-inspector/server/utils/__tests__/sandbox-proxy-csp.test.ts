@@ -1,3 +1,4 @@
+import { MCP_APPS_SANDBOX_PROXY_HTML } from "../../routes/apps/SandboxProxyHtml.bundled";
 /**
  * Parity test: `buildSandboxProxyWidgetCsp` (Node) MUST produce byte-identical
  * output to the production `buildCSP` widget-declared branch that ships inline
@@ -7,54 +8,26 @@
  *
  * Same extraction approach as `server/__tests__/sandbox-proxy-buildCSP.test.ts`:
  * pull `sanitizeDomain` + `buildCSP` out of the HTML and evaluate them, so the
- * canonical function stays physically in the document it ships in.
+ * test exercises the materialized document that ships to the browser.
  */
 import { describe, it, expect } from "vitest";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 import { buildSandboxProxyWidgetCsp } from "../sandbox-proxy-csp";
 import type { WidgetCspMeta } from "../widget-helpers";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const html = fs.readFileSync(
-  path.resolve(
-    __dirname,
-    "..",
-    "..",
-    "routes",
-    "apps",
-    "mcp-apps",
-    "sandbox-proxy.html"
-  ),
-  "utf8"
-);
+const html = MCP_APPS_SANDBOX_PROXY_HTML;
 
-// Extract a named function body from the inline <script>, brace-walking so
-// reformatting of the HTML doesn't break the test.
-function extract(name: string): string {
-  const sig = new RegExp(`function\\s+${name}\\s*\\([^)]*\\)\\s*\\{`);
-  const m = sig.exec(html);
-  if (!m) throw new Error(`Could not extract function ${name}`);
-  let i = m.index + m[0].length;
-  let depth = 1;
-  while (i < html.length && depth > 0) {
-    const ch = html[i++];
-    if (ch === "{") depth++;
-    else if (ch === "}") depth--;
-  }
-  if (depth !== 0) throw new Error(`Unbalanced braces in ${name}`);
-  return html.slice(m.index, i);
-}
+// Evaluate the actual compiled policy module, including its dependencies.
+const policyStart = html.indexOf("var SandboxCspPolicy =");
+const policyEnd = html.indexOf("const { sanitizeDomain, buildCSP, PERMISSIVE_SANDBOX_CSP }");
+if (policyStart < 0 || policyEnd <= policyStart) throw new Error("Missing compiled CSP policy module");
+const policy = html.slice(policyStart, policyEnd);
 
 // eslint-disable-next-line @typescript-eslint/no-implied-eval
 const proxyBuildCSP = new Function(
   "csp",
   "cspDirectives",
   "cspSubtypePolicy",
-  `${extract("sanitizeDomain")}\n${extract(
-    "buildCSP"
-  )}\nreturn buildCSP(csp, cspDirectives, cspSubtypePolicy);`
+  `${policy}\nreturn SandboxCspPolicy.buildCSP(csp, cspDirectives, cspSubtypePolicy);`
 ) as (
   csp: unknown,
   cspDirectives?: Record<string, string[]>,
@@ -93,6 +66,7 @@ describe("buildSandboxProxyWidgetCsp — parity with sandbox-proxy.html", () => 
         frame_domains: ["https://embed.example.com"],
       },
     ],
+    ["internationalized resource", { resource_domains: ["https://bücher.example/部品"] }],
     // Malformed/adversarial metadata must sanitize identically to the proxy.
     [
       "domain attempting CSP directive injection",

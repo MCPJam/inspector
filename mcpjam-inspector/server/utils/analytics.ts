@@ -4,6 +4,7 @@ import { analyticsTransport } from "./analytics-transport.js";
 import type { Context } from "hono";
 import { randomUUID } from "crypto";
 import type { ServerAnalyticsEventName } from "@/shared/analytics-events";
+import type { LocalHarnessRolloutFlag } from "../../shared/harness-descriptors.js";
 import {
   rolloutActorId,
   rolloutPersonProperties,
@@ -16,6 +17,11 @@ import {
 import type { RequestLogContext } from "./log-events.js";
 import { resolveEnvironment } from "./log-events.js";
 import { HOSTED_MODE } from "../config.js";
+import { scrubDeliveredSecretsDeep } from "../../shared/delivered-secret-registry.js";
+import {
+  resolveFeatureFlagSource,
+  rolloutAnswerWithoutPostHog,
+} from "./feature-flag-source.js";
 
 /**
  * Server-side PostHog capture for business-critical events.
@@ -47,7 +53,7 @@ const POSTHOG_HOST = "https://us.i.posthog.com";
 
 // Same opt-outs the client honors, plus the conventional DO_NOT_TRACK for
 // npm/local installs where the server runs on the user's machine.
-function isAnalyticsDisabled(): boolean {
+export function isAnalyticsDisabled(): boolean {
   const dnt = process.env.DO_NOT_TRACK;
   return (
     process.env.VITE_DISABLE_POSTHOG_LOCAL === "true" ||
@@ -67,8 +73,11 @@ function serverPlatform(): string {
 
 let client: PostHog | null = null;
 
-// Feature evaluation controls product availability, independently of tracking.
-// Callers using this exception must suppress feature-flag exposure events.
+// Feature evaluation controls product availability, so it bypasses
+// `isAnalyticsDisabled()`. DO_NOT_TRACK still stops it: callers reach this
+// client only when `resolveFeatureFlagSource` names PostHog, which it never
+// does under DO_NOT_TRACK or when a flag file answers instead. Callers must
+// also suppress feature-flag exposure events.
 function getClient(forFeatureFlags = false): PostHog | null {
   if (!forFeatureFlags && isAnalyticsDisabled()) return null;
   if (!client) {
@@ -88,6 +97,46 @@ function getClient(forFeatureFlags = false): PostHog | null {
     });
   }
   return client;
+}
+
+let batchedClient: PostHog | null = null;
+
+/**
+ * For high-volume events, such as one per Platform API request, where an
+ * event lost at process exit costs a data point, not a decision. The default
+ * client flushes each event on its own POST.
+ */
+function getBatchedClient(): PostHog | null {
+  if (isAnalyticsDisabled()) return null;
+  if (!batchedClient) {
+    batchedClient = new PostHog(POSTHOG_PROJECT_KEY, {
+      host: POSTHOG_HOST,
+      disableCompression: true,
+      enableExceptionAutocapture: false,
+      fetch: analyticsTransport(
+        POSTHOG_HOST,
+        POSTHOG_PROJECT_KEY,
+        isAnalyticsDisabled,
+      ),
+      flushAt: 20,
+      flushInterval: 5000,
+    });
+  }
+  return batchedClient;
+}
+
+/**
+ * API-key and AuthKit bearer callers never pass the Convex authorize exchange
+ * that fills `userExternalId`; the WorkOS user id from bearer auth IS the
+ * actorKey the identity contract requires. Call before `captureServerEvent`
+ * on a `/v1` route.
+ */
+export function fillAnalyticsActorFromBearer(c: Context): void {
+  const ctx = c.var.requestLogContext as RequestLogContext | undefined;
+  const workosUserId = c.get("workosUserId");
+  if (ctx && !ctx.userExternalId && workosUserId) {
+    c.set("requestLogContext", { ...ctx, userExternalId: workosUserId });
+  }
 }
 
 /**
@@ -143,15 +192,16 @@ export function captureServerEventForActor(
   actor: ServerAnalyticsActor,
   event: ServerAnalyticsEventName,
   properties: Record<string, unknown> = {},
+  options: { batched?: boolean } = {},
 ): void {
   try {
-    const posthog = getClient();
+    const posthog = options.batched ? getBatchedClient() : getClient();
     if (!posthog) return;
     posthog.capture({
       event,
       distinctId: actor.distinctId,
       properties: {
-        ...properties,
+        ...scrubDeliveredSecretsDeep(properties),
         // Retry-dedupe key: posthog-node may resend on transient failures.
         $insert_id: randomUUID(),
         platform: serverPlatform(),
@@ -174,18 +224,17 @@ export function captureServerEventForActor(
  * caller's force-exit timer is the backstop).
  */
 /** Rollout evaluation does not emit exposure events or trust client flags. */
-export async function evaluateBrowserRollout(
-  key: "local-browser-enabled" | "hosted-browser-enabled",
+export async function evaluateHostedBrowserRollout(
   distinctId: string,
 ): Promise<boolean> {
+  const key = "hosted-browser-enabled";
   if (!rolloutActorId(distinctId)) return false;
+  const answer = rolloutAnswerWithoutPostHog(key);
+  if (answer !== undefined) return answer;
   try {
     return (
       (await getClient(true)?.isFeatureEnabled(key, distinctId, {
         sendFeatureFlagEvents: false,
-        ...(key === "local-browser-enabled"
-          ? { personProperties: { local_browser_security_version: "1" } }
-          : {}),
       })) === true
     );
   } catch {
@@ -193,18 +242,6 @@ export async function evaluateBrowserRollout(
   }
 }
 
-/**
- * The server-side rollout flag for each local harness. Codex rolls out on its
- * own flag (D3), whose cohort must be a subset of `codex-host-enabled` — the
- * backend refuses a Codex host config outside that cohort, so a user enabled
- * here but not there could pick Codex and then fail to create the host.
- */
-export const LOCAL_HARNESS_ROLLOUT_FLAG = {
-  "claude-code": "local-harness-enabled",
-  codex: "local-codex-enabled",
-} as const;
-export type LocalHarnessRolloutFlag =
-  (typeof LOCAL_HARNESS_ROLLOUT_FLAG)[keyof typeof LOCAL_HARNESS_ROLLOUT_FLAG];
 
 /** Same server-owned rollout decision for setup, launches and client visibility. */
 export async function evaluateLocalHarnessRollout(
@@ -212,16 +249,56 @@ export async function evaluateLocalHarnessRollout(
   trustedEmail?: string,
   flagKey: LocalHarnessRolloutFlag = "local-harness-enabled",
 ): Promise<boolean> {
+  return evaluateServerRollout(
+    flagKey,
+    distinctId,
+    { deployment: "self_hosted" },
+    trustedEmail,
+  );
+}
+
+/**
+ * A boolean rollout the server enforces, from the same flag source and person
+ * properties `GET /api/web/flags` uses. No exposure events; any failure is off.
+ */
+export async function evaluateServerRollout(
+  flagKey: string,
+  distinctId: string,
+  personProperties: Record<string, string>,
+  trustedEmail?: string,
+): Promise<boolean> {
+  return (
+    (await serverRolloutAnswer(
+      flagKey,
+      distinctId,
+      personProperties,
+      trustedEmail,
+    )) === true
+  );
+}
+
+/**
+ * {@link evaluateServerRollout}'s decision, or `undefined` when there was
+ * none to read: the PostHog request failed or did not evaluate the flag. A
+ * caller that keeps answers keeps only a definite one.
+ */
+export async function serverRolloutAnswer(
+  flagKey: string,
+  distinctId: string,
+  personProperties: Record<string, string>,
+  trustedEmail?: string,
+): Promise<boolean | undefined> {
   if (!rolloutActorId(distinctId)) return false;
+  const answer = rolloutAnswerWithoutPostHog(flagKey);
+  if (answer !== undefined) return answer;
   try {
-    return (
-      (await getClient(true)?.isFeatureEnabled(flagKey, distinctId, {
-        sendFeatureFlagEvents: false,
-        personProperties: rolloutPersonProperties({ deployment: "self_hosted" }, trustedEmail),
-      })) === true
-    );
+    return await getClient(true)?.isFeatureEnabled(flagKey, distinctId, {
+      sendFeatureFlagEvents: false,
+      personProperties: rolloutPersonProperties(personProperties, trustedEmail),
+    });
   } catch {
-    return false;
+    // A request that failed is no answer; callers read it as off.
+    return undefined;
   }
 }
 
@@ -229,7 +306,8 @@ export async function evaluateLocalHarnessRollout(
  * Values for the flags the web client reads, for `GET /api/web/flags`
  * (MJ-015). Only allowlisted keys are evaluated or returned, no exposure
  * events are sent, and any failure yields `{}` so the client keeps its own
- * fallback instead of failing the page.
+ * fallback instead of failing the page. A flag file's answers are the same for
+ * every visitor; under DO_NOT_TRACK without one, every flag is off.
  */
 export async function evaluateClientFeatureFlags(
   distinctId: string,
@@ -237,6 +315,9 @@ export async function evaluateClientFeatureFlags(
   trustedEmail?: string,
 ): Promise<ClientFeatureFlagValues> {
   if (!rolloutActorId(distinctId)) return {};
+  const source = resolveFeatureFlagSource();
+  if (source.kind === "file") return pickClientFeatureFlags(source.answers);
+  if (source.kind === "off") return {};
   try {
     const values = await getClient(true)?.getAllFlags(distinctId, {
       flagKeys: [...CLIENT_FEATURE_FLAG_KEYS],
@@ -249,11 +330,18 @@ export async function evaluateClientFeatureFlags(
 }
 
 export async function shutdownAnalytics(): Promise<void> {
-  if (!client) return;
-  try {
-    await client.shutdown(2000);
-  } catch {
-    // Losing a final flush beats hanging shutdown.
-  }
+  const clients = [client, batchedClient].filter(
+    (c): c is PostHog => c !== null,
+  );
   client = null;
+  batchedClient = null;
+  await Promise.all(
+    clients.map(async (c) => {
+      try {
+        await c.shutdown(2000);
+      } catch {
+        // Losing a final flush beats hanging shutdown.
+      }
+    }),
+  );
 }

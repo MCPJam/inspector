@@ -128,11 +128,12 @@ export function isReadOnlyHostComputer(
 export type McpToolResultImageRendering = McpToolResultImageRenderingPolicy;
 
 /**
- * Real agent harness for this host. `"claude-code"` / `"codex"` / `"cursor"` run
- * the real CLI runtime (the `@ai-sdk/harness-claude-code` adapter, MCPJam's
- * Codex app-server adapter, or the `@ai-sdk/harness-cursor` adapter) inside the
- * attached personal computer instead of MCPJam's emulated engine. Absent ⇒
- * emulated. The backend enforces `harness ⇒ computer`.
+ * Real agent harness for this host. `"claude-code"` / `"codex"` / `"cursor"` /
+ * `"opencode"` run the real CLI runtime (the `@ai-sdk/harness-claude-code`
+ * adapter, MCPJam's Codex app-server adapter, the `@ai-sdk/harness-cursor`
+ * adapter, or the `@ai-sdk/harness-opencode` adapter) inside the attached
+ * personal computer instead of MCPJam's emulated engine. Absent ⇒ emulated.
+ * The backend enforces `harness ⇒ computer`.
  *
  * ALIASED, not re-listed. This was a hand-copied union that had to be edited
  * in lockstep with `HARNESS_IDS`, and the dangerous direction is narrow drift:
@@ -182,6 +183,7 @@ export type HostConfigInputV2 = {
    * configs; Cursor's template explicitly sets it to `false`.
    */
   respectToolVisibility: boolean;
+  runUnloadedToolCalls?: boolean;
   /**
    * Host-level opt-in for progressive MCP tool discovery
    * (`search_mcp_tools` / `load_mcp_tools` meta-tools instead of sending
@@ -306,6 +308,7 @@ export type HostConfigDtoV2 = {
    * coerces `undefined` to the spec default (`true`).
    */
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   /** Surfaced verbatim — see HostConfigInputV2.progressiveToolDiscovery. */
   progressiveToolDiscovery?: boolean;
   requireNativeToolDiscovery?: boolean;
@@ -441,6 +444,7 @@ export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
     // DTO carries `undefined` when the persisted row predates this
     // feature; treat that as the spec default (filter app-only tools).
     respectToolVisibility: dto.respectToolVisibility ?? true,
+    runUnloadedToolCalls: dto.runUnloadedToolCalls,
     progressiveToolDiscovery: dto.progressiveToolDiscovery,
     requireNativeToolDiscovery: dto.requireNativeToolDiscovery,
     modelVisibleMcpToolResults: dto.modelVisibleMcpToolResults
@@ -1045,6 +1049,7 @@ export function hostConfigInputsEqual(
   if (a.temperature !== b.temperature) return false;
   if (a.requireToolApproval !== b.requireToolApproval) return false;
   if (a.respectToolVisibility !== b.respectToolVisibility) return false;
+  if (a.runUnloadedToolCalls !== b.runUnloadedToolCalls) return false;
   // Optional boolean: undefined / true / false are three distinct states
   // (backend hashes them distinctly). A strict !== covers all three since
   // we never coerce undefined to false elsewhere in the input pipeline.

@@ -20,8 +20,8 @@
  *
  * ── Why a closed grammar is enough ────────────────────────────────────────
  * The grammar is small and finite because the framework and adapters are
- * pinned exactly (`@ai-sdk/harness@1.0.117`,
- * `@ai-sdk/harness-claude-code@1.0.121`, `@ai-sdk/harness-codex@1.0.119`) and
+ * pinned exactly (`@ai-sdk/harness@1.0.158`,
+ * `@ai-sdk/harness-claude-code@1.0.162`, `@ai-sdk/harness-cursor@1.0.72`) and
  * every command they emit is a literal in their own source, not model- or
  * repo-derived text. The shapes are enumerated in `ADAPTER_COMMAND_SHAPES`
  * below. An adapter upgrade that changes one of them fails CLOSED — the
@@ -38,9 +38,9 @@
  *
  * ── Path remapping is part of the translation, not a detail ───────────────
  * The adapters declare `bootstrapDir = .harness-bootstrap/<harnessId>`, which
- * the framework resolves against the session's default working directory — for
- * us, the user's granted workspace — and then `pnpm install` a vendor CLI into
- * it at session start. Both halves are unacceptable on a host:
+ * the framework resolves against `$HOME/.ai-sdk-harness` — for us, the
+ * session's synthetic home — and then `pnpm install` a vendor CLI into it at
+ * session start. Both halves are unacceptable on a host:
  *
  *   - a vendor CLI's whole dependency graph does not belong inside somebody's
  *     checkout, where it lands in their working tree and their VCS status;
@@ -66,8 +66,9 @@
 // judged as POSIX text everywhere, and the host's own path flavour only enters
 // when a result is mapped onto the managed bundle or the session overlay.
 import { normalize, posix, sep } from "node:path";
-import { assertArgvAllowed } from "./argv-policy.js";
-import type { SupportedLocalHarnessId } from "./targets.js";
+import { SUPPORTED_LOCAL_HARNESS_IDS, type SupportedLocalHarnessId } from "./targets.js";
+import { LOCAL_RUNTIMES, localRuntime } from "./runtimes/index.js";
+import { matchBridgeLaunch } from "./bridge-launch.js";
 
 /** What a recognized command turns into. Every arm is something the supervisor
  *  can perform WITHOUT a shell. */
@@ -97,6 +98,10 @@ export type TranslatedCommand =
       executable: string;
       args: readonly string[];
       workingDirectory: string;
+      /** Files in the session's own state to write before the launch, at
+       *  paths this module composed (an ACP bridge's implementation
+       *  descriptor). */
+      files?: ReadonlyArray<{ path: string; content: string }>;
     };
 
 export class CommandTranslationError extends Error {
@@ -116,7 +121,7 @@ export interface CommandTranslationContext {
   harnessId: SupportedLocalHarnessId;
   /**
    * The adapter's declared bootstrap directory as the framework resolves it —
-   * `<defaultWorkingDirectory>/.harness-bootstrap/<harnessId>`. Never touched
+   * `$HOME/.ai-sdk-harness/.harness-bootstrap/<harnessId>`. Never touched
    * on disk: it is matched, and every reference to it is remapped onto the
    * verified managed bundle.
    */
@@ -191,6 +196,8 @@ export interface CommandTranslationContext {
    * where a provider supplies no narrower check.
    */
   confineToSessionState?: (path: string) => Promise<string>;
+  /** The host the session runs on, for a runtime whose launch differs by it. */
+  platform?: NodeJS.Platform;
 }
 
 /**
@@ -220,23 +227,10 @@ export const ADAPTER_COMMAND_SHAPES: Readonly<
     "test ! -e '<skillDir>'",
     "rm -rf -- '<skillDir>' …",
   ],
-  "claude-code": [
-    "pnpm install --frozen-lockfile --store-dir .pnpm-store",
-    "./node_modules/.bin/claude --version",
-    "mkdir -p '<workDir>' '<bridgeStateDir>'",
-    "node '<bootstrapDir>/bridge.mjs' --workdir '<workDir>' --bridge-state-dir '<bridgeStateDir>'",
-  ],
-  // MCPJam's app-server adapter (`codex-appserver/`), the only Codex adapter
-  // that runs locally. The exec adapter's `--cli-shim-dir` launch is not a
-  // local shape and is refused.
-  codex: [
-    "pnpm install --frozen-lockfile --store-dir .pnpm-store",
-    "node node_modules/@openai/codex/bin/codex.js --version",
-    "mkdir -p '<workDir>' '<bridgeStateDir>' '<sessionDataDir>'",
-    "node '<bootstrapDir>/bridge.mjs' --workdir '<workDir>' --bridge-state-dir " +
-      "'<bridgeStateDir>' --session-data-dir '<sessionDataDir>' --bootstrap-dir " +
-      "'<bootstrapDir>'",
-  ],
+  // Each runtime's own shapes, from its definition (`commands.shapes`).
+  ...(Object.fromEntries(
+    SUPPORTED_LOCAL_HARNESS_IDS.map((id) => [id, LOCAL_RUNTIMES[id].commands.shapes]),
+  ) as Record<SupportedLocalHarnessId, readonly string[]>),
 };
 
 /**
@@ -270,7 +264,7 @@ const ENV_MKDIR_SHAPES: Readonly<Record<string, string>> = {
  * implementing quoting rules, and the difference is the point: there is no
  * expansion step here for anything to hide in.
  */
-function splitQuotedTokens(operands: string, command: string): string[] {
+export function splitQuotedTokens(operands: string, command: string): string[] {
   const paths: string[] = [];
   let i = 0;
   while (i < operands.length) {
@@ -312,7 +306,7 @@ function splitQuotedTokens(operands: string, command: string): string[] {
 
 /** Reject anything that could make an operand mean something other than the
  *  literal path it looks like. */
-function assertPlainPathOperand(path: string, command: string): void {
+export function assertPlainPathOperand(path: string, command: string): void {
   if (path.length === 0 || path.length > 4096) {
     throw new CommandTranslationError("implausible path operand", command);
   }
@@ -347,7 +341,7 @@ function underBootstrapDir(path: string, bootstrapDir: string): boolean {
   return p === root || p.startsWith(root + "/");
 }
 
-function remapBootstrapPath(
+export function remapBootstrapPath(
   path: string,
   ctx: CommandTranslationContext,
 ): string {
@@ -426,6 +420,8 @@ export function classifyBootstrapPath(
   const root = posix.normalize(ctx.adapterBootstrapDir);
   const normalized = posix.normalize(path);
   if (!underBootstrapDir(normalized, root)) return { kind: "workspace" };
+  const aliased = aliasImplementationHome(normalized, ctx);
+  if (aliased !== normalized) return { kind: "session-overlay", overlayPath: aliased };
 
   const relative = normalized.slice(root.length).replace(/^\//, "");
   if (relative.length === 0) {
@@ -473,6 +469,21 @@ export function classifyBootstrapPath(
 // only place the pinned framework writes skills. A shape naming anything else
 // is refused even though `confine` would happily accept it: the narrower rule
 // is what makes an adapter change visible instead of silently honoured.
+/**
+ * An ACP runtime's adapter writes into the private home it gives the CLI in
+ * the cloud, `<bootstrapDir>/implementation/home` (the skills it hands the
+ * agent). Locally the CLI's home is the session's synthetic home (its
+ * implementation descriptor has no private home), so a path there is the same
+ * path under the synthetic home. Any other path comes back unchanged.
+ */
+function aliasImplementationHome(path: string, ctx: CommandTranslationContext): string {
+  if (localRuntime(ctx.harnessId).acp === undefined) return path;
+  const home = posix.normalize(`${ctx.adapterBootstrapDir}/implementation/home`);
+  const p = posix.normalize(path);
+  if (p !== home && !p.startsWith(home + "/")) return path;
+  return posix.join(posix.normalize(ctx.syntheticHome), p.slice(home.length));
+}
+
 function assertUnderSyntheticHome(
   path: string,
   ctx: CommandTranslationContext,
@@ -497,14 +508,13 @@ async function translateSkillsMove(
   if (ops.length !== 2) {
     throw new CommandTranslationError("mv -f needs exactly two operands", command);
   }
-  for (const p of ops) {
-    assertPlainPathOperand(p, command);
-    assertUnderSyntheticHome(p, ctx, command);
-  }
+  for (const p of ops) assertPlainPathOperand(p, command);
+  const [from, to] = ops.map((p) => aliasImplementationHome(p, ctx));
+  for (const p of [from!, to!]) assertUnderSyntheticHome(p, ctx, command);
   return {
     kind: "rename",
-    from: await ctx.confine(ops[0]!),
-    to: await ctx.confine(ops[1]!),
+    from: await ctx.confine(from!),
+    to: await ctx.confine(to!),
   };
 }
 
@@ -517,8 +527,9 @@ async function translateSkillsProbe(
     throw new CommandTranslationError("test ! -e needs exactly one operand", command);
   }
   assertPlainPathOperand(ops[0]!, command);
-  assertUnderSyntheticHome(ops[0]!, ctx, command);
-  return { kind: "probe-absent", path: await ctx.confine(ops[0]!) };
+  const path = aliasImplementationHome(ops[0]!, ctx);
+  assertUnderSyntheticHome(path, ctx, command);
+  return { kind: "probe-absent", path: await ctx.confine(path) };
 }
 
 async function translateSkillsRemove(
@@ -532,8 +543,9 @@ async function translateSkillsRemove(
   const paths: string[] = [];
   for (const p of ops) {
     assertPlainPathOperand(p, command);
-    assertUnderSyntheticHome(p, ctx, command);
-    paths.push(await ctx.confine(p));
+    const path = aliasImplementationHome(p, ctx);
+    assertUnderSyntheticHome(path, ctx, command);
+    paths.push(await ctx.confine(path));
   }
   return { kind: "remove", paths };
 }
@@ -550,6 +562,11 @@ async function translateMkdir(
   const paths: string[] = [];
   for (const path of raw) {
     assertPlainPathOperand(path, command);
+    const aliased = aliasImplementationHome(path, ctx);
+    if (aliased !== path) {
+      paths.push(await ctx.confine(aliased));
+      continue;
+    }
     if (underBootstrapDir(path, posix.normalize(ctx.adapterBootstrapDir))) {
       // The bundle already exists and is read-only by design; creating it is
       // a no-op rather than an error so the adapter's bootstrap sequence
@@ -580,7 +597,7 @@ function matchBootstrapInstall(
   command: string,
   ctx: CommandTranslationContext,
 ): TranslatedCommand | null {
-  if (command === "pnpm install --frozen-lockfile --store-dir .pnpm-store") {
+  if (command === localRuntime(ctx.harnessId).commands.install) {
     return {
       kind: "noop",
       reason:
@@ -588,12 +605,7 @@ function matchBootstrapInstall(
         "runtime bundle; no package manager runs during a session",
     };
   }
-  if (
-    (ctx.harnessId === "claude-code" &&
-      command === "./node_modules/.bin/claude --version") ||
-    (ctx.harnessId === "codex" &&
-      command === "node node_modules/@openai/codex/bin/codex.js --version")
-  ) {
+  if (command === localRuntime(ctx.harnessId).commands.versionProbe) {
     return {
       kind: "noop",
       reason:
@@ -602,120 +614,6 @@ function matchBootstrapInstall(
     };
   }
   return null;
-}
-
-/** Translate the adapters' `node '<bootstrapDir>/bridge.mjs' …` launch. */
-async function matchBridgeLaunch(
-  command: string,
-  ctx: CommandTranslationContext,
-): Promise<TranslatedCommand | null> {
-  if (!command.startsWith("node ")) return null;
-  const tokens = splitQuotedTokens(command.slice("node ".length), command);
-
-  // The EXACT flag vector each pinned adapter emits, in order. Matching a
-  // subset, a permutation, or another harness's flags would let an adapter
-  // change slip through as a valid launch — the opposite of the fail-closed
-  // behaviour this module promises. The Codex (app-server) bridge also names
-  // its session-data directory and the bootstrap directory it loads Codex
-  // from.
-  const expected: Readonly<Record<SupportedLocalHarnessId, readonly string[]>> =
-    {
-      "claude-code": ["--workdir", "--bridge-state-dir"],
-      codex: [
-        "--workdir",
-        "--bridge-state-dir",
-        "--session-data-dir",
-        "--bootstrap-dir",
-      ],
-    };
-  const flags = expected[ctx.harnessId];
-
-  if (tokens.length !== 1 + flags.length * 2) {
-    throw new CommandTranslationError(
-      `the ${ctx.harnessId} bridge launch must be the bridge path followed by ` +
-        `exactly ${flags.join(", ")}, but ${tokens.length} tokens were given`,
-      command,
-    );
-  }
-
-  const bridgeToken = tokens[0]!;
-  assertPlainPathOperand(bridgeToken, command);
-  const expectedBridge = `${ctx.adapterBootstrapDir}/bridge.mjs`;
-  if (posix.normalize(bridgeToken) !== posix.normalize(expectedBridge)) {
-    throw new CommandTranslationError(
-      `bridge launch names ${JSON.stringify(bridgeToken)}, but the only ` +
-        `bridge this session may run is the one in its managed bundle`,
-      command,
-    );
-  }
-
-  const args: string[] = [
-    ctx.bridgeLauncherPath ??
-      (ctx.layerRoot !== undefined
-        ? `${ctx.layerRoot}${sep}bridge.mjs`
-        : remapBootstrapPath(expectedBridge, ctx)),
-    // The launcher's own argument, never the bridge's: only where a launcher
-    // is in front, and only the verified pack.
-    ...(ctx.bridgeLauncherPath !== undefined && ctx.launcherVendorRoot !== undefined
-      ? ["--mcpjam-vendor-root", ctx.launcherVendorRoot]
-      : []),
-  ];
-  for (let i = 0; i < flags.length; i += 1) {
-    const flag = tokens[1 + i * 2]!;
-    const value = tokens[2 + i * 2]!;
-    if (flag !== flags[i]) {
-      throw new CommandTranslationError(
-        `expected bridge flag ${JSON.stringify(flags[i])} at position ` +
-          `${i + 1}, found ${JSON.stringify(flag)}`,
-        command,
-      );
-    }
-    assertPlainPathOperand(value, command);
-    if (flag === "--bootstrap-dir") {
-      // Exactly the adapter's bootstrap directory. In a sandbox it holds
-      // everything; locally it is SPLIT along the two trusted sources: the
-      // vendor half (Codex's `bin/codex.js` and platform package) is the
-      // digest-verified pack, and the MCPJam half (the host-tools MCP
-      // entrypoint Codex spawns) is the Inspector layer.
-      if (
-        posix.normalize(value) !== posix.normalize(ctx.adapterBootstrapDir)
-      ) {
-        throw new CommandTranslationError(
-          `--bootstrap-dir names ${JSON.stringify(value)}, but the only ` +
-            `bootstrap this session may load is its managed bundle`,
-          command,
-        );
-      }
-      if (ctx.layerRoot !== undefined) {
-        args.push(
-          "--vendor-dir",
-          remapBootstrapPath(value, ctx),
-          "--layer-dir",
-          ctx.layerRoot,
-        );
-      } else {
-        args.push(flag, remapBootstrapPath(value, ctx));
-      }
-      continue;
-    }
-    if (
-      ctx.harnessId === "codex" &&
-      (flag === "--bridge-state-dir" || flag === "--session-data-dir")
-    ) {
-      // Runtime state (rollouts, CODEX_HOME, the relay credential) stays in
-      // the session's own directory, never in the user's checkout.
-      args.push(flag, await (ctx.confineToSessionState ?? ctx.confine)(value));
-      continue;
-    }
-    args.push(flag, await ctx.confine(value));
-  }
-  assertArgvAllowed(args);
-  return {
-    kind: "exec",
-    executable: ctx.nodeExecutable,
-    args,
-    workingDirectory: await ctx.confine(ctx.sessionRoot),
-  };
 }
 
 /**

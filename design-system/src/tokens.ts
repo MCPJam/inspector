@@ -56,6 +56,12 @@ export const tokensCss: string = `@theme {
      the hover fill and the hairline were 0.0045 L apart, so hovering a
      secondary button erased its own outline. */
   --chrome-control-hover: oklch(0.83 0.0235 80.6762);
+  /* Header buttons (Ask MCPJam, Star, Sign in): a paper fill one step above
+     the linen ground, so they read as buttons and the beige server selector
+     stays the only --chrome-control fill in the bar. Hairline is
+     --chrome-control-border. */
+  --chrome-button: oklch(0.9818 0.0054 95.0986);
+  --chrome-button-hover: oklch(0.9468 0.0102 92.3);
   --divider: oklch(0.8829 0.0171 88.0071);
   --input: oklch(0.7621 0.0156 98.3528);
   --ring: oklch(0.6171 0.1375 39.0427);
@@ -228,6 +234,10 @@ export const tokensCss: string = `@theme {
      value, so sharing it filled a hovered control with exactly its own
      hairline colour and the outline vanished. A step past it instead. */
   --chrome-control-hover: oklch(0.3951 0.0106 106.8928);
+  /* The panel value, a step above the dark ground; hover brightens to the
+     raised --chrome-control value. */
+  --chrome-button: oklch(0.2679 0.0036 106.6427);
+  --chrome-button-hover: oklch(0.3085 0.0035 106.6039);
   --divider: oklch(0.3618 0.0101 106.8928);
   --input: oklch(0.4336 0.0113 100.2195);
   --ring: oklch(0.6724 0.1308 38.7559);

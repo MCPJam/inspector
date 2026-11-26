@@ -17,13 +17,19 @@
  * replayed against a DIFFERENT boot is rejected (`unknown_boot`) rather than
  * re-run; the caller learns the current bootId from every response and stores it.
  */
-import { BROWSERD_PROTOCOL_VERSION, type BrowserCommand } from "./protocol";
+import {
+  BROWSERD_PROTOCOL_VERSION,
+  profileExportRequest,
+  type BrowserCommand,
+  type BrowserdProfileExportOptions,
+} from "./protocol";
 import {
   decodePaneCommand,
   decodePaneState,
   decodeViewport,
   type PaneCommandOutcome,
 } from "./pane-client";
+import type { PreviewGrant } from "./daemon/workspace-preview";
 import type { BrowserStateSnapshot } from "../../../shared/browser-session-state";
 import type {
   BrowserPaneCommand,
@@ -297,6 +303,12 @@ export class BrowserdClient {
     });
   }
 
+  /** Serve one workspace port on the browser box's loopback. The grant carries keys: never log it. */
+  async previewGrant(grant: PreviewGrant): Promise<{ ok: true } | { ok: false; error: string }> {
+    const res = await this.request("/v1/preview", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(grant) }, true);
+    return res.ok ? { ok: true } : { ok: false, error: res.status === 404 ? "preview_unsupported" : await this.errorOf(res) };
+  }
+
   /** Report a panel measurement; answer with the size the session settled at. */
   async paneViewport(args: {
     policy?: "fixed" | "followPane";
@@ -498,12 +510,8 @@ export class BrowserdClient {
   }
 
   /** Download a drained persistent profile snapshot from browserd. */
-  async exportProfile(): Promise<Uint8Array> {
-    const res = await this.request(
-      "/v1/profile/export",
-      { method: "POST" },
-      true,
-    );
+  async exportProfile(options?: BrowserdProfileExportOptions): Promise<Uint8Array> {
+    const res = await this.request("/v1/profile/export", profileExportRequest(options), true);
     if (!res.ok) {
       throw new BrowserdClientError(
         `browser profile export failed with status ${res.status}`,

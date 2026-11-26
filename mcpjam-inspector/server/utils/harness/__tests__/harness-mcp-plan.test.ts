@@ -299,6 +299,61 @@ describe("harness MCP route table", () => {
   });
 });
 
+describe("the dedicated GitHub Copilot CLI client", () => {
+  // Its own MCP client either way: forwarded where forwarding opens,
+  // MCPJam's per-server proxy everywhere else. Never refused for the route.
+  const copilot = (overrides: Partial<Facts> = {}) =>
+    facts({
+      dispatch: { mcpClient: "harness" },
+      forwardingRuntime: RUNTIME,
+      ...overrides,
+    });
+
+  it("forwards on pass-through when admitted", () => {
+    const plan = resolveHarnessMcpPlan(copilot({ admit: NATIVE }));
+    expect(plan).toMatchObject({
+      upstream: "harness",
+      delivery: "mcp-endpoint",
+      forwardingKind: "pass-through",
+    });
+  });
+
+  it("takes the profiled bridge when admission bridges the turn", () => {
+    const plan = resolveHarnessMcpPlan(copilot({ admit: BRIDGE }));
+    expect(plan).toMatchObject({
+      upstream: "mcpjam",
+      delivery: "mcp-endpoint",
+      forwardingKind: "profiled",
+      reasons: [],
+    });
+  });
+
+  it.each([
+    ["no admission", { admit: RETAINED }, "forwarding not admitted; configured route retained"],
+    ["the flag off", { forwardingEnabled: false }, "forwarding flag off"],
+    ["an unenrolled organization", { forwardingOrganization: false }, "organization not enrolled"],
+    ["an eval", { evalIterationId: "e" }, "eval iteration"],
+    ["a User Testing session", { scenarioId: "s" }, "scenario turn"],
+    ["a v1 API turn", { hostId: undefined }, "no host id"],
+    ["a member's computer", { localExecution: true, plane: "local-loopback" }, "local execution target"],
+  ] as const)("bridges through MCPJam's proxy on %s", (_name, overrides, reason) => {
+    const plan = resolveHarnessMcpPlan(copilot(overrides));
+    expect(plan).toMatchObject({ upstream: "mcpjam", delivery: "mcp-endpoint" });
+    expect(plan.forwardingKind).toBeUndefined();
+    expect(plan.reasons).toContain(reason);
+    expect(toDiscoveryDeliveryLabel(plan)).toBe("native-proxy");
+  });
+
+  it("keeps MCPJam's client when the turn routes between accounts", () => {
+    // `resolveAgentLoop` hands account routing to MCPJam's client.
+    const plan = resolveHarnessMcpPlan(
+      copilot({ dispatch: { mcpClient: "mcpjam" }, accountRouting: true }),
+    );
+    expect(plan).toMatchObject({ upstream: "mcpjam", delivery: "host-tools" });
+    expect(plan.reasons).toContain("account routing");
+  });
+});
+
 describe("the three route fields", () => {
   it.each([
     ["forwarded-native", NATIVE, "harness", "mcp-endpoint", "pass-through"],
@@ -388,5 +443,71 @@ describe("what the planner must not know", () => {
   });
   it("reads no environment: the runner passes the forwarding switch in", () => {
     expect(source("harness-mcp-plan.ts")).not.toContain("process.env");
+  });
+});
+
+describe("a web client's own route (E4)", () => {
+  /** Every exclusion the planner checks, each on its own and all at once. */
+  const EXCLUSIONS: Array<[string, Partial<Facts>]> = [
+    ["forwarding off", { forwardingEnabled: false }],
+    ["organization not enrolled", { forwardingOrganization: false }],
+    ["no runtime contract", { forwardingRuntime: undefined }],
+    ["local loopback plane", { plane: "local-loopback" }],
+    ["scenario turn", { scenarioId: "scenario-1" }],
+    ["eval iteration", { evalIterationId: "iteration-1" }],
+    ["journey run", { journeyRunId: "journey-run-1" }],
+    ["local execution", { localExecution: true }],
+    ["no host id", { hostId: undefined }],
+    ["account routing", { dispatch: { mcpClient: "mcpjam" }, accountRouting: true }],
+    [
+      "all of them",
+      {
+        forwardingEnabled: false,
+        forwardingOrganization: false,
+        forwardingRuntime: undefined,
+        plane: undefined,
+        scenarioId: "s",
+        evalIterationId: "e",
+        journeyRunId: "j",
+        localExecution: true,
+        hostId: undefined,
+        accountRouting: true,
+      },
+    ],
+  ];
+
+  it.each(EXCLUSIONS)("forwards past %s without asking admission", (_name, overrides) => {
+    const admit = vi.fn(RETAINED);
+    const plan = resolveHarnessMcpPlan(
+      facts({ ...overrides, webConnector: true, admit }),
+    );
+    expect(plan).toEqual({
+      upstream: "harness",
+      delivery: "mcp-endpoint",
+      forwardingKind: "pass-through",
+      surface: true,
+      candidate: true,
+      gaps: [],
+      reasons: [],
+    });
+    expect(admit).not.toHaveBeenCalled();
+    expect(toDiscoveryDeliveryLabel(plan)).toBe("forwarded-native");
+  });
+
+  it("leaves every other runtime on the exclusion list", () => {
+    const plan = resolveHarnessMcpPlan(
+      facts({ evalIterationId: "iteration-1", webConnector: false }),
+    );
+    expect(plan.forwardingKind).toBeUndefined();
+    expect(plan.reasons).toContain("eval iteration");
+  });
+
+  it("hands each turn its own plan, so a caller cannot edit the next one's", () => {
+    const first = resolveHarnessMcpPlan(facts({ webConnector: true }));
+    first.reasons.push("eval iteration");
+    first.gaps.push("client-tools");
+    const second = resolveHarnessMcpPlan(facts({ webConnector: true }));
+    expect(second.reasons).toEqual([]);
+    expect(second.gaps).toEqual([]);
   });
 });

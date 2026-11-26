@@ -321,13 +321,22 @@ export async function runUndeclaredProbe(
 }
 
 export interface InputRequiredLeg {
-  outcome: "no-responses-configured" | "update-rejected" | "updated";
+  outcome:
+    | "no-responses-configured"
+    | "no-matching-responses"
+    | "update-rejected"
+    | "updated";
   /** Keys the task asked the client to answer. */
   requested: string[];
   /** Keys the operator supplied. */
   answered?: string[];
   message?: string;
   code?: number;
+  /**
+   * On a rejection: why the configured answers could not satisfy the task
+   * (missing, extra, or failing its `requestedSchema`), when we can tell.
+   */
+  answersProblem?: string;
   /** Result members beyond the envelope; a conforming ack has none. */
   ackVerdict?: ShapeVerdict;
 }

@@ -26,6 +26,27 @@ export const GUEST_SESSION_FAILURE_REASONS = [
 export type GuestSessionFailureReason =
   (typeof GUEST_SESSION_FAILURE_REASONS)[number];
 
+/**
+ * The `code` on a 403 from `POST /api/web/guest-session` when the deployment
+ * does not issue guest sessions at all (the backend's non-production lockdown).
+ * Unlike a revoked guest, this never clears on retry: the browser stops asking
+ * and offers sign-in.
+ */
+export const GUEST_ACCESS_DISABLED_CODE = "GUEST_ACCESS_DISABLED";
+
+/**
+ * Carries the same refusal in a header, so the browser can recognise it from
+ * the status line alone when the error body is slow to arrive or unreadable.
+ */
+export const GUEST_SESSION_REFUSAL_HEADER = "x-mcpjam-guest-refusal";
+
+/**
+ * The refusal header's value on a 403 for a guest the authority revoked or
+ * suspended. Other 403s (a mismatched shared secret, an edge refusal) are
+ * answered as a 503, so the browser can treat only this one as final.
+ */
+export const GUEST_SESSION_REVOKED_CODE = "GUEST_SESSION_REVOKED";
+
 export type GuestSessionFailureDetails = {
   reason: GuestSessionFailureReason;
   /** The upstream's HTTP status, when it answered with a non-ok response. */

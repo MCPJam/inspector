@@ -4,7 +4,6 @@ import type {
   HarnessV1Session,
 } from "@ai-sdk/harness";
 import { createHash } from "node:crypto";
-import { posix } from "node:path";
 import { z } from "zod";
 import { logger } from "../logger.js";
 import { diskResumeState } from "./local/resume-state.js";
@@ -12,6 +11,17 @@ import { warmBridgeCommand } from "./warm-bridge-files.js";
 
 export const WARM_ATTACH_TIMEOUT_MS = 1500;
 export const WARM_RETENTION_TIMEOUT_MS = 1500;
+
+/**
+ * How a warm attach ended: it re-attached, or it fell back to saved files
+ * because the box's probe refused the bridge, the attach threw, or the
+ * deadline passed. The step, never the error: an E2B error names its sandbox.
+ */
+export type WarmAttachOutcome =
+  | "attached"
+  | "probe_refused"
+  | "attach_failed"
+  | "attach_timeout";
 
 const coordinates = z.object({
   data: z.object({
@@ -37,11 +47,27 @@ function withoutSpawn<T extends object>(target: T): T {
   });
 }
 
-/** A warm attempt cannot dispatch a prompt or spawn a replacement process. */
+export interface WarmBridgeRuntimeOptions {
+  /**
+   * The box's ceiling when the bridge is kept through its pause
+   * (`warm-retention.ts`); the probe and the marker then run to it.
+   */
+  retainUntil?: number;
+  /** Hears how an attempt ended; a cancelled one reports nothing. */
+  onAttach?: (outcome: WarmAttachOutcome) => void;
+}
+
+/**
+ * A warm attempt cannot dispatch a prompt or spawn a replacement process.
+ * `windowMs` is the box's idle window: how long a parked bridge stays reusable.
+ */
 export function withWarmBridgeRuntime<T extends HarnessV1>(
-  factory: (startupTimeoutMs?: number) => T,
+  factory: (startupTimeoutMs?: number, sandboxHomeDir?: string) => T,
   configuration: string,
+  windowMs: number,
+  { retainUntil, onAttach }: WarmBridgeRuntimeOptions = {},
 ): T {
+  const retention = retainUntil === undefined ? {} : { retainUntil };
   const ordinary = factory();
 
   return new Proxy(ordinary, {
@@ -61,12 +87,6 @@ export function withWarmBridgeRuntime<T extends HarnessV1>(
           .update(configuration)
           .update(JSON.stringify(bootstrap?.files ?? []))
           .digest("hex");
-        const directory = posix.join(
-          options.sandboxSession.defaultWorkingDirectory,
-          ".agent-runs",
-          options.sessionId,
-          "bridge",
-        );
         const saved = coordinates.safeParse(options.resumeFrom);
         let session: HarnessV1Session | undefined;
         // Resume approvals through the original adapter, then retain the
@@ -77,31 +97,49 @@ export function withWarmBridgeRuntime<T extends HarnessV1>(
             ? AbortSignal.any([options.abortSignal, abort.signal])
             : abort.signal;
           let timer: ReturnType<typeof setTimeout> | undefined;
+          // The step a fallback came from. The deadline is kept apart: an
+          // attempt it abandoned can still settle and move this on.
+          let failedAt: "probe_refused" | "attach_failed" = "attach_failed";
+          let timedOut = false;
           const attempt = async () => {
             const result = await options.sandboxSession.run({
               command: warmBridgeCommand({
-                directory,
+                sessionId: options.sessionId,
                 configuration: fingerprint,
                 ...saved.data.data.bridge,
                 park: false,
+                windowMs,
+                ...retention,
+                includeHome: true,
               }),
               abortSignal: signal,
             });
-            if (result.exitCode !== 0 || result.stdout !== "ready")
+            failedAt = "probe_refused";
+            const probe = z.object({ ready: z.literal(true), home: z.string().optional() })
+              .safeParse(JSON.parse(result.stdout));
+            if (result.exitCode !== 0 || !probe.success)
               throw new Error("Warm bridge identity or configuration changed.");
+            // This value comes from the current, identity-checked sandbox command,
+            // never the persisted resume payload or a client-supplied path.
+            const home = probe.data.home;
+            const sandboxHomeDir = home?.startsWith("/") && !home.includes("\0")
+              ? home : undefined;
             signal.throwIfAborted();
-            return factory(WARM_ATTACH_TIMEOUT_MS).doStart({
+            failedAt = "attach_failed";
+            return factory(WARM_ATTACH_TIMEOUT_MS, sandboxHomeDir).doStart({
               ...options,
               abortSignal: signal,
               sandboxSession: withoutSpawn(options.sandboxSession),
             });
           };
           const pending = Promise.resolve(attempt());
+          let outcome: WarmAttachOutcome;
           try {
             session = await Promise.race([
               pending,
               new Promise<never>((_, reject) => {
                 timer = setTimeout(() => {
+                  timedOut = true;
                   abort.abort();
                   reject(new Error("Warm bridge deadline exceeded."));
                 }, WARM_ATTACH_TIMEOUT_MS);
@@ -110,6 +148,7 @@ export function withWarmBridgeRuntime<T extends HarnessV1>(
             logger.info("[harness] warm bridge attached", {
               harness: target.harnessId,
             });
+            outcome = "attached";
           } catch {
             // No prompt was dispatched. A late attach only detaches its socket;
             // it must neither retain a socket nor stop the replacement process.
@@ -128,10 +167,16 @@ export function withWarmBridgeRuntime<T extends HarnessV1>(
               "[harness] warm bridge unavailable; resuming from disk",
               { harness: target.harnessId },
             );
+            outcome = timedOut ? "attach_timeout" : failedAt;
           } finally {
             if (timer) clearTimeout(timer);
           }
+          onAttach?.(outcome);
         }
+        // Neither re-attached above nor continuing an approval: the adapter
+        // starts the process this turn parks (disk resume drops the old one's
+        // coordinates).
+        const spawned = session === undefined && !options.continueFrom;
         session ??= await target.doStart({
           ...options,
           ...(options.resumeFrom && !options.continueFrom
@@ -151,10 +196,13 @@ export function withWarmBridgeRuntime<T extends HarnessV1>(
                   try {
                     const write = options.sandboxSession.run({
                       command: warmBridgeCommand({
-                        directory,
+                        sessionId: options.sessionId,
                         configuration: fingerprint,
                         ...bridge.data.data.bridge,
                         park: true,
+                        windowMs,
+                        ...retention,
+                        spawned,
                       }),
                       abortSignal: abort.signal,
                     });

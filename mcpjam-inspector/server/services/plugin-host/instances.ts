@@ -1,5 +1,6 @@
 import { pluginFormFileGrants } from "./form-file-grants.js";
 import { pluginFormSources } from "./form-sources.js";
+import { readAfterAdmission } from "./durable-controls.js";
 import { pluginContextMemory } from "./context-memory.js";
 import {
   PluginContextWorkspace,
@@ -354,6 +355,8 @@ export class PluginInstanceRegistry {
           ),
           expiresAt: control.expiresAt,
           ...(control.instance.contextEnabled ? { contextToken: token } : {}),
+          // Any replica that restores a Settings App reads its document here.
+          ...(activation.selector.kind === "settings" ? { settings: true } : {}),
         },
         signal,
       );
@@ -391,6 +394,26 @@ export class PluginInstanceRegistry {
     const saved = await port.read(token, signal, known);
     signal.throwIfAborted();
     return this.restoreRead(token, identity, saved, known, port, signal);
+  }
+
+  /** Whether this process holds `token`'s control or its close. */
+  holds(token: string) {
+    return this.records.has(token) || this.closed.has(token);
+  }
+
+  /** `getPersistent` for a control the caller already read with `port`. */
+  async getPersistentFrom(
+    token: string,
+    identity: PluginInstanceIdentity,
+    saved: DurablePluginInstanceControl | null,
+    signal: AbortSignal,
+    port: PluginInstanceControlPort,
+  ) {
+    signal.throwIfAborted();
+    if (this.closed.has(token))
+      throw new PluginInvocationError("INSTANCE_UNAVAILABLE");
+    this.sweep();
+    return this.restoreRead(token, identity, saved, undefined, port, signal);
   }
 
   /** `restore` a reply that left out the context at `known`. If this
@@ -779,10 +802,11 @@ export class PluginInstanceRegistry {
     return record.instance;
   }
 
-  /** One authorization's reads (one or two), each the instance's durable
-   * control and the caller's admission query side by side. Both legs are
-   * observed, including late failure of either; neither permits the next
-   * step alone. */
+  /** One authorization's reads (one or two), each the caller's admission
+   * query and then the instance's durable control, so a close anywhere
+   * during the admission wait refuses what follows. Only the first read may
+   * stand on the request's own control read: the receipt claim checks the
+   * App is live and the invoker authorizes again before any dispatch. */
   private fencedReads(
     token: string,
     identity: PluginInstanceIdentity,
@@ -800,18 +824,14 @@ export class PluginInstanceRegistry {
       const standOnControlRead = state.controlRead;
       state.controlRead = false;
       try {
-        const [durable, admission] = await Promise.allSettled([
-          standOnControlRead
-            ? Promise.resolve()
-            : this.getPersistent(token, identity, requestSignal),
-          Promise.resolve().then(query),
-        ]);
+        const admitted = await readAfterAdmission(query, async () => {
+          if (!standOnControlRead)
+            await this.getPersistent(token, identity, requestSignal);
+        });
         requestSignal.throwIfAborted();
-        if (durable.status === "rejected") throw durable.reason;
-        if (admission.status === "rejected") throw admission.reason;
         this.get(token, identity);
         state.reads++;
-        return admission.value;
+        return admitted;
       } finally {
         state.reading = false;
       }

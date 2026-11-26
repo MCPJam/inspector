@@ -8,6 +8,9 @@ import { isPrivateNetworkUrl } from "@/shared/private-address";
 import { HOSTED_MODE } from "../config.js";
 import { isBlockedEgressHost } from "./hosted-egress-guard.js";
 import { logger } from "./logger.js";
+import { withDefaultUserAgent } from "./outbound-user-agent.js";
+
+const dial = withDefaultUserAgent();
 
 /** Everything the backend hands back when it cannot refresh a credential itself. */
 export type PrivateAuthorizationServerRefreshMaterial = {
@@ -43,7 +46,8 @@ const MAX_DISCOVERY_REDIRECTS = 3;
  *    set — `.local`/`.internal` names included.
  *  - `isBlockedEgressHost(host, false)` is the never-legitimate tier the rest
  *    of this codebase refuses in EVERY mode: cloud-metadata addresses and
- *    their DNS aliases, IPv4/IPv6 link-local, and the unspecified address.
+ *    their DNS aliases, IPv4/IPv6 link-local, multicast and reserved space,
+ *    and the unspecified address.
  *    `isPrivateNetworkUrl` says yes to several of those (169.254.0.0/16 is
  *    "private", and `metadata.google.internal` ends in `.internal`), which
  *    would let a malicious or simply wrong backend response steer a refresh
@@ -83,7 +87,7 @@ function urlOf(input: Parameters<typeof fetch>[0]): string {
  */
 const dialTokenEndpoint: typeof fetch = (input, init) => {
   assertPrivateRefreshTarget(urlOf(input), "the token endpoint");
-  return fetch(input, {
+  return dial(input, {
     ...init,
     redirect: "error",
     signal: withLocalCheckSignal(AbortSignal.timeout(REFRESH_TIMEOUT_MS)),
@@ -108,7 +112,7 @@ const dialDiscovery: typeof fetch = async (input, init) => {
 
   for (let hop = 0; ; hop++) {
     assertPrivateRefreshTarget(currentUrl, "the authorization server");
-    const response = await fetch(currentUrl, {
+    const response = await dial(currentUrl, {
       ...init,
       headers,
       redirect: "manual",

@@ -1,3 +1,4 @@
+import { inspectorDiscoveryRunMetadata } from "../../utils/discovery-run-metadata";
 import { capRequestPayloadsForPersist } from "../../utils/live-chat-trace-stream";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
@@ -35,6 +36,7 @@ import { buildIterationMetadata } from "./iteration-metadata.js";
 import { buildIterationErrorMetadata } from "./iteration-error-metadata.js";
 import {
   buildHostIterationMetadata,
+  type HarnessMcpAtTurn,
   type HostExecutionPolicy,
   type ToolExposureSignals,
 } from "@mcpjam/sdk/host-config/internal";
@@ -71,6 +73,7 @@ import { buildShadowMismatch, emitShadowMismatch } from "./shadow-mismatch.js";
 import {
   lockEvalSessionAfterUpdate,
   persistEvalTraceFanout,
+  type EvalTraceModelSource,
 } from "./persist-eval-trace.js";
 import { isEvalIterationTerminalStatus } from "@mcpjam/sdk/contract";
 import {
@@ -78,6 +81,7 @@ import {
   type SelectionCatalogToolLike,
 } from "./selection-tool-catalog.js";
 import type { AgentActivityAssessment } from "./agent-activity.js";
+import type { PlatformGateEvidence } from "./platform-gate-rows.js";
 
 /**
  * The canonical lifecycle vocabulary, imported rather than re-spelled: this
@@ -410,6 +414,7 @@ function narrowEvaluation(
 function buildScoreMetadata(args: {
   mode: GradingEngineMode;
   agentActivity?: AgentActivityAssessment;
+  platformGates?: PlatformGateEvidence;
   predicateResults?: unknown[];
   evaluation: Record<string, unknown>;
   matchOptions?: Record<string, unknown>;
@@ -435,6 +440,7 @@ function buildScoreMetadata(args: {
     ...(args.matchOptions ? { matchOptions: args.matchOptions } : {}),
     ...(args.isNegativeTest ? { isNegativeTest: true } : {}),
     ...(args.agentActivity ? { agentActivity: args.agentActivity } : {}),
+    ...(args.platformGates ? { platformGates: args.platformGates } : {}),
     // The judge has not run yet on this pass; its row arrives in the second.
   });
   if (scores.length === 0) {
@@ -629,15 +635,23 @@ export function buildIterationFinishParams(args: {
   passed: boolean;
   /** @see assessAgentActivity */
   agentActivity?: AgentActivityAssessment;
+  /** The verdict's gate inputs, for the platform score rows. */
+  platformGates?: PlatformGateEvidence;
   /** `evaluation` drives both `toolsCalled` and `buildIterationMetadata`. */
   evaluation: { toolsCalled: ToolCallRecord[] } & Record<string, unknown>;
   usage: UsageTotals;
   messages: ModelMessage[];
   /** The model selected for this iteration, used for session attribution. */
   modelId?: string;
+  /** Whose spend that model was; absent reads as MCPJam's. */
+  modelSource?: EvalTraceModelSource;
   systemPrompt?: string;
   spans?: EvalTraceSpan[];
   requestPayloads?: LiveChatTraceRequestPayloadEntry[];
+  /** Each harness turn's MCP route, by promptIndex. */
+  harnessMcpByPromptIndex?: ReadonlyMap<number, HarnessMcpAtTurn>;
+  /** The skills every turn of the iteration ran with (see the finalize param). */
+  skillsAtTurn?: Array<Record<string, unknown>>;
   prompts?: PromptTraceSummary[];
   widgetSnapshots?: EvalTraceWidgetSnapshot[];
   widgetRenderObservations?: RunnerWidgetRenderObservation[];
@@ -714,6 +728,7 @@ export function buildIterationFinishParams(args: {
   // Metadata includes structured timeout and experiment attribution.
   iterationMetadataBase: Record<string, unknown>;
   hostPolicy?: HostExecutionPolicy;
+  nativeHarness?: boolean;
   toolSignals?: ToolExposureSignals;
   /**
    * Folded run-level connect / tools-list evidence. Threaded into the
@@ -791,6 +806,8 @@ export function buildIterationFinishParams(args: {
     systemPrompt,
     spans,
     requestPayloads,
+    harnessMcpByPromptIndex,
+    skillsAtTurn,
     prompts,
     widgetSnapshots,
     widgetRenderObservations,
@@ -851,6 +868,7 @@ export function buildIterationFinishParams(args: {
     passed,
     stageMetadata,
     ...(args.agentActivity ? { agentActivity: args.agentActivity } : {}),
+    ...(args.platformGates ? { platformGates: args.platformGates } : {}),
     ...(args.runId ? { runId: args.runId } : {}),
     ...(iterationId ? { iterationId } : {}),
     ...(scoreMatchOptions ? { matchOptions: scoreMatchOptions } : {}),
@@ -961,9 +979,12 @@ export function buildIterationFinishParams(args: {
     usage,
     messages,
     ...(modelId ? { modelId } : {}),
+    ...(args.modelSource ? { modelSource: args.modelSource } : {}),
     ...(systemPrompt ? { systemPrompt } : {}),
     ...(persistedSpans.length ? { spans: persistedSpans } : {}),
     ...(requestPayloads?.length ? { requestPayloads } : {}),
+    ...(harnessMcpByPromptIndex?.size ? { harnessMcpByPromptIndex } : {}),
+    ...(skillsAtTurn ? { skillsAtTurn } : {}),
     ...(prompts?.length ? { prompts } : {}),
     ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
     ...(widgetRenderObservations?.length ? { widgetRenderObservations } : {}),
@@ -1027,6 +1048,7 @@ export function buildIterationFinishParams(args: {
             injectOpenAiCompat === true,
           )
         : {}),
+      ...inspectorDiscoveryRunMetadata(hostPolicy?.runUnloadedToolCalls, args.nativeHarness),
     },
   };
 }
@@ -1046,8 +1068,21 @@ export type FinalizeEvalIterationParams = {
   messages: ModelMessage[];
   /** Effective model used by the iteration; persisted on the eval session. */
   modelId?: string;
+  /** Whose spend that model was, on the eval session; absent is MCPJam's. */
+  modelSource?: EvalTraceModelSource;
   spans?: EvalTraceSpan[];
   requestPayloads?: LiveChatTraceRequestPayloadEntry[];
+  /**
+   * Each harness turn's MCP route, by promptIndex. Only the per-turn fanout
+   * sends it; the W1 fallback has no field for it.
+   */
+  harnessMcpByPromptIndex?: ReadonlyMap<number, HarnessMcpAtTurn>;
+  /**
+   * The `skillsAtTurn` rows every turn of the iteration ran with, from the
+   * turn's skill plan. Absent when the run froze no skills. Only the per-turn
+   * fanout sends it; the W1 fallback has no field for it.
+   */
+  skillsAtTurn?: Array<Record<string, unknown>>;
   prompts?: PromptTraceSummary[];
   widgetSnapshots?: EvalTraceWidgetSnapshot[];
   /**
@@ -1180,8 +1215,11 @@ export async function finalizeEvalIteration(
     usage,
     messages,
     modelId,
+    modelSource,
     spans,
     requestPayloads,
+    harnessMcpByPromptIndex,
+    skillsAtTurn,
     prompts,
     widgetSnapshots,
     systemPrompt,
@@ -1310,12 +1348,23 @@ export async function finalizeEvalIteration(
 
   const fanout = await persistEvalTraceFanout({
     convexClient,
+    ...(typeof metadata?.engineVersion === "string" ? {
+      discoveryAtTurn: {
+        engineVersion: metadata.engineVersion,
+        ...(typeof metadata.runUnloadedToolCalls === "boolean"
+          ? { runUnloadedToolCalls: metadata.runUnloadedToolCalls }
+          : {}),
+      },
+    } : {}),
     iterationId,
     iterationStartedAt: startedAt,
     messages,
     ...(modelId ? { modelId } : {}),
+    ...(modelSource ? { modelSource } : {}),
     spans,
     requestPayloads,
+    harnessMcpByPromptIndex,
+    ...(skillsAtTurn ? { skillsAtTurn } : {}),
     prompts,
     widgetSnapshots,
     systemPrompt,
@@ -1366,6 +1415,8 @@ export async function finalizeEvalIteration(
       ...(usagePayload ? { usage: usagePayload } : {}),
       ...(useW1Fallback
         ? {
+            // No routing records: `updateTestIteration` has no field for
+            // them, so an iteration saved this way loses its turns' routes.
             messages: sanitizeForConvexTransport(messages),
             ...(requestPayloads?.length
               ? {

@@ -94,6 +94,10 @@ vi.mock("posthog-js", () => ({
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => mocks.evaluateFlag.enabled,
 }));
+const stepsEditorFlag = vi.hoisted(() => ({ enabled: false }));
+vi.mock("@/hooks/use-test-case-steps-editor-enabled", () => ({
+  useTestCaseStepsEditorEnabled: () => stepsEditorFlag.enabled,
+}));
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: () => "light",
@@ -454,7 +458,7 @@ describe("EvaluateTab", () => {
     mocks.getEffectiveSuiteServers.mockReturnValue(["server-a"]);
     render(<EvaluateTab projectId="ws-1" />);
     await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
-    await userEvent.click(screen.getByRole("button", { name: "Setup Run Suite suite-a" }));
+    await userEvent.click(screen.getByRole("button", { name: "Run Suite suite-a" }));
     expect(screen.getByRole("dialog", { name: "Run Suite suite-a" })).toBeInTheDocument();
     expect(screen.getByTestId("evals-suites-overview")).toBeInTheDocument();
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
@@ -543,7 +547,7 @@ describe("EvaluateTab", () => {
     });
   });
 
-  describe("Add case and Setup Run with no suite yet", () => {
+  describe("Add case and Run with no suite yet", () => {
     function withSuites(sortedSuites: unknown[], isOverviewLoading = false) {
       mocks.useEvalQueries.mockImplementation(
         ({ selectedSuiteId }: { selectedSuiteId: string | null }) => ({
@@ -561,11 +565,11 @@ describe("EvaluateTab", () => {
       mocks.route.current = { type: "list" };
     });
 
-    it("Setup Run goes straight to creating a suite instead of an empty picker", async () => {
+    it("Run goes straight to creating a suite instead of an empty picker", async () => {
       withSuites([]);
       render(<EvaluateTab projectId="ws-1" />);
 
-      await userEvent.click(screen.getByRole("button", { name: /setup run/i }));
+      await userEvent.click(screen.getByRole("button", { name: /^run$/i }));
 
       expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
         type: "create",
@@ -611,7 +615,7 @@ describe("EvaluateTab", () => {
     it("waits for suites to load before deciding there are none", async () => {
       withSuites([], true);
       const view = render(<EvaluateTab projectId="ws-1" />);
-      await userEvent.click(screen.getByRole("button", { name: /setup run/i }));
+      await userEvent.click(screen.getByRole("button", { name: /^run$/i }));
       expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
       expect(screen.getByText("Loading suites…")).toBeInTheDocument();
 
@@ -627,7 +631,7 @@ describe("EvaluateTab", () => {
     it("opens the picker once suites arrive, without sending anyone to create one", async () => {
       withSuites([], true);
       const view = render(<EvaluateTab projectId="ws-1" />);
-      await userEvent.click(screen.getByRole("button", { name: /setup run/i }));
+      await userEvent.click(screen.getByRole("button", { name: /^run$/i }));
 
       mocks.useEvalQueries.mockImplementation(
         ({ selectedSuiteId }: { selectedSuiteId: string | null }) =>
@@ -645,7 +649,7 @@ describe("EvaluateTab", () => {
     it("drops a pending action when the route leaves the list", async () => {
       withSuites([], true);
       const view = render(<EvaluateTab projectId="ws-1" />);
-      await userEvent.click(screen.getByRole("button", { name: /setup run/i }));
+      await userEvent.click(screen.getByRole("button", { name: /^run$/i }));
 
       // Back to another page while suites load, then the overview answers.
       mocks.route.current = { type: "suite-overview", suiteId: "suite-a" };
@@ -776,7 +780,7 @@ describe("EvaluateTab", () => {
     const user = userEvent.setup();
     render(<EvaluateTab projectId="ws-1" />);
     await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
-    await user.click(screen.getByRole("button", { name: "Setup Run Suite suite-a" }));
+    await user.click(screen.getByRole("button", { name: "Run Suite suite-a" }));
     expect(mocks.handleRerun).not.toHaveBeenCalled();
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Start reviewed run" }));
@@ -1028,6 +1032,31 @@ describe("EvaluateTab", () => {
     });
   });
 
+  it("opens the suite's test cases from a case's crumb behind eval-test-case-steps-editor", async () => {
+    stepsEditorFlag.enabled = true;
+    mocks.route.current = {
+      type: "test-edit",
+      suiteId: "suite-a",
+      testId: "tc-1",
+    };
+    mocks.useEvalQueries.mockImplementation(
+      ({ selectedSuiteId }: { selectedSuiteId: string | null }) =>
+        makeQueryState(selectedSuiteId),
+    );
+    try {
+      render(<EvaluateTab projectId="ws-1" />);
+      await userEvent
+        .setup()
+        .click(screen.getByRole("button", { name: "Suite suite-a" }));
+      expect(mocks.toSuiteOverview).toHaveBeenCalledWith(
+        "suite-a",
+        "test-cases",
+      );
+    } finally {
+      stepsEditorFlag.enabled = false;
+    }
+  });
+
   it("redirects invalid suite routes back to the eval list", async () => {
     mocks.route.current = { type: "suite-overview", suiteId: "missing-suite" };
 
@@ -1042,7 +1071,7 @@ describe("EvaluateTab", () => {
   });
 
   it("does not bounce a just-created suite the cached overview hasn't caught up to", () => {
-    // "Promote to test case" into a NEW suite runs as an action; its result
+    // "Save as test case" into a NEW suite runs as an action; its result
     // can arrive before the overview subscription's update, so the page
     // mounts on an overview that does not list the suite yet — while the
     // suite's own query is still in flight.
@@ -1273,7 +1302,7 @@ describe("EvaluateTab", () => {
       );
     });
 
-    it("runEvalSuite launches the count Setup Run would start at, not each case's saved runs", async () => {
+    it("runEvalSuite launches the count the Set up run sheet would start at, not each case's saved runs", async () => {
       localStorage.setItem("mcpjam:suite-run-iterations:suite-b", "1");
       try {
         render(<EvaluateTab projectId="ws-1" />);

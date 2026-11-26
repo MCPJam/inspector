@@ -32,7 +32,7 @@ import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import type {
   ProgressiveToolPlan,
   ToolDiscoveryState,
-} from "@/shared/progressive-tool-discovery";
+} from "@mcpjam/sdk";
 import {
   runChatEngineLoop,
   type MCPJamHandlerOptions,
@@ -40,6 +40,7 @@ import {
 import type { ChatOrigin, PersistedTurnTrace } from "./chat-ingestion.js";
 import { runHarnessTurn } from "./harness/run-harness-turn.js";
 import { getHarnessAdapter } from "./harness/registry.js";
+import { harnessSkillOptions } from "./harness/harness-skill-options.js";
 import {
   harnessModelPurposeForSourceType,
   harnessModelRefusal,
@@ -48,6 +49,7 @@ import {
 } from "./harness/harness-availability.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { logger } from "./logger.js";
+import type { TurnAuthorization } from "../services/turn-authorization.js";
 
 /**
  * Authentication context for `runAssistantTurn`.
@@ -60,6 +62,8 @@ export type RunAssistantTurnAuthContext = {
   kind: "user_bearer";
   /** Full `authorization` header value, e.g. `"Bearer …"`. */
   token: string;
+  /** Read on every model step instead of `token`, for a bearer that renews. */
+  turnAuthorization?: TurnAuthorization;
   /** Originating client IP for the per-IP guest spend cap. */
   clientIp?: string | null;
 };
@@ -70,7 +74,8 @@ export type RunAssistantTurnStreamSink = "ui" | "none";
 /** Whether `runAssistantTurn` runs the chat-ingestion path itself. */
 export type RunAssistantTurnPersistMode = "handler" | "caller";
 
-export interface RunAssistantTurnOptions {
+export interface RunAssistantTurnOptions
+  extends Pick<MCPJamHandlerOptions, "turnTiming"> {
   messages: ModelMessage[];
   projectId?: string;
   scenarioId?: string;
@@ -104,7 +109,7 @@ export interface RunAssistantTurnOptions {
    * narrowed to the public values to avoid silent string churn.
    * `event` is an MCP Events trigger run (unattended, like eval/swarm).
    */
-  sourceType: "direct" | "scenario" | "eval" | "swarm" | "event";
+  sourceType: "direct" | "scenario" | "eval" | "swarm" | "event" | "readiness";
   /**
    * Product-surface discriminator forwarded into chat-ingestion. Required
    * so each caller (eval runner, session simulation, MCP route) explicitly
@@ -261,6 +266,7 @@ export interface RunAssistantTurnOptions {
   /** Reports back what the run FROZE about evidence, as the mint saw it. */
   onHarnessEvidenceDecision?: MCPJamHandlerOptions["onHarnessEvidenceDecision"];
   onHarnessPolicyBlocks?: MCPJamHandlerOptions["onHarnessPolicyBlocks"];
+  onBoxSkillsWritten?: MCPJamHandlerOptions["onBoxSkillsWritten"];
 
   /**
    * Swarm (journey-execution) continuity identity. Forwarded to the harness
@@ -271,12 +277,10 @@ export interface RunAssistantTurnOptions {
   journeyRunId?: MCPJamHandlerOptions["journeyRunId"];
   hostId?: MCPJamHandlerOptions["hostId"];
 
-  /**
-   * Pinned harness skills for env-based swarm targets (Project Environments).
-   * Pass-through to `runHarnessTurn`: when set (even empty) the harness turn
-   * skips the live skills fetch and delivers exactly these pinned artifacts.
-   */
-  pinnedHarnessSkills?: MCPJamHandlerOptions["pinnedHarnessSkills"];
+  /** The turn's skill plan. Pass-through to `runHarnessTurn`, which carries it
+   *  out. */
+  skillPlan?: MCPJamHandlerOptions["skillPlan"];
+
 
   /**
    * The disposable box this session already owns (B-isolation phase 6).
@@ -286,6 +290,8 @@ export interface RunAssistantTurnOptions {
    * personal path unchanged.
    */
   harnessSandboxBinding?: MCPJamHandlerOptions["harnessSandboxBinding"];
+  /** Web clients: the eval run's owner and frozen accounts. */
+  webClientRun?: MCPJamHandlerOptions["webClientRun"];
 
   /**
    * MCPJam's SERVER-EXECUTED built-ins (`web_search`, …) for the harness path.
@@ -298,13 +304,9 @@ export interface RunAssistantTurnOptions {
    */
   builtInTools?: MCPJamHandlerOptions["builtInTools"];
 
-  /**
-   * Resolved Project-Environment skills for this turn (Phase 1.4).
-   * Pass-through to `runHarnessTurn`: when set (even empty) the harness turn
-   * delivers exactly these and skips the live project-wide fetch. Ranks below
-   * `pinnedHarnessSkills` — see `harness/skill-delivery.ts`.
-   */
-  runtimeSkillsOverride?: MCPJamHandlerOptions["runtimeSkillsOverride"];
+  /** The turn's capability set, for its plugins' origins and versions.
+   *  Pass-through to `runHarnessTurn`. */
+  effectiveCapabilities?: MCPJamHandlerOptions["effectiveCapabilities"];
 
   /**
    * The Project Environment this turn resolved — the GRANT BOUNDARY for project
@@ -498,6 +500,9 @@ function buildHandlerOptions(
     mcpClientManager: opts.mcpClientManager,
     unavailableServerIds: opts.unavailableServerIds,
     authHeader: opts.authContext.token,
+    ...(opts.authContext.turnAuthorization
+      ? { turnAuthorization: opts.authContext.turnAuthorization }
+      : {}),
     ...(opts.temperature !== undefined
       ? { temperature: opts.temperature }
       : {}),
@@ -534,16 +539,12 @@ function buildHandlerOptions(
     ...(opts.harnessToolPolicy
       ? { harnessToolPolicy: opts.harnessToolPolicy }
       : {}),
-    ...(opts.onHarnessPolicyBlocks
-      ? { onHarnessPolicyBlocks: opts.onHarnessPolicyBlocks }
-      : {}),
+    onHarnessPolicyBlocks: opts.onHarnessPolicyBlocks,
+    onBoxSkillsWritten: opts.onBoxSkillsWritten,
     ...(opts.journeyRunId ? { journeyRunId: opts.journeyRunId } : {}),
     ...(opts.hostId ? { hostId: opts.hostId } : {}),
-    // Pinned harness skills: presence (even an EMPTY array) is semantic — an
-    // empty authoritative set means "run skill-less", never "fall back live".
-    ...(opts.pinnedHarnessSkills !== undefined
-      ? { pinnedHarnessSkills: opts.pinnedHarnessSkills }
-      : {}),
+    ...harnessSkillOptions(opts),
+    ...(opts.webClientRun ? { webClientRun: opts.webClientRun } : {}),
     // The attempt's own disposable box. Absent ⇒ the harness reserves the
     // personal computer, exactly as before.
     ...(opts.harnessSandboxBinding
@@ -552,12 +553,6 @@ function buildHandlerOptions(
     // Server-executed built-ins forwarded SEPARATELY so the harness path can
     // hand them to HarnessAgent (mirrors `routes/mcp/chat-v2.ts`).
     ...(opts.builtInTools ? { builtInTools: opts.builtInTools } : {}),
-    // Environment skill override: same presence-is-semantic rule as pinned —
-    // an empty resolved set means "this environment delivers no skills", never
-    // "fall back to the project pool".
-    ...(opts.runtimeSkillsOverride !== undefined
-      ? { runtimeSkillsOverride: opts.runtimeSkillsOverride }
-      : {}),
     // The turn's grant boundary for project secrets. Harness-relevant: the
     // external-account credential check asks whether a BROKERED secret is
     // selected into THIS environment, and an absent id means "no grant" rather
@@ -604,6 +599,7 @@ function buildHandlerOptions(
     // PR 5b-followup-2: pass-through structured-error callback.
     ...(opts.onEngineError ? { onEngineError: opts.onEngineError } : {}),
     ...(opts.failureReporter ? { failureReporter: opts.failureReporter } : {}),
+    ...(opts.turnTiming ? { turnTiming: opts.turnTiming } : {}),
     ...(opts.failureCapture ? { failureCapture: opts.failureCapture } : {}),
     // Browser-rendered MCP App eval PR 2: advertised-tool narrowing hook.
     ...(opts.prepareAdvertisedTools
@@ -673,7 +669,7 @@ export async function runAssistantTurn(
     },
   );
 
-  // A host with a `harness` selected (claude-code | codex | cursor) runs the
+  // A host with a `harness` selected (claude-code | codex | cursor | opencode) runs the
   // real runtime inside its computer; otherwise the emulated engine. Both
   // satisfy the same ChatEngineLoopResult contract, so everything downstream is
   // identical.
@@ -739,8 +735,7 @@ export async function runAssistantTurn(
     }
     handlerOptions.modelSelection = opts.modelSelection;
   }
-  const useHarness = harnessRequested;
-  const engineResult = useHarness
+  const engineResult = harnessRequested
     ? await runHarnessTurn(handlerOptions, opts.streamSink)
     : await runChatEngineLoop(handlerOptions, opts.streamSink);
 

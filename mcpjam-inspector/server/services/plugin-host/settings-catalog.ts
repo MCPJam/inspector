@@ -11,6 +11,7 @@ import { DialectAwareJsonSchemaValidator } from "@mcpjam/sdk";
 import { mcpAppToolResultSchema as CallToolResultSchema } from "@mcpjam/sdk/widget-runtime";
 import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
 import { pluginToolCallValidation } from "./tool-call-validation.js";
+import { PluginInvocationError } from "./invocation.js";
 import {
   pluginDiagnostic,
   type PluginDiagnostic,
@@ -27,6 +28,19 @@ export type PluginSettingsCatalog = Pick<
   | "protocolVersion"
 >;
 type Catalog = PluginSettingsCatalog;
+
+/** A rejected settings reply explains the failure without proving the tool had no effect. */
+export function settingsResultValidation(validate: (result: unknown) => void) {
+  return (result: unknown) => {
+    try {
+      validate(result);
+    } catch (error) {
+      if (error instanceof PluginSettingsError)
+        throw new PluginInvocationError(error.code, true);
+      throw error;
+    }
+  };
+}
 
 export interface PluginSettingsActionBinding {
   name: string;

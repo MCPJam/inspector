@@ -112,6 +112,18 @@ describe("per-server view host", () => {
     expect(await status(app, "/assets/index.js", LABEL_HOST)).toBe(404);
   });
 
+  it("gives reserved admission origins only the proxy path and restrictive error headers", async () => {
+    const host = `v-0123456789abcdef.${SANDBOX_HOST}`;
+    expect(await status(app, PROXY_PATH, host)).toBe(200);
+    for (const path of ["/", "/health", "/api/web/projects", "/assets/index.js"]) {
+      const response = await app.request(`http://${host}${path}`, { headers: { Host: host } });
+      expect(response.status).toBe(404);
+      expect(response.headers.get("Content-Security-Policy")).toContain("default-src 'none'");
+      expect(response.headers.get("Cache-Control")).toContain("no-store");
+      expect(response.headers.get("Origin-Agent-Cluster")).toBe("?1");
+    }
+  });
+
   it("only matches a label this service would actually mint", async () => {
     // Not hex, wrong length, nested, or under a host that is not ours — none
     // are names the deriver produces, so they are not partitioned at all and
@@ -205,9 +217,11 @@ describe("SANDBOX_HOSTS entries that are not hostnames", () => {
 async function bootWith(env: {
   sandboxHosts: string;
   hostedOrigin: string;
+  sandboxOrigin?: string;
 }): Promise<{ logged: string[]; health: string }> {
   vi.stubEnv("SANDBOX_HOSTS", env.sandboxHosts);
   vi.stubEnv("MCPJAM_HOSTED_ORIGIN", env.hostedOrigin);
+  vi.stubEnv("MCPJAM_SANDBOX_ORIGIN", env.sandboxOrigin ?? "");
   vi.resetModules();
 
   const logged: string[] = [];
@@ -270,6 +284,80 @@ describe("boot invariant", () => {
     expect(logged).toHaveLength(1);
   });
 
+  it("reports unpartitioned when MCPJAM_SANDBOX_ORIGIN names a host SANDBOX_HOSTS does not list", async () => {
+    const { logged, health } = await bootWith({
+      sandboxHosts: "sandbox.mcpjam.com,sandbox-staging.mcpjam.com",
+      hostedOrigin: "https://inspector.customer.test",
+      sandboxOrigin:
+        "https://ops:hunter2@sandbox.customer.test/proxy?token=abc",
+    });
+
+    expect(health).toBe("unpartitioned");
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toContain("(https://sandbox.customer.test)");
+    expect(logged[0]).toContain("SANDBOX_HOSTS");
+    // Only the origin is logged: no credentials, path or query.
+    expect(logged[0]).not.toMatch(/hunter2|token=|\/proxy/);
+  });
+
+  it("reports same-origin when MCPJAM_SANDBOX_ORIGIN is the app's own origin", async () => {
+    const { logged, health } = await bootWith({
+      sandboxHosts: "sandbox.customer.test",
+      hostedOrigin: "https://inspector.customer.test",
+      sandboxOrigin: "https://inspector.customer.test",
+    });
+
+    expect(health).toBe("same-origin");
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toContain(
+      "MCPJAM_SANDBOX_ORIGIN is the app's own origin",
+    );
+  });
+
+  it.each([
+    { cause: "listed in SANDBOX_HOSTS", sandboxHosts: "app.mcpjam.test" },
+    {
+      cause: "named by MCPJAM_SANDBOX_ORIGIN",
+      sandboxHosts: "sandbox.mcpjam.test",
+      sandboxOrigin: "https://app.mcpjam.test",
+    },
+  ])(
+    "logs only the hosted origin when the app's own host is $cause",
+    async ({ sandboxHosts, sandboxOrigin }) => {
+      const { logged, health } = await bootWith({
+        sandboxHosts,
+        hostedOrigin: "https://ops:hunter2@app.mcpjam.test/base?token=abc",
+        sandboxOrigin,
+      });
+
+      expect(health).toBe("same-origin");
+      expect(logged).toHaveLength(1);
+      expect(logged[0]).toContain("(https://app.mcpjam.test)");
+      expect(logged[0]).not.toMatch(/hunter2|token=|\/base/);
+    },
+  );
+
+  it("also prints the fault on stderr in production without VERBOSE_LOGS", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("VERBOSE_LOGS", "");
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    try {
+      const { logged, health } = await bootWith({
+        sandboxHosts: "sandbox.mcpjam.com",
+        hostedOrigin: "https://inspector.customer.test",
+        sandboxOrigin: "https://sandbox.customer.test",
+      });
+
+      expect(health).toBe("unpartitioned");
+      expect(stderr).toHaveBeenCalledWith(`${logged[0]}\n`);
+    } finally {
+      stderr.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("stays silent on a deploy whose sandbox host is its own hostname", async () => {
     const { logged, health } = await bootWith({
       sandboxHosts: "sandbox.mcpjam.test",
@@ -278,5 +366,29 @@ describe("boot invariant", () => {
 
     expect(health).toBe("ok");
     expect(logged).toEqual([]);
+  });
+});
+
+describe("resolveSandboxIsolation with MCPJAM_SANDBOX_ORIGIN", () => {
+  const sandboxHosts = new Set(["sandbox.customer.test"]);
+  const hostedOrigin = "https://inspector.customer.test";
+
+  afterAll(() => vi.unstubAllEnvs());
+
+  it("is ok when it names a listed host, on any port", async () => {
+    const { resolveSandboxIsolation } = await import("../../config.js");
+    expect(
+      resolveSandboxIsolation(
+        sandboxHosts,
+        hostedOrigin,
+        "https://sandbox.customer.test:8443",
+      ),
+    ).toBe("ok");
+  });
+
+  it("ignores a value that is not an http(s) origin, as the browser does", async () => {
+    vi.stubEnv("MCPJAM_SANDBOX_ORIGIN", "sandbox.elsewhere.test");
+    const { resolveSandboxIsolation } = await import("../../config.js");
+    expect(resolveSandboxIsolation(sandboxHosts, hostedOrigin)).toBe("ok");
   });
 });

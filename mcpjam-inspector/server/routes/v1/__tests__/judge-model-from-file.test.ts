@@ -33,6 +33,7 @@ vi.mock("convex/browser", () => ({
 
 import v1Routes from "../index.js";
 import { logger } from "../../../utils/logger.js";
+import { ConvexHttpStatusError } from "../convex-read-errors.js";
 
 const PROJECT_ID = "k57a1b2c3d4e5f6g7h8j9k0m1n2p3q4r";
 const SUITE_ID = "s57a1b2c3d4e5f6g7h8j9k0m1n2p3q4r";
@@ -138,5 +139,39 @@ describe("POST /eval-suites/from-file sends the judge in catalog spelling", () =
 
     expect(res.status).toBe(201);
     expect(judgeSent()).toBeNull();
+  });
+
+  // No preflight read runs before this mutation, so the write translator is
+  // the only thing between Convex's answer and the CLI.
+  it.each([
+    [
+      "a Convex 401",
+      new ConvexHttpStatusError(401, "Unauthorized"),
+      401,
+      "UNAUTHORIZED",
+    ],
+    [
+      "a proxy's 500",
+      new ConvexHttpStatusError(500, "500 Internal Server Error"),
+      502,
+      "SERVER_UNREACHABLE",
+    ],
+    [
+      "a missing function",
+      new ConvexHttpStatusError(
+        404,
+        "Could not find public function for 'testSuites:resolveOrCreateFileOwnedSuite'",
+      ),
+      422,
+      "FEATURE_NOT_SUPPORTED",
+    ],
+  ])("answers %s by its status", async (_label, error, status, code) => {
+    vi.spyOn(logger, "error").mockImplementation(() => {});
+    convexMutationMock.mockRejectedValue(error);
+
+    const res = await syncSuite(undefined);
+
+    expect(res.status).toBe(status);
+    expect(((await res.json()) as { code?: string }).code).toBe(code);
   });
 });

@@ -5,6 +5,23 @@ import { DescribeCaseWorkspace } from "../describe-case-workspace";
 
 describe("DescribeCaseWorkspace", () => {
   beforeEach(() => useAgentPanelStore.setState({ isOpen: false }));
+  it("draws the steps editor in place of the case form card", () => {
+    render(
+      <DescribeCaseWorkspace
+        title="Refunds"
+        onTitleChange={vi.fn()}
+        caseForm={<div>Old form</div>}
+        stepsForm={<div>Step cards</div>}
+        onAsk={vi.fn()}
+        onSave={vi.fn()}
+        saveDisabled={false}
+      />,
+    );
+    expect(screen.getByText("Step cards")).toBeVisible();
+    expect(screen.queryByText("Old form")).toBeNull();
+    expect(screen.getByLabelText("Draft case title")).toHaveValue("Refunds");
+    expect(screen.getByRole("button", { name: "Save case" })).toBeEnabled();
+  });
   it("opens the shared agent instead of mounting a second composer", () => {
     const onAsk = vi.fn();
     const onTitleChange = vi.fn();
@@ -37,5 +54,27 @@ describe("DescribeCaseWorkspace", () => {
     });
     expect(onTitleChange).toHaveBeenCalledWith("Refund policy");
     expect(screen.getByRole("button", { name: "Save case" })).toBeDisabled();
+  });
+
+  it("offers no Ask MCPJam button when the server turns the agent off", () => {
+    window.__MCP_RUNTIME_CONFIG__ = { platformAgentDisabled: true };
+    try {
+      render(
+        <DescribeCaseWorkspace
+          title="Untitled test case"
+          onTitleChange={vi.fn()}
+          caseForm={<div>Case steps</div>}
+          onAsk={vi.fn()}
+          onSave={vi.fn()}
+          saveDisabled
+        />,
+      );
+      expect(screen.getByText("Case steps")).toBeVisible();
+      expect(
+        screen.queryByRole("button", { name: "Ask MCPJam" }),
+      ).not.toBeInTheDocument();
+    } finally {
+      delete window.__MCP_RUNTIME_CONFIG__;
+    }
   });
 });

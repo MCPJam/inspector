@@ -33,12 +33,22 @@ vi.mock("@/components/chat-v2/chat-input/model-selector", () => ({
     availableModels,
   }: {
     disabled?: boolean;
-    availableModels?: Array<{ id: string; orgProvider?: { id?: string } }>;
+    availableModels?: Array<{
+      id: string;
+      orgProvider?: { id?: string };
+      disabled?: boolean;
+    }>;
   }) => (
+    // Pickable rows, then the rows listed disabled with a reason.
     <div
       data-testid="model-selector"
       data-disabled={disabled ? "true" : undefined}
       data-models={(availableModels ?? [])
+        .filter((m) => !m.disabled)
+        .map((m) => `${m.orgProvider?.id ?? "hosted"}:${m.id}`)
+        .join(",")}
+      data-locked-models={(availableModels ?? [])
+        .filter((m) => m.disabled)
         .map((m) => `${m.orgProvider?.id ?? "hosted"}:${m.id}`)
         .join(",")}
     />
@@ -85,11 +95,13 @@ describe("BehaviorTab harness gray-out", () => {
   });
 
   it("leaves approval EDITABLE for claude-code now that its proxy phase landed", () => {
-    // The adapter bridge's `canUseTool` gates every surface — built-ins,
-    // host-executed tools, and (under `approvalPermissionMode: "allow-reads"`)
-    // the MCP tools the in-sandbox client calls — so `requireToolApproval` is
-    // enforced for claude-code (#4531) and the switch must not gray out or
-    // carry the old "refused rather than run unapproved" note.
+    // Approval reaches every surface, though not every call: the adapter
+    // bridge's `canUseTool` gates side-effecting built-ins and (under
+    // `approvalPermissionMode: "allow-reads"`) the MCP tools the in-sandbox
+    // client calls, and the host gates its own host-executed tools — so
+    // `requireToolApproval` is enforced for claude-code (#4531) and the
+    // switch must not gray out or carry the old "refused rather than run
+    // unapproved" note.
     renderBehaviorTab({ harness: "claude-code" });
 
     expect(
@@ -156,20 +168,18 @@ describe("BehaviorTab harness gray-out", () => {
     ).toBeInTheDocument();
   });
 
-  it("disables the MODEL selector for a cursor harness host, and says who chooses", () => {
+  it("enables account model selection while keeping unsupported controls disabled", () => {
     // The one harness whose model is not MCPJam's to choose: it authenticates
     // with the customer's own Cursor account and that account picks the model.
     // Left enabled, a selection persists onto the host and reaches nothing —
     // the host then displays a model that never ran.
     const { container } = renderBehaviorTab({ harness: "cursor" });
 
-    expect(screen.getByTestId("model-selector")).toHaveAttribute(
+    expect(screen.getByTestId("model-selector")).not.toHaveAttribute(
       "data-disabled",
       "true",
     );
-    expect(
-      screen.getByText(/Cursor account, which chooses the model itself/i),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/Cursor account, which chooses the model itself/i)).not.toBeInTheDocument();
 
     // Temperature goes with it, for the same reason.
     expect(sliderRoot(container)).toHaveAttribute("data-disabled");
@@ -286,6 +296,10 @@ describe("the model list a harness host offers", () => {
     expect(screen.getByTestId("model-selector")).toHaveAttribute(
       "data-models",
       "",
+    );
+    expect(screen.getByTestId("model-selector")).toHaveAttribute(
+      "data-locked-models",
+      "orgprov_o:gpt-5-mini",
     );
   });
 

@@ -1,20 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
-import { HARNESS_DESCRIPTORS } from "../harness-descriptors";
+import {
+  HARNESS_DESCRIPTORS,
+  HARNESS_SURFACES,
+  harnessSurfaceRefusal,
+} from "../harness-descriptors";
+import { orgKeySurfaceRefusal } from "../org-key-surfaces";
 
 /** Adding a descriptor field means deciding what every harness says for it. */
 const DESCRIPTOR_KEYS = [
   "controls",
   "credential",
   "displayName",
-  "guest",
-  "local",
   "mcpClient",
   "modelAccess",
-  "orgUpstream",
+  "orgKeys",
   "protocol",
   "reasoningEfforts",
+  "runtimeName",
   "runtimeVersion",
+  "unavailableOn",
 ];
 
 const LOOP_CONTROLS = [
@@ -23,6 +28,22 @@ const LOOP_CONTROLS = [
   "requireToolApproval",
   "temperature",
 ];
+
+it("names each runtime as the harness choice shows it", () => {
+  expect(
+    Object.fromEntries(
+      HARNESS_IDS.map((id) => [id, HARNESS_DESCRIPTORS[id].runtimeName]),
+    ),
+  ).toEqual({
+    "claude-code": "Claude Agent SDK",
+    codex: "Codex App Server",
+    cursor: "Cursor CLI",
+    "copilot-cli": "GitHub Copilot CLI",
+    opencode: "OpenCode",
+    "claude-web": "claude.ai",
+    "chatgpt-web": "chatgpt.com",
+  });
+});
 
 it("describes every SDK harness and nothing else", () => {
   expect(Object.keys(HARNESS_DESCRIPTORS).sort()).toEqual(
@@ -40,25 +61,56 @@ describe.each(HARNESS_IDS)("%s descriptor", (id) => {
 
   it("uses only the known values", () => {
     expect(descriptor.displayName.trim()).not.toBe("");
+    expect(descriptor.runtimeName.trim()).not.toBe("");
     expect(descriptor.runtimeVersion.trim()).not.toBe("");
     expect(["harness", "mcpjam"]).toContain(descriptor.mcpClient);
     expect(["broker", "external-account"]).toContain(descriptor.modelAccess);
     for (const control of Object.values(descriptor.controls)) {
       if (!control.enforced) expect(control.note.trim()).not.toBe("");
     }
+    for (const [surface, reason] of Object.entries(descriptor.unavailableOn)) {
+      expect(HARNESS_SURFACES).toContain(surface);
+      expect(reason).toMatch(/^[A-Z].+\.$/);
+      // The backend's mirror pin captures surface/reason pairs, so each
+      // reason names its runtime.
+      expect(reason.startsWith(descriptor.displayName)).toBe(true);
+    }
   });
 
   it("keeps brokered and own-account harnesses distinct", () => {
     if (descriptor.modelAccess === "broker") {
       expect(descriptor.credential).toBeNull();
-      expect(descriptor.orgUpstream).not.toBeNull();
       expect(descriptor.protocol).not.toBeNull();
+    } else if (descriptor.credential && "kind" in descriptor.credential) {
+      // A web account: the project's signed-in browser profile, no key.
+      expect(descriptor.credential.kind).toBe("web-account");
+      expect(descriptor.credential.sites.length).toBeGreaterThan(0);
+      expect(descriptor.orgKeys).toBe(false);
+      expect(descriptor.protocol).toBeNull();
+      expect(harnessSurfaceRefusal(id, "guests")).toBeDefined();
+      // Pinned by the backend's mirror, word for word.
+      expect(harnessSurfaceRefusal(id, "user-testing")).toBe(
+        `${descriptor.displayName} runs on a project web account, so studies cannot use it. Choose a different client for this study.`,
+      );
     } else {
       expect(descriptor.credential?.env.trim()).toBeTruthy();
-      expect(descriptor.orgUpstream).toBeNull();
+      expect(descriptor.orgKeys).toBe(false);
       expect(descriptor.protocol).toBeNull();
-      expect(descriptor.local).toBe(false);
-      expect(descriptor.guest).toBe(false);
+      expect(harnessSurfaceRefusal(id, "guests")).toBeDefined();
+      // Its key never reaches a box a guest or participant controls; the
+      // Playground, evals, swarms and the API check it before a box. The
+      // study refusal uses the same copy as the org-key checks.
+      expect(harnessSurfaceRefusal(id, "user-testing")).toBe(
+        orgKeySurfaceRefusal(descriptor.displayName),
+      );
+      expect(harnessSurfaceRefusal(id, "api")).toBeUndefined();
+      expect(harnessSurfaceRefusal(id, "events")).toBeUndefined();
     }
+  });
+
+  it("only admits an organization key when that path is qualified", () => {
+    expect(descriptor.orgKeys).toBe(
+      id !== "cursor" && id !== "claude-web" && id !== "chatgpt-web",
+    );
   });
 });

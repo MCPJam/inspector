@@ -17,7 +17,7 @@ export const SUITE_SETTINGS_GROUPS = [
     // the gate shared one Edit/Close and one dirty badge.
     rows: ["policy", "iterations", "qualityGate", "passOrFail"],
   },
-  { id: "runs", label: "Where it runs", rows: ["environments"] },
+  { id: "runs", label: "Where it runs", rows: ["environments", "accounts"] },
   {
     id: "limits",
     label: "Time & retry limits",

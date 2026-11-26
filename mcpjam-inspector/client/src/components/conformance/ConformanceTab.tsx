@@ -16,18 +16,21 @@ import type {
   ConformanceSelection,
   ProtocolVersionPin,
 } from "@/hooks/use-conformance-run";
-import { runnableSelection } from "@/hooks/conformance-suite-state";
+import {
+  isHttpServer,
+  isSelected,
+  runnableSelection,
+} from "@/hooks/conformance-suite-state";
+import {
+  hasNewProtocolInputs,
+  withoutTaskAnswersCheck,
+} from "@/shared/conformance-settings";
 import {
   CONFORMANCE_RUN_PARAM,
+  CONFORMANCE_SETUP_PARAM,
   useAppNavigate,
   useCurrentLocationParts,
 } from "@/lib/app-navigation";
-import {
-  readLocalTimeout,
-  saveLocalTimeout,
-  readSessionTimeout,
-  saveSessionTimeout,
-} from "./conformance-local-timeout";
 import { toast } from "@/lib/toast";
 import type { ConformancePersistConfig } from "@/components/conformance/PersistConformanceRun";
 import {
@@ -49,12 +52,20 @@ import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
 import { ConformanceDefaultsError } from "./ConformanceDefaultsError";
 import { ConformanceSettings } from "./ConformanceSettings";
 import { ConformanceSetup } from "./ConformanceSetup";
+import { useTasksUpdateCheckEnabled } from "./conformance-catalogs";
+import { track } from "@/lib/analytics";
+import { ConformanceRunRequestContext } from "./conformance-run-request";
 import {
   probesAfterRun,
   useConformanceProbeStore,
 } from "@/hooks/use-conformance-probes";
 
 const LAST_SERVER_KEY = "mcpjam.conformance.lastServer.v1";
+type RunOptions = {
+  arriving?: boolean;
+  resolvedVersion?: McpProtocolVersion;
+  previousVersion?: McpProtocolVersion;
+};
 
 function readLastServer(): string | null {
   try {
@@ -158,10 +169,26 @@ export function ConformanceTab({
     );
   };
   const showHistory = history !== undefined;
-  // Run opens the setup steps; Continue hands back the server and revision to
-  // run, and the run view mounts fresh for them and starts. `id` keys that
-  // mount, so a Continue on the server already shown still starts anew.
-  const [setupOpen, setSetupOpen] = useState(false);
+  // Home's checklist opens setup via `?setup=1`.
+  const [setupTarget, setSetupTarget] = useState<{
+    serverName?: string;
+    version?: McpProtocolVersion;
+    defaults?: ConformanceDefaults;
+  } | null>(() =>
+    new URLSearchParams(location.search).has(CONFORMANCE_SETUP_PARAM) ? {} : null,
+  );
+  const tasksUpdateCheckEnabled = useTasksUpdateCheckEnabled();
+  // Dropped once read, so a refresh or a view change doesn't reopen setup.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (!params.has(CONFORMANCE_SETUP_PARAM)) return;
+    params.delete(CONFORMANCE_SETUP_PARAM);
+    const query = params.toString();
+    navigate(
+      `${location.pathname}${query ? `?${query}` : ""}${location.hash}`,
+      { replace: true },
+    );
+  }, [location.search, location.pathname, location.hash, navigate]);
   const [start, setStart] = useState<{
     id: number;
     serverName: string;
@@ -175,6 +202,8 @@ export function ConformanceTab({
   // Bumped to send a finished run's view back to the page's home: its key
   // changes, so it mounts fresh, on the server list.
   const [homeVersion, setHomeVersion] = useState(0);
+  // The tab a run was started from, so the run's Back returns there.
+  const [runFrom, setRunFrom] = useState<ConformanceView>("overview");
   // The server whose Conformance Settings are open, over the run view.
   const [settingsFor, setSettingsFor] = useState<string | null>(null);
   // The tools each server's checks may call: set in step 2, and
@@ -200,6 +229,9 @@ export function ConformanceTab({
     seconds: number | null;
   }>>({});
   useEffect(() => {
+    track("conformance_tab_viewed", { location: "conformance_tab" });
+  }, []);
+  useEffect(() => {
     setChangedTimeouts((previous) => {
       const pending = Object.fromEntries(
         Object.entries(previous).filter(([, entry]) => {
@@ -215,37 +247,39 @@ export function ConformanceTab({
         : pending;
     });
   }, [serverTimeouts, persist?.projectId]);
-  const [, refreshSessionTimeout] = useState(0);
-  const isSessionTimeout = (name: string) =>
-    Boolean(
-      persist && isSavedServer && !isSavedServer(name) && !projectServersLoading,
-    );
+  // The timeout is set in a server's Settings, which only a saved project
+  // server has. Every other run (an unsaved server, or no project) takes the
+  // default, the most a run may take anyway.
   const timeoutFor = (name: string) => {
-    if (persist && isSessionTimeout(name)) {
-      return readSessionTimeout(persist.projectId, name);
-    }
     const changed = changedTimeouts[timeoutKeyFor(name)];
     if (changed) return changed.seconds ?? undefined;
-    return savedTimeoutFor(name) ?? (!persist ? readLocalTimeout(name) : undefined);
+    return savedTimeoutFor(name);
   };
-  const saveTimeout = async (name: string, seconds: number | null) => {
-    if (persist && isSessionTimeout(name)) {
-      saveSessionTimeout(persist.projectId, name, seconds);
-      refreshSessionTimeout((version) => version + 1);
-      return;
-    }
-    if (onSaveServerTimeout) await onSaveServerTimeout(name, seconds);
-    else if (!persist) saveLocalTimeout(name, seconds);
-    else throw new Error("Server timeout settings are unavailable. Reload the page and try again.");
-    setChangedTimeouts((previous) => ({
-      ...previous,
-      [timeoutKeyFor(name)]: {
-        projectId: persist?.projectId ?? null,
-        serverName: name,
-        seconds,
-      },
-    }));
-  };
+  // Settings offers the timeout only where it can be saved. The change counts
+  // before its save lands, as `saveDefaults` does: Back works while the
+  // timeout saves, so Run again right after must already run with it. A save
+  // that fails takes its entry back, unless a later change owns it by then.
+  const saveTimeout = onSaveServerTimeout
+    ? async (name: string, seconds: number | null) => {
+        const key = timeoutKeyFor(name);
+        const entry = {
+          projectId: persist?.projectId ?? null,
+          serverName: name,
+          seconds,
+        };
+        setChangedTimeouts((previous) => ({ ...previous, [key]: entry }));
+        try {
+          await onSaveServerTimeout(name, seconds);
+        } catch (error) {
+          setChangedTimeouts((previous) => {
+            if (previous[key] !== entry) return previous;
+            const { [key]: _failed, ...rest } = previous;
+            return rest;
+          });
+          throw error;
+        }
+      }
+    : undefined;
   const defaultsFor = (serverName: string) =>
     Object.hasOwn(changedDefaults, serverName)
       ? changedDefaults[serverName]
@@ -339,13 +373,38 @@ export function ConformanceTab({
     inputs?: ConformanceProbes,
     resolvedProtocolVersion?: McpProtocolVersion,
   ) => {
+    if (versionPin !== "auto") {
+      const target = servers?.find((offered) => offered.name === serverName);
+      const hasHttpSuites = !target || isHttpServer(target);
+      const checks = runnableSelection(
+        tasksUpdateCheckEnabled ? selection : withoutTaskAnswersCheck(selection),
+        resolvedProtocolVersion ?? versionPin,
+      );
+      if (
+        checks &&
+        !isSelected(checks.apps) &&
+        !isSelected(checks.tasks) &&
+        (!hasHttpSuites ||
+          (checks.oauth === false && !isSelected(checks.protocol)))
+      ) {
+        toast.error(
+          "No selected checks can run on this protocol version. Open Run conformance checks to choose checks.",
+        );
+        return;
+      }
+    }
     beginRun(serverName, versionPin, selection, inputs, resolvedProtocolVersion);
     changeView("overview");
   };
   const [loadingDefaults, setLoadingDefaults] = useState(false);
+  /** The server whose run is waiting on its defaults, for its card. */
+  const [startingServer, setStartingServer] = useState<string | null>(null);
+  /** The server a run is connecting before it starts, for its card. */
+  const [connectingServer, setConnectingServer] = useState<string | null>(null);
   const [failedRequest, setFailedRequest] = useState<{
     name: string;
     pin?: ProtocolVersionPin;
+    options?: RunOptions;
   } | null>(null);
   const readDefaults = (name: string): Promise<ConformanceDefaults> =>
     onLoadServerDefaults &&
@@ -374,28 +433,46 @@ export function ConformanceTab({
   const requestDefaults = async (
     name: string,
     pin?: ProtocolVersionPin,
-    arriving = false,
+    options?: RunOptions,
   ) => {
     const id = ++requestId.current;
     setLoadingDefaults(true);
+    setStartingServer(pin ? name : null);
     setFailedRequest(null);
     try {
       const defaults = await readDefaults(name);
       if (!mounted.current || id !== requestId.current) return;
-      if (pin)
-        (arriving ? beginRun : startRun)(
+      const { previousVersion, resolvedVersion } = options ?? {};
+      if (
+        previousVersion &&
+        resolvedVersion &&
+        servers &&
+        onSelectServer &&
+        hasNewProtocolInputs(
+          previousVersion,
+          resolvedVersion,
+          defaults.selection,
+          defaults.inputs,
+        )
+      )
+        setSetupTarget({ serverName: name, version: resolvedVersion, defaults });
+      else if (pin)
+        (options?.arriving ? beginRun : startRun)(
           name,
           pin,
           defaults.selection,
           defaults.inputs,
+          resolvedVersion,
         );
       else setSettingsFor(name);
     } catch {
       if (mounted.current && id === requestId.current)
-        setFailedRequest({ name, pin });
+        setFailedRequest({ name, pin, options });
     } finally {
-      if (mounted.current && id === requestId.current)
+      if (mounted.current && id === requestId.current) {
         setLoadingDefaults(false);
+        setStartingServer(null);
+      }
     }
   };
   // A saved run's Run again lands here with `?run=<server>`: start that
@@ -421,7 +498,7 @@ export function ConformanceTab({
         { replace: true },
       );
       if (servers?.some((offered) => offered.name === runRequest)) {
-        void requestDefaults(runRequest, "auto", true);
+        void requestDefaults(runRequest, "auto", { arriving: true });
       } else {
         toast.info(`${runRequest} is not one of this project's servers.`);
       }
@@ -445,14 +522,24 @@ export function ConformanceTab({
   // straight to a run with that server's default checks.
   const recentServers = (servers ?? []).flatMap((offered) => {
     const run = lastRuns?.[offered.name];
-    return run ? [{ serverName: offered.name, run }] : [];
+    return run ? [{ server: offered, run }] : [];
   });
+  // A run connecting its server holds every Run off, even before the server
+  // itself reports "connecting": a second Run would replace the pending one.
   const cardsDisabled =
-    !serverDefaultsLoaded || loadingDefaults || selectionIsReconnecting;
-  const runServer = (serverName: string) =>
-    onLoadServerDefaults
-      ? void requestDefaults(serverName, "auto")
-      : startRun(serverName, "auto", defaultsFor(serverName) ?? {});
+    !serverDefaultsLoaded ||
+    loadingDefaults ||
+    selectionIsReconnecting ||
+    connectingServer !== null;
+  const runServer = (
+    serverName: string,
+    version: ProtocolVersionPin,
+    resolvedVersion?: McpProtocolVersion,
+    previousVersion?: McpProtocolVersion,
+  ) => {
+    setRunFrom("overview");
+    void requestDefaults(serverName, version, { resolvedVersion, previousVersion });
+  };
   const home =
     recentServers.length > 0 && onViewRun ? (
       <ConformanceServerList
@@ -461,42 +548,41 @@ export function ConformanceTab({
         onViewRun={onViewRun}
         disabled={cardsDisabled}
         disabledServerName={failedRequest?.name}
+        startingServerName={
+          (loadingDefaults ? startingServer : connectingServer) ?? undefined
+        }
         onRun={runServer}
+        onSetup={(serverName, version) => setSetupTarget({ serverName, version })}
       />
     ) : undefined;
-  // Run always opens the setup steps, even with no servers yet: the server
-  // list may still be loading, and the steps say what is missing.
   const openSetup =
-    servers && onSelectServer ? () => setSetupOpen(true) : undefined;
+    servers && onSelectServer ? () => setSetupTarget({}) : undefined;
+  const setupServerName =
+    setupTarget?.serverName ?? (selectionIsOffered ? server?.name ?? null : null);
 
   const setup =
-    setupOpen && servers && onSelectServer ? (
+    setupTarget && servers && onSelectServer ? (
       <ConformanceSetup
         servers={servers}
         projectServerNames={projectServerNames}
         projectServersLoading={projectServersLoading}
-        initialServerName={selectionIsOffered ? (server?.name ?? null) : null}
-        initialVersionPin={start?.versionPin ?? "auto"}
-        // Saved defaults win, as they do for Run again: they already hold the
-        // last setup run's picks, plus any Settings change since. The last
-        // run's picks only count for the server it ran on.
+        initialServerName={setupServerName}
+        initialVersionPin={setupTarget.version ?? start?.versionPin ?? "auto"}
+        initialDefaults={setupTarget.defaults}
         initialSelection={
           start &&
-          selectionIsOffered &&
-          start.serverName === server?.name &&
+          start.serverName === setupServerName &&
           !defaultsFor(start.serverName)
             ? start.selection
             : undefined
         }
-        timeoutFor={timeoutFor}
-        onSaveTimeout={saveTimeout}
         defaultsFor={defaultsFor}
         defaultsLoaded={serverDefaultsLoaded}
         onLoadDefaults={onLoadServerDefaults ? readDefaults : undefined}
         onConnectServer={onConnectServer}
         onEditServer={onEditServer}
         probesFor={probesFor}
-        onCancel={() => setSetupOpen(false)}
+        onCancel={() => setSetupTarget(null)}
         onRun={(
           serverName,
           versionPin,
@@ -505,19 +591,16 @@ export function ConformanceTab({
           resolvedProtocolVersion,
         ) => {
           const effectiveVersion = resolvedProtocolVersion ?? versionPin;
-          setSetupOpen(false);
-          const runnable = runnableSelection(selection, effectiveVersion);
+          setSetupTarget(null);
           const savedInputs = probesAfterRun(
-            probesFor(serverName),
+            (setupTarget.serverName === serverName ? setupTarget.defaults?.inputs : undefined) ??
+              probesFor(serverName),
             probes,
-            runnable,
+            runnableSelection(selection, effectiveVersion),
             effectiveVersion,
           );
           setProbes(serverName, savedInputs);
           startRun(serverName, versionPin, selection, probes, resolvedProtocolVersion);
-          // The checks picked here become the server's defaults: Settings
-          // opens on them and the server list's Run reuses them. A failed
-          // save leaves the old defaults; the run goes ahead either way.
           saveDefaults?.(serverName, selection, savedInputs).catch(() => {
             toast.error(
               "Could not save these checks as the server's defaults. Change them in Settings to try again.",
@@ -535,11 +618,17 @@ export function ConformanceTab({
   if (!server || !server.name || server.name === "none" || !server.config) {
     if (setup) return setup;
     // Same pre-run page as with a server; running just asks for one first.
+    const noServerRunRequest = {
+      run: openSetup
+        ? () => {
+            setRunFrom(activeView);
+            openSetup();
+          }
+        : () => toast.info(NO_SERVERS_MESSAGE),
+      disabled: false,
+    };
     const noServerRunButton = (
-      <Button
-        size="sm"
-        onClick={openSetup ?? (() => toast.info(NO_SERVERS_MESSAGE))}
-      >
+      <Button size="sm" onClick={noServerRunRequest.run}>
         {RUN_LABEL}
       </Button>
     );
@@ -554,8 +643,12 @@ export function ConformanceTab({
         </ConformanceHeader>
         <ConformanceTabPanel view={activeView}>
           {activeView === "history" ? (
-            <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
-              {history}
+            // The same column and run request as with a server, so History
+            // centers its states and offers the same Run.
+            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 py-6">
+              <ConformanceRunRequestContext.Provider value={noServerRunRequest}>
+                {history}
+              </ConformanceRunRequestContext.Provider>
             </div>
           ) : (
             <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 pt-6 pb-8">
@@ -584,8 +677,12 @@ export function ConformanceTab({
       onViewChange={changeView}
       onShowHome={() => {
         setHomeVersion((version) => version + 1);
-        changeView("overview");
+        changeView(runFrom);
       }}
+      backLabel={
+        runFrom === "history" ? "Conformance History" : "Conformance"
+      }
+      onRunFrom={setRunFrom}
       serverIconUrl={serverIcons?.[server.name]}
       showHistory={showHistory}
       history={history}
@@ -619,6 +716,9 @@ export function ConformanceTab({
       onAutoStart={() => {
         if (start) startedIdRef.current = start.id;
       }}
+      onConnectingChange={(connecting) =>
+        setConnectingServer(connecting ? server.name : null)
+      }
       initialVersionPin={startsHere ? start?.versionPin : undefined}
       initialResolvedProtocolVersion={
         startsHere ? start?.resolvedProtocolVersion : undefined
@@ -652,7 +752,11 @@ export function ConformanceTab({
       {failedRequest ? (
         <ConformanceDefaultsError
           onRetry={() =>
-            void requestDefaults(failedRequest.name, failedRequest.pin)
+            void requestDefaults(
+              failedRequest.name,
+              failedRequest.pin,
+              failedRequest.options,
+            )
           }
         />
       ) : null}
@@ -679,6 +783,12 @@ export function ConformanceTab({
             }
             onSave={(selection, inputs) =>
               saveDefaults(settingsServer, selection, inputs)
+            }
+            timeoutSeconds={timeoutFor(settingsServer)}
+            onSaveTimeout={
+              saveTimeout
+                ? (seconds) => saveTimeout(settingsServer, seconds)
+                : undefined
             }
             onBack={() => setSettingsFor(null)}
           />

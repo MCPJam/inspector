@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { HARNESS_IDS } from "../host-config/types.js";
 import type { McpAppsCapabilities } from "../host-config/types.js";
 import type { SeededHostConfigInput } from "../host-config/templates/index.js";
 
@@ -216,6 +217,7 @@ const hostConfigTemplateSchema = z.object({
   requireToolApproval: z.boolean(),
   respectToolVisibility: z.boolean(),
   progressiveToolDiscovery: z.boolean().optional(),
+  runUnloadedToolCalls: z.boolean().optional(),
   serverIds: z.array(z.string()),
   optionalServerIds: z.array(z.string()),
   builtInToolIds: z.array(z.string()),
@@ -227,7 +229,7 @@ const hostConfigTemplateSchema = z.object({
       workdir: z.string().optional(),
     })
     .optional(),
-  harness: z.enum(["claude-code", "codex", "cursor"]).optional(),
+  harness: z.enum(HARNESS_IDS).optional(),
   connectionDefaults: z.object({
     headers: z.record(z.string(), z.string()),
     requestTimeout: z.number(),

@@ -60,13 +60,6 @@ vi.mock("convex/react", async () => {
   };
 });
 
-vi.mock(
-  "@/components/conformance/directory-readiness/DirectoryReadinessSection",
-  () => ({
-    DirectoryReadinessSection: () => null,
-  }),
-);
-
 // The share dialog reads Convex queries this file doesn't mock. What these
 // tests check is the name Share hands the card.
 vi.mock("../ConformanceRunActions", async (importOriginal) => ({

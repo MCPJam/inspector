@@ -1,7 +1,10 @@
+import { pluginRuntimeProfile } from "@/shared/plugin-runtime-profile";
+import { pluginOperationRequest, pluginOperationAuthorization } from "../../../shared/plugin-operation-authorization.js";
+import { sandboxSourceReceipt } from "../../services/sandbox-view-source.js";
+import { preparePluginOperation, bindPluginOperation, cancelPluginOperation, receiptOnlyPorts, rootPluginOperation } from "../../services/plugin-host/operation-authorization.js";
 import { discoveryIcons, openOwnedLocalFile } from "../../services/plugin-host/open-local-file.js";
 import { fileReadResponse, readFileWriteBody } from "../../services/plugin-host/file-transfer.js";
 import { PLUGIN_FILE_MAX_BYTES, PLUGIN_FILE_MEDIA_TYPE } from "../../../shared/plugin-file-transfer.js";
-import { usesMcpjamClient } from "@/shared/harness-descriptors";
 import { pluginModelAppRoutes } from "./plugin-model-apps.js";
 import { preparePluginMessageTurn } from "../../services/plugin-host/message.js";
 import {
@@ -14,7 +17,7 @@ import {
   uploadPluginFormFiles,
 } from "../../services/plugin-host/form-files.js";
 import {
-  pluginFormServiceRequestSchema,
+  pluginFormFileServiceRequestSchema,
   pluginFormFileUploadRequestSchema,
   PLUGIN_FORM_FILE_MAX_COUNT,
   PLUGIN_FORM_FILE_MAX_BYTES,
@@ -106,9 +109,15 @@ import {
 import { pluginInstances } from "../../services/plugin-host/instances.js";
 import { PluginInvocationError } from "../../services/plugin-host/invocation.js";
 import {
+  assertPluginEntrypointOpenable,
   pluginActivationFromCatalog,
   resolvePluginActivation,
 } from "../../services/plugin-host/activation.js";
+import {
+  entrypointIssues,
+  hiddenEntrypointDiagnostics,
+  quickActionsShown,
+} from "../../../shared/plugin-entry-checks.js";
 import {
   pluginBindingDigest,
   pluginResourceUri,
@@ -170,6 +179,7 @@ const approvalSchema = z.strictObject({
   approved: z.boolean(),
 });
 const executeSchema = handleSchema.extend({
+  authorization: pluginOperationAuthorization.optional(),
   approval: approvalSchema.optional(),
   resume: z
     .strictObject({
@@ -211,6 +221,7 @@ async function admitted(c: Context, body: z.infer<typeof scopeSchema>) {
   const scoped = await scope(c, body);
   const admission = await admitPluginWorkspace({
     ...scoped,
+    getAuthorization: () => getConvexBearerForRequest(c),
     projectId: body.projectId,
     signal: c.req.raw.signal,
   });
@@ -436,6 +447,9 @@ instances.post("/discover", (c) =>
       const allowed = (kind: keyof typeof PLUGIN_ENTRYPOINT_EXTENSIONS) =>
         catalog.extensions?.capabilities[PLUGIN_ENTRYPOINT_EXTENSIONS[kind]] !==
         false;
+      // The client's entry-point rules: some tools aren't listed, and a
+      // listed one may be flagged as refused on open.
+      const hidden: string[] = [];
       const entries = catalog.tools.flatMap((tool) => {
         const kinds = pluginEntrypointKinds(tool).filter(
           (kind) => (kind === "thread" || kind === "global") && allowed(kind),
@@ -446,7 +460,14 @@ instances.post("/discover", (c) =>
         } catch {
           return [];
         }
-        const action = pluginQuickAction(tool);
+        const issues = entrypointIssues(tool, catalog.behavior);
+        if (issues.hidden) {
+          hidden.push(tool.name);
+          return [];
+        }
+        const action = quickActionsShown(catalog.behavior)
+          ? pluginQuickAction(tool)
+          : undefined;
         const toolIcons = icons.toolIcons(
           (tool as { icons?: unknown }).icons,
         );
@@ -455,6 +476,7 @@ instances.post("/discover", (c) =>
             toolName: tool.name,
             title: pluginEntrypointTitle(tool),
             kind,
+            ...(issues.unopenable ? { unopenable: issues.unopenable } : {}),
             ...(toolIcons.length ? { toolIcons } : {}),
           })),
           ...(action && allowed("quick-action")
@@ -484,6 +506,7 @@ instances.post("/discover", (c) =>
           : undefined;
       const diagnostics = [
         ...pluginEntrypointDiagnostics(catalog.tools, body.serverId),
+        ...hiddenEntrypointDiagnostics(hidden, body.serverId),
         ...mention.diagnostics,
       ];
       return c.json({
@@ -1006,7 +1029,12 @@ instances.post("/activation/open", (c) =>
       }
       const activation =
         selector.kind === "quick-action"
-          ? pluginActivationFromCatalog(catalog, body.toolName, selector)
+          ? pluginActivationFromCatalog(
+              catalog,
+              body.toolName,
+              selector,
+              catalog.behavior,
+            )
           : undefined;
       const current =
         activation?.resource ??
@@ -1026,15 +1054,20 @@ instances.post("/activation/open", (c) =>
               })
             ).get(current.serverIdentity.pluginId)
           : undefined;
-      const validateLink = (resolved: typeof current) =>
-        admittedPluginDeepLink(body.deepLink, {
-          serverIdentity: resolved.serverIdentity,
-          runtime: resolved.runtime,
+      const validateLink = (publishedPluginId: string | undefined) => {
+        if (body.deepLink === undefined) return undefined;
+        return admittedPluginDeepLink(body.deepLink, {
+          serverIdentity: current.serverIdentity,
+          runtime: current.runtime,
           toolName: body.toolName,
           kind: body.kind,
-          names: linkNames,
+          names:
+            current.serverIdentity.kind === "standalone"
+              ? { publishedId: publishedPluginId }
+              : linkNames,
         });
-      validateLink(current);
+      };
+      validateLink(catalog.publishedPluginId);
       const listedFile =
         body.kind === "file"
           ? await resolveListedFileResource(
@@ -1067,7 +1100,14 @@ instances.post("/activation/open", (c) =>
         ? { file: { name: file.name, resourceUri: "host-resource://pending" } }
         : {};
       if (file) pluginFileEntrypointPlan(current.tool, previewInput);
-      else if (!activation) pluginEntrypointPlan(current.tool, selector);
+      else if (!activation) {
+        assertPluginEntrypointOpenable(
+          current.tool,
+          catalog.behavior,
+          body.serverId,
+        );
+        pluginEntrypointPlan(current.tool, selector, catalog.behavior);
+      }
       if (!activation)
         pluginToolCallValidation(
           current.tool,
@@ -1125,9 +1165,9 @@ instances.post("/activation/open", (c) =>
       const toolsMetadata = pluginAppToolsMetadata(catalog.tools);
       // Final fence: ONE batched read proves the actor is still admitted and
       // the host and saved server identity are unchanged after the write.
-      await runtime.verifyCurrent(c.req.raw.signal);
+      const publishedPluginId = await runtime.verifyCurrent(c.req.raw.signal);
       c.req.raw.signal.throwIfAborted();
-      const link = validateLink(current);
+      const link = validateLink(publishedPluginId);
       const navigationNamespace =
         current.extensions?.capabilities.deepLinks === false
           ? undefined
@@ -1201,6 +1241,17 @@ instances.post("/activation/open", (c) =>
           : {}),
         widgetContent: {
           ...widgetContent,
+          sourceReceipt: await sandboxSourceReceipt(
+            c,
+            {
+              serverId: body.serverId,
+              resourceUri: uri,
+              toolCallId: opened.instance.activation.operationId,
+            },
+            widgetContent.html,
+            widgetContent.csp,
+            body.projectId,
+          ),
           permissive: false,
           injectedOpenAiCompat: false,
           viewOriginLabel: viewOriginLabelForConfig(
@@ -1228,33 +1279,18 @@ async function invoke(
     actor,
     c.req.raw.signal,
   );
-  if (
-    origin === "entrypoint" &&
-    instance.activation.selector.kind === "quick-action"
-  )
-    origin = "quick-action";
-  const params =
-    "params" in body
-      ? body.params
-      : {
-          name: instance.activation.toolName,
-          arguments: instance.activation.file
-            ? ownedFileResources.get(
-                instance,
-                pluginInstances.signal(body.instanceToken, actor),
-              ).input
-            : (instance.activation.arguments ?? {}),
-        };
-  const invocationId =
-    "invocationId" in body
-      ? body.invocationId
-      : instance.activation.operationId;
+  const operation = rootPluginOperation(instance, "params" in body ? { params: body.params, invocationId: body.invocationId } : {}, pluginInstances.signal(body.instanceToken, actor));
+  origin = operation.origin as typeof origin;
+  const { params, invocationId } = operation;
+  const authorization = await bindPluginOperation(c, instance, operation, body.authorization, c.req.raw.signal);
+  try {
   const runtime = createPluginRequestRuntime(
     c,
     admission,
     bearer,
     { hostId: instance.hostId, serverId: instance.owner.serverId },
     instance,
+    { ownerRef: { kind: "app", token: body.instanceToken } },
   );
   const resolveActivation: typeof runtime.resolve =
     origin === "quick-action"
@@ -1281,6 +1317,7 @@ async function invoke(
   // beside admission), so the invoker's first authorization can reuse it.
   // Await the complete dispatch/delivery before releasing its request-owned manager.
   return await invokePluginRequest(c, {
+    receiptOnly: authorization.receiptOnly,
     actor,
     owner: instance.owner,
     admission,
@@ -1388,7 +1425,7 @@ async function invoke(
       pluginInstances.invoke(
         body.instanceToken,
         actor,
-        ports,
+        receiptOnlyPorts(ports, authorization.receiptOnly),
         invocationId,
         next,
         AbortSignal.any([
@@ -1399,6 +1436,7 @@ async function invoke(
         fence,
       ),
   });
+  } finally { authorization.dispose(); }
 }
 instances.post("/activation/execute", (c) =>
   route(c, async () =>
@@ -1457,13 +1495,15 @@ instances.post("/deep-link/resolve", (c) =>
         })
       : new Map();
     const { link, servers } = resolvePluginDeepLinkTarget(body.url, {
-      runtime: (config.agentLoop && usesMcpjamClient(config) || config.harness === "codex") ? "codex" : "chatgpt",
+      runtime: pluginRuntimeProfile(config),
       candidates: identities.map((candidate) => ({
         ...candidate,
-        ...(candidate.serverIdentity.kind === "plugin" &&
-        names.has(candidate.serverIdentity.pluginId)
-          ? { names: names.get(candidate.serverIdentity.pluginId) }
-          : {}),
+        names:
+          candidate.serverIdentity.kind === "plugin"
+            ? names.get(candidate.serverIdentity.pluginId)
+            : {
+                publishedId: context.publishedPluginIdsByServerId?.[candidate.serverId],
+              },
       })),
     });
     let target = servers[0];
@@ -1556,24 +1596,27 @@ async function renewFileGrant(
 /** Lease renewal for a retained App: same instance, same activation. */
 instances.post("/renew", (c) =>
   route(c, async () => {
-    const body = handleSchema.parse(await c.req.json());
+    const body = handleSchema.extend({ operation: pluginOperationRequest.optional(), cancelAuthorization: pluginOperationAuthorization.optional() }).parse(await c.req.json());
     const { admission, bearer, actor } = await admitted(c, body);
+    let operationAuthorization;
     let writableFile: { file: string; serverId: string } | undefined;
     const renewed = await pluginInstances.renewPersistent(
       body.instanceToken,
       actor,
       c.req.raw.signal,
-      (instance) => {
+      async (instance) => {
         const file = instance.activation?.file;
         writableFile = file?.localTarget
           ? { file: file.name, serverId: instance.owner.serverId }
           : undefined;
-        return assertPluginInstanceBindingCurrent({
+        await assertPluginInstanceBindingCurrent({
           admission,
           bearer,
           instance,
           signal: c.req.raw.signal,
         });
+        if (body.cancelAuthorization) await cancelPluginOperation(c, body.cancelAuthorization, instance);
+        if (body.operation) operationAuthorization = await preparePluginOperation(c, instance, rootPluginOperation(instance, body.operation, pluginInstances.signal(body.instanceToken, actor)), body.operation.requestId, pluginInstances.signal(body.instanceToken, actor));
       },
     );
     const diagnostics = writableFile
@@ -1582,6 +1625,7 @@ instances.post("/renew", (c) =>
     return c.json({
       status: renewed.renewed ? "renewed" : "unchanged",
       expiresAt: renewed.expiresAt,
+      ...(operationAuthorization ? { operationAuthorization } : {}),
       ...(diagnostics.length ? { diagnostics } : {}),
     });
   }),
@@ -1629,25 +1673,40 @@ instances.post("/form-preview/app/open", (c) =>
   route(c, async () => {
     const body = pluginFormPreviewRequestSchema.parse(await c.req.json());
     const { admission, bearer, actor } = await admitted(c, body);
-    return c.json(
-      await openPluginFormAppPreview({
-        actor,
-        bearer,
-        sourceToken: body.sourceToken,
-        parent: body.parent,
-        target: body.target,
-        signal: c.req.raw.signal,
-        runtime: (instance) =>
-          createPluginRequestRuntime(
-            c,
-            admission,
-            bearer,
-            { hostId: instance.hostId, serverId: instance.owner.serverId },
-            instance,
-            { ownedForms: false },
-          ),
-      }),
-    );
+    const preview = await openPluginFormAppPreview({
+      actor,
+      bearer,
+      sourceToken: body.sourceToken,
+      parent: body.parent,
+      target: body.target,
+      signal: c.req.raw.signal,
+      runtime: (instance) =>
+        createPluginRequestRuntime(
+          c,
+          admission,
+          bearer,
+          { hostId: instance.hostId, serverId: instance.owner.serverId },
+          instance,
+          { ownedForms: false },
+        ),
+    });
+    return c.json({
+      ...preview,
+      widgetContent: {
+        ...preview.widgetContent,
+        sourceReceipt: await sandboxSourceReceipt(
+          c,
+          {
+            serverId: preview.serverId,
+            resourceUri: preview.resourceUri,
+            toolCallId: preview.operationId,
+          },
+          preview.widgetContent.html,
+          preview.widgetContent.csp,
+          body.projectId,
+        ),
+      },
+    });
   }),
 );
 for (const action of ["execute", "call-tool"] as const)
@@ -1657,7 +1716,7 @@ for (const action of ["execute", "call-tool"] as const)
       const call = action === "call-tool" ? callSchema.parse(raw) : undefined;
       const body = call ?? executeSchema.parse(raw);
       const { admission, bearer, actor } = await admitted(c, body);
-      const current = getPluginFormApp({
+      const current = await getPluginFormApp({
         actor,
         bearer,
         token: body.instanceToken,
@@ -1717,7 +1776,7 @@ for (const action of ["execute", "call-tool"] as const)
 instances.post("/form-files/services", (c) =>
   route(c, async () => {
     c.header("cache-control", "no-store");
-    const body = pluginFormServiceRequestSchema.parse(await c.req.json());
+    const body = pluginFormFileServiceRequestSchema.parse(await c.req.json());
     const { bearer, admission, actor } = await admitted(c, body);
     return c.json(
       await describePluginFormFiles({

@@ -24,6 +24,7 @@ import { LOCAL_HARNESS_MANIFEST } from "../../local/compatibility";
 import { assertNativeDiscovery } from "../../native-discovery";
 import {
   CASES,
+  NO_BOX,
   OWN_MODEL,
   assertFullMatrix,
   sortKeysDeep,
@@ -46,9 +47,13 @@ const LABELS = [
 /** Routes with a live qualification row at the current pin. */
 const QUALIFIED_DISCOVERY: Record<Harness, readonly (typeof LABELS)[number][]> =
   {
-    "claude-code": ["forwarded-bridge", "host-tools"],
+    "claude-code": [],
     codex: ["forwarded-bridge", "host-tools"],
     cursor: [],
+    "copilot-cli": [],
+    opencode: [],
+    "claude-web": [],
+    "chatgpt-web": [],
   };
 
 const REQUALIFY = [
@@ -113,11 +118,14 @@ function pinSites({
   const sites: Array<[string, unknown]> = [
     ["HARNESS_PINNED_VERSIONS", HARNESS_PINNED_VERSIONS[id]],
     ["adapter.pinnedRuntimeVersion", adapter.pinnedRuntimeVersion],
-    [
+  ];
+  // A runtime with no box bakes no recipe (`NO_BOX` names why).
+  if (!NO_BOX[id]) {
+    sites.push([
       "harness-bake.lock.json",
       bake.recipes.find((recipe) => recipe.harnessId === id)?.runtimeVersion,
-    ],
-  ];
+    ]);
+  }
   if (adapter.forwardingRuntime) {
     sites.push([
       "adapter.forwardingRuntime.runtimeVersion",
@@ -174,7 +182,24 @@ function pinSites({
         : `none of ${schemas.join(", ")}`,
     ]);
   }
+  if (id === "copilot-cli") {
+    const bridge = readJson(join(HARNESS_DIR, "copilot-cli/bridge/package.json"));
+    sites.push(["Copilot CLI bridge runtime", bridge.dependencies["@github/copilot"]]);
+  }
   if (id === "cursor") sites.push(["CURSOR_CLI_VERSION", CURSOR_CLI_VERSION]);
+  if (id === "opencode") {
+    const require = createRequire(import.meta.url);
+    const bridge = readJson(
+      join(
+        dirname(require.resolve("@ai-sdk/harness-opencode/package.json")),
+        "dist/bridge/package.json",
+      ),
+    ) as { dependencies: Record<string, string> };
+    sites.push([
+      "@ai-sdk/harness-opencode bridge",
+      bridge.dependencies["opencode-ai"],
+    ]);
+  }
   return sites;
 }
 

@@ -182,6 +182,10 @@ export const RUNTIME_CHOSEN_MODEL_SENTINELS: Readonly<Record<string, string>> =
     // `CURSOR_API_KEY`, every request transits Cursor's servers, and Cursor
     // Auto picks the model on that account.
     "cursor/auto": "Cursor Auto",
+    // Claude web and ChatGPT web run on the vendor's own site, which picks
+    // the model for the signed-in account.
+    "claude-web/default": "Claude web",
+    "chatgpt-web/default": "ChatGPT web",
   });
 
 /**
@@ -190,6 +194,10 @@ export const RUNTIME_CHOSEN_MODEL_SENTINELS: Readonly<Record<string, string>> =
  * Blank- and nullish-safe, and trim-tolerant like {@link classifyModelIdProvider}
  * — a provider-resolution site often holds a value it has not validated yet.
  */
+export function isRuntimeAccountModel(modelId: string | null | undefined): boolean {
+  return typeof modelId === "string" && /^cursor\/[^\s]+$/.test(modelId);
+}
+
 export function isRuntimeChosenModelSentinel(
   modelId: string | undefined | null,
 ): boolean {

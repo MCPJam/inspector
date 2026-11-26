@@ -1,24 +1,146 @@
 {
+  "chatgpt-web": {
+    "adapter": {
+      "approvalPermissionMode": "allow-all",
+      "conversationState": null,
+      "defaultPermissionMode": "allow-all",
+      "displayName": "ChatGPT web",
+      "id": "chatgpt-web",
+      "mcpDelivery": "harness",
+      "mcpNativeDelivery": "web-connector",
+      "modelAccess": "external-account",
+      "pinnedRuntimeVersion": "page-2026-11-20",
+      "promptImageInput": false,
+      "requiresComputer": false,
+      "skills": {
+        "frontmatter": {
+          "descriptionMaxLength": 1024,
+          "strictYaml": true
+        },
+        "headlessLoading": "native",
+        "readFolders": [],
+        "serverSkills": "box-files",
+        "trailingNewline": false,
+        "writeFolder": ""
+      },
+      "supportedReasoningEfforts": [],
+      "supportsHostExecutedToolApproval": false,
+      "supportsMcpToolApproval": true,
+      "supportsNativeToolApproval": false,
+      "supportsPluginBundles": false,
+      "supportsSkills": false,
+      "webAccount": {
+        "vendor": "chatgpt"
+      }
+    },
+    "descriptor": {
+      "controls": {
+        "modelId": {
+          "enforced": false,
+          "note": "ChatGPT web uses the model the account picks on chatgpt.com."
+        },
+        "progressiveToolDiscovery": {
+          "enforced": false,
+          "note": "ChatGPT web does its own tool discovery."
+        },
+        "requireToolApproval": {
+          "enforced": false,
+          "note": "ChatGPT web runs its own tools on chatgpt.com, where MCPJam can't pause them."
+        },
+        "temperature": {
+          "enforced": false,
+          "note": "ChatGPT web runs chatgpt.com's own loop and ignores temperature."
+        }
+      },
+      "credential": {
+        "kind": "web-account",
+        "label": "ChatGPT account",
+        "sites": [
+          "https://chatgpt.com",
+          "https://auth.openai.com"
+        ]
+      },
+      "displayName": "ChatGPT web",
+      "mcpClient": "harness",
+      "modelAccess": "external-account",
+      "orgKeys": false,
+      "protocol": null,
+      "reasoningEfforts": [],
+      "runtimeName": "chatgpt.com",
+      "runtimeVersion": "page-2026-11-20",
+      "unavailableOn": {
+        "guests": "ChatGPT web runs on the project's own ChatGPT account, so guests can't use it.",
+        "local": "ChatGPT web runs in a browser, not on your computer's runtime. Choose This machine in the browser settings instead.",
+        "user-testing": "ChatGPT web runs on a project web account, so studies cannot use it. Choose a different client for this study."
+      }
+    },
+    "qualifiedDiscovery": []
+  },
   "claude-code": {
     "adapter": {
       "approvalPermissionMode": "allow-reads",
+      "conversationState": {
+        "folder": ".claude/projects",
+        "idKey": "claudeSessionId",
+        "named": {
+          "depth": 2,
+          "names": [
+            "{id}.jsonl",
+            "{id}"
+          ]
+        }
+      },
       "defaultPermissionMode": "allow-all",
       "displayName": "Claude Code",
       "forwardingRuntime": {
         "configurationVersion": "tool-search-auto-v1",
+        "correlationKey": "claudecode/toolUseId",
+        "nativeClient": {
+          "capabilities": {
+            "elicitation": {
+              "form": {}
+            },
+            "roots": {
+              "listChanged": true
+            }
+          },
+          "clientInfo": {
+            "description": "Anthropic's agentic coding tool",
+            "name": "claude-code",
+            "title": "Claude Code",
+            "version": "2.1.290",
+            "websiteUrl": "https://claude.com/claude-code"
+          },
+          "supportedProtocolVersions": [
+            "2025-03-26",
+            "2025-06-18",
+            "2025-11-25"
+          ]
+        },
         "ownedInput": true,
-        "runtimeVersion": "2.1.245"
+        "runtimeVersion": "2.1.290"
       },
+      "hostedWarmAgent": "refresh",
       "id": "claude-code",
       "liveApprovalRuntime": true,
       "mcpDelivery": "harness",
       "mcpNativeDelivery": "session-config",
       "modelAccess": "broker",
-      "pinnedRuntimeVersion": "2.1.245",
+      "pinnedRuntimeVersion": "2.1.290",
+      "promptImageInput": true,
       "requiresComputer": true,
-      "skillsBaseDir": "/home/user/.claude/skills",
-      "skillsWriteOptions": {
-        "trailingNewline": true
+      "skills": {
+        "frontmatter": {
+          "descriptionMaxLength": 1024,
+          "strictYaml": false
+        },
+        "headlessLoading": "native",
+        "readFolders": [
+          ".claude/skills"
+        ],
+        "serverSkills": "harness-tools",
+        "trailingNewline": true,
+        "writeFolder": ".claude/skills"
       },
       "supportedReasoningEfforts": [],
       "supportsHostExecutedToolApproval": true,
@@ -46,44 +168,145 @@
       },
       "credential": null,
       "displayName": "Claude Code",
-      "guest": true,
-      "local": true,
       "mcpClient": "harness",
       "modelAccess": "broker",
-      "orgUpstream": {
-        "profile": "anthropic-native",
-        "provider": "anthropic"
-      },
+      "orgKeys": true,
       "protocol": "anthropic-messages",
       "reasoningEfforts": [],
-      "runtimeVersion": "2.1.245"
+      "runtimeName": "Claude Agent SDK",
+      "runtimeVersion": "2.1.290",
+      "unavailableOn": {}
     },
-    "qualifiedDiscovery": [
-      "forwarded-bridge",
-      "host-tools"
-    ]
+    "qualifiedDiscovery": []
+  },
+  "claude-web": {
+    "adapter": {
+      "approvalPermissionMode": "allow-all",
+      "conversationState": null,
+      "defaultPermissionMode": "allow-all",
+      "displayName": "Claude web",
+      "id": "claude-web",
+      "mcpDelivery": "harness",
+      "mcpNativeDelivery": "web-connector",
+      "modelAccess": "external-account",
+      "pinnedRuntimeVersion": "page-2026-11-20",
+      "promptImageInput": false,
+      "requiresComputer": false,
+      "skills": {
+        "frontmatter": {
+          "descriptionMaxLength": 1024,
+          "strictYaml": true
+        },
+        "headlessLoading": "native",
+        "readFolders": [],
+        "serverSkills": "box-files",
+        "trailingNewline": false,
+        "writeFolder": ""
+      },
+      "supportedReasoningEfforts": [],
+      "supportsHostExecutedToolApproval": false,
+      "supportsMcpToolApproval": true,
+      "supportsNativeToolApproval": false,
+      "supportsPluginBundles": false,
+      "supportsSkills": false,
+      "webAccount": {
+        "vendor": "claude"
+      }
+    },
+    "descriptor": {
+      "controls": {
+        "modelId": {
+          "enforced": false,
+          "note": "Claude web uses the model the account picks on claude.ai."
+        },
+        "progressiveToolDiscovery": {
+          "enforced": false,
+          "note": "Claude web does its own tool discovery."
+        },
+        "requireToolApproval": {
+          "enforced": false,
+          "note": "Claude web runs its own tools on claude.ai, where MCPJam can't pause them."
+        },
+        "temperature": {
+          "enforced": false,
+          "note": "Claude web runs claude.ai's own loop and ignores temperature."
+        }
+      },
+      "credential": {
+        "kind": "web-account",
+        "label": "Claude account",
+        "sites": [
+          "https://claude.ai"
+        ]
+      },
+      "displayName": "Claude web",
+      "mcpClient": "harness",
+      "modelAccess": "external-account",
+      "orgKeys": false,
+      "protocol": null,
+      "reasoningEfforts": [],
+      "runtimeName": "claude.ai",
+      "runtimeVersion": "page-2026-11-20",
+      "unavailableOn": {
+        "guests": "Claude web runs on the project's own Claude account, so guests can't use it.",
+        "local": "Claude web runs in a browser, not on your computer's runtime. Choose This machine in the browser settings instead.",
+        "user-testing": "Claude web runs on a project web account, so studies cannot use it. Choose a different client for this study."
+      }
+    },
+    "qualifiedDiscovery": []
   },
   "codex": {
     "adapter": {
       "acceptsSandboxPolicy": true,
       "approvalPermissionMode": "allow-reads",
+      "conversationState": {
+        "folder": "{sessionData}/codex-home/sessions"
+      },
       "defaultPermissionMode": "allow-all",
       "displayName": "Codex",
       "forwardingRuntime": {
         "configurationVersion": "native-mcp-v1",
         "correlationKey": "callId",
+        "nativeClient": {
+          "capabilities": {
+            "elicitation": {
+              "form": {},
+              "url": {}
+            }
+          },
+          "clientInfo": {
+            "name": "codex-mcp-client",
+            "title": "Codex",
+            "version": "0.163.0"
+          },
+          "mcpProtocolVersion": "2025-06-18",
+          "supportedProtocolVersions": [
+            "2025-06-18"
+          ]
+        },
         "ownedInput": true,
         "runtimeVersion": "0.163.0"
       },
+      "hostedWarmAgent": "refresh",
       "id": "codex",
       "liveApprovalRuntime": true,
       "mcpDelivery": "mcpjam",
       "modelAccess": "broker",
       "pinnedRuntimeVersion": "0.163.0",
+      "promptImageInput": true,
       "requiresComputer": true,
-      "skillsBaseDir": "/home/user/.agents/skills",
-      "skillsWriteOptions": {
-        "trailingNewline": false
+      "skills": {
+        "frontmatter": {
+          "descriptionMaxLength": 1024,
+          "strictYaml": false
+        },
+        "headlessLoading": "native",
+        "readFolders": [
+          ".agents/skills"
+        ],
+        "serverSkills": "harness-tools",
+        "trailingNewline": false,
+        "writeFolder": ".agents/skills"
       },
       "supportedReasoningEfforts": [
         "low",
@@ -117,14 +340,9 @@
       },
       "credential": null,
       "displayName": "Codex",
-      "guest": true,
-      "local": true,
       "mcpClient": "mcpjam",
       "modelAccess": "broker",
-      "orgUpstream": {
-        "profile": "openai-native",
-        "provider": "openai"
-      },
+      "orgKeys": true,
       "protocol": "openai-responses",
       "reasoningEfforts": [
         "low",
@@ -132,52 +350,163 @@
         "high",
         "xhigh"
       ],
-      "runtimeVersion": "0.163.0"
+      "runtimeName": "Codex App Server",
+      "runtimeVersion": "0.163.0",
+      "unavailableOn": {}
     },
     "qualifiedDiscovery": [
       "forwarded-bridge",
       "host-tools"
     ]
   },
+  "copilot-cli": {
+    "adapter": {
+      "approvalPermissionMode": "allow-reads",
+      "conversationState": {
+        "folder": "{sessionData}/copilot-home/session-state/{id}",
+        "idKey": "threadId"
+      },
+      "defaultPermissionMode": "allow-all",
+      "displayName": "GitHub Copilot CLI",
+      "forwardingRuntime": {
+        "configurationVersion": "copilot-native-mcp-v1",
+        "correlationKey": "mcpjam/toolCallId",
+        "nativeClient": {
+          "capabilities": {
+            "sampling": {}
+          },
+          "clientInfo": {
+            "name": "copilot-cli",
+            "version": "1.0.92"
+          }
+        },
+        "runtimeVersion": "1.0.92"
+      },
+      "hostedWarmAgent": "restart",
+      "id": "copilot-cli",
+      "liveApprovalRuntime": true,
+      "mcpDelivery": "harness",
+      "mcpNativeDelivery": "session-config",
+      "modelAccess": "broker",
+      "pinnedRuntimeVersion": "1.0.92",
+      "promptImageInput": false,
+      "requiresComputer": true,
+      "skills": {
+        "frontmatter": {
+          "descriptionMaxLength": 1024,
+          "strictYaml": true
+        },
+        "headlessLoading": "bridge-opt-in",
+        "readFolders": [
+          ".copilot/skills"
+        ],
+        "serverSkills": "harness-tools",
+        "trailingNewline": false,
+        "writeFolder": ".copilot/skills"
+      },
+      "supportedReasoningEfforts": [],
+      "supportsHostExecutedToolApproval": true,
+      "supportsMcpToolApproval": true,
+      "supportsNativeToolApproval": true,
+      "supportsPluginBundles": false,
+      "supportsSkills": true
+    },
+    "descriptor": {
+      "controls": {
+        "modelId": {
+          "enforced": true
+        },
+        "progressiveToolDiscovery": {
+          "enforced": false,
+          "note": "GitHub Copilot CLI receives the selected tools at turn start."
+        },
+        "requireToolApproval": {
+          "enforced": true
+        },
+        "temperature": {
+          "enforced": false,
+          "note": "GitHub Copilot CLI controls temperature."
+        }
+      },
+      "credential": null,
+      "displayName": "GitHub Copilot CLI",
+      "mcpClient": "harness",
+      "modelAccess": "broker",
+      "orgKeys": true,
+      "protocol": "openai-responses",
+      "reasoningEfforts": [],
+      "runtimeName": "GitHub Copilot CLI",
+      "runtimeVersion": "1.0.92",
+      "unavailableOn": {}
+    },
+    "qualifiedDiscovery": []
+  },
   "cursor": {
     "adapter": {
       "approvalPermissionMode": "allow-reads",
+      "conversationState": null,
       "defaultPermissionMode": "allow-all",
       "displayName": "Cursor CLI",
-      "externalAccountBrokerBinding": {
-        "CURSOR_API_KEY": {
-          "header": "authorization",
-          "hosts": [
-            "api2.cursor.sh"
-          ],
-          "template": "Bearer {}"
-        }
-      },
       "externalAccountCredentialEnv": [
         "CURSOR_API_KEY"
       ],
+      "fingerprintsMcpConfig": true,
+      "forwardingRuntime": {
+        "boundApprovals": true,
+        "configurationVersion": "acp-forward-v1",
+        "nativeClient": {
+          "capabilities": {
+            "elicitation": {
+              "form": {}
+            }
+          },
+          "clientInfo": {
+            "name": "Cursor",
+            "version": "1.0.0"
+          },
+          "versionNegotiation": "legacy-first"
+        },
+        "ownedInput": false,
+        "runtimeVersion": "2026.11.05-86047df"
+      },
+      "hostToolApprovalAtRuntime": true,
       "id": "cursor",
       "mcpDelivery": "harness",
       "mcpNativeDelivery": "session-config",
       "modelAccess": "external-account",
       "pinnedRuntimeVersion": "2026.11.05-86047df",
+      "promptImageInput": true,
       "requiresComputer": true,
-      "skillsBaseDir": "/home/user/.agents/skills",
-      "skillsWriteOptions": {
-        "trailingNewline": false
+      "skills": {
+        "frontmatter": {
+          "descriptionMaxLength": 1024,
+          "strictYaml": false,
+          "surface": "cli"
+        },
+        "headlessLoading": "native",
+        "readFolders": [
+          ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.agents/skills",
+          ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.cursor/skills",
+          ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.claude/skills",
+          ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.codex/skills",
+          ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.grok/skills",
+          ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.cursor/skills-cursor"
+        ],
+        "serverSkills": "harness-tools",
+        "trailingNewline": false,
+        "writeFolder": ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.agents/skills"
       },
       "supportedReasoningEfforts": [],
-      "supportsHostExecutedToolApproval": false,
-      "supportsMcpToolApproval": false,
+      "supportsHostExecutedToolApproval": true,
+      "supportsMcpToolApproval": true,
       "supportsNativeToolApproval": true,
       "supportsPluginBundles": false,
-      "supportsSkills": false
+      "supportsSkills": true
     },
     "descriptor": {
       "controls": {
         "modelId": {
-          "enforced": false,
-          "note": "The Cursor CLI runs on your Cursor account, which chooses the model itself."
+          "enforced": true
         },
         "progressiveToolDiscovery": {
           "enforced": false,
@@ -203,14 +532,82 @@
         "label": "Cursor API key"
       },
       "displayName": "Cursor CLI",
-      "guest": false,
-      "local": false,
       "mcpClient": "harness",
       "modelAccess": "external-account",
-      "orgUpstream": null,
+      "orgKeys": false,
       "protocol": null,
       "reasoningEfforts": [],
-      "runtimeVersion": "2026.11.05-86047df"
+      "runtimeName": "Cursor CLI",
+      "runtimeVersion": "2026.11.05-86047df",
+      "unavailableOn": {
+        "guests": "Cursor CLI runs on the organization's own Cursor account, so guests can't use it.",
+        "user-testing": "Cursor CLI runs only in the Playground, evals, swarms and the API. Choose a different client for this study."
+      }
+    },
+    "qualifiedDiscovery": []
+  },
+  "opencode": {
+    "adapter": {
+      "approvalPermissionMode": "allow-reads",
+      "conversationState": null,
+      "defaultPermissionMode": "allow-all",
+      "displayName": "OpenCode",
+      "id": "opencode",
+      "liveApprovalRuntime": true,
+      "mcpDelivery": "mcpjam",
+      "modelAccess": "broker",
+      "pinnedRuntimeVersion": "1.18.34",
+      "promptImageInput": false,
+      "requiresComputer": true,
+      "skills": {
+        "frontmatter": {
+          "descriptionMaxLength": 1024,
+          "strictYaml": false
+        },
+        "headlessLoading": "native",
+        "readFolders": [
+          ".agents/skills",
+          ".config/opencode/skills",
+          ".config/opencode/skill"
+        ],
+        "serverSkills": "harness-tools",
+        "trailingNewline": false,
+        "writeFolder": ".agents/skills"
+      },
+      "supportedReasoningEfforts": [],
+      "supportsHostExecutedToolApproval": true,
+      "supportsMcpToolApproval": false,
+      "supportsNativeToolApproval": true,
+      "supportsPluginBundles": false,
+      "supportsSkills": true
+    },
+    "descriptor": {
+      "controls": {
+        "modelId": {
+          "enforced": true
+        },
+        "progressiveToolDiscovery": {
+          "enforced": false,
+          "note": "OpenCode does its own tool discovery."
+        },
+        "requireToolApproval": {
+          "enforced": true
+        },
+        "temperature": {
+          "enforced": false,
+          "note": "OpenCode runs its own loop and ignores temperature."
+        }
+      },
+      "credential": null,
+      "displayName": "OpenCode",
+      "mcpClient": "mcpjam",
+      "modelAccess": "broker",
+      "orgKeys": true,
+      "protocol": "anthropic-messages",
+      "reasoningEfforts": [],
+      "runtimeName": "OpenCode",
+      "runtimeVersion": "1.18.34",
+      "unavailableOn": {}
     },
     "qualifiedDiscovery": []
   }

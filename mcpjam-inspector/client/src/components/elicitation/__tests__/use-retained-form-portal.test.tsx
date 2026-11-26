@@ -30,3 +30,15 @@ it("preserves focused selection and cleans up only its own portal", () => {
   expect(other.children).toHaveLength(0);
   a.remove(); b.remove(); other.remove();
 });
+
+it("shows an opted-in form after the last foreign composer leaves, without a prior slot", () => {
+  function Pending({ composerMounted }: { composerMounted: boolean }) {
+    const portal = useRetainedFormPortal(null, !composerMounted, "workspace-X", undefined, false, !composerMounted);
+    return portal.ready ? portal.render(<input aria-label="Workspace X answer" />) : null;
+  }
+  const view = render(<Pending composerMounted />);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  view.rerender(<Pending composerMounted={false} />);
+  expect(screen.getByRole("dialog")).toBeVisible();
+  expect(screen.getByRole("textbox", { name: "Workspace X answer" })).toBeVisible();
+});

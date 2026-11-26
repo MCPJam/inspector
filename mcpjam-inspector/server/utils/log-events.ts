@@ -3,6 +3,7 @@ import type { ErrorOrigin } from "@mcpjam/sdk";
 import type { RouteFailureHop } from "./route-error-report.js";
 import type { ChatOrigin } from "./chat-origin.js";
 import type { LogConvexId } from "./log-convex-id.js";
+import type { OnboardingPhaseTimings, OnboardingTraceLastPhase } from "../../shared/onboarding-trace.js";
 import type { PluginContextRefusedEvent } from "./context-refused-event.js";
 
 export type Environment =
@@ -364,7 +365,9 @@ export type RequestEventMap = {
       | "protocol_error"
       | "exception"
       | "version_conflict";
-    statusCode?: number;
+    // The ingest's HTTP status. Not `statusCode`: a streamed turn's request
+    // context already holds the route's 200, and context wins over payload.
+    ingestStatusCode?: number;
     /**
      * Sanitized, length-capped excerpt of the ingest's response body (see
      * `sanitizeDiagnosticText`: secrets, emails and bearer tokens are redacted
@@ -376,10 +379,19 @@ export type RequestEventMap = {
     sourceType?: "scenario" | "direct" | "eval" | "swarm" | "event";
     // Product-surface discriminator carried alongside sourceType so PostHog
     // can pivot persist failures by surface without rejoining to chatSessions.
-    // CAUTION: this `origin` is a DIFFERENT axis from the ErrorOrigin field
-    // of the same name on `http.request.failed` / `route.operation.failed` —
-    // never join the two in an APL query.
-    origin?: ChatOrigin;
+    // Not `origin`: strict-log keeps that name for the ErrorOrigin enum on
+    // `http.request.failed` / `route.operation.failed` and drops these values.
+    // Keep the `ChatOrigin` values inline: the telemetry catalog generator
+    // reads only literal unions, and a field without a rule is dropped.
+    chatOrigin?:
+      | "playground"
+      | "mcpjam_agent"
+      | "scenario"
+      | "eval"
+      | "swarm"
+      | "api"
+      | "event"
+      | "readiness";
   };
   /**
    * The backend accepted the request but declined the write, judging the
@@ -389,7 +401,8 @@ export type RequestEventMap = {
    */
   "chat.session.persist.skipped": {
     sourceType?: "scenario" | "direct" | "eval" | "swarm" | "event";
-    origin?: ChatOrigin;
+    // Kept through the inline union on `.failed`: catalog rules are per field name.
+    chatOrigin?: ChatOrigin;
     /** False means the payload had no idempotency key to dedupe on. */
     hasTurnId: boolean;
   };
@@ -426,10 +439,9 @@ export type RequestEventMap = {
   /** An App context update refused before anything was stored. */
   "plugin.instance.context.refused": PluginContextRefusedEvent;
   /**
-   * One plugin onboarding turn (the Playground's Run onboarding or Set up),
-   * from its request to its terminal result. `phases` holds the ms since the
-   * request at which each phase was first reached. IDs, codes, counts and
-   * timings only; never skill text, credentials or tool arguments.
+   * One onboarding turn from request to terminal result. `phases` holds ms
+   * since the request. The strict boundary hashes correlation IDs and keeps
+   * known phase timings, never skill text, credentials or tool arguments.
    */
   "plugin.onboarding.turn": {
     attemptId: string;
@@ -438,16 +450,16 @@ export type RequestEventMap = {
     code?: string;
     statusCode: number;
     totalMs: number;
-    phases: Record<string, number>;
+    phases: OnboardingPhaseTimings;
     unavailableServers: number;
   };
   /** The same turn, unfinished when its watchdog fired: where it stopped. */
   "plugin.onboarding.turn.stalled": {
     attemptId: string;
     pluginVersionId: string;
-    lastPhase: string;
+    lastPhase: OnboardingTraceLastPhase;
     elapsedMs: number;
-    phases: Record<string, number>;
+    phases: OnboardingPhaseTimings;
   };
   "mcp.tool.execution.failed": {
     toolName: string;
@@ -461,6 +473,7 @@ export type RequestEventMap = {
     computerId: string;
     errorCode: string;
   };
+  "computer.terminal.input_failed": { errorCode: string };
   // Saved browser profile download (routes/web/browser-profile-download.ts,
   // MJ-005): the archive could not be served. `stage` is the hop that failed,
   // `lookup` (the backend's owner check) or `archive` (reading the archive).
@@ -491,6 +504,10 @@ export type RequestEventMap = {
     reason: "failed" | "timeout";
     status: "pending" | "failed";
   };
+  // Same route: Convex refused the sign-out's own token (401), so no durable
+  // record was written and no retry was scheduled. Expected for an expired
+  // token; a burst of them means Convex stopped accepting AuthKit tokens.
+  "auth.session.revoke_refused": Record<string, never>;
   "route.operation.failed": RouteOperationFailedFields;
   /**
    * API key lifecycle (routes/web/api-keys.ts). `workosKeyId` is the WorkOS
@@ -546,13 +563,8 @@ export type SystemEventMap = {
   "model_catalog.refresh.failed": {
     reason: "fetch_failed" | "invalid_catalog";
   };
-  "harness.timing": {
-    harnessId?: "claude-code" | "codex" | "cursor";
-    harnessBootstrap?: "baked" | "installed" | "install-failed" | "reused" | "none";
-    harnessBakeExpected?: "baked" | "custom-workdir" | "unbaked-recipe" | "none";
-    harnessBakeOnBox?: "present" | "absent" | "unknown" | "not-checked";
-    harnessTurn?: "failed";
-  };
+  "mcp_app.resource_read.failed": import("./log-events/mcp-app-resource-read.js").McpAppResourceReadFailedEvent;
+  "harness.timing": import("./log-events/harness-timing.js").HarnessTimingEvent;
   "harness.bootstrap": Record<string, never>;
   "harness.turn.failed": Record<string, never>;
   /**
@@ -583,7 +595,7 @@ export type SystemEventMap = {
     surface: string;
     serverId: string;
     transport: "http" | "stdio";
-    configuredMode: "auto" | "modern-pin" | "legacy";
+    configuredMode: "auto" | "modern-pin" | "legacy" | "legacy-first";
     outcome: "connected" | "failed";
     negotiatedEra?: "legacy" | "modern";
     negotiatedProtocolVersion?: string;
@@ -591,36 +603,7 @@ export type SystemEventMap = {
   };
   "process.unhandled_rejection": { errorCode: string };
   "process.uncaught_exception": { errorCode: string };
-  /**
-   * Heap and retained-buffer gauge, one line per sample that says something
-   * (see utils/process-vitals.ts). Emitted on startup, on a heap step, and on a
-   * slow heartbeat — never once per interval unconditionally, so a quiet
-   * session costs almost nothing.
-   *
-   * Exists because INSPECTOR-ELECTRON-W3 crashed after 21 minutes with ZERO
-   * breadcrumbs for the whole session: nothing recorded whether the heap ramped
-   * or spiked, and the difference is the entire diagnosis. Every field is a
-   * number or a three-valued reason, so cardinality is fixed.
-   */
-  "process.vitals": {
-    reason: "startup" | "heap_step" | "heartbeat";
-    uptimeSeconds: number;
-    heapUsedBytes: number;
-    heapTotalBytes: number;
-    heapLimitBytes: number;
-    oldSpaceUsedBytes: number;
-    oldSpaceSizeBytes: number;
-    externalBytes: number;
-    rssBytes: number;
-    peakHeapUsedBytes: number;
-    rpcLogBufferBytes: number;
-    rpcLogBufferEvents: number;
-    rpcLogBufferServers: number;
-    rpcLogTruncatedFrames: number;
-    peakRpcLogBufferBytes: number;
-    tokenizerPeakChars: number;
-    tokenizerOversizeSkips: number;
-  };
+  "process.vitals": import("./log-events/process-vitals.js").ProcessVitalsEvent;
   /**
    * Aggregated socket-level failure counters, one line per flush interval
    * (see utils/socket-diagnostics.ts). These are connections that died before

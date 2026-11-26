@@ -6,10 +6,16 @@ import test from "node:test";
 import { createRequire } from "node:module";
 import { main } from "../src/index.js";
 import {
+  captureProcessOutput,
+  cleanTelemetryEnv,
+  createRecordingClient,
+  createStatePath,
+  type CapturedEvent,
+} from "./support/telemetry-harness.js";
+import {
   getTelemetryStatus,
   readTelemetryState,
   setTelemetryEnabled,
-  type TelemetryClient,
   type TelemetryOptions,
 } from "../src/lib/telemetry.js";
 
@@ -18,95 +24,6 @@ const CLI_VERSION: string = require("../package.json").version;
 
 const UUID_A = "11111111-1111-4111-8111-111111111111";
 const UUID_B = "22222222-2222-4222-8222-222222222222";
-
-type CapturedEvent = Parameters<TelemetryClient["capture"]>[0];
-
-async function createStatePath(): Promise<string> {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-telemetry-"));
-  return path.join(directory, "telemetry.json");
-}
-
-function cleanTelemetryEnv(
-  overrides: NodeJS.ProcessEnv = {},
-): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  for (const key of [
-    "DO_NOT_TRACK",
-    "MCPJAM_TELEMETRY_DISABLED",
-    "MCPJAM_TELEMETRY_DEBUG",
-    "CI",
-    "GITHUB_ACTIONS",
-    "GITLAB_CI",
-    "CIRCLECI",
-    "BUILDKITE",
-    "JENKINS_URL",
-    "JENKINS_HOME",
-    "VERCEL",
-    "NETLIFY",
-  ]) {
-    delete env[key];
-  }
-  return { ...env, ...overrides };
-}
-
-function createRecordingClient(): {
-  events: CapturedEvent[];
-  createClient: () => TelemetryClient;
-  flushes: () => number;
-} {
-  const events: CapturedEvent[] = [];
-  let flushCount = 0;
-
-  return {
-    events,
-    createClient: () => ({
-      capture(event) {
-        events.push(event);
-      },
-      async flush() {
-        flushCount += 1;
-      },
-    }),
-    flushes: () => flushCount,
-  };
-}
-
-async function captureProcessOutput<T>(
-  fn: () => Promise<T>,
-): Promise<{
-  result: T;
-  stdout: string;
-  stderr: string;
-}> {
-  const originalStdoutWrite = process.stdout.write.bind(process.stdout);
-  const originalStderrWrite = process.stderr.write.bind(process.stderr);
-  const originalExitCode = process.exitCode;
-  let stdout = "";
-  let stderr = "";
-
-  process.exitCode = undefined;
-  process.stdout.write = ((chunk: string | Uint8Array) => {
-    stdout += String(chunk);
-    return true;
-  }) as typeof process.stdout.write;
-  process.stderr.write = ((chunk: string | Uint8Array) => {
-    stderr += String(chunk);
-    return true;
-  }) as typeof process.stderr.write;
-
-  try {
-    const result = await fn();
-    return {
-      result,
-      stdout,
-      stderr,
-    };
-  } finally {
-    process.stdout.write = originalStdoutWrite;
-    process.stderr.write = originalStderrWrite;
-    process.exitCode = originalExitCode;
-  }
-}
 
 test("telemetry state creates, reuses, disables, enables, and replaces invalid state", async () => {
   const statePath = await createStatePath();
@@ -334,6 +251,7 @@ test("successful command emits one allowlisted CLI event with CI tags", async ()
     command: "inspector stop",
     success: true,
     exit_code: 0,
+    outcome: "ok",
     duration_ms: event.properties.duration_ms,
     cli_version: CLI_VERSION,
     os: process.platform,
@@ -465,12 +383,12 @@ test("action-level failures emit sanitized errors without sensitive argv values"
   }
 });
 
-test("help, version, unknown commands, and telemetry commands emit no telemetry", async () => {
+// Unknown commands are counted as usage errors: see telemetry-outcome.test.ts.
+test("help, version, and telemetry commands emit no telemetry", async () => {
   for (const argv of [
     ["node", "mcpjam"],
     ["node", "mcpjam", "--help"],
     ["node", "mcpjam", "--version"],
-    ["node", "mcpjam", "not-a-command"],
     ["node", "mcpjam", "telemetry", "status"],
     ["node", "mcpjam", "telemetry", "disable"],
     ["node", "mcpjam", "telemetry", "enable"],
@@ -519,3 +437,193 @@ test("capture falls back to a per-run UUID when the telemetry file cannot be wri
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
+// Nothing listens on port 1, so the run fails fast and stays on the machine.
+const CONFORMANCE_ARGV = [
+  "node",
+  "mcpjam",
+  "--format",
+  "json",
+  "protocol",
+  "conformance",
+  "--url",
+  "http://127.0.0.1:1/mcp",
+  "--check-id",
+  "server-initialize",
+  "--check-timeout",
+  "2000",
+];
+
+/**
+ * Run `fn` with the SDK's own opt-outs cleared from the real environment
+ * (the SDK reads `process.env`, not the env handed to the CLI) and every
+ * request to PostHog recorded, so a missed `__suppressTelemetry` would show.
+ */
+async function withSdkTelemetryWatched<T>(
+  fn: (posthogRequests: string[]) => Promise<T>,
+): Promise<T> {
+  const saved = {
+    DO_NOT_TRACK: process.env.DO_NOT_TRACK,
+    MCPJAM_TELEMETRY_DISABLED: process.env.MCPJAM_TELEMETRY_DISABLED,
+  };
+  delete process.env.DO_NOT_TRACK;
+  delete process.env.MCPJAM_TELEMETRY_DISABLED;
+  const originalFetch = globalThis.fetch;
+  const posthogRequests: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (new URL(url).hostname === "us.i.posthog.com") {
+      posthogRequests.push(url);
+      return new Response("{}", { status: 200 });
+    }
+    return originalFetch(input, init);
+  }) as typeof fetch;
+  try {
+    return await fn(posthogRequests);
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+test("a conformance run sends one conformance_run_triggered and the SDK sends nothing", async () => {
+  await withSdkTelemetryWatched(async (posthogRequests) => {
+    const statePath = await createStatePath();
+    const recorder = createRecordingClient();
+
+    const run = await captureProcessOutput(() =>
+      main(CONFORMANCE_ARGV, {
+        telemetry: {
+          statePath,
+          // CI is on to show the label stays `cli` there too.
+          env: cleanTelemetryEnv({ CI: "true", GITHUB_ACTIONS: "true" }),
+          createId: () => UUID_A,
+          createClient: recorder.createClient,
+        },
+      }),
+    );
+
+    assert.notEqual(run.result.exitCode, 2, run.stderr);
+    assert.deepEqual(
+      recorder.events.map((event) => event.event).sort(),
+      ["cli_command", "conformance_run_triggered"],
+    );
+    const conformance = recorder.events.find(
+      (event) => event.event === "conformance_run_triggered",
+    );
+    assert.equal(conformance?.distinctId, UUID_A);
+    assert.deepEqual(conformance?.properties, {
+      run_source: "cli",
+      suite: "protocol",
+      mode: "single",
+      cli_version: CLI_VERSION,
+    });
+    assert.equal(recorder.flushes(), 1);
+    assert.deepEqual(posthogRequests, []);
+  });
+});
+
+test("conformance telemetry follows every CLI opt-out", async () => {
+  await withSdkTelemetryWatched(async (posthogRequests) => {
+    for (const scenario of [
+      {
+        name: "flag",
+        argv: [...CONFORMANCE_ARGV.slice(0, 2), "--no-telemetry", ...CONFORMANCE_ARGV.slice(2)],
+        env: cleanTelemetryEnv(),
+        disable: false,
+      },
+      {
+        name: "DO_NOT_TRACK",
+        argv: CONFORMANCE_ARGV,
+        env: cleanTelemetryEnv({ DO_NOT_TRACK: "1" }),
+        disable: false,
+      },
+      {
+        name: "MCPJAM_TELEMETRY_DISABLED",
+        argv: CONFORMANCE_ARGV,
+        env: cleanTelemetryEnv({ MCPJAM_TELEMETRY_DISABLED: "1" }),
+        disable: false,
+      },
+      {
+        name: "persisted disable",
+        argv: CONFORMANCE_ARGV,
+        env: cleanTelemetryEnv(),
+        disable: true,
+      },
+    ]) {
+      const statePath = await createStatePath();
+      if (scenario.disable) {
+        setTelemetryEnabled(false, { statePath, env: scenario.env });
+      }
+      let clientCreated = false;
+
+      await captureProcessOutput(() =>
+        main(scenario.argv, {
+          telemetry: {
+            statePath,
+            env: scenario.env,
+            createClient() {
+              clientCreated = true;
+              throw new Error(`client created for ${scenario.name}`);
+            },
+          },
+        }),
+      );
+
+      assert.equal(clientCreated, false, scenario.name);
+    }
+    assert.deepEqual(posthogRequests, []);
+  });
+});
+
+test("debug mode prints the conformance event instead of sending it", async () => {
+  const statePath = await createStatePath();
+  let clientCreated = false;
+
+  const run = await captureProcessOutput(() =>
+    main(CONFORMANCE_ARGV, {
+      telemetry: {
+        statePath,
+        env: cleanTelemetryEnv({ MCPJAM_TELEMETRY_DEBUG: "1" }),
+        createId: () => UUID_A,
+        createClient() {
+          clientCreated = true;
+          throw new Error("debug mode should not send");
+        },
+      },
+    }),
+  );
+
+  assert.equal(clientCreated, false);
+  assert.match(run.stderr, /"event":"conformance_run_triggered"/);
+  assert.match(
+    run.stderr,
+    /"properties":\{"run_source":"cli","suite":"protocol","mode":"single","cli_version":"[^"]+"\}/,
+  );
+  assert.match(run.stderr, /"event":"cli_command"/);
+});
+
+test("a conformance command that stops before running sends no conformance event", async () => {
+  const statePath = await createStatePath();
+  const recorder = createRecordingClient();
+
+  const run = await captureProcessOutput(() =>
+    main([...CONFORMANCE_ARGV, "--reporter", "nope"], {
+      telemetry: {
+        statePath,
+        env: cleanTelemetryEnv(),
+        createId: () => UUID_A,
+        createClient: recorder.createClient,
+      },
+    }),
+  );
+
+  assert.equal(run.result.exitCode, 2);
+  assert.deepEqual(
+    recorder.events.map((event) => event.event),
+    ["cli_command"],
+  );
+});

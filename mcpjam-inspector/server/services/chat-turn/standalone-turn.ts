@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
+import { appliedToolApproval } from "@/shared/tool-approval";
 import { HOSTED_MODE, WEBMCP_INSPECTOR_ENABLED } from "../../config.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
@@ -13,7 +14,7 @@ import {
   resolveChatReasoningEffort,
 } from "../../utils/chat-reasoning-effort.js";
 import { listLocalRuntimeSkills } from "../../utils/skill-tools.js";
-import { buildLiveEffectiveCapabilities } from "../environments/effective-capabilities.js";
+import { resolveTurnSkills } from "../environments/turn-skills.js";
 import {
   validateAppToolEntries,
   validatePageToolEntries,
@@ -22,6 +23,7 @@ import {
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { getSpendClientIp } from "../../utils/client-ip.js";
 import { streamChatTurn } from "../../utils/web-chat-turn.js";
+import { eventToolsFromBody } from "./event-tools-body.js";
 import {
   parseScopeStepUpResumeRequest,
   parseScopeStepUpCancelRequest,
@@ -125,12 +127,17 @@ export async function runStandaloneTurn(
       temperature: body.temperature,
       requireToolApproval: body.requireToolApproval,
       respectToolVisibility: body.respectToolVisibility,
+      runUnloadedToolCalls: body.runUnloadedToolCalls,
       progressiveToolDiscovery: body.progressiveToolDiscovery,
       modelVisibleMcpToolResults: body.modelVisibleMcpToolResults,
       mcpToolResultImageRendering: body.mcpToolResultImageRendering,
       hostStyle: body.hostStyle ?? "claude",
     },
   });
+  const requireToolApproval = appliedToolApproval(
+    "chat",
+    execution.requireToolApproval,
+  );
   const localSkills = await listLocalRuntimeSkills().catch((error) => {
     logger.warn("[chat-v2] local skill scan failed", {
       error: error instanceof Error ? error.message : String(error),
@@ -169,9 +176,10 @@ export async function runStandaloneTurn(
         temperature: body.temperature ?? execution.temperature,
         reasoningEffort,
         explicitTemperature: effort.effort ? body.temperature : undefined,
-        requireToolApproval: execution.requireToolApproval,
+        requireToolApproval,
         requireNativeToolDiscovery: execution.requireNativeToolDiscovery,
         respectToolVisibility: execution.respectToolVisibility,
+        runUnloadedToolCalls: execution.runUnloadedToolCalls,
         modelVisibleMcpToolResults: execution.modelVisibleMcpToolResults,
         customProviders: body.customProviders,
         ...(rail !== "hosted"
@@ -190,11 +198,21 @@ export async function runStandaloneTurn(
         pageTools: WEBMCP_INSPECTOR_ENABLED
           ? validatePageToolEntries(body.pageTools)
           : [],
+        eventTools: eventToolsFromBody(body.eventTools),
         widgetModelContext: validateWidgetModelContextEntries(
           body.widgetModelContext,
         ),
-        liveSkillSurface: true,
-        effectiveCapabilities: buildLiveEffectiveCapabilities({ localSkills }),
+        // No project: this machine's skills, and the connected servers' own.
+        skills: resolveTurnSkills({
+          source: {
+            kind: "live",
+            projectSkills: [],
+            liveExtras: { localSkills },
+          },
+          runtime: { kind: "agent" },
+          modelContextTokens: model.contextLength,
+        }),
+        skillsSurface: "playground",
         ...(execution.progressiveToolDiscovery !== undefined
           ? {
               progressiveToolDiscovery: {
@@ -214,12 +232,13 @@ export async function runStandaloneTurn(
         selectedServerNames: serverNames,
         systemPrompt: execution.systemPrompt,
         temperature: body.temperature ?? execution.temperature,
-        requireToolApproval: execution.requireToolApproval,
+        requireToolApproval,
         respectToolVisibility: execution.respectToolVisibility,
         mcpToolResultImageRendering: execution.mcpToolResultImageRendering,
         directVisibility: body.directVisibility,
         expectedVersion: body.expectedVersion,
         rewind: body.rewind,
+        multiModel: body.multiModel,
         runtimeSecrets: [],
       },
       runtime: {

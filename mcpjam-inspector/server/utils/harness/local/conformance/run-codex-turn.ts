@@ -33,7 +33,7 @@ import { z } from "zod";
 import { HarnessAgent } from "@ai-sdk/harness/agent";
 import { getHarnessAdapter } from "../../registry.js";
 import { withLocalRuntimeBootstrap } from "../pack-bootstrap.js";
-import { withAutoApprovedNativeRequests } from "../../auto-approve-harness.js";
+import { APPROVE_NATIVE_REQUEST, withAnsweredNativeRequests } from "../../auto-approve-harness.js";
 import { LocalHarnessSupervisor } from "../supervisor.js";
 import {
   createSupervisedLocalHarnessProvider,
@@ -56,6 +56,7 @@ import {
   type LocalPlatform,
 } from "../targets.js";
 import { listProcessRecords } from "../process-registry.js";
+import { descendants, isLoopbackListener, treeListeners } from "./process-checks.js";
 import { CODEX_LOCAL_ADAPTER_IDENTITY } from "../../codex-appserver/local-identity.js";
 
 const execFileP = promisify(execFile);
@@ -176,11 +177,6 @@ const freePort = () =>
  * arm that asks the OS directly, as `run-native-turn.ts` does: `tasklist` for
  * liveness, `netstat -ano` for listeners, and CIM for the parent/child tree.
  */
-const powershell = (script: string) =>
-  execFileP("powershell.exe", ["-NoProfile", "-NonInteractive", "-InputFormat", "None", "-Command", script], {
-    windowsHide: true,
-  });
-
 async function running(pid: number): Promise<boolean> {
   if (WIN) {
     try {
@@ -198,25 +194,6 @@ async function running(pid: number): Promise<boolean> {
   }
   return state.length > 0 && !state.startsWith("Z");
 }
-async function descendants(pid: number): Promise<number[]> {
-  const out: number[] = [];
-  const walk = async (p: number) => {
-    let kids = "";
-    try {
-      kids = WIN
-        ? (await powershell(`Get-CimInstance Win32_Process -Filter "ParentProcessId=${p}" | ForEach-Object { $_.ProcessId }`)).stdout
-        : (await execFileP("pgrep", ["-P", String(p)])).stdout;
-    } catch {
-      return;
-    }
-    for (const k of kids.split(/\r?\n/).map((s) => Number(s.trim())).filter(Boolean)) {
-      out.push(k);
-      await walk(k);
-    }
-  };
-  await walk(pid);
-  return out;
-}
 async function psEnv(pid: number) {
   try { return (await execFileP("ps", ["-E", "-o", "command=", "-p", String(pid)])).stdout; }
   catch { return ""; }
@@ -226,27 +203,6 @@ async function readProcEnv(pid: number) {
   try { return (await readFile(`/proc/${pid}/environ`, "utf8")).replace(/\0/g, "\n"); }
   catch { return psEnv(pid); }
 }
-async function listeners(pid: number) {
-  if (WIN) {
-    // Shaped like the lsof answer below so the loopback verdict reads both.
-    try {
-      return (await execFileP("netstat", ["-ano"])).stdout
-        .split(/\r?\n/)
-        .map((l) => l.trim().split(/\s+/))
-        .filter((f) => f[0] === "TCP" && f[3] === "LISTENING" && f[4] === String(pid))
-        .map((f) => `${f[1]} (LISTEN)`);
-    } catch {
-      return [];
-    }
-  }
-  try {
-    return (await execFileP("lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN"])).stdout
-      .split("\n").slice(1).filter(Boolean).map((l) => l.split(/\s+/).slice(-2).join(" "));
-  } catch {
-    return [];
-  }
-}
-
 type TurnResult = {
   text: string;
   parts: Record<string, number>;
@@ -430,7 +386,7 @@ async function main() {
   });
   const localHarness = await withLocalRuntimeBootstrap(harness, plan.runtime);
   const agent: any = new HarnessAgent({
-    harness: (AUTO_APPROVE ? withAutoApprovedNativeRequests(localHarness) : localHarness) as any,
+    harness: (AUTO_APPROVE ? withAnsweredNativeRequests(localHarness, APPROVE_NATIVE_REQUEST) : localHarness) as any,
     sandbox: provider,
     permissionMode: UNATTENDED ? plan.permissionMode : "allow-reads",
     instructions: "You are running a conformance check.",
@@ -489,8 +445,9 @@ async function main() {
   const tree = [bridgePid, ...kids];
   const envDump = (await Promise.all(tree.map(readProcEnv))).join("\n");
   if (envDump.includes(UPSTREAM_KEY_CANARY)) failures.push("the upstream model key reached a child process's environment");
-  const bridgeListeners = (await Promise.all(tree.map(listeners))).flat();
-  const offLoopback = bridgeListeners.filter((l) => !/^(127\.|\[?::1\]?:)/.test(l));
+  const bridgeListeners = await treeListeners(tree);
+  if (bridgeListeners === null) failures.push("a supervised process's listeners could not be read, so the loopback check proved nothing");
+  const offLoopback = (bridgeListeners ?? []).filter((l) => !isLoopbackListener(l));
   if (offLoopback.length > 0) failures.push(`a supervised process listened off loopback: ${JSON.stringify(offLoopback)}`);
   note(`tree: ${tree.length} processes; listeners ${JSON.stringify(bridgeListeners)}`);
 

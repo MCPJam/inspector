@@ -77,6 +77,7 @@ import {
   type BrowserActTarget,
   type BrowserCommand,
   type BrowserCommandCorrelation,
+  type BrowserCommandSecret,
   type ObservationStateToken,
   type WebMcpToolsRevision,
 } from "../../services/browserd/protocol.js";
@@ -94,6 +95,11 @@ import {
   BrowserProtocolMismatchError,
   type BrowserSessionHandle,
 } from "../../services/browserd/browser-session.js";
+import {
+  loopbackUrl,
+  openPreviewForNavigation,
+  type PreviewWorkspaceSource,
+} from "../../services/workspace-preview/workspace-tunnel.js";
 import type { BrowserContextMode } from "../../services/browserd/browser-sessions-client.js";
 import { BrowserSessionService } from "../../services/browserd/session-service.js";
 import { getConfiguredInspectorServiceToken } from "../../middleware/internal-service-auth.js";
@@ -110,9 +116,21 @@ import {
 } from "../computers/control-plane-client.js";
 import { planSecretPlaceholders } from "../secrets/secret-placeholders.js";
 import {
+  createFeatureCheck,
+  navigationStopFields,
+  requiredDaemonFeatures,
+  SECRET_TARGET_REQUIRED,
+  takeNavigationStop,
+  secretDeliveryOutcome,
+  type BrowserNavigationStop,
+  type BrowserSecretGate,
+  type BrowserSecretReport,
+} from "./browser-caller-options.js";
+import {
   createSecretScrubber,
   MIN_SCRUBBABLE_LENGTH,
 } from "../../../shared/secret-scrubber";
+import { authHeaderNow, type AuthHeaderSource } from "../run-bearer.js";
 
 // Re-exported so the server's existing importers keep their one import site;
 // the value itself now lives in `shared/client-fulfilled-tools.ts` beside the
@@ -223,7 +241,7 @@ export interface BrowserToolsOptions {
     holder?: { kind: "human" | "script" };
   }) => void;
   /** Bearer authorization forwarded to the control plane. */
-  authHeader: string;
+  authHeader: AuthHeaderSource;
   /** Local guest sessions have no member-owned cloud metadata or profiles. */
   localGuest?: boolean;
   /** Project whose computer this turn drives. */
@@ -240,8 +258,11 @@ export interface BrowserToolsOptions {
    * means every placeholder is refused.
    */
   secrets?: {
-    /** Materialized `{name, value}` pairs, already resolved for this turn. */
-    available: ReadonlyArray<{ name: string; value: string }>;
+    /**
+     * Materialized `{name, value}` pairs, already resolved for this turn.
+     * `origins`, when set, are the only pages the daemon types the value on.
+     */
+    available: ReadonlyArray<BrowserCommandSecret>;
     /**
      * Brokered names: injected at egress, so never typeable. Kept separate so
      * the refusal can say why.
@@ -249,7 +270,13 @@ export interface BrowserToolsOptions {
     brokered?: readonly string[];
     /** Fired with the NAMES (never values) that actually reached a browser. */
     onDelivered?: (names: readonly string[]) => void;
+    /** Awaited before a value leaves this process; a string refuses. */
+    beforeDeliver?: BrowserSecretGate;
+    /** Awaited once the daemon answers a command that carried values. */
+    afterDeliver?: BrowserSecretReport;
   };
+  /** Stop every navigation to this page before it loads; caller-only. */
+  navigationStop?: BrowserNavigationStop;
   /**
    * The host's Tool Approval switch.
    *
@@ -310,6 +337,8 @@ export interface BrowserToolsOptions {
    * produce one.
    */
   sandboxTarget?: { sandboxRowId: string; sandboxId: string; record?: boolean };
+  /** The shell's workspace, opened at `http://localhost:<port>`. */
+  previewWorkspace?: PreviewWorkspaceSource;
   ensureSession?: (args: {
     bearer: string;
     projectId: string;
@@ -517,11 +546,12 @@ interface CommandSender {
     options?: {
       timeoutMs?: number;
       signal?: AbortSignal;
-      secrets?: ReadonlyArray<{ name: string; value: string }>;
+      secrets?: ReadonlyArray<BrowserCommandSecret>;
     },
   ): Promise<{
     status: string;
     result?: {
+      stoppedAt?: string;
       ok: boolean;
       output?: unknown;
       error?: string;
@@ -814,7 +844,7 @@ class BrowserTurnState {
   async handle(signal?: AbortSignal): Promise<BrowserSessionHandle> {
     await this.verifyConsent();
     this.session ??= this.ensure({
-      bearer: this.opts.authHeader,
+      bearer: authHeaderNow(this.opts.authHeader),
       projectId: this.opts.projectId,
       contextMode: this.contextMode,
       ...(this.ownerKey ? { ownerKey: this.ownerKey } : {}),
@@ -1137,6 +1167,7 @@ export function buildBrowserTools(
     });
     return undefined;
   }
+  const checkFeatures = createFeatureCheck();
   const state = new BrowserTurnState(
     opts,
     opts.ensureSession ?? defaultEnsureSession(engine, opts),
@@ -1307,6 +1338,9 @@ export function buildBrowserTools(
       throw error;
     }
     lastBootId = handle.bootId;
+    const preview = await openPreviewForNavigation({ action, workspace: opts.previewWorkspace, handle });
+    if ("refusal" in preview) return { ok: false, error: preview.refusal, tabId: args.tabId ?? "@session" };
+    action = preview.action;
     const recovering = args.recovering === true;
     const tabId = args.tabId ?? "@session";
     const pinned = args.expectedState
@@ -1325,6 +1359,7 @@ export function buildBrowserTools(
     const command: BrowserCommand = {
       commandId,
       source: unattended ? "eval" : "chat",
+      ...navigationStopFields(opts.navigationStop),
       ...(correlation ? { correlation } : {}),
       ...(args.tabId ? { tabId: args.tabId } : {}),
       action:
@@ -1432,34 +1467,32 @@ export function buildBrowserTools(
               command.source,
             )
           : undefined;
-      // An older daemon would type the literal placeholder and report
-      // success, so check its features first.
-      if (args.secrets?.length) {
-        try {
-          const status = await handle.client.status({
-            ...(args.signal ? { signal: args.signal } : {}),
-          });
-          if (
-            status.kind !== "ok" ||
-            !status.features?.includes("secret-placeholders")
-          )
-            return {
-              ok: false,
-              error:
-                "secret_unsupported_daemon: this browser is running an older " +
-                "build that cannot fill in a {{secret:...}} placeholder, so " +
-                "nothing was typed. Ask the user to restart the browser " +
-                "session, or have them type the credential themselves.",
-              tabId,
-            };
-        } catch (error) {
-          return {
-            ok: false,
-            error: error instanceof Error ? error.message : String(error),
-            tabId,
-          };
-        }
-      }
+      // An older daemon would type the literal placeholder, or let the page
+      // the run ends on load, and report success: check its features first.
+      const refusal =
+        (await checkFeatures(
+          handle,
+          requiredDaemonFeatures({
+            secrets: args.secrets,
+            navigationStop: opts.navigationStop,
+          }),
+          args.signal,
+        )) ??
+        (args.secrets?.length
+          ? await opts.secrets?.beforeDeliver?.(
+              args.secrets.map((secret) => secret.name),
+              { commandId },
+            )
+          : undefined);
+      if (refusal) return { ok: false, error: refusal, tabId };
+      const reportDelivery = async (
+        answer: Parameters<typeof secretDeliveryOutcome>[0],
+      ) => {
+        if (!args.secrets?.length || !opts.secrets?.afterDeliver) return;
+        const names = args.secrets.map((secret) => secret.name);
+        const outcome = secretDeliveryOutcome(answer);
+        await opts.secrets.afterDeliver(names, { commandId, outcome });
+      };
       let response;
       try {
         // Approval, handoff and queue waits may outlive the grant checked at
@@ -1487,6 +1520,7 @@ export function buildBrowserTools(
         );
       } catch (error) {
         disarm?.();
+        await reportDelivery(undefined);
         if (args.signal?.aborted) {
           // Reported as a CANCELLATION, not as a transport failure: the model
           // (and the person reading the card) should see that the tool was
@@ -1502,6 +1536,10 @@ export function buildBrowserTools(
         throw error;
       }
       disarm?.();
+      await reportDelivery(response);
+      // The run reached its last page: the caller takes the URL, the model a note.
+      const stopped = takeNavigationStop(opts.navigationStop, response.result);
+      if (stopped) return { ...stopped, tabId };
       // A PERSON HAS THE BROWSER. Park instead of refusing, and come back with
       // a fresh look rather than with this command's result — which does not
       // exist, because the command was never run. @see browser-handoff.ts
@@ -1663,7 +1701,10 @@ export function buildBrowserTools(
           engine,
         )} (or go back / forward / reload). Returns the page ` +
         "after it settles — what you can act on (a11y with refs) AND a screenshot — " +
-        "so you do not need to observe separately before acting.",
+        "so you do not need to observe separately before acting." +
+        (opts.previewWorkspace
+          ? " Apps running on the shell's computer open at http://localhost:<port>."
+          : ""),
       inputSchema: z.object({
         url: z
           .string()
@@ -1684,11 +1725,14 @@ export function buildBrowserTools(
       }),
       needsApproval,
       execute: async (
-        { url, action, tabId, newTab },
+        { url: rawUrl, action, tabId, newTab },
         { abortSignal, toolCallId },
       ) => {
         const verb = action ?? "goto";
-        if (verb === "goto" && !url) return { error: "navigate needs a url" };
+        if (verb === "goto" && !rawUrl) return { error: "navigate needs a url" };
+        // Judged as the address the browser will open, so a 0.0.0.0 a dev
+        // server printed is allowed or refused as the localhost it becomes.
+        const url = rawUrl === undefined ? undefined : loopbackUrl(rawUrl);
         if (url && policy && !isOriginAllowed(url, policy.originAllowlist)) {
           // Enforced BEFORE the command leaves this process: an unattended run
           // must not reach an origin its policy never named.
@@ -1845,6 +1889,10 @@ export function buildBrowserTools(
           : selector
           ? { selector }
           : undefined;
+        const limited = secretPlan.deliver.some((secret) => secret.origins);
+        if (limited && (verb === "fill_form" || !ref)) {
+          return { error: SECRET_TARGET_REQUIRED };
+        }
         return presented(
           await send(
             {
@@ -2864,6 +2912,12 @@ export async function ensureHostedConversationSession(args: {
   ownerKind: BrowserSessionOwnerKind;
   hostId?: string;
   browserProfileId?: string;
+  /**
+   * The profile a fresh boot runs on, whatever the session was opened with:
+   * this archive, or a blank profile without one. A web account's browser
+   * passes it, so it never boots on the person's own default profile.
+   */
+  ownProfile?: { archive?: Uint8Array };
   target?: {
     kind: "sandbox";
     sandboxRowId: string;
@@ -2892,15 +2946,24 @@ export async function ensureHostedConversationSession(args: {
       "This conversation already uses a browser on another engine.",
     );
   const logicalSessionId = logical.sessionId;
-  const profileArchive =
-    logical.profileId && !logical.lastBootId
-      ? await new BrowserSessionService().downloadProfile({
-          projectId: args.projectId,
-          profileId: logical.profileId,
-          bearer: args.bearer,
-          ...(args.signal ? { signal: args.signal } : {}),
-        })
-      : null;
+  // A caller's own profile comes before the one the session was opened with,
+  // which for a conversation is the person's default browser profile.
+  // Its fresh boot also starts from an empty profile directory: an archive
+  // import only adds files, and a blank profile must carry nothing an earlier
+  // boot on this box left there.
+  const freshProfile = !logical.lastBootId && args.ownProfile !== undefined;
+  const profileArchive = logical.lastBootId
+    ? null
+    : args.ownProfile
+      ? (args.ownProfile.archive ?? null)
+      : logical.profileId
+        ? await new BrowserSessionService().downloadProfile({
+            projectId: args.projectId,
+            profileId: logical.profileId,
+            bearer: args.bearer,
+            ...(args.signal ? { signal: args.signal } : {}),
+          })
+        : null;
   let sandboxRowId: string | undefined = args.target?.sandboxRowId;
   let sandboxId: string | undefined = args.target?.sandboxId;
   const watched = args.ownerKind === "conversation";
@@ -2976,6 +3039,7 @@ export async function ensureHostedConversationSession(args: {
       ...(watched ? { watched: true as const } : {}),
     },
     ...(profileArchive ? { profileArchive } : {}),
+    ...(freshProfile ? { freshProfile: true } : {}),
     ...(args.signal ? { signal: args.signal } : {}),
   });
 }

@@ -57,6 +57,7 @@ import {
   callerContextFromHono,
 } from "../auth.js";
 import { ErrorCode, WebRouteError } from "../errors.js";
+import { SAVED_ACCOUNT_UNAVAILABLE } from "../../../utils/oauth-account-sets.js";
 import { parseChallengeHeader } from "@mcpjam/sdk";
 import { __resetPrivateAuthorizationServerMaterialCacheForTests } from "../../../utils/hosted-oauth-refresh.js";
 import { buildHostConnectionPins } from "../../../services/host-connection-pins.js";
@@ -278,9 +279,11 @@ describe("web auth manager batching", () => {
     global.fetch = vi.fn(async () => Response.json({results: {"server-1": {
       ok: true, role: "member", accessLevel: "project_member", permissions: {chatOnly: false},
       oauthAccessToken: "selected-token", oauthCredentialId: returnedId, oauthCredentialAuthorizedAt: 42,
+      oauthAccountSet: "applied",
+      oauthConnections: returnedId ? [{connectionId: returnedId, isDefault: false, accessToken: "selected-token", credentialAuthorizedAt: 42}] : [],
       serverConfig: {updatedAt: 123, transportType: "http", url: "https://fixture.example/mcp", useOAuth: true},
     }}})) as typeof fetch;
-    const run = createAuthorizedManager({}, "bearer", "project", ["server-1"], 10_000, undefined, undefined, {lazyConnect: true, onlySelectedConnections: true, connectionIds: {"server-1": "saved-account"}});
+    const run = createAuthorizedManager({}, "bearer", "project", ["server-1"], 10_000, undefined, undefined, {lazyConnect: true, connectionIdSets: {"server-1": ["saved-account"]}, accountSetRefusal: SAVED_ACCOUNT_UNAVAILABLE});
     if (returnedId !== "saved-account") {
       await expect(run).rejects.toThrow("The account saved with this task is unavailable");
       expect(mcpClientManagerMock).not.toHaveBeenCalled();
@@ -288,7 +291,8 @@ describe("web auth manager batching", () => {
     }
     const result = await run;
     const key = result.connectionsByServerId?.["server-1"][0]?.key;
-    expect(key).toBe("server-1#saved-account");
+    // The pinned account is the server's only connection, so it owns the bare key.
+    expect(key).toBe("server-1");
     if (!key) throw Error("Missing selected connection");
     const config = result.authorizedServerConfigs?.[key];
     if (!config || !("url" in config)) throw Error("Missing selected HTTP config");
@@ -297,7 +301,9 @@ describe("web auth manager batching", () => {
     expect(getManagerResourceSnapshot(result.manager, key)?.credentialAuthorizedAt).toBe(42);
     const wireBody = vi.mocked(global.fetch).mock.calls[0][1]?.body;
     if (typeof wireBody !== "string") throw Error("Missing authorization request body");
-    expect(JSON.parse(wireBody)).toMatchObject({includeConnections: true, connectionIds: {"server-1": "saved-account"}});
+    const sent = JSON.parse(wireBody);
+    expect(sent).toMatchObject({connectionIdSets: {"server-1": ["saved-account"]}});
+    expect(sent.includeConnections).toBeUndefined();
   });
 
   it.each([
@@ -319,12 +325,18 @@ describe("web auth manager batching", () => {
               oauthCredentialId: "saved-credential",
               oauthCredentialAuthorizedAt: 42,
               internalLogContext: { userId: "resolved-owner" },
+              // A pinned request is answered with only the pinned account.
+              ...(connectionId ? { oauthAccountSet: "applied" } : {}),
               oauthConnections: [
-                {
-                  connectionId: "other-account",
-                  accessToken: "other-token",
-                  isDefault: true,
-                },
+                ...(connectionId
+                  ? []
+                  : [
+                      {
+                        connectionId: "other-account",
+                        accessToken: "other-token",
+                        isDefault: true,
+                      },
+                    ]),
                 {
                   connectionId: "saved-account",
                   accessToken: "saved-token",
@@ -364,8 +376,8 @@ describe("web auth manager batching", () => {
       const authorization = JSON.parse(
         String(vi.mocked(global.fetch).mock.calls[0][1]?.body),
       );
-      expect(authorization.connectionIds).toEqual(
-        connectionId ? { "server-1": connectionId } : undefined,
+      expect(authorization.connectionIdSets).toEqual(
+        connectionId ? { "server-1": [connectionId] } : undefined,
       );
       const [configs, options] = mcpClientManagerMock.mock.calls[0];
       expect(options.lazyConnect).toBe(lazyConnect ? true : undefined);
@@ -433,22 +445,16 @@ describe("web auth manager batching", () => {
                 url: "https://fixture.example/mcp",
                 useOAuth: true,
               },
-              oauthConnections: [
-                {
-                  connectionId: "default",
-                  accessToken: "default-token",
-                  isDefault: true,
-                },
-                ...(revoked
-                  ? [
-                      {
-                        connectionId: "saved-account",
-                        accessToken: "stale-token",
-                        needsReauth: true,
-                      },
-                    ]
-                  : []),
-              ],
+              oauthAccountSet: "applied",
+              oauthConnections: revoked
+                ? [
+                    {
+                      connectionId: "saved-account",
+                      accessToken: "stale-token",
+                      needsReauth: true,
+                    },
+                  ]
+                : [],
             },
           },
         }),
@@ -1060,6 +1066,119 @@ describe("web auth manager batching", () => {
     ]);
   });
 
+  it.each([
+    ["explicit OAuth", { useOAuth: true }],
+    ["discover", { authMethod: "auto" }],
+  ])("refuses a recovered token bound to another origin than the server's (%s)", async (_label, auth) => {
+    // Pass 1b recovers the token locally from material for the server's NEW
+    // address: the connection reads the old one, so the token is held back,
+    // and a discover server reports it instead of connecting bare.
+    global.fetch = vi.fn(async (input) => {
+      const url = fetchUrl(input);
+      if (url.endsWith("/web/authorize-batch")) {
+        return Response.json({
+          results: {
+            "server-private": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              oauthUnavailableReason: "private_authorization_server",
+              serverConfig: {
+                transportType: "http",
+                url: "http://localhost:8000/mcp",
+                headers: {},
+                ...auth,
+              },
+            },
+          },
+        });
+      }
+      if (url.endsWith("/web/oauth/force-refresh")) {
+        return Response.json(
+          {
+            success: false,
+            code: "private_authorization_server",
+            message: "Authorization server is on a private address.",
+            refresh: {
+              connectionId: "cred-1",
+              authorizationServerUrl: "http://localhost:9000",
+              serverUrl: "http://localhost:8001/mcp",
+              oauthResourceUrl: "http://localhost:8001",
+              clientId: "client-1",
+              refreshToken: "stored-refresh-token",
+            },
+          },
+          { status: 409 },
+        );
+      }
+      if (url.endsWith("/web/oauth/import-tokens")) {
+        return Response.json({ success: true });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    }) as typeof fetch;
+    localRefreshMock.mockResolvedValue({ access_token: "moved-token" });
+
+    await expect(
+      createAuthorizedManager(
+        callerContextFromHono(mockContext),
+        "bearer-token",
+        "project-1",
+        ["server-private"],
+        10_000,
+      ),
+    ).rejects.toMatchObject({ status: 401 });
+    expect(localRefreshMock).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(mcpClientManagerMock.mock.calls)).not.toContain(
+      "moved-token",
+    );
+  });
+
+  it("refuses a discover server's recovered token when the refresh names no origins", async () => {
+    // The recovery names no account, so a backend answer without origins
+    // cannot tie the token to this server; no manager is built.
+    global.fetch = vi.fn(async (input) => {
+      const url = fetchUrl(input);
+      if (url.endsWith("/web/authorize-batch")) {
+        return Response.json({
+          results: {
+            "server-private": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              oauthUnavailableReason: "private_authorization_server",
+              serverConfig: {
+                transportType: "http",
+                url: "http://localhost:8000/mcp",
+                headers: {},
+                authMethod: "auto",
+              },
+            },
+          },
+        });
+      }
+      if (url.endsWith("/web/oauth/force-refresh")) {
+        return Response.json({ success: true, accessToken: "unplaced-token" });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    }) as typeof fetch;
+
+    await expect(
+      createAuthorizedManager(
+        callerContextFromHono(mockContext),
+        "bearer-token",
+        "project-1",
+        ["server-private"],
+        10_000,
+      ),
+    ).rejects.toMatchObject({
+      status: 401,
+      details: expect.objectContaining({ originRefused: true }),
+    });
+    expect(mcpClientManagerMock).not.toHaveBeenCalled();
+  });
+
   it("does not report refusals unless asked to tolerate them", async () => {
     global.fetch = vi.fn(async () =>
       Response.json({
@@ -1180,6 +1299,144 @@ describe("web auth manager batching", () => {
     expect(
       result.connectionsByServerId?.["server-1"].map((c) => c.connectionId),
     ).toEqual([a, b]);
+  });
+
+  it("connects only a suite's chosen account, under the bare server key", async () => {
+    const dummy = "b".repeat(32);
+    const requests: Array<{ body: any }> = [];
+    global.fetch = vi.fn(async (_input, init) => {
+      requests.push({ body: JSON.parse(String(init?.body)) });
+      return Response.json({
+        results: {
+          "server-1": {
+            ok: true,
+            role: "member",
+            accessLevel: "project_member",
+            permissions: { chatOnly: false },
+            serverConfig: {
+              updatedAt: 123,
+              transportType: "http",
+              url: "https://example.com/mcp",
+              headers: {},
+              useOAuth: true,
+            },
+            oauthAccountSet: "applied",
+            oauthAccessToken: "token-dummy",
+            oauthCredentialId: dummy,
+            oauthConnections: [
+              {
+                connectionId: dummy,
+                isDefault: false,
+                label: "Dummy",
+                accessToken: "token-dummy",
+              },
+            ],
+          },
+        },
+      });
+    }) as typeof fetch;
+    mcpClientManagerMock.mockClear();
+
+    const result = await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-1"],
+      10_000,
+      undefined,
+      undefined,
+      { connectionIdSets: { "server-1": [dummy] } },
+    );
+
+    expect(requests[0].body.connectionIdSets).toEqual({ "server-1": [dummy] });
+    expect(requests[0].body.includeConnections).toBeUndefined();
+    const configs = mcpClientManagerMock.mock.calls[0][0];
+    expect(Object.keys(configs)).toEqual(["server-1"]);
+    expect(
+      new Headers(configs["server-1"].requestInit.headers).get("authorization"),
+    ).toBe("Bearer token-dummy");
+    expect(result.connectionsByServerId?.["server-1"]).toEqual([
+      expect.objectContaining({ connectionId: dummy, key: "server-1" }),
+    ]);
+  });
+
+  it("connects the project accounts a person chose on a shared server", async () => {
+    const first = "e".repeat(32);
+    const second = "f".repeat(32);
+    const requests: Array<{ body: any }> = [];
+    global.fetch = vi.fn(async (_input, init) => {
+      requests.push({ body: JSON.parse(String(init?.body)) });
+      return Response.json({
+        results: {
+          "server-1": {
+            ok: true,
+            role: "member",
+            accessLevel: "project_member",
+            permissions: { chatOnly: false },
+            serverConfig: {
+              updatedAt: 123,
+              transportType: "http",
+              url: "https://example.com/mcp",
+              headers: {},
+              useOAuth: true,
+            },
+            // A shared server answers a set the way a personal one does,
+            // with the project's chosen accounts.
+            oauthAccountSet: "applied",
+            oauthAccessToken: "token-1",
+            oauthCredentialId: first,
+            oauthConnections: [
+              {
+                connectionId: second,
+                isDefault: false,
+                label: "test-automation-2",
+                displayName: "test-automation-2",
+                accessToken: "token-2",
+              },
+              {
+                connectionId: first,
+                isDefault: true,
+                label: "test-automation-1",
+                displayName: "test-automation-1",
+                accessToken: "token-1",
+              },
+            ],
+          },
+        },
+      });
+    }) as typeof fetch;
+    mcpClientManagerMock.mockClear();
+
+    const result = await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-1"],
+      10_000,
+      undefined,
+      undefined,
+      { connectionIdSets: { "server-1": [second, first] } },
+    );
+
+    expect(requests[0].body.connectionIdSets).toEqual({
+      "server-1": [second, first],
+    });
+    const configs = mcpClientManagerMock.mock.calls[0][0];
+    expect(Object.keys(configs).sort()).toEqual(
+      ["server-1", `server-1#${second}`].sort(),
+    );
+    // The project's default owns the bare key; the other chosen account its own.
+    expect(
+      new Headers(configs["server-1"].requestInit.headers).get("authorization"),
+    ).toBe("Bearer token-1");
+    expect(
+      new Headers(configs[`server-1#${second}`].requestInit.headers).get(
+        "authorization",
+      ),
+    ).toBe("Bearer token-2");
+    expect(
+      result.connectionsByServerId?.["server-1"].map((c) => c.label),
+    ).toEqual(["test-automation-2", "test-automation-1"]);
   });
 
   describe("a member's only login", () => {
@@ -1541,6 +1798,7 @@ describe("web auth manager batching", () => {
                 accessLevel: "project_member",
                 permissions: { chatOnly: false },
                 oauthAccessToken: "old-hosted-token",
+                oauthCredentialId: "cred-1",
                 serverConfig: {
                   transportType: "http",
                   url: "https://server-1.example.com/mcp",
@@ -1561,10 +1819,12 @@ describe("web auth manager batching", () => {
       expect(init?.headers).toEqual({
         "Content-Type": "application/json",
         Authorization: "Bearer bearer-token",
+        "x-mcpjam-delivery-contract": "1",
       });
       expect(JSON.parse(init?.body as string)).toEqual({
         projectId: "project-1",
         serverId: "server-1",
+        connectionId: "cred-1",
         // This builder is shared with the hosted /web routes, but in LOCAL
         // mode this process is the one that can reach a private authorization
         // server — so it declares that, exactly as the /api/mcp resolver does.
@@ -1663,6 +1923,7 @@ describe("web auth manager batching", () => {
               oauthResourceUrl: "http://localhost:8000",
               clientId: "client-1",
               refreshToken: "stored-refresh-token",
+              connectionId: "cred-1",
             },
           }),
           { status: 409, headers: { "Content-Type": "application/json" } }
@@ -1714,6 +1975,7 @@ describe("web auth manager batching", () => {
                 accessLevel: "project_member",
                 permissions: { chatOnly: false },
                 oauthAccessToken: "old-hosted-token",
+                oauthCredentialId: "cred-1",
                 serverConfig: {
                   transportType: "http",
                   url: "https://server-1.example.com/mcp",
@@ -1918,7 +2180,9 @@ describe("web auth manager batching", () => {
         serverName: "Asana",
       },
     });
-    expect(error.message).toContain("credential export policy");
+    expect(error.message).toContain(
+      "turn on Allow credential export in Organization settings under Security",
+    );
     // Authorizing again would mint a token the same policy withholds.
     expect(error.details?.oauthRequired).toBeUndefined();
   });
@@ -2187,6 +2451,7 @@ describe("web auth manager batching", () => {
               accessLevel: "project_member",
               permissions: { chatOnly: false },
               oauthAccessToken: "stored-token",
+              oauthCredentialId: "cred-1",
               serverConfig: {
                 transportType: "http",
                 url: "https://server-1.example.com/mcp",

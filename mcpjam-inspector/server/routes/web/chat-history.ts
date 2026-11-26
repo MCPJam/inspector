@@ -143,12 +143,52 @@ async function proxyPost(
 chatHistory.get("/list", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
-    const { projectId, status, limit, before } = c.req.query();
+    const { projectId, status, limit, before, includeMultiModelSiblings } =
+      c.req.query();
     return await proxyGet(bearerToken, "/direct-chat/list", {
       projectId,
       status,
       limit,
       before,
+      includeMultiModelSiblings,
+    });
+  }),
+);
+
+// GET /chat-history/group?groupId=...&projectId=...
+chatHistory.get("/group", async (c) =>
+  handleRoute(c, async () => {
+    const bearerToken = assertBearerToken(c);
+    const { groupId, projectId } = c.req.query();
+    if (!groupId) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "groupId is required",
+      );
+    }
+    return await proxyGet(bearerToken, "/direct-chat/group", {
+      groupId,
+      projectId,
+    });
+  }),
+);
+
+// GET /chat-history/group?groupId=...&projectId=...
+chatHistory.get("/group", async (c) =>
+  handleRoute(c, async () => {
+    const bearerToken = assertBearerToken(c);
+    const { groupId, projectId } = c.req.query();
+    if (!groupId) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "groupId is required",
+      );
+    }
+    return await proxyGet(bearerToken, "/direct-chat/group", {
+      groupId,
+      projectId,
     });
   }),
 );
@@ -157,7 +197,7 @@ chatHistory.get("/list", async (c) =>
 chatHistory.get("/detail", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
-    const { sessionId, chatSessionId, projectId } = c.req.query();
+    const { sessionId, chatSessionId, projectId, view } = c.req.query();
     if (!sessionId && !chatSessionId) {
       throw new WebRouteError(
         400,
@@ -169,6 +209,7 @@ chatHistory.get("/detail", async (c) =>
       sessionId,
       chatSessionId,
       projectId,
+      ...(view === "state" ? { view } : {}),
     });
     // The detail carries short-lived artifact links minted for this caller;
     // nothing between here and the browser may keep a copy.

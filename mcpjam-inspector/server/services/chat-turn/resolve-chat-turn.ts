@@ -1,3 +1,4 @@
+import { isWebClientRuntimeId } from "../../../shared/web-clients.js";
 import { externalAccountCredentialFor } from "../../../shared/external-credential-selection.js";
 import { markOnboardingPhase } from "../plugin-host/onboarding-trace.js";
 import { makeFunctionReference } from "convex/server";
@@ -34,6 +35,25 @@ export type ResolvedChatTurn = {
   selection: TurnServerSelection;
 };
 
+export function chatPreparationRequest(
+  projectId: string,
+  target: Extract<InternalExecutionTarget, { kind: "host" | "adhoc" }>,
+  selection: TurnServerSelection,
+) {
+  const runtimeVenue = resolveRuntimeVenue();
+  return {
+    projectId,
+    ...(target.kind === "host" ? { hostId: target.hostId } : {}),
+    ...(selection.kind === "explicit"
+      ? { serverOverrideIds: selection.serverIds }
+      : {}),
+    ...(selection.kind === "client-default"
+      ? { serverSelectionSource: "client-default" as const }
+      : {}),
+    ...(runtimeVenue ? { runtimeVenue } : {}),
+  };
+}
+
 /** Authenticated adapters supply access intent; the existing resolvers authorize it live. */
 export async function resolveChatTurn(args: {
   target: Exclude<InternalExecutionTarget, { kind: "scenario" }>;
@@ -43,6 +63,10 @@ export async function resolveChatTurn(args: {
   bearer: string;
   signal?: AbortSignal;
   prepareChatTurn?: boolean;
+  preparedChatTurn?: unknown;
+  /** A client's turn (`resolveEnvironmentForRuntime`). The backend's own
+   *  preparation always asks for it. */
+  skillScope?: "visible";
 }): Promise<ResolvedChatTurn> {
   if (
     !args.client ||
@@ -57,27 +81,21 @@ export async function resolveChatTurn(args: {
   }
   const composed = args.target.kind !== "environment";
   let preparedHost: { hostId: string; config: HostRuntimeConfig } | undefined;
-  if (args.prepareChatTurn && composed) {
+  if (
+    (args.prepareChatTurn || args.preparedChatTurn !== undefined) &&
+    args.target.kind !== "environment"
+  ) {
     let raw: unknown;
     try {
-      raw = await args.client.action(
-        makeFunctionReference<"action">("chatTurnPreparation:prepareChatTurn"),
-        {
-          projectId: args.access.projectId,
-          ...(args.target.kind === "host"
-            ? { hostId: args.target.hostId }
-            : {}),
-          ...(args.selection.kind === "explicit"
-            ? { serverOverrideIds: args.selection.serverIds }
-            : {}),
-          ...(args.selection.kind === "client-default"
-            ? { serverSelectionSource: "client-default" }
-            : {}),
-          ...(resolveRuntimeVenue()
-            ? { runtimeVenue: resolveRuntimeVenue() }
-            : {}),
-        },
-      );
+      raw = args.preparedChatTurn !== undefined
+        ? args.preparedChatTurn
+        : await args.client.action(
+            makeFunctionReference<"action">("chatTurnPreparation:prepareChatTurn"),
+            chatPreparationRequest(args.access.projectId, args.target, args.selection),
+          );
+      if (isRecord(raw) && raw.kind === "failed") {
+        throw { data: raw.errorData };
+      }
     } catch (error) {
       if (args.signal?.aborted) throw error;
       if (error instanceof Error && error.name === "TimeoutError") {
@@ -137,7 +155,7 @@ export async function resolveChatTurn(args: {
     const harness = raw.runtimeConfig.agentLoop ?? raw.runtimeConfig.harness;
     if (
       typeof harness !== "string" ||
-      !externalAccountCredentialFor(harness) ||
+      (!externalAccountCredentialFor(harness) && !isWebClientRuntimeId(harness)) ||
       (args.target.kind === "host" && raw.hostId !== args.target.hostId)
     ) {
       throw new WebRouteError(
@@ -177,6 +195,7 @@ export async function resolveChatTurn(args: {
     ...(args.selection.kind === "explicit"
       ? { overrides: { serverIds: args.selection.serverIds } }
       : {}),
+    ...(args.skillScope ? { skillScope: args.skillScope } : {}),
   });
   if (
     composition &&

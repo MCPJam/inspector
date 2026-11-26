@@ -179,6 +179,7 @@ export interface HostedElicitationBridgeOptions {
    * `sk_…` key Convex cannot verify.
    */
   convexBearer: string;
+  getConvexBearer?: () => Promise<string>;
   projectId: string;
   chatSessionId?: string;
   /** Remote harness requests are delivered by the actor-owned chat query. */
@@ -508,7 +509,11 @@ export class HostedElicitationBridge {
               : controller.signal,
           }),
       });
-      client.setAuth(stripBearer(this.options.convexBearer));
+      client.setAuth(
+        stripBearer(this.options.getConvexBearer
+          ? await this.options.getConvexBearer()
+          : this.options.convexBearer),
+      );
       const input = {
         rendezvousId: args.rendezvousId,
         projectId: this.options.projectId,

@@ -4,6 +4,7 @@ import { localServerCheckQueue } from "./utils/local-server-check-queue.js";
 import { registerBrowserController } from "./services/browserd/local/security-policy.js";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
+import { createLocalMrtrStream } from "./routes/web/local-mrtr-stream.js";
 import fixPath from "fix-path";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -26,6 +27,10 @@ import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { MCPClientManager } from "@mcpjam/sdk";
 import {
+  applyInspectorUserAgent,
+  withDefaultUserAgent,
+} from "./utils/outbound-user-agent.js";
+import {
   getInspectorClientRuntimeConfigScript,
   loadInspectorEnv,
   warnOnConvexDevMisconfiguration,
@@ -34,6 +39,10 @@ import { startTelemetryCanary } from "./utils/telemetry-canary.js";
 import { initServerSentry } from "./sentry.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy";
 import { cacheEventLogger } from "./utils/cache-events";
+import {
+  flushPendingHostedObservations,
+  recordLocalObservation,
+} from "./services/server-canvas/observation-recorders";
 import { negotiationTelemetryLogger } from "./utils/negotiation-telemetry";
 
 // Security imports
@@ -51,6 +60,7 @@ import {
   scrubTokenFromUrl,
 } from "./middleware/session-auth";
 import { originValidationMiddleware } from "./middleware/origin-validation";
+import { localHostAllowlistMiddleware } from "./middleware/local-host-allowlist";
 import {
   documentScriptNonce,
   securityHeadersMiddleware,
@@ -66,6 +76,7 @@ import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
 import { startLocalHarnessJanitor } from "./utils/harness/local/scratch-janitor.js";
 import { startLocalHarnessRuntimeMaintenance } from "./utils/harness/local/runtime-install.js";
+import { shutdownLocalTurnParks } from "./utils/harness/local/approval-park.js";
 
 import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
@@ -174,7 +185,14 @@ import {
   applySandboxHostPartition,
   assertSandboxIsolation,
 } from "./middleware/sandbox-host-partition";
+import { mountLocalSandboxViewHost } from "./middleware/local-sandbox-view-host";
+import {
+  createLocalConnectorRoutes,
+  mountInspectorWebConnectors,
+} from "./services/web-clients/inspector-endpoint.js";
+import { mountWebClientRuntime } from "./services/web-clients/runtime-mount.js";
 import { assertHostedFirstPartyMcpUrls } from "./utils/hosted-mcp-base-fetch.js";
+import { loadPrivateEgressAllowlist } from "./utils/hosted-egress-guard.js";
 import webRoutes from "./routes/web/index";
 import internalServerConnections from "./routes/internal/server-connections.js";
 import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completions.js";
@@ -204,6 +222,7 @@ import { createXaaWebRouter } from "./routes/web/xaa";
 import workosAuthkitRoutes from "./routes/workos-authkit";
 import { resolveWorkosApiBaseUrl } from "./services/workos-api-base.js";
 import { resolveTrustedClientIpHeader } from "./utils/client-ip.js";
+import { loadFeatureFlagFileAtBoot } from "./utils/feature-flag-source.js";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningJourneyRuns } from "./services/sessionSimulation/swarm-runner";
@@ -234,6 +253,7 @@ import {
 import "./types/hono"; // Type extensions
 import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
 import { buildHealthMeta } from "./utils/health-payload.js";
+import { createWebReconnectRoutes } from "./services/web-clients/recovery/reconnect-route.js";
 
 // Utility function to extract MCP server config from environment variables
 function getMCPConfigFromEnv() {
@@ -417,6 +437,7 @@ const app = new Hono().onError((err, c) => {
 // registered on this app below; `injectWebSocket` is called on the node
 // server after `serve()` at the bottom of this file.
 const { upgradeWebSocket, injectWebSocket } = createNodeWebSocket({ app });
+const localMrtrStream = createLocalMrtrStream(upgradeWebSocket);
 const strictModeResponse = (c: any, path: string) =>
   c.json(
     {
@@ -426,11 +447,16 @@ const strictModeResponse = (c: any, path: string) =>
     410,
   );
 
+applyInspectorUserAgent();
+
 // Initialize centralized MCPJam Client Manager and wire RPC logging to SSE bus
 const mcpClientManager = new MCPClientManager(
   {},
   {
+    baseFetch: withDefaultUserAgent(),
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+    // Observed server features, filed under each connection's own context.
+    featureObserver: (event) => recordLocalObservation(mcpClientManager, event),
     rpcLogger: ({ direction, message, serverId }) => {
       rpcLogBus.publish({
         serverId,
@@ -460,6 +486,14 @@ const mcpClientManager = new MCPClientManager(
     negotiationOutcomeLogger: negotiationTelemetryLogger("local-inspector"),
   },
 );
+// Local App documents answer their own `localhost` subdomains before any
+// other middleware or route sees the request.
+mountLocalSandboxViewHost(app);
+// Claude web and ChatGPT web reach the project's server here. claude.ai
+// stops after `initialize` when the app's own headers ride along, so this
+// answers before the global middleware too.
+mountInspectorWebConnectors(app);
+
 // Middleware to inject client manager into context
 app.use("*", async (c, next) => {
   c.mcpClientManager = mcpClientManager;
@@ -476,6 +510,9 @@ app.use("*", securityHeadersMiddleware);
 // 1b. Indexing directive. Host-scoped, so it is its own middleware rather
 // than another line in the security headers — see indexing-headers.ts.
 app.use("*", indexingHeadersMiddleware);
+
+// 1c. Host allowlist (blocks DNS rebinding), local mode only.
+if (!HOSTED_MODE) app.use("*", localHostAllowlistMiddleware);
 
 // 2. Origin validation (blocks CSRF/DNS rebinding)
 app.use("*", originValidationMiddleware);
@@ -503,6 +540,9 @@ if (HOSTED_MODE) {
   // mid-turn, one turn at a time, with the reason buried in a per-request
   // error. This says it once, names the variable, and stops.
   assertHostedFirstPartyMcpUrls();
+  // Parsed now rather than on the first private dial, so an invalid
+  // MCPJAM_PRIVATE_EGRESS_ALLOWLIST is reported at boot, not mid-request.
+  loadPrivateEgressAllowlist();
 }
 
 // 5. Session authentication (blocks unauthorized API requests)
@@ -544,15 +584,20 @@ app.use("/api/*", sentryRequestIdentityMiddleware);
 app.use("/api/*", requestLogContextMiddleware);
 
 // API Routes
+mountWebClientRuntime(app);
 if (!HOSTED_MODE) {
   app.route("/api/apps", appsRoutes);
   app.route("/api/mcp", mcpRoutes);
+  app.route("/api/web-clients/local-connectors", createLocalConnectorRoutes());
 } else {
   // Only the hosted-open paths (health + public model catalog) are mounted;
   // the rest of /api/mcp and /api/apps stays 410'd by applyHostedPartition.
   // Mirror of server/app.ts — both entries share mountHostedOpenRoutes.
   mountHostedOpenRoutes(app);
 }
+// A person hands a web account back after signing it in, and its paused
+// runs resume. Hosted only in effect: it needs the backend's service credential.
+app.route("/api/web-clients/reconnect", createWebReconnectRoutes());
 // Construct after loadInspectorEnv() so hosted confidential CIMD observes
 // Inspector dotenv configuration and malformed configured keys fail startup.
 app.route("/api/web/xaa", createXaaWebRouter());
@@ -642,6 +687,7 @@ if (!HOSTED_MODE) {
 // stream. Auth is the ordinary session token on `Sec-WebSocket-Protocol` —
 // see routes/web/webmcp-frames.
 if (!HOSTED_MODE) {
+  app.get("/api/web/mcp/mrtr/stream", localMrtrStream.handler);
   app.get(
     "/api/web/webmcp/sessions/:id/frames",
     createWebMcpFramesWsHandler(upgradeWebSocket),
@@ -681,6 +727,10 @@ resolveWorkosApiBaseUrl(process.env);
 // that is not one header name fails here, not in every request that asks for a
 // client address. Unset, this is a no-op.
 resolveTrustedClientIpHeader(process.env);
+// And `MCPJAM_FEATURE_FLAGS_FILE` (mirror of server/app.ts): a missing or
+// malformed file is reported on stderr now, not at the first flag evaluation.
+// Unset, this is a no-op.
+loadFeatureFlagFileAtBoot();
 
 // Mounted in EVERY runtime, hosted included. AuthKit's `initialize()` makes no
 // network call at all unless the page's own cookies carry `workos-has-session`
@@ -1103,6 +1153,7 @@ async function shutdown() {
     // Same reason, same moment: a frame socket is an established connection
     // that `server.close()` would leave attached to an exiting process.
     shutdownWebMcpFrameSockets();
+    localMrtrStream.shutdown();
     // Same again for the agent browser's own viewport sockets.
     shutdownLocalBrowserFrameSockets();
     // Hosted panes too: an established WS survives `server.close()`.
@@ -1115,10 +1166,15 @@ async function shutdown() {
     // the context is what makes Chromium release its profile's singleton lock,
     // so a skipped teardown here is a browser the NEXT run cannot launch.
     await shutdownLocalBrowserSessions();
+    // Local runtimes kept between turns stop with this Inspector rather than
+    // run detached until the next boot's janitor (bounded internally).
+    await shutdownLocalTurnParks();
     server.close();
     // Flush queued server-side analytics (bounded internally; forceExitTimer
     // is the backstop). Billing/funnel events must not die in the queue.
-    await shutdownAnalytics();
+    // Hosted observed server features still inside their flush interval go
+    // out alongside, bounded the same way.
+    await Promise.all([shutdownAnalytics(), flushPendingHostedObservations()]);
     await appLogger.flush();
     clearTimeout(forceExitTimer);
     process.exit(0);

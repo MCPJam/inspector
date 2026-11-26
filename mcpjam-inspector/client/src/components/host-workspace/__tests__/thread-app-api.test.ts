@@ -3,6 +3,8 @@ import { PLUGIN_FILE_METADATA_HEADER } from "@/shared/plugin-file-headers";
 import { PLUGIN_APP_REPLY_MAX_BYTES } from "@/shared/plugin-app-ui-limits";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createThreadAppApi, type ThreadAppHandle } from "../thread-app-api";
+// This suite isolates the existing transport; the real preflight composition has its own suite.
+vi.mock("@/lib/plugin-operation-authorization", () => ({ withPluginOperationAuthorization: async (_operation: unknown, _signal: unknown, _renew: unknown, send: () => Promise<unknown>) => send() }));
 const fetch = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/session-token", () => ({ authFetch: fetch }));
 const scope = {

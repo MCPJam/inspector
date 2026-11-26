@@ -70,8 +70,8 @@ function assertUploadToggles(
       "Upload refused: File resources is turned off for this client",
     );
 }
-function fileAuthority(options: PluginFormServiceOptions) {
-  const service = createPluginFormAuthority(options);
+async function fileAuthority(options: PluginFormServiceOptions) {
+  const service = await createPluginFormAuthority(options);
   let scope: ExecutionScope | undefined;
   const authorize = async () => {
     const current = await service.authorize();
@@ -90,9 +90,9 @@ function fileAuthority(options: PluginFormServiceOptions) {
   return { ...service, authorize, executionScope: () => scope };
 }
 export async function describePluginFormFiles(
-  options: PluginFormServiceOptions,
+  options: PluginFormServiceOptions & { includeOperation?: true },
 ) {
-  const service = createPluginFormAuthority(options);
+  const service = await createPluginFormAuthority(options);
   try {
     const current = await service.authorize();
     const available = uploadsAvailable(
@@ -101,6 +101,23 @@ export async function describePluginFormFiles(
       service.source.owner.serverId,
     );
     return {
+      ...(options.includeOperation &&
+      current.extensions?.capabilities.forms !== false &&
+      (service.source.origin === "app" ||
+        service.source.origin === "settings") &&
+      service.source.parent.kind === "legacy"
+        ? {
+            operation: {
+              projectId: service.source.owner.projectId,
+              workspaceId: service.source.owner.workspaceId,
+              instanceId: service.source.owner.instanceId,
+              generation: service.source.owner.generation,
+              serverId: service.source.owner.serverId,
+              invocationId: service.source.invocationId,
+              expiresAt: service.source.expiresAt,
+            },
+          }
+        : {}),
       userResources: available,
       userResourceKinds: available
         ? ["file" as const, "directory" as const]
@@ -124,7 +141,7 @@ export async function uploadPluginFormFiles(
     files: PluginFormUploadFile[];
   },
 ) {
-  const service = fileAuthority(options);
+  const service = await fileAuthority(options);
   try {
     formUploadInput(service.source, options.field);
     // On the project's Computer the bytes go to the VM through this

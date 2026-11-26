@@ -3,11 +3,15 @@ import type { ConformanceReport } from "./conformance-reporting.js";
 import type { ConformanceSuiteKind } from "./conformance-run-types.js";
 import {
   AUTHORIZATION_REQUIRED_MESSAGE,
-  authorizationRequiredDetails,
   isAuthorizationRefusal,
 } from "./conformance-authorization.js";
+import {
+  loginRequiredDetails,
+  type ConformanceCredentialSource,
+} from "./conformance-login.js";
 import { withEphemeralClient } from "./operations.js";
 import { withAbortSignalFetch } from "./abort-signal.js";
+import { http1Fetch } from "./http1-fetch.js";
 import {
   isKnownProtocolVersion,
   type McpProtocolVersion,
@@ -49,7 +53,7 @@ export async function resolveRunProtocolVersion(
     {
       ...server,
       baseFetch: withAbortSignalFetch(
-        config.protocol?.fetchFn ?? serverConfigFetch(server) ?? fetch,
+        config.protocol?.fetchFn ?? serverConfigFetch(server) ?? http1Fetch,
         config.protocol?.signal
       ),
       timeout: server.timeout ?? config.protocol?.checkTimeout,
@@ -66,10 +70,15 @@ export async function resolveRunProtocolVersion(
   );
 }
 
-/** A connection failure leaves the requested checks untested, never passing. */
+/**
+ * A connection failure leaves the requested checks untested, never passing.
+ * A 401 is the caller's login to fix, so it costs no point; the run still
+ * establishes nothing and stays incomplete.
+ */
 export function unresolvedVersionReport(
   kind: ConformanceSuiteKind,
-  error: unknown
+  error: unknown,
+  credentials?: ConformanceCredentialSource
 ): ConformanceReport {
   const needsAuthorization = isAuthorizationRefusal(error);
   const message = needsAuthorization
@@ -88,7 +97,7 @@ export function unresolvedVersionReport(
     score: {
       score: null,
       outcome: "incomplete",
-      applicable: 1,
+      applicable: needsAuthorization ? 0 : 1,
       passed: 0,
       failed: 0,
       couldNotRun: 1,
@@ -114,7 +123,7 @@ export function unresolvedVersionReport(
             durationMs: 0,
             error: message,
             ...(needsAuthorization
-              ? { details: authorizationRequiredDetails(error) }
+              ? { details: loginRequiredDetails(error, credentials) }
               : {}),
           },
         ],

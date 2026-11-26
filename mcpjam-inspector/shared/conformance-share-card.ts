@@ -12,9 +12,10 @@
  * and the wordmark as a data URL.
  *
  * The rules ScoreHeadline keeps hold here too: the denominator and protocol
- * version travel with the number; checks that do not apply, could not run,
- * need input or are not scored yet are said rather than folded in; and a run
- * with nothing applicable has no card.
+ * version travel with the number; checks that do not apply, could not run
+ * or are not scored yet are said rather than folded in; and a run with
+ * nothing applicable has no card. Checks that only need an input are left off
+ * the card: they hold nothing back, so they are not news.
  */
 
 import {
@@ -177,13 +178,9 @@ export function shareCardSuiteStatus(suite: ShareCardSuite): {
 
 /** The parts of the checks line, each a count the score did not fold in. */
 export function shareCardChecksParts(data: ConformanceShareCardData): string[] {
-  const needsInput = needsInputCount(data);
-  const otherUnrun = data.couldNotRun - needsInput;
+  const otherUnrun = data.couldNotRun - needsInputCount(data);
   const parts = [`${data.passed}/${data.applicable} checks passed`];
   if (data.failed > 0) parts.push(`${data.failed} failed`);
-  if (needsInput > 0) {
-    parts.push(`${needsInput} ${needsInput === 1 ? "needs" : "need"} input`);
-  }
   if (otherUnrun > 0) parts.push(`${otherUnrun} could not run`);
   if (data.pending > 0) parts.push(`${data.pending} not scored yet`);
   if (data.notApplicable > 0) parts.push(`${data.notApplicable} n/a`);
@@ -307,14 +304,15 @@ function round(value: number): number {
 }
 
 /**
- * A bar's unrun checks: those that could not run in amber, then those that
- * need an input in grey, as the app's score bar draws them.
+ * A bar's segments: only the scored checks (passed, failed, could not run),
+ * so a run that passes everything it scores fills its bar green. Unlike the
+ * app's score bar, checks that need an input or do not apply get no segment.
  */
-function unrunSegments(counts: CheckCounts): Array<[number, string]> {
-  const needsInput = needsInputCount(counts);
+function scoredSegments(counts: CheckCounts): Array<[number, string]> {
   return [
-    [counts.couldNotRun - needsInput, COLOR.warn],
-    [needsInput, COLOR.faint],
+    [counts.passed, COLOR.ok],
+    [counts.failed, COLOR.bad],
+    [counts.couldNotRun - needsInputCount(counts), COLOR.warn],
   ];
 }
 
@@ -354,11 +352,7 @@ function suiteRow(
           barY,
           SUITE_BAR_WIDTH,
           6,
-          [
-            [suite.passed, COLOR.ok],
-            [suite.failed, COLOR.bad],
-            ...unrunSegments(suite),
-          ],
+          scoredSegments(suite),
           2,
           false,
         ) +
@@ -487,20 +481,7 @@ export function buildConformanceShareCardSvg(
     ...suites.map((suite, index) =>
       suiteRow(suite, index, rowHeight, index === suites.length - 1),
     ),
-    segments(
-      72,
-      522,
-      FOOTER_WIDTH,
-      10,
-      [
-        [data.passed, COLOR.ok],
-        [data.failed, COLOR.bad],
-        ...unrunSegments(data),
-        [data.notApplicable, COLOR.track],
-      ],
-      3,
-      true,
-    ),
+    segments(72, 522, FOOTER_WIDTH, 10, scoredSegments(data), 3, true),
     ...checksLines.map((line, index) =>
       text(72, 570 + index * FOOTER_LINE_HEIGHT, line, {
         family: FAMILY.mono,

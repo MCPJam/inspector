@@ -59,7 +59,7 @@ describe("global App pending form presentation", () => {
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "inside takeover" } });
     view.rerender(<CardOwner />);
     expect(screen.getByRole("textbox")).toHaveValue("inside takeover");
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel form" }));
     await waitFor(() => expect(respond).toHaveBeenCalledWith("cancel", undefined));
     releaseSlot();
     background.remove();

@@ -466,6 +466,22 @@ describe("classifyEvalInfraError — harness producers", () => {
         httpStatus: 429,
       }),
     ).toMatchObject({ class: "account_limit", layer: "platform" });
+    // The Free native harness trial, refused at the lease or before the
+    // computer boots: an account limit no retry lifts.
+    expect(
+      classifyEvalInfraError({
+        source: "platform_setup",
+        code: "native_harness_trial_exhausted",
+        httpStatus: 403,
+      }),
+    ).toMatchObject({ class: "account_limit", layer: "platform", retryable: false });
+    expect(
+      classifyEvalInfraError({
+        source: "sandbox_setup",
+        code: "native_harness_trial_exhausted",
+        httpStatus: 409,
+      }),
+    ).toMatchObject({ class: "account_limit", retryable: false });
     // A box that is gone is the sandbox layer whoever reported it.
     expect(
       classifyEvalInfraError({
@@ -773,5 +789,32 @@ describe("resolveIterationInfraError", () => {
         "platform",
       ),
     ).toBeUndefined();
+  });
+});
+
+describe("classifyEvalInfraError — a web client turn that stopped on the vendor's page", () => {
+  it.each([
+    ["needs_sign_in", "auth", "platform", false],
+    ["plan_limit", "account_limit", "platform", false],
+    ["turn_running", "capacity", "platform", true],
+    ["page_changed", "provider_unavailable", "platform", false],
+    ["send_ambiguous", "provider_unavailable", "platform", false],
+    ["driver", "sandbox", "sandbox", true],
+    ["connector_not_found", "configuration", "platform", false],
+  ] as const)("is the run's failure when the page stopped with %s", (code, cls, layer, retryable) => {
+    expect(classifyEvalInfraError({ source: "web_client", code })).toEqual({
+      class: cls,
+      layer,
+      retryable,
+      code,
+    });
+  });
+
+  it("keeps counting a stop the server under test can cause", () => {
+    // The vendor's app couldn't reach the connector (a server that is down),
+    // or the reply never finished (a tool call that hangs).
+    for (const code of ["connector_failed", "reply_timeout", "anything_else", undefined]) {
+      expect(classifyEvalInfraError({ source: "web_client", ...(code ? { code } : {}) }), String(code)).toBeUndefined();
+    }
   });
 });

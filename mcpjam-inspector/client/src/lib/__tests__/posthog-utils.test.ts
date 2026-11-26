@@ -95,7 +95,6 @@ describe("PosthogUtils", () => {
     // `register` feeds EVENTS; `/flags` evaluates PERSON properties. Without
     // this call a `deployment = self_hosted` flag rule matches nobody.
     expect(posthog.setPersonPropertiesForFlags).toHaveBeenCalledWith({
-      local_browser_security_version: "1",
       deployment: "self_hosted",
       platform: expect.any(String),
     });
@@ -246,6 +245,47 @@ describe("PosthogUtils", () => {
       // opt_out_capturing_by_default suppresses sending, not loading.
       expect(opts.disable_session_recording).toBe(true);
       expect(opts.capture_exceptions).toBe(false);
+    });
+
+    it("DO_NOT_TRACK from the server: opted out, no remote loading, flags still bootstrapped", async () => {
+      vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+      window.__MCP_RUNTIME_CONFIG__ = { doNotTrack: true };
+      try {
+        vi.resetModules();
+        const { getPostHogOptions, isPostHogDisabled } = await import(
+          "../PosthogUtils"
+        );
+        const { recordingSurface } = await import("../session-privacy");
+        const opts = getPostHogOptions({
+          "evaluate-enabled": true,
+        }) as Record<string, any>;
+
+        expect(isPostHogDisabled).toBe(true);
+        expect(recordingSurface()).toBe("off");
+        expect(opts.opt_out_capturing_by_default).toBe(true);
+        expect(opts.disable_session_recording).toBe(true);
+        expect(opts.capture_exceptions).toBe(false);
+        // Not even the remote config or survey loads the opted-out branch
+        // otherwise still makes through the relay.
+        expect(opts.advanced_disable_flags).toBe(true);
+        expect(opts.disable_surveys).toBe(true);
+        expect(opts.disable_external_dependency_loading).toBe(true);
+        // Flags are the server's answers, handed over at init.
+        expect(opts.bootstrap.featureFlags).toEqual({ "evaluate-enabled": true });
+      } finally {
+        delete window.__MCP_RUNTIME_CONFIG__;
+      }
+    });
+
+    it("the opted-out branch without DO_NOT_TRACK keeps its remote config", async () => {
+      vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "true");
+      vi.resetModules();
+      const { getPostHogOptions } = await import("../PosthogUtils");
+      const opts = getPostHogOptions() as Record<string, unknown>;
+
+      expect(opts.advanced_disable_flags).toBeUndefined();
+      expect(opts.disable_surveys).toBeUndefined();
     });
 
     it("treats bearer-credential share URLs as credential paths", async () => {

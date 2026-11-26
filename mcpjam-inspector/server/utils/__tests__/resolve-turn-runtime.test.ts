@@ -40,6 +40,7 @@ import {
   resolveTurnRuntime,
   classifyTurnFailure,
 } from "../resolve-turn-runtime.js";
+import { getEffectiveSkillToolsAndPrompt } from "../computers/effective-skill-tools.js";
 import type { UnifiedTurnResult } from "../turn-execution.js";
 
 const MCPJAM_MODEL: ModelDefinition = {
@@ -211,56 +212,74 @@ describe("resolveTurnRuntime — runtime shape", () => {
     ).not.toHaveProperty("maxOutputTokens");
   });
 
-  it("external account WITH a harness is refused here — this surface cannot deliver the credential", async () => {
-    // The host's model id names no provider model, so there is no org provider
-    // to resolve and no MCPJam credential to spend — and the resolver no longer
-    // ships `providerKey: "cursor"` to `/stream/org`, which Convex answered
-    // with `provider_not_configured: cursor`.
-    //
-    // But "not a provider question" is not the same as "runnable". An
-    // external-account runtime authenticates with the customer's own vendor
-    // credential, which `runHarnessTurn` takes ONLY from the caller's
-    // materialized project secrets — and `runUnifiedAssistantTurn`, the facade
-    // every caller of this resolver drives, has no `runtimeSecrets` seam at
-    // all. Handing back a runnable "hosted + harness" runtime advertised a turn
-    // that then died inside the harness telling the user to add a
-    // `CURSOR_API_KEY` secret they may already have set. Refuse instead, with
-    // the real reason, before the caller marks the turn as possibly-spent.
-    resolveSyntheticModelSourceMock.mockResolvedValue({
-      source: "external-account",
-    });
+  it.each(["swarm", "eval", "direct"] as const)(
+    "a Cursor client on a %s run is a harness turn on the organization's key",
+    async (sourceType) => {
+      // The sentinel names no provider model, so nothing is resolved against
+      // an org provider; the turn's own check of the org key runs in
+      // `runHarnessTurn`, before any box is reserved.
+      resolveSyntheticModelSourceMock.mockResolvedValue({
+        source: "external-account",
+      });
 
-    await expect(
-      resolveTurnRuntime(
-        baseArgs({ modelDefinition: CURSOR_SENTINEL_MODEL, harness: "cursor" }),
-      ),
-    ).rejects.toThrow(/cursor\/auto[\s\S]*your own account/);
-    // Not "add a secret" — the diagnosis names the surface, not the customer.
-    await expect(
-      resolveTurnRuntime(
-        baseArgs({ modelDefinition: CURSOR_SENTINEL_MODEL, harness: "cursor" }),
-      ),
-    ).rejects.toThrow(/cannot deliver that credential/);
-    // And no round-trip that could answer `provider_not_configured`.
+      const rt = await resolveTurnRuntime(
+        baseArgs({
+          modelDefinition: CURSOR_SENTINEL_MODEL,
+          harness: "cursor",
+          sourceType,
+        }),
+      );
+
+      expect(rt.modelSource).toBe("external-account");
+      expect(rt.runtime).toEqual({
+        kind: "hosted",
+        endpointPath: "/stream",
+        harness: "cursor",
+      });
+      await rt.finalizeUsage(successResult());
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("a Cursor client is refused in User Testing session simulation, whatever the model, before anything resolves", async () => {
+    for (const modelDefinition of [CURSOR_SENTINEL_MODEL, MCPJAM_MODEL]) {
+      await expect(
+        resolveTurnRuntime(
+          baseArgs({ modelDefinition, harness: "cursor", sourceType: "scenario" }),
+        ),
+      ).rejects.toThrow(
+        "Cursor CLI runs only in the Playground, evals, swarms and the API. " +
+          "Choose a different client for this study.",
+      );
+    }
+    expect(resolveSyntheticModelSourceMock).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("external account without a harness is refused, not routed to a provider", async () => {
-    // A sentinel on a turn with no harness selected cannot run at all. Saying
-    // so here — before the caller marks the turn as possibly-spent — is what
-    // replaces `provider_not_configured: cursor`, which read as "go configure
-    // a key" for a provider that has no keys.
-    resolveSyntheticModelSourceMock.mockResolvedValue({
-      source: "external-account",
-    });
-
-    // The OTHER refusal sentence: this one is about the sentinel itself, not
-    // about what this surface can deliver, so the two arms stay legible apart.
-    await expect(
-      resolveTurnRuntime(baseArgs({ modelDefinition: CURSOR_SENTINEL_MODEL })),
-    ).rejects.toThrow(/cursor\/auto[\s\S]*not a model MCPJam can run/);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
+  it.each(["direct", "event", "swarm"] as const)(
+    "the sentinel without its harness is refused on %s, not routed to a provider",
+    async (sourceType) => {
+      // The v1 agent and MCP Events never select a harness, and a brokered
+      // harness can't run a model the vendor's account chooses. Refused before
+      // the caller marks the turn as possibly-spent, where a provider lookup
+      // would answer `provider_not_configured: cursor`.
+      resolveSyntheticModelSourceMock.mockResolvedValue({
+        source: "external-account",
+      });
+      for (const harness of [undefined, "claude-code" as const]) {
+        await expect(
+          resolveTurnRuntime(
+            baseArgs({
+              modelDefinition: CURSOR_SENTINEL_MODEL,
+              sourceType,
+              ...(harness ? { harness } : {}),
+            }),
+          ),
+        ).rejects.toThrow(/cursor\/auto[\s\S]*not a model MCPJam can run/);
+      }
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("cloud BYOK → hosted /stream/org with providerKey + serverIds (byte-parity body)", async () => {
     resolveSyntheticModelSourceMock.mockResolvedValue({
@@ -318,9 +337,11 @@ describe("resolveTurnRuntime — runtime shape", () => {
 
     expect(rt.modelSource).toBe("local_byok");
     expect(assertOrgModelAllowedMock).toHaveBeenCalledWith(provider, "llama3");
+    // With the hosted egress guard as its fetch (plain fetch locally).
     expect(buildOrgModelFromResolvedConfigMock).toHaveBeenCalledWith(
       provider,
       "llama3",
+      { fetch: expect.any(Function) },
     );
     expect(rt.runtime).toEqual({
       kind: "direct",
@@ -357,7 +378,7 @@ describe("resolveTurnRuntime — runtime shape", () => {
     expect(buildOrgModelFromResolvedConfigMock).not.toHaveBeenCalled();
   });
 
-  it("local BYOK + requireToolApproval=true with non-empty tools throws before building the model", async () => {
+  it("local BYOK + requireToolApproval=true with a tool that asks throws before building the model", async () => {
     resolveSyntheticModelSourceMock.mockResolvedValue({
       source: "local_byok",
       orgRuntime: {
@@ -371,12 +392,69 @@ describe("resolveTurnRuntime — runtime shape", () => {
         baseArgs({
           modelDefinition: LOCAL_MODEL,
           requireToolApproval: true,
-          tools: { search: { description: "noop" } } as never,
+          tools: {
+            search: {
+              description: "noop",
+              needsApproval: true,
+              execute: async () => ({}),
+            },
+            loadSkill: {
+              description: "load",
+              needsApproval: false,
+              execute: async () => "",
+            },
+          } as never,
         }),
       ),
     ).rejects.toThrow(/approval-required tool calls.*Disable tool approval/i);
 
     expect(buildOrgModelFromResolvedConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("local BYOK + requireToolApproval=true runs when only skill tools are advertised", async () => {
+    // Skill tools never ask, so a scenario with approval on and nothing else
+    // to call has no approval for this runtime to fail on.
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "local_byok",
+      orgRuntime: {
+        runtimeLocation: "local",
+        provider: { providerKey: "openai" } as never,
+      },
+    });
+    const skills = getEffectiveSkillToolsAndPrompt({
+      explicitServerIds: [],
+      pluginServerIds: [],
+      effectiveServerIds: [],
+      servers: [],
+      pluginSkills: [],
+      standaloneSkills: [
+        {
+          ref: "pdf-processing",
+          skillId: "sk_library",
+          name: "pdf-processing",
+          description: "Process PDFs",
+          content: "BODY",
+          aggregateHash: "agg",
+          files: [],
+          channels: [],
+        },
+      ],
+      serverSkills: [],
+      localSkills: [],
+      pluginVersions: [],
+      problems: [],
+    });
+
+    const rt = await resolveTurnRuntime(
+      baseArgs({
+        modelDefinition: LOCAL_MODEL,
+        requireToolApproval: true,
+        tools: skills.tools,
+      }),
+    );
+
+    expect(rt.runtime.kind).toBe("direct");
+    expect(buildOrgModelFromResolvedConfigMock).toHaveBeenCalled();
   });
 });
 
@@ -683,6 +761,53 @@ describe("resolveTurnRuntime — local usage writeback (finalizeUsage)", () => {
       eventRunId: "event-run-1",
     });
     expect(body).not.toHaveProperty("journeyRunId");
+  });
+
+  it("puts each call's returned price on that call's llm span of the turn", async () => {
+    const cost = (amountUsd: number) => ({
+      calculationVersion: 1,
+      currency: "USD",
+      completeness: "complete",
+      amountUsd,
+      source: "customer_rate",
+      funding: "customer",
+    });
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        costs: { "turn-1:0": cost(0.01), "turn-1:1": cost(0.5) },
+      }),
+    );
+    const span = (id: string, category: "step" | "llm", stepIndex: number) => ({
+      id,
+      name: id,
+      category,
+      stepIndex,
+      startMs: 0,
+      endMs: 1,
+    });
+    const result = successResult();
+    result.turnTrace!.spans = [
+      span("step-0", "step", 0),
+      span("llm-0", "llm", 0),
+      span("llm-1", "llm", 1),
+    ];
+    result.modelCalls = [0, 1].map((stepIndex) => ({
+      callId: `turn-1:${stepIndex}`,
+      stepIndex,
+      usage: { totalTokens: 5 },
+      finishedAt: 1,
+    }));
+    const rt = await resolveTurnRuntime(localArgs());
+
+    await rt.finalizeUsage(result);
+
+    expect(
+      result.turnTrace!.spans.map((s) => [s.id, s.callId, s.cost?.amountUsd]),
+    ).toEqual([
+      ["step-0", undefined, undefined],
+      ["llm-0", "turn-1:0", 0.01],
+      ["llm-1", "turn-1:1", 0.5],
+    ]);
   });
 
   it("does NOT fire on an aborted result", async () => {

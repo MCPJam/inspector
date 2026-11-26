@@ -1,3 +1,4 @@
+import { completedTurnPersistence } from "../../services/completed-turn-persistence";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "hono";
 import {
@@ -188,6 +189,32 @@ describe("chat-ingestion", () => {
       rewoundFromMessageId: "user-message-2",
       reason: "message_edit",
     });
+  });
+
+  it("serializes the multi-model column of a compare column", async () => {
+    const multiModel = {
+      groupId: "group-1",
+      position: 1,
+      columnKind: "model" as const,
+      compareId: "openai/gpt-4.1-mini",
+    };
+    await persistChatSessionToConvex({
+      chatSessionId: "column-session",
+      modelId: "openai/gpt-4.1-mini",
+      modelSource: "mcpjam",
+      authHeader: "Bearer bearer-token",
+      projectId: "project-1",
+      sourceType: "direct",
+      origin: "playground",
+      multiModel,
+      sessionMessages: [],
+      startedAt: 1,
+    });
+
+    const request = vi.mocked(global.fetch).mock.calls[0]?.[1];
+    const body = JSON.parse((request?.body as string) ?? "{}");
+
+    expect(body.multiModel).toEqual(multiModel);
   });
 
   it("stamps senderUserId onto persisted user messages only for the authenticated user", () => {
@@ -427,6 +454,21 @@ describe("chat-ingestion", () => {
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
+  it.each([400, 403, 404, 405, 413, 415, 422])("does not retain a permanently rejected ingest body for HTTP %s", async (status) => {
+    global.fetch = vi.fn(async () => new Response("invalid request", { status }));
+    const register = vi.spyOn(completedTurnPersistence, "register");
+    try {
+      const outcome = await persistChatSessionToConvex({
+        chatSessionId: "oversized", modelId: "model", modelSource: "mcpjam",
+        authHeader: "Bearer credential", origin: "playground", startedAt: 1,
+        retryOwner: { subject: "actor", projectId: "project" },
+        turnTrace: { turnId: "large-turn", promptIndex: 0, startedAt: 1, endedAt: 2, spans: [], modelId: "model" },
+      });
+      expect(outcome).toEqual({ outcome: "failed", failureKind: "http_error", status });
+      expect(register).not.toHaveBeenCalled();
+      expect(global.fetch).toHaveBeenCalledOnce();
+    } finally { register.mockRestore(); }
+  });
   it("does not retry a 4xx that is not a conflict", async () => {
     global.fetch = vi
       .fn()
@@ -510,7 +552,10 @@ describe("chat-ingestion", () => {
     expect(mockLogger.event).toHaveBeenCalledWith(
       "chat.session.persist.failed",
       expect.any(Object),
-      expect.objectContaining({ failureKind: "version_conflict" }),
+      expect.objectContaining({
+        failureKind: "version_conflict",
+        ingestStatusCode: 409,
+      }),
       undefined
     );
     expect(mockLogger.warn).not.toHaveBeenCalled();
@@ -538,7 +583,11 @@ describe("chat-ingestion", () => {
     expect(mockLogger.event).toHaveBeenCalledWith(
       "chat.session.persist.failed",
       expect.any(Object),
-      expect.objectContaining({ failureKind: "http_error", statusCode: 503 }),
+      expect.objectContaining({
+        failureKind: "http_error",
+        ingestStatusCode: 503,
+        chatOrigin: "playground",
+      }),
       undefined
     );
     expect(mockLogger.warn).not.toHaveBeenCalled();
@@ -555,7 +604,7 @@ describe("chat-ingestion", () => {
     origin: "event" as const,
   };
 
-  it("carries an event turn's sourceType and origin on chat.session.persist.failed", async () => {
+  it("carries an event turn's sourceType and chatOrigin on chat.session.persist.failed", async () => {
     global.fetch = vi
       .fn()
       .mockResolvedValue(new Response("Server Error", { status: 503 }));
@@ -568,12 +617,12 @@ describe("chat-ingestion", () => {
     expect(mockLogger.event).toHaveBeenCalledWith(
       "chat.session.persist.failed",
       expect.any(Object),
-      expect.objectContaining({ sourceType: "event", origin: "event" }),
+      expect.objectContaining({ sourceType: "event", chatOrigin: "event" }),
       undefined
     );
   });
 
-  it("carries an event turn's sourceType and origin on chat.session.persist.skipped", async () => {
+  it("carries an event turn's sourceType and chatOrigin on chat.session.persist.skipped", async () => {
     global.fetch = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ skipped: true, version: 3 }), {
         status: 200,
@@ -592,7 +641,7 @@ describe("chat-ingestion", () => {
     );
     expect(skipped?.[2]).toMatchObject({
       sourceType: "event",
-      origin: "event",
+      chatOrigin: "event",
       hasTurnId: false,
     });
   });
@@ -835,7 +884,7 @@ describe("chat-ingestion", () => {
         expect.any(Object),
         expect.objectContaining({
           failureKind: "http_error",
-          statusCode: 400,
+          ingestStatusCode: 400,
           responsePreview: expect.stringContaining("modelId is required"),
         }),
         undefined

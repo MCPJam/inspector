@@ -21,7 +21,7 @@ export class NativeWireError extends Error {
 
 // JSON.parse would silently choose one of two decision keys. Reject duplicates
 // at every depth before inspecting any method, account or argument.
-function checkDuplicateKeys(text: string): void {
+export function checkDuplicateKeys(text: string): void {
   let pos = 0;
   const space = () => {
     while (/\s/.test(text[pos] ?? "") && pos < text.length) pos++;
@@ -209,4 +209,17 @@ export async function readNativeBody(
     chunks.push(chunk.value);
   }
   return Buffer.concat(chunks).toString("utf8");
+}
+
+/** The request a `notifications/cancelled` names, when this message is one. */
+export function cancelledRequestId(
+  message: Pick<NativeMessage, "method" | "params"> | undefined,
+): string | number | undefined {
+  if (message?.method !== "notifications/cancelled") return undefined;
+  const params = message.params;
+  const id: unknown =
+    params && typeof params === "object"
+      ? Reflect.get(params, "requestId")
+      : undefined;
+  return typeof id === "string" || typeof id === "number" ? id : undefined;
 }

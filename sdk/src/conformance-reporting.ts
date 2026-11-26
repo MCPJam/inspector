@@ -174,6 +174,22 @@ export interface ConformanceReport {
    * report, which is the property a version bump would otherwise be asserting.
    */
   advisories?: ConformanceReportAdvisory[];
+  /**
+   * SHOULD/MAY advice the run checked and the server already meets, kept apart
+   * from `advisories` so it never counts as advice to act on. Absent when
+   * there is none, and on reports saved before passes were recorded.
+   */
+  passedAdvisories?: ConformanceReportPassedAdvisory[];
+}
+
+/** One SHOULD/MAY the server met, as a saved report keeps it. */
+export interface ConformanceReportPassedAdvisory {
+  id: string;
+  title: string;
+  /** Id of the {@link ConformanceReportGroup} it was checked in. */
+  group: string;
+  /** The advice's spec strength: SHOULD, MAY or Deprecation Notice. */
+  status: string;
 }
 
 type SupportedSingleConformanceResult =
@@ -595,6 +611,7 @@ function createProtocolReport(
       ...readinessAdvisoryFields(
         result.results.map((entry, index) => ({
           readiness: entry.readiness,
+          passedAdvice: entry.passedAdvice,
           group: `mcp-${index + 1}`,
         }))
       ),
@@ -612,7 +629,11 @@ function createProtocolReport(
     durationMs: result.durationMs,
     groups: [mcpGroupFromResult(result, "MCP Protocol Conformance", 0)],
     ...readinessAdvisoryFields([
-      { readiness: result.readiness, group: "mcp-1" },
+      {
+        readiness: result.readiness,
+        passedAdvice: result.passedAdvice,
+        group: "mcp-1",
+      },
     ]),
   };
 }
@@ -635,6 +656,7 @@ function createAppsReport(
       ...readinessAdvisoryFields(
         result.results.map((entry, index) => ({
           readiness: entry.readiness,
+          passedAdvice: entry.passedAdvice,
           group: `apps-${index + 1}`,
         }))
       ),
@@ -651,7 +673,11 @@ function createAppsReport(
     durationMs: result.durationMs,
     groups: [appsGroupFromResult(result, "MCP Apps Conformance", 0)],
     ...readinessAdvisoryFields([
-      { readiness: result.readiness, group: "apps-1" },
+      {
+        readiness: result.readiness,
+        passedAdvice: result.passedAdvice,
+        group: "apps-1",
+      },
     ]),
   };
 }
@@ -732,6 +758,7 @@ function createOAuthReport(
       ...readinessAdvisoryFields(
         result.results.map((entry, index) => ({
           readiness: entry.readiness,
+          passedAdvice: entry.passedAdvice,
           group: `oauth-${index + 1}`,
         }))
       ),
@@ -758,7 +785,11 @@ function createOAuthReport(
       ),
     ],
     ...readinessAdvisoryFields([
-      { readiness: result.readiness, group: "oauth-1" },
+      {
+        readiness: result.readiness,
+        passedAdvice: result.passedAdvice,
+        group: "oauth-1",
+      },
     ]),
   };
 }
@@ -1183,7 +1214,11 @@ export function toConformanceReport(
         appsGroupFromResult(result, "MCP Tasks Conformance", 0, "tasks"),
       ],
       ...readinessAdvisoryFields([
-        { readiness: result.readiness, group: "tasks-1" },
+        {
+        readiness: result.readiness,
+        passedAdvice: result.passedAdvice,
+        group: "tasks-1",
+      },
       ]),
     };
   }
@@ -1314,9 +1349,33 @@ function renderConformanceTestSuite(
   return `  <testsuite name="${name}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">\n${properties}${cases}\n  </testsuite>`;
 }
 
+/** One report's `<testsuite>` elements and tallies, without the document root. */
+export interface ConformanceJUnitSuites {
+  name: string;
+  tests: number;
+  failures: number;
+  skipped: number;
+  durationMs: number;
+  /** Zero or more `<testsuite>` elements, newline-joined. */
+  xml: string;
+}
+
 export function renderConformanceReportJUnitXml(
   report: ConformanceReport,
 ): string {
+  const suites = renderConformanceReportJUnitSuites(report);
+  const time = (suites.durationMs / 1000).toFixed(3);
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${escapeXml(suites.name)}" tests="${suites.tests}" failures="${suites.failures}" skipped="${suites.skipped}" time="${time}">\n${suites.xml}\n</testsuites>\n`;
+}
+
+/**
+ * The body of {@link renderConformanceReportJUnitXml}, for a document that
+ * holds several reports under one `<testsuites>` root: a second XML prolog or
+ * root element would make the whole file unparseable.
+ */
+export function renderConformanceReportJUnitSuites(
+  report: ConformanceReport
+): ConformanceJUnitSuites {
   const redactedReport = renderConformanceReportJson(report);
   const tests = redactedReport.groups.reduce(
     (sum, group) => sum + group.cases.length,
@@ -1339,9 +1398,6 @@ export function renderConformanceReportJUnitXml(
       ).length,
     0,
   );
-  const time = (redactedReport.durationMs / 1000).toFixed(3);
-  const name = escapeXml(redactedReport.name);
-
   const advisories = redactedReport.advisories ?? [];
   const suites = redactedReport.groups
     .map((group) =>
@@ -1365,5 +1421,12 @@ export function renderConformanceReportJUnitXml(
         )}\n    </properties>\n  </testsuite>`
       : "";
 
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${name}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">\n${suites}${orphanSuite}\n</testsuites>\n`;
+  return {
+    name: redactedReport.name,
+    tests,
+    failures,
+    skipped,
+    durationMs: redactedReport.durationMs,
+    xml: `${suites}${orphanSuite}`,
+  };
 }

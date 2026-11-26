@@ -5,7 +5,7 @@ import {
   pageToolsSnapshotFrom,
 } from "../browserd/page-tools-peek.js";
 import { type MintedDeclaredTool } from "@/shared/declared-tools";
-import { webmcpPageToolsMode } from "../../config.js";
+import { HOSTED_MODE, webmcpPageToolsMode } from "../../config.js";
 import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import { type Context } from "hono";
 import { ErrorCode, WebRouteError } from "../../routes/web/auth.js";
@@ -26,6 +26,12 @@ import {
   type TrustedSandboxBinding,
 } from "../../utils/built-in-tools/registry.js";
 import {
+  advertisesBrowser,
+  appendBrowserRefusalContext,
+  classifyBrowserRefusal,
+  recordBrowserSuppression,
+} from "../../utils/built-in-tools/browser-refusal.js";
+import {
   ackScenarioSandboxNotices,
   isScenarioSandboxNotice,
   provisionScenarioSandbox,
@@ -35,13 +41,17 @@ import {
   acquireHarnessBox,
   canProvisionHarnessBoxes,
 } from "../../utils/harness/harness-box.js";
+import { takeEarly } from "../../utils/early-start.js";
 import {
-  acquirePlaygroundHarnessBox,
+  acquireOwnedPlaygroundHarnessBox,
+  startPlaygroundBoxEarly,
+} from "./owned-playground-box.js";
+import {
   describePlaygroundBoxRefusal,
   playgroundCredentialRefusal,
-  playgroundHarnessBoxReason,
   playgroundHarnessBoxUnavailableReason,
 } from "../../utils/harness/playground-box.js";
+import { playgroundBoxPlan } from "./playground-box-plan.js";
 import {
   isSandboxNoticeReason,
   type SandboxNoticeReason,
@@ -63,6 +73,7 @@ import { logger } from "../../utils/logger.js";
 import { resolveManagedTurnSetup } from "./managed-setup.js";
 import { prepareManagedConnections } from "./managed-connections.js";
 import { TurnResources } from "./resources.js";
+import type { TurnTiming } from "../../utils/turn-timing.js";
 
 type ManagedSetup = Extract<
   Awaited<ReturnType<typeof resolveManagedTurnSetup>>,
@@ -74,6 +85,7 @@ export async function prepareManagedTools(args: {
   bearerToken: string;
   localIngress: boolean;
   resources: TurnResources;
+  timing: TurnTiming;
   setup: Pick<
     ManagedSetup,
     | "hostedBody"
@@ -101,8 +113,10 @@ export async function prepareManagedTools(args: {
     Awaited<ReturnType<typeof prepareManagedConnections>>,
     "validatedPageTools"
   >;
+  /** The Playground box the route booked right after setup, if it did. */
+  earlyPlaygroundBox?: ReturnType<typeof startPlaygroundBoxEarly>;
 }) {
-  const { c, rawBody, bearerToken, localIngress, resources } = args;
+  const { c, rawBody, bearerToken, localIngress, resources, timing } = args;
   let scenarioBox: HarnessBox | undefined;
   let {
     hostedBody,
@@ -113,7 +127,6 @@ export async function prepareManagedTools(args: {
     hostRuntimeConfig,
     environmentSpec,
     scenarioEnvironment,
-    pinsEnvironment,
     environmentServers,
     resolvedExecution,
     builtInToolPolicy,
@@ -126,6 +139,21 @@ export async function prepareManagedTools(args: {
     scenarioParticipant,
   } = args.setup;
   let { validatedPageTools } = args.connections;
+  // The Playground box (see PLAYGROUND FALLBACK below) needs this turn's
+  // secrets only to check a member's own credential, so otherwise it is booked
+  // while the secrets read is in flight. Booked early only when none of the
+  // refusals checked before the booking below could apply.
+  // The route may have booked it already, right after setup
+  // (`MCPJAM_HARNESS_BOX_FIRST`), under the same plan. That booking comes
+  // before the turn's authorization and connections, so a turn they refuse
+  // has woken its box for nothing; the turn's resources release it.
+  const { reason: playgroundBoxReason, args: playgroundBoxArgs } =
+    playgroundBoxPlan({ c, bearerToken, timing, setup: args.setup });
+  const earlyPlaygroundBox =
+    args.earlyPlaygroundBox ??
+    startPlaygroundBoxEarly(
+      resources, playgroundBoxReason, playgroundBoxArgs, Boolean(c.get("guestId")),
+    );
   // ── Phase 4: the scenario's own EPHEMERAL sandbox ────────────────────────
   // An env-backed scenario whose backend says `computerSandbox: 'ephemeral'`
   // runs bash on a per-conversation disposable box booted from the
@@ -266,7 +294,7 @@ export async function prepareManagedTools(args: {
     // The shared box holder: the box's idle clock keeps running for as long
     // as this turn does (a long harness turn would otherwise outlive the
     // scenario TTL), and stops when the turn's stream completes.
-    const acquired = await acquireHarnessBox({
+    const acquired = await timing.timeBoxAcquisition(() => acquireHarnessBox({
       surface: "scenario",
       provision: async () => {
         provisioned = await provisionScenarioSandbox({
@@ -284,11 +312,12 @@ export async function prepareManagedTools(args: {
                 ...(provisioned.value.workdir
                   ? { workdir: provisioned.value.workdir }
                   : {}),
+                idleMs: provisioned.value.idleMs,
               },
             }
           : { ok: false as const, refusal: provisioned };
       },
-    });
+    }));
     if (acquired.ok) {
       scenarioBox = acquired.box;
       resources.own(() => acquired.box.release());
@@ -382,12 +411,6 @@ export async function prepareManagedTools(args: {
   // A harness that signs in with the customer's own account (Cursor) and every
   // compare column take the conversation's disposable box instead, with no
   // quiet fallback: a box that cannot be had is a refusal that says why.
-  const playgroundBoxReason = playgroundHarnessBoxReason({
-    harnessId: resolvedExecution.harness,
-    localExecution: Boolean(harnessExecutionTarget),
-    isScenarioSession: turnMode === "recorded",
-    comparePane: hostedBody.comparePane === true,
-  });
   // A guest has no project computer to protect and no project to hold a box
   // for, so it keeps its existing path (and, on a scenario, its own box).
   if (playgroundBoxReason && resolvedExecution.harness && !c.get("guestId")) {
@@ -413,26 +436,18 @@ export async function prepareManagedTools(args: {
         { reason: "NO_CHAT_SESSION_ID" },
       );
     }
-    // The environment whose grant the box carries: the turn's own when it
-    // targets one; otherwise, for a client that signs in with the member's
-    // own account, a HIDDEN ad-hoc environment selecting the member's key.
-    // Refused here, before any box, when the member has no usable key.
-    const playgroundEnvironmentId =
-      pinsEnvironment || playgroundBoxReason === "credential"
-        ? environmentSpec?.environmentRef.environmentId
-        : undefined;
-    // The credential check the harness turn would fail, run BEFORE the box
-    // is booted: a refused Cursor turn must not pay for a box first. Same
-    // function and inputs as `runHarnessTurn`'s own check.
+    // The box carries `playgroundEnvironmentId`'s grant: the turn's own
+    // environment, or, for a client that signs in with the member's own
+    // account, a HIDDEN ad-hoc environment selecting the member's key. That
+    // credential check runs BEFORE the box is booted: a refused Cursor turn
+    // must not pay for a box first. Same function and inputs as
+    // `runHarnessTurn`'s own check.
     if (playgroundBoxReason === "credential") {
       const credentialRefusal = await playgroundCredentialRefusal({
         harnessId: resolvedExecution.harness,
-        secretEnv,
         bearer: bearerToken,
         projectId: hostedBody.projectId,
-        ...(playgroundEnvironmentId
-          ? { environmentId: playgroundEnvironmentId }
-          : {}),
+        signal: c.req.raw.signal as AbortSignal | undefined,
       });
       if (credentialRefusal) {
         throw new WebRouteError(409, ErrorCode.CONFLICT, credentialRefusal, {
@@ -440,16 +455,12 @@ export async function prepareManagedTools(args: {
         });
       }
     }
-    const acquired = await acquirePlaygroundHarnessBox({
-      bearer: bearerToken,
-      projectId: hostedBody.projectId,
-      chatSessionId: hostedBody.chatSessionId,
-      ...(playgroundEnvironmentId
-        ? { projectEnvironmentId: playgroundEnvironmentId }
-        : {}),
-      harness: resolvedExecution.harness,
-      signal: c.req.raw.signal as AbortSignal | undefined,
-    });
+    const acquired = earlyPlaygroundBox
+      ? await takeEarly(earlyPlaygroundBox)
+      : await acquireOwnedPlaygroundHarnessBox(resources, {
+          ...playgroundBoxArgs,
+          chatSessionId: hostedBody.chatSessionId,
+        });
     if (!acquired.ok) {
       logger.warn("[chat-v2] playground harness box provision failed", {
         reason: playgroundBoxReason,
@@ -489,7 +500,6 @@ export async function prepareManagedTools(args: {
         : refusalError;
     }
     scenarioBox = acquired.box;
-    resources.own(() => acquired.box.release());
     // The model's own `bash` rides the same machine as the harness's Shell:
     // two filesystems in one turn is a bug nobody can see.
     sandboxBinding = {
@@ -612,6 +622,7 @@ export async function prepareManagedTools(args: {
         currentPageToolsBinding: () => BrowserPageToolsSnapshot | undefined;
       }
     | undefined;
+  const browserSuppression = recordBrowserSuppression();
   const builtInTools = resolveHostTools(
     {
       builtInToolIds: turnBuiltInToolIds,
@@ -649,6 +660,7 @@ export async function prepareManagedTools(args: {
         : {}),
       isGuest: Boolean(c.get("guestId")),
       isScenarioSession: turnMode === "recorded",
+      onToolSuppressed: browserSuppression.onToolSuppressed,
       // Lets a spend inside a shared scenario bill the scenario OWNER instead
       // of the visitor, who has no wallet to charge. Only web search reads
       // it today; the model turn and voice already send their own.
@@ -715,14 +727,23 @@ export async function prepareManagedTools(args: {
     ...(executionScope ? { executionScope } : {}),
   });
 
+  // Browser is on for this client and missing from this turn. The model is
+  // told why every turn it applies; nobody gets a toast for an ordinary turn.
+  const browserRefusal = classifyBrowserRefusal({
+    configured: (turnBuiltInToolIds ?? []).includes(BROWSER_BUILT_IN_TOOL_ID),
+    advertised: advertisesBrowser(builtInTools),
+    suppression: browserSuppression.code,
+    hostedMode: HOSTED_MODE,
+  });
+
   // The sandbox notices must reach the MODEL, not only the user's toast.
   //
   // The SSE part warns the human; the model still receives the old transcript
   // and, without this, reasons about files that are gone. Turn-injected and
   // never persisted, like the blueprint block above.
-  const effectiveSystemPrompt = appendSandboxNoticeContext(
-    withEnvironmentContext,
-    sandboxNotices,
+  const effectiveSystemPrompt = appendBrowserRefusalContext(
+    appendSandboxNoticeContext(withEnvironmentContext, sandboxNotices),
+    browserRefusal,
   );
 
   return {

@@ -17,7 +17,9 @@ export function withHarnessTurnContext(messages: ModelMessage[], context?: strin
       if (part.type !== "text") continue;
       const block = parseUserContextText(part.text);
       if (block?.kind === "widget-state") states.set(block.subject, part.text);
-      else if (index > lastAssistant && index < lastUser) pending.push(part.text);
+      // An unanswered ordinary prompt may have been stopped. Only labelled
+      // user context accompanies the latest request.
+      else if (block && index > lastAssistant && index < lastUser) pending.push(part.text);
     }
   }
   const message = messages[lastUser]!;

@@ -233,6 +233,40 @@ describe("workspace grants", () => {
   });
 });
 
+describe("one grant store shared by every Inspector version", () => {
+  const storePath = () => join(base, ".mcpjam", "harness-local", "grants.json");
+  /** How a build that knows only Claude Code and Codex validates the store. */
+  const twoHarnessValid = (raw: { harnessGrants: Array<{ binding: { harnessId: string } }> }) =>
+    raw.harnessGrants.every((grant) => grant.binding.harnessId === "claude-code" || grant.binding.harnessId === "codex");
+
+  it("writes every other runtime's grant where those builds never read", async () => {
+    await grantLocalHarnessConsent(binding());
+    const copilot = await grantLocalHarnessConsent(binding({ harnessId: "copilot-cli" }));
+    const raw = JSON.parse(await readFile(storePath(), "utf8"));
+    expect(twoHarnessValid(raw)).toBe(true);
+    expect(raw.runtimeGrants.map((grant: { binding: { harnessId: string } }) => grant.binding.harnessId)).toEqual(["copilot-cli"]);
+    expect((await verifyLocalHarnessGrant(copilot.token, binding({ harnessId: "copilot-cli" }))).ok).toBe(true);
+  });
+
+  it("keeps a newer build's grant as written, and drops it on revoke and expiry", async () => {
+    await grantLocalHarnessConsent(binding());
+    const later = {
+      grantId: "later", tokenHash: "0".repeat(64), bindingHash: "1".repeat(64),
+      binding: { ...binding(), harnessId: "pi" },
+      grantedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+    const raw = JSON.parse(await readFile(storePath(), "utf8"));
+    await writeFile(storePath(), JSON.stringify({ ...raw, runtimeGrants: [later] }));
+    await grantLocalHarnessConsent(binding({ projectId: "proj_2" })); // any write
+    expect(JSON.parse(await readFile(storePath(), "utf8")).runtimeGrants).toEqual([later]);
+    await pruneExpiredHarnessGrants(Date.now() + 120_000);
+    expect(JSON.parse(await readFile(storePath(), "utf8")).runtimeGrants).toEqual([]);
+    await writeFile(storePath(), JSON.stringify({ ...JSON.parse(await readFile(storePath(), "utf8")), runtimeGrants: [later] }));
+    expect(await revokeLocalHarnessGrants({ userId: "user_1" })).toBeGreaterThan(0);
+    expect(JSON.parse(await readFile(storePath(), "utf8")).runtimeGrants).toEqual([]);
+  });
+});
+
 describe("the cross-process grant lock", () => {
   it("waits for another live Inspector instead of losing its update", async () => {
     const dir = join(base, ".mcpjam", "harness-local");

@@ -1,10 +1,11 @@
+import { completedTurnPersistence, type CompletedTurnOwner } from "../services/completed-turn-persistence.js";
 import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
 import type { SetupAtTurn } from "../services/chat-turn/setup-manifest.js";
 import type { PersistedRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import type { Context } from "hono";
-import type { ChatRewind } from "@/shared/chat-v2";
+import type { ChatMultiModelColumn, ChatRewind } from "@/shared/chat-v2";
 import type {
   ModelReasoningEffort,
   RequestedModelSelection,
@@ -74,6 +75,8 @@ export type PersistChatOutcome =
       outcome: "failed";
       failureKind: PersistChatFailureKind;
       status?: number;
+      retryHandle?: string;
+      retryProjectId?: string;
     }
   | {
       outcome: "not-attempted";
@@ -121,6 +124,7 @@ export interface ResumeConfig {
   requireToolApproval?: boolean;
   requireNativeToolDiscovery?: boolean;
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   selectedServers?: string[];
@@ -181,6 +185,7 @@ export interface DirectHostConfig {
    * `undefined` so pre-feature rows stay byte-identical.
    */
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   selectedServerIds: string[];
@@ -208,6 +213,7 @@ export function buildDirectHostConfig(input: {
   requireToolApproval?: boolean;
   requireNativeToolDiscovery?: boolean;
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   selectedServerIds?: string[];
@@ -221,6 +227,7 @@ export function buildDirectHostConfig(input: {
     requireToolApproval,
     requireNativeToolDiscovery,
     respectToolVisibility,
+    runUnloadedToolCalls,
     modelVisibleMcpToolResults,
     mcpToolResultImageRendering,
     selectedServerIds,
@@ -240,6 +247,7 @@ export function buildDirectHostConfig(input: {
     // Pass through verbatim so undefined-vs-set semantics survive into
     // the backend canonicalizer (drops undefined; keeps explicit false).
     ...(respectToolVisibility !== undefined ? { respectToolVisibility } : {}),
+    ...(runUnloadedToolCalls !== undefined ? { runUnloadedToolCalls } : {}),
     ...(modelVisibleMcpToolResults !== undefined
       ? { modelVisibleMcpToolResults }
       : {}),
@@ -257,6 +265,8 @@ export function buildDirectHostConfig(input: {
  * Kept in one place so the producer callbacks and the wire body can't drift.
  */
 export interface PersistedTurnTrace {
+  runUnloadedToolCalls?: boolean;
+  engineVersion?: string;
   setupAtTurn?: SetupAtTurn;
   connectionsAtTurn?: Array<{
     serverId: string;
@@ -281,7 +291,7 @@ export interface PersistedTurnTrace {
   /**
    * Which skills and which environment this turn ran with, echoed from the
    * backend's per-entry `provenance` rows (see
-   * `services/environments/runtime.ts` `turnSkillProvenance`).
+   * `services/environments/live-turn-skills.ts` `turnSkillProvenance`).
    *
    * Carried INSIDE the turn trace, not beside it, for two reasons. The binding
    * is per-TURN — a session live-follows Latest, so an edit changes what the
@@ -348,6 +358,8 @@ interface PersistChatSessionOptions {
    */
   modelSource: "mcpjam" | "byok" | "local_byok" | "external-account";
   authHeader?: string;
+  authorizationFailure?: { status?: number };
+  retryOwner?: CompletedTurnOwner;
   projectId?: string;
   sourceType?: "scenario" | "direct" | "eval" | "swarm" | "event";
   origin: ChatOrigin;
@@ -384,6 +396,7 @@ interface PersistChatSessionOptions {
   resumeConfig?: ResumeConfig;
   expectedVersion?: number;
   rewind?: ChatRewind;
+  multiModel?: ChatMultiModelColumn;
   turnTrace?: PersistedTurnTrace;
   turnLeaseOwnerToken?: string;
   /**
@@ -634,6 +647,7 @@ function buildIngestBody(options: PersistChatSessionOptions): string {
     // stay on the legacy path.
     ...(options.turnTrace?.turnId ? { turnId: options.turnTrace.turnId } : {}),
     ...(options.rewind ? { rewind: options.rewind } : {}),
+    ...(options.multiModel ? { multiModel: options.multiModel } : {}),
     ...(options.turnTrace ? { turnTrace: options.turnTrace } : {}),
     ...(options.turnLeaseOwnerToken
       ? { turnLeaseOwnerToken: options.turnLeaseOwnerToken }
@@ -733,11 +747,12 @@ function classifySuccessBody(body: unknown): PersistChatOutcome {
   return { outcome: "saved", version: parsed.version, ...sessionDocId };
 }
 
-async function attemptChatIngest(
+export async function attemptChatIngest(
   url: string,
   headers: Record<string, string>,
   body: string,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<IngestAttemptResult> {
   // A fresh controller per attempt. Reusing one across retries would poison
   // every later attempt: once aborted, an AbortSignal stays aborted, so retry 1
@@ -749,7 +764,7 @@ async function attemptChatIngest(
     const response = await fetch(url, {
       method: "POST",
       headers,
-      signal: controller.signal,
+      signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
       body,
     });
 
@@ -862,19 +877,27 @@ export async function persistChatSessionToConvex(
   if (!options.chatSessionId) {
     return { outcome: "not-attempted", reason: "no-session-id" };
   }
-  if (!options.authHeader) {
-    return { outcome: "not-attempted", reason: "no-auth" };
-  }
 
   const perAttemptTimeoutMs = options.timeoutMs ?? DEFAULT_INGEST_TIMEOUT_MS;
   const deadline =
     Date.now() + Math.max(perAttemptTimeoutMs, INGEST_TOTAL_BUDGET_MS);
   const ingestHeaders: Record<string, string> = {
     "content-type": "application/json",
-    authorization: options.authHeader,
+    ...(options.authHeader ? { authorization: options.authHeader } : {}),
     ...options.forwardHeaders,
   };
   const body = buildIngestBody(options);
+  const retain = (outcome: PersistChatOutcome): PersistChatOutcome => {
+    if (outcome.outcome !== "failed" || !options.retryOwner || !options.turnTrace?.turnId) return outcome;
+    const status = outcome.status;
+    if (status !== undefined && status >= 400 && status < 500 &&
+        ![401, 408, 425, 429].includes(status)) return outcome;
+    const retryHandle = completedTurnPersistence.register(options.retryOwner, body, options.chatSessionId, options.turnTrace.turnId);
+    return retryHandle ? { ...outcome, retryHandle, retryProjectId: options.retryOwner.projectId } : outcome;
+  };
+
+  if (options.authorizationFailure) return retain({ outcome: "failed", failureKind: "http_error", status: options.authorizationFailure.status });
+  if (!options.authHeader) return { outcome: "not-attempted", reason: "no-auth" };
 
   const logFailure = (detail: {
     failureKind: PersistChatFailureKind | "version_conflict";
@@ -888,10 +911,10 @@ export async function persistChatSessionToConvex(
         "chat.session.persist.failed",
         {
           failureKind,
-          ...(status !== undefined ? { statusCode: status } : {}),
+          ...(status !== undefined ? { ingestStatusCode: status } : {}),
           ...(preview ? { responsePreview: preview } : {}),
           sourceType: options.sourceType,
-          origin: options.origin,
+          chatOrigin: options.origin,
         },
         error ? { error } : undefined,
       );
@@ -968,7 +991,7 @@ export async function persistChatSessionToConvex(
             "chat.session.persist.skipped",
             {
               sourceType: options.sourceType,
-              origin: options.origin,
+              chatOrigin: options.origin,
               hasTurnId: Boolean(options.turnTrace?.turnId),
             },
           );
@@ -978,7 +1001,7 @@ export async function persistChatSessionToConvex(
           );
         }
       }
-      return outcome;
+      return retain(outcome);
     }
 
     // Keep the first attempt's diagnostics when a later one has none — a
@@ -1002,11 +1025,11 @@ export async function persistChatSessionToConvex(
   }
 
   logFailure(lastFailure);
-  return {
+  return retain({
     outcome: "failed",
     failureKind: lastFailure.failureKind,
     ...(lastFailure.status !== undefined ? { status: lastFailure.status } : {}),
-  };
+  });
 }
 
 /**
@@ -1057,6 +1080,7 @@ export function buildPersistReceiptData(
         outcome: "failed",
         ...base,
         failureKind: outcome.failureKind,
+        ...(outcome.retryHandle ? { retryHandle: outcome.retryHandle, retryProjectId: outcome.retryProjectId } : {}),
       };
   }
 }

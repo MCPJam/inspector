@@ -4,9 +4,11 @@ import type { EnsureProjectClientResult } from "@/shared/ensure-project-client";
 import { useCanManageProjectClients } from "@/hooks/useProjects";
 import { useProjectClientInitialization } from "@/hooks/use-project-client-initialization";
 import {
-  loadSelectedHostIds,
-  saveSelectedHostIds,
-} from "@/lib/selected-host-storage";
+  loadComparePanes,
+  paneHostIds,
+  panesForHostIds,
+  saveComparePanes,
+} from "@/lib/compare-panes";
 import {
   loadPreviewedHostId,
   savePreviewedHostId,
@@ -19,7 +21,7 @@ type Selection = { previewed: string | null; selected: string[] };
 function readSelection(projectId: string): Selection {
   return {
     previewed: loadPreviewedHostId(projectId),
-    selected: loadSelectedHostIds(projectId),
+    selected: paneHostIds(loadComparePanes(projectId)),
   };
 }
 
@@ -80,7 +82,10 @@ function applySelection(
   // shouldn't announce itself.
   markQuietClientSwitch(projectId, next.lead);
   savePreviewedHostId(projectId, next.lead);
-  saveSelectedHostIds(projectId, next.lineup);
+  saveComparePanes(
+    projectId,
+    panesForHostIds(loadComparePanes(projectId), next.lineup),
+  );
   if (!isActive) return;
   live.setPreviewedHostId(next.lead);
   live.setSelectedHostIds(next.lineup);
@@ -154,10 +159,18 @@ export function usePlaygroundClientInitialization({
       return { projectId: pid, before, result };
     };
 
+  const defaultNeeded = ready && hostList.length === 0;
+  const comparisonNeeded =
+    ready &&
+    hostList.length > 0 &&
+    !roleLoading &&
+    canManage &&
+    !comparisonSettled;
+
   const defaultInit = useProjectClientInitialization({
     projectId,
     intent: "default",
-    needed: ready && hostList.length === 0,
+    needed: defaultNeeded,
     run: withSelection(false),
     // A fresh default replaces any lineup of deleted clients.
     onSuccess: ({ projectId: pid, before, result }) => {
@@ -180,12 +193,7 @@ export function usePlaygroundClientInitialization({
   const comparisonInit = useProjectClientInitialization({
     projectId,
     intent: "comparison",
-    needed:
-      ready &&
-      hostList.length > 0 &&
-      !roleLoading &&
-      canManage &&
-      !comparisonSettled,
+    needed: comparisonNeeded,
     run: withSelection(true),
     onSuccess: ({ projectId: pid, before, result }) => {
       const comparison = result.comparison;
@@ -206,5 +214,15 @@ export function usePlaygroundClientInitialization({
       );
     },
   });
-  return { defaultInit, comparisonInit };
+  const unsettled = (needed: boolean, init: typeof defaultInit) =>
+    needed && (init.state.status === "idle" || init.state.status === "pending");
+  // The client lineup may still change, e.g. from one client to a comparison.
+  const settling =
+    isAuthenticated &&
+    !!projectId &&
+    (hostListLoading ||
+      roleLoading ||
+      unsettled(defaultNeeded, defaultInit) ||
+      unsettled(comparisonNeeded, comparisonInit));
+  return { defaultInit, comparisonInit, settling };
 }

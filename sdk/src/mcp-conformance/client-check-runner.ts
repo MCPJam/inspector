@@ -7,6 +7,11 @@ import type {
 } from "./types.js";
 import { CHECK_ERAS } from "./types.js";
 import {
+  blockedByDetails,
+  stoppedAnsweringMessage,
+} from "../conformance-blocked.js";
+import {
+  blockedResult,
   couldNotRunResult,
   eraSkipMessage,
   errorMessage,
@@ -48,17 +53,52 @@ const CONNECTION_DATA_CHECK_IDS = new Set<MCPCheckId>([
   "capabilities-consistent",
 ]);
 
+/**
+ * The check whose timeout means the connection is lost. Every 2025 revision
+ * says of a ping: "Timeouts SHOULD be treated as connection failures"
+ * (basic/utilities/ping.mdx, Error Handling).
+ */
+const PING_CHECK_ID: MCPCheckId = "ping";
+
+const SKIPPED_AFTER_PING_NOTE =
+  "A ping with no answer means the connection may be lost, so the checks after this one were skipped.";
+
 export async function runSelectedClientChecks(
   selectedClientChecks: readonly MCPClientCheckDefinition[],
   ctx: MCPClientCheckContext
 ): Promise<MCPCheckResult[]> {
   const config = ctx.config;
   const results: MCPCheckResult[] = [];
-  let connectionLost = false;
+  /** The check whose error broke the session; every later check names it. */
+  let connectionLostBy: MCPClientCheckDefinition | undefined;
   // Checks in a row that ran out of time. A timeout leaves the session
   // usable, but at this many the server has stopped answering, and each
   // check after would wait out the full limit for the same silence.
   let timeoutStreak = 0;
+  /** The checks in the current streak, named in the skips that follow. */
+  let timedOut: MCPClientCheckDefinition[] = [];
+
+  /**
+   * Count a timed-out check. A timed-out ping is the exception to "the session
+   * stays usable": the connection counts as lost, so the remaining checks skip.
+   */
+  const recordTimeout = (
+    check: MCPClientCheckDefinition,
+    result: MCPCheckResult
+  ): MCPCheckResult => {
+    timeoutStreak += 1;
+    timedOut.push(check);
+    if (check.id !== PING_CHECK_ID) return result;
+    timeoutStreak = MAX_TIMEOUTS_IN_A_ROW;
+    return {
+      ...result,
+      error: {
+        ...result.error,
+        message: `${result.error?.message} ${SKIPPED_AFTER_PING_NOTE}`,
+      },
+      details: { ...result.details, connectionLost: true },
+    };
+  };
 
   for (const check of selectedClientChecks) {
     config.signal?.throwIfAborted();
@@ -71,13 +111,8 @@ export async function runSelectedClientChecks(
       continue;
     }
 
-    if (connectionLost) {
-      results.push(
-        couldNotRunResult(
-          check,
-          "Skipping check because the MCP client session is no longer healthy"
-        )
-      );
+    if (connectionLostBy) {
+      results.push(blockedResult(check, connectionLostBy));
       continue;
     }
 
@@ -85,7 +120,8 @@ export async function runSelectedClientChecks(
       results.push(
         couldNotRunResult(
           check,
-          "Skipped because the server stopped responding."
+          stoppedAnsweringMessage(timedOut.map((entry) => entry.title)),
+          timedOut.length > 0 ? blockedByDetails(timedOut[0]!.id) : undefined
         )
       );
       continue;
@@ -100,25 +136,30 @@ export async function runSelectedClientChecks(
       );
       config.signal?.throwIfAborted();
       // Only an answer ends the streak; a skip asked the server nothing.
-      if (isTimedOutCheck(result)) timeoutStreak += 1;
-      else if (
+      if (isTimedOutCheck(result)) {
+        results.push(recordTimeout(check, result));
+        continue;
+      }
+      if (
         result.status !== "skipped" &&
         !CONNECTION_DATA_CHECK_IDS.has(check.id)
       ) {
         timeoutStreak = 0;
+        timedOut = [];
       }
       results.push(result);
     } catch (error) {
       config.signal?.throwIfAborted();
       if (isRequestTimeoutError(error)) {
-        timeoutStreak += 1;
-        results.push(timedOutResult(check, config.checkTimeout));
+        results.push(
+          recordTimeout(check, timedOutResult(check, config.checkTimeout))
+        );
         continue;
       }
       results.push(
         failedResult(check, 0, errorMessage(error), undefined, error)
       );
-      connectionLost = true;
+      connectionLostBy = check;
     }
   }
   return results;

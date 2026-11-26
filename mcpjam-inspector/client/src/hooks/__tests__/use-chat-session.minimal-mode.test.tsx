@@ -531,7 +531,7 @@ describe("useChatSession minimal mode parity", () => {
     });
   });
 
-  it("uses saved MCP image policies when continuing a resumed session", async () => {
+  it("uses saved MCP image and discovery policies when continuing a resumed session", async () => {
     const selectedServers = ["server-1"];
     const currentHostPolicy = {
       directContent: { image: true },
@@ -558,6 +558,7 @@ describe("useChatSession minimal mode parity", () => {
         messagesBlobUrl: null,
         resumeConfig: {
           respectToolVisibility: false,
+          runUnloadedToolCalls: false,
           modelVisibleMcpToolResults: resumedPolicy,
           mcpToolResultImageRendering: { placement: "none" },
         },
@@ -577,6 +578,7 @@ describe("useChatSession minimal mode parity", () => {
       expect(getTransportRequests()).toContainEqual(
         expect.objectContaining({
           respectToolVisibility: false,
+          runUnloadedToolCalls: false,
           modelVisibleMcpToolResults: resumedPolicy,
           mcpToolResultImageRendering: { placement: "none" },
         })
@@ -1137,9 +1139,6 @@ describe("useChatSession minimal mode parity", () => {
       selectedServerIds: ["server-id-1"],
     });
     expect(transport.requests[0]).not.toHaveProperty("apiKey");
-    // A remote server needs no local runtime: the route resolves the org
-    // connection as usual (the key stays in Convex).
-    expect(transport.requests[0]).not.toHaveProperty("localMcpRuntimeRequired");
     expect(transport.requests[0]).toHaveProperty("accessScope", "chat_v2");
     expect(mockAuthFetch).toHaveBeenCalledWith(
       "/api/mcp/chat-v2",
@@ -1231,7 +1230,6 @@ describe("useChatSession minimal mode parity", () => {
       projectId: "project-1",
       selectedServerNames: ["server-1"],
       selectedServerIds: ["hosted-server-id"],
-      localMcpRuntimeRequired: true,
     });
     expect(transport.requests[0]).not.toHaveProperty("apiKey");
     expect(transport.requests[0].selectedServerIds).toEqual(["hosted-server-id"]);

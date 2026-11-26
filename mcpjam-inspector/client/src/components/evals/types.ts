@@ -1,5 +1,8 @@
 import type { JudgeRubric } from "@mcpjam/sdk/contract";
-import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
+import type {
+  ModelCostRollup,
+  RequestedModelSelection,
+} from "@mcpjam/sdk/browser";
 import type { CaseSource } from "@mcpjam/sdk/contract";
 import type {
   EvalSuiteFileCaseImport,
@@ -576,6 +579,8 @@ export type EvalIterationUsage = {
   estimatedCostUsd?: number;
   cacheHit?: boolean;
   costBasis?: EvalIterationCostBasis;
+  /** Sum of the iteration's per-call cost evidence, beside the estimate above. */
+  costRollup?: ModelCostRollup;
 };
 export type EvalIteration = {
   _id: string;
@@ -917,6 +922,45 @@ export type EvalSuiteRunSummary = {
   policyBlockedIterations?: number;
 };
 
+/**
+ * One account a run had for one server, recorded when the run started. The
+ * name is the one the account had then, so a later rename does not rewrite
+ * history. Names never carry an email.
+ */
+export type EvalRunAccount = {
+  serverId: string;
+  /** A person's own account, a shared server's project account, or an XAA identity. */
+  kind: "account" | "shared" | "xaa";
+  connectionId?: string;
+  name: string;
+  profileId?: string;
+  /** The simulated identity an XAA server ran as. */
+  xaaSubject?: string;
+  // The stored token's facts when the run started; absent from older backends.
+  /** Who stored the token, by the name teammates see. */
+  tokenStoredBy?: string;
+  tokenStoredAt?: number;
+  /** Uploaded through the accounts API rather than signed in. */
+  tokenUploaded?: boolean;
+  tokenExpiresAt?: number;
+  identity?: EvalRunAccountIdentity;
+};
+
+/**
+ * Whose an account's token was: from the server's profile tool (`profile`)
+ * or from the token's own unverified claims (`token`). Only `email` holds an
+ * address, and the backend leaves it out for a viewer who may not see it.
+ */
+export type EvalRunAccountIdentity = {
+  source: "profile" | "token";
+  name?: string;
+  subject?: string;
+  issuer?: string;
+  email?: string;
+  /** Where `email` came from, which can differ from `source`. */
+  emailSource?: "profile" | "token";
+};
+
 export type EvalSuiteRun = {
   name?: string;
   tags?: string[];
@@ -1140,6 +1184,14 @@ export type EvalSuiteRun = {
     surface: "rest" | "cli" | "mcp" | "slack" | "discord" | "workspace";
     apiKeyId?: string | null;
   };
+  /**
+   * The accounts this run connected with, per server. Absent on runs from
+   * before accounts were recorded, which is how readers tell "not recorded"
+   * from "no accounts".
+   */
+  accountsAtRun?: EvalRunAccount[];
+  /** Whose accounts the run used: who clicked Run, the schedule's or the key's owner. */
+  ranAsName?: string;
   replayedFromRunId?: string;
   /**
    * Set when this run re-ran a SUBSET of `rerunOfRunId`: only the cases that
@@ -1615,6 +1667,8 @@ export type EvalSuiteRunListItem = Pick<
   | "source"
   | "launcher"
   | "attribution"
+  | "accountsAtRun"
+  | "ranAsName"
   | "ciMetadata"
   | "replayedFromRunId"
   | "rerunOfRunId"

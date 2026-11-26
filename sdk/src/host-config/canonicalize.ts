@@ -25,6 +25,7 @@ import {
   TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
   UNAUTHORIZED_CHALLENGE_TRIGGERS,
 } from "../mcp-client-manager/auth-challenge.js";
+import { VERSION_NEGOTIATION_PREFERENCES } from "../mcp-client-manager/version-negotiation.js";
 import {
   HARNESS_IDS,
   HOST_CONFIG_SCHEMA_VERSION_V2,
@@ -61,6 +62,7 @@ import {
   type McpToolResultBlobVisibility,
   type McpToolResultImageRenderingPolicy,
   type ModelVisibleMcpToolResults,
+  type ModelVisibleStructuredContent,
   type OpenAiAppsCapabilities,
   type ServerId,
 } from "./types.js";
@@ -74,6 +76,7 @@ import {
   MODEL_CONTEXT_POLICY_KEYS,
   type ModelContextPolicyKey,
 } from "./model-context-policy.js";
+import { canonicalizePluginExtensionBehavior } from "./plugin-extension-behavior.js";
 
 // Allowed keys on `openaiAppsOverrides`. Centralized so the canonicalizer's
 // typo-rejection stays in sync with the type — if you add a method to
@@ -277,6 +280,18 @@ function canonicalizeResourceVisibility(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+function readModelVisibleStructuredContent(
+  value: unknown
+): ModelVisibleStructuredContent | undefined {
+  if (value === undefined) return undefined;
+  if (value === "fallback" || value === "preferred" || value === "both") {
+    return value;
+  }
+  throw new Error(
+    'hostConfigV2: modelVisibleMcpToolResults.structuredContent must be "fallback", "preferred" or "both"'
+  );
+}
+
 function canonicalizeModelVisibleMcpToolResults(
   value: unknown
 ): ModelVisibleMcpToolResults | undefined {
@@ -289,10 +304,18 @@ function canonicalizeModelVisibleMcpToolResults(
   const record = value as Record<string, unknown>;
   assertOnlyKnownKeys(
     record,
-    new Set(["directContent", "embeddedResources", "linkedResources"]),
+    new Set([
+      "structuredContent",
+      "directContent",
+      "embeddedResources",
+      "linkedResources",
+    ]),
     "modelVisibleMcpToolResults"
   );
 
+  const structuredContent = readModelVisibleStructuredContent(
+    record.structuredContent
+  );
   const directContent = canonicalizeBooleanLeaves(
     record.directContent,
     DIRECT_CONTENT_VISIBILITY_KEYS,
@@ -306,10 +329,13 @@ function canonicalizeModelVisibleMcpToolResults(
     record.linkedResources,
     "modelVisibleMcpToolResults.linkedResources"
   );
+  // Key order is part of the hash (JSON.stringify of this object), so the
+  // backend's canonicalizer must emit the same order.
   const out = {
     ...(directContent !== undefined ? { directContent } : {}),
     ...(embeddedResources !== undefined ? { embeddedResources } : {}),
     ...(linkedResources !== undefined ? { linkedResources } : {}),
+    ...(structuredContent !== undefined ? { structuredContent } : {}),
   };
   return Object.keys(out).length > 0 ? out : undefined;
 }
@@ -942,6 +968,7 @@ function canonicalizeMcpProfile(
     ["unauthorizedChallengeTrigger", UNAUTHORIZED_CHALLENGE_TRIGGERS],
     ["toolResultAuthChallenge", AUTH_CHALLENGE_ACTIONS],
     ["toolResultAuthChallengeTrigger", TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS],
+    ["versionNegotiation", VERSION_NEGOTIATION_PREFERENCES],
   ] as const;
   for (const [key, modes] of conformanceKnobs) {
     const value = input[key];
@@ -1594,8 +1621,9 @@ const PLUGIN_EXTENSION_CAPABILITY_KEY_SET: ReadonlySet<string> = new Set(
  * extensions switch. `enabled` is required whenever the object is present
  * (absence of the whole object is what means "use the style default").
  * `capabilities` keeps both `true` and `false` entries verbatim, sorted, and
- * collapses to absent when empty. Unknown keys are rejected at both levels so
- * a typo can't silently read back as "on".
+ * collapses to absent when empty; `behavior` is canonicalized by its own
+ * module. Unknown keys are rejected at every level so a typo can't silently
+ * read back as the default.
  */
 function canonicalizePluginExtensions(
   value: unknown
@@ -1606,7 +1634,7 @@ function canonicalizePluginExtensions(
     );
   }
   for (const key of Object.keys(value)) {
-    if (key !== "enabled" && key !== "capabilities") {
+    if (key !== "enabled" && key !== "capabilities" && key !== "behavior") {
       throw new Error(
         `hostConfigV2: mcpProfile.apps.pluginExtensions has unknown key "${key}"`
       );
@@ -1617,7 +1645,15 @@ function canonicalizePluginExtensions(
       "hostConfigV2: mcpProfile.apps.pluginExtensions.enabled must be a boolean"
     );
   }
-  const out: HostConfigPluginExtensionsV1 = { enabled: value.enabled };
+  const behavior =
+    value.behavior === undefined
+      ? undefined
+      : canonicalizePluginExtensionBehavior(value.behavior);
+  // Sorted keys: `behavior`, `capabilities`, then `enabled`.
+  const out: HostConfigPluginExtensionsV1 = {
+    ...(behavior ? { behavior } : {}),
+    enabled: value.enabled,
+  };
   if (value.capabilities !== undefined) {
     if (!isPlainObject(value.capabilities)) {
       throw new Error(
@@ -1641,8 +1677,8 @@ function canonicalizePluginExtensions(
       capabilities[key] = value.capabilities[key] as boolean;
     }
     if (Object.keys(capabilities).length > 0) {
-      // Sorted keys: `capabilities` before `enabled`.
       return {
+        ...(behavior ? { behavior } : {}),
         capabilities: capabilities as HostConfigPluginExtensionsV1["capabilities"],
         enabled: value.enabled,
       };
@@ -2801,5 +2837,6 @@ export function canonicalizeHostConfigV2(
               }
             : {},
         }),
+    ...(input.runUnloadedToolCalls === undefined ? {} : { runUnloadedToolCalls: input.runUnloadedToolCalls }),
   };
 }

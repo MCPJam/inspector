@@ -5,13 +5,12 @@ import { CASES, assertFullMatrix } from "./support";
 
 it("covers every registered harness", assertFullMatrix);
 
-/** What the adapter's own flags say about pausing for approval. */
+/** What the adapter's own flags say about pausing for approval. Who answers
+ *  (the person, or MCPJam's denial) does not change it. */
 function declaredRefusal(
   adapter: HarnessRuntimeAdapter,
   hasServers: boolean,
-  unattended: boolean,
-): "unattended" | "native" | "mcp" | undefined {
-  if (unattended) return "unattended";
+): "native" | "mcp" | undefined {
   if (!adapter.supportsNativeToolApproval) return "native";
   const mcp =
     adapter.mcpDelivery === "harness"
@@ -21,31 +20,20 @@ function declaredRefusal(
 }
 
 const COPY = {
-  unattended: "cannot wait for tool approval in evals or swarms",
   native: "does not support interactive tool approval",
   mcp: "cannot wait for approval of MCP server tools",
 } as const;
 
 describe.each(CASES)("$id tool approval", ({ adapter, descriptor }) => {
-  it.each([
-    [false, false],
-    [true, false],
-    [false, true],
-    [true, true],
-  ])(
-    "refuses exactly what its flags declare (servers=%s, unattended=%s)",
-    (hasSelectedMcpServers, unattended) => {
+  it.each([false, true])(
+    "refuses exactly what its flags declare (servers=%s)",
+    (hasSelectedMcpServers) => {
       const reason = harnessToolApprovalRefusalReason({
         adapter,
         requireToolApproval: true,
         hasSelectedMcpServers,
-        unattended,
       });
-      const declared = declaredRefusal(
-        adapter,
-        hasSelectedMcpServers,
-        unattended,
-      );
+      const declared = declaredRefusal(adapter, hasSelectedMcpServers);
       if (declared) expect(reason).toContain(COPY[declared]);
       else expect(reason).toBeUndefined();
     },
@@ -57,7 +45,6 @@ describe.each(CASES)("$id tool approval", ({ adapter, descriptor }) => {
         adapter,
         requireToolApproval: false,
         hasSelectedMcpServers: true,
-        unattended: true,
       }),
     ).toBeUndefined();
   });

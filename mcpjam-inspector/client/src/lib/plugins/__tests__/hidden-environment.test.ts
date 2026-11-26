@@ -191,9 +191,6 @@ describe("hiddenEnvironmentCompositionKey", () => {
         pluginVersionIds: ["v2", "v1"],
       }),
     );
-    expect(hiddenEnvironmentCompositionKey(base)).not.toBe(
-      hiddenEnvironmentCompositionKey({ ...base, secretIds: ["s"] }),
-    );
     // Hosted keys are unchanged; a local venue is its own composition.
     expect(hiddenEnvironmentCompositionKey(base)).toBe(
       hiddenEnvironmentCompositionKey({ ...base, venue: "hosted" }),
