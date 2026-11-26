@@ -112,6 +112,25 @@ describe("resume instructions", () => {
     });
   });
 
+  it("replays a refused resume as the same resume, not the whole suite", () => {
+    const instruction = replayLaunchResumeInstruction({
+      projectId: "p1",
+      suiteId: "s1",
+      input: {
+        project: "Acme",
+        suite: "Smoke",
+        resumeFromRunId: "run_9",
+        idempotencyKey: "k",
+      },
+    });
+    expect(instruction.arguments).toEqual({
+      project: "p1",
+      suite: "s1",
+      resumeFromRunId: "run_9",
+      idempotencyKey: "k",
+    });
+  });
+
   it("mints a group key only when the caller gave none", () => {
     expect(withGroupLaunchKey({ idempotencyKey: "k" })).toEqual({
       idempotencyKey: "k",

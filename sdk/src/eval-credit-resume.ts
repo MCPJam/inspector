@@ -71,6 +71,8 @@ export function stoppedRunResumeInstruction(
  * the replay returns the targets that started as their existing runs and
  * launches only the ones that were refused. Every selector, compose recipe
  * and knob is kept, because changing any of them would be a different launch.
+ * A refused resume keeps its `resumeFromRunId`: without it the replay would
+ * run the whole suite, cases the stopped run already finished included.
  */
 export function replayLaunchResumeInstruction(launch: {
   projectId: string;
@@ -80,10 +82,7 @@ export function replayLaunchResumeInstruction(launch: {
   const knobs = Object.fromEntries(
     Object.entries(launch.input).filter(
       ([key, value]) =>
-        value !== undefined &&
-        key !== "project" &&
-        key !== "suite" &&
-        key !== "resumeFromRunId"
+        value !== undefined && key !== "project" && key !== "suite"
     )
   );
   return {
