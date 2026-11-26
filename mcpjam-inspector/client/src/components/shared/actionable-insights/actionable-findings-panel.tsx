@@ -334,12 +334,12 @@ export function ActionableFindingsPanel({
       envelope.status === "pending"
         ? "Analyzing this run for actionable findings…"
         : envelope.status === "failed"
-        ? `Analysis failed${
-            envelope.error ? `: ${envelope.error.message}` : "."
-          }${envelope.retryable ? " You can request it again." : ""}`
-        : envelope.status === "not_requested"
-        ? "No analysis has been requested for this yet."
-        : "Actionable findings appear once this finishes and is analyzed.";
+          ? `Analysis failed${
+              envelope.error ? `: ${envelope.error.message}` : "."
+            }${envelope.retryable ? " You can request it again." : ""}`
+          : envelope.status === "not_requested"
+            ? "No analysis has been requested for this yet."
+            : "Actionable findings appear once this finishes and is analyzed.";
     return (
       <p
         className="px-3 py-2 text-xs text-muted-foreground"

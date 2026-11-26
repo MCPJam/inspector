@@ -91,15 +91,13 @@ export function buildOptionPrompt(
   const overlapping = problem.explanations.filter((row) =>
     row.iterationIds.some((id) => scope.has(id)),
   );
-  // An option names the mechanism it acts on; other explanations that touch
-  // the same iterations are context, never part of this option's cause.
-  const linked = option.mechanismId
-    ? overlapping.filter((row) => row.id === option.mechanismId)
-    : [];
-  const causes = linked.length ? linked : overlapping;
-  const others = linked.length
-    ? overlapping.filter((row) => row.id !== option.mechanismId)
-    : [];
+  // Only an explicit mechanism link makes an explanation this option's cause;
+  // any other explanation touching these iterations is context, named with the
+  // iterations it covers.
+  const causes = overlapping.filter((row) => row.id === option.mechanismId);
+  const others = overlapping.filter((row) => row.id !== option.mechanismId);
+  const ids = (list: readonly string[]) =>
+    list.map((id) => sanitizeIdentifier(id, 60)).join(", ");
   const unresolved = problem.coverage.unresolvedIterationIds.filter((id) =>
     scope.has(id),
   );
@@ -109,7 +107,7 @@ export function buildOptionPrompt(
     "",
     "## Observed",
     fence("Recorded observation", problem.observed),
-    `This applies to ${option.iterationIds.length} of the ${plural(problem.coverage.observed, "affected iteration")}: ${option.iterationIds.map((id) => sanitizeIdentifier(id, 60)).join(", ")}.`,
+    `This applies to ${option.iterationIds.length} of the ${plural(problem.coverage.observed, "affected iteration")}: ${ids(option.iterationIds)}.`,
     ...(causes.length
       ? [
           "",
@@ -122,13 +120,18 @@ export function buildOptionPrompt(
           "",
           "## Other explanations for these iterations",
           "Context only: this option does not act on these.",
-          proposal(...others.map((row) => `- ${row.rootCause ?? row.title}`)),
+          proposal(
+            ...others.map(
+              (row) =>
+                `- ${row.rootCause ?? row.title} (iterations ${ids(row.iterationIds.filter((id) => scope.has(id)))})`,
+            ),
+          ),
         ]
       : []),
     ...(unresolved.length
       ? [
           "",
-          `No checked cause or analysis option covers ${unresolved.length} of these iterations; treat them as open.`,
+          `No checked cause or analysis option covers ${plural(unresolved.length, "iteration")} here; treat ${unresolved.length === 1 ? "it" : "them"} as open: ${ids(unresolved)}.`,
         ]
       : []),
     ...(evidence.length
@@ -136,6 +139,13 @@ export function buildOptionPrompt(
           "",
           "## Evidence",
           ...evidence.map((row) => fence(evidenceLabel(row), row.excerpt)),
+        ]
+      : []),
+    ...(option.citations.length
+      ? [
+          "",
+          "## Trace citations",
+          ...option.citations.map((ref) => `- ${sanitizeIdentifier(ref, 120)}`),
         ]
       : []),
     "",

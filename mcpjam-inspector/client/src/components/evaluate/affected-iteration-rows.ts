@@ -64,6 +64,20 @@ export function affectedRowsById(
       chain: fromDiagnostics.get(iteration._id) ?? chains?.get(iteration._id),
     };
   }
+  // A diagnostic for an iteration whose metadata did not load still carries
+  // its verified stage, so the rubric can read it by id.
+  for (const [id, chain] of fromDiagnostics) {
+    rows[id] ??= {
+      iterationId: id,
+      caseTitle: "Iteration not loaded on this page",
+      iterationNumber: null,
+      client: null,
+      model: null,
+      result: "unknown",
+      canOpen: false,
+      chain,
+    };
+  }
   return rows;
 }
 

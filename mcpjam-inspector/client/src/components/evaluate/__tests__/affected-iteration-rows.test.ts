@@ -42,4 +42,10 @@ describe("affectedRowsById", () => {
     );
     expect(rows.it_a.chain).toBe(SELECTION_FAILED);
   });
+
+  it("keeps the diagnostic chain when the iteration metadata did not load", () => {
+    const rows = affectedRowsById([], null, undefined, [diagnostic]);
+    expect(rows.it_a.chain).toBe(SELECTION_FAILED);
+    expect(rows.it_a.canOpen).toBe(false);
+  });
 });

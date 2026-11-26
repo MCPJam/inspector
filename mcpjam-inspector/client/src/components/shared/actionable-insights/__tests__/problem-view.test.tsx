@@ -383,7 +383,11 @@ describe("problem details", () => {
     // The alternative's prompt never carries the recommendation's change.
     expect(clipboard.text).not.toContain("takes the id returned by");
     expect(clipboard.text).toContain("## Weakens it if");
-    expect(clipboard.text).toContain("## Reviewed explanation");
+    // No mechanism link: overlapping explanations are context, never the cause.
+    expect(clipboard.text).not.toContain("## Reviewed explanation");
+    expect(clipboard.text).toContain(
+      "## Other explanations for these iterations",
+    );
     expect(clipboard.text).not.toContain("## Checked cause");
     expect(
       screen.getByText(/You decide the next action and start any rerun/),
@@ -425,6 +429,45 @@ describe("problem details", () => {
     await user.click(screen.getByRole("option", { name: /Alternative/ }));
     expect(rowText("Case one")).toContain("Not in selected option");
     expect(rowText("Case two")).toContain("In selected option");
+  });
+
+  it("keeps an in-scope iteration's unresolved status", () => {
+    render(
+      <ProblemDetailsContent
+        problem={problem({
+          options: [option({ iterationIds: ["it_1", "it_2", "it_3"] })],
+        })}
+      />,
+    );
+    const rows = screen.getAllByText(/In selected option/);
+    expect(rows.map((row) => row.textContent)).toContain(
+      "In selected option · Unresolved",
+    );
+  });
+
+  it("lists the selected option's trace citations", () => {
+    render(<ProblemDetailsContent problem={problem({ evidence: [] })} />);
+    expect(screen.getByTestId("problem-option-citations")).toHaveTextContent(
+      "it_1/tc:0",
+    );
+  });
+
+  it("labels a passing comparison apart from the affected excerpts", () => {
+    render(
+      <ProblemDetailsContent
+        problem={problem({
+          options: [],
+          evidence: [
+            { iterationId: "it_1", kind: "tool_error", excerpt: "failed" },
+            { iterationId: "it_7", kind: "contrast", excerpt: "passed call" },
+          ],
+        })}
+      />,
+    );
+    expect(
+      screen.getByText("Passing comparison, iteration it_7"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("passed call")).toBeInTheDocument();
   });
 
   it("shows the recorded excerpt under Evidence", () => {
@@ -570,8 +613,20 @@ describe("buildOptionPrompt", () => {
       }),
     );
     expect(prompt).toContain(
-      "No checked cause or analysis option covers 1 of these iterations",
+      "No checked cause or analysis option covers 1 iteration here; treat it as open: it_3.",
     );
+    expect(prompt).not.toContain("## Reviewed explanation");
+    expect(
+      prompt.split("## Other explanations for these iterations")[1],
+    ).toMatch(/\(iterations it_1\)/);
+  });
+
+  it("carries the option's trace citations even with no sampled excerpt", () => {
+    const prompt = buildOptionPrompt(
+      problem({ evidence: [] }),
+      option({ citations: ["it_1/tc:0"] }),
+    );
+    expect(prompt.split("## Trace citations")[1]).toContain("- it_1/tc:0");
   });
 
   it("fences analysis text so a quoted server message cannot add a heading or an instruction", () => {

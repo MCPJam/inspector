@@ -186,9 +186,9 @@ export function ProblemDetailsContent({
   );
   const unresolved = new Set(problem.coverage.unresolvedIterationIds);
   const target = option ? optionTargetLabel(option) : null;
-  const excerpts = problem.evidence.filter(
-    (row) => row.kind !== "contrast" && row.excerpt,
-  );
+  // A passing comparison stays visible but is labelled apart, since it is
+  // not one of the affected iterations.
+  const excerpts = problem.evidence.filter((row) => row.excerpt);
   const status = (id: string) =>
     explained.has(id)
       ? "Evidence reviewed"
@@ -211,7 +211,9 @@ export function ProblemDetailsContent({
               {excerpts.map((row, index) => (
                 <figure key={index} className="mt-2 min-w-0">
                   <figcaption className="text-xs text-muted-foreground">
-                    {evidenceLabel(row)}
+                    {row.kind === "contrast"
+                      ? `Passing comparison${row.iterationId ? `, iteration ${row.iterationId}` : ""}`
+                      : evidenceLabel(row)}
                   </figcaption>
                   <pre
                     tabIndex={0}
@@ -319,6 +321,14 @@ export function ProblemDetailsContent({
               </p>
             </details>
           ) : null}
+          {option.citations.length > 0 ? (
+            <p
+              className="break-words text-xs text-muted-foreground"
+              data-testid="problem-option-citations"
+            >
+              Cited trace locations: {option.citations.join(", ")}
+            </p>
+          ) : null}
           <CopyOptionPrompt
             key={option.id}
             problem={problem}
@@ -357,9 +367,16 @@ export function ProblemDetailsContent({
             !option
               ? status(row.iterationId)
               : scope.has(row.iterationId)
-                ? explained.has(row.iterationId)
-                  ? "In selected option · Evidence reviewed"
-                  : "In selected option"
+                ? [
+                    "In selected option",
+                    explained.has(row.iterationId)
+                      ? "Evidence reviewed"
+                      : unresolved.has(row.iterationId)
+                        ? "Unresolved"
+                        : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")
                 : `Not in selected option · ${status(row.iterationId)}`
           }
           {...(onOpenEvidence
