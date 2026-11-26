@@ -80,8 +80,9 @@ QA profile or member sign-in is unavailable, report which checks are blocked.
 3. Take a screenshot in light mode, then switch to dark mode and take another.
    Both themes must read correctly.
 4. Check the browser console for new errors.
-5. Attach the screenshots to the PR description. An agent that can't attach
-   images to a PR uploads them to the Kestral task and links them instead.
+5. Attach the screenshots to the PR on GitHub, in the description or a
+   comment, and name the commit they were taken on. A Kestral link on its own
+   doesn't count as evidence. See `.github/agent-pr-definition-of-done.md`.
 
 ## Something to connect to
 
