@@ -2557,6 +2557,106 @@ describe("PlaygroundMain", () => {
       }
     });
 
+    it("keeps text typed in the fullscreen composer while its send prepares", async () => {
+      const deviceType = mockUIPlaygroundStore.deviceType;
+      mockUIPlaygroundStore.deviceType = "fill";
+      useHostContextStore.setState({
+        draftHostContext: { displayMode: "fullscreen" },
+      });
+      try {
+        const { rerender } = await openSavedThread();
+        await act(async () => {
+          rerender(<PlaygroundMain {...defaultProps} />);
+        });
+        await act(async () => {
+          mockThread.mock.calls.at(-1)?.[0].onFullscreenChange(true);
+        });
+        const overlay = () =>
+          mockFullscreenChatOverlay.mock.calls.at(-1)?.[0] as {
+            onSend: () => void;
+            input?: string;
+            isSubmitting?: boolean;
+          };
+        const type = (value: string) =>
+          fireEvent.change(screen.getByTestId("fullscreen-overlay-input"), {
+            target: { value },
+          });
+        const releaseSync = holdPreSendSync();
+        type("first");
+        await act(async () => overlay().onSend());
+        type("first plus more");
+
+        await act(async () => releaseSync());
+
+        await waitFor(() => expect(overlay().isSubmitting).toBe(false));
+        expect(sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ text: "first" }),
+        );
+        expect(overlay().input).toBe("plus more");
+      } finally {
+        mockUIPlaygroundStore.deviceType = deviceType;
+      }
+    });
+
+    it("keeps text typed while a compare send converts its attachment", async () => {
+      mockUseChatSession.messages = [];
+      mockUseChatSession.availableModels = [
+        { id: "openai/gpt-5-mini", name: "Mini", provider: "openai" },
+        {
+          id: "anthropic/claude-sonnet-4.5",
+          name: "Sonnet",
+          provider: "anthropic",
+        },
+      ] as any;
+      mockUseChatSession.multiModelEnabled = true;
+      const read = FileReader.prototype.readAsDataURL;
+      const held: Array<() => void> = [];
+      const hold = vi
+        .spyOn(FileReader.prototype, "readAsDataURL")
+        .mockImplementation(function (this: FileReader, blob: Blob) {
+          held.push(() => read.call(this, blob));
+        });
+      const composer = () =>
+        composerProps() as unknown as {
+          value: string;
+          onChange: (text: string) => void;
+          onSubmit: (e: { preventDefault: () => void }) => Promise<void>;
+          onChangeFileAttachments: (files: unknown[]) => void;
+        };
+      try {
+        render(<PlaygroundMain {...defaultProps} enableMultiModelChat />);
+        await act(async () => {
+          composer().onChangeFileAttachments([
+            { id: "f1", file: new File(["x"], "a.png", { type: "image/png" }) },
+          ]);
+          composer().onChange("first");
+        });
+        let submitted!: Promise<void>;
+        await act(async () => {
+          submitted = composer().onSubmit({ preventDefault() {} });
+        });
+        await waitFor(() => expect(held).toHaveLength(1));
+        await act(async () => composer().onChange("first plus more"));
+
+        await act(async () => {
+          held.forEach((release) => release());
+          await submitted;
+        });
+
+        await waitFor(() =>
+          expect(
+            mockMultiModelPlaygroundCard.mock.calls.at(-1)?.[0].broadcastRequest
+              ?.text,
+          ).toBe("first"),
+        );
+        expect(composer().value).toBe("plus more");
+      } finally {
+        hold.mockRestore();
+        mockUseChatSession.availableModels = [];
+        mockUseChatSession.multiModelEnabled = false;
+      }
+    });
+
     const thread = () =>
       mockThread.mock.calls.at(-1)?.[0] as {
         onModelContextUpdate: (
