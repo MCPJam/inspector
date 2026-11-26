@@ -60,43 +60,14 @@ const CONNECTION_DATA_CHECK_IDS = new Set<MCPCheckId>([
  */
 const PING_CHECK_ID: MCPCheckId = "ping";
 
-const RECONNECTED_AFTER_PING_NOTE =
-  "A ping with no answer means the connection may be lost, so the checks after this one ran on a new connection.";
-
-/**
- * Drop the connection and open a new one, as a client does when a ping gets
- * no answer. Returns the context for the new connection, or `undefined` when
- * the server did not accept one.
- */
-async function reconnect(
-  ctx: MCPClientCheckContext
-): Promise<MCPClientCheckContext | undefined> {
-  const { manager, serverId, config } = ctx;
-  const serverConfig = manager.getServerConfig(serverId);
-  if (!serverConfig) return undefined;
-  try {
-    await manager.disconnectServer(serverId);
-    const client = await manager.connectToServer(serverId, serverConfig, {
-      signal: config.signal,
-    });
-    return {
-      ...ctx,
-      client,
-      initializationInfo: manager.getInitializationInfo(serverId),
-    };
-  } catch {
-    config.signal?.throwIfAborted();
-    return undefined;
-  }
-}
+const SKIPPED_AFTER_PING_NOTE =
+  "A ping with no answer means the connection may be lost, so the checks after this one were skipped.";
 
 export async function runSelectedClientChecks(
   selectedClientChecks: readonly MCPClientCheckDefinition[],
-  initialCtx: MCPClientCheckContext
+  ctx: MCPClientCheckContext
 ): Promise<MCPCheckResult[]> {
-  const config = initialCtx.config;
-  /** Replaced when a ping times out and the run reconnects. */
-  let ctx = initialCtx;
+  const config = ctx.config;
   const results: MCPCheckResult[] = [];
   /** The check whose error broke the session; every later check names it. */
   let connectionLostBy: MCPClientCheckDefinition | undefined;
@@ -109,30 +80,23 @@ export async function runSelectedClientChecks(
 
   /**
    * Count a timed-out check. A timed-out ping is the exception to "the session
-   * stays usable": the run reconnects, and when the server does not accept a
-   * new connection it has stopped answering, so the remaining checks skip.
+   * stays usable": the connection counts as lost, so the remaining checks skip.
    */
-  const recordTimeout = async (
+  const recordTimeout = (
     check: MCPClientCheckDefinition,
     result: MCPCheckResult
-  ): Promise<MCPCheckResult> => {
+  ): MCPCheckResult => {
     timeoutStreak += 1;
     timedOut.push(check);
     if (check.id !== PING_CHECK_ID) return result;
-    const reconnected = await reconnect(ctx);
-    config.signal?.throwIfAborted();
-    if (!reconnected) {
-      timeoutStreak = MAX_TIMEOUTS_IN_A_ROW;
-      return { ...result, details: { ...result.details, reconnected: false } };
-    }
-    ctx = reconnected;
+    timeoutStreak = MAX_TIMEOUTS_IN_A_ROW;
     return {
       ...result,
       error: {
         ...result.error,
-        message: `${result.error?.message} ${RECONNECTED_AFTER_PING_NOTE}`,
+        message: `${result.error?.message} ${SKIPPED_AFTER_PING_NOTE}`,
       },
-      details: { ...result.details, reconnected: true },
+      details: { ...result.details, connectionLost: true },
     };
   };
 
@@ -173,7 +137,7 @@ export async function runSelectedClientChecks(
       config.signal?.throwIfAborted();
       // Only an answer ends the streak; a skip asked the server nothing.
       if (isTimedOutCheck(result)) {
-        results.push(await recordTimeout(check, result));
+        results.push(recordTimeout(check, result));
         continue;
       }
       if (
@@ -188,7 +152,7 @@ export async function runSelectedClientChecks(
       config.signal?.throwIfAborted();
       if (isRequestTimeoutError(error)) {
         results.push(
-          await recordTimeout(check, timedOutResult(check, config.checkTimeout))
+          recordTimeout(check, timedOutResult(check, config.checkTimeout))
         );
         continue;
       }
