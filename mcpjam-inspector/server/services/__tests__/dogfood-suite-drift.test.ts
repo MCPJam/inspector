@@ -153,11 +153,126 @@ describe("the dogfood eval suites", () => {
       expect(passes(asserts, { answer }), answer).toBe(false);
     }
   });
+
+  it("make the identity case require the address itself", () => {
+    const asserts = caseAsserts(IDENTITY);
+    const toolCalls = ["get_me"];
+
+    expect(
+      passes(asserts, {
+        toolCalls,
+        answer: "You are signed in as ada@example.com.",
+      }),
+    ).toBe(true);
+    expect(
+      passes(asserts, { toolCalls, answer: "You are signed in to MCPJam." }),
+    ).toBe(false);
+  });
+
+  it("make the count case require one number", () => {
+    // Only the answer check: a synthetic transcript carries no turn count or
+    // token usage, so the case's budget checks cannot pass here.
+    const asserts = caseAsserts(COUNT).filter(
+      (a) => a.type === "responseMatches",
+    );
+    expect(asserts).toHaveLength(1);
+    const toolCalls = ["list_projects"];
+
+    for (const answer of ["3", "You have 3 projects."]) {
+      expect(passes(asserts, { toolCalls, answer }), answer).toBe(true);
+    }
+    for (const answer of ["You have several projects.", "3 of 12 projects"]) {
+      expect(passes(asserts, { toolCalls, answer }), answer).toBe(false);
+    }
+  });
+
+  it("make the missing-project case require saying so, and no create", () => {
+    const asserts = caseAsserts(MISSING);
+    const lookup = {
+      toolName: "list_eval_suites",
+      arguments: { project: "No Such Project 7f3a" },
+    };
+    const notFound: Result = {
+      toolName: "list_eval_suites",
+      text: "NOT_FOUND: no project matches 'No Such Project 7f3a'",
+      isError: true,
+    };
+    const looked = { toolCalls: [lookup], toolResults: [notFound] };
+
+    for (const answer of [
+      "I couldn't find a project named 'No Such Project 7f3a'.",
+      "That project does not exist. Your projects are A and B.",
+      "I don't see a project called that. Which one did you mean?",
+      "The project 'No Such Project 7f3a' could not be found.",
+      "No Such Project 7f3a wasn't found among your projects.",
+      "For project 'No Such Project 7f3a', I couldn't find it.",
+    ]) {
+      expect(passes(asserts, { ...looked, answer }), answer).toBe(true);
+    }
+    for (const answer of [
+      "The suites are Smoke and Nightly.",
+      "I don't see any problems. The suites are Smoke and Nightly.",
+    ]) {
+      expect(passes(asserts, { ...looked, answer }), answer).toBe(false);
+    }
+
+    // An answer the pattern accepts, so only the run around it can fail.
+    const answer = "That project does not exist.";
+    expect(passes(asserts, { ...looked, answer })).toBe(true);
+    // No lookup at all.
+    expect(passes(asserts, { answer })).toBe(false);
+    // Lookups that never name the missing project.
+    expect(passes(asserts, { toolCalls: ["list_projects"], answer })).toBe(
+      false,
+    );
+    expect(
+      passes(asserts, {
+        toolCalls: [
+          { toolName: "list_eval_suites", arguments: { project: "Other" } },
+        ],
+        toolResults: [{ ...notFound, text: "NOT_FOUND: no project 'Other'" }],
+        answer,
+      }),
+    ).toBe(false);
+    // Creating the project it could not find.
+    expect(
+      passes(asserts, {
+        toolCalls: [lookup, "create_project"],
+        toolResults: [notFound],
+        answer,
+      }),
+    ).toBe(false);
+    // Falling back to another project's suites.
+    expect(
+      passes(asserts, {
+        toolCalls: [lookup, { toolName: "list_eval_suites", arguments: {} }],
+        toolResults: [
+          notFound,
+          {
+            toolName: "list_eval_suites",
+            text: '{"project":{"name":"MCPJam MCP dogfood"},"items":[{"name":"Smoke"},{"name":"Nightly"}]}',
+          },
+        ],
+        answer:
+          "Project not found: No Such Project 7f3a. Here are the suites in MCPJam MCP dogfood: Smoke, Nightly.",
+      }),
+    ).toBe(false);
+  });
+
+  it("name only tools the MCPJam MCP server has", () => {
+    const names = new Set(platformOperations().map((op) => op.name));
+    const used = allToolNames();
+    expect(used.length).toBeGreaterThan(0);
+    expect(used.filter((name) => !names.has(name))).toEqual([]);
+  });
 });
 
 const GLOSSARY =
   "names the six user-value stages in order from its own glossary";
 const ASKS = "asks rather than guessing when the request names nothing";
+const IDENTITY = "answers who the caller is from the platform, not from memory";
+const COUNT = "counts projects in one hop and stays inside a token budget";
+const MISSING = "says a named project does not exist instead of guessing";
 
 // The case's own assertions, loaded from the suite file and scored by the
 // evaluator itself, so its pattern gates (an invalid or nested-quantifier
@@ -174,23 +289,55 @@ function caseAsserts(title: string): Predicate[] {
   );
 }
 
+type Call = string | { toolName: string; arguments: Record<string, unknown> };
+type Result = { toolName: string; text: string; isError?: boolean };
+
+// A trial passes when every gating check passes; advisory checks only report.
 function passes(
   asserts: Predicate[],
-  run: { toolCalls?: string[]; answer: string },
+  run: { toolCalls?: Call[]; toolResults?: Result[]; answer: string },
 ): boolean {
   const transcript = buildIterationTranscript({
-    toolCalls: (run.toolCalls ?? []).map((toolName) => ({
-      toolName,
-      arguments: {},
-    })),
+    toolCalls: (run.toolCalls ?? []).map((call) =>
+      typeof call === "string" ? { toolName: call, arguments: {} } : call,
+    ),
+    ...(run.toolResults
+      ? {
+          resultsCaptured: true,
+          toolResults: run.toolResults.map((result) => ({
+            ...result,
+            size: {
+              bytes: result.text.length,
+              basis: "model_visible_output" as const,
+              complete: true,
+            },
+          })),
+        }
+      : {}),
     finalAssistantMessage: run.answer,
   });
-  return evaluatePredicates(transcript, asserts).every((r) => r.passed);
+  const gating = asserts.filter((a) => a.role !== "advisory");
+  return evaluatePredicates(transcript, gating).every((r) => r.passed);
+}
+
+function allToolNames(): string[] {
+  const loaded = loadEvalSuiteFile(read(STAGING));
+  if (!loaded.ok) throw new Error(`${STAGING} does not load`);
+  return loaded.resolved.cases.flatMap((c) =>
+    c.steps.flatMap((step) =>
+      step.kind === "assert" && "toolName" in step.assertion
+        ? [step.assertion.toolName].filter(
+            (name): name is string => typeof name === "string",
+          )
+        : [],
+    ),
+  );
 }
 
 function platformOperations(): Array<{ name: string; readOnly?: boolean }> {
-  return Object.values(platform).filter(
-    (value): value is { name: string; readOnly?: boolean } & object =>
+  const exports: unknown[] = Object.values(platform);
+  return exports.filter(
+    (value): value is { name: string; readOnly?: boolean } =>
       typeof value === "object" &&
       value !== null &&
       typeof (value as { name?: unknown }).name === "string" &&
