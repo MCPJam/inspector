@@ -293,6 +293,8 @@ interface EvalFixtureOptions {
     { code: string; message: string; recovery?: unknown }
   >;
   runCaseResult?: "passed" | "failed" | "inconclusive" | null;
+  /** The `creditRecovery` a credit stop left on `run-case`. */
+  runCaseCreditRecovery?: Record<string, unknown>;
   /** The execution record `run-case`'s iteration carries (absent: none). */
   runCaseExecution?: Record<string, unknown>;
   /** Non-terminal keeps `--wait` polling until its deadline. */
@@ -1094,6 +1096,9 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
           createdAt: 10,
           completedAt: 20,
           ...(options.runAccounts ? { accounts: options.runAccounts } : {}),
+          ...(options.runCaseCreditRecovery
+            ? { creditRecovery: options.runCaseCreditRecovery }
+            : {}),
           ...(policy2
             ? {
                 verdictPolicyVersion: 2,
@@ -6677,6 +6682,51 @@ test("eval run --wait exits 6 and replays the group for its credit-refused targe
     assert.match(
       run.stdout,
       /Resume: mcpjam cloud eval run --suite suite-1 --project proj-alpha --all-targets --wait --idempotency-key k1 --resume\n/
+    );
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait --reporter prints a credit stop's resume on stderr", async () => {
+  const fixture = await startEvalFixture({
+    runCaseStatus: "failed",
+    runCaseResult: "failed",
+    runCaseCreditRecovery: {
+      version: 1,
+      reason: "allowance_exhausted",
+      action: "buy_credits",
+      actor: "caller",
+      url: "https://app.mcpjam.com/billing",
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--reporter",
+          "json-summary"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 6, run.stderr);
+    assert.equal(JSON.parse(run.stdout).kind, "eval-run");
+    assert.match(
+      run.stderr,
+      /Recovery: Buy credits to keep going: https:\/\/app\.mcpjam\.com\/billing\n/
+    );
+    assert.match(
+      run.stderr,
+      /Resume: mcpjam cloud eval run --suite suite-1 --project proj-alpha --wait --reporter json-summary --resume --resume-from run-case\n/
     );
   } finally {
     process.exitCode = 0;

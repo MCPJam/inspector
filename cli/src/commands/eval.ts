@@ -3801,6 +3801,12 @@ export function registerEvalCommands(program: Command): void {
             throw error;
           }
         }
+        // A refused `--file -` launch resumes on its suite by id, and a suite
+        // launch with no `--case` runs every stored case, including the rows
+        // the file disabled. Its resume names the cases this launch ran.
+        let stdinRunCases: string[] | undefined;
+        const replayOptions = () =>
+          stdinRunCases ? { ...options, case: stdinRunCases } : options;
         let result: RunEvalSuiteResult;
         try {
           result = await runPlatformCommand(
@@ -3854,6 +3860,9 @@ export function registerEvalCommands(program: Command): void {
                     onDisclosureUnavailable,
                     onIdempotencyKey: (key) => {
                       process.stderr.write(`Eval idempotency key: ${key}\n`);
+                    },
+                    onRunCases: (caseIds) => {
+                      if (options.file === "-") stdinRunCases = caseIds;
                     },
                   },
                   {
@@ -3980,7 +3989,7 @@ export function registerEvalCommands(program: Command): void {
             const block = refusedLaunchCreditBlock(
               error.details,
               launchRecovery,
-              options,
+              replayOptions(),
             );
             if (globalOptions.format === "human") {
               process.stderr.write(`${error.message}\n`);
@@ -4020,7 +4029,10 @@ export function registerEvalCommands(program: Command): void {
           throw error;
         }
         // Fan-out targets credits refused: each gets its own resume command.
-        const refusedBlocks = refusedTargetCreditBlocks(result, options);
+        const refusedBlocks = refusedTargetCreditBlocks(
+          result,
+          replayOptions(),
+        );
         // EXACTLY ONE JSON document on `--format json`: the receipt already
         // carries every run, so appending human lines to it would make the
         // stream unparseable for the CI callers that read it. The human-mode
@@ -4366,6 +4378,9 @@ export function registerEvalCommands(program: Command): void {
         }
         if (reporter && report) {
           writeReporterResult(reporter, report);
+          // The report format has no field for a resume, so the step and its
+          // command go to stderr and stdout stays one parseable document.
+          writeCreditBlocks("human", creditBlocks, resumed, process.stderr);
         } else {
           writeResult(
             {

@@ -23,6 +23,7 @@ import {
   MAX_IMPORT_NOTE_CHARS,
 } from "@mcpjam/sdk/contract";
 import {
+  isPlatformApiError,
   projectResolutionError,
   resolveProject,
   runEvalSuiteOperation,
@@ -48,6 +49,7 @@ import {
   type EvalVocabulary,
 } from "./eval-vocabulary.js";
 import { CliError, cliError, normalizeCliError, usageError } from "./output.js";
+import { toCliError } from "./platform-client.js";
 
 /** Hosted runs refuse more than this many iterations — named, not clamped. */
 export const HOSTED_ITERATIONS_CAP = 10;
@@ -1000,6 +1002,8 @@ export async function executeEvalRunFromFile(
     onDisclosure?: (disclosure: PlatformEvalRunDisclosure) => void;
     onDisclosureUnavailable?: (reason: string) => void;
     onIdempotencyKey?: (key: string) => void;
+    /** The case rows this launch runs: the file's enabled cases, or `--case`. */
+    onRunCases?: (caseIds: string[]) => void;
   },
   params: {
     source: { text: string; bytes: number; buffer: Uint8Array };
@@ -1208,6 +1212,7 @@ export async function executeEvalRunFromFile(
     outgoingCases,
     knobs.case
   );
+  context.onRunCases?.(runCases);
 
   const importApprovals = mapApprovalsToHostedCases({
     approvals: knobs.approvals,
@@ -1248,7 +1253,11 @@ export async function executeEvalRunFromFile(
         ...(knobs.iterations !== undefined || knobs.repetitions !== undefined
           ? { iterations: knobs.iterations ?? knobs.repetitions }
           : {}),
-        cases: runCases,
+        // A resume runs the source run's unfinished cases, and the backend
+        // refuses a case list beside it; only an explicit --case is sent.
+        ...(knobs.resumeFromRunId && !knobs.case?.length
+          ? {}
+          : { cases: runCases }),
         ...(knobs.excludeSkills ? { excludeSkills: true } : {}),
         ...(knobs.refreshSnapshot ? { refreshSnapshot: true } : {}),
         ...(knobs.notes !== undefined ? { notes: knobs.notes } : {}),
@@ -1270,7 +1279,11 @@ export async function executeEvalRunFromFile(
       }
     );
   } catch (error) {
-    const normalized = normalizeCliError(error);
+    // A platform refusal keeps its wire code and `details`, where a credit
+    // refusal carries its recovery.
+    const normalized = isPlatformApiError(error)
+      ? toCliError(error)
+      : normalizeCliError(error);
     // The suite is already written, so a resume names it by id rather than
     // reading the file (or consumed stdin) again.
     const launch = { idempotencyKey, suiteId: synced.suite.id };
