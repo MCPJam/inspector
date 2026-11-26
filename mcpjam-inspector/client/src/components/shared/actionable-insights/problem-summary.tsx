@@ -81,7 +81,7 @@ export function ProblemSummary({
             </>
           ) : (
             <li>
-              <strong>Next:</strong> No supported next step.
+              <strong>Next:</strong> No action is available for this problem yet.
             </li>
           )}
         </ul>
