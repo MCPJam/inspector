@@ -375,6 +375,52 @@ describe("a refusal for a model with no private provider", () => {
     }
   });
 
+  // Mid-stream and harness refusals store the sentence in `errorDetails` and
+  // the code as the execution failure's reason.
+  it.each([
+    [
+      "mid-stream, with a provider-error chain",
+      providerErrorChain,
+      "execution",
+    ],
+    ["harness, with a setup-aborted chain", setupAbortedChain, "setup"],
+  ])("groups the %s refusal as a setting", (_label, chain, phase) => {
+    const breakdown = buildRunErrorBreakdown({
+      iterations: [
+        iteration("a", {
+          status: "failed",
+          error: noPrivateProvider,
+          errorDetails: noPrivateProvider,
+          metadata: {
+            evalExecutionFailure: { phase, reason: "policy_no_zdr_endpoint" },
+          },
+        }),
+      ],
+      chains: new Map([["a", chain]]),
+    });
+    expect(breakdown!.groups).toEqual([
+      expect.objectContaining({ cause: "settings", count: 1 }),
+    ]);
+  });
+
+  it("keeps a server failure the chain pins on the MCP server", () => {
+    expect(
+      classifyIterationError(
+        iteration("a", {
+          status: "failed",
+          error: noPrivateProvider,
+          metadata: {
+            evalExecutionFailure: {
+              phase: "execution",
+              reason: "policy_no_zdr_endpoint",
+            },
+          },
+        }),
+        toolErrorChain,
+      ),
+    ).toBe("serverError");
+  });
+
   it("leaves other stored codes classified from the text", () => {
     const breakdown = buildRunErrorBreakdown({
       iterations: [iteration("a", noPrivateProviderRefusal("internal_error"))],
