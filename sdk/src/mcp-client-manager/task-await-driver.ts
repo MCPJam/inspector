@@ -101,6 +101,17 @@ export interface DriveTaskToTerminalArgs {
   ) => Promise<void>;
   /** Answers `input_required` rounds. Absent ⇒ any input ends the drive. */
   input?: TaskInputDriverOptions;
+  /**
+   * LEGACY only: how long the one `tasks/result` sent on `input_required` may
+   * stay open. 2025-11-25 says a requestor that meets `input_required` SHOULD
+   * call `tasks/result` right away (tasks.mdx:449): that open call is where
+   * the server delivers its questions, and it only answers once the task has
+   * ended. Short by default, so a task nobody here can answer still ends the
+   * drive as `input-required` instead of looking like a hang. A surface with
+   * an elicitation handler passes a longer bound; the drive's own deadline
+   * always caps it.
+   */
+  inputRequiredResultWaitMs?: number;
   /** Total wall-clock budget. The whole drive, not a single read. */
   timeoutMs?: number;
   /** Consecutive failed reads tolerated before giving up. */
@@ -156,6 +167,7 @@ function terminalOutcome(status: string): TaskAwaitOutcome {
 const DEFAULT_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_MAX_CONSECUTIVE_ERRORS = 5;
 const DEFAULT_MAX_INPUT_ROUNDS = 10;
+const DEFAULT_INPUT_REQUIRED_RESULT_WAIT_MS = 5_000;
 
 /**
  * Polls `identity` until it reaches a terminal state or a bounded exit.
@@ -186,6 +198,10 @@ export async function driveTaskToTerminal(
   let inputRounds = 0;
   let lastError: unknown;
   let unansweredInput: TaskInputRejection[] | undefined;
+  /** Legacy: the `tasks/result` for `input_required` is sent once per drive. */
+  let resultCalledForInput = false;
+  /** Legacy: what that call returned, kept so the result is not fetched twice. */
+  let earlyResult: { value: Record<string, unknown> | null } | undefined;
 
   for (;;) {
     if (args.signal?.aborted) {
@@ -301,6 +317,20 @@ export async function driveTaskToTerminal(
     }
 
     if (snapshot.status === "input_required") {
+      // 2025-11-25: call `tasks/result` as soon as the task asks for input
+      // (tasks.mdx:449, a SHOULD). Once per drive: a call that brought nothing
+      // would bring nothing again.
+      if (
+        identity.wire === "legacy" &&
+        args.getResult &&
+        !resultCalledForInput
+      ) {
+        resultCalledForInput = true;
+        const moved = await callResultForInput();
+        if (moved === ABORTED) return { outcome: "aborted", task: snapshot };
+        // The server answered the call, so the task in hand is stale.
+        if (moved) continue;
+      }
       // No handlers, or no way to submit ⇒ this is exactly the deterministic
       // outcome the plan asks for, rather than a hang.
       if (!args.input || !args.updateTask) {
@@ -422,14 +452,15 @@ export async function driveTaskToTerminal(
    * the transport itself never settles.
    */
   async function raceDeadline<T>(
-    work: Promise<T>
+    work: Promise<T>,
+    capMs = Number.POSITIVE_INFINITY
   ): Promise<T | typeof TIMED_OUT | typeof ABORTED> {
     // If the bound wins, nobody is left awaiting `work`. Attach a no-op
     // handler now so a later rejection from the call we stopped waiting on
     // does not surface as an unhandled rejection — it is noise, not a signal.
     work.catch(() => undefined);
 
-    const remaining = deadline - now();
+    const remaining = Math.min(deadline - now(), capMs);
     if (remaining <= 0) return TIMED_OUT;
     if (args.signal?.aborted) return ABORTED;
 
@@ -450,6 +481,30 @@ export async function driveTaskToTerminal(
     } finally {
       cancelTimer();
       if (onAbort) args.signal?.removeEventListener("abort", onAbort);
+    }
+  }
+
+  /**
+   * Legacy: the one `tasks/result` sent while the task asks for input.
+   *
+   * `true` when the server answered it, with a result or with an error: either
+   * way the task has moved and must be read again. `false` when the call was
+   * still open at its bound, which is what a parked task looks like.
+   */
+  async function callResultForInput(): Promise<boolean | typeof ABORTED> {
+    try {
+      const fetched = await raceDeadline(
+        args.getResult!(identity),
+        args.inputRequiredResultWaitMs ?? DEFAULT_INPUT_REQUIRED_RESULT_WAIT_MS
+      );
+      if (fetched === ABORTED) return ABORTED;
+      if (fetched === TIMED_OUT) return false;
+      earlyResult = { value: fetched };
+      return true;
+    } catch {
+      // A JSON-RPC error is the result of a task that ended without
+      // completing; the next read says which. Nothing to keep.
+      return true;
     }
   }
 
@@ -477,6 +532,12 @@ export async function driveTaskToTerminal(
       snapshot.result !== undefined
     ) {
       return base;
+    }
+    if (earlyResult) {
+      // Already in hand: the call made on `input_required` returned it.
+      return earlyResult.value === null
+        ? base
+        : { ...base, task: { ...snapshot, result: earlyResult.value } };
     }
     if (!args.getResult) {
       return {

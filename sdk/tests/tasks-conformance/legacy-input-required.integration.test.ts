@@ -681,17 +681,19 @@ describe("2025-11-25, answers configured: the client answers over tasks/result",
     expect(check(result, "tasks-ttl-shape").status).toBe("failed");
   });
 
-  it("makes no call and sends no answers in a group that does not grade the result", async () => {
+  it("makes the call but sends no answers in a group that does not grade the result", async () => {
     // Only tasks-inline-result reads what the call brings. Answering here
-    // would drive a real task to its side effect for nothing.
-    const fixture = await serveParkedTask({ onResult: "ask" });
+    // would drive a real task to its side effect for nothing, so this group
+    // does not say it can answer. It still calls `tasks/result` once, as a
+    // requestor SHOULD when a task asks for input (tasks.mdx:449).
+    const fixture = await serveParkedTask({ onResult: "hold" });
     const result = await run(fixture, {
       pollTimeoutMs: 1_000,
       inputResponses: SEAT_ANSWER,
       checkIds: ["tasks-ttl-shape"],
     });
 
-    expect(resultCalls(fixture)).toBe(0);
+    expect(resultCalls(fixture)).toBe(1);
     expect(fixture.answers).toEqual([]);
     expect(fixture.clientCapabilities()).not.toHaveProperty("elicitation");
     expect(check(result, "tasks-ttl-shape").status).toBe("passed");

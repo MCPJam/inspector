@@ -101,15 +101,17 @@ export class TaskGroupRunner extends TaskOperations {
     // 2025-11-25: the answers to the questions a server sends over
     // `tasks/result`. Decided here because a client that answers has to say
     // so in `initialize`. Only tasks-inline-result reads what the call brings,
-    // so a group without it neither calls nor answers: answering would drive
-    // a second real task to its side effect for a check that cannot use it.
-    const legacyCallUsed = selected.has("tasks-inline-result");
-    const inputAnswers = legacyCallUsed
+    // so a group without it does not answer: answering would drive a second
+    // real task to its side effect for a check that cannot use it. Every
+    // group still makes the call itself when the task asks for input, as a
+    // requestor SHOULD (tasks.mdx:449).
+    const legacyAnswersUsed = selected.has("tasks-inline-result");
+    const inputAnswers = legacyAnswersUsed
       ? taskInputAnswersFor(this.config)
       : undefined;
     const resultLeg = new InputRequiredResultLeg(
       inputAnswers,
-      legacyCallUsed && answersNeedPin(this.config)
+      legacyAnswersUsed && answersNeedPin(this.config)
     );
     const serverConfig = serverConfigForAnswers(
       this.config.serverConfig,
@@ -531,7 +533,7 @@ export class TaskGroupRunner extends TaskOperations {
                       inputRequiredTask ??= task;
                       // 2025-11-25 answers over `tasks/result`, not `tasks/update`.
                       if (wire !== "extension") {
-                        if (wire !== "legacy" || !legacyCallUsed) return false;
+                        if (wire !== "legacy") return false;
                         const next = await resultLeg.run(
                           manager,
                           serverId,

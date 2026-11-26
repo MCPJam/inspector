@@ -388,10 +388,16 @@ export async function driveTaskWatch(
     // 2025-11-25, which is why `TasksSupport.update` is hard-`false` for that
     // wire. A legacy task's input arrives out of band as an `elicitation/create`
     // stamped with `relatedTaskId` and its `Task` carries no `inputRequests`, so
-    // the poll loop has nothing to answer and nothing to answer it with. The
-    // driver reports `input_required` there deliberately rather than re-reading
-    // an unchanging status until the deadline — a deterministic exit 6 beats a
-    // timeout that looks like a hang.
+    // the poll loop has nothing to answer and nothing to answer it with. What
+    // the driver does send there is the one `tasks/result` 2025-11-25 asks for
+    // on `input_required` (tasks.mdx:449): the open call the server delivers
+    // its question on. With `--interactive` a handler can answer that question,
+    // so the call may stay open for the whole watch. Without it the call is
+    // short and the driver then reports `input_required` — a deterministic
+    // exit 6 beats a timeout that looks like a hang.
+    ...(!extension && args.input
+      ? { inputRequiredResultWaitMs: Number.POSITIVE_INFINITY }
+      : {}),
     ...(extension
       ? {
           updateTask: async (_identity, inputResponses) => {

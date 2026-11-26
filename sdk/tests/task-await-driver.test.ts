@@ -525,6 +525,92 @@ describe("poll discipline", () => {
     });
   });
 
+  it("calls tasks/result once when a legacy task asks for input, then reports input-required", async () => {
+    const clock = controlledClock();
+    const legacy = { serverId: "srv", wire: "legacy", taskId: "t1" } as const;
+    // 2025-11-25 tasks.mdx:449: on `input_required` the requestor SHOULD call
+    // `tasks/result`. Nobody here can answer, so the server holds the call
+    // open; the short bound ends it and the drive still does not hang.
+    const getResult = vi.fn(() => new Promise<never>(() => undefined));
+    const result = await driveTaskToTerminal({
+      identity: legacy,
+      getTask: async () => ({ status: "input_required" }),
+      getResult,
+      inputRequiredResultWaitMs: 20,
+      now: clock.now,
+      sleep: async (ms) => clock.advance(ms),
+      engine: new TaskLifecycleEngine({ now: clock.now }),
+      timeoutMs: 10 * 60_000,
+    });
+    expect(result.outcome).toBe("input-required");
+    expect(getResult).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the result that call returned and does not fetch it twice", async () => {
+    const clock = controlledClock();
+    const legacy = { serverId: "srv", wire: "legacy", taskId: "t1" } as const;
+    // The question was answered out of band while the call was open, so the
+    // server ended the task and answered the call with its result.
+    const reads = scriptedReads([
+      { status: "input_required" },
+      { status: "completed" },
+    ]);
+    const getResult = vi.fn(async () => ({
+      content: [{ type: "text", text: "booked" }],
+    }));
+    const result = await driveTaskToTerminal({
+      identity: legacy,
+      getTask: reads.getTask,
+      getResult,
+      now: clock.now,
+      sleep: async (ms) => clock.advance(ms),
+      engine: new TaskLifecycleEngine({ now: clock.now }),
+      timeoutMs: 10 * 60_000,
+    });
+    expect(result.outcome).toBe("completed");
+    expect(result.task?.result).toEqual({
+      content: [{ type: "text", text: "booked" }],
+    });
+    expect(getResult).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads the task again when the server answers that call with an error", async () => {
+    const clock = controlledClock();
+    const legacy = { serverId: "srv", wire: "legacy", taskId: "t1" } as const;
+    const reads = scriptedReads([
+      { status: "input_required" },
+      { status: "failed" },
+    ]);
+    const getResult = vi.fn(async () => {
+      throw Object.assign(new Error("nobody answered"), { code: -32603 });
+    });
+    const result = await driveTaskToTerminal({
+      identity: legacy,
+      getTask: reads.getTask,
+      getResult,
+      now: clock.now,
+      sleep: async (ms) => clock.advance(ms),
+      engine: new TaskLifecycleEngine({ now: clock.now }),
+      timeoutMs: 10 * 60_000,
+    });
+    expect(result.outcome).toBe("failed");
+    expect(getResult).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends no tasks/result for input on a drive with no result seam", async () => {
+    const clock = controlledClock();
+    const legacy = { serverId: "srv", wire: "legacy", taskId: "t1" } as const;
+    const result = await driveTaskToTerminal({
+      identity: legacy,
+      getTask: async () => ({ status: "input_required" }),
+      now: clock.now,
+      sleep: async (ms) => clock.advance(ms),
+      engine: new TaskLifecycleEngine({ now: clock.now }),
+      timeoutMs: 10 * 60_000,
+    });
+    expect(result.outcome).toBe("input-required");
+  });
+
   it("still reports a legacy task completed when its result cannot be fetched", async () => {
     const clock = controlledClock();
     const legacy = { serverId: "srv", wire: "legacy", taskId: "t1" } as const;
