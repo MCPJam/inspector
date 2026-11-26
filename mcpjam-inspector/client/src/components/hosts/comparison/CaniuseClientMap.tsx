@@ -155,7 +155,7 @@ export function ClientMap({ coverage }: { coverage: CapabilityCoverage }) {
                           )}
                         </div>
                       </TooltipTrigger>
-                      <TooltipContent variant="muted" className="dark" sideOffset={6}>
+                      <TooltipContent variant="muted" className="dark caniuse-client-tooltip" sideOffset={6}>
                         <span className="block font-semibold">
                           {client.hostName}
                         </span>

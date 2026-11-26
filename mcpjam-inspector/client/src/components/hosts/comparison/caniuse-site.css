@@ -54,6 +54,11 @@
   background-color: transparent;
 }
 
+.caniuse-site .caniuse-sidebar-search input,
+.caniuse-site .caniuse-sidebar-search input:focus-visible {
+  background-color: var(--caniuse-compare-background);
+}
+
 @media (forced-colors: active) {
   :is(.caniuse-site, .caniuse-dialog)
     :is(input:not([type]), input[type="text"], input[type="email"], input[type="search"], textarea):focus-visible {
@@ -93,6 +98,10 @@
   background-color: var(--caniuse-compare-background);
   background-image: none;
   border-radius: 12px;
+}
+
+.caniuse-dialog,
+.caniuse-client-tooltip {
   box-shadow: 0 0 50px color-mix(in oklab, var(--primary) 19%, transparent);
 }
 

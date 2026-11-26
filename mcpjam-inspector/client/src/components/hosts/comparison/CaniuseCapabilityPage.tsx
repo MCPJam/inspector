@@ -215,7 +215,7 @@ export function CaniuseCapabilityPage({
           className="hidden min-w-0 self-start md:sticky md:top-4 md:block md:max-h-[calc(100dvh-2rem)] md:overflow-auto"
         >
           <SearchInput
-            className="mx-px mb-2 [&_input]:h-9 [&_input]:text-sm"
+            className="caniuse-sidebar-search mx-px mb-2 [&_input]:h-9 [&_input]:text-sm"
             iconClassName="size-3.5"
             placeholder="Search capabilities"
             value={navSearch}
@@ -230,9 +230,9 @@ export function CaniuseCapabilityPage({
             <details
               key={query ? `search-${group}` : group}
               open={Boolean(query) || group === activeGroup}
-              className="group border-b border-border last:border-b-0"
+              className="group border-b border-border/60 last:border-b-0"
             >
-              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-md px-2 py-2.5 text-sm font-semibold hover:bg-muted focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-md px-2 py-2.5 text-sm font-semibold text-muted-foreground hover:text-foreground focus-visible:outline-ring group-open:text-foreground group-open:hover:bg-muted [&::-webkit-details-marker]:hidden">
                 {group}
                 <ChevronRight aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground group-open:rotate-90" />
               </summary>
