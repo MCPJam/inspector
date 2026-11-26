@@ -59,6 +59,11 @@
   background-color: var(--caniuse-compare-background);
 }
 
+.caniuse-sidebar-search:has(input:focus-visible) > svg {
+  color: var(--foreground);
+  stroke-width: 2.5;
+}
+
 @media (forced-colors: active) {
   :is(.caniuse-site, .caniuse-dialog)
     :is(input:not([type]), input[type="text"], input[type="email"], input[type="search"], textarea):focus-visible {
