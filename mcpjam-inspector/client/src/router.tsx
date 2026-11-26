@@ -3,7 +3,8 @@ import { LegacyEvalRedirect } from "./components/routing/legacy-eval-redirect";
 import { LegacyEvalCaseRedirect } from "./components/routing/legacy-eval-case-redirect";
 import { ByokCreditsPage } from "./components/billing/ByokCreditsPage";
 import { CreditUsagePage } from "./components/billing/CreditUsagePage";
-import { createBrowserRouter, RouterProvider, redirect } from "react-router";
+import { createBrowserRouter, redirect } from "react-router";
+import { RouterProvider } from "react-router/dom";
 import { RouteErrorScreen } from "./components/RouteErrorScreen";
 import { CaniuseComparePage } from "./components/hosts/comparison/CaniuseComparePage";
 import App, {

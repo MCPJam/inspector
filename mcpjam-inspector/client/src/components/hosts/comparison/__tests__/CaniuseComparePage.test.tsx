@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Link, MemoryRouter, Route, Routes } from "react-router";
+import { createMemoryRouter, Link, MemoryRouter, Route, Routes } from "react-router";
+import { RouterProvider } from "react-router/dom";
 import { describe, expect, it, vi } from "vitest";
 import { AnnouncementQueueProvider, useAnnouncementSlot } from "@/components/announcement-slot";
 import { CaniuseComparePage } from "../CaniuseComparePage";
@@ -130,6 +131,32 @@ describe("CaniuseComparePage", () => {
     await user.keyboard("{ArrowDown}");
     expect(search).toHaveAttribute("aria-expanded", "true");
     expect(screen.getAllByRole("option").length).toBeGreaterThan(0);
+  });
+
+  it("keeps both search fields in sync between rapid keystrokes", () => {
+    const router = createMemoryRouter(
+      [{ path: "/compare", element: <CaniuseComparePage /> }],
+      { initialEntries: ["/compare?hosts=preset:claude"] },
+    );
+    render(<RouterProvider router={router} />);
+    const hero = screen.getByRole<HTMLInputElement>("combobox", {
+      name: "Type a capability",
+    });
+    const toolbar = screen.getByRole<HTMLInputElement>("combobox", {
+      name: "Search capabilities",
+    });
+
+    act(() => {
+      for (const character of "Events") {
+        fireEvent.change(hero, { target: { value: hero.value + character } });
+      }
+      expect(toolbar).toHaveValue("Events");
+    });
+
+    expect(hero).toHaveValue("Events");
+    const params = new URLSearchParams(router.state.location.search);
+    expect(params.get("q")).toBe("Events");
+    expect(params.get("hosts")).toBe("preset:claude");
   });
 
   it("shows the first match when reopening scrolled suggestions from the keyboard", async () => {
