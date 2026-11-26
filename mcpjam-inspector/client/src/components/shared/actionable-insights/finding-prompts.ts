@@ -82,8 +82,8 @@ export function evidenceLabel(evidence: ActionableFindingEvidence): string {
   const where = evidence.sessionId
     ? `session ${evidence.sessionId}`
     : evidence.iterationId
-      ? `iteration ${evidence.iterationId}`
-      : null;
+    ? `iteration ${evidence.iterationId}`
+    : null;
   if (where) parts.push(where);
   return parts.join(", ");
 }
