@@ -24,29 +24,44 @@ import { maskReplayRequest, maskReplayRequestFull } from "./replay-network";
 export type PostHogProfile = "full" | "masked";
 
 /**
- * Marks a surface that shows a secret as TEXT: OAuth tokens in the flow
- * logger, the one-time API key reveal, the SDK quickstart snippet. Those
- * surfaces carry `ph-no-capture rr-block` alongside it for autocapture, and
- * Sentry Replay blocks the attribute. PostHog replay masks text under it at
- * `full`, and every text node at `masked`.
+ * Marks a surface that shows a secret as TEXT: revealed server tokens, the
+ * one-time API key reveal, every JSON view and editor, the OAuth and XAA
+ * HTTP history. Those surfaces carry `ph-no-capture rr-block` alongside it
+ * for autocapture, and Sentry Replay blocks the attribute. PostHog replay
+ * masks text under it at `full`, and every text node at `masked`.
  */
 export const SECRET_SURFACE_ATTRIBUTE = "data-ph-no-capture";
 
-function isUnderSecretSurface(element: Element | null | undefined): boolean {
+/**
+ * Text `full` masks without an annotation: code, monospace and editable text,
+ * where tokens, keys, headers and configs are shown. Interface prose stays.
+ */
+const SECRET_TEXT_SELECTOR = [
+  `[${SECRET_SURFACE_ATTRIBUTE}]`,
+  "pre",
+  "code",
+  "textarea",
+  ".font-mono",
+
+  '[contenteditable]:not([contenteditable="false"])',
+].join(", ");
+
+function isSecretText(element: Element | null | undefined): boolean {
   try {
-    return !!element?.closest?.(`[${SECRET_SURFACE_ATTRIBUTE}]`);
+    return !!element?.closest?.(SECRET_TEXT_SELECTOR);
   } catch {
     return true;
   }
 }
 
 /**
- * `maskTextFn` at `full`. rrweb calls it for every text node (`*`): text
- * under a secret surface is masked, and the rest keeps its words minus any
- * credential URL, since a share link on the page is a credential at any level.
+ * `maskTextFn` at `full`. rrweb calls it for every text node (`*`): secret
+ * text (`SECRET_TEXT_SELECTOR`) is masked, and the rest keeps its words minus
+ * any credential URL, since a share link on the page is a credential at any
+ * level.
  */
 export function maskReplayTextFull(text: string, element?: Element): string {
-  if (isUnderSecretSurface(element)) return maskReplayText(text);
+  if (isSecretText(element)) return maskReplayText(text);
   return scrubCredentialsInText(text);
 }
 

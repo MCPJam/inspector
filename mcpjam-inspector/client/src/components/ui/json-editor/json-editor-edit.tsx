@@ -498,6 +498,7 @@ export function JsonEditorEdit({
   return (
     <div
       ref={containerRef}
+      data-ph-no-capture
       className={cn(
         "group relative flex w-full overflow-hidden bg-muted/30",
         !isValid && "border-destructive",

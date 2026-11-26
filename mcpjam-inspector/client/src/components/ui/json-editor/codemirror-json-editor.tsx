@@ -254,6 +254,7 @@ export function CodeMirrorJsonEditor({
 
   return (
     <div
+      data-ph-no-capture
       className={cn(
         "h-full w-full overflow-hidden bg-muted/30",
         !isValid && "border-destructive",

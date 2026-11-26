@@ -162,7 +162,7 @@ export function HttpExchangeDetails({
             : "text-green-600 dark:text-green-400";
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3" data-ph-no-capture>
       <div className="flex items-center gap-2 font-mono text-xs">
         <span className="text-foreground">{exchange.request.method}</span>
         <span className="text-muted-foreground truncate">

@@ -297,12 +297,8 @@ function EditableJsonEditor({
           />
         )}
 
-        {/* Content area. What someone types here (an imported config, tool
-            arguments) can hold credentials, so replay masks it as a secret. */}
-        <div
-          className="flex-1 min-h-0 h-full"
-          data-ph-no-capture={mode === "edit" ? "" : undefined}
-        >
+        {/* Content area */}
+        <div className="flex-1 min-h-0 h-full">
           {mode === "view" ? (
             <JsonEditorView
               value={viewValue}

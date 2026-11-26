@@ -112,6 +112,7 @@ export function HTTPHistoryEntry({
     <Collapsible
       open={isExpanded}
       onOpenChange={setIsExpanded}
+      data-ph-no-capture
       className={cn(
         "border rounded-lg bg-card shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden",
         hasError ? "border-red-400 dark:border-red-500" : "border-border",

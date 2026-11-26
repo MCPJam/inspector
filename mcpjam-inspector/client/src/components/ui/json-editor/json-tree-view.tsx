@@ -35,6 +35,7 @@ export function JsonTreeView({
 
   return (
     <div
+      data-ph-no-capture
       className={cn(
         "p-3 text-xs overflow-auto select-text cursor-text",
         className,

@@ -384,7 +384,7 @@ describe("JsonEditor", () => {
     });
   });
 
-  it("marks the edit surface, not the view, as a secret surface for replay", () => {
+  it("marks the view and the edit surface as secret surfaces for replay", () => {
     const props = {
       height: "100%",
       rawContent: '{"token":"t"}',
@@ -395,6 +395,8 @@ describe("JsonEditor", () => {
     );
     expect(container.querySelector("[data-ph-no-capture]")).not.toBeNull();
     rerender(<JsonEditor {...props} mode="view" />);
-    expect(container.querySelector("[data-ph-no-capture]")).toBeNull();
+    expect(container.querySelector("[data-ph-no-capture]")).not.toBeNull();
+    rerender(<JsonEditor {...props} mode="view" collapsible />);
+    expect(container.querySelector("[data-ph-no-capture]")).not.toBeNull();
   });
 });
