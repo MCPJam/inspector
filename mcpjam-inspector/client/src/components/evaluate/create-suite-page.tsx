@@ -453,7 +453,10 @@ export function CreateSuitePage({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto bg-background">
-        <div className="mx-auto flex max-w-2xl flex-col gap-8 px-6 py-8 sm:px-8">
+        <div
+          className="mx-auto flex max-w-2xl flex-col gap-8 px-6 py-8 sm:px-8"
+          data-tour-anchor="create-suite-form"
+        >
           <div className="space-y-2">
             <h1 className="text-2xl font-semibold tracking-[-0.02em] text-foreground">
               Create a new eval suite

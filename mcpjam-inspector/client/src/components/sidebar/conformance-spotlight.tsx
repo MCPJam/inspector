@@ -1,15 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import {
-  FeatureSpotlight,
   FeatureSpotlightActions,
-  FeatureSpotlightAnchor,
-  FeatureSpotlightContent,
+  FeatureSpotlightBadge,
   FeatureSpotlightDescription,
   FeatureSpotlightTitle,
 } from "@mcpjam/design-system/feature-spotlight";
 import { SUITE_COPY } from "@/components/conformance/conformance-ui";
+import { AnnouncementSpotlight } from "@/components/announcement-popups";
 import { track } from "@/lib/analytics";
 import { buildConformanceRunServerPath } from "@/lib/app-navigation";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -95,7 +93,6 @@ export function ConformanceSpotlight({
   const [ready, setReady] = useState(false);
   const shown = useRef(false);
   const eligible = enabled && !dismissed && !isMobile;
-  const open = eligible && ready && !onConformancePage;
 
   useEffect(() => {
     if (!eligible) return;
@@ -123,8 +120,8 @@ export function ConformanceSpotlight({
     if (eligible && onConformancePage) close("visited");
   });
 
-  useEffect(() => {
-    if (!open || shown.current) return;
+  const handleShown = () => {
+    if (shown.current) return;
     shown.current = true;
     track("feature_spotlight_engagement", {
       location: "mcp_sidebar",
@@ -132,47 +129,44 @@ export function ConformanceSpotlight({
       action: "shown",
       has_server: serverName !== null,
     });
-  }, [open, serverName]);
+  };
 
   if (!eligible) return <>{children}</>;
 
   return (
-    <FeatureSpotlight
-      open={open}
-      onOpenChange={(next) => {
-        if (!next) close("dismiss");
-      }}
+    <AnnouncementSpotlight
+      eligible={ready && !onConformancePage}
+      anchor={children}
+      onDismiss={() => close("dismiss")}
+      onShown={handleShown}
     >
-      <FeatureSpotlightAnchor>{children}</FeatureSpotlightAnchor>
-      <FeatureSpotlightContent>
-        <Badge variant="secondary">New</Badge>
-        <FeatureSpotlightTitle>
-          Check your server against the MCP spec
-        </FeatureSpotlightTitle>
-        <FeatureSpotlightDescription>
-          Conformance runs the spec's {SUITE_LIST} checks on your server and
-          explains every failure in plain language. Fix them before Claude or
-          ChatGPT users run into them.
-        </FeatureSpotlightDescription>
-        <FeatureSpotlightActions>
-          <Button
-            size="sm"
-            onClick={() => {
-              close("primary");
-              onNavigate(
-                serverName
-                  ? buildConformanceRunServerPath(serverName)
-                  : "/conformance",
-              );
-            }}
-          >
-            {serverName ? `Check ${serverName}` : "Open Conformance"}
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => close("dismiss")}>
-            Got it
-          </Button>
-        </FeatureSpotlightActions>
-      </FeatureSpotlightContent>
-    </FeatureSpotlight>
+      <FeatureSpotlightBadge />
+      <FeatureSpotlightTitle>
+        Check your server against the MCP spec
+      </FeatureSpotlightTitle>
+      <FeatureSpotlightDescription>
+        Conformance runs the spec's {SUITE_LIST} checks on your server and
+        explains every failure in plain language. Fix them before Claude or
+        ChatGPT users run into them.
+      </FeatureSpotlightDescription>
+      <FeatureSpotlightActions>
+        <Button
+          size="sm"
+          onClick={() => {
+            close("primary");
+            onNavigate(
+              serverName
+                ? buildConformanceRunServerPath(serverName)
+                : "/conformance",
+            );
+          }}
+        >
+          {serverName ? `Check ${serverName}` : "Open Conformance"}
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => close("dismiss")}>
+          Got it
+        </Button>
+      </FeatureSpotlightActions>
+    </AnnouncementSpotlight>
   );
 }

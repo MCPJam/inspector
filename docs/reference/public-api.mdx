@@ -632,6 +632,9 @@ unique on the server, ignoring case.
   MCPJam. The audit log records token delivery and its recipient. Actions performed with a copied token may occur outside MCPJam’s audit trail.
 - **Set `tokens.expires_in` when the remaining lifetime is known.** It is a
   number of seconds. Omission is supported, and the server still enforces expiry.
+  Without it, a JWT's `exp` claim sets when MCPJam stops using the token; with
+  both, the earlier one applies. An opaque token uploaded without it has an
+  unknown expiry.
 - **Shared and uploaded accounts require HTTPS for remote MCP servers.**
   Loopback development addresses are allowed.
 - **The token is bound to the server URL saved in the project.** The body
@@ -678,7 +681,9 @@ reads the token from a file, an environment variable or stdin, and
 The default is shared by every run that key starts, so don't run the same
 key's runs at the same time with different defaults. A suite that has saved
 accounts in its settings runs as those accounts and ignores the default, so
-check the suite's settings before relying on the default.
+check the suite's settings before relying on the default. See
+[Run evals as test users](/inspector/eval-test-users) for choosing accounts
+per suite.
 
 ### Deleting an account
 
@@ -841,6 +846,55 @@ If a server answers `401 OAUTH_REQUIRED`, complete the OAuth flow yourself
 client-credentials flows) and upload the token to one of the server's
 [accounts](#server-accounts). Subsequent runs inject the stored token, and
 refresh it server-side when you stored a refresh token.
+
+### Which accounts a run used
+
+Run reads and listings also return `accounts`: one entry per account the run
+used on each server, as it was when the run started. No entry holds a token.
+
+```json
+"accounts": [
+  {
+    "serverId": "<serverId>",
+    "accountId": "<accountId>",
+    "name": "test-automation-1",
+    "kind": "project",
+    "tokenUploaded": true,
+    "tokenStoredBy": "Dana Kim",
+    "tokenStoredAt": 1794994200000,
+    "tokenExpiresAt": 1794997800000,
+    "identity": {
+      "source": "token",
+      "subject": "user-1842",
+      "issuer": "https://auth.example.com",
+      "email": "test-automation-1@example.com",
+      "emailSource": "token"
+    }
+  }
+]
+```
+
+- **`kind`** is `personal` for an account of the person who started the run,
+  `project` for an account of a server shared with the project, and `xaa` for
+  the identity an XAA server ran as. `accountId` is the account's `id` in the
+  [server accounts API](#server-accounts). It is absent for an XAA identity
+  and for a shared server's default account.
+- **Times are epoch milliseconds.** `tokenStoredAt` is when the token was
+  stored and `tokenExpiresAt` when it expires. Each is absent when unknown.
+- **`identity`** says whose the token was. `source` is `profile` when the
+  server's profile tool answered and `token` when the values come from the
+  token's own claims, which MCPJam does not verify. `emailSource` can differ
+  from `source`.
+- **`identity.email` is present only when you may see it.** A project
+  account's or readiness reviewer login's email is visible to every project
+  member. A personal account's is visible only to the person who started the
+  run, which for a run started with an API key is the key's owner.
+
+A run that recorded nothing about its accounts, such as one from before MCPJam
+recorded them, has no `accounts` field. `accounts: []` means the run recorded
+that none of its servers used an account. See
+[Run evals as test users](/inspector/eval-test-users#what-each-run-records)
+for where the identity and email come from.
 
 ## Reasoning effort
 

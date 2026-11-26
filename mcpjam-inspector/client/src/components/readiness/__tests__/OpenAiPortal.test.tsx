@@ -99,7 +99,7 @@ describe("OpenAiPortal", () => {
     );
     expect(screen.getByRole("heading", { name: "Plugins" })).toBeVisible();
     expect(
-      screen.getByText(/Upload a plugin ZIP or choose a saved plugin below\./),
+      screen.getByText(/Choose a plugin ZIP, a source folder, or a saved plugin below\./),
     ).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Choose" }));
     expect(current.setPlugin).toHaveBeenCalledWith({

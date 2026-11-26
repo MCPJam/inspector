@@ -213,6 +213,7 @@ import { setManagerConnections } from "../../mcp-connections";
 function manager() {
   return {
     getServerConfig: vi.fn(() => ({ url: "https://server.test/mcp" })),
+    getAllToolAnnotations: vi.fn(() => ({})),
     getInitializationInfo: vi.fn(() => ({
       transport: "streamable-http",
       protocolVersion: "2025-11-25",
@@ -530,7 +531,7 @@ describe("the route receipt on the persisted turn trace", () => {
         unavailableServerIds: ["srv-a"],
       });
       if (route === "host-tools") {
-        projectSpy.mockResolvedValueOnce({ tools: {}, keyToServerId: {} });
+        projectSpy.mockResolvedValueOnce({ tools: {}, keyToServerId: {}, toolRegistry: new Map() });
       }
       const receipt = await persisted(options);
       expect(receipt).not.toHaveProperty("profile");

@@ -189,6 +189,7 @@ mrtrContinuation.post("/resume", async (c) =>
       resumeSchema,
       {
         timeoutMs: WEB_CALL_TIMEOUT_MS,
+        observeFeatures: true,
         // This route drives and persists rounds below. Register its fulfiller
         // before connect so the fresh connection retains the form claims.
         mrtrInputCollectorForServer: () => async () => {

@@ -1,39 +1,36 @@
 import type { InspectorProjectTarget } from "./inspector-project-target.js";
-import { randomBytes } from "node:crypto";
-import {
-  readFileSync,
-  lstatSync,
-  closeSync,
-  existsSync,
-  openSync,
-  renameSync,
-  statSync,
-} from "node:fs";
-import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
-import os from "node:os";
 import path from "node:path";
+import {
+  clearInspectorSessionTokenCache as clearInspectorSessionTokenCacheWithEngine,
+  ensureInspector as ensureInspectorWithEngine,
+  ensureInspectorBackend as ensureInspectorBackendWithEngine,
+  fetchInspectorSessionToken as fetchInspectorSessionTokenWithEngine,
+  isAuthFailure,
+  isInspectorError,
+  normalizeInspectorBaseUrl as normalizeInspectorBaseUrlWithEngine,
+  resolveInspectorBrowserBaseUrl as resolveInspectorBrowserBaseUrlWithEngine,
+  stopInspector as stopInspectorWithEngine,
+  type EnsureInspectorBackendOptions,
+  type EnsureInspectorBackendResult,
+  type EnsureInspectorOptions,
+  type EnsureInspectorResult,
+} from "@mcpjam/sdk/internal/inspector";
 import { operationalError } from "./output.js";
+
+export {
+  buildInspectorAccessUrl,
+  buildInspectorBrowserUrl,
+  delay,
+  getNpxExecutable,
+  normalizeInspectorFrontendUrl,
+} from "@mcpjam/sdk/internal/inspector";
 
 const require = createRequire(import.meta.url);
 
-const FALLBACK_INSPECTOR_BASE_URL = "http://127.0.0.1:6274";
-const DEFAULT_START_TIMEOUT_MS = 30_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const COMMAND_FETCH_TIMEOUT_BUFFER_MS = 2_000;
-const HEALTH_FETCH_TIMEOUT_MS = 2_000;
-const FRONTEND_PROBE_TIMEOUT_MS = 750;
-const ORIGIN_PROBE_TIMEOUT_MS = 750;
-const SESSION_TOKEN_TIMEOUT_MS = 3_000;
-const STOP_FETCH_TIMEOUT_MS = 3_000;
-const STARTUP_LOG_MAX_BYTES = 1024 * 1024;
-const FRONTEND_PORT_SCAN_WINDOW = 10;
-const WELL_KNOWN_FRONTEND_PORTS = [5173, 5174, 5175, 8080];
-
-const TOKEN_TTL_MS = 5 * 60_000;
-const tokenCache = new Map<string, { token: string; fetchedAt: number }>();
-const tokenRequests = new Map<string, Promise<string>>();
 
 export interface InspectorApiClientOptions {
   baseUrl?: string;
@@ -61,15 +58,6 @@ type InspectorRequestInit = Omit<RequestInit, "body"> & {
    */
   treatAsSuccess?: (status: number, payload: unknown) => boolean;
 };
-
-export interface EnsureInspectorOptions extends InspectorApiClientOptions {
-  frontendUrl?: string;
-  openBrowser?: boolean;
-  skipDiscovery?: boolean;
-  startIfNeeded?: boolean;
-  tab?: string;
-  timeoutMs?: number;
-}
 
 /**
  * Lightweight mirrors of the types in mcpjam-inspector/shared/inspector-command.ts.
@@ -103,103 +91,24 @@ export type InspectorCommandResponse =
   | InspectorCommandSuccessResponse
   | InspectorCommandErrorResponse;
 
+/**
+ * The start-or-attach engine lives in `@mcpjam/sdk/internal/inspector` and
+ * throws its own `InspectorError`. These wrappers turn that back into the
+ * CLI's operational error, so exit codes and structured output stay the same,
+ * and give the engine the CLI's local `@mcpjam/inspector` start script.
+ */
+function toCliError(error: unknown): unknown {
+  return isInspectorError(error)
+    ? operationalError(error.message, error.details)
+    : error;
+}
+
 export function normalizeInspectorBaseUrl(baseUrl: string | undefined): string {
-  const value =
-    baseUrl?.trim() ||
-    process.env.MCPJAM_INSPECTOR_URL?.trim() ||
-    FALLBACK_INSPECTOR_BASE_URL;
-
   try {
-    const parsed = new URL(value);
-    parsed.hash = "";
-    parsed.search = "";
-    return parsed.href.replace(/\/$/, "");
+    return normalizeInspectorBaseUrlWithEngine(baseUrl);
   } catch (error) {
-    throw operationalError(
-      `Invalid Inspector URL "${value}".`,
-      error instanceof Error ? error.message : String(error),
-    );
+    throw toCliError(error);
   }
-}
-
-export function buildInspectorUrl(baseUrl: string, tab?: string): string {
-  if (!tab || !tab.trim()) {
-    return baseUrl;
-  }
-
-  return `${baseUrl}/#${tab.trim()}`;
-}
-
-export function normalizeInspectorFrontendUrl(
-  frontendUrl: unknown,
-): string | undefined {
-  if (typeof frontendUrl !== "string" || !frontendUrl.trim()) {
-    return undefined;
-  }
-
-  try {
-    const parsed = new URL(frontendUrl.trim());
-    parsed.hash = "";
-    parsed.search = "";
-    return parsed.href.replace(/\/$/, "");
-  } catch {
-    return undefined;
-  }
-}
-
-function normalizeExplicitInspectorFrontendUrl(frontendUrl: string): string {
-  const normalized = normalizeInspectorFrontendUrl(frontendUrl);
-  if (!normalized) {
-    throw operationalError(`Invalid Inspector frontend URL "${frontendUrl}".`);
-  }
-  return normalized;
-}
-
-function canonicalizeInspectorFrontendUrl(
-  baseUrl: string,
-  frontendUrl: string | undefined,
-): string | undefined {
-  if (!frontendUrl) {
-    return undefined;
-  }
-
-  try {
-    const base = new URL(baseUrl);
-    const frontend = new URL(frontendUrl);
-    if (
-      isLoopbackHostname(base.hostname) &&
-      isLoopbackHostname(frontend.hostname) &&
-      base.protocol === frontend.protocol &&
-      getEffectiveUrlPort(base) === getEffectiveUrlPort(frontend)
-    ) {
-      return baseUrl;
-    }
-  } catch {
-    return frontendUrl;
-  }
-
-  return frontendUrl;
-}
-
-function getEffectiveUrlPort(url: URL): string {
-  if (url.port) {
-    return url.port;
-  }
-  return url.protocol === "https:" ? "443" : "80";
-}
-
-export function buildInspectorBrowserUrl(
-  baseUrl: string,
-  frontendUrl?: string,
-  tab?: string,
-): string {
-  return buildInspectorUrl(
-    canonicalizeInspectorFrontendUrl(
-      baseUrl,
-      normalizeInspectorFrontendUrl(frontendUrl),
-    ) ?? baseUrl,
-    tab,
-  );
 }
 
 export async function resolveInspectorBrowserBaseUrl(
@@ -207,343 +116,68 @@ export async function resolveInspectorBrowserBaseUrl(
   frontendUrl?: string,
   options: { skipDiscovery?: boolean } = {},
 ): Promise<string> {
-  const fastResolution = await resolveInspectorBrowserBaseUrlFast(
-    baseUrl,
-    frontendUrl,
-  );
-  if (fastResolution.browserBaseUrl) {
-    return fastResolution.browserBaseUrl;
-  }
-
-  if (options.skipDiscovery) {
-    assertFastFrontendMismatch(fastResolution.candidates);
-    return fastResolution.normalizedFrontendUrl ?? baseUrl;
-  }
-
-  const discoveredCandidates = await discoverLocalInspectorFrontendCandidates(
-    baseUrl,
-    fastResolution.normalizedFrontendUrl,
-  );
-
-  const usableDiscoveredCandidate = discoveredCandidates.find(
-    isUsableInspectorFrontendCandidate,
-  );
-  if (usableDiscoveredCandidate) {
-    return usableDiscoveredCandidate.url;
-  }
-
-  const candidates = [...fastResolution.candidates, ...discoveredCandidates];
-  assertFullFrontendMismatch(candidates);
-
-  return fastResolution.normalizedFrontendUrl ?? baseUrl;
-}
-
-interface InspectorBrowserBaseUrlFastResolution {
-  browserBaseUrl?: string;
-  candidates: InspectorFrontendCandidate[];
-  normalizedFrontendUrl?: string;
-}
-
-async function resolveInspectorBrowserBaseUrlFast(
-  baseUrl: string,
-  frontendUrl?: string,
-): Promise<InspectorBrowserBaseUrlFastResolution> {
-  const normalizedFrontendUrl = canonicalizeInspectorFrontendUrl(
-    baseUrl,
-    normalizeInspectorFrontendUrl(frontendUrl),
-  );
-  const targets: Array<{
-    source: InspectorFrontendCandidate["source"];
-    url: string;
-  }> = [];
-
-  if (normalizedFrontendUrl) {
-    targets.push({ source: "advertised", url: normalizedFrontendUrl });
-  }
-  if (!targets.some((target) => target.url === baseUrl)) {
-    targets.push({ source: "base", url: baseUrl });
-  }
-
-  const candidates = await inspectInspectorFrontendCandidates(
-    baseUrl,
-    targets,
-  );
-  const usableCandidate = candidates.find(isUsableInspectorFrontendCandidate);
-
-  return {
-    ...(usableCandidate
-      ? { browserBaseUrl: usableCandidate.url }
-      : {}),
-    candidates,
-    ...(normalizedFrontendUrl ? { normalizedFrontendUrl } : {}),
-  };
-}
-
-async function inspectInspectorFrontendCandidates(
-  apiBaseUrl: string,
-  targets: ReadonlyArray<{
-    source: InspectorFrontendCandidate["source"];
-    url: string;
-  }>,
-): Promise<InspectorFrontendCandidate[]> {
-  const settled = await Promise.allSettled(
-    targets.map((target) =>
-      inspectInspectorFrontendCandidate(apiBaseUrl, target.url, target.source),
-    ),
-  );
-
-  return settled.map((result, index) => {
-    if (result.status === "fulfilled") {
-      return result.value;
-    }
-    const target = targets[index]!;
-    return {
-      isFrontend: false,
-      originStatus: "unknown",
-      source: target.source,
-      url: target.url,
-    };
-  });
-}
-
-function assertFastFrontendMismatch(
-  candidates: InspectorFrontendCandidate[],
-): void {
-  const advertisedCandidate = candidates.find(
-    (candidate) => candidate.source === "advertised",
-  );
-  const rejectedLiveCandidate = candidates.find(
-    (candidate) => candidate.isFrontend && candidate.originStatus === "rejected",
-  );
-
-  if (!rejectedLiveCandidate) {
-    return;
-  }
-
-  if (advertisedCandidate === rejectedLiveCandidate) {
-    throw frontendMismatchError(undefined, rejectedLiveCandidate);
-  }
-  throw frontendMismatchError(advertisedCandidate, rejectedLiveCandidate);
-}
-
-function assertFullFrontendMismatch(
-  candidates: InspectorFrontendCandidate[],
-): void {
-  const advertisedCandidate = candidates.find(
-    (candidate) => candidate.source === "advertised",
-  );
-  const rejectedLiveCandidate = candidates.find(
-    (candidate) =>
-      candidate !== advertisedCandidate &&
-      candidate.isFrontend &&
-      candidate.originStatus === "rejected",
-  );
-
-  if (
-    advertisedCandidate?.isFrontend &&
-    advertisedCandidate.originStatus === "rejected"
-  ) {
-    throw frontendMismatchError(undefined, advertisedCandidate);
-  }
-
-  if (
-    advertisedCandidate &&
-    !advertisedCandidate.isFrontend &&
-    advertisedCandidate.originStatus === "accepted"
-  ) {
-    throw frontendMismatchError(advertisedCandidate, rejectedLiveCandidate);
-  }
-
-  if (rejectedLiveCandidate) {
-    throw frontendMismatchError(advertisedCandidate, rejectedLiveCandidate);
-  }
-}
-
-async function resolveInspectorBrowserBaseUrlForHealth(
-  baseUrl: string,
-  frontendUrl: string | undefined,
-  options: {
-    hasActiveClient: boolean;
-    openBrowser: boolean;
-    skipDiscovery?: boolean;
-  },
-): Promise<string> {
-  const skipDiscovery =
-    options.skipDiscovery || (options.hasActiveClient && !options.openBrowser);
   try {
-    return await resolveInspectorBrowserBaseUrl(baseUrl, frontendUrl, {
-      skipDiscovery,
-    });
+    return await resolveInspectorBrowserBaseUrlWithEngine(
+      baseUrl,
+      frontendUrl,
+      options,
+    );
   } catch (error) {
-    if (options.hasActiveClient && !options.openBrowser) {
-      return (
-        canonicalizeInspectorFrontendUrl(
-          baseUrl,
-          normalizeInspectorFrontendUrl(frontendUrl),
-        ) ?? baseUrl
-      );
-    }
-    throw error;
+    throw toCliError(error);
   }
-}
-
-export interface EnsureInspectorResult {
-  baseUrl: string;
-  frontendUrl?: string;
-  hasActiveClient: boolean;
-  url: string;
-  started: boolean;
 }
 
 export async function ensureInspector(
   options: EnsureInspectorOptions = {},
 ): Promise<EnsureInspectorResult> {
-  const baseUrl = normalizeInspectorBaseUrl(options.baseUrl);
-  const explicitFrontendUrl =
-    options.frontendUrl !== undefined
-      ? normalizeExplicitInspectorFrontendUrl(options.frontendUrl)
-      : undefined;
-
-  const health = await getInspectorHealth(baseUrl);
-  if (health.healthy) {
-    const browserBaseUrl =
-      explicitFrontendUrl ??
-      (await resolveInspectorBrowserBaseUrlForHealth(baseUrl, health.frontendUrl, {
-        hasActiveClient: health.hasActiveClient,
-        openBrowser: options.openBrowser === true,
-        skipDiscovery: options.skipDiscovery,
-      }));
-    const url = buildInspectorUrl(browserBaseUrl, options.tab);
-    if (options.openBrowser && !health.hasActiveClient) {
-      openUrl(
-        buildInspectorAccessUrl(url, await fetchInspectorSessionToken(baseUrl))
-      );
-    }
-    return {
-      baseUrl,
-      ...(browserBaseUrl !== baseUrl ? { frontendUrl: browserBaseUrl } : {}),
-      hasActiveClient: health.hasActiveClient,
-      url,
-      started: false,
-    };
+  try {
+    return await ensureInspectorWithEngine({
+      ...options,
+      resolveStartScriptPath: getInspectorStartScriptPath,
+    });
+  } catch (error) {
+    throw toCliError(error);
   }
-
-  if (!options.startIfNeeded) {
-    throw operationalError(
-      "Inspector is not running. Run `mcpjam inspector open` first or pass an Inspector-backed option that starts it.",
-    );
-  }
-
-  await startInspector(baseUrl, options.timeoutMs ?? DEFAULT_START_TIMEOUT_MS);
-  clearInspectorSessionTokenCache(baseUrl);
-
-  const startedHealth = await getInspectorHealth(baseUrl);
-  const browserBaseUrl =
-    explicitFrontendUrl ??
-    (await resolveInspectorBrowserBaseUrlForHealth(
-      baseUrl,
-      startedHealth.frontendUrl,
-      {
-        hasActiveClient: startedHealth.hasActiveClient,
-        openBrowser: options.openBrowser === true,
-        skipDiscovery: options.skipDiscovery,
-      },
-    ));
-  const url = buildInspectorUrl(browserBaseUrl, options.tab);
-
-  if (options.openBrowser) {
-    openUrl(
-      buildInspectorAccessUrl(url, await fetchInspectorSessionToken(baseUrl))
-    );
-  }
-
-  return {
-    baseUrl,
-    ...(browserBaseUrl !== baseUrl ? { frontendUrl: browserBaseUrl } : {}),
-    hasActiveClient: startedHealth.hasActiveClient,
-    url,
-    started: true,
-  };
 }
 
-export interface EnsureInspectorBackendOptions extends InspectorApiClientOptions {
-  startIfNeeded?: boolean;
-  timeoutMs?: number;
-}
-
-export interface EnsureInspectorBackendResult {
-  baseUrl: string;
-  hasActiveClient: boolean;
-  started: boolean;
-}
-
-/**
- * Ensure the local Inspector BACKEND is reachable (starting it if asked),
- * without resolving a browser frontend URL. Headless callers (e.g. `apps
- * render`, which runs the render server-side) need only a live backend — and
- * the full {@link ensureInspector} additionally probes/validates the frontend
- * and can throw a frontend-mismatch error when no browser client is present,
- * which would wrongly block a render that never touches the browser UI.
- */
 export async function ensureInspectorBackend(
   options: EnsureInspectorBackendOptions = {},
 ): Promise<EnsureInspectorBackendResult> {
-  const baseUrl = normalizeInspectorBaseUrl(options.baseUrl);
-
-  const health = await getInspectorHealth(baseUrl);
-  if (health.healthy) {
-    return { baseUrl, hasActiveClient: health.hasActiveClient, started: false };
+  try {
+    return await ensureInspectorBackendWithEngine({
+      ...options,
+      resolveStartScriptPath: getInspectorStartScriptPath,
+    });
+  } catch (error) {
+    throw toCliError(error);
   }
-
-  if (!options.startIfNeeded) {
-    throw operationalError(
-      "Inspector is not running. Run `mcpjam inspector open` first or pass an Inspector-backed option that starts it.",
-    );
-  }
-
-  await startInspector(baseUrl, options.timeoutMs ?? DEFAULT_START_TIMEOUT_MS);
-  clearInspectorSessionTokenCache(baseUrl);
-
-  const startedHealth = await getInspectorHealth(baseUrl);
-  return {
-    baseUrl,
-    hasActiveClient: startedHealth.hasActiveClient,
-    started: true,
-  };
 }
 
 export async function stopInspector(
   baseUrl: string,
 ): Promise<{ stopped: boolean; baseUrl: string }> {
-  const normalized = normalizeInspectorBaseUrl(baseUrl);
-
-  if (!(await isInspectorHealthy(normalized))) {
-    return { stopped: false, baseUrl: normalized };
-  }
-
-  const fetchShutdown = async (): Promise<Response> => {
-    const token = await fetchInspectorSessionToken(normalized);
-    return await fetch(`${normalized}/api/shutdown`, {
-      method: "POST",
-      headers: {
-        "X-MCP-Session-Auth": `Bearer ${token}`,
-      },
-      signal: AbortSignal.timeout(STOP_FETCH_TIMEOUT_MS),
-    });
-  };
-
   try {
-    let response = await fetchShutdown();
-    if (isAuthFailure(response)) {
-      clearInspectorSessionTokenCache(normalized);
-      response = await fetchShutdown();
-    }
-    if (response.ok) {
-      clearInspectorSessionTokenCache(normalized);
-    }
-    return { stopped: response.ok, baseUrl: normalized };
-  } catch {
-    return { stopped: false, baseUrl: normalized };
+    return await stopInspectorWithEngine(baseUrl);
+  } catch (error) {
+    throw toCliError(error);
+  }
+}
+
+export async function fetchInspectorSessionToken(
+  baseUrl: string,
+): Promise<string> {
+  try {
+    return await fetchInspectorSessionTokenWithEngine(baseUrl);
+  } catch (error) {
+    throw toCliError(error);
+  }
+}
+
+export function clearInspectorSessionTokenCache(baseUrl?: string): void {
+  try {
+    clearInspectorSessionTokenCacheWithEngine(baseUrl);
+  } catch (error) {
+    throw toCliError(error);
   }
 }
 
@@ -758,111 +392,6 @@ export class InspectorApiClient {
   }
 }
 
-export async function fetchInspectorSessionToken(
-  baseUrl: string,
-): Promise<string> {
-  const normalizedBaseUrl = normalizeInspectorBaseUrl(baseUrl);
-  const cached = tokenCache.get(normalizedBaseUrl);
-  if (cached && Date.now() - cached.fetchedAt < TOKEN_TTL_MS) {
-    return cached.token;
-  }
-
-  const pending = tokenRequests.get(normalizedBaseUrl);
-  if (pending) {
-    return pending;
-  }
-
-  const request = fetchFreshInspectorSessionToken(normalizedBaseUrl).finally(
-    () => {
-      tokenRequests.delete(normalizedBaseUrl);
-    },
-  );
-  tokenRequests.set(normalizedBaseUrl, request);
-  return request;
-}
-
-export function clearInspectorSessionTokenCache(baseUrl?: string): void {
-  if (!baseUrl) {
-    tokenCache.clear();
-    tokenRequests.clear();
-    return;
-  }
-
-  const normalizedBaseUrl = normalizeInspectorBaseUrl(baseUrl);
-  tokenCache.delete(normalizedBaseUrl);
-  tokenRequests.delete(normalizedBaseUrl);
-}
-
-async function fetchFreshInspectorSessionToken(
-  normalizedBaseUrl: string,
-): Promise<string> {
-  const endpoint = new URL(normalizedBaseUrl);
-  if (!isLoopbackHostname(endpoint.hostname))
-    throw operationalError("Inspector attachment requires a local address.");
-  let token: string;
-  try {
-    const file = path.join(
-      os.homedir(),
-      ".mcpjam",
-      "inspector",
-      `${endpoint.port || "6274"}.json`
-    );
-    const stat = lstatSync(file);
-    if (
-      !stat.isFile() ||
-      (process.platform !== "win32" &&
-        ((stat.mode & 0o077) !== 0 || stat.uid !== process.getuid?.()))
-    )
-      throw new Error("Unsafe discovery file permissions");
-    const record = JSON.parse(readFileSync(file, "utf8"));
-    if (
-      record.port !== Number(endpoint.port || "6274") ||
-      !Number.isSafeInteger(record.pid) ||
-      record.pid <= 0 ||
-      typeof record.token !== "string" ||
-      !/^[A-Za-z0-9_-]{24,}$/.test(record.token)
-    )
-      throw new Error("Invalid discovery file");
-    process.kill(record.pid, 0);
-    token = record.token;
-  } catch {
-    throw operationalError(
-      "Cannot read this Inspector's access file. Start or restart an updated Inspector as the same user, then try again."
-    );
-  }
-  let response: Response;
-  try {
-    response = await fetch(`${normalizedBaseUrl}/api/session-token`, {
-      headers: {
-        "X-MCP-Session-Auth": `Bearer ${token}`,
-      },
-      signal: AbortSignal.timeout(SESSION_TOKEN_TIMEOUT_MS),
-    });
-  } catch (error) {
-    throw operationalError(
-      "Failed to contact the local Inspector session-token endpoint.",
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-
-  if (!response.ok) {
-    throw operationalError(
-      `Inspector session-token request failed with ${response.status}.`,
-    );
-  }
-
-  const body = (await response.json()) as { ok?: unknown };
-  if (body.ok !== true) {
-    throw operationalError("Inspector session-token response was invalid.");
-  }
-
-  tokenCache.set(normalizedBaseUrl, {
-    token,
-    fetchedAt: Date.now(),
-  });
-  return token;
-}
-
 function getInspectorStartScriptPath(): string | undefined {
   try {
     const packageJsonPath = require.resolve("@mcpjam/inspector/package.json");
@@ -870,384 +399,6 @@ function getInspectorStartScriptPath(): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-interface InspectorHealthStatus {
-  healthy: boolean;
-  hasActiveClient: boolean;
-  frontendUrl?: string;
-}
-
-type InspectorOriginStatus = "accepted" | "rejected" | "unknown";
-
-interface InspectorFrontendCandidate {
-  isFrontend: boolean;
-  originStatus: InspectorOriginStatus;
-  source: "advertised" | "base" | "discovered";
-  url: string;
-}
-
-async function getInspectorHealth(
-  baseUrl: string,
-  timeoutMs = HEALTH_FETCH_TIMEOUT_MS,
-): Promise<InspectorHealthStatus> {
-  try {
-    const response = await fetch(`${baseUrl}/health`, {
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!response.ok) {
-      return { healthy: false, hasActiveClient: false };
-    }
-    const body = (await response.json()) as {
-      hasActiveClient?: boolean;
-      frontend?: unknown;
-    };
-    const frontendUrl = normalizeInspectorFrontendUrl(body.frontend);
-    return {
-      healthy: true,
-      hasActiveClient: body.hasActiveClient === true,
-      ...(frontendUrl ? { frontendUrl } : {}),
-    };
-  } catch {
-    return { healthy: false, hasActiveClient: false };
-  }
-}
-
-async function isInspectorFrontendUrl(baseUrl: string): Promise<boolean> {
-  try {
-    const response = await fetch(`${baseUrl}/`, {
-      signal: AbortSignal.timeout(FRONTEND_PROBE_TIMEOUT_MS),
-    });
-    if (!response.ok) {
-      return false;
-    }
-
-    const contentType = response.headers.get("content-type") ?? "";
-    if (!contentType.toLowerCase().includes("text/html")) {
-      return false;
-    }
-
-    const body = await response.text();
-    return (
-      hasInspectorFrontendMarker(body) ||
-      /<title>\s*MCPJam Inspector\s*<\/title>/i.test(body) ||
-      body.includes("/mcp_jam.svg")
-    );
-  } catch {
-    return false;
-  }
-}
-
-function hasInspectorFrontendMarker(body: string): boolean {
-  return /<meta\b(?=[^>]*\bname=["']mcpjam-inspector["'])[^>]*>/i.test(body);
-}
-
-async function inspectInspectorFrontendCandidate(
-  apiBaseUrl: string,
-  frontendBaseUrl: string,
-  source: InspectorFrontendCandidate["source"],
-): Promise<InspectorFrontendCandidate> {
-  const [isFrontend, originStatus] = await Promise.all([
-    isInspectorFrontendUrl(frontendBaseUrl),
-    getInspectorApiOriginStatus(apiBaseUrl, frontendBaseUrl),
-  ]);
-
-  return {
-    isFrontend,
-    originStatus,
-    source,
-    url: frontendBaseUrl,
-  };
-}
-
-function isUsableInspectorFrontendCandidate(
-  candidate: InspectorFrontendCandidate,
-): boolean {
-  return candidate.isFrontend && candidate.originStatus !== "rejected";
-}
-
-async function getInspectorApiOriginStatus(
-  apiBaseUrl: string,
-  frontendBaseUrl: string,
-): Promise<InspectorOriginStatus> {
-  try {
-    const origin = new URL(frontendBaseUrl).origin;
-    const response = await fetch(`${apiBaseUrl}/api/session-token`, {
-      headers: { Origin: origin },
-      signal: AbortSignal.timeout(ORIGIN_PROBE_TIMEOUT_MS),
-    });
-    return response.status === 403 ? "rejected" : "accepted";
-  } catch {
-    return "unknown";
-  }
-}
-
-function frontendMismatchError(
-  advertisedCandidate: InspectorFrontendCandidate | undefined,
-  rejectedLiveCandidate: InspectorFrontendCandidate | undefined,
-) {
-  const details = {
-    ...(advertisedCandidate
-      ? {
-          advertisedFrontendUrl: advertisedCandidate.url,
-          advertisedFrontendReachable: advertisedCandidate.isFrontend,
-          advertisedOriginStatus: advertisedCandidate.originStatus,
-        }
-      : {}),
-    ...(rejectedLiveCandidate
-      ? {
-          rejectedFrontendUrl: rejectedLiveCandidate.url,
-          rejectedOriginStatus: rejectedLiveCandidate.originStatus,
-        }
-      : {}),
-  };
-
-  if (advertisedCandidate && rejectedLiveCandidate) {
-    return operationalError(
-      `Inspector backend advertises ${advertisedCandidate.url}, but no Inspector frontend responded there. A frontend was found at ${rejectedLiveCandidate.url}, but the Inspector backend rejects that origin. Start Inspector's frontend on the advertised URL or restart Inspector with matching frontend/backend ports.`,
-      details,
-    );
-  }
-
-  if (advertisedCandidate) {
-    return operationalError(
-      `Inspector backend advertises ${advertisedCandidate.url}, but no Inspector frontend responded there. Start Inspector's frontend on the advertised URL or restart Inspector with matching frontend/backend ports.`,
-      details,
-    );
-  }
-
-  return operationalError(
-    `Inspector frontend ${
-      rejectedLiveCandidate?.url ?? "URL"
-    } is reachable, but the Inspector backend rejects that origin. Restart Inspector with matching frontend/backend ports.`,
-    details,
-  );
-}
-
-async function discoverLocalInspectorFrontendCandidates(
-  baseUrl: string,
-  frontendUrl?: string,
-): Promise<InspectorFrontendCandidate[]> {
-  const hosts = getLocalInspectorCandidateHosts(baseUrl, frontendUrl);
-  if (hosts.length === 0) {
-    return [];
-  }
-
-  const protocol =
-    getUrlProtocol(frontendUrl) ?? getUrlProtocol(baseUrl) ?? "http:";
-  const targets: string[] = [];
-  for (const port of getFrontendProbePorts(frontendUrl)) {
-    for (const host of hosts) {
-      const candidate = `${protocol}//${formatUrlHostname(host)}:${port}`;
-      if (candidate === frontendUrl || candidate === baseUrl) {
-        continue;
-      }
-      targets.push(candidate);
-    }
-  }
-
-  const inspectedCandidates = await inspectInspectorFrontendCandidates(
-    baseUrl,
-    targets.map((candidate) => ({
-      source: "discovered" as const,
-      url: candidate,
-    })),
-  );
-  return inspectedCandidates.filter((candidate) => candidate.isFrontend);
-}
-
-function getLocalInspectorCandidateHosts(
-  baseUrl: string,
-  frontendUrl?: string,
-): string[] {
-  const hosts = new Set<string>();
-  for (const value of [frontendUrl, baseUrl]) {
-    const hostname = getUrlHostname(value);
-    if (!hostname || !isLoopbackHostname(hostname)) {
-      continue;
-    }
-    hosts.add(hostname);
-    if (hostname === "localhost") {
-      hosts.add("127.0.0.1");
-    }
-    if (hostname === "127.0.0.1") {
-      hosts.add("localhost");
-    }
-  }
-  return [...hosts];
-}
-
-function getFrontendProbePorts(frontendUrl?: string): number[] {
-  const ports = new Set<number>();
-  const hintedPort = getUrlPort(frontendUrl);
-  if (hintedPort) {
-    ports.add(hintedPort);
-    for (let offset = 1; offset <= FRONTEND_PORT_SCAN_WINDOW; offset += 1) {
-      ports.add(hintedPort + offset);
-    }
-  }
-  for (const port of WELL_KNOWN_FRONTEND_PORTS) {
-    ports.add(port);
-  }
-  return [...ports].filter((port) => port > 0 && port < 65_536);
-}
-
-function getUrlHostname(value: string | undefined): string | undefined {
-  if (!value) {
-    return undefined;
-  }
-  try {
-    return new URL(value).hostname.toLowerCase();
-  } catch {
-    return undefined;
-  }
-}
-
-function getUrlProtocol(value: string | undefined): string | undefined {
-  if (!value) {
-    return undefined;
-  }
-  try {
-    return new URL(value).protocol;
-  } catch {
-    return undefined;
-  }
-}
-
-function getUrlPort(value: string | undefined): number | undefined {
-  if (!value) {
-    return undefined;
-  }
-  try {
-    const parsed = new URL(value);
-    const port = Number(parsed.port);
-    return Number.isInteger(port) && port > 0 ? port : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function isLoopbackHostname(hostname: string): boolean {
-  return (
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname === "::1" ||
-    hostname === "[::1]"
-  );
-}
-
-function formatUrlHostname(hostname: string): string {
-  return hostname.includes(":") && !hostname.startsWith("[")
-    ? `[${hostname}]`
-    : hostname;
-}
-
-async function isInspectorHealthy(baseUrl: string): Promise<boolean> {
-  const status = await getInspectorHealth(baseUrl);
-  return status.healthy;
-}
-
-export function getNpxExecutable(platform = process.platform): string {
-  return platform === "win32" ? "npx.cmd" : "npx";
-}
-
-async function startInspector(
-  baseUrl: string,
-  timeoutMs: number,
-): Promise<void> {
-  const parsedUrl = new URL(baseUrl);
-  const port = parsedUrl.port || "6274";
-  const startScriptPath = getInspectorStartScriptPath();
-  const localStartScriptPath =
-    startScriptPath && existsSync(startScriptPath) ? startScriptPath : undefined;
-  const args = localStartScriptPath
-    ? [localStartScriptPath, "--port", port, "--no-open"]
-    : ["-y", "@mcpjam/inspector@latest", "--port", port, "--no-open"];
-  const executable = localStartScriptPath
-    ? process.execPath
-    : getNpxExecutable();
-  const logPath = getInspectorStartupLogPath();
-  const logFd = openStartupLogFile(logPath);
-
-  let child: ReturnType<typeof spawn>;
-  try {
-    child = spawn(executable, args, {
-      cwd: localStartScriptPath
-        ? path.dirname(localStartScriptPath)
-        : process.cwd(),
-      detached: true,
-      stdio: ["ignore", logFd, logFd],
-      env: {
-        ...process.env,
-        MCPJAM_SESSION_TOKEN:
-          process.env.MCPJAM_SESSION_TOKEN ??
-          randomBytes(24).toString("base64url"),
-        HOST: parsedUrl.hostname,
-        MCPJAM_INSPECTOR_SUPPRESS_AUTO_OPEN: "1",
-      },
-    });
-  } finally {
-    closeSync(logFd);
-  }
-  child.unref();
-
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    if (await isInspectorHealthy(baseUrl)) {
-      return;
-    }
-    await delay(250);
-  }
-
-  throw operationalError(
-    `Inspector did not become ready within ${timeoutMs}ms. Startup log: ${logPath}`,
-  );
-}
-
-function isAuthFailure(response: Response): boolean {
-  return response.status === 401 || response.status === 403;
-}
-
-function getInspectorStartupLogPath(): string {
-  return path.join(os.tmpdir(), "mcpjam-inspector-startup.log");
-}
-
-function openStartupLogFile(logPath: string): number {
-  try {
-    if (existsSync(logPath) && statSync(logPath).size > STARTUP_LOG_MAX_BYTES) {
-      renameSync(logPath, `${logPath}.1`);
-    }
-  } catch {
-    // Startup logging is best-effort; rotation failures should not block launch.
-  }
-
-  // CLI-owned launches suppress the access link; this log contains diagnostics only.
-  return openSync(logPath, "a");
-}
-
-function openUrl(url: string): void {
-  if (process.env.MCPJAM_CLI_DISABLE_BROWSER_OPEN === "1") {
-    return;
-  }
-
-  const platform = process.platform;
-  const child =
-    platform === "darwin"
-      ? spawn("open", [url], { detached: true, stdio: "ignore" })
-      : platform === "win32"
-      ? spawn("cmd", ["/c", "start", "", url], {
-          detached: true,
-          stdio: "ignore",
-        })
-      : spawn("xdg-open", [url], { detached: true, stdio: "ignore" });
-  child.on("error", () => {});
-  child.unref();
-}
-
-export function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }
 
 async function readResponsePayload(response: Response): Promise<unknown> {
@@ -1305,15 +456,4 @@ function isInspectorCommandResponse(
       typeof (error as Record<string, unknown>).code === "string" &&
       typeof (error as Record<string, unknown>).message === "string",
   );
-}
-
-/** Browser-only credential; keep command results and diagnostics on clean URLs. */
-export function buildInspectorAccessUrl(url: string, token: string): string {
-  const target = new URL(url);
-  const tab = target.hash.slice(1);
-  target.hash = new URLSearchParams({
-    token,
-    ...(tab ? { tab } : {}),
-  }).toString();
-  return target.href;
 }

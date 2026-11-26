@@ -163,6 +163,7 @@ vi.mock("../needs-ephemeral-sandbox", async (importOriginal) => {
 
 import { withPluginExecutionServers } from "../plugin-execution-servers";
 import { PERSONAL, accountToolSet } from "./helpers/account-tools";
+import { HarnessToolNameCollisionError } from "../../../utils/harness/harness-tool-names";
 import {
   createConcurrencyLimiter,
   defaultEvalExecutionBudgets,
@@ -413,6 +414,50 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         name === "testSuites:updateTestIteration" && args.errorDetails,
     );
     expect(persisted?.[1].errorDetails).toContain("Insufficient credits");
+  });
+
+  // A harness broker's spend cap: its sentence names no code, so only the
+  // engine's captured code says the cap is terminal.
+  it("stops a hosted run on the engine's spend-budget code", async () => {
+    const assistantTurnModule = await import("../../../utils/assistant-turn");
+    const runAssistantTurnSpy = vi
+      .spyOn(assistantTurnModule, "runAssistantTurn")
+      .mockImplementation(async (opts: any) => {
+        opts.onEngineError?.({
+          message:
+            "An owner or admin needs to raise this organization's budget to continue.",
+          code: "spend_budget_reached",
+          httpStatus: 402,
+          rawText:
+            '{"error":"An owner or admin needs to raise this organization\'s budget to continue."}',
+          promptIndex: 0,
+          stepIndex: 0,
+        });
+        return {
+          messages: [{ role: "user", content: "Hello" }],
+          assistantMessages: [],
+          toolCalls: [],
+          toolResults: [],
+        } as any;
+      });
+    try {
+      const config = buildQuickRunConfig();
+      config.config.tests[0].model = "claude-haiku-4.5";
+      config.config.tests[0].provider = "anthropic";
+      config.config.tests[0].runs = 3;
+      const result = await runEvalSuiteWithAiSdk({
+        ...config,
+        modelApiKeys: {},
+      } as any);
+
+      expect(runAssistantTurnSpy).toHaveBeenCalledTimes(1);
+      expect(result?.quickRunIterationOutcomes?.[0]).toMatchObject({
+        creditsExhausted: true,
+        creditRecovery: { action: "raise_budget", actor: "owner_or_admin" },
+      });
+    } finally {
+      runAssistantTurnSpy.mockRestore();
+    }
   });
 
   it("redacts a key the provider's error message echoes before storing it", async () => {
@@ -3065,16 +3110,16 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
   });
 
   it("records prepareChatV2 setup failures as a failed iteration", async () => {
-    // Force prepareChatV2 to throw — simulates Anthropic name validation,
+    // Force prepareChatV2 to throw — simulates a harness tool-name collision,
     // meta-tool name collision, or skill-tool prep failure. The runner must
     // catch this and persist a failed iteration row, NOT propagate the throw.
     const orchestration = await import("../../../utils/chat-v2-orchestration");
     const prepareSpy = vi
       .spyOn(orchestration, "prepareChatV2")
       .mockRejectedValueOnce(
-        new Error(
-          "Invalid tool name(s) for Anthropic: 'bad.name'. Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters).",
-        ),
+        new HarnessToolNameCollisionError([
+          { serverId: "shop", toolNames: ["a.b", "a_b"] },
+        ]),
       );
 
     // The iteration row is created via `action`
@@ -3127,7 +3172,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       expect(payload.status).toBe("failed");
       expect(payload.result).toBe("failed");
       expect(payload.error).toEqual(
-        expect.stringContaining("Invalid tool name"),
+        expect.stringContaining("Claude Code can't run `a.b` and `a_b`"),
       );
       expect(payload.iterationId).toBe("iter-failed-setup");
 

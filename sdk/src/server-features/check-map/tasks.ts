@@ -1,4 +1,32 @@
 import type { TasksCheckFeatureMap } from "./types.js";
 
-/** Filled by KES-886 I3; until then no tasks check maps to a feature. */
-export const TASKS_CHECK_FEATURES: Partial<TasksCheckFeatureMap> = {};
+/**
+ * Tasks suite check → catalog features (family 20). Checks that run on both
+ * wires map to the core and the extension feature; a result only counts for
+ * the revision its run negotiated, and lifecycle hides the other form.
+ */
+export const TASKS_CHECK_FEATURES = {
+  "tasks-wire-resolvable": ["tasks.core.capability", "tasks.ext.declaration"],
+  // Grades the requests MCPJam sends (params.task and the extension
+  // declaration), not anything the server does.
+  "tasks-declaration-hygiene": "excluded",
+  "tasks-result-type-discipline": [
+    "tasks.core.augmented-call",
+    "tasks.ext.create-task-result",
+  ],
+  "tasks-undeclared-creation-refused": ["tasks.ext.create-task-result"],
+  "tasks-undeclared-capability-rejected": [
+    "tasks.ext.missing-capability-error",
+  ],
+  "tasks-ttl-shape": ["tasks.core.get", "tasks.ext.polling"],
+  "tasks-inline-result": ["tasks.core.result", "tasks.ext.polling"],
+  "tasks-mcp-name-routing": ["tasks.ext.mcp-name-routing"],
+  "tasks-invalid-task-id-rejected": ["tasks.ext.unknown-task-id"],
+  "tasks-status-payload-shape": ["tasks.core.get", "tasks.ext.polling"],
+  "tasks-cancel-ack-shape": ["tasks.ext.cancel"],
+  "tasks-update-ack-shape": ["tasks.ext.update"],
+  "tasks-ttl-integer-shape": ["tasks.ext.polling"],
+  "tasks-undeclared-capability-names-requirements": [
+    "tasks.ext.missing-capability-error",
+  ],
+} as const satisfies TasksCheckFeatureMap;

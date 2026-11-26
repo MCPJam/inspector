@@ -50,6 +50,8 @@ export default defineConfig({
     "src/internal/telemetry.ts",
     "src/internal/deployment.ts",
     "src/internal/network-proxy.ts",
+    // Node-only start-or-attach engine for a local Inspector (CLI + launcher).
+    "src/internal/inspector.ts",
     // Node-only SSRF-hardened OAuth networking (classifier + DNS-pinned
     // transport) for backend actions that must not load the whole SDK graph.
     "src/oauth/node.ts",

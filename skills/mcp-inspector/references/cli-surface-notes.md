@@ -188,7 +188,10 @@ If a higher-priority surface contradicts a lower-priority summary, trust the hig
 ### `prompts list`, `prompts get`
 
 - Empty prompt arrays are easy to overread.
-- `prompts list` returns `{ prompts: [] }` without sending `prompts/list` when the server does not advertise the `prompts` capability, and also when `prompts/list` comes back method-unavailable.
+- `prompts list` returns `{ prompts: [] }` in two cases that are not an empty supported list:
+  - the server does not advertise the `prompts` capability, so `prompts/list` is never sent
+  - `prompts/list` is sent and comes back method-unavailable, and the CLI turns that error into an empty array
+- Only a successful `prompts/list` response shows the server supports prompts.
 - Add `--rpc` to see whether `prompts/list` was sent at all.
 - Do not claim "the server supports prompts and returns an empty list" unless you have raw evidence that `prompts/list` was actually sent and answered.
 

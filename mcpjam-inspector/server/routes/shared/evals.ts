@@ -48,7 +48,6 @@ import {
   defaultEvalExecutionBudgets,
   resolveSteps,
   runEvalSuiteWithAiSdk,
-  runFrozenSkillOptions,
   streamTestCase,
   throwIfEvalToolSnapshotFailed,
   type EvalTestCase,
@@ -117,7 +116,6 @@ import {
 } from "../../services/evals/pinned-skill-source.js";
 import type { PinnedSkillSource } from "../../services/environments/turn-skills.js";
 import { harnessToolPolicyLaunchRefusal } from "../../utils/harness/harness-proxy-policy-enforcement.js";
-import type { PinnedSkillArtifact } from "@/shared/skill-types";
 import type { LegacyModelSelection, ModelSelection } from "@mcpjam/sdk";
 import {
   readRoutingSelection,
@@ -3155,19 +3153,6 @@ export async function prepareEvalRun(
   // setup failure must precede model execution and name the component that
   // caused it.
   let pinnedSkillSource: PinnedSkillSource | undefined;
-  /**
-   * The run's frozen skills in HARNESS shape (materialized on box), built here
-   * rather than per iteration because the supporting-file download is I/O that
-   * belongs in run preparation — where a failure fails the run cleanly, before
-   * any model call, naming the skill and path.
-   *
-   * Set for EVERY runId-bearing run, empty included. The harness selects its
-   * pinned source by PRESENCE, so `[]` says "this run delivers no skills" while
-   * `undefined` leaves the box with whatever skills it already holds — which
-   * would unfreeze a frozen run, and would hand the `skillsOverride: "exclude"`
-   * arm an earlier turn's skills.
-   */
-  let pinnedHarnessSkills: PinnedSkillArtifact[] | undefined;
   /** The run's pinned plugin servers, re-gated just before execution. */
   let executionPluginServers: RunPluginServer[] = [];
   if (runId) {
@@ -3220,7 +3205,6 @@ export async function prepareEvalRun(
         effectiveServerIds: resolvedServerIds,
         ...(pinServerNames ? { serverNames: pinServerNames } : {}),
       });
-      pinnedHarnessSkills = built.pinnedHarnessSkills;
       pinnedSkillSource = built.pinnedSkillSource;
     } catch (error) {
       await failRunBeforeExecution(convexClient, recorder, runId, {
@@ -3294,9 +3278,6 @@ export async function prepareEvalRun(
       // no secrets at all.
       ...(environmentId ? { projectEnvironmentId: environmentId } : {}),
       ...(pinnedSkillSource ? { pinnedSkillSource } : {}),
-      // Presence is meaningful (empty ⇒ "no skills", absent ⇒ live fetch), so
-      // this checks for undefined rather than truthiness.
-      ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
       ...(toolPolicy ? { toolPolicy } : {}),
       // The SAME object, never a copy — see `extraHeaders` on the request type.
       ...(extraHeaders ? { extraHeaders } : {}),
@@ -3928,19 +3909,15 @@ function environmentExecutionOptions(prepared: PreparedSingleCaseExecution): {
   committedQuickRunIterationIds?: string[];
   projectEnvironmentId?: string;
   pinnedSkillSource?: PinnedSkillSource;
-  pinnedHarnessSkills?: PinnedSkillArtifact[];
 } {
   const environment = prepared.environment;
   if (!environment) return {};
   return {
     committedQuickRunIterationIds: environment.committed.iterationIds,
     projectEnvironmentId: environment.resolved.environmentRef.environmentId,
-    ...runFrozenSkillOptions({
-      ...(environment.frozenSkills?.pinnedSkillSource
-        ? { pinnedSkillSource: environment.frozenSkills.pinnedSkillSource }
-        : {}),
-      pinnedHarnessSkills: environment.frozenSkills?.pinnedHarnessSkills ?? [],
-    }),
+    ...(environment.frozenSkills?.pinnedSkillSource
+      ? { pinnedSkillSource: environment.frozenSkills.pinnedSkillSource }
+      : {}),
   };
 }
 

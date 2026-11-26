@@ -1449,3 +1449,14 @@ describe("a local Codex runtime kept between turns", () => {
     expect(kept).toBe(false);
   });
 });
+
+it("holds native commands for an unattended turn that offers server skills", async () => {
+  const result = await prepareLocalHarnessTurn({
+    ...turnArgs(),
+    scope: "unattended",
+    holdNativeCommands: true,
+  });
+  if (!result.ok) throw new Error(result.message);
+  expect(result.prepared.permissionMode).toBe("allow-reads");
+  await result.prepared.teardown();
+});

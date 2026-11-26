@@ -12,6 +12,10 @@ import {
   redactSensitiveTraceValue,
 } from "./oauth/state-machines/trace-redaction.js";
 import type { OAuthProtocolVersion } from "./oauth/state-machines/types.js";
+import { readSseJsonRpc } from "./directory-readiness/discovery.js";
+
+/** How much of an event stream is read looking for its first message. */
+const MAX_EVENT_STREAM_PROBE_BYTES = 64 * 1024;
 
 export interface ProbeHttpAttempt {
   name:
@@ -85,12 +89,31 @@ function parseJsonBody(text: string): unknown {
   }
 }
 
+/** A JSON-RPC request body's id; `undefined` when it has none. */
+function jsonRpcRequestId(body: unknown): string | number | undefined {
+  if (typeof body !== "object" || body === null || !("id" in body)) {
+    return undefined;
+  }
+  const { id } = body;
+  return typeof id === "string" || typeof id === "number" ? id : undefined;
+}
+
 async function readResponseBody(
-  response: Response
+  response: Response,
+  firstEventStreamMessage: boolean,
+  requestId: string | number | undefined
 ): Promise<{ body?: unknown; contentType?: string }> {
   const contentType = response.headers.get("content-type") ?? undefined;
   if (contentType?.includes("text/event-stream")) {
-    return { contentType };
+    // A server may hold a stream open, so one is read only when the caller
+    // expects an answer on it, and only up to the response to this request.
+    if (!firstEventStreamMessage) return { contentType };
+    const body = await readSseJsonRpc(
+      response,
+      MAX_EVENT_STREAM_PROBE_BYTES,
+      requestId
+    );
+    return body === undefined ? { contentType } : { body, contentType };
   }
 
   const text = await response.text();
@@ -189,7 +212,15 @@ export async function performRequest(
   fetchFn: typeof fetch,
   attempt: ProbeHttpAttempt,
   timeoutMs: number | undefined,
-  validateLandingUrl?: (url: string) => void
+  validateLandingUrl?: (url: string) => void,
+  options: {
+    /**
+     * Read an event-stream answer as far as the response to the request's
+     * JSON-RPC id (its first message when the request has no id), as the
+     * body. Other streams are left unread.
+     */
+    firstEventStreamMessage?: boolean;
+  } = {}
 ): Promise<ParsedHttpResponse> {
   const startedAt = Date.now();
   const { signal, cleanup, didTimeout } = withTimeoutSignal(timeoutMs);
@@ -216,7 +247,11 @@ export async function performRequest(
       validateLandingUrl(response.url);
     }
 
-    const parsedBody = await readResponseBody(response);
+    const parsedBody = await readResponseBody(
+      response,
+      options.firstEventStreamMessage === true,
+      jsonRpcRequestId(attempt.request.body)
+    );
     const normalizedHeaders = normalizeHeaders(response.headers);
     attempt.durationMs = Date.now() - startedAt;
     attempt.response = {

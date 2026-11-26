@@ -11,7 +11,7 @@ import { getManagerConnections } from "./mcp-connections.js";
  *
  * Encapsulates the identical prep logic used by both mcp/chat-v2 and web/chat-v2:
  *   1. getToolsForAiSdk + the turn's skill source + needsApproval merge
- *   2. Anthropic tool name validation, harness turns only (throws on invalid)
+ *   2. Harness tool-name collision check (throws when a runtime would merge two tools)
  *   3. System prompt + skills prompt concatenation
  *   4. Temperature resolution (GPT-5 check)
  *   5. scrubMessages lambda construction
@@ -45,12 +45,9 @@ import {
   type ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config/internal";
 import {
-  isAnthropicCompatibleModel,
-  getInvalidAnthropicToolNames,
   scrubUnavailableToolHistoryForBackend,
   scrubMcpAppsToolResultsForBackend,
   scrubChatGPTAppsToolResultsForBackend,
-  type CustomProviderConfig,
 } from "./chat-helpers.js";
 import { getEffectiveSkillToolsAndPrompt } from "./computers/effective-skill-tools.js";
 import { listLiveServerSkills } from "./computers/live-server-skills.js";
@@ -95,6 +92,10 @@ import {
   type ToolDiscoveryState,
 } from "@mcpjam/sdk";
 import { createProgressiveMetaTools } from "@mcpjam/sdk";
+import {
+  findHarnessToolNameCollisions,
+  HarnessToolNameCollisionError,
+} from "./harness/harness-tool-names.js";
 
 // `filterAppOnlyTools` now lives in `@mcpjam/sdk/host-config/internal` so the
 // eval runtime can apply it without reaching into this file. Re-exported here
@@ -758,7 +759,6 @@ export interface PrepareChatV2Options {
   excludeMcpToolNames?: readonly string[];
   /** Host/client policy for eligible MCP tool-result content/resources. */
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
-  customProviders?: CustomProviderConfig[];
   /** Progressive discovery overrides (e.g. tighter thresholds for tests). */
   progressiveToolDiscovery?: ProgressiveDiscoveryOptions;
   /**
@@ -1265,7 +1265,8 @@ function describeUnconnectedServers(
 /**
  * Prepare tools, system prompt, temperature, and message scrubber for chat-v2.
  *
- * Throws if Anthropic tool name validation fails.
+ * Throws `HarnessToolNameCollisionError` when a harness runtime would merge two
+ * of a server's tools under one name.
  */
 export async function prepareChatV2(
   options: PrepareChatV2Options,
@@ -1281,7 +1282,6 @@ export async function prepareChatV2(
     respectToolVisibility,
     excludeMcpToolNames,
     modelVisibleMcpToolResults,
-    customProviders,
     appTools,
     uiTools,
     pageTools,
@@ -1432,7 +1432,7 @@ export async function prepareChatV2(
   // approval (`effective-skill-tools.ts`).
   // The two skill-delivery channels are deliberately DISJOINT, and this is the
   // single point both funnel through. A harness turn materializes SKILL.md on
-  // the box from `pinnedHarnessSkills` (see `utils/harness/skill-delivery.ts`);
+  // the box from its plan (`TurnSkills.harness`, read by `skill-delivery.ts`);
   // MCPJam's agent gets in-memory `loadSkill` tools. A plan for one engine on
   // the other would hand the model the same skill twice, by two mechanisms, or
   // claim skills the model never gets. Callers guard this themselves and a
@@ -1737,25 +1737,33 @@ export async function prepareChatV2(
   const allTools = { ...realTools, ...metaTools } as ToolSet;
   const availableToolNames = Object.keys(allTools);
 
-  // 3. Anthropic tool name validation — meta-tool names are conforming and
-  // checked alongside real tools. Bedrock's Converse API enforces the same
-  // ^[a-zA-Z0-9_-]{1,64}$ tool-name shape as Anthropic, so it shares the gate.
-  // Only harness turns are checked: a direct or hosted turn aliases such names
-  // on the wire (`withProviderSafeToolNames`, the hosted stream request), while
-  // a harness runtime builds its own tool names from the server's.
-  if (
-    harness &&
-    (isAnthropicCompatibleModel(modelDefinition, customProviders) ||
-      modelDefinition.provider === "bedrock")
-  ) {
-    const invalidNames = getInvalidAnthropicToolNames(Object.keys(allTools));
-    if (invalidNames.length > 0) {
-      const nameList = invalidNames.map((name) => `'${name}'`).join(", ");
-      const providerLabel =
-        modelDefinition.provider === "bedrock" ? "Amazon Bedrock" : "Anthropic";
-      throw new Error(
-        `Invalid tool name(s) for ${providerLabel}: ${nameList}. Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters).`,
-      );
+  // 3. Tool names a harness runtime would merge. Claude Code shows `a.b` and
+  // `a_b` both as `a_b`, so a call to either could not be attributed; refuse
+  // the turn before the runtime starts. Every other name is made valid by the
+  // runtime or by MCPJam's host-executed naming (`harness/harness-tool-names.ts`);
+  // direct and hosted turns alias names on the wire.
+  // Each server's own list: the merged tool map keeps one tool per name, so a
+  // name two servers share would hide which server a collision is on. A server
+  // the turn runs without keeps its last list in the cache, so it is skipped.
+  if (harness) {
+    const skippedKeys = new Set(
+      [...lister.unavailable().keys()].flatMap(
+        (id) => selectedGroups?.[id]?.map((c) => c.key) ?? [id],
+      ),
+    );
+    const collisions = findHarnessToolNameCollisions(
+      harness,
+      new Map(
+        (knownSelectedServers ?? mcpClientManager.listServers())
+          .filter((id) => !skippedKeys.has(id))
+          .map((id) => [
+            id,
+            Object.keys(mcpClientManager.getAllToolAnnotations(id)),
+          ]),
+      ),
+    );
+    if (collisions.length > 0) {
+      throw new HarnessToolNameCollisionError(collisions);
     }
   }
   // Guard: meta-tool name must never collide with a real tool. If it does,

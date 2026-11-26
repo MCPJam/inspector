@@ -148,6 +148,20 @@ describe("exa web search — organization AI key policy refusals", () => {
     expect(result.error).not.toMatch(/BYOK|try again|wait/i);
   });
 
+  it("sends a locked wallet to support rather than to buying credits", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      json(402, {
+        error: "Web search unavailable: wallet locked.",
+        code: "WALLET_LOCKED",
+      }),
+    );
+    const result = await runSearch();
+    expect(result.error).toBe(
+      "Web search is unavailable because this organization's MCPJam wallet is locked. Contact MCPJam support to resolve it.",
+    );
+    expect(result.error).not.toMatch(/add credits|buy credits|upgrade/i);
+  });
+
   it("renders the refusal's recovery step and link when the 402 carries one", async () => {
     global.fetch = vi.fn().mockResolvedValue(
       json(402, {
