@@ -299,9 +299,13 @@ function offeredOnVersionRefusal(
       ? (error.data as { supported?: unknown; requested?: unknown })
       : {};
   const listed = Array.isArray(data.supported) ? data.supported : undefined;
+  // The 2025 shape only on its own code: an internal error (`-32603`) that
+  // happens to carry these fields is still the server's failure to grade.
   const aboutVersion =
     error.code === MCP_ERROR_CODES.UnsupportedProtocolVersion ||
-    (listed !== undefined && typeof data.requested === "string");
+    (error.code === MCP_ERROR_CODES.InvalidParams &&
+      listed !== undefined &&
+      typeof data.requested === "string");
   if (!aboutVersion) return undefined;
   return (listed ?? []).filter(
     (version): version is string => typeof version === "string"

@@ -175,6 +175,27 @@ describe("a raw-only 2026 pin the server does not refuse", () => {
     expect(result.checks[0]?.status).toBe("passed");
   });
 
+  it("asks server/discover once: Server Discover grades the gate's answer", async () => {
+    const log: string[] = [];
+    // No advice: its own probes are not what this counts.
+    const result = await new MCPConformanceTest({
+      serverUrl: "https://refusing.example.test/mcp",
+      protocolVersion: PINNED,
+      checkIds: ["modern-server-discover"],
+      readinessIds: [],
+      checkTimeout: 500,
+      fetchFn: refusingFetch(
+        200,
+        { code: -32601, message: "Method not found" },
+        log
+      ),
+      __suppressTelemetry: true,
+    }).run();
+
+    expect(log).toEqual(["server/discover"]);
+    expect(result.checks[0]?.status).toBe("failed");
+  });
+
   it("runs the checks when the gate itself could not reach the server", async () => {
     let calls = 0;
     const flaky = (async (input: RequestInfo | URL, init?: RequestInit) => {

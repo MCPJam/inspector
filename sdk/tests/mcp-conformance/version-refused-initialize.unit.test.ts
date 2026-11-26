@@ -121,6 +121,24 @@ describe("legacyInitialize on a refused version", () => {
     expect(handshake.stop?.kind).toBe("refused");
     expect(handshake.stop?.details).not.toHaveProperty("missingInput");
   });
+
+  it("reads the 2025 shape only on -32602, not on an internal error that carries it", async () => {
+    const handshake = await legacyInitialize(
+      context(
+        {
+          refuseVersion: {
+            status: 500,
+            code: -32603,
+            supported: ["2026-07-28"],
+          },
+        },
+        []
+      )
+    );
+
+    expect(handshake.stop?.kind).toBe("refused");
+    expect(handshake.stop?.details).not.toHaveProperty("missingInput");
+  });
 });
 
 describe("the checks on a server that refuses the pinned version", () => {

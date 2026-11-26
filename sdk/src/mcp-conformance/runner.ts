@@ -30,7 +30,11 @@ import {
 } from "../operations.js";
 import { CORE_CHECKS } from "./checks/core.js";
 import { RESOURCE_CHECKS } from "./checks/resources.js";
-import { MODERN_CHECK_METADATA, runModernChecks } from "./checks/modern.js";
+import {
+  MODERN_CHECK_METADATA,
+  probeServerDiscover,
+  runModernChecks,
+} from "./checks/modern.js";
 import { runProtocolChecks } from "./checks/protocol.js";
 import { runSecurityChecks } from "./checks/security.js";
 import { runTransportChecks } from "./checks/transport.js";
@@ -71,6 +75,7 @@ import {
   splitReadinessOutcomes,
 } from "./readiness.js";
 import { WireObservationRecorder } from "./wire-observations.js";
+import type { RawHttpResult } from "./raw-http.js";
 import { createCapturingFetch } from "./raw-capture.js";
 import {
   createNegotiationProbeHold,
@@ -318,6 +323,8 @@ async function runClientChecks(
   authorizationRefused?: true;
   /** The pinned version was refused: no raw check or advice may run. */
   versionRefused?: true;
+  /** The `server/discover` answer already in hand, for the modern track. */
+  discover?: RawHttpResult;
   /** The check that carries a failed connect, for checks blocked by it. */
   connectFailedCheck?: { id: MCPCheckId; title: string };
 }> {
@@ -336,16 +343,25 @@ async function runClientChecks(
     // server refuse it: ask once, so a refusal stops the run as it does on
     // the client path instead of failing every raw probe. (A 2025 pin sees it
     // in each probe's own `initialize`; see `legacy-handshake.ts`.)
+    // The modern track grades this same answer, so the run still asks once.
     if (config.era === "modern" && selectedCheckIds.size > 0) {
-      const refusal = await modernPinRefusal(
-        {
+      let discover: RawHttpResult | undefined;
+      try {
+        discover = await probeServerDiscover({
           config,
           serverUrl: config.serverUrl,
           fetchFn: config.fetchFn,
           recorder,
-        },
-        config.protocolVersion,
-      );
+        });
+      } catch {
+        // Unreachable: Server Discover sends its own and grades that.
+        config.signal?.throwIfAborted();
+      }
+      const refusal =
+        discover !== undefined ? modernPinRefusal(discover) : undefined;
+      if (discover !== undefined && !refusal) {
+        return { checks: [], config, readiness: [], discover };
+      }
       if (refusal) {
         return {
           checks: pinRefusalResults(
@@ -721,6 +737,7 @@ export class MCPConformanceTest {
       surface: clientRun.surface,
       recorder,
       connectFailedCheck: clientRun.connectFailedCheck,
+      discover: clientRun.discover,
     };
 
     // A refused run (an Auto run's credentials, or a pinned version) already

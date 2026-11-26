@@ -21,10 +21,8 @@ import {
 import { MCP_ERROR_CODES } from "../mcp-client-manager/mcp-error-codes.js";
 import {
   jsonRpcError,
-  modernHeaders,
-  modernRequestBody,
-  rawRequest,
   type JsonRpcErrorShape,
+  type RawHttpResult,
 } from "./raw-http.js";
 import { CHECK_ERAS } from "./types.js";
 import type {
@@ -33,7 +31,6 @@ import type {
   MCPCheckResult,
   MCPClientCheckDefinition,
   NormalizedMCPConformanceConfig,
-  RawHttpCheckContext,
 } from "./types.js";
 
 /** The pin refusal behind a failed connect, however deep it was wrapped. */
@@ -169,8 +166,8 @@ export function pinRefusalResults(
 }
 
 /**
- * Whether the server refuses a 2026-era pin, asked once with
- * `server/discover` before any raw check runs.
+ * Whether a `server/discover` answer refuses a 2026-era pin. The runner sends
+ * that request once before the raw checks of a raw-only 2026 pin.
  *
  * A pinned run with no client check skips the client connect, and 2026 has no
  * handshake, so nothing else would see the refusal: every raw probe would draw
@@ -185,35 +182,12 @@ export function pinRefusalResults(
  *     or is not a recognized modern JSON-RPC error, fall back to `initialize`",
  *     i.e. the server speaks a 2025 version, not the pin.
  *
- * Anything else, a network failure included, is left to the checks to grade.
- * The probe stays out of the run-wide wire record: Server Discover sends and
- * grades its own.
+ * Anything else is left to the checks to grade: Server Discover grades this
+ * same answer rather than sending its own.
  */
-export async function modernPinRefusal(
-  ctx: RawHttpCheckContext,
-  pinned: string
-): Promise<
-  | { offered: string[]; status: number; error: JsonRpcErrorShape }
-  | undefined
-> {
-  let result;
-  try {
-    result = await rawRequest(ctx, {
-      headers: modernHeaders({
-        protocolVersion: pinned,
-        method: "server/discover",
-      }),
-      body: modernRequestBody({
-        id: 1,
-        method: "server/discover",
-        protocolVersion: pinned,
-      }),
-      record: false,
-    });
-  } catch {
-    ctx.config.signal?.throwIfAborted();
-    return undefined;
-  }
+export function modernPinRefusal(
+  result: RawHttpResult
+): { offered: string[]; status: number; error: JsonRpcErrorShape } | undefined {
   const error = jsonRpcError(result);
   if (error === undefined) return undefined;
   if (error.code === MCP_ERROR_CODES.UnsupportedProtocolVersion) {

@@ -646,6 +646,17 @@ async function badArgsResult(
   });
 }
 
+/**
+ * The track's one `server/discover`. The runner sends this same request before
+ * a raw-only 2026 pin to learn whether the server refuses the pin, and hands
+ * the answer over in `ctx.discover`, so the run asks once.
+ */
+export function probeServerDiscover(
+  ctx: RawHttpCheckContext
+): Promise<RawHttpResult> {
+  return modernProbe(ctx, { id: 7001, method: "server/discover" });
+}
+
 async function discoverOnce(
   ctx: RawHttpCheckContext,
   state: ModernRunState
@@ -653,7 +664,9 @@ async function discoverOnce(
   if (!state.discover) {
     state.discover = await track(
       state,
-      modernProbe(ctx, { id: 7001, method: "server/discover" })
+      ctx.discover !== undefined
+        ? Promise.resolve(ctx.discover)
+        : probeServerDiscover(ctx)
     );
   }
   return state.discover;
