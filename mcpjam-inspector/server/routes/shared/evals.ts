@@ -3629,9 +3629,14 @@ export async function prepareSingleCaseExecution(
     ),
   });
 
-  const suiteId = testCase.testSuiteId ?? testCase.evalTestSuiteId;
-  const suiteDefaultMatchOptions = await loadSuiteDefaultMatchOptions(convexClient, suiteId);
-  const suiteDefaultPredicates = await loadSuiteDefaultPredicates(convexClient, suiteId);
+  const suiteDefaultMatchOptions = await loadSuiteDefaultMatchOptions(
+    convexClient,
+    testCase.evalTestSuiteId,
+  );
+  const suiteDefaultPredicates = await loadSuiteDefaultPredicates(
+    convexClient,
+    testCase.evalTestSuiteId,
+  );
   // An environment runs AS its client; a legacy run as the suite's (or the
   // named) host, with the request's one-off override on top.
   const executionHostId = environmentLaunch?.hostId ?? namedHostId;
@@ -3643,7 +3648,7 @@ export async function prepareSingleCaseExecution(
       )
     : await loadSuiteHostConfig(
         convexClient,
-        suiteId,
+        testCase.evalTestSuiteId,
         namedHostId,
       );
   const legacyHostConfigOverride = environmentLaunch
@@ -3693,7 +3698,10 @@ export async function prepareSingleCaseExecution(
     ? environmentRuntimeEnvironment(resolvedServerIds, environmentLaunch)
     : buildRuntimeEnvironmentWithBindings({
         resolvedServerIds,
-        suiteEnvironment: await loadSuiteEnvironment(convexClient, suiteId),
+        suiteEnvironment: await loadSuiteEnvironment(
+          convexClient,
+          testCase.testSuiteId ?? testCase.evalTestSuiteId,
+        ),
       });
   const test = buildSingleCaseRuntimeTest({
     testCase,
