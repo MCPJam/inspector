@@ -101,7 +101,6 @@ const RAW_CHECK_CATEGORY_ENTRIES: ReadonlyArray<
   ["localhost-host-rebinding-rejected", "security"],
   ["localhost-host-valid-accepted", "security"],
   ["server-sse-polling-session", "transport"],
-  ["server-accepts-multiple-post-streams", "transport"],
   ["server-sse-streams-functional", "transport"],
   ["notification-post-accepted", "transport"],
   ["get-stream-or-405", "transport"],

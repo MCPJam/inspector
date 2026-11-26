@@ -97,10 +97,6 @@ export const PROTOCOL_CHECK_CATALOG = {
     title: "SSE Polling Session",
     description: "Server provides a streamable HTTP session id.",
   },
-  "server-accepts-multiple-post-streams": {
-    title: "Multiple POST Streams",
-    description: "The server accepts multiple concurrent POST requests.",
-  },
   "server-sse-streams-functional": {
     title: "Functional SSE Streams",
     description: "Concurrent SSE streams remain readable.",

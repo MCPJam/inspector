@@ -32,13 +32,21 @@ describe("conformance profile manifest", () => {
     expect(unknown).toEqual([]);
   });
 
-  it("scores exactly the 44 checks of v2026-11-02.1", () => {
-    // The pre-gap-program pool of 36 plus the eight gap-program checks the
-    // revision states as requirements. Adding a check without a profile bump
+  it("scores exactly the 43 checks of v2026-11-25.1", () => {
+    // The pre-gap-program pool of 36, less Multiple POST Streams, plus the
+    // eight gap-program checks the revision states as requirements. Adding a check without a profile bump
     // keeps this green (the check lands pending, which is the intent);
     // silently PROMOTING one moves the count and fails.
-    expect(PROFILE.version).toBe("2026-11-02.1");
-    expect(PROFILE.scored).toHaveLength(44);
+    expect(PROFILE.version).toBe("2026-11-25.1");
+    expect(PROFILE.scored).toHaveLength(43);
+  });
+
+  it("no longer scores the check that graded a client rule", () => {
+    // v2026-11-02.1 scored Multiple POST Streams. The check is gone from the
+    // suite, so it must be gone from the manifest too: an entry for a deleted
+    // check shrinks nothing visibly and still changes the digest.
+    expect(PROFILE.scored).not.toContain("server-accepts-multiple-post-streams");
+    expect(MCP_CHECK_IDS).not.toContain("server-accepts-multiple-post-streams");
   });
 
   it("states exactly which shipped checks it leaves unscored", () => {

@@ -14,6 +14,7 @@ import {
   MCP_TASKS_CHECK_IDS,
   MCP_TASKS_READINESS_IDS,
   RENAMED_MCP_TASKS_CHECK_IDS,
+  REMOVED_MCP_CHECK_IDS,
   RETIRED_MCP_CHECK_IDS,
   runConformance,
   type ConformanceSuiteKind,
@@ -99,7 +100,14 @@ export interface CompositeConformanceOptions
 const CHECK_ID_SUITES: ReadonlyArray<
   readonly [ConformanceSuiteKind, readonly string[]]
 > = [
-  ["protocol", [...MCP_CHECK_IDS, ...Object.keys(RETIRED_MCP_CHECK_IDS)]],
+  [
+    "protocol",
+    [
+      ...MCP_CHECK_IDS,
+      ...Object.keys(RETIRED_MCP_CHECK_IDS),
+      ...Object.keys(REMOVED_MCP_CHECK_IDS),
+    ],
+  ],
   ["apps", MCP_APPS_CHECK_IDS],
   [
     "tasks",

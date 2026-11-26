@@ -82,7 +82,6 @@ describe("a server that refuses requests before the initialized notification", (
 
   it("accepts the concurrent requests and the GET that follow the handshake", async () => {
     const ids: MCPCheckId[] = [
-      "server-accepts-multiple-post-streams",
       "server-sse-streams-functional",
       "notification-post-accepted",
       "get-stream-or-405",
@@ -145,7 +144,7 @@ describe("a server that answers initialize with a JSON-RPC error on HTTP 200", (
       "protocol-invalid-method-error",
       "server-sse-polling-session",
       "session-id-visible-ascii",
-      "server-accepts-multiple-post-streams",
+      "server-sse-streams-functional",
       "notification-post-accepted",
       "get-stream-or-405",
     ];
@@ -194,7 +193,7 @@ describe("a server that does not speak the pinned version", () => {
     const ids: MCPCheckId[] = [
       "protocol-invalid-method-error",
       "server-sse-polling-session",
-      "server-accepts-multiple-post-streams",
+      "server-sse-streams-functional",
       "get-stream-or-405",
     ];
     // What a 2026-only server answers a 2025 initialize.
@@ -226,7 +225,7 @@ describe("a strict server the notification never reaches", () => {
       {
         checkIds: [
           "protocol-invalid-method-error",
-          "server-accepts-multiple-post-streams",
+          "server-sse-streams-functional",
           "get-stream-or-405",
         ],
       }
@@ -236,7 +235,7 @@ describe("a strict server the notification never reaches", () => {
     // server: "Expected JSON-RPC error code -32601 ... got -32600".
     for (const id of [
       "protocol-invalid-method-error",
-      "server-accepts-multiple-post-streams",
+      "server-sse-streams-functional",
       "get-stream-or-405",
     ] as MCPCheckId[]) {
       expect([id, status(id)]).toEqual([id, "skipped"]);

@@ -361,6 +361,38 @@ test("conformance run sends retired and renamed ids to their suite", () => {
   assert.deepEqual(input.tasks?.checkIds, [renamed[1]]);
 });
 
+test("conformance run drops a removed id next to other protocol checks", () => {
+  const input = runInput([
+    ...["--suite", "protocol", "--suite", "apps"],
+    ...["--check-id", "ping"],
+    ...["--check-id", "server-accepts-multiple-post-streams"],
+    ...["--check-id", "ui-tools-present"],
+  ]);
+
+  // The SDK drops the removed id and runs ping; apps runs as asked.
+  assert.deepEqual(input.protocol?.checkIds, [
+    "ping",
+    "server-accepts-multiple-post-streams",
+  ]);
+  assert.deepEqual(input.apps?.checkIds, ["ui-tools-present"]);
+});
+
+test("conformance run refuses a protocol selection of removed ids only, before any suite runs", () => {
+  // Without this the apps check would run while the protocol suite reported a
+  // failure for a check that no longer exists.
+  assert.throws(
+    () =>
+      runInput([
+        ...["--suite", "protocol", "--suite", "apps"],
+        ...["--check-id", "server-accepts-multiple-post-streams"],
+        ...["--check-id", "ui-tools-present"],
+      ]),
+    isUsageError(
+      "Check server-accepts-multiple-post-streams was removed and nothing runs in its place.",
+    ),
+  );
+});
+
 test("conformance run rejects an unknown or blank id", () => {
   assert.throws(
     () => runInput(["--check-id", "not-a-check"]),

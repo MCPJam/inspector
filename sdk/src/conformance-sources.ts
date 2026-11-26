@@ -87,9 +87,6 @@ export const PROTOCOL_CHECK_SOURCES = {
   "server-sse-polling-session": {
     legacy: `${LEGACY_TRANSPORTS}#session-management`,
   },
-  "server-accepts-multiple-post-streams": {
-    legacy: `${LEGACY_TRANSPORTS}#multiple-connections`,
-  },
   "server-sse-streams-functional": {
     legacy: `${LEGACY_TRANSPORTS}#listening-for-messages-from-the-server`,
   },

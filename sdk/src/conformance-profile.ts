@@ -76,7 +76,7 @@ export interface ConformanceProfile {
 }
 
 /**
- * `mcp-protocol` v2026-11-02.1 — the 36 checks shipping before the
+ * `mcp-protocol` v2026-11-25.1 — 35 of the 36 checks shipping before the
  * conformance-gap program's new checks landed, plus eight of those checks.
  *
  * FROZEN AT EXACTLY TODAY'S POOL, deliberately. Every check the gap program
@@ -106,10 +106,18 @@ export interface ConformanceProfile {
  * The inspector now collects the tool to call in step 2. A run that names none
  * is not applicable when no tool declares an `outputSchema`, and could not run
  * when one does: the MUST went unverified, as with any unnamed probe tool.
+ *
+ * v2026-11-02.1 → v2026-11-25.1 removes `server-accepts-multiple-post-streams`.
+ * The check is gone from the suite, not demoted to pending: the one rule
+ * behind it ("The client MAY remain connected to multiple SSE streams
+ * simultaneously") binds the client, so it scored servers on a requirement no
+ * 2025 revision states. A run under this version has one question fewer on a
+ * 2025 revision, and a server that refused a concurrent POST no longer loses
+ * that point.
  */
 const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
   id: "mcp-protocol",
-  version: "2026-11-02.1",
+  version: "2026-11-25.1",
   scored: [
     "server-initialize",
     "ping",
@@ -125,7 +133,6 @@ const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
     "localhost-host-rebinding-rejected",
     "localhost-host-valid-accepted",
     "server-sse-polling-session",
-    "server-accepts-multiple-post-streams",
     "server-sse-streams-functional",
     "notification-post-accepted",
     "get-stream-or-405",

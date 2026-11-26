@@ -4,6 +4,8 @@ import type {
   RawHttpCheckContext,
 } from "../types.js";
 import { CHECK_ERAS } from "../types.js";
+import { jsonRpcResult } from "../raw-http.js";
+import { concurrentProbe, PING_ANSWERED_AS_JSON } from "./concurrent-probe.js";
 import {
   blockedResult,
   errorMessage,
@@ -24,6 +26,7 @@ import {
   rawRequest,
   pollingOutcome,
   resumePolledStream,
+  streamAnswersRequest,
   type RawHttpResult,
 } from "../raw-http.js";
 
@@ -37,12 +40,6 @@ export const TRANSPORT_CHECK_METADATA = {
     category: "transport",
     title: "SSE Polling Session",
     description: "Server provides a streamable HTTP session id.",
-  },
-  "server-accepts-multiple-post-streams": {
-    id: "server-accepts-multiple-post-streams",
-    category: "transport",
-    title: "Multiple POST Streams",
-    description: "The server accepts multiple concurrent POST requests.",
   },
   "server-sse-streams-functional": {
     id: "server-sse-streams-functional",
@@ -82,7 +79,6 @@ export const TRANSPORT_CHECK_METADATA = {
   Extract<
     MCPCheckId,
     | "server-sse-polling-session"
-    | "server-accepts-multiple-post-streams"
     | "server-sse-streams-functional"
     | "notification-post-accepted"
     | "get-stream-or-405"
@@ -147,7 +143,6 @@ function invalidSessionIdCharacters(sessionId: string): string[] {
 
 /** The checks that send more requests on the session the handshake opened. */
 const SESSION_PROBE_CHECKS = [
-  "server-accepts-multiple-post-streams",
   "server-sse-streams-functional",
   "notification-post-accepted",
   "get-stream-or-405",
@@ -162,6 +157,8 @@ async function initializeSession(
     status: number;
     body: unknown;
     contentType: string;
+    /** The capabilities the `initialize` answer declared, as sent. */
+    capabilities: unknown;
     isMcpLayerResponse: boolean;
   }
 > {
@@ -173,6 +170,7 @@ async function initializeSession(
     status: result.status,
     body: result.json ?? (result.bodyText || undefined),
     contentType: result.headers["content-type"] ?? "",
+    capabilities: jsonRpcResult(result)?.capabilities,
     // Whether the server answered at the MCP layer at all. A non-2xx carrying
     // a JSON-RPC error IS the server's own response, so response-framing MUSTs
     // still bind to it; a non-2xx without one came from something in front of
@@ -348,7 +346,6 @@ export async function runTransportChecks(
       }
 
       for (const id of [
-        "server-accepts-multiple-post-streams",
         "server-sse-streams-functional",
         "notification-post-accepted",
         "get-stream-or-405",
@@ -528,15 +525,17 @@ export async function runTransportChecks(
     }
     const { initialized } = session;
 
-    const needsMultiStreamChecks =
-      selectedCheckIds.has("server-accepts-multiple-post-streams") ||
-      selectedCheckIds.has("server-sse-streams-functional");
-
-    if (needsMultiStreamChecks) {
+    // Three requests at once, each answered on a stream of its own: "The
+    // client MAY remain connected to multiple SSE streams simultaneously."
+    // That sentence permits the client to do this. It asks nothing of the
+    // server, so accepting all three is not graded; what is graded is the
+    // streams that come back.
+    if (selectedCheckIds.has("server-sse-streams-functional")) {
       const activeSessionId = sessionId;
       const streamVersion =
         ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION;
       const multiStreamStartedAt = Date.now();
+      const probe = concurrentProbe(session.capabilities);
       const settledResponses = await Promise.allSettled(
         Array.from({ length: 3 }).map((_, index) =>
           rawRequest(ctx, {
@@ -547,12 +546,7 @@ export async function runTransportChecks(
               }),
               Accept: "text/event-stream, application/json",
             },
-            body: {
-              jsonrpc: "2.0",
-              id: 1000 + index,
-              method: "tools/list",
-              params: {},
-            },
+            body: probe.body(1000 + index),
           }).then((response) =>
             // A polled answer needs a call-back; the three wait at once.
             resumePolledStream(ctx, response, {
@@ -576,134 +570,135 @@ export async function runTransportChecks(
       const contentTypes = responses.map(
         (response) => response?.headers["content-type"] ?? "",
       );
-      const allAccepted =
-        requestErrors.every((error) => error === undefined) &&
-        responses.every((response) => response !== undefined && isOk(response));
-      const responseFailures = responses.some(
-        (response) => response !== undefined && !isOk(response),
+      // What the server accepted. Refusals and request errors are reported in
+      // the details, never graded: a server may turn a concurrent POST away.
+      const answered = responses.filter(
+        (response) => response !== undefined && isOk(response),
+      ).length;
+      const anyRequestError = requestErrors.some(
+        (error) => error !== undefined,
       );
-      const requestOutcomeSummary = statuses.map(
-        (status, index) => status ?? `error:${requestErrors[index] ?? "unknown"}`,
-      );
+      // Every verdict names the probe: it follows the declared capabilities,
+      // so it can be any of the three listings or a ping.
+      const acceptance = {
+        probeMethod: probe.method,
+        statuses,
+        ...(anyRequestError ? { requestErrors } : {}),
+      };
+      const sseResponses = responses
+        .map((response, index) => ({ response, index }))
+        .filter(
+          (
+            candidate,
+          ): candidate is { response: RawHttpResult; index: number } =>
+            candidate.response !== undefined &&
+            isOk(candidate.response) &&
+            (candidate.response.headers["content-type"] ?? "").includes(
+              "text/event-stream",
+            ),
+        );
 
-      if (selectedCheckIds.has("server-accepts-multiple-post-streams")) {
+      const polling = pollingOutcome(sseResponses);
+      if (sseResponses.length === 0) {
         results.push(
-          allAccepted
-            ? passedResult(
-                TRANSPORT_CHECK_METADATA["server-accepts-multiple-post-streams"],
-                Date.now() - multiStreamStartedAt,
-                {
-                  statuses,
-                  contentTypes,
-                },
+          answered === 0 && !anyRequestError
+            ? // Every request was turned down with an HTTP status. A server may
+              // refuse concurrent requests, so there is no stream to grade, and
+              // that must not hold the run at "incomplete" either.
+              notApplicableResult(
+                TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
+                `The server turned down all three concurrent requests (HTTP ${statuses.join(", ")}), so there was no stream to check. A server does not have to accept concurrent requests.`,
+                { ...acceptance, contentTypes },
               )
-            : failedResult(
-                TRANSPORT_CHECK_METADATA["server-accepts-multiple-post-streams"],
+            : answered === 0
+            ? // A request that never got an HTTP answer might have streamed:
+              // unknown, so this was not tested rather than not applicable.
+              couldNotRunResult(
+                TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
+                `None of the three concurrent requests was accepted (${requestErrors.filter((error) => error !== undefined).length} failed before any HTTP answer), so no stream came back to check.`,
+                { ...acceptance, contentTypes },
+              )
+            : probe.capability === undefined
+            ? notApplicableResult(
+                TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
+                PING_ANSWERED_AS_JSON,
+                { probeMethod: probe.method, contentTypes },
+              )
+            : passedResult(
+                TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
                 Date.now() - multiStreamStartedAt,
-                `Expected all concurrent POST requests to return 2xx, got ${requestOutcomeSummary.join(", ")}`,
                 {
-                  statuses,
+                  message:
+                    "Concurrent requests returned JSON responses instead of SSE streams",
                   contentTypes,
-                  requestErrors,
+                  ...acceptance,
                 },
               ),
         );
-      }
-
-      if (selectedCheckIds.has("server-sse-streams-functional")) {
-        const sseResponses = responses
-          .map((response, index) => ({ response, index }))
+      } else if (polling.unreadMessage !== undefined) {
+        // A polled stream that was never read cannot be judged readable.
+        results.push(
+          couldNotRunResult(
+            TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
+            polling.unreadMessage,
+            {
+              probeMethod: probe.method,
+              unreadStreams: polling.unreadStreams,
+            },
+          ),
+        );
+      } else {
+        // For the details. Only DELIMITED frames count: a stream cut mid-frame
+        // leaves an unterminated tail, which is not a delivered event.
+        const eventCounts = sseResponses.map(
+          ({ response }) =>
+            response.sse?.filter((event) => event.terminated).length ?? 0,
+        );
+        const readErrors = sseResponses.map(
+          ({ response }) => response.bodyError,
+        );
+        // Only the streams that came back: each must be read to the end and
+        // carry the JSON-RPC response to its own request, not just any event.
+        const unansweredStreams = sseResponses
           .filter(
-            (
-              candidate,
-            ): candidate is { response: RawHttpResult; index: number } =>
-              candidate.response !== undefined &&
-              isOk(candidate.response) &&
-              (candidate.response.headers["content-type"] ?? "").includes(
-                "text/event-stream",
+            ({ response, index }) =>
+              !streamAnswersRequest(response.sse, 1000 + index),
+          )
+          .map(({ index }) => index);
+        const allStreamsReadable =
+          readErrors.every((error) => error === undefined) &&
+          unansweredStreams.length === 0;
+
+        results.push(
+          allStreamsReadable
+            ? passedResult(
+                TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
+                Date.now() - multiStreamStartedAt,
+                {
+                  eventCounts,
+                  sseStreamCount: sseResponses.length,
+                  ...acceptance,
+                  ...polling.resumedDetail,
+                },
+              )
+            : failedResult(
+                TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
+                Date.now() - multiStreamStartedAt,
+                unansweredStreams.length > 0
+                  ? "One or more concurrent SSE streams ended without the JSON-RPC response to its request"
+                  : "One or more concurrent SSE streams could not be read to the end",
+                {
+                  contentTypes,
+                  ...acceptance,
+                  eventCounts,
+                  unansweredStreams,
+                  readErrors,
+                  sseStreamCount: sseResponses.length,
+                  sseResponseIndexes: sseResponses.map(({ index }) => index),
+                  ...polling.resumedDetail,
+                },
               ),
-          );
-
-        const polling = pollingOutcome(sseResponses);
-        if (sseResponses.length === 0) {
-          results.push(
-            requestErrors.some((error) => error !== undefined) || responseFailures
-              ? failedResult(
-                  TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
-                  Date.now() - multiStreamStartedAt,
-                  "One or more concurrent POST requests failed before any SSE stream could be validated",
-                  {
-                    statuses,
-                    contentTypes,
-                    requestErrors,
-                  },
-                )
-              : passedResult(
-                  TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
-                  Date.now() - multiStreamStartedAt,
-                  {
-                    message:
-                      "Concurrent requests returned JSON responses instead of SSE streams",
-                    contentTypes,
-                  },
-                ),
-          );
-        } else if (polling.unreadMessage !== undefined) {
-          // A polled stream that was never read cannot be judged readable.
-          results.push(
-            couldNotRunResult(
-              TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
-              polling.unreadMessage,
-              { unreadStreams: polling.unreadStreams },
-            ),
-          );
-        } else {
-          // The frames were already parsed off each capture by the shared
-          // harness, so "readable" is now a property of the recorded exchange
-          // rather than a second pass over the live stream. Only DELIMITED
-          // frames count: a stream cut mid-frame leaves an unterminated tail,
-          // which is not a delivered event.
-          const eventCounts = sseResponses.map(
-            ({ response }) =>
-              response.sse?.filter((event) => event.terminated).length ?? 0,
-          );
-          const readErrors = sseResponses.map(
-            ({ response }) => response.bodyError,
-          );
-          const allStreamsReadable =
-            requestErrors.every((error) => error === undefined) &&
-            !responseFailures &&
-            readErrors.every((error) => error === undefined) &&
-            eventCounts.every((count) => count > 0);
-
-          results.push(
-            allStreamsReadable
-              ? passedResult(
-                  TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
-                  Date.now() - multiStreamStartedAt,
-                  {
-                    eventCounts,
-                    sseStreamCount: sseResponses.length,
-                    ...polling.resumedDetail,
-                  },
-                )
-              : failedResult(
-                  TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
-                  Date.now() - multiStreamStartedAt,
-                  "One or more concurrent SSE streams produced no readable events",
-                  {
-                    statuses,
-                    contentTypes,
-                    requestErrors,
-                    eventCounts,
-                    readErrors,
-                    sseStreamCount: sseResponses.length,
-                    sseResponseIndexes: sseResponses.map(({ index }) => index),
-                    ...polling.resumedDetail,
-                  },
-                ),
-          );
-        }
+        );
       }
     }
     if (selectedCheckIds.has("notification-post-accepted")) {
