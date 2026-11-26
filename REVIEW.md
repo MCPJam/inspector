@@ -48,7 +48,7 @@ when:
 
 For each visible change, ask who meets it differently: a new user and one with
 data, a user midway through the flow, owner, member and guest, hosted, `npx`
-and desktop. Signed-in checks run on Jamroom (see `AGENTS.md`).
+and desktop. Run signed-in checks the way `AGENTS.md` describes.
 
 ## Look closely
 
