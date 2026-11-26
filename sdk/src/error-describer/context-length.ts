@@ -34,6 +34,22 @@ const CONTEXT_LENGTH_PATTERNS: readonly RegExp[] = [
 ];
 
 /**
+ * The body without OpenRouter's `metadata.previous_errors`, which lists the
+ * earlier providers' failures: an earlier "prompt is too long" must not label
+ * a different final error. A body that is not JSON is read as it is.
+ */
+function currentErrorText(body: string): string {
+  try {
+    return JSON.stringify(JSON.parse(body), (key, value: unknown) =>
+      key === "previous_errors" ? undefined : value
+    );
+  } catch {
+    // Not JSON (an HTML page, plain text): nothing to leave out.
+    return body;
+  }
+}
+
+/**
  * Whether `message`, or the error's `responseBody`, is this refusal. Every
  * documented refusal is a 400, so an error that states another status is
  * never one.
@@ -44,12 +60,12 @@ export function isContextLengthExceeded(
   status: number | undefined
 ): boolean {
   if (status !== undefined && status !== 400) return false;
-  const body =
+  const rawBody =
     error && typeof error === "object"
       ? (error as { responseBody?: unknown }).responseBody
       : undefined;
+  const body = typeof rawBody === "string" ? currentErrorText(rawBody) : "";
   return CONTEXT_LENGTH_PATTERNS.some(
-    (pattern) =>
-      pattern.test(message) || (typeof body === "string" && pattern.test(body))
+    (pattern) => pattern.test(message) || pattern.test(body)
   );
 }

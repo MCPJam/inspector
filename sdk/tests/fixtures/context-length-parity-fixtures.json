@@ -1,5 +1,5 @@
 {
-  "__readme": "Shared fixtures for a provider refusing a request that does not fit the model's context window (PLB-300). ONE FILE, byte-identical in both repos: mcpjam-backend at tests/convex/fixtures/context-length-parity-fixtures.json (read by convex/lib/contextLengthError.ts tests) and the Inspector at sdk/tests/fixtures/context-length-parity-fixtures.json (read by the SDK error describer and the chat banner's count parser). Pinned by `context-length-parity-fixtures` in convex/lib/mirrors.json. Every `match` row must be recognized on both sides, every `noMatch` row on neither. `statusCode` null means the error carried no status; `responseBody` null means it carried no body. `counts` is what the Inspector's banner shows, or null when the sentence has no numbers. When a provider's wording is added, edit BOTH detectors and this file in the same PR.",
+  "__readme": "Shared fixtures for a provider refusing a request that does not fit the model's context window (PLB-300). ONE FILE, byte-identical in both repos: mcpjam-backend at tests/convex/fixtures/context-length-parity-fixtures.json (read by convex/lib/contextLengthError.ts tests) and the Inspector at sdk/tests/fixtures/context-length-parity-fixtures.json (read by the SDK error describer and the chat banner's count parser). Pinned by `context-length-parity-fixtures` in convex/lib/mirrors.json. Every `match` row must be recognized on both sides, every `noMatch` row on neither. `statusCode` null means the error carried no status; `responseBody` null means it carried no body. OpenRouter's `metadata.previous_errors` lists earlier attempts and is never read: only the current error decides. `counts` is what the Inspector's banner shows, or null when the sentence has no numbers. When a provider's wording is added, edit BOTH detectors and this file in the same PR.",
   "match": [
     {
       "label": "OpenRouter rail, Anthropic through Google Vertex with a failed Amazon Bedrock attempt (observed 2026-11-24)",
@@ -149,6 +149,12 @@
       "statusCode": 400,
       "message": "Tool name is too long: 70 > 64 characters",
       "responseBody": null
+    },
+    {
+      "label": "An unrelated 400 whose earlier attempt in previous_errors was too long",
+      "statusCode": 400,
+      "message": "Provider returned error",
+      "responseBody": "{\"error\":{\"message\":\"Provider returned error\",\"code\":400,\"metadata\":{\"raw\":\"{\\\"type\\\":\\\"error\\\",\\\"error\\\":{\\\"type\\\":\\\"invalid_request_error\\\",\\\"message\\\":\\\"messages.1.content.0.tool_use.input: Field required\\\"}}\",\"provider_name\":\"Google\",\"previous_errors\":[{\"code\":400,\"message\":\"Provider returned error\",\"provider_name\":\"Amazon Bedrock\",\"raw\":\"{\\\"message\\\":\\\"prompt is too long: 596303 tokens > 200000 maximum\\\"}\"}]}}}"
     }
   ]
 }
