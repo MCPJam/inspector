@@ -2640,6 +2640,134 @@ describe("PlaygroundMain", () => {
       );
     });
 
+    describe("Cancel sending", () => {
+      const cancelProps = () =>
+        mockChatInputProps.mock.calls.at(-1)?.[0] as {
+          isSubmitting?: boolean;
+          onCancelSubmit?: () => void;
+        };
+      const failWith = (error: Error) => {
+        let reject!: () => void;
+        mockGetChatHistoryState.mockReturnValue(
+          new Promise((_, fail) => {
+            reject = () => fail(error);
+          }),
+        );
+        return reject;
+      };
+
+      it("cancels from the fullscreen App chat and sends nothing", async () => {
+        const deviceType = mockUIPlaygroundStore.deviceType;
+        mockUIPlaygroundStore.deviceType = "fill";
+        useHostContextStore.setState({
+          draftHostContext: { displayMode: "fullscreen" },
+        });
+        try {
+          const { rerender } = await openSavedThread();
+          await act(async () => {
+            rerender(<PlaygroundMain {...defaultProps} />);
+          });
+          await act(async () => {
+            mockThread.mock.calls.at(-1)?.[0].onFullscreenChange(true);
+          });
+          const overlay = () =>
+            mockFullscreenChatOverlay.mock.calls.at(-1)?.[0] as {
+              onSend: () => void;
+              onCancelSubmit?: () => void;
+              isSubmitting?: boolean;
+            };
+          const releaseSync = holdPreSendSync();
+          fireEvent.change(screen.getByTestId("fullscreen-overlay-input"), {
+            target: { value: "from fullscreen" },
+          });
+          await act(async () => overlay().onSend());
+          expect(overlay().isSubmitting).toBe(true);
+
+          await act(async () => overlay().onCancelSubmit?.());
+
+          expect(overlay().isSubmitting).toBe(false);
+          await act(async () => releaseSync());
+          await act(async () => {});
+          expect(sendMessage).not.toHaveBeenCalled();
+        } finally {
+          mockUIPlaygroundStore.deviceType = deviceType;
+        }
+      });
+
+      it("resends nothing when Retry is cancelled during the pre-send sync, and Retry works again", async () => {
+        mockUseChatSession.error = Object.assign(
+          new Error("The organization's AI provider is unavailable."),
+          { formatted: { code: "provider_unavailable" } },
+        );
+        await openSavedThread();
+        const releaseSync = holdPreSendSync();
+        await act(async () => {
+          fireEvent.click(screen.getByTestId("error-box-retry"));
+        });
+        expect(cancelProps().isSubmitting).toBe(true);
+
+        await act(async () => cancelProps().onCancelSubmit?.());
+        expect(cancelProps().isSubmitting).toBe(false);
+        await act(async () => releaseSync());
+        await act(async () => {});
+        expect(sendMessage).not.toHaveBeenCalled();
+
+        await act(async () => {
+          fireEvent.click(screen.getByTestId("error-box-retry"));
+        });
+        await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+        expect(sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ text: "Hello" }),
+        );
+      });
+
+      it("does not put Retry's text back when its send is refused after a cancel", async () => {
+        mockUseChatSession.error = Object.assign(
+          new Error("The organization's AI provider is unavailable."),
+          { formatted: { code: "provider_unavailable" } },
+        );
+        let dispatch!: () => void;
+        sendMessage.mockImplementation(
+          ({ isCurrent }: { isCurrent?: () => boolean }) =>
+            new Promise<boolean>((resolve) => {
+              dispatch = () => resolve(isCurrent?.() ?? true);
+            }),
+        );
+        await openSavedThread();
+        const releaseSync = holdPreSendSync();
+        await act(async () => {
+          fireEvent.click(screen.getByTestId("error-box-retry"));
+        });
+        await act(async () => releaseSync());
+        await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+
+        await act(async () => cancelProps().onCancelSubmit?.());
+        await act(async () => dispatch());
+
+        expect(screen.getByTestId("chat-input-field")).toHaveValue("");
+      });
+
+      it("hides the read's error when Retry was cancelled while the thread was read", async () => {
+        const toastError = vi.spyOn(toast, "error");
+        mockUseChatSession.error = Object.assign(
+          new Error("The organization's AI provider is unavailable."),
+          { formatted: { code: "provider_unavailable" } },
+        );
+        await openSavedThread();
+        const failRead = failWith(new WebApiError(503, null, "down"));
+        await act(async () => {
+          fireEvent.click(screen.getByTestId("error-box-retry"));
+        });
+
+        await act(async () => cancelProps().onCancelSubmit?.());
+        await act(async () => failRead());
+        await act(async () => {});
+
+        expect(toastError).not.toHaveBeenCalled();
+        expect(sendMessage).not.toHaveBeenCalled();
+      });
+    });
+
     it("resends once when the error banner's Retry is clicked twice during the pre-send sync", async () => {
       mockUseChatSession.error = Object.assign(
         new Error("The organization's AI provider is unavailable."),
@@ -3050,6 +3178,32 @@ describe("PlaygroundMain", () => {
         expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
           expect.objectContaining({ text: "draft for A" }),
         );
+      });
+
+      it("drops a starter chip cancelled during the server wait; the chip stays and the box stays empty", async () => {
+        const readiness = holdServerReadiness();
+        mockUseChatSession.messages = [] as never;
+        render(
+          <PlaygroundMain
+            {...defaultProps}
+            ensureServersReady={readiness.ensureServersReady}
+          />,
+        );
+        await act(async () => {
+          fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+        });
+        expect(composer().isSubmitting).toBe(true);
+
+        await act(async () => composer().onCancelSubmit?.());
+
+        expect(composer().isSubmitting).toBe(false);
+        await act(async () => readiness.release());
+        await settle();
+        expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+        expect(composer().value).toBe("");
+        expect(
+          screen.getByRole("button", { name: "Starter chip" }),
+        ).toBeInTheDocument();
       });
 
       it("hides the read's error when the send was cancelled while the thread was read", async () => {
