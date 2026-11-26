@@ -24,6 +24,7 @@ import { LOCAL_HARNESS_MANIFEST } from "../../local/compatibility";
 import { assertNativeDiscovery } from "../../native-discovery";
 import {
   CASES,
+  NO_BOX,
   OWN_MODEL,
   assertFullMatrix,
   sortKeysDeep,
@@ -51,6 +52,8 @@ const QUALIFIED_DISCOVERY: Record<Harness, readonly (typeof LABELS)[number][]> =
     cursor: [],
     "copilot-cli": [],
     opencode: [],
+    "claude-web": [],
+    "chatgpt-web": [],
   };
 
 const REQUALIFY = [
@@ -115,11 +118,14 @@ function pinSites({
   const sites: Array<[string, unknown]> = [
     ["HARNESS_PINNED_VERSIONS", HARNESS_PINNED_VERSIONS[id]],
     ["adapter.pinnedRuntimeVersion", adapter.pinnedRuntimeVersion],
-    [
+  ];
+  // A runtime with no box bakes no recipe (`NO_BOX` names why).
+  if (!NO_BOX[id]) {
+    sites.push([
       "harness-bake.lock.json",
       bake.recipes.find((recipe) => recipe.harnessId === id)?.runtimeVersion,
-    ],
-  ];
+    ]);
+  }
   if (adapter.forwardingRuntime) {
     sites.push([
       "adapter.forwardingRuntime.runtimeVersion",

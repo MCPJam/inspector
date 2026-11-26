@@ -5,9 +5,11 @@ import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
 import { HostPicker } from "@/components/hosts/HostPicker";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
-import { resolveHostLogoByName } from "@/lib/host-logo";
+import { resolveHostLogo } from "@/lib/host-logo";
 import { useHostList, type HostListItem } from "@/hooks/useClients";
+import { useWebClientsEnabled } from "@/hooks/useWebClientsEnabled";
 import { clientDisplayName } from "@/lib/client-display-name";
+import { pickableHosts } from "@/lib/web-accounts/clients";
 import { HostChipLogo } from "@/components/hosts/host-chip";
 
 export type HostAttachmentDraft = {
@@ -49,6 +51,17 @@ export function ClientAttachmentsEditor({
     () => new Set(value.map((attachment) => attachment.namedHostId)),
     [value],
   );
+  // Full once every client the picker below can offer is attached. It offers
+  // what the shared rule allows, so a web client hidden by its flag doesn't
+  // keep it open with nothing left to pick.
+  const webClientsEnabled = useWebClientsEnabled();
+  const allAttached = useMemo(() => {
+    const offered = pickableHosts(hosts, webClientsEnabled);
+    return (
+      offered.length > 0 &&
+      offered.every((host) => attachedIds.has(host.hostId))
+    );
+  }, [attachedIds, hosts, webClientsEnabled]);
 
   const hostsById = useMemo(() => {
     const map = new Map<string, HostListItem>();
@@ -87,6 +100,7 @@ export function ClientAttachmentsEditor({
                   : undefined
               }
               hostRawName={hostsById.get(attachment.namedHostId)?.name}
+              hostStyle={hostsById.get(attachment.namedHostId)?.hostStyle}
               onRemove={() => handleRemoveAttachment(index)}
               disabled={disabled}
             />
@@ -104,15 +118,10 @@ export function ClientAttachmentsEditor({
               onChange={handleAddHost}
               location="eval_runner"
               placeholder={
-                attachedIds.size === hosts.length && hosts.length > 0
-                  ? "All clients attached"
-                  : "Choose a client to attach"
+                allAttached ? "All clients attached" : "Choose a client to attach"
               }
               includeNone={false}
-              disabled={
-                disabled ||
-                (attachedIds.size === hosts.length && hosts.length > 0)
-              }
+              disabled={disabled || allAttached}
             />
           </div>
           <Button
@@ -143,6 +152,7 @@ type HostAttachmentRowProps = {
   attachment: HostAttachmentDraft;
   hostName: string | undefined;
   hostRawName: string | undefined;
+  hostStyle: string | null | undefined;
   onRemove: () => void;
   disabled: boolean;
 };
@@ -151,11 +161,15 @@ function HostAttachmentRow({
   attachment,
   hostName,
   hostRawName,
+  hostStyle,
   onRemove,
   disabled,
 }: HostAttachmentRowProps) {
   const displayName = hostName ?? attachment.namedHostId;
-  const logoSrc = resolveHostLogoByName(hostRawName ?? displayName);
+  const logoSrc = resolveHostLogo({
+    name: hostRawName ?? displayName,
+    hostStyle,
+  });
 
   return (
     <div className="rounded-xl border bg-card/60">

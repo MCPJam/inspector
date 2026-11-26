@@ -76,6 +76,30 @@ vi.mock("../../browser-session-context", () => ({
   })),
 }));
 
+// Off by default. A case sets `throwsLeft` to make the next finalization
+// reject, which sends the iteration down the runner's failure path.
+const finalizeFault = vi.hoisted(() => ({
+  throwsLeft: 0,
+  calls: [] as Array<Record<string, unknown>>,
+}));
+
+vi.mock("../finalize-iteration", async (original) => {
+  const actual = await original<typeof import("../finalize-iteration")>();
+  return {
+    ...actual,
+    finalizeEvalIteration: vi.fn(
+      async (params: Parameters<typeof actual.finalizeEvalIteration>[0]) => {
+        finalizeFault.calls.push(params as Record<string, unknown>);
+        if (finalizeFault.throwsLeft > 0) {
+          finalizeFault.throwsLeft -= 1;
+          throw new Error("backend unavailable");
+        }
+        return actual.finalizeEvalIteration(params);
+      },
+    ),
+  };
+});
+
 vi.mock("ai", async () => {
   const actual = await vi.importActual<typeof import("ai")>("ai");
   return {
@@ -158,6 +182,9 @@ function scrub(value: unknown): unknown {
         // Preserve immutable v11 payload fixtures while asserting the v12 producer.
         expect(v).toBe(12);
         out[k] = 11;
+      } else if (k === "engineVersion") {
+        expect(v).toEqual(expect.any(String));
+        out[k] = "<inspector-version>";
       } else if (SCRUB_KEYS.has(k)) {
         out[k] = v == null ? v : "<scrubbed>";
       } else if (k === "requestPayloadsJson" && typeof v === "string") {
@@ -234,6 +261,8 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     browserState.interactionSteps = [];
     browserState.scriptedCheckFailures = [];
     browserState.computerUseSupported = false;
+    finalizeFault.throwsLeft = 0;
+    finalizeFault.calls = [];
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
     process.env.CONVEX_HTTP_URL = "https://example.convex.site";
@@ -861,6 +890,146 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     });
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
       "convex",
+    );
+  });
+
+  it("keeps a found widget-check failure on the row when finalization throws", async () => {
+    browserState.scriptedCheckFailures = [
+      {
+        toolName: "search-products",
+        reason: 'no widget rendered for tool "search-products"',
+      },
+    ];
+    finalizeFault.throwsLeft = 1;
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Case",
+            query: "Hello",
+            runs: 1,
+            ...LOCAL_MODEL,
+            expectedToolCalls: [],
+            promptTurns: PROMPT_ONLY,
+            testCaseId: "case-1",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      modelApiKeys: { openai: "sk-test" },
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-1",
+      gradingMode: "dual_write",
+    } as any);
+    expect(finalizeFault.calls).toHaveLength(2);
+    const recovered = finalizeFault.calls[1] as {
+      passed?: boolean;
+      metadata?: { scores?: Array<Record<string, unknown>> };
+    };
+    expect(recovered.passed).toBe(false);
+    expect(
+      recovered.metadata?.scores?.find(
+        (row) => row.scorerId === "platform:widgetCheck",
+      ),
+    ).toMatchObject({
+      status: "scored",
+      value: 0,
+      rationale: expect.stringContaining("search-products"),
+    });
+  });
+
+  it("declares the same checks on the recovery write as on the finished one", async () => {
+    finalizeFault.throwsLeft = 1;
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Case",
+            query: "Hello",
+            runs: 1,
+            ...LOCAL_MODEL,
+            expectedToolCalls: [],
+            promptTurns: PROMPT_ONLY,
+            successPredicates: [{ type: "finalAssistantMessageNonEmpty" }],
+            testCaseId: "case-1",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      modelApiKeys: { openai: "sk-test" },
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-1",
+      gradingMode: "dual_write",
+    } as any);
+    expect(finalizeFault.calls).toHaveLength(2);
+    const [finished, recovered] = finalizeFault.calls.map(
+      (call) =>
+        (call as { metadata?: { evaluationConfig?: { hash?: string } } })
+          .metadata?.evaluationConfig?.hash,
+    );
+    expect(finished).toEqual(expect.any(String));
+    expect(recovered).toBe(finished);
+  });
+
+  it("keeps a check that passed before finalization threw as passed on the recovery write", async () => {
+    finalizeFault.throwsLeft = 1;
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Case",
+            query: "Hello",
+            runs: 1,
+            ...LOCAL_MODEL,
+            expectedToolCalls: [],
+            promptTurns: PROMPT_ONLY,
+            successPredicates: [{ type: "finalAssistantMessageNonEmpty" }],
+            testCaseId: "case-1",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      modelApiKeys: { openai: "sk-test" },
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-1",
+      gradingMode: "dual_write",
+    } as any);
+    expect(finalizeFault.calls).toHaveLength(2);
+    const [finished, recovered] = finalizeFault.calls.map(
+      (call) =>
+        (
+          call as {
+            metadata?: {
+              evaluationConfig?: { hash?: string };
+              scores?: Array<Record<string, unknown>>;
+            };
+          }
+        ).metadata,
+    );
+    const check = (metadata: typeof finished) =>
+      metadata?.scores?.find((row) =>
+        String(row.scorerId).startsWith("predicate:"),
+      );
+    expect(check(finished)).toMatchObject({ status: "scored", passed: true });
+    // Measured before finalization threw, so it is not an unmeasured error.
+    expect(check(recovered)).toMatchObject({ status: "scored", passed: true });
+    expect(recovered?.evaluationConfig?.hash).toBe(
+      finished?.evaluationConfig?.hash,
     );
   });
 

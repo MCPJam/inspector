@@ -17,6 +17,7 @@ describe("the modules the layer bundler loads", () => {
     for (const module of [
       "../../claude-code-bootstrap.js",
       "../../cursor-local-bridge.js",
+      "../../opencode-local-bridge.js",
     ]) {
       await expect(import(module), module).resolves.toBeDefined();
     }

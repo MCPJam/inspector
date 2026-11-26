@@ -238,6 +238,15 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
               },
             });
           };
+          // MCPJam stamped its own correlation key on the request; the server
+          // gets it without that key, whichever route carries it.
+          const forwarded =
+            raw === undefined
+              ? { body: raw, message }
+              : withoutHostCorrelation(
+                  { body: raw, message },
+                  context.correlationKey,
+                );
           const send = (
             settle?: Parameters<typeof forwardNativeMcp>[0]["settle"],
           ) =>
@@ -245,7 +254,7 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
               ? enhancedMcpResponse({
                   manager: authorized.manager,
                   serverId,
-                  message,
+                  message: forwarded.message,
                   signal,
                   respectVisibility:
                     sealed.profile?.respectToolVisibility !== false,
@@ -273,12 +282,7 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
                   serverId,
                   request: c.req.raw,
                   signal,
-                  ...(raw === undefined
-                    ? { body: raw, message }
-                    : withoutHostCorrelation(
-                        { body: raw, message },
-                        context.correlationKey,
-                      )),
+                  ...forwarded,
                   trustedHeaders: config.requestInit?.headers,
                   fetch: config.baseFetch!,
                   onUnauthorized: config.onUnauthorized,
@@ -318,8 +322,10 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
             control,
             operation: {
               invocationKey: randomUUID(),
-              // A session-stable runtime's requests name no tool call.
-              ...(message.method === "tools/call" && !context.session
+              // A session envelope's requests name their call only where the
+              // runtime stamps one (Cursor CLI's name none).
+              ...(message.method === "tools/call" &&
+              (!context.session || context.correlationKey)
                 ? { nativeToolCallId: nativeToolCallId(message.params, context.correlationKey) }
                 : {}),
               turnId: caller.turnId,
@@ -361,7 +367,8 @@ function reportNativeFailure(error: unknown) {
     reportRouteFailure(
       "Native MCP forwarding failed",
       new Error(
-        error instanceof ExecutionControlError ? error.code :
+        error instanceof ExecutionControlError
+          ? [error.code, error.reason].filter(Boolean).join(":") :
         error instanceof Error ? error.name : "Unknown forwarding failure",
       ),
       { source: "web.harness-forwarding", hop: "user_server_hop" },

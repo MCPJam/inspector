@@ -80,3 +80,27 @@ describe("stdio auto-negotiation (always on)", () => {
     expect(events[0].negotiatedEra).not.toBe("modern");
   }, 20000);
 });
+
+it("rejects an unrecognized discovery reply before exposing the stdio client", async () => {
+  const manager = new MCPClientManager({});
+  const script = `
+    require("node:readline").createInterface({ input: process.stdin }).on("line", line => {
+      const request = JSON.parse(line);
+      if (request.method === "server/discover") {
+        console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: {
+          supportedVersions: ["2026-07-28"], capabilities: {}, resultType: "partial",
+        } }));
+      }
+    });
+  `;
+  try {
+    await expect(manager.connectToServer("modern", {
+      command: process.execPath,
+      args: ["-e", script],
+      timeout: 5000,
+    })).rejects.toThrow('Unrecognized resultType "partial"');
+    expect(manager.getManagedClient("modern")).toBeUndefined();
+  } finally {
+    await manager.disconnectAllServers();
+  }
+});

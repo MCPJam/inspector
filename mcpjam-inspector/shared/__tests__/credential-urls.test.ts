@@ -39,6 +39,9 @@ const CORPUS: Record<string, string> = {
   "api-score-run": `/api/web/score/runs/${sentinel("apiscore")}`,
   "api-bench-results": `/api/web/bench/results/${sentinel("apibench")}`,
   "api-conformance-shared": `/api/web/conformance-shared/${sentinel("apiconf")}`,
+  "api-local-web-connector": `/api/web-clients/local-connectors/${sentinel("localconnector")}/turn`,
+  "web-connector": `https://tunnel.example.com/mcp/${sentinel("webconnector")}`,
+  "web-connector-metadata": `/.well-known/oauth-protected-resource/mcp/${sentinel("webconnectormeta")}`,
   "app-view-local": `/api/apps/mcp-apps/sandbox-proxy?view_token=${sentinel("localview")}`,
   "app-view-hosted": `/api/web/apps/mcp-apps/sandbox-proxy?view_token=${sentinel("hostedview")}`,
   "api-session-token-query": `/api/mcp/servers/rpc/stream?serverId=a&_token=${sentinel("session")}`,
@@ -303,6 +306,49 @@ describe("credentialRouteTemplate", () => {
       "/api/web/bench/results/:secret",
     );
     expect(credentialRouteTemplate("/p/x/servers")).toBeNull();
+  });
+});
+
+describe("a root-only route", () => {
+  const id = sentinel("rootonly");
+
+  it("matches where a path starts: a pathname, the text, a delimiter or a host", () => {
+    expect(matchCredentialPath(`/mcp/${id}`)?.route.id).toBe("web-connector");
+    expect(credentialRouteTemplate(`/mcp/${id}`)).toBe("/mcp/:connectorId");
+    expect(scrubCredentialUrl(`https://tunnel.example.com/mcp/${id}?x=1`)).toBe(
+      "https://tunnel.example.com/mcp/[redacted]?x=1",
+    );
+    const cases: Array<[string, string]> = [
+      [`/mcp/${id}`, "/mcp/[redacted]"],
+      [`--> POST /mcp/${id} 200 4ms`, "--> POST /mcp/[redacted] 200 4ms"],
+      [`a:attr__href="/mcp/${id}"`, 'a:attr__href="/mcp/[redacted]"'],
+      [
+        `failed: https://tunnel.example.com:8443/mcp/${id}.`,
+        "failed: https://tunnel.example.com:8443/mcp/[redacted].",
+      ],
+      [
+        `next=${encodeURIComponent(`https://tunnel.example.com/mcp/${id}`)}`,
+        "next=https%3A%2F%2Ftunnel.example.com%2Fmcp%2F[redacted]",
+      ],
+    ];
+    for (const [text, scrubbed] of cases) {
+      expect(scrubCredentialsInText(text)).toBe(scrubbed);
+    }
+  });
+
+  it("does not match a longer path that ends with its prefix", () => {
+    expect(matchCredentialPath("/api/mcp/servers")).toBeNull();
+    for (const text of [
+      "--> GET /api/mcp/servers?serverId=foo 200 3ms",
+      "GET https://app.mcpjam.com/api/mcp/servers/rpc/stream",
+      `next=${encodeURIComponent("https://app.mcpjam.com/api/mcp/servers")}`,
+    ]) {
+      expect(scrubCredentialsInText(text)).toBe(text);
+    }
+    // Every other route still matches after any slash.
+    expect(scrubCredentialsInText("GET /p/proj/results/tok_1")).toBe(
+      "GET /p/proj/results/[redacted]",
+    );
   });
 });
 

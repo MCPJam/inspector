@@ -32,6 +32,8 @@
  * many times did it call this" is one of the things an eval exists to measure.
  */
 
+import { rejectedToolCallIds } from "@mcpjam/evaluators/internal/eval-tool-execution";
+
 export type ProjectedToolCall = {
   toolName: string;
   arguments: unknown;
@@ -154,7 +156,8 @@ export function extractToolCallsFromConversation(
     }
   }
 
-  return toolsCalled;
+  const rejected = rejectedToolCallIds(params.messages);
+  return toolsCalled.filter((call) => !call.toolCallId || !rejected.has(call.toolCallId));
 }
 
 /**

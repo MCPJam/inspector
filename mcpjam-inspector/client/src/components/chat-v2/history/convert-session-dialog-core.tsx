@@ -41,8 +41,8 @@ import {
 } from "@/hooks/useViews";
 import { useHostList } from "@/hooks/useClients";
 import type { HostAttachmentDraft } from "@/components/evals/client-attachments-editor";
+import { ClientMultiSelect } from "@/components/hosts/client-multi-select";
 import { ServerPicker } from "@/components/hosts/server-picker";
-import { HostPicker } from "@/components/hosts/HostPicker";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { deriveSessionServerDisplay } from "./session-server-display";
@@ -132,7 +132,7 @@ type DestinationCardProps = {
  * are siblings: nesting them inside the label would hand every click on a
  * select to the radio.
  */
-function DestinationCard({
+export function DestinationCard({
   value,
   title,
   selected,
@@ -165,7 +165,7 @@ function DestinationCard({
 }
 
 /**
- * Presentational/submit core of "Promote to test case". Owns the suite
+ * Presentational/submit core of "Save as test case". Owns the suite
  * pickers and the `importChatSessionToTestCase` call; per-source adapters
  * (`ConvertChatSessionDialog` for direct history, `ConvertPromotableSessionDialog`
  * for swarm runs) own fetching the summary/detail inputs.
@@ -270,6 +270,7 @@ function ConvertSessionDialogCoreInner({
   const [serverAttachmentId, setServerAttachmentId] = useState<string | null>(
     null,
   );
+  const hostsSeeded = useRef(false);
   const [hostAttachments, setHostAttachments] = useState<HostAttachmentDraft[]>(
     [],
   );
@@ -467,8 +468,6 @@ function ConvertSessionDialogCoreInner({
     ? destinationMode
     : "new";
 
-  /** The one client the new-suite branch attaches; see `handleClientChange`. */
-  const selectedHostId = hostAttachments[0]?.namedHostId ?? null;
 
   /**
    * Per-SESSION reset, keyed on `sessionId` rather than on the `summary`
@@ -578,6 +577,7 @@ function ConvertSessionDialogCoreInner({
       setIsSubmitting(false);
       setServerAttachmentId(null);
       setHostAttachments([]);
+      hostsSeeded.current = false;
     }
   }, [open]);
 
@@ -585,8 +585,8 @@ function ConvertSessionDialogCoreInner({
   // attachments/hosts available. Mirrors CreateSuiteDialog: pick the first
   // standalone serverAttachment; hosts prefer `defaultHostId` when it names
   // a live project host. Either can be swapped from its own picker, but only
-  // `ServerPicker` can CREATE from there — `HostPicker` has none, which
-  // is what the empty-state button on the Client column below stands in for.
+  // `ServerPicker` can CREATE from there — `ClientMultiSelect` has none,
+  // which is what the empty-state button on the Client column below stands in for.
   useEffect(() => {
     if (!attachmentPickersEnabled) return;
     if (serverAttachmentId === null && projectServerAttachments.length > 0) {
@@ -603,7 +603,13 @@ function ConvertSessionDialogCoreInner({
     // authoritative `defaultHostId` arrives — silently attaching the wrong
     // host. A user edit before load completes still wins (non-empty guard).
     if (detail.loading) return;
-    if (hostAttachments.length === 0 && projectHosts.length > 0) {
+    // Seed once per open, so clearing the list is not undone.
+    if (
+      !hostsSeeded.current &&
+      hostAttachments.length === 0 &&
+      projectHosts.length > 0
+    ) {
+      hostsSeeded.current = true;
       const preferredHostId =
         defaultHostId &&
         projectHosts.some((host) => host.hostId === defaultHostId)
@@ -737,12 +743,12 @@ function ConvertSessionDialogCoreInner({
         added.length > 0
       ) {
         toast.success(
-          `Session promoted to a test case. Added ${added.join(
+          `Saved as test case. Added ${added.join(
             ", ",
           )} to the suite.`,
         );
       } else {
-        toast.success("Session promoted to a test case");
+        toast.success("Saved as test case");
       }
       onOpenChange(false);
       onImported({ suiteId: result.suiteId, testCaseId: result.testCaseId });
@@ -754,7 +760,7 @@ function ConvertSessionDialogCoreInner({
       // upgrade wording.
       toast.error(
         getPromotionBlockedCopy(error) ??
-          getBillingErrorMessage(error, "Failed to promote session"),
+          getBillingErrorMessage(error, "Couldn't save as test case. Try again."),
       );
     } finally {
       setIsSubmitting(false);
@@ -763,14 +769,26 @@ function ConvertSessionDialogCoreInner({
 
   const sessionTitle = summary?.title ?? "Imported chat";
 
-  /**
-   * One client, chosen in one field. The wire shape stays the backend's
-   * attachment array so the created suite can grow more clients later in
-   * suite settings — but promoting does not make you assemble a fan-out.
-   */
-  const handleClientChange = (hostId: string | null) => {
-    setHostAttachments(
-      hostId ? [{ namedHostId: hostId, enabledOptionalServerIds: [] }] : [],
+  /** A client created inline joins the suite's clients. */
+  const handleClientCreated = (hostId: string) => {
+    hostsSeeded.current = true;
+    setHostAttachments((current) =>
+      current.some((attachment) => attachment.namedHostId === hostId)
+        ? current
+        : [...current, { namedHostId: hostId, enabledOptionalServerIds: [] }],
+    );
+  };
+
+  const handleClientsChange = (hostIds: string[]) => {
+    hostsSeeded.current = true;
+    setHostAttachments((current) =>
+      hostIds.map(
+        (hostId) =>
+          current.find((attachment) => attachment.namedHostId === hostId) ?? {
+            namedHostId: hostId,
+            enabledOptionalServerIds: [],
+          },
+      ),
     );
   };
 
@@ -790,8 +808,8 @@ function ConvertSessionDialogCoreInner({
       <AlertTriangle className="h-4 w-4" />
       <AlertTitle>Import unavailable</AlertTitle>
       <AlertDescription>
-        This session is not linked to a shared project yet, so it cannot be
-        promoted to a suite-backed test case.
+        This session isn't linked to a shared project, so it can't be saved as
+        a test case. Open a session from a shared project instead.
       </AlertDescription>
     </Alert>
   ) : null;
@@ -916,27 +934,22 @@ function ConvertSessionDialogCoreInner({
         />
       </div>
 
-      {/* Side by side, and only on this branch: a new suite is the one case
-          where nobody has decided what it runs against yet. Both are
-          pre-filled from the session, so the common path is to read them
-          rather than answer them. */}
+      {/* Only on this branch: a new suite is the one case where nobody has
+          decided what it runs against yet. Both are pre-filled from the
+          session, so the common path is to read them rather than answer them.
+          A suite can run on several clients, so Client is a multi-select. */}
       {attachmentPickersEnabled && effectiveProjectId ? (
         <div className="grid grid-cols-2 gap-3">
           <div className="min-w-0 space-y-2">
             <Label htmlFor="promote-new-suite-client">Client</Label>
-            <HostPicker
-              projectId={effectiveProjectId}
-              value={selectedHostId}
-              onChange={handleClientChange}
-              location="eval_runner"
-              placeholder="Select a client"
-              includeNone={false}
+            <ClientMultiSelect
+              hosts={projectHosts}
+              value={hostAttachments.map((draft) => draft.namedHostId)}
+              onChange={handleClientsChange}
+              placeholder="Select clients"
               disabled={isSubmitting}
-              priorityHostId={defaultHostId ?? undefined}
               triggerId="promote-new-suite-client"
-              // `SelectTrigger` is `w-fit`; without this the Client control
-              // shrinks to its content while Server fills its grid cell.
-              triggerClassName="w-full"
+              inModal
             />
             {/* A project with no clients is otherwise a dead end: the seeding
                 effect needs `projectHosts.length > 0`, so `hostAttachments`
@@ -990,7 +1003,7 @@ function ConvertSessionDialogCoreInner({
                 needs a `serverAttachmentId`, so a project with no groups shows
                 a normal-looking field above a Promote that never enables, and
                 explains itself only once the popover is open. No button —
-                unlike `HostPicker` this picker creates inline — but that
+                unlike `ClientMultiSelect` this picker creates inline — but that
                 create needs a server to put in the group, so which of the two
                 sentences below is true depends on the SERVER list, not the
                 group list.
@@ -1024,7 +1037,7 @@ function ConvertSessionDialogCoreInner({
           isOpen={createHostOpen}
           onClose={() => setCreateHostOpen(false)}
           projectId={effectiveProjectId}
-          onCreated={handleClientChange}
+          onCreated={handleClientCreated}
         />
       ) : null}
     </>
@@ -1032,17 +1045,17 @@ function ConvertSessionDialogCoreInner({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="gap-0 sm:max-w-xl border-border/50 p-0 shadow-sm">
+      <DialogContent className="flex max-h-[90vh] flex-col gap-0 sm:max-w-xl border-border/50 p-0 shadow-sm">
         <div className="px-6 pt-6">
           <DialogHeader className="space-y-1.5 pr-10">
-            <DialogTitle>Promote to test case</DialogTitle>
+            <DialogTitle>Save as test case</DialogTitle>
             <DialogDescription className="text-sm text-muted-foreground">
               Turn this session into a reusable case.
             </DialogDescription>
           </DialogHeader>
         </div>
 
-        <div className="space-y-5 px-6 py-5">
+        <div className="min-h-0 space-y-5 overflow-y-auto px-6 py-5">
           {blockingNotice ?? (
             <>
               <div className="space-y-2">
@@ -1200,7 +1213,7 @@ function ConvertSessionDialogCoreInner({
             {isSubmitting ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : null}
-            Promote to test case
+            Save as test case
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1229,7 +1242,7 @@ export function ConvertSessionDialogCore(props: ConvertSessionDialogCoreProps) {
           <DialogContent className="gap-0 sm:max-w-xl border-border/50 p-0 shadow-sm">
             <div className="px-6 pt-6">
               <DialogHeader className="space-y-1.5 pr-10">
-                <DialogTitle>Promote to test case</DialogTitle>
+                <DialogTitle>Save as test case</DialogTitle>
                 <DialogDescription className="text-sm text-muted-foreground">
                   Turn this session into a reusable case.
                 </DialogDescription>

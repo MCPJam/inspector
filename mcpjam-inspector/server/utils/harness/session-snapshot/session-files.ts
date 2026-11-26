@@ -1,17 +1,10 @@
 /**
- * Where a harness CLI keeps the session it resumes from, on the box.
+ * Where a harness CLI keeps the session it resumes from, on the box, as its
+ * runtime declares it (`../conversation-state.ts`).
  *
  * A snapshot is these files and nothing else: never the working folder, the
  * CLI's config or its credentials. They are what `resume` reads, so writing
  * them onto a replaced box lets the CLI pick up the conversation natively.
- *
- *   - Claude Code: the Agent SDK's transcript for the session,
- *     `~/.claude/projects/<cwd>/<claudeSessionId>.jsonl`, and the folder of the
- *     same name beside it (subagent transcripts). The `<cwd>` folder is the
- *     CLI's encoding of the working folder, so it is found, not computed.
- *   - Codex: the rollouts `thread/resume` reads, under the per-session
- *     `CODEX_HOME` (`codex-appserver/bridge/codex-home.ts`). Its `config.toml`
- *     carries the relay credential and is never included.
  *
  * Paths are stored relative to the box's home, so a new box with the same
  * harness session id puts them back in the same place.
@@ -21,11 +14,10 @@ import {
   harnessSessionDataDirectoryPath,
   harnessStateDirectoryPath,
 } from "@ai-sdk/harness";
-
-export type SnapshotHarnessId = "claude-code" | "codex";
+import type { HarnessConversationState } from "../conversation-state.js";
 
 export type SessionFileSpec = {
-  harnessId: SnapshotHarnessId;
+  harnessId: string;
   /** Folder every saved file must sit under, absolute on this box. */
   root: string;
   /** Prints `<bytes>\t<absolute path>` for each file to save. */
@@ -35,60 +27,106 @@ export type SessionFileSpec = {
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 /** What a box home or a derived folder may contain before it reaches a shell. */
 const SAFE_PATH = /^\/[A-Za-z0-9._/%-]+$/;
+/** One plain name, which needs no escaping in a single-quoted shell word. */
+const SAFE_NAME = /^[A-Za-z0-9._-]+$/;
+const MAX_DEPTH = 8;
 
-function readClaudeSessionId(resumeState: unknown): string | undefined {
+function resumeDataId(resumeState: unknown, key: string): unknown {
   if (!resumeState || typeof resumeState !== "object") return undefined;
   const data: unknown = Reflect.get(resumeState, "data");
   if (!data || typeof data !== "object") return undefined;
-  const id: unknown = Reflect.get(data, "claudeSessionId");
-  return typeof id === "string" && SAFE_ID.test(id) ? id : undefined;
+  return Reflect.get(data, key);
 }
 
 /**
+ * A declared path with its placeholders filled, or undefined when one names an
+ * id this session does not have, or one it cannot place safely.
+ */
+function expand(
+  template: string,
+  values: { id: () => unknown; sessionData: () => unknown },
+): string | undefined {
+  let placed = true;
+  const path = template.replace(/\{(id|sessionData)\}/g, (_, key: string) => {
+    const value = key === "id" ? values.id() : values.sessionData();
+    if (typeof value === "string") return value;
+    placed = false;
+    return "";
+  });
+  return placed ? path : undefined;
+}
+
+const isPlainName = (name: string) =>
+  SAFE_NAME.test(name) && name !== "." && name !== "..";
+
+/**
  * The session files for one harness session on a box whose home is `home`, or
- * undefined for a runtime this does not save, or ids it cannot place safely.
+ * undefined for a runtime that declares none, or ids it cannot place safely.
  */
 export function sessionFileSpec(args: {
   harnessId: string;
+  conversationState: HarnessConversationState | null;
   harnessSessionId: string;
   resumeState: unknown;
   home: string;
 }): SessionFileSpec | undefined {
-  const { home } = args;
-  if (!SAFE_PATH.test(home)) return undefined;
-  if (args.harnessId === "claude-code") {
-    const id = readClaudeSessionId(args.resumeState);
-    if (!id) return undefined;
-    const root = posix.join(home, ".claude", "projects");
-    return {
-      harnessId: "claude-code",
-      root,
-      listCommand:
-        `find '${root}' -mindepth 2 -maxdepth 2 \\( -name '${id}.jsonl' -o -name '${id}' \\) ` +
-        `-exec find {} -type f -printf '%s\\t%p\\n' \\; 2>/dev/null`,
-    };
+  const { conversationState: state, home } = args;
+  if (!state || !SAFE_PATH.test(home)) return undefined;
+  const values = {
+    id: () => {
+      const id = state.idKey
+        ? resumeDataId(args.resumeState, state.idKey)
+        : undefined;
+      return typeof id === "string" && SAFE_ID.test(id) ? id : undefined;
+    },
+    sessionData: () =>
+      SAFE_ID.test(args.harnessSessionId)
+        ? posix.relative(
+            home,
+            harnessSessionDataDirectoryPath({
+              stateDirectory: harnessStateDirectoryPath({
+                sandboxHomeDir: home,
+              }),
+              sessionId: args.harnessSessionId,
+            }),
+          )
+        : undefined,
+  };
+  const folder = expand(state.folder, values);
+  if (folder === undefined || !folder.split("/").every(isPlainName)) {
+    return undefined;
   }
-  if (args.harnessId === "codex") {
-    if (!SAFE_ID.test(args.harnessSessionId)) return undefined;
-    const root = posix.join(
-      harnessSessionDataDirectoryPath({
-        stateDirectory: harnessStateDirectoryPath({ sandboxHomeDir: home }),
-        sessionId: args.harnessSessionId,
-      }),
-      "codex-home",
-      "sessions",
-    );
-    if (!SAFE_PATH.test(root)) return undefined;
+  const root = posix.join(home, folder);
+  if (!SAFE_PATH.test(root)) return undefined;
+  if (!state.named) {
     return {
-      harnessId: "codex",
+      harnessId: args.harnessId,
       root,
       listCommand: `find '${root}' -type f -printf '%s\\t%p\\n' 2>/dev/null`,
     };
   }
-  return undefined;
+  const { depth } = state.named;
+  const names = state.named.names.map((name) => expand(name, values));
+  if (
+    !Number.isInteger(depth) ||
+    depth < 1 ||
+    depth > MAX_DEPTH ||
+    names.length === 0 ||
+    !names.every((name) => name !== undefined && isPlainName(name))
+  ) {
+    return undefined;
+  }
+  const matches = names.map((name) => `-name '${name}'`).join(" -o ");
+  return {
+    harnessId: args.harnessId,
+    root,
+    listCommand:
+      `find '${root}' -mindepth ${depth} -maxdepth ${depth} \\( ${matches} \\) ` +
+      `-exec find {} -type f -printf '%s\\t%p\\n' \\; 2>/dev/null`,
+  };
 }
 
-/** The names both CLIs give their session files, folder by folder. */
+/** The names the CLIs give their session files, folder by folder. */
 const SAFE_RELATIVE_PATH = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
 
 /**

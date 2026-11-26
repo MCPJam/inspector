@@ -287,6 +287,10 @@ export const HOST_STYLE_CAPABILITIES = {
   "codex-cli": {
     mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE,
   },
+  // Terminal client, not yet probed: no widget rendering claimed.
+  opencode: {
+    mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE,
+  },
   copilot: {
     // Microsoft 365 Copilot's published MCP Apps subset (see
     // MCP_APPS_COPILOT_SURFACE for the per-row M365 table mapping).

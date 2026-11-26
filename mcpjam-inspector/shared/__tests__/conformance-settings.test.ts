@@ -169,7 +169,7 @@ describe("conformanceSuiteConfigs", () => {
     tasksProbe: createTask,
   };
 
-  it("never runs the update check or sends its saved answers", () => {
+  it("shares default answers with polling checks even when the update check is excluded", () => {
     const { tasks } = conformanceSuiteConfigs(
       {
         selection: {},
@@ -178,7 +178,7 @@ describe("conformanceSuiteConfigs", () => {
       "2026-07-28",
     );
     expect(tasks.checkIds).not.toContain("tasks-update-ack-shape");
-    expect(tasks.inputResponses).toBeUndefined();
+    expect(tasks.inputResponses).toEqual({ ok: 1 });
   });
 
   it("sends a tool only for a picked check that runs at the pin", () => {

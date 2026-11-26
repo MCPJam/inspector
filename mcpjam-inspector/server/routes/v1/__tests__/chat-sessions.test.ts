@@ -558,21 +558,24 @@ describe("assertUnambiguousModelId", () => {
     }
   });
 
-  it("rejects a runtime-chosen sentinel, which is unambiguous and still unrunnable here", () => {
+  it("rejects a runtime-chosen sentinel unless the target client's harness picks it", () => {
     // `cursor/auto` has an explicit provider prefix, so the ambiguity rule
-    // above waves it through. It still names no model this route can run —
-    // there is no harness on this surface — and asking the org-provider config
-    // about it answered `provider_not_configured: cursor`, i.e. "configure a
-    // key" for a provider that has no keys.
+    // above waves it through. It names no model until a Cursor CLI client
+    // runs it as its own, and asking the org-provider config about it
+    // answered `provider_not_configured: cursor`, i.e. "configure a key" for
+    // a provider that has no keys.
     //
-    // Rejecting HERE and not later is load-bearing: everything downstream runs
-    // after `claimTurnLease`, which CREATES the session row before the model is
-    // resolved. A turn that dies after the claim leaves a row whose `modelId`
-    // was never written — a session that reads as having run on nothing.
+    // A body's model is checked before `claimTurnLease`, which CREATES the
+    // session row before the model is resolved, so a sentinel there is
+    // refused: a turn that dies after the claim leaves a row whose `modelId`
+    // was never written, a session that reads as having run on nothing.
     expect(() => assertUnambiguousModelId("cursor/auto")).toThrow(
-      /Cursor Auto/,
+      /Cursor Auto.*Target that client without modelId/,
     );
     expect(() => assertUnambiguousModelId("  cursor/auto  ")).toThrow();
+    // A Cursor CLI client's own model, read off the resolved client.
+    expect(() => assertUnambiguousModelId("cursor/auto", true)).not.toThrow();
+    expect(() => assertUnambiguousModelId("claude-sonnet-5", true)).toThrow();
   });
 });
 
@@ -592,7 +595,22 @@ describe("computeExcludedToolNames", () => {
       ["live", "dead"],
       { toolMode: "read_only", onUnavailable },
     );
-    expect(result).toEqual({ excluded: ["write"], advertised: 1 });
+    expect(result).toEqual({
+      excluded: ["write"],
+      advertised: 1,
+      // Each server's own listing, which a harness turn's read_only policy is
+      // built from; the unreachable server lists nothing.
+      listed: [
+        {
+          serverId: "live",
+          tools: [
+            { name: "read", annotations: { readOnlyHint: true } },
+            { name: "write" },
+          ],
+        },
+        { serverId: "dead", tools: [] },
+      ],
+    });
     expect(onUnavailable).toHaveBeenCalledWith("dead", failure);
   });
 

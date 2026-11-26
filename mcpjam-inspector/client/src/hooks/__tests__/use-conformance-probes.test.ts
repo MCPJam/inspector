@@ -202,7 +202,7 @@ describe("Tasks probe", () => {
     for (const id of noTool) expect(probeKeyFor(id)).toBeUndefined();
   });
 
-  it("sends the answers only when the update acknowledgement check runs", () => {
+  it("sends shared answers to polling checks and skips them for cancellation", () => {
     expect(
       tasksRunOptions({ tasksProbe }, { tasks: ["tasks-cancel-ack-shape"] }),
     ).toEqual({
@@ -266,7 +266,7 @@ describe("Tasks per-check settings", () => {
     );
     expect(
       tasksRunOptions(probes, { tasks: ["tasks-update-ack-shape"] })
-        .inputResponses,
+        .checkOverrides?.["tasks-update-ack-shape"]?.inputResponses,
     ).toEqual({ name: "Ada" });
     expect(
       tasksRunOptions(
@@ -274,7 +274,7 @@ describe("Tasks per-check settings", () => {
           tasksProbe,
           tasksOverrides: { "tasks-update-ack-shape": { toolName: "ask" } },
         },
-        {},
+        { tasks: ["tasks-update-ack-shape"] },
       ).inputResponses,
     ).toBeUndefined();
   });

@@ -29,6 +29,10 @@ function hasEntries(value: object | undefined): value is object {
  * the parameter form so a claim is readable next to the button that runs the
  * tool, and they stay collapsed by default because every caller resets
  * `openSections` to a single section whenever the selected tool changes.
+ *
+ * Events reuses it for an event type: the second schema is the payload
+ * schema (`outputSchemaLabel`), and `children` adds sections after
+ * Parameters.
  */
 export function ToolDetailsAccordion({
   description,
@@ -38,8 +42,10 @@ export function ToolDetailsAccordion({
   annotations,
   metadata,
   parameters,
+  outputSchemaLabel = "Output Schema",
   openSections,
   onOpenSectionsChange,
+  children,
 }: {
   description?: string;
   descriptionExtra?: ReactNode;
@@ -50,8 +56,12 @@ export function ToolDetailsAccordion({
   /** `tool._meta`, already merged with the server's tools metadata upstream. */
   metadata?: object;
   parameters?: ReactNode;
+  /** The second schema's heading. */
+  outputSchemaLabel?: string;
   openSections: string[];
   onOpenSectionsChange: (value: string[]) => void;
+  /** More `AccordionItem`s, after Parameters. */
+  children?: ReactNode;
 }) {
   return (
     <Accordion
@@ -81,7 +91,9 @@ export function ToolDetailsAccordion({
       ) : null}
       {outputSchema ? (
         <AccordionItem value="output-schema">
-          <AccordionTrigger className="text-xs">Output Schema</AccordionTrigger>
+          <AccordionTrigger className="text-xs">
+            {outputSchemaLabel}
+          </AccordionTrigger>
           <AccordionContent>
             <SchemaViewer schema={outputSchema} />
           </AccordionContent>
@@ -117,6 +129,7 @@ export function ToolDetailsAccordion({
           <AccordionContent>{parameters}</AccordionContent>
         </AccordionItem>
       ) : null}
+      {children}
     </Accordion>
   );
 }

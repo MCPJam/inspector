@@ -4,6 +4,7 @@ import type {
 } from "../conformance-outcome.js";
 import type { ConformanceProfileStamp } from "../conformance-profile.js";
 import type { WireObservationRecorder } from "./wire-observations.js";
+import type { RawHttpResult } from "./raw-http.js";
 import type {
   ManagedMcpClient,
   MCPClientManager,
@@ -521,7 +522,7 @@ export type RetiredMCPCheckId = keyof typeof RETIRED_MCP_CHECK_IDS;
  * for an era may still find nothing to say there (its probe decides).
  */
 export const READINESS_ERAS: Record<MCPReadinessId, MCPCheckEras> = {
-  "readiness-tool-order-deterministic": ["legacy", "modern"],
+  "readiness-tool-order-deterministic": ["modern"],
   // Modern: removed capabilities. Legacy: a revision older than 2025-11-25.
   "readiness-deprecated-feature-use": ["legacy", "modern"],
   "readiness-session-termination": ["legacy", "modern"],
@@ -560,6 +561,20 @@ export interface MCPReadinessWarning {
    */
   informational?: boolean;
 }
+
+/**
+ * A SHOULD/MAY the server already meets: the advice applied to this server,
+ * was checked, and found nothing to change. Like a warning, it never affects
+ * `passed` or any check status.
+ */
+export interface MCPPassedAdvice {
+  id: MCPReadinessId;
+  title: string;
+  specStrength: MCPReadinessSpecStrength;
+}
+
+/** What one advice probe concluded, when the advice applied. */
+export type MCPReadinessOutcome = MCPReadinessWarning | MCPPassedAdvice;
 
 export interface MCPConformanceResult {
   /**
@@ -603,6 +618,11 @@ export interface MCPConformanceResult {
    * real-world interop, and they NEVER affect `passed` or any check status.
    */
   readiness: MCPReadinessWarning[];
+  /**
+   * Advice the run checked and found nothing to change. Absent when there is
+   * none. Advice that did not apply to this server is in neither list.
+   */
+  passedAdvice?: MCPPassedAdvice[];
   /**
    * WHICH QUESTIONS THIS RUN ASKED, and which build asked them — the frozen
    * scored-check manifest, the checker version, the revisions and (from the
@@ -674,6 +694,12 @@ export interface RawHttpCheckContext {
    * have nothing to record into.
    */
   recorder?: WireObservationRecorder;
+  /**
+   * The `server/discover` answer the runner already has: on a raw-only 2026
+   * pin it asks once, before the raw checks, whether the server refuses the
+   * pin. The modern track grades this answer instead of sending its own.
+   */
+  discover?: RawHttpResult;
 }
 
 export interface MCPClientCheckDefinition {

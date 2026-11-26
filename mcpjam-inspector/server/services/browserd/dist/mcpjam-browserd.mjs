@@ -30,8 +30,23 @@ var BROWSERD_WEBMCP_FEATURES = [
    */
   "navigation-stop",
   /** A callback stop can remain armed between commands on the same tab. */
-  "navigation-stop-persistent"
+  "navigation-stop-persistent",
+  /**
+   * `observe {mode:"text"}` takes a `rootSelector` and reads that element's
+   * text, and a `rootSelector` may use Playwright's selector syntax. Without
+   * it the server must not send a scoped text read: an old daemon ignores
+   * `rootSelector` there and answers with the whole page's text.
+   */
+  "element-text",
+  /**
+   * `POST /v1/profile/export` takes `excludeOrigins` and clears each one's
+   * cookies and site storage before the archive is read. Without it the server
+   * must not save a profile that has to leave a site's session behind: an old
+   * daemon ignores the body and archives everything.
+   */
+  "profile-export-exclusions"
 ];
+var BROWSERD_PUBLIC_NETWORK_FEATURE = "network-public-only";
 var BROWSERD_OBSERVATION_VIEWPORT = {
   width: 1024,
   height: 768
@@ -1303,7 +1318,7 @@ function openTunnel(grant) {
     `x-mcpjam-preview-key: ${grant.key}`,
     ...Object.entries(grant.upstreamHeaders).map(([k, v]) => `${k}: ${v}`)
   ].join("\r\n");
-  return new Promise((resolve2, reject) => {
+  return new Promise((resolve3, reject) => {
     const socket = secure ? tls.connect({ host: url.hostname, servername: url.hostname, port }) : net.connect(port, url.hostname);
     socket.once(
       secure ? "secureConnect" : "connect",
@@ -1330,7 +1345,7 @@ function openTunnel(grant) {
       socket.off("close", onClose);
       const rest = buf.subarray(end + 4);
       if (rest.length) socket.unshift(rest);
-      resolve2(socket);
+      resolve3(socket);
     };
     const onClose = () => reject(new Error("tunnel_closed"));
     socket.on("data", onData);
@@ -1493,11 +1508,11 @@ var WorkspacePreviewRelay = class {
   }
 };
 function listen(server, port, host2) {
-  return new Promise((resolve2, reject) => {
+  return new Promise((resolve3, reject) => {
     server.once("error", reject);
     server.listen(port, host2, () => {
       server.off("error", reject);
-      resolve2();
+      resolve3();
     });
   });
 }
@@ -1637,8 +1652,8 @@ function createVideoRecorder(options) {
     }
     let settleExit = () => {
     };
-    const exited = new Promise((resolve2) => {
-      settleExit = resolve2;
+    const exited = new Promise((resolve3) => {
+      settleExit = resolve3;
     });
     const entry = {
       id: args.id,
@@ -1730,13 +1745,13 @@ function createVideoRecorder(options) {
       let timer;
       await Promise.race([
         entry.exited,
-        new Promise((resolve2) => {
+        new Promise((resolve3) => {
           timer = setTimer(() => {
             try {
               entry.child.kill("SIGKILL");
             } catch {
             }
-            resolve2();
+            resolve3();
           }, graceMs);
         })
       ]);
@@ -2232,7 +2247,7 @@ var BrowserdRequestHandler = class {
       if (req.method !== "POST") {
         return { status: 405, headers: { allow: "POST" } };
       }
-      return this.handleProfileExport();
+      return this.handleProfileExport(req);
     }
     if (req.path === "/v1/input") {
       if (req.method !== "POST") {
@@ -2465,9 +2480,13 @@ var BrowserdRequestHandler = class {
     });
     return { status: 200, body: { viewport, bootId: this.bootId } };
   }
-  async handleProfileExport() {
+  async handleProfileExport(req) {
     if (!this.profileExport) {
       return { status: 501, body: { error: "profile_export_unavailable" } };
+    }
+    const excludeOrigins = parseExcludeOrigins(req.body);
+    if (!excludeOrigins) {
+      return { status: 400, body: { error: "invalid_exclude_origins", bootId: this.bootId } };
     }
     if (!this.queue.isIdle?.()) {
       return { status: 409, body: { error: "profile_busy" } };
@@ -2481,7 +2500,7 @@ var BrowserdRequestHandler = class {
       return { status: 423, body: { error: "lease_held" } };
     }
     try {
-      const archive = await this.profileExport();
+      const archive = await this.profileExport({ excludeOrigins });
       return {
         status: 200,
         body: archive,
@@ -3261,6 +3280,33 @@ function isValidCommand(value) {
   const candidate = value;
   return typeof candidate.commandId === "string" && candidate.commandId.length > 0 && typeof candidate.source === "string" && typeof candidate.action === "object" && candidate.action !== null && (candidate.tabId === void 0 || typeof candidate.tabId === "string") && (candidate.holder === void 0 || typeof candidate.holder === "string");
 }
+function parseExcludeOrigins(body) {
+  let parsed;
+  try {
+    parsed = JSON.parse(body || "{}");
+  } catch {
+    return void 0;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return void 0;
+  const raw = parsed.excludeOrigins;
+  if (raw === void 0) return [];
+  if (!Array.isArray(raw) || raw.length > 16) return void 0;
+  const origins = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string") return void 0;
+    let url;
+    try {
+      url = new URL(entry);
+    } catch {
+      return void 0;
+    }
+    if (url.protocol !== "https:" && url.protocol !== "http:" || url.origin !== entry) {
+      return void 0;
+    }
+    origins.push(entry);
+  }
+  return origins;
+}
 
 // shared/browser-viewport-policy.ts
 var BROWSER_VIEWPORT_POLICY = {
@@ -4035,7 +4081,7 @@ var DEFAULT_BODY_LIMIT_BYTES = 1024 * 1024;
 var BodyTooLargeError = class extends Error {
 };
 function readRequestBody(req, limitBytes) {
-  return new Promise((resolve2, reject) => {
+  return new Promise((resolve3, reject) => {
     const chunks = [];
     let size = 0;
     let refused = false;
@@ -4050,7 +4096,7 @@ function readRequestBody(req, limitBytes) {
       }
       chunks.push(chunk);
     });
-    req.on("end", () => resolve2(Buffer.concat(chunks).toString("utf8")));
+    req.on("end", () => resolve3(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
 }
@@ -4879,15 +4925,21 @@ async function readScrollableNodes(cdp) {
   return found;
 }
 var DOCUMENT_SCROLLER_NAMES = /* @__PURE__ */ new Set(["HTML", "BODY"]);
-async function resolveBackendNodeId(cdp, selector) {
+async function resolveBackendNodeId(cdp, selector, otherwise) {
   try {
     const doc = await cdp.send("DOM.getDocument", { depth: 0 });
     const rootNodeId = doc?.root?.nodeId;
     if (rootNodeId === void 0) return null;
-    const found = await cdp.send("DOM.querySelector", {
-      nodeId: rootNodeId,
-      selector
-    });
+    let found;
+    try {
+      found = await cdp.send("DOM.querySelector", {
+        nodeId: rootNodeId,
+        selector
+      });
+    } catch (refused) {
+      if (!otherwise) throw refused;
+      return await otherwise(selector);
+    }
     if (!found?.nodeId) return null;
     const described = await cdp.send("DOM.describeNode", {
       nodeId: found.nodeId
@@ -5428,6 +5480,83 @@ async function replaceTextInNode(cdp, backendNodeId, text, guard = () => {
   }
   await input.send("Input.insertText", { text });
 }
+var SecretNotTypedError = class extends Error {
+  constructor(code, detail) {
+    super(detail);
+    this.code = code;
+    this.name = "SecretNotTypedError";
+  }
+  code;
+};
+var REFUSED_BEFORE_TYPING = /* @__PURE__ */ new Set([
+  "wrong_origin",
+  "not_focused",
+  "not_inserted"
+]);
+async function insertSecretInNode(cdp, backendNodeId, text, limit, guard) {
+  const objectId = await isolatedObjectId(cdp, backendNodeId, limit.frameId);
+  if (!objectId) {
+    throw new SecretNotTypedError(
+      "target_not_found",
+      "the field could not be resolved; nothing was typed"
+    );
+  }
+  guard();
+  const outcome = await cdp.send("Runtime.callFunctionOn", {
+    objectId,
+    returnByValue: true,
+    arguments: [{ value: text }, { value: [...limit.origins] }],
+    functionDeclaration: `function (value, origins) {
+        const view = this.ownerDocument && this.ownerDocument.defaultView;
+        if (!view || !origins.includes(view.origin)) return "wrong_origin";
+        this.focus();
+        if (this.getRootNode().activeElement !== this) return "not_focused";
+        if (typeof this.select === "function") this.select();
+        else {
+          // A contenteditable field: select its contents, so the value replaces them.
+          const range = this.ownerDocument.createRange();
+          range.selectNodeContents(this);
+          const selection = view.getSelection();
+          if (selection) {
+            selection.removeAllRanges();
+            selection.addRange(range);
+          }
+        }
+        if (this.getRootNode().activeElement !== this) return "not_focused";
+        return this.ownerDocument.execCommand("insertText", false, value)
+          ? "typed"
+          : "not_inserted";
+      }`
+  });
+  const answer2 = outcome?.result?.value;
+  if (answer2 === "typed") return;
+  if (typeof answer2 === "string" && REFUSED_BEFORE_TYPING.has(answer2)) {
+    throw new SecretNotTypedError(
+      "unsupported_target",
+      "the field did not take the credential in its own document; nothing was typed"
+    );
+  }
+  throw new Error(
+    "the credential's field answered nothing MCPJam could read, so it may have been typed"
+  );
+}
+async function isolatedObjectId(cdp, backendNodeId, frameId) {
+  try {
+    const frame = frameId ?? (await cdp.send("Page.getFrameTree")).frameTree?.frame?.id;
+    if (!frame) return void 0;
+    const world = await cdp.send("Page.createIsolatedWorld", {
+      frameId: frame,
+      worldName: "mcpjam-secret"
+    });
+    const resolved = await cdp.send("DOM.resolveNode", {
+      backendNodeId,
+      executionContextId: world.executionContextId
+    });
+    return resolved.object?.objectId;
+  } catch {
+    return void 0;
+  }
+}
 async function selectOptionOnNode(cdp, backendNodeId, value, label) {
   const objectId = await resolveObjectId(cdp, backendNodeId);
   if (!objectId) {
@@ -5584,7 +5713,10 @@ async function pointForRefAcrossFrames(args) {
         `${args.label} is scrolled out of view inside its frame; scroll the frame first, then observe again`
       );
     }
-    point = { x: Math.round(point.x + host2.x), y: Math.round(point.y + host2.y) };
+    point = {
+      x: Math.round(point.x + host2.x),
+      y: Math.round(point.y + host2.y)
+    };
     current = frame.parentSessionFrameId;
   }
   if (current !== void 0) {
@@ -5718,8 +5850,8 @@ var SessionBarrier = class {
   request(size) {
     this.pending = size;
     if (this.pendingSince === 0) this.pendingSince = this.now();
-    const settled = new Promise((resolve2) => {
-      this.requestWaiters.push(resolve2);
+    const settled = new Promise((resolve3) => {
+      this.requestWaiters.push(resolve3);
     });
     this.clearTimer(this.debounceHandle);
     this.debounceHandle = this.setTimer(() => {
@@ -5773,7 +5905,7 @@ var SessionBarrier = class {
     this.resizing = this.apply(size).catch(() => {
     }).then(() => {
       this.resizing = null;
-      for (const resolve2 of waiters) resolve2();
+      for (const resolve3 of waiters) resolve3();
       this.maybeResize();
     });
   }
@@ -5901,11 +6033,12 @@ function isStopTarget(value) {
 }
 var isAt = (url, target) => url === target || url.startsWith(`${target}?`) || url.startsWith(`${target}#`);
 var watches = /* @__PURE__ */ new WeakMap();
+var ANSWERED_LIMIT = 512;
 async function answer(cdp, slot, payload) {
   const paused = payload;
   const watch = slot.current;
   const url = paused.request?.url ?? "";
-  const stop = watch !== void 0 && watch.stopped === void 0 && paused.frameId === watch.mainFrame && isAt(url, watch.target);
+  const stop = watch !== void 0 && watch.stopped === void 0 && paused.resourceType === "Document" && paused.frameId === watch.mainFrame && isAt(url, watch.target);
   if (stop) watch.stopped = url;
   try {
     await cdp.send(
@@ -5915,12 +6048,36 @@ async function answer(cdp, slot, payload) {
   } catch {
   }
 }
-async function armNavigationStop(cdp, target) {
+async function answerAuth(cdp, slot, payload) {
+  const challenge = payload;
+  const requestId = challenge.requestId ?? "";
+  const credentials = slot.proxyAuth;
+  const provide = credentials !== void 0 && challenge.authChallenge?.source === "Proxy" && !slot.answered.has(requestId);
+  if (provide) {
+    if (slot.answered.size >= ANSWERED_LIMIT) slot.answered.clear();
+    slot.answered.add(requestId);
+  }
+  try {
+    await cdp.send("Fetch.continueWithAuth", {
+      requestId,
+      authChallengeResponse: provide ? {
+        response: "ProvideCredentials",
+        username: credentials.username,
+        password: credentials.password
+      } : { response: "CancelAuth" }
+    });
+  } catch {
+  }
+}
+async function armNavigationStop(cdp, target, proxyAuth) {
   let slot = watches.get(cdp);
   if (!slot) {
-    const created = {};
+    const created = { answered: /* @__PURE__ */ new Set() };
     cdp.on("Fetch.requestPaused", (payload) => {
       void answer(cdp, created, payload);
+    });
+    cdp.on("Fetch.authRequired", (payload) => {
+      void answerAuth(cdp, created, payload);
     });
     watches.set(cdp, created);
     slot = created;
@@ -5929,15 +6086,22 @@ async function armNavigationStop(cdp, target) {
   const watch = { target, mainFrame: tree.frameTree?.frame?.id };
   const owner = slot;
   owner.current = watch;
-  await cdp.send("Fetch.enable", {
-    patterns: [
-      {
-        urlPattern: `${target}*`,
-        resourceType: "Document",
-        requestStage: "Request"
-      }
-    ]
-  });
+  owner.proxyAuth = proxyAuth;
+  await cdp.send(
+    "Fetch.enable",
+    proxyAuth ? {
+      handleAuthRequests: true,
+      patterns: [{ urlPattern: "*", requestStage: "Request" }]
+    } : {
+      patterns: [
+        {
+          urlPattern: `${target}*`,
+          resourceType: "Document",
+          requestStage: "Request"
+        }
+      ]
+    }
+  );
   return {
     stopped: () => watch.stopped,
     disarm: async () => {
@@ -7074,8 +7238,8 @@ var WebMcpBridge = class {
       }
       throw error;
     }
-    const output = await new Promise((resolve2, reject) => {
-      const waiter = { resolve: resolve2, reject, cdp: owner };
+    const output = await new Promise((resolve3, reject) => {
+      const waiter = { resolve: resolve3, reject, cdp: owner };
       const early = this.earlyResponses.get(invocationId);
       if (early) {
         this.earlyResponses.delete(invocationId);
@@ -7639,8 +7803,8 @@ function createTabViewport(cdp, options) {
       try {
         await Promise.race([
           stop(),
-          new Promise((resolve2) => {
-            timer = setTimeout(resolve2, 1e3);
+          new Promise((resolve3) => {
+            timer = setTimeout(resolve3, 1e3);
           })
         ]);
       } finally {
@@ -7793,6 +7957,12 @@ var ActError2 = class extends Error {
 };
 var LeaseTakenMidAct = class extends Error {
 };
+function nothingMatches(selector) {
+  return formatBrowserdError(
+    "unknown_selector",
+    `nothing on this page matches "${selector}"; re-observe the page and pick a selector from what it shows`
+  );
+}
 function withoutRefIndex(fields) {
   const { refs: _unstored, ...rest } = fields;
   return rest;
@@ -7849,8 +8019,8 @@ async function settleBridge(page) {
   try {
     await Promise.race([
       page.webmcp().catch(() => null),
-      new Promise((resolve2) => {
-        timer = setTimeout(() => resolve2(null), BRIDGE_SETTLE_MS);
+      new Promise((resolve3) => {
+        timer = setTimeout(() => resolve3(null), BRIDGE_SETTLE_MS);
       })
     ]);
   } finally {
@@ -7868,6 +8038,7 @@ var ChromiumDriver = class {
   pageTextMaxBytes;
   /** Behaviour this build has but does not do by default. @see BrowserdFeatures */
   features;
+  webOnly;
   /** Values this boot has typed into a page, and what to show instead. */
   secrets;
   lease;
@@ -8009,6 +8180,7 @@ var ChromiumDriver = class {
     this.webmcpOutputBudgetBytes = options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
     this.pageTextMaxBytes = options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.features = options.features ?? {};
+    this.webOnly = options.webOnly === true;
     this.secrets = options.secrets ?? createBrowserSecretRegistry();
     this.lease = options.lease;
     this.viewportPolicy = options.viewport?.policy ?? "fixed";
@@ -8189,7 +8361,10 @@ var ChromiumDriver = class {
       if (!watch) {
         const cdp2 = await entry.page.cdp();
         if (!cdp2) return { ok: false, error: "navigation stop unavailable" };
-        watch = { target, stop: await armNavigationStop(cdp2, target) };
+        watch = {
+          target,
+          stop: await armNavigationStop(cdp2, target, this.context.proxyAuth)
+        };
         this.navigationStops.set(tabId, watch);
       }
       const before = watch.stop.stopped();
@@ -8212,7 +8387,7 @@ var ChromiumDriver = class {
     if (!cdp || !isStopTarget(target)) {
       return this.executeInBarrier(command, context);
     }
-    const stop = await armNavigationStop(cdp, target);
+    const stop = await armNavigationStop(cdp, target, this.context.proxyAuth);
     try {
       const result = await this.executeInBarrier(command, context);
       const stoppedAt = stop.stopped();
@@ -8246,6 +8421,15 @@ var ChromiumDriver = class {
     if (blocked) return blocked;
     switch (action.kind) {
       case "navigate": {
+        if (this.webOnly && action.url !== "about:blank" && !/^https?:\/\//i.test(action.url)) {
+          return {
+            ok: false,
+            error: formatBrowserdError(
+              "browser_policy_refused",
+              "this browser opens http and https pages only; nothing was opened"
+            )
+          };
+        }
         if (action.newTab) {
           if (command.tabId === void 0) {
             return {
@@ -8666,13 +8850,39 @@ var ChromiumDriver = class {
             "a credential limited to a sign-in origin is typed only into a field named by a ref; nothing was typed"
           );
         }
+        if (limited && refNode?.recovered) {
+          throw new ActError2(
+            "stale_ref",
+            `${refLabel} is no longer on the page, and a credential limited to a sign-in origin goes only into the field that was observed; nothing was typed. Observe again and use the new ref.`
+          );
+        }
+        const frameId = refs?.entries.get(refLabel)?.frameId ?? refNode?.sessionFrameId;
         const refusal = refNode && limited ? await receivingFrameRefusal(
           await needOwnerCdp(),
-          refs?.entries.get(refLabel)?.frameId ?? refNode.sessionFrameId,
+          frameId,
           limited
         ) : void 0;
         if (refusal) throw new ActError2("secret_origin_refused", refusal);
-        if (refNode) {
+        if (refNode && limited) {
+          try {
+            await insertSecretInNode(
+              await needOwnerCdp(),
+              refNode.backendNodeId,
+              text,
+              { ...frameId ? { frameId } : {}, origins: limited },
+              stillOurs
+            );
+          } catch (error) {
+            if (error instanceof SecretNotTypedError) {
+              throw new ActError2(error.code, error.message);
+            }
+            if (error instanceof LeaseTakenMidAct) throw error;
+            throw new ActError2(
+              "act_failed",
+              error instanceof Error ? error.message : String(error)
+            );
+          }
+        } else if (refNode) {
           await replaceTextInNode(
             await needOwnerCdp(),
             refNode.backendNodeId,
@@ -9111,7 +9321,7 @@ var ChromiumDriver = class {
       case "screenshot":
         return this.observeScreenshot(tabId, entry, permit);
       case "text": {
-        return this.observeText(tabId, entry, permit);
+        return this.observeText(tabId, entry, permit, action.rootSelector);
       }
       case "a11y": {
         const rendered = await this.renderA11y(tabId, entry, action);
@@ -9240,11 +9450,19 @@ var ChromiumDriver = class {
    * because a tree has boundaries to drop at; running text has none, and a cut
    * string with a counted marker is honest about exactly that.
    */
-  async observeText(tabId, entry, permit) {
+  async observeText(tabId, entry, permit, rootSelector) {
+    const read = async () => {
+      const text2 = rootSelector === void 0 ? await entry.page.pageText() : await this.readElementText(entry, rootSelector);
+      if (typeof text2 === "string" || permit()) return text2;
+      return this.leaseBlockedResult(
+        "a person took control of this browser while this was running; the result was discarded and nothing was observed"
+      );
+    };
     const STABLE_ATTEMPTS = 2;
     let before = await this.snapshot(entry.page);
     for (let attempt = 0; attempt < STABLE_ATTEMPTS; attempt += 1) {
-      const text2 = await entry.page.pageText();
+      const text2 = await read();
+      if (typeof text2 !== "string") return text2;
       const after2 = await this.snapshot(entry.page);
       const output = this.cappedText(text2);
       if (before.url === after2.url && before.domSignal === after2.domSignal) {
@@ -9257,12 +9475,39 @@ var ChromiumDriver = class {
         "a person has taken control of this browser; nothing was observed"
       );
     }
-    const text = await entry.page.pageText();
+    const text = await read();
+    if (typeof text !== "string") return text;
     const after = await this.snapshot(entry.page);
     return {
       ...this.observation(tabId, entry, this.cappedText(text), after, permit),
       settled: false
     };
+  }
+  /**
+   * One element's text for a scoped text observation, found by Playwright's
+   * engine as an act's target is; otherwise the result that says why not.
+   */
+  async readElementText(entry, selector) {
+    if (!entry.page.elementText) {
+      return {
+        ok: false,
+        error: formatBrowserdError(
+          "unsupported_target",
+          `this browser reads only a whole page's text; observe {mode:"text"} without rootSelector`
+        )
+      };
+    }
+    let text;
+    try {
+      text = await entry.page.elementText(selector);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        ok: false,
+        error: formatBrowserdError("unsupported_target", message.split("\n")[0])
+      };
+    }
+    return text ?? { ok: false, error: nothingMatches(selector) };
   }
   /** The text observation's payload, cut to budget with the counted marker. */
   cappedText(text) {
@@ -9508,8 +9753,8 @@ var ChromiumDriver = class {
     this.stopPageCreated?.();
     await Promise.race([
       Promise.allSettled([...this.pendingTabs.values()]),
-      new Promise((resolve2) => {
-        const timer2 = setTimeout(resolve2, CLOSE_PENDING_TAB_GRACE_MS);
+      new Promise((resolve3) => {
+        const timer2 = setTimeout(resolve3, CLOSE_PENDING_TAB_GRACE_MS);
         timer2.unref?.();
       })
     ]);
@@ -9526,8 +9771,8 @@ var ChromiumDriver = class {
     try {
       await Promise.race([
         rendererCleanup,
-        new Promise((resolve2) => {
-          timer = setTimeout(resolve2, CLOSE_SURFACE_GRACE_MS);
+        new Promise((resolve3) => {
+          timer = setTimeout(resolve3, CLOSE_SURFACE_GRACE_MS);
         })
       ]);
     } finally {
@@ -10038,14 +10283,15 @@ var ChromiumDriver = class {
       }
       rootBackendNodeId = known.backendDOMNodeId;
     } else if (action.rootSelector !== void 0) {
-      const resolved = await resolveBackendNodeId(cdp, action.rootSelector);
+      const resolved = await resolveBackendNodeId(
+        cdp,
+        action.rootSelector,
+        entry.page.elementNodeId?.bind(entry.page)
+      );
       if (resolved === null) {
         return {
           ok: false,
-          error: {
-            ok: false,
-            error: `unknown_selector: nothing on this page matches "${action.rootSelector}"; re-observe the page and pick a selector from what it shows`
-          }
+          error: { ok: false, error: nothingMatches(action.rootSelector) }
         };
       }
       rootBackendNodeId = resolved;
@@ -10420,6 +10666,7 @@ function secureDriverContext(context, policy) {
     return wrapped;
   }
   return {
+    ...context.proxyAuth ? { proxyAuth: context.proxyAuth } : {},
     async newPage() {
       await policy.assertActive();
       const page = await context.newPage();
@@ -10442,12 +10689,12 @@ function secureDriverContext(context, policy) {
 
 // server/services/browserd/local/egress-proxy.ts
 function pinnedAddressOptions(addresses) {
-  const lookup = (_hostname, options, callback) => {
+  const lookup2 = (_hostname, options, callback) => {
     if (options.all) callback(null, addresses);
     else callback(null, addresses[0].address, addresses[0].family);
   };
   return {
-    lookup,
+    lookup: lookup2,
     autoSelectFamily: true,
     autoSelectFamilyAttemptTimeout: 250
   };
@@ -10595,11 +10842,11 @@ ${headers.map(
   server.on("upgrade", (req, socket, head) => {
     void tunnel(req, socket, head, true);
   });
-  await new Promise((resolve2, reject) => {
+  await new Promise((resolve3, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => {
       server.off("error", reject);
-      resolve2();
+      resolve3();
     });
   });
   const address = server.address();
@@ -10614,7 +10861,7 @@ ${headers.map(
     unsubscribe?.();
     unregister();
     for (const socket of sockets) socket.destroy();
-    await new Promise((resolve2) => server.close(() => resolve2()));
+    await new Promise((resolve3) => server.close(() => resolve3()));
   };
   server.on("error", () => {
     void close();
@@ -10725,11 +10972,11 @@ async function bundledChromiumMajorVersion() {
   try {
     const { createRequire } = await import("node:module");
     const { readFileSync: readFileSync2 } = await import("node:fs");
-    const { dirname, join: join4 } = await import("node:path");
+    const { dirname, join: join5 } = await import("node:path");
     const require_ = createRequire(import.meta.url);
     const root = dirname(require_.resolve("playwright-core/package.json"));
     resolved = chromiumMajorFromManifest(
-      readFileSync2(join4(root, "browsers.json"), "utf8")
+      readFileSync2(join5(root, "browsers.json"), "utf8")
     );
   } catch {
   }
@@ -10852,7 +11099,93 @@ function defaultIsAlive(pid) {
   }
 }
 
+// server/services/browserd/daemon/engine-element.ts
+import { randomUUID as randomUUID4 } from "node:crypto";
+var READ_TIMEOUT_MS = 2e3;
+var VANISHED = /TimeoutError|Execution context was destroyed|frame was detached/;
+var MARK = "data-mcpjam-element";
+function vanished(error) {
+  return error instanceof Error && VANISHED.test(`${error.name} ${error.message}`);
+}
+async function elementText(locator, selector) {
+  const first = locator(selector).first();
+  if (await first.count() === 0) return null;
+  try {
+    return await first.innerText({ timeout: READ_TIMEOUT_MS });
+  } catch (error) {
+    if (vanished(error)) return null;
+    throw error;
+  }
+}
+async function elementNodeId(locator, cdp, selector) {
+  const first = locator(selector).first();
+  if (await first.count() === 0) return null;
+  let handle;
+  try {
+    handle = await first.elementHandle({ timeout: READ_TIMEOUT_MS });
+  } catch (error) {
+    if (vanished(error)) return null;
+    throw error;
+  }
+  const token = randomUUID4();
+  try {
+    await handle.evaluate(
+      (element, [name, value]) => element.setAttribute(name, value),
+      [MARK, token]
+    );
+    const marked = `[${MARK}="${token}"]`;
+    return await resolveBackendNodeId(cdp, marked) ?? await markedInShadowRoot(cdp, marked);
+  } finally {
+    await unmark(handle);
+  }
+}
+var FIND_THROUGH_SHADOW_ROOTS = `(selector) => {
+  const walk = (root) => {
+    const hit = root.querySelector(selector);
+    if (hit) return hit;
+    for (const host of root.querySelectorAll("*")) {
+      const inner = host.shadowRoot ? walk(host.shadowRoot) : null;
+      if (inner) return inner;
+    }
+    return null;
+  };
+  return walk(document);
+}`;
+async function markedInShadowRoot(cdp, selector) {
+  try {
+    const found = await cdp.send("Runtime.evaluate", {
+      expression: `(${FIND_THROUGH_SHADOW_ROOTS})(${JSON.stringify(selector)})`
+    });
+    const objectId = found?.result?.objectId;
+    if (!objectId) return null;
+    try {
+      const described = await cdp.send("DOM.describeNode", { objectId });
+      return described?.node?.backendNodeId ?? null;
+    } finally {
+      try {
+        await cdp.send("Runtime.releaseObject", { objectId });
+      } catch {
+      }
+    }
+  } catch {
+    return null;
+  }
+}
+async function unmark(handle) {
+  try {
+    await handle.evaluate(
+      (element, name) => element.removeAttribute(name),
+      MARK
+    );
+  } catch (error) {
+    if (!vanished(error)) throw error;
+  } finally {
+    await handle.dispose();
+  }
+}
+
 // server/services/browserd/daemon/chromium-launch.ts
+var DISABLE_NON_PROXIED_UDP = "--force-webrtc-ip-handling-policy=disable_non_proxied_udp";
 var PAGE_API_PROBE = "!!(document.modelContext ?? navigator.modelContext)";
 var NAV_TIMEOUT_MS = 3e4;
 var DOM_SIGNAL_FN = `() => {
@@ -10985,6 +11318,7 @@ function wrapPage(page, localSecurity = false, localBudget) {
   let webmcpPromise = null;
   let attachedBridge = null;
   let cdpPromise = null;
+  const locate = page.locator?.bind(page);
   const adapted = {
     async goto(url) {
       await page.goto(url, {
@@ -11089,6 +11423,13 @@ function wrapPage(page, localSecurity = false, localBudget) {
         return "";
       }
     },
+    ...locate ? {
+      elementText: (selector) => elementText(locate, selector),
+      async elementNodeId(selector) {
+        const session = await adapted.cdp();
+        return session ? elementNodeId(locate, session, selector) : null;
+      }
+    } : {},
     networkEntries: () => network.entries(),
     dropNetworkSince: (since) => network.dropSince(since),
     networkCursor: () => network.count(),
@@ -11224,16 +11565,17 @@ async function launchBrowserdContext(options) {
   }
   if (policy && options.contextMode !== "ephemeral" && options.userDataDir) {
     const { rm: rm2 } = await import("node:fs/promises");
-    const { join: join4 } = await import("node:path");
+    const { join: join5 } = await import("node:path");
     for (const cache of ["Service Worker", "Cache", "Code Cache"]) {
-      await rm2(join4(options.userDataDir, "Default", cache), {
+      await rm2(join5(options.userDataDir, "Default", cache), {
         recursive: true,
         force: true
       });
     }
   }
   const { chromium } = await import("playwright");
-  const proxy = policy ? await startLocalBrowserProxy(policy) : void 0;
+  const egress = policy ?? options.egressPolicy;
+  const proxy = egress ? await startLocalBrowserProxy(egress) : void 0;
   const finish = async (context, onClose) => {
     try {
       if (policy) {
@@ -11249,6 +11591,12 @@ async function launchBrowserdContext(options) {
       const adapted = adaptContext(context, {
         localSecurity: Boolean(policy),
         localBudget: policy?.discoveryBudget,
+        ...proxy ? {
+          proxyAuth: {
+            username: proxy.proxy.username,
+            password: proxy.proxy.password
+          }
+        } : {},
         onClose: async () => {
           try {
             await onClose?.();
@@ -11278,10 +11626,16 @@ async function launchBrowserdContext(options) {
       // Chromium cannot start its renderer sandbox as uid 0 (the image builds
       // as root), so it is disabled only in that case.
       chromiumSandbox: process.getuid?.() !== 0,
-      args: buildBrowserdLaunchArgs(options.extraArgs, {
-        surface,
-        ...userAgent ? { userAgent } : {}
-      })
+      args: buildBrowserdLaunchArgs(
+        options.egressPolicy ? (
+          // WebRTC's UDP would otherwise reach addresses the proxy never sees.
+          [...options.extraArgs ?? [], DISABLE_NON_PROXIED_UDP]
+        ) : options.extraArgs,
+        {
+          surface,
+          ...userAgent ? { userAgent } : {}
+        }
+      )
     };
     const launchProfileContext = async (contextMode) => {
       const cleared = await clearStaleSingletonLock(options.userDataDir);
@@ -11332,10 +11686,17 @@ async function launchBrowserdContext(options) {
     throw error;
   }
 }
+function cookieDomainsFor(host2) {
+  const name = host2.toLowerCase();
+  const labels = name.split(".");
+  const domains = labels.length < 2 || /^[\d.]+$/.test(name) || name.includes(":") ? [name] : labels.slice(0, -1).map((_, start) => labels.slice(start).join("."));
+  const escaped = domains.map((domain) => domain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return new RegExp(`^\\.?(?:${escaped.join("|")})$`, "i");
+}
 var CONTEXT_CLOSE_GRACE_MS = 1e4;
 function closeGrace(ms = CONTEXT_CLOSE_GRACE_MS) {
-  return new Promise((resolve2) => {
-    const timer = setTimeout(resolve2, ms);
+  return new Promise((resolve3) => {
+    const timer = setTimeout(resolve3, ms);
     timer.unref?.();
   });
 }
@@ -11368,6 +11729,7 @@ function adaptContext(context, options = {}) {
     return driverPage;
   }
   return {
+    ...options.proxyAuth ? { proxyAuth: options.proxyAuth } : {},
     onPageCreated(listener) {
       listeners.add(listener);
       return () => {
@@ -11382,6 +11744,23 @@ function adaptContext(context, options = {}) {
     isConnected() {
       return context.browser()?.isConnected() ?? true;
     },
+    async clearOriginData(origins) {
+      if (origins.length === 0) return;
+      if (!context.newCDPSession || !context.clearCookies) {
+        throw new Error("This browser can't clear a site's data.");
+      }
+      const closed = await Promise.race([
+        Promise.all(context.pages().map((open) => open.close())).then(() => true),
+        closeGrace().then(() => false)
+      ]);
+      if (!closed) throw new Error("profile_export_pages_did_not_close");
+      const page = await context.newPage();
+      const cdp = await context.newCDPSession(page);
+      for (const origin of origins) {
+        await cdp.send("Storage.clearDataForOrigin", { origin, storageTypes: "all" });
+        await context.clearCookies({ domain: cookieDomainsFor(new URL(origin).hostname) });
+      }
+    },
     async close() {
       try {
         await Promise.race([context.close(), closeGrace()]);
@@ -11392,8 +11771,183 @@ function adaptContext(context, options = {}) {
   };
 }
 
+// server/services/browserd/daemon/public-network.ts
+import { lookup } from "node:dns/promises";
+import { BlockList, isIP } from "node:net";
+
+// server/utils/private-egress-allowlist.ts
+import { isIPv6 } from "node:net";
+function normalizeEgressHost(host2) {
+  let normalized = host2.trim().toLowerCase();
+  if (normalized.startsWith("[") && normalized.endsWith("]")) {
+    normalized = normalized.slice(1, -1);
+  }
+  return normalized.replace(/\.+$/, "");
+}
+function ipv4Bytes(text) {
+  if (!/^(?:0|[1-9]\d{0,2})(?:\.(?:0|[1-9]\d{0,2})){3}$/.test(text)) {
+    return null;
+  }
+  const octets = text.split(".").map(Number);
+  return octets.every((octet) => octet <= 255) ? octets : null;
+}
+function ipv6Bytes(text) {
+  if (text.includes("%") || !isIPv6(text)) return null;
+  let hex = text;
+  const dotted = /^(.*:)(\d+\.\d+\.\d+\.\d+)$/.exec(text);
+  if (dotted) {
+    const v4 = ipv4Bytes(dotted[2]);
+    if (!v4) return null;
+    hex = `${dotted[1]}${(v4[0] << 8 | v4[1]).toString(16)}:${(v4[2] << 8 | v4[3]).toString(16)}`;
+  }
+  const groups = (part) => part === "" ? [] : part.split(":").map((group) => parseInt(group, 16));
+  const halves = hex.split("::");
+  const hextets = halves.length === 2 ? (() => {
+    const left = groups(halves[0]);
+    const right = groups(halves[1]);
+    return [
+      ...left,
+      ...new Array(8 - left.length - right.length).fill(0),
+      ...right
+    ];
+  })() : groups(hex);
+  if (hextets.length !== 8) return null;
+  return hextets.flatMap((hextet) => [hextet >> 8, hextet & 255]);
+}
+
+// server/utils/egress-tier.ts
+function parseIpv4Octets(host2) {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host2);
+  if (!m) return null;
+  const o = [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])];
+  if (o.some((n) => n > 255)) return null;
+  return [o[0], o[1], o[2], o[3]];
+}
+var METADATA_NAMES = /* @__PURE__ */ new Set([
+  "metadata",
+  "metadata.google.internal",
+  "metadata.goog"
+]);
+var MACHINE_LOCAL_NAMES = /* @__PURE__ */ new Set([
+  "ip6-localhost",
+  "ip6-loopback",
+  "host.docker.internal",
+  "gateway.docker.internal"
+]);
+var AWS_IPV6_METADATA = ipv6Bytes("fd00:ec2::254");
+function egressTier(hostname2) {
+  const host2 = normalizeEgressHost(hostname2);
+  if (!host2) return "never";
+  if (METADATA_NAMES.has(host2)) return "never";
+  if (host2 === "localhost" || host2.endsWith(".localhost") || MACHINE_LOCAL_NAMES.has(host2)) {
+    return "private";
+  }
+  const v4 = parseIpv4Octets(host2);
+  if (v4) {
+    const [a, b, c, d] = v4;
+    if (a === 169 && b === 254) return "never";
+    if (a === 0) return "never";
+    if (a >= 224) return "never";
+    if (a === 100 && b === 100 && c === 100 && d === 200) return "never";
+    if (a === 127) return "private";
+    if (a === 10) return "private";
+    if (a === 192 && b === 168) return "private";
+    if (a === 172 && b >= 16 && b <= 31) return "private";
+    if (a === 100 && b >= 64 && b <= 127) return "private";
+    return "public";
+  }
+  if (host2.includes(":")) {
+    const mapped = /(?:^|:)((?:\d{1,3}\.){3}\d{1,3})$/.exec(host2);
+    if (mapped) return egressTier(mapped[1]);
+    const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host2);
+    if (mappedHex) {
+      const high = parseInt(mappedHex[1], 16);
+      const low = parseInt(mappedHex[2], 16);
+      return egressTier(
+        `${high >> 8 & 255}.${high & 255}.${low >> 8 & 255}.${low & 255}`
+      );
+    }
+    if (host2 === "::") return "never";
+    if (/^fe[89ab]/.test(host2)) return "never";
+    if (/^ff[0-9a-f]{2}:/.test(host2)) return "never";
+    const bytes = ipv6Bytes(host2);
+    if (bytes && AWS_IPV6_METADATA && bytes.every((byte, i) => byte === AWS_IPV6_METADATA[i])) {
+      return "never";
+    }
+    if (host2 === "::1") return "private";
+    if (/^f[cd]/.test(host2)) return "private";
+    return "public";
+  }
+  return "public";
+}
+
+// server/services/browserd/daemon/public-network.ts
+var WEB_PROTOCOLS = /* @__PURE__ */ new Set(["http:", "https:", "ws:", "wss:"]);
+var NOT_GLOBAL = new BlockList();
+NOT_GLOBAL.addSubnet("192.0.0.0", 24, "ipv4");
+NOT_GLOBAL.addSubnet("192.0.2.0", 24, "ipv4");
+NOT_GLOBAL.addSubnet("198.18.0.0", 15, "ipv4");
+NOT_GLOBAL.addSubnet("198.51.100.0", 24, "ipv4");
+NOT_GLOBAL.addSubnet("203.0.113.0", 24, "ipv4");
+NOT_GLOBAL.addSubnet("2001:db8::", 32, "ipv6");
+NOT_GLOBAL.addSubnet("2001::", 32, "ipv6");
+NOT_GLOBAL.addSubnet("2001:2::", 48, "ipv6");
+NOT_GLOBAL.addSubnet("2002::", 16, "ipv6");
+NOT_GLOBAL.addSubnet("3fff::", 20, "ipv6");
+NOT_GLOBAL.addSubnet("64:ff9b:1::", 48, "ipv6");
+var NAT64 = new BlockList();
+NAT64.addSubnet("64:ff9b::", 96, "ipv6");
+function embeddedIpv4(address) {
+  if (isIP(address) !== 6 || !NAT64.check(address, "ipv6")) return void 0;
+  const tail = address.split(":").slice(-2);
+  if (tail.length === 1 || tail[1]?.includes(".")) return tail.at(-1);
+  const [high, low] = tail.map((part) => parseInt(part || "0", 16));
+  return [high >> 8, high & 255, low >> 8, low & 255].join(".");
+}
+function isPublicHost(host2) {
+  if (egressTier(host2) !== "public") return false;
+  const address = host2.replace(/^\[|\]$/g, "");
+  const family = isIP(address);
+  if (family === 0) return true;
+  if (NOT_GLOBAL.check(address, family === 6 ? "ipv6" : "ipv4")) return false;
+  const translated = embeddedIpv4(address);
+  return translated === void 0 || isPublicHost(translated);
+}
+var REFUSED = "this browser reaches public internet addresses only, and this destination is not one.";
+function isPublicWebUrl(raw) {
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  return WEB_PROTOCOLS.has(url.protocol) && isPublicHost(url.hostname);
+}
+function createPublicNetworkPolicy(resolve3 = lookup) {
+  return {
+    isActive: () => true,
+    onRevoked: () => () => {
+    },
+    allowsRequest: isPublicWebUrl,
+    async resolveDestination(hostname2, port) {
+      const name = hostname2.replace(/^\[|\]$/g, "");
+      if (!Number.isInteger(port) || port < 1 || port > 65535 || !isPublicHost(name)) {
+        throw new BrowserPolicyError(REFUSED);
+      }
+      const addresses = isIP(name) ? [{ address: name, family: isIP(name) }] : await resolve3(name, { all: true, verbatim: true });
+      if (addresses.length === 0 || addresses.some(({ address }) => !isPublicHost(address))) {
+        throw new BrowserPolicyError(REFUSED);
+      }
+      return addresses;
+    }
+  };
+}
+
 // server/services/browserd/daemon/prepare-browser-profile.ts
-import { readFile as readFile2, rm } from "node:fs/promises";
+import { createHash as createHash2 } from "node:crypto";
+import { readFile as readFile2, readdir as readdir2, rm } from "node:fs/promises";
+import { createServer as createServer3 } from "node:net";
+import { isAbsolute, join as join4, relative as relative2, resolve as resolve2, sep as sep2 } from "node:path";
 
 // server/services/browserd/profile-archive.ts
 import { lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -11726,6 +12280,7 @@ async function importBrowserProfileArchive(profileDir, archive, options = {}) {
 
 // server/services/browserd/daemon/prepare-browser-profile.ts
 async function prepareBrowserProfile(config) {
+  if (config.freshProfile) await emptyProfileDir(config);
   if (!config.profileArchivePath) return false;
   try {
     try {
@@ -11744,6 +12299,64 @@ async function prepareBrowserProfile(config) {
     );
   }
   return true;
+}
+async function emptyProfileDir(config) {
+  const owner = await probeSingletonOwner(config.userDataDir);
+  if (owner.live) {
+    throw new Error(
+      `profile_in_use: another browser (pid ${owner.pid ?? "unknown"}${owner.host ? ` on ${owner.host}` : ""}) holds this profile; close it and try again`
+    );
+  }
+  const kept = config.recordDir ? relative2(config.userDataDir, config.recordDir) : "";
+  if (config.recordDir && !kept) {
+    throw new Error(
+      "MCPJAM_BROWSERD_RECORD_DIR is the profile directory itself. Set it to a folder inside or outside the profile."
+    );
+  }
+  const keep = kept && !kept.startsWith("..") && !isAbsolute(kept) ? kept.split(sep2) : [];
+  await emptyExcept(config.userDataDir, keep);
+}
+async function emptyExcept(dir, keep) {
+  let entries;
+  try {
+    entries = await readdir2(dir);
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
+  }
+  for (const entry of entries) {
+    if (entry === keep[0]) {
+      if (keep.length > 1) await emptyExcept(join4(dir, entry), keep.slice(1));
+      continue;
+    }
+    await rm(join4(dir, entry), { recursive: true, force: true });
+  }
+}
+async function withProfileClaim(userDataDir, boot) {
+  const claim = await takeProfileClaim(userDataDir);
+  try {
+    return await boot();
+  } finally {
+    claim?.close();
+  }
+}
+async function takeProfileClaim(userDataDir) {
+  if (process.platform !== "linux") return void 0;
+  const id = createHash2("sha256").update(resolve2(userDataDir)).digest("hex");
+  const server = createServer3();
+  try {
+    await new Promise((listening, failed) => {
+      server.once("error", failed);
+      server.listen(`\0mcpjam-browserd-profile-${id}`, listening);
+    });
+  } catch (error) {
+    if (error.code !== "EADDRINUSE") throw error;
+    throw new Error(
+      "profile_in_use: another browser is starting on this profile; try again"
+    );
+  }
+  server.unref();
+  return server;
 }
 
 // server/services/browserd/daemon/main.ts
@@ -11846,15 +12459,13 @@ async function resizeHostedDisplay(deps, next, previous) {
 }
 
 // server/services/browserd/daemon/config.ts
-import { createHash as createHash2, randomBytes as randomBytes5 } from "node:crypto";
+import { createHash as createHash3, randomBytes as randomBytes5 } from "node:crypto";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 var DEFAULT_ON_FEATURES = [
   "a11yFrames",
   "scrollableMarkers"
 ];
-var OPT_IN_FEATURES = [
-  "keystrokeTyping"
-];
+var OPT_IN_FEATURES = ["keystrokeTyping"];
 function namedIn(raw) {
   return new Set(
     (raw ?? "").split(",").map((name) => name.trim()).filter((name) => name.length > 0)
@@ -11904,6 +12515,7 @@ function readBrowserdConfig(env = process.env, mintToken = defaultMintToken) {
     // persistent profile — the mode a human's logins depend on — rather than
     // silently wiping state because a typo read as "ephemeral".
     contextMode: env.MCPJAM_BROWSERD_EPHEMERAL === "true" ? "ephemeral" : "persistent",
+    networkPolicy: env.MCPJAM_BROWSERD_NETWORK === "public" ? "public" : "open",
     // NEVER WITH HEADLESS. Kiosk is what makes "the display IS the page" true
     // for the video encoder, and a headless Chromium draws on no display at
     // all — so the daemon would advertise `h264`, spawn a grab of an empty X
@@ -11925,6 +12537,7 @@ function readBrowserdConfig(env = process.env, mintToken = defaultMintToken) {
     recordingEnabled: env.MCPJAM_BROWSERD_RECORD !== "0",
     ...tokenFile ? { tokenFile } : {},
     ...env.MCPJAM_BROWSERD_PROFILE_ARCHIVE?.trim() ? { profileArchivePath: env.MCPJAM_BROWSERD_PROFILE_ARCHIVE.trim() } : {},
+    freshProfile: env.MCPJAM_BROWSERD_FRESH_PROFILE === "1",
     // Only a daemon that had to mint its own token was started by the box.
     startedBy: supplied.length === 0 && tokenFile ? "prelaunch" : "inspector"
   };
@@ -11952,6 +12565,9 @@ function announcedFeatures(config, env = process.env) {
     features.push("h264");
   }
   if (config.recordingEnabled) features.push("record");
+  if (config.networkPolicy === "public") {
+    features.push(BROWSERD_PUBLIC_NETWORK_FEATURE);
+  }
   return features;
 }
 function extraArgsFor(config) {
@@ -11987,7 +12603,7 @@ function readBundleHash(argv = process.argv, hashFile = defaultHashFile) {
   }
 }
 function defaultHashFile(path) {
-  return createHash2("sha256").update(readFileSync(path)).digest("hex");
+  return createHash3("sha256").update(readFileSync(path)).digest("hex");
 }
 
 // server/services/browserd/daemon/main.ts
@@ -11996,13 +12612,13 @@ function log(message) {
 `);
 }
 function runShell(command) {
-  return new Promise((resolve2) => {
+  return new Promise((resolve3) => {
     execFile(
       "/bin/sh",
       ["-c", command],
       { timeout: 1e4 },
       (error, _stdout, stderr) => {
-        resolve2({
+        resolve3({
           exitCode: error ? error.code ?? 1 : 0,
           stderr: typeof stderr === "string" ? stderr : void 0
         });
@@ -12023,15 +12639,18 @@ function displayHeight(config) {
 async function main() {
   const config = readBrowserdConfig();
   const bundleHash = readBundleHash();
-  const profileImported = await prepareBrowserProfile(config);
-  const context = await launchBrowserdContext({
-    userDataDir: config.userDataDir,
-    profileImported,
-    headless: config.headless,
-    extraArgs: extraArgsFor(config),
-    contextMode: config.contextMode,
-    deviceScaleFactor: config.deviceScaleFactor
-  });
+  const context = await withProfileClaim(
+    config.userDataDir,
+    async () => launchBrowserdContext({
+      userDataDir: config.userDataDir,
+      profileImported: await prepareBrowserProfile(config),
+      headless: config.headless,
+      extraArgs: extraArgsFor(config),
+      contextMode: config.contextMode,
+      deviceScaleFactor: config.deviceScaleFactor,
+      ...config.networkPolicy === "public" ? { egressPolicy: createPublicNetworkPolicy() } : {}
+    })
+  );
   const lease = new HandoffLease();
   let encoder;
   const canResize = config.contextMode === "persistent" && config.kiosk && (await runShell(
@@ -12040,6 +12659,7 @@ async function main() {
   const driver = new ChromiumDriver(context, {
     lease,
     features: parseBrowserdFeatures(),
+    webOnly: config.networkPolicy === "public",
     viewport: {
       /**
        * The DAEMON's default is `fixed`, and the door widens it.
@@ -12130,7 +12750,13 @@ async function main() {
     ...video ? { video } : {},
     ...recorder ? { recorder } : {},
     ...config.contextMode === "persistent" ? {
-      profileExport: async () => {
+      profileExport: async ({ excludeOrigins }) => {
+        if (excludeOrigins.length > 0) {
+          if (!context.clearOriginData) {
+            throw new Error("profile_exclusions_unavailable");
+          }
+          await context.clearOriginData(excludeOrigins);
+        }
         await context.close();
         await driver.close();
         return exportBrowserProfileArchive(config.userDataDir);

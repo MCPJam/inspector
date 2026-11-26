@@ -32,6 +32,7 @@ import { claudeCodeLocalRuntime } from "./claude-code.js";
 import { codexLocalRuntime } from "./codex.js";
 import { copilotCliLocalRuntime } from "./copilot-cli.js";
 import { cursorLocalRuntime } from "./cursor.js";
+import { opencodeLocalRuntime } from "./opencode.js";
 import type { LocalRuntime } from "./types.js";
 
 export type { LocalRuntime } from "./types.js";
@@ -44,6 +45,7 @@ export const LOCAL_RUNTIMES: {
   codex: codexLocalRuntime,
   "copilot-cli": copilotCliLocalRuntime,
   cursor: cursorLocalRuntime,
+  opencode: opencodeLocalRuntime,
 };
 
 /** The definition of a runtime the caller already knows is local. */

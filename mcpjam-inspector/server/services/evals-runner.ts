@@ -1,3 +1,4 @@
+import { credentialFailureMessage } from "../routes/web/errors.js";
 import { assertNativeDiscovery } from "../utils/harness/native-discovery.js";
 import { mergeViewToolEvidence } from "./evals/view-tool-evidence.js";
 import { evalWidgetServerCall } from "./evals/view-tool-policy.js";
@@ -17,6 +18,7 @@ import { modelWorkloadFor } from "../utils/model-workload.js";
 import { listBaseServers } from "../utils/mcp-connections.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { isCreditExhaustion } from "../../shared/credit-exhaustion.js";
+import { NATIVE_HARNESS_TRIAL_EXHAUSTED_CODE } from "../../shared/native-harness-trial.js";
 import { providerErrorDetails } from "./evals/provider-error-details.js";
 import { redactSecretShapes } from "../../shared/secret-shape-redaction.js";
 import { EVAL_SANDBOX_CAPACITY_POLICY } from "../utils/run-supervisor/capacity-retry.js";
@@ -28,6 +30,7 @@ import {
 } from "./browserd/page-tools-peek.js";
 import { webmcpPageToolsMode } from "../config.js";
 import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
+import { appliedToolApproval } from "@/shared/tool-approval";
 import { type ModelMessage } from "ai";
 import {
   extractToolCallsExcludingPolicyBlocks,
@@ -63,6 +66,7 @@ import {
   singleCaseHarnessBoxRefusal,
 } from "./evals/needs-ephemeral-sandbox";
 import { createStepExecutionState, executeSteps } from "./evals/step-executor";
+import { caseConcurrencyForRun } from "./evals/run-sandbox-slots";
 import { classifyEvalInfraError } from "./evals/infra-error-classification";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
 import {
@@ -97,6 +101,12 @@ import {
   harnessOfHostConfig,
   isModelFreeCase,
 } from "./evals/harness-admission.js";
+import { isWebClientRuntimeId } from "@/shared/web-clients";
+import {
+  WEB_CLIENT_RUN_UNREAD,
+  webClientRunOfEvalRun,
+  type WebClientRunContext,
+} from "./web-clients/web-client-run.js";
 import {
   readTasksPolicy,
   type MCPClientManager,
@@ -161,21 +171,27 @@ import {
   type ModelDefinition,
   type ModelProvider,
 } from "@/shared/types";
-import type { LegacyModelSelection, ModelSelection } from "@mcpjam/sdk";
+import type {
+  LegacyModelSelection,
+  ModelCallCostEvidence,
+  ModelSelection,
+} from "@mcpjam/sdk";
 import {
   decideTurnRail,
   routingSelectionForModel,
   withSelectionRouting,
 } from "../utils/selection-rail.js";
 import {
+  azureDeploymentRefusal,
   backendModelSelection,
+  isOrgConfigurationRefusal,
   ModelResolutionRefusalError,
   ORG_KEYS_REQUIRED_REASON,
   policyIneligibleRefusal,
   resolveLocalModelSelection,
 } from "../utils/model-resolution-local.js";
-import { isOrgKeyPolicyRefusalCode } from "../../shared/ai-execution-refusal.js";
 import { connectionPolicyEligibility } from "@/shared/org-ai-key-policy";
+import { hasAzureConnection } from "@/shared/azure-deployment";
 import {
   resolveEffectiveModelSettings,
   type DirectProviderOptions,
@@ -202,7 +218,6 @@ import {
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
 } from "@mcpjam/sdk";
-import type { PinnedSkillArtifact } from "@/shared/skill-types";
 import type { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
 import {
@@ -512,62 +527,6 @@ export type EvalTestCase = {
 };
 
 /**
- * How a run's FROZEN skills reach one case — both channels, together.
- *
- * There are two, and they are not interchangeable:
- *   - `pinnedSkillSource` is what each iteration plans its skills from
- *     (`iterationTurnSkills`): MCPJam's agent's tools, and what a turn records.
- *   - `pinnedHarnessSkills` feeds the HARNESS path, where they are materialized
- *     as SKILL.md files on the box.
- *
- * They are bundled here because forwarding one without the other is a silent
- * failure rather than a loud one: a case that receives no `pinnedHarnessSkills`
- * does not error, it leaves the harness's box with whatever skills it already
- * holds — so a frozen run quietly stops being frozen, and the
- * `skillsOverride: "exclude"` arm quietly runs with an earlier turn's skills.
- * That is exactly the bug this helper exists to make structurally impossible:
- * one place decides, and both channels leave together or not at all.
- *
- * `pinnedHarnessSkills` is included when DEFINED rather than truthy — `[]` is
- * the "this run delivers no skills" answer and must survive.
- */
-export function runFrozenSkillOptions(run: {
-  pinnedSkillSource?: PinnedSkillSource;
-  pinnedHarnessSkills?: PinnedSkillArtifact[];
-}): {
-  pinnedSkillSource?: PinnedSkillSource;
-  pinnedHarnessSkills?: PinnedSkillArtifact[];
-} {
-  // Presence selects the pinned source at every hop below, so a non-array that
-  // is not `undefined` would sail through all of them and only fail inside
-  // `pinnedArtifactsToRuntimeSkills`'s `.map` — deep in the harness turn, after
-  // a sandbox has been provisioned and paid for. The type forbids it, but the
-  // value crosses a route boundary and a persisted-data conversion on the way
-  // here, so it is worth one loud check at the seam rather than a confusing
-  // crash later. `undefined` stays legal: it means "this run pinned nothing".
-  if (
-    run.pinnedHarnessSkills !== undefined &&
-    !Array.isArray(run.pinnedHarnessSkills)
-  ) {
-    throw new Error(
-      `runFrozenSkillOptions: pinnedHarnessSkills must be an array or undefined (got ${
-        run.pinnedHarnessSkills === null
-          ? "null"
-          : typeof run.pinnedHarnessSkills
-      })`,
-    );
-  }
-  return {
-    ...(run.pinnedSkillSource
-      ? { pinnedSkillSource: run.pinnedSkillSource }
-      : {}),
-    ...(run.pinnedHarnessSkills !== undefined
-      ? { pinnedHarnessSkills: run.pinnedHarnessSkills }
-      : {}),
-  };
-}
-
-/**
  * The match options the `toolCalls:match` score definition hashes over.
  *
  * RESOLVED, not authored. The matcher applies `MATCH_OPTIONS_DEFAULTS` to
@@ -715,27 +674,13 @@ export type RunEvalSuiteOptions = {
   /**
    * The run's frozen skills, prepared once at the boundary (`prepareEvalRun`)
    * and forwarded verbatim; every iteration plans its turn's skills from them
-   * (`iterationTurnSkills`). Absent ⇒ no skills (eval runs never use local-FS
-   * skills — decision 10); a quick run without an environment stays absent
-   * (no run row = no pinning carrier).
+   * (`iterationTurnSkills`), and a harness iteration carries that plan out on
+   * its box, an empty frozen set clearing it. Absent ⇒ no skills (eval runs
+   * never use local-FS skills — decision 10), and a harness box stays as it is;
+   * a quick run without an environment stays absent (no run row = no pinning
+   * carrier).
    */
   pinnedSkillSource?: PinnedSkillSource;
-  /**
-   * The run's frozen skills in HARNESS shape, materialized ON BOX.
-   *
-   * A separate channel from {@link RunEvalSuiteOptions.pinnedSkillSource}, and
-   * deliberately so: `pinnedSkillSource` feeds the EMULATED path, where skills
-   * become in-memory tool definitions; a harness turn writes SKILL.md files
-   * into the runtime's skills root instead, so it needs complete artifacts
-   * (identity, complete-envelope hash, preserved frontmatter, inline file
-   * bodies) rather than the body-only projection that path takes.
-   *
-   * Presence, not length, is what selects the pinned source in the harness. An
-   * empty list says "this run delivers no skills"; ABSENT leaves the box with
-   * whatever skills it already holds, which would unfreeze the run. So the
-   * boundary sets this for every runId-bearing run, empty included.
-   */
-  pinnedHarnessSkills?: PinnedSkillArtifact[];
   toolPolicy?: EvalSuiteFileToolPolicy;
   /**
    * Extra headers stamped on every per-step Convex request of this run.
@@ -762,12 +707,20 @@ export type RunEvalSuiteOptions = {
   benchmarkWriteGuard?: BenchmarkWriteGuard;
 };
 
+const CREDITS_EXHAUSTED_NOTE =
+  "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews.";
+
+/** Shared across a run's cases: once set, their untouched iterations are skipped with `note`. */
+type RunStop = { exhausted: boolean; note?: string };
+
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
 export type EvalIterationOutcome = {
   evaluation: EvaluationResult;
   iterationId?: string;
   policyBlockCount?: number;
   creditsExhausted?: boolean;
+  /** The setup refusal, when the organization's native harness trial is used up. */
+  nativeHarnessTrialRefusal?: string;
   /**
    * OUR infrastructure failed this trial. The run summary leaves it out of
    * `total`/`passed`/`failed`, as the backend's legacy header does.
@@ -1303,6 +1256,8 @@ function throwSetupPhaseError(args: {
   /** The observer's explanation, when it recorded one for this failure. */
   detail?: SetupFailureDetail;
 }): never {
+  const credentialFailure = credentialFailureMessage(args.error);
+  const failureLine = credentialFailure ?? args.detail?.line;
   const serverLabel = getServerLabelForEvalError(
     args.serverId,
     args.environment,
@@ -1314,15 +1269,15 @@ function throwSetupPhaseError(args: {
     const setupError = new EvalSetupPhaseError({
       status: 409,
       code: ErrorCode.SERVER_UNREACHABLE,
-      message: args.detail
-        ? `Could not start eval because "${serverLabel}" is not connected: ${args.detail.line}`
+      message: failureLine
+        ? `Could not start eval because "${serverLabel}" is not connected: ${failureLine}`
         : `Could not start eval because "${serverLabel}" is not connected. Reconnect the server and try again.`,
       serverId: args.serverId,
       phase: args.phase,
       details: {
         serverId: args.serverId,
         serverName: serverLabel,
-        ...(args.detail ? { cause: args.detail.line } : {}),
+        ...(failureLine ? { cause: failureLine } : {}),
       },
     });
     setupError.cause = args.error;
@@ -2324,7 +2279,7 @@ type RunIterationBaseParams = {
    * Suite-level raw tool set, kept for `toolSignals` telemetry only.
    * Iteration runners route the actual tool prep through `prepareChatV2`
    * (per PR 1 of the engine consolidation) so eval gets skill tools,
-   * progressive-discovery meta-tools, Anthropic name validation, and the
+   * progressive-discovery meta-tools, the harness tool-name check, and the
    * system-prompt assembly chat already applies. Removed in a later PR.
    */
   tools: ToolSet;
@@ -2448,9 +2403,6 @@ type RunIterationBaseParams = {
    * Eval runs NEVER use local-FS skills (decision 10): absent means none.
    */
   pinnedSkillSource?: PinnedSkillSource;
-  /** The run's frozen skills in harness shape (see
-   *  {@link RunEvalSuiteOptions.pinnedHarnessSkills}). */
-  pinnedHarnessSkills?: PinnedSkillArtifact[];
   /**
    * The run's resolved MCP Tasks seam (`resolveToolTaskSeam`, surface
    * `"eval"`), or absent for tasks-off.
@@ -2489,7 +2441,7 @@ type RunIterationBackendParams = RunIterationBaseParams & {
   convexHttpUrl: string;
   convexAuthToken: string;
   modelId: string;
-  /** Resolved model definition — fed to `prepareChatV2` for Anthropic name validation. */
+  /** Resolved model definition, fed to `prepareChatV2`. */
   modelDefinition: ModelDefinition;
   endpointPath?: "/stream" | "/stream/org";
   extraBodyFields?: Record<string, unknown>;
@@ -2727,9 +2679,10 @@ export function resolveEvalCaseSettings(args: {
  * `/stream/org/local-usage` for one model turn of an eval iteration on a
  * local-runtime org connection: the backend never saw the call, so this is
  * its usage row, and, under a saved `org` selection, the execution record it
- * merges onto the iteration (`evalIterationId`). Fire-and-forget, like the
- * chat and swarm writebacks; an aborted call is not written back (the same
- * rule those follow: an aborted turn is not billed as completed usage).
+ * merges onto the iteration (`evalIterationId`). Resolves with the backend's
+ * price for each call, or undefined; it never rejects. An aborted call is not
+ * written back (the same rule the chat and swarm writebacks follow: an
+ * aborted turn is not billed as completed usage).
  */
 function postEvalOrgLocalUsage(args: {
   context: EvalOrgLocalUsageContext;
@@ -2740,9 +2693,9 @@ function postEvalOrgLocalUsage(args: {
   runId: string | null;
   convexAuthToken: string | undefined;
   selectedServers: string[];
-}): void {
+}): Promise<Record<string, ModelCallCostEvidence> | undefined> | undefined {
   const { context, event } = args;
-  if (event.outcome === "aborted") return;
+  if (event.outcome === "aborted") return undefined;
   const execution = buildLocalExecutionRecord({
     selection: context.modelSelection,
     providerKey: context.providerKey,
@@ -2755,11 +2708,12 @@ function postEvalOrgLocalUsage(args: {
     at: event.at,
     ...(event.upstreamModel ? { upstreamModel: event.upstreamModel } : {}),
   });
-  void postLocalUsage({
+  return postLocalUsage({
     projectId: context.projectId,
     providerKey: context.providerKey,
     model: args.modelId,
     ...(event.usage ? { usage: event.usage } : {}),
+    ...(event.calls ? { calls: event.calls } : {}),
     ...(event.finishReason ? { finishReason: event.finishReason } : {}),
     sourceType: "eval",
     ...(args.convexAuthToken
@@ -2775,6 +2729,7 @@ function postEvalOrgLocalUsage(args: {
     logger.warn("[evals] Failed to post local usage", {
       error: error instanceof Error ? error.message : String(error),
     });
+    return undefined;
   });
 }
 
@@ -3204,7 +3159,7 @@ const executeTestCase = async (params: {
   abortSignal?: AbortSignal;
   /** Lifecycle abort hook: an iteration timeout aborts the whole run through it. */
   abortRun?: (error: EvalRunStoppedError) => void;
-  creditStop?: { exhausted: boolean };
+  creditStop?: RunStop;
   compareRunId?: string;
   /**
    * See {@link RunEvalSuiteOptions.committedQuickRunIterationIds}. When set,
@@ -3254,9 +3209,6 @@ const executeTestCase = async (params: {
   projectEnvironmentUnresolvedReason?: string;
   /** The run's frozen skills (see RunEvalSuiteOptions.pinnedSkillSource). */
   pinnedSkillSource?: PinnedSkillSource;
-  /** The run's frozen skills in harness shape (see
-   *  RunEvalSuiteOptions.pinnedHarnessSkills). */
-  pinnedHarnessSkills?: PinnedSkillArtifact[];
   /** The run's resolved Tasks seam — see RunIterationBaseParams.tasks. */
   tasks?: ToolTaskSeamOptions;
   toolPolicy?: EvalSuiteFileToolPolicy;
@@ -3303,7 +3255,6 @@ const executeTestCase = async (params: {
     projectEnvironmentId,
     projectEnvironmentUnresolvedReason,
     pinnedSkillSource,
-    pinnedHarnessSkills,
     tasks,
     toolPolicy,
     toolAnnotations,
@@ -3383,6 +3334,18 @@ const executeTestCase = async (params: {
           event: "evals.credits_exhausted",
           iterationId: startedIterationId,
         });
+      }
+      // The trial is per organization: every later iteration would be refused.
+      if (outcome.nativeHarnessTrialRefusal && !creditStop.exhausted) {
+        creditStop.exhausted = true;
+        creditStop.note = `${outcome.nativeHarnessTrialRefusal} Completed results are saved; remaining iterations were skipped.`;
+        logger.info(
+          "[evals] native harness trial used up; remaining iterations skipped",
+          {
+            event: "evals.native_harness_trial_exhausted",
+            iterationId: startedIterationId,
+          },
+        );
       }
       return outcome;
     };
@@ -3516,7 +3479,6 @@ const executeTestCase = async (params: {
         harnessRuntimeVenue,
         environment,
         pinnedSkillSource,
-        pinnedHarnessSkills,
         ...(toolPolicy
           ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
           : {}),
@@ -3684,6 +3646,21 @@ const executeTestCase = async (params: {
       ]);
     }
   }
+  // Azure runs only a named deployment. A case without a saved org selection
+  // (written as `{ model, provider }`, saved before selections, or a legacy
+  // one) reaches `/stream/org` too, so the rule applies to the id it sends.
+  // After the policy check, in `resolveLocalModelSelection`'s order. Skipped
+  // only when the organization's config is known and has no Azure connection:
+  // then the missing connection is the problem, as on the run sheet. A config
+  // that failed to load is not that.
+  const azureRefusal =
+    orgByokRuntime?.kind === "cloud" &&
+    (!orgModelConfig || hasAzureConnection(orgModelConfig.providers))
+      ? azureDeploymentRefusal(orgByokRuntime.providerKey, {
+          modelId: String(modelDefinition.id),
+        })
+      : undefined;
+  if (azureRefusal) throw new ModelResolutionRefusalError([azureRefusal]);
   // The case's settings, resolved ONCE for every iteration below on the
   // route it takes (per-run override > saved selection > host defaults).
   // Legacy cases (no selection) keep the runners' own host/override rule.
@@ -3801,8 +3778,7 @@ const executeTestCase = async (params: {
           result: "failed",
           actualToolCalls: [],
           tokensUsed: 0,
-          error:
-            "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews.",
+          error: creditStop.note ?? CREDITS_EXHAUSTED_NOTE,
         });
       }
       continue;
@@ -3868,7 +3844,6 @@ const executeTestCase = async (params: {
           ? { projectEnvironmentUnresolvedReason }
           : {}),
         pinnedSkillSource,
-        pinnedHarnessSkills,
         // The run's Tasks seam. Hosted-only: it exists so the HARNESS turn can
         // rebuild its MCP tools under the same seam the emulated tool set was
         // already built with (`getEvalToolsForAiSdkOrThrow`).
@@ -3945,7 +3920,6 @@ const executeTestCase = async (params: {
           ? { projectEnvironmentUnresolvedReason }
           : {}),
         pinnedSkillSource,
-        pinnedHarnessSkills,
         // The run's Tasks seam. Hosted-only: it exists so the HARNESS turn can
         // rebuild its MCP tools under the same seam the emulated tool set was
         // already built with (`getEvalToolsForAiSdkOrThrow`).
@@ -4011,7 +3985,6 @@ const executeTestCase = async (params: {
       environment,
       convexAuthToken,
       pinnedSkillSource,
-      pinnedHarnessSkills,
       ...(toolPolicy
         ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
         : {}),
@@ -4116,7 +4089,6 @@ export const runEvalSuiteWithAiSdk = async ({
   projectEnvironmentId,
   projectEnvironmentUnresolvedReason,
   pinnedSkillSource,
-  pinnedHarnessSkills,
   toolPolicy,
   benchmarkWriteGuard,
   extraHeaders,
@@ -4407,7 +4379,7 @@ export const runEvalSuiteWithAiSdk = async ({
         modelIdentifiers,
       });
     }
-    const creditStop = { exhausted: false };
+    const creditStop: RunStop = { exhausted: false };
     const runOne = (test: (typeof tests)[number]) =>
       runTestCase({
         test,
@@ -4459,10 +4431,7 @@ export const runEvalSuiteWithAiSdk = async ({
             }
           : {}),
         ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
-        // BOTH frozen-skill channels, from one place — see
-        // `runFrozenSkillOptions`: forwarding only the emulated one would
-        // leave the harness's box with whatever skills it already holds.
-        ...runFrozenSkillOptions({ pinnedSkillSource, pinnedHarnessSkills }),
+        ...(pinnedSkillSource ? { pinnedSkillSource } : {}),
         // The run's ONE Tasks seam — the same object `getEvalToolsForAiSdkOrThrow`
         // built the emulated tool set with, so the harness (which rebuilds its
         // own MCP tools) cannot end up on a different row of the policy matrix.
@@ -4471,6 +4440,22 @@ export const runEvalSuiteWithAiSdk = async ({
         ...(evalTasksSeam ? { tasks: evalTasksSeam } : {}),
         ...(extraHeaders ? { extraHeaders } : {}),
       });
+    // A web client's account runs one turn per server at a time (a second
+    // is refused as turn_running), so its cases take turns. Otherwise cases
+    // that boot boxes wait for one of the run's box slots before their first
+    // iteration (and its clock) starts; see `run-sandbox-slots.ts`.
+    const sandboxSlots = caseConcurrencyForRun({
+      suiteHostConfig,
+      environment: config.environment,
+      runId,
+    });
+    const caseLimit = isWebClientRuntimeId(
+      harnessOfHostConfig(suiteHostConfig),
+    )
+      ? createConcurrencyLimiter(1)
+      : sandboxSlots
+        ? createConcurrencyLimiter(sandboxSlots)
+        : undefined;
     const testPromises = tests.map((test) =>
       // Cap concurrent headless browsers for every model-free render check
       // (legacy widget_probe OR a unified case whose turns are all pinned),
@@ -4481,7 +4466,9 @@ export const runEvalSuiteWithAiSdk = async ({
         promptTurns: resolveEvalTestCase(test).promptTurns,
       })
         ? renderCheckLimit(() => runOne(test))
-        : runOne(test),
+        : caseLimit
+          ? caseLimit(() => runOne(test))
+          : runOne(test),
     );
 
     // Poll the run status: user cancellation, or a `timed_out` status set
@@ -4682,14 +4669,13 @@ export const runEvalSuiteWithAiSdk = async ({
         ) {
           throw result.reason;
         }
-        // Test failed entirely - log error but continue. A refusal by the
-        // organization's AI-key policy is the org's own configuration working
-        // as designed (choose an org model): recorded, never paged.
+        // Test failed entirely - log error but continue. A refusal the
+        // organization fixes in its own settings is recorded, never paged.
         if (
           result.reason instanceof ModelResolutionRefusalError &&
-          isOrgKeyPolicyRefusalCode(result.reason.code)
+          isOrgConfigurationRefusal(result.reason)
         ) {
-          logger.warn("[evals] Test case refused by the organization AI-key policy:", {
+          logger.warn("[evals] Test case refused by the organization's AI configuration:", {
             code: result.reason.code,
             message: result.reason.message,
           });
@@ -4741,10 +4727,7 @@ export const runEvalSuiteWithAiSdk = async ({
       await recorder.finalize({
         status: creditStop.exhausted ? "failed" : "completed",
         ...(creditStop.exhausted
-          ? {
-              notes:
-                "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews.",
-            }
+          ? { notes: creditStop.note ?? CREDITS_EXHAUSTED_NOTE }
           : {}),
         summary: {
           total: summary.total,
@@ -5247,6 +5230,23 @@ const runLocalIteration = async ({
   // Maps account-routed calls back to the server's tools. Declared out here
   // because the catch below records a failed turn's calls too.
   let accountRouting: AccountRouting | undefined;
+  // A pinned-only case (render check) with no authored predicates defaults to
+  // "the widget rendered" — the model-free equivalent of the legacy probe
+  // verdict. Mirrors the former runIterationWithAiSdk post-loop. Out here so
+  // the failure path declares the same checks.
+  const effectivePredicates = test.successPredicates?.length
+    ? test.successPredicates
+    : isPinnedOnly({ caseType: test.caseType, promptTurns })
+      ? ([{ type: "widgetRendered" }] as NonNullable<
+          typeof test.successPredicates
+        >)
+      : undefined;
+  // The checks' results once the verdict has measured them. Out here so a
+  // failure after that (finalization included) reports them as measured.
+  let measuredPredicateResults: PredicateResult[] | undefined;
+  // Failed interact / widget-DOM-assert steps. Out here so a failure after
+  // they were recorded still reports them on the `platform:widgetCheck` row.
+  let stepScriptedFailures: { toolName: string; reason: string }[] = [];
 
   try {
     // See `runIterationWithAiSdk`: adopt the chat-side pipeline inside the try
@@ -5273,7 +5273,12 @@ const runLocalIteration = async ({
         modelDefinition,
         systemPrompt: system,
         temperature,
+        requireToolApproval: appliedToolApproval(
+          "eval",
+          resolvedExecution.requireToolApproval,
+        ),
         respectToolVisibility: hostPolicy?.respectToolVisibility,
+        runUnloadedToolCalls: resolvedExecution.runUnloadedToolCalls,
         modelVisibleMcpToolResults: hostPolicy?.modelVisibleMcpToolResults,
         ...(resolvedExecution.harness
           ? { harness: resolvedExecution.harness }
@@ -5297,7 +5302,6 @@ const runLocalIteration = async ({
               },
             }
           : {}),
-        customProviders: modelRuntime!.customProviders,
         priorMessages: [],
       });
       // PR 4d review fix (CodeRabbit "Use the dedicated system: field in
@@ -5565,9 +5569,9 @@ const runLocalIteration = async ({
     // (the clean per-step contract the public /steps API projects).
     let stepResults: unknown[] = [];
     // §2: failed interact / widget-DOM-assert steps recorded in StepExecutionState
-    // (not in browser.scriptedCheckFailures) — folded into the verdict's
-    // scripted-check gate so they actually fail the iteration.
-    let stepScriptedFailures: { toolName: string; reason: string }[] = [];
+    // (not in browser.scriptedCheckFailures) are folded into the verdict's
+    // scripted-check gate, via `stepScriptedFailures` above, so they actually
+    // fail the iteration.
     // Drive the iteration through the sequential executeSteps engine: the handlers
     // wrap driveLocalEvalTurn (which mutates `acc`), so the post-loop verdict +
     // finishParams below consume `acc` + the executor's StepExecutionState.
@@ -5748,16 +5752,6 @@ const runLocalIteration = async ({
             }>,
           }
         : undefined;
-    // A pinned-only case (render check) with no authored predicates defaults to
-    // "the widget rendered" — the model-free equivalent of the legacy probe
-    // verdict. Mirrors the former runIterationWithAiSdk post-loop.
-    const effectivePredicates = test.successPredicates?.length
-      ? test.successPredicates
-      : isPinnedOnly({ caseType: test.caseType, promptTurns })
-        ? ([{ type: "widgetRendered" }] as NonNullable<
-            typeof test.successPredicates
-          >)
-        : undefined;
     // Flush the last turn's groups so a trailing turn's unrun checks still fail
     // closed, before the shared verdict reads scripted-check failures. (Flush
     // only mutates `scriptedCheckFailures`, which no earlier gate reads, so
@@ -5768,7 +5762,7 @@ const runLocalIteration = async ({
       selectedServers,
     );
     // Single verdict boundary — matcher + case predicates + ordering + all gates.
-    const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
+    const { evaluation, passed, predicateResults, platformGates } = buildEvalIterationVerdict({
       ...collectToolDeclarations(mcpClientManager, selectedServers),
       promptTurns,
       toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
@@ -5839,6 +5833,7 @@ const runLocalIteration = async ({
         }),
       }),
     });
+    measuredPredicateResults = predicateResults;
     const promptTraceSummaries = buildPromptTraceSummaries(
       evaluation,
       turnCheckResults,
@@ -5871,6 +5866,7 @@ const runLocalIteration = async ({
         );
     const finishParams = buildIterationFinishParams({
       iterationId,
+      platformGates,
       // The layer that failed, when this driver could tell — the local twin of
       // the hosted path's `stepError`. Without it a local-BYOK trial that died
       // on the model call finalizes uncategorised, which is the very failure
@@ -6190,6 +6186,31 @@ const runLocalIteration = async ({
     // success path.
     const failParams = buildIterationFinishParams({
       iterationId,
+      // The same platform rows a finished iteration declares, so this case's
+      // evaluation config does not change between iterations of one run.
+      platformGates: {
+        failOnToolError: failsOnToolError(advancedConfig),
+        trace: { messages: failMessages, spans: acc.capturedSpans },
+        pinnedToolErrors: acc.pinnedToolErrors,
+        iterationError: errorMessage ?? acc.iterationError ?? "iteration failed",
+        // Whatever the widget checks had already found, so the row still says
+        // why when a later step (finalization included) is what threw.
+        scriptedCheckFailures: [
+          ...browser.scriptedCheckFailures,
+          ...stepScriptedFailures,
+        ],
+      },
+      // The case's checks: a finished iteration declares them, and one case
+      // can't report two evaluation configs in a run. As measured when the
+      // verdict ran before the failure; unmeasured only when it never did.
+      predicateResults:
+        measuredPredicateResults ??
+        (effectivePredicates ?? []).map((predicate): PredicateResult => ({
+          predicate,
+          passed: false,
+          status: "error",
+          reason: "the iteration failed before this check ran",
+        })),
       // Same as the success path: carry the layer when the driver could tell.
       // This branch is the one a model-call failure most often ends on, so
       // omitting it here would leave the fix half-applied.
@@ -6348,7 +6369,6 @@ const runHostedIterationWithBrowser = async (
     convexAuthToken,
     modelId,
     modelDefinition,
-    orgModelConfig,
     endpointPath = "/stream",
     extraBodyFields,
     modelSelection,
@@ -6379,7 +6399,6 @@ const runHostedIterationWithBrowser = async (
     projectEnvironmentId,
     projectEnvironmentUnresolvedReason,
     pinnedSkillSource,
-    pinnedHarnessSkills,
     tasks,
     toolPolicy,
     toolAnnotations,
@@ -6405,7 +6424,10 @@ const runHostedIterationWithBrowser = async (
   });
   browser.setWidgetToolCallPolicy(evalWidgetServerCall(toolPolicyGate, mcpClientManager));
 
-
+  // A web client's turns act as the run's owner on the accounts it froze.
+  let webClientRun: WebClientRunContext | undefined;
+  /** Set when a web client's run could not be read; the iteration stops on it. */
+  let webClientRunUnread: string | undefined;
   // Check if run was cancelled before starting iteration
   if (runId !== null) {
     try {
@@ -6413,6 +6435,13 @@ const runHostedIterationWithBrowser = async (
         "testSuites:getTestSuiteRun" as any,
         { runId },
       );
+      const fromRow = webClientRunOfEvalRun({
+        harness: harnessOfHostConfig(suiteHostConfig),
+        runId,
+        run: currentRun,
+      });
+      if (fromRow === null) webClientRunUnread = WEB_CLIENT_RUN_UNREAD;
+      else webClientRun = fromRow;
       if (currentRun?.status === "cancelled") {
         return {
           // A cancelled / deleted-run iteration never executed — never score it
@@ -6452,6 +6481,16 @@ const runHostedIterationWithBrowser = async (
           },
           iterationId: undefined,
         };
+      }
+      // Without the run's row a web client's turn would act as this
+      // request's bearer on the project's default account, not as the run's
+      // owner on the accounts the run froze, so it never starts.
+      if (isWebClientRuntimeId(harnessOfHostConfig(suiteHostConfig))) {
+        logger.warn("[evals] a web client iteration could not read its run", {
+          runId,
+          error: errorMessage,
+        });
+        webClientRunUnread = WEB_CLIENT_RUN_UNREAD;
       }
     }
   }
@@ -6567,19 +6606,12 @@ const runHostedIterationWithBrowser = async (
 
   // Adopt the chat-side tool/system/temperature pipeline. Same change as the
   // local-AI-SDK runner: pulls in skill tools, progressive-discovery meta-
-  // tools, Anthropic name validation, and the assembled system prompt. The
+  // tools, the harness tool-name check, and the assembled system prompt. The
   // backend path serializes `prepared.allTools` to `toolDefs` below and
   // executes them locally on tool-call events. Run AFTER iteration creation
   // and inside a try/catch so prep failures persist as a failed iteration row
   // rather than rejecting the test case with no iteration record.
   //
-  // `customProviders` is derived from `orgModelConfig` so Anthropic name
-  // validation fires for hosted-org BYOK runs that use Anthropic-compatible
-  // custom providers (matches the local-AI-SDK runner, which threads the same
-  // shape via `resolveEvalModelRuntime`).
-  const backendCustomProviders = orgModelConfig
-    ? buildLlmRuntimeConfigFromOrgConfig(orgModelConfig).customProviders
-    : undefined;
   // PR 4d review fix (Codex P2 / Cursor Medium): hoisted up-front (above
   // the `prepareChatV2` try) so the catch path and the assignment
   // inside the try are both in scope. Stays `undefined` if prepareChatV2
@@ -6687,6 +6719,10 @@ const runHostedIterationWithBrowser = async (
         ? {
             authHeader: convexAuthToken,
             projectId: builtInTarget.projectId,
+            requireToolApproval: appliedToolApproval(
+              "eval",
+              resolvedExecution.requireToolApproval,
+            ),
             ...(browserApprovalDelivery ? { browserApprovalDelivery } : {}),
             ...(browserSecrets.length > 0
               ? {
@@ -6761,25 +6797,6 @@ const runHostedIterationWithBrowser = async (
           annotations: toolAnnotations ?? new Map(),
         })
       : undefined;
-  // The run's PINNED skills, in the shape the harness materializes on box.
-  //
-  // Built once at the run boundary (`prepareEvalRun` → `runPinnedSkillsToHarnessArtifacts`),
-  // where the full pin rows and their signed file URLs are in hand, so the
-  // supporting-file download happens before any model call rather than N times
-  // mid-run. Nothing is synthesized here: identity, the complete-envelope hash,
-  // preserved frontmatter and file bodies all come off the pin.
-  //
-  // Rides `pinnedHarnessSkills` — the FROZEN-RUN channel — and not
-  // `runtimeSkillsOverride`, which is the live-environment channel one rank
-  // below it in `selectHarnessSkillSource`. The distinction is the whole point:
-  // an eval run must deliver exactly what it pinned, and must not consult
-  // anything live.
-  //
-  // Forwarded when DEFINED rather than truthy: `[]` is a real answer ("this run
-  // delivers no skills", which is what `skillsOverride: "exclude"` means), and
-  // dropping it would leave the without-skills arm with whatever skills its box
-  // already holds.
-
   // Reproducible-eval sandbox for this hosted iteration (parity with the local
   // runner). Provisioned inside the prepareChatV2 try so a failure records a
   // clean failed iteration; released right after the agent run below.
@@ -6814,6 +6831,9 @@ const runHostedIterationWithBrowser = async (
   };
   let prepared: PrepareChatV2Result;
   try {
+    // First, so the failed read records as this iteration's setup failure
+    // before anything is provisioned and before any turn reaches the vendor.
+    if (webClientRunUnread) throw new Error(webClientRunUnread);
     throwIfDescriptionOverrideOnHarness(
       toolDescriptionOverride,
       resolvedExecution.harness,
@@ -6972,8 +6992,15 @@ const runHostedIterationWithBrowser = async (
     // NEVER A PERSONAL COMPUTER. A hosted harness turn with no box of its own
     // falls through to `resolveHarnessSandbox`, the acting member's computer.
     // Every path above boots one or throws; this is the last check before the
-    // first turn, so a future gap fails here instead of running there.
-    if (resolvedExecution.harness && !harnessExecutionTarget && !evalBox) {
+    // first turn, so a future gap fails here instead of running there. A web
+    // client has no box and no such fallback: `runHarnessTurn` hands its turn
+    // to the vendor's page before it resolves any sandbox.
+    if (
+      resolvedExecution.harness &&
+      !isWebClientRuntimeId(resolvedExecution.harness) &&
+      !harnessExecutionTarget &&
+      !evalBox
+    ) {
       throw new Error(
         "This eval runs on a harness but no disposable computer was " +
           "provisioned for it, so it was refused rather than run on a " +
@@ -7028,7 +7055,12 @@ const runHostedIterationWithBrowser = async (
       modelDefinition,
       systemPrompt,
       temperature,
+      requireToolApproval: appliedToolApproval(
+        "eval",
+        resolvedExecution.requireToolApproval,
+      ),
       respectToolVisibility: hostPolicy?.respectToolVisibility,
+        runUnloadedToolCalls: resolvedExecution.runUnloadedToolCalls,
       modelVisibleMcpToolResults: hostPolicy?.modelVisibleMcpToolResults,
       ...(resolvedExecution.harness
         ? { harness: resolvedExecution.harness }
@@ -7050,9 +7082,6 @@ const runHostedIterationWithBrowser = async (
               enabled: resolvedExecution.progressiveToolDiscovery,
             },
           }
-        : {}),
-      ...(backendCustomProviders?.length
-        ? { customProviders: backendCustomProviders }
         : {}),
       skills: turnSkills.skills,
       priorMessages: [],
@@ -7126,7 +7155,16 @@ const runHostedIterationWithBrowser = async (
     }
     const errorMessage = error instanceof Error ? error.message : String(error);
     const setupCode = harnessFailureEvidenceOf(error)?.code;
-    logger.error("[evals] iteration setup failed (prepareChatV2)", error);
+    // A used-up trial is the plan's answer, not a fault: it stays out of Sentry.
+    const trialRefused = setupCode === NATIVE_HARNESS_TRIAL_EXHAUSTED_CODE;
+    if (trialRefused) {
+      logger.info(
+        "[evals] iteration setup refused: native harness trial used up",
+        { code: setupCode },
+      );
+    } else {
+      logger.error("[evals] iteration setup failed (prepareChatV2)", error);
+    }
     if (toolDescriptionOverride) {
       stampDescriptionExperiment(
         iterationMetadataBase,
@@ -7180,6 +7218,7 @@ const runHostedIterationWithBrowser = async (
     failedEvaluation.passed = false;
     return {
       creditsExhausted: isCreditExhaustion(error),
+      ...(trialRefused ? { nativeHarnessTrialRefusal: errorMessage } : {}),
       evaluation: failedEvaluation,
       iterationId,
       ...(toolPolicyGate?.blocks.length
@@ -7390,6 +7429,7 @@ const runHostedIterationWithBrowser = async (
           },
         }
       : {}),
+    ...(webClientRun ? { webClientRun } : {}),
     // The sealed policy + the sink that accounts its refusals. Blocks land on
     // the SAME gate the in-process path records into, so `policyBlocks` and the
     // matcher exclusion below cover both origins with no second code path.
@@ -7408,11 +7448,13 @@ const runHostedIterationWithBrowser = async (
           },
         }
       : {}),
-    // The run's FROZEN skills, materialized on box. Forwarded when DEFINED,
-    // not when truthy: `[]` says "this run delivers no skills" (the
-    // `skillsOverride: "exclude"` arm), while absent leaves the box with
-    // whatever skills it already holds, an earlier turn's included.
-    ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
+    // The iteration's skill plan, which a harness turn carries out: a frozen
+    // run's skills on its box, `[]` for the without-skills arm, and an
+    // unpinned turn's box left as it is. MCPJam's agent builds its tools from
+    // the same plan.
+    ...(turnSkills.skills.runtime.kind === "harness"
+      ? { skillPlan: turnSkills.skills }
+      : {}),
     // Each harness turn's skills event, from what its box writer wrote.
     ...(turnSkills.skills.runtime.kind === "harness"
       ? {
@@ -7632,7 +7674,7 @@ const runHostedIterationWithBrowser = async (
     mcpClientManager,
     selectedServers,
   );
-  const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
+  const { evaluation, passed, predicateResults, platformGates } = buildEvalIterationVerdict({
     ...collectToolDeclarations(mcpClientManager, selectedServers),
     promptTurns,
     toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
@@ -7707,6 +7749,7 @@ const runHostedIterationWithBrowser = async (
   // transcript).
   const finishParams = buildIterationFinishParams({
     iterationId,
+    platformGates,
     ...(runId !== null ? { runId: String(runId) } : {}),
     ...(gradingMode ? { gradingMode } : {}),
     scoreMatchOptions: scoreMatchOptionsFor(test),
@@ -7735,6 +7778,7 @@ const runHostedIterationWithBrowser = async (
     ...(skillsAtTurnForPersist ? { skillsAtTurn: skillsAtTurnForPersist } : {}),
     spans: capturedSpans,
     requestPayloads,
+    nativeHarness: Boolean(resolvedExecution.harness),
     harnessMcpByPromptIndex,
     prompts: promptTraceSummaries,
     // Where the friction signals read their tool results from. THREE TIERS,

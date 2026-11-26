@@ -51,6 +51,18 @@ const dummy: EvalRunAccount = {
   name: "Dummy",
 };
 
+const uploaded: EvalRunAccount = {
+  serverId: "srv-asana",
+  kind: "shared",
+  connectionId: "conn-uploaded",
+  name: "test-automation-1",
+  tokenStoredBy: "Ana Ruiz",
+  tokenStoredAt: 1_700_000_000_000,
+  tokenUploaded: true,
+  tokenExpiresAt: 1_700_003_600_000,
+  identity: { source: "token", subject: "svc-automation" },
+};
+
 function makeRun(overrides: Partial<EvalSuiteRun> = {}): EvalSuiteRun {
   return {
     _id: "run-1",
@@ -130,6 +142,23 @@ describe("the run header's account facts", () => {
     expect(screen.queryByTestId("evaluate-run-account-facts")).toBeNull();
   });
 
+  it("shows who uploaded each account's token, when it expires and whose it is", () => {
+    renderPage(makeRun({ accountsAtRun: [uploaded, dummy] }));
+    const credentials = screen.getByTestId("evaluate-run-account-credentials");
+    expect(credentials.children).toHaveLength(1);
+    const line = credentials.textContent ?? "";
+    expect(line).toMatch(
+      /^Asana · test-automation-1 · Uploaded .+ by Ana Ruiz · Expires .+ · Identity: svc-automation, from the token$/,
+    );
+    expect(line).not.toContain("@");
+  });
+
+  it("leaves out Credentials for a run that recorded no token facts", () => {
+    renderPage(makeRun());
+    expect(screen.queryByText("Credentials")).toBeNull();
+    expect(screen.queryByTestId("evaluate-run-account-credentials")).toBeNull();
+  });
+
   it("shows nothing while the rollout flag is off", () => {
     state.flag = false;
     renderPage(makeRun());
@@ -188,6 +217,15 @@ describe("the Recent runs account columns", () => {
     );
     expect(screen.getByTestId("run-history-accounts")).toHaveTextContent(
       "Asana Dummy",
+    );
+  });
+
+  it("puts each account's token facts in the Accounts cell's tooltip", () => {
+    renderTable(makeRun({ accountsAtRun: [uploaded] }), true);
+    const cell = screen.getByTestId("run-history-accounts");
+    expect(cell).toHaveTextContent("Asana test-automation-1");
+    expect(cell.getAttribute("title")).toMatch(
+      /^Asana · test-automation-1 · Uploaded .+ by Ana Ruiz/,
     );
   });
 

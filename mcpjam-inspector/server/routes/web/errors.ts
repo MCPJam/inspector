@@ -1034,3 +1034,17 @@ export function parseWithSchema<T>(schema: z.ZodSchema<T>, data: unknown): T {
   }
   return parsed.data;
 }
+
+/** Only promote errors whose message was constructed by credential handling. */
+export function credentialFailureMessage(error: unknown): string | undefined {
+  const seen = new Set<unknown>();
+  while (error instanceof Error && !seen.has(error)) {
+    seen.add(error);
+    if (error instanceof WebRouteError &&
+      (error.details?.uploadedAccount === true || error.details?.credentialRefusal)) {
+      return scrubDeliveredSecretsDeep(error.message);
+    }
+    error = error.cause;
+  }
+  return undefined;
+}

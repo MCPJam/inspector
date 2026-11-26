@@ -113,6 +113,17 @@ vi.mock("../../harness-session-state.js", async (importOriginal) => ({
   commitHarnessSessionState: vi.fn(async () => true),
   heartbeatHarnessSessionState: vi.fn(async () => "ok"),
   releaseHarnessSessionState: vi.fn(async () => {}),
+  // A chat turn binds its lane's session handles first. The broker stand-in
+  // installs no session grant beside the lease, so the turn then keeps
+  // per-turn tokens, as it does on an origin egress does not inject for.
+  bindHarnessSessionTurn: vi.fn(
+    async ({ servers }: { servers: Array<{ serverId: string }> }) => ({
+      ok: true,
+      handles: Object.fromEntries(
+        servers.map(({ serverId }) => [serverId, `session-${serverId}`]),
+      ),
+    }),
+  ),
 }));
 
 vi.mock("../../runtime-skills.js", async (importOriginal) => ({
@@ -243,6 +254,8 @@ function probeManager(
       id === serverId
         ? { url: new URL("http://probe.invalid/mcp") }
         : undefined,
+    getAllToolAnnotations: (id: string) =>
+      id === serverId ? { [toolName]: {} } : {},
     getToolsForAiSdk: async (ids: string[]) => {
       if (!ids.includes(serverId)) return {};
       const probe = tool({
@@ -552,7 +565,11 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
         if (warmManager) admitWarmChatManager(warmManager, "org-e2e", false);
         const manager = warmManager ?? (harness === "codex"
           ? probeManager(spec.mcpServerId, spec.mcpToolName, probeCalls)
-          : { getServerConfig: (id: string) => id === spec.mcpServerId ? { url: mocks.mcpUrl } : undefined });
+          : {
+              getServerConfig: (id: string) => id === spec.mcpServerId ? { url: mocks.mcpUrl } : undefined,
+              // The server's tool list, which the turn maps Claude Code's renamed tools back to.
+              getAllToolAnnotations: (id: string) => (id === spec.mcpServerId ? { [spec.mcpToolName]: {} } : {}),
+            });
         const result = await runHarnessTurn(
           {
             messages,

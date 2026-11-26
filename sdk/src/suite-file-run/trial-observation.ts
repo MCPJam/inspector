@@ -12,6 +12,7 @@
  */
 
 import type { IterationResult } from "../EvalTest.js";
+import type { PromptResult } from "../PromptResult.js";
 import type { EvaluationConfigSnapshot } from "../contract/types.js";
 import {
   evalV2TrialObservation,
@@ -83,6 +84,19 @@ function toolCallArguments(value: unknown): {
   };
 }
 
+function reportToolCalls(prompts: PromptResult[]): SuiteFileIterationEvidence["toolCalls"] {
+  return prompts.flatMap((prompt) => [
+    ...actualToolCallsFromPrompts([prompt]).map((call) => ({
+      toolName: call.toolName,
+      ...toolCallArguments(call.arguments),
+    })),
+    ...prompt.getMalformedToolCalls().map((call) => ({
+      toolName: call.toolName,
+      ...toolCallArguments(call.input),
+    })),
+  ]);
+}
+
 export function observeIteration(args: {
   iteration: IterationResult;
   iterationNumber: number;
@@ -126,12 +140,7 @@ export function observeIteration(args: {
     ...(observation.evaluatorError ? { evaluatorError: true } : {}),
     ...(error !== undefined ? { error } : {}),
     ...(args.refusal !== undefined ? { refusal: args.refusal } : {}),
-    toolCalls: iteration.captureError
-      ? []
-      : actualToolCallsFromPrompts(prompts).map((call) => ({
-          toolName: call.toolName,
-          ...toolCallArguments(call.arguments),
-        })),
+    toolCalls: iteration.captureError ? [] : reportToolCalls(prompts),
     policyBlocks: [...args.policyBlocks],
     scores: (iteration.scores ?? []).map((score) => {
       const role = definitions.get(score.scorerId)?.role;

@@ -63,7 +63,7 @@ describe("Case run setup", () => {
     rerender(
       <CaseRunSetup {...props} onStart={onStart} onOpenChange={onOpenChange} />,
     );
-    expect(screen.getByRole("dialog", { name: "Setup Run" })).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "Set up run" })).toBeVisible();
     expect(
       screen.getByRole("spinbutton", { name: "Iterations per case" }),
     ).toBeVisible();

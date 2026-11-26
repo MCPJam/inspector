@@ -4,7 +4,10 @@ import type {
 } from "../conformance-outcome.js";
 import type { ConformanceProfileStamp } from "../conformance-profile.js";
 import type { MCPServerConfig } from "../mcp-client-manager/index.js";
-import type { MCPReadinessWarning } from "../mcp-conformance/types.js";
+import type {
+  MCPPassedAdvice,
+  MCPReadinessWarning,
+} from "../mcp-conformance/types.js";
 import type { TasksWire } from "../mcp-client-manager/tasks-dispatch.js";
 
 export const MCP_TASKS_CHECK_CATEGORIES = [
@@ -60,7 +63,17 @@ export type MCPTasksToolCheckId = (typeof MCP_TASKS_TOOL_CHECK_IDS)[number];
 export function isTasksToolCheck(id: string): id is MCPTasksToolCheckId {
   return MCP_TASKS_TOOL_CHECK_IDS.some((check) => check === id);
 }
+export function taskCheckUsesInput(id: string): boolean {
+  return [
+    "tasks-ttl-shape",
+    "tasks-inline-result",
+    "tasks-status-payload-shape",
+    "tasks-ttl-integer-shape",
+    "tasks-update-ack-shape",
+  ].includes(id);
+}
 export interface MCPTasksToolSetup {
+  inputResponses?: Record<string, unknown>;
   toolName: string;
   toolArguments?: Record<string, unknown>;
 }
@@ -121,6 +134,11 @@ export interface MCPTasksUncheckedAdvice {
   id: MCPTasksReadinessId;
   title: string;
   reason: string;
+}
+
+/** Advice the run checked and the server already meets. */
+export interface MCPTasksPassedAdvice extends Omit<MCPPassedAdvice, "id"> {
+  id: MCPTasksReadinessId;
 }
 
 export type MCPTasksCheckStatus = "passed" | "failed" | "skipped";
@@ -252,6 +270,8 @@ export interface MCPTasksConformanceResult {
   readiness?: MCPTasksReadinessWarning[];
   /** Picked advice this run could not judge. Absent when there is none. */
   uncheckedAdvice?: MCPTasksUncheckedAdvice[];
+  /** Advice the run checked and found nothing to change. Absent when none. */
+  passedAdvice?: MCPTasksPassedAdvice[];
   summary: string;
   durationMs: number;
   categorySummary: Record<

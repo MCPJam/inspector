@@ -573,10 +573,10 @@ const requestInsightsSchema = z
 //
 // Answers **202**: generation is scheduled, not done. Poll the GET above.
 //
-// SPENDS, and now in two ways. The org's `insightsPerDay` ledger is shared with
-// user-testing window insights, so a caller that burns it here has taken it
-// from there too — and the generation itself DEBITS the org's model budget
-// (it used to be priced and charged to nobody).
+// Included with MCPJam: the generation is platform-paid and charges no
+// credits. It counts against the org's `insightsPerDay` ledger, which is
+// shared with study, user-testing and eval run insights, so a caller that
+// burns it here has taken it from there too.
 //
 // Two 429s can come back, and they mean different waits: the per-minute burst
 // brake (`rate_limited`, seconds) and the daily ledger

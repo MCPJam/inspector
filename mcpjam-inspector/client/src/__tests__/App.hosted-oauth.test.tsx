@@ -461,9 +461,6 @@ vi.mock("../components/LearningTab", () => ({
 vi.mock("../components/TasksTab", () => ({
   TasksTab: () => <div />,
 }));
-vi.mock("../components/ChatTabV2", () => ({
-  ChatTabV2: () => <div />,
-}));
 vi.mock("../components/EvalsTab", () => ({
   EvalsTab: () => <div data-testid="evals-tab">Evals Tab</div>,
 }));
@@ -3786,6 +3783,37 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
+  it("leaves an owner opening a request email on the request instead of Home", async () => {
+    // Same first-run-eligible guest, as a signed-out owner opening the
+    // approve link from a request email in a fresh browser. Without the
+    // guard, onboarding sends them to Home and the request is gone.
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState(
+      {},
+      "",
+      "/access-requests/req_1?decision=approve",
+    );
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mcp-sidebar")).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe("/access-requests/req_1");
+    expect(window.location.search).toBe("?decision=approve");
+    expect(
+      screen.queryByRole("heading", { name: "Welcome to MCPJam" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows first-run onboarding on Home from the default route", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
@@ -6028,46 +6056,25 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("renders legacy Suites mode when enabled", async () => {
-    clearHostedOAuthPendingState();
-    clearScenarioSession();
-    window.history.replaceState({}, "", "/evals");
-    mockHandleOAuthCallback.mockReset();
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) =>
-        flag === "playground-enabled" || flag === "evaluate-enabled",
-    );
+  it.each(["/evals", "/evals/runs"])(
+    "redirects %s to Evaluate",
+    async (legacyPath) => {
+      clearHostedOAuthPendingState();
+      clearScenarioSession();
+      window.history.replaceState({}, "", legacyPath);
+      mockHandleOAuthCallback.mockReset();
 
-    render(<App />);
+      render(<App />);
 
-    await waitFor(() => {
-      expect(screen.getByTestId("evals-tab")).toBeInTheDocument();
-    });
+      await waitFor(() => {
+        expect(screen.getByTestId("evaluate-tab")).toBeInTheDocument();
+      });
 
-    expect(window.location.pathname).toBe("/evals");
-    expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
-  });
-
-  it("renders legacy Runs mode when enabled", async () => {
-    clearHostedOAuthPendingState();
-    clearScenarioSession();
-    window.history.replaceState({}, "", "/evals/runs");
-    mockHandleOAuthCallback.mockReset();
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) =>
-        flag === "playground-enabled" || flag === "evaluate-enabled",
-    );
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("ci-evals-tab")).toBeInTheDocument();
-    });
-
-    expect(window.location.pathname).toBe("/evals/runs");
-    expect(screen.queryByText("Loading Runs...")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
-  });
+      expect(window.location.pathname).toBe("/evaluate");
+      expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
+    },
+  );
 
   it("keeps a conformance share link open", async () => {
     clearHostedOAuthPendingState();

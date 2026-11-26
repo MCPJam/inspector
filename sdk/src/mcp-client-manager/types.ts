@@ -21,6 +21,7 @@ import type {
 // beta.4 moved the stdio transport params to the `/stdio` subpath.
 import type { StdioServerParameters } from "@modelcontextprotocol/client/stdio";
 import type { RetryPolicy } from "../retry.js";
+import type { EventsWireProfile } from "./events-ext-guards.js";
 import type {
   RefreshTokenOAuthProvider,
   RefreshTokensRotatedHandler,
@@ -31,6 +32,7 @@ import type {
 export type { RefreshTokensRotatedHandler } from "./refresh-token-auth-provider.js";
 import type { TraceContextProvider } from "./trace-context.js";
 import type { HttpExchangeLogger } from "./http-exchange-log.js";
+import type { FeatureObserver } from "./feature-observer.js";
 import type { ToolSet } from "ai";
 
 import type {
@@ -131,7 +133,10 @@ export type CacheEventLogger = (event: CacheHitEvent) => void;
  *    (`HttpServerConfig.versionNegotiation`).
  */
 export type ConfiguredNegotiationMode =
-  "auto" | "modern-pin" | "legacy" | "legacy-first";
+  | "auto"
+  | "modern-pin"
+  | "legacy"
+  | "legacy-first";
 
 /**
  * One connection-attempt outcome, emitted by the manager for Phase 5
@@ -228,6 +233,8 @@ export type ClientCapabilityOptions = NonNullable<
  * Base configuration shared by all server types
  */
 export type BaseServerConfig = {
+  /** Select an Events wire contract explicitly. Defaults to the server's Beta declaration, then legacy. */
+  eventsWireProfile?: EventsWireProfile;
   /** Legacy merge-style client capabilities to advertise to this server */
   capabilities?: ClientCapabilityOptions;
   /**
@@ -486,6 +493,8 @@ export type StdioServerConfig = BaseServerConfig & {
 };
 
 export type UnauthorizedRefreshResult = {
+  /** Explain a rejected replacement without requesting another credential. */
+  onRetryRejected?: (error: unknown) => never;
   accessToken: string;
 };
 
@@ -746,6 +755,11 @@ export interface MCPClientManagerOptions {
   defaultLogJsonRpc?: boolean;
   /** Global JSON-RPC logger */
   rpcLogger?: RpcLogger;
+  /**
+   * Receives the catalog feature ids each JSON-RPC frame shows, never the
+   * frame itself. Unset, no frame is classified.
+   */
+  featureObserver?: FeatureObserver;
   /** Global HTTP-exchange (headers-only) logger. See `httpLogger` on the
    *  server config for why this is a separate channel from `rpcLogger`. */
   httpLogger?: HttpExchangeLogger;

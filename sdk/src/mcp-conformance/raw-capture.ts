@@ -156,6 +156,49 @@ export function parseSseEvents(body: string): RawSseEvent[] {
   return events;
 }
 
+/**
+ * Complete SSE frames sitting in `buffer`, plus the unconsumed remainder. For
+ * a reader that consumes a stream as it arrives: a frame only counts once its
+ * blank-line delimiter has arrived.
+ */
+export function drainFrames(buffer: string): {
+  frames: RawSseEvent[];
+  rest: string;
+} {
+  const normalized = buffer.replace(/\r\n/g, "\n");
+  const lastDelimiter = normalized.lastIndexOf("\n\n");
+  if (lastDelimiter === -1) {
+    return { frames: [], rest: normalized };
+  }
+  const complete = normalized.slice(0, lastDelimiter + 2);
+  return {
+    frames: parseSseEvents(complete),
+    rest: normalized.slice(lastDelimiter + 2),
+  };
+}
+
+/**
+ * The reconnection time a stream asked for with the SSE `retry:` field, in
+ * milliseconds: the last valid one, or undefined when there is none. The SSE
+ * standard ignores a value that is not all ASCII digits.
+ *
+ * Read off the raw text rather than added to {@link parseSseEvents}: a frame
+ * that holds only `retry:` dispatches no event, and keeping the parser as it
+ * is keeps every check's frame count as it is. A line counts only once its
+ * line break has arrived, as in the SSE parser: the last piece of a stream
+ * that broke mid-line is not a field yet.
+ */
+export function sseRetryMs(bodyText: string): number | undefined {
+  let retry: number | undefined;
+  const lines = bodyText.replace(/\r\n?/g, "\n").split("\n");
+  for (const line of lines.slice(0, -1)) {
+    if (!line.startsWith("retry:")) continue;
+    const value = line.slice("retry:".length).replace(/^ /, "");
+    if (/^\d+$/.test(value)) retry = Number(value);
+  }
+  return retry;
+}
+
 async function captureRequest(
   input: RequestInfo | URL,
   init?: RequestInit

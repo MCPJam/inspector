@@ -128,4 +128,24 @@ describe("execution control client", () => {
     ).rejects.toThrow("evidence_too_large");
     expect(transport).not.toHaveBeenCalled();
   });
+  it("keeps the control plane's refusal code as the reason", async () => {
+    const refuse = (body: BodyInit) =>
+      createExecutionControl({
+        owner,
+        token: "model-grant",
+        baseUrl: "https://backend.example",
+        fetch: vi.fn<typeof fetch>(async () => new Response(body, { status: 409 })),
+      }).prepare(intent);
+    await expect(
+      refuse(JSON.stringify({ code: "harness_execution_scope_mismatch" })),
+    ).rejects.toMatchObject({
+      code: "control_409",
+      reason: "harness_execution_scope_mismatch",
+      message: "Forwarding execution refused (control_409).",
+    });
+    await expect(refuse("not json")).rejects.toMatchObject({
+      code: "control_409",
+      reason: undefined,
+    });
+  });
 });
