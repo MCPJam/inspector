@@ -53,7 +53,7 @@ describe("useCreditBalance", () => {
       paidCreditsRemaining: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 65,
-      freeDailyResetAt: 1_777_777_777_000,
+      freeDailyResetAt: 4_102_444_800_000,
       freeDailyCreditsRemaining: 7,
       freeDailyCreditsTotal: 20,
       walletLocked: false,
@@ -108,7 +108,7 @@ describe("useCreditBalance", () => {
       paidCreditsRemaining: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 65,
-      freeDailyResetAt: 1_777_777_777_000,
+      freeDailyResetAt: 4_102_444_800_000,
       freeDailyCreditsRemaining: 7,
       freeDailyCreditsTotal: 20,
       walletLocked: false,
@@ -227,7 +227,7 @@ describe("useCreditBalance", () => {
       paidCreditsRemaining: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 65,
-      freeDailyResetAt: 1_777_777_777_000,
+      freeDailyResetAt: 4_102_444_800_000,
       freeDailyCreditsRemaining: 7,
       freeDailyCreditsTotal: 20,
       walletLocked: false,
@@ -264,7 +264,7 @@ describe("useCreditBalance", () => {
       paidCreditsRemaining: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 100,
-      freeDailyResetAt: 1_777_777_777_000,
+      freeDailyResetAt: 4_102_444_800_000,
       freeDailyCreditsRemaining: 0,
       freeDailyCreditsTotal: 20,
       walletLocked: false,
@@ -290,7 +290,7 @@ describe("useCreditBalance", () => {
       paidCreditsRemaining: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 100,
-      freeDailyResetAt: 1_777_777_777_000,
+      freeDailyResetAt: 4_102_444_800_000,
       freeDailyCreditsRemaining,
       freeDailyCreditsTotal: 20,
       walletLocked: false,
@@ -473,6 +473,21 @@ describe("per-call credit minimum", () => {
       expect(result.current?.belowCallMinimum).toBe(false);
     });
 
+    it("returns the same lock across renders with an unchanged balance", () => {
+      mocks.queryResult = {
+        billingModel: "daily",
+        freeDailyCreditsRemaining: 4,
+        paidCreditsRemaining: 0,
+        freeDailyResetAt: Date.now() + 3 * 60 * 60 * 1000,
+        perCallMinimumCredits: 25,
+      };
+      const { result, rerender } = renderHook(() => useOutOfCreditsLock());
+      const first = result.current;
+      expect(first).not.toBeNull();
+      rerender();
+      expect(result.current).toBe(first);
+    });
+
     it("unlocks once the bucket resets above the minimum", () => {
       mocks.queryResult = {
         billingModel: "daily",
@@ -538,5 +553,23 @@ describe("daily bucket reset", () => {
     expect(result.current).toBe(false);
     unmount();
     vi.useRealTimers();
+  });
+
+  it("unlocks a view that mounts after the reset passed", () => {
+    mocks.convexAuth.isAuthenticated = true;
+    mocks.convexAuth.isLoading = false;
+    mocks.workosAuth.user = { id: "daily-owner" };
+    mocks.workosAuth.isLoading = false;
+    mocks.queryResult = {
+      billingModel: "daily",
+      freeDailyCreditsRemaining: 4,
+      freeDailyCreditsTotal: 300,
+      freeDailyResetAt: Date.now() - 1000,
+      paidCreditsRemaining: 0,
+      perCallMinimumCredits: 25,
+    };
+    mocks.useQuery.mockImplementation(() => mocks.queryResult);
+    const { result } = renderHook(() => useOutOfCredits("daily-org"));
+    expect(result.current).toBe(false);
   });
 });

@@ -199,6 +199,25 @@ describe("allModelsOutOfCredits", () => {
     ).toBe(true);
   });
 
+  it("never blocks a saved own-key selection that shares a hosted row's id", () => {
+    const org = {
+      model: "openai/gpt-5-mini",
+      provider: "openai",
+      selection: {
+        modelId: "openai/gpt-5-mini",
+        source: "org",
+        connectionRef: { kind: "org", id: "conn-1" },
+      },
+    };
+    expect(allModelsOutOfCredits([org], models)).toBe(false);
+    expect(
+      allModelsOutOfCredits(
+        [{ ...org, selection: { modelId: org.model, source: "hosted" } }],
+        models
+      )
+    ).toBe(true);
+  });
+
   it("never blocks a provider that has no row of its own", () => {
     expect(
       allModelsOutOfCredits(

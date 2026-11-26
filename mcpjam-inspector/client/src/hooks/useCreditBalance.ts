@@ -140,22 +140,27 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
  * `freeDailyResetAt`, computing the balance from the clock when queried.
  * Nothing is written at the reset, so the subscription does not re-run and an
  * open tab would keep the old window's balance and its model lock. Wake at the
- * reset and read the bucket as refilled.
+ * reset and read the bucket as refilled. A view that mounts after the reset
+ * reads the same cached snapshot, so a reset already past counts as crossed.
  */
 function useDailyReset(
   value: CreditBalanceState | undefined,
 ): CreditBalanceState | undefined {
   const resetAt = value?.billingModel === "daily" ? value.freeDailyResetAt : 0;
-  const [crossedResetAt, setCrossedResetAt] = useState<number | null>(null);
+  const [now, setNow] = useState(Date.now);
   useEffect(() => {
+    if (!resetAt) return;
     const wait = resetAt - Date.now();
-    if (!resetAt || wait <= 0) return;
-    const timer = setTimeout(() => setCrossedResetAt(resetAt), wait + 1);
+    if (wait <= 0) {
+      setNow(Date.now());
+      return;
+    }
+    const timer = setTimeout(() => setNow(Date.now()), wait + 1);
     return () => clearTimeout(timer);
   }, [resetAt]);
   return useMemo(
     () =>
-      value && resetAt > 0 && crossedResetAt === resetAt
+      value && resetAt > 0 && resetAt <= now
         ? {
             ...value,
             freeDailyCreditsRemaining: value.freeDailyCreditsTotal,
@@ -163,7 +168,7 @@ function useDailyReset(
             freeDailyResetAt: resetAt + MS_PER_DAY,
           }
         : value,
-    [value, resetAt, crossedResetAt],
+    [value, resetAt, now],
   );
 }
 
@@ -336,7 +341,20 @@ export function useOutOfCreditsLock(
       organizationId ?? (user ? readStoredActiveOrganizationId(user.id) : null),
     includeGuests: true,
   });
-  if (!outOfCredits) return null;
+  const lock = outOfCredits ? outOfCreditsLockFor(balance) : null;
+  const reason = lock?.reason ?? null;
+  const belowCallMinimum = lock?.belowCallMinimum ?? false;
+  // Model lists are composed from this lock, so a new object on every render
+  // would rebuild them and rerun every effect keyed on the selected model.
+  return useMemo(
+    () => (reason === null ? null : { reason, belowCallMinimum }),
+    [reason, belowCallMinimum],
+  );
+}
+
+function outOfCreditsLockFor(
+  balance: CreditBalanceState | undefined,
+): OutOfCreditsLock {
   if (!balance) {
     return { reason: "Out of MCPJam credits", belowCallMinimum: false };
   }

@@ -103,11 +103,16 @@ export function applyOutOfCreditsLocks(
  * Whether every model a run would use is locked by {@link applyOutOfCreditsLocks},
  * so the run could only be refused. A hosted row and a BYOK row can share an
  * id, so a model counts as locked only when every row it can mean is locked
- * (narrowed to its provider when one is known). No known model, or any model
- * still usable, keeps the run available.
+ * (narrowed to its provider when one is known). A saved own-key selection
+ * (org, local, legacy) never spends credits, whatever rows share its id. No
+ * known model, or any model still usable, keeps the run available.
  */
 export function allModelsOutOfCredits(
-  models: readonly { model: string; provider?: string }[],
+  models: readonly {
+    model: string;
+    provider?: string;
+    selection?: { source?: string } | null;
+  }[],
   availableModels: readonly Pick<
     ModelDefinition,
     "id" | "provider" | "disabledReasonCode"
@@ -115,7 +120,8 @@ export function allModelsOutOfCredits(
 ): boolean {
   return (
     models.length > 0 &&
-    models.every(({ model, provider }) => {
+    models.every(({ model, provider, selection }) => {
+      if (selection?.source && selection.source !== "hosted") return false;
       // An older case can name a catalog model without its provider prefix.
       const ids =
         provider && !model.startsWith(`${provider}/`)
