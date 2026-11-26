@@ -73,7 +73,7 @@ export function CaniuseCapabilitySearch({
       className={cn(
         "relative flex w-full flex-col rounded-md",
         hero
-          ? "min-w-0 max-w-[13em] flex-[1_1_9em] bg-transparent"
+          ? "min-w-0 max-w-[13em] shrink grow basis-[9em] bg-transparent"
           : "min-w-28 flex-1 basis-full border border-border bg-background sm:basis-40",
       )}
       onBlur={(event) => {
