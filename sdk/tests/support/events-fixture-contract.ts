@@ -82,6 +82,13 @@ export interface EventsFixtureMisbehavior {
 
 export interface EventsFixtureOptions {
   beta?: boolean;
+  /**
+   * `false` leaves the Events declaration out of the server's capabilities
+   * (the `events/*` handlers stay registered), so a test can prove the client
+   * refuses to send `events/*` to a server that did not advertise them.
+   * Default true.
+   */
+  declareEvents?: boolean;
   onToolCall?: () => Promise<void>;
   /** Labelled non-conformant: accept `http://` callback URLs. */
   allowInsecureCallbacks?: boolean;

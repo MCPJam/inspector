@@ -272,9 +272,11 @@ export async function startEventsFixture(
     const server = new Server(EVENTS_FIXTURE_INFO, {
       // `events` is not in the server SDK's capability type; it must still
       // reach the wire, which is the whole point of the capture seam.
-      capabilities: options.beta
-        ? { tools: {}, extensions: { "io.modelcontextprotocol/events": { listChanged: true } } }
-        : { tools: {}, events: { listChanged: true } } as never,
+      capabilities: options.declareEvents === false
+        ? { tools: {} }
+        : options.beta
+          ? { tools: {}, extensions: { "io.modelcontextprotocol/events": { listChanged: true } } }
+          : { tools: {}, events: { listChanged: true } } as never,
     });
     const principal = principalOf(ctx.requestInfo);
     const record = (method: string, params: unknown) => {

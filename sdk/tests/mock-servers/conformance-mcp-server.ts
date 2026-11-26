@@ -20,6 +20,28 @@ export const CONFORMANCE_UI_TOOL_NAME = "test_ui_dashboard";
 export const CONFORMANCE_UI_RESOURCE_URI = "ui://test/dashboard";
 const CONFORMANCE_UI_RESOURCE_MIME_TYPE = "text/html;profile=mcp-app";
 
+/**
+ * One HTTP request as the server received it, for tests that assert what a
+ * client SENT. Recorded server-side on purpose: the localhost security checks
+ * use `node:http` directly, so a capturing `fetch` never sees them.
+ */
+export interface ConformanceMockRequest {
+  method: string;
+  /** Path and query, as the request line carried it. */
+  url: string;
+  headers: http.IncomingHttpHeaders;
+  /** The parsed JSON-RPC message. Undefined for a request with no body, or one refused before it was read. */
+  body?: unknown;
+  /** `performance.now()` when the request arrived. */
+  startedAt: number;
+  /** `performance.now()` when the response finished or the connection closed. */
+  endedAt?: number;
+  /** For an `initialize` that opened a session: the id the server minted. */
+  mintedSessionId?: string;
+  /** The response's `Content-Type`, once it was sent. */
+  responseContentType?: string;
+}
+
 type ConformanceServerOptions = {
   omitTools?: string[];
   omitPrompts?: string[];
@@ -30,6 +52,11 @@ type ConformanceServerOptions = {
   omitToolDescriptions?: string[];
   omitPromptDescriptions?: string[];
   statelessTransport?: boolean;
+  /**
+   * Called once per request, as it arrives. The server fills the record in
+   * later (`body`, `endedAt`, `mintedSessionId`), so keep the reference.
+   */
+  onRequest?: (request: ConformanceMockRequest) => void;
 };
 
 function shouldOmitDescription(
@@ -785,7 +812,41 @@ export async function startConformanceMockServer(
   const servers = new Map<string, McpServer>();
 
   const httpServer = http.createServer(async (req, res) => {
+    const record: ConformanceMockRequest | undefined = options.onRequest
+      ? {
+          method: req.method ?? "",
+          url: req.url ?? "",
+          headers: req.headers,
+          startedAt: performance.now(),
+        }
+      : undefined;
+    if (record) {
+      options.onRequest!(record);
+      // Headers passed straight to `writeHead` never reach `getHeader`, so
+      // read the content type off the call itself.
+      const writeHead = res.writeHead.bind(res) as (...args: unknown[]) => http.ServerResponse;
+      (res as { writeHead: unknown }).writeHead = (...args: unknown[]) => {
+        for (const arg of args.slice(1)) {
+          if (!arg || typeof arg !== "object" || Array.isArray(arg)) continue;
+          for (const [name, value] of Object.entries(arg)) {
+            if (name.toLowerCase() === "content-type" && typeof value === "string") {
+              record.responseContentType = value;
+            }
+          }
+        }
+        return writeHead(...args);
+      };
+      res.once("close", () => {
+        record.endedAt = performance.now();
+        const contentType = res.getHeader("content-type");
+        if (!record.responseContentType && typeof contentType === "string") {
+          record.responseContentType = contentType;
+        }
+      });
+    }
+
     if (shouldRejectForRebinding(req)) {
+      if (record) record.body = await readJsonBody(req).catch(() => undefined);
       res.writeHead(403, { "Content-Type": "application/json" });
       res.end(
         JSON.stringify({
@@ -809,6 +870,7 @@ export async function startConformanceMockServer(
     try {
       if (req.method === "POST") {
         const body = await readJsonBody(req);
+        if (record) record.body = body;
 
         if (options.statelessTransport) {
           const server = createMcpServer(options, () => undefined);
@@ -846,6 +908,7 @@ export async function startConformanceMockServer(
             eventStore: createEventStore(),
             retryInterval: 5000,
             onsessioninitialized: (newSessionId) => {
+              if (record) record.mintedSessionId = newSessionId;
               transports.set(newSessionId, transport);
               servers.set(newSessionId, server);
             },
