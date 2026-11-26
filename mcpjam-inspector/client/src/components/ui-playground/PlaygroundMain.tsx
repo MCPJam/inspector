@@ -6290,6 +6290,7 @@ export function PlaygroundMain({
       // Shares the composer's lock: the chip clears the composer, so one
       // clicked while a submit is being prepared would wipe that submit's
       // attachments and the submit would still send its draft.
+      const inputAtClick = composer.input;
       void composerSend.run(async () => {
         if (!(await ensureSelectedServerReadyForChat())) {
           composer.setInput(prompt);
@@ -6326,15 +6327,19 @@ export function PlaygroundMain({
             return;
           }
         }
-        setModelContextQueue([]);
-        composer.setInput("");
-        // Starter sends are text-only: staged prompt/skill results are
-        // discarded like the typed draft and file attachments, so they don't
-        // silently ride along on the next composer submit.
-        setMcpPromptResults([]);
-        setSkillResults([]);
+        setModelContextQueue((current) =>
+          withoutSent(current, modelContextQueue),
+        );
+        // Starter sends are text-only: what the composer held at the click is
+        // discarded, so it doesn't ride along on the next composer submit.
+        // What was added during the send stays.
+        composer.setInput((current) => remainingText(current, inputAtClick));
+        setMcpPromptResults((current) =>
+          withoutSent(current, mcpPromptResults),
+        );
+        setSkillResults((current) => withoutSent(current, skillResults));
         revokeFileAttachmentUrls(fileAttachments);
-        setFileAttachments([]);
+        setFileAttachments((current) => withoutSent(current, fileAttachments));
         onFirstMessageSent?.();
       });
     },
@@ -6347,12 +6352,14 @@ export function PlaygroundMain({
       ensureLocalHarnessReadyForSend,
       fileAttachments,
       isCompareMode,
+      mcpPromptResults,
       modelContextQueue,
       onFirstMessageSent,
       outgoingSenderMetadata,
       queueBroadcastRequest,
       sendBlocked,
       sendOrBranch,
+      skillResults,
       trackSendMessage,
     ],
   );

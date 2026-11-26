@@ -2657,6 +2657,29 @@ describe("PlaygroundMain", () => {
       }
     });
 
+    it("keeps text typed while a starter prompt's send prepares", async () => {
+      mockUseChatSession.messages = [];
+      let dispatch!: (sent: boolean) => void;
+      sendMessage.mockImplementation(
+        () => new Promise<boolean>((done) => (dispatch = done)),
+      );
+      render(<PlaygroundMain {...defaultProps} />);
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+      });
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "typed meanwhile" },
+      });
+
+      await act(async () => dispatch(true));
+
+      expect(sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "Starter chip prompt" }),
+      );
+      expect(composerProps().value).toBe("typed meanwhile");
+    });
+
     const thread = () =>
       mockThread.mock.calls.at(-1)?.[0] as {
         onModelContextUpdate: (
