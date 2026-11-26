@@ -10,14 +10,18 @@
  *                                    (200, `events: []`, `support.declared:
  *                                    false` for a server without events)
  *   POST poll                        EventsPollRequest → EventsPollResponse (one-off)
- *   GET  subscriptions?serverId=     → {subscriptions}
- *   POST subscriptions               EventsCreateSubscriptionRequest → {subscription}
+  *   GET  subscriptions?serverId=&projectId=  → {subscriptions}
+ *   POST subscriptions               EventsCreateSubscriptionRequest (+ projectId?) → {subscription}
  *   POST subscriptions/:id/state     {desiredState} → {subscription}
  *   POST subscriptions/:id/rotate    → {subscription}
  *   POST simulate                    EventsSimulateRequest → {entry}
- *   GET  feed?after=&limit=          → {entries, nextAfter}
- *   GET  stream?after=               SSE of EventsStreamFrame
+ *   GET  feed?after=&limit=&projectId=  → {entries, nextAfter}
+ *   GET  stream?after=&projectId=       SSE of EventsStreamFrame
  *   POST hooks/:serverId/i/:inboxId/s/:slotId  signed webhook delivery
+ *
+ * Subscriptions, the feed and the stream belong to the `projectId` the client
+ * sends (the runtime's default project when it sends none), as the hosted
+ * registry and inbox belong to one project.
  *
  * Errors answer `{code, message}` with the `EventsRouteErrorCode` set.
  */
@@ -107,6 +111,11 @@ async function readBoundedBody(request: Request, maxBytes: number): Promise<Uint
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The project a request names, if any. */
+function projectIdOf(value: unknown): string | undefined {
+  return typeof value === "string" && value ? value : undefined;
 }
 
 /** How the built-in host is named in messages. */
@@ -269,7 +278,8 @@ export function createLocalEventsRouter(options: LocalEventsRouterOptions = {}):
 
   router.get("/subscriptions", (c) => {
     const serverId = c.req.query("serverId") || undefined;
-    return c.json({ subscriptions: runtimeFor(c.mcpClientManager).list(serverId) });
+    const projectId = projectIdOf(c.req.query("projectId"));
+    return c.json({ subscriptions: runtimeFor(c.mcpClientManager).list(serverId, projectId) });
   });
 
   router.post("/subscriptions", async (c) => {
@@ -320,7 +330,9 @@ export function createLocalEventsRouter(options: LocalEventsRouterOptions = {}):
     if (!receiver || (body.receiver !== undefined && mode !== "webhook")) {
       return eventsError(c, 400, "EVENTS_UNAVAILABLE", "Choose This machine or Custom URL for webhook delivery.");
     }
+    const projectId = projectIdOf(body.projectId);
     const request: EventsCreateSubscriptionRequest = {
+      ...(projectId ? { projectId } : {}),
       serverId: body.serverId,
       eventName: body.eventName,
       arguments: isRecord(body.arguments) ? body.arguments : {},
@@ -421,6 +433,7 @@ export function createLocalEventsRouter(options: LocalEventsRouterOptions = {}):
       runtimeFor(c.mcpClientManager).feed(
         Number.isFinite(after) && after > 0 ? Math.floor(after) : 0,
         Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 200,
+        projectIdOf(c.req.query("projectId")),
       ),
     );
   });
@@ -428,6 +441,7 @@ export function createLocalEventsRouter(options: LocalEventsRouterOptions = {}):
   router.get("/stream", (c) => {
     const afterParam = Number(c.req.query("after") ?? 0);
     const after = Number.isFinite(afterParam) && afterParam > 0 ? Math.floor(afterParam) : 0;
+    const projectId = projectIdOf(c.req.query("projectId"));
     const runtime = runtimeFor(c.mcpClientManager);
     const encoder = new TextEncoder();
     let cleanup: (() => void) | undefined;
@@ -450,7 +464,7 @@ export function createLocalEventsRouter(options: LocalEventsRouterOptions = {}):
             close();
           }
         }, 25_000);
-        const opened = runtime.openStream(after, send);
+        const opened = runtime.openStream(after, send, projectId);
         function close() {
           if (closed) return;
           closed = true;

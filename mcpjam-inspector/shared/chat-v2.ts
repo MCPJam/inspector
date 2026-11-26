@@ -1,6 +1,7 @@
 import { UIMessage } from "ai";
 import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
 import type { ModelDefinition } from "./types";
+import type { EventToolsSnapshot } from "./event-agent-tools";
 import type {
   McpToolResultImageRenderingPolicy,
   ModelReasoningEffort,
@@ -207,6 +208,13 @@ export interface ChatV2Request {
    * process, so a hosted turn has nothing to resolve these against.
    */
   pageTools?: PageToolSnapshotEntry[];
+  /**
+   * MCP Events agent tools: the connected servers that declare Events, sent by
+   * a Playground that can run `mcpjam_subscribe_to_event` and its siblings
+   * (`event-agent-tools.ts`). Client-fulfilled like `appTools`; absent means
+   * the turn advertises none.
+   */
+  eventTools?: EventToolsSnapshot;
   /**
    * SEP-1865 `ui/update-model-context` snapshots for the next model turn.
    *

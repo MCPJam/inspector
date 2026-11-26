@@ -28,6 +28,7 @@
  * -32602 without specifying an HTTP status.
  */
 
+import { DiscoveryResultError, requireCompleteDiscovery } from "../../discovery-result.js";
 import type {
   MCPCheckSkipReason,
   MCPCheckId,
@@ -71,6 +72,7 @@ import {
 import { scanXMcpHeaderDeclarations } from "../../mcp-client-manager/mcp-header-mirror.js";
 import { DialectAwareJsonSchemaValidator } from "../../mcp-client-manager/dialect-aware-json-schema-validator.js";
 import {
+  compareAcknowledgedFilter,
   filterRequests,
   isSubscriptionNotificationMethod,
   observeListenStream,
@@ -646,6 +648,17 @@ async function badArgsResult(
   });
 }
 
+/**
+ * The track's one `server/discover`. The runner sends this same request before
+ * a raw-only 2026 pin to learn whether the server refuses the pin, and hands
+ * the answer over in `ctx.discover`, so the run asks once.
+ */
+export function probeServerDiscover(
+  ctx: RawHttpCheckContext
+): Promise<RawHttpResult> {
+  return modernProbe(ctx, { id: 7001, method: "server/discover" });
+}
+
 async function discoverOnce(
   ctx: RawHttpCheckContext,
   state: ModernRunState
@@ -653,7 +666,9 @@ async function discoverOnce(
   if (!state.discover) {
     state.discover = await track(
       state,
-      modernProbe(ctx, { id: 7001, method: "server/discover" })
+      ctx.discover !== undefined
+        ? Promise.resolve(ctx.discover)
+        : probeServerDiscover(ctx)
     );
   }
   return state.discover;
@@ -671,7 +686,9 @@ async function track(
 function advertisedCapabilities(
   discover: RawHttpResult
 ): Record<string, unknown> {
-  const capabilities = jsonRpcResult(discover)?.capabilities;
+  const payload = jsonRpcResult(discover);
+  if (payload) requireCompleteDiscovery(payload);
+  const capabilities = payload?.capabilities;
   return capabilities !== null && typeof capabilities === "object"
     ? (capabilities as Record<string, unknown>)
     : {};
@@ -744,6 +761,7 @@ async function runServerDiscoverCheck(
     );
   }
 
+  requireCompleteDiscovery(payload);
   const supportedVersions = payload.supportedVersions;
   const serverInfo = readServerIdentity(payload);
   const problems: string[] = [];
@@ -806,6 +824,10 @@ async function collectCacheableResults(
     { method: "server/discover", result: discover },
   ];
 
+  // Check 23 still needs the raw discriminator when the discovery reply is invalid.
+  // Its capabilities cannot be used to select follow-up requests.
+  const type = jsonRpcResult(discover)?.resultType;
+  if (type !== undefined && type !== COMPLETE_RESULT_TYPE) return collected;
   let id = 7100;
   for (const method of cacheableListMethods(advertisedCapabilities(discover))) {
     collected.push({
@@ -832,6 +854,7 @@ function runResultTypeCheck(
     }
     const resultType = payload.resultType;
     observed[method] = resultType;
+    if (method === "server/discover") requireCompleteDiscovery(payload);
     if (typeof resultType !== "string" || resultType.length === 0) {
       missing.push(method);
     }
@@ -869,6 +892,7 @@ function runCacheHintsCheck(
     if (!payload) {
       continue;
     }
+    if (method === "server/discover") requireCompleteDiscovery(payload);
     observed[method] = {
       ttlMs: payload.ttlMs,
       cacheScope: payload.cacheScope,
@@ -2774,12 +2798,19 @@ function subscriptionNotifications(observation: ListenObservation): Array<{
   );
 }
 
+/**
+ * What every subscription check reports about the stream. The acknowledged
+ * filter is compared with the requested one here, as a client SHOULD. A
+ * server may honor only part of the request, so a difference is reported and
+ * never fails a check.
+ */
 function observationDetails(
   observation: ListenObservation
 ): Record<string, unknown> {
   return {
     subscriptionId: observation.subscriptionId,
     requestedFilter: observation.requestedFilter,
+    ...compareAcknowledgedFilter(observation),
     messageCount: observation.messages.length,
     streamOutcome: observation.outcome,
     observedMs: observation.observedMs,
@@ -2837,9 +2868,6 @@ async function runSubscriptionAckOrderingCheck(
   return passedResult(meta, Date.now() - startedAt, {
     ...details,
     notificationCount: notifications.length,
-    acknowledgedFilter: (
-      observation.messages[ackIndex] as { params?: Record<string, unknown> }
-    ).params?.notifications,
   });
 }
 
@@ -3265,6 +3293,10 @@ export async function runModernChecks(
       );
     } catch (error) {
       ctx.config.signal?.throwIfAborted();
+      if (error instanceof DiscoveryResultError && id !== "modern-result-type-present") {
+        results.push(couldNotRunResult(MODERN_CHECK_METADATA[id], error.message));
+        continue;
+      }
       results.push(
         failedResult(
           MODERN_CHECK_METADATA[id],

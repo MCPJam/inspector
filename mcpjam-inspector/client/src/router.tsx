@@ -1,4 +1,5 @@
 import { PromoRedemptionPage } from "./components/promo/PromoRedemptionPage";
+import { AccessRequestPage } from "./components/access-requests/AccessRequestPage";
 import { LegacyEvalRedirect } from "./components/routing/legacy-eval-redirect";
 import { LegacyEvalCaseRedirect } from "./components/routing/legacy-eval-case-redirect";
 import { ByokCreditsPage } from "./components/billing/ByokCreditsPage";
@@ -360,6 +361,7 @@ const ROUTE_ELEMENTS: Record<
   // component of its own rather than Servers: it must call `signIn()` so
   // authkit-js writes a PKCE verifier before the code lands on `/callback`.
   redeem: { element: <PromoRedemptionPage /> },
+  "access-requests/:requestId": { element: <AccessRequestPage /> },
   login: { element: <LoginInitiationRoute /> },
   callback: { element: <AppEntryLandingRoute /> },
   "oauth/callback/*": { element: <AppEntryLandingRoute /> },
@@ -556,6 +558,15 @@ export function createAppRouter(): AppRouter {
           {
             path: "__e2e/oauth-debugger",
             lazy: async () => {
+              if (
+                new URLSearchParams(window.location.search).get("surface") ===
+                "conformance"
+              ) {
+                const { ConformanceOAuthE2EHarness } = await import(
+                  "./components/e2e/ConformanceOAuthE2EHarness"
+                );
+                return { Component: ConformanceOAuthE2EHarness };
+              }
               const { OAuthDebuggerE2EHarness } =
                 await import("./components/e2e/OAuthDebuggerE2EHarness");
               return { Component: OAuthDebuggerE2EHarness };

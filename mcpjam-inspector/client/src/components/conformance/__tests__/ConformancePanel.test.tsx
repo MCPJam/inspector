@@ -461,10 +461,10 @@ describe("ConformanceTab", () => {
       result: createTasksResult({
         checks: [
           {
-            id: "tasks-wire-resolvable",
-            category: "dispatch",
-            title: "Tasks Wire Resolvable",
-            description: "wire",
+            id: "tasks-invalid-task-id-rejected",
+            category: "lifecycle",
+            title: "Invalid Task Id Rejected",
+            description: "unknown task id",
             status: "passed",
             durationMs: 1,
           },
@@ -519,7 +519,10 @@ describe("ConformanceTab", () => {
       success: true,
       result: createTasksResult({
         checks: [
-          { ...notApplicable("tasks-wire-resolvable"), category: "dispatch" },
+          {
+            ...notApplicable("tasks-invalid-task-id-rejected"),
+            category: "lifecycle",
+          },
         ],
       }),
     });
@@ -3092,7 +3095,7 @@ describe("ConformanceTab", () => {
       ).toBeInTheDocument();
     });
 
-    it("asks once for the Tasks tool on any pin, and for answers under the update check", async () => {
+    it("asks once for the shared Tasks tool and its answers", async () => {
       const user = userEvent.setup();
       setupSuccessfulRunMocks();
       await toStep2("auto");
@@ -3151,7 +3154,7 @@ describe("ConformanceTab", () => {
       );
     });
 
-    it("hides the flagged update check and its answers box", async () => {
+    it("keeps the shared answers box when the flagged update check is hidden", async () => {
       enabledFlags.delete("conformance-tasks-update-check");
       const user = userEvent.setup();
       setupSuccessfulRunMocks();
@@ -3173,7 +3176,7 @@ describe("ConformanceTab", () => {
         screen.queryByRole("textbox", {
           name: "Answers to the task's questions (optional)",
         }),
-      ).toBeNull();
+      ).toBeInTheDocument();
     });
 
     it("lists the tools once for every field, across pages", async () => {
@@ -4257,7 +4260,7 @@ describe("ConformanceTab", () => {
     mockStartOAuth.mockResolvedValue({
       phase: "authorization_needed",
       sessionId: "session-1",
-      authorizationUrl: "https://auth.example.com/authorize",
+      authorizationUrl: "https://auth.example.com/authorize?state=st-1",
     });
     mockSubmitCode.mockResolvedValue({ success: true });
     mockCompleteOAuth.mockReturnValue(poll.promise);
@@ -4273,7 +4276,7 @@ describe("ConformanceTab", () => {
     window.dispatchEvent(
       new MessageEvent("message", {
         origin: window.location.origin,
-        data: { type: "OAUTH_CALLBACK", code: "auth-code" },
+        data: { type: "OAUTH_CALLBACK", code: "auth-code", state: "st-1" },
       }),
     );
 
@@ -4388,7 +4391,7 @@ describe("ConformanceTab", () => {
     );
     expect(openSpy).toHaveBeenLastCalledWith(
       "https://auth.example.com/authorize",
-      "oauth_conformance_auth",
+      expect.stringMatching(/^oauth_authorization_/),
       expect.any(String),
     );
     await screen.findByText("Waiting for browser authorization...");
@@ -4446,7 +4449,7 @@ describe("ConformanceTab", () => {
     mockStartOAuth.mockResolvedValue({
       phase: "authorization_needed",
       sessionId: "session-1",
-      authorizationUrl: "https://auth.example.com/authorize",
+      authorizationUrl: "https://auth.example.com/authorize?state=st-1",
     });
     mockSubmitCode.mockReturnValue(submit.promise);
     mockCompleteOAuth.mockResolvedValue({
@@ -4461,7 +4464,7 @@ describe("ConformanceTab", () => {
     window.dispatchEvent(
       new MessageEvent("message", {
         origin: window.location.origin,
-        data: { type: "OAUTH_CALLBACK", code: "auth-code" },
+        data: { type: "OAUTH_CALLBACK", code: "auth-code", state: "st-1" },
       }),
     );
     await waitFor(() => expect(mockSubmitCode).toHaveBeenCalled());

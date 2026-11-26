@@ -26,6 +26,7 @@ import {
   createMisbehavingSubscriptionHandler,
   createSubscriptionFixtureHandler,
   SUBSCRIPTION_FIXTURE_CLOSE_AFTER_MS,
+  SUBSCRIPTION_FIXTURE_UNREQUESTED_URI,
 } from "../support/subscription-fixture.js";
 
 const MODERN = "2026-07-28" as const;
@@ -98,6 +99,16 @@ describe("subscription checks against a conforming listen stream", () => {
     expect(filtering.details?.notificationMethods).toContain(
       "notifications/tools/list_changed"
     );
+    // The server acknowledged exactly the filter the probe asked for.
+    for (const check of [ack, filtering]) {
+      expect(check.details?.acknowledgedFilter).toEqual(
+        check.details?.requestedFilter
+      );
+      expect(check.details).toMatchObject({
+        notAcknowledged: {},
+        acknowledgedNotRequested: {},
+      });
+    }
 
     // Nothing closed this subscription, and only the server can: a client
     // probe has no way to make it, so there is nothing here to test. A skip,
@@ -206,6 +217,56 @@ describe("subscription checks against streams that break one MUST each", () => {
     );
     expect(graceful.details).toMatchObject({ streamOutcome: "stream-ended" });
     expect(result.passed).toBe(false);
+  });
+});
+
+describe("subscription checks compare the acknowledged filter with the requested one", () => {
+  it("passes and reports what a narrower acknowledgement left out", async () => {
+    const serverUrl = await serve(
+      createMisbehavingSubscriptionHandler("ack-narrowed")
+    );
+    const result = await runSubscriptionChecks(serverUrl);
+
+    // A server may honor only part of the request, so nothing fails.
+    for (const id of [
+      "modern-subscription-ack-precedes-notifications",
+      "modern-subscription-filter-and-tagging",
+    ] as const) {
+      const check = byId(result.checks, id);
+      expect([id, check.status]).toEqual([id, "passed"]);
+      expect(check.details?.requestedFilter).toMatchObject({
+        promptsListChanged: true,
+      });
+      expect(check.details?.acknowledgedFilter).not.toHaveProperty(
+        "promptsListChanged"
+      );
+      expect(check.details).toMatchObject({
+        notAcknowledged: { promptsListChanged: true },
+        acknowledgedNotRequested: {},
+      });
+    }
+  });
+
+  it("passes and reports what a wider acknowledgement added", async () => {
+    const serverUrl = await serve(
+      createMisbehavingSubscriptionHandler("ack-widened")
+    );
+    const result = await runSubscriptionChecks(serverUrl);
+
+    // The stream itself carried nothing unrequested, so nothing fails.
+    for (const id of [
+      "modern-subscription-ack-precedes-notifications",
+      "modern-subscription-filter-and-tagging",
+    ] as const) {
+      const check = byId(result.checks, id);
+      expect([id, check.status]).toEqual([id, "passed"]);
+      expect(check.details).toMatchObject({
+        notAcknowledged: {},
+        acknowledgedNotRequested: {
+          resourceSubscriptions: [SUBSCRIPTION_FIXTURE_UNREQUESTED_URI],
+        },
+      });
+    }
   });
 });
 

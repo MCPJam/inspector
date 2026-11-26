@@ -1,6 +1,7 @@
 import {
   createRemoteJWKSet,
   decodeJwt,
+  errors,
   jwtVerify,
   type JWTPayload,
   type JWTVerifyGetKey,
@@ -23,7 +24,8 @@ export const GUEST_ISSUER = "https://api.mcpjam.com/guest";
 
 export type VerifyResult =
   | { ok: true; verified: VerifiedToken }
-  | { ok: false; response: Response };
+  /** `expired`: the token was otherwise valid, so this is a routine refresh. */
+  | { ok: false; response: Response; expired?: true };
 
 export function normalizeIssuer(domain: string | undefined): string | undefined {
   if (!domain) return undefined;
@@ -31,7 +33,9 @@ export function normalizeIssuer(domain: string | undefined): string | undefined 
     domain.startsWith("http://") || domain.startsWith("https://")
       ? domain
       : `https://${domain}`;
-  return withScheme.replace(/\/+$/, "");
+  let end = withScheme.length;
+  while (end > 0 && withScheme[end - 1] === "/") end -= 1;
+  return withScheme.slice(0, end);
 }
 
 /**
@@ -235,8 +239,8 @@ export async function verifyBearerToken(
       clockTolerance: 5,
     });
     return { ok: true, verified: { token, payload } };
-  } catch {
-    return { ok: false, response: invalidTokenResponse(origin) };
+  } catch (error) {
+    return rejected(origin, error);
   }
 }
 
@@ -276,8 +280,8 @@ async function verifyGuestToken(
       return { ok: false, response: invalidTokenResponse(origin) };
     }
     return { ok: true, verified: { token, payload } };
-  } catch {
-    return { ok: false, response: invalidTokenResponse(origin) };
+  } catch (error) {
+    return rejected(origin, error);
   }
 }
 
@@ -296,6 +300,14 @@ function missingTokenResponse(origin: string): Response {
       "www-authenticate": buildWwwAuthenticate(origin),
     },
   });
+}
+
+function rejected(origin: string, error: unknown): VerifyResult {
+  return {
+    ok: false,
+    response: invalidTokenResponse(origin),
+    ...(error instanceof errors.JWTExpired ? { expired: true } : {}),
+  };
 }
 
 function invalidTokenResponse(origin: string): Response {

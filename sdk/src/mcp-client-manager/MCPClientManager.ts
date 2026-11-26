@@ -1,3 +1,4 @@
+import { requireCompleteDiscovery } from "../discovery-result.js";
 import { validBetaHttpEventTypes, withEventsBetaRouting } from "./events-beta-routing.js";
 import { readServerEventTypes } from "../server-list-reads.js";
 import { guardToolResponseStreams } from "./tool-response-stream.js";
@@ -3369,6 +3370,12 @@ export class MCPClientManager {
         throw new Error(`MCP server "${serverId}" connection was cancelled.`);
       }
 
+      // All transports have finished negotiation here. A rejected reply goes
+      // through connection cleanup without triggering another transport attempt.
+      const discovery = upstreamClient.getDiscoverResult?.();
+      if (discovery) {
+        requireCompleteDiscovery(discovery, upstreamClient.getNegotiatedProtocolVersion());
+      }
       state.client = client;
       state.transport = transport;
       // Post-negotiation re-resolution: now that the era is known, a

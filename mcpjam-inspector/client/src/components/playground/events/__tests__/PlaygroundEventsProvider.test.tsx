@@ -125,6 +125,38 @@ describe("Playground Events lifecycle", () => {
     });
     expect(send).not.toHaveBeenCalled();
   });
+  it("records when an occurrence arrived and what became of it", async () => {
+    render(tree());
+    await act(add);
+    const options = mocks.feed.mock.lastCall![0] as UseEventsFeedOptions;
+    const receivedAt = new Date(2026, 10, 25, 9, 30, 34).getTime();
+    act(() => {
+      options.onNewEntries?.([
+        {
+          seq: 43,
+          kind: "event",
+          origin: "push",
+          namespace: "live",
+          logicalSubscriptionId: "logical",
+          name: "demo.ping",
+          eventId: "arrival",
+          receivedAt,
+          data: {},
+        },
+      ]);
+    });
+    await waitFor(() =>
+      expect(runtime!.bindings[0].recentEvents).toEqual([
+        {
+          key: expect.any(String),
+          receivedAt,
+          origin: "push",
+          outcome: { status: "sent", message: "Event sent to agent" },
+        },
+      ]),
+    );
+  });
+
   it("preserves the conversation across flag hydration and host selection", () => {
     mocks.flag = undefined;
     const { rerender } = render(tree());
@@ -165,6 +197,14 @@ describe("Playground Events lifecycle", () => {
       window.dispatchEvent(new Event("pageshow"));
     });
     expect(runtime?.bindings[0].enabled).toBe(false);
+  });
+  it("subscribes and reads the local feed in its project", async () => {
+    render(tree());
+    await act(add);
+    expect(mocks.watermark).toHaveBeenCalledWith(0, "project");
+    expect(mocks.create).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "project", serverId: "demo" }),
+    );
   });
   it("rejects a duplicate binding instead of silently losing new instructions", async () => {
     render(tree());
