@@ -3,6 +3,7 @@ import {
   buildServerDiffReport,
   collectServerSnapshot,
   diffServerSnapshots,
+  isKnownProtocolVersion,
   probeMcpServer,
   runServerDoctor,
   serializeServerSnapshot,
@@ -84,8 +85,8 @@ export function registerServerCommands(program: Command): void {
       )
       .option(
         "--protocol-version <version>",
-        "OAuth/MCP protocol version hint used for the initialize probe",
-        "2025-11-25",
+        "MCP protocol version to probe, or auto to detect it",
+        "auto",
       )
       .option(
         "--timeout <ms>",
@@ -99,10 +100,7 @@ export function registerServerCommands(program: Command): void {
   ).action(async (options, command) => {
       const globalOptions = getGlobalOptions(command);
       const retryPolicy = parseRetryPolicy(options);
-      const protocolVersion = options.protocolVersion as
-        | "2025-03-26"
-        | "2025-06-18"
-        | "2025-11-25";
+      const protocolVersion: string = options.protocolVersion;
       const accessToken = resolveServerProbeAccessToken(options);
       const config = parseServerConfig({
         ...options,
@@ -117,11 +115,7 @@ export function registerServerCommands(program: Command): void {
         ? createCliRpcLogCollector({ __cli__: target })
         : undefined;
 
-      if (
-        protocolVersion !== "2025-03-26" &&
-        protocolVersion !== "2025-06-18" &&
-        protocolVersion !== "2025-11-25"
-      ) {
+      if (protocolVersion !== "auto" && !isKnownProtocolVersion(protocolVersion)) {
         throw usageError(
           `Invalid protocol version "${options.protocolVersion}".`,
         );
@@ -237,6 +231,7 @@ export function registerServerCommands(program: Command): void {
     const result = await runServerDoctor({
       // The CLI counts the run itself, under its own opt-outs.
       __suppressTelemetry: true,
+      probeProtocolVersion: "auto",
       config,
       target: doctorTarget,
       timeout: globalOptions.timeout,

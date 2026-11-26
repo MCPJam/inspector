@@ -584,6 +584,7 @@ export {
   OAuthRedactedCredentialError,
 } from "./oauth/state-machines/factory.js";
 export type {
+  ProbeDiscoverInfo,
   ProbeHttpAttempt,
   ProbeInitializeInfo,
   ProbeMcpServerConfig,

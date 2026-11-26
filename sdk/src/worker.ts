@@ -19,6 +19,7 @@ export type {
   RpcLogger,
 } from "./mcp-client-manager/types.js";
 export type {
+  ProbeDiscoverInfo,
   ProbeHttpAttempt,
   ProbeInitializeInfo,
   ProbeMcpServerConfig,

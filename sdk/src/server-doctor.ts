@@ -1,4 +1,4 @@
-import { probeMcpServer } from "./server-probe.js";
+import { probeMcpServer, type ProbeMcpServerConfig } from "./server-probe.js";
 import { awaitWithSignal } from "./abort-signal.js";
 import { startSdkRunTelemetry } from "./telemetry.js";
 import { withSkillsExtensionCapability } from "./mcp-client-manager/index.js";
@@ -63,6 +63,8 @@ export interface RunServerDoctorInput<TTarget = unknown> {
   timeout: number;
   rpcLogger?: RpcLogger;
   retryPolicy?: RetryPolicy;
+  /** Protocol selection for the HTTP diagnostic probe. */
+  probeProtocolVersion?: ProbeMcpServerConfig["protocolVersion"];
   /** Transport for the probe's requests. See `buildDoctorProbeConfig`. */
   fetchFn?: typeof fetch;
   /** @internal set by a host that counts the run itself. See `startSdkRunTelemetry`. */
@@ -132,6 +134,8 @@ async function diagnoseServer<TTarget>(
     try {
       result.probe = await probeServer(
         buildDoctorProbeConfig(input.config, {
+          protocolVersion:
+            input.config.mcpProtocolVersion ?? input.probeProtocolVersion,
           timeout: input.timeout,
           retryPolicy: input.retryPolicy,
           fetchFn: input.fetchFn,

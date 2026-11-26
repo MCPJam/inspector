@@ -33,12 +33,12 @@ import type {
   ClientCredentialsResult,
   NormalizedOAuthConformanceConfig,
   OAuthConformanceConfig,
+  OAuthVerificationConfig,
   TrackedRequestFn,
   VerificationResult,
 } from "./oauth-conformance/types.js";
-import { detectLoginIssuerMigration } from "./oauth/login-issuer-migration.js";
-import { runLoginVerification } from "./oauth/login-verification.js";
-import { resolveLoginStepUpScopes } from "./oauth/login-step-up.js";
+import type { HttpServerConfig } from "./mcp-client-manager/index.js";
+import { listTools, withEphemeralClient } from "./operations.js";
 import { discoverStatelessLoginMetadata } from "./oauth/stateless-login-discovery.js";
 import { probeMcpServer } from "./server-probe.js";
 
@@ -283,6 +283,94 @@ function mergeDynamicRegistration(
   return merged;
 }
 
+async function runVerification(
+  config: NormalizedOAuthConformanceConfig,
+  state: OAuthFlowState,
+  verificationConfig: OAuthVerificationConfig,
+): Promise<VerificationResult | undefined> {
+  if (!verificationConfig.listTools || !state.accessToken) {
+    return undefined;
+  }
+
+  const result: VerificationResult = {};
+  const verifyConfig: HttpServerConfig = {
+    url: config.serverUrl,
+    accessToken: state.accessToken,
+    requestInit: config.customHeaders
+      ? { headers: config.customHeaders }
+      : undefined,
+    timeout: verificationConfig.timeout ?? 30_000,
+    // Post-auth verification must speak the negotiated wire era. For 2026 the
+    // MCP endpoint is stateless (no initialize), so pin the transport; older
+    // OAuth flows keep the legacy default (unset) they used before.
+    ...(config.protocolVersion === "2026-07-28"
+      ? { mcpProtocolVersion: "2026-07-28" as const }
+      : {}),
+  };
+
+  try {
+    await withEphemeralClient(
+      verifyConfig,
+      async (manager, serverId) => {
+        const listStartedAt = Date.now();
+        try {
+          const toolsResult = await listTools(manager, { serverId });
+          result.listTools = {
+            passed: true,
+            toolCount: toolsResult.tools.length,
+            durationMs: Date.now() - listStartedAt,
+          };
+        } catch (error) {
+          result.listTools = {
+            passed: false,
+            durationMs: Date.now() - listStartedAt,
+            error: error instanceof Error ? error.message : String(error),
+          };
+          return;
+        }
+
+        if (!verificationConfig.callTool) {
+          return;
+        }
+
+        const callStartedAt = Date.now();
+        try {
+          await manager.executeTool(
+            serverId,
+            verificationConfig.callTool.name,
+            verificationConfig.callTool.params ?? {},
+          );
+          result.callTool = {
+            passed: true,
+            toolName: verificationConfig.callTool.name,
+            durationMs: Date.now() - callStartedAt,
+          };
+        } catch (error) {
+          result.callTool = {
+            passed: false,
+            toolName: verificationConfig.callTool.name,
+            durationMs: Date.now() - callStartedAt,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      },
+      {
+        timeout: verificationConfig.timeout ?? 30_000,
+      },
+    );
+  } catch (error) {
+    if (!result.listTools) {
+      result.listTools = {
+        passed: false,
+        durationMs: 0,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  return result;
+}
+
 function buildResult(
   config: NormalizedOAuthConformanceConfig,
   authorizationPlan: ResolvedAuthorizationPlan,
@@ -295,7 +383,7 @@ function buildResult(
     completed: state.currentStep === "complete" && !error,
     serverUrl: config.serverUrl,
     protocolVersion: config.protocolVersion,
-    registrationStrategy: authorizationPlan.registrationStrategy,
+    registrationStrategy: config.registrationStrategy,
     protocolMode: authorizationPlan.protocolMode,
     registrationMode: authorizationPlan.registrationMode,
     authMode: config.auth.mode,
@@ -360,7 +448,7 @@ export async function runOAuthLogin(
   const getState = () => state;
 
   try {
-    let authorizationPlan = await resolveOAuthLoginAuthorizationPlan(input);
+    const authorizationPlan = await resolveOAuthLoginAuthorizationPlan(input);
     if (
       authorizationPlan.status !== "ready" ||
       !authorizationPlan.registrationStrategy
@@ -459,74 +547,44 @@ export async function runOAuthLogin(
     } as const;
 
     if (config.auth.mode !== "client_credentials") {
-      const runAuthorization = (
-        customScopes = config.scopes,
-        migration?: {
-          issuer: string;
-          resource: string;
-          resourceMetadataUrl?: string;
-        }
-      ) =>
-        runOAuthStateMachine({
-          ...machineConfig,
-          registrationStrategy:
-            authorizationPlan.registrationStrategy ??
-            config.registrationStrategy,
-          state: getState(),
-          customScopes,
-          resourceMetadataUrl: migration?.resourceMetadataUrl,
-          loadPreregisteredCredentials: migration
-            ? undefined
-            : machineConfig.loadPreregisteredCredentials,
-          maxSteps: 40,
-          onAuthorizationRequest: async ({
-            authorizationUrl,
-            state: flowState,
-          }) => {
-            try {
-              if (
-                migration &&
-                (flowState.recordedIssuer !== migration.issuer ||
-                  flowState.resourceMetadata?.resource !== migration.resource)
-              ) {
-                throw new Error(
-                  "OAuth issuer or resource changed again during authorization."
-                );
-              }
-              config.onProgress("Opening browser for authorization...");
-              const authorizationResult =
-                config.auth.mode === "interactive"
-                  ? await interactiveSession!.authorize({
-                      authorizationUrl,
-                      expectedState: flowState.state,
-                      timeoutMs: config.stepTimeout,
-                      openUrl: config.auth.openUrl,
-                    })
-                  : await (
-                      deps.completeHeadlessAuthorization ??
-                      completeHeadlessAuthorization
-                    )({
-                      authorizationUrl,
-                      redirectUrl,
-                      expectedState: flowState.state,
-                      request: trackedRequest,
-                    });
+      const flowResult = await runOAuthStateMachine({
+        ...machineConfig,
+        maxSteps: 40,
+        onAuthorizationRequest: async ({ authorizationUrl, state: flowState }) => {
+          try {
+            config.onProgress("Opening browser for authorization...");
+            const authorizationResult =
+              config.auth.mode === "interactive"
+                ? await interactiveSession!.authorize({
+                    authorizationUrl,
+                    expectedState: flowState.state,
+                    timeoutMs: config.stepTimeout,
+                    openUrl: config.auth.openUrl,
+                  })
+                : await (
+                    deps.completeHeadlessAuthorization ??
+                    completeHeadlessAuthorization
+                  )({
+                    authorizationUrl,
+                    redirectUrl,
+                    expectedState: flowState.state,
+                    request: trackedRequest,
+                  });
 
-              config.onProgress("Authorization received, exchanging token...");
-              return {
-                type: "authorization_code" as const,
-                authorizationCode: authorizationResult.code,
-              };
-            } catch (error) {
-              updateState({
-                error: error instanceof Error ? error.message : String(error),
-              });
-              throw error;
-            }
-          },
-        });
+            config.onProgress("Authorization received, exchanging token...");
+            return {
+              type: "authorization_code" as const,
+              authorizationCode: authorizationResult.code,
+            };
+          } catch (error) {
+            updateState({
+              error: error instanceof Error ? error.message : String(error),
+            });
+            throw error;
+          }
+        },
+      });
 
-      const flowResult = await runAuthorization();
       if (flowResult.error) {
         const resultState =
           flowResult.state.currentStep === "authorization_request" &&
@@ -545,120 +603,21 @@ export async function runOAuthLogin(
           redirectUrl,
           resultState,
           undefined,
-          flowResult.error.message
+          flowResult.error.message,
         );
       }
 
-      let authenticatedState = flowResult.state;
-      let initial = await runLoginVerification(config, authenticatedState);
-      try {
-        const migration = await detectLoginIssuerMigration(
-          config,
-          authenticatedState,
-          initial.unauthorizedChallenge
-        );
-        if (migration) {
-          // Start with no tokens or registration from the previous issuer.
-          state = cloneEmptyFlowState();
-          if (config.registrationStrategy === "preregistered") {
-            throw new Error(
-              "OAuth issuer changed. Configure credentials registered with the new authorization server."
-            );
-          }
-          authorizationPlan = resolveAuthorizationPlan({
-            ...toAuthorizationPlanInput(input),
-            clientId: undefined,
-            clientSecret: undefined,
-            discovery: migration.discovery,
-          });
-          if (authorizationPlan.status !== "ready") {
-            throw new Error(
-              authorizationPlan.blockers[0] ?? authorizationPlan.summary
-            );
-          }
-
-          config.onProgress(
-            "Authorization server changed. Starting OAuth with the new issuer..."
-          );
-          const migrated = await runAuthorization(config.scopes, migration);
-          if (!migrated.completed) {
-            throw new Error(
-              migrated.error?.message ??
-                "OAuth authorization with the new issuer did not complete."
-            );
-          }
-          authenticatedState = migrated.state;
-          initial = await runLoginVerification(config, authenticatedState);
-          if (initial.unauthorizedChallenge) {
-            throw new Error(
-              "The MCP server rejected the token from the new issuer."
-            );
-          }
-        }
-      } catch (error) {
-        return buildResult(
-          config,
-          authorizationPlan,
-          redirectUrl,
-          { ...state, accessToken: undefined, refreshToken: undefined },
-          initial.verification,
-          error instanceof Error ? error.message : String(error)
-        );
-      }
-      let verification = initial.verification;
-      let stepUpError: string | undefined;
-      let resultState = authenticatedState;
-      const firstCall = verification?.callTool;
-      if (
-        config.protocolVersion === "2026-07-28" &&
-        initial.toolChallenge &&
-        firstCall
-      ) {
-        try {
-          const scopes = await resolveLoginStepUpScopes(
-            config,
-            authenticatedState,
-            initial.toolChallenge
-          );
-          if (scopes) {
-            config.onProgress("Requesting additional OAuth scopes...");
-            updateState({
-              currentStep: "received_client_credentials",
-              accessToken: undefined,
-              refreshToken: undefined,
-              authorizationResponseIss: undefined,
-            });
-            const stepUp = await runAuthorization(scopes);
-            if (!stepUp.completed) {
-              throw new Error(
-                stepUp.error?.message ?? "OAuth step-up did not complete."
-              );
-            }
-            resultState = stepUp.state;
-            ({ verification } = await runLoginVerification(
-              config,
-              resultState,
-              verification
-            ));
-          }
-        } catch (error) {
-          stepUpError = error instanceof Error ? error.message : String(error);
-          verification = {
-            ...initial.verification,
-            callTool: {
-              ...firstCall,
-              error: stepUpError,
-            },
-          };
-        }
-      }
+      const verification = await runVerification(
+        config,
+        flowResult.state,
+        config.verification,
+      );
       return buildResult(
         config,
         authorizationPlan,
         redirectUrl,
-        resultState,
+        flowResult.state,
         verification,
-        stepUpError
       );
     }
 
@@ -782,7 +741,11 @@ export async function runOAuthLogin(
     if (config.verification.listTools) {
       config.onProgress("Verifying token with server...");
     }
-    const { verification } = await runLoginVerification(config, state);
+    const verification = await runVerification(
+      config,
+      state,
+      config.verification,
+    );
     return buildResult(
       config,
       authorizationPlan,
