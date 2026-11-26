@@ -9,13 +9,15 @@ An MCP App tool can return a widget: an interactive view rendered in the chat. I
 
 ## Before you start
 
-This tutorial picks up where [Chat and inspect tool calls](/inspector/playground) ends, with the **Hello** rectangle in the **Claude** pane. If you came here directly, connect the Excalidraw demo server as in [Start testing](/#start-testing), open **Playground**, and send `Draw a rectangle with the text Hello inside it.`
+This tutorial picks up where [Chat and inspect tool calls](/inspector/playground) ends. If you came here directly, connect the Excalidraw demo server as in [Start testing](/#start-testing), open **Playground**, and send `Draw a rectangle with the text Hello inside it.`
+
+Use any pane that shows the **Hello** rectangle. The screenshots use Claude. If no pane shows a widget, follow [Compare clients](/inspector/playground/compare-hosts#compare-the-arguments) to check which tools the models called.
 
 With your own server, send a prompt that makes one of your tools return a widget.
 
 <Steps titleSize="h3">
   <Step title="Find the widget toolbar" id="find-the-widget-toolbar">
-    In the **Claude** pane, find the row of icons above the rectangle. This is the widget toolbar.
+    In a pane that shows the **Hello** rectangle, find the row of icons above the rectangle. This is the widget toolbar.
 
     <Frame>
       <img src="/images/playground/v1/widget-claude.png" alt="The Hello rectangle in the Claude pane with the widget toolbar above it" width="450" />
@@ -44,10 +46,10 @@ With your own server, send a prompt that makes one of your tools return a widget
     To leave fullscreen, at the right end of the bar at the top of the window, select **Exit fullscreen** (**×**).
   </Step>
   <Step title="Check the tool input and result" id="check-input-and-result">
-    Back in the **Claude** pane, select **Edit input & output**. Two JSON editors open. They show the original `create_view` call from your prompt, not the rectangle you just drew. Your drawing doesn't change them; the widget keeps its own state, and the JSON-RPC log shows it saving a checkpoint.
+    Back in the same pane, select **Edit input & output**. Two JSON editors open. They show the original `create_view` call from your prompt, not the rectangle you just drew. Your drawing doesn't change them, because the widget keeps its own state.
 
     - **INPUT** is the argument the model sent to `create_view`. Check that the `elements` string contains a rectangle whose `label` text is `Hello`. If the original **Hello** rectangle looks wrong, this is the first place to look.
-    - **RESULT** is what the server returned. Under `_meta`, `ui/resourceUri` is `ui://excalidraw/mcp-app.html`, the widget the pane rendered.
+    - **RESULT** is what the server returned. In the example run, under `_meta`, `ui/resourceUri` is `ui://excalidraw/mcp-app.html`, the widget the pane rendered.
 
     When you are done, select **Done editing**.
   </Step>
