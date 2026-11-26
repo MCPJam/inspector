@@ -1,102 +1,140 @@
 /**
  * The 2025-11-25 step for a task parked on `input_required`: "When the
  * requestor encounters the `input_required` status, it SHOULD preemptively
- * call `tasks/result`."
+ * call `tasks/result`", and the questions the server sends over that call get
+ * the answers from setup.
  *
- * These pin the call itself (one request, bounded, classified by what came
- * back) and when the task runner makes it.
+ * These pin the call (one request, bounded, classified by what came back),
+ * the answers (which one, once each, never invented), when the run goes on
+ * polling, and what it says about a task that ended without a result.
  */
 
 import { describe, expect, it, vi } from "vitest";
 import type { MCPClientManager } from "../../src/mcp-client-manager/index.js";
 import {
   INPUT_REQUIRED_RESULT_WAIT_MS,
+  InputRequiredResultLeg,
+  TaskInputAnswers,
+  answersNeedPin,
   callResultWhileInputRequired,
   describeResultCall,
   inputRequiredResultWaitMs,
+  taskInputAnswersFor,
 } from "../../src/tasks-conformance/input-required-result.js";
 import { TaskOperations } from "../../src/tasks-conformance/task-operations.js";
 import { normalizeMCPTasksConformanceConfig } from "../../src/tasks-conformance/validation.js";
 
-function rpcError(code: number, message: string): Error {
+const RELATED_TASK = "io.modelcontextprotocol/related-task";
+
+function rpcError(code: number | string, message: string): Error {
   return Object.assign(new Error(message), { code });
 }
 
+/** What the SDK throws when its own time limit cuts a request. */
+const sdkTimeout = () => rpcError("REQUEST_TIMEOUT", "Request timed out");
+
+function fakeManager(getTaskResult: ReturnType<typeof vi.fn>) {
+  return { getTaskResult } as unknown as Pick<MCPClientManager, "getTaskResult">;
+}
+
+function form(property: string, values: string[], message = `${property}?`) {
+  return {
+    message,
+    requestedSchema: {
+      type: "object",
+      properties: { [property]: { type: "string", enum: values } },
+      required: [property],
+    },
+  } as never;
+}
+
+const accept = (content: Record<string, unknown>) => ({
+  action: "accept",
+  content,
+});
+
 describe("callResultWhileInputRequired", () => {
   it("sends one tasks/result for the task, with the time limit", async () => {
-    const request = vi.fn().mockResolvedValue({ content: [] });
+    const getTaskResult = vi.fn().mockResolvedValue({ content: [] });
     const call = await callResultWhileInputRequired({
-      request,
+      manager: fakeManager(getTaskResult),
+      serverId: "server",
       taskId: "task-1",
       timeoutMs: 1_234,
     });
 
-    expect(request).toHaveBeenCalledTimes(1);
-    expect(request).toHaveBeenCalledWith(
-      { method: "tasks/result", params: { taskId: "task-1" } },
-      { timeout: 1_234 },
-    );
-    expect(call.outcome).toBe("returned");
+    expect(getTaskResult).toHaveBeenCalledTimes(1);
+    expect(getTaskResult).toHaveBeenCalledWith("server", "task-1", {
+      timeout: 1_234,
+    });
+    expect(call).toMatchObject({ outcome: "returned", answered: [] });
   });
 
-  it("reads a JSON-RPC error as the server's answer", async () => {
-    const request = vi
-      .fn()
-      .mockRejectedValue(rpcError(-32603, "the task failed"));
+  it.each([
+    ["the task's own failure", -32603],
+    ["a refusal", -32602],
+    // The number a timeout is often given. The SDK's own timeout is not a
+    // number, so this one came from the server.
+    ["-32001 sent by the server", -32001],
+  ])("reads %s as the server's answer", async (_label, code) => {
     const call = await callResultWhileInputRequired({
-      request,
+      manager: fakeManager(vi.fn().mockRejectedValue(rpcError(code, "no"))),
+      serverId: "server",
       taskId: "task-1",
       timeoutMs: 1_000,
     });
 
-    expect(call).toMatchObject({
-      outcome: "error",
-      code: -32603,
-      message: "the task failed",
-    });
+    expect(call).toMatchObject({ outcome: "error", code, message: "no" });
   });
 
-  it("reads the client's own timeout as no answer", async () => {
-    const request = vi
-      .fn()
-      .mockRejectedValue(rpcError(-32001, "Request timed out"));
+  it.each([
+    ["the SDK's own timeout", sdkTimeout()],
+    ["a dropped connection", new Error("fetch failed")],
+  ])("reads %s as no answer", async (_label, error) => {
     const call = await callResultWhileInputRequired({
-      request,
+      manager: fakeManager(vi.fn().mockRejectedValue(error)),
+      serverId: "server",
       taskId: "task-1",
       timeoutMs: 1_000,
     });
 
-    expect(call).toMatchObject({
-      outcome: "no-answer",
-      message: "Request timed out",
-    });
+    expect(call.outcome).toBe("no-answer");
+    expect(call).not.toHaveProperty("code");
   });
 
-  it("reads a failure with no JSON-RPC code as no answer", async () => {
-    // A dropped connection or an abort: the server said nothing about the task.
-    const request = vi.fn().mockRejectedValue(new Error("socket hang up"));
-    const call = await callResultWhileInputRequired({
-      request,
-      taskId: "task-1",
-      timeoutMs: 1_000,
+  it("reports the input requests answered while this call was open, and only those", async () => {
+    const answers = new TaskInputAnswers({
+      seat: accept({ seat: "aisle" }),
+      meal: accept({ meal: "standard" }),
+    });
+    // Answered before this call: not this call's.
+    await answers.handler(form("seat", ["aisle"]));
+    const getTaskResult = vi.fn().mockImplementation(async () => {
+      await answers.handler(form("meal", ["standard"], "Which meal?"));
+      return { content: [] };
     });
 
-    expect(call).toMatchObject({
-      outcome: "no-answer",
-      message: "socket hang up",
+    const call = await callResultWhileInputRequired({
+      manager: fakeManager(getTaskResult),
+      serverId: "server",
+      taskId: "task-1",
+      timeoutMs: 1_000,
+      answers,
     });
-    expect(request).toHaveBeenCalledTimes(1);
+
+    expect(call.answered).toEqual([
+      { message: "Which meal?", key: "meal", action: "accept" },
+    ]);
   });
 });
 
 describe("inputRequiredResultWaitMs", () => {
-  it("is the fixed bound on a normal poll budget", () => {
-    expect(inputRequiredResultWaitMs(30_000)).toBe(
-      INPUT_REQUIRED_RESULT_WAIT_MS,
-    );
+  it("is 5 s when more than that is left", () => {
+    expect(INPUT_REQUIRED_RESULT_WAIT_MS).toBe(5_000);
+    expect(inputRequiredResultWaitMs(30_000)).toBe(5_000);
   });
 
-  it("never exceeds the run's own poll budget", () => {
+  it("is what is left of the poll budget when that is less", () => {
     expect(inputRequiredResultWaitMs(300)).toBe(300);
   });
 
@@ -105,18 +143,238 @@ describe("inputRequiredResultWaitMs", () => {
   });
 });
 
-describe("describeResultCall", () => {
-  it("reports each outcome without inventing fields", () => {
-    expect(describeResultCall({ outcome: "returned", waitedMs: 12 })).toEqual({
-      outcome: "returned",
-      waitedMs: 12,
+describe("TaskInputAnswers", () => {
+  it("answers with the configured answer that fits the form, whatever the order written", async () => {
+    const answers = new TaskInputAnswers({
+      meal: accept({ meal: "vegetarian" }),
+      seat: accept({ seat: "aisle" }),
     });
+
+    expect(await answers.handler(form("seat", ["window", "aisle"]))).toEqual(
+      accept({ seat: "aisle" }),
+    );
+    expect(await answers.handler(form("meal", ["vegetarian"]))).toEqual(
+      accept({ meal: "vegetarian" }),
+    );
+    expect(answers.log.map((entry) => entry.key)).toEqual(["seat", "meal"]);
+  });
+
+  it("falls back to the order written when no answer fits the form", async () => {
+    // The answer is still the caller's to send: the server decides what to
+    // do with one that does not fit.
+    const answers = new TaskInputAnswers({ seat: accept({ seat: "roof" }) });
+
+    expect(await answers.handler(form("seat", ["window", "aisle"]))).toEqual(
+      accept({ seat: "roof" }),
+    );
+  });
+
+  it("sends a configured decline as written", async () => {
+    const answers = new TaskInputAnswers({ seat: { action: "decline" } });
+
+    expect(await answers.handler(form("seat", ["aisle"]))).toEqual({
+      action: "decline",
+    });
+    expect(answers.log).toEqual([
+      { message: "seat?", key: "seat", action: "decline" },
+    ]);
+  });
+
+  it("uses each answer once, then says it has none", async () => {
+    const answers = new TaskInputAnswers({ seat: accept({ seat: "aisle" }) });
+
+    await answers.handler(form("seat", ["aisle"]));
+    // Asked again: it does not repeat itself and does not make one up.
+    expect(await answers.handler(form("seat", ["aisle"], "Again?"))).toEqual({
+      action: "cancel",
+    });
+    expect(answers.log.at(-1)).toEqual({ message: "Again?", action: "cancel" });
+  });
+
+  it("puts the task's related-task key on the answer", async () => {
+    const answers = new TaskInputAnswers({ seat: accept({ seat: "aisle" }) });
+    const related = { [RELATED_TASK]: { taskId: "task-1" } };
+
+    const answer = await answers.handler({
+      ...(form("seat", ["aisle"]) as object),
+      _meta: related,
+    } as never);
+
+    expect(answer).toEqual({ ...accept({ seat: "aisle" }), _meta: related });
+  });
+
+  it("ignores a configured answer that is not an object", async () => {
+    const answers = new TaskInputAnswers({ seat: "aisle" });
+
+    expect(await answers.handler(form("seat", ["aisle"]))).toEqual({
+      action: "cancel",
+    });
+  });
+});
+
+describe("taskInputAnswersFor: when the run declares it will answer", () => {
+  const ANSWERS = { seat: accept({ seat: "aisle" }) };
+  const config = (
+    mcpProtocolVersion: string | undefined,
+    inputResponses?: Record<string, unknown>,
+  ) =>
+    normalizeMCPTasksConformanceConfig({
+      url: "https://example.test/mcp",
+      ...(mcpProtocolVersion ? { mcpProtocolVersion } : {}),
+      ...(inputResponses ? { inputResponses } : {}),
+    } as never);
+
+  it("answers on a run pinned to 2025-11-25 with answers configured", () => {
+    const pinned = config("2025-11-25", ANSWERS);
+
+    expect(taskInputAnswersFor(pinned)).toBeInstanceOf(TaskInputAnswers);
+    expect(answersNeedPin(pinned)).toBe(false);
+  });
+
+  it.each([
+    ["no answers", undefined],
+    ["an empty set of answers", {}],
+  ])("does not answer with %s", (_label, inputResponses) => {
+    const pinned = config("2025-11-25", inputResponses);
+
+    expect(taskInputAnswersFor(pinned)).toBeUndefined();
+    expect(answersNeedPin(pinned)).toBe(false);
+  });
+
+  it.each([
+    ["the extension wire's revision", "2026-07-28"],
+    ["no pin", undefined],
+  ])("leaves %s as it is, and says the answers were not sent", (_label, pin) => {
+    const other = config(pin, ANSWERS);
+
+    expect(taskInputAnswersFor(other)).toBeUndefined();
+    expect(answersNeedPin(other)).toBe(true);
+  });
+});
+
+describe("InputRequiredResultLeg: when polling goes on after the call", () => {
+  const run = (leg: InputRequiredResultLeg, getTaskResult: ReturnType<typeof vi.fn>) =>
+    leg.run(fakeManager(getTaskResult), "server", "task-1", 2_000);
+
+  it("goes on when the server returned: the task has ended", async () => {
+    const leg = new InputRequiredResultLeg();
+
+    expect(await run(leg, vi.fn().mockResolvedValue({ content: [] }))).toBe(true);
+  });
+
+  it("goes on when the server answered with an error", async () => {
+    const leg = new InputRequiredResultLeg();
+
+    expect(
+      await run(leg, vi.fn().mockRejectedValue(rpcError(-32603, "failed"))),
+    ).toBe(true);
+  });
+
+  it("stops when nothing came back and nothing was answered: the task is parked", async () => {
+    const leg = new InputRequiredResultLeg();
+
+    expect(await run(leg, vi.fn().mockRejectedValue(sdkTimeout()))).toBe(false);
+  });
+
+  it("goes on when the call timed out but a question was answered during it", async () => {
+    const answers = new TaskInputAnswers({ seat: accept({ seat: "aisle" }) });
+    const leg = new InputRequiredResultLeg(answers);
+    const getTaskResult = vi.fn().mockImplementation(async () => {
+      await answers.handler(form("seat", ["aisle"]));
+      throw sdkTimeout();
+    });
+
+    expect(await run(leg, getTaskResult)).toBe(true);
+  });
+
+  it("gives the call what is left of the poll budget, capped at 5 s", async () => {
+    const getTaskResult = vi.fn().mockResolvedValue({});
+    const manager = fakeManager(getTaskResult);
+
+    await new InputRequiredResultLeg().run(manager, "server", "task-1", 700);
+    await new InputRequiredResultLeg().run(manager, "server", "task-1", 20_000);
+
+    expect(getTaskResult.mock.calls.map((call) => call[2])).toEqual([
+      { timeout: 700 },
+      { timeout: 5_000 },
+    ]);
+  });
+
+  it("makes no call when the poll budget is already spent", async () => {
+    const getTaskResult = vi.fn();
+    const leg = new InputRequiredResultLeg();
+
+    expect(await leg.run(fakeManager(getTaskResult), "server", "task-1", 0)).toBe(
+      false,
+    );
+    expect(getTaskResult).not.toHaveBeenCalled();
+    expect(leg.details()).toBeUndefined();
+  });
+
+  it("does not call again when the last call brought no question", async () => {
+    // A server that refuses the call leaves the task parked. Asking again
+    // would only repeat the refusal until the budget ran out.
+    const leg = new InputRequiredResultLeg();
+    const getTaskResult = vi
+      .fn()
+      .mockRejectedValue(rpcError(-32602, "not finished"));
+
+    expect(await run(leg, getTaskResult)).toBe(true);
+    expect(await run(leg, getTaskResult)).toBe(false);
+    expect(getTaskResult).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls again when the task asks again after an answer", async () => {
+    const answers = new TaskInputAnswers({
+      seat: accept({ seat: "aisle" }),
+      meal: accept({ meal: "standard" }),
+    });
+    const leg = new InputRequiredResultLeg(answers);
+    const getTaskResult = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        await answers.handler(form("seat", ["aisle"], "Seat?"));
+        throw sdkTimeout();
+      })
+      .mockImplementationOnce(async () => {
+        await answers.handler(form("meal", ["standard"], "Meal?"));
+        return {};
+      });
+
+    expect(await run(leg, getTaskResult)).toBe(true);
+    expect(await run(leg, getTaskResult)).toBe(true);
+    expect(getTaskResult).toHaveBeenCalledTimes(2);
+    // The report carries the last call and every answer.
+    expect(leg.details()).toEqual({
+      resultWhileInputRequired: {
+        outcome: "returned",
+        waitedMs: expect.any(Number),
+        calls: 2,
+        answered: [
+          { message: "Seat?", key: "seat", action: "accept" },
+          { message: "Meal?", key: "meal", action: "accept" },
+        ],
+      },
+    });
+  });
+});
+
+describe("InputRequiredResultLeg: what the report says", () => {
+  it("has nothing to say when no call was made", () => {
+    expect(new InputRequiredResultLeg().details()).toBeUndefined();
+  });
+
+  it("reports each outcome without inventing fields", () => {
+    expect(
+      describeResultCall({ outcome: "returned", waitedMs: 12, answered: [] }),
+    ).toEqual({ outcome: "returned", waitedMs: 12 });
     expect(
       describeResultCall({
         outcome: "error",
         code: -32603,
         message: "failed",
         waitedMs: 20,
+        answered: [],
       }),
     ).toEqual({
       outcome: "error",
@@ -129,6 +387,7 @@ describe("describeResultCall", () => {
         outcome: "no-answer",
         message: "Request timed out",
         waitedMs: 5_000,
+        answered: [],
       }),
     ).toEqual({
       outcome: "no-answer",
@@ -136,156 +395,110 @@ describe("describeResultCall", () => {
       waitedMs: 5_000,
     });
   });
+
+  it("says the answers were not sent on a run that is not pinned", async () => {
+    const leg = new InputRequiredResultLeg(undefined, true);
+    await leg.run(
+      fakeManager(vi.fn().mockRejectedValue(sdkTimeout())),
+      "server",
+      "task-1",
+      100,
+    );
+
+    expect(leg.details()?.resultWhileInputRequired).toMatchObject({
+      answersNotSent: expect.stringContaining("pinned to 2025-11-25"),
+    });
+    expect(leg.unfinishedReason("failed").message).toContain(
+      "pinned to 2025-11-25",
+    );
+  });
+
+  describe("a task that asked for input and ended without completing", () => {
+    it("is the run's doing when it had no answer to give", async () => {
+      const leg = new InputRequiredResultLeg();
+      await leg.run(
+        fakeManager(vi.fn().mockRejectedValue(rpcError(-32603, "failed"))),
+        "server",
+        "task-1",
+        100,
+      );
+
+      expect(leg.unfinishedReason("failed")).toEqual({
+        message:
+          "The task asked for input, this run had no answer to give, and it ended as failed, so there was no result to check.",
+        setup: false,
+      });
+    });
+
+    it("points at the answers in setup when they were sent", async () => {
+      const answers = new TaskInputAnswers({ seat: accept({ seat: "roof" }) });
+      const leg = new InputRequiredResultLeg(answers);
+      await leg.run(
+        fakeManager(
+          vi.fn().mockImplementation(async () => {
+            await answers.handler(form("seat", ["aisle"]));
+            throw rpcError(-32603, "failed");
+          }),
+        ),
+        "server",
+        "task-1",
+        100,
+      );
+
+      const reason = leg.unfinishedReason("failed");
+      expect(reason.setup).toBe(true);
+      expect(reason.message).toContain("Check the answers in setup");
+    });
+
+    it("says an answer is missing when the task asked for more than was configured", async () => {
+      const answers = new TaskInputAnswers({});
+      const leg = new InputRequiredResultLeg(answers);
+      await leg.run(
+        fakeManager(
+          vi.fn().mockImplementation(async () => {
+            await answers.handler(form("meal", ["standard"]));
+            throw rpcError(-32603, "failed");
+          }),
+        ),
+        "server",
+        "task-1",
+        100,
+      );
+
+      const reason = leg.unfinishedReason("cancelled");
+      expect(reason.setup).toBe(true);
+      expect(reason.message).toContain("more input than the answers in setup");
+      expect(reason.message).toContain("ended as cancelled");
+    });
+  });
 });
 
-describe("TaskOperations.resolveInputRequired", () => {
-  const PARKED = {
-    task: { taskId: "task-1", status: "input_required", pollInterval: 1 },
-    inputRequired: true,
-  };
-
-  function setup(options: {
-    requestWithSchema: ReturnType<typeof vi.fn>;
-    getTask?: ReturnType<typeof vi.fn>;
-    pollTimeoutMs?: number;
-  }) {
-    const getTask = options.getTask ?? vi.fn();
-    const manager = {
-      getManagedClient: () => ({
-        requestWithSchema: options.requestWithSchema,
-      }),
-      getTask,
-    } as unknown as MCPClientManager;
+describe("TaskOperations.pollToTerminal: one budget for the whole step", () => {
+  it("tells the parked callback how much of the poll budget is left", async () => {
+    const getTask = vi.fn().mockResolvedValue({
+      taskId: "task-1",
+      status: "input_required",
+      pollInterval: 50,
+    });
     const operations = new TaskOperations(
       normalizeMCPTasksConformanceConfig({
         url: "https://example.test/mcp",
-        pollTimeoutMs: options.pollTimeoutMs ?? 2_000,
+        pollTimeoutMs: 2_000,
       }),
     );
-    return { manager, operations, getTask };
-  }
+    const continueAfterInput = vi.fn().mockResolvedValue(false);
 
-  it("does nothing on the extension wire, which has no tasks/result", async () => {
-    const requestWithSchema = vi.fn();
-    const { manager, operations } = setup({ requestWithSchema });
-
-    const polled = await operations.resolveInputRequired(
-      manager,
-      "server",
-      "extension",
-      "task-1",
-      PARKED,
-    );
-
-    expect(polled).toBe(PARKED);
-    expect(requestWithSchema).not.toHaveBeenCalled();
-  });
-
-  it("does nothing when the task did not park on input_required", async () => {
-    const requestWithSchema = vi.fn();
-    const { manager, operations } = setup({ requestWithSchema });
-    const finished = { task: { taskId: "task-1", status: "completed" } };
-
-    const polled = await operations.resolveInputRequired(
-      manager,
+    await operations.pollToTerminal(
+      { getTask } as unknown as MCPClientManager,
       "server",
       "legacy",
       "task-1",
-      finished,
+      { stopOnInputRequired: true, continueAfterInput },
     );
 
-    expect(polled).toBe(finished);
-    expect(requestWithSchema).not.toHaveBeenCalled();
-  });
-
-  it("calls tasks/result once and keeps the parked task when nothing comes back", async () => {
-    const requestWithSchema = vi
-      .fn()
-      .mockRejectedValue(rpcError(-32001, "Request timed out"));
-    const { manager, operations, getTask } = setup({
-      requestWithSchema,
-      pollTimeoutMs: 750,
-    });
-
-    const polled = await operations.resolveInputRequired(
-      manager,
-      "server",
-      "legacy",
-      "task-1",
-      PARKED,
-    );
-
-    expect(requestWithSchema).toHaveBeenCalledTimes(1);
-    const [payload, , requestOptions] = requestWithSchema.mock.calls[0]!;
-    expect(payload).toEqual({
-      method: "tasks/result",
-      params: { taskId: "task-1" },
-    });
-    // Bounded by the run's poll budget when that is the smaller of the two.
-    expect(requestOptions).toEqual({ timeout: 750 });
-    expect(polled.task).toBe(PARKED.task);
-    expect(polled.inputRequired).toBe(true);
-    expect(polled.resultCall?.outcome).toBe("no-answer");
-    // The task was not read again: nothing says it moved.
-    expect(getTask).not.toHaveBeenCalled();
-  });
-
-  it("reads the task again when tasks/result returns", async () => {
-    const requestWithSchema = vi.fn().mockResolvedValue({ content: [] });
-    const getTask = vi
-      .fn()
-      .mockResolvedValue({ taskId: "task-1", status: "completed" });
-    const { manager, operations } = setup({ requestWithSchema, getTask });
-
-    const polled = await operations.resolveInputRequired(
-      manager,
-      "server",
-      "legacy",
-      "task-1",
-      PARKED,
-    );
-
-    expect(polled.resultCall?.outcome).toBe("returned");
-    expect(polled.task).toEqual({ taskId: "task-1", status: "completed" });
-    expect(polled.inputRequired).toBeUndefined();
-  });
-
-  it("reads the task again after a JSON-RPC error, and reports it still parked if it is", async () => {
-    // A server that refuses tasks/result while the task is open has not ended
-    // the task. The re-read says so, and the run goes on with a parked task.
-    const requestWithSchema = vi
-      .fn()
-      .mockRejectedValue(rpcError(-32602, "task is not finished"));
-    const getTask = vi.fn().mockResolvedValue(PARKED.task);
-    const { manager, operations } = setup({ requestWithSchema, getTask });
-
-    const polled = await operations.resolveInputRequired(
-      manager,
-      "server",
-      "legacy",
-      "task-1",
-      PARKED,
-    );
-
-    expect(polled.resultCall).toMatchObject({ outcome: "error", code: -32602 });
-    expect(polled.task?.status).toBe("input_required");
-    expect(polled.inputRequired).toBe(true);
-  });
-
-  it("keeps the earlier read when the task cannot be read again", async () => {
-    const requestWithSchema = vi.fn().mockResolvedValue({ content: [] });
-    const getTask = vi.fn().mockRejectedValue(new Error("connection reset"));
-    const { manager, operations } = setup({ requestWithSchema, getTask });
-
-    const polled = await operations.resolveInputRequired(
-      manager,
-      "server",
-      "legacy",
-      "task-1",
-      PARKED,
-    );
-
-    expect(polled.task).toBe(PARKED.task);
-    expect(polled.resultCall?.outcome).toBe("returned");
+    // Three reads 50 ms apart came out of the 2 s first.
+    const [, remainingMs] = continueAfterInput.mock.calls[0]!;
+    expect(remainingMs).toBeGreaterThan(1_500);
+    expect(remainingMs).toBeLessThan(2_000);
   });
 });

@@ -82,19 +82,27 @@ export async function runReadChecks(context: TaskCheckContext) {
 
   if (selected.has("tasks-inline-result")) {
     const stepStartedAt = Date.now();
+    // 2025-11-25: the `tasks/result` this run sent while the task was asking
+    // for input. Shown on every verdict, so the report says it came first.
+    const resultCall = context.resultLeg?.details();
     if (!finalTask || !createdTaskId) {
       checks.push(noTask("tasks-inline-result"));
     } else if (!TERMINAL_STATUSES.has(String(finalTask.status))) {
       checks.push(
         couldNotRun(
           "tasks-inline-result",
-          context.repeatedInputKeys
+          context.pollError !== undefined
+            ? `reading task ${createdTaskId} failed before it reached a terminal status (last status: ${String(
+                finalTask.status
+              )}): ${errorMessage(context.pollError)}`
+            : context.repeatedInputKeys
             ? `The server kept requesting keys this run already answered: ${JSON.stringify(context.repeatedInputKeys)}. The task was still waiting for input at the polling deadline.`
             : `task did not reach a terminal status within ${
             operations.config.pollTimeoutMs
           }ms (last status: ${String(
             finalTask.status
-          )}); raise --poll-timeout (SDK: pollTimeoutMs) or probe a shorter-lived task`
+          )}); raise --poll-timeout (SDK: pollTimeoutMs) or probe a shorter-lived task`,
+          resultCall
         )
       );
     } else if (wire === "extension") {
@@ -116,6 +124,21 @@ export async function runReadChecks(context: TaskCheckContext) {
               { status: finalTask.status }
             )
       );
+    } else if (resultCall && finalTask.status !== "completed") {
+      // The task was waiting on this run and ended without a result. Whether
+      // the run answered or could not, that is not the server breaking a rule.
+      const reason = context.resultLeg!.unfinishedReason(
+        String(finalTask.status)
+      );
+      checks.push(
+        couldNotRun("tasks-inline-result", reason.message, {
+          status: finalTask.status,
+          ...resultCall,
+          ...(reason.setup
+            ? needsSetupDetails("tasksProbe", reason.message)
+            : {}),
+        })
+      );
     } else {
       try {
         const result = await manager.getTaskResult(serverId, createdTaskId);
@@ -123,11 +146,13 @@ export async function runReadChecks(context: TaskCheckContext) {
           isRecord(result)
             ? passed("tasks-inline-result", Date.now() - stepStartedAt, {
                 status: finalTask.status,
+                ...resultCall,
               })
             : failed(
                 "tasks-inline-result",
                 Date.now() - stepStartedAt,
-                "legacy tasks/result must return the original request's result"
+                "legacy tasks/result must return the original request's result",
+                resultCall
               )
         );
       } catch (error) {
@@ -136,7 +161,7 @@ export async function runReadChecks(context: TaskCheckContext) {
             "tasks-inline-result",
             Date.now() - stepStartedAt,
             `legacy tasks/result failed: ${errorMessage(error)}`,
-            undefined,
+            resultCall,
             error
           )
         );

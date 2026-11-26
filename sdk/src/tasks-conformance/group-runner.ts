@@ -61,6 +61,11 @@ import {
   InputRequiredLeg,
 } from "./evidence.js";
 import { TaskOperations } from "./task-operations.js";
+import {
+  InputRequiredResultLeg,
+  answersNeedPin,
+  taskInputAnswersFor,
+} from "./input-required-result.js";
 import { runReadChecks } from "./read-checks.js";
 import { runMutationChecks } from "./mutation-checks.js";
 export class TaskGroupRunner extends TaskOperations {
@@ -93,6 +98,14 @@ export class TaskGroupRunner extends TaskOperations {
     // exists for: a reader comparing two runs must be able to tell whether they
     // asked the same questions, and "failed to connect" is still a run.
     const profile = conformanceProfile("mcp-tasks");
+    // 2025-11-25: the answers to the questions a server sends over
+    // `tasks/result`. Decided here because a client that answers has to say
+    // so in `initialize`.
+    const inputAnswers = taskInputAnswersFor(this.config);
+    const resultLeg = new InputRequiredResultLeg(
+      inputAnswers,
+      answersNeedPin(this.config)
+    );
 
     try {
       return await withTasksClient(
@@ -524,9 +537,19 @@ export class TaskGroupRunner extends TaskOperations {
                   createdTaskId,
                   {
                     stopOnInputRequired: true,
-                    continueAfterInput: async (task) => {
+                    continueAfterInput: async (task, remainingMs) => {
                       inputRequiredTask ??= task;
-                      if (wire !== "extension") return false;
+                      // 2025-11-25 answers over `tasks/result`, not `tasks/update`.
+                      if (wire !== "extension")
+                        return (
+                          wire === "legacy" &&
+                          resultLeg.run(
+                            manager,
+                            serverId,
+                            createdTaskId,
+                            remainingMs
+                          )
+                        );
                       const leg = await this.runInputRequiredLeg(
                         manager,
                         serverId,
@@ -646,6 +669,8 @@ export class TaskGroupRunner extends TaskOperations {
             serverId,
             inputRequiredTask,
             inputLeg,
+            resultLeg,
+            pollError: polled.error,
             received,
             sent,
             rawCreation,
@@ -762,6 +787,12 @@ export class TaskGroupRunner extends TaskOperations {
           rpcLogger: captureRpc,
           signal: this.config.signal,
           onRequest: this.requestHeaders.observe,
+          ...(inputAnswers
+            ? {
+                beforeConnect: (manager, serverId) =>
+                  manager.setElicitationHandler(serverId, inputAnswers.handler),
+              }
+            : {}),
         }
       );
     } catch (error) {

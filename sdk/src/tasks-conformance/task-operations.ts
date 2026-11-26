@@ -466,7 +466,14 @@ export class TaskOperations {
     taskId: string,
     options?: {
       stopOnInputRequired?: boolean;
-      continueAfterInput?: (task: Record<string, unknown>) => Promise<boolean>;
+      /**
+       * Called when the task is seen parked. `remainingMs` is what is left of
+       * the poll budget: whatever the callback does is paid for out of it.
+       */
+      continueAfterInput?: (
+        task: Record<string, unknown>,
+        remainingMs: number
+      ) => Promise<boolean>;
     }
   ): Promise<{
     task?: Record<string, unknown>;
@@ -516,7 +523,9 @@ export class TaskOperations {
       ) {
         consecutiveInputRequired += 1;
         if (consecutiveInputRequired >= PARKED_INPUT_REQUIRED_POLLS) {
-          if (!(await options.continueAfterInput?.(last)))
+          if (
+            !(await options.continueAfterInput?.(last, deadline - Date.now()))
+          )
             return { task: last, inputRequired: true };
           consecutiveInputRequired = 0;
         }
