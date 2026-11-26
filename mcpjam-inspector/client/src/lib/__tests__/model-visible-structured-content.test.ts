@@ -3,7 +3,9 @@ import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config";
 import {
   getModelVisibleStructuredContent,
   parseModelVisibleStructuredContent,
+  ruleForToolResultParts,
   setModelVisibleStructuredContent,
+  toolResultPartsForRule,
 } from "../model-visible-structured-content";
 
 const imageFlags: ModelVisibleMcpToolResults = {
@@ -70,5 +72,43 @@ describe("reading the rule", () => {
     expect(getModelVisibleStructuredContent(undefined)).toBeUndefined();
     expect(parseModelVisibleStructuredContent("default")).toBeUndefined();
     expect(parseModelVisibleStructuredContent("both")).toBe("both");
+  });
+});
+
+describe("tool result parts", () => {
+  it.each([
+    [undefined, ["content", "structuredContent", "_meta"]],
+    ["fallback", ["content"]],
+    ["preferred", ["structuredContent"]],
+    ["both", ["content", "structuredContent"]],
+  ] as const)("rule %s selects %j", (rule, parts) => {
+    expect(toolResultPartsForRule(rule)).toEqual(parts);
+  });
+
+  // [current rule, part toggled, resulting rule]
+  it.each([
+    [undefined, "_meta", "both"],
+    [undefined, "content", "preferred"],
+    [undefined, "structuredContent", "fallback"],
+    ["both", "_meta", undefined],
+    ["both", "content", "preferred"],
+    ["both", "structuredContent", "fallback"],
+    ["fallback", "structuredContent", "both"],
+    ["fallback", "_meta", undefined],
+    ["preferred", "content", "both"],
+    ["preferred", "_meta", undefined],
+  ] as const)("from %s, toggling %s gives %s", (current, part, expected) => {
+    const before: string[] = toolResultPartsForRule(current);
+    const selected = before.includes(part)
+      ? before.filter((p) => p !== part)
+      : [...before, part];
+    expect(ruleForToolResultParts(current, selected)).toEqual({
+      rule: expected,
+    });
+  });
+
+  it("keeps the rule when the last part is deselected", () => {
+    expect(ruleForToolResultParts("fallback", [])).toBeNull();
+    expect(ruleForToolResultParts("preferred", [])).toBeNull();
   });
 });

@@ -68,66 +68,86 @@ function renderTab(policy: ModelVisibleMcpToolResults | undefined) {
   };
 }
 
-async function pick(option: string) {
+async function toggle(part: string) {
   const user = userEvent.setup();
-  const group = screen.getByRole("radiogroup", { name: LABEL });
-  await user.click(within(group).getByRole("radio", { name: option }));
+  const group = screen.getByRole("toolbar", { name: LABEL });
+  await user.click(within(group).getByRole("button", { name: part }));
 }
 
-function selectedOption() {
-  const group = screen.getByRole("radiogroup", { name: LABEL });
-  return within(group).getByRole("radio", { checked: true });
+function selectedParts() {
+  const group = screen.getByRole("toolbar", { name: LABEL });
+  return within(group)
+    .getAllByRole("button", { pressed: true })
+    .map((button) => button.textContent);
 }
 
 describe("BehaviorTab tool results sent to the model", () => {
-  it("shows the default for a client with no rule", () => {
+  it("selects all three parts for a client with no rule", () => {
     renderTab(imageFlags);
-    expect(selectedOption()).toHaveAccessibleName("All three (default)");
+    expect(selectedParts()).toEqual(["content", "structuredContent", "_meta"]);
     expect(
       screen.getByText(
-        "The model gets the text, structuredContent and _meta as one escaped JSON string.",
+        "The model gets content, structuredContent and _meta as one escaped JSON string.",
       ),
     ).toBeInTheDocument();
   });
 
   it.each([
-    ["Text", "fallback", /or structuredContent when content is empty/],
-    ["structuredContent", "preferred", /or the text when there is none/],
-    ["Text and structuredContent", "both", /without _meta/],
+    ["_meta", "both", ["content", "structuredContent"], /each once/],
+    [
+      "content",
+      "preferred",
+      ["structuredContent"],
+      /or content when there is none/,
+    ],
+    [
+      "structuredContent",
+      "fallback",
+      ["content"],
+      /or structuredContent when content is empty/,
+    ],
   ] as const)(
-    "picking %s stores %s and keeps the image flags",
-    async (option, rule, description) => {
+    "deselecting %s from the default stores %s and keeps the image flags",
+    async (part, rule, parts, description) => {
       const { lastPolicy } = renderTab(imageFlags);
-      await pick(option);
+      await toggle(part);
       expect(lastPolicy()).toEqual({ ...imageFlags, structuredContent: rule });
-      expect(selectedOption()).toHaveAccessibleName(option);
+      expect(selectedParts()).toEqual(parts);
       expect(screen.getByText(description)).toBeInTheDocument();
     },
   );
 
-  it("picking the default removes only the rule", async () => {
+  it("selecting _meta selects all three and removes only the rule", async () => {
     const { lastPolicy } = renderTab({
       ...imageFlags,
       structuredContent: "preferred",
     });
-    expect(selectedOption()).toHaveAccessibleName("structuredContent");
-    await pick("All three (default)");
+    expect(selectedParts()).toEqual(["structuredContent"]);
+    await toggle("_meta");
+    expect(selectedParts()).toEqual(["content", "structuredContent", "_meta"]);
     expect(lastPolicy()).toEqual(imageFlags);
     expect(lastPolicy()).not.toHaveProperty("structuredContent");
   });
 
-  it("picking the default clears a policy that held only the rule", async () => {
+  it("going back to the default clears a policy that held only the rule", async () => {
     const { lastPolicy, drafts } = renderTab({ structuredContent: "both" });
-    await pick("All three (default)");
+    await toggle("_meta");
     expect(drafts.length).toBeGreaterThan(0);
     expect(lastPolicy()).toBeUndefined();
   });
 
-  it("re-clicking the selected option keeps it", async () => {
+  it("selecting a second part sends both", async () => {
+    const { lastPolicy } = renderTab({ structuredContent: "fallback" });
+    await toggle("structuredContent");
+    expect(lastPolicy()).toEqual({ structuredContent: "both" });
+    expect(selectedParts()).toEqual(["content", "structuredContent"]);
+  });
+
+  it("keeps the last selected part", async () => {
     const { drafts } = renderTab({ structuredContent: "fallback" });
-    await pick("Text");
+    await toggle("content");
     expect(drafts).toHaveLength(0);
-    expect(selectedOption()).toHaveAccessibleName("Text");
+    expect(selectedParts()).toEqual(["content"]);
   });
 
   it.each([
@@ -150,7 +170,7 @@ describe("BehaviorTab tool results sent to the model", () => {
       screen.getByRole("radiogroup", { name: "Render tool images" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("radiogroup", { name: LABEL }),
+      screen.queryByRole("toolbar", { name: LABEL }),
     ).not.toBeInTheDocument();
   });
 
@@ -163,9 +183,9 @@ describe("BehaviorTab tool results sent to the model", () => {
         readOnly
       />,
     );
-    const group = screen.getByRole("radiogroup", { name: LABEL });
-    for (const radio of within(group).getAllByRole("radio")) {
-      expect(radio).toBeDisabled();
+    const group = screen.getByRole("toolbar", { name: LABEL });
+    for (const button of within(group).getAllByRole("button")) {
+      expect(button).toBeDisabled();
     }
   });
 });

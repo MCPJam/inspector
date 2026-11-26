@@ -10,7 +10,7 @@ import type {
   ModelVisibleStructuredContent,
 } from "@mcpjam/sdk/host-config";
 
-/** A rule from an untyped value (a toggle's string), or undefined. */
+/** A rule from an untyped value, or undefined. */
 export function parseModelVisibleStructuredContent(
   value: unknown,
 ): ModelVisibleStructuredContent | undefined {
@@ -40,4 +40,53 @@ export function setModelVisibleStructuredContent(
   if (!policy) return undefined;
   const { structuredContent: _removed, ...rest } = policy;
   return Object.keys(rest).length > 0 ? rest : undefined;
+}
+
+/** The three parts of an MCP tool result, by their field names. */
+export const TOOL_RESULT_PARTS = [
+  "content",
+  "structuredContent",
+  "_meta",
+] as const;
+export type ToolResultPart = (typeof TOOL_RESULT_PARTS)[number];
+
+/** The parts the model gets under a rule. */
+export function toolResultPartsForRule(
+  rule: ModelVisibleStructuredContent | undefined,
+): ToolResultPart[] {
+  switch (rule) {
+    case "fallback":
+      return ["content"];
+    case "preferred":
+      return ["structuredContent"];
+    case "both":
+      return ["content", "structuredContent"];
+    default:
+      return ["content", "structuredContent", "_meta"];
+  }
+}
+
+/**
+ * The rule after one part is toggled, given the parts now selected. Only four
+ * of the seven combinations exist: `_meta` reaches the model only together
+ * with the other two, in the default's one JSON string. So selecting `_meta`
+ * selects all three, and deselecting `content` or `structuredContent` while
+ * `_meta` is selected drops `_meta` too. Returns null when nothing would be
+ * selected, which keeps the current rule.
+ */
+export function ruleForToolResultParts(
+  current: ModelVisibleStructuredContent | undefined,
+  selected: readonly string[],
+): { rule: ModelVisibleStructuredContent | undefined } | null {
+  const before = toolResultPartsForRule(current);
+  const has = (part: ToolResultPart) => selected.includes(part);
+  if (has("_meta") && !before.includes("_meta")) return { rule: undefined };
+  const content = has("content");
+  const structured = has("structuredContent");
+  if (content && structured) {
+    return { rule: has("_meta") ? undefined : "both" };
+  }
+  if (content) return { rule: "fallback" };
+  if (structured) return { rule: "preferred" };
+  return null;
 }
