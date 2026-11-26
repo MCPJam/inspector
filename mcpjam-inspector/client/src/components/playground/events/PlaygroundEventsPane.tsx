@@ -2,7 +2,7 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { toast } from "sonner";
 import { useState } from "react";
 import { useConvexAuth, useQuery } from "convex/react";
-import { Plus, Radio } from "lucide-react";
+import { Plus } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import { Label } from "@mcpjam/design-system/label";
@@ -17,10 +17,10 @@ import { EventTriggersTab } from "@/components/EventTriggersTab";
 import { EVENT_TRIGGERS_API } from "@/lib/apis/event-triggers-api";
 import { useCurrentSearchParam } from "@/lib/app-navigation";
 import { EventDataView } from "@/components/events/EventsFeedPanel";
-import { ReachabilityHeader } from "@/components/events/ReachabilityHeader";
-import { hasInsecureLocalReceiver, simulationDataFromSchema } from "@/components/events/event-utils";
+import { simulationDataFromSchema } from "@/components/events/event-utils";
 import { AddPlaygroundEvent } from "./AddPlaygroundEvent";
-import { arrivalLabel, bindingStatus } from "./binding-status";
+import { bindingStatus } from "./binding-status";
+import { EventConnectionCard } from "./EventConnectionCard";
 import {
   usePlaygroundEvents,
   type PlaygroundEventBinding,
@@ -66,83 +66,26 @@ export function PlaygroundEventsPane() {
               feedStatus: runtime.feed.status,
             });
             return (
-              <section
+              <EventConnectionCard
                 key={binding.id}
-                className="space-y-2 rounded-md border border-border p-3"
-                aria-label={`${binding.eventName} connection`}
-              >
-                {binding.title ? (
-                  <p className="truncate text-xs font-medium">
-                    {binding.title}
-                  </p>
-                ) : null}
-                <div className="flex items-center gap-2">
-                  <Radio className="size-3.5 text-muted-foreground" />
-                  <span className="truncate font-mono text-xs">
-                    {binding.eventName}
-                  </span>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {binding.serverName} · {status}
-                  {binding.subscription && hasInsecureLocalReceiver(binding.subscription) ? (
-                    <span className="ml-2 text-warning">Plain HTTP</span>
-                  ) : null}
-                </p>
-                <div className="flex flex-wrap gap-1">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={!connected || !binding.enabled}
-                    onClick={() => setSelected({ binding, mode: "test" })}
-                  >
-                    Trigger event
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setSelected({ binding, mode: "edit" })}
-                  >
-                    Edit instructions
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() =>
-                      void runtime
-                        .edit(binding.id, { enabled: !binding.enabled })
-                        .catch((error: unknown) =>
-                          toast.error(
-                            error instanceof Error
-                              ? error.message
-                              : "Could not resume events. Try again.",
-                          ),
-                        )
-                    }
-                  >
-                    {binding.enabled ? "Pause" : "Resume"}
-                  </Button>
-                </div>
-                {binding.lastEvent || binding.lastResult ? (
-                  <div
-                    role="status"
-                    className="space-y-0.5 text-xs text-muted-foreground"
-                  >
-                    {binding.lastEvent ? (
-                      <p className="text-foreground">
-                        {arrivalLabel(binding.lastEvent)}
-                      </p>
-                    ) : null}
-                    {binding.lastResult ? <p>{binding.lastResult}</p> : null}
-                  </div>
-                ) : null}
-                {!runtime.hosted && binding.subscription?.mode === "webhook" ? (
-                  <ReachabilityHeader subscription={binding.subscription} />
-                ) : binding.subscription?.lastError ? (
-                  <p role="alert" className="text-xs text-destructive">
-                    {binding.subscription.lastError.message}
-                  </p>
-                ) : null}
-              </section>
+                binding={binding}
+                status={status}
+                connected={connected}
+                hosted={runtime.hosted}
+                onTrigger={() => setSelected({ binding, mode: "test" })}
+                onEdit={() => setSelected({ binding, mode: "edit" })}
+                onTogglePause={() =>
+                  void runtime
+                    .edit(binding.id, { enabled: !binding.enabled })
+                    .catch((error: unknown) =>
+                      toast.error(
+                        error instanceof Error
+                          ? error.message
+                          : "Could not resume events. Try again.",
+                      ),
+                    )
+                }
+              />
             );
           })
         )}

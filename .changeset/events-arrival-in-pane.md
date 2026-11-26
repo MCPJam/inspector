@@ -2,4 +2,4 @@
 "@mcpjam/inspector": patch
 ---
 
-The Playground Events pane shows when each event arrived and how it was delivered, even when the agent skipped it, and Tracing names the event type on each event row.
+Each Playground Events card opens to list its recent events, with when each arrived and whether it reached the agent, plus its Trigger event, Edit instructions and Pause actions. Closed, it shows when the event last fired and any reason it was not sent. Tracing names the event type on each event row.

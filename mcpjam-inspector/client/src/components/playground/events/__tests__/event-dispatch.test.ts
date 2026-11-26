@@ -142,7 +142,9 @@ describe("foreground event dispatch", () => {
       await f.dispatcher.dispatch("binding", { ...f.entry, eventId: "next" }),
     ).toBe(false);
     expect(f.agent().send).not.toHaveBeenCalled();
-    expect(f.result).toHaveBeenCalledTimes(2);
+    expect(f.result.mock.calls.map(([, , outcome]) => outcome.status)).toEqual(
+      ["skipped", "skipped"],
+    );
     // A skipped occurrence still shows it arrived.
     expect(f.received.mock.calls.map(([, entry]) => entry.eventId)).toEqual([
       "ping-1",
@@ -158,7 +160,10 @@ describe("foreground event dispatch", () => {
     await f.dispatcher.dispatch("binding", f.entry);
     await f.dispatcher.dispatch("binding", { ...f.entry, seq: 2 });
     expect(f.received).toHaveBeenCalledTimes(1);
-    expect(f.result).toHaveBeenLastCalledWith("binding", "Event sent to agent");
+    expect(f.result).toHaveBeenLastCalledWith("binding", f.entry, {
+      status: "sent",
+      message: "Event sent to agent",
+    });
   });
   it.each([
     "pause",

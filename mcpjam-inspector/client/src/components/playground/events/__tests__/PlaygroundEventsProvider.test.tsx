@@ -6,7 +6,6 @@ import {
   usePlaygroundEvents,
 } from "../PlaygroundEventsProvider";
 import { useEventAgentBridge } from "../event-agent-bridge";
-import { arrivalLabel } from "../binding-status";
 import type { UseEventsFeedOptions } from "@/components/events/use-events-feed";
 
 const mocks = vi.hoisted(() => ({
@@ -147,15 +146,14 @@ describe("Playground Events lifecycle", () => {
       ]);
     });
     await waitFor(() =>
-      expect(runtime!.bindings[0].lastResult).toBe("Event sent to agent"),
-    );
-    const lastEvent = runtime!.bindings[0].lastEvent!;
-    expect(lastEvent).toEqual({ receivedAt, origin: "push" });
-    expect(arrivalLabel(lastEvent, "en-US")).toBe(
-      "Received 9:30:34 AM via push",
-    );
-    expect(arrivalLabel({ receivedAt, origin: "simulation" }, "en-US")).toBe(
-      "Test event 9:30:34 AM",
+      expect(runtime!.bindings[0].recentEvents).toEqual([
+        {
+          key: expect.any(String),
+          receivedAt,
+          origin: "push",
+          outcome: { status: "sent", message: "Event sent to agent" },
+        },
+      ]),
     );
   });
 
