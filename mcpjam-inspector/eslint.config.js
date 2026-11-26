@@ -25,6 +25,14 @@ const NODE_BUILTIN = {
   message:
     "shared/ also runs in the browser, so it cannot import Node built-ins. Put this in server/.",
 };
+// gray-matter's default engines evaluate `---js` and `---javascript`
+// frontmatter as code, so parsing a skill with it runs whatever the file says.
+// Skills go through readSkillDocument, which only reads YAML.
+const GRAY_MATTER = {
+  regex: "^gray-matter(/|$)",
+  message:
+    "gray-matter evaluates `---js` frontmatter as code. Read SKILL.md with readSkillDocument from shared/skill-document.ts, or parse YAML with `yaml`.",
+};
 // Tests are left out: a parity test has to load both sides it compares.
 const TESTS = ["**/__tests__/**", "**/*.test.{ts,tsx}"];
 // no-restricted-imports only sees static imports, so `import("../server/x")`
@@ -90,6 +98,12 @@ export default [
     linterOptions: { reportUnusedDisableDirectives: "off" },
   },
   {
+    // Tests included. The layer configs below replace these options for the
+    // files they cover and repeat GRAY_MATTER, so the ban holds everywhere.
+    files: ["client/src/**/*.{ts,tsx}", "server/**/*.ts", "shared/**/*.ts"],
+    rules: restrictImports(GRAY_MATTER),
+  },
+  {
     files: ["client/src/**/*.{ts,tsx}"],
     plugins: { "react-hooks": reactHooks },
     rules: {
@@ -100,12 +114,12 @@ export default [
   {
     files: ["client/src/**/*.{ts,tsx}"],
     ignores: TESTS,
-    rules: restrictImports(SERVER_BY_PATH, SDK_BY_PATH),
+    rules: restrictImports(SERVER_BY_PATH, SDK_BY_PATH, GRAY_MATTER),
   },
   {
     files: ["server/**/*.ts"],
     ignores: TESTS,
-    rules: restrictImports(CLIENT_BY_PATH, SDK_BY_PATH),
+    rules: restrictImports(CLIENT_BY_PATH, SDK_BY_PATH, GRAY_MATTER),
   },
   {
     files: ["shared/**/*.ts"],
@@ -115,6 +129,7 @@ export default [
       CLIENT_BY_PATH,
       SDK_BY_PATH,
       NODE_BUILTIN,
+      GRAY_MATTER,
     ),
   },
   {

@@ -24,11 +24,11 @@
  * prompt time, so each test reaches `doPromptTurn` against a fake bridge.
  */
 import { describe, expect, it } from "vitest";
-import matter from "gray-matter";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
 import { createCodexAppServer } from "../codex-appserver/index.js";
 import { boxSkillsFolder, planBoxSkills } from "../box-skills-writer";
 import { getHarnessAdapter } from "../registry";
+import { readSkillDocument } from "../../../../shared/skill-document";
 import type { RuntimeSkill } from "../runtime-skills";
 import { BOX_HOME } from "../../../test/support/fake-skill-box";
 import {
@@ -122,12 +122,12 @@ describe("codex skill parity (real adapter)", () => {
     );
 
     expectReachedPrompt(error);
-    const parsed = matter(
+    const parsed = readSkillDocument(
       skillWrites(writes, boxSkillsFolder(getHarnessAdapter("codex").skills, BOX_HOME))[0]!.content
     );
-    expect(parsed.data.name).toBe("pdf-tools");
-    expect(parsed.data.description).toBe('Process: PDFs "safely"');
-    expect(parsed.content.trim()).toBe("# Body");
+    expect(parsed.frontmatter?.name).toBe("pdf-tools");
+    expect(parsed.frontmatter?.description).toBe('Process: PDFs "safely"');
+    expect(parsed.body.trim()).toBe("# Body");
   });
 
   it("would emit BROKEN frontmatter without the encoding (control)", async () => {
@@ -150,13 +150,10 @@ describe("codex skill parity (real adapter)", () => {
       writes,
       boxSkillsFolder(getHarnessAdapter("codex").skills, BOX_HOME)
     )[0]!;
-    let parsedDescription: unknown;
-    try {
-      parsedDescription = matter(written.content).data.description;
-    } catch {
-      parsedDescription = undefined; // YAML refused it outright
-    }
-    expect(parsedDescription).not.toBe('Process: PDFs "safely"');
+    // The reader gives no frontmatter at all when YAML refuses the block.
+    expect(readSkillDocument(written.content).frontmatter?.description).not.toBe(
+      'Process: PDFs "safely"'
+    );
   });
 
   it("accepts every name MCPJam's validator accepts", async () => {
@@ -231,10 +228,11 @@ describe("codex skill parity (real adapter)", () => {
     );
     expect(boxSkillsFolder(claudeAdapter.skills, BOX_HOME)).toBe(`${BOX_HOME}/.claude/skills`);
     // Same frontmatter + body (claude-code appends a trailing newline).
-    const codexParsed = matter(codexWrite.content);
-    const claudeParsed = matter(claudeWrite.content);
-    expect(codexParsed.data).toEqual(claudeParsed.data);
-    expect(codexParsed.content.trim()).toBe(claudeParsed.content.trim());
+    const codexParsed = readSkillDocument(codexWrite.content);
+    const claudeParsed = readSkillDocument(claudeWrite.content);
+    expect(codexParsed.frontmatter).toBeDefined();
+    expect(codexParsed.frontmatter).toEqual(claudeParsed.frontmatter);
+    expect(codexParsed.body.trim()).toBe(claudeParsed.body.trim());
   });
 });
 

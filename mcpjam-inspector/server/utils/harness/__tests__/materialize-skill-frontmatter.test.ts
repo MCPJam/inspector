@@ -1,5 +1,4 @@
 import { describe, it, expect } from "vitest";
-import matter from "gray-matter";
 import { parse as parseYaml } from "yaml";
 import { writeSkills } from "@ai-sdk/harness/utils";
 import { planBoxSkills } from "../box-skills-writer";
@@ -12,6 +11,14 @@ import {
 } from "../materialize-skill-frontmatter";
 import type { RuntimeSkill } from "../runtime-skills";
 import { HARNESS_SKILLS } from "../skills-descriptor";
+import { readSkillDocument } from "../../../../shared/skill-document";
+
+/** The frontmatter of a rendered SKILL.md; fails the test when it doesn't parse. */
+function frontmatterOf(md: string): Record<string, unknown> {
+  const { frontmatter } = readSkillDocument(md);
+  expect(frontmatter).toBeDefined();
+  return frontmatter ?? {};
+}
 
 const SKILLS_BASE = "/home/user/.claude/skills";
 
@@ -109,7 +116,7 @@ describe("generateSkillMdWithExtras", () => {
       content: "c",
       extraFrontmatter: drifted,
     });
-    const { data } = matter(md);
+    const data = frontmatterOf(md);
     expect(Object.keys(data).sort()).toEqual([
       "description",
       "license",
@@ -426,25 +433,25 @@ describe("renderSkillMd, by the runtime's frontmatter rules", () => {
       ...RULES,
       descriptionMaxLength: 1024,
     });
-    expect(matter(text).data.description).toHaveLength(1024);
+    expect(frontmatterOf(text).description).toHaveLength(1024);
   });
 
   it("adds Cursor's surface to a skill that lists surfaces without it", () => {
     const rules = HARNESS_SKILLS.cursor.frontmatter;
     const render = (surfaces: string) =>
-      matter(
+      frontmatterOf(
         renderSkillMd(
           skill({ extraFrontmatter: { metadata: { surfaces, team: "docs" } } }),
           rules,
         ),
-      ).data.metadata;
+      ).metadata;
     expect(render("ide")).toEqual({ surfaces: "ide,cli", team: "docs" });
     expect(render("cli, ide")).toEqual({ surfaces: "cli, ide", team: "docs" });
     // No surfaces: Cursor loads the skill everywhere already.
     expect(
-      matter(
+      frontmatterOf(
         renderSkillMd(skill({ extraFrontmatter: { license: "MIT" } }), rules),
-      ).data.metadata,
+      ).metadata,
     ).toBeUndefined();
   });
 

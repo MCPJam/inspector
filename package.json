@@ -90,11 +90,6 @@
       "zod": "^4.6.5"
     },
     "global-agent": "^4.1.3",
-    "gray-matter": {
-      "js-yaml": {
-        "argparse": "^2.0.1"
-      }
-    },
     "@chromatic-com/playwright": {
       "storybook": "^10.6.2"
     },

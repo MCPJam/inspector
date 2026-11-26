@@ -227,7 +227,6 @@
     "fix-path": "^5.0.0",
     "framer-motion": "^13.4.6",
     "fuse.js": "^7.5.0",
-    "gray-matter": "^4.0.3",
     "hono": "^4.13.16",
     "https-proxy-agent": "^7.0.6",
     "jose": "^6.2.12",

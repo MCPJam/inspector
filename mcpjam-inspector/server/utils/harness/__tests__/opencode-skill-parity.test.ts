@@ -15,13 +15,13 @@
  *      check throws mid-turn, failing the whole turn.
  */
 import { describe, expect, it } from "vitest";
-import matter from "gray-matter";
 import { createCodexAppServer } from "../codex-appserver/index.js";
 import { boxSkillsFolder, planBoxSkills } from "../box-skills-writer";
 import { createOpenCodeHarness } from "../opencode-adapter";
 import { buildBrokerDummyAuth, getHarnessAdapter } from "../registry";
 import type { RuntimeSkill } from "../runtime-skills";
 import { foldersToClear } from "../skills-descriptor";
+import { readSkillDocument } from "../../../../shared/skill-document";
 import { BOX_HOME } from "../../../test/support/fake-skill-box";
 import {
   promptWithSkills,
@@ -115,7 +115,9 @@ describe("OpenCode skill parity (real adapter)", () => {
       lastWrite(codexRun.writes, manifest),
     );
     // OpenCode reads `name` and `description`; MCPJam's quoting survives.
-    expect(matter(lastWrite(openCodeRun.writes, skillMd)!).data).toEqual({
+    expect(
+      readSkillDocument(lastWrite(openCodeRun.writes, skillMd)!).frontmatter,
+    ).toEqual({
       name: "pdf-tools",
       description: 'Process: PDFs "safely"',
     });

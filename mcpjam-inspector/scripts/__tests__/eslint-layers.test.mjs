@@ -54,3 +54,26 @@ test("same-layer, package, computed and test-file dynamic imports pass", async (
     assert.deepEqual(await ruleIds(file, code), [], `${file}: ${code}`);
   }
 });
+
+test("gray-matter is rejected in every layer, tests included", async () => {
+  const files = [
+    "server/utils/x.ts",
+    "server/routes/web/x.ts",
+    "server/utils/harness/__tests__/x.test.ts",
+    "client/src/lib/x.ts",
+    "client/src/lib/x.test.tsx",
+    "shared/x.ts",
+  ];
+  for (const file of files) {
+    assert.deepEqual(
+      await ruleIds(file, 'import matter from "gray-matter";'),
+      ["no-restricted-imports"],
+      `${file}: static import`,
+    );
+    assert.deepEqual(
+      await ruleIds(file, 'await import("gray-matter");'),
+      ["layers/no-restricted-dynamic-imports"],
+      `${file}: dynamic import`,
+    );
+  }
+});
