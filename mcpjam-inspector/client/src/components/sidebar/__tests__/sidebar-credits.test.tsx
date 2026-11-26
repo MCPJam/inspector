@@ -293,7 +293,7 @@ describe("SidebarCredits", () => {
     renderCredits();
 
     expect(screen.getByTestId("sidebar-see-credits")).toHaveTextContent(
-      "See credits",
+      "Credits",
     );
     const dailyRow = screen.getByTestId("sidebar-usage-daily");
     expect(dailyRow).toHaveTextContent("Free daily credits");
@@ -306,14 +306,14 @@ describe("SidebarCredits", () => {
 
     // The rail keeps the icon; the hover card is the only surface that can
     // show the numbers, which is why the row carries no Tooltip of its own.
-    expect(screen.getByText("See credits")).toHaveClass(
+    expect(screen.getByText("Credits")).toHaveClass(
       "group-data-[collapsible=icon]:hidden",
     );
     // With the label hidden and the coin decorative, the aria-label is the
     // only accessible name left on the collapsed rail.
     expect(screen.getByTestId("sidebar-see-credits")).toHaveAttribute(
       "aria-label",
-      "See credits",
+      "Credits",
     );
   });
 

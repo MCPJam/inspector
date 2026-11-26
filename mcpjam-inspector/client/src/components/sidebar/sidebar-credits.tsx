@@ -74,7 +74,7 @@ export function SidebarCredits({
   const sponsoredAllowance = useSwarmSponsorshipAllowance();
 
   // Settled with nothing to show. Rendering the row anyway leaves a permanent
-  // "See credits" whose card is a blank number over an empty bar, which reads
+  // "Credits" whose card is a blank number over an empty bar, which reads
   // as a broken meter rather than as absent data. The meter this replaced made
   // the same call.
   if ((balance?.unlimitedCreditsUntil ?? 0) > Date.now()) return null;
@@ -189,12 +189,12 @@ export function SidebarCredits({
               // The label is hidden on the collapsed rail and the coin is
               // decorative, which would otherwise leave the button nameless
               // there. No tooltip: see the comment above.
-              aria-label="See credits"
+              aria-label="Credits"
               onClick={onOpenBilling}
             >
               <CoinStackIcon aria-hidden="true" className="size-4" />
               <span className="group-data-[collapsible=icon]:hidden">
-                See credits
+                Credits
               </span>
               {plan && (
                 <span className="ml-auto rounded-full border border-border px-2 py-0.5 text-xs group-data-[collapsible=icon]:hidden">
