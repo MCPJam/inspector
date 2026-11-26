@@ -7249,7 +7249,9 @@ describe("multi-model columns", () => {
       await act(async () => {
         fireEvent.submit(screen.getByTestId("chat-input"));
       });
-      await waitFor(() => expect(mockUploadAttachments).toHaveBeenCalledTimes(1));
+      await waitFor(() =>
+        expect(mockUploadAttachments).toHaveBeenCalledTimes(1),
+      );
 
       await act(async () => composer().onCancelSubmit?.());
       expect(composer().isSubmitting).toBe(false);

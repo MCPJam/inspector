@@ -5898,7 +5898,8 @@ export function useChatSession(
             widgetModelContext && widgetModelContext.length > 0
               ? widgetModelContext
               : undefined;
-          if (preparedServers) resolvedHostedServersRef.current = preparedServers;
+          if (preparedServers)
+            resolvedHostedServersRef.current = preparedServers;
           appMessageTurnRef.current = pluginMessage !== undefined;
           activeSendSessions.current.add(sessionAtSend);
           admitted = true;
