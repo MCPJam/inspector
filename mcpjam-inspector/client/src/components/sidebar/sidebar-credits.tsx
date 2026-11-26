@@ -4,6 +4,8 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from "@mcpjam/design-system/hover-card";
+import { Badge } from "@mcpjam/design-system/badge";
+import { Button } from "@mcpjam/design-system/button";
 import { Progress } from "@mcpjam/design-system/progress";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import {
@@ -21,13 +23,6 @@ import { useCreditBalance } from "@/hooks/useCreditBalance";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useSwarmSponsorshipAllowance } from "@/hooks/use-swarm-sponsorship-allowance";
 import {
-  NATIVE_HARNESS_TURNS_TOOLTIP,
-  nativeHarnessTurnsLeftPercent,
-  nativeHarnessTurnsLeftText,
-  useNativeHarnessTrial,
-} from "@/hooks/use-native-harness-trial";
-import { useNativeHarnessEnabled } from "@/hooks/useNativeHarnessEnabled";
-import {
   isPaidPlan,
   useOrganizationBillingStatus,
 } from "@/hooks/useOrganizationBilling";
@@ -37,6 +32,7 @@ import {
   formatMonthlyResetText,
 } from "@/lib/credit-usage";
 import { getEvalIterationQuotaLabel } from "@/lib/eval-iteration-quota";
+import { useRefillAnimation } from "./use-refill-animation";
 
 interface SidebarCreditsProps {
   organizationId: string;
@@ -44,6 +40,8 @@ interface SidebarCreditsProps {
   onOpenBilling: () => void;
   /** Opens the organization's Plans page. */
   onExplorePlans: () => void;
+  /** Opens billing with the credit top-up dialog. */
+  onBuyCredits: () => void;
 }
 
 /**
@@ -64,6 +62,7 @@ export function SidebarCredits({
   organizationId,
   onOpenBilling,
   onExplorePlans,
+  onBuyCredits,
 }: SidebarCreditsProps) {
   const { balance, isLoading } = useCreditBalance({ organizationId });
   const billingStatus = useOrganizationBillingStatus(organizationId);
@@ -73,10 +72,6 @@ export function SidebarCredits({
   const { quota: evalIterationQuota, isLoading: isEvalIterationQuotaLoading } =
     useEvalIterationQuota({ organizationId });
   const sponsoredAllowance = useSwarmSponsorshipAllowance();
-  const nativeHarnessEnabled = useNativeHarnessEnabled();
-  const nativeTrial = useNativeHarnessTrial(
-    nativeHarnessEnabled ? organizationId : null,
-  );
 
   // Settled with nothing to show. Rendering the row anyway leaves a permanent
   // "See credits" whose card is a blank number over an empty bar, which reads
@@ -97,11 +92,6 @@ export function SidebarCredits({
     Math.max(0, monthlyRemaining),
   );
   const meterCapacity = monthlyTotal + rolloverRemaining;
-  // Paid top-ups are a separate pool from the plan allowance and are never
-  // folded into it. Shown only when there is something in it: a "0 credits"
-  // row would read as a second exhausted meter.
-  const paidRemaining = balance?.paidCreditsRemaining ?? 0;
-  const showPaidCredits = !isLoading && paidRemaining > 0;
   const resetText = balance
     ? showMonthly
       ? formatMonthlyResetText(balance.monthlyResetAt, {
@@ -122,8 +112,69 @@ export function SidebarCredits({
         evalIterationQuota.allowed !== null));
 
   const plan = billingStatus?.effectivePlan;
-  const planLabel = plan ? `${formatPlanName(plan)} plan` : null;
   const showExplorePlans = plan !== undefined && !isPaidPlan(plan);
+  const canBuyCredits =
+    billingStatus?.canManageBilling === true &&
+    balance?.topUpEligible !== false &&
+    balance?.walletLocked !== true;
+
+  const meters: UsageMeter[] = [
+    {
+      label: showMonthly ? "Monthly credits" : "Free daily credits",
+      remaining: balance
+        ? showMonthly
+          ? monthlyRemaining
+          : balance.freeDailyCreditsRemaining
+        : 0,
+      total: balance
+        ? showMonthly
+          ? meterCapacity
+          : balance.freeDailyCreditsTotal
+        : 0,
+      helperText: resetText,
+      isLoading,
+      testId: showMonthly ? "sidebar-usage-monthly" : "sidebar-usage-daily",
+    },
+  ];
+  if (showEvalIterationUsage) {
+    const allowed = evalIterationQuota?.allowed ?? 0;
+    meters.push({
+      label: getEvalIterationQuotaLabel(evalIterationQuota?.windowKind),
+      remaining: Math.max(0, allowed - (evalIterationQuota?.used ?? 0)),
+      total: allowed,
+      isLoading: isEvalIterationQuotaLoading,
+      testId: "sidebar-usage-eval-iterations",
+    });
+  }
+  const freeEvalIterations = evalIterationQuota?.starterRemaining;
+  // Free grants are one-time, so a used-up grant leaves nothing to show.
+  if (freeEvalIterations != null && freeEvalIterations > 0) {
+    meters.push({
+      label: "Free eval iterations",
+      remaining: freeEvalIterations,
+      total: FREE_EVAL_ITERATION_GRANT,
+      tooltip:
+        "A one-time set of eval iterations MCPJam pays for before your organization's credits are used. It does not renew.",
+      testId: "sidebar-usage-eval-free",
+    });
+  }
+  if (sponsoredAllowance && sponsoredAllowance.remaining > 0) {
+    meters.push({
+      label: "Free swarm credits",
+      remaining: sponsoredAllowance.remaining,
+      total: sponsoredAllowance.granted,
+      tooltip:
+        "Swarm conversations MCPJam pays for before your organization's credits are used. Which ones qualify depends on the model and environment.",
+      testId: "sidebar-usage-swarm-sponsored",
+    });
+  }
+
+  const creditMeter = meters[0];
+  const isLowOnCredits =
+    !creditMeter.isLoading &&
+    creditMeter.total > 0 &&
+    remainingPercent(creditMeter) <= LOW_CREDIT_PERCENT;
+  const showUpsell = isLowOnCredits && (showExplorePlans || canBuyCredits);
 
   return (
     <SidebarMenu>
@@ -156,20 +207,20 @@ export function SidebarCredits({
             side="right"
             align="end"
             sideOffset={8}
-            className="w-64"
+            className="w-72 border-0 shadow-lg"
             data-testid="sidebar-credits-card"
           >
-            <div className="flex flex-col gap-3">
-              {planLabel ? (
+            <div className="flex flex-col gap-4">
+              {plan ? (
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-xs font-semibold">
-                    {planLabel}
-                  </span>
-                  {showExplorePlans ? (
+                  <Badge className="rounded-full border-transparent bg-primary/15 text-primary hover:bg-primary/15">
+                    {formatPlanName(plan)} plan
+                  </Badge>
+                  {showExplorePlans && !showUpsell ? (
                     <button
                       type="button"
                       onClick={onExplorePlans}
-                      className="shrink-0 text-[11px] font-medium text-primary hover:underline"
+                      className="shrink-0 text-xs font-medium text-primary hover:underline"
                     >
                       Explore plans
                     </button>
@@ -177,125 +228,39 @@ export function SidebarCredits({
                 </div>
               ) : null}
 
-              {evalIterationQuota?.starterRemaining != null && (
-                <p className="text-xs">
-                  Free starter eval iterations:{" "}
-                  {evalIterationQuota.starterRemaining.toLocaleString()}{" "}
-                  remaining · one-time allowance of 500
-                </p>
-              )}
-              <SidebarUsageRow
-                label={showMonthly ? "Monthly credits" : "Free daily credits"}
-                percentText={
-                  balance
-                    ? showMonthly
-                      ? `${monthlyRemaining.toLocaleString()} / ${meterCapacity.toLocaleString()}`
-                      : `${balance.freeDailyCreditsRemaining.toLocaleString()} / ${balance.freeDailyCreditsTotal.toLocaleString()}`
-                    : ""
-                }
-                helperText={resetText}
-                fillPercent={
-                  balance
-                    ? showMonthly
-                      ? meterCapacity > 0
-                        ? (monthlyRemaining / meterCapacity) * 100
-                        : 0
-                      : balance.freeDailyCreditsTotal > 0
-                        ? (balance.freeDailyCreditsRemaining /
-                            balance.freeDailyCreditsTotal) *
-                          100
-                        : 0
-                    : 0
-                }
-                isLoading={isLoading}
-                showCoin
-                isCreditMeter={
-                  balance != null &&
-                  (showMonthly
-                    ? monthlyTotal > 0
-                    : balance.freeDailyCreditsTotal > 0)
-                }
-                testId={
-                  showMonthly ? "sidebar-usage-monthly" : "sidebar-usage-daily"
-                }
-              />
-
-              {showPaidCredits ? (
-                <SidebarUsageRow
-                  label="Shared paid credits"
-                  percentText={`${paidRemaining.toLocaleString()} credits`}
-                  helperText={null}
-                  fillPercent={0}
-                  isLoading={false}
-                  showBar={false}
-                  showCoin
-                  testId="sidebar-usage-paid"
+              {meters.map((meter) => (
+                <UsageRow
+                  key={meter.testId}
+                  meter={meter}
+                  storageKey={`mcpjam:credits-last-seen:${organizationId}:${meter.testId}`}
                 />
-              ) : null}
+              ))}
 
-              {showEvalIterationUsage ? (
-                <SidebarUsageRow
-                  label={getEvalIterationQuotaLabel(
-                    evalIterationQuota?.windowKind,
-                  )}
-                  percentText={
-                    evalIterationQuota && evalIterationQuota.allowed !== null
-                      ? `${Math.max(
-                          0,
-                          evalIterationQuota.allowed - evalIterationQuota.used,
-                        ).toLocaleString()} / ${evalIterationQuota.allowed.toLocaleString()} remaining`
-                      : ""
-                  }
-                  helperText={null}
-                  fillPercent={
-                    evalIterationQuota?.allowed
-                      ? Math.min(
-                          100,
-                          (Math.max(
-                            0,
-                            evalIterationQuota.allowed -
-                              evalIterationQuota.used,
-                          ) /
-                            evalIterationQuota.allowed) *
-                            100,
-                        )
-                      : 0
-                  }
-                  isLoading={isEvalIterationQuotaLoading}
-                  testId="sidebar-usage-eval-iterations"
-                />
-              ) : null}
-
-              {sponsoredAllowance ? (
-                <SidebarUsageRow
-                  label="Sponsored swarm conversations"
-                  percentText={`${sponsoredAllowance.remaining.toLocaleString()} / ${sponsoredAllowance.granted.toLocaleString()} remaining`}
-                  helperText={null}
-                  fillPercent={Math.min(
-                    100,
-                    Math.max(
-                      0,
-                      (sponsoredAllowance.remaining /
-                        sponsoredAllowance.granted) *
-                        100,
-                    ),
-                  )}
-                  isLoading={false}
-                  testId="sidebar-usage-swarm-sponsored"
-                  tooltip="Swarm conversations MCPJam pays for before your organization's credits are used. Which ones qualify depends on the model and environment, and sponsored capacity can run out."
-                />
-              ) : null}
-
-              {nativeTrial ? (
-                <SidebarUsageRow
-                  label="Native harness turns"
-                  percentText={nativeHarnessTurnsLeftText(nativeTrial)}
-                  helperText={null}
-                  fillPercent={nativeHarnessTurnsLeftPercent(nativeTrial)}
-                  isLoading={false}
-                  testId="sidebar-usage-native-harness-turns"
-                  tooltip={NATIVE_HARNESS_TURNS_TOOLTIP}
-                />
+              {showUpsell ? (
+                <div
+                  className="flex gap-2"
+                  data-testid="sidebar-credits-upsell"
+                >
+                  {showExplorePlans ? (
+                    <Button
+                      size="sm"
+                      className="flex-1"
+                      onClick={onExplorePlans}
+                    >
+                      Explore plans
+                    </Button>
+                  ) : null}
+                  {canBuyCredits ? (
+                    <Button
+                      size="sm"
+                      variant={showExplorePlans ? "outline" : "default"}
+                      className="flex-1"
+                      onClick={onBuyCredits}
+                    >
+                      Buy credits
+                    </Button>
+                  ) : null}
+                </div>
               ) : null}
             </div>
           </HoverCardContent>
@@ -305,97 +270,113 @@ export function SidebarCredits({
   );
 }
 
-interface SidebarUsageRowProps {
+interface UsageMeter {
   label: string;
-  percentText: string;
-  helperText: string | null;
-  fillPercent: number;
-  isLoading: boolean;
+  remaining: number;
+  total: number;
   testId: string;
-  /** Render the progress bar. Off for absolute counts with no denominator. */
-  showBar?: boolean;
-  /** Prefix the value with a coin icon — used for credit-balance amounts. */
-  showCoin?: boolean;
-  /** Credit meters use the theme accent and a low-balance text warning. */
-  isCreditMeter?: boolean;
+  helperText?: string | null;
+  isLoading?: boolean;
   /** Optional explainer surfaced via an info icon next to the label. */
   tooltip?: string;
 }
 
-function SidebarUsageRow({
-  label,
-  percentText,
-  helperText,
-  fillPercent,
-  isLoading,
-  testId,
-  showBar = true,
-  showCoin = false,
-  isCreditMeter = false,
-  tooltip,
-}: SidebarUsageRowProps) {
+const LOW_CREDIT_PERCENT = 10;
+// Size of the one-time eval grant (`STARTER_ALLOTMENT` in the backend).
+const FREE_EVAL_ITERATION_GRANT = 500;
+
+function remainingPercent({ remaining, total }: UsageMeter): number {
+  return total > 0 ? Math.min(100, Math.max(0, (remaining / total) * 100)) : 0;
+}
+
+function UsageLabel({ meter }: { meter: UsageMeter }) {
   return (
-    <div className="flex flex-col gap-1.5" data-testid={testId}>
-      <div className="flex items-center justify-between gap-2 text-[11px] leading-none">
-        <span className="flex min-w-0 items-center gap-1 truncate font-medium text-foreground">
-          {label}
-          {tooltip ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  aria-label={`About ${label}`}
-                  // Stop bubbling so the surrounding clickable row (which
-                  // navigates to billing) doesn't fire when the user is just
-                  // trying to see the tooltip.
-                  onClick={(event) => event.stopPropagation()}
-                  onKeyDown={(event) => event.stopPropagation()}
-                  className="inline-flex items-center text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"
-                >
-                  <Info aria-hidden="true" className="size-2.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent sideOffset={6}>{tooltip}</TooltipContent>
-            </Tooltip>
-          ) : null}
-        </span>
-        <span className="flex shrink-0 items-center gap-1 text-muted-foreground">
-          {isLoading ? (
-            <Skeleton className="h-3 w-12" />
-          ) : (
-            <>
-              {showCoin ? (
-                <CoinStackIcon aria-hidden="true" className="size-3 shrink-0" />
-              ) : null}
-              {percentText}
-            </>
-          )}
-        </span>
-      </div>
-      {showBar ? (
-        isLoading ? (
-          <Skeleton className="h-1.5 w-full rounded-full" />
-        ) : (
-          <Progress
-            className={
-              fillPercent <= 10
-                ? "h-1.5 bg-muted [&_[data-slot=progress-indicator]]:bg-destructive"
-                : isCreditMeter
-                  ? "h-1.5 bg-muted"
-                  : "h-1.5 bg-muted [&_[data-slot=progress-indicator]]:bg-foreground/60"
-            }
-            value={fillPercent}
-            aria-label={label}
-            aria-valuetext={percentText || undefined}
-          />
-        )
+    <span className="inline-flex min-w-0 items-center gap-1 text-pretty">
+      {meter.label}
+      {meter.tooltip ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label={`About ${meter.label}`}
+              // Stop bubbling so the surrounding clickable row (which
+              // navigates to billing) doesn't fire when the user is just
+              // trying to see the tooltip.
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => event.stopPropagation()}
+              className="inline-flex shrink-0 items-center text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"
+            >
+              <Info aria-hidden="true" className="size-3" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent sideOffset={6} className="max-w-60 text-pretty">
+            {meter.tooltip}
+          </TooltipContent>
+        </Tooltip>
       ) : null}
-      {!isLoading && isCreditMeter && fillPercent <= 10 && (
-        <span className="text-xs text-foreground">Low credits</span>
-      )}
-      {helperText && !isLoading ? (
-        <span className="truncate text-[10px] leading-none text-muted-foreground">
-          {helperText}
+    </span>
+  );
+}
+
+function UsageBar({
+  meter,
+  storageKey,
+}: {
+  meter: UsageMeter;
+  storageKey: string;
+}) {
+  const percent = remainingPercent(meter);
+  const filling = useRefillAnimation(
+    meter.isLoading ? null : storageKey,
+    meter.isLoading ? null : meter.remaining,
+  );
+  if (meter.isLoading)
+    return <Skeleton className="h-1.5 w-full rounded-full" />;
+  return (
+    <Progress
+      value={filling ? 0 : percent}
+      pace="gradual"
+      aria-label={meter.label}
+      aria-valuetext={`${meter.remaining.toLocaleString()} / ${meter.total.toLocaleString()} left`}
+      className="h-1.5 bg-primary/15"
+    />
+  );
+}
+
+function UsageValue({ meter }: { meter: UsageMeter }) {
+  if (meter.isLoading) return <Skeleton className="h-3.5 w-14" />;
+  return (
+    <span className="shrink-0 whitespace-nowrap tabular-nums">
+      <span className="text-sm font-semibold text-foreground">
+        {meter.remaining.toLocaleString()}
+      </span>
+      <span className="text-xs text-muted-foreground">
+        {" "}
+        / {meter.total.toLocaleString()} left
+      </span>
+    </span>
+  );
+}
+
+function UsageRow({
+  meter,
+  storageKey,
+}: {
+  meter: UsageMeter;
+  storageKey: string;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5" data-testid={meter.testId}>
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="min-w-0 text-xs font-medium text-foreground">
+          <UsageLabel meter={meter} />
+        </span>
+        <UsageValue meter={meter} />
+      </div>
+      <UsageBar meter={meter} storageKey={storageKey} />
+      {meter.helperText && !meter.isLoading ? (
+        <span className="text-xs text-muted-foreground">
+          {meter.helperText}
         </span>
       ) : null}
     </div>
