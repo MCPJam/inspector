@@ -17,9 +17,9 @@
 import { describe, expect, it } from "vitest";
 import { runProtocolChecks } from "../../src/mcp-conformance/checks/protocol.js";
 import { runTransportChecks } from "../../src/mcp-conformance/checks/transport.js";
+import { legacyInitialize } from "../../src/mcp-conformance/legacy-handshake.js";
 import {
   jsonRpcResult,
-  legacyInitialize,
   rawRequest,
   resumePolledStream,
 } from "../../src/mcp-conformance/raw-http.js";
