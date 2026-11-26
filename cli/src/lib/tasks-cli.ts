@@ -378,11 +378,15 @@ export async function driveTaskWatch(
     ...(extension
       ? {}
       : {
-          getResult: async () =>
-            (await manager.getTaskResult(serverId, taskId)) as Record<
-              string,
-              unknown
-            > | null,
+          // `timeoutMs` is set on the call sent for input. It becomes the
+          // request's own timeout, so the default `--timeout` (30 s) cannot
+          // end that call while the user is still answering.
+          getResult: async (_identity, options) =>
+            (await manager.getTaskResult(
+              serverId,
+              taskId,
+              options ? { timeout: options.timeoutMs } : undefined,
+            )) as Record<string, unknown> | null,
         }),
     // Extension only, and not an omission: `tasks/update` does not exist on
     // 2025-11-25, which is why `TasksSupport.update` is hard-`false` for that
@@ -392,9 +396,10 @@ export async function driveTaskWatch(
     // the driver does send there is the one `tasks/result` 2025-11-25 asks for
     // on `input_required` (tasks.mdx:449): the open call the server delivers
     // its question on. With `--interactive` a handler can answer that question,
-    // so the call may stay open for the whole watch. Without it the call is
-    // short and the driver then reports `input_required` — a deterministic
-    // exit 6 beats a timeout that looks like a hang.
+    // so the call may stay open until the watch's deadline (the driver caps
+    // `POSITIVE_INFINITY` at what is left of `--duration-ms`). Without it the
+    // call is short and the driver then reports `input_required` — a
+    // deterministic exit 6 beats a timeout that looks like a hang.
     ...(!extension && args.input
       ? { inputRequiredResultWaitMs: Number.POSITIVE_INFINITY }
       : {}),

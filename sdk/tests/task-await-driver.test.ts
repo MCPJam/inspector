@@ -544,6 +544,62 @@ describe("poll discipline", () => {
     });
     expect(result.outcome).toBe("input-required");
     expect(getResult).toHaveBeenCalledTimes(1);
+    // The wait is handed to the seam as the request's own timeout, so the
+    // request itself ends at that bound.
+    expect(getResult).toHaveBeenCalledWith(legacy, { timeoutMs: 20 });
+  });
+
+  it("holds that call until the drive's deadline, and reports timeout when it ends it", async () => {
+    const clock = controlledClock();
+    const legacy = { serverId: "srv", wire: "legacy", taskId: "t1" } as const;
+    // `--interactive`: no extra cap, so the deadline is the only bound. A call
+    // it ends is a timeout, not "nobody can answer".
+    const getResult = vi.fn(() => new Promise<never>(() => undefined));
+    const result = await driveTaskToTerminal({
+      identity: legacy,
+      getTask: async () => ({ status: "input_required" }),
+      getResult,
+      inputRequiredResultWaitMs: Number.POSITIVE_INFINITY,
+      now: clock.now,
+      sleep: async (ms) => clock.advance(ms),
+      engine: new TaskLifecycleEngine({ now: clock.now }),
+      timeoutMs: 30,
+    });
+    expect(result.outcome).toBe("timeout");
+    expect(getResult).toHaveBeenCalledTimes(1);
+    // Finite: what is left of the drive, never Infinity.
+    const options = (getResult.mock.calls[0] as unknown[])[1] as {
+      timeoutMs: number;
+    };
+    expect(Number.isFinite(options.timeoutMs)).toBe(true);
+    expect(options.timeoutMs).toBeLessThanOrEqual(30);
+  });
+
+  it("reads our own request timeout as no answer, not as the server's", async () => {
+    const clock = controlledClock();
+    const legacy = { serverId: "srv", wire: "legacy", taskId: "t1" } as const;
+    const reads = scriptedReads([
+      { status: "input_required" },
+      { status: "completed" },
+    ]);
+    // The client's own timeout carries a string code; only a numeric code is
+    // the server answering.
+    const getResult = vi.fn(async () => {
+      throw Object.assign(new Error("Request timed out"), {
+        code: "REQUEST_TIMEOUT",
+      });
+    });
+    const result = await driveTaskToTerminal({
+      identity: legacy,
+      getTask: reads.getTask,
+      getResult,
+      now: clock.now,
+      sleep: async (ms) => clock.advance(ms),
+      engine: new TaskLifecycleEngine({ now: clock.now }),
+      timeoutMs: 10 * 60_000,
+    });
+    expect(result.outcome).toBe("input-required");
+    expect(reads.calls).toHaveLength(1);
   });
 
   it("uses the result that call returned and does not fetch it twice", async () => {

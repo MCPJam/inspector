@@ -92,7 +92,14 @@ export interface DriveTaskToTerminalArgs {
    * is the entire point of waiting.
    */
   getResult?: (
-    identity: TaskLifecycleIdentity
+    identity: TaskLifecycleIdentity,
+    /**
+     * Set only on the call sent while the task asks for input: how long that
+     * request may stay open. Pass it on as the request's own timeout, so the
+     * request ends (and is cancelled) at that bound instead of at the client's
+     * default request timeout.
+     */
+    options?: { timeoutMs: number }
   ) => Promise<Record<string, unknown> | null>;
   /** Submits input responses. Resolving means the server acknowledged them. */
   updateTask?: (
@@ -108,8 +115,9 @@ export interface DriveTaskToTerminalArgs {
    * the server delivers its questions, and it only answers once the task has
    * ended. Short by default, so a task nobody here can answer still ends the
    * drive as `input-required` instead of looking like a hang. A surface with
-   * an elicitation handler passes a longer bound; the drive's own deadline
-   * always caps it.
+   * an elicitation handler passes a longer bound (`Number.POSITIVE_INFINITY`
+   * for "until the drive's deadline"); the deadline always caps it, and the
+   * capped, finite value is what `getResult` gets as its `timeoutMs`.
    */
   inputRequiredResultWaitMs?: number;
   /** Total wall-clock budget. The whole drive, not a single read. */
@@ -328,6 +336,11 @@ export async function driveTaskToTerminal(
         resultCalledForInput = true;
         const moved = await callResultForInput();
         if (moved === ABORTED) return { outcome: "aborted", task: snapshot };
+        // The drive ran out of time while the call was open: that is a
+        // timeout, not a task nobody can answer.
+        if (moved === TIMED_OUT) {
+          return { outcome: "timeout", task: snapshot, lastError };
+        }
         // The server answered the call, so the task in hand is stale.
         if (moved) continue;
       }
@@ -487,24 +500,41 @@ export async function driveTaskToTerminal(
   /**
    * Legacy: the one `tasks/result` sent while the task asks for input.
    *
-   * `true` when the server answered it, with a result or with an error: either
-   * way the task has moved and must be read again. `false` when the call was
-   * still open at its bound, which is what a parked task looks like.
+   * - `true`: the server answered it, with a result or with a JSON-RPC error.
+   *   Either way the task has moved and must be read again.
+   * - `false`: no answer within the short input wait (the request timed out
+   *   or the connection dropped). That is what a parked task looks like.
+   * - `TIMED_OUT`: no answer before the drive's own deadline.
    */
-  async function callResultForInput(): Promise<boolean | typeof ABORTED> {
+  async function callResultForInput(): Promise<
+    boolean | typeof ABORTED | typeof TIMED_OUT
+  > {
+    const remainingMs = deadline - now();
+    if (remainingMs <= 0) return TIMED_OUT;
+    const requestedMs =
+      args.inputRequiredResultWaitMs ?? DEFAULT_INPUT_REQUIRED_RESULT_WAIT_MS;
+    const waitMs = Math.min(requestedMs, remainingMs);
+    // When the deadline is the tighter bound, a call it ends is a timeout.
+    const unanswered = () =>
+      requestedMs >= remainingMs || now() >= deadline ? TIMED_OUT : false;
     try {
       const fetched = await raceDeadline(
-        args.getResult!(identity),
-        args.inputRequiredResultWaitMs ?? DEFAULT_INPUT_REQUIRED_RESULT_WAIT_MS
+        args.getResult!(identity, { timeoutMs: waitMs }),
+        waitMs
       );
       if (fetched === ABORTED) return ABORTED;
-      if (fetched === TIMED_OUT) return false;
+      if (fetched === TIMED_OUT) return unanswered();
       earlyResult = { value: fetched };
       return true;
-    } catch {
-      // A JSON-RPC error is the result of a task that ended without
-      // completing; the next read says which. Nothing to keep.
-      return true;
+    } catch (error) {
+      if (args.signal?.aborted) return ABORTED;
+      // A numeric code is a JSON-RPC error, so the server answered: the task
+      // ended without completing, and the next read says how. No numeric code
+      // is our own request timeout or a dropped connection: no answer.
+      const code = (error as { code?: unknown } | null)?.code;
+      if (typeof code === "number") return true;
+      lastError = error;
+      return unanswered();
     }
   }
 
