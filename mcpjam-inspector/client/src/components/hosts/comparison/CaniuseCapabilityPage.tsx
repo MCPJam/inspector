@@ -1,8 +1,9 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
-import { ArrowUpRight, ChevronDown, FlaskConical } from "lucide-react";
+import { ArrowUpRight, ChevronDown, ChevronRight, FlaskConical } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
+import { SearchInput } from "@/components/ui/search-input";
 import { routePaths } from "@/lib/app-navigation";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
@@ -104,6 +105,7 @@ export function CaniuseCapabilityPage({
       ? resolved
       : null;
   const [params, setParams] = useSearchParams();
+  const [navSearch, setNavSearch] = useState("");
   const navigate = useNavigate();
   const slices = capability ? capabilitySlices(capability.field, clients) : [];
   const requested = params.get("slice") ?? "";
@@ -162,58 +164,88 @@ export function CaniuseCapabilityPage({
     ?.entries.sort(
       (a, b) => EXTENSIONS.indexOf(a.field.id) - EXTENSIONS.indexOf(b.field.id),
     );
+  const query = navSearch.trim().toLowerCase();
+  const visibleGroups = query
+    ? groups
+        .map(({ name, entries }) => ({
+          name,
+          entries: entries.filter(({ field }) =>
+            caniuseTitle(field).toLowerCase().includes(query),
+          ),
+        }))
+        .filter(({ entries }) => entries.length > 0)
+    : groups;
 
   return (
     <CaniuseSite current="capabilities">
       <div className="grid gap-5 py-6 md:grid-cols-[220px_minmax(0,1fr)] lg:gap-8 lg:py-9">
         <label className="grid min-w-0 gap-1.5 text-xs text-muted-foreground md:hidden">
           Browse capabilities
-          <select
-            className="min-h-11 w-full min-w-0 truncate rounded-lg border border-border bg-card px-3 text-sm text-card-foreground"
-            value={capability?.slug ?? ""}
-            onChange={(event) =>
-              navigate(buildCaniuseCapabilityPath(event.target.value))
-            }
-          >
-            {!capability && (
-              <option value="" disabled>
-                Choose a capability
-              </option>
-            )}
-            {groups.map(({ name, entries }) => (
-              <optgroup key={name} label={name}>
-                {entries.map(({ slug, field }) => (
-                  <option key={slug} value={slug}>
-                    {caniuseTitle(field)}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
+          <span className="relative">
+            <select
+              className="min-h-11 w-full min-w-0 appearance-none truncate rounded-lg border border-border bg-card pl-3 pr-10 text-base text-card-foreground forced-colors:appearance-auto"
+              value={capability?.slug ?? ""}
+              onChange={(event) =>
+                navigate(buildCaniuseCapabilityPath(event.target.value))
+              }
+            >
+              {!capability && (
+                <option value="" disabled>
+                  Choose a capability
+                </option>
+              )}
+              {groups.map(({ name, entries }) => (
+                <optgroup key={name} label={name}>
+                  {entries.map(({ slug, field }) => (
+                    <option key={slug} value={slug}>
+                      {caniuseTitle(field)}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+            <ChevronDown
+              aria-hidden="true"
+              className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground forced-colors:hidden"
+            />
+          </span>
         </label>
         <nav
           aria-label="Browse capabilities"
-          className="hidden min-w-0 self-start rounded-xl border border-border bg-card text-card-foreground md:sticky md:top-4 md:block md:max-h-[calc(100dvh-2rem)] md:overflow-auto"
+          className="hidden min-w-0 self-start border-r border-border pr-3 md:sticky md:top-4 md:block md:max-h-[calc(100dvh-2rem)] md:overflow-auto lg:pr-4"
         >
-          {groups.map(({ name: group, entries }) => (
+          <SearchInput
+            className="mx-px mb-2 [&_input]:h-9 [&_input]:text-sm"
+            iconClassName="size-3.5"
+            placeholder="Search capabilities"
+            value={navSearch}
+            onValueChange={setNavSearch}
+          />
+          {visibleGroups.length === 0 && (
+            <p className="px-2 py-2 text-sm text-muted-foreground" role="status">
+              No matching capabilities
+            </p>
+          )}
+          {visibleGroups.map(({ name: group, entries }) => (
             <details
-              key={group}
-              open={group === activeGroup}
+              key={query ? `search-${group}` : group}
+              open={Boolean(query) || group === activeGroup}
               className="group border-b border-border last:border-b-0"
             >
-              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold hover:bg-muted focus-visible:outline-ring">
-                {group}{" "}
-                <ChevronDown className="size-3.5 text-muted-foreground group-open:rotate-180" />
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-md px-2 py-2.5 text-sm font-semibold hover:bg-muted focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
+                {group}
+                <ChevronRight aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground group-open:rotate-90" />
               </summary>
-              <div className="grid gap-0.5 px-2 pb-2">
+              <div className="grid gap-0.5 pb-2">
                 {entries.map(({ slug, field }) => (
                   <Link
                     key={slug}
                     to={buildCaniuseCapabilityPath(slug)}
+                    onClick={() => setNavSearch("")}
                     aria-current={
                       slug === capability?.slug ? "page" : undefined
                     }
-                    className="rounded-md border border-transparent px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground aria-[current=page]:border-primary/40 aria-[current=page]:bg-accent aria-[current=page]:font-semibold aria-[current=page]:text-accent-foreground"
+                    className="rounded-md border border-transparent px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground aria-[current=page]:border-primary/40 aria-[current=page]:bg-primary/10 aria-[current=page]:font-semibold aria-[current=page]:text-primary"
                   >
                     {caniuseTitle(field)}
                   </Link>
@@ -301,9 +333,9 @@ export function CaniuseCapabilityPage({
                     <p className="text-sm font-medium text-foreground">
                       Published results
                     </p>
-                    <p className="mt-1 text-3xl font-bold tracking-normal tabular-nums sm:text-5xl">
+                    <p className="mt-1 text-3xl font-bold tracking-normal sm:text-5xl">
                       <span className="text-primary">{coverage.published}</span>
-                      <span className="text-foreground/85"> / {coverage.probed}</span>
+                      <span className="text-foreground/85">/{coverage.probed}</span>
                     </p>
                     <p className="mt-2 text-sm text-foreground/85">Probed clients</p>
                   </div>

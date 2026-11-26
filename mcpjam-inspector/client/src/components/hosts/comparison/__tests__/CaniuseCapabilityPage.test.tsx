@@ -60,6 +60,18 @@ describe("CaniuseCapabilityPage", () => {
     ).toBeVisible();
   });
 
+  it("filters the sidebar and exposes matches from collapsed groups", () => {
+    renderCapability("event-delivery");
+    const nav = within(screen.getByRole("navigation", { name: "Browse capabilities" }));
+    const search = nav.getByRole("searchbox", { name: "Search capabilities" });
+    expect(nav.getByRole("link", { name: "MCP Events" })).toHaveAttribute("aria-current", "page");
+    fireEvent.change(search, { target: { value: "Sampling" } });
+    expect(nav.getByRole("link", { name: "Sampling" })).toHaveAttribute("href", "/capabilities/sampling");
+    expect(nav.queryByText("MCP Events")).not.toBeInTheDocument();
+    fireEvent.click(nav.getByRole("button", { name: "Clear search" }));
+    expect(nav.getByRole("link", { name: "MCP Events" })).toHaveAttribute("aria-current", "page");
+  });
+
   it("restores a mode from the URL, shares the same mode and prepares the PNG", async () => {
     renderCapability("event-delivery", "?slice=poll&view=reference");
     expect(screen.getByRole("button", { name: /poll/i })).toHaveAttribute(
