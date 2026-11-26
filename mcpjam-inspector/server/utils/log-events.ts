@@ -365,7 +365,9 @@ export type RequestEventMap = {
       | "protocol_error"
       | "exception"
       | "version_conflict";
-    statusCode?: number;
+    // The ingest's HTTP status. Not `statusCode`: a streamed turn's request
+    // context already holds the route's 200, and context wins over payload.
+    ingestStatusCode?: number;
     /**
      * Sanitized, length-capped excerpt of the ingest's response body (see
      * `sanitizeDiagnosticText`: secrets, emails and bearer tokens are redacted
@@ -377,10 +379,19 @@ export type RequestEventMap = {
     sourceType?: "scenario" | "direct" | "eval" | "swarm" | "event";
     // Product-surface discriminator carried alongside sourceType so PostHog
     // can pivot persist failures by surface without rejoining to chatSessions.
-    // CAUTION: this `origin` is a DIFFERENT axis from the ErrorOrigin field
-    // of the same name on `http.request.failed` / `route.operation.failed` —
-    // never join the two in an APL query.
-    origin?: ChatOrigin;
+    // Not `origin`: strict-log keeps that name for the ErrorOrigin enum on
+    // `http.request.failed` / `route.operation.failed` and drops these values.
+    // Keep the `ChatOrigin` values inline: the telemetry catalog generator
+    // reads only literal unions, and a field without a rule is dropped.
+    chatOrigin?:
+      | "playground"
+      | "mcpjam_agent"
+      | "scenario"
+      | "eval"
+      | "swarm"
+      | "api"
+      | "event"
+      | "readiness";
   };
   /**
    * The backend accepted the request but declined the write, judging the
@@ -390,7 +401,8 @@ export type RequestEventMap = {
    */
   "chat.session.persist.skipped": {
     sourceType?: "scenario" | "direct" | "eval" | "swarm" | "event";
-    origin?: ChatOrigin;
+    // Kept through the inline union on `.failed`: catalog rules are per field name.
+    chatOrigin?: ChatOrigin;
     /** False means the payload had no idempotency key to dedupe on. */
     hasTurnId: boolean;
   };
@@ -492,6 +504,10 @@ export type RequestEventMap = {
     reason: "failed" | "timeout";
     status: "pending" | "failed";
   };
+  // Same route: Convex refused the sign-out's own token (401), so no durable
+  // record was written and no retry was scheduled. Expected for an expired
+  // token; a burst of them means Convex stopped accepting AuthKit tokens.
+  "auth.session.revoke_refused": Record<string, never>;
   "route.operation.failed": RouteOperationFailedFields;
   /**
    * API key lifecycle (routes/web/api-keys.ts). `workosKeyId` is the WorkOS

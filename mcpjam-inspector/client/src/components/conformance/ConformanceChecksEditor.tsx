@@ -160,8 +160,8 @@ export function ConformanceChecksEditor({
             tools={probeTools}
             probes={probes}
             onChange={onProbesChange}
-            onValidChange={(valid) =>
-              setProbeValid((prev) => ({ ...prev, tasksProbe: valid }))
+            onValidChange={(part, valid) =>
+              setProbeValid((prev) => ({ ...prev, [part]: valid }))
             }
           />
         ) : null

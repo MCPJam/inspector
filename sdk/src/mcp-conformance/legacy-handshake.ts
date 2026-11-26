@@ -18,6 +18,7 @@ import {
   jsonRpcResult,
   legacyHeaders,
   rawRequest,
+  resumePolledStream,
   type RawHttpResult,
 } from "./raw-http.js";
 import type { RawHttpCheckContext } from "./types.js";
@@ -62,7 +63,7 @@ export async function legacyInitialize(
 ): Promise<LegacyHandshake> {
   const requestedVersion =
     ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION;
-  const result = await rawRequest(ctx, {
+  const posted = await rawRequest(ctx, {
     headers: legacyHeaders({}),
     body: {
       jsonrpc: "2.0",
@@ -75,8 +76,16 @@ export async function legacyInitialize(
       },
     },
   });
+  // The answer may have been handed to polling; without it the version below
+  // cannot be read. No version header yet: nothing is negotiated until then.
+  const result = await resumePolledStream(ctx, posted, {
+    sessionId: posted.headers["mcp-session-id"],
+  });
 
-  const sessionId = result.headers["mcp-session-id"];
+  // The session comes on the response that carries the InitializeResult,
+  // which for a polled answer is the call-back.
+  const sessionId =
+    result.headers["mcp-session-id"] ?? result.resumed?.sessionId;
   const answeredVersion = jsonRpcResult(result)?.protocolVersion;
   if (typeof answeredVersion === "string" && answeredVersion !== requestedVersion) {
     // The run stops here, so the handshake is not completed.

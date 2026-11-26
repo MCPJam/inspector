@@ -12,7 +12,9 @@ import { withAbortSignalFetch } from "../abort-signal.js";
  * The harness NEVER negotiates and NEVER repairs. It does not run an
  * `initialize` prelude, does not add a protocol-version header of its own, and
  * does not retry: a check that wants any of that asks for it explicitly (see
- * {@link modernEnvelope} / {@link modernHeaders}, which a check opts into). That
+ * {@link modernEnvelope} / {@link modernHeaders}, which a check opts into, and
+ * {@link resumePolledStream}, which calls back for an answer a 2025 server
+ * handed to polling). That
  * is what makes it usable for hostile framing — the whole point of the raw
  * track is to send exactly the bytes the check intends, including the wrong
  * ones.
@@ -39,6 +41,19 @@ import {
   type RawExchange,
   type RawSseEvent,
 } from "./raw-capture.js";
+import {
+  pollingOutcome,
+  resumePolledStream,
+  unreadPolledAnswerMessage,
+  type PolledStreamResume,
+} from "./raw-poll-resume.js";
+
+export {
+  pollingOutcome,
+  resumePolledStream,
+  unreadPolledAnswerMessage,
+  type PolledStreamResume,
+};
 
 export {
   CLIENT_CAPABILITIES_META_KEY,
@@ -246,7 +261,14 @@ export interface RawHttpResult {
   sse?: RawSseEvent[];
   /** The full captured exchange (request side included). */
   exchange: RawExchange;
+  /**
+   * Set by {@link resumePolledStream} when it called the server back for this
+   * answer. `sse` then also holds the events the call-backs read; every other
+   * field is still the original request's.
+   */
+  resumed?: PolledStreamResume;
 }
+
 
 export interface JsonRpcErrorShape {
   code: number;

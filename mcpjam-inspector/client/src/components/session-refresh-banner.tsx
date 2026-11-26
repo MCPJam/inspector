@@ -25,7 +25,7 @@ export function SessionRefreshBanner({
 }) {
   const status = useSessionRefreshStore((s) => s.status);
   const kind = useSessionRefreshStore((s) => s.kind);
-  const { user, signIn } = useInspectorAuth();
+  const { signIn } = useInspectorAuth();
 
   if (status === "idle" || !kind) return null;
 
@@ -74,7 +74,7 @@ export function SessionRefreshBanner({
         </Button>
       )}
 
-      {!isSignedOut && !user && (
+      {!isSignedOut && (
         <Button size="sm" variant="outline" onClick={handleSignIn}>
           Sign in
         </Button>

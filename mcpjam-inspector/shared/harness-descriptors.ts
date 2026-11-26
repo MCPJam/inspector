@@ -1,4 +1,5 @@
 import { HARNESS_IDS, HARNESS_REASONING_EFFORTS, type Harness } from "@mcpjam/sdk/host-config/internal";
+import { WEB_CLIENT_PAGE_MODULE_VERSIONS, WEB_CLIENT_SITES } from "./web-clients";
 
 type HarnessControlState = { enforced: true } | { enforced: false; note: string };
 type HarnessLoopControl = "modelId" | "temperature" | "requireToolApproval" | "progressiveToolDiscovery";
@@ -92,7 +93,30 @@ const LOOP_CONTROLS: Record<
       note: "OpenCode does its own tool discovery.",
     },
   },
+  "claude-web": webClientControls("Claude web", "claude.ai"),
+  "chatgpt-web": webClientControls("ChatGPT web", "chatgpt.com"),
 };
+
+/**
+ * A web client runs the vendor's own app on a project's web account, so the
+ * model, its settings and the app's own tools belong to that account. MCPJam's
+ * gate still decides every MCP call at the forwarding endpoint, but it cannot
+ * pause the app's built-in tools, so a turn that asks for approval is refused.
+ */
+function webClientControls(
+  name: string,
+  site: string,
+): Record<HarnessLoopControl, HarnessControlState> {
+  return {
+    modelId: { enforced: false, note: `${name} uses the model the account picks on ${site}.` },
+    temperature: { enforced: false, note: `${name} runs ${site}'s own loop and ignores temperature.` },
+    requireToolApproval: {
+      enforced: false,
+      note: `${name} runs its own tools on ${site}, where MCPJam can't pause them.`,
+    },
+    progressiveToolDiscovery: { enforced: false, note: `${name} does its own tool discovery.` },
+  };
+}
 
 /** What the harness choice calls MCPJam's own agent loop, beside each `runtimeName`. */
 export const MCPJAM_HARNESS_NAME = "MCPJam Harness";
@@ -163,6 +187,35 @@ export const HARNESS_DESCRIPTORS = {
     protocol: "anthropic-messages", credential: null,
     unavailableOn: {},
     controls: LOOP_CONTROLS.opencode, reasoningEfforts: HARNESS_REASONING_EFFORTS.opencode,
+  },
+  // The vendor's own website, driven in a browser on a project's web account.
+  // Its MCP client is the vendor's, reaching the servers through MCPJam's
+  // forwarding endpoint. Local here means the member's computer running a CLI
+  // runtime, which a website has no use for; a local Inspector drives its own
+  // browser instead, and only on an account an admin allows local runs on.
+  "claude-web": {
+    displayName: "Claude web", runtimeName: "claude.ai",
+    runtimeVersion: WEB_CLIENT_PAGE_MODULE_VERSIONS.claude, mcpClient: "harness",
+    modelAccess: "external-account", orgKeys: false, protocol: null,
+    unavailableOn: {
+      "user-testing": "Claude web runs on a project web account, so studies cannot use it. Choose a different client for this study.",
+      guests: "Claude web runs on the project's own Claude account, so guests can't use it.",
+      local: "Claude web runs in a browser, not on your computer's runtime. Choose This machine in the browser settings instead.",
+    },
+    credential: { kind: "web-account", label: "Claude account", sites: WEB_CLIENT_SITES.claude },
+    controls: LOOP_CONTROLS["claude-web"], reasoningEfforts: HARNESS_REASONING_EFFORTS["claude-web"],
+  },
+  "chatgpt-web": {
+    displayName: "ChatGPT web", runtimeName: "chatgpt.com",
+    runtimeVersion: WEB_CLIENT_PAGE_MODULE_VERSIONS.chatgpt, mcpClient: "harness",
+    modelAccess: "external-account", orgKeys: false, protocol: null,
+    unavailableOn: {
+      "user-testing": "ChatGPT web runs on a project web account, so studies cannot use it. Choose a different client for this study.",
+      guests: "ChatGPT web runs on the project's own ChatGPT account, so guests can't use it.",
+      local: "ChatGPT web runs in a browser, not on your computer's runtime. Choose This machine in the browser settings instead.",
+    },
+    credential: { kind: "web-account", label: "ChatGPT account", sites: WEB_CLIENT_SITES.chatgpt },
+    controls: LOOP_CONTROLS["chatgpt-web"], reasoningEfforts: HARNESS_REASONING_EFFORTS["chatgpt-web"],
   },
 } as const satisfies Record<
   Harness,

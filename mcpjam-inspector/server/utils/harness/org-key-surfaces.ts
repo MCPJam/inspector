@@ -1,6 +1,7 @@
 import type { Harness } from "@mcpjam/sdk";
 import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 import { orgKeySurfaceRefusal } from "@/shared/org-key-surfaces";
+import { isWebClientRuntimeId } from "@/shared/web-clients";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 
 /**
@@ -9,7 +10,10 @@ import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
  * in the runtime's descriptor (`unavailableOn`).
  */
 export function runsOnOrgVendorKey(harness: Harness): boolean {
-  return HARNESS_DESCRIPTORS[harness].modelAccess === "external-account";
+  return (
+    HARNESS_DESCRIPTORS[harness].modelAccess === "external-account" &&
+    !isWebClientRuntimeId(harness)
+  );
 }
 
 /** The study refusal as a chat route's answer. */

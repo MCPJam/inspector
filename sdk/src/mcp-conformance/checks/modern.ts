@@ -28,6 +28,7 @@
  * -32602 without specifying an HTTP status.
  */
 
+import { DiscoveryResultError, requireCompleteDiscovery } from "../../discovery-result.js";
 import type {
   MCPCheckSkipReason,
   MCPCheckId,
@@ -684,7 +685,9 @@ async function track(
 function advertisedCapabilities(
   discover: RawHttpResult
 ): Record<string, unknown> {
-  const capabilities = jsonRpcResult(discover)?.capabilities;
+  const payload = jsonRpcResult(discover);
+  if (payload) requireCompleteDiscovery(payload);
+  const capabilities = payload?.capabilities;
   return capabilities !== null && typeof capabilities === "object"
     ? (capabilities as Record<string, unknown>)
     : {};
@@ -757,6 +760,7 @@ async function runServerDiscoverCheck(
     );
   }
 
+  requireCompleteDiscovery(payload);
   const supportedVersions = payload.supportedVersions;
   const serverInfo = readServerIdentity(payload);
   const problems: string[] = [];
@@ -819,6 +823,10 @@ async function collectCacheableResults(
     { method: "server/discover", result: discover },
   ];
 
+  // Check 23 still needs the raw discriminator when the discovery reply is invalid.
+  // Its capabilities cannot be used to select follow-up requests.
+  const type = jsonRpcResult(discover)?.resultType;
+  if (type !== undefined && type !== COMPLETE_RESULT_TYPE) return collected;
   let id = 7100;
   for (const method of cacheableListMethods(advertisedCapabilities(discover))) {
     collected.push({
@@ -845,6 +853,7 @@ function runResultTypeCheck(
     }
     const resultType = payload.resultType;
     observed[method] = resultType;
+    if (method === "server/discover") requireCompleteDiscovery(payload);
     if (typeof resultType !== "string" || resultType.length === 0) {
       missing.push(method);
     }
@@ -882,6 +891,7 @@ function runCacheHintsCheck(
     if (!payload) {
       continue;
     }
+    if (method === "server/discover") requireCompleteDiscovery(payload);
     observed[method] = {
       ttlMs: payload.ttlMs,
       cacheScope: payload.cacheScope,
@@ -3169,7 +3179,15 @@ async function runXMcpHeaderDeclarationsCheck(
           ? ""
           : ` (note: the tools/list walk ended early — ${terminationReason(termination)} — so further tools were not scanned)`
       }`,
-      { violations, toolCount, termination, pagesRead }
+      // On failure the count includes the invalid tools, so it is larger than
+      // the tool list a conforming client keeps. The distinct key gets its own
+      // UI label so the two numbers do not look like they disagree.
+      {
+        violations,
+        toolCountIncludingInvalid: toolCount,
+        termination,
+        pagesRead,
+      }
     );
   }
 
@@ -3270,6 +3288,10 @@ export async function runModernChecks(
       );
     } catch (error) {
       ctx.config.signal?.throwIfAborted();
+      if (error instanceof DiscoveryResultError && id !== "modern-result-type-present") {
+        results.push(couldNotRunResult(MODERN_CHECK_METADATA[id], error.message));
+        continue;
+      }
       results.push(
         failedResult(
           MODERN_CHECK_METADATA[id],

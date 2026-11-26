@@ -10211,6 +10211,7 @@ const clientFieldSet = z
       .nullable()
       .optional()
       .describe("null clears the host-level opt-in."),
+    runUnloadedToolCalls: z.boolean().nullable().optional(),
     progressiveToolDiscovery: z
       .boolean()
       .nullable()

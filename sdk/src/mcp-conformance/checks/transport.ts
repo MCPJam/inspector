@@ -22,6 +22,8 @@ import {
   modernRequestBody,
   rawHeadersProbe,
   rawRequest,
+  pollingOutcome,
+  resumePolledStream,
   type RawHttpResult,
 } from "../raw-http.js";
 
@@ -532,15 +534,15 @@ export async function runTransportChecks(
 
     if (needsMultiStreamChecks) {
       const activeSessionId = sessionId;
+      const streamVersion =
+        ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION;
       const multiStreamStartedAt = Date.now();
       const settledResponses = await Promise.allSettled(
         Array.from({ length: 3 }).map((_, index) =>
           rawRequest(ctx, {
             headers: {
               ...legacyHeaders({
-                protocolVersion:
-                  ctx.config.protocolVersion ??
-                  DEFAULT_LEGACY_PROTOCOL_VERSION,
+                protocolVersion: streamVersion,
                 sessionId: activeSessionId,
               }),
               Accept: "text/event-stream, application/json",
@@ -551,7 +553,13 @@ export async function runTransportChecks(
               method: "tools/list",
               params: {},
             },
-          }),
+          }).then((response) =>
+            // A polled answer needs a call-back; the three wait at once.
+            resumePolledStream(ctx, response, {
+              sessionId: activeSessionId,
+              protocolVersion: streamVersion,
+            }),
+          ),
         ),
       );
 
@@ -616,6 +624,7 @@ export async function runTransportChecks(
               ),
           );
 
+        const polling = pollingOutcome(sseResponses);
         if (sseResponses.length === 0) {
           results.push(
             requestErrors.some((error) => error !== undefined) || responseFailures
@@ -638,6 +647,15 @@ export async function runTransportChecks(
                     contentTypes,
                   },
                 ),
+          );
+        } else if (polling.unreadMessage !== undefined) {
+          // A polled stream that was never read cannot be judged readable.
+          results.push(
+            couldNotRunResult(
+              TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
+              polling.unreadMessage,
+              { unreadStreams: polling.unreadStreams },
+            ),
           );
         } else {
           // The frames were already parsed off each capture by the shared
@@ -666,6 +684,7 @@ export async function runTransportChecks(
                   {
                     eventCounts,
                     sseStreamCount: sseResponses.length,
+                    ...polling.resumedDetail,
                   },
                 )
               : failedResult(
@@ -680,6 +699,7 @@ export async function runTransportChecks(
                     readErrors,
                     sseStreamCount: sseResponses.length,
                     sseResponseIndexes: sseResponses.map(({ index }) => index),
+                    ...polling.resumedDetail,
                   },
                 ),
           );

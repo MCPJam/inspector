@@ -15,10 +15,20 @@ vi.mock("../session-refresh-banner", () => ({
   SessionRefreshBanner: () => null,
 }));
 vi.mock("../guest-session-refused-banner", () => ({
-  GuestSessionRefusedBanner: () => null,
+  GuestSessionRefusedBanner: () => <div data-testid="guest-refused-banner" />,
+}));
+vi.mock("@/lib/error-reporting", () => ({ reportCaught: vi.fn() }));
+vi.mock("@/lib/PosthogUtils", () => ({ detectPlatform: () => "web" }));
+vi.mock("@/hooks/use-inspector-auth", () => ({
+  useInspectorAuth: () => ({ user: { id: "user_1" }, signIn: vi.fn() }),
 }));
 
 import { AuthRecoveryBoundary } from "../AuthRecoveryBoundary";
+import {
+  resetStartupStatusForTests,
+  useStartupStore,
+} from "@/lib/startup-status";
+import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 
 function renderBoundary() {
   return render(
@@ -37,6 +47,12 @@ describe("AuthRecoveryBoundary", () => {
   beforeEach(() => {
     state.convexAuth = { isLoading: false, isAuthenticated: false };
     state.refusal = null;
+    resetStartupStatusForTests();
+    useSessionRefreshStore.setState({
+      status: "idle",
+      kind: null,
+      queriesPaused: false,
+    });
   });
 
   it("holds an unauthenticated visitor on the spinner while a guest may still arrive", () => {
@@ -61,7 +77,7 @@ describe("AuthRecoveryBoundary", () => {
     state.convexAuth = { isLoading: true, isAuthenticated: false };
     state.refusal = refused();
     renderBoundary();
-    expect(screen.queryByTestId("guest-refused-signed-out")).toBeNull();
+    expect(screen.queryByTestId("startup-recovery-card")).toBeNull();
     expect(screen.getByText("Loading")).toBeInTheDocument();
   });
 
@@ -69,5 +85,47 @@ describe("AuthRecoveryBoundary", () => {
     state.convexAuth = { isLoading: false, isAuthenticated: true };
     renderBoundary();
     expect(screen.getByTestId("app")).toBeInTheDocument();
+  });
+
+  it("replaces the spinner with the recovery card once startup escalates", () => {
+    useSessionRefreshStore.setState({ status: "failed", kind: "transient" });
+    useStartupStore.setState({ escalated: true });
+    renderBoundary();
+    expect(screen.queryByTestId("app")).toBeNull();
+    expect(screen.queryByText("Loading")).toBeNull();
+    expect(screen.getByTestId("startup-recovery-card")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Sign in again" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Reload app" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Copy diagnostics" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the card up with a busy Retry while a retry runs", () => {
+    useSessionRefreshStore.setState({ status: "retrying", kind: "transient" });
+    useStartupStore.setState({ escalated: true });
+    renderBoundary();
+    expect(screen.getByRole("button", { name: "Retrying…" })).toBeDisabled();
+  });
+
+  it("offers Sign in once, on the card, when an escalated startup covers a guest refusal", () => {
+    state.refusal = refused();
+    useSessionRefreshStore.setState({ queriesPaused: true });
+    useStartupStore.setState({ escalated: true });
+    renderBoundary();
+    expect(screen.getByTestId("startup-recovery-card")).toBeInTheDocument();
+    expect(screen.queryByTestId("guest-refused-banner")).toBeNull();
+  });
+
+  it("keeps the refusal banner while startup has not escalated", () => {
+    state.refusal = refused();
+    useSessionRefreshStore.setState({ queriesPaused: true });
+    renderBoundary();
+    expect(screen.getByTestId("guest-refused-banner")).toBeInTheDocument();
   });
 });

@@ -1322,6 +1322,16 @@ export type {
   SubscribableModes,
 } from "./host-config/events-support.js";
 
+// Which Events error an `events/*` JSON-RPC error is (draft and Beta codes),
+// so the Events tab names a termination the same way the runtime does.
+// Browser-safe: pure predicates over the error object.
+export * from "./events/receiver.js";
+export { classifyEventsRpcError } from "./mcp-client-manager/events-ext-guards.js";
+export type {
+  ClassifiedEventsError,
+  EventsErrorKind,
+} from "./mcp-client-manager/events-ext-guards.js";
+
 // Skills over MCP (SEP-2640) — the browser-safe halves only. The dispatch
 // gate is pure predicates over capability objects, and the integrity helpers
 // are WebCrypto-backed by construction (never `node:crypto`), so the Skills
@@ -1377,6 +1387,7 @@ export { aiRequestHeaders } from "./ai-request-headers.js";
 export { validateEmbeddedClientRequest } from "./mcp-client-manager/task-input-driver.js";
 export {
   RENAMED_MCP_TASKS_CHECK_IDS,
+  taskCheckUsesInput,
   MCP_TASKS_TOOL_CHECK_IDS,
   isTasksToolCheck,
 } from "./tasks-conformance/types.js";

@@ -207,7 +207,7 @@ describe("modern checks on a legacy run", () => {
           jsonrpc: "2.0",
           id: 1,
           result: {
-            resultType: "discover",
+            resultType: "complete",
             protocolVersions: ["2026-07-28"],
             // No listChanged / subscribe: there is nothing to subscribe to.
             capabilities: { tools: {}, prompts: {}, resources: {} },

@@ -200,3 +200,25 @@ describe("identity", () => {
     ).not.toBe(toolCallIdentity({ toolName: "a", arguments: {} }));
   });
 });
+
+describe("pre-dispatch refusals in persisted eval traces", () => {
+  const call = (toolCallId: string, rejected = false) => ({
+    role: "assistant", content: [{type: "tool-call", toolName: "echo", toolCallId, input: {},
+      ...(rejected ? {providerOptions: {mcpjam: {rejectedToolCall: true}}} : {})}]
+  });
+  const result = (toolCallId: string, failed: boolean) => ({
+    role: "tool", content: [{type: "tool-result", toolName: "echo", toolCallId,
+      output: failed ? {type: "error-text", value: "failed"} : {type: "text", value: "ok"}}]
+  });
+  test.each([
+    {label: "refusal only", retry: false, fails: false, executed: [], errors: []},
+    {label: "successful retry", retry: true, fails: false, executed: ["retry"], errors: []},
+    {label: "server error on retry", retry: true, fails: true, executed: ["retry"], errors: ["retry"]},
+  ])("$label", async ({retry, fails, executed, errors}) => {
+    const {extractToolErrors} = await import("@mcpjam/evaluators/internal/eval-tool-execution");
+    const messages = [call("refusal", true), result("refusal", true),
+      ...(retry ? [call("retry"), result("retry", fails)] : [])];
+    expect(extractToolCallsFromConversation({messages}).map(call => call.toolCallId)).toEqual(executed);
+    expect(extractToolErrors({messages}).map(error => error.toolCallId)).toEqual(errors);
+  });
+});
