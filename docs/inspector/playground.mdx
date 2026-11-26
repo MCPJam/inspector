@@ -28,7 +28,7 @@ Each prompt uses MCPJam credits, because MCPJam provides the models. If a guest 
     Draw a rectangle with the text Hello inside it.
     ```
 
-    Each pane's model answers the prompt on its own. In each pane, the model calls `read_me` and `create_view`, and the widget draws a rectangle with **Hello** inside it. Some panes also call tool-search tools first.
+    Each pane's model answers the prompt on its own. In the example run, each model called `read_me` and `create_view`, and the widget drew a rectangle with **Hello** inside it. Some models also called tool-search tools first. If a pane answers only in text, see [Compare clients](/inspector/playground/compare-hosts#compare-the-arguments).
 
     <Frame>
       <img src="/images/playground/v1/three-panes.png" alt="The Playground with Claude, ChatGPT and Cursor panes, each showing the Hello rectangle drawn by the Excalidraw widget, and the server's five tools in the left rail" />

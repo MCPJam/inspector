@@ -16,6 +16,8 @@ This tutorial picks up where [Chat and inspect tool calls](/inspector/playground
     Look at what the widget rendered in each pane and note any difference. In the example run¹, **Claude** and **Cursor** drew a filled light-blue rectangle, and **ChatGPT** drew an outline with small text. Your run may look the same in every pane, or differ in other ways.
   </Step>
   <Step title="Compare the tool arguments" id="compare-the-arguments">
+    If a pane shows only text, select **Trace** in that pane and check which tool the model called, if any. If the pane shows **No servers**, connect **Excalidraw (App)** and send the prompt again. If the server is connected but the model chose a different tool, note that difference; it is already a result. Compare widget inputs only in panes that called `create_view`.
+
     In each pane you want to compare, select **Edit input & output** and read **INPUT**. Each pane's model writes its own `create_view` call, so the inputs don't have to match.
 
     In the example¹, the models in the Claude and Cursor panes sent a rectangle with `"backgroundColor":"#a5d8ff"` on a 400×300 canvas. The model in the ChatGPT pane sent a rectangle with no background color on an 800×600 canvas. That explains the outline and the smaller text: the widget drew what it was given.
@@ -42,7 +44,7 @@ This tutorial picks up where [Chat and inspect tool calls](/inspector/playground
     Match what you saw to one of these cases:
 
     - **Different arguments.** First check whether the difference breaks the request. The prompt didn't ask for a fill color, so a plain outline still meets it. If an argument does contradict the request, review your tool's description and input schema.
-    - **Same relevant arguments, different rendering.** Compare what each client supports and how your widget handles it. To isolate the client, reproduce the case with equivalent inputs in each pane before you conclude anything. Before you report it as a client bug, confirm it in the client's own app: a pane is an emulation.
+    - **Same relevant arguments, different rendering.** Compare what each client supports and how your widget handles it. If the inputs differ, these runs alone can't tell you whether the client caused the rendering difference. Before you report it as a client bug, confirm it in the client's own app: a pane is an emulation.
     - **A blocked request.** Read the blocked operation and the policy that blocked it, then find the code in your widget that makes the request. Decide whether the widget needs it before you change anything.
     - **No unexpected difference and no block.** You are done.
   </Step>
