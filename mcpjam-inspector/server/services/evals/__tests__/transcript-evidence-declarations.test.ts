@@ -14,6 +14,7 @@ import { evaluatePredicate } from "@mcpjam/sdk/predicates";
 import { buildIterationTranscript } from "@mcpjam/sdk/predicates";
 import {
   collectToolAnnotations,
+  extractTranscriptEvidence,
   toTranscriptToolInventory,
 } from "../transcript-evidence.js";
 
@@ -136,5 +137,26 @@ describe("annotations come from the manager, because the ToolSet drops them", ()
         getAllToolAnnotations: () => ({}),
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("a protocol-level tool failure", () => {
+  it("is marked as an error, so result checks skip it", () => {
+    const { toolResults } = extractTranscriptEvidence({
+      messages: [
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "c1",
+              toolName: "get_order",
+              output: { type: "error-text", value: "MCP error -32602" },
+            },
+          ],
+        },
+      ],
+    });
+    expect(toolResults[0]?.isError).toBe(true);
   });
 });

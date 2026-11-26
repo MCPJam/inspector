@@ -72,6 +72,18 @@ export type ArgMatcher = {
  * any kind can be marked advisory (`role: "advisory"`, `severity: "warn"`)
  * without a parallel field.
  */
+/**
+ * `toolResultMatchesSchema.schema`: an authored JSON Schema (any JSON value
+ * except a string), or "declared" for each tool's own output schema.
+ */
+export type AuthoredResultSchema =
+  | "declared"
+  | Record<string, unknown>
+  | unknown[]
+  | number
+  | boolean
+  | null;
+
 export type Predicate = (
   | { type: "toolDescriptionsPresent"; minLength?: number }
   | {
@@ -189,7 +201,12 @@ export type Predicate = (
    * `schema: "declared"` validates each result's `structuredContent` against
    * the output schema its own tool declared instead of one authored schema.
    */
-  | { type: "toolResultMatchesSchema"; schema: unknown; toolName?: string }
+  | {
+      type: "toolResultMatchesSchema";
+      /** A JSON Schema document, or "declared" for each tool's own schema. */
+      schema: AuthoredResultSchema;
+      toolName?: string;
+    }
   /**
    * Every tool result in scope is strictly under `maxBytes`.
    *
@@ -731,17 +748,21 @@ export const predicateUnion = z.discriminatedUnion("type", [
     // Author content, capped rather than inspected: a schema is a document,
     // and the cap is what keeps an unbounded one out of every persisted
     // predicate row. Shape is the validator engine's problem at evaluate time.
+    // Any JSON value except a string, or the one string a schema may be:
+    // "declared", meaning each tool's own output schema. Spelled as a union
+    // so the published suite schemas reject other strings too.
     schema: z
-      .unknown()
+      .union([
+        z.literal("declared"),
+        z.record(z.string(), z.unknown()),
+        z.array(z.unknown()),
+        z.number(),
+        z.boolean(),
+        z.null(),
+      ])
       .refine(
         (value) => canonicalSize(value) <= MAX_SCHEMA_BYTES,
         `schema must canonicalize to at most ${MAX_SCHEMA_BYTES} bytes`
-      )
-      // The one string a schema may be: "declared", meaning each tool's own
-      // output schema. Any other string is not a JSON Schema document.
-      .refine(
-        (value) => typeof value !== "string" || value === "declared",
-        'a string schema must be "declared"'
       ),
     toolName: z.string().min(1).optional(),
     ...checkPolicyShape,

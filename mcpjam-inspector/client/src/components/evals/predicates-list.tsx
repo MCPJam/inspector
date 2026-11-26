@@ -1,4 +1,10 @@
-import { CheckCircle2, ChevronDown, ChevronRight, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  MinusCircle,
+  XCircle,
+} from "lucide-react";
 import { checkRole } from "@mcpjam/sdk/predicates";
 import type { Predicate, PredicateResult } from "@/shared/eval-matching";
 import {
@@ -122,8 +128,11 @@ export function PredicatesList({
   // Advisory (Warn/Report) rows are reported, never decisive: the runner's
   // own verdict skips them, so counting their failures here would paint a
   // red "2 / 3 assertions passed" badge on an iteration the runner passed.
+  // Not applicable rows keep `passed: true` for older readers, but they
+  // measured nothing, so they are not counted as passes.
   const gating = predicates.filter(
-    (r) => checkRole(r.predicate) !== "advisory"
+    (r) =>
+      checkRole(r.predicate) !== "advisory" && r.status !== "not_applicable"
   );
   const failed = gating.filter((r) => !r.passed).length;
   const passed = gating.length - failed;
@@ -206,29 +215,35 @@ function PredicateRow({
   observations: EvalTraceWidgetRenderObservationView[];
 }) {
   const evidence = evidenceObservations(row.predicate, observations);
+  const notApplicable = row.status === "not_applicable";
+  const failed = !row.passed && !notApplicable;
   return (
     <li
       className={`rounded border ${
-        row.passed
-          ? "border-border/40 bg-background/40"
-          : "border-destructive/40 bg-destructive/5"
+        failed
+          ? "border-destructive/40 bg-destructive/5"
+          : "border-border/40 bg-background/40"
       }`}
     >
-      <details className="group" open={!row.passed}>
+      <details className="group" open={failed}>
         <summary className="flex cursor-pointer list-none items-start gap-2 p-2 [&::-webkit-details-marker]:hidden">
           <span
             className={`mt-0.5 flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-              row.passed
-                ? EVAL_PASSED_BADGE_STRONG_CLASS
-                : EVAL_FAILED_BADGE_STRONG_CLASS
+              notApplicable
+                ? "border border-border text-muted-foreground"
+                : row.passed
+                  ? EVAL_PASSED_BADGE_STRONG_CLASS
+                  : EVAL_FAILED_BADGE_STRONG_CLASS
             }`}
           >
-            {row.passed ? (
+            {notApplicable ? (
+              <MinusCircle className="h-3 w-3" aria-hidden />
+            ) : row.passed ? (
               <CheckCircle2 className="h-3 w-3" aria-hidden />
             ) : (
               <XCircle className="h-3 w-3" aria-hidden />
             )}
-            {row.passed ? "PASS" : "FAIL"}
+            {notApplicable ? "N/A" : row.passed ? "PASS" : "FAIL"}
           </span>
           <span className="min-w-0 flex-1">
             <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
@@ -253,7 +268,7 @@ function PredicateRow({
         <div className="space-y-1.5 px-2 pb-2 pl-[26px]">
           <div
             className={`whitespace-pre-wrap break-words text-[11px] leading-tight ${
-              row.passed ? "text-muted-foreground" : "text-destructive"
+              failed ? "text-destructive" : "text-muted-foreground"
             }`}
           >
             {row.reason}

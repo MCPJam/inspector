@@ -1519,7 +1519,20 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   type: "string",
                                   const: "toolResultMatchesSchema",
                                 },
-                                schema: {},
+                                schema: {
+                                  anyOf: [
+                                    { type: "string", const: "declared" },
+                                    {
+                                      type: "object",
+                                      propertyNames: { type: "string" },
+                                      additionalProperties: {},
+                                    },
+                                    { type: "array", items: {} },
+                                    { type: "number" },
+                                    { type: "boolean" },
+                                    { type: "null" },
+                                  ],
+                                },
                                 toolName: { type: "string", minLength: 1 },
                                 role: {
                                   type: "string",
@@ -2677,7 +2690,20 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                   type: "object",
                   properties: {
                     type: { type: "string", const: "toolResultMatchesSchema" },
-                    schema: {},
+                    schema: {
+                      anyOf: [
+                        { type: "string", const: "declared" },
+                        {
+                          type: "object",
+                          propertyNames: { type: "string" },
+                          additionalProperties: {},
+                        },
+                        { type: "array", items: {} },
+                        { type: "number" },
+                        { type: "boolean" },
+                        { type: "null" },
+                      ],
+                    },
                     toolName: { type: "string", minLength: 1 },
                     role: {
                       type: "string",
@@ -3732,7 +3758,20 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                   type: "object",
                   properties: {
                     type: { type: "string", const: "toolResultMatchesSchema" },
-                    schema: {},
+                    schema: {
+                      anyOf: [
+                        { type: "string", const: "declared" },
+                        {
+                          type: "object",
+                          propertyNames: { type: "string" },
+                          additionalProperties: {},
+                        },
+                        { type: "array", items: {} },
+                        { type: "number" },
+                        { type: "boolean" },
+                        { type: "null" },
+                      ],
+                    },
                     toolName: { type: "string", minLength: 1 },
                     role: {
                       type: "string",

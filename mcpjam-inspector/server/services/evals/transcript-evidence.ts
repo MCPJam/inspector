@@ -81,6 +81,17 @@ function outputText(output: unknown): string | undefined {
   }
 }
 
+/**
+ * True for an `error-text` / `error-json` output part: a call that failed at
+ * the protocol level and returned no `CallToolResult` at all.
+ */
+function isProtocolErrorOutput(output: unknown): boolean {
+  return (
+    isRecord(output) &&
+    (output.type === "error-text" || output.type === "error-json")
+  );
+}
+
 /** The JSON payload of a `{type: "json"}` output part. */
 function outputJson(output: unknown): unknown {
   if (!isRecord(output)) return undefined;
@@ -146,7 +157,9 @@ export function extractTranscriptEvidence(trace: unknown): ExtractedEvidence {
           ...(json !== undefined ? { json } : {}),
           ...(raw !== undefined && typeof raw.isError === "boolean"
             ? { isError: raw.isError }
-            : {}),
+            : isProtocolErrorOutput(part.output)
+              ? { isError: true }
+              : {}),
           size: {
             bytes: bytes ?? 0,
             basis: "model_visible_output",

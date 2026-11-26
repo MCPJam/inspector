@@ -5624,7 +5624,9 @@ const runLocalIteration = async ({
       // Per-turn streaming play-by-play (headless in batch).
       buildSinks: makeSinks,
     });
-    const stepState = createStepExecutionState();
+    const stepState = createStepExecutionState(
+    collectToolDeclarations(mcpClientManager, selectedServers),
+  );
     const stepOutcome = await executeSteps({
       steps,
       state: stepState,
@@ -7443,7 +7445,9 @@ const runHostedIterationWithBrowser = async (
         }
       : {}),
   });
-  const stepState = createStepExecutionState();
+  const stepState = createStepExecutionState(
+    collectToolDeclarations(mcpClientManager, selectedServers),
+  );
   let result: Awaited<ReturnType<typeof executeSteps>>;
   try {
     result = await executeSteps({
