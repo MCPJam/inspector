@@ -46,7 +46,7 @@ import {
   loadEvalRunAccountPlan,
   loadSuiteConnectionIdSets,
   openEvalAccountGroups,
-  quickRunAccountPlanError,
+  type QuickRunAccounts,
   type EvalAccountPlan,
   type EvalAccountSelection,
 } from "./suite-account-choices.js";
@@ -78,6 +78,7 @@ export type LocalEvalRun = {
     serverNames?: string[];
     storageServerIds?: string[];
     resolvedEnvironment?: ResolvedEnvironmentForLaunch;
+    quickRunAccounts?: QuickRunAccounts;
     evalAccounts?: {
       plan: EvalAccountPlan;
       requested?: EvalAccountSelection[];
@@ -372,7 +373,6 @@ export async function openLocalEvalRun(
     ...(caseIds?.length ? { caseIds } : {}),
     ...(target.runAccounts ? { runAccounts: target.runAccounts } : {}),
   }) : null;
-  if (target.testCaseId && plan?.length) throw quickRunAccountPlanError();
   if (target.runAccounts && !plan) {
     throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "Run account choices require a saved suite and connected MCP servers.");
   }
@@ -391,7 +391,9 @@ export async function openLocalEvalRun(
           serverNames: servers.serverNames,
           storageServerIds: target.storageServerIds ?? servers.refs,
         }),
-      ...(plan && groups ? {
+      ...(plan && target.testCaseId ? {
+        quickRunAccounts: { plan, serverIds: servers.serverIds, ...(target.runAccounts ? { runAccounts: target.runAccounts } : {}) },
+      } : plan && groups ? {
         evalAccounts: { plan, requested: target.runAccounts, managerForCase: groups.forCase },
       } : {}),
     },

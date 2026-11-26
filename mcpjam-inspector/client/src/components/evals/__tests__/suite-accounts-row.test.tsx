@@ -152,7 +152,7 @@ describe("SuiteAccountsRow", () => {
   });
 
   it("drafts a shared server default through suite settings", async () => {
-    state.view = view({ sharedAccountsEnabled: true, servers: [{
+    state.view = view({ servers: [{
       serverId: "srv-asana",
       mode: "shared",
       managed: true,

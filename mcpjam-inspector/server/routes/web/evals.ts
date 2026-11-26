@@ -1,6 +1,8 @@
 import { anyUnattendedLocalHarness } from "../../utils/harness/local/run-resources.js";
 import {
+  assertEvalAccountConnections,
   loadEvalRunAccountPlan,
+  loadQuickRunAccounts,
   loadSuiteConnectionIdSets,
   openEvalAccountGroups,
 } from "../../services/evals/suite-account-choices.js";
@@ -422,15 +424,26 @@ async function preflightQuickRunEnvironment(
   return resolved;
 }
 
+function plannedQuickRunTokens(
+  tokens: Record<string, string> | undefined,
+  plan: Awaited<ReturnType<typeof loadQuickRunAccounts>>["accountContext"],
+) {
+  if (!tokens || !plan) return tokens;
+  const managed = new Set(plan.plan.map(({ serverId }) => serverId));
+  return Object.fromEntries(Object.entries(tokens).filter(([id]) => !managed.has(id)));
+}
+
 evals.post("/run-test-case", async (c) => {
   let preflightEnvironment: ResolvedEnvironmentForLaunch | undefined;
+  let accounts: Awaited<ReturnType<typeof loadQuickRunAccounts>> | undefined;
   return withEphemeralConnection(
     c,
     hostedRunTestCaseSchema,
-    async (manager, body) =>
-      // Drained by its admission until this answers; see refuseWhileDraining.
-      runEvalTestCaseWithManager(manager, {
+    async (manager, body) => {
+      assertEvalAccountConnections(manager, accounts?.accountContext?.plan.map(({ serverId, connectionId }) => [serverId, connectionId]));
+      return runEvalTestCaseWithManager(manager, {
         ...body,
+        quickRunAccounts: accounts?.accountContext,
         ...((await anyUnattendedLocalHarness(c.req.header("authorization"), body.projectId)) ? { runtimeVenue: "local" as const } : {}),
         // The DELEGATED JWT: the run's Convex calls use this bearer, and an
         // `sk_` API key 401s Convex's query and action surfaces.
@@ -438,18 +451,21 @@ evals.post("/run-test-case", async (c) => {
         ...(preflightEnvironment
           ? { resolvedEnvironment: preflightEnvironment }
           : {}),
-      }),
+      });
+    },
     {
       rpcLogs: false,
       pluginComputerRuntime: false,
       beforeConnect: async (rawBody) => {
         preflightEnvironment = await preflightQuickRunEnvironment(c, rawBody);
-      },
-      connectionIdSetsForBody: async (rawBody) =>
-        loadSuiteConnectionIdSets(
+        const body = parseWithSchema(hostedRunTestCaseSchema, rawBody);
+        accounts = await loadQuickRunAccounts(
           createConvexClient(await getConvexBearerForRequest(c)),
-          { suiteId: rawBody.suiteId, testCaseId: rawBody.testCaseId, serverIds: rawBody.serverIds },
-        ),
+          { testCaseId: body.testCaseId, serverIds: body.serverIds, runAccounts: body.runAccounts },
+        );
+        rawBody.oauthTokens = plannedQuickRunTokens(body.oauthTokens, accounts.accountContext);
+      },
+      connectionIdSetsForBody: async () => accounts?.connectionIdSets,
       // Connect as the host this case runs under, not as whichever one the
       // browser had active — same rule as the suite-run and streaming routes.
       // An environment runs as its own client. The wrapper owns the body, so
@@ -569,9 +585,9 @@ evals.post("/stream-test-case", async (c) => {
       )
     : mergedCasePins.initializePins;
 
-  const caseConnectionIdSets = await loadSuiteConnectionIdSets(
+  const accounts = await loadQuickRunAccounts(
     createConvexClient(await getConvexBearerForRequest(c)),
-    { suiteId: rawBody.suiteId, testCaseId: rawBody.testCaseId, serverIds },
+    { testCaseId: body.testCaseId, serverIds, runAccounts: body.runAccounts },
   );
   const { manager } = await createAuthorizedManager(
     callerContextFromHono(c),
@@ -579,13 +595,13 @@ evals.post("/stream-test-case", async (c) => {
     body.projectId,
     serverIds,
     caseHostPins?.timeoutMs ?? WEB_CALL_TIMEOUT_MS,
-    oauthTokens,
+    plannedQuickRunTokens(oauthTokens, accounts.accountContext),
     (caseHostConfig ? hostClientCapabilities(caseHostConfig) : undefined) ??
       (body.clientCapabilities as Record<string, unknown> | undefined),
     {
       // A host attachment does not authorize durable Computer placement for an eval.
       pluginComputerRuntime: false,
-      ...(caseConnectionIdSets ? { connectionIdSets: caseConnectionIdSets } : {}),
+      ...(accounts.connectionIdSets ? { connectionIdSets: accounts.connectionIdSets } : {}),
       accessScope: body.accessScope as "project_member" | "chat_v2" | undefined,
       scenarioId: evalScenarioId,
       accessVersion: body.accessVersion as number | undefined,
@@ -614,6 +630,7 @@ evals.post("/stream-test-case", async (c) => {
     }),
   );
   try {
+    assertEvalAccountConnections(manager, accounts.accountContext?.plan.map(({ serverId, connectionId }) => [serverId, connectionId]));
     const stream = await streamEvalTestCaseWithManager(
       manager,
       {
@@ -621,6 +638,7 @@ evals.post("/stream-test-case", async (c) => {
           serverIds: string[];
         }),
         convexAuthToken,
+        quickRunAccounts: accounts.accountContext,
         ...(preflightEnvironment
           ? { resolvedEnvironment: preflightEnvironment }
           : {}),

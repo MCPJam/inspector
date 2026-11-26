@@ -254,7 +254,7 @@ describe("local eval runs", () => {
         switch (getFunctionName(ref)) {
           case "testSuiteAccountSelections:getEvalRunAccountPlan":
             return null;
-          case "testSuiteAccountSelections:getMySuiteAccountChoices":
+          case "testSuiteAccountSelections:getPersonalSuiteAccountChoices":
             return choices[args.suiteId] ?? [];
           case "testSuites:getTestCase":
             return { testSuiteId: "suite-1", projectId: "project-1" };
@@ -478,7 +478,8 @@ describe("local eval runs", () => {
     expect(untouched(uiManager)).toBe(true);
   });
 
-  it("refuses a local Quick Run when a named server needs a shared account plan", async () => {
+  it("uses the shared case plan for a local Quick Run with a server name", async () => {
+    mocks.runEvalTestCase.mockResolvedValueOnce({ success: true });
     const query = mocks.convexQuery.getMockImplementation()!;
     mocks.convexQuery.mockImplementation(async (ref, args) =>
       getFunctionName(ref) === "testSuiteAccountSelections:getEvalRunAccountPlan"
@@ -494,9 +495,18 @@ describe("local eval runs", () => {
       convexAuthToken: "token-123",
     });
 
-    expect(response.status).toBe(409);
-    expect(authorizeRequests).toEqual([]);
-    expect(mocks.runEvalTestCase).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(authorizeRequests).toEqual([
+      expect.objectContaining({ connectionIdSets: { srv_linear: ["acct_b"] } }),
+    ]);
+    const [manager] = mocks.managers;
+    expect(authorization(manager.configs.srv_linear)).toBe("Bearer token-b");
+    expect(mocks.runEvalTestCase).toHaveBeenCalledWith(manager, expect.objectContaining({
+      quickRunAccounts: expect.objectContaining({
+        serverIds: ["srv_linear"],
+        plan: [expect.objectContaining({ source: "case", connectionId: "acct_b" })],
+      }),
+    }));
   });
 
   it("closes a streamed quick run's manager when the stream completes", async () => {

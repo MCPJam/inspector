@@ -13,6 +13,7 @@ import {
 } from "@/lib/mcpjam-agent/eval-tool-metadata";
 import { DEFAULTS, EVAL_DESTRUCTIVE_BUTTON_CLASS } from "./constants";
 import { CaseServerAccounts } from "./suite-accounts-row";
+import type { SharedEvalAccountSelection } from "@/lib/evals/eval-accounts";
 import {
   advancedConfigForUpdate,
   buildCaseSavePayload,
@@ -3224,6 +3225,14 @@ export function TestTemplateEditor({
     }
   }, []);
 
+  const [quickRunAccountDraft, setQuickRunAccountDraft] = useState<{
+    caseId: string;
+    accounts: SharedEvalAccountSelection[];
+  }>();
+  const quickRunAccounts = quickRunAccountDraft?.caseId === currentTestCase?._id
+    ? quickRunAccountDraft?.accounts ?? []
+    : [];
+
   const handleRunCompare = async (options?: {
     modelValues?: string[];
     sessionMode?: "new" | "reuse";
@@ -3522,6 +3531,7 @@ export function TestTemplateEditor({
       return;
     }
 
+    setQuickRunAccountDraft(undefined);
     const totalRequestedModels = runModelValues.length;
     const modelRequestGen: Record<string, number> = {};
     for (const { modelValue } of preparedRuns) {
@@ -3658,6 +3668,7 @@ export function TestTemplateEditor({
             await streamEvalTestCase(
               {
                 ...request.request,
+                ...(quickRunAccounts.length ? { runAccounts: quickRunAccounts } : {}),
                 compareRunId,
                 skipLastMessageRunUpdate: true,
               },
@@ -4310,6 +4321,16 @@ export function TestTemplateEditor({
           selections={editForm.accounts ?? currentTestCase?.accounts}
           disabled={readOnly}
           onChange={(accounts) => setEditForm((current) => current ? { ...current, accounts } : current)}
+        />
+      ) : null}
+      {suite && currentTestCase && editForm && !isDraft && !checksPage ? (
+        <CaseServerAccounts
+          suite={suite}
+          projectId={projectId}
+          oneOff={{ test: currentTestCase }}
+          selections={quickRunAccounts}
+          onChange={(accounts) => setQuickRunAccountDraft({ caseId: currentTestCase._id, accounts })}
+          disabled={readOnly || isRunningCompare}
         />
       ) : null}
       {simpleCaseEditorEnabled && editForm && evalAgent.change && (

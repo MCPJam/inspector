@@ -134,6 +134,7 @@ type RunEvalsRequest = EvalRequestWithServers & {
 
 type RunTestCaseRequest = EvalRequestWithServers & {
   testCaseId: string;
+  runAccounts?: import("@/lib/evals/eval-accounts").SharedEvalAccountSelection[];
   /**
    * Environment quick run: the server runs this environment's model, client
    * and servers, so the request carries no `model`/`provider`, host or

@@ -1,5 +1,4 @@
 import { credentialFailureMessage } from "../routes/web/errors.js";
-import { isQuickRunAccountPlanError, quickRunAccountPlanError } from "./evals/suite-account-choices.js";
 import { assertNativeDiscovery } from "../utils/harness/native-discovery.js";
 import { mergeViewToolEvidence } from "./evals/view-tool-evidence.js";
 import { evalWidgetServerCall } from "./evals/view-tool-policy.js";
@@ -1940,7 +1939,6 @@ async function createIterationDirectly(
 
     iterationId = result?.iterationId as string | undefined;
   } catch (error) {
-    if (isQuickRunAccountPlanError(error)) throw quickRunAccountPlanError();
     logger.error("[evals] Failed to create iteration:", error);
     if (params.namedHostId || params.runtimeVenue) throw new Error("Could not record this client's eval iteration. Update the backend before running it.", { cause: error });
     if (params.requireRecord) {
@@ -3758,7 +3756,6 @@ const executeTestCase = async (params: {
         const id = await createIterationDirectly(convexClient, iterationParams);
         precreatedIterationIds.push(id);
       } catch (error) {
-        if (isQuickRunAccountPlanError(error)) throw error;
         logger.warn(
           "[evals] Failed to precreate iteration row; falling back to per-loop create",
           {
@@ -4725,7 +4722,7 @@ export const runEvalSuiteWithAiSdk = async ({
       } else {
         if (
           runId === null &&
-          (result.reason instanceof HarnessIterationRecordError || isQuickRunAccountPlanError(result.reason))
+          result.reason instanceof HarnessIterationRecordError
         ) {
           throw result.reason;
         }

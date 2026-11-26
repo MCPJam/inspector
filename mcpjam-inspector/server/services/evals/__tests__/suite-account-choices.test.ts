@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { WebRouteError } from "../../../routes/web/errors.js";
 import {
   loadEvalRunAccountPlan,
+  loadQuickRunAccounts,
   loadSuiteConnectionIdSets,
   openEvalAccountGroups,
   type EvalAccountPlan,
@@ -25,7 +26,7 @@ function convexAnswering(
 describe("loadSuiteConnectionIdSets", () => {
   it("reads the acting person's choice for a suite", async () => {
     const convex = convexAnswering({
-      "testSuiteAccountSelections:getMySuiteAccountChoices": [
+      "testSuiteAccountSelections:getPersonalSuiteAccountChoices": [
         { serverId: "asana", connectionIds: ["dummy"] },
       ],
     });
@@ -40,7 +41,7 @@ describe("loadSuiteConnectionIdSets", () => {
   it("finds a quick run's suite from its case", async () => {
     const convex = convexAnswering({
       "testSuites:getTestCase": { testSuiteId: "suite-1" },
-      "testSuiteAccountSelections:getMySuiteAccountChoices": (args: unknown) =>
+      "testSuiteAccountSelections:getPersonalSuiteAccountChoices": (args: unknown) =>
         (args as { suiteId: string }).suiteId === "suite-1"
           ? [{ serverId: "asana", connectionIds: ["dummy"] }]
           : [],
@@ -52,7 +53,7 @@ describe("loadSuiteConnectionIdSets", () => {
 
   it("has nothing to apply without a suite or a saved choice", async () => {
     const convex = convexAnswering({
-      "testSuiteAccountSelections:getMySuiteAccountChoices": [],
+      "testSuiteAccountSelections:getPersonalSuiteAccountChoices": [],
     });
     await expect(loadSuiteConnectionIdSets(convex, {})).resolves.toBeUndefined();
     await expect(
@@ -60,24 +61,32 @@ describe("loadSuiteConnectionIdSets", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("refuses a quick run before opening a connection when it needs an account plan", async () => {
+  it("uses the case plan for Quick Run and preserves personal choices on other servers", async () => {
+    const plan = [{ testCaseId: "case-1", serverId: "billing", connectionId: "admin", source: "case" }];
     const convex = convexAnswering({
       "testSuites:getTestCase": { testSuiteId: "suite-1" },
-      "testSuiteAccountSelections:getEvalRunAccountPlan": [
-        { testCaseId: "case-1", serverId: "billing", connectionId: "admin", source: "case" },
+      "testSuiteAccountSelections:getPersonalSuiteAccountChoices": [
+        { serverId: "billing", connectionIds: ["legacy"] },
+        { serverId: "crm", connectionIds: ["personal"] },
       ],
+      "testSuiteAccountSelections:getEvalRunAccountPlan": plan,
     });
-    await expect(loadSuiteConnectionIdSets(convex, {
+    await expect(loadQuickRunAccounts(convex, {
       testCaseId: "case-1",
-      serverIds: ["billing"],
-    })).rejects.toMatchObject({ status: 409, details: { code: "QUICK_RUN_ACCOUNT_PLAN_REQUIRED" } });
-    expect(convex.query).toHaveBeenCalledTimes(2);
+      serverIds: ["billing", "crm"],
+    })).resolves.toEqual({
+      accountContext: { plan, serverIds: ["billing", "crm"] },
+      connectionIdSets: { billing: ["admin"], crm: ["personal"] },
+    });
   });
 
   it("treats a backend without the feature as having no choices", async () => {
     const convex = convexAnswering({
       "testSuiteAccountSelections:getMySuiteAccountChoices": new Error(
         "Could not find public function for 'testSuiteAccountSelections:getMySuiteAccountChoices'",
+      ),
+      "testSuiteAccountSelections:getPersonalSuiteAccountChoices": new Error(
+        "Could not find public function for 'testSuiteAccountSelections:getPersonalSuiteAccountChoices'",
       ),
     });
     await expect(
@@ -87,7 +96,7 @@ describe("loadSuiteConnectionIdSets", () => {
 
   it("refuses the run when the choice can't be read", async () => {
     const convex = convexAnswering({
-      "testSuiteAccountSelections:getMySuiteAccountChoices": new Error(
+      "testSuiteAccountSelections:getPersonalSuiteAccountChoices": new Error(
         "fetch failed",
       ),
     });

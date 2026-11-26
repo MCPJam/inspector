@@ -5,11 +5,11 @@ import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { managerAccountsAtRun } from "../../utils/mcp-connections.js";
 import type { ConnectionIdSets } from "../../utils/oauth-account-sets.js";
 
-const getMySuiteAccountChoices = makeFunctionReference<
-  "query",
-  { suiteId: string },
-  Array<{ serverId: string; connectionIds: string[] }>
->("testSuiteAccountSelections:getMySuiteAccountChoices");
+const accountChoiceQuery = (name: string) => makeFunctionReference<
+  "query", { suiteId: string }, Array<{ serverId: string; connectionIds: string[] }>
+>(`testSuiteAccountSelections:${name}`);
+const getPersonalSuiteAccountChoices = accountChoiceQuery("getPersonalSuiteAccountChoices");
+const getMySuiteAccountChoices = accountChoiceQuery("getMySuiteAccountChoices");
 const getTestCase = makeFunctionReference<
   "query",
   { testCaseId: string },
@@ -17,25 +17,63 @@ const getTestCase = makeFunctionReference<
 >("testSuites:getTestCase");
 
 export type EvalAccountSelection = { serverId: string; connectionId: string };
-const QUICK_RUN_ACCOUNT_PLAN_REQUIRED = "QUICK_RUN_ACCOUNT_PLAN_REQUIRED";
-
-export function quickRunAccountPlanError() {
-  return new WebRouteError(409, ErrorCode.CONFLICT,
-    "Quick Run cannot validate shared MCP accounts. Run this case from the suite instead.",
-    { code: QUICK_RUN_ACCOUNT_PLAN_REQUIRED });
-}
-
-export function isQuickRunAccountPlanError(error: unknown) {
-  const data = error instanceof WebRouteError
-    ? error.details
-    : typeof error === "object" && error && "data" in error ? error.data : undefined;
-  return typeof data === "object" && data !== null &&
-    "code" in data && data.code === QUICK_RUN_ACCOUNT_PLAN_REQUIRED;
-}
 export type EvalAccountPlan = Array<EvalAccountSelection & {
   testCaseId: string;
   source: "case" | "run" | "suite" | "default";
 }>;
+
+export type QuickRunAccounts = {
+  plan: EvalAccountPlan;
+  serverIds: string[];
+  runAccounts?: EvalAccountSelection[];
+};
+
+export function assertEvalAccountConnections(
+  manager: MCPClientManager,
+  accounts: Iterable<[string, string]> | undefined,
+) {
+  if (!accounts) return;
+  const connected = new Map(managerAccountsAtRun(manager).map(
+    ({ serverId, connectionIds }) => [serverId, connectionIds],
+  ));
+  for (const [serverId, accountId] of accounts) {
+    const ids = connected.get(serverId);
+    if (ids?.length !== 1 || ids[0] !== accountId) {
+      throw new WebRouteError(409, ErrorCode.CONFLICT,
+        "A selected account could not be connected. Reconnect the account and try again.");
+    }
+  }
+}
+
+export async function loadQuickRunAccounts(
+  convex: Pick<ConvexHttpClient, "query">,
+  { testCaseId, serverIds, runAccounts }: {
+    testCaseId: string;
+    serverIds: string[];
+    runAccounts?: EvalAccountSelection[];
+  },
+) {
+  const test = await convex.query(getTestCase, { testCaseId });
+  const suiteId = test?.testSuiteId;
+  const [personal, plan] = await Promise.all([
+    suiteId ? loadSuiteConnectionIdSets(convex, { suiteId, serverIds }) : undefined,
+    suiteId && serverIds.length
+      ? loadEvalRunAccountPlan(convex, { suiteId, caseIds: [testCaseId], serverIds, runAccounts })
+      : null,
+  ]);
+  if (runAccounts?.length && !plan?.length) {
+    throw new WebRouteError(409, ErrorCode.CONFLICT,
+      "Choose one-off accounts for shared MCP servers in a saved case's run.");
+  }
+  const accountContext = plan?.length ? { plan, serverIds, ...(runAccounts ? { runAccounts } : {}) } : undefined;
+  return {
+    accountContext,
+    connectionIdSets: accountContext
+      ? { ...personal, ...Object.fromEntries(accountContext.plan.map(({ serverId, connectionId }) =>
+          [serverId, [connectionId]])) }
+      : personal,
+  };
+}
 
 type AccountPlanInput = {
   suiteId: string;
@@ -106,15 +144,7 @@ export async function openEvalAccountGroups(
           ),
         });
         groups.set(key, manager);
-        const connected = new Map(managerAccountsAtRun(manager).map(
-          (entry) => [entry.serverId, entry.connectionIds],
-        ));
-        for (const [serverId, accountId] of servers) {
-          const ids = connected.get(serverId);
-          if (ids?.length !== 1 || ids[0] !== accountId) {
-            throw new WebRouteError(409, ErrorCode.VALIDATION_ERROR, "A selected account could not be connected. Reconnect the account and try again.");
-          }
-        }
+        assertEvalAccountConnections(manager, servers);
       }
       caseManagers.set(caseId, manager);
     }
@@ -166,17 +196,13 @@ export async function loadSuiteConnectionIdSets(
         ? named((await convex.query(getTestCase, { testCaseId }))?.testSuiteId)
         : undefined);
     if (!suiteId) return undefined;
-    if (testCaseId && serverIds?.length) {
-      const plan = await loadEvalRunAccountPlan(convex, {
-        suiteId,
-        caseIds: [testCaseId],
-        serverIds,
-      });
-      if (plan?.length) throw quickRunAccountPlanError();
+    try {
+      rows = await convex.query(getPersonalSuiteAccountChoices, { suiteId });
+    } catch (error) {
+      if (!/Could not find public function.*getPersonalSuiteAccountChoices/i.test(String(error))) throw error;
+      rows = await convex.query(getMySuiteAccountChoices, { suiteId });
     }
-    rows = await convex.query(getMySuiteAccountChoices, { suiteId });
   } catch (error) {
-    if (isQuickRunAccountPlanError(error)) throw error;
     if (/Could not find public function.*getMySuiteAccountChoices/i.test(String(error))) {
       return undefined;
     }

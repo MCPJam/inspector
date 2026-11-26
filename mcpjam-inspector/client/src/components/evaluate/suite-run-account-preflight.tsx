@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useEvalAccountSelectionEnabled } from "@/hooks/useEvalAccountSelectionEnabled";
 import { Button } from "@mcpjam/design-system/button";
 import { buildProjectServerPath, navigateApp } from "@/lib/app-navigation";
 import type { RemoteServer } from "@/hooks/useProjects";
@@ -63,6 +64,7 @@ export function useSuiteAccountPreflight({
     [suite, plannedRefs, projectServers],
   );
   const { view } = useSuiteAccountsView({ suiteId: suite._id, serverIds });
+  const canChooseAccounts = useEvalAccountSelectionEnabled();
   if (!view) return {};
   const serverName = serverNameFrom(projectServers);
   const accountsFor = (refs: readonly string[]) => {
@@ -74,8 +76,8 @@ export function useSuiteAccountPreflight({
     const accountProblems = chosenAccountProblems(kept, serverName);
     return {
       ...(accountProblems.length ? { accountProblems } : {}),
-      runsAs: runsAsEntries(kept, serverName),
-      sharedServers: view.sharedAccountsEnabled
+      runsAs: runsAsEntries({ ...view, servers: view.servers.filter((s) => ids.has(s.serverId)) }, serverName),
+      sharedServers: canChooseAccounts
         ? view.servers.filter((s) => ids.has(s.serverId) && s.managed)
         : [],
       sharedServerName: serverName,

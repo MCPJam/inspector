@@ -130,7 +130,7 @@ beforeEach(() => {
   convexQueryMock.mockImplementation(async (ref: string | FunctionReference<"query">) => {
     const name = typeof ref === "string" ? ref : getFunctionName(ref);
     if (name === "testSuiteAccountSelections:getEvalRunAccountPlan") return null;
-    if (name === "testSuiteAccountSelections:getMySuiteAccountChoices") return [];
+    if (name === "testSuiteAccountSelections:getPersonalSuiteAccountChoices") return [];
     if (name === "testSuites:getTestSuiteRun") {
       return {
         _id: RUN_ID,
