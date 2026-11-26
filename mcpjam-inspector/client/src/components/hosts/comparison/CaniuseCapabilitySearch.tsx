@@ -29,10 +29,10 @@ export function CaniuseCapabilitySearch({
   hero?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const suggestions = open
-    ? fields.filter((field) => matchesCaniuseQuery(field, query)).slice(0, 12)
-    : [];
-  const expanded = suggestions.length > 0;
+  const suggestions = fields
+    .filter((field) => matchesCaniuseQuery(field, query))
+    .slice(0, 12);
+  const expanded = open && suggestions.length > 0;
 
   return (
     <Command
@@ -53,12 +53,14 @@ export function CaniuseCapabilitySearch({
           setOpen(false);
         } else if (event.key === "ArrowDown" && !open) {
           setOpen(true);
+        } else if (event.key === "Enter" && !expanded) {
+          event.preventDefault();
         }
       }}
     >
       <CommandInput
+        asChild
         aria-label={hero ? "Type a capability" : "Search capabilities"}
-        aria-expanded={expanded}
         placeholder={hero ? "type a capability…" : "Search capabilities…"}
         className={hero ? "h-auto rounded-none pb-1 pt-0 text-[length:inherit] font-[weight:inherit] leading-[inherit] tracking-[inherit] text-primary" : undefined}
         value={query}
@@ -67,7 +69,10 @@ export function CaniuseCapabilitySearch({
           onQueryChange(value);
           setOpen(true);
         }}
-      />
+      >
+        <input aria-expanded={expanded} />
+      </CommandInput>
+      {/* Keep items registered while collapsed so cmdk doesn't reselect during dismissal. */}
       <CommandList
         hidden={!expanded}
         className="absolute inset-x-0 top-full z-40 mt-2 max-h-64 rounded-lg border border-border bg-popover p-1 text-sm font-normal tracking-normal text-popover-foreground shadow-md"

@@ -72,6 +72,28 @@ describe("CaniuseComparePage", () => {
     );
   });
 
+  it("dismisses hero suggestions without clearing or selecting a capability", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/compare?q="]}>
+        <CaniuseComparePage />
+      </MemoryRouter>,
+    );
+    const search = screen.getByRole("combobox", { name: "Type a capability" });
+    await user.click(search);
+    fireEvent.change(search, { target: { value: "Events" } });
+    await user.click(search);
+    expect(search).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getAllByRole("option").length).toBeGreaterThan(0);
+    await user.keyboard("{Escape}{Enter}");
+    expect(search).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("option")).toBeNull();
+    expect(search).toHaveValue("Events");
+    await user.keyboard("{ArrowDown}");
+    expect(search).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getAllByRole("option").length).toBeGreaterThan(0);
+  });
+
   it("copies the exact comparison on the first click and hides gated verification", async () => {
     const query = "toolResult.content.image";
     const user = userEvent.setup();
