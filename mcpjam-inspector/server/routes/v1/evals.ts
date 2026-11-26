@@ -2433,10 +2433,12 @@ function toSuiteDetailDto(
      * without the whole answer the first sign that a suite is read-only was a
      * 409 on a write the caller had no way to know would be refused.
      *
-     * A CI-owned suite still RUNS from here. What it refuses is configuration:
-     * name, settings, environments, schedule, models, skills, host config and
-     * cases. Send `declaredSuiteId` to write as the file, or duplicate the
-     * suite for an editable copy.
+     * A CI-owned suite still RUNS from here as configured; a launch that would
+     * write it is refused (`evalLaunchWritesSuite`). What it refuses is
+     * configuration: name, settings, environments, schedule, models, skills,
+     * host config and cases. Its suite file writes as itself by sending
+     * `declaredSuiteId` on the routes that take it; an SDK-created suite has
+     * no file. Either can be duplicated in the app for an editable copy.
      */
     managedBy: isCiOwnedSuiteDoc(suite) ? "ci" : "app",
     name: suite.name ?? null,

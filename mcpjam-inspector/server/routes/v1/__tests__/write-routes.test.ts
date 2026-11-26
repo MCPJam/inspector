@@ -1145,6 +1145,12 @@ describe("v1 write routes", () => {
           ["a bare rerun", { suiteId: SUITE_ID }, []],
           ["an explicit rerun", { suiteId: SUITE_ID, suiteRerun: true }, []],
           [
+            // Inline tests on a rerun are run, not saved, so they pass.
+            "a rerun with inline tests",
+            { suiteId: SUITE_ID, suiteRerun: true, tests: [inlineTest] },
+            [],
+          ],
+          [
             // What `eval run --file` sends after syncing the suite.
             "the CLI's file launch",
             {

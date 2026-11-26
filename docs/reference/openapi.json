@@ -12721,7 +12721,7 @@
         "name": "declaredSuiteId",
         "in": "query",
         "required": false,
-        "description": "The suite file's own `suite.id`, when this request is that file syncing itself. A CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`; naming the suite's own declared id is how the file writing itself is allowed through. Naming any other id gets the same `409` as naming none, so it is not a capability. Omit it for an ordinary edit.\n\nSend it as a query parameter. Some of these routes also accept it as a body field, but an older deployment rejects an unknown body field with `400` and ignores an unknown query parameter.",
+        "description": "The suite file's own `suite.id`, when this request is that file syncing itself. A CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`; naming the suite's own declared id is how the file writing itself is allowed through. Naming any other id gets the same `409` as naming none, so it is not a capability. Omit it for an ordinary edit.\n\nSend it as a query parameter. Some routes also accept it as a body field, but an older deployment rejects an unknown body field with `400` and ignores an unknown query parameter.",
         "schema": {
           "type": "string",
           "maxLength": 128
@@ -18254,7 +18254,7 @@
           },
           "refreshSnapshot": {
             "type": "boolean",
-            "description": "**PERSISTS A SUITE MUTATION.** Re-derives and stores the suite's host-config snapshot from this request's server list, so future runs of the suite use it too. Without it a rerun leaves the snapshot frozen, which is what stops newly connected servers from silently contaminating an existing suite. Single-target launches only: it is not accepted on `POST /eval-run-groups`, where last-writer-wins on a frozen snapshot is never what a fan-out means."
+            "description": "**PERSISTS A SUITE MUTATION.** Re-derives and stores the suite's host-config snapshot from this request's server list, so future runs of the suite use it too. It does nothing on a project-environment launch, whose servers come from the environment. Without it a rerun leaves the snapshot frozen, which is what stops newly connected servers from silently contaminating an existing suite. Single-target launches only: it is not accepted on `POST /eval-run-groups`, where last-writer-wins on a frozen snapshot is never what a fan-out means."
           },
           "runGroupId": {
             "type": "string",
@@ -33609,7 +33609,7 @@
         }
       },
       "Conflict": {
-        "description": "The resource is not in a state that accepts this write: a stale `expectedRevision`, a duplicate name, an environment that cannot currently be launched, or a CI-owned eval suite. The request was well-formed. For the first three, re-read the resource and retry. A CI-owned suite answers with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`, and retrying does not change that. Change the suite where it is defined (its suite file, or the SDK's reports for a suite the SDK created), or duplicate it in the MCPJam app to get an editable copy. Only routes that take a `declaredSuiteId` parameter accept a write from the suite file itself (see `EvalSuiteDetail.managedBy`).",
+        "description": "The resource is not in a state that accepts this write: a stale `expectedRevision`, a duplicate name, an environment that cannot currently be launched, or a CI-owned eval suite. The request was well-formed. For the first three, re-read the resource and retry. A CI-owned suite (see `EvalSuiteDetail.managedBy`) answers with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`, and retrying does not change that. Change the suite where it is defined (its suite file, or the SDK's reports for a suite the SDK created), or duplicate it in the MCPJam app to get an editable copy. Only operations that list a `declaredSuiteId` parameter accept a write from the suite file itself.",
         "content": {
           "application/json": {
             "schema": {
