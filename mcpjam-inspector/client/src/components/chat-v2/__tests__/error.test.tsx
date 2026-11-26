@@ -243,6 +243,32 @@ describe("ErrorBox context_length_exceeded", () => {
     expect(onResetChat).toHaveBeenCalledTimes(1);
   });
 
+  it("opens the chat's model picker to choose another model", () => {
+    const release = useModelPickerIntentStore
+      .getState()
+      .registerProvidersTabResponder();
+    const before = useModelPickerIntentStore.getState().openModelPickerNonce;
+    render(<ErrorBox message={message} code="context_length_exceeded" />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Choose another model" }),
+    );
+
+    expect(useModelPickerIntentStore.getState().openModelPickerNonce).toBe(
+      before + 1,
+    );
+    release();
+  });
+
+  it("offers no model button when no model picker can open", () => {
+    useModelPickerIntentStore.setState({ providersTabResponderCount: 0 });
+    render(<ErrorBox message={message} code="context_length_exceeded" />);
+
+    expect(
+      screen.queryByRole("button", { name: "Choose another model" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps the provider's body under More details", () => {
     render(
       <ErrorBox

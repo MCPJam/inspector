@@ -216,9 +216,26 @@ describe("ModelSelector", () => {
   beforeEach(() => {
     useModelPickerIntentStore.setState({
       openProvidersTabNonce: 0,
+      openModelPickerNonce: 0,
       providersTabResponderCount: 0,
     });
     localStorage.clear();
+  });
+
+  it("opens in place on the choose-another-model intent and keeps the model", async () => {
+    // "Choose another model" on a chat too long for its model: the user picks
+    // the replacement, so the picker opens without switching anything.
+    render(<ProviderIntentControlledModelSelector />);
+    const before = screen.getByTestId("current-model-id").textContent ?? "";
+
+    act(() => {
+      useModelPickerIntentStore.getState().requestOpenModelPicker();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("Search models")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("current-model-id")).toHaveTextContent(before);
   });
 
   it("registers as a providers-tab responder only while opted in", () => {

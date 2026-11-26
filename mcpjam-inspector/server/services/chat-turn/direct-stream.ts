@@ -6,7 +6,11 @@ import {
   type UIMessageChunk,
 } from "ai";
 import type { ModelMessage, ProviderOptions } from "@ai-sdk/provider-utils";
-import { describeError, describeAsSlug } from "@mcpjam/sdk";
+import {
+  CONTEXT_LENGTH_EXCEEDED_MESSAGE,
+  describeError,
+  describeAsSlug,
+} from "@mcpjam/sdk";
 import type {
   ProgressiveToolPlan,
   ToolDiscoveryState,
@@ -40,7 +44,7 @@ import {
 } from "../../utils/direct-chat-scope-step-up.js";
 import type { MrtrEngineResume } from "../../utils/mrtr-hosted-chat.js";
 
-function formatStreamError(error: unknown, provider?: string): string {
+export function formatStreamError(error: unknown, provider?: string): string {
   if (!(error instanceof Error)) {
     return String(error);
   }
@@ -60,6 +64,20 @@ function formatStreamError(error: unknown, provider?: string): string {
     "responseBody" in error && typeof error.responseBody === "string"
       ? error.responseBody
       : undefined;
+
+  // A chat too long for the model, answered like the backend answers it.
+  // Before the overload check, which matches "overloaded" anywhere in the
+  // body: OpenRouter bodies list other providers' failed attempts.
+  if (normalized.slug === "provider/context_length_exceeded") {
+    return JSON.stringify({
+      code: "context_length_exceeded",
+      message: CONTEXT_LENGTH_EXCEEDED_MESSAGE,
+      statusCode,
+      isRetryable: false,
+      details: responseBody ?? error.message,
+      normalized,
+    });
+  }
   if (
     isProviderOverloadError({
       message: error.message,

@@ -3,6 +3,21 @@ import { describeError } from "@mcpjam/sdk/browser";
 import { describeEvalIterationError } from "../eval-iteration-error";
 
 describe("describeEvalIterationError", () => {
+  it("titles an iteration that failed on a chat too long for the model", () => {
+    // Iterations keep only the engine's message: the backend's sentence.
+    const error = describeEvalIterationError({
+      status: "failed",
+      result: "failed",
+      error:
+        "This chat is too long for the model's context window. Start a new chat, have the tool return less, or pick a model with a larger context window.",
+    })!;
+
+    expect(error).toMatchObject({
+      slug: "provider/context_length_exceeded",
+      title: "Chat too long for this model",
+    });
+  });
+
   it("turns heartbeat loss into a timeout while retaining pretty-printed diagnostics", () => {
     const error = describeEvalIterationError({
       status: "failed",

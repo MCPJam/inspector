@@ -318,13 +318,26 @@ export function ErrorBox({
               ))}
             </ul>
           </div>
-          {onResetChat ? (
-            <div className="ml-auto flex flex-shrink-0 flex-wrap items-center gap-2">
+          <div className="ml-auto flex flex-shrink-0 flex-wrap items-center gap-2">
+            {/* The pickers that answer the providers-tab intent answer this
+                one too, so their count says whether one can open. */}
+            {canOpenProvidersTab ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() =>
+                  useModelPickerIntentStore.getState().requestOpenModelPicker()
+                }
+              >
+                Choose another model
+              </Button>
+            ) : null}
+            {onResetChat ? (
               <Button type="button" variant="outline" onClick={onResetChat}>
                 Reset chat
               </Button>
-            </div>
-          ) : null}
+            ) : null}
+          </div>
         </div>
         {errorDetails ? (
           <ErrorDetailsPanel
