@@ -15,6 +15,15 @@ describe("VerdictPill", () => {
     rerender(<VerdictPill status="passed" label="0.91" size="sm" />);
     expect(screen.getByText("0.91")).toHaveAttribute("data-status", "passed");
   });
+
+  it("still names the verdict to a screen reader when a score replaces it", () => {
+    const { rerender } = renderWithProviders(
+      <VerdictPill status="failed" label="0.62" />,
+    );
+    expect(screen.getByText("Failed:")).toHaveClass("sr-only");
+    rerender(<VerdictPill status="passed" label="0.62" />);
+    expect(screen.getByText("Passed:")).toHaveClass("sr-only");
+  });
 });
 
 describe("CheckRow", () => {
@@ -81,6 +90,23 @@ describe("CheckRow", () => {
   });
 });
 
+describe("CheckRow evidence", () => {
+  it("shows an observed count of zero", () => {
+    renderWithProviders(
+      <ul>
+        <CheckRow
+          mode="result"
+          label="Tool calls"
+          role="required"
+          status="passed"
+          evidence={0}
+        />
+      </ul>,
+    );
+    expect(screen.getByText("0")).toBeInTheDocument();
+  });
+});
+
 describe("EvaluatorGroup", () => {
   const checks = [
     {
@@ -108,6 +134,13 @@ describe("EvaluatorGroup", () => {
     );
     const group = screen.getByRole("region", { name: "Expected Tool Calls" });
     expect(group).toHaveTextContent("v2");
+    // Inside suite settings' form, a default button would submit it.
+    for (const name of ["Update to v3", "Remove Expected Tool Calls"]) {
+      expect(screen.getByRole("button", { name })).toHaveAttribute(
+        "type",
+        "button",
+      );
+    }
     fireEvent.click(screen.getByRole("button", { name: "Update to v3" }));
     expect(onAcceptUpdate).toHaveBeenCalledTimes(1);
     fireEvent.click(

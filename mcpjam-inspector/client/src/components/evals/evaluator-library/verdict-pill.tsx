@@ -32,7 +32,9 @@ const VERDICT = {
   failed: {
     label: "Failed",
     icon: X,
-    className: "bg-destructive text-destructive-foreground",
+    // A tint with the reading foreground: small text on the solid
+    // destructive fill is below 4.5:1 in both themes (DESIGN.md).
+    className: "bg-destructive/15 text-foreground",
   },
   error: {
     label: "Error",
@@ -63,7 +65,7 @@ const VERDICT = {
 
 /**
  * One evaluator result or iteration verdict. Error is outlined and Failed is
- * filled, so a crashed evaluator never reads like a bad agent. Not
+ * a filled tint, so a crashed evaluator never reads like a bad agent. Not
  * applicable is gray and outlined because it is not a pass.
  */
 export function VerdictPill({
@@ -91,9 +93,17 @@ export function VerdictPill({
         className={cn(
           size === "sm" ? "size-3" : "size-3.5",
           status === "running" && "animate-spin",
+          status === "failed" && "text-destructive",
         )}
       />
-      {label ?? fallback}
+      {label === undefined ? (
+        fallback
+      ) : (
+        <>
+          <span className="sr-only">{fallback}: </span>
+          {label}
+        </>
+      )}
     </span>
   );
 }
