@@ -72,5 +72,8 @@ Internal-only changes (tests, CI, refactors with no behavior change) do not.
 
 ## When a check fails and you did not touch that area
 
-Check whether it fails on `main` too (`git stash`, rerun, `git stash pop`).
+Check whether it fails on `main` too: read the latest `main` run of that check
+(`gh run list --branch main`), or rerun it in a detached worktree
+(`git worktree add --detach <dir> origin/main`). Don't stash: the stash stack
+is shared with every worktree and other agents.
 If it does, say so in the PR description instead of fixing unrelated code.
