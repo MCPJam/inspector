@@ -17,21 +17,38 @@ To test whether a model and client use your server to satisfy a user's request, 
 | **Tasks** | Task creation and lifecycle behavior, using the task protocol the server offers. |
 | **OAuth** | Authorization discovery, client registration where applicable, and making an authorized MCP request. |
 
-Protocol and OAuth require an HTTP endpoint. In the local Inspector, Apps and Tasks can also run against a STDIO server. The checks that apply depend on the protocol version, the server's capabilities, and the inputs you supply.
-
 ## Run your first check in Inspector
 
-1. [Add your server](/inspector/connecting-servers). Use the local Inspector for a server running on your machine.
-2. In the sidebar, open **Verify** → **Conformance** and click **Run conformance checks**.
-3. Choose your server and a protocol version. Use **Auto (negotiated)** to let MCPJam resolve the version, or choose a specific revision to test it directly. Click **Continue**.
-4. Select your suites and checks. Some checks ask for input, such as a tool name and arguments. Use a test tool you can safely call again when you rerun the checks.
-5. Click **Run conformance checks**. If you selected OAuth and are prompted to sign in, complete the authorization flow to continue those checks.
+### Before you begin
+
+- [Add your server](/inspector/connecting-servers). Use the hosted Inspector for a public HTTPS server or the local Inspector for servers running on your machine.
+- Use an HTTP endpoint for Protocol or OAuth. In the local Inspector, Apps and Tasks also support STDIO.
+- Have a safe tool and sample arguments ready if you plan to run checks that invoke a tool.
+
+### Start a run
+
+1. Open **Verify** → **Conformance** in the sidebar and click **Run conformance checks**.
+2. Choose your server and a protocol version. Use **Auto (negotiated)** to let MCPJam resolve the version, or choose a specific revision to test it directly. Click **Continue**.
+3. Select your suites and checks. The available checks depend on the server's capabilities and the protocol version. Fill in any inputs for the checks you want to run.
+4. Click **Run conformance checks**. If you selected OAuth and are prompted to sign in, complete the authorization flow to continue those checks.
 
 If MCPJam can't connect, use **Sign in** if prompted, or **Edit connection** to check the server URL and authentication settings before retrying.
 
 ## Read your results
 
-Expand a suite, then a check, to see what MCPJam expected and the details it captured. Start with failed checks. If a check could not run, its details explain what prevented it from running, such as missing input or a timeout. A suite can also be inapplicable, such as OAuth on an endpoint that requires no sign-in. **Advice** highlights recommendations outside the conformance score.
+Expand a suite, then a check, to see what MCPJam expected and the details it captured.
+
+| Result label | What to do |
+| --- | --- |
+| **PASSED** | The scored checks that ran passed. Look for any checks marked **Not run** if you expected them to be covered. |
+| **FAILED** | Open a failed check to see the expected behavior and what your server returned. |
+| **INCOMPLETE** | Open the checks that could not run and address the reason shown, such as a timeout or failed sign-in. |
+| **NOT APPLICABLE** | Check the reason shown if you expected the suite to apply. For example, OAuth can be inapplicable on an endpoint that requires no sign-in. |
+| **NOT SELECTED** | Select the suite in your next run if you want to include it. |
+| **ERROR** | Review the suite's error and retry after addressing it. |
+| **Not run** | Open the check to see which input it needs, then supply that input and rerun it. |
+
+When **Additional enhancements** appears above the suites, expand it to review suggested (`SHOULD`) and optional (`MAY`) changes. These recommendations are outside the conformance score.
 
 After fixing an issue, rerun the checks with the same protocol version and inputs. For runs saved in a project, open **History** to return to the results. Filter by server or search by protocol version.
 

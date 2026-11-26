@@ -90,10 +90,10 @@
                 "icon": "search",
                 "pages": [
                   "inspector/tools-prompts-resources",
-                  "inspector/tasks",
                   "inspector/tools",
                   "inspector/resources",
                   "inspector/prompts",
+                  "inspector/tasks",
                   "inspector/skills",
                   "inspector/debugging"
                 ]
