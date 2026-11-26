@@ -356,7 +356,7 @@ function MatrixAdoption({
     overall.score === null
       ? "No results"
       : overall.eventsMode
-        ? `${overall.score}% of ${overall.measured} with results`
+        ? `${overall.score}% of ${overall.probed} probed clients`
         : `${overall.score}%${overall.reporting ? " reported" : ""}`;
   return (
     <div className="flex flex-col items-center gap-0.5 text-xs tabular-nums text-muted-foreground">
@@ -370,10 +370,10 @@ function MatrixAdoption({
           className="font-bold text-primary hover:underline"
           title={
             overall.score === null
-              ? "No published results"
+              ? "No probed clients"
               : overall.eventsMode
                 ? eventsSupportSummary(overall)
-                : `${overall.full} of ${overall.measured} clients support this capability`
+                : `${overall.full} of ${overall.probed} probed clients have confirmed support`
           }
         >
           {label}

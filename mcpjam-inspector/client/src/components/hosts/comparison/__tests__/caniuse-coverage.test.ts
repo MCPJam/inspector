@@ -2,6 +2,7 @@ import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
 import { describe, expect, it } from "vitest";
 import {
   hostConfigField,
+  type HostConfigDtoWithCatalogFacts,
   type HostComparisonSubject,
 } from "@/lib/host-config-field-schema";
 import { capabilityCoverage, capabilitySlices } from "../caniuse-coverage";
@@ -9,13 +10,18 @@ import { buildPresetCompareEntries } from "../host-compare-presets";
 
 const { subjects } = buildPresetCompareEntries(bundledHostCompatCatalog());
 const clients = Object.values(subjects);
+const probed = clients.filter(
+  ({ hostId, config }) =>
+    hostId !== "preset:mcpjam" &&
+    (config as HostConfigDtoWithCatalogFacts).provenance === "probe",
+);
 
 describe("caniuse adoption", () => {
-  it("leaves unmeasured CSP subtypes out of the adoption denominator", () => {
+  it("records zero confirmed support separately from zero published results", () => {
     const field = hostConfigField("appsCap.cspConnectDomains.fetch");
     expect(
       capabilityCoverage({ ...field, read: () => undefined }, clients),
-    ).toMatchObject({ measured: 0, score: null });
+    ).toMatchObject({ probed: probed.length, published: 0, score: 0 });
   });
 
   it("counts inline-only widget rendering for its slice but not for full display-mode support", () => {
@@ -27,10 +33,10 @@ describe("caniuse adoption", () => {
     expect(capabilityCoverage(field, clients, "inline").score).toBe(100);
   });
 
-  it("omits the MCPJam baseline and untested clients, and keeps partial results in the denominator", () => {
+  it("counts partial and missing results for probed clients and excludes other profiles", () => {
     const sampling = hostConfigField("capabilities.sampling");
-    const values = [true, undefined, false, true, true];
-    const ids = ["claude", "cursor", "mistral", "chatgpt", "mcpjam"];
+    const values = [true, undefined, false, true, true, true];
+    const ids = ["claude", "cursor", "mistral", "chatgpt", "mcpjam", "opencode"];
     const field = {
       ...sampling,
       read: (config: HostComparisonSubject["config"]) => {
@@ -45,10 +51,17 @@ describe("caniuse adoption", () => {
     };
     const coverage = capabilityCoverage(
       field,
-      ids.map((id) => subjects[`preset:${id}`]),
+      ids.map((id) => {
+        const subject = subjects[`preset:${id}`];
+        const config: HostConfigDtoWithCatalogFacts = {
+          ...subject.config,
+          provenance: id === "opencode" ? "assumed" : "probe",
+        };
+        return { ...subject, config };
+      }),
     );
-    expect(coverage).toMatchObject({ full: 2, measured: 4, score: 50 });
-    expect(coverage.rows.map(({ status }) => status)).toEqual([
+    expect(coverage).toMatchObject({ full: 2, probed: 4, score: 50 });
+    expect(coverage.probedRows.map(({ status }) => status)).toEqual([
       "supported",
       "partial",
       "unsupported",
@@ -59,18 +72,14 @@ describe("caniuse adoption", () => {
   it("treats any published Events mode as adoption and measures individual modes independently", () => {
     const field = hostConfigField("eventsDeliveryModes");
     const coverage = capabilityCoverage(field, clients);
-    const known = clients.filter(
-      ({ hostId, config }) =>
-        hostId !== "preset:mcpjam" && Array.isArray(field.read(config)),
-    );
+    const known = probed.filter(({ config }) => Array.isArray(field.read(config)));
     expect(known.length).toBeGreaterThan(0);
-    expect(coverage.measured).toBe(known.length);
+    expect(coverage).toMatchObject({ probed: probed.length, published: known.length });
+    expect(coverage.probed).toBeGreaterThan(coverage.published);
     const [any, ...modes] = capabilitySlices(field, clients);
     expect(any).toBe("any");
     for (const mode of modes) {
-      expect(capabilityCoverage(field, clients, mode).measured).toBe(
-        known.length,
-      );
+      expect(capabilityCoverage(field, clients, mode).probed).toBe(probed.length);
     }
   });
 
@@ -78,19 +87,15 @@ describe("caniuse adoption", () => {
     const field = hostConfigField("supportedProtocolVersions");
     const versions = capabilitySlices(field, clients);
     expect(versions.length).toBeGreaterThan(1);
-    const reported = clients.filter(
-      ({ hostId, config }) =>
-        hostId !== "preset:mcpjam" && Array.isArray(field.read(config)),
-    );
     for (const version of versions) {
-      const count = reported.filter(({ config }) => {
+      const count = probed.filter(({ config }) => {
         const value = field.read(config);
         return Array.isArray(value) && value.includes(version);
       }).length;
       expect(capabilityCoverage(field, clients, version)).toMatchObject({
         full: count,
-        measured: reported.length,
-        score: Math.round((count / reported.length) * 100),
+        probed: probed.length,
+        score: Math.round((count / probed.length) * 100),
       });
     }
   });
