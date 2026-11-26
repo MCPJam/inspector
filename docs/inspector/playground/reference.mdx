@@ -14,7 +14,7 @@ The Playground has three areas. Drag a divider to resize a side rail.
 
 | Area | What it holds |
 | --- | --- |
-| **Left rail** | **Tools**: every tool from the servers in this chat, with a search box and **Run**. **Sessions**: past conversations. |
+| **Left rail** | Two tabs. **Tools**: every tool from the servers in this chat, with a search box and **Run**. **Sessions**: past conversations. |
 | **Center** | One pane per client, side by side, and the chat box below them. **Clear chat** starts a new conversation. |
 | **Right rail** | The JSON-RPC log. |
 
@@ -41,7 +41,7 @@ Each pane has three views of its conversation:
 
 ## Tools rail
 
-Select a tool to see its **Description**, **Input Schema**, and **Annotations**. If the tool takes input, fill in **Parameters**: one field per input, with required fields marked **required**. Select an optional field's checkbox to include it, and enter objects and arrays as JSON. Then select **Run** to call the tool without a model. The result appears in the chat as **Invoked** followed by the tool name.
+Select a tool to see its **Description**, **Input Schema**, **Annotations**, and **Metadata**. If the tool takes input, fill in **Parameters**: one field per input, with required fields marked **required**. Select an optional field's checkbox to include it, and enter objects and arrays as JSON. Then select **Run** to call the tool without a model. The result appears in the chat as **Invoked** followed by the tool name.
 
 ## Widgets
 
@@ -85,7 +85,7 @@ Guests see higher-priced models greyed out with **Sign in to use this model**. S
 - **Servers:** select **+** to see the servers in this project, turn them on or off for the chat, or **Add server**.
 - **Attach files:** select **+** → **Attach files**, paste an image, or drag files onto the chat box. A pasted image without a name is saved as `pasted-image-1.png`, `pasted-image-2.png`, and so on.
 - **Message history:** press **Up** in the chat box to recall your last message, **Up** again to go further back, and **Down** to go forward. Inside a multi-line message, the arrow keys move the cursor instead.
-- **Voice input:** select **Start voice input** to dictate. The text is added to the composer.
+- **Voice input:** select **Start voice input** to dictate. The text is added to the chat box.
 - **Context meter:** shows the token breakdown of the conversation. Before the first message it shows **MCP Tools (estimated)**; if a server or model can't count tokens it shows **Token count unavailable**.
 
 ## Prompts
@@ -107,7 +107,7 @@ When you are signed in as a project member, the model also gets built-in tools f
 Whether a call pauses for your approval depends on what the tool does:
 
 - **Always pauses:** tools that change something, including `call_server_tool` and tools that start a run.
-- **Follows Require tool approval:** read-only tools that open a connection to one of your saved servers, such as `diagnose_server` and `list_server_tools`. The client's saved setting counts, and it is on unless saved off.
+- **Follows Require tool approval:** read-only tools that open a connection to one of your saved servers, such as `diagnose_server` and `list_server_tools`. The client's saved setting counts. It is on by default.
 - **Never pauses:** read-only tools that only read your project in MCPJam, such as `list_project_servers`.
 
 ## Sessions
