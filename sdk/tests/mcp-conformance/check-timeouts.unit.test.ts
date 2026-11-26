@@ -25,6 +25,8 @@ const requestTimeout = Object.assign(new Error("Request timed out"), {
 
 const never = () => new Promise<never>(() => {});
 
+const SERVER_CONFIG = { url: "https://example.com/mcp" };
+
 function serveManager(manager: Record<string, unknown>) {
   mockedOperations.withEphemeralClient.mockImplementation(async (_config, fn) =>
     fn(
@@ -36,6 +38,10 @@ function serveManager(manager: Record<string, unknown>) {
         listResourceTemplates: vi.fn().mockResolvedValue({
           resourceTemplates: [],
         }),
+        // A timed-out ping reconnects; by default the server accepts it.
+        getServerConfig: vi.fn().mockReturnValue(SERVER_CONFIG),
+        disconnectServer: vi.fn().mockResolvedValue(undefined),
+        connectToServer: vi.fn().mockResolvedValue({}),
         ...manager,
       } as unknown as Parameters<typeof fn>[0],
       "server-1"
@@ -244,5 +250,128 @@ describe("protocol checks that run out of time", () => {
 
     expect(result.checks[0]).toMatchObject({ status: "failed" });
     expect(isTimedOutCheck(result.checks[0]!)).toBe(false);
+  });
+});
+
+/**
+ * "Timeouts SHOULD be treated as connection failures" (2025 revisions,
+ * basic/utilities/ping.mdx): a ping with no answer ends the connection, and
+ * the checks after it run on a new one.
+ */
+describe("a ping that runs out of time", () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  const LOGGING = {
+    protocolVersion: "2025-11-25",
+    serverCapabilities: { logging: {} },
+  };
+
+  it.each([
+    ["rejects with a timeout", () => Promise.reject(requestTimeout)],
+    ["never settles", never],
+  ])(
+    "reconnects and runs the next check on the new connection when the ping %s",
+    async (_name, ping) => {
+      const firstClient = { setLoggingLevel: vi.fn() };
+      const secondClient = {
+        setLoggingLevel: vi.fn().mockResolvedValue(undefined),
+      };
+      const disconnectServer = vi.fn().mockResolvedValue(undefined);
+      const connectToServer = vi.fn().mockResolvedValue(secondClient);
+      serveManager({
+        getManagedClient: vi.fn().mockReturnValue(firstClient),
+        getInitializationInfo: vi.fn().mockReturnValue(LOGGING),
+        pingServer: vi.fn().mockImplementation(ping),
+        disconnectServer,
+        connectToServer,
+      });
+
+      const result = await run(["ping", "logging-set-level"]);
+
+      expect(result.checks[0]).toMatchObject({
+        id: "ping",
+        status: "skipped",
+        skipReason: "could-not-run",
+        details: { timedOut: true, reconnected: true },
+      });
+      expect(result.checks[0]?.error?.message).toMatch(
+        /did not answer within .* ran on a new connection\.$/
+      );
+      expect(disconnectServer).toHaveBeenCalledExactlyOnceWith("server-1");
+      expect(connectToServer).toHaveBeenCalledExactlyOnceWith(
+        "server-1",
+        SERVER_CONFIG,
+        expect.anything()
+      );
+      expect(disconnectServer.mock.invocationCallOrder[0]).toBeLessThan(
+        connectToServer.mock.invocationCallOrder[0]!
+      );
+      expect(result.checks[1]).toMatchObject({
+        id: "logging-set-level",
+        status: "passed",
+      });
+      expect(firstClient.setLoggingLevel).not.toHaveBeenCalled();
+      expect(secondClient.setLoggingLevel).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it("skips the remaining checks when the server does not accept a new connection", async () => {
+    const listTools = vi.fn().mockResolvedValue({ tools: [] });
+    serveManager({
+      pingServer: vi.fn().mockRejectedValue(requestTimeout),
+      connectToServer: vi.fn().mockRejectedValue(new Error("fetch failed")),
+      listTools,
+    });
+
+    const result = await run(["ping", "tools-list"]);
+
+    expect(result.checks[0]).toMatchObject({
+      id: "ping",
+      skipReason: "could-not-run",
+      details: { timedOut: true, reconnected: false },
+    });
+    expect(result.checks[0]?.error?.message).not.toMatch(/new connection/);
+    expect(result.checks[1]).toMatchObject({
+      id: "tools-list",
+      status: "skipped",
+      skipReason: "could-not-run",
+      error: {
+        message:
+          'Skipped because the server stopped responding ("Ping" timed out).',
+      },
+      details: { blockedBy: "ping" },
+    });
+    expect(result.checks.filter((check) => check.status === "failed")).toEqual(
+      []
+    );
+    expect(listTools).not.toHaveBeenCalled();
+  });
+
+  it("keeps the connection when another check times out", async () => {
+    const disconnectServer = vi.fn();
+    const connectToServer = vi.fn();
+    serveManager({
+      pingServer: vi.fn().mockResolvedValue({}),
+      listTools: vi.fn().mockRejectedValue(requestTimeout),
+      listPrompts: vi.fn().mockResolvedValue({ prompts: [] }),
+      disconnectServer,
+      connectToServer,
+    });
+
+    const result = await run(["ping", "tools-list", "prompts-list"]);
+
+    expect(result.checks.map((check) => check.status)).toEqual([
+      "passed",
+      "skipped",
+      "passed",
+    ]);
+    expect(result.checks[1]?.details).toEqual({
+      timedOut: true,
+      timeoutMs: 50,
+    });
+    expect(disconnectServer).not.toHaveBeenCalled();
+    expect(connectToServer).not.toHaveBeenCalled();
   });
 });
