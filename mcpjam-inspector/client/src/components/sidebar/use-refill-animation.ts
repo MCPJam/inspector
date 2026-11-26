@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 function readLastSeen(storageKey: string): number | null {
   try {
@@ -7,6 +7,7 @@ function readLastSeen(storageKey: string): number | null {
     const value = Number(raw);
     return Number.isFinite(value) ? value : null;
   } catch {
+    // Storage is unavailable (private mode, blocked). Treat it as first use, so no animation.
     return null;
   }
 }
@@ -19,10 +20,6 @@ function writeLastSeen(storageKey: string, value: number) {
   }
 }
 
-/**
- * True for the first frames after a meter opens with more left than the user
- * last saw, so the bar can start empty and fill in from the left.
- */
 function prefersReducedMotion(): boolean {
   return (
     typeof window.matchMedia === "function" &&
@@ -30,20 +27,30 @@ function prefersReducedMotion(): boolean {
   );
 }
 
+/**
+ * True for the first frames after a meter opens with more left than the user
+ * last saw, so the bar can start empty and fill in from the left.
+ */
 export function useRefillAnimation(
   storageKey: string | null,
   remaining: number | null,
 ): boolean {
-  const [filling, setFilling] = useState(() => {
-    if (!storageKey || remaining === null || prefersReducedMotion()) {
-      return false;
-    }
-    const lastSeen = readLastSeen(storageKey);
-    return lastSeen !== null && remaining > lastSeen;
-  });
+  const [filling, setFilling] = useState(false);
+  // Compare once per key, on the first loaded value, so a card opened while
+  // its meter is still loading still gets the refill.
+  const comparedKey = useRef<string | null>(null);
 
-  useEffect(() => {
-    if (storageKey && remaining !== null) writeLastSeen(storageKey, remaining);
+  // Layout effect: the bar must be empty before the first paint, or it flashes full.
+  useLayoutEffect(() => {
+    if (!storageKey || remaining === null) return;
+    if (comparedKey.current !== storageKey) {
+      comparedKey.current = storageKey;
+      const lastSeen = readLastSeen(storageKey);
+      if (!prefersReducedMotion() && lastSeen !== null && remaining > lastSeen) {
+        setFilling(true);
+      }
+    }
+    writeLastSeen(storageKey, remaining);
   }, [storageKey, remaining]);
 
   useEffect(() => {

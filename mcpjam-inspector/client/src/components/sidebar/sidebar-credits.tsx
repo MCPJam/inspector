@@ -213,7 +213,7 @@ export function SidebarCredits({
             <div className="flex flex-col gap-4">
               {plan ? (
                 <div className="flex items-center justify-between gap-2">
-                  <Badge className="rounded-full border-transparent bg-primary/15 text-primary hover:bg-primary/15">
+                  <Badge className="rounded-full border-transparent bg-primary/15 text-foreground">
                     {formatPlanName(plan)} plan
                   </Badge>
                   {showExplorePlans && !showUpsell ? (

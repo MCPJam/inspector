@@ -25,6 +25,23 @@ describe("useRefillAnimation", () => {
     expect(localStorage.getItem(KEY)).toBe("300");
   });
 
+  it("still animates when the card opens before the meter loads", () => {
+    vi.useFakeTimers({ toFake: ["requestAnimationFrame"] });
+    localStorage.setItem(KEY, "12");
+    const { result, rerender } = renderHook(
+      ({ key, remaining }) => useRefillAnimation(key, remaining),
+      {
+        initialProps: {
+          key: null as string | null,
+          remaining: null as number | null,
+        },
+      },
+    );
+    expect(result.current).toBe(false);
+    rerender({ key: KEY, remaining: 300 });
+    expect(result.current).toBe(true);
+  });
+
   it.each([
     ["the first time", null],
     ["while credits are only going down", "320"],
