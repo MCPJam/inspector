@@ -62,7 +62,9 @@ export function CheckRow(props: CheckRowProps) {
         {props.mode === "config" && props.detail ? (
           <div className="text-xs text-muted-foreground">{props.detail}</div>
         ) : null}
-        {props.mode === "result" && props.evidence ? (
+        {props.mode === "result" &&
+        props.evidence !== undefined &&
+        props.evidence !== null ? (
           <div className="mt-0.5 text-xs text-muted-foreground">
             {props.evidence}
           </div>
