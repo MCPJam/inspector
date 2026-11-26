@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { POSTHOG_TAB_STORAGE_KEY } from "./posthog-tab-storage";
 
 declare global {
   interface Window {
@@ -97,11 +98,15 @@ function forgetStoredChoice(): void {
 
 function applyToClient(
   client: AnalyticsConsentClient,
-  consent: AnalyticsConsent,
+  consent: AnalyticsConsent | null,
 ): void {
-  const refused = consent !== "granted";
-  if (refused) client.opt_out_capturing();
-  else client.opt_in_capturing({ captureEventName: false });
+  // Without a choice, this location's default decides.
+  const refused =
+    consent === null ? isAnalyticsConsentRequired() : consent !== "granted";
+  if (consent === "denied") client.opt_out_capturing();
+  else if (consent === "granted") {
+    client.opt_in_capturing({ captureEventName: false });
+  }
   // posthog-js read these getters once at init. A remote config that lands
   // later would reload Conversations, and `reset()` deletes the stored choice
   // and falls back to the opt-out defaults, unless the live config carries
@@ -111,16 +116,29 @@ function applyToClient(
     opt_out_capturing_by_default: refused,
     opt_out_persistence_by_default: refused,
   });
+  // posthog-js keeps the choice it stored for an earlier document, and one it
+  // could not store leaves it reading the earlier one. Removing that leaves
+  // the default set above in charge.
+  if (consent === null || client.is_capturing() === refused) {
+    client.clear_opt_in_out_capturing();
+  }
   if (!refused) return;
-  // If posthog-js could not store the refusal either, it still reads its
-  // earlier grant. Removing that grant leaves the opt-out default set above in
-  // charge.
-  if (client.is_capturing()) client.clear_opt_in_out_capturing();
+  forgetTabWindowId();
   // Outside cookieless mode, opting out leaves a running recorder and a
   // loaded Conversations widget in place. Re-checking stops the recorder
   // now that capture is off; reset removes the widget and its stored session.
   client.sessionRecording?.startIfEnabledOrStop();
   client.conversations?.reset();
+}
+
+// posthog-js keeps this tab's window id in sessionStorage after persistence
+// is turned off, and reads it back on the next load.
+function forgetTabWindowId(): void {
+  try {
+    window.sessionStorage.removeItem(`${POSTHOG_TAB_STORAGE_KEY}_window_id`);
+  } catch (error) {
+    console.debug("[analytics-consent] could not remove the tab window id", error);
+  }
 }
 
 function notify(): void {
@@ -140,12 +158,16 @@ export function reapplyAnalyticsConsent(client: AnalyticsConsentClient): void {
 
 /**
  * Applies a choice made in another open tab to `client` here too, so a
- * withdrawal there also stops this tab's recorder and replay.
+ * withdrawal there also stops this tab's recorder and replay. Call it once
+ * posthog-js has loaded.
  */
 export function followAnalyticsConsentAcrossTabs(
   client: AnalyticsConsentClient,
 ): void {
   followedClient = client;
+  // A choice posthog-js stored for an earlier document, possibly in another
+  // region, must not outlive the visitor's own choice being cleared.
+  if (getAnalyticsConsent() === null) client.clear_opt_in_out_capturing();
 }
 
 // Some test and embedded hosts stand in a `window` without events.
@@ -157,12 +179,9 @@ if (
     // `key` is null when another tab cleared all of storage.
     if (event.key !== STORAGE_KEY && event.key !== null) return;
     pageChoice = null;
-    // posthog-js keeps the choice it applied earlier, so a cleared store
-    // applies this location's default: off where the visitor must opt in, on
-    // where they need not.
-    if (followedClient) {
-      applyToClient(followedClient, hasAnalyticsConsent() ? "granted" : "denied");
-    }
+    // A cleared store applies this location's default without storing it as
+    // a choice: off where the visitor must opt in, on where they need not.
+    if (followedClient) applyToClient(followedClient, getAnalyticsConsent());
     notify();
   });
 }

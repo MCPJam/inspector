@@ -285,8 +285,9 @@ export const options = {
   get disable_surveys() {
     return shouldMaskAnalytics();
   },
+  // Heatmaps buffer clicks until a flush, so they collect only with consent.
   get enable_heatmaps() {
-    return !shouldMaskAnalytics();
+    return !shouldMaskAnalytics() && hasAnalyticsConsent();
   },
 
   // Getters, not eager calls. `options` is a module-scope literal, so calling
