@@ -3484,7 +3484,6 @@ export function PlaygroundMain({
     convexProjectId,
     historySelectionRequestIdRef,
   );
-
   // A chat change the user did not choose (`stay`) keeps a dropped prompt.
   const cancelPendingHistorySelection = useCallback(
     ({ stay = false } = {}) => {
@@ -4232,7 +4231,6 @@ export function PlaygroundMain({
       siblings?: readonly ChatHistorySession[],
     ) => {
       if (isStreaming) return;
-      // Clicking the open thread's row is not a move to another thread.
       if (session._id !== activeHistorySessionId) leaveThreadSend();
       if (!(await ensureDiscardDraftConfirmed())) return;
       if (hasUnsavedDraftRef.current) {
@@ -5283,6 +5281,8 @@ export function PlaygroundMain({
       ? "Wait for the agent conversation to finish loading."
       : isCompareMode
       ? "Choose one agent to run events."
+      : sendInColumn
+      ? "Events can't run in a saved column. Open the multi-model session, then trigger the event again."
       : isStreamingActive || isPreparingServerForSend
         ? "Event skipped while the agent is busy. Trigger it again when the turn finishes."
         : composerDisabled || sendBlocked || conversationSendBlockedRef.current

@@ -4223,6 +4223,14 @@ describe("PlaygroundMain", () => {
       invalidateChatHistoryPrefetch();
     });
 
+    it("refuses events, which are tied to their conversation, instead of branching", async () => {
+      await openColumnAlone();
+
+      expect(useEventAgentBridge.getState().agent?.blockedReason).toBe(
+        "Events can't run in a saved column. Open the multi-model session, then trigger the event again.",
+      );
+    });
+
     it("continues the edited chat on the next send instead of branching again", async () => {
       mockUseChatSession.rewindToMessage = vi.fn(
         async (args: { onBeforeBranch?: () => void }) => {
