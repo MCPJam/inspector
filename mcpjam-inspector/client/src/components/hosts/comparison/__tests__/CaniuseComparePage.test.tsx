@@ -17,22 +17,34 @@ vi.mock("@/lib/host-compat/use-host-catalog", async () => {
 });
 
 describe("CaniuseComparePage", () => {
-  it("shows a skippable intro once on the initial Compare load", () => {
-    render(
-      <MemoryRouter initialEntries={["/compare"]}>
-        <Routes>
-          <Route path="/compare" element={<CaniuseComparePage />} />
-          <Route path="/capabilities/:slug" element={<Link to="/compare">Back to Compare</Link>} />
-        </Routes>
-      </MemoryRouter>,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Skip intro" }));
-    expect(
-      screen.getByRole("combobox", { name: "Search capabilities" }),
-    ).toBeVisible();
-    fireEvent.click(screen.getByRole("link", { name: "Capabilities" }));
-    fireEvent.click(screen.getByRole("link", { name: "Back to Compare" }));
-    expect(screen.queryByRole("button", { name: "Skip intro" })).toBeNull();
+  it("plays the intro only on the initial Compare load", () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <MemoryRouter initialEntries={["/compare"]}>
+          <Routes>
+            <Route path="/compare" element={<CaniuseComparePage />} />
+            <Route
+              path="/capabilities/:slug"
+              element={<Link to="/compare">Back to Compare</Link>}
+            />
+          </Routes>
+        </MemoryRouter>,
+      );
+      const matrixSearch = () =>
+        screen.queryByRole("combobox", { name: "Search capabilities" });
+      expect(matrixSearch()).toBeNull();
+      expect(screen.queryByRole("button", { name: "Skip intro" })).toBeNull();
+      for (let step = 0; step < 3; step++) {
+        act(() => vi.advanceTimersByTime(1400));
+      }
+      expect(matrixSearch()).toBeVisible();
+      fireEvent.click(screen.getByRole("link", { name: "Capabilities" }));
+      fireEvent.click(screen.getByRole("link", { name: "Back to Compare" }));
+      expect(matrixSearch()).toBeVisible();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("qualifies the Events score with the probed-client denominator", () => {
@@ -41,12 +53,17 @@ describe("CaniuseComparePage", () => {
         <CaniuseComparePage />
       </MemoryRouter>,
     );
-    const score = screen.getByRole("link", { name: /% of \d+ probed clients/ });
+    const score = screen.getByRole("link", { name: /^\d+%, \d+ of \d+ probed clients/ });
     const adoptionHeader = screen.getByRole("columnheader", {
       name: "Client adoption",
     });
     expect(screen.getAllByRole("columnheader")[1]).toBe(adoptionHeader);
     expect(score.closest("tr")?.children[1]).toContainElement(score);
+    expect(score).toHaveTextContent(/\d+\/\d+/);
+    expect(score).toHaveAttribute("href", "/capabilities/event-delivery");
+    expect(
+      screen.getByRole("link", { name: /^webhook:/i }),
+    ).toHaveAttribute("href", "/capabilities/event-delivery?slice=webhook");
     expect(score).toHaveAttribute(
       "title",
       expect.stringMatching(
@@ -104,7 +121,7 @@ describe("CaniuseComparePage", () => {
     ).toBeInTheDocument();
     const adoption = () =>
       within(screen.getByRole("table"))
-        .getAllByRole("link", { name: /^\d+%$/ })
+        .getAllByRole("link", { name: /^\d+%, \d+ of \d+ probed clients/ })
         .find(
           (link) => link.getAttribute("href") === "/capabilities/elicitation",
         );
@@ -125,9 +142,16 @@ describe("CaniuseComparePage", () => {
         <CaniuseComparePage />
       </MemoryRouter>,
     );
-    expect(
-      within(screen.getByRole("table")).getByRole("link", { name: "2026-07-28" }),
-    ).toHaveAttribute(
+    const version = screen.getByRole("link", { name: "2026-07-28" });
+    expect(version).toHaveAttribute(
+      "href",
+      "/capabilities/supported-protocol-versions?slice=2026-07-28",
+    );
+    const adoption = within(screen.getByRole("row", { name: /^2026-07-28/ })).getByRole("link", {
+      name: /^\d+%, \d+ of \d+ probed clients/,
+    });
+    expect(adoption).toHaveTextContent(/\d+\/\d+/);
+    expect(adoption).toHaveAttribute(
       "href",
       "/capabilities/supported-protocol-versions?slice=2026-07-28",
     );

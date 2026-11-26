@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router";
 import { useReducedMotion } from "framer-motion";
 import { ArrowUpRight } from "lucide-react";
-import { Button } from "@mcpjam/design-system/button";
 import { Switch } from "@mcpjam/design-system/switch";
 import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
@@ -27,6 +26,7 @@ import {
   capabilitySlices,
   eventsSupportSummary,
   sliceLabel,
+  type CapabilityCoverage,
 } from "./caniuse-coverage";
 import { CaniuseClientPicker } from "./CaniuseClientPicker";
 import { clientLogo, CaniuseSite } from "./CaniuseSite";
@@ -107,7 +107,7 @@ export function CaniuseComparePage() {
                 .filter((slice) => slice !== "any")
                 .map((slice) => ({
                   slice,
-                  score: capabilityCoverage(field, clients, slice).score,
+                  coverage: capabilityCoverage(field, clients, slice),
                 })),
             },
           ];
@@ -152,9 +152,9 @@ export function CaniuseComparePage() {
     }
     return rows;
   });
-  const versionScores = new Map(versions.map(({ slice, score }) => [
-    `supportedProtocolVersions:${slice}`,
-    { slice, score },
+  const versionScores = new Map(versions.map((version) => [
+    `supportedProtocolVersions:${version.slice}`,
+    version,
   ]));
 
   function fieldDestination(field: HostConfigFieldDef) {
@@ -235,13 +235,6 @@ export function CaniuseComparePage() {
               ?
             </span>
           </div>
-          <Button
-            variant="ghost"
-            className="mt-6 text-muted-foreground"
-            onClick={() => setIntro(null)}
-          >
-            Skip intro
-          </Button>
         </div>
       </div>
     );
@@ -251,7 +244,7 @@ export function CaniuseComparePage() {
     <CaniuseSite current="compare">
       <div className="caniuse-reveal">
         <div className="pb-10 pt-12 sm:pb-14 sm:pt-20">
-          <div className="caniuse-hero relative z-10 flex flex-wrap items-baseline gap-x-[0.23em] gap-y-1 font-bold">
+          <div className="caniuse-hero relative z-50 flex flex-wrap items-baseline gap-x-[0.23em] gap-y-1 font-bold">
             <h1 className="whitespace-nowrap">Can I use</h1>
             <CaniuseCapabilitySearch fields={fields} query={query} onQueryChange={updateQuery} hero />
           </div>
@@ -314,18 +307,23 @@ export function CaniuseComparePage() {
                   },
                   render: (field) => {
                     const version = versionScores.get(field.id);
-                    if (version) {
-                      return (
-                        <div className="text-center text-xs font-bold tabular-nums text-primary">
-                          {version.score === null ? "No results" : `${version.score}%`}
-                        </div>
-                      );
-                    }
+                    const path = fieldDestination(field);
+                    if (!path) return null;
                     const summary = summaries.get(field.id);
-                    return (
-                      summary && (
-                        <MatrixAdoption field={field} summary={summary} />
-                      )
+                    const coverage = version?.coverage ?? summary?.overall;
+                    return coverage && (
+                      <div className="flex flex-col gap-1 tabular-nums">
+                        <AdoptionLink path={path} coverage={coverage} />
+                        {field.id !== protocol?.id &&
+                          summary?.slices.map(({ slice, coverage }) => (
+                            <AdoptionLink
+                              key={slice}
+                              path={`${path}?slice=${encodeURIComponent(slice)}`}
+                              coverage={coverage}
+                              label={sliceLabel(slice)}
+                            />
+                          ))}
+                      </div>
                     );
                   },
                 }}
@@ -338,52 +336,50 @@ export function CaniuseComparePage() {
   );
 }
 
-function MatrixAdoption({
-  field,
-  summary,
+function AdoptionLink({
+  path,
+  coverage,
+  label,
 }: {
-  field: HostConfigFieldDef;
-  summary: {
-    overall: ReturnType<typeof capabilityCoverage>;
-    slices: { slice: string; score: number | null }[];
-  };
+  path: string;
+  coverage: CapabilityCoverage;
+  label?: string;
 }) {
-  const capability = getCaniuseCapabilityForField(field);
-  if (!capability) return null;
-  const path = buildCaniuseCapabilityPath(capability.slug);
-  const { overall, slices } = summary;
-  const label =
-    overall.score === null
-      ? "No results"
-      : overall.eventsMode
-        ? `${overall.score}% of ${overall.probed} probed clients`
-        : `${overall.score}%${overall.reporting ? " reported" : ""}`;
+  const { full, probed, reporting, eventsMode, score } = coverage;
+  const percentage = score === null ? "No results" : `${score}%`;
+  const detail = score === null
+    ? "No results published yet"
+    : eventsMode
+      ? eventsSupportSummary(coverage)
+      : `${full} of ${probed} probed clients ${reporting ? "reported a value" : "have confirmed support"}`;
+  const summary = score === null ? detail : `${percentage}, ${detail}`;
   return (
-    <div className="flex flex-col items-center gap-0.5 text-xs tabular-nums text-muted-foreground">
-      {overall.reporting || field.id === "supportedProtocolVersions" ? (
-        <span className="font-bold text-primary">
-          {label}
+    <Link
+      to={path}
+      aria-label={label ? `${label}: ${summary}` : summary}
+      className="w-fit rounded-sm text-xs text-muted-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+      title={detail}
+    >
+      {label && <span className="mr-1">{label}</span>}
+      <span
+        className={
+          score === null
+            ? undefined
+            : label
+              ? "text-sm font-bold text-primary"
+              : "text-base font-bold leading-tight text-primary"
+        }
+      >
+        {percentage}
+        {reporting && score !== null && (
+          <span className="ml-1 text-xs font-medium">reported</span>
+        )}
+      </span>
+      {score !== null && (
+        <span className={label ? "ml-1 inline-block" : "block"}>
+          {full}/{probed}
         </span>
-      ) : (
-        <Link
-          to={path}
-          className="font-bold text-primary hover:underline"
-          title={
-            overall.score === null
-              ? "No results published yet"
-              : overall.eventsMode
-                ? eventsSupportSummary(overall)
-                : `${overall.full} of ${overall.probed} probed clients have confirmed support`
-          }
-        >
-          {label}
-        </Link>
       )}
-      {field.id !== "supportedProtocolVersions" && slices.map(({ slice, score }) => (
-        <span key={slice} className="text-[11px]">
-          {sliceLabel(slice)} {score === null ? "–" : `${score}%`}
-        </span>
-      ))}
-    </div>
+    </Link>
   );
 }
