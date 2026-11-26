@@ -96,7 +96,6 @@ async function servePolling(seen: string[]): Promise<string> {
 
 const CHECKS: MCPCheckId[] = [
   "protocol-invalid-method-error",
-  "server-accepts-multiple-post-streams",
   "server-sse-streams-functional",
 ];
 

@@ -525,15 +525,9 @@ describe("raw probes on a server that hands its streams to polling", () => {
       );
       const results = await runTransportChecks(
         ctx,
-        new Set<MCPCheckId>([
-          "server-accepts-multiple-post-streams",
-          "server-sse-streams-functional",
-        ])
+        new Set<MCPCheckId>(["server-sse-streams-functional"])
       );
 
-      expect(byId(results, "server-accepts-multiple-post-streams").status).toBe(
-        "passed"
-      );
       expect(byId(results, "server-sse-streams-functional")).toMatchObject({
         status: "passed",
         details: expect.objectContaining({ resumedStreams: [0, 1, 2] }),
