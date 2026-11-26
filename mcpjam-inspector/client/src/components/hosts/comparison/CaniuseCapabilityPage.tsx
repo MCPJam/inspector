@@ -17,10 +17,9 @@ import {
   getCaniuseCapabilityBySlug,
   getCaniuseSupportLabel,
   caniuseFieldHasPresetData,
-  getCaniuseSupportLevel,
   sortCaniusePresetHosts,
 } from "./caniuse-capability-catalog";
-import { capabilityCoverage, capabilitySlices } from "./caniuse-coverage";
+import { capabilityResults, capabilitySlices } from "./caniuse-coverage";
 
 const INSPECTOR_CTA_URL = "https://app.mcpjam.com";
 const FULL_MATRIX_PATH = "/embed/host-compare";
@@ -69,28 +68,16 @@ export function CaniuseCapabilityPage({
   const slices = capability ? capabilitySlices(capability.field, subjects) : [];
   const slice =
     requestedSlice && slices.includes(requestedSlice) ? requestedSlice : undefined;
-  const coverage = capability
-    ? capabilityCoverage(capability.field, subjects, slice)
+  const capabilityResult = capability
+    ? capabilityResults(capability.field, subjects, slice)
     : null;
-  const scopedResults =
-    coverage &&
-    (slice || coverage.reporting || capability?.field.id === "supportedProtocolVersions")
-      ? new Map(
-          coverage.rows.map(({ subject, status }) => [subject.hostId, status]),
-        )
-      : null;
-  const results = capability
-    ? subjects.flatMap((subject) => {
-        const level = scopedResults
-          ? scopedResults.get(subject.hostId)
-          : getCaniuseSupportLevel(capability.field, subject.config);
-        if (!level) return [];
-        const label = coverage?.reporting
-          ? (level === "supported" ? "Reported" : "No published result")
-          : getCaniuseSupportLabel(level, capability.field.id);
-        return [{ subject, level, label }];
-      })
-    : [];
+  const results =
+    capabilityResult?.rows.map(({ subject, status: level }) => {
+      const label = capabilityResult.reporting
+        ? level === "supported" ? "Reported" : "No published result"
+        : getCaniuseSupportLabel(level, capability?.field.id);
+      return { subject, level, label };
+    }) ?? [];
 
   // Agent bridge: SNAPSHOT-ONLY (no tools). This is the `host-compare` surface
   // on its single-capability permalink route (`capabilities/:slug`), where this

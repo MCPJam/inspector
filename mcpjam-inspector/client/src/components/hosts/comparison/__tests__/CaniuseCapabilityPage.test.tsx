@@ -83,6 +83,7 @@ describe("CaniuseCapabilityPage", () => {
     expect(screen.getByText(`/capabilities/supported-protocol-versions${query}`)).toBeVisible();
     const cursor = screen.getByText("Cursor").parentElement?.parentElement;
     const claude = screen.getByText("Claude").parentElement?.parentElement;
+    expect(screen.getByText("MCPJam")).toBeVisible();
     expect(within(cursor!).getByText("Not supported")).toBeVisible();
     expect(within(claude!).getByText("Supported")).toBeVisible();
   });
