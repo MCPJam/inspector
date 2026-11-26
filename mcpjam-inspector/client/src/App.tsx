@@ -6007,7 +6007,7 @@ export default function App() {
     !isDebugCallback &&
     !isHostedChatRoute &&
     pendingCheckoutIntent === null &&
-    !isCaniuseSite &&
+    !isBareCaniuseRoute &&
     !isLoginInitiationRoute &&
     !hasHostTemplateVerifyParam &&
     isProjectScopedFirstRunDestinationReady &&
