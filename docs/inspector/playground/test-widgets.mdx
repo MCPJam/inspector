@@ -56,7 +56,7 @@ With your own server, send a prompt that makes one of your tools return a widget
 ## If the widget is blank
 
 1. Look at the **Sandbox** icon. If it shows a number, the sandbox blocked requests. Select **Sandbox** and start with **Findings**.
-2. Select **Edit input & output** and check that **RESULT** has `_meta` → `ui/resourceUri`. Without it, the client has no widget to render.
+2. Check that the tool declares a widget. In the left rail, select the tool under **Tools** and open **Metadata**: it should have `ui` → `resourceUri` (or the older `ui/resourceUri`) with a `ui://` URI. Without it, the client has no widget to render.
 3. In the JSON-RPC log, select the **Apps** filter and check that the widget sent `ui/initialize` and received `ui/notifications/tool-result`.
 
 ## Next

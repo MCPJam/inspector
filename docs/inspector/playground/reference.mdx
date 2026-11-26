@@ -100,6 +100,16 @@ A server can pause a tool call to ask you for input. The Playground shows the re
 - **URL:** the dialog shows the full URL as plain text with the host emphasized, and warns about unencrypted `http://` links, punycode hosts, embedded credentials, and bare IP addresses. Non-`http(s)` schemes are blocked. Select **Open in new tab**. Consent is recorded only when the tab opens.
 - **URL-required notice:** when a call fails with MCP error `-32042`, the notice lists the URLs to open. Open them, then retry.
 
+## Workspace tools
+
+When you are signed in as a project member, the model also gets built-in tools for your project. With them it can list your saved servers, diagnose one, list and call its tools, read its prompts and resources, and start or read readiness runs. Guests don't get them.
+
+Whether a call pauses for your approval depends on what the tool does:
+
+- **Always pauses:** tools that change something, including `call_server_tool` and tools that start a run.
+- **Follows Require tool approval:** read-only tools that open a connection to one of your saved servers, such as `diagnose_server` and `list_server_tools`. The client's saved setting counts, and it is on unless saved off.
+- **Never pauses:** read-only tools that only read your project in MCPJam, such as `list_project_servers`.
+
 ## Sessions
 
 The **Sessions** tab in the left rail lists saved conversations in the project. Open one to continue it.
