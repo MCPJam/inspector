@@ -99,7 +99,7 @@ export function capabilityCoverage(
     published,
     reporting,
     eventsMode,
-    score: probed ? Math.round((full / probed) * 100) : null,
+    score: published ? Math.round((full / probed) * 100) : null,
   };
 }
 
