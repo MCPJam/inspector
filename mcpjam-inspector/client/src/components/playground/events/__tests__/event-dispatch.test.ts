@@ -25,11 +25,13 @@ function fixture() {
     blockedReason: null,
     send: vi.fn(async (_text, isCurrent) => isCurrent()),
   };
+  const received = vi.fn();
   const result = vi.fn();
   const dispatcher = createEventDispatcher({
     binding: () => binding,
     connected: () => connected,
     agent: () => agent,
+    received,
     result,
   });
   const entry: EventsFeedEntryView = {
@@ -46,6 +48,7 @@ function fixture() {
   return {
     dispatcher,
     entry,
+    received,
     result,
     binding: () => binding!,
     agent: () => agent!,
@@ -92,6 +95,7 @@ describe("foreground event dispatch", () => {
       await f.dispatcher.dispatch("binding", { ...f.entry, ...change }),
     ).toBe(false);
     expect(f.agent().send).not.toHaveBeenCalled();
+    expect(f.received).not.toHaveBeenCalled();
   });
   it("accepts independent webhook message IDs even from an inbox with the old draft warning", async () => {
     const f = fixture();
@@ -138,7 +142,28 @@ describe("foreground event dispatch", () => {
       await f.dispatcher.dispatch("binding", { ...f.entry, eventId: "next" }),
     ).toBe(false);
     expect(f.agent().send).not.toHaveBeenCalled();
-    expect(f.result).toHaveBeenCalledTimes(2);
+    expect(f.result.mock.calls.map(([, , outcome]) => outcome.status)).toEqual(
+      ["skipped", "skipped"],
+    );
+    // A skipped occurrence still shows it arrived.
+    expect(f.received.mock.calls.map(([, entry]) => entry.eventId)).toEqual([
+      "ping-1",
+      "next",
+    ]);
+  });
+  it("reports an arrival once, before the turn is sent", async () => {
+    const f = fixture();
+    f.agent().send = vi.fn(async () => {
+      expect(f.received).toHaveBeenCalledWith("binding", f.entry);
+      return true;
+    });
+    await f.dispatcher.dispatch("binding", f.entry);
+    await f.dispatcher.dispatch("binding", { ...f.entry, seq: 2 });
+    expect(f.received).toHaveBeenCalledTimes(1);
+    expect(f.result).toHaveBeenLastCalledWith("binding", f.entry, {
+      status: "sent",
+      message: "Event sent to agent",
+    });
   });
   it.each([
     "pause",
