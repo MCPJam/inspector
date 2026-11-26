@@ -41,6 +41,13 @@ function createDeferred() {
 const useMutationMock = vi.hoisted(() => vi.fn(() => vi.fn()));
 const useQueryMock = vi.hoisted(() => vi.fn());
 const useQueriesMock = vi.hoisted(() => vi.fn((_requests: unknown) => ({})));
+
+function lastSelectedRunQuery() {
+  return useQueriesMock.mock.calls.findLast(
+    ([requests]) =>
+      typeof requests === "object" && requests !== null && "selectedRun" in requests,
+  )?.[0];
+}
 const reviewBlobAction = vi.hoisted(() =>
   vi.fn().mockResolvedValue({ messages: [] }),
 );
@@ -1423,7 +1430,7 @@ describe("TestTemplateEditor run view from route", () => {
         : {}),
     });
     await screen.findByTestId("case-spine");
-    expect(useQueriesMock.mock.calls.at(-1)?.[0]).toMatchObject({
+    expect(lastSelectedRunQuery()).toMatchObject({
       selectedRun: {
         args: {
           runId:
@@ -1461,12 +1468,12 @@ describe("TestTemplateEditor run view from route", () => {
       observeFirst: true,
       suiteIterations: [newest, replayed],
     });
-    expect(useQueriesMock.mock.calls.at(-1)?.[0]).toMatchObject({
+    expect(lastSelectedRunQuery()).toMatchObject({
       selectedRun: { args: { runId: "newest-run" } },
     });
     fireEvent.click((await screen.findAllByTestId("case-run-row"))[1]);
     await waitFor(() =>
-      expect(useQueriesMock.mock.calls.at(-1)?.[0]).toMatchObject({
+      expect(lastSelectedRunQuery()).toMatchObject({
         selectedRun: { args: { runId: "replayed-run" } },
       }),
     );
@@ -1505,7 +1512,7 @@ describe("TestTemplateEditor run view from route", () => {
       expect(runIds).toContain("timed-out-run");
     });
     // The detail run is still the newest traced one.
-    expect(useQueriesMock.mock.calls.at(-1)?.[0]).toMatchObject({
+    expect(lastSelectedRunQuery()).toMatchObject({
       selectedRun: { args: { runId: "newest-run" } },
     });
   });

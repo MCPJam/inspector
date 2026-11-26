@@ -279,8 +279,12 @@ export async function openLocalEvalRun(
   },
 ): Promise<LocalEvalRun> {
   const convex = createConvexClient(target.convexAuthToken);
-  // First: a run whose accounts cannot be read does not start.
-  const connectionIdSets = await loadSuiteConnectionIdSets(convex, target);
+  // Local server references can be names. Read choices by suite or case,
+  // then check the plan after resolving canonical server IDs.
+  const connectionIdSets = await loadSuiteConnectionIdSets(convex, {
+    suiteId: target.suiteId,
+    testCaseId: target.testCaseId,
+  });
   const projectId = await runProjectId(convex, target);
   let resolved: ResolvedEnvironmentForLaunch | undefined;
   if (target.environmentId && projectId) {
@@ -299,11 +303,11 @@ export async function openLocalEvalRun(
   }
   if (!projectId) {
     // Saved choices name project servers, so none here could honor one.
-    if (connectionIdSets) {
+    if (connectionIdSets || target.runAccounts) {
       throw new WebRouteError(
         409,
         ErrorCode.CONFLICT,
-        "This run can't use the accounts chosen for this suite, because the suite isn't in a project. Clear the account choices in the suite's settings, then run again.",
+        "This suite has no project for the selected MCP accounts. Clear the account choices, then run again.",
       );
     }
     return appConnections(c, resolved);
@@ -315,7 +319,7 @@ export async function openLocalEvalRun(
         localNames: [],
         resolved: undefined,
       };
-  if (!servers.serverIds.length && servers.localNames.length) {
+  if (!servers.serverIds.length && servers.localNames.length && !target.runAccounts) {
     return appConnections(c, servers.resolved);
   }
   const hostId = resolved?.hostId ?? target.namedHostId;
