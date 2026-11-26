@@ -5362,6 +5362,21 @@ describe("v1 eval-edit — CI-owned suites", () => {
     });
   });
 
+  // Deleting is not a locked action, so the route leaves it to the platform,
+  // which allows it on a CI-owned suite.
+  it("deletes a CI-owned suite without a marker", async () => {
+    convexMutationMock.mockImplementation((name: string, args?: any) =>
+      defaultMutationImpl(name, args),
+    );
+    const res = await request("DELETE", SUITE_PATH);
+    expect(res.status).toBe(200);
+    expect(
+      convexMutationMock.mock.calls.find(
+        ([name]: [string]) => name === "testSuites:deleteTestSuite",
+      )?.[1],
+    ).not.toHaveProperty("fileSync");
+  });
+
   it("refuses POST environments even with the suite's own marker", async () => {
     const res = await request(
       "POST",
@@ -5459,11 +5474,12 @@ describe("v1 eval-edit — CI-owned suites", () => {
     expect(json.code).toBe("CONFLICT");
     expect(json.details?.reason).toBe("CI_OWNED_SUITE_READ_ONLY");
     expect(json.message).toMatch(/duplicate/i);
-    expect(json.details?.hint).toContain("declaredSuiteId");
+    // No file-sync hint: this path cannot tell whether a marker could work.
+    expect(json.details).not.toHaveProperty("hint");
     expect(convexMutationMock).toHaveBeenCalledTimes(1);
   });
 
-  it("drops the hint when the platform's refusal is its SDK-suite copy", async () => {
+  it("forwards the platform's SDK-suite copy without a hint", async () => {
     convexQueryMock.mockImplementation((name: string) =>
       defaultQueryImpl(name),
     );

@@ -9137,6 +9137,9 @@ evals.delete("/projects/:projectId/eval-suites/:suiteId", async (c) => {
     );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
+  // No CI-owned pre-check: deleting is lifecycle, not configuration, and the
+  // backend allows it on a CI-owned suite (`suite.delete` is not a locked
+  // action), so there is no refusal to move out of Convex.
   const { convexClient } = createConvexClients(token);
   try {
     await convexClient.mutation("testSuites:deleteTestSuite" as any, {

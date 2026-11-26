@@ -503,14 +503,12 @@ export function translateConvexWriteError(
   // data — and either loses the message on a 500 or matches a pattern by
   // accident and answers with the wrong status.
   //
-  // The file-sync hint stays on, except under the backend's SDK message: the
-  // refusal the routes predict least is a marker naming the wrong id, which
-  // only reaches here on a route that takes one.
+  // No file-sync hint here: this branch cannot tell which route or kind of
+  // suite it serves, so it could suggest `declaredSuiteId` where that never
+  // works. The backend's message already says what is wrong; a wrong marker
+  // gets one that names both ids.
   if (code === CI_OWNED_SUITE_READ_ONLY_CODE) {
-    return ciOwnedSuiteReadOnlyError({
-      message: structuredMessage,
-      fileSyncHint: structuredMessage !== SDK_SUITE_READ_ONLY_MESSAGE,
-    });
+    return ciOwnedSuiteReadOnlyError({ message: structuredMessage });
   }
 
   // ── Import eligibility (mcpjam-backend lib/evalImportEligibility.ts) ─────
