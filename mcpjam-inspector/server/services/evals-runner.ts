@@ -315,6 +315,14 @@ import type {
   EvalStreamEvent,
   EvalStreamToolCall,
 } from "@/shared/eval-stream-events";
+import {
+  bearerForCleanup,
+  bearerNow,
+  bearerTurnAuthorization,
+  isBearerRefusal,
+  type RunBearer,
+} from "../utils/run-bearer.js";
+import type { RunAssistantTurnAuthContext } from "../utils/assistant-turn.js";
 
 /**
  * Max render-check (`widget_probe`) cases that may execute at once. Each one
@@ -635,7 +643,7 @@ export type RunEvalSuiteOptions = {
   orgModelConfigTarget?: ResolveOrgModelConfigTarget;
   convexClient: ConvexHttpClient;
   convexHttpUrl: string;
-  convexAuthToken: string;
+  convexAuthToken: RunBearer;
   mcpClientManager: MCPClientManager;
   recorder?: SuiteRunRecorder | null;
   testCaseId?: string; // For quick runs, associate iterations with a specific test case
@@ -2040,8 +2048,9 @@ export function describeModelRefusalForIteration(
 }
 
 /**
- * Record a case's model refusal on its pre-created rows. The case never
- * reached a model, so each row finalizes `setup_failed` (the verdict is
+ * Record a case's refusal on its pre-created rows: a refused model selection,
+ * an unreadable client profile, or a job token the backend stopped renewing.
+ * Those rows never ran, so each finalizes `setup_failed` (the verdict is
  * withheld, never a server failure) with the refusal as its error. Only the
  * refused case's PENDING rows are touched; a row another worker already
  * claimed is left alone.
@@ -2051,7 +2060,7 @@ async function persistCaseRefusal(args: {
   convexClient: ConvexHttpClient;
   recorder: SuiteRunRecorder | null;
   test: EvalTestCase;
-  refusal: ModelResolutionRefusalError | InvalidClientProfileError;
+  refusal: Error;
   runStartedAt: number;
 }): Promise<void> {
   if (!args.test.testCaseId) return;
@@ -2223,7 +2232,7 @@ async function finalizeIterationWithBrowserArtifacts(args: {
   recorder: SuiteRunRecorder | null;
   convexClient: ConvexHttpClient;
   /** The bearer `convexClient` writes with; the evidence uploads use it too. */
-  convexAuthToken: string;
+  convexAuthToken: RunBearer;
   finishParams: Omit<
     EvalIterationFinishParams,
     "videoBytes" | "videoMime" | "videoMeta"
@@ -2259,7 +2268,7 @@ async function finalizeIterationWithBrowserArtifacts(args: {
       convexClient: args.convexClient,
       finishParams: {
         ...args.finishParams,
-        convexAuthToken: args.convexAuthToken,
+        convexAuthToken: bearerForCleanup(args.convexAuthToken),
       },
     },
   });
@@ -2397,7 +2406,7 @@ type RunIterationBaseParams = {
   projectEnvironmentUnresolvedReason?: string;
   /** Run caller's Convex bearer — used to provision/release the reproducible
    * eval sandbox when the suite pins a computerEnvironment. */
-  convexAuthToken: string;
+  convexAuthToken: RunBearer;
   /**
    * The run's frozen skills (see {@link RunEvalSuiteOptions.pinnedSkillSource}).
    * Eval runs NEVER use local-FS skills (decision 10): absent means none.
@@ -2439,7 +2448,7 @@ type EvalOrgLocalUsageContext = {
 type RunIterationBackendParams = RunIterationBaseParams & {
   harnessExecutionTarget?: LocalHarnessExecutionTarget;
   convexHttpUrl: string;
-  convexAuthToken: string;
+  convexAuthToken: RunBearer;
   modelId: string;
   /** Resolved model definition, fed to `prepareChatV2`. */
   modelDefinition: ModelDefinition;
@@ -2691,7 +2700,7 @@ function postEvalOrgLocalUsage(args: {
   effectiveSettings: EffectiveModelSettings;
   iterationId: string | undefined;
   runId: string | null;
-  convexAuthToken: string | undefined;
+  convexAuthToken: RunBearer | undefined;
   selectedServers: string[];
 }): Promise<Record<string, ModelCallCostEvidence> | undefined> | undefined {
   const { context, event } = args;
@@ -2716,8 +2725,10 @@ function postEvalOrgLocalUsage(args: {
     ...(event.calls ? { calls: event.calls } : {}),
     ...(event.finishReason ? { finishReason: event.finishReason } : {}),
     sourceType: "eval",
+    // Records a model call that already happened, so after a refused renewal
+    // it still goes out with the last token issued rather than throwing here.
     ...(args.convexAuthToken
-      ? { authHeader: `Bearer ${args.convexAuthToken}` }
+      ? { authHeader: `Bearer ${bearerForCleanup(args.convexAuthToken)}` }
       : {}),
     ...(args.selectedServers.length ? { serverIds: args.selectedServers } : {}),
     ...(args.iterationId ? { evalIterationId: String(args.iterationId) } : {}),
@@ -2739,7 +2750,7 @@ async function resolveOrgByokEvalRuntime(args: {
   modelApiKeys?: Record<string, string>;
   orgModelConfig?: ResolvedOrgModelConfig;
   orgModelConfigTarget?: ResolveOrgModelConfigTarget;
-  convexAuthToken: string;
+  convexAuthToken: RunBearer;
   /**
    * An explicit `org` selection: the org connection is the choice, so keys the
    * request happens to carry do not divert it onto the local path.
@@ -2791,7 +2802,7 @@ async function resolveOrgByokEvalRuntime(args: {
     target,
     providerKey,
     String(args.modelDefinition.id),
-    { bearerToken: args.convexAuthToken },
+    { bearerToken: bearerNow(args.convexAuthToken) },
     args.modelSelection ? { modelSelection: args.modelSelection } : undefined,
   );
   if (runtime.runtimeLocation === "cloud") {
@@ -2840,7 +2851,7 @@ const runHostedIteration = async (
       // local harness has its own runtime, authorization and grant, and a
       // target minted for one is never valid for another.
       const resources = await prepareLocalHarnessRun({
-        bearer: params.convexAuthToken,
+        bearer: bearerNow(params.convexAuthToken),
         projectId: project.projectId,
         harnessId: localHarnessIdOf(harnessOfHostConfig(params.suiteHostConfig)) ?? "claude-code",
       });
@@ -3151,7 +3162,7 @@ const executeTestCase = async (params: {
   orgModelConfig?: ResolvedOrgModelConfig;
   orgModelConfigTarget?: ResolveOrgModelConfigTarget;
   convexHttpUrl: string;
-  convexAuthToken: string;
+  convexAuthToken: RunBearer;
   convexClient: ConvexHttpClient;
   testCaseId?: string;
   suiteId?: string;
@@ -4093,10 +4104,6 @@ export const runEvalSuiteWithAiSdk = async ({
   benchmarkWriteGuard,
   extraHeaders,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
-  const harnessRuntimeVenue = requestedHarnessRuntimeVenue ??
-    (await shouldUseLocalHarness(harnessOfHostConfig(suiteHostConfig), convexAuthToken,
-      orgModelConfigTarget && "projectId" in orgModelConfigTarget ? orgModelConfigTarget.projectId : undefined,
-      { scope: "unattended" }) ? "local" : "hosted");
   // One resolution for the whole run. When the launch response carried frozen
   // budgets we consume them verbatim — they are the decision, already made,
   // against the platform ceilings; org ceilings apply once the backend
@@ -4196,6 +4203,12 @@ export const runEvalSuiteWithAiSdk = async ({
   let resolvedToolPolicyWarnings: string[] | undefined;
 
   try {
+    // Inside the setup `try`: reading a job token whose renewal was refused
+    // throws, and the catch below is what marks the precreated rows failed.
+    const harnessRuntimeVenue = requestedHarnessRuntimeVenue ??
+      (await shouldUseLocalHarness(harnessOfHostConfig(suiteHostConfig), bearerNow(convexAuthToken),
+        orgModelConfigTarget && "projectId" in orgModelConfigTarget ? orgModelConfigTarget.projectId : undefined,
+        { scope: "unattended" }) ? "local" : "hosted");
     toolDescriptionOverride = readToolDescriptionOverrideMarker(
       toolDescriptionOverrideRaw,
     );
@@ -4679,6 +4692,11 @@ export const runEvalSuiteWithAiSdk = async ({
             code: result.reason.code,
             message: result.reason.message,
           });
+        } else if (isBearerRefusal(result.reason)) {
+          // The backend ending the job (owner gone, lease lost), not a fault.
+          logger.warn("[evals] Test case stopped by a refused job token:", {
+            message: result.reason.message,
+          });
         } else {
           logger.error("[evals] Test case failed:", result.reason);
         }
@@ -4686,14 +4704,17 @@ export const runEvalSuiteWithAiSdk = async ({
         summary.total += 1;
         summary.failed += 1;
         // A refused model selection or an unreadable client profile never
-        // started an iteration, so without this its pre-created rows would say
-        // nothing about why: the reason goes on each of that case's pending rows.
+        // started an iteration, and a refused job token stops the case's loop
+        // with its later rows unstarted. Without this, those pre-created rows
+        // stay `pending` and say nothing about why: the reason goes on each of
+        // that case's pending rows.
         const refusedTest = tests[resultIndex];
         if (
           runId !== null &&
           refusedTest &&
           (result.reason instanceof ModelResolutionRefusalError ||
-            result.reason instanceof InvalidClientProfileError)
+            result.reason instanceof InvalidClientProfileError ||
+            isBearerRefusal(result.reason))
         ) {
           try {
             await persistCaseRefusal({
@@ -5375,7 +5396,7 @@ const runLocalIteration = async ({
         const capacityStartedAt = Date.now();
         evalSandbox = await provisionEvalSandbox({
           timeoutMs: capacityBudgetMs,
-          bearer: convexAuthToken,
+          bearer: bearerNow(convexAuthToken),
           runId: String(runId),
           ...(iterationId ? { iterationId: String(iterationId) } : {}),
           ...(abortSignal ? { signal: abortSignal } : {}),
@@ -5406,7 +5427,7 @@ const runLocalIteration = async ({
         // This path is TERMINAL-only (see the comment on the branch), so the
         // reader is always the `bash` tool injected on the next line.
         attachmentsNote = await seedAndAnnotateEvalAttachments({
-          bearer: convexAuthToken,
+          bearer: bearerNow(convexAuthToken),
           runId: String(runId),
           // The EFFECTIVE id. Today the fallback is unreachable here — the
           // outer `testCaseId` is the quick/single-case surface, which passes
@@ -5623,7 +5644,7 @@ const runLocalIteration = async ({
                 { projectId: orgLocalUsage.projectId },
                 orgLocalUsage.providerKey,
                 String(modelDefinition.id),
-                { bearerToken: convexAuthToken },
+                { bearerToken: bearerNow(convexAuthToken) },
                 {
                   modelSelection: orgLocalUsage.modelSelection,
                   modelWorkload: modelWorkloadFor({
@@ -5843,7 +5864,7 @@ const runLocalIteration = async ({
       injectOpenAiCompat,
       messages: acc.conversationMessages,
       mcpClientManager,
-      uploadTarget: evalSnapshotUploadTarget(convexAuthToken, iterationId),
+      uploadTarget: evalSnapshotUploadTarget(bearerForCleanup(convexAuthToken), iterationId),
     });
     // PR (this change): the resolved system prompt now flows through
     // `appendEvalTurnTrace.systemPrompt`. The `withSystemPrefix`
@@ -6132,7 +6153,7 @@ const runLocalIteration = async ({
       injectOpenAiCompat,
       messages: failMessages,
       mcpClientManager,
-      uploadTarget: evalSnapshotUploadTarget(convexAuthToken, iterationId),
+      uploadTarget: evalSnapshotUploadTarget(bearerForCleanup(convexAuthToken), iterationId),
     });
 
     // PR6: SSE failure signal only in streaming mode (batch has no emit).
@@ -6692,7 +6713,7 @@ const runHostedIterationWithBrowser = async (
             ...(builtInTarget && "projectId" in builtInTarget
               ? { projectId: builtInTarget.projectId }
               : { projectId: undefined }),
-            bearer: convexAuthToken,
+            bearer: bearerNow(convexAuthToken),
             sandboxRowId: browserBox.sandboxRowId,
             // A cancelled run must not sit out the peek's full deadline before
             // its cancellation takes effect.
@@ -6704,7 +6725,7 @@ const runHostedIterationWithBrowser = async (
     // never become env vars; the box itself still receives none.
     const browserSecrets = browserApprovalDelivery
       ? await resolveBrowserSecrets({
-          bearer: convexAuthToken,
+          bearer: bearerNow(convexAuthToken),
           ...(builtInTarget && "projectId" in builtInTarget
             ? { projectId: builtInTarget.projectId }
             : {}),
@@ -6717,7 +6738,7 @@ const runHostedIterationWithBrowser = async (
       { builtInToolIds: resolvedExecution.builtInToolIds },
       builtInTarget && "projectId" in builtInTarget
         ? {
-            authHeader: convexAuthToken,
+            authHeader: () => bearerNow(convexAuthToken),
             projectId: builtInTarget.projectId,
             requireToolApproval: appliedToolApproval(
               "eval",
@@ -6728,7 +6749,7 @@ const runHostedIterationWithBrowser = async (
               ? {
                   browserSecrets,
                   onBrowserSecretDelivered: () => {
-                    void markRuntimeSecretsDelivered(convexAuthToken, {
+                    void markRuntimeSecretsDelivered(bearerNow(convexAuthToken), {
                       projectId: builtInTarget.projectId,
                       ...(projectEnvironmentId
                         ? { environmentId: projectEnvironmentId }
@@ -6830,6 +6851,7 @@ const runHostedIterationWithBrowser = async (
     await box?.release();
   };
   let prepared: PrepareChatV2Result;
+  let evalAuthContext: RunAssistantTurnAuthContext;
   try {
     // First, so the failed read records as this iteration's setup failure
     // before anything is provisioned and before any turn reaches the vendor.
@@ -6865,7 +6887,7 @@ const runHostedIterationWithBrowser = async (
     if (harnessExecutionTarget) {
       assertLocalHarnessCapabilities({ builtInToolIds: resolvedExecution.builtInToolIds, computerEnvironmentId: pinnedEnvironmentId, browserToolPolicy: resolvedExecution.browserToolPolicy, harnessId: resolvedExecution.harness });
       if (runId) {
-        const attachments = await resolveEvalRunAttachments({ bearer: convexAuthToken, runId: String(runId), signal: abortSignal });
+        const attachments = await resolveEvalRunAttachments({ bearer: bearerNow(convexAuthToken), runId: String(runId), signal: abortSignal });
         if (!attachments.ok) throw new Error("Could not verify this run's attachment requirements");
         assertLocalHarnessCapabilities({ hasAttachments: attachments.value.cases.some(entry => entry.attachments.length > 0), harnessId: resolvedExecution.harness });
       }
@@ -6911,7 +6933,7 @@ const runHostedIterationWithBrowser = async (
         provision: async () => {
           const result = await provisionEvalSandbox({
             timeoutMs: capacityBudgetMs,
-            bearer: convexAuthToken,
+            bearer: bearerNow(convexAuthToken),
             ...(runId
               ? {
                   runId: String(runId),
@@ -7121,7 +7143,7 @@ const runHostedIterationWithBrowser = async (
       // (parity with the local-BYOK path). Fail-honest — a throw here is caught
       // below and persisted as a failed iteration, never a silent run.
       attachmentsNote = await seedAndAnnotateEvalAttachments({
-        bearer: convexAuthToken,
+        bearer: bearerNow(convexAuthToken),
         runId: String(runId),
         // The EFFECTIVE id — see the identical note on the local path.
         testCaseId: test.testCaseId ?? testCaseId,
@@ -7147,6 +7169,16 @@ const runHostedIterationWithBrowser = async (
         sandboxId: sandboxBinding.sandboxId,
       });
     }
+    // Inside the try: a renewal refused during setup reaches the catch, which
+    // releases the box and records the setup failure. `runAssistantTurn`
+    // sends `token` on each per-step Convex fetch, or reads
+    // `turnAuthorization` on each step when the bearer renews.
+    const turnAuthorization = bearerTurnAuthorization(convexAuthToken);
+    evalAuthContext = {
+      kind: "user_bearer",
+      token: `Bearer ${bearerNow(convexAuthToken)}`,
+      ...(turnAuthorization ? { turnAuthorization } : {}),
+    };
   } catch (error) {
     // Release any sandbox provisioned before a later line in the try threw.
     await releaseEvalSandboxIfAny();
@@ -7237,15 +7269,8 @@ const runHostedIterationWithBrowser = async (
   // approval handling. Eval owns the per-turn `runAssistantTurn` call,
   // SSE callback wiring (text deltas via `onLiveTextDelta`, tool
   // call/result/step events via the PR 5b-pre callbacks), failure
-  // detection, persistence, and grading.
-  //
-  // `runAssistantTurn` reads `authContext.token` and forwards it as the
-  // Authorization header on the per-step Convex fetch — same shape used
-  // by `runIterationViaBackend` above (PR 3/4d).
-  const evalAuthContext = {
-    kind: "user_bearer" as const,
-    token: `Bearer ${convexAuthToken}`,
-  };
+  // detection, persistence, and grading. The auth context is built at the
+  // end of the setup try above.
 
   // Cursor review fix (mirrors PR 4b for the non-stream backend
   // runner): the engine swallows AbortError internally (sets its
@@ -7740,7 +7765,7 @@ const runHostedIterationWithBrowser = async (
     injectOpenAiCompat,
     messages: messageHistory,
     mcpClientManager,
-    uploadTarget: evalSnapshotUploadTarget(convexAuthToken, iterationId),
+    uploadTarget: evalSnapshotUploadTarget(bearerForCleanup(convexAuthToken), iterationId),
   });
   // PR (this change): the resolved system prompt now flows through
   // `appendEvalTurnTrace.systemPrompt`. The `withSystemPrefix` closure
@@ -7922,7 +7947,7 @@ export const streamTestCase = async (
 ) => {
   const target = params.orgModelConfigTarget;
   const harnessRuntimeVenue = params.harnessRuntimeVenue ??
-    (await shouldUseLocalHarness(harnessOfHostConfig(params.suiteHostConfig), params.convexAuthToken,
+    (await shouldUseLocalHarness(harnessOfHostConfig(params.suiteHostConfig), bearerNow(params.convexAuthToken),
       target && "projectId" in target ? target.projectId : undefined,
       { scope: "unattended" }) ? "local" : "hosted");
   const pinned = { ...params, harnessRuntimeVenue };

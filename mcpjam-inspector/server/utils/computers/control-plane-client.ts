@@ -24,6 +24,7 @@ import {
   withCapacityRetry,
 } from "../run-supervisor/capacity-retry.js";
 import { getServiceCredential } from "../../services/service-credential.js";
+import { authHeaderNow, type AuthHeaderSource } from "../run-bearer.js";
 
 export type ComputerStatus =
   | "requested"
@@ -1469,7 +1470,8 @@ export async function touchComputerActivity(args: {
  * machine mid-wait, and rides the same authorization as the first call.
  */
 export async function ensureComputerReady(args: {
-  bearer: string;
+  /** Read before each reserve call, so a long poll sends a renewed bearer. */
+  bearer: AuthHeaderSource;
   projectId: string;
   /** Phase 3 scope; forwarded verbatim to reserveComputer (legacy when absent). */
   executionScope?: ExecutionScope;
@@ -1485,7 +1487,10 @@ export async function ensureComputerReady(args: {
   const deadline = Date.now() + timeoutMs;
 
   for (;;) {
-    const reserved = await reserveComputer(args);
+    const reserved = await reserveComputer({
+      ...args,
+      bearer: authHeaderNow(args.bearer),
+    });
     if (!reserved.ok) return reserved;
     const { status } = reserved.value;
     if (status === "ready") return reserved;
