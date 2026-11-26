@@ -304,7 +304,7 @@ export function SuiteAccountGroups({
             selections={sharedDefaults.value}
             onChange={sharedDefaults.onChange}
             disabled={sharedDefaults.disabled}
-            inheritLabel="Use project server default"
+            inheritLabel="Use the MCP server's default account"
           />
         </AccountGroup>
       ) : null}
