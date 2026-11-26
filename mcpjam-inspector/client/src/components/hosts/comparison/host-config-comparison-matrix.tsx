@@ -47,6 +47,7 @@ interface HostConfigComparisonMatrixProps {
   summaryColumn?: {
     label: string;
     render: (field: HostConfigFieldDef) => React.ReactNode;
+    renderFieldLabel?: (field: HostConfigFieldDef) => React.ReactNode;
   };
   fields?: ReadonlyArray<HostConfigFieldDef>;
   /** When true, hide rows whose value is identical across every host. */
@@ -252,14 +253,14 @@ export function HostConfigComparisonMatrix({
           <thead>
             <tr>
               <th className="sticky left-0 top-0 z-30 bg-card border-b border-border px-3 py-3 text-left after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border after:content-[''] sm:px-5 sm:py-4">
-                <span className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                <span className={cn("text-[11px] text-muted-foreground", !summaryColumn && "uppercase tracking-[0.16em]")}>
                   Field
                 </span>
               </th>
               {summaryColumn && (
                 <th
                   scope="col"
-                  className="sticky top-0 z-20 border-b border-l border-border bg-card px-2 py-3 text-[11px] uppercase tracking-[0.12em] text-muted-foreground"
+                  className="sticky top-0 z-20 border-b border-l border-border bg-card px-2 py-3 text-[11px] text-muted-foreground"
                 >
                   {summaryColumn.label}
                 </th>
@@ -272,6 +273,7 @@ export function HostConfigComparisonMatrix({
                   themeMode={themeMode}
                   verifyBaseUrl={verifyBaseUrl}
                   disabledVerifyTemplateIds={disabledVerifyTemplateIds}
+                  linkName={Boolean(summaryColumn)}
                 />
               ))}
             </tr>
@@ -408,7 +410,7 @@ function SectionRows({
   const colSpan = subjects.length + (summaryColumn ? 2 : 1);
   return (
     <>
-      <tr>
+      {!summaryColumn && <tr>
         {/* Label lives in its own first-column cell so `sticky left-0` can pin
             it — a colSpan cell spans the whole table and never sticks. */}
         <th
@@ -445,7 +447,7 @@ function SectionRows({
           </motion.div>
         </th>
         <td colSpan={colSpan - 1} className="border-y border-border bg-muted" />
-      </tr>
+      </tr>}
 
       {subsections.map((sub) => {
         const fields = sub.fields.filter((f) => visibleFieldIds.has(f.id));
@@ -454,6 +456,7 @@ function SectionRows({
           <SubsectionRows
             key={`${sectionLabel}-${sub.label}`}
             label={sub.label}
+            sectionLabel={sectionLabel}
             fields={fields}
             subjects={subjects}
             coverageSubjects={coverageSubjects}
@@ -472,6 +475,7 @@ function SectionRows({
 function SubsectionRows({
   summaryColumn,
   label,
+  sectionLabel,
   fields,
   subjects,
   coverageSubjects,
@@ -482,6 +486,7 @@ function SubsectionRows({
 }: {
   summaryColumn?: HostConfigComparisonMatrixProps["summaryColumn"];
   label: string;
+  sectionLabel: string;
   fields: ReadonlyArray<HostConfigFieldDef>;
   subjects: ReadonlyArray<HostComparisonSubject>;
   coverageSubjects: ReadonlyArray<HostComparisonSubject>;
@@ -492,12 +497,21 @@ function SubsectionRows({
 }) {
   return (
     <>
-      <tr>
+      {summaryColumn ? (
+        <tr className="border-b border-border bg-muted">
+          <th
+            colSpan={colSpan}
+            className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground sm:px-5"
+          >
+            {sectionLabel === label ? label : `${sectionLabel} / ${label}`}
+          </th>
+        </tr>
+      ) : <tr>
         <td className="sticky left-0 z-10 border-b border-border bg-card px-3 py-1.5 text-left text-[10px] uppercase tracking-wider text-muted-foreground after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border after:content-[''] sm:px-5">
           {label}
         </td>
         <td colSpan={colSpan - 1} className="border-b border-border bg-card" />
-      </tr>
+      </tr>}
       {fields.map((field) => (
         <FieldRow
           key={field.id}
@@ -549,7 +563,7 @@ function FieldRow({
           conflicting with `sticky` and would strip the sticky positioning.
           `sticky` already anchors the absolute diverge gutter below. */}
       <td className="sticky left-0 z-10 bg-card px-3 py-2.5 text-left after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border after:content-[''] sm:px-5">
-        {diverges && (
+        {diverges && !summaryColumn && (
           <motion.span
             aria-hidden="true"
             className="absolute left-0 top-0 bottom-0 w-[3px] bg-primary/70 origin-top"
@@ -568,7 +582,9 @@ function FieldRow({
             mobileOptimized && "min-w-0",
           )}
         >
-          <span className={labelClassName}>{field.label}</span>
+          <span className={labelClassName}>
+            {summaryColumn?.renderFieldLabel?.(field) ?? field.label}
+          </span>
           {coverage && (
             <span
               className="text-[10.5px] text-muted-foreground tabular-nums"
@@ -578,7 +594,7 @@ function FieldRow({
               {coverage.supported}/{coverage.total}
             </span>
           )}
-          {field.description && !showDescriptions && (
+          {field.description && !showDescriptions && !summaryColumn && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
@@ -625,6 +641,7 @@ function FieldRow({
             field={field}
             subject={s}
             mobileOptimized={mobileOptimized}
+            compact={Boolean(summaryColumn)}
           />
         </td>
       ))}
@@ -636,10 +653,12 @@ export function FieldCell({
   field,
   subject,
   mobileOptimized,
+  compact = false,
 }: {
   field: HostConfigFieldDef;
   subject: HostComparisonSubject;
   mobileOptimized: boolean;
+  compact?: boolean;
 }) {
   const value = field.read(subject.config);
   const kind = field.kind;
@@ -658,15 +677,25 @@ export function FieldCell({
     kind.kind !== "tri-state" &&
     kind.kind !== "capability"
   ) {
-    return <span className="text-[12px] text-muted-foreground/60">—</span>;
+    return (
+      <span className="text-xs text-muted-foreground">
+        {compact && <span className="sr-only">No result</span>}
+        <span aria-hidden={compact || undefined}>—</span>
+      </span>
+    );
   }
 
   switch (kind.kind) {
     case "boolean": {
+      if (compact) {
+        return value === true ? (
+          <SupportChip level="supported" label="Supported" />
+        ) : (
+          <SupportChip level="unsupported" label="Not supported" />
+        );
+      }
       const level: SupportLevel = value === true ? "supported" : "neutral";
-      return (
-        <SupportChip level={level} label={value === true ? "Yes" : "No"} />
-      );
+      return <SupportChip level={level} label={value === true ? "Yes" : "No"} />;
     }
 
     case "tri-state": {
@@ -679,7 +708,7 @@ export function FieldCell({
     case "capability": {
       const level = getSupportLevel(field, subject.config) ?? "neutral";
       if (value === undefined || value === null) {
-        return <SupportChip level={level} label="Not supported" />;
+        return <SupportChip level={compact ? "unsupported" : level} label="Not supported" />;
       }
       const caveats = getCapabilityCaveats(field, subject.config);
       const keys =
@@ -688,7 +717,7 @@ export function FieldCell({
           : [];
       return (
         <span className="inline-flex items-center justify-center gap-2">
-          <SupportChip level={level} label="Supported" />
+          <SupportChip level={level} label={compact && level === "partial" ? "Partial" : "Supported"} />
           <CapabilityInfoTooltip
             caveats={caveats}
             value={keys.length > 0 ? value : undefined}
@@ -950,12 +979,14 @@ function HostColumnHeader({
   themeMode,
   verifyBaseUrl,
   disabledVerifyTemplateIds,
+  linkName,
 }: {
   subject: HostComparisonSubject;
   onRemove?: (hostId: string) => void;
   themeMode: HostThemeMode;
   verifyBaseUrl?: string;
   disabledVerifyTemplateIds?: ReadonlySet<string>;
+  linkName: boolean;
 }) {
   const logoSrc = getScenarioHostLogo(
     subject.hostStyle,
@@ -968,6 +999,7 @@ function HostColumnHeader({
     subject.hostId,
     disabledVerifyTemplateIds,
   );
+  const nameClassName = "min-w-0 max-w-[160px] text-center text-[14px] font-medium leading-tight";
 
   return (
     <th className="sticky top-0 z-20 border-b border-l border-border bg-card px-3 py-3 text-center align-top sm:px-4 sm:py-4">
@@ -1000,13 +1032,27 @@ function HostColumnHeader({
           alt=""
           className="mt-0.5 size-4 shrink-0 object-contain"
         />
-        <div
-          className="min-w-0 max-w-[160px] truncate text-center text-[14px] font-medium leading-tight"
-          title={subject.hostName}
-        >
-          {subject.hostName}
-        </div>
-        {verifyHref ? (
+        {linkName && verifyHref ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <a
+                href={verifyHref}
+                data-testid={`host-compare-verify-${subject.hostId}`}
+                className={cn(nameClassName, "scroll-ml-[var(--matrix-field-width)] rounded-sm break-words underline decoration-border underline-offset-4 hover:text-primary focus-visible:outline-2 focus-visible:outline-ring")}
+              >
+                {subject.hostName}
+              </a>
+            </TooltipTrigger>
+            <TooltipContent side="top" sideOffset={6} variant="muted" className="dark">
+              Verify against your server
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          <div className={cn(nameClassName, linkName ? "break-words" : "truncate")} title={linkName ? undefined : subject.hostName}>
+            {subject.hostName}
+          </div>
+        )}
+        {!linkName && verifyHref ? (
           <Tooltip>
             <TooltipTrigger asChild>
               <a

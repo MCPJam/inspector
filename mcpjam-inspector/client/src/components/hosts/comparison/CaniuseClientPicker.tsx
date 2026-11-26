@@ -31,11 +31,9 @@ export function CaniuseClientPicker({
   const [picker, setPicker] = useState<string | null>(null);
   const opener = useRef<HTMLButtonElement | null>(null);
   const ids = selected.map(({ hostId }) => hostId);
-  const available = orderPublicClients(
-    clients.filter(({ hostId }) => !ids.includes(hostId)),
-  );
+  const hasAvailableClients = clients.some(({ hostId }) => !ids.includes(hostId));
   const groups = new Map<string, HostComparisonSubject[]>();
-  for (const client of available) {
+  for (const client of orderPublicClients(clients)) {
     const { surface } = publicClientIdentity(client);
     const group = groups.get(surface) ?? [];
     group.push(client);
@@ -43,6 +41,10 @@ export function CaniuseClientPicker({
   }
 
   function select(id: string) {
+    if (id === picker) {
+      setPicker(null);
+      return;
+    }
     onChange(
       picker === "add"
         ? [...ids, id]
@@ -68,7 +70,7 @@ export function CaniuseClientPicker({
               >
                 <Button
                   variant="ghost"
-                  disabled={!available.length}
+                  disabled={!hasAvailableClients}
                   className="h-full min-w-0 flex-1 justify-start gap-1.5 px-2 py-1 text-left text-[13px] leading-[1.35] sm:gap-2 sm:px-2.5 sm:py-2"
                   onClick={(event) => {
                     opener.current = event.currentTarget;
@@ -108,7 +110,7 @@ export function CaniuseClientPicker({
         )}
         <DialogTrigger asChild>
           <Button
-            disabled={!available.length}
+            disabled={!hasAvailableClients}
             onClick={() => {
               opener.current = null;
               setPicker("add");
@@ -120,7 +122,7 @@ export function CaniuseClientPicker({
         </DialogTrigger>
       </div>
       <DialogContent
-        className="dark caniuse-dialog caniuse-glow gap-3 border-0 bg-card text-card-foreground"
+        className="dark caniuse-dialog gap-4 border-0 text-foreground"
         aria-describedby={undefined}
         onCloseAutoFocus={(event) => {
           if (opener.current?.isConnected) {
@@ -133,31 +135,47 @@ export function CaniuseClientPicker({
           {picker === "add" ? "Add client" : "Replace client"}
         </DialogTitle>
         <Command>
-          <CommandInput placeholder="Search clients…" />
+          <CommandInput placeholder="Search clients or surfaces" />
           <CommandList className="max-h-[min(360px,55dvh)]">
             <CommandEmpty>No matching clients.</CommandEmpty>
             {[...groups].map(([surface, options]) => (
               <CommandGroup key={surface} heading={surface}>
-                {options.map((client) => (
-                  <CommandItem
-                    key={client.hostId}
-                    value={client.hostId}
-                    keywords={[
-                      client.hostName,
-                      surface,
-                      publicClientIdentity(client).mode,
-                    ]}
-                    onSelect={() => select(client.hostId)}
-                    className="gap-3 py-2"
-                  >
-                    <img
-                      src={clientLogo(client)}
-                      alt=""
-                      className="size-6 rounded object-contain"
-                    />
-                    {client.hostName}
-                  </CommandItem>
-                ))}
+                {options.map((client) => {
+                  const status =
+                    picker === client.hostId
+                      ? "Current"
+                      : ids.includes(client.hostId)
+                        ? "Comparing"
+                        : null;
+                  return (
+                    <CommandItem
+                      key={client.hostId}
+                      value={client.hostId}
+                      keywords={[
+                        client.hostName,
+                        surface,
+                        publicClientIdentity(client).mode,
+                      ]}
+                      onSelect={() => select(client.hostId)}
+                      disabled={status === "Comparing"}
+                      className="gap-3 py-2 data-[disabled=true]:opacity-60"
+                    >
+                      <img
+                        src={clientLogo(client)}
+                        alt=""
+                        className="size-9 shrink-0 rounded-md border border-border bg-card object-contain p-1"
+                      />
+                      <span className="min-w-0 flex-1 font-semibold">
+                        {client.hostName}
+                      </span>
+                      {status && (
+                        <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
+                          {status}
+                        </span>
+                      )}
+                    </CommandItem>
+                  );
+                })}
               </CommandGroup>
             ))}
           </CommandList>

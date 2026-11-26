@@ -71,6 +71,8 @@
 }
 
 .caniuse-dialog {
+  background-color: var(--caniuse-compare-background);
+  background-image: none;
   box-shadow: 0 0 50px color-mix(in oklab, var(--primary) 19%, transparent);
 }
 

@@ -39,6 +39,7 @@ import {
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import { Textarea } from "@mcpjam/design-system/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@mcpjam/design-system/tooltip";
 import {
   Command,
   CommandEmpty,
@@ -1030,14 +1031,14 @@ export function ReportInconsistencyDialog({ footer = false }: { footer?: boolean
             </DialogFooter>
           </>
         ) : (
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className={footer ? "space-y-5" : "space-y-4"}>
             <DialogHeader>
               <DialogTitle>Report inconsistency</DialogTitle>
-              <DialogDescription>
+              <DialogDescription className={footer ? "sr-only" : undefined}>
                 Tell us what looks inconsistent.
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-2">
+            <div className="grid gap-2">
               <label
                 htmlFor="caniuse-report-message"
                 className="text-sm font-medium text-foreground"
@@ -1432,6 +1433,7 @@ export function ShareComparisonDialog({
 }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [tooltipOpen, setTooltipOpen] = useState(false);
 
   const shareUrl = useMemo(
     () => buildShareComparisonUrl(selectedHostIds, searchQuery, fields, preserveQuery),
@@ -1449,14 +1451,13 @@ export function ShareComparisonDialog({
     window.setTimeout(() => setCopied(false), 2000);
   }, [copyOnShare, shareUrl]);
 
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
+  const trigger = (
       <Button
         type="button"
         variant="outline"
         size="sm"
-        aria-label="Share"
-        title={copyOnShare && copied ? "Link copied" : "Share"}
+        aria-label={copyOnShare ? "Copy comparison link" : "Share"}
+        title={copyOnShare ? undefined : "Share"}
         onClick={() => (copyOnShare ? void handleCopy() : setOpen(true))}
         className={cn(
           "gap-1.5",
@@ -1466,6 +1467,8 @@ export function ShareComparisonDialog({
       >
         {copyOnShare && copied ? (
           <Check className="size-3.5" />
+        ) : copyOnShare ? (
+          <Copy className="size-3.5" />
         ) : (
           <Share2 className="size-3.5" />
         )}
@@ -1473,7 +1476,19 @@ export function ShareComparisonDialog({
           {copyOnShare && copied ? "Link copied" : iconOnly ? "" : "Share"}
         </span>
       </Button>
-      <DialogContent className="sm:max-w-[460px]">
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      {copyOnShare ? (
+        <Tooltip open={!open && (copied || tooltipOpen)} onOpenChange={setTooltipOpen}>
+          <TooltipTrigger asChild>{trigger}</TooltipTrigger>
+          <TooltipContent side="top" sideOffset={6} variant="muted" className="dark">
+            {copied ? "Link copied" : "Copy a link to this exact comparison"}
+          </TooltipContent>
+        </Tooltip>
+      ) : trigger}
+      <DialogContent className={cn("sm:max-w-[460px]", copyOnShare && "dark caniuse-dialog border-0 text-foreground")}>
         <DialogHeader>
           <DialogTitle>Share this comparison</DialogTitle>
           <DialogDescription>
