@@ -53,6 +53,37 @@ const mockChatHistoryAction = vi.hoisted(() => vi.fn());
 // exercise both sides of that gate. Defaults to signed out, which is what every
 // other test in this file has always run as.
 const mockConvexAuthState = vi.hoisted(() => ({ isAuthenticated: false }));
+// The real App draft hook, with a count of the holds a send has not released.
+const appDraftHolds = vi.hoisted(() => ({ active: 0 }));
+vi.mock(
+  "@/components/host-workspace/use-app-message-draft",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("@/components/host-workspace/use-app-message-draft")
+      >();
+    const { useCallback } = await import("react");
+    return {
+      ...actual,
+      useAppMessageDraft: (
+        ...args: Parameters<typeof actual.useAppMessageDraft>
+      ) => {
+        const draft = actual.useAppMessageDraft(...args);
+        const hold = useCallback(() => {
+          const release = draft.hold();
+          let held = true;
+          appDraftHolds.active += 1;
+          return () => {
+            if (held) appDraftHolds.active -= 1;
+            held = false;
+            release();
+          };
+        }, [draft.hold]);
+        return { ...draft, hold };
+      },
+    };
+  },
+);
 const mockReactiveHistoryState = vi.hoisted(() => ({
   session: undefined as any,
   widgetSnapshots: undefined as any,
@@ -3204,6 +3235,70 @@ describe("PlaygroundMain", () => {
         expect(
           screen.getByRole("button", { name: "Starter chip" }),
         ).toBeInTheDocument();
+      });
+
+      it("releases the App draft hold at once, while the cancelled send still waits", async () => {
+        const readiness = holdServerReadiness();
+        await renderWithThreadA({
+          ensureServersReady: readiness.ensureServersReady,
+        });
+        const before = appDraftHolds.active;
+        await typeAndSend("draft for A");
+        expect(appDraftHolds.active).toBe(before + 1);
+
+        await act(async () => composer().onCancelSubmit?.());
+
+        expect(appDraftHolds.active).toBe(before);
+        await act(async () => readiness.release());
+        await settle();
+        expect(appDraftHolds.active).toBe(before);
+      });
+
+      it("queues nothing to the comparison when a composer send is cancelled", async () => {
+        mockUseChatSession.availableModels = [
+          { id: "openai/gpt-5-mini", name: "Mini", provider: "openai" },
+          {
+            id: "anthropic/claude-sonnet-4.5",
+            name: "Sonnet",
+            provider: "anthropic",
+          },
+        ] as never;
+        mockUseChatSession.multiModelEnabled = true;
+        try {
+          const readiness = holdServerReadiness();
+          render(
+            <PlaygroundMain
+              {...defaultProps}
+              enableMultiModelChat
+              ensureServersReady={readiness.ensureServersReady}
+            />,
+          );
+          await waitFor(() => expect(bridge()).not.toBe(null));
+          const broadcast = () =>
+            mockMultiModelPlaygroundCard.mock.calls.at(-1)?.[0]
+              .broadcastRequest;
+          const before = broadcast();
+          const submit = () =>
+            mockChatInputProps.mock.calls.at(-1)?.[0] as {
+              onChange: (text: string) => void;
+              onSubmit: (e: { preventDefault: () => void }) => Promise<void>;
+            };
+          await act(async () => submit().onChange("draft for the panes"));
+          await act(async () => {
+            void submit().onSubmit({ preventDefault: () => {} });
+          });
+          expect(composer().isSubmitting).toBe(true);
+
+          await act(async () => composer().onCancelSubmit?.());
+          await act(async () => readiness.release());
+          await settle();
+
+          expect(broadcast()).toBe(before);
+          expect(composer().value).toBe("draft for the panes");
+        } finally {
+          mockUseChatSession.availableModels = [];
+          mockUseChatSession.multiModelEnabled = false;
+        }
       });
 
       it("hides the read's error when the send was cancelled while the thread was read", async () => {
@@ -7124,6 +7219,47 @@ describe("multi-model columns", () => {
           url: expect.stringMatching(/^data:text\/csv;base64,/),
         }),
       ]);
+    });
+
+    it("sends nothing when the send is cancelled during the computer upload", async () => {
+      previewComputerHost({});
+      let finishUpload!: () => void;
+      mockUploadAttachments.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finishUpload = () =>
+              resolve([{ name: "report.csv", path: UPLOADED_PATH }]);
+          }),
+      );
+      render(<PlaygroundMain {...defaultProps} activeProjectId="project-1" />);
+      const composer = () =>
+        mockChatInputProps.mock.calls.at(-1)?.[0] as {
+          onChangeFileAttachments: (next: unknown[]) => void;
+          onCancelSubmit?: () => void;
+          isSubmitting?: boolean;
+        };
+      await act(async () => {
+        composer().onChangeFileAttachments([
+          { id: "attachment-1", file: new File(["a,b\n"], "report.csv") },
+        ]);
+      });
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "how many rows?" },
+      });
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+      await waitFor(() => expect(mockUploadAttachments).toHaveBeenCalledTimes(1));
+
+      await act(async () => composer().onCancelSubmit?.());
+      expect(composer().isSubmitting).toBe(false);
+      await act(async () => finishUpload());
+      await act(async () => {});
+
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+      expect(screen.getByTestId("chat-input-field")).toHaveValue(
+        "how many rows?",
+      );
     });
 
     it("a non-harness computer host still uploads and notes the path, as before", async () => {
