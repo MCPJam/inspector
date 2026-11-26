@@ -45,27 +45,27 @@ export function EvaluatorGroup({
       aria-label={name}
       className="overflow-hidden rounded-lg border border-border bg-popover"
     >
-      <div className="flex items-center gap-2 border-b border-border bg-muted/50 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border bg-muted/50 px-3 py-2">
         <button
           type="button"
           aria-expanded={!collapsed}
           aria-controls={listId}
           onClick={() => setCollapsed((v) => !v)}
-          className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-card-foreground"
+          className="flex min-w-0 items-center gap-1.5 text-left text-sm font-medium text-card-foreground"
         >
           {collapsed ? (
             <ChevronRight aria-hidden className="size-4" />
           ) : (
             <ChevronDown aria-hidden className="size-4" />
           )}
-          <span className="truncate">{name}</span>
+          <span className="break-words">{name}</span>
         </button>
         <span className="font-mono text-xs text-muted-foreground">
           {version}
         </span>
         <EvaluatorKindBadge origin={origin} />
         <EvaluatorKindBadge method={method} />
-        <span className="ml-auto flex items-center gap-1">
+        <span className="ml-auto flex shrink-0 items-center gap-1">
           {updateAvailable && onAcceptUpdate ? (
             <Button
               type="button"
