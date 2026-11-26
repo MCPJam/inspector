@@ -29,10 +29,12 @@ import type { SkillsSource } from "@/lib/apis/mcp-skills-api";
 import type {
   ChangeEvent,
   ClipboardEvent,
+  Dispatch,
   DragEvent,
   FormEvent,
   KeyboardEvent,
   ReactNode,
+  SetStateAction,
 } from "react";
 import { cn } from "@/lib/chat-utils";
 import { track } from "@/lib/analytics";
@@ -387,9 +389,9 @@ interface ChatInputProps {
   systemPromptTokenCount?: number | null;
   systemPromptTokenCountLoading?: boolean;
   mcpPromptResults: MCPPromptResult[];
-  onChangeMcpPromptResults: (mcpPromptResults: MCPPromptResult[]) => void;
+  onChangeMcpPromptResults: Dispatch<SetStateAction<MCPPromptResult[]>>;
   skillResults: SkillResult[];
-  onChangeSkillResults: (skillResults: SkillResult[]) => void;
+  onChangeSkillResults: Dispatch<SetStateAction<SkillResult[]>>;
   /** File attachments for the message */
   fileAttachments?: FileAttachment[];
   /** Callback when file attachments change */
@@ -865,19 +867,23 @@ export function ChatInput({
     setCaretIndex(end);
   }, [moveCaretToEndTrigger]);
 
+  // Remove the "/" that opened the picker. A pick lands after its fetch, when
+  // a send may have changed the box: use the click's caret only if the text
+  // is still the one it was in.
+  const removeSlashTrigger = useCallback(() => {
+    const current = valueRef.current;
+    const caret = current === value ? caretIndex : current.length;
+    onChange(
+      current.slice(0, caret).replace(/\/\s*$/, "") + current.slice(caret),
+    );
+  }, [value, caretIndex, onChange]);
+
   const onMCPPromptSelected = useCallback(
     (mcpPromptResult: MCPPromptResult) => {
-      // Add the prompt result to the mcpPromptResults state
-      onChangeMcpPromptResults([...mcpPromptResults, mcpPromptResult]);
-
-      // Remove the "/" that triggered the popover
-      const textBeforeCaret = value.slice(0, caretIndex);
-      const textAfterCaret = value.slice(caretIndex);
-      const cleanedBefore = textBeforeCaret.replace(/\/\s*$/, "");
-      const newValue = cleanedBefore + textAfterCaret;
-      onChange(newValue);
+      onChangeMcpPromptResults((current) => [...current, mcpPromptResult]);
+      removeSlashTrigger();
     },
-    [value, caretIndex, onChange, mcpPromptResults, onChangeMcpPromptResults],
+    [onChangeMcpPromptResults, removeSlashTrigger],
   );
 
   const removeMCPPromptResult = (index: number) => {
@@ -1435,17 +1441,10 @@ export function ChatInput({
 
   const onSkillSelected = useCallback(
     (skillResult: SkillResult) => {
-      // Add the skill result to the skillResults state
-      onChangeSkillResults([...skillResults, skillResult]);
-
-      // Remove the "/" that triggered the popover
-      const textBeforeCaret = value.slice(0, caretIndex);
-      const textAfterCaret = value.slice(caretIndex);
-      const cleanedBefore = textBeforeCaret.replace(/\/\s*$/, "");
-      const newValue = cleanedBefore + textAfterCaret;
-      onChange(newValue);
+      onChangeSkillResults((current) => [...current, skillResult]);
+      removeSlashTrigger();
     },
-    [value, caretIndex, onChange, skillResults, onChangeSkillResults],
+    [onChangeSkillResults, removeSlashTrigger],
   );
 
   const removeSkillResult = (index: number) => {
@@ -1606,11 +1605,13 @@ export function ChatInput({
               skillResult={skillResult}
               skillsSource={skillsSource}
               onRemove={() => removeSkillResult(index)}
-              onUpdate={(updatedSkill) => {
-                const newSkillResults = [...skillResults];
-                newSkillResults[index] = updatedSkill;
-                onChangeSkillResults(newSkillResults);
-              }}
+              onUpdate={(updatedSkill) =>
+                onChangeSkillResults((current) =>
+                  current.map((skill) =>
+                    skill === skillResult ? updatedSkill : skill,
+                  ),
+                )
+              }
             />
           ))}
         </div>

@@ -118,8 +118,14 @@ vi.mock("../chat-input/prompts/mcp-prompt-result-card", () => ({
   ),
 }));
 
+const skillCards = vi.hoisted(() => ({
+  props: {} as Record<string, Record<string, any>>,
+}));
 vi.mock("../chat-input/skills/skill-result-card", () => ({
-  SkillResultCard: () => <div data-testid="skill-result-card">Skill Card</div>,
+  SkillResultCard: (props: Record<string, any>) => {
+    skillCards.props[props.skillResult.name] = props;
+    return <div data-testid="skill-result-card">Skill Card</div>;
+  },
 }));
 
 vi.mock("../chat-input/attachments/file-attachment-card", () => ({
@@ -2170,6 +2176,70 @@ describe("ChatInput", () => {
         screen.getByRole("button", { name: "Remove all Parts context" })
       );
       expect(removeAll).toHaveBeenCalledTimes(1);
+    });
+  });
+  describe("a pick that resolves after a send", () => {
+    // The popover and the skill card call back after their fetch, with the
+    // callback from the render where it started. A send can clear the
+    // composer in between.
+    const item = (name: string) => ({ name }) as any;
+    const renderLate = (overrides: Record<string, unknown>) => {
+      const onChange = vi.fn();
+      const props = { ...defaultProps, onChange, ...overrides };
+      const view = render(<ChatInput {...props} />);
+      return {
+        onChange,
+        rerender: (next: Record<string, unknown>) =>
+          view.rerender(<ChatInput {...props} {...next} />),
+      };
+    };
+
+    it.each([
+      [
+        "prompt",
+        "onPromptSelected",
+        "mcpPromptResults",
+        "onChangeMcpPromptResults",
+      ],
+      ["skill", "onSkillSelected", "skillResults", "onChangeSkillResults"],
+    ])(
+      "adds a %s to what the composer holds when its fetch finishes",
+      (_kind, pick, list, onList) => {
+        const setList = vi.fn();
+        const { onChange, rerender } = renderLate({
+          value: "first /",
+          [list]: [item("sent")],
+          [onList]: setList,
+        });
+        const pickLater = promptsPopover.props![pick];
+
+        rerender({ value: "/", [list]: [item("added")] });
+        act(() => pickLater(item("picked")));
+
+        const update = setList.mock.calls.at(-1)![0];
+        expect(update([item("added")])).toEqual([
+          item("added"),
+          item("picked"),
+        ]);
+        expect(onChange).toHaveBeenLastCalledWith("");
+      },
+    );
+
+    it("updates a skill whose files load after other skills were added", () => {
+      const setList = vi.fn();
+      const sent = item("sent");
+      const { rerender } = renderLate({
+        skillResults: [sent],
+        onChangeSkillResults: setList,
+      });
+      const updateLater = skillCards.props.sent!.onUpdate;
+      const added = item("added");
+
+      rerender({ skillResults: [sent, added] });
+      act(() => updateLater(item("sent with files")));
+
+      const update = setList.mock.calls.at(-1)![0];
+      expect(update([sent, added])).toEqual([item("sent with files"), added]);
     });
   });
 });
