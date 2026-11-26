@@ -607,6 +607,25 @@ describe("buildOptionPrompt", () => {
     }
   });
 
+  it("keeps every context explanation when several are long", () => {
+    const other = (n: number) => ({
+      id: `obs_lookup:mechanism:${n}`,
+      title: `Mechanism ${n}`,
+      rootCause: `${"x".repeat(400)} cause ${n} end.`,
+      attribution: "server_contract" as const,
+      iterationIds: ["it_1"],
+      citations: [],
+    });
+    const prompt = buildOptionPrompt(
+      problem({
+        explanations: [...problem().explanations, other(2), other(3)],
+      }),
+      option({ mechanismId: "obs_lookup:mechanism:1" }),
+    );
+    expect(prompt).toContain("cause 2 end.");
+    expect(prompt).toContain("cause 3 end.");
+  });
+
   it("names unresolved iterations instead of folding them into the cause", () => {
     const prompt = buildOptionPrompt(
       problem(),

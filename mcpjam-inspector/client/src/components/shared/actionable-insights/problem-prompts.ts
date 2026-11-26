@@ -2,8 +2,10 @@
  * The prompt a reader copies for ONE option of one recorded problem.
  *
  * Same containment rules as `finding-prompts.ts`: recorded excerpts go inside
- * UNTRUSTED fences, and analysis-written fields go inside PROPOSAL blocks,
- * since analysis text can quote the server under test. Identifiers are
+ * UNTRUSTED fences, and the selected option's analysis-written fields go
+ * inside PROPOSAL blocks, since analysis text can quote the server under test.
+ * Explanations the option does not act on are context, so they go in UNTRUSTED
+ * fences rather than PROPOSAL blocks. Identifiers are
  * flattened before they are interpolated, and the heading names the kind of
  * work so an experiment never reads as a proven repair. A prompt carries only
  * the selected option's scope and steps; copying an alternative never copies
@@ -120,14 +122,13 @@ export function buildOptionPrompt(
           "",
           "## Other explanations for these iterations",
           "Context only: this option does not act on these. Do not carry them out.",
-          fence(
-            "Other explanations (context, not this option's work)",
-            others
-              .map(
-                (row) =>
-                  `- ${row.rootCause ?? row.title} (iterations ${ids(row.iterationIds.filter((id) => scope.has(id)))})`,
-              )
-              .join("\n"),
+          // One fence per explanation: a fence clips its body, so a shared one
+          // would silently drop the later explanations.
+          ...others.map((row) =>
+            fence(
+              "Other explanation (context, not this option's work)",
+              `${row.rootCause ?? row.title} (iterations ${ids(row.iterationIds.filter((id) => scope.has(id)))})`,
+            ),
           ),
         ]
       : []),
