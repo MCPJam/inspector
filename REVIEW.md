@@ -24,6 +24,32 @@ and `DESIGN.md` hold the full rules; this file lists what to check on every PR.
 - **Behavior change without a test.** Tests live in `__tests__/` next to the
   source.
 
+## What the user sees
+
+#4990 merged a warning and checkbox that blocked Save on every server URL
+edit, and #6732 turned the prompt editor read-only. Neither PR had a
+screenshot, and both were visible in the running app in minutes. Block the PR
+when:
+
+- **A visible change has no before and after from the running app** or the
+  PR preview, in light and dark, or an interaction has no recording. Passing
+  tests are not evidence of what a screen shows.
+  `.github/agent-pr-definition-of-done.md` lists the evidence per kind of
+  change.
+- **A user loses something without a product decision.** A control removed,
+  disabled or made read-only, or a new checkbox, confirm or required step in
+  front of Save, Submit, Connect or Run, needs a spec agreed by someone other
+  than the author.
+- **A warning or toast fires when the risk isn't there,** or a message breaks
+  the Errors rules in `DESIGN.md`.
+- **A CLI change moves an exit code, a JSON field, stdout or stderr, or help
+  text** without saying so and showing the command's output before and after.
+- **It needs a backend change or migration that isn't live yet.**
+
+For each visible change, ask who meets it differently: a new user and one with
+data, a user midway through the flow, owner, member and guest, hosted, `npx`
+and desktop. Signed-in checks run on Jamroom (see `AGENTS.md`).
+
 ## Look closely
 
 - Auth, sessions and tokens: `server/routes/workos-authkit.ts`,
