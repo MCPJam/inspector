@@ -325,8 +325,12 @@ export interface DriveTaskWatchArgs {
   taskId: string;
   tuning?: TaskWatchTuning;
   input?: TaskInputDriverOptions;
-  /** 2025-11-25 only: see {@link legacyInputResultCallFor}. Default `"short"`. */
-  legacyInputCall?: LegacyInputResultCall;
+  /**
+   * 2025-11-25 only: the run can prompt for input (see
+   * {@link canPromptForTaskInput}). With the connection's advertised
+   * capabilities it decides the input call ({@link legacyInputResultCallFor}).
+   */
+  canPrompt?: boolean;
   signal?: AbortSignal;
   onState?: (snapshot: TaskLifecycleSnapshot) => void;
 }
@@ -405,8 +409,18 @@ export async function driveTaskWatch(
     // the driver does send there is the one `tasks/result` 2025-11-25 asks for
     // on `input_required` (tasks.mdx:449): the open call the server delivers
     // its question on. How long it stays open, or whether it is sent at all,
-    // is `legacyInputCall` (see `legacyInputResultCallFor`).
-    ...(extension ? {} : legacyInputCallDriverOptions(args.legacyInputCall)),
+    // follows from `canPrompt` and what `initialize` advertised (see
+    // `legacyInputResultCallFor`).
+    ...(extension
+      ? {}
+      : legacyInputCallDriverOptions(
+          legacyInputResultCallFor({
+            canPrompt: args.canPrompt === true,
+            advertisedCapabilities: manager.getAdvertisedClientCapabilities(
+              serverId,
+            ) as Record<string, unknown> | undefined,
+          }),
+        )),
     ...(extension
       ? {
           updateTask: async (_identity, inputResponses) => {
@@ -492,39 +506,45 @@ export function abortedDuringResultFetch(args: {
  * - `"wait"`: `--interactive` with a terminal to prompt on. The call stays
  *   open until the watch's deadline, so the question can arrive and be
  *   answered.
- * - `"skip"`: the connection declares an input capability with nothing here
- *   to answer it (`--host`/`--client-capabilities` without `--interactive`,
- *   or `--interactive` that cannot prompt: `--yes`, no TTY). A server would
- *   ask, get a refusal or an automatic decline, and may end the task. No
- *   call, so the watch exits 6 and the task stays answerable.
- * - `"short"`: nothing that a server could ask for is declared, so it cannot
- *   ask. The call is held 5 s, then the watch exits 6.
+ * - `"skip"`: the connection advertises an input capability with nothing
+ *   here to answer it (`roots`/`sampling` from `--host` or
+ *   `--client-capabilities`, or `--interactive` that cannot prompt: `--yes`,
+ *   no TTY, whose handler only declines). A server would ask, be refused or
+ *   declined, and may end the task. No call, so the watch exits 6 and the
+ *   task stays answerable.
+ * - `"short"`: the connection advertises nothing a server could ask for (an
+ *   unanswerable `elicitation` is already dropped from `initialize`), so it
+ *   cannot ask (2025-11-25 `basic/lifecycle.mdx`). The call is held 5 s,
+ *   then the watch exits 6.
  */
 export type LegacyInputResultCall = "wait" | "short" | "skip";
 
-export function legacyInputResultCallFor(
-  args: Omit<BuildTaskInputDriverOptionsArgs, "collectorOptions">,
-): LegacyInputResultCall {
-  const interactive = args.interactive === true;
-  if (
-    interactive &&
+/** `--interactive` with a terminal the collector can really prompt on. */
+export function canPromptForTaskInput(args: {
+  interactive?: boolean;
+  yes?: boolean;
+  stdinIsTTY?: boolean;
+  env?: NodeJS.ProcessEnv;
+}): boolean {
+  return (
+    args.interactive === true &&
     !resolveNonInteractive({
       yes: args.yes,
       stdinIsTTY: args.stdinIsTTY ?? Boolean(process.stdin.isTTY),
       ...(args.env ? { env: args.env } : {}),
     })
-  ) {
-    return "wait";
-  }
-  // The same declared set `buildTaskInputDriverOptions` checks: with
-  // `--interactive` the connection also declares `elicitation`.
-  const resolved = interactive
-    ? applyInteractiveElicitationCapability(args.config)
-    : args.config;
-  const declared =
-    (resolved as { clientCapabilities?: Record<string, unknown> })
-      .clientCapabilities ?? resolved.capabilities;
-  return canDeclareTasksExtension(declared as never, {}).ok ? "short" : "skip";
+  );
+}
+
+export function legacyInputResultCallFor(args: {
+  canPrompt: boolean;
+  /** What `initialize` advertised: `manager.getAdvertisedClientCapabilities`. */
+  advertisedCapabilities: Record<string, unknown> | undefined;
+}): LegacyInputResultCall {
+  if (args.canPrompt) return "wait";
+  return canDeclareTasksExtension(args.advertisedCapabilities as never, {}).ok
+    ? "short"
+    : "skip";
 }
 
 function legacyInputCallDriverOptions(

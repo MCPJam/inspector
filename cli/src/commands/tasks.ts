@@ -57,7 +57,7 @@ import {
 import {
   assertWireCapability,
   buildTaskInputDriverOptions,
-  legacyInputResultCallFor,
+  canPromptForTaskInput,
   driveTaskWatch,
   getTaskForWire,
   parseTasksWireOption,
@@ -779,8 +779,7 @@ function registerTaskWatch(tasks: Command): void {
       interactive: options.interactive,
       yes: options.yes,
     });
-    const legacyInputCall = legacyInputResultCallFor({
-      config,
+    const canPrompt = canPromptForTaskInput({
       interactive: options.interactive,
       yes: options.yes,
     });
@@ -810,7 +809,7 @@ function registerTaskWatch(tasks: Command): void {
               taskId,
               tuning: taskWatchTuningFrom(options),
               ...(input ? { input } : {}),
-              legacyInputCall,
+              canPrompt,
               signal,
               ...(onState ? { onState } : {}),
             }),

@@ -26,7 +26,7 @@ import {
 import {
   assertWireCapability,
   buildTaskInputDriverOptions,
-  legacyInputResultCallFor,
+  canPromptForTaskInput,
   detectCreatedTask,
   driveTaskWatch,
   parseTasksWireOption,
@@ -335,8 +335,7 @@ async function runTaskAugmentedToolCall(args: {
     interactive: options.interactive,
     yes: options.yes,
   });
-  const legacyInputCall = legacyInputResultCallFor({
-    config: inputConfig,
+  const canPrompt = canPromptForTaskInput({
     interactive: options.interactive,
     yes: options.yes,
   });
@@ -482,7 +481,7 @@ async function runTaskAugmentedToolCall(args: {
           taskId,
           tuning: taskWatchTuningFrom(options),
           ...(input ? { input } : {}),
-          legacyInputCall,
+          canPrompt,
           signal,
           ...(onState ? { onState } : {}),
         });

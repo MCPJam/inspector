@@ -716,20 +716,53 @@ describe("2025-11-25, answers configured: the client answers over tasks/result",
     expect(check(result, "tasks-ttl-shape").status).toBe("passed");
   });
 
-  it("makes no call when the run declares elicitation and has nothing to answer with", async () => {
+  it("makes the call when a declared elicitation is not sent, because nothing answers it", async () => {
     // An Inspector host profile can declare elicitation while setup has no
-    // answers. A server would ask over the call and be refused, which can end
-    // the task, so the run does not make the call.
-    const fixture = await serveParkedTask({ onResult: "ask" });
+    // answers. The manager leaves it out of initialize when nothing answers
+    // it, so a server cannot ask, and the call is safe.
+    const fixture = await serveParkedTask({ onResult: "hold" });
     const result = await run(fixture, {
       pollTimeoutMs: 1_000,
       clientCapabilities: { elicitation: {} },
     });
 
+    expect(fixture.clientCapabilities()).not.toHaveProperty("elicitation");
+    expect(resultCalls(fixture)).toBe(1);
+    expect(check(result, "tasks-ttl-shape").status).toBe("passed");
+  });
+
+  it("makes no call when the run advertises roots and has nothing to answer with", async () => {
+    // `roots` is advertised as written. A server may ask `roots/list` over
+    // the call, be refused, and end the task, so a run without answers does
+    // not make the call.
+    const fixture = await serveParkedTask({ onResult: "ask" });
+    const result = await run(fixture, {
+      pollTimeoutMs: 1_000,
+      clientCapabilities: { roots: {} },
+    });
+
+    expect(fixture.clientCapabilities()).toHaveProperty("roots");
     expect(resultCalls(fixture)).toBe(0);
     expect(fixture.answers).toEqual([]);
     expect(check(result, "tasks-ttl-shape").status).toBe("passed");
     expect(verdict(result, "tasks-inline-result")).toEqual(COULD_NOT_RUN);
+  });
+
+  it("still answers over the call when the host also advertises roots", async () => {
+    // Several seed host templates declare roots. With answers in setup the
+    // call is how they reach the server, as before this change.
+    const fixture = await serveParkedTask({ onResult: "ask" });
+    const result = await run(fixture, {
+      pollTimeoutMs: 3_000,
+      inputResponses: SEAT_ANSWER,
+      clientCapabilities: { roots: {} },
+    });
+
+    expect(resultCalls(fixture)).toBe(1);
+    expect(fixture.answers[0]).toMatchObject({
+      result: { action: "accept", content: { seat: "aisle" } },
+    });
+    expect(check(result, "tasks-inline-result").status).toBe("passed");
   });
 
   it("answers two questions on one held call, each with the answer that fits it", async () => {

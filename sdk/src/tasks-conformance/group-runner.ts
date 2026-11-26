@@ -118,22 +118,6 @@ export class TaskGroupRunner extends TaskOperations {
       this.config.serverConfig,
       inputAnswers
     );
-    // A run that declares an input capability with nothing behind it to
-    // answer (an Inspector host profile with `elicitation`, and no answers in
-    // setup) does not make the call: a server would ask over it, get Method
-    // not found, and may end the task. Without the declaration a conforming
-    // server cannot ask (2025-11-25 `basic/lifecycle.mdx`: only negotiated
-    // capabilities are used), so the call is safe.
-    const declared =
-      (serverConfig as { clientCapabilities?: Record<string, unknown> })
-        .clientCapabilities ?? serverConfig.capabilities;
-    const unanswerable = canDeclareTasksExtension(declared as never, {});
-    const refusesQuestions =
-      !unanswerable.ok &&
-      unanswerable.missing.some(
-        (method) => !(inputAnswers && method === "elicitation/create")
-      );
-
     try {
       return await withTasksClient(
         serverConfig,
@@ -141,6 +125,19 @@ export class TaskGroupRunner extends TaskOperations {
           this.config.signal?.throwIfAborted();
           const support = manager.getTasksSupport(serverId);
           const wire = support.wire;
+          // A run with answers makes the call, as it always did: it is how
+          // those answers reach the server. A run without them makes it only
+          // when the server cannot ask for something nobody here answers.
+          // That is judged on what `initialize` advertised (an exact set
+          // loses `elicitation` with no handler), because a server may only
+          // ask for that (2025-11-25 `basic/lifecycle.mdx`). Asked and
+          // refused, a server may end the task.
+          const refusesQuestions = () =>
+            !inputAnswers &&
+            !canDeclareTasksExtension(
+              manager.getAdvertisedClientCapabilities(serverId),
+              {}
+            ).ok;
           const protocolVersion =
             manager.getNegotiatedProtocolVersion(serverId);
 
@@ -549,7 +546,7 @@ export class TaskGroupRunner extends TaskOperations {
                       inputRequiredTask ??= task;
                       // 2025-11-25 answers over `tasks/result`, not `tasks/update`.
                       if (wire !== "extension") {
-                        if (wire !== "legacy" || refusesQuestions) return false;
+                        if (wire !== "legacy" || refusesQuestions()) return false;
                         const next = await resultLeg.run(
                           manager,
                           serverId,
