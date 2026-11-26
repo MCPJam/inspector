@@ -1,4 +1,4 @@
-import type { ExtensionLaunchProfile, ExtensionLaunchObservation } from "@/lib/extension-launch-health";
+import type { ExtensionLaunchProfile } from "@/lib/extension-launch-health";
 import {
   useCallback,
   useEffect,
@@ -30,13 +30,11 @@ export function ServerSettingsPanel({
   serverId,
   serverName,
   launchProfile,
-  launchObservation,
 }: {
   scope: ThreadAppScope;
   serverId: string;
   serverName: string;
   launchProfile?: ExtensionLaunchProfile;
-  launchObservation?: ExtensionLaunchObservation;
 }) {
   const host = useWidgetHost();
   const dialog = useSettingsDialogPresentation();
@@ -172,7 +170,6 @@ export function ServerSettingsPanel({
           approve={approve}
           host={host}
           launchProfile={launchProfile}
-          launchObservation={launchObservation}
         />
       </div>
     </div>

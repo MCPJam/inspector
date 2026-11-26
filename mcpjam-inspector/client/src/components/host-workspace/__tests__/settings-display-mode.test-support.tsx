@@ -72,10 +72,6 @@ vi.mock("convex/react", () => ({
 vi.mock("@/lib/apis/web/base", () => ({
   webPost: async () => ({ ok: true, storageId: "answer" }),
 }));
-vi.mock("@/lib/use-extension-launch-health", async (original) => ({
-  ...(await original<typeof import("@/lib/use-extension-launch-health")>()),
-  useSettingsLaunchObservation: () => undefined,
-}));
 vi.mock("../use-server-settings", () => ({
   useServerSettingsAvailability: () => ({ available: true, failed: false }),
 }));

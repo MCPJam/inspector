@@ -191,7 +191,6 @@ export function ServerSettingsTabBody({ controller }: ControllerProps) {
       serverId={hostedServerId}
       serverName={server.name}
       launchProfile={settings.launchProfile}
-      launchObservation={settings.launch}
     />
   );
 }

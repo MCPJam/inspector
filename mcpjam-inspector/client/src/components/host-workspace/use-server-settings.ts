@@ -57,6 +57,7 @@ export function useServerSettingsAvailability(
   return {
     available: !!key && current && state.available,
     failed: !!key && current && state.failed,
+    errorCode: current && state.failed ? state.errorCode : undefined,
     errorMessage:
       current && state.failed
         ? describePluginSettingsError(state.errorCode)

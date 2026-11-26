@@ -24,7 +24,6 @@ import {
   isOpenAIApp,
   isOpenAIAppAndMCPApp,
 } from "@/lib/mcp-ui/mcp-apps-utils";
-import { useSettingsLaunchObservation } from "@/lib/use-extension-launch-health";
 import type { ExtensionLaunchProfile } from "@/lib/extension-launch-health";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useServerSettingsAvailability } from "../../host-workspace/use-server-settings";
@@ -194,7 +193,6 @@ export interface ServerDetailController {
   };
   settings: {
     availability: ReturnType<typeof useServerSettingsAvailability>;
-    launch: ReturnType<typeof useSettingsLaunchObservation>;
     scope: ThreadAppScope | null;
     launchProfile: ExtensionLaunchProfile | undefined;
     /** The Settings body mounts once visited and stays mounted. */
@@ -309,12 +307,6 @@ export function useServerDetailController({
   useEffect(() => {
     if (controlledTab === "settings") setSettingsVisited(true);
   }, [controlledTab]);
-  const settingsLaunch = useSettingsLaunchObservation(
-    JSON.stringify([extensionSettingsScope, hostedServerId]),
-    extensionLaunchProfile ?? "chatgpt",
-    isOpen && settingsVisited && !!extensionSettingsScope,
-    settings.failed
-  );
   // Any HTTP server, matching the token section's own guard rather than
   // `useOAuth`: a server that has since had OAuth turned off can still hold
   // stored tokens, or unparseable ones, and "Saved auth data is invalid" has
@@ -540,7 +532,11 @@ export function useServerDetailController({
     void handleSave();
   };
 
-  const showSettings = settings.available || settings.failed;
+  // A failed check proves nothing about settings unless it names a broken
+  // declaration, which its author needs to see; otherwise there is no tab.
+  const showSettings =
+    settings.available ||
+    settings.errorCode?.startsWith("PLUGIN_SETTINGS_") === true;
   const visibleTabs = SERVER_DETAIL_TAB_DEFS.filter((tab) => {
     if (tab.id === "settings") return showSettings;
     if (tab.id === "authorization") return showAuthorization;
@@ -602,7 +598,6 @@ export function useServerDetailController({
     },
     settings: {
       availability: settings,
-      launch: settingsLaunch,
       scope: extensionSettingsScope,
       launchProfile: extensionLaunchProfile,
       showBody: Boolean(

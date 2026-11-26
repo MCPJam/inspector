@@ -12,7 +12,10 @@ const h = vi.hoisted(() => ({
   settingsFailed: false,
   retry: vi.fn(),
   sectionProps: [] as unknown[],
+  track: vi.fn(),
 }));
+
+vi.mock("@/lib/analytics", () => ({ track: h.track }));
 
 vi.mock("../../host-workspace/use-server-settings", () => ({
   useServerSettingsAvailability: (scope: unknown) => ({
@@ -51,6 +54,7 @@ beforeEach(() => {
   h.settingsAvailable = false;
   h.settingsFailed = false;
   h.retry.mockClear();
+  h.track.mockClear();
   h.sectionProps = [];
 });
 
@@ -112,5 +116,22 @@ describe("ServerDetailModal for a plugin's server", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(h.retry).toHaveBeenCalledTimes(1);
+  });
+
+  it("records no Settings launch when its settings check fails", () => {
+    h.settingsFailed = true;
+    render(
+      <ServerDetailModal
+        isOpen
+        plugin={detail}
+        onClose={vi.fn()}
+        projectId="p_1"
+        extensionSettingsScope={scope}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(
+      h.track.mock.calls.filter(([event]) => event === "extension_launch_completed"),
+    ).toEqual([]);
   });
 });
