@@ -661,7 +661,7 @@ function FieldRow({
   );
 }
 
-export function FieldCell({
+function FieldCell({
   field,
   subject,
   mobileOptimized,

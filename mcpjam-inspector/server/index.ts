@@ -73,6 +73,7 @@ import {
   stopRevokedSessionCache,
 } from "./services/revoked-session-cache.js";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
+import { vanityDomainLandingMiddleware } from "./middleware/vanity-domain-landing";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
 import { startLocalHarnessJanitor } from "./utils/harness/local/scratch-janitor.js";
 import { startLocalHarnessRuntimeMaintenance } from "./utils/harness/local/runtime-install.js";
@@ -238,7 +239,6 @@ import {
   ALLOWED_HOSTS,
   CANIUSE_LANDING_HOSTS,
   LOCAL_HARNESS_ENABLED,
-  SCORE_LANDING_HOSTS,
 } from "./config";
 import {
   DEFAULT_DOCUMENT_TITLE_TAG,
@@ -845,25 +845,7 @@ if (process.env.NODE_ENV === "production") {
   // In-app browser redirect (before SPA fallback)
   app.use("/*", inAppBrowserMiddleware);
 
-  // Vanity-domain landing: caniuse.dev (the "Can I use" host-compare showcase)
-  // points at this same service, so send its root straight to the chrome-less
-  // comparison page (no sidebar/nav, NUX-bypassed). Deep links pass through
-  // untouched. Host-gated so app.mcpjam.com and every other domain keep their
-  // normal home.
-  app.use("/*", async (c, next) => {
-    const host = (c.req.header("Host") ?? "").toLowerCase().split(":")[0];
-    if (CANIUSE_LANDING_HOSTS.has(host) && c.req.path === "/") {
-      const { search } = new URL(c.req.url);
-      return c.redirect(`/compare${search}`, 302);
-    }
-    // score.mcpjam.com rides the same service: its root lands on the
-    // conformance-score runner. `/results/<token>` deep links fall through so
-    // a shared result opens directly.
-    if (SCORE_LANDING_HOSTS.has(host) && c.req.path === "/") {
-      return c.redirect("/embed/score", 302);
-    }
-    return next();
-  });
+  app.use("/*", vanityDomainLandingMiddleware);
 
   // Serve all static files from client root (images, svgs, etc.)
   // This handles files like /mcp_jam_light.png, /favicon.ico, etc.
