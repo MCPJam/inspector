@@ -5623,8 +5623,8 @@ const runLocalIteration = async ({
       buildSinks: makeSinks,
     });
     const stepState = createStepExecutionState(
-    collectToolDeclarations(mcpClientManager, selectedServers),
-  );
+      collectToolDeclarations(mcpClientManager, selectedServers),
+    );
     const stepOutcome = await executeSteps({
       steps,
       state: stepState,

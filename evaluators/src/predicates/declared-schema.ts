@@ -1,3 +1,4 @@
+import { canonicalJson } from "../contract/canonical.js";
 import { validateAgainstSchema } from "./schema-validation.js";
 import type {
   TranscriptToolDeclaration,
@@ -38,7 +39,9 @@ export function checkDeclaredSchemas(
   const ambiguous = new Set<string>();
   const seen = new Map<string, string>();
   for (const tool of declarations) {
-    const shape = JSON.stringify(tool.outputSchema ?? null);
+    // Key order is not meaning: two servers with the same schema written
+    // in a different order are not ambiguous.
+    const shape = canonicalJson(tool.outputSchema ?? null);
     const earlier = seen.get(tool.name);
     if (earlier !== undefined && earlier !== shape) ambiguous.add(tool.name);
     seen.set(tool.name, shape);
