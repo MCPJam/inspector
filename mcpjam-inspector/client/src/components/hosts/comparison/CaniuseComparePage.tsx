@@ -171,7 +171,7 @@ export function CaniuseComparePage() {
       buildHostCompareSnapshot({
         totalSelectableHosts: clients.length,
         selectedHosts: selected,
-        capabilityFields: matchingFields,
+        capabilityFields: matrixFields,
         viewMode: "table",
         searchQuery: query,
         supportFilter: "all",
