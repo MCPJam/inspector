@@ -602,6 +602,118 @@ describe("poll discipline", () => {
     expect(reads.calls).toHaveLength(1);
   });
 
+  it("says input-required, not timeout, when the short wait runs into the deadline", async () => {
+    const clock = controlledClock();
+    const legacy = { serverId: "srv", wire: "legacy", taskId: "t1" } as const;
+    // Default wait (nobody here can answer) and less time left than the wait:
+    // the task still needs input, and exit 6 is what says so.
+    const getResult = vi.fn(() => new Promise<never>(() => undefined));
+    const result = await driveTaskToTerminal({
+      identity: legacy,
+      getTask: async () => ({ status: "input_required" }),
+      getResult,
+      now: clock.now,
+      sleep: async (ms) => clock.advance(ms),
+      engine: new TaskLifecycleEngine({ now: clock.now }),
+      timeoutMs: 30,
+    });
+    expect(result.outcome).toBe("input-required");
+    expect(getResult).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends the call again when it drops on a drive that waits for an answer", async () => {
+    const clock = controlledClock();
+    const legacy = { serverId: "srv", wire: "legacy", taskId: "t1" } as const;
+    const reads = scriptedReads([
+      { status: "input_required" },
+      { status: "input_required" },
+      { status: "completed" },
+    ]);
+    // A dropped stream carries no numeric code and is not our timeout: the
+    // drive backs off and asks again rather than ending as `timeout`.
+    const getResult = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new Error("closed"), { code: "CONNECTION_CLOSED" })
+      )
+      .mockResolvedValueOnce({ content: [{ type: "text", text: "booked" }] });
+    const result = await driveTaskToTerminal({
+      identity: legacy,
+      getTask: reads.getTask,
+      getResult,
+      inputRequiredResultWaitMs: Number.POSITIVE_INFINITY,
+      now: clock.now,
+      sleep: async (ms) => clock.advance(ms),
+      engine: new TaskLifecycleEngine({ now: clock.now }),
+      timeoutMs: 10 * 60_000,
+    });
+    expect(result.outcome).toBe("completed");
+    expect(result.task?.result).toEqual({
+      content: [{ type: "text", text: "booked" }],
+    });
+    expect(getResult).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the result that call returned when the next read cannot confirm it", async () => {
+    const clock = controlledClock();
+    const legacy = { serverId: "srv", wire: "legacy", taskId: "t1" } as const;
+    let reads = 0;
+    // The server answers the call with the result, then drops the task: the
+    // follow-up read gets -32602. The result is in hand, so it is not lost.
+    const result = await driveTaskToTerminal({
+      identity: legacy,
+      getTask: async () => {
+        reads += 1;
+        if (reads === 1) return { status: "input_required" };
+        throw Object.assign(new Error("unknown task"), { code: -32602 });
+      },
+      getResult: async () => ({ content: [{ type: "text", text: "booked" }] }),
+      now: clock.now,
+      sleep: async (ms) => clock.advance(ms),
+      engine: new TaskLifecycleEngine({ now: clock.now }),
+      timeoutMs: 10 * 60_000,
+    });
+    expect(result.outcome).toBe("completed");
+    expect(result.task?.result).toEqual({
+      content: [{ type: "text", text: "booked" }],
+    });
+  });
+
+  it("sends no input call when told to skip it, and passes the signal otherwise", async () => {
+    const clock = controlledClock();
+    const legacy = { serverId: "srv", wire: "legacy", taskId: "t1" } as const;
+    const getResult = vi.fn(() => new Promise<never>(() => undefined));
+    const skipped = await driveTaskToTerminal({
+      identity: legacy,
+      getTask: async () => ({ status: "input_required" }),
+      getResult,
+      skipInputRequiredResultCall: true,
+      now: clock.now,
+      sleep: async (ms) => clock.advance(ms),
+      engine: new TaskLifecycleEngine({ now: clock.now }),
+      timeoutMs: 10 * 60_000,
+    });
+    expect(skipped.outcome).toBe("input-required");
+    expect(getResult).not.toHaveBeenCalled();
+
+    const controller = new AbortController();
+    await driveTaskToTerminal({
+      identity: legacy,
+      getTask: async () => ({ status: "input_required" }),
+      getResult,
+      inputRequiredResultWaitMs: 20,
+      signal: controller.signal,
+      now: clock.now,
+      sleep: async (ms) => clock.advance(ms),
+      engine: new TaskLifecycleEngine({ now: clock.now }),
+      timeoutMs: 10 * 60_000,
+    });
+    expect(getResult).toHaveBeenCalledWith(legacy, {
+      timeoutMs: 20,
+      signal: controller.signal,
+    });
+  });
+
   it("uses the result that call returned and does not fetch it twice", async () => {
     const clock = controlledClock();
     const legacy = { serverId: "srv", wire: "legacy", taskId: "t1" } as const;

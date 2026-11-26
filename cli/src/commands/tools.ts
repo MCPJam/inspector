@@ -26,6 +26,7 @@ import {
 import {
   assertWireCapability,
   buildTaskInputDriverOptions,
+  legacyInputResultCallFor,
   detectCreatedTask,
   driveTaskWatch,
   parseTasksWireOption,
@@ -328,8 +329,14 @@ async function runTaskAugmentedToolCall(args: {
       collectors: [collector],
     });
 
+  const inputConfig = host ? applyHostToConfig(config, host.connection) : config;
   const input = buildTaskInputDriverOptions({
-    config: host ? applyHostToConfig(config, host.connection) : config,
+    config: inputConfig,
+    interactive: options.interactive,
+    yes: options.yes,
+  });
+  const legacyInputCall = legacyInputResultCallFor({
+    config: inputConfig,
     interactive: options.interactive,
     yes: options.yes,
   });
@@ -475,6 +482,7 @@ async function runTaskAugmentedToolCall(args: {
           taskId,
           tuning: taskWatchTuningFrom(options),
           ...(input ? { input } : {}),
+          legacyInputCall,
           signal,
           ...(onState ? { onState } : {}),
         });

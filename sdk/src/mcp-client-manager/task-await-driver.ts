@@ -38,6 +38,7 @@ import {
   type TaskInputDriverOptions,
   type TaskInputRejection,
 } from "./task-input-driver.js";
+import { isRequestTimeoutError } from "../conformance-timeout.js";
 
 /** How the drive ended. Every one is deterministic and reportable. */
 export type TaskAwaitOutcome =
@@ -95,11 +96,11 @@ export interface DriveTaskToTerminalArgs {
     identity: TaskLifecycleIdentity,
     /**
      * Set only on the call sent while the task asks for input: how long that
-     * request may stay open. Pass it on as the request's own timeout, so the
-     * request ends (and is cancelled) at that bound instead of at the client's
-     * default request timeout.
+     * request may stay open, and the drive's signal. Pass both on to the
+     * request, so it ends (and is cancelled) at that bound or when the drive
+     * is interrupted, not at the client's default request timeout.
      */
-    options?: { timeoutMs: number }
+    options?: { timeoutMs: number; signal?: AbortSignal }
   ) => Promise<Record<string, unknown> | null>;
   /** Submits input responses. Resolving means the server acknowledged them. */
   updateTask?: (
@@ -120,6 +121,15 @@ export interface DriveTaskToTerminalArgs {
    * capped, finite value is what `getResult` gets as its `timeoutMs`.
    */
   inputRequiredResultWaitMs?: number;
+  /**
+   * LEGACY only: do not send that `tasks/result` at all. For a connection that
+   * declares an input capability (`elicitation`, `sampling`, `roots`) with
+   * nothing behind it to answer: a server may then ask over the call, get a
+   * refusal, and end the task the user meant to answer later. A client that
+   * declares none of them cannot be asked (2025-11-25 `basic/lifecycle.mdx`:
+   * only negotiated capabilities are used), so the call is safe there.
+   */
+  skipInputRequiredResultCall?: boolean;
   /** Total wall-clock budget. The whole drive, not a single read. */
   timeoutMs?: number;
   /** Consecutive failed reads tolerated before giving up. */
@@ -216,7 +226,7 @@ export async function driveTaskToTerminal(
       return { outcome: "aborted", task: engine.snapshot(identity) };
     }
     if (now() >= deadline) {
-      return { outcome: "timeout", task: engine.snapshot(identity), lastError };
+      return orEarly({ outcome: "timeout", task: engine.snapshot(identity), lastError });
     }
 
     // Checked before EVERY dispatch, not just the first. On a shared engine an
@@ -240,11 +250,11 @@ export async function driveTaskToTerminal(
     }
     if (existing && existing.nextPollAt > now()) {
       if (!(await waitUntilDue())) {
-        return {
+        return orEarly({
           outcome: "timeout",
           task: engine.snapshot(identity),
           lastError,
-        };
+        });
       }
       continue;
     }
@@ -258,11 +268,11 @@ export async function driveTaskToTerminal(
       // Somebody else is mid-read on this exact handle. Wait for their result
       // rather than issuing a duplicate of it.
       if (!(await waitUntilDue())) {
-        return {
+        return orEarly({
           outcome: "timeout",
           task: engine.snapshot(identity),
           lastError,
-        };
+        });
       }
       continue;
     }
@@ -271,11 +281,11 @@ export async function driveTaskToTerminal(
     try {
       const bounded = await leasedRead(existing !== undefined);
       if (bounded === TIMED_OUT) {
-        return {
+        return orEarly({
           outcome: "timeout",
           task: engine.snapshot(identity),
           lastError,
-        };
+        });
       }
       if (bounded === ABORTED) {
         return { outcome: "aborted", task: engine.snapshot(identity) };
@@ -289,7 +299,7 @@ export async function driveTaskToTerminal(
         engine.markExpired(identity);
         const expired = engine.snapshot(identity);
         if (expired) args.onState?.(expired);
-        return { outcome: "expired", task: expired };
+        return orEarly({ outcome: "expired", task: expired });
       }
       // A 429/503's `Retry-After` — when any layer preserved it on the error —
       // becomes the engine's scheduling floor, so the next `waitUntilDue`
@@ -298,19 +308,19 @@ export async function driveTaskToTerminal(
         retryAfterMs: retryAfterMsFromError(error, now()),
       });
       if (record.consecutiveErrors >= maxErrors) {
-        return {
+        return orEarly({
           outcome: "unreachable",
           task: engine.snapshot(identity),
           lastError,
-        };
+        });
       }
       const waited = await waitUntilDue();
       if (!waited) {
-        return {
+        return orEarly({
           outcome: "timeout",
           task: engine.snapshot(identity),
           lastError,
-        };
+        });
       }
       continue;
     }
@@ -331,18 +341,39 @@ export async function driveTaskToTerminal(
       if (
         identity.wire === "legacy" &&
         args.getResult &&
+        !args.skipInputRequiredResultCall &&
         !resultCalledForInput
       ) {
         resultCalledForInput = true;
-        const moved = await callResultForInput();
-        if (moved === ABORTED) return { outcome: "aborted", task: snapshot };
+        const call = await callResultForInput();
+        if (call === ABORTED) return { outcome: "aborted", task: snapshot };
         // The drive ran out of time while the call was open: that is a
         // timeout, not a task nobody can answer.
-        if (moved === TIMED_OUT) {
-          return { outcome: "timeout", task: snapshot, lastError };
+        if (call === TIMED_OUT) {
+          return orEarly({ outcome: "timeout", task: snapshot, lastError });
         }
         // The server answered the call, so the task in hand is stale.
-        if (moved) continue;
+        if (call === "moved") continue;
+        if (call === "retry") {
+          // The call failed on its own (a dropped stream) before any bound,
+          // on a drive that waits for an answer: back off like a failed read,
+          // then read the task and send the call again.
+          resultCalledForInput = false;
+          const record = engine.observeError(identity, {
+            retryAfterMs: retryAfterMsFromError(lastError, now()),
+          });
+          if (record.consecutiveErrors >= maxErrors) {
+            return { outcome: "unreachable", task: snapshot, lastError };
+          }
+          if (!(await waitUntilDue())) {
+            return {
+              outcome: "timeout",
+              task: engine.snapshot(identity),
+              lastError,
+            };
+          }
+          continue;
+        }
       }
       // No handlers, or no way to submit ⇒ this is exactly the deterministic
       // outcome the plan asks for, rather than a hang.
@@ -500,42 +531,73 @@ export async function driveTaskToTerminal(
   /**
    * Legacy: the one `tasks/result` sent while the task asks for input.
    *
-   * - `true`: the server answered it, with a result or with a JSON-RPC error.
-   *   Either way the task has moved and must be read again.
-   * - `false`: no answer within the short input wait (the request timed out
-   *   or the connection dropped). That is what a parked task looks like.
-   * - `TIMED_OUT`: no answer before the drive's own deadline.
+   * - `"moved"`: the server answered it, with a result or with a JSON-RPC
+   *   error. Either way the task has moved and must be read again.
+   * - `"parked"`: no answer, and nobody here waits for one: the short default
+   *   wait ended, or the call failed. The task is parked.
+   * - `"retry"`: the call failed on its own (no numeric code, not our
+   *   timeout) on a drive that waits for an answer.
+   * - `TIMED_OUT`: a drive that waits for an answer ran out of time.
    */
   async function callResultForInput(): Promise<
-    boolean | typeof ABORTED | typeof TIMED_OUT
+    "moved" | "parked" | "retry" | typeof ABORTED | typeof TIMED_OUT
   > {
     const remainingMs = deadline - now();
     if (remainingMs <= 0) return TIMED_OUT;
-    const requestedMs =
-      args.inputRequiredResultWaitMs ?? DEFAULT_INPUT_REQUIRED_RESULT_WAIT_MS;
-    const waitMs = Math.min(requestedMs, remainingMs);
-    // When the deadline is the tighter bound, a call it ends is a timeout.
-    const unanswered = () =>
-      requestedMs >= remainingMs || now() >= deadline ? TIMED_OUT : false;
+    // Only a caller that asked to wait for an answer can run into the
+    // deadline. With the short default, an unanswered call means "nobody here
+    // can answer", whichever bound was tighter.
+    const callerWaitMs = args.inputRequiredResultWaitMs;
+    const waitMs = Math.min(
+      callerWaitMs ?? DEFAULT_INPUT_REQUIRED_RESULT_WAIT_MS,
+      remainingMs
+    );
+    const deadlineBound =
+      callerWaitMs !== undefined && callerWaitMs >= remainingMs;
+    const boundEnded = () => (deadlineBound ? TIMED_OUT : "parked");
     try {
       const fetched = await raceDeadline(
-        args.getResult!(identity, { timeoutMs: waitMs }),
+        args.getResult!(identity, {
+          timeoutMs: waitMs,
+          ...(args.signal ? { signal: args.signal } : {}),
+        }),
         waitMs
       );
       if (fetched === ABORTED) return ABORTED;
-      if (fetched === TIMED_OUT) return unanswered();
+      if (fetched === TIMED_OUT) return boundEnded();
       earlyResult = { value: fetched };
-      return true;
+      return "moved";
     } catch (error) {
       if (args.signal?.aborted) return ABORTED;
       // A numeric code is a JSON-RPC error, so the server answered: the task
-      // ended without completing, and the next read says how. No numeric code
-      // is our own request timeout or a dropped connection: no answer.
+      // ended without completing, and the next read says how. This client's
+      // own errors carry string codes (`REQUEST_TIMEOUT`, `CONNECTION_CLOSED`,
+      // an HTTP failure's `CLIENT_HTTP_*`).
       const code = (error as { code?: unknown } | null)?.code;
-      if (typeof code === "number") return true;
+      if (typeof code === "number") return "moved";
       lastError = error;
-      return unanswered();
+      // Our own bound, raised by the request instead of by the race.
+      if (isRequestTimeoutError(error)) return boundEnded();
+      return callerWaitMs !== undefined ? "retry" : "parked";
     }
+  }
+
+  /**
+   * After the input call returned the task's result, an exit that cannot
+   * confirm the status must not drop that result. The server only answers
+   * `tasks/result` once the task has ended (tasks.mdx:465), so the task is
+   * settled from it: `failed` when the tool result is an error, as the
+   * 2025-11-25 statuses define it, else `completed`.
+   */
+  function orEarly(result: TaskAwaitResult): TaskAwaitResult {
+    if (!earlyResult || earlyResult.value === null) return result;
+    const value = earlyResult.value;
+    const status = value.isError === true ? "failed" : "completed";
+    const last = result.task ?? engine.snapshot(identity);
+    return {
+      outcome: status,
+      ...(last ? { task: { ...last, status, result: value } } : {}),
+    };
   }
 
   /**

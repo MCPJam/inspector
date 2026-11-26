@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { MCPServerConfig, TaskAwaitOutcome } from "@mcpjam/sdk";
+import type { MCPClientManager, TasksSupport } from "@mcpjam/sdk";
 import {
   abortedDuringResultFetch,
   buildTaskInputDriverOptions,
   detectCreatedTask,
+  driveTaskWatch,
+  legacyInputResultCallFor,
   parseTasksWireOption,
   taskWatchExitCode,
 } from "../src/lib/tasks-cli.js";
@@ -368,4 +371,110 @@ test("abortedDuringResultFetch reclassifies only a real interrupt", () => {
   for (const outcome of ["failed", "timeout", "input-required", "aborted"]) {
     assert.equal(abortedDuringResultFetch({ ...base, outcome }), false);
   }
+});
+
+test("legacyInputResultCallFor waits only when the run can prompt", () => {
+  // The 2025-11-25 `tasks/result` call is where the server sends its
+  // question. Holding it open is only worth it when someone can answer.
+  assert.equal(
+    legacyInputResultCallFor({
+      config: httpConfig,
+      interactive: true,
+      stdinIsTTY: true,
+      env: {},
+    }),
+    "wait",
+  );
+  // Nothing declared that a server could ask for: a short call is safe.
+  assert.equal(
+    legacyInputResultCallFor({ config: httpConfig, stdinIsTTY: true, env: {} }),
+    "short",
+  );
+});
+
+test("legacyInputResultCallFor skips the call when a question would be refused", () => {
+  // `--interactive` that cannot prompt declares `elicitation` but declines,
+  // and a `--host`/`--client-capabilities` set can declare it with no
+  // handler at all. Either way a server that asks may end the task, and
+  // `--yes` promises exit 6.
+  const cannotAnswer = [
+    { interactive: true, yes: true, stdinIsTTY: true, env: {} },
+    { interactive: true, stdinIsTTY: false, env: {} },
+    {
+      config: {
+        ...httpConfig,
+        clientCapabilities: { elicitation: {} },
+      } as MCPServerConfig,
+      stdinIsTTY: true,
+      env: {},
+    },
+  ];
+  for (const scenario of cannotAnswer) {
+    assert.equal(
+      legacyInputResultCallFor({ config: httpConfig, ...scenario }),
+      "skip",
+      JSON.stringify(scenario),
+    );
+  }
+});
+
+const legacySupport = {
+  wire: "legacy",
+  toolCalls: true,
+  list: false,
+  cancel: true,
+  update: false,
+  inlineResult: false,
+} as TasksSupport;
+
+/** A legacy task parked on `input_required`, and every `tasks/result` sent. */
+function parkedLegacyManager() {
+  const resultCalls: unknown[] = [];
+  const manager = {
+    getTask: async () => ({
+      taskId: "t-1",
+      status: "input_required",
+      createdAt: "2026-11-26T00:00:00Z",
+      lastUpdatedAt: "2026-11-26T00:00:00Z",
+      ttl: 60_000,
+    }),
+    getTaskResult: (_serverId: string, _taskId: string, options?: unknown) => {
+      resultCalls.push(options);
+      return new Promise<never>(() => undefined);
+    },
+  } as unknown as MCPClientManager;
+  return { manager, resultCalls };
+}
+
+test("driveTaskWatch holds the input call for what is left of the watch", async () => {
+  const { manager, resultCalls } = parkedLegacyManager();
+  const envelope = await driveTaskWatch({
+    manager,
+    serverId: "srv",
+    support: legacySupport,
+    taskId: "t-1",
+    tuning: { durationMs: 50 },
+    legacyInputCall: "wait",
+  });
+  // The request carries its own finite timeout, so the default `--timeout`
+  // cannot end it while the user is answering.
+  assert.equal(resultCalls.length, 1);
+  const options = resultCalls[0] as { timeout?: number };
+  assert.ok(Number.isFinite(options.timeout), JSON.stringify(options));
+  assert.ok((options.timeout ?? 0) <= 50, JSON.stringify(options));
+  assert.equal(envelope.outcome, "timeout");
+});
+
+test("driveTaskWatch sends no input call when it would refuse the question", async () => {
+  const { manager, resultCalls } = parkedLegacyManager();
+  const envelope = await driveTaskWatch({
+    manager,
+    serverId: "srv",
+    support: legacySupport,
+    taskId: "t-1",
+    tuning: { durationMs: 10_000 },
+    legacyInputCall: "skip",
+  });
+  assert.equal(resultCalls.length, 0);
+  assert.equal(envelope.outcome, "input-required");
 });

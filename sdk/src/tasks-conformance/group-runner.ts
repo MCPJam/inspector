@@ -1,5 +1,6 @@
 import { namesTasksExtension, errorCode } from "./metadata.js";
 import { isTasksToolCheck, taskCheckUsesInput } from "./types.js";
+import { canDeclareTasksExtension } from "../mcp-client-manager/task-input-driver.js";
 
 import type { RpcLogEvent } from "../mcp-client-manager/index.js";
 
@@ -117,6 +118,21 @@ export class TaskGroupRunner extends TaskOperations {
       this.config.serverConfig,
       inputAnswers
     );
+    // A run that declares an input capability with nothing behind it to
+    // answer (an Inspector host profile with `elicitation`, and no answers in
+    // setup) does not make the call: a server would ask over it, get Method
+    // not found, and may end the task. Without the declaration a conforming
+    // server cannot ask (2025-11-25 `basic/lifecycle.mdx`: only negotiated
+    // capabilities are used), so the call is safe.
+    const declared =
+      (serverConfig as { clientCapabilities?: Record<string, unknown> })
+        .clientCapabilities ?? serverConfig.capabilities;
+    const unanswerable = canDeclareTasksExtension(declared as never, {});
+    const refusesQuestions =
+      !unanswerable.ok &&
+      unanswerable.missing.some(
+        (method) => !(inputAnswers && method === "elicitation/create")
+      );
 
     try {
       return await withTasksClient(
@@ -533,7 +549,7 @@ export class TaskGroupRunner extends TaskOperations {
                       inputRequiredTask ??= task;
                       // 2025-11-25 answers over `tasks/result`, not `tasks/update`.
                       if (wire !== "extension") {
-                        if (wire !== "legacy") return false;
+                        if (wire !== "legacy" || refusesQuestions) return false;
                         const next = await resultLeg.run(
                           manager,
                           serverId,

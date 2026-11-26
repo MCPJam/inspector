@@ -7,6 +7,7 @@ import {
   legacyTaskToObservation,
   LEGACY_TASK_STATUSES,
   TaskLifecycleEngine,
+  type DriveTaskToTerminalArgs,
   type MCPClientManager,
   type MCPServerConfig,
   type TaskAwaitOutcome,
@@ -324,6 +325,8 @@ export interface DriveTaskWatchArgs {
   taskId: string;
   tuning?: TaskWatchTuning;
   input?: TaskInputDriverOptions;
+  /** 2025-11-25 only: see {@link legacyInputResultCallFor}. Default `"short"`. */
+  legacyInputCall?: LegacyInputResultCall;
   signal?: AbortSignal;
   onState?: (snapshot: TaskLifecycleSnapshot) => void;
 }
@@ -378,14 +381,20 @@ export async function driveTaskWatch(
     ...(extension
       ? {}
       : {
-          // `timeoutMs` is set on the call sent for input. It becomes the
-          // request's own timeout, so the default `--timeout` (30 s) cannot
-          // end that call while the user is still answering.
+          // `options` is set on the call sent for input. Its `timeoutMs`
+          // becomes the request's own timeout, so the default `--timeout`
+          // (30 s) cannot end that call while the user is still answering, and
+          // its `signal` ends the request when the watch is interrupted.
           getResult: async (_identity, options) =>
             (await manager.getTaskResult(
               serverId,
               taskId,
-              options ? { timeout: options.timeoutMs } : undefined,
+              options
+                ? {
+                    timeout: options.timeoutMs,
+                    ...(options.signal ? { signal: options.signal } : {}),
+                  }
+                : undefined,
             )) as Record<string, unknown> | null,
         }),
     // Extension only, and not an omission: `tasks/update` does not exist on
@@ -395,14 +404,9 @@ export async function driveTaskWatch(
     // the poll loop has nothing to answer and nothing to answer it with. What
     // the driver does send there is the one `tasks/result` 2025-11-25 asks for
     // on `input_required` (tasks.mdx:449): the open call the server delivers
-    // its question on. With `--interactive` a handler can answer that question,
-    // so the call may stay open until the watch's deadline (the driver caps
-    // `POSITIVE_INFINITY` at what is left of `--duration-ms`). Without it the
-    // call is short and the driver then reports `input_required` — a
-    // deterministic exit 6 beats a timeout that looks like a hang.
-    ...(!extension && args.input
-      ? { inputRequiredResultWaitMs: Number.POSITIVE_INFINITY }
-      : {}),
+    // its question on. How long it stays open, or whether it is sent at all,
+    // is `legacyInputCall` (see `legacyInputResultCallFor`).
+    ...(extension ? {} : legacyInputCallDriverOptions(args.legacyInputCall)),
     ...(extension
       ? {
           updateTask: async (_identity, inputResponses) => {
@@ -478,6 +482,62 @@ export function abortedDuringResultFetch(args: {
     args.hasLastError &&
     !args.hasResult
   );
+}
+
+/**
+ * How a 2025-11-25 watch sends the `tasks/result` call when its task asks for
+ * input (tasks.mdx:449). On that wire the server sends its question on the
+ * open call, so what the call does depends on whether this run can answer:
+ *
+ * - `"wait"`: `--interactive` with a terminal to prompt on. The call stays
+ *   open until the watch's deadline, so the question can arrive and be
+ *   answered.
+ * - `"skip"`: the connection declares an input capability with nothing here
+ *   to answer it (`--host`/`--client-capabilities` without `--interactive`,
+ *   or `--interactive` that cannot prompt: `--yes`, no TTY). A server would
+ *   ask, get a refusal or an automatic decline, and may end the task. No
+ *   call, so the watch exits 6 and the task stays answerable.
+ * - `"short"`: nothing that a server could ask for is declared, so it cannot
+ *   ask. The call is held 5 s, then the watch exits 6.
+ */
+export type LegacyInputResultCall = "wait" | "short" | "skip";
+
+export function legacyInputResultCallFor(
+  args: Omit<BuildTaskInputDriverOptionsArgs, "collectorOptions">,
+): LegacyInputResultCall {
+  const interactive = args.interactive === true;
+  if (
+    interactive &&
+    !resolveNonInteractive({
+      yes: args.yes,
+      stdinIsTTY: args.stdinIsTTY ?? Boolean(process.stdin.isTTY),
+      ...(args.env ? { env: args.env } : {}),
+    })
+  ) {
+    return "wait";
+  }
+  // The same declared set `buildTaskInputDriverOptions` checks: with
+  // `--interactive` the connection also declares `elicitation`.
+  const resolved = interactive
+    ? applyInteractiveElicitationCapability(args.config)
+    : args.config;
+  const declared =
+    (resolved as { clientCapabilities?: Record<string, unknown> })
+      .clientCapabilities ?? resolved.capabilities;
+  return canDeclareTasksExtension(declared as never, {}).ok ? "short" : "skip";
+}
+
+function legacyInputCallDriverOptions(
+  call: LegacyInputResultCall = "short",
+): Pick<
+  DriveTaskToTerminalArgs,
+  "inputRequiredResultWaitMs" | "skipInputRequiredResultCall"
+> {
+  // The driver caps `POSITIVE_INFINITY` at what is left of `--duration-ms`.
+  if (call === "wait") {
+    return { inputRequiredResultWaitMs: Number.POSITIVE_INFINITY };
+  }
+  return call === "skip" ? { skipInputRequiredResultCall: true } : {};
 }
 
 export interface BuildTaskInputDriverOptionsArgs {

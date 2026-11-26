@@ -57,6 +57,7 @@ import {
 import {
   assertWireCapability,
   buildTaskInputDriverOptions,
+  legacyInputResultCallFor,
   driveTaskWatch,
   getTaskForWire,
   parseTasksWireOption,
@@ -778,6 +779,11 @@ function registerTaskWatch(tasks: Command): void {
       interactive: options.interactive,
       yes: options.yes,
     });
+    const legacyInputCall = legacyInputResultCallFor({
+      config,
+      interactive: options.interactive,
+      yes: options.yes,
+    });
     const onState = watchStateReporter(globalOptions);
 
     // `withWatchSignals` goes INSIDE the connect, not around it. Its listeners
@@ -804,6 +810,7 @@ function registerTaskWatch(tasks: Command): void {
               taskId,
               tuning: taskWatchTuningFrom(options),
               ...(input ? { input } : {}),
+              legacyInputCall,
               signal,
               ...(onState ? { onState } : {}),
             }),

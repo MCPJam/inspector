@@ -699,6 +699,39 @@ describe("2025-11-25, answers configured: the client answers over tasks/result",
     expect(check(result, "tasks-ttl-shape").status).toBe("passed");
   });
 
+  it("does not finish a real task in a group that does not answer, when the server asks anyway", async () => {
+    // The server asks although nothing declared elicitation. This group
+    // answers nothing, so the SDK says Method not found and the fixture fails
+    // the task: ended, never driven to its side effect. TTL Shape still
+    // grades what it read.
+    const fixture = await serveParkedTask({ onResult: "ask" });
+    const result = await run(fixture, {
+      pollTimeoutMs: 1_500,
+      checkIds: ["tasks-ttl-shape"],
+    });
+
+    expect(resultCalls(fixture)).toBe(1);
+    expect(fixture.answers).toHaveLength(1);
+    expect(fixture.answers[0].error?.code).toBe(-32601);
+    expect(check(result, "tasks-ttl-shape").status).toBe("passed");
+  });
+
+  it("makes no call when the run declares elicitation and has nothing to answer with", async () => {
+    // An Inspector host profile can declare elicitation while setup has no
+    // answers. A server would ask over the call and be refused, which can end
+    // the task, so the run does not make the call.
+    const fixture = await serveParkedTask({ onResult: "ask" });
+    const result = await run(fixture, {
+      pollTimeoutMs: 1_000,
+      clientCapabilities: { elicitation: {} },
+    });
+
+    expect(resultCalls(fixture)).toBe(0);
+    expect(fixture.answers).toEqual([]);
+    expect(check(result, "tasks-ttl-shape").status).toBe("passed");
+    expect(verdict(result, "tasks-inline-result")).toEqual(COULD_NOT_RUN);
+  });
+
   it("answers two questions on one held call, each with the answer that fits it", async () => {
     const fixture = await serveParkedTask({
       onResult: "ask",
