@@ -2183,10 +2183,17 @@ describe("ChatInput", () => {
     // callback from the render where it started. A send can clear the
     // composer in between.
     const item = (name: string) => ({ name });
-    const renderLate = (overrides: Record<string, unknown>) => {
+    const renderLate = (overrides: Record<string, unknown>, caret?: number) => {
       const onChange = vi.fn();
       const props = { ...defaultProps, onChange, ...overrides };
       const view = render(<ChatInput {...props} />);
+      // The picker opened at the "/" the user just typed.
+      const field = screen.getByPlaceholderText(
+        "Type your message...",
+      ) as HTMLTextAreaElement;
+      const at = caret ?? props.value.length;
+      field.setSelectionRange(at, at);
+      fireEvent.keyUp(field);
       return {
         onChange,
         rerender: (next: Record<string, unknown>) =>
@@ -2224,6 +2231,29 @@ describe("ChatInput", () => {
         expect(onChange).toHaveBeenLastCalledWith("");
       },
     );
+
+    it("removes the slash from the middle of a draft a send shortened", () => {
+      const { onChange, rerender } = renderLate({ value: "first / tail" }, 8);
+      const pickLater = promptsPopover.props!.onSkillSelected;
+
+      rerender({ value: "/ tail" });
+      act(() => pickLater(item("picked")));
+
+      expect(onChange).toHaveBeenLastCalledWith("tail");
+    });
+
+    it.each([
+      ["a different draft", "https://example.com/path/"],
+      ["a box the send emptied with its slash", ""],
+    ])("leaves %s alone when the pick lands", (_case, draft) => {
+      const { onChange, rerender } = renderLate({ value: "first /" });
+      const pickLater = promptsPopover.props!.onSkillSelected;
+
+      rerender({ value: draft });
+      act(() => pickLater(item("picked")));
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
 
     it("updates a skill whose files load after other skills were added", () => {
       const setList = vi.fn();

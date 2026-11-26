@@ -867,15 +867,16 @@ export function ChatInput({
     setCaretIndex(end);
   }, [moveCaretToEndTrigger]);
 
-  // Remove the "/" that opened the picker. A pick lands after its fetch, when
-  // a send may have changed the box: use the click's caret only if the text
-  // is still the one it was in.
+  // Remove the "/" that opened the picker. A pick lands after its fetch: a
+  // send may have cleared the text before it, so the box ends with the
+  // click's text. Any other change leaves the box as it is.
   const removeSlashTrigger = useCallback(() => {
     const current = valueRef.current;
-    const caret = current === value ? caretIndex : current.length;
-    onChange(
-      current.slice(0, caret).replace(/\/\s*$/, "") + current.slice(caret),
-    );
+    const trigger = value.slice(0, caretIndex).match(/\/\s*$/);
+    const end = current.length - (value.length - caretIndex);
+    const start = end - (trigger?.[0].length ?? 0);
+    if (!trigger || !value.endsWith(current) || start < 0) return;
+    onChange(current.slice(0, start) + current.slice(end));
   }, [value, caretIndex, onChange]);
 
   const onMCPPromptSelected = useCallback(
