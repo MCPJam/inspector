@@ -44,6 +44,7 @@ export function EvaluatorPreviewPanel({
             Test on recent iterations
           </h3>
           <Button
+            type="button"
             size="sm"
             className="ml-auto"
             disabled={running}
@@ -78,6 +79,7 @@ export function EvaluatorPreviewPanel({
               <VerdictPill size="sm" status={result.status} />
               {onCorrect ? (
                 <Button
+                  type="button"
                   size="sm"
                   variant="ghost"
                   aria-label={`Correct ${result.iterationLabel}`}

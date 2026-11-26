@@ -1,9 +1,11 @@
 import { MAX_JUDGE_INSTRUCTIONS_LENGTH } from "@mcpjam/sdk/contract";
-import { useId, useRef, useState } from "react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { PromptVariable } from "./variable-mapping-table";
 
-const VARIABLE = /\{\{\s*([A-Za-z_]\w*)\s*\}\}/g;
+// The same token grammar the backend's custom-judge parser uses, so every
+// token it would reject on save is flagged here first.
+const VARIABLE = /\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g;
 
 /** Variable names a prompt uses, in order, without repeats. */
 export function usedVariables(value: string): string[] {
@@ -52,16 +54,38 @@ export function PromptEditor({
   const id = useId();
   const ref = useRef<HTMLTextAreaElement>(null);
   const [picking, setPicking] = useState(false);
+  const [noRoom, setNoRoom] = useState<string | null>(null);
+  // Where the {{ that opened the list ends, and where the caret goes once
+  // the inserted token reaches the textarea.
+  const trigger = useRef<number | null>(null);
+  const caretAfterInsert = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const caret = caretAfterInsert.current;
+    if (caret === null || !ref.current) return;
+    caretAfterInsert.current = null;
+    ref.current.setSelectionRange(caret, caret);
+  }, [value]);
   const known = new Set(variables.map((v) => v.name));
   const used = usedVariables(value);
   const unknown = used.filter((name) => !known.has(name));
 
   const insert = (name: string) => {
-    const caret = ref.current?.selectionStart ?? value.length;
+    const caret =
+      trigger.current ?? ref.current?.selectionStart ?? value.length;
     const before = value.slice(0, caret).replace(/\{\{$/, "");
-    onChange(`${before}{{${name}}}${value.slice(caret)}`);
+    const token = `{{${name}}}`;
+    const next = `${before}${token}${value.slice(caret)}`;
     setPicking(false);
     ref.current?.focus();
+    // The picker bypasses maxLength, so check the limit here and leave the
+    // prompt as it was when the token does not fit.
+    if (next.length > MAX_JUDGE_INSTRUCTIONS_LENGTH) {
+      setNoRoom(name);
+      return;
+    }
+    setNoRoom(null);
+    caretAfterInsert.current = before.length + token.length;
+    onChange(next);
   };
 
   return (
@@ -82,7 +106,10 @@ export function PromptEditor({
           const next = event.target.value;
           const caret = event.target.selectionStart;
           onChange(next);
-          setPicking(next.slice(0, caret).endsWith("{{"));
+          setNoRoom(null);
+          const opens = next.slice(0, caret).endsWith("{{");
+          trigger.current = opens ? caret : null;
+          setPicking(opens);
         }}
         onKeyDown={(event) => {
           if (event.key === "Escape") setPicking(false);
@@ -128,6 +155,11 @@ export function PromptEditor({
           <span className="text-destructive">
             Unknown variable: {unknown.join(", ")}. Type {"{{"} to pick one from
             the list.
+          </span>
+        ) : null}
+        {noRoom ? (
+          <span className="text-destructive">
+            No room for {`{{${noRoom}}}`}. Shorten the prompt to add it.
           </span>
         ) : null}
         <span className="ml-auto">
