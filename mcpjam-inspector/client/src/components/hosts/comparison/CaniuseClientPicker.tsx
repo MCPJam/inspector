@@ -134,7 +134,7 @@ export function CaniuseClientPicker({
         <DialogTitle>
           {picker === "add" ? "Add client" : "Replace client"}
         </DialogTitle>
-        <Command>
+        <Command className="bg-transparent text-foreground">
           <CommandInput placeholder="Search clients or surfaces" />
           <CommandList className="max-h-[min(360px,55dvh)]">
             <CommandEmpty>No matching clients.</CommandEmpty>

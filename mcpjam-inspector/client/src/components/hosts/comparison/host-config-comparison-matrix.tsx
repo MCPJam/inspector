@@ -216,6 +216,7 @@ export function HostConfigComparisonMatrix({
         )}
       >
         <table
+          data-caniuse-matrix={summaryColumn ? "" : undefined}
           className={cn(
             "border-collapse text-center text-[13px]",
             mobileOptimized ? "table-fixed min-w-full" : "w-full",
