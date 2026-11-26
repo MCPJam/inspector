@@ -20,6 +20,8 @@
 
 # 🚀 Quick start
 
+[![Protodex Verified](https://img.shields.io/badge/Protodex-Verified_MCP-2DD9E0?style=flat-square&logo=github)](https://protodex.io/servers/MCPJam-inspector.html)
+
 Open the hosted app. No install needed.
 
 👉 **[app.mcpjam.com](https://app.mcpjam.com)**
