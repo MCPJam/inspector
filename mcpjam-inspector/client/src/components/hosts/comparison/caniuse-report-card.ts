@@ -56,6 +56,27 @@ export function shareResultLabel(
   return `${count} with partial support`;
 }
 
+function reportTitleLines(
+  title: string,
+  measure: (text: string) => number,
+  width: number,
+) {
+  if (measure(title) <= width) return [title];
+  const words = title.split(" ");
+  let lines = [title];
+  let widestLine = measure(title);
+  for (let index = 1; index < words.length; index++) {
+    const first = words.slice(0, index).join(" ");
+    const second = words.slice(index).join(" ");
+    const candidate = Math.max(measure(first), measure(second));
+    if (candidate < widestLine) {
+      lines = [first, second];
+      widestLine = candidate;
+    }
+  }
+  return lines;
+}
+
 export async function drawCaniuseReportCard(
   canvas: HTMLCanvasElement,
   title: string,
@@ -129,13 +150,26 @@ export async function drawCaniuseReportCard(
 
   font(600, 23);
   text("CAN I USE MCP", INSET, 57, "--muted-foreground");
+  const titleWidth = 820;
+  const measure = (line: string) => ctx.measureText(line).width;
   font(700, 53);
-  text(title, INSET, 122, "--foreground", 900);
+  const lines = reportTitleLines(title, measure, titleWidth);
+  const titleSize = Math.min(
+    53,
+    Math.floor((53 * titleWidth) / Math.max(...lines.map(measure))),
+  );
+  font(700, titleSize);
+  const titleLineHeight = titleSize + 1;
+  lines.forEach((line, index) =>
+    text(line, INSET, 122 + index * titleLineHeight),
+  );
+  const titleBottom = 122 + (lines.length - 1) * titleLineHeight;
   font(500, 24);
-  if (slice) text(slice, INSET, 157, "--muted-foreground");
+  if (slice) text(slice, INSET, titleBottom + 35, "--muted-foreground");
+  const headerBottom = Math.max(174, titleBottom + (slice ? 52 : 22));
   font(600, 22);
   if (!shown.length)
-    text("No published client results yet.", INSET, 223, "--muted-foreground");
+    text("No published client results yet.", INSET, headerBottom + 49, "--muted-foreground");
   ctx.textAlign = "right";
   font(700, 72);
   text(
@@ -167,19 +201,20 @@ export async function drawCaniuseReportCard(
     (sum, { clients }) => sum + Math.ceil(clients.length / columns),
     0,
   );
-  const groupSpacing = 68;
+  const availableHeight = 544 - headerBottom;
+  const groupSpacing = rows > shown.length ? 60 : 68;
   const tileHeight = Math.min(
     76,
     Math.floor(
-      (370 - groupSpacing * shown.length - 8 * (rows - shown.length)) / Math.max(1, rows),
+      (availableHeight - groupSpacing * shown.length - 8 * (rows - shown.length)) / Math.max(1, rows),
     ),
   );
   let y =
-    174 +
+    headerBottom +
     Math.max(
       0,
       Math.floor(
-        (370 -
+        (availableHeight -
           groupSpacing * shown.length -
           8 * (rows - shown.length) -
           tileHeight * rows) /
@@ -205,7 +240,7 @@ export async function drawCaniuseReportCard(
     );
     font(600, 20);
     text(label, INSET + 36, y + 22);
-    const top = y + 50;
+    const top = y + 45;
     clients.forEach((client, index) => {
       const x = INSET + (index % columns) * (tileWidth + gap);
       const rowY = top + Math.floor(index / columns) * (tileHeight + 8);
@@ -262,7 +297,7 @@ export async function drawCaniuseReportCard(
         ctx.textAlign = "left";
       }
     });
-    y = top + Math.ceil(clients.length / columns) * (tileHeight + 8) + 10;
+    y = top + Math.ceil(clients.length / columns) * (tileHeight + 8) + groupSpacing - 53;
   }
 
   font(500, 19);

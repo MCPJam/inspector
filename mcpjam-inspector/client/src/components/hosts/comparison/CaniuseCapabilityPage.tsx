@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
-import { ArrowUpRight, ChevronDown } from "lucide-react";
+import { ArrowUpRight, ChevronDown, FlaskConical } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
 import { routePaths } from "@/lib/app-navigation";
@@ -213,7 +213,7 @@ export function CaniuseCapabilityPage({
                     aria-current={
                       slug === capability?.slug ? "page" : undefined
                     }
-                    className="rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground aria-[current=page]:bg-accent aria-[current=page]:font-semibold aria-[current=page]:text-accent-foreground"
+                    className="rounded-md border border-transparent px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground aria-[current=page]:border-primary/40 aria-[current=page]:bg-accent aria-[current=page]:font-semibold aria-[current=page]:text-accent-foreground"
                   >
                     {caniuseTitle(field)}
                   </Link>
@@ -223,13 +223,36 @@ export function CaniuseCapabilityPage({
           ))}
         </nav>
         <div className="min-w-0">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <h1 className="min-w-0 break-words text-3xl font-bold tracking-tight sm:text-4xl">
-              {title}
-            </h1>
+          <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
+            <div className="min-w-0 max-w-full flex-[1_1_max-content]">
+              <h1 className="wrap-break-word text-3xl font-bold tracking-tight sm:text-4xl">
+                {title}
+              </h1>
+              {capability && (
+                <p className="mt-2 max-w-[66ch] text-sm leading-6 text-muted-foreground">
+                  {capability.field.description}
+                  {SOURCES[capability.field.id] && (
+                    <>
+                      {" "}
+                      <a
+                        className="inline-flex items-center gap-1 font-medium text-foreground underline decoration-primary/70 underline-offset-4"
+                        href={SOURCES[capability.field.id]}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {capability.field.id === "eventsDeliveryModes"
+                          ? "Read proposal"
+                          : "Read specification"}{" "}
+                        <ArrowUpRight className="size-3" />
+                      </a>
+                    </>
+                  )}
+                </p>
+              )}
+            </div>
             {capability && coverage && (
               <div className="flex flex-wrap items-center gap-2">
-                <Button asChild variant="outline">
+                <Button asChild variant="outline" size="sm" className="h-9">
                   <a
                     href={`https://app.mcpjam.com${
                       capability.field.id === "eventsDeliveryModes"
@@ -237,7 +260,7 @@ export function CaniuseCapabilityPage({
                         : routePaths.playground
                     }`}
                   >
-                    Test this capability <ArrowUpRight className="size-4" />
+                    <FlaskConical className="size-4" /> Test this capability
                   </a>
                 </Button>
                 <CaniuseShareDialog
@@ -252,38 +275,19 @@ export function CaniuseCapabilityPage({
           </div>
           {capability && coverage ? (
             <>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-                {capability.field.description}
-                {SOURCES[capability.field.id] && (
-                  <>
-                    {" "}
-                    <a
-                      className="inline-flex items-center gap-1 font-medium text-foreground underline decoration-primary/70 underline-offset-4"
-                      href={SOURCES[capability.field.id]}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {capability.field.id === "eventsDeliveryModes"
-                        ? "Read proposal"
-                        : "Read specification"}{" "}
-                      <ArrowUpRight className="size-3" />
-                    </a>
-                  </>
-                )}
-              </p>
               <section
                 aria-label={coverageLabel}
                 className="caniuse-glow mt-5 overflow-hidden rounded-xl border border-primary/25 bg-card text-card-foreground"
               >
                 <div className="grid sm:grid-cols-2">
                   <div className="px-5 py-5 sm:px-7 sm:py-6">
-                    <p className="text-sm font-medium text-muted-foreground">
+                    <p className="text-sm font-medium text-foreground">
                       {coverageLabel}
                     </p>
-                    <div className="mt-1 text-5xl font-bold tracking-[-0.06em] text-primary tabular-nums sm:text-7xl">
+                    <div className="mt-1 text-5xl font-bold tracking-normal text-primary tabular-nums sm:text-7xl">
                       {coverage.score === null ? "—" : `${coverage.score}%`}
                     </div>
-                    <p className="mt-2 text-sm text-muted-foreground">
+                    <p className="mt-2 text-sm text-foreground/85">
                       {coverage.score === null
                         ? "No published client results yet."
                         : coverage.eventsMode
@@ -294,14 +298,14 @@ export function CaniuseCapabilityPage({
                     </p>
                   </div>
                   <div className="border-t border-primary/15 px-5 py-4 sm:border-l sm:border-t-0 sm:px-7 sm:py-6">
-                    <p className="text-sm font-medium text-muted-foreground">
+                    <p className="text-sm font-medium text-foreground">
                       Published results
                     </p>
-                    <p className="mt-1 text-3xl font-bold tracking-tight tabular-nums sm:text-5xl">
+                    <p className="mt-1 text-3xl font-bold tracking-normal tabular-nums sm:text-5xl">
                       <span className="text-primary">{coverage.published}</span>
-                      <span className="text-muted-foreground"> / {coverage.rows.length}</span>
+                      <span className="text-foreground/85"> / {coverage.rows.length}</span>
                     </p>
-                    <p className="mt-2 text-sm text-muted-foreground">Tracked clients</p>
+                    <p className="mt-2 text-sm text-foreground/85">Tracked clients</p>
                   </div>
                 </div>
                 {slices.length > 0 && (

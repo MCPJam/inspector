@@ -1,5 +1,4 @@
 import { useRef, useState } from "react";
-import { Check, CircleHelp, Minus, X } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -18,28 +17,24 @@ export const RESULT_GROUPS = [
   {
     status: "supported",
     title: "Supported",
-    Icon: Check,
     tint: "bg-success/15",
     token: "--success",
   },
   {
     status: "partial",
     title: "Partial support",
-    Icon: Minus,
     tint: "bg-warning/15",
     token: "--warning",
   },
   {
     status: "unsupported",
     title: "Not supported",
-    Icon: X,
     tint: "bg-destructive/15",
     token: "--destructive",
   },
   {
     status: "unknown",
     title: "No result",
-    Icon: CircleHelp,
     tint: "bg-muted",
     token: "--muted",
   },
@@ -82,20 +77,18 @@ export function ClientMap({ coverage }: { coverage: CapabilityCoverage }) {
     <div className="grid gap-3">
       {groupResults(coverage)
         .filter(({ clients }) => clients.length > 0)
-        .map(({ status, title, Icon, tint, clients }) => (
+        .map(({ status, title, tint, clients }) => (
           <section
             key={status}
             aria-label={title}
             className={`caniuse-map-group grid items-start gap-2.5 rounded-lg border border-border/75 p-3 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-4 ${tint}`}
           >
-            <h2
-              className="flex items-center gap-1.5 text-xs font-semibold sm:flex-wrap"
-            >
-              <Icon className="size-3.5" /> {title}{" "}
-              <span className="text-lg font-bold tabular-nums sm:w-full sm:text-2xl">
+            <h3 className="grid gap-1 text-xs font-semibold">
+              <span className="text-2xl font-bold leading-none tabular-nums">
                 {clients.length}
-              </span>
-            </h2>
+              </span>{" "}
+              {title}
+            </h3>
             <ul className="flex flex-wrap gap-1.5">
               {clients.map((client) => {
                 const badges = clientBadges(client, coverage);
@@ -162,7 +155,7 @@ export function ClientMap({ coverage }: { coverage: CapabilityCoverage }) {
                           )}
                         </div>
                       </TooltipTrigger>
-                      <TooltipContent variant="muted" className="dark caniuse-dialog">
+                      <TooltipContent variant="muted" className="dark" sideOffset={6}>
                         <span className="block font-semibold">
                           {client.hostName}
                         </span>
