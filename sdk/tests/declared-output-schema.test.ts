@@ -160,6 +160,31 @@ describe("toolResultMatchesSchema with the declared schema", () => {
     expect(verdict.status).toBeUndefined();
   });
 
+  test("does not call one schema written in two key orders ambiguous", () => {
+    const reordered = {
+      ...getOrder,
+      serverKey: "other",
+      outputSchema: {
+        required: ["status", "total"],
+        properties: { total: { type: "number" }, status: { type: "string" } },
+        type: "object",
+      },
+    };
+    const verdict = run(
+      transcript(
+        [
+          result("get_order", {
+            structuredContent: { status: "ok", total: 1 },
+            rawBytes: 30,
+          }),
+        ],
+        [getOrder, reordered]
+      )
+    );
+    expect(verdict.passed).toBe(true);
+    expect(verdict.status).toBeUndefined();
+  });
+
   test("a capped text field does not stop a complete structured result passing", () => {
     const verdict = run(
       transcript([
