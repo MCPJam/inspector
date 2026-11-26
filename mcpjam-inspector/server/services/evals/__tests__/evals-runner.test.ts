@@ -1,5 +1,6 @@
 import { LOCAL_EVAL_MODEL } from "../../../test/support/local-eval-model";
 import { logger } from "../../../utils/logger";
+import type { RunAssistantTurnResult } from "../../../utils/assistant-turn";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import creditRefusalCorpus from "../../../../../sdk/tests/fixtures/credit-refusal-fixtures.json";
 
@@ -422,7 +423,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     const assistantTurnModule = await import("../../../utils/assistant-turn");
     const runAssistantTurnSpy = vi
       .spyOn(assistantTurnModule, "runAssistantTurn")
-      .mockImplementation(async (opts: any) => {
+      .mockImplementation(async (opts) => {
         opts.onEngineError?.({
           message:
             "An owner or admin needs to raise this organization's budget to continue.",
@@ -433,28 +434,44 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           promptIndex: 0,
           stepIndex: 0,
         });
-        return {
+        const turn: RunAssistantTurnResult = {
           messages: [{ role: "user", content: "Hello" }],
           assistantMessages: [],
           toolCalls: [],
           toolResults: [],
-        } as any;
+        };
+        return turn;
       });
     try {
       const config = buildQuickRunConfig();
       config.config.tests[0].model = "claude-haiku-4.5";
       config.config.tests[0].provider = "anthropic";
       config.config.tests[0].runs = 3;
+      let nextId = 0;
+      convexClient.action.mockImplementation(async (name) =>
+        name === "testSuites:startQuickRunIteration"
+          ? { iterationId: `iteration-${++nextId}` }
+          : { iterationId: "iteration" },
+      );
       const result = await runEvalSuiteWithAiSdk({
         ...config,
         modelApiKeys: {},
-      } as any);
+      });
 
-      expect(runAssistantTurnSpy).toHaveBeenCalledTimes(1);
+      expect(result?.quickRunIterationOutcomes).toHaveLength(1);
       expect(result?.quickRunIterationOutcomes?.[0]).toMatchObject({
         creditsExhausted: true,
         creditRecovery: { action: "raise_budget", actor: "owner_or_admin" },
       });
+      const skipped = convexClient.action.mock.calls.filter(
+        ([name, args]) =>
+          name === "testSuites:updateTestIteration" &&
+          args.status === "skipped",
+      );
+      expect(skipped.map(([, args]) => args.iterationId)).toEqual([
+        "iteration-2",
+        "iteration-3",
+      ]);
     } finally {
       runAssistantTurnSpy.mockRestore();
     }
