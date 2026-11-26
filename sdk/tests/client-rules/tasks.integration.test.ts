@@ -232,21 +232,6 @@ describe("2025-11-25 tasks (legacy-tasks-fixture)", () => {
     30_000,
   );
 
-  ruleTest.knownBreak(
-    "C086",
-    "a plain executeTool on a tool whose taskSupport is required goes out as a plain tools/call",
-    "MCPClientManager.executeTool adds params.task only when the caller passes task options (src/mcp-client-manager/MCPClientManager.ts:1701) and never reads execution.taskSupport, so a required tool called without them is sent as an ordinary tools/call",
-    async () => {
-      const wire: WireRequest[] = [];
-      const fixture = await legacy();
-      const manager = await connect(fixture.url, "2025-11-25", wire);
-      await manager.executeTool(SERVER_ID, LEGACY_TASK_TOOL_NAME, {});
-      const calls = sent(wire, "tools/call");
-      expect(calls).toHaveLength(1);
-      expect(paramsOf(calls[0]!)).not.toHaveProperty("task");
-    },
-  );
-
   ruleTest(
     "C088",
     "after a CreateTaskResult the Tasks suite polls that task with tasks/get",

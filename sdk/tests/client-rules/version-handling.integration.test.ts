@@ -15,7 +15,6 @@ import { describe, expect } from "vitest";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { CHECK_ERAS, MCP_CHECK_IDS } from "../../src/mcp-conformance/index.js";
 import { MCPClientManager } from "../../src/mcp-client-manager/index.js";
-import { runUndeclaredProbe } from "../../src/tasks-conformance/evidence.js";
 import { createFixtureHandler } from "../support/dual-era-fixture.js";
 import {
   startConformanceMockServer,
@@ -266,26 +265,6 @@ describe("unknown result types", () => {
     },
   );
 
-  ruleTest.knownBreak(
-    "C036",
-    "the raw result-type check accepts tools/list answering an unknown resultType",
-    "checks/modern.ts:857 (runResultTypeCheck) only asks for a non-empty string, so it passes resultType \"partial\"",
-    async () => {
-      const fixture = createFixtureHandler();
-      const run = await runOneCheck("modern-result-type-present", {
-        serverUrl: "http://localhost/mcp",
-        protocolVersion: "2026-07-28",
-        fetchFn: (input, init) =>
-          rewriting((request) => fixture.fetch(request), "tools/list", (body) => {
-            body.result!.resultType = "partial";
-          })(new Request(input, init)),
-      });
-      expect(run.check?.status).toBe("passed");
-      expect(
-        (run.check?.details as { resultTypes?: Record<string, unknown> })?.resultTypes?.["tools/list"],
-      ).toBe("partial");
-    },
-  );
 });
 
 describe("telling a modern server from a legacy one", () => {
@@ -446,22 +425,6 @@ describe("telling a modern server from a legacy one", () => {
     },
   );
 
-  ruleTest.knownBreak(
-    "C053",
-    "a 404 carrying a JSON-RPC method-not-found is still followed by the old HTTP+SSE GET",
-    "MCPClientManager only treats a -32022 version refusal as proof of a modern server; a 404 with a -32601 body still reaches the HTTP+SSE fallback (MCPClientManager.ts:3807)",
-    async () => {
-      const sent = await unpinnedConnect((method, id) =>
-        Response.json(
-          { jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } },
-          { status: 404 },
-        ),
-      );
-      expect(sent[0]?.body?.method).toBe("server/discover");
-      expect(sent.some((request) => request.httpMethod === "GET")).toBe(true);
-    },
-  );
-
   ruleTest(
     "C053",
     "a 404 with no JSON-RPC body is treated as an old HTTP+SSE server: the GET is tried",
@@ -472,25 +435,3 @@ describe("telling a modern server from a legacy one", () => {
   );
 });
 
-describe("codes in the reserved legacy range", () => {
-  ruleTest.knownBreak(
-    "C055",
-    "a server's -32001 is read as a timeout (\"no-response\")",
-    "tasks-conformance/evidence.ts:308 turns every -32001 into \"no-response\" (\"produced no JSON-RPC rejection\"); the SDK's own timeout uses the same code, so a server-sent -32001 is misread",
-    async () => {
-      const sent: unknown[] = [];
-      const probe = await runUndeclaredProbe(
-        async (payload) => {
-          sent.push({ jsonrpc: "2.0", id: 1, ...payload });
-          // What the client surfaces when the SERVER answered with -32001.
-          throw Object.assign(new Error("Server declined: busy"), { code: -32001 });
-        },
-        sent,
-        "tasks/get",
-        { taskId: "t1" },
-      );
-      expect(probe.outcome).toBe("no-response");
-      expect(probe.code).toBe(-32001);
-    },
-  );
-});

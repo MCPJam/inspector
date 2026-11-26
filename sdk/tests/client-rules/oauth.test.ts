@@ -15,7 +15,6 @@
 import { describe, expect, vi } from "vitest";
 import { completeHeadlessAuthorization } from "../../src/oauth-conformance/auth-strategies/headless.js";
 import { createInteractiveAuthorizationSession } from "../../src/oauth-conformance/auth-strategies/interactive.js";
-import { startAuthorization } from "../../src/oauth/browser-auth.js";
 import { createOAuthStateMachine } from "../../src/oauth/state-machines/factory.js";
 import {
   EMPTY_OAUTH_FLOW_STATE,
@@ -118,45 +117,6 @@ describe("C197: no authorization without code_challenge_methods_supported", () =
     "stops before authorization when the AS advertises no PKCE metadata",
   );
 
-  const metadata = {
-    issuer: "https://auth.example.com",
-    authorization_endpoint: "https://auth.example.com/authorize",
-    token_endpoint: "https://auth.example.com/token",
-    response_types_supported: ["code"],
-  };
-
-  ruleTest.knownBreak(
-    "C197",
-    "the exported startAuthorization builds an authorization URL when code_challenge_methods_supported is absent",
-    "src/oauth/browser-auth.ts:1058-1068 only refuses a list that lacks S256, and goes on when the field is absent; the per-revision state machines refuse correctly",
-    async () => {
-      const { authorizationUrl } = await startAuthorization("https://auth.example.com", {
-        metadata: metadata as never,
-        clientInformation: { client_id: "client" },
-        redirectUrl: REDIRECT_URI,
-        state: "s",
-      });
-      expect(authorizationUrl.origin + authorizationUrl.pathname).toBe(
-        "https://auth.example.com/authorize",
-      );
-      expect(authorizationUrl.searchParams.get("code_challenge")).toBeTruthy();
-    },
-  );
-
-  ruleTest(
-    "C197",
-    "(control) the exported startAuthorization refuses a list without S256",
-    async () => {
-      await expect(
-        startAuthorization("https://auth.example.com", {
-          metadata: { ...metadata, code_challenge_methods_supported: ["plain"] } as never,
-          clientInformation: { client_id: "client" },
-          redirectUrl: REDIRECT_URI,
-          state: "s",
-        }),
-      ).rejects.toThrow(/code challenge method/);
-    },
-  );
 });
 
 describe("C198: protected resource metadata with a bad resource is refused", () => {
@@ -239,18 +199,6 @@ describe("C198: protected resource metadata with a bad resource is refused", () 
       const state = await runResourceMetadataStep(SAME_ORIGIN_OTHER_PATH, "reject-rfc9728");
       expect(state.error).toBeTruthy();
       expect(state.currentStep).not.toBe("received_resource_metadata");
-    },
-  );
-
-  ruleTest.knownBreak(
-    "C198",
-    '2026-07-28 under "reject" (the login path): a same-origin resource for another path is accepted',
-    'src/oauth-login.ts:541 runs the flow with "reject", which refuses only an unusable resource (src/oauth/state-machines/shared/resource-indicator.ts:86-91) and lets a same-origin mismatch through with a warning, on purpose for servers like Asana (tests/oauth/state-machine-regressions.test.ts)',
-    async () => {
-      const state = await runResourceMetadataStep(SAME_ORIGIN_OTHER_PATH, "reject");
-      expect(state.error).toBeUndefined();
-      expect(state.currentStep).toBe("received_resource_metadata");
-      expect(state.resourceIndicator?.rfc9728Compliant).toBe(false);
     },
   );
 

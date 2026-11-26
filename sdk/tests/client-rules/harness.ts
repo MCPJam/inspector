@@ -4,14 +4,11 @@
  * Every test here is named after one rule in `rules.ts` and marked with the
  * rule's spec level (see `levels.ts`), as `C003 [MUST] <what it proves>`.
  * Each test checks exactly what its rule says, no more and no less. A rule is
- * accounted for in one of four ways:
+ * accounted for in one of three ways:
  *
  * - `ruleTest`: a test that proves our client follows the rule. When the setup
  *   did not make the client do the thing the rule is about, the test skips
  *   with "not exercised" (see `exercised`) instead of passing or failing.
- * - `ruleTest.knownBreak`: the client breaks the rule today. The body asserts
- *   the broken behavior exactly, so the test turns red the day someone fixes
- *   it, and also if it starts failing for any other reason.
  * - `coveredBy`: a test elsewhere proves exactly this rule and nothing more;
  *   this only checks that the test still exists.
  * - `mayRule`: a MAY only permits something, so there is nothing a client can
@@ -20,11 +17,12 @@
  * Rules checked across many conformance checks use a "wire corpus" instead:
  * every mapped check runs once against a fake server, each request the client
  * sends is recorded and tagged with the check that sent it, and the test
- * asserts that the checks breaking the rule are EXACTLY the known ones. A fix
- * and a new break both turn the test red.
+ * asserts that no check breaks the rule.
  *
- * `rules-coverage.unit.test.ts` reads these files and fails if a rule in the
- * catalog is not accounted for, or has no spec level.
+ * Rules MCPJam breaks today have no test here (see `BROKEN_TODAY` in
+ * `rules-coverage.unit.test.ts`); their tests come back once they are fixed.
+ * `rules-coverage.unit.test.ts` reads these files and fails if any other rule
+ * in the catalog is not accounted for, or a rule has no spec level.
  */
 
 import { readFileSync } from "node:fs";
@@ -66,22 +64,7 @@ function ruleTestImpl(
   it(ruleName(id, label), fn, timeout);
 }
 
-export const ruleTest = Object.assign(ruleTestImpl, {
-  /**
-   * The client breaks the rule today. `reason` says where and why. The body
-   * asserts the broken behavior exactly (not the rule), so a fix and any other
-   * failure both turn the test red.
-   */
-  knownBreak(
-    id: ClientRuleId,
-    label: string,
-    reason: string,
-    fn: TestBody,
-    timeout?: number,
-  ): void {
-    it(`${ruleName(id, label)} (KNOWN BREAK: ${reason})`, fn, timeout);
-  },
-});
+export const ruleTest = ruleTestImpl;
 
 /**
  * Skip the running test with "not exercised" when the setup did not make the

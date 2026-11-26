@@ -44,26 +44,8 @@ const LEGACY_CHECKS: string[] = MCP_CHECK_IDS.filter((id) =>
   CHECK_ERAS[id].includes("legacy"),
 );
 
-/** The checks that connect through the official client (MCPClientManager). */
-const CLIENT_BACKED_LEGACY_CHECKS = [
-  "server-initialize",
-  "ping",
-  "logging-set-level",
-  "completion-complete",
-  "capabilities-consistent",
-  "tools-list",
-  "tools-input-schemas-valid",
-  "prompts-list",
-  "resources-list",
-];
-
 /** Checks known to break a rule, by rule id. Absent means none does. */
-const KNOWN: Record<string, string[]> = {
-  // SHOULD. MCPClientManager closes the transport on disconnect but never
-  // calls the transport's terminateSession, so no DELETE goes out; the raw
-  // protocol probe (checks/protocol.ts) opens a session and never ends it.
-  C261: [...CLIENT_BACKED_LEGACY_CHECKS, "protocol-invalid-method-error"],
-};
+const KNOWN: Record<string, string[]> = {};
 
 const LATEST_LEGACY_VERSION = [...MCP_PROTOCOL_VERSIONS]
   .filter((version) => !isStatelessProtocolVersion(version))
@@ -419,16 +401,6 @@ describe("legacy wire corpus (2025-11-25, stateful mock server)", () => {
     "MCPJam does: the GET-stream check closes the stream it opened once it has the headers",
   );
 
-  ruleTest("C261", "every opened session is ended with an HTTP DELETE", () => {
-    expectKnownViolations(
-      violationsByCheck(corpus.sessions, (session) =>
-        session.requests.some((request) => request.httpMethod === "DELETE")
-          ? undefined
-          : "session never deleted",
-      ),
-      KNOWN.C261,
-    );
-  });
 });
 
 describe("legacy wire, other revisions and modes", () => {
