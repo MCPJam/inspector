@@ -178,13 +178,23 @@ export async function drawCaniuseReportCard(
     109,
     "--primary",
   );
-  font(600, 22);
-  text(
-    coverage.reporting ? "Reporting coverage" : "Of probed clients",
-    CARD_WIDTH - INSET,
-    147,
-    "--muted-foreground",
-  );
+  if (coverage.score !== null) {
+    font(600, 26);
+    text(
+      `${coverage.full} of ${coverage.probed} probed clients`,
+      CARD_WIDTH - INSET,
+      147,
+    );
+  }
+  if (coverage.reporting) {
+    font(600, 22);
+    text(
+      "Reporting coverage",
+      CARD_WIDTH - INSET,
+      coverage.score === null ? 147 : 175,
+      "--muted-foreground",
+    );
+  }
   ctx.textAlign = "left";
 
   const largest = Math.max(0, ...shown.map(({ clients }) => clients.length));
