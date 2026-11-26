@@ -147,14 +147,15 @@ describe("SuiteAccountsRow", () => {
     const row = document.querySelector('[data-setting-key="accounts"]');
     expect(row).toHaveTextContent("Accounts");
     expect(row).toHaveTextContent(
-      "Set a default for each shared MCP server.",
+      "Choose the accounts your runs use.",
     );
   });
 
   it("drafts a shared server default through suite settings", async () => {
-    state.view = view({ servers: [{
+    state.view = view({ sharedAccountsEnabled: true, servers: [{
       serverId: "srv-asana",
       mode: "shared",
+      managed: true,
       accounts: [live, dummy],
       chosen: [dummy.connectionId],
     }] });

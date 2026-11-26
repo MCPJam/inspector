@@ -26,6 +26,8 @@ export type SuiteAccountsServer = {
   accounts: SuiteAccount[];
   /** The saved choice; `null` (or empty) runs with the default account. */
   chosen: string[] | null;
+  managed?: boolean;
+  reviewRequired?: boolean;
   xaaSubject?: string;
 };
 
@@ -37,6 +39,7 @@ export type SuiteAccountsScheduleOwner = {
 export type SuiteAccountsView = {
   servers: SuiteAccountsServer[];
   scheduleOwners: SuiteAccountsScheduleOwner[];
+  sharedAccountsEnabled?: boolean;
 };
 
 /** Whether the person chooses which of this server's accounts their runs use. */

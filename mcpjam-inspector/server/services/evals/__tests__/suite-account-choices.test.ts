@@ -60,6 +60,20 @@ describe("loadSuiteConnectionIdSets", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("refuses a quick run before opening a connection when it needs an account plan", async () => {
+    const convex = convexAnswering({
+      "testSuites:getTestCase": { testSuiteId: "suite-1" },
+      "testSuiteAccountSelections:getEvalRunAccountPlan": [
+        { testCaseId: "case-1", serverId: "billing", connectionId: "admin", source: "case" },
+      ],
+    });
+    await expect(loadSuiteConnectionIdSets(convex, {
+      testCaseId: "case-1",
+      serverIds: ["billing"],
+    })).rejects.toMatchObject({ status: 409, details: { code: "QUICK_RUN_ACCOUNT_PLAN_REQUIRED" } });
+    expect(convex.query).toHaveBeenCalledTimes(2);
+  });
+
   it("treats a backend without the feature as having no choices", async () => {
     const convex = convexAnswering({
       "testSuiteAccountSelections:getMySuiteAccountChoices": new Error(

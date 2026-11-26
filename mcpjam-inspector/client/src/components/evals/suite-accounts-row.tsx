@@ -108,12 +108,15 @@ function SuiteAccountsSection({
     suite,
     projectId,
   );
+  const managedDefaults = sharedDefaults && view?.servers.some((server) => server.managed)
+    ? { ...sharedDefaults, disabled: sharedDefaults.disabled || !view.sharedAccountsEnabled }
+    : undefined;
   return (
     <SuiteSettingsRow
       settingKey="accounts"
       chained={false}
       data-subsection-id="accounts"
-      hint={SUITE_ACCOUNTS_HINT}
+      hint={managedDefaults ? SUITE_ACCOUNTS_HINT : "Choose the accounts your runs use."}
     >
       {error ? (
         <p className="text-xs text-destructive">
@@ -126,7 +129,7 @@ function SuiteAccountsSection({
           suiteId={suite._id}
           view={view}
           serverName={serverName}
-          sharedDefaults={sharedDefaults}
+          sharedDefaults={managedDefaults}
         />
       ) : (
         <p className="text-xs text-muted-foreground">
@@ -248,12 +251,10 @@ export function SuiteAccountGroups({
   // A save in flight shows its result at once; the query then confirms it,
   // and a failure falls back to what the query says.
   const [pending, setPending] = useState<Record<string, string[]>>({});
-  const own = view.servers.filter((server) =>
-    sharedDefaults ? server.mode === "accounts" : choosesAccounts(server),
-  );
   const shared = sharedDefaults
-    ? view.servers.filter((server) => server.mode === "shared")
+    ? view.servers.filter((server) => server.mode === "shared" && server.managed)
     : [];
+  const own = view.servers.filter((server) => choosesAccounts(server) && !shared.includes(server));
   const project = view.servers.filter((server) => server.mode === "xaa");
   const personalServers = new Set(own.map((server) => server.serverId));
   const scheduleOwners = view.scheduleOwners.flatMap((owner) => {
@@ -390,6 +391,7 @@ export function CaseServerAccounts({
   disabled: boolean;
 }) {
   const { view, serverName } = useSuiteAccounts(suite, projectId ?? suite.projectId);
+  if (!view?.sharedAccountsEnabled && !selections?.length) return null;
   const servers = view?.servers.filter((server) => server.mode === "shared");
   if (!servers?.length) return null;
   return (
@@ -402,7 +404,7 @@ export function CaseServerAccounts({
             serverName={serverName}
             selections={selections}
             onChange={onChange}
-            disabled={disabled}
+            disabled={disabled || !view?.sharedAccountsEnabled}
             inheritLabel="Inherit run account"
           />
         </AccountGroup>
@@ -464,6 +466,11 @@ export function SharedServerAccountRows({
             </option>
           ))}
         </select>
+        {server.reviewRequired ? (
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            Choose and save a shared account in suite settings to review earlier account choices.
+          </p>
+        ) : null}
         {casePins?.length ? (
           <ul className="mt-1.5 space-y-1 text-xs text-muted-foreground">
             {casePins.map((pin) => (

@@ -40,6 +40,7 @@ import {
 } from "../environments/resolve.js";
 import { resolveQuickRunPluginServers } from "../plugins/run-plugin-servers.js";
 import { asBillingRouteError } from "./recorder.js";
+import { isQuickRunAccountPlanError, quickRunAccountPlanError } from "./suite-account-choices.js";
 import { asAiRefusalRouteError } from "../../utils/ai-refusal-route-error.js";
 import {
   buildPinnedSkillSource,
@@ -229,6 +230,7 @@ export function assertEnvironmentQuickRunModel(
  */
 export function translateQuickRunCommitError(error: unknown): unknown {
   if (error instanceof WebRouteError) return error;
+  if (isQuickRunAccountPlanError(error)) return quickRunAccountPlanError();
   const billing = asBillingRouteError(error);
   if (billing) return billing;
   // The organization's AI-key policy refused the launch (its code and the

@@ -69,13 +69,15 @@ export function useSuiteAccountPreflight({
     const ids = new Set(serverIdsForRefs(refs, projectServers));
     const kept = {
       ...view,
-      servers: view.servers.filter((s) => ids.has(s.serverId) && s.mode !== "shared"),
+      servers: view.servers.filter((s) => ids.has(s.serverId) && !s.managed),
     };
     const accountProblems = chosenAccountProblems(kept, serverName);
     return {
       ...(accountProblems.length ? { accountProblems } : {}),
       runsAs: runsAsEntries(kept, serverName),
-      sharedServers: view.servers.filter((s) => ids.has(s.serverId) && s.mode === "shared"),
+      sharedServers: view.sharedAccountsEnabled
+        ? view.servers.filter((s) => ids.has(s.serverId) && s.managed)
+        : [],
       sharedServerName: serverName,
     };
   };

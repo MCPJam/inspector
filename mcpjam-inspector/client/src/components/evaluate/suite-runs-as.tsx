@@ -84,7 +84,7 @@ function LoadedRunsAsLine({
   const { view, serverName } = useSuiteAccounts(suite, projectId);
   return (
     <RunsAsLine
-      entries={view ? runsAsEntries({ ...view, servers: view.servers.filter((server) => server.mode !== "shared") }, serverName) : undefined}
+      entries={view ? runsAsEntries({ ...view, servers: view.servers.filter((server) => !server.managed) }, serverName) : undefined}
       className={className}
     />
   );

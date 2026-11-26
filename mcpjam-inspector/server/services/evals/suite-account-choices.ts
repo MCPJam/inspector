@@ -17,6 +17,21 @@ const getTestCase = makeFunctionReference<
 >("testSuites:getTestCase");
 
 export type EvalAccountSelection = { serverId: string; connectionId: string };
+const QUICK_RUN_ACCOUNT_PLAN_REQUIRED = "QUICK_RUN_ACCOUNT_PLAN_REQUIRED";
+
+export function quickRunAccountPlanError() {
+  return new WebRouteError(409, ErrorCode.CONFLICT,
+    "Quick Run cannot validate shared MCP accounts. Run this case from the suite instead.",
+    { code: QUICK_RUN_ACCOUNT_PLAN_REQUIRED });
+}
+
+export function isQuickRunAccountPlanError(error: unknown) {
+  const data = error instanceof WebRouteError
+    ? error.details
+    : typeof error === "object" && error && "data" in error ? error.data : undefined;
+  return typeof data === "object" && data !== null &&
+    "code" in data && data.code === QUICK_RUN_ACCOUNT_PLAN_REQUIRED;
+}
 export type EvalAccountPlan = Array<EvalAccountSelection & {
   testCaseId: string;
   source: "case" | "run" | "suite" | "default";
@@ -143,7 +158,6 @@ export async function loadSuiteConnectionIdSets(
     ? target.serverIds.filter((id): id is string => typeof id === "string")
     : undefined;
   let rows: Array<{ serverId: string; connectionIds: string[] }>;
-  let plan: EvalAccountPlan | null = null;
   try {
     // A quick run names only its case; the case's suite holds the choice.
     const suiteId =
@@ -153,15 +167,17 @@ export async function loadSuiteConnectionIdSets(
         : undefined);
     if (!suiteId) return undefined;
     if (testCaseId && serverIds?.length) {
-      plan = await loadEvalRunAccountPlan(convex, {
+      const plan = await loadEvalRunAccountPlan(convex, {
         suiteId,
         caseIds: [testCaseId],
         serverIds,
       });
+      if (plan?.length) throw quickRunAccountPlanError();
     }
     rows = await convex.query(getMySuiteAccountChoices, { suiteId });
   } catch (error) {
-    if (!plan && /Could not find public function.*getMySuiteAccountChoices/i.test(String(error))) {
+    if (isQuickRunAccountPlanError(error)) throw error;
+    if (/Could not find public function.*getMySuiteAccountChoices/i.test(String(error))) {
       return undefined;
     }
     throw new WebRouteError(
@@ -174,7 +190,6 @@ export async function loadSuiteConnectionIdSets(
     ...(Array.isArray(rows) ? rows : [])
       .filter((row) => !serverIds || serverIds.includes(row.serverId))
       .map((row) => [row.serverId, row.connectionIds] as const),
-    ...(plan ?? []).map(({ serverId, connectionId }) => [serverId, [connectionId]] as const),
   ]);
   return Object.keys(sets).length ? sets : undefined;
 }

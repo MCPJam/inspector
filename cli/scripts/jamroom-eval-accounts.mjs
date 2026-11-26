@@ -126,6 +126,29 @@ function setIdentityAssertions(caseId, billingIdentity) {
   });
 }
 
+async function checkProtectedMessage() {
+  const { id, allowedText, deniedText } = fixture.protectedMessage;
+  for (const value of [id, allowedText, deniedText]) {
+    assert(typeof value === "string" && value.length > 0, "Missing protected message fixture.");
+  }
+  assert.notEqual(allowedText, deniedText);
+  const cases = [
+    { caseId: fixture.inheritedCaseId, identity: viewerIdentity, expected: deniedText },
+    { caseId: fixture.pinnedCaseId, identity: adminIdentity, expected: allowedText },
+  ];
+  for (const { caseId, identity, expected } of cases) {
+    await request(suitePath + "/cases/" + caseId, "PATCH", {
+      steps: [
+        { id: "whoami", kind: "toolCall", toolName: "whoami", serverName: "Billing", arguments: {} },
+        { id: "identity", kind: "assert", assertion: { type: "toolResultContains", toolName: "whoami", needle: identity } },
+        { id: "read", kind: "toolCall", toolName: "read_message", serverName: "Billing", arguments: { id } },
+        { id: "access", kind: "assert", assertion: { type: "toolResultContains", toolName: "read_message", needle: expected } },
+      ],
+    });
+  }
+  return check("REST protected message allow and deny", (await launch()).runId, viewer);
+}
+
 await request(suitePath, "PATCH", { accounts: [viewer, support] });
 await request(suitePath + "/cases/" + fixture.pinnedCaseId, "PATCH", { accounts: [admin] });
 await setIdentityAssertions(fixture.inheritedCaseId, auditorIdentity);
@@ -156,4 +179,5 @@ results.push(await check("MCP suite", fromMcp.runId, auditor));
 results.push(await check("MCP case", single.runId, auditor, [fixture.pinnedCaseId]));
 await setIdentityAssertions(fixture.inheritedCaseId, viewerIdentity);
 results.push(await check("REST saved choices after overrides", (await launch()).runId, viewer));
+if (fixture.protectedMessage) results.push(await checkProtectedMessage());
 console.log(JSON.stringify({ inspector: env.JAMROOM_INSPECTOR_COMMIT, results }));

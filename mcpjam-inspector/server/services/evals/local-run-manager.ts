@@ -46,6 +46,7 @@ import {
   loadEvalRunAccountPlan,
   loadSuiteConnectionIdSets,
   openEvalAccountGroups,
+  quickRunAccountPlanError,
   type EvalAccountPlan,
   type EvalAccountSelection,
 } from "./suite-account-choices.js";
@@ -367,6 +368,7 @@ export async function openLocalEvalRun(
     ...(caseIds?.length ? { caseIds } : {}),
     ...(target.runAccounts ? { runAccounts: target.runAccounts } : {}),
   }) : null;
+  if (target.testCaseId && plan?.length) throw quickRunAccountPlanError();
   if (target.runAccounts && !plan) {
     throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "Run account choices require a saved suite and connected MCP servers.");
   }
