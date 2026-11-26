@@ -42,7 +42,7 @@ export function CaniuseCapabilitySearch({
         "relative h-auto overflow-visible",
         hero
           ? "min-w-0 max-w-[13em] flex-[1_1_9em] bg-transparent [&_[data-slot=command-input-wrapper]]:h-auto [&_[data-slot=command-input-wrapper]]:border-primary/40 [&_[data-slot=command-input-wrapper]]:px-0 [&_[data-slot=command-input-wrapper]>svg]:hidden"
-          : "min-w-28 flex-1 rounded-md border border-border bg-background sm:ml-auto sm:max-w-xs [&_[data-slot=command-input-wrapper]]:border-b-0",
+          : "min-w-28 flex-1 basis-full rounded-md border border-border bg-background sm:basis-40 [&_[data-slot=command-input-wrapper]]:border-b-0",
       )}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
