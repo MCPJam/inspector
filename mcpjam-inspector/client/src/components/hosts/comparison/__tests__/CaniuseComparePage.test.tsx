@@ -4,6 +4,13 @@ import { Link, MemoryRouter, Route, Routes } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { CaniuseComparePage } from "../CaniuseComparePage";
 
+const { captureSnapshot } = vi.hoisted(() => ({ captureSnapshot: vi.fn() }));
+vi.mock("@/lib/webmcp/use-surface-agent-bridge", () => ({
+  useSurfaceAgentBridge: ({ snapshot }: { snapshot: () => unknown }) => {
+    captureSnapshot(snapshot());
+  },
+}));
+
 vi.mock("@/lib/host-compat/use-host-catalog", async () => {
   const { bundledHostCompatCatalog } = await import("@mcpjam/sdk/host-compat");
   return { useHostCatalog: () => ({ catalog: bundledHostCompatCatalog() }) };
@@ -110,6 +117,25 @@ describe("CaniuseComparePage", () => {
     expect(
       screen.getByRole("button", { name: "Add client" }),
     ).toBeInTheDocument();
+  });
+
+  it("includes the displayed protocol date in the comparison snapshot", () => {
+    render(
+      <MemoryRouter initialEntries={["/compare?q=2026-07-28"]}>
+        <CaniuseComparePage />
+      </MemoryRouter>,
+    );
+    expect(
+      within(screen.getByRole("table")).getByRole("link", { name: "2026-07-28" }),
+    ).toHaveAttribute(
+      "href",
+      "/capabilities/supported-protocol-versions?slice=2026-07-28",
+    );
+    expect(captureSnapshot).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        capabilityRows: expect.arrayContaining(["2026-07-28"]),
+      }),
+    );
   });
 
   it("keeps a removed client out when the search changes in the same update", () => {

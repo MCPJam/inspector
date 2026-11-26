@@ -82,6 +82,18 @@ describe("CaniuseCapabilityPage", () => {
     );
   });
 
+  it("uses the protocol version from a matrix link to scope the Client map", () => {
+    renderCapability("supported-protocol-versions", "?slice=2026-07-28");
+    expect(screen.getByRole("button", { name: "2026-07-28" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    const supported = screen.getByRole("region", { name: "Supported", exact: true });
+    const unsupported = screen.getByRole("region", { name: "Not supported" });
+    expect(within(supported).getByRole("img", { name: /^Claude\./ })).toBeVisible();
+    expect(within(unsupported).getByRole("img", { name: /^Cursor\./ })).toBeVisible();
+  });
+
   it("shows Tasks without claiming any published results", () => {
     renderCapability("mcp-tasks");
     expect(
