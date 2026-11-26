@@ -18,6 +18,14 @@ import {
   eraSkipMessage,
   notApplicableResult,
 } from "./checks/helpers.js";
+import { MCP_ERROR_CODES } from "../mcp-client-manager/mcp-error-codes.js";
+import {
+  jsonRpcError,
+  modernHeaders,
+  modernRequestBody,
+  rawRequest,
+  type JsonRpcErrorShape,
+} from "./raw-http.js";
 import { CHECK_ERAS } from "./types.js";
 import type {
   MCPCheckCategory,
@@ -25,6 +33,7 @@ import type {
   MCPCheckResult,
   MCPClientCheckDefinition,
   NormalizedMCPConformanceConfig,
+  RawHttpCheckContext,
 } from "./types.js";
 
 /** The pin refusal behind a failed connect, however deep it was wrapped. */
@@ -92,25 +101,52 @@ export function describePinRefusal(
  */
 export function pinRefusalChecks(
   error: unknown,
-  options: {
-    config: NormalizedMCPConformanceConfig;
-    selectedCheckIds: ReadonlySet<MCPCheckId>;
-    selectedClientChecks: readonly MCPClientCheckDefinition[];
-    categoryOf: (id: MCPCheckId) => MCPCheckCategory;
-  }
+  options: PinRefusalOptions
 ): MCPCheckResult[] | undefined {
-  const { config, selectedClientChecks } = options;
   // Only a pinned run: an Auto run negotiates instead of being refused.
   const refusal =
-    config.protocolVersion !== undefined ? findPinRefusal(error) : undefined;
+    options.config.protocolVersion !== undefined
+      ? findPinRefusal(error)
+      : undefined;
   if (!refusal) return undefined;
+  return pinRefusalResults(
+    {
+      pinned: refusal.protocolVersion,
+      offered: refusal.supportedVersions,
+    },
+    options
+  );
+}
+
+interface PinRefusalOptions {
+  config: NormalizedMCPConformanceConfig;
+  selectedCheckIds: ReadonlySet<MCPCheckId>;
+  selectedClientChecks: readonly MCPClientCheckDefinition[];
+  categoryOf: (id: MCPCheckId) => MCPCheckCategory;
+}
+
+/**
+ * The results for a refused pin, however the refusal was seen: the client's
+ * connect, or the raw `server/discover` gate below. `extraDetails` carries
+ * what the refusing answer said, when there was one to quote.
+ */
+export function pinRefusalResults(
+  refusal: {
+    pinned: string;
+    offered: readonly string[];
+    extraDetails?: Record<string, unknown>;
+  },
+  options: PinRefusalOptions
+): MCPCheckResult[] {
+  const { config, selectedClientChecks } = options;
   const { message, setupGap } = describePinRefusal(
-    refusal.protocolVersion,
-    refusal.supportedVersions
+    refusal.pinned,
+    refusal.offered
   );
   const details = {
-    requestedProtocolVersion: refusal.protocolVersion,
-    offeredProtocolVersions: [...refusal.supportedVersions],
+    ...refusal.extraDetails,
+    requestedProtocolVersion: refusal.pinned,
+    offeredProtocolVersions: [...refusal.offered],
     ...(setupGap ? needsSetupDetails("protocolVersion", message) : {}),
   };
   const ids = [...options.selectedCheckIds];
@@ -130,4 +166,86 @@ export function pinRefusalChecks(
           eraSkipMessage(config.era, config.protocolVersion)
         );
   });
+}
+
+/**
+ * Whether the server refuses a 2026-era pin, asked once with
+ * `server/discover` before any raw check runs.
+ *
+ * A pinned run with no client check skips the client connect, and 2026 has no
+ * handshake, so nothing else would see the refusal: every raw probe would draw
+ * it and grade it as the server's answer to that probe. Two answers mean the
+ * server does not speak the pin:
+ *
+ *   - `-32022`, the 2026 refusal, on any status, with the server's own
+ *     `supported` list ("it MUST respond with an UnsupportedProtocolVersionError
+ *     listing the versions it does support").
+ *   - `400 Bad Request` carrying `-32000`, a code in the range 2026 keeps for
+ *     "legacy" use: a 2025 server refusing the request. "If the body is empty
+ *     or is not a recognized modern JSON-RPC error, fall back to `initialize`",
+ *     i.e. the server speaks a 2025 version, not the pin.
+ *
+ * Anything else, a network failure included, is left to the checks to grade.
+ * The probe stays out of the run-wide wire record: Server Discover sends and
+ * grades its own.
+ */
+export async function modernPinRefusal(
+  ctx: RawHttpCheckContext,
+  pinned: string
+): Promise<
+  | { offered: string[]; status: number; error: JsonRpcErrorShape }
+  | undefined
+> {
+  let result;
+  try {
+    result = await rawRequest(ctx, {
+      headers: modernHeaders({
+        protocolVersion: pinned,
+        method: "server/discover",
+      }),
+      body: modernRequestBody({
+        id: 1,
+        method: "server/discover",
+        protocolVersion: pinned,
+      }),
+      record: false,
+    });
+  } catch {
+    ctx.config.signal?.throwIfAborted();
+    return undefined;
+  }
+  const error = jsonRpcError(result);
+  if (error === undefined) return undefined;
+  if (error.code === MCP_ERROR_CODES.UnsupportedProtocolVersion) {
+    const supported = (error.data as { supported?: unknown } | undefined)
+      ?.supported;
+    return {
+      offered: Array.isArray(supported)
+        ? supported.filter(
+            (version): version is string => typeof version === "string"
+          )
+        : [],
+      status: result.status,
+      error,
+    };
+  }
+  if (result.status === 400 && error.code === -32000) {
+    return {
+      offered: legacyOfferedVersions(error.message),
+      status: result.status,
+      error,
+    };
+  }
+  return undefined;
+}
+
+/**
+ * The versions a 2025 server's `-32000` names, when it names them. The
+ * TypeScript SDK's server says "Unsupported protocol version: X (supported
+ * versions: A, B)". Other wording yields none, and the message then asks for
+ * "a version the server supports" rather than guessing.
+ */
+function legacyOfferedVersions(message: string): string[] {
+  const listed = /supported versions:\s*([^)]*)/i.exec(message)?.[1];
+  return listed?.match(/\d{4}-\d{2}-\d{2}/g) ?? [];
 }

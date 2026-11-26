@@ -60,7 +60,11 @@ import type {
   RawHttpCheckContext,
 } from "./types.js";
 import { MCP_CHECK_CATEGORIES } from "./types.js";
-import { pinRefusalChecks } from "./version-refusal.js";
+import {
+  modernPinRefusal,
+  pinRefusalChecks,
+  pinRefusalResults,
+} from "./version-refusal.js";
 import {
   collectClientAdvice,
   collectRawAdvice,
@@ -328,6 +332,44 @@ async function runClientChecks(
     selectedClientChecks.length === 0 &&
     config.protocolVersion !== undefined
   ) {
+    // With no client connect, a 2026 pin has nothing that would see the
+    // server refuse it: ask once, so a refusal stops the run as it does on
+    // the client path instead of failing every raw probe. (A 2025 pin sees it
+    // in each probe's own `initialize`; see `legacy-handshake.ts`.)
+    if (config.era === "modern" && selectedCheckIds.size > 0) {
+      const refusal = await modernPinRefusal(
+        {
+          config,
+          serverUrl: config.serverUrl,
+          fetchFn: config.fetchFn,
+          recorder,
+        },
+        config.protocolVersion,
+      );
+      if (refusal) {
+        return {
+          checks: pinRefusalResults(
+            {
+              pinned: config.protocolVersion,
+              offered: refusal.offered,
+              extraDetails: {
+                status: refusal.status,
+                error: { code: refusal.error.code, message: refusal.error.message },
+              },
+            },
+            {
+              config,
+              selectedCheckIds,
+              selectedClientChecks,
+              categoryOf: (id) => CHECK_CATEGORY_BY_ID.get(id) ?? "protocol",
+            },
+          ),
+          config,
+          readiness: [],
+          versionRefused: true,
+        };
+      }
+    }
     return { checks: [], config, readiness: [] };
   }
 
