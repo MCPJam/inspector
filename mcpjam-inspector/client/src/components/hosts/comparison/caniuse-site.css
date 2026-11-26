@@ -50,6 +50,17 @@
   box-shadow: none;
 }
 
+.caniuse-site .caniuse-hero input:focus-visible {
+  background-color: transparent;
+}
+
+@media (forced-colors: active) {
+  :is(.caniuse-site, .caniuse-dialog)
+    :is(input:not([type]), input[type="text"], input[type="email"], input[type="search"], textarea):focus-visible {
+    border-bottom: 2px solid Highlight;
+  }
+}
+
 .caniuse-nav-link {
   display: flex;
   align-items: center;
