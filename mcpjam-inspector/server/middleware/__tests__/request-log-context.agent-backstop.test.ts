@@ -154,9 +154,10 @@ describe("request-log backstop for Ask MCPJam", () => {
     expect(captureTags().page_class).toBe("incident");
   });
 
+  // GET, so the metadata guard decides it: a POST pages whatever the metadata.
   it("keeps a route's own 404 classified by its code", async () => {
     await app((a) =>
-      a.post(AGENT, (c) => {
+      a.get(AGENT, (c) => {
         c.set("webErrorMeta", {
           status: 404,
           code: "TASK_NOT_FOUND",
@@ -164,7 +165,7 @@ describe("request-log backstop for Ask MCPJam", () => {
         });
         return c.json({ code: "TASK_NOT_FOUND" }, 404);
       }),
-    ).request(AGENT, { method: "POST" });
+    ).request(AGENT, { method: "GET" });
 
     expect(captureTags().page_class).toBe("incident");
   });
