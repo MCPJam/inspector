@@ -113,9 +113,9 @@ export function parseUserContextText(text: unknown): UserContextBlock | null {
 // and stores in the chat. Recognized here so a persisted event run renders as
 // an event card — the SAME text the model read — rather than as a message
 // the user typed. Pinned by `shared/__tests__/user-context-message.test.ts`.
-const EVENT_TURN_PREFIX = "Standing instruction:\n";
-const EVENT_TURN_DATA_OPEN = '\n<event-data untrusted="true">\n';
-const EVENT_TURN_DATA_CLOSE = "\n</event-data>";
+export const EVENT_TURN_PREFIX = "Standing instruction:\n";
+export const EVENT_TURN_DATA_OPEN = '\n<event-data untrusted="true">\n';
+export const EVENT_TURN_DATA_CLOSE = "\n</event-data>";
 
 /**
  * Parse one SDK event-turn message into an `event` context block, or null.
