@@ -174,12 +174,14 @@ describe("protocol conformance against a server that requires authorization", ()
     expect(byId["server-initialize"]).toMatchObject({
       skipReason: "could-not-run",
     });
-    // The raw probe ran, saw the 401, and was reclassified rather than skipped.
+    // The raw probe ran, saw initialize refused with a 401, stopped there, and
+    // was reclassified as a login problem rather than a plain could-not-run.
     expect(byId["protocol-invalid-method-error"]).toMatchObject({
       skipReason: "could-not-run",
       details: expect.objectContaining({
         status: 401,
-        probeFailure: expect.any(String),
+        authorizationRequired: true,
+        probeReason: expect.stringContaining("HTTP 401"),
       }),
     });
 
@@ -207,10 +209,13 @@ describe("protocol conformance against a server that requires authorization", ()
       skipReason: "could-not-run",
     });
     expect(isAuthorizationRequiredCheck(probe!)).toBe(true);
+    // The handshake stops at the refused initialize, so the probe's own
+    // could-not-run message is the one kept.
     expect(probe?.details).toMatchObject({
       status: 401,
-      probeFailure: expect.any(String),
+      probeReason: expect.stringContaining("HTTP 401"),
     });
+    expect(probe?.details).not.toHaveProperty("probeFailure");
     expect(result.outcome).toBe("incomplete");
   }, 60_000);
 

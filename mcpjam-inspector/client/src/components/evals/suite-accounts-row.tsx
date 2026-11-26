@@ -182,6 +182,9 @@ function SuiteWebAccountsGroup({
     setPending((current) => ({ ...current, [vendor]: next }));
     try {
       await save({ suiteId, vendor, webAccountIds: next });
+      // The choice is outside the settings draft, so Save settings stays
+      // off; this is the only sign that it saved.
+      toast.success(`Saved your ${webClientName(vendor)} accounts.`);
     } catch (failure) {
       const fallback = `Couldn't save your ${webClientName(vendor)} accounts. Try again.`;
       const refusal = describeConvexFailure(failure, fallback);
@@ -200,7 +203,7 @@ function SuiteWebAccountsGroup({
       testId="suite-accounts-web"
       title="Web clients"
       description="The accounts Claude web and ChatGPT web sign in as for runs you start and schedules you own."
-      footer="Teammates choose their own accounts."
+      footer="Changes save right away. Teammates choose their own accounts."
       column="Client"
     >
       {rows.map(({ vendor, server }) => (
@@ -252,6 +255,9 @@ export function SuiteAccountGroups({
     setPending((current) => ({ ...current, [serverId]: next }));
     try {
       await save({ suiteId, serverId, connectionIds: next });
+      // The choice is outside the settings draft, so Save settings stays
+      // off; this is the only sign that it saved.
+      toast.success(`Saved your ${serverName(serverId)} accounts.`);
     } catch (failure) {
       console.warn("[Suite settings] Could not save accounts.", failure);
       // The backend's own sentence when it refused the choice; otherwise ours.
@@ -274,7 +280,7 @@ export function SuiteAccountGroups({
           testId="suite-accounts-mine"
           title="Runs as you"
           description="Used by runs you start in the app or with your API key, and by schedules you own."
-          footer="Teammates choose their own accounts."
+          footer="Changes save right away. Teammates choose their own accounts."
         >
           {own.map((server) => (
             <AccountServerRow

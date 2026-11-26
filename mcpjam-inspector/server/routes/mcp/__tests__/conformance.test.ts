@@ -197,7 +197,7 @@ describe("POST /api/mcp/conformance/tasks", () => {
     const body = await res.json();
     expect(body.success).toBe(true);
     expect(body.result.passed).toBe(false);
-    expect(body.result.checks[0].id).toBe("tasks-wire-resolvable");
+    expect(body.result.checks[0].id).toBe("tasks-result-type-discipline");
   });
 });
 

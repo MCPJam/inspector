@@ -12,15 +12,18 @@ import {
   notApplicableResult,
 } from "./helpers.js";
 import {
+  legacyInitialize,
+  type LegacyHandshakeStop,
+} from "../legacy-handshake.js";
+import {
   DEFAULT_LEGACY_PROTOCOL_VERSION,
   jsonRpcError,
   legacyHeaders,
-  legacyInitialize,
   modernHeaders,
   modernRequestBody,
   rawRequest,
-  versionStopDetails,
-  type LegacyVersionStop,
+  resumePolledStream,
+  unreadPolledAnswerMessage,
   type RawHttpResult,
 } from "../raw-http.js";
 import { hasWireField } from "../raw-capture.js";
@@ -62,7 +65,7 @@ const INVALID_METHOD = "nonexistent/method_that_does_not_exist";
  */
 async function sendInvalidMethodProbe(
   ctx: RawHttpCheckContext,
-): Promise<RawHttpResult | { versionStop: LegacyVersionStop }> {
+): Promise<RawHttpResult | { stop: LegacyHandshakeStop }> {
   if (ctx.config.era === "modern") {
     const version =
       ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION;
@@ -79,31 +82,34 @@ async function sendInvalidMethodProbe(
     });
   }
 
-  const { sessionId, negotiatedVersion, versionStop } =
-    await legacyInitialize(ctx);
-  if (versionStop !== undefined) {
-    // The handshake did not end in the version this run uses, so the probe is
-    // not sent: there is no session on that version to send it on.
-    return { versionStop };
+  const { sessionId, negotiatedVersion, stop } = await legacyInitialize(ctx);
+  if (stop !== undefined) {
+    // The handshake did not end in a session on the version this run uses, so
+    // the probe is not sent: a refusal it drew would be MCPJam's doing.
+    return { stop };
   }
-  return await rawRequest(ctx, {
+  const protocolVersion =
+    negotiatedVersion ??
+    ctx.config.protocolVersion ??
+    DEFAULT_LEGACY_PROTOCOL_VERSION;
+  const response = await rawRequest(ctx, {
     // Only the method name is the test. 2025-06-18 and later require the
     // version header on every request after initialize, so it is sent here
     // like on any other request, with the version the server agreed to: a
     // server that answered an older version may refuse the one we asked for.
-    headers: legacyHeaders({
-      protocolVersion:
-        negotiatedVersion ??
-        ctx.config.protocolVersion ??
-        DEFAULT_LEGACY_PROTOCOL_VERSION,
-      sessionId,
-    }),
+    headers: legacyHeaders({ protocolVersion, sessionId }),
     body: {
       jsonrpc: "2.0",
       id: 99,
       method: INVALID_METHOD,
       params: {},
     },
+  });
+  // A server may hand the error to polling; grading the empty stream it
+  // closed would fail it for an answer it did send.
+  return await resumePolledStream(ctx, response, {
+    sessionId,
+    protocolVersion,
   });
 }
 
@@ -137,12 +143,12 @@ export async function runProtocolChecks(
   const startedAt = Date.now();
   try {
     const response = await sendInvalidMethodProbe(ctx);
-    if ("versionStop" in response) {
+    if ("stop" in response) {
       results.push(
         couldNotRunResult(
           PROTOCOL_CHECK_METADATA["protocol-invalid-method-error"],
-          response.versionStop.message,
-          versionStopDetails(response.versionStop),
+          response.stop.message,
+          response.stop.details,
         ),
       );
       return results;
@@ -150,6 +156,22 @@ export async function runProtocolChecks(
     // `jsonRpcError` reads JSON and SSE bodies alike off the capture, so the
     // check never has to know how the server framed its answer.
     const rpcError = jsonRpcError(response);
+
+    // The server handed the answer to polling and asked for a longer wait
+    // than the check had: nothing was graded, so this is not a failure.
+    const unread = rpcError
+      ? undefined
+      : unreadPolledAnswerMessage(response.resumed);
+    if (unread !== undefined) {
+      results.push(
+        couldNotRunResult(
+          PROTOCOL_CHECK_METADATA["protocol-invalid-method-error"],
+          unread,
+          { status: response.status },
+        ),
+      );
+      return results;
+    }
 
     if (!rpcError) {
       // `jsonRpcError` only reports a WELL-FORMED error (numeric code + string
