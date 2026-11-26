@@ -1072,7 +1072,7 @@ export function useEvalHandlers({
           : undefined;
         const coveredAccounts = new Set(accountsByTarget?.flat());
         if (runAccounts?.some((account) => !coveredAccounts.has(account))) {
-          throw new Error("A selected MCP server account is outside the clients and models in this run.");
+          throw new Error("This run doesn't include an MCP server you chose an account for. Clear the account choice or select a client and model that use that server.");
         }
 
         // Partial-failure tolerant: a failure on one host shouldn't cancel
