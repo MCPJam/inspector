@@ -1,48 +1,64 @@
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@mcpjam/design-system/select";
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@mcpjam/design-system/toggle-group";
 import type {
   ModelVisibleMcpToolResults,
   ModelVisibleStructuredContent,
 } from "@mcpjam/sdk/host-config";
 import {
   getModelVisibleStructuredContent,
-  MODEL_VISIBLE_STRUCTURED_CONTENT_RULES,
   parseModelVisibleStructuredContent,
   setModelVisibleStructuredContent,
 } from "@/lib/model-visible-structured-content";
+import { TRI_SELECTOR_ACTIVE_CLASSES } from "./primitives";
 
-// Radix Select needs a non-empty value for every item, so the unset rule
-// gets a sentinel that never reaches the draft.
+// Radix needs a non-empty value for every item, so the unset rule gets a
+// sentinel that never reaches the draft.
 const DEFAULT_OPTION = "default";
 
 const LABEL = "Tool results sent to the model";
 
-const OPTION_LABELS: Record<ModelVisibleStructuredContent, string> = {
-  fallback: "Prefer text",
-  preferred: "Prefer structured content",
-  both: "Text and structured content",
-};
-
-const DEFAULT_LABEL = "Combined JSON (default)";
-
-const DEFAULT_DESCRIPTION =
-  "Sends text, structured content and _meta together as one JSON string.";
-
-const DESCRIPTIONS: Record<ModelVisibleStructuredContent, string> = {
-  fallback:
-    "Sends the text. Sends structured content only when there is no text, like Claude Desktop.",
-  preferred:
-    "Sends structured content. Sends the text only when there is no structured content, like Claude Code and Codex CLI.",
-  both: "Sends the text and the structured content, once each.",
-};
+// Worded in the spec's terms for the three parts of a tool result: the text
+// (`content`), `structuredContent` and `_meta`.
+const OPTIONS: ReadonlyArray<{
+  value: ModelVisibleStructuredContent | typeof DEFAULT_OPTION;
+  label: string;
+  ariaLabel: string;
+  description: string;
+}> = [
+  {
+    value: DEFAULT_OPTION,
+    label: "All three",
+    ariaLabel: "All three (default)",
+    description:
+      "The model gets the text, structuredContent and _meta as one escaped JSON string.",
+  },
+  {
+    value: "fallback",
+    label: "Text",
+    ariaLabel: "Text",
+    description:
+      "The model gets the text, or structuredContent when content is empty.",
+  },
+  {
+    value: "preferred",
+    label: "structuredContent",
+    ariaLabel: "structuredContent",
+    description:
+      "The model gets structuredContent, or the text when there is none.",
+  },
+  {
+    value: "both",
+    label: "Both",
+    ariaLabel: "Text and structuredContent",
+    description:
+      "The model gets the text and structuredContent, without _meta.",
+  },
+];
 
 /**
- * Which half of a tool result the model sees
+ * Which parts of a tool result the model sees
  * (`modelVisibleMcpToolResults.structuredContent`). The default writes
  * absence, so a client that never touches this keeps hashing as before.
  */
@@ -55,42 +71,51 @@ export function ToolResultStructuredContentField({
   disabled: boolean;
   onChange: (next: ModelVisibleMcpToolResults | undefined) => void;
 }) {
-  const rule = getModelVisibleStructuredContent(policy);
+  const selected = getModelVisibleStructuredContent(policy) ?? DEFAULT_OPTION;
+  const description = OPTIONS.find(
+    (option) => option.value === selected,
+  )?.description;
   return (
-    <div className="flex items-center justify-between gap-3 border-t border-border/60 pt-2.5">
+    <div className="flex flex-wrap items-center justify-between gap-2.5 border-t border-border/60 pt-2.5">
       <div className="min-w-0">
         <span className="text-[12px] font-medium">{LABEL}</span>
         <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
-          {rule ? DESCRIPTIONS[rule] : DEFAULT_DESCRIPTION}
+          {description}
         </p>
       </div>
-      <Select
-        value={rule ?? DEFAULT_OPTION}
-        onValueChange={(next) =>
+      <ToggleGroup
+        type="single"
+        size="sm"
+        variant="outline"
+        className="shrink-0"
+        value={selected}
+        onValueChange={(next) => {
+          // Re-clicking the selected item emits "", which would leave nothing
+          // selected.
+          if (!next) return;
           onChange(
             setModelVisibleStructuredContent(
               policy,
               parseModelVisibleStructuredContent(next),
             ),
-          )
-        }
+          );
+        }}
         disabled={disabled}
+        aria-label={LABEL}
       >
-        <SelectTrigger
-          aria-label={LABEL}
-          className="h-9 w-[220px] flex-shrink-0 text-xs"
-        >
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={DEFAULT_OPTION}>{DEFAULT_LABEL}</SelectItem>
-          {MODEL_VISIBLE_STRUCTURED_CONTENT_RULES.map((option) => (
-            <SelectItem key={option} value={option}>
-              {OPTION_LABELS[option]}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+        {OPTIONS.map((option) => (
+          <ToggleGroupItem
+            key={option.value}
+            value={option.value}
+            aria-label={option.ariaLabel}
+            // flex-none: the labels differ in length, so each item takes its
+            // label's width instead of an equal share.
+            className={`h-7 flex-none px-2.5 text-xs ${TRI_SELECTOR_ACTIVE_CLASSES}`}
+          >
+            {option.label}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
     </div>
   );
 }

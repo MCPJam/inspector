@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   emptyHostConfigInputV2,
@@ -70,41 +70,37 @@ function renderTab(policy: ModelVisibleMcpToolResults | undefined) {
 
 async function pick(option: string) {
   const user = userEvent.setup();
-  await user.click(screen.getByRole("combobox", { name: LABEL }));
-  await user.click(await screen.findByRole("option", { name: option }));
+  const group = screen.getByRole("radiogroup", { name: LABEL });
+  await user.click(within(group).getByRole("radio", { name: option }));
+}
+
+function selectedOption() {
+  const group = screen.getByRole("radiogroup", { name: LABEL });
+  return within(group).getByRole("radio", { checked: true });
 }
 
 describe("BehaviorTab tool results sent to the model", () => {
   it("shows the default for a client with no rule", () => {
     renderTab(imageFlags);
-    expect(screen.getByRole("combobox", { name: LABEL })).toHaveTextContent(
-      "Combined JSON (default)",
-    );
+    expect(selectedOption()).toHaveAccessibleName("All three (default)");
     expect(
       screen.getByText(
-        "Sends text, structured content and _meta together as one JSON string.",
+        "The model gets the text, structuredContent and _meta as one escaped JSON string.",
       ),
     ).toBeInTheDocument();
   });
 
   it.each([
-    [
-      "Prefer text",
-      "fallback",
-      /only when there is no text, like Claude Desktop/,
-    ],
-    [
-      "Prefer structured content",
-      "preferred",
-      /only when there is no structured content, like Claude Code and Codex CLI/,
-    ],
-    ["Text and structured content", "both", /once each/],
+    ["Text", "fallback", /or structuredContent when content is empty/],
+    ["structuredContent", "preferred", /or the text when there is none/],
+    ["Text and structuredContent", "both", /without _meta/],
   ] as const)(
     "picking %s stores %s and keeps the image flags",
     async (option, rule, description) => {
       const { lastPolicy } = renderTab(imageFlags);
       await pick(option);
       expect(lastPolicy()).toEqual({ ...imageFlags, structuredContent: rule });
+      expect(selectedOption()).toHaveAccessibleName(option);
       expect(screen.getByText(description)).toBeInTheDocument();
     },
   );
@@ -114,19 +110,24 @@ describe("BehaviorTab tool results sent to the model", () => {
       ...imageFlags,
       structuredContent: "preferred",
     });
-    expect(screen.getByRole("combobox", { name: LABEL })).toHaveTextContent(
-      "Prefer structured content",
-    );
-    await pick("Combined JSON (default)");
+    expect(selectedOption()).toHaveAccessibleName("structuredContent");
+    await pick("All three (default)");
     expect(lastPolicy()).toEqual(imageFlags);
     expect(lastPolicy()).not.toHaveProperty("structuredContent");
   });
 
   it("picking the default clears a policy that held only the rule", async () => {
     const { lastPolicy, drafts } = renderTab({ structuredContent: "both" });
-    await pick("Combined JSON (default)");
+    await pick("All three (default)");
     expect(drafts.length).toBeGreaterThan(0);
     expect(lastPolicy()).toBeUndefined();
+  });
+
+  it("re-clicking the selected option keeps it", async () => {
+    const { drafts } = renderTab({ structuredContent: "fallback" });
+    await pick("Text");
+    expect(drafts).toHaveLength(0);
+    expect(selectedOption()).toHaveAccessibleName("Text");
   });
 
   it.each([
@@ -149,7 +150,7 @@ describe("BehaviorTab tool results sent to the model", () => {
       screen.getByRole("radiogroup", { name: "Render tool images" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("combobox", { name: LABEL }),
+      screen.queryByRole("radiogroup", { name: LABEL }),
     ).not.toBeInTheDocument();
   });
 
@@ -162,6 +163,9 @@ describe("BehaviorTab tool results sent to the model", () => {
         readOnly
       />,
     );
-    expect(screen.getByRole("combobox", { name: LABEL })).toBeDisabled();
+    const group = screen.getByRole("radiogroup", { name: LABEL });
+    for (const radio of within(group).getAllByRole("radio")) {
+      expect(radio).toBeDisabled();
+    }
   });
 });

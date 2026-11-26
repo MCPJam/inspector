@@ -10,13 +10,7 @@ import type {
   ModelVisibleStructuredContent,
 } from "@mcpjam/sdk/host-config";
 
-export const MODEL_VISIBLE_STRUCTURED_CONTENT_RULES = [
-  "fallback",
-  "preferred",
-  "both",
-] as const satisfies readonly ModelVisibleStructuredContent[];
-
-/** A rule from an untyped value (a select's string), or undefined. */
+/** A rule from an untyped value (a toggle's string), or undefined. */
 export function parseModelVisibleStructuredContent(
   value: unknown,
 ): ModelVisibleStructuredContent | undefined {

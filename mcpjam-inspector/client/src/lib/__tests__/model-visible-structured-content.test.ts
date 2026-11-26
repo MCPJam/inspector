@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config";
 import {
   getModelVisibleStructuredContent,
-  MODEL_VISIBLE_STRUCTURED_CONTENT_RULES,
   parseModelVisibleStructuredContent,
   setModelVisibleStructuredContent,
 } from "../model-visible-structured-content";
@@ -14,7 +13,7 @@ const imageFlags: ModelVisibleMcpToolResults = {
 };
 
 describe("setModelVisibleStructuredContent", () => {
-  it.each(MODEL_VISIBLE_STRUCTURED_CONTENT_RULES)(
+  it.each(["fallback", "preferred", "both"] as const)(
     "sets %s and keeps the image flags",
     (rule) => {
       expect(setModelVisibleStructuredContent(imageFlags, rule)).toEqual({
