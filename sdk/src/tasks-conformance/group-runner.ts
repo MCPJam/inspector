@@ -1,5 +1,6 @@
 import { namesTasksExtension, errorCode } from "./metadata.js";
 import { isTasksToolCheck, taskCheckUsesInput } from "./types.js";
+import { canDeclareTasksExtension } from "../mcp-client-manager/task-input-driver.js";
 
 import type { RpcLogEvent } from "../mcp-client-manager/index.js";
 
@@ -101,21 +102,22 @@ export class TaskGroupRunner extends TaskOperations {
     // 2025-11-25: the answers to the questions a server sends over
     // `tasks/result`. Decided here because a client that answers has to say
     // so in `initialize`. Only tasks-inline-result reads what the call brings,
-    // so a group without it neither calls nor answers: answering would drive
-    // a second real task to its side effect for a check that cannot use it.
-    const legacyCallUsed = selected.has("tasks-inline-result");
-    const inputAnswers = legacyCallUsed
+    // so a group without it does not answer: answering would drive a second
+    // real task to its side effect for a check that cannot use it. Every
+    // group still makes the call itself when the task asks for input, as a
+    // requestor SHOULD (tasks.mdx:449).
+    const legacyAnswersUsed = selected.has("tasks-inline-result");
+    const inputAnswers = legacyAnswersUsed
       ? taskInputAnswersFor(this.config)
       : undefined;
     const resultLeg = new InputRequiredResultLeg(
       inputAnswers,
-      legacyCallUsed && answersNeedPin(this.config)
+      legacyAnswersUsed && answersNeedPin(this.config)
     );
     const serverConfig = serverConfigForAnswers(
       this.config.serverConfig,
       inputAnswers
     );
-
     try {
       return await withTasksClient(
         serverConfig,
@@ -123,6 +125,19 @@ export class TaskGroupRunner extends TaskOperations {
           this.config.signal?.throwIfAborted();
           const support = manager.getTasksSupport(serverId);
           const wire = support.wire;
+          // A run with answers makes the call, as it always did: it is how
+          // those answers reach the server. A run without them makes it only
+          // when the server cannot ask for something nobody here answers.
+          // That is judged on what `initialize` advertised (an exact set
+          // loses `elicitation` with no handler), because a server may only
+          // ask for that (2025-11-25 `basic/lifecycle.mdx`). Asked and
+          // refused, a server may end the task.
+          const refusesQuestions = () =>
+            !inputAnswers &&
+            !canDeclareTasksExtension(
+              manager.getAdvertisedClientCapabilities(serverId),
+              {}
+            ).ok;
           const protocolVersion =
             manager.getNegotiatedProtocolVersion(serverId);
 
@@ -531,7 +546,7 @@ export class TaskGroupRunner extends TaskOperations {
                       inputRequiredTask ??= task;
                       // 2025-11-25 answers over `tasks/result`, not `tasks/update`.
                       if (wire !== "extension") {
-                        if (wire !== "legacy" || !legacyCallUsed) return false;
+                        if (wire !== "legacy" || refusesQuestions()) return false;
                         const next = await resultLeg.run(
                           manager,
                           serverId,
