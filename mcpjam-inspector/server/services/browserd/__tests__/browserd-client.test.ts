@@ -519,4 +519,13 @@ describe("BrowserdClient.exportProfile", () => {
     await client.exportProfile();
     expect(calls[0]?.init.body).toBeUndefined();
   });
+
+  it("says why the daemon refused the export", async () => {
+    const reason = "browserContext.newPage: Failed to open a new tab";
+    const { client } = makeClient(json(500, { error: reason }));
+    await expect(client.exportProfile()).rejects.toMatchObject({
+      httpStatus: 500,
+      message: expect.stringContaining(reason),
+    });
+  });
 });

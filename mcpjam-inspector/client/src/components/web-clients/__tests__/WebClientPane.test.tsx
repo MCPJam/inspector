@@ -19,7 +19,13 @@ const mocks = vi.hoisted(() => ({
   copy: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn() },
 }));
-vi.mock("@/lib/browser-shell/chat-handoff", () => ({ releaseBrowserForChat: mocks.release }));
+vi.mock("@/lib/browser-shell/chat-handoff", () => ({
+  releaseBrowserForChat: mocks.release,
+  withBrowserForAgent: async (projectId: string, sessionId: string, task: () => Promise<unknown>) => {
+    await mocks.release(projectId, sessionId);
+    return task();
+  },
+}));
 vi.mock("sonner", () => ({ toast: mocks.toast }));
 vi.mock("@/hooks/use-web-accounts", () => ({ useWebAccounts: mocks.accounts }));
 vi.mock("convex/react", () => ({ useMutation: () => mocks.create }));
@@ -378,7 +384,7 @@ describe("SaveWebAccountBar", () => {
   it("says the save didn't happen when the request fails", async () => {
     await save(() => Promise.reject(new Error("network")));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Couldn't save the account. Try again.",
+      "The account wasn't saved because the request didn't finish.",
     );
   });
 });

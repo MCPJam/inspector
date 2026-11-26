@@ -514,7 +514,7 @@ export class BrowserdClient {
     const res = await this.request("/v1/profile/export", profileExportRequest(options), true);
     if (!res.ok) {
       throw new BrowserdClientError(
-        `browser profile export failed with status ${res.status}`,
+        `browser profile export failed with status ${res.status}: ${await res.text().then((t) => t.slice(0, 300), () => "")}`,
         res.status,
       );
     }

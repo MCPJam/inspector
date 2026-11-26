@@ -6,7 +6,10 @@
  * browser), the browser opens the URL itself and the module reads the JSON
  * the browser shows, then goes back to the page it was on, whatever it read;
  * only a cookie-authenticated endpoint works that way, and only an answer
- * short enough for the browser's page text.
+ * short enough for the browser's page text. Longer answers on that browser:
+ * Claude's `/api/account` reads its email with `leadingJsonString`; a long
+ * Claude conversation or organization list fails as "didn't come through
+ * whole", a typed failure the turn reports instead of a wrong answer.
  */
 import { PageDriverError, type PageDriver } from "./page-driver.js";
 
@@ -45,12 +48,36 @@ export async function readVendorJson(
       "This site's saved data needs a script in the page, which this browser can't run.",
     );
   }
+  return shownJson(await readShownVendorText(driver, url));
+}
+
+/**
+ * The text a browser without a script in the page shows for a vendor URL,
+ * then back to the page it was on. The hosted browser caps its text read
+ * (16,000 bytes), so a long answer comes back cut off: a caller that needs
+ * one field near the start reads it from here instead of parsing it all.
+ */
+export async function readShownVendorText(driver: PageDriver, url: string): Promise<string> {
   const back = await driver.url();
   await driver.navigate(url);
   try {
-    return shownJson(driver.pageText ? await driver.pageText() : ((await driver.readText("body")) ?? ""));
+    return driver.pageText ? await driver.pageText() : ((await driver.readText("body")) ?? "");
   } finally {
     await driver.navigate(back);
+  }
+}
+
+/**
+ * The first string value of `key` in JSON text that may be cut off. Only
+ * for a field the answer puts before anything long.
+ */
+export function leadingJsonString(shown: string, key: string): string | undefined {
+  const match = new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`).exec(shown);
+  if (!match) return undefined;
+  try {
+    return text(JSON.parse(`"${match[1]}"`));
+  } catch {
+    return undefined;
   }
 }
 

@@ -4,7 +4,8 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createWebAccountRoutes, type WebAccountRouteDeps } from "../account-routes";
-import { pollUntil, type PageDriver } from "../../../utils/harness/real-ui/page-driver";
+import { PageDriverError, pollUntil, type PageDriver } from "../../../utils/harness/real-ui/page-driver";
+import { BrowserdClientError } from "../../browserd/browserd-codec";
 
 const ACTOR = { actorExternalId: "user_admin" };
 const ROW = {
@@ -211,6 +212,29 @@ describe("POST /accounts/:id/save-profile", () => {
     expect(await (await post(app, path, body)).json()).toMatchObject({ ok: true });
     expect(deps.saveProfile).toHaveBeenCalledTimes(1);
     expect(deps.browser.release).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["the account check", "identity"],
+    ["the profile export", "capture"],
+  ] as const)("answers 409 and keeps the browser when the person holds it during %s", async (_what, stage) => {
+    const page = claudePage("team@example.com");
+    const captureProfile = vi.fn(async () => new Uint8Array([1, 2, 3]));
+    if (stage === "identity") {
+      page.navigate = vi.fn(page.navigate).mockRejectedValueOnce(
+        new PageDriverError("person_has_browser", "a person has taken control of this browser"),
+      );
+    } else {
+      captureProfile.mockRejectedValueOnce(new BrowserdClientError("lease_held", 423));
+    }
+    const { app, deps } = routes({
+      browser: { ...routes().deps.browser, driver: async () => page, captureProfile },
+    });
+    const first = await post(app, "/accounts/acct-1/save-profile", body);
+    expect(first.status).toBe(409);
+    expect(await first.json()).toMatchObject({ error: expect.stringContaining("You have control of the browser") });
+    expect(deps.browser.release).not.toHaveBeenCalled();
+    expect(deps.saveProfile).not.toHaveBeenCalled();
   });
 
   it("keeps the browser open while the person finishes signing in or switches accounts", async () => {

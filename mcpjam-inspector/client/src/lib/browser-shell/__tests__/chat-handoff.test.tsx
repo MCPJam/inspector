@@ -1,7 +1,9 @@
 import { act, renderHook } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import {
+  agentHoldsBrowser,
   releaseBrowserForChat,
+  withBrowserForAgent,
   useBrowserChatHandoff,
   runBrowserCommandWithHandoff,
 } from "../chat-handoff";
@@ -207,3 +209,51 @@ it.each([true, false])(
     view.unmount();
   },
 );
+
+it("keeps the browser for the agent until its task ends, then lets the pane take it", async () => {
+  const release = vi.fn(async () => true);
+  const view = renderHook(() =>
+    useBrowserChatHandoff({ projectId: "save", sessionId: "s", holding: true, release }),
+  );
+  let finish!: (value: string) => void;
+  const running = withBrowserForAgent("save", "s", () => {
+    expect(release).toHaveBeenCalledOnce();
+    expect(agentHoldsBrowser("save", "s")).toBe(true);
+    return new Promise<string>((resolve) => {
+      finish = resolve;
+    });
+  });
+  expect(agentHoldsBrowser("save", "s")).toBe(true);
+  expect(agentHoldsBrowser("save", "other")).toBe(false);
+  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+  finish("saved");
+  await expect(running).resolves.toBe("saved");
+  expect(agentHoldsBrowser("save", "s")).toBe(false);
+  view.unmount();
+});
+
+it("runs the agent's task when a release never answers, and still frees the browser after a failure", async () => {
+  vi.useFakeTimers();
+  try {
+    const view = renderHook(() =>
+      useBrowserChatHandoff({
+        projectId: "stuck",
+        sessionId: "s",
+        holding: true,
+        release: () => new Promise<boolean>(() => {}),
+      }),
+    );
+    const task = vi.fn(async () => {
+      throw new Error("409");
+    });
+    const running = withBrowserForAgent("stuck", "s", task);
+    const outcome = expect(running).rejects.toThrow("409");
+    await vi.advanceTimersByTimeAsync(10_000);
+    await outcome;
+    expect(task).toHaveBeenCalledOnce();
+    expect(agentHoldsBrowser("stuck", "s")).toBe(false);
+    view.unmount();
+  } finally {
+    vi.useRealTimers();
+  }
+});

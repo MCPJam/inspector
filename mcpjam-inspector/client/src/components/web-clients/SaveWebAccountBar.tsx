@@ -57,7 +57,7 @@ export function SaveWebAccountBar({
       setProblem(
         webAccountFailureMessage(
           failure,
-          "Couldn't save the account. Try again.",
+          "The account wasn't saved because the request didn't finish. Save again, or start signing in again if the browser closed.",
         ),
       );
     } finally {

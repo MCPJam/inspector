@@ -1,5 +1,7 @@
 import type { JpegDeliveryStats } from "@/shared/browser-viewport-policy";
 import {
+  AGENT_HOLDS_NOTICE,
+  agentHoldsBrowser,
   releaseBrowserForChat,
   useBrowserChatHandoff,
 } from "@/lib/browser-shell/chat-handoff";
@@ -1304,6 +1306,10 @@ export function HostedBrowserBody({
   const takeover = useCallback(
     async (events: BrowserInputEvent[]) => {
       if (!tokens || takingRef.current) return;
+      if (agentHoldsBrowser(projectId, sessionId)) {
+        setTakeoverNotice(AGENT_HOLDS_NOTICE);
+        return;
+      }
       const originalTokens = tokens;
       const anchor = paneInteractionAnchor(shell.state, session?.bootId);
       takingRef.current = true;
@@ -1325,7 +1331,7 @@ export function HostedBrowserBody({
         takingRef.current = false;
       }
     },
-    [tokens, session?.bootId, setLeaseAction, shell.state],
+    [tokens, session?.bootId, setLeaseAction, shell.state, projectId, sessionId],
   );
 
   // The stats overlay's flag, which the take-control bar used to own.

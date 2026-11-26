@@ -34,7 +34,8 @@ import {
 } from "@/shared/web-clients";
 import { chatgptWebPageModule } from "../../utils/harness/real-ui/chatgpt-web.js";
 import { claudeWebPageModule } from "../../utils/harness/real-ui/claude-web.js";
-import type { PageDriver } from "../../utils/harness/real-ui/page-driver.js";
+import { PageDriverError, type PageDriver } from "../../utils/harness/real-ui/page-driver.js";
+import { BrowserdClientError } from "../browserd/browserd-codec.js";
 import {
   RealUiError,
   type RealUiPageModule,
@@ -154,6 +155,16 @@ async function jsonBody(c: Context): Promise<unknown> {
   }
 }
 
+const PERSON_HAS_BROWSER =
+  "You have control of the browser, so the account couldn't be checked. Leave the browser alone for a moment, then save again.";
+
+function personHasBrowser(error: unknown): boolean {
+  return (
+    (error instanceof PageDriverError && error.code === "person_has_browser") ||
+    (error instanceof BrowserdClientError && error.httpStatus === 423)
+  );
+}
+
 export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
   const app = new Hono();
 
@@ -229,6 +240,9 @@ export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
     // the same browser. Once storage starts, its outcome may be ambiguous.
     const release = () => deps.browser.release({ ...browser, bearer: c.req.header("authorization") ?? "" });
     const retryBeforeStorage = (stage: "identity" | "capture", error: unknown) => {
+      // The person still holds the browser (the save's check, or the daemon's
+      // export lease): their sign-in stays open for another save.
+      if (personHasBrowser(error)) return c.json({ error: PERSON_HAS_BROWSER }, 409);
       // Browser errors may quote the vendor page. Report only the phase and kind.
       const kind = error instanceof RealUiError ? error.failure.kind : "unavailable";
       reportRouteFailure("Web account profile save interrupted", new Error(`${stage}: ${kind}`), {
