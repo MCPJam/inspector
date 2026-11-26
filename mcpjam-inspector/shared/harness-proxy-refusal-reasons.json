@@ -10,6 +10,8 @@
   "reasons": {
     "spend_budget_reached": { "retry": false },
     "spending_limit_reached": { "retry": false },
+    "spend_held": { "retry": true },
+    "wallet_locked": { "retry": false },
     "spend_admission": { "retry": false },
     "pricing_unavailable": { "retry": false },
     "gateway_not_configured": { "retry": false },

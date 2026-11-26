@@ -132,7 +132,11 @@ export function useCreditTopupReturnFlowBilling({
 
     useMCPJamLimitDialogStore.getState().clearOutOfCreditsHit();
 
-    toast.success("Credits added.");
+    // A credit refusal sends an agent's user here to top up, and the agent
+    // waits to be told to continue: it never retries on its own.
+    toast.success(
+      "Credits added. If an agent sent you here, go back and tell it to continue.",
+    );
     track("credit_topup_return_success", {
       location: "credit_topup_return_billing",
       organization_id: organizationId,

@@ -244,6 +244,33 @@ describe("eval rerun routes", () => {
       const body = (await res.json()) as Record<string, unknown>;
       expect(body).not.toHaveProperty("rerunOfRunId");
       expect(body).not.toHaveProperty("rerunScope");
+      expect(body).not.toHaveProperty("resumeSelection");
+    });
+
+    it("exposes the backend's resume selection, and drops a malformed one", async () => {
+      const selection = { caseIds: ["case_a", "case_b"], totalCaseCount: 4 };
+      mockConvex({
+        "testSuites:getTestSuiteRun": () => ({
+          ...SOURCE_RUN,
+          resumeSelection: selection,
+        }),
+      });
+      const res = await request(
+        "GET",
+        `/projects/${PROJECT_ID}/eval-runs/${RUN_ID}`,
+      );
+      expect(await res.json()).toMatchObject({ resumeSelection: selection });
+
+      mockConvex({
+        "testSuites:getTestSuiteRun": () => ({
+          ...SOURCE_RUN,
+          resumeSelection: { caseIds: "case_a" },
+        }),
+      });
+      const malformed = (await (
+        await request("GET", `/projects/${PROJECT_ID}/eval-runs/${RUN_ID}`)
+      ).json()) as Record<string, unknown>;
+      expect(malformed).not.toHaveProperty("resumeSelection");
     });
   });
 

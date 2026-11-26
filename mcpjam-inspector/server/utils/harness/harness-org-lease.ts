@@ -11,6 +11,7 @@ import { z } from "zod";
 import { logger } from "../logger.js";
 import type { HarnessOrgUpstreamProfile } from "@/shared/harness-model-support";
 import type { ModelSelection } from "@mcpjam/sdk/browser";
+import { parseCreditRecovery, type CreditRecovery } from "@mcpjam/sdk/contract";
 import {
   HARNESS_PROXY_REFUSAL_REASONS,
   HARNESS_PROXY_REFUSAL_STATUS,
@@ -107,22 +108,33 @@ export function orgBindingUnconfirmed(): {
 /** The refusal read-back's answer, checked at the boundary. */
 const leaseRefusalSchema = z.object({
   ok: z.literal(true),
-  refusal: z.object({ reason: z.string(), at: z.number() }),
+  refusal: z.object({
+    reason: z.string(),
+    at: z.number(),
+    recovery: z.unknown().optional(),
+  }),
 });
+
+/** A proxy refusal recorded on a lease, with a spend refusal's one step. */
+export type HarnessLeaseRefusal = {
+  reason: string;
+  at: number;
+  recovery?: CreditRecovery;
+};
 
 /**
  * The model proxy's own most recent refusal on the caller's leases for
- * `runId` — its `x-mcpjam-proxy-refusal` reason, which the backend records on
- * the lease — or undefined. The runtime in the sandbox surfaces only the
- * refusal's status, so a failed turn reads the reason back here to classify
- * what failed. Never throws: an unreachable endpoint leaves the failure
- * unclassified, the safe direction.
+ * `runId` — its `x-mcpjam-proxy-refusal` reason, and a spend refusal's
+ * recovery, which the backend records on the lease — or undefined. The
+ * runtime in the sandbox surfaces only the refusal's status, so a failed turn
+ * reads them back here. Never throws: an unreachable endpoint leaves the
+ * failure unclassified, the safe direction.
  */
 export async function readHarnessLeaseRefusal(args: {
   runId: string;
   bearer: string;
   signal?: AbortSignal;
-}): Promise<{ reason: string; at: number } | undefined> {
+}): Promise<HarnessLeaseRefusal | undefined> {
   try {
     const url = new URL(
       "/web/harness/model-broker/refusal",
@@ -141,7 +153,10 @@ export async function readHarnessLeaseRefusal(args: {
     });
     if (!response.ok) return undefined;
     const parsed = leaseRefusalSchema.safeParse(await response.json());
-    return parsed.success ? parsed.data.refusal : undefined;
+    if (!parsed.success) return undefined;
+    const { reason, at } = parsed.data.refusal;
+    const recovery = parseCreditRecovery(parsed.data.refusal.recovery);
+    return { reason, at, ...(recovery ? { recovery } : {}) };
   } catch (err) {
     logger.warn("[harness-model-broker] refusal lookup failed", {
       error: err instanceof Error ? err.message : String(err),
@@ -170,7 +185,9 @@ async function proxyRefusalForFailedTurn(args: {
   leaseRunId: string | undefined;
   bearer: string | undefined;
   turnStartedAt: number;
-}): Promise<HarnessProxyRefusalReason | undefined> {
+}): Promise<
+  { reason: HarnessProxyRefusalReason; recovery?: CreditRecovery } | undefined
+> {
   const { evidence } = args;
   if (!args.modelInvoked || !args.leaseRunId || !args.bearer) return undefined;
   if (
@@ -198,23 +215,57 @@ async function proxyRefusalForFailedTurn(args: {
   ) {
     return undefined;
   }
-  return refusal.reason;
+  return {
+    reason: refusal.reason,
+    ...(refusal.recovery ? { recovery: refusal.recovery } : {}),
+  };
 }
 
 /**
+ * What a failed turn reports: the evidence, and the step a spend refusal
+ * names to recover.
+ */
+export type FailedHarnessTurn = {
+  evidence: InfraFailureEvidence | undefined;
+  recovery?: CreditRecovery;
+};
+
+/**
  * The evidence a failed turn reports: the model proxy's own refusal when it
- * was one (`proxyRefusalForFailedTurn`), so it is classified as what it was;
- * otherwise the runtime's.
+ * was one (`proxyRefusalForFailedTurn`), so it is classified as what it was,
+ * with its recovery step; otherwise the runtime's.
  */
 export async function failedTurnEvidence(
   args: Parameters<typeof proxyRefusalForFailedTurn>[0],
-): Promise<InfraFailureEvidence | undefined> {
-  const reason = await proxyRefusalForFailedTurn(args);
-  return reason
-    ? {
-        source: "harness_runtime",
-        code: reason,
-        httpStatus: HARNESS_PROXY_REFUSAL_STATUS,
-      }
-    : args.evidence;
+): Promise<FailedHarnessTurn> {
+  const refusal = await proxyRefusalForFailedTurn(args);
+  if (!refusal) return { evidence: args.evidence };
+  return {
+    evidence: {
+      source: "harness_runtime",
+      code: refusal.reason,
+      httpStatus: HARNESS_PROXY_REFUSAL_STATUS,
+    },
+    ...(refusal.recovery ? { recovery: refusal.recovery } : {}),
+  };
+}
+
+/**
+ * A failed turn's error text: the stream's error part, and the raw text the
+ * engine error carries. A coded failure is the JSON envelope the chat reads
+ * its code from; one with a recovery step is that envelope in the raw text
+ * too, so a run stopping on it (`runStopRefusal`) names the step.
+ */
+export function failedTurnErrorText(
+  message: string,
+  code: string | undefined,
+  recovery: CreditRecovery | undefined,
+): { streamText: string; rawText: string } {
+  if (!code) return { streamText: message, rawText: message };
+  const envelope = JSON.stringify({
+    message,
+    code,
+    ...(recovery ? { recovery } : {}),
+  });
+  return { streamText: envelope, rawText: recovery ? envelope : message };
 }
