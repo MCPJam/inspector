@@ -281,16 +281,6 @@ export const APPS_CHECK_CATALOG = {
 
 /** Tasks suite. Keys follow `MCP_TASKS_CHECK_IDS` order. */
 export const TASKS_CHECK_CATALOG = {
-  "tasks-wire-resolvable": {
-    title: "Tasks Wire Resolvable",
-    description:
-      "The negotiated protocol version and advertised capabilities resolve to exactly one tasks wire.",
-  },
-  "tasks-declaration-hygiene": {
-    title: "Per-Version Declaration Hygiene",
-    description:
-      "Outgoing requests carry `params.task` only on the legacy wire and the tasks extension declaration only on the extension wire; a connection with no tasks wire sends neither.",
-  },
   "tasks-result-type-discipline": {
     title: "Result Type Discipline",
     description:

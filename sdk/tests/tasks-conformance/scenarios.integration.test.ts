@@ -653,10 +653,7 @@ describe("the mcp-tasks profile", () => {
     const fixture = await serve(quickPhases(), {
       misbehave: { answerUnknownTaskId: true },
     });
-    const result = await run(fixture, [
-      "tasks-invalid-task-id-rejected",
-      "tasks-wire-resolvable",
-    ]);
+    const result = await run(fixture, ["tasks-invalid-task-id-rejected"]);
     expect(check(result, "tasks-invalid-task-id-rejected").status).toBe(
       "failed",
     );
@@ -726,11 +723,7 @@ describe("per-check task subjects", () => {
   });
   it("makes no tool calls for task-free checks, even with a suite default", async () => {
     const fixture = await serve(quickPhases());
-    await run(fixture, [
-      "tasks-wire-resolvable",
-      "tasks-declaration-hygiene",
-      "tasks-invalid-task-id-rejected",
-    ]);
+    await run(fixture, ["tasks-invalid-task-id-rejected"]);
     expect(
       fixture.received.filter((r) => r.method === "tools/call")
     ).toHaveLength(0);

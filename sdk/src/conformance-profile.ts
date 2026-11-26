@@ -201,6 +201,13 @@ const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
  *     `requiredCapabilities` does not name the tasks extension; the core spec
  *     requires it to list the missing capabilities (basic/index.mdx, a MUST).
  *
+ * v2026-11-02.1 → v2026-11-26.1 removes `tasks-wire-resolvable` and
+ * `tasks-declaration-hygiene`. The checks are gone from the suite, not demoted
+ * to pending: both graded MCPJam's own client, so a server could not fail
+ * them on their own logic, and every run scored them. Their rules are client
+ * tests in CI. A run under this version has two questions fewer, and a
+ * server with no tasks at all no longer collects two passed checks.
+ *
  * A SEPARATE profile rather than a section of `mcp-protocol`, which was the
  * open design question. Two reasons settled it:
  *
@@ -215,10 +222,8 @@ const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
  */
 const MCP_TASKS_PROFILE: ConformanceProfile = {
   id: "mcp-tasks",
-  version: "2026-11-02.1",
+  version: "2026-11-26.1",
   scored: [
-    "tasks-wire-resolvable",
-    "tasks-declaration-hygiene",
     "tasks-result-type-discipline",
     "tasks-undeclared-creation-refused",
     "tasks-undeclared-capability-rejected",
