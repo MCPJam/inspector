@@ -226,6 +226,8 @@ export function HostConfigComparisonMatrix({
           "min-h-0 overflow-auto",
           mobileOptimized &&
             "max-w-full [--matrix-field-width:140px] [-webkit-overflow-scrolling:touch] sm:[--matrix-field-width:300px]",
+          // Keep absolutely positioned screen-reader text inside the public matrix scroller.
+          mobileOptimized && summaryColumn && "relative",
         )}
       >
         <table
