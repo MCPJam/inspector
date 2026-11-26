@@ -2519,16 +2519,21 @@ export class MCPClientManager {
   }
 
   /**
-   * The client capabilities this connection advertises: the configured set
-   * after the same handler gates `initialize` applies (an exact set loses
-   * `elicitation` when nothing is registered to answer it). A server may only
-   * send requests for these (2025-11-25 `basic/lifecycle.mdx`), so this is the
-   * set to judge "can the server ask me something I cannot answer" against.
-   * `undefined` for a server that is not registered.
+   * The client capabilities this connection advertises: once connected, the
+   * set `initialize` actually sent (stored on the live state, as
+   * `getServerConnectionInfo` reads it); before that, the configured set after
+   * the same handler gates (an exact set loses `elicitation` when nothing is
+   * registered to answer it). A server may only send requests for these
+   * (2025-11-25 `basic/lifecycle.mdx`), so this is the set to judge "can the
+   * server ask me something I cannot answer" against. `undefined` for a
+   * server that is not registered.
    */
   getAdvertisedClientCapabilities(
     serverId: string
   ): ClientCapabilityOptions | undefined {
+    const sent =
+      this.liveClientStates.get(serverId)?.initializedClientCapabilities;
+    if (sent) return sent;
     const config = this.registeredServers.get(serverId)?.config;
     return config ? this.buildCapabilities(serverId, config) : undefined;
   }
