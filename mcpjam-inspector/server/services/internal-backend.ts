@@ -85,9 +85,33 @@ export function serviceRouteEnv(): {
 }
 
 /**
+ * The checked origin and token, or a throw naming the misconfiguration. Every
+ * service-route request starts here, and a worker that must not start on an
+ * unsafe origin calls it at startup, so "may start" and "may send" are one
+ * check.
+ */
+export function requireServiceRouteEnv(): {
+  origin: string;
+  serviceToken: string;
+} {
+  const env = serviceRouteEnv();
+  if (!env) {
+    throw new Error(
+      "Service routes require CONVEX_HTTP_URL and INSPECTOR_SERVICE_TOKEN",
+    );
+  }
+  return {
+    origin: serviceRouteOrigin(env.convexUrl),
+    serviceToken: env.serviceToken,
+  };
+}
+
+/**
  * The configured origin without a trailing slash. Refuses any origin that
  * would put the service token on the wire in cleartext; loopback `http:` is
  * allowed because local development runs Convex over http on 127.0.0.1.
+ * Only `http:` gets that exception, so `ftp://localhost` is a config error,
+ * not an outage.
  */
 function serviceRouteOrigin(convexUrl: string): string {
   let parsed: URL;
@@ -139,13 +163,7 @@ export async function postServiceRoute(
   body: Record<string, unknown>,
   options?: { headers?: Record<string, string> },
 ): Promise<ServiceRouteResponse> {
-  const env = serviceRouteEnv();
-  if (!env) {
-    throw new Error(
-      "Service routes require CONVEX_HTTP_URL and INSPECTOR_SERVICE_TOKEN",
-    );
-  }
-  const origin = serviceRouteOrigin(env.convexUrl);
+  const { origin, serviceToken } = requireServiceRouteEnv();
   const controller = new AbortController();
   const timeout = setTimeout(
     () => controller.abort(),
@@ -160,7 +178,7 @@ export async function postServiceRoute(
       headers: {
         ...extraHeaders(options?.headers),
         "Content-Type": "application/json",
-        "x-inspector-service-token": env.serviceToken,
+        "x-inspector-service-token": serviceToken,
       },
       body: JSON.stringify(body),
       signal: controller.signal,
