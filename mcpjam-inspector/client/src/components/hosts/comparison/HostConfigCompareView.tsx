@@ -1456,14 +1456,14 @@ export function ShareComparisonDialog({
       <Button
         type="button"
         variant="outline"
-        size="sm"
+        size={iconOnly ? "icon" : "sm"}
         aria-label={copyOnShare ? "Copy comparison link" : "Share"}
         title={copyOnShare ? undefined : "Share"}
         onClick={() => (copyOnShare ? void handleCopy() : setOpen(true))}
         className={cn(
           "gap-1.5",
           CANIUSE_ACTION_BUTTON_CLASS,
-          iconOnly && "size-8 px-0 has-[>svg]:px-0",
+          iconOnly && "size-8 px-0",
         )}
       >
         {copyOnShare && copied ? (
