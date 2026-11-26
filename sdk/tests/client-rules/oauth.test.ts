@@ -7,12 +7,14 @@
  * received_resource_metadata, cimd_metadata_response). The machines run here
  * with a scripted request executor, so no socket is needed.
  *
- * Where an existing test already proves a rule exactly, it is pointed to with
- * `coveredBy`; the new tests fill the paths nothing proved yet.
+ * Where an existing test already proves a rule exactly, and nothing more, it
+ * is pointed to with `coveredBy`; the new tests fill the paths nothing proved
+ * yet.
  */
 
 import { describe, expect, vi } from "vitest";
 import { completeHeadlessAuthorization } from "../../src/oauth-conformance/auth-strategies/headless.js";
+import { createInteractiveAuthorizationSession } from "../../src/oauth-conformance/auth-strategies/interactive.js";
 import { startAuthorization } from "../../src/oauth/browser-auth.js";
 import { createOAuthStateMachine } from "../../src/oauth/state-machines/factory.js";
 import {
@@ -49,14 +51,31 @@ function jsonResponse(body: unknown) {
 describe("C196: the callback state must match", () => {
   coveredBy(
     "C196",
-    "tests/oauth-conformance/interactive.test.ts",
-    "returns an error page when the callback state does not match",
+    "tests/oauth-conformance/remote-browser.test.ts",
+    "rejects authorize with a state mismatch when state is wrong",
   );
   coveredBy(
     "C196",
     "tests/oauth-conformance/remote-browser.test.ts",
     "rejects authorize when state is missing but one was expected",
   );
+
+  ruleTest("C196", "the interactive strategy rejects a callback with a different state", async () => {
+    const session = await createInteractiveAuthorizationSession();
+    try {
+      const result = session.authorize({
+        authorizationUrl: "https://auth.example.com/authorize",
+        expectedState: "sent-state",
+        timeoutMs: 10_000,
+        openUrl: async () => {
+          await fetch(`${session.redirectUrl}?code=c&state=other-state`).catch(() => {});
+        },
+      });
+      await expect(result).rejects.toThrow(/state/i);
+    } finally {
+      await session.stop().catch(() => undefined);
+    }
+  });
 
   ruleTest("C196", "the headless strategy rejects a callback with a different state", async () => {
     await expect(
@@ -106,19 +125,21 @@ describe("C197: no authorization without code_challenge_methods_supported", () =
     response_types_supported: ["code"],
   };
 
-  ruleTest.fails(
+  ruleTest.knownBreak(
     "C197",
-    "the exported startAuthorization refuses metadata that omits code_challenge_methods_supported",
-    "src/oauth/browser-auth.ts:1058-1068 only refuses a list that lacks S256, and goes on when the field is absent",
+    "the exported startAuthorization builds an authorization URL when code_challenge_methods_supported is absent",
+    "src/oauth/browser-auth.ts:1058-1068 only refuses a list that lacks S256, and goes on when the field is absent; the per-revision state machines refuse correctly",
     async () => {
-      await expect(
-        startAuthorization("https://auth.example.com", {
-          metadata: metadata as never,
-          clientInformation: { client_id: "client" },
-          redirectUrl: REDIRECT_URI,
-          state: "s",
-        }),
-      ).rejects.toThrow();
+      const { authorizationUrl } = await startAuthorization("https://auth.example.com", {
+        metadata: metadata as never,
+        clientInformation: { client_id: "client" },
+        redirectUrl: REDIRECT_URI,
+        state: "s",
+      });
+      expect(authorizationUrl.origin + authorizationUrl.pathname).toBe(
+        "https://auth.example.com/authorize",
+      );
+      expect(authorizationUrl.searchParams.get("code_challenge")).toBeTruthy();
     },
   );
 
@@ -206,6 +227,36 @@ describe("C198: protected resource metadata with a bad resource is refused", () 
       },
     );
   }
+
+  // A resource on this server's origin but not the URL being accessed fails
+  // RFC 9728 §3.3 ("MUST NOT be used" unless identical).
+  const SAME_ORIGIN_OTHER_PATH = "https://mcp.example.com/v2/other";
+
+  ruleTest(
+    "C198",
+    '2026-07-28 under "reject-rfc9728" (the conformance runner): a same-origin resource for another path fails discovery',
+    async () => {
+      const state = await runResourceMetadataStep(SAME_ORIGIN_OTHER_PATH, "reject-rfc9728");
+      expect(state.error).toBeTruthy();
+      expect(state.currentStep).not.toBe("received_resource_metadata");
+    },
+  );
+
+  ruleTest.knownBreak(
+    "C198",
+    '2026-07-28 under "reject" (the login path): a same-origin resource for another path is accepted',
+    'src/oauth-login.ts:541 runs the flow with "reject", which refuses only an unusable resource (src/oauth/state-machines/shared/resource-indicator.ts:86-91) and lets a same-origin mismatch through with a warning, on purpose for servers like Asana (tests/oauth/state-machine-regressions.test.ts)',
+    async () => {
+      const state = await runResourceMetadataStep(SAME_ORIGIN_OTHER_PATH, "reject");
+      expect(state.error).toBeUndefined();
+      expect(state.currentStep).toBe("received_resource_metadata");
+      expect(state.resourceIndicator?.rfc9728Compliant).toBe(false);
+    },
+  );
+
+  // Not covered on purpose: the OAuth debugger's default "warn" enforcement.
+  // It is a diagnostic tool that shows the warning and carries on so the rest
+  // of the flow can be inspected, not a client that relies on the metadata.
 
   ruleTest("C198", "(control) 2026-07-28 accepts metadata naming this server", async () => {
     const state = await runResourceMetadataStep(SERVER_URL, "reject-rfc9728");

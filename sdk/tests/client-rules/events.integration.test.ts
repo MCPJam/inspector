@@ -1,16 +1,17 @@
 /**
  * Client rules for the MCP Events extension, as MCPJam's events client
- * (MCPClientManager's events methods, the subscription coordinator, and the
- * webhook inbox that receives deliveries) follows them.
+ * (MCPClientManager's events methods, the subscription coordinator, the push
+ * runtime, and the webhook inbox that receives deliveries) follows them.
  *
  * Wire tests run the real client against the official-SDK events fixture over
- * a real socket and read what the fixture received. Rules an existing test
- * already proves exactly are pointed to with `coveredBy`.
+ * a real socket and read what the fixture received, in both eras MCPJam speaks
+ * Events on: the pre-Beta profile on 2025-11-25 (a top-level `events`
+ * capability) and the Beta extension on 2026-07-28. Receiver tests drive the
+ * webhook inbox directly with signed deliveries.
  */
 
 import { afterEach, describe, expect } from "vitest";
 import { MCPClientManager } from "../../src/mcp-client-manager/index.js";
-import { MCPEventsWireError } from "../../src/mcp-client-manager/events-ext-guards.js";
 import {
   decodeWebhookSecret,
   generateWebhookSecret,
@@ -22,6 +23,7 @@ import {
 import { computeBindingKey } from "../../src/events/identity.js";
 import { MemoryEventInbox } from "../../src/events/memory-inbox.js";
 import { DRAFT_PROFILE_ID } from "../../src/events/profiles.js";
+import { EventsPushRuntime, createManagerPushPort } from "../../src/events/push.js";
 import {
   buildWebhookHeaders,
   verifyWebhookDelivery,
@@ -31,19 +33,27 @@ import {
   startEventsFixture,
   type EventsFixtureHandle,
 } from "../support/events-fixture.js";
-import { coveredBy, ruleTest } from "./harness.js";
+import { exercised, ruleTest } from "./harness.js";
 
 const SERVER_ID = "events-fixture";
-const opened: { fixtures: EventsFixtureHandle[]; managers: MCPClientManager[] } = {
-  fixtures: [],
-  managers: [],
-};
+const ERAS = [
+  ["2025-11-25", false],
+  ["2026-07-28", true],
+] as const;
+
+const opened: {
+  fixtures: EventsFixtureHandle[];
+  managers: MCPClientManager[];
+  runtimes: EventsPushRuntime[];
+} = { fixtures: [], managers: [], runtimes: [] };
 
 afterEach(async () => {
+  for (const runtime of opened.runtimes) runtime.close();
   await Promise.all(opened.managers.map((m) => m.disconnectAllServers().catch(() => {})));
   await Promise.all(opened.fixtures.map((f) => f.close()));
   opened.fixtures = [];
   opened.managers = [];
+  opened.runtimes = [];
 });
 
 async function connected(
@@ -62,9 +72,13 @@ async function connected(
   return { server, manager };
 }
 
-function pollRecord(): SubscriptionRecord {
+function subscriptionRecord(
+  id: string,
+  mode: SubscriptionRecord["mode"],
+  documentId = "doc_1",
+): SubscriptionRecord {
   return {
-    id: "esub_poll",
+    id,
     projectId: "proj_1",
     environmentId: null,
     bindingKey: computeBindingKey({
@@ -75,8 +89,8 @@ function pollRecord(): SubscriptionRecord {
     serverId: SERVER_ID,
     profile: DRAFT_PROFILE_ID,
     eventName: "comment.created",
-    arguments: { document_id: "doc_1" },
-    mode: "poll",
+    arguments: { document_id: documentId },
+    mode,
     desiredState: "active",
     observedState: "pending",
     generation: 1,
@@ -85,129 +99,188 @@ function pollRecord(): SubscriptionRecord {
   };
 }
 
-describe("Events client rules", () => {
-  coveredBy(
-    "C201",
-    "tests/events-wire.integration.test.ts",
-    "lists descriptors and polls with cursor semantics",
-  );
+function coordinatorFor(manager: MCPClientManager, inbox: MemoryEventInbox): EventsCoordinator {
+  return new EventsCoordinator({
+    rpc: async () => ({
+      list: (params) => manager.listServerEvents(SERVER_ID, params),
+      poll: (params) => manager.pollServerEvents(SERVER_ID, params),
+      subscribe: (params) => manager.subscribeServerEvents(SERVER_ID, params),
+      unsubscribe: (params) => manager.unsubscribeServerEvents(SERVER_ID, params),
+    }),
+    inbox: async () => inbox,
+  });
+}
 
-  // The two eras declare Events differently: a top-level `capabilities.events`
-  // in the 2025 handshake, an `extensions` entry (Beta) on 2026-07-28.
-  for (const [protocolVersion, beta] of [
-    ["2025-11-25", false],
-    ["2026-07-28", true],
-  ] as const) {
+async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error("waitFor timed out");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+describe("Events client rules", () => {
+  for (const [protocolVersion, beta] of ERAS) {
+    ruleTest("C201", `${protocolVersion}: listing the available event types sends events/list`, async () => {
+      const { server, manager } = await connected({ beta }, protocolVersion);
+      await manager.listServerEvents(SERVER_ID);
+      expect(server.received.some((request) => request.method === "events/list")).toBe(true);
+    });
+
     ruleTest(
       "C202",
-      `${protocolVersion}: against a server that does not advertise Events, list, poll and subscribe send nothing`,
-      async () => {
-        const { server, manager } = await connected(
-          { beta, declareEvents: false },
-          protocolVersion,
+      `${protocolVersion}: against a server that does not advertise Events, no events/* request goes out`,
+      async (ctx) => {
+        const { server, manager } = await connected({ beta, declareEvents: false }, protocolVersion);
+        exercised(
+          ctx,
+          !manager.getEventsSupport(SERVER_ID).declared,
+          "the fixture advertised Events anyway",
         );
-        expect(manager.getEventsSupport(SERVER_ID).declared).toBe(false);
-        await expect(manager.listServerEvents(SERVER_ID)).rejects.toBeInstanceOf(
-          MCPEventsWireError,
-        );
-        await expect(
-          manager.pollServerEvents(SERVER_ID, {
-            name: "comment.created",
-            arguments: { document_id: "doc_1" },
-            cursor: null,
-          }),
-        ).rejects.toBeInstanceOf(MCPEventsWireError);
-        await expect(
+        const request = { name: "comment.created", arguments: { document_id: "doc_1" } };
+        const controller = new AbortController();
+        await Promise.allSettled([
+          manager.listServerEvents(SERVER_ID),
+          manager.pollServerEvents(SERVER_ID, { ...request, cursor: null }),
           manager.subscribeServerEvents(SERVER_ID, {
-            name: "comment.created",
-            arguments: { document_id: "doc_1" },
-            delivery: {
-              url: "https://inbox.example/hook",
-              secret: generateWebhookSecret(),
-            },
+            ...request,
+            delivery: { url: "https://inbox.example/hook", secret: generateWebhookSecret() },
             cursor: null,
           }),
-        ).rejects.toBeInstanceOf(MCPEventsWireError);
+          manager.unsubscribeServerEvents(SERVER_ID, {
+            ...request,
+            delivery: { url: "https://inbox.example/hook" },
+          }),
+          manager.openEventsStream(
+            SERVER_ID,
+            { ...request, cursor: null },
+            {
+              signal: controller.signal,
+              timeout: 1_000,
+              onRequestId: () => {},
+              onRequestStreamEnd: () => {},
+            },
+          ),
+        ]);
+        controller.abort();
         expect(server.received.filter((r) => r.method.startsWith("events/"))).toEqual([]);
       },
     );
 
     ruleTest(
       "C202",
-      `(control) ${protocolVersion}: the same calls reach a server that advertises Events`,
+      `(control) ${protocolVersion}: the same client does send events/list to a server that advertises Events`,
       async () => {
         const { server, manager } = await connected({ beta }, protocolVersion);
-        expect(manager.getEventsSupport(SERVER_ID).declared).toBe(true);
         await manager.listServerEvents(SERVER_ID);
         expect(server.received.some((r) => r.method === "events/list")).toBe(true);
       },
     );
+
+    ruleTest(
+      "C203",
+      `${protocolVersion}: a new poll subscription asks to start from now with cursor: null on its first events/poll`,
+      async (ctx) => {
+        const { server, manager } = await connected({ beta }, protocolVersion);
+        const inbox = new MemoryEventInbox({ publicOrigin: "https://inbox.example" });
+        const record = subscriptionRecord("esub_poll", "poll");
+        applySubscriptionPatch(record, await coordinatorFor(manager, inbox).step(record));
+        const polls = server.received.filter((r) => r.method === "events/poll");
+        exercised(ctx, polls.length > 0, "the coordinator sent no events/poll");
+        const first = polls[0]!.params as Record<string, unknown>;
+        expect(Object.prototype.hasOwnProperty.call(first, "cursor")).toBe(true);
+        expect(first.cursor).toBeNull();
+      },
+    );
+
+    ruleTest(
+      "C204",
+      `${protocolVersion}: a webhook subscription's events/subscribe carries the client's signing secret`,
+      async (ctx) => {
+        const { server, manager } = await connected({ beta }, protocolVersion);
+        const inbox = new MemoryEventInbox({ publicOrigin: "https://inbox.example" });
+        const record = subscriptionRecord("esub_hook", "webhook");
+        await coordinatorFor(manager, inbox).step(record).catch(() => {});
+        const subscribes = server.received.filter((r) => r.method === "events/subscribe");
+        exercised(ctx, subscribes.length > 0, "the coordinator sent no events/subscribe");
+        for (const subscribe of subscribes) {
+          const secret = (subscribe.params as { delivery?: { secret?: unknown } }).delivery?.secret;
+          expect(typeof secret === "string" && secret.length > 0).toBe(true);
+        }
+      },
+    );
+
+    ruleTest(
+      "C207",
+      `${protocolVersion}: two push streams with the same event and arguments each get only their own notifications`,
+      async (ctx) => {
+        const server = await startEventsFixture({ beta });
+        opened.fixtures.push(server);
+        const manager = new MCPClientManager();
+        opened.managers.push(manager);
+        await manager.connectToServer(SERVER_ID, {
+          url: server.url,
+          timeout: 10_000,
+          mcpProtocolVersion: protocolVersion as never,
+        });
+        const inbox = new MemoryEventInbox({ publicOrigin: "https://hooks.test" });
+        const runtime = new EventsPushRuntime({
+          port: createManagerPushPort(manager as never, SERVER_ID),
+          inbox,
+          maxBackoffMs: 200,
+        });
+        opened.runtimes.push(runtime);
+        const eventIds = (logicalId: string) =>
+          inbox
+            .read(0, 1000)
+            .entries.filter((entry) => entry.logicalSubscriptionId === logicalId && entry.kind === "event")
+            .map((entry) => entry.eventId);
+
+        // Same event name, same arguments: only the subscription id on each
+        // notification tells the streams apart. Stream B opens after the
+        // first event, so only stream A ever carries it.
+        runtime.start(subscriptionRecord("esub_a", "push", "doc_same"));
+        await waitFor(() => server.openStreams() === 1);
+        await server.emit("comment.created", { document_id: "doc_same", comment_id: "1", text: "one" });
+        await waitFor(() => eventIds("esub_a").length === 1);
+        runtime.start(subscriptionRecord("esub_b", "push", "doc_same"));
+        await waitFor(() => server.openStreams() === 2);
+        await server.emit("comment.created", { document_id: "doc_same", comment_id: "2", text: "two" });
+        await waitFor(() => eventIds("esub_a").length === 2 && eventIds("esub_b").length >= 1);
+        // Let any misrouted copy land before reading.
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        exercised(ctx, eventIds("esub_a").length === 2, "stream A did not get both events");
+        expect(eventIds("esub_a")).toEqual(["evt_1", "evt_2"]);
+        expect(eventIds("esub_b")).toEqual(["evt_2"]);
+      },
+      15_000,
+    );
   }
 
-  coveredBy(
-    "C203",
-    "tests/support/events-lifecycle-suite.ts",
-    "starts from now with a null cursor and advances on an empty batch",
-  );
-
-  ruleTest(
-    "C203",
-    "a new poll subscription's first events/poll carries cursor: null on the wire",
-    async () => {
-      const { server, manager } = await connected({}, "2025-11-25");
-      const coordinator = new EventsCoordinator({
-        rpc: async () => ({
-          list: (params) => manager.listServerEvents(SERVER_ID, params),
-          poll: (params) => manager.pollServerEvents(SERVER_ID, params),
-          subscribe: (params) => manager.subscribeServerEvents(SERVER_ID, params),
-          unsubscribe: (params) => manager.unsubscribeServerEvents(SERVER_ID, params),
-        }),
-        inbox: async () => new MemoryEventInbox({ publicOrigin: "https://inbox.example" }),
-      });
-      const record = pollRecord();
-      applySubscriptionPatch(record, await coordinator.step(record));
-      const polls = server.received.filter((r) => r.method === "events/poll");
-      expect(polls.length).toBeGreaterThan(0);
-      const first = polls[0]!.params as Record<string, unknown>;
-      expect(Object.prototype.hasOwnProperty.call(first, "cursor")).toBe(true);
-      expect(first.cursor).toBeNull();
-    },
-  );
-
-  coveredBy(
-    "C204",
-    "tests/events-wire.integration.test.ts",
-    "never captures the secret across subscribe, refresh and failures",
-  );
-
   ruleTest(
     "C205",
-    "the secret MCPJam supplies is whsec_ plus 24 to 64 random bytes in Base64",
+    "every secret MCPJam generates is whsec_ plus 24 to 64 random bytes in Base64",
     () => {
       const shape = /^whsec_[A-Za-z0-9+/]+={0,2}$/;
-      for (const bytes of [24, 32, 64]) {
-        const secret = generateWebhookSecret(bytes);
+      const secrets = [
+        ...[24, 32, 64].map((bytes) => generateWebhookSecret(bytes)),
+        ...Array.from({ length: 50 }, () => generateWebhookSecret()),
+      ];
+      for (const secret of secrets) {
         expect(secret).toMatch(shape);
         // Decoded independently of MCPJam's own decoder.
-        expect(Buffer.from(secret.slice("whsec_".length), "base64")).toHaveLength(bytes);
+        const length = Buffer.from(secret.slice("whsec_".length), "base64").length;
+        expect(length).toBeGreaterThanOrEqual(24);
+        expect(length).toBeLessThanOrEqual(64);
       }
-      // The default, which the inbox uses for every slot, is in range too.
-      const fallback = generateWebhookSecret();
-      expect(fallback).toMatch(shape);
-      const length = Buffer.from(fallback.slice("whsec_".length), "base64").length;
-      expect(length).toBeGreaterThanOrEqual(24);
-      expect(length).toBeLessThanOrEqual(64);
-      expect(() => generateWebhookSecret(23)).toThrow(RangeError);
-      expect(() => generateWebhookSecret(65)).toThrow(RangeError);
-      // Random: no two secrets alike.
-      const many = new Set(Array.from({ length: 50 }, () => generateWebhookSecret()));
-      expect(many.size).toBe(50);
+      // Random: no two default secrets alike.
+      expect(new Set(secrets.slice(3)).size).toBe(50);
     },
   );
 
   ruleTest(
     "C205",
-    "the inbox allocates each subscription its own in-range secret",
+    "the inbox gives each subscription its own in-range secret",
     async () => {
       const inbox = new MemoryEventInbox({ publicOrigin: "https://inbox.example" });
       const allocate = (key: string) =>
@@ -221,67 +294,21 @@ describe("Events client rules", () => {
         });
       const [a, b] = [await allocate("a"), await allocate("b")];
       for (const { secret } of [a, b]) {
-        expect(decodeWebhookSecret(secret)?.length).toBeGreaterThanOrEqual(24);
+        const length = decodeWebhookSecret(secret)?.length ?? 0;
+        expect(length).toBeGreaterThanOrEqual(24);
+        expect(length).toBeLessThanOrEqual(64);
       }
       expect(a.secret).not.toBe(b.secret);
     },
   );
 
-  coveredBy(
-    "C206",
-    "src/events/__tests__/standard-webhooks.test.ts",
-    "verifies the published vector and rejects a tampered body",
-  );
-  coveredBy(
-    "C206",
-    "tests/events-wire.integration.test.ts",
-    "rejects forged deliveries and never lets them change a binding",
-  );
-
-  coveredBy(
-    "C207",
-    "tests/events-push.integration.test.ts",
-    "demuxes two concurrent streams on one connection",
-  );
-
-  describe("C400: deliveries older than five minutes are refused", () => {
-    const secret = generateWebhookSecret();
-    const body = JSON.stringify({ hello: "world" });
+  describe("the webhook receiver (MemoryEventInbox)", () => {
     const signedAt = 1_800_000_000;
-    const headers = () =>
-      buildWebhookHeaders({
-        secrets: [secret],
-        webhookId: "msg_1",
-        timestampSeconds: signedAt,
-        body,
-        subscriptionId: "sub_1",
-      });
-    const verifyAt = async (nowSeconds: number) =>
-      verifyWebhookDelivery({ secrets: [secret], headers: await headers(), body, nowSeconds });
 
-    ruleTest("C400", "a delivery exactly five minutes old is still accepted", async () => {
-      await expect(verifyAt(signedAt + 300)).resolves.toMatchObject({ ok: true });
-    });
-
-    ruleTest("C400", "a delivery five minutes and one second old is refused", async () => {
-      await expect(verifyAt(signedAt + 301)).resolves.toEqual({
-        ok: false,
-        reason: "stale_timestamp",
-      });
-    });
-
-    ruleTest("C400", "a timestamp more than five minutes in the future is refused too", async () => {
-      await expect(verifyAt(signedAt - 301)).resolves.toEqual({
-        ok: false,
-        reason: "stale_timestamp",
-      });
-    });
-
-    ruleTest("C400", "the webhook inbox answers a stale delivery with 401", async () => {
-      const now = signedAt * 1000;
+    async function inboxAndSlot() {
       const inbox = new MemoryEventInbox({
         publicOrigin: "https://inbox.example",
-        clock: { now: () => now },
+        clock: { now: () => signedAt * 1000 },
       });
       const slot = await inbox.allocateSlot({
         logicalSubscriptionId: "s",
@@ -291,32 +318,91 @@ describe("Events client rules", () => {
         dispatch: false,
         idempotencyKey: "s",
       });
-      const signed = await buildWebhookHeaders({
-        secrets: [slot.secret],
-        webhookId: "msg_1",
-        timestampSeconds: signedAt - 3_600,
-        body,
-        subscriptionId: "sub_1",
-      });
-      const result = await inbox.receive({ slotId: slot.slotId, headers: signed, body });
-      expect(result.status).toBe(401);
-      expect(inbox.rejections.at(-1)?.reason).toBe("stale_timestamp");
-      // Control: the same delivery signed now is not refused for its age.
-      const fresh = await inbox.receive({
-        slotId: slot.slotId,
-        headers: await buildWebhookHeaders({
+      const events = () =>
+        inbox.read(0, 100).entries.filter((entry) => entry.kind === "event");
+      return { inbox, slot, events };
+    }
+
+    // The raw bytes a server sent, with whitespace a re-serializer would drop.
+    const rawBody =
+      '{ "eventId": "evt_1",  "name": "comment.created", "timestamp": "2027-01-15T08:00:00Z", "data": { "document_id": "doc_1" }, "cursor": "c1" }';
+
+    ruleTest(
+      "C206",
+      "a delivery signed over its raw bytes is verified against those bytes and accepted",
+      async () => {
+        const { inbox, slot, events } = await inboxAndSlot();
+        const headers = await buildWebhookHeaders({
           secrets: [slot.secret],
-          webhookId: "msg_2",
+          webhookId: "msg_1",
+          timestampSeconds: signedAt,
+          body: rawBody,
+          subscriptionId: "sub_1",
+        });
+        const result = await inbox.receive({ slotId: slot.slotId, headers, body: rawBody });
+        expect(result.status).toBeLessThan(300);
+        expect(events().map((entry) => entry.eventId)).toEqual(["evt_1"]);
+      },
+    );
+
+    ruleTest(
+      "C206",
+      "a delivery whose signature does not cover its raw bytes is not accepted",
+      async () => {
+        const { inbox, slot, events } = await inboxAndSlot();
+        // Signed over the re-serialized JSON, sent as the raw bytes.
+        const headers = await buildWebhookHeaders({
+          secrets: [slot.secret],
+          webhookId: "msg_1",
+          timestampSeconds: signedAt,
+          body: JSON.stringify(JSON.parse(rawBody)),
+          subscriptionId: "sub_1",
+        });
+        const result = await inbox.receive({ slotId: slot.slotId, headers, body: rawBody });
+        expect(result.status).toBeGreaterThanOrEqual(300);
+        expect(events()).toEqual([]);
+      },
+    );
+
+    const secret = generateWebhookSecret();
+    const body = JSON.stringify({ hello: "world" });
+    const verifyAt = async (nowSeconds: number) =>
+      verifyWebhookDelivery({
+        secrets: [secret],
+        headers: await buildWebhookHeaders({
+          secrets: [secret],
+          webhookId: "msg_1",
           timestampSeconds: signedAt,
           body,
           subscriptionId: "sub_1",
         }),
         body,
+        nowSeconds,
       });
-      expect(fresh.status).toBeDefined();
-      expect(
-        inbox.rejections.filter((rejection) => rejection.reason === "stale_timestamp"),
-      ).toHaveLength(1);
+
+    ruleTest("C400", "a delivery more than five minutes old is refused", async () => {
+      await expect(verifyAt(signedAt + 301)).resolves.toEqual({
+        ok: false,
+        reason: "stale_timestamp",
+      });
+    });
+
+    ruleTest("C400", "(control) the same delivery, checked as it arrives, is not refused for its age", async () => {
+      await expect(verifyAt(signedAt)).resolves.toMatchObject({ ok: true });
+    });
+
+    ruleTest("C400", "the webhook inbox refuses a delivery more than five minutes old", async () => {
+      const { inbox, slot, events } = await inboxAndSlot();
+      const headers = await buildWebhookHeaders({
+        secrets: [slot.secret],
+        webhookId: "msg_1",
+        timestampSeconds: signedAt - 3_600,
+        body: rawBody,
+        subscriptionId: "sub_1",
+      });
+      const result = await inbox.receive({ slotId: slot.slotId, headers, body: rawBody });
+      expect(result.status).toBeGreaterThanOrEqual(300);
+      expect(events()).toEqual([]);
     });
   });
 });

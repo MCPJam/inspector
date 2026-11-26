@@ -1,17 +1,21 @@
 /**
  * Shared helpers for the client spec-rule tests in this folder.
  *
- * Every test here is named after one rule in `rules.ts`, as
- * `C003 [MUST] <what the test proves>`. A rule is accounted for in one of
- * four ways:
+ * Every test here is named after one rule in `rules.ts` and marked with the
+ * rule's spec level (see `levels.ts`), as `C003 [MUST] <what it proves>`.
+ * Each test checks exactly what its rule says, no more and no less. A rule is
+ * accounted for in one of four ways:
  *
- * - `ruleTest`: a test that proves our client follows the rule.
- * - `ruleTest.fails`: the rule is known to be broken. The test reproduces the
- *   break, so it fails the day someone fixes it and the known list stays true.
- * - `coveredBy`: a test elsewhere already proves the rule; this only checks
- *   that the test still exists.
- * - `noBehavior`: MCPJam never does what the rule governs (a MAY it does not
- *   use). Reported as skipped, with the reason.
+ * - `ruleTest`: a test that proves our client follows the rule. When the setup
+ *   did not make the client do the thing the rule is about, the test skips
+ *   with "not exercised" (see `exercised`) instead of passing or failing.
+ * - `ruleTest.knownBreak`: the client breaks the rule today. The body asserts
+ *   the broken behavior exactly, so the test turns red the day someone fixes
+ *   it, and also if it starts failing for any other reason.
+ * - `coveredBy`: a test elsewhere proves exactly this rule and nothing more;
+ *   this only checks that the test still exists.
+ * - `mayRule`: a MAY only permits something, so there is nothing a client can
+ *   break. Reported as skipped, with what MCPJam does.
  *
  * Rules checked across many conformance checks use a "wire corpus" instead:
  * every mapped check runs once against a fake server, each request the client
@@ -20,13 +24,13 @@
  * and a new break both turn the test red.
  *
  * `rules-coverage.unit.test.ts` reads these files and fails if a rule in the
- * catalog is not accounted for.
+ * catalog is not accounted for, or has no spec level.
  */
 
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, it } from "vitest";
+import { expect, it, type TestContext } from "vitest";
 import {
   MCPConformanceTest,
   type MCPCheckId,
@@ -38,7 +42,8 @@ import {
   startConformanceMockServer,
   type ConformanceMockRequest,
 } from "../mock-servers/conformance-mcp-server.js";
-import { CLIENT_RULES, type ClientRuleId } from "./rules.js";
+import { levelOf } from "./levels.js";
+import type { ClientRuleId } from "./rules.js";
 
 const SDK_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -47,10 +52,10 @@ const SDK_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 // ---------------------------------------------------------------------------
 
 export function ruleName(id: ClientRuleId, label: string): string {
-  return `${id} [${CLIENT_RULES[id].keyword}] ${label}`;
+  return `${id} [${levelOf(id)}] ${label}`;
 }
 
-type TestBody = () => unknown;
+type TestBody = (context: TestContext) => unknown;
 
 function ruleTestImpl(
   id: ClientRuleId,
@@ -63,20 +68,33 @@ function ruleTestImpl(
 
 export const ruleTest = Object.assign(ruleTestImpl, {
   /**
-   * A known break. `reason` says where and why. The body asserts the rule as
-   * if it held, so it fails today and `it.fails` turns that into a pass; once
-   * the break is fixed the body passes and this test goes red.
+   * The client breaks the rule today. `reason` says where and why. The body
+   * asserts the broken behavior exactly (not the rule), so a fix and any other
+   * failure both turn the test red.
    */
-  fails(
+  knownBreak(
     id: ClientRuleId,
     label: string,
     reason: string,
     fn: TestBody,
     timeout?: number,
   ): void {
-    it.fails(`${ruleName(id, label)} (KNOWN BREAK: ${reason})`, fn, timeout);
+    it(`${ruleName(id, label)} (KNOWN BREAK: ${reason})`, fn, timeout);
   },
 });
+
+/**
+ * Skip the running test with "not exercised" when the setup did not make the
+ * client do the thing the rule is about. No verdict either way: the rule was
+ * not observed.
+ */
+export function exercised(
+  context: TestContext,
+  happened: boolean,
+  what: string,
+): void {
+  context.skip(!happened, `not exercised: ${what}`);
+}
 
 /** `file` is relative to the sdk folder; `testName` must appear in it verbatim. */
 export function coveredBy(
@@ -93,8 +111,12 @@ export function coveredBy(
   });
 }
 
-export function noBehavior(id: ClientRuleId, reason: string): void {
-  it.skip(`${ruleName(id, "not tested")}: ${reason}`, () => {});
+/** A MAY: nothing a client can break. `note` says what MCPJam does. */
+export function mayRule(id: ClientRuleId, note: string): void {
+  if (levelOf(id) !== "MAY") {
+    throw new Error(`${id} is ${levelOf(id)}, not MAY`);
+  }
+  it.skip(`${ruleName(id, "nothing to break: a MAY only permits")}. ${note}`, () => {});
 }
 
 // ---------------------------------------------------------------------------

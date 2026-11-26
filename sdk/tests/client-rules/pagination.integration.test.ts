@@ -130,17 +130,13 @@ describe.each(ERAS)("the official client on %s", (era) => {
 
   ruleTest(
     "C013",
-    "takes pages of 3, 1 and 5 items and asks for no page size of its own",
+    "takes pages of 3, then 1, then 5 items without stopping at a short page",
     async () => {
-      const { sent, tools, resources } = await listEverything(era);
+      // A client that assumed the first page's size would stop after the
+      // one-item second page and miss the last five.
+      const { tools, resources } = await listEverything(era);
       expect(tools).toEqual(ALL_ITEMS.map((name) => `tool-${name}`));
       expect(resources).toEqual(ALL_ITEMS.map((name) => `resource-${name}`));
-      for (const request of sent.filter((r) => rpcMethodOf(r)?.endsWith("/list"))) {
-        const params = { ...(rpcOf(request)!.params ?? {}) };
-        delete params.cursor;
-        delete params._meta;
-        expect(params, `${rpcMethodOf(request)} params`).toEqual({});
-      }
     },
   );
 

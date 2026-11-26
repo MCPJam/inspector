@@ -862,6 +862,11 @@ export async function startConformanceMockServer(
     }
 
     if (req.url !== "/mcp") {
+      // A JSON-RPC message sent to the wrong path is still one the client
+      // sent; keep it visible to a test that asserts where messages go.
+      if (record && req.method === "POST") {
+        record.body = await readJsonBody(req).catch(() => undefined);
+      }
       res.writeHead(404);
       res.end("Not found");
       return;

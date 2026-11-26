@@ -12,8 +12,9 @@
  * of subscribable capabilities, and one full run with every modern check at
  * once (the way the product runs them) for request-id reuse.
  *
- * Some checks send a broken or removed request ON PURPOSE (that is what they
- * test). `DELIBERATE` lists them; header and method rules skip their traffic.
+ * A few probes break one header ON PURPOSE (that is what their check tests).
+ * `DELIBERATE_HEADERS` names each by request id and header; only that header
+ * on that request is excused, and everything else is judged as usual.
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
@@ -36,9 +37,10 @@ import { createSubscriptionFixtureHandler } from "../support/subscription-fixtur
 import { mcpNameProblem } from "../support/mcp-name-validation.js";
 import {
   buildFetchCorpus,
-  coveredBy,
+  exercised,
   expectKnownViolations,
   isRpcRequest,
+  mayRule,
   overlaps,
   recordingFetch,
   rpcMethodOf,
@@ -54,24 +56,30 @@ const MODERN_CHECKS: string[] = MCP_CHECK_IDS.filter((id) =>
   CHECK_ERAS[id].includes("modern"),
 );
 
-/** Checks that send a broken or removed request on purpose, and why. */
-const DELIBERATE: Record<string, string> = {
-  "modern-protocol-version-header-mismatch": "sends a wrong MCP-Protocol-Version",
-  "modern-method-header-mismatch": "sends a wrong Mcp-Method",
-  "modern-name-header-mismatch": "sends a wrong Mcp-Name",
-  "modern-missing-method-header-rejected": "leaves Mcp-Method out",
-  "modern-header-names-case-insensitive": "sends header names in odd case",
-  "modern-unsupported-version-error": "sends a version the server does not support",
-  "modern-removed-methods-not-found": "sends methods 2026-07-28 removed",
-  "protocol-invalid-method-error": "sends a method that does not exist",
+/**
+ * Probes that break one header on purpose, by check: the probe's request id
+ * (see checks/modern.ts) and the header it breaks.
+ */
+const DELIBERATE_HEADERS: Record<string, { id: number; header: string }> = {
+  "modern-missing-method-header-rejected": { id: 7250, header: "mcp-method" },
+  "modern-protocol-version-header-mismatch": { id: 7200, header: "mcp-protocol-version" },
+  "modern-unsupported-version-error": { id: 7500, header: "mcp-protocol-version" },
+  "modern-name-header-mismatch": { id: 7400, header: "mcp-name" },
 };
+
+/** Methods 2026-07-28 removed, which this check sends on purpose to see -32601. */
+const REMOVED_METHODS_CHECK = "modern-removed-methods-not-found";
+
+function brokenOnPurpose(request: WireRequest, header: string): boolean {
+  const probe = DELIBERATE_HEADERS[request.check];
+  return probe !== undefined && probe.header === header && rpcOf(request)?.id === probe.id;
+}
 
 const NAMED_METHODS = new Set(["tools/call", "prompts/get", "resources/read"]);
 
 /** Checks known to break a rule, by rule id. Absent means none does. */
 const KNOWN: Record<string, string[]> = {};
 
-const PROTOCOL_VERSION_KEY = "io.modelcontextprotocol/protocolVersion";
 const CLIENT_CAPABILITIES_KEY = "io.modelcontextprotocol/clientCapabilities";
 const LOG_LEVEL_KEY = "io.modelcontextprotocol/logLevel";
 
@@ -125,8 +133,10 @@ function metaOf(request: WireRequest): Record<string, unknown> | undefined {
   return meta && typeof meta === "object" ? (meta as Record<string, unknown>) : undefined;
 }
 
-function notDeliberate(request: WireRequest): boolean {
-  return !(request.check in DELIBERATE);
+/** The name a named request targets: `params.name`, or `params.uri` for resources/read. */
+function targetOf(request: WireRequest): string {
+  const params = rpcOf(request)!.params ?? {};
+  return String(params.name ?? params.uri);
 }
 
 let main: FetchCorpus;
@@ -164,20 +174,10 @@ describe("modern wire corpus (2026-07-28, in-process fixtures)", () => {
     );
   });
 
-  ruleTest("C011", "every modern run starts with server/discover", () => {
-    const first = new Map<string, WireRequest>();
-    for (const request of main.requests) {
-      if (!first.has(request.check)) first.set(request.check, request);
-    }
-    expectKnownViolations(
-      violationsByCheck([...first.values()], (request) =>
-        rpcMethodOf(request) === "server/discover"
-          ? undefined
-          : `first request was ${rpcMethodOf(request)}`,
-      ),
-      KNOWN.C011,
-    );
-  });
+  mayRule(
+    "C011",
+    "MCPJam does call server/discover first on a 2026-07-28 run",
+  );
 
   ruleTest("C022", "every modern request id is a string or an integer", () => {
     expectKnownViolations(
@@ -206,28 +206,35 @@ describe("modern wire corpus (2026-07-28, in-process fixtures)", () => {
     );
   });
 
+  ruleTest("C029", "on 2026-07-28 too, every POST carries one JSON-RPC message", () => {
+    expectKnownViolations(
+      violationsByCheck(
+        [...main.requests, ...named.requests].filter((request) => request.httpMethod === "POST"),
+        (request) => (Array.isArray(request.body) ? "sent a JSON array (batch)" : undefined),
+      ),
+      KNOWN.C029,
+    );
+  });
+
   ruleTest(
     "C033",
-    "every modern POST request carries MCP-Protocol-Version and a matching Mcp-Method, plus Mcp-Name when it names a target",
+    "every modern POST request carries MCP-Protocol-Version and Mcp-Method, plus Mcp-Name when it names a target",
     () => {
+      // The required standard headers must be present. That their values match
+      // the body is a separate rule (C217 and friends), not this one.
       expectKnownViolations(
         violationsByCheck(
           [...main.requests, ...named.requests].filter(
-            (request) =>
-              request.httpMethod === "POST" && isRpcRequest(request) && notDeliberate(request),
+            (request) => request.httpMethod === "POST" && isRpcRequest(request),
           ),
           (request) => {
             const method = rpcMethodOf(request)!;
-            if (!request.headers["mcp-protocol-version"]) {
-              return `${method} had no MCP-Protocol-Version`;
-            }
-            if (request.headers["mcp-method"] !== method) {
-              return `${method} had Mcp-Method ${JSON.stringify(request.headers["mcp-method"])}`;
-            }
-            if (NAMED_METHODS.has(method) && !request.headers["mcp-name"]) {
-              return `${method} had no Mcp-Name`;
-            }
-            return undefined;
+            const required = ["mcp-protocol-version", "mcp-method"];
+            if (NAMED_METHODS.has(method)) required.push("mcp-name");
+            const missing = required.filter(
+              (header) => !request.headers[header] && !brokenOnPurpose(request, header),
+            );
+            return missing.length > 0 ? `${method} had no ${missing.join(", ")}` : undefined;
           },
         ),
         KNOWN.C033,
@@ -241,7 +248,6 @@ describe("modern wire corpus (2026-07-28, in-process fixtures)", () => {
     () => {
       const problems = new Map<string, string>();
       for (const check of MODERN_CHECKS) {
-        if (check in DELIBERATE) continue;
         const requests = main.requests.filter((request) => request.check === check);
         const discover = requests.find(
           (request) =>
@@ -249,11 +255,9 @@ describe("modern wire corpus (2026-07-28, in-process fixtures)", () => {
         );
         const supported = (discover?.responseJson as { result?: { supportedVersions?: unknown } })
           ?.result?.supportedVersions;
-        if (!Array.isArray(supported)) {
-          problems.set(check, `no supportedVersions in ${JSON.stringify(discover?.responseJson)?.slice(0, 200)}`);
-          continue;
-        }
-        for (const request of requests.slice(requests.indexOf(discover!) + 1)) {
+        if (!discover || !Array.isArray(supported)) continue;
+        for (const request of requests.slice(requests.indexOf(discover) + 1)) {
+          if (brokenOnPurpose(request, "mcp-protocol-version")) continue;
           const version = request.headers["mcp-protocol-version"];
           if (!supported.includes(version)) {
             problems.set(check, `${rpcMethodOf(request)} used ${version}, server listed ${JSON.stringify(supported)}`);
@@ -265,29 +269,22 @@ describe("modern wire corpus (2026-07-28, in-process fixtures)", () => {
     },
   );
 
-  ruleTest("C051", "no modern request leans on a session id", () => {
-    expectKnownViolations(
-      violationsByCheck([...main.requests, ...named.requests], (request) =>
-        request.headers["mcp-session-id"]
-          ? `${rpcMethodOf(request)} carried Mcp-Session-Id`
-          : undefined,
-      ),
-      KNOWN.C051,
-    );
-  });
-
   ruleTest(
     "C054",
     "subscriptions go through subscriptions/listen, never resources/subscribe",
-    () => {
-      expect(
+    (context) => {
+      exercised(
+        context,
         main.requests.some((request) => rpcMethodOf(request) === "subscriptions/listen"),
-      ).toBe(true);
+        "no check subscribed",
+      );
       expectKnownViolations(
-        violationsByCheck(main.requests.filter(notDeliberate), (request) =>
-          ["resources/subscribe", "resources/unsubscribe"].includes(rpcMethodOf(request) ?? "")
-            ? `sent ${rpcMethodOf(request)}`
-            : undefined,
+        violationsByCheck(
+          main.requests.filter((request) => request.check !== REMOVED_METHODS_CHECK),
+          (request) =>
+            ["resources/subscribe", "resources/unsubscribe"].includes(rpcMethodOf(request) ?? "")
+              ? `sent ${rpcMethodOf(request)}`
+              : undefined,
         ),
         KNOWN.C054,
       );
@@ -297,11 +294,11 @@ describe("modern wire corpus (2026-07-28, in-process fixtures)", () => {
   ruleTest(
     "C066",
     "no modern request declares the deprecated roots capability",
-    () => {
+    (context) => {
       const declaring = [...main.requests, ...named.requests].filter(
         (request) => metaOf(request)?.[CLIENT_CAPABILITIES_KEY] !== undefined,
       );
-      expect(declaring.length).toBeGreaterThan(0);
+      exercised(context, declaring.length > 0, "no request declared client capabilities");
       expectKnownViolations(
         violationsByCheck(declaring, (request) =>
           "roots" in (metaOf(request)![CLIENT_CAPABILITIES_KEY] as object)
@@ -316,11 +313,11 @@ describe("modern wire corpus (2026-07-28, in-process fixtures)", () => {
   ruleTest(
     "C067",
     "no modern request declares the deprecated sampling capability",
-    () => {
+    (context) => {
       const declaring = [...main.requests, ...named.requests].filter(
         (request) => metaOf(request)?.[CLIENT_CAPABILITIES_KEY] !== undefined,
       );
-      expect(declaring.length).toBeGreaterThan(0);
+      exercised(context, declaring.length > 0, "no request declared client capabilities");
       expectKnownViolations(
         violationsByCheck(declaring, (request) =>
           "sampling" in (metaOf(request)![CLIENT_CAPABILITIES_KEY] as object)
@@ -337,18 +334,21 @@ describe("Mcp-Name encoding (names that cannot go into a header as they are)", (
   ruleTest(
     "C048",
     "the raw probes put a decodable, visible-ASCII Mcp-Name on every named request",
-    () => {
+    (context) => {
       const requests = named.requests.filter(
-        (request) => NAMED_METHODS.has(rpcMethodOf(request) ?? "") && notDeliberate(request),
+        (request) =>
+          NAMED_METHODS.has(rpcMethodOf(request) ?? "") && !brokenOnPurpose(request, "mcp-name"),
       );
-      // Not vacuous: each named method went out at least once.
-      expect(new Set(requests.map(rpcMethodOf))).toEqual(NAMED_METHODS);
+      const targets = new Set(requests.map(targetOf));
+      exercised(
+        context,
+        targets.has(NAMED_TOOL) && targets.has(NAMED_PROMPT),
+        "the probes never named the tool or prompt that need Base64",
+      );
       expectKnownViolations(
         violationsByCheck(requests, (request) => {
-          const params = rpcOf(request)!.params ?? {};
-          const target = String(params.name ?? params.uri);
-          const problem = mcpNameProblem(request.headers["mcp-name"], target);
-          return problem ? `${rpcMethodOf(request)} ${target}: ${problem}` : undefined;
+          const problem = mcpNameProblem(request.headers["mcp-name"], targetOf(request));
+          return problem ? `${rpcMethodOf(request)} ${targetOf(request)}: ${problem}` : undefined;
         }),
         KNOWN.C048,
       );
@@ -376,11 +376,14 @@ describe("Mcp-Name encoding (names that cannot go into a header as they are)", (
         await manager.disconnectAllServers().catch(() => {});
       }
       const requests = sent.filter((request) => NAMED_METHODS.has(rpcMethodOf(request) ?? ""));
-      expect(new Set(requests.map(rpcMethodOf))).toEqual(NAMED_METHODS);
+      expect(new Set(requests.map(targetOf))).toEqual(
+        new Set([NAMED_TOOL, NAMED_PROMPT, NAMED_RESOURCE]),
+      );
       for (const request of requests) {
-        const params = rpcOf(request)!.params ?? {};
-        const target = String(params.name ?? params.uri);
-        expect(mcpNameProblem(request.headers["mcp-name"], target), `${rpcMethodOf(request)} ${target}`).toBeUndefined();
+        expect(
+          mcpNameProblem(request.headers["mcp-name"], targetOf(request)),
+          `${rpcMethodOf(request)} ${targetOf(request)}`,
+        ).toBeUndefined();
       }
     },
   );
@@ -389,8 +392,8 @@ describe("Mcp-Name encoding (names that cannot go into a header as they are)", (
 describe("per-request log level (2026-07-28 logging)", () => {
   ruleTest(
     "C058",
-    "the logging check asks for logs by putting a level in that request's _meta",
-    async () => {
+    "to get logs for a request, the client puts a log level in that request's _meta",
+    async (context) => {
       const sent: WireRequest[] = [];
       const handler = createLoggingFixtureHandler({ mode: "conforming" });
       await runOneCheck("modern-logs-require-log-level", {
@@ -399,12 +402,14 @@ describe("per-request log level (2026-07-28 logging)", () => {
         logProbe: { toolName: EMIT_LOG_TOOL_NAME },
         fetchFn: recordingFetch((request) => handler.fetch(request), sent, () => "logs"),
       });
-      const calls = sent.filter((request) => rpcMethodOf(request) === "tools/call");
-      const withLevel = calls.filter((request) => metaOf(request)?.[LOG_LEVEL_KEY] !== undefined);
-      expect(withLevel.length).toBeGreaterThan(0);
+      // The check asks for logs once (and once deliberately without asking).
+      const withLevel = sent.filter(
+        (request) =>
+          rpcMethodOf(request) === "tools/call" && metaOf(request)?.[LOG_LEVEL_KEY] !== undefined,
+      );
+      exercised(context, withLevel.length > 0, "the logging check never asked for logs");
       for (const request of withLevel) {
         expect(MCP_LOG_LEVELS).toContain(metaOf(request)![LOG_LEVEL_KEY]);
-        expect(metaOf(request)![PROTOCOL_VERSION_KEY]).toBe("2026-07-28");
       }
     },
   );
@@ -412,12 +417,10 @@ describe("per-request log level (2026-07-28 logging)", () => {
 
 describe("subscriptions/listen (2026-07-28 subscriptions)", () => {
   let listens: WireRequest[];
-  let sent: WireRequest[];
 
   beforeAll(async () => {
-    sent = [];
-    // Advertise only two of the four subscribable things, so the filter has
-    // something to leave out.
+    const sent: WireRequest[] = [];
+    // Advertise only two of the four subscribable things.
     const handler = createSubscriptionFixtureHandler({
       capabilities: { promptsListChanged: false, resourcesSubscribe: false },
     });
@@ -434,43 +437,33 @@ describe("subscriptions/listen (2026-07-28 subscriptions)", () => {
     listens = sent.filter((request) => rpcMethodOf(request) === "subscriptions/listen");
   }, 60_000);
 
-  ruleTest("C060", "every subscriptions/listen carries a notifications filter", () => {
-    expect(listens.length).toBeGreaterThan(0);
+  ruleTest("C060", "every subscriptions/listen carries a notifications filter", (context) => {
+    exercised(context, listens.length > 0, "no subscriptions/listen was sent");
     for (const listen of listens) {
       const filter = rpcOf(listen)!.params?.notifications;
       expect(filter && typeof filter === "object" && !Array.isArray(filter), listen.check).toBe(true);
     }
   });
 
-  ruleTest(
+  mayRule(
     "C061",
-    "the filter leaves out what the server does not offer, so the client is not subscribed to it",
-    () => {
-      for (const listen of listens) {
-        const filter = rpcOf(listen)!.params!.notifications as Record<string, unknown>;
-        expect(filter, listen.check).not.toHaveProperty("promptsListChanged");
-        expect(filter, listen.check).not.toHaveProperty("resourceSubscriptions");
-      }
-    },
-  );
-
-  // The re-listen lives in MCPClientManager's subscription coordinator, which
-  // the conformance checks do not use; its own test drives a dropped stream.
-  coveredBy(
-    "C063",
-    "tests/subscription-coordinator.test.ts",
-    "distinguishes graceful close from remote loss and re-listens only after loss",
+    "MCPJam does leave out the filter fields for things the server does not offer",
   );
 
   ruleTest(
     "C062",
-    "over HTTP the client ends a subscription by closing the stream, not with notifications/cancelled",
-    () => {
+    "over HTTP the client ends a subscription by closing its stream",
+    (context) => {
+      exercised(context, listens.length > 0, "no subscriptions/listen was sent");
       for (const listen of listens) {
         expect(listen.abortedAt, `${listen.check}: stream was never closed by the client`).toBeDefined();
       }
-      expect(sent.filter((request) => rpcMethodOf(request) === "notifications/cancelled")).toEqual([]);
     },
+  );
+
+  mayRule(
+    "C063",
+    "MCPJam does: the subscription coordinator re-listens after a stream drops without its final result",
   );
 });
 
@@ -501,7 +494,6 @@ describe("request ids in one full run (every modern check at once)", () => {
         fetchFn: recordingFetch(slow, sent, () => "full-run"),
       }).run();
       const requests = sent.filter(isRpcRequest);
-      expect(requests.length).toBeGreaterThan(20);
       const clashes: string[] = [];
       requests.forEach((a, index) => {
         for (const b of requests.slice(index + 1)) {

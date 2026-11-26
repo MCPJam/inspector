@@ -22,7 +22,7 @@ import {
   type ConformanceMockRequest,
 } from "../mock-servers/conformance-mcp-server.js";
 import {
-  coveredBy,
+  exercised,
   expectKnownViolations,
   recordingFetch,
   rpcMethodOf,
@@ -153,6 +153,9 @@ describe("server identity does not steer the client", () => {
               rpcMethodOf(request) ?? "-",
               request.headers["mcp-method"] ?? "",
               request.headers["mcp-name"] ?? "",
+              request.headers["mcp-protocol-version"] ?? "",
+              // The whole message minus its id, which only numbers requests.
+              JSON.stringify({ ...(request.body as object), id: undefined }),
             ]
               .join(" ")
               // Some probes name a made-up target stamped with the time.
@@ -263,10 +266,10 @@ describe("unknown result types", () => {
     },
   );
 
-  ruleTest.fails(
+  ruleTest.knownBreak(
     "C036",
-    "the raw result-type check treats an unknown resultType as invalid",
-    "checks/modern.ts:857 (runResultTypeCheck) only asks for a non-empty string, so tools/list answering resultType \"partial\" passes",
+    "the raw result-type check accepts tools/list answering an unknown resultType",
+    "checks/modern.ts:857 (runResultTypeCheck) only asks for a non-empty string, so it passes resultType \"partial\"",
     async () => {
       const fixture = createFixtureHandler();
       const run = await runOneCheck("modern-result-type-present", {
@@ -277,17 +280,90 @@ describe("unknown result types", () => {
             body.result!.resultType = "partial";
           })(new Request(input, init)),
       });
-      expect(run.check?.status).toBe("failed");
-      expect(JSON.stringify(run.check)).toContain("partial");
+      expect(run.check?.status).toBe("passed");
+      expect(
+        (run.check?.details as { resultTypes?: Record<string, unknown> })?.resultTypes?.["tools/list"],
+      ).toBe("partial");
     },
   );
 });
 
 describe("telling a modern server from a legacy one", () => {
-  coveredBy(
+  /** A request as an unpinned connect sent it: HTTP method and parsed body. */
+  interface Sent {
+    httpMethod: string;
+    body?: { method?: string; params?: { protocolVersion?: string } };
+  }
+
+  /**
+   * An unpinned connect against a scripted server. `answer` gets each POST's
+   * JSON-RPC method; any other HTTP method gets 405.
+   */
+  async function unpinnedConnect(
+    answer: (method: string | undefined, id: unknown) => Response,
+  ): Promise<Sent[]> {
+    const sent: Sent[] = [];
+    const manager = new MCPClientManager();
+    try {
+      await manager
+        .connectToServer("server", {
+          url: "http://localhost/mcp",
+          timeout: 5_000,
+          baseFetch: async (input, init) => {
+            const request = new Request(input, init);
+            const body = request.method === "POST"
+              ? await request.clone().json().catch(() => undefined)
+              : undefined;
+            sent.push({ httpMethod: request.method, body });
+            if (request.method !== "POST") return new Response(null, { status: 405 });
+            return answer(body?.method, body?.id);
+          },
+        })
+        .catch(() => {});
+    } finally {
+      await manager.disconnectAllServers().catch(() => {});
+    }
+    return sent;
+  }
+
+  /** The modern "protocol version not supported" error, listing `supported`. */
+  function versionRefusal(id: unknown, supported: string[]): Response {
+    return Response.json(
+      {
+        jsonrpc: "2.0",
+        id,
+        error: {
+          code: -32022,
+          message: "Unsupported protocol version: 2026-07-28",
+          data: { supported, requested: "2026-07-28" },
+        },
+      },
+      { status: 400 },
+    );
+  }
+
+  const LEGACY_INITIALIZE_ANSWER = (id: unknown) =>
+    Response.json(
+      {
+        jsonrpc: "2.0",
+        id,
+        result: {
+          protocolVersion: "2025-11-25",
+          capabilities: { tools: {} },
+          serverInfo: { name: "client-rules-scripted", version: "1" },
+        },
+      },
+      { headers: { "mcp-session-id": "session-1" } },
+    );
+
+  ruleTest(
     "C046",
-    "tests/modern-version-refusal.integration.test.ts",
-    "stops without trying the SSE transport when no version is shared",
+    "a 400 whose body is a modern error is read, and the client does not fall back to initialize",
+    async () => {
+      const sent = await unpinnedConnect((method, id) => versionRefusal(id, ["2099-01-01"]));
+      expect(sent[0]?.body?.method).toBe("server/discover");
+      expect(sent.filter((request) => request.body?.method === "initialize")).toEqual([]);
+    },
   );
 
   ruleTest(
@@ -299,8 +375,7 @@ describe("telling a modern server from a legacy one", () => {
         onRequest: (record) => received.push(record),
       });
       try {
-        const run = await runOneCheck("server-initialize", { serverUrl: server.url });
-        expect(run.check?.status).toBe("passed");
+        await runOneCheck("server-initialize", { serverUrl: server.url });
       } finally {
         await server.stop();
       }
@@ -314,102 +389,93 @@ describe("telling a modern server from a legacy one", () => {
     },
   );
 
-  coveredBy(
+  ruleTest(
     "C050",
-    "tests/modern-version-refusal.integration.test.ts",
-    "stops without trying the SSE transport when no version is shared",
+    "after a modern version error with no shared version, the client falls back to nothing",
+    async () => {
+      const sent = await unpinnedConnect((method, id) => versionRefusal(id, ["2099-01-01"]));
+      // Neither the 2025 handshake nor the old HTTP+SSE transport.
+      expect(sent.filter((request) => request.body?.method === "initialize")).toEqual([]);
+      expect(sent.filter((request) => request.httpMethod === "GET")).toEqual([]);
+    },
   );
 
-  coveredBy(
+  ruleTest(
     "C050",
-    "tests/modern-version-refusal.integration.test.ts",
-    "retries with the 2025 handshake when the server lists a version it shares",
+    "after a modern version error that lists a shared version, the client retries with it",
+    async () => {
+      const sent = await unpinnedConnect((method, id) =>
+        method === "server/discover"
+          ? versionRefusal(id, ["2099-01-01", "2025-11-25"])
+          : method === "initialize"
+            ? LEGACY_INITIALIZE_ANSWER(id)
+            : new Response(null, { status: 202 }),
+      );
+      const retry = sent.find((request) => request.body?.method === "initialize");
+      expect(retry?.body?.params?.protocolVersion).toBe("2025-11-25");
+    },
   );
 
   ruleTest(
     "C052",
     "an unpinned run works against a server with sessions and against one without",
-    async () => {
-      const withSessions: ConformanceMockRequest[] = [];
+    async (context) => {
+      const legacyRecords: ConformanceMockRequest[] = [];
       const legacy = await startConformanceMockServer({
-        onRequest: (record) => withSessions.push(record),
+        onRequest: (record) => legacyRecords.push(record),
       });
+      let legacyStatus: string | undefined;
       try {
-        const run = await runOneCheck("tools-list", { serverUrl: legacy.url });
-        expect(run.check?.status).toBe("passed");
+        legacyStatus = (await runOneCheck("tools-list", { serverUrl: legacy.url })).check?.status;
       } finally {
         await legacy.stop();
       }
-      expect(withSessions.some((request) => request.headers["mcp-session-id"])).toBe(true);
-
-      const withoutSessions: WireRequest[] = [];
       const fixture = createFixtureHandler();
-      const run = await runOneCheck("tools-list", {
+      const modern = await runOneCheck("tools-list", {
         serverUrl: "http://localhost/mcp",
-        fetchFn: recordingFetch((request) => fixture.fetch(request), withoutSessions, () => "modern"),
+        fetchFn: (input, init) => fixture.fetch(new Request(input, init)),
       });
-      expect(run.check?.status).toBe("passed");
-      expect(run.result.protocolVersion).toBe("2026-07-28");
-      expect(withoutSessions.some((request) => request.headers["mcp-session-id"])).toBe(false);
+      exercised(
+        context,
+        legacyRecords.some((record) => record.mintedSessionId) &&
+          modern.result.protocolVersion === "2026-07-28",
+        "the two servers did not end up as one with sessions and one without",
+      );
+      expect(legacyStatus).toBe("passed");
+      expect(modern.check?.status).toBe("passed");
     },
   );
 
-  /** An unpinned connect against a server that answers every POST with `answer`. */
-  async function unpinnedConnect(answer: () => Response): Promise<string[]> {
-    const wire: string[] = [];
-    const manager = new MCPClientManager();
-    try {
-      await manager
-        .connectToServer("server", {
-          url: "http://localhost/mcp",
-          timeout: 5_000,
-          baseFetch: async (input, init) => {
-            const request = new Request(input, init);
-            const body = request.method === "POST"
-              ? await request.clone().json().catch(() => undefined)
-              : undefined;
-            wire.push(`${request.method} ${body?.method ?? "-"}`);
-            if (request.method !== "POST") return new Response(null, { status: 405 });
-            return answer();
-          },
-        })
-        .catch(() => {});
-    } finally {
-      await manager.disconnectAllServers().catch(() => {});
-    }
-    return wire;
-  }
-
-  ruleTest.fails(
+  ruleTest.knownBreak(
     "C053",
-    "a 404 carrying a JSON-RPC method-not-found is read as a modern server: no old HTTP+SSE GET",
+    "a 404 carrying a JSON-RPC method-not-found is still followed by the old HTTP+SSE GET",
     "MCPClientManager only treats a -32022 version refusal as proof of a modern server; a 404 with a -32601 body still reaches the HTTP+SSE fallback (MCPClientManager.ts:3807)",
     async () => {
-      const wire = await unpinnedConnect(() =>
+      const sent = await unpinnedConnect((method, id) =>
         Response.json(
-          { jsonrpc: "2.0", id: 1, error: { code: -32601, message: "Method not found" } },
+          { jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } },
           { status: 404 },
         ),
       );
-      expect(wire[0]).toBe("POST server/discover");
-      expect(wire).not.toContain("GET -");
+      expect(sent[0]?.body?.method).toBe("server/discover");
+      expect(sent.some((request) => request.httpMethod === "GET")).toBe(true);
     },
   );
 
   ruleTest(
     "C053",
-    "a 404 with no JSON-RPC body is read as an old HTTP+SSE server: the GET is tried (control)",
+    "a 404 with no JSON-RPC body is treated as an old HTTP+SSE server: the GET is tried",
     async () => {
-      const wire = await unpinnedConnect(() => new Response("Not Found", { status: 404 }));
-      expect(wire).toContain("GET -");
+      const sent = await unpinnedConnect(() => new Response("Not Found", { status: 404 }));
+      expect(sent.some((request) => request.httpMethod === "GET")).toBe(true);
     },
   );
 });
 
 describe("codes in the reserved legacy range", () => {
-  ruleTest.fails(
+  ruleTest.knownBreak(
     "C055",
-    "a server's -32001 is reported as the code it is, not read as a timeout",
+    "a server's -32001 is read as a timeout (\"no-response\")",
     "tasks-conformance/evidence.ts:308 turns every -32001 into \"no-response\" (\"produced no JSON-RPC rejection\"); the SDK's own timeout uses the same code, so a server-sent -32001 is misread",
     async () => {
       const sent: unknown[] = [];
@@ -423,7 +489,7 @@ describe("codes in the reserved legacy range", () => {
         "tasks/get",
         { taskId: "t1" },
       );
-      expect(probe.outcome).toBe("wrong-code");
+      expect(probe.outcome).toBe("no-response");
       expect(probe.code).toBe(-32001);
     },
   );

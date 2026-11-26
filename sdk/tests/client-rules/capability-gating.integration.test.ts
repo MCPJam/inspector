@@ -8,8 +8,9 @@
  * undeclared capability. The localhost security checks are left out: they
  * dial `node:http` straight at the URL, and this fixture has no socket.
  *
- * Two checks send undeclared methods ON PURPOSE (that is what they test), so
- * their traffic is excused; see `DELIBERATE`.
+ * One check sends methods 2026-07-28 removed ON PURPOSE, to see the server
+ * answer -32601; only those methods are excused (see `DELIBERATE`), and the
+ * rest of that check's traffic is judged like any other.
  */
 
 import { beforeAll, describe, expect } from "vitest";
@@ -18,6 +19,7 @@ import { z } from "zod";
 import { CHECK_ERAS, MCP_CHECK_IDS } from "../../src/mcp-conformance/index.js";
 import {
   buildFetchCorpus,
+  exercised,
   expectKnownViolations,
   rpcMethodOf,
   ruleTest,
@@ -44,11 +46,16 @@ const LEGACY_CHECKS = MCP_CHECK_IDS.filter(
 );
 const MODERN_CHECKS = MCP_CHECK_IDS.filter((id) => CHECK_ERAS[id].includes("modern"));
 
-/** Checks that send an undeclared or removed method on purpose, and why. */
-const DELIBERATE: Record<string, string> = {
-  "modern-removed-methods-not-found":
-    "sends logging/setLevel and resources/subscribe to prove 2026-07-28 removed them",
-  "protocol-invalid-method-error": "sends a method that does not exist",
+/**
+ * Methods a check sends on purpose, by check. These are removed from
+ * 2026-07-28, so sending them is a probe for -32601, not use of a capability.
+ */
+const DELIBERATE: Record<string, readonly string[]> = {
+  "modern-removed-methods-not-found": [
+    "logging/setLevel",
+    "resources/subscribe",
+    "resources/unsubscribe",
+  ],
 };
 
 /** Checks known to break a rule, by rule id. Absent means none does. */
@@ -58,9 +65,9 @@ function undeclaredUse(
   request: WireRequest,
   prefixes: readonly string[],
 ): string | undefined {
-  if (request.check in DELIBERATE) return undefined;
   const method = rpcMethodOf(request);
   if (!method) return undefined;
+  if (DELIBERATE[request.check]?.includes(method)) return undefined;
   return prefixes.some((prefix) => method === prefix || method.startsWith(`${prefix}/`))
     ? `sent ${method}`
     : undefined;
@@ -79,8 +86,12 @@ describe("a server that declares tools only", () => {
   ruleTest(
     "C008",
     "no check uses logging, completions, prompts or resources (2025-11-25)",
-    () => {
-      expect(legacy.requests.some((request) => rpcMethodOf(request) === "tools/list")).toBe(true);
+    (context) => {
+      exercised(
+        context,
+        legacy.requests.some((request) => rpcMethodOf(request) === "tools/list"),
+        "the checks never reached the server",
+      );
       expectKnownViolations(
         violationsByCheck(legacy.requests, (request) =>
           undeclaredUse(request, ["logging", "completion", "prompts", "resources"]),
@@ -93,8 +104,12 @@ describe("a server that declares tools only", () => {
   ruleTest(
     "C008",
     "no check uses logging, completions, prompts or resources (2026-07-28)",
-    () => {
-      expect(modern.requests.some((request) => rpcMethodOf(request) === "tools/list")).toBe(true);
+    (context) => {
+      exercised(
+        context,
+        modern.requests.some((request) => rpcMethodOf(request) === "tools/list"),
+        "the checks never reached the server",
+      );
       expectKnownViolations(
         violationsByCheck(modern.requests, (request) =>
           undeclaredUse(request, ["logging", "completion", "prompts", "resources"]),

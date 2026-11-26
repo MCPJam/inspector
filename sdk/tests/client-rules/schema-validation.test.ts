@@ -14,7 +14,7 @@ import { createMcpHandler, Server } from "@modelcontextprotocol/server";
 import { MCPClientManager } from "../../src/mcp-client-manager/index.js";
 import { DialectAwareJsonSchemaValidator } from "../../src/mcp-client-manager/dialect-aware-json-schema-validator.js";
 import { CspSafeDialectAwareJsonSchemaValidator } from "../../src/mcp-client-manager/csp-safe-dialect-aware-json-schema-validator.js";
-import { coveredBy, ruleTest } from "./harness.js";
+import { exercised, ruleTest } from "./harness.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -47,35 +47,36 @@ async function connect(
   return manager;
 }
 
-describe("validating by the declared or default dialect", () => {
-  coveredBy(
-    "C016",
-    "tests/dialect-aware-json-schema-validator.test.ts",
-    "validates declared draft-07 schemas instead of rejecting them",
-  );
-  coveredBy(
-    "C016",
-    "tests/dialect-aware-json-schema-validator.test.ts",
-    "validates schemas with no $schema as 2020-12",
-  );
+describe.each([
+  ["Ajv (Node)", DialectAwareJsonSchemaValidator],
+  ["CSP-safe (browser, workers)", CspSafeDialectAwareJsonSchemaValidator],
+] as const)("dialects, %s validator", (_name, Validator) => {
+  // Each schema uses a keyword only its own dialect knows. A validator that
+  // used the other dialect would ignore the keyword and accept { a: 1 }.
+  ruleTest("C016", "validates a schema that declares draft-07 by draft-07", () => {
+    const validate = new Validator().getValidator({
+      $schema: "http://json-schema.org/draft-07/schema#",
+      type: "object",
+      dependencies: { a: ["b"] },
+    });
+    expect(validate({ a: 1, b: 2 }).valid).toBe(true);
+    expect(validate({ a: 1 }).valid).toBe(false);
+  });
+
+  ruleTest("C016", "validates a schema with no $schema by the default, 2020-12", () => {
+    const validate = new Validator().getValidator({
+      type: "object",
+      dependentRequired: { a: ["b"] },
+    });
+    expect(validate({ a: 1, b: 2 }).valid).toBe(true);
+    expect(validate({ a: 1 }).valid).toBe(false);
+  });
 });
 
 describe.each([
   ["Ajv (Node)", DialectAwareJsonSchemaValidator],
   ["CSP-safe (browser, workers)", CspSafeDialectAwareJsonSchemaValidator],
 ] as const)("$ref resolution, %s validator", (_name, Validator) => {
-  ruleTest("C057", "resolves a local $ref into $defs and validates through it", () => {
-    const validate = new Validator().getValidator({
-      type: "object",
-      $defs: { name: { type: "string", minLength: 1 } },
-      properties: { name: { $ref: "#/$defs/name" } },
-      required: ["name"],
-    });
-    expect(validate({ name: "ada" }).valid).toBe(true);
-    expect(validate({ name: 5 }).valid).toBe(false);
-    expect(validate({ name: "" }).valid).toBe(false);
-  });
-
   ruleTest(
     "C057",
     "never fetches a network $ref, and does not treat it as permissive",
@@ -136,7 +137,7 @@ describe("dropping a tool for a bad x-mcp-header (2026-07-28)", () => {
   ruleTest(
     "C017",
     "warns with the tool's name and the reason when it drops the tool",
-    async () => {
+    async (context) => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       const handler = toolServer([
         {
@@ -160,12 +161,14 @@ describe("dropping a tool for a bad x-mcp-header (2026-07-28)", () => {
       } finally {
         await manager.disconnectAllServers().catch(() => {});
       }
-      // The drop itself (a MUST, graded by MCP Conformance as well).
-      expect(names).toEqual(["good-tool"]);
+      // Dropping the tool is a separate MUST (C215); this rule is the warning.
+      exercised(context, !names.includes("bad-header-tool"), "the client kept the tool");
       const warnings = warn.mock.calls.map((call) => call.map(String).join(" "));
+      // The reason names the property and the constraint it breaks.
       expect(
         warnings.some(
-          (text) => text.includes("bad-header-tool") && /x-mcp-header/i.test(text),
+          (text) =>
+            text.includes("bad-header-tool") && text.includes("region") && /empty/i.test(text),
         ),
         `console.warn calls: ${JSON.stringify(warnings)}`,
       ).toBe(true);

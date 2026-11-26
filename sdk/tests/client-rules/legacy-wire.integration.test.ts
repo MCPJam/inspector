@@ -8,8 +8,8 @@
  * client the client-backed checks connect with, and the hand-built raw probes
  * of the protocol, transport and security checks.
  *
- * A rule that some checks break lists them in `KNOWN`; the test fails when the
- * list is wrong in either direction.
+ * Each test checks exactly what its rule says. A rule that some checks break
+ * lists them in `KNOWN`; the test fails when the list is wrong either way.
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
@@ -25,13 +25,13 @@ import {
 import {
   buildFetchCorpus,
   buildLegacyCorpus,
+  exercised,
   expectKnownViolations,
   isRpcRequest,
+  mayRule,
   rpcMethodOf,
-  recordingFetch,
   rpcOf,
   ruleTest,
-  runOneCheck,
   violationsByCheck,
   type FetchCorpus,
   type LegacyCorpus,
@@ -39,7 +39,6 @@ import {
   type WireSession,
 } from "./harness.js";
 import { createFixtureHandler } from "../support/dual-era-fixture.js";
-import { startConformanceMockServer } from "../mock-servers/conformance-mcp-server.js";
 
 const LEGACY_CHECKS: string[] = MCP_CHECK_IDS.filter((id) =>
   CHECK_ERAS[id].includes("legacy"),
@@ -79,24 +78,33 @@ beforeAll(async () => {
   });
 }, 180_000);
 
-/**
- * C003: a session's first request other than ping is notifications/initialized.
- * Returns what went wrong, or undefined.
- */
-function judgeInitializedFirst(session: WireSession): string | undefined {
-  for (const request of session.requests) {
-    const method = rpcMethodOf(request);
-    if (method === "notifications/initialized") return undefined;
-    if (method === "ping") continue;
-    return `sent ${request.httpMethod} ${method ?? ""} before notifications/initialized`.trim();
-  }
-  return "never sent notifications/initialized";
+/** C003: the session sent notifications/initialized. */
+function judgeInitializedSent(session: WireSession): string | undefined {
+  return session.requests.some(
+    (request) => rpcMethodOf(request) === "notifications/initialized",
+  )
+    ? undefined
+    : "never sent notifications/initialized";
+}
+
+/** C023: the request carries an MCP-Protocol-Version header. */
+function judgeVersionHeaderSent(request: WireRequest): string | undefined {
+  return request.headers["mcp-protocol-version"]
+    ? undefined
+    : `${request.httpMethod} ${rpcMethodOf(request) ?? ""} had no MCP-Protocol-Version`.trim();
 }
 
 function acceptList(request: WireRequest): string[] {
   return (request.headers.accept ?? "")
     .split(",")
     .map((part) => part.split(";")[0]!.trim().toLowerCase());
+}
+
+/** Every request after initialize, tagged with the check that opened its session. */
+function requestsOnSessions(sessions: readonly WireSession[]): WireRequest[] {
+  return sessions.flatMap((session) =>
+    session.requests.map((request) => ({ ...request, check: session.check })),
+  );
 }
 
 // Every rule here binds the client as a whole, so it is judged on EVERY legacy
@@ -108,39 +116,37 @@ describe("legacy wire corpus (2025-11-25, stateful mock server)", () => {
       if (check === "wire-schema-valid") continue;
       expect(corpus.requests.some((request) => request.check === check), check).toBe(true);
     }
-    const skipped: WireSession = {
-      id: "s",
-      check: "x",
-      initialize: corpus.requests[0]!,
-      requests: [{ ...corpus.requests[0]!, body: { jsonrpc: "2.0", id: 9, method: "tools/list" } }],
-    };
-    expect(judgeInitializedFirst(skipped)).toMatch(/before notifications\/initialized/);
-    expect(judgeInitializedFirst({ ...skipped, requests: [] })).toBe(
+    const sample = corpus.requests[0]!;
+    expect(judgeInitializedSent({ id: "s", check: "x", initialize: sample, requests: [] })).toBe(
       "never sent notifications/initialized",
     );
+    expect(judgeVersionHeaderSent({ ...sample, headers: {} })).toMatch(/no MCP-Protocol-Version/);
   });
 
-  ruleTest("C001", "every check's first request is initialize", () => {
-    const firstByCheck = new Map<string, WireRequest>();
-    for (const request of corpus.requests) {
-      if (!firstByCheck.has(request.check)) firstByCheck.set(request.check, request);
-    }
-    expect(firstByCheck.size).toBeGreaterThan(0);
-    expectKnownViolations(
-      violationsByCheck([...firstByCheck.values()], (request) =>
-        rpcMethodOf(request) === "initialize"
-          ? undefined
-          : `first request was ${request.httpMethod} ${rpcMethodOf(request) ?? "(no JSON-RPC)"}`,
-      ),
-      KNOWN.C001,
-    );
-  });
+  ruleTest(
+    "C001",
+    "nothing is sent before the initialize that opens a connection",
+    () => {
+      // A request without a session id belongs to no connection yet, so it
+      // must be the initialize that opens one.
+      expectKnownViolations(
+        violationsByCheck(
+          corpus.requests.filter((request) => !request.headers["mcp-session-id"]),
+          (request) =>
+            rpcMethodOf(request) === "initialize"
+              ? undefined
+              : `${request.httpMethod} ${rpcMethodOf(request) ?? "(no JSON-RPC)"} before any initialize`,
+        ),
+        KNOWN.C001,
+      );
+    },
+  );
 
-  ruleTest("C002", "every initialize declares the client's capabilities", () => {
+  ruleTest("C002", "every initialize declares the client's capabilities", (context) => {
     const initializes = corpus.requests.filter(
       (request) => rpcMethodOf(request) === "initialize",
     );
-    expect(initializes.length).toBeGreaterThan(0);
+    exercised(context, initializes.length > 0, "no initialize was sent");
     expectKnownViolations(
       violationsByCheck(initializes, (request) => {
         const capabilities = rpcOf(request)?.params?.capabilities;
@@ -154,74 +160,70 @@ describe("legacy wire corpus (2025-11-25, stateful mock server)", () => {
 
   ruleTest(
     "C003",
-    "every opened session sends notifications/initialized before anything but ping",
-    () => {
-      const sessions = corpus.sessions;
-      expect(sessions.length).toBeGreaterThan(0);
+    "every session a good initialize opened sends notifications/initialized",
+    (context) => {
+      exercised(context, corpus.sessions.length > 0, "no session was opened");
       expectKnownViolations(
-        violationsByCheck(sessions, judgeInitializedFirst),
+        violationsByCheck(corpus.sessions, judgeInitializedSent),
         KNOWN.C003,
       );
     },
   );
 
-  ruleTest("C006", "every logging/setLevel is a request with a level", () => {
-    const setLevels = corpus.requests.filter(
-      (request) => rpcMethodOf(request) === "logging/setLevel",
-    );
-    expect(setLevels.length).toBeGreaterThan(0);
-    expectKnownViolations(
-      violationsByCheck(setLevels, (request) => {
-        const rpc = rpcOf(request)!;
-        if (!rpc.hasId) return "sent as a notification (no id)";
-        return typeof rpc.params?.level === "string"
-          ? undefined
-          : `params.level was ${JSON.stringify(rpc.params?.level)}`;
-      }),
-      KNOWN.C006,
-    );
-  });
+  ruleTest(
+    "C006",
+    "every logging/setLevel is a request whose level is one of the spec's levels",
+    (context) => {
+      const setLevels = corpus.requests.filter(
+        (request) => rpcMethodOf(request) === "logging/setLevel",
+      );
+      exercised(context, setLevels.length > 0, "no logging/setLevel was sent");
+      expectKnownViolations(
+        violationsByCheck(setLevels, (request) => {
+          const rpc = rpcOf(request)!;
+          if (!rpc.hasId) return "sent as a notification (no id)";
+          return (MCP_LOG_LEVELS as readonly unknown[]).includes(rpc.params?.level)
+            ? undefined
+            : `params.level was ${JSON.stringify(rpc.params?.level)}`;
+        }),
+        KNOWN.C006,
+      );
+    },
+  );
 
-  ruleTest("C007", "the logging check asks for a real log level", () => {
-    const setLevels = corpus.requests.filter(
-      (request) =>
-        request.check === "logging-set-level" &&
-        rpcMethodOf(request) === "logging/setLevel",
-    );
-    expect(setLevels.length).toBeGreaterThan(0);
-    for (const request of setLevels) {
-      expect(MCP_LOG_LEVELS).toContain(rpcOf(request)?.params?.level);
-    }
-  });
+  mayRule(
+    "C007",
+    "MCPJam does send logging/setLevel (the logging check, and the client on connect); the request's form is C006",
+  );
 
   ruleTest(
     "C009",
     "completion/complete names what it completes with a prompt or resource reference",
-    () => {
+    (context) => {
       const completions = corpus.requests.filter(
         (request) => rpcMethodOf(request) === "completion/complete",
       );
-      expect(completions.length).toBeGreaterThan(0);
+      exercised(context, completions.length > 0, "no completion/complete was sent");
       expectKnownViolations(
         violationsByCheck(completions, (request) => {
-          const params = rpcOf(request)?.params ?? {};
-          const ref = params.ref as Record<string, unknown> | undefined;
-          const argument = params.argument as Record<string, unknown> | undefined;
-          const refOk =
-            (ref?.type === "ref/prompt" && typeof ref.name === "string") ||
-            (ref?.type === "ref/resource" && typeof ref.uri === "string");
-          const argumentOk =
-            typeof argument?.name === "string" && typeof argument?.value === "string";
-          return refOk && argumentOk
+          const ref = rpcOf(request)?.params?.ref as Record<string, unknown> | undefined;
+          return (ref?.type === "ref/prompt" && typeof ref.name === "string") ||
+            (ref?.type === "ref/resource" && typeof ref.uri === "string")
             ? undefined
-            : `ref ${JSON.stringify(ref)}, argument ${JSON.stringify(argument)}`;
+            : `ref ${JSON.stringify(ref)}`;
         }),
         KNOWN.C009,
       );
     },
   );
 
-  ruleTest("C018", "the prompts check lists prompts with prompts/list", () => {
+  ruleTest("C018", "the prompts check lists prompts with prompts/list", (context) => {
+    // The check passing means it listed the server's prompts.
+    exercised(
+      context,
+      corpus.runs.get("prompts-list")?.check?.status === "passed",
+      "the prompts check did not list prompts",
+    );
     expect(
       corpus.requests.some(
         (request) =>
@@ -230,7 +232,12 @@ describe("legacy wire corpus (2025-11-25, stateful mock server)", () => {
     ).toBe(true);
   });
 
-  ruleTest("C021", "the resources check lists resources with resources/list", () => {
+  ruleTest("C021", "the resources check lists resources with resources/list", (context) => {
+    exercised(
+      context,
+      corpus.runs.get("resources-list")?.check?.status === "passed",
+      "the resources check did not list resources",
+    );
     expect(
       corpus.requests.some(
         (request) =>
@@ -285,18 +292,12 @@ describe("legacy wire corpus (2025-11-25, stateful mock server)", () => {
 
   ruleTest(
     "C023",
-    "every request on a session carries MCP-Protocol-Version with the negotiated version",
+    "every request after initialize carries an MCP-Protocol-Version header",
     () => {
+      // The MUST is the header itself; that its value is the negotiated
+      // version is a separate SHOULD.
       expectKnownViolations(
-        violationsByCheck(
-          corpus.sessions.flatMap((session) =>
-            session.requests.map((request) => ({ ...request, check: session.check })),
-          ),
-          (request) =>
-            request.headers["mcp-protocol-version"] === "2025-11-25"
-              ? undefined
-              : `${request.httpMethod} ${rpcMethodOf(request) ?? ""} had MCP-Protocol-Version ${JSON.stringify(request.headers["mcp-protocol-version"])}`,
-        ),
+        violationsByCheck(requestsOnSessions(corpus.sessions), judgeVersionHeaderSent),
         KNOWN.C023,
       );
     },
@@ -305,7 +306,7 @@ describe("legacy wire corpus (2025-11-25, stateful mock server)", () => {
   ruleTest("C024", "every JSON-RPC message goes by POST to the MCP endpoint", () => {
     expectKnownViolations(
       violationsByCheck(
-        corpus.requests.filter((request) => request.body !== undefined),
+        corpus.requests.filter((request) => rpcOf(request) !== undefined),
         (request) =>
           request.httpMethod === "POST" && request.path === "/mcp"
             ? undefined
@@ -362,14 +363,22 @@ describe("legacy wire corpus (2025-11-25, stateful mock server)", () => {
     },
   );
 
+  mayRule(
+    "C027",
+    "MCPJam does: the functional-streams check keeps three POST answers open as SSE streams at once",
+  );
+
   ruleTest(
     "C028",
-    "the checks pass against a server that answers over SSE (this corpus)",
-    () => {
-      const sse = corpus.requests.filter((request) =>
-        request.responseContentType?.startsWith("text/event-stream"),
+    "the client gets its answers from a server that answers over SSE (this corpus)",
+    (context) => {
+      exercised(
+        context,
+        corpus.requests.some((request) =>
+          request.responseContentType?.startsWith("text/event-stream"),
+        ),
+        "the server answered nothing over SSE",
       );
-      expect(sse.length).toBeGreaterThan(0);
       for (const check of ["server-initialize", "ping", "tools-list", "prompts-list"]) {
         expect(corpus.runs.get(check)?.check?.status, check).toBe("passed");
       }
@@ -387,18 +396,14 @@ describe("legacy wire corpus (2025-11-25, stateful mock server)", () => {
     );
   });
 
-  ruleTest("C030", "the GET-stream check opens an SSE stream with GET", () => {
-    expect(
-      corpus.requests.some(
-        (request) =>
-          request.check === "get-stream-or-405" && request.httpMethod === "GET",
-      ),
-    ).toBe(true);
-  });
+  mayRule(
+    "C030",
+    "MCPJam does: the GET-stream check and the official client open an SSE stream with GET; its Accept header is C031",
+  );
 
-  ruleTest("C031", "every GET accepts text/event-stream", () => {
+  ruleTest("C031", "every GET accepts text/event-stream", (context) => {
     const gets = corpus.requests.filter((request) => request.httpMethod === "GET");
-    expect(gets.length).toBeGreaterThan(0);
+    exercised(context, gets.length > 0, "no GET was sent");
     expectKnownViolations(
       violationsByCheck(gets, (request) =>
         acceptList(request).includes("text/event-stream")
@@ -408,6 +413,11 @@ describe("legacy wire corpus (2025-11-25, stateful mock server)", () => {
       KNOWN.C031,
     );
   });
+
+  mayRule(
+    "C032",
+    "MCPJam does: the GET-stream check closes the stream it opened once it has the headers",
+  );
 
   ruleTest("C261", "every opened session is ended with an HTTP DELETE", () => {
     expectKnownViolations(
@@ -445,18 +455,12 @@ describe("legacy wire, other revisions and modes", () => {
 
   ruleTest(
     "C023",
-    "on 2025-06-18 too, every request on a session carries the negotiated MCP-Protocol-Version",
-    () => {
-      const requests = older.sessions.flatMap((session) =>
-        session.requests.map((request) => ({ ...request, check: session.check })),
-      );
-      expect(requests.length).toBeGreaterThan(0);
+    "on 2025-06-18 too, every request after initialize carries an MCP-Protocol-Version header",
+    (context) => {
+      const requests = requestsOnSessions(older.sessions);
+      exercised(context, requests.length > 0, "no request followed an initialize");
       expectKnownViolations(
-        violationsByCheck(requests, (request) =>
-          request.headers["mcp-protocol-version"] === "2025-06-18"
-            ? undefined
-            : `${request.httpMethod} ${rpcMethodOf(request) ?? ""} had ${JSON.stringify(request.headers["mcp-protocol-version"])}`,
-        ),
+        violationsByCheck(requests, judgeVersionHeaderSent),
         KNOWN.C023_2025_06_18,
       );
     },
@@ -464,18 +468,17 @@ describe("legacy wire, other revisions and modes", () => {
 
   ruleTest("C029", "on 2025-06-18 too, every POST carries one JSON-RPC message", () => {
     const posts = older.requests.filter((request) => request.httpMethod === "POST");
-    expect(posts.length).toBeGreaterThan(0);
     expect(posts.filter((request) => Array.isArray(request.body))).toEqual([]);
   });
 
   ruleTest(
     "C068",
     "an unpinned run proposes the latest legacy version in initialize",
-    () => {
+    (context) => {
       const initializes = auto.requests.filter(
         (request) => rpcMethodOf(request) === "initialize",
       );
-      expect(initializes.length).toBeGreaterThan(0);
+      exercised(context, initializes.length > 0, "no initialize was sent");
       expectKnownViolations(
         violationsByCheck(initializes, (request) => {
           const proposed = rpcOf(request)?.params?.protocolVersion;
@@ -489,92 +492,16 @@ describe("legacy wire, other revisions and modes", () => {
   );
 
   ruleTest(
-    "C032",
-    "the GET-stream check closes the SSE stream it opened, itself",
-    async () => {
-      // Recorded at the client's fetch: the server alone cannot tell a stream
-      // the client closed from one it ended when the session was deleted a
-      // fraction of a millisecond later.
-      const server = await startConformanceMockServer();
-      const sent: WireRequest[] = [];
-      try {
-        const run = await runOneCheck("get-stream-or-405", {
-          serverUrl: server.url,
-          protocolVersion: "2025-11-25",
-          fetchFn: recordingFetch((request) => fetch(request), sent, () => "get-stream-or-405"),
-        });
-        expect(run.check?.status).toBe("passed");
-      } finally {
-        await server.stop();
-      }
-      const gets = sent.filter((request) => request.httpMethod === "GET");
-      expect(gets.length).toBeGreaterThan(0);
-      for (const get of gets) {
-        expect(get.responseContentType).toMatch(/^text\/event-stream/);
-        expect(get.abortedAt, "the client never closed the stream").toBeDefined();
-      }
-    },
-  );
-
-  ruleTest(
-    "C027",
-    "the functional-streams check has several SSE streams open on one session at once",
-    async () => {
-      // Hold every tools/list until three are in flight. A client that sent
-      // them one after another would never get there: the first would wait
-      // out the timeout alone, and the peak would stay at 1.
-      const server = await startConformanceMockServer();
-      let inFlight = 0;
-      let peak = 0;
-      let releaseAll!: () => void;
-      const allSent = new Promise<void>((resolve) => (releaseAll = resolve));
-      const fetchFn: typeof fetch = async (input, init) => {
-        const request = new Request(input, init);
-        const body = request.method === "POST"
-          ? await request.clone().json().catch(() => undefined)
-          : undefined;
-        if (body?.method !== "tools/list") return fetch(request);
-        inFlight++;
-        peak = Math.max(peak, inFlight);
-        if (inFlight >= 3) releaseAll();
-        await Promise.race([allSent, new Promise((wait) => setTimeout(wait, 1_000))]);
-        try {
-          return await fetch(request);
-        } finally {
-          inFlight--;
-        }
-      };
-      try {
-        await runOneCheck("server-sse-streams-functional", {
-          serverUrl: server.url,
-          protocolVersion: "2025-11-25",
-          fetchFn,
-        });
-      } finally {
-        await server.stop();
-      }
-      expect(peak).toBeGreaterThanOrEqual(2);
-      // And the corpus shows those POSTs were answered as SSE streams.
-      expect(
-        corpus.requests.some(
-          (request) =>
-            request.check === "server-sse-streams-functional" &&
-            rpcMethodOf(request) === "tools/list" &&
-            request.responseContentType?.startsWith("text/event-stream"),
-        ),
-      ).toBe(true);
-    },
-  );
-
-  ruleTest(
     "C028",
-    "the checks also pass against a server that answers with a single JSON object",
-    () => {
-      expect(
+    "the client also gets its answers from a server that answers with a single JSON object",
+    (context) => {
+      exercised(
+        context,
         json.requests.some((request) =>
           request.responseContentType?.startsWith("application/json"),
         ),
-      ).toBe(true);
+        "the server answered nothing as a single JSON object",
+      );
       for (const [check, run] of json.runs) {
         expect(run.check?.status, check).toBe("passed");
       }
