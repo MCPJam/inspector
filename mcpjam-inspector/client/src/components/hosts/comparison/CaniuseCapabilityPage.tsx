@@ -370,7 +370,7 @@ export function CaniuseCapabilityPage({
                 )}
               </section>
               <section
-                className="mt-4 rounded-xl border border-border bg-card p-3 sm:p-5"
+                className="mt-6"
                 aria-labelledby="caniuse-map-heading"
               >
                 <h2 id="caniuse-map-heading" className="mb-3 text-xl font-bold tracking-tight">
