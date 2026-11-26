@@ -22,8 +22,8 @@ import {
   modernRequestBody,
   rawHeadersProbe,
   rawRequest,
+  pollingOutcome,
   resumePolledStream,
-  unreadPolledAnswerMessage,
   versionStopDetails,
   type LegacyVersionStop,
   type RawHttpResult,
@@ -533,8 +533,7 @@ export async function runTransportChecks(
               params: {},
             },
           }).then((response) =>
-            // A stream handed to polling carries its answer only after a
-            // call-back; the three wait for theirs at the same time.
+            // A polled answer needs a call-back; the three wait at once.
             resumePolledStream(ctx, response, {
               sessionId: activeSessionId,
               protocolVersion: streamVersion,
@@ -604,14 +603,7 @@ export async function runTransportChecks(
               ),
           );
 
-        const unreadStreams = sseResponses.filter(
-          ({ response }) =>
-            unreadPolledAnswerMessage(response.resumed) !== undefined,
-        );
-        const unreadMessage = unreadPolledAnswerMessage(
-          unreadStreams[0]?.response.resumed,
-        );
-
+        const polling = pollingOutcome(sseResponses);
         if (sseResponses.length === 0) {
           results.push(
             requestErrors.some((error) => error !== undefined) || responseFailures
@@ -635,14 +627,13 @@ export async function runTransportChecks(
                   },
                 ),
           );
-        } else if (unreadMessage !== undefined) {
-          // A stream handed to polling whose call-back could not fit in the
-          // check's time was never read, so it cannot be judged readable.
+        } else if (polling.unreadMessage !== undefined) {
+          // A polled stream that was never read cannot be judged readable.
           results.push(
             couldNotRunResult(
               TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
-              unreadMessage,
-              { unreadStreams: unreadStreams.map(({ index }) => index) },
+              polling.unreadMessage,
+              { unreadStreams: polling.unreadStreams },
             ),
           );
         } else {
@@ -663,13 +654,6 @@ export async function runTransportChecks(
             !responseFailures &&
             readErrors.every((error) => error === undefined) &&
             eventCounts.every((count) => count > 0);
-          // Which streams got their answer only through a call-back, so a
-          // reader can tell a polled stream from one that answered at once.
-          const resumedStreams = sseResponses
-            .filter(({ response }) => response.resumed?.gotResponse)
-            .map(({ index }) => index);
-          const resumedDetail =
-            resumedStreams.length > 0 ? { resumedStreams } : {};
 
           results.push(
             allStreamsReadable
@@ -679,7 +663,7 @@ export async function runTransportChecks(
                   {
                     eventCounts,
                     sseStreamCount: sseResponses.length,
-                    ...resumedDetail,
+                    ...polling.resumedDetail,
                   },
                 )
               : failedResult(
@@ -694,7 +678,7 @@ export async function runTransportChecks(
                     readErrors,
                     sseStreamCount: sseResponses.length,
                     sseResponseIndexes: sseResponses.map(({ index }) => index),
-                    ...resumedDetail,
+                    ...polling.resumedDetail,
                   },
                 ),
           );

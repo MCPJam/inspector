@@ -44,12 +44,14 @@ import {
   type RawSseEvent,
 } from "./raw-capture.js";
 import {
+  pollingOutcome,
   resumePolledStream,
   unreadPolledAnswerMessage,
   type PolledStreamResume,
 } from "./raw-poll-resume.js";
 
 export {
+  pollingOutcome,
   resumePolledStream,
   unreadPolledAnswerMessage,
   type PolledStreamResume,

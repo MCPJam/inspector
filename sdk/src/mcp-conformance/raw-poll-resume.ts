@@ -36,6 +36,34 @@ export function unreadPolledAnswerMessage(
   return `The server handed its answer to polling and asked to be called back after ${resumed.waitTooLong.waitMs} ms, more than this check had left, so the answer was never read. Raise the check timeout (--check-timeout, SDK: checkTimeout) to let MCPJam wait that long.`;
 }
 
+/**
+ * How a check's streams fared with polling: why one handed to polling was
+ * never read (and which ones), and which got their answer only through a
+ * call-back, so a reader can tell a polled stream from one that answered.
+ */
+export function pollingOutcome(
+  streams: ReadonlyArray<{
+    response: { resumed?: PolledStreamResume };
+    index: number;
+  }>
+): {
+  unreadMessage?: string;
+  unreadStreams: number[];
+  resumedDetail: { resumedStreams?: number[] };
+} {
+  const unread = streams.filter(({ response }) =>
+    unreadPolledAnswerMessage(response.resumed)
+  );
+  const resumedStreams = streams
+    .filter(({ response }) => response.resumed?.gotResponse)
+    .map(({ index }) => index);
+  return {
+    unreadMessage: unreadPolledAnswerMessage(unread[0]?.response.resumed),
+    unreadStreams: unread.map(({ index }) => index),
+    resumedDetail: resumedStreams.length > 0 ? { resumedStreams } : {},
+  };
+}
+
 // How the normal client paces its call-backs (`@modelcontextprotocol/client`,
 // DEFAULT_STREAMABLE_HTTP_RECONNECTION_OPTIONS): wait what the server asked
 // for with `retry`, else back off from 1 s, and give up after two failed tries
