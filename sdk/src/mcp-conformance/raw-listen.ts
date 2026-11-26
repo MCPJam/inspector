@@ -27,11 +27,7 @@ import { withAbortSignalFetch } from "../abort-signal.js";
 
 import { SUBSCRIPTION_ID_META_KEY } from "../mcp-client-manager/subscription-coordinator.js";
 import type { RawHttpCheckContext } from "./types.js";
-import {
-  getWireField,
-  parseSseEvents,
-  type RawSseEvent,
-} from "./raw-capture.js";
+import { drainFrames, getWireField, type RawSseEvent } from "./raw-capture.js";
 import { baseHeaders, modernHeaders, modernRequestBody } from "./raw-http.js";
 
 /** The `subscriptions/listen` method name, spelled once. */
@@ -169,23 +165,6 @@ export function filterRequests(
     );
   }
   return Boolean(filter[SUBSCRIPTION_NOTIFICATION_FILTER_KEYS[method]]);
-}
-
-/** Complete SSE frames sitting in `buffer`, plus the unconsumed remainder. */
-function drainFrames(buffer: string): {
-  frames: RawSseEvent[];
-  rest: string;
-} {
-  const normalized = buffer.replace(/\r\n/g, "\n");
-  const lastDelimiter = normalized.lastIndexOf("\n\n");
-  if (lastDelimiter === -1) {
-    return { frames: [], rest: normalized };
-  }
-  const complete = normalized.slice(0, lastDelimiter + 2);
-  return {
-    frames: parseSseEvents(complete),
-    rest: normalized.slice(lastDelimiter + 2),
-  };
 }
 
 /**

@@ -13,7 +13,9 @@ import { needsSetupDetails } from "../conformance-input.js";
  * The harness NEVER negotiates and NEVER repairs. It does not run an
  * `initialize` prelude, does not add a protocol-version header of its own, and
  * does not retry: a check that wants any of that asks for it explicitly (see
- * {@link modernEnvelope} / {@link modernHeaders}, which a check opts into). That
+ * {@link modernEnvelope} / {@link modernHeaders}, which a check opts into, and
+ * {@link resumePolledStream}, which calls back for an answer a 2025 server
+ * handed to polling). That
  * is what makes it usable for hostile framing — the whole point of the raw
  * track is to send exactly the bytes the check intends, including the wrong
  * ones.
@@ -41,6 +43,19 @@ import {
   type RawExchange,
   type RawSseEvent,
 } from "./raw-capture.js";
+import {
+  pollingOutcome,
+  resumePolledStream,
+  unreadPolledAnswerMessage,
+  type PolledStreamResume,
+} from "./raw-poll-resume.js";
+
+export {
+  pollingOutcome,
+  resumePolledStream,
+  unreadPolledAnswerMessage,
+  type PolledStreamResume,
+};
 
 export {
   CLIENT_CAPABILITIES_META_KEY,
@@ -248,7 +263,14 @@ export interface RawHttpResult {
   sse?: RawSseEvent[];
   /** The full captured exchange (request side included). */
   exchange: RawExchange;
+  /**
+   * Set by {@link resumePolledStream} when it called the server back for this
+   * answer. `sse` then also holds the events the call-backs read; every other
+   * field is still the original request's.
+   */
+  resumed?: PolledStreamResume;
 }
+
 
 export interface JsonRpcErrorShape {
   code: number;
@@ -459,7 +481,7 @@ export async function legacyInitialize(ctx: RawHttpCheckContext): Promise<{
 }> {
   const requestedVersion =
     ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION;
-  const result = await rawRequest(ctx, {
+  const posted = await rawRequest(ctx, {
     headers: legacyHeaders({}),
     body: {
       jsonrpc: "2.0",
@@ -472,15 +494,24 @@ export async function legacyInitialize(ctx: RawHttpCheckContext): Promise<{
       },
     },
   });
+  // The answer may have been handed to polling; without it the version below
+  // cannot be read. No version header yet: nothing is negotiated until then.
+  const result = await resumePolledStream(ctx, posted, {
+    sessionId: posted.headers["mcp-session-id"],
+  });
 
+  // The session comes on the response that carries the InitializeResult,
+  // which for a polled answer is the call-back.
+  const sessionId =
+    result.headers["mcp-session-id"] ?? result.resumed?.sessionId;
   const answeredVersion = jsonRpcResult(result)?.protocolVersion;
   if (typeof answeredVersion !== "string") {
-    return { result, sessionId: result.headers["mcp-session-id"] };
+    return { result, sessionId };
   }
   const supported = isKnownProtocolVersion(answeredVersion);
   return {
     result,
-    sessionId: result.headers["mcp-session-id"],
+    sessionId,
     ...(supported ? { negotiatedVersion: answeredVersion } : {}),
     ...(answeredVersion !== requestedVersion
       ? {
