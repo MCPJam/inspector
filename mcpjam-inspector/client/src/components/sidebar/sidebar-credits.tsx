@@ -33,6 +33,7 @@ import {
 } from "@/lib/credit-usage";
 import { getEvalIterationQuotaLabel } from "@/lib/eval-iteration-quota";
 import { useRefillAnimation } from "./use-refill-animation";
+import { withCreditPreviewSample } from "./credit-preview-sample";
 
 interface SidebarCreditsProps {
   organizationId: string;
@@ -69,9 +70,13 @@ export function SidebarCredits({
   const isV2 =
     billingStatus?.pricingVersion === "v2" ||
     balance?.billingModel === "monthly_flat";
-  const { quota: evalIterationQuota, isLoading: isEvalIterationQuotaLoading } =
+  const { quota: liveEvalIterationQuota, isLoading: isEvalIterationQuotaLoading } =
     useEvalIterationQuota({ organizationId });
-  const sponsoredAllowance = useSwarmSponsorshipAllowance();
+  const { swarm: sponsoredAllowance, quota: evalIterationQuota } =
+    withCreditPreviewSample(
+      useSwarmSponsorshipAllowance(),
+      liveEvalIterationQuota,
+    );
 
   // Settled with nothing to show. Rendering the row anyway leaves a permanent
   // "See credits" whose card is a blank number over an empty bar, which reads
