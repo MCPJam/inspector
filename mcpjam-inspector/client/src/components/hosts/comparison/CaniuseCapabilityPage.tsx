@@ -212,7 +212,7 @@ export function CaniuseCapabilityPage({
         </label>
         <nav
           aria-label="Browse capabilities"
-          className="hidden min-w-0 self-start border-r border-border pr-3 md:sticky md:top-4 md:block md:max-h-[calc(100dvh-2rem)] md:overflow-auto lg:pr-4"
+          className="hidden min-w-0 self-start md:sticky md:top-4 md:block md:max-h-[calc(100dvh-2rem)] md:overflow-auto"
         >
           <SearchInput
             className="mx-px mb-2 [&_input]:h-9 [&_input]:text-sm"
@@ -318,7 +318,7 @@ export function CaniuseCapabilityPage({
                     <div className="mt-1 text-5xl font-bold tracking-normal text-primary tabular-nums sm:text-7xl">
                       {coverage.score === null ? "—" : `${coverage.score}%`}
                     </div>
-                    <p className="mt-2 text-sm text-foreground/85">
+                    <p className="mt-2 text-pretty text-sm text-foreground/85">
                       {coverage.score === null
                         ? "No published client results yet."
                         : coverage.eventsMode
