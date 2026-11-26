@@ -20,9 +20,10 @@
  *     Codex turn). The conversation's box is its machine.
  *
  * A LOCAL harness (npx / Electron) runs on the member's own machine and is never
- * given a box; neither is a scenario session (its own box path) or a turn with
- * no harness. This module owns the decision and the acquisition; the chat
- * routes only ask it.
+ * given a box; neither is a scenario session (its own box path), a web client
+ * (it drives the vendor's website in a browser) or a turn with no harness.
+ * This module owns the decision and the acquisition; the chat routes only ask
+ * it.
  */
 import { logger } from "../logger.js";
 import {
@@ -33,7 +34,6 @@ import {
 import {
   acquireHarnessBox,
   canProvisionHarnessBoxes,
-  type AcquireHarnessBoxResult,
   type HarnessBox,
 } from "./harness-box.js";
 import {
@@ -41,6 +41,7 @@ import {
   resolveOrgKeyCredentialPlan,
 } from "./external-account-credentials.js";
 import { getHarnessAdapter, harnessUsesExternalAccount } from "./registry.js";
+import { isWebClientRuntimeId } from "@/shared/web-clients";
 
 export type PlaygroundBoxReason = "credential" | "compare" | "conversation";
 
@@ -57,6 +58,9 @@ export function playgroundHarnessBoxReason(args: {
   if (!args.harnessId || args.localExecution || args.isScenarioSession) {
     return null;
   }
+  // External-account like Cursor, but on a web account, not an org key: the
+  // vendor's own app runs the turn, so a box would sit idle.
+  if (isWebClientRuntimeId(args.harnessId)) return null;
   if (harnessUsesExternalAccount(args.harnessId)) return "credential";
   if (args.comparePane) return "compare";
   return "conversation";
@@ -80,6 +84,9 @@ export async function playgroundCredentialRefusal(args: {
   harnessId: string;
   bearer?: string;
   projectId?: string;
+  /** The model the turn will run, so one the account no longer offers is
+   *  refused here, before a box, not after it. */
+  modelId?: string;
   signal?: AbortSignal;
 }): Promise<string | null> {
   try {
@@ -87,6 +94,7 @@ export async function playgroundCredentialRefusal(args: {
       harness: getHarnessAdapter(args.harnessId),
       ...(args.bearer ? { bearer: args.bearer } : {}),
       ...(args.projectId ? { projectId: args.projectId } : {}),
+      ...(args.modelId ? { modelId: args.modelId } : {}),
       ...(args.signal ? { signal: args.signal } : {}),
     });
     return null;
@@ -95,6 +103,11 @@ export async function playgroundCredentialRefusal(args: {
     throw error;
   }
 }
+
+/** A held box, and `prepared` when this call took one prepared before Send. */
+export type AcquiredPlaygroundBox =
+  | { ok: true; box: HarnessBox; prepared?: true }
+  | { ok: false; refusal: PlaygroundBoxRefusal };
 
 /**
  * Hold this conversation's box for the turn. The heartbeat keeps its idle
@@ -111,8 +124,10 @@ export async function acquirePlaygroundHarnessBox(args: {
   /** The turn's harness id; the backend gates the box on its own flag. */
   harness?: string;
   signal?: AbortSignal;
-}): Promise<AcquireHarnessBoxResult<PlaygroundBoxRefusal>> {
-  return acquireHarnessBox<PlaygroundBoxRefusal>({
+}): Promise<AcquiredPlaygroundBox> {
+  // The backend says it once, on the call that takes a prepared box.
+  let prepared = false;
+  const acquired = await acquireHarnessBox<PlaygroundBoxRefusal>({
     surface: "playground",
     // The turn's signal: a stopped or abandoned turn stops beating, and the
     // box idles out on its own clock (it is never torn down by the turn).
@@ -155,6 +170,7 @@ export async function acquirePlaygroundHarnessBox(args: {
           },
         };
       }
+      prepared = result.value.prepared === true;
       return {
         ok: true as const,
         box: {
@@ -162,10 +178,15 @@ export async function acquirePlaygroundHarnessBox(args: {
           sandboxId: result.value.sandboxId,
           ...(result.value.workdir ? { workdir: result.value.workdir } : {}),
           ...(result.value.idleMs ? { idleMs: result.value.idleMs } : {}),
+          ...(result.value.retainUntil
+            ? { retainUntil: result.value.retainUntil }
+            : {}),
+          ...(prepared ? { unused: true as const } : {}),
         },
       };
     },
   });
+  return acquired.ok && prepared ? { ...acquired, prepared: true } : acquired;
 }
 
 /** Can this server hold the box at all? Null when it can. */

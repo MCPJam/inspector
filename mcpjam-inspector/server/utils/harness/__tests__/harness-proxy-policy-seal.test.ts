@@ -226,6 +226,51 @@ describe("sealHarnessSessionEnvelope (one value for a whole session)", () => {
     expect(unsealHarnessProxyToken(session(), "srv-b")).toBeNull();
   });
 
+  it("seals a bridged server as its own version, which only opens with its profile", () => {
+    const bridged = session({ delivery: "bridge" });
+    // An instance that predates the version refuses it instead of reading a
+    // pass-through envelope.
+    expect(bridged).toMatch(/^mcpjps5\./);
+    expect(bridged).toBe(session({ delivery: "bridge" }));
+    expect(unsealHarnessProxyToken(bridged, "srv-a")).toMatchObject({
+      session: true,
+      delivery: "bridge",
+      profile: { clientCapabilities: {}, timeout: 60_000 },
+    });
+    expect(unsealHarnessProxyToken(session(), "srv-a")).not.toHaveProperty("delivery");
+    expect(() => session({ delivery: "bridge", profile: undefined })).toThrow(
+      "needs its connection profile",
+    );
+  });
+
+  it("seals a runtime's correlation key as its own version, bridged or not", () => {
+    const keyed = session({ correlationKey: "mcpjam/toolCallId" });
+    // An instance that predates it would neither strip the key nor bind the
+    // call to its approval, so it refuses the envelope.
+    expect(keyed).toMatch(/^mcpjps6\./);
+    expect(keyed).toBe(session({ correlationKey: "mcpjam/toolCallId" }));
+    const opened = unsealHarnessProxyToken(keyed, "srv-a");
+    expect(opened).toMatchObject({
+      session: true,
+      correlationKey: "mcpjam/toolCallId",
+      profile: { clientCapabilities: {}, timeout: 60_000 },
+    });
+    expect(opened).not.toHaveProperty("delivery");
+    const bridged = session({ correlationKey: "callId", delivery: "bridge" });
+    expect(bridged).toMatch(/^mcpjps6\./);
+    expect(unsealHarnessProxyToken(bridged, "srv-a")).toMatchObject({
+      session: true,
+      delivery: "bridge",
+      correlationKey: "callId",
+    });
+    // Without a key the envelope keeps its earlier version, so a runtime that
+    // stamps none (Cursor CLI) sees no change.
+    expect(session()).toMatch(/^mcpjps4\./);
+    expect(unsealHarnessProxyToken(session(), "srv-a")).not.toHaveProperty(
+      "correlationKey",
+    );
+  });
+
   it("refuses a tampered envelope", () => {
     const [prefix, iv, body] = session().split(".");
     const flipped = body!.slice(0, -2) + (body!.endsWith("A") ? "BB" : "AA");

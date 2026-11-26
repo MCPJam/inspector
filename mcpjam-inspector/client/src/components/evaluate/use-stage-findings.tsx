@@ -11,8 +11,7 @@
  * diagnostics down: the suite page has no such caller, and a prop that only one
  * of the two surfaces can supply would have made this feature run-page-only.
  *
- * The read is off unless the caller says otherwise, and the caller's flag is
- * the existing `evaluate-enabled` one — nothing new to turn on.
+ * The caller enables the read when this surface can display its findings.
  */
 import { useMemo } from "react";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
@@ -80,7 +79,7 @@ export interface StageFindingsTarget {
     verdictSummary?: unknown;
     goalCompletionStatus?: string | null;
   } | null;
-  /** The existing `evaluate-enabled` flag, threaded by the caller. */
+  /** Whether this surface should load iteration findings. */
   enabled: boolean;
   /** Whether this surface can open a trial at all. Gates the row's button. */
   canOpenTrial: boolean;

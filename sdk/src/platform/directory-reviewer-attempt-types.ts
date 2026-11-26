@@ -32,6 +32,9 @@ export interface PlatformReviewerStage {
   detail?: string;
   evidence?: {
     screenshotArtifactId?: string;
+    /** Whether the stage's own picture was taken, and if not, why. */
+    screenshotStatus?: "captured" | "suppressed" | "unavailable";
+    screenshotNote?: string;
     recordingArtifactId?: string;
     observedIdentity?: string;
     observedOrganization?: string;
@@ -48,6 +51,7 @@ export interface PlatformReviewerAttempt {
   serverId: string;
   /** The hosted-only account the reviewer's connection wrote its tokens to. */
   reviewerAccountId?: string;
+  humanSignInCompletedAt?: number;
   passwordSecretName: string;
   usernameSecretName?: string;
   username?: string;
@@ -100,7 +104,7 @@ export function reviewerAttemptsPath(
   projectId: string,
   submissionId: string,
   attemptId?: string,
-  action?: "resume" | "cancel"
+  action?: "resume" | "cancel" | "handoff"
 ): string {
   const base = `${directorySubmissionsPath(projectId, submissionId)}/reviewer-attempts`;
   if (attemptId === undefined) return base;

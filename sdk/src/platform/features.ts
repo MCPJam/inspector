@@ -53,6 +53,7 @@ export const PLATFORM_FEATURE_KEYS = [
   "unified-share-evals",
   "github-checks",
   "scheduled-evals",
+  "web-clients",
 ] as const;
 
 export type PlatformFeatureKey = (typeof PLATFORM_FEATURE_KEYS)[number];
@@ -84,6 +85,7 @@ export const PLATFORM_FEATURES: Readonly<Record<PlatformFeatureKey, string>> = {
   "unified-share-evals": "Eval run sharing",
   "github-checks": "GitHub checks",
   "scheduled-evals": "Scheduled evals",
+  "web-clients": "Claude web and ChatGPT web",
 };
 
 /**
@@ -125,6 +127,7 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   start_directory_submission_run: "directory-readiness",
   // A reviewer sign-in starts a run, as a submission's run does.
   create_reviewer_attempt: "directory-readiness",
+  create_reviewer_handoff: "directory-readiness",
   resume_reviewer_attempt: "directory-readiness",
   record_directory_submission_status: "directory-readiness",
   record_directory_submission_snapshot: "directory-readiness",
@@ -365,6 +368,9 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   backtest_eval_run: null,
   backtest_eval_run_judge: null,
   request_eval_run_judge: null,
+  request_eval_run_insights: null,
+  cancel_eval_run_insights: null,
+  build_eval_run_findings: null,
   get_eval_run_steps: null,
   create_tunnel: null,
   close_tunnel: null,

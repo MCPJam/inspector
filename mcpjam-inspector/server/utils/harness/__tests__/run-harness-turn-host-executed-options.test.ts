@@ -101,7 +101,7 @@ vi.mock("../registry.js", () => ({
 
 /** The projection itself is covered by its own file; here it is a spy. */
 const projectSpy = vi.hoisted(() =>
-  vi.fn(async (_args: Parameters<typeof import("../host-executed-mcp-tools").projectSelectedMcpServersAsHostTools>[0]) => ({ tools: {}, keyToServerId: {} }))
+  vi.fn(async (_args: Parameters<typeof import("../host-executed-mcp-tools").projectSelectedMcpServersAsHostTools>[0]) => ({ tools: {}, keyToServerId: {}, toolRegistry: new Map() }))
 );
 vi.mock("../host-executed-mcp-tools.js", async (importOriginal) => {
   const actual = await importOriginal<
@@ -155,14 +155,16 @@ vi.mock("../harness-session-state.js", async (importOriginal) => {
 });
 
 vi.mock("../harness-model-broker.js", () => ({
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
     proxyBaseUrl: "https://broker.example",
     forwarding: {}, expiresAt: Date.now() + 60_000,
   })),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 const forwarding = vi.hoisted(() => ({
@@ -205,7 +207,7 @@ function baseOptions(overrides: Record<string, unknown> = {}) {
     systemPrompt: "You are Codex.",
     authHeader: "Bearer test",
     projectId: "project-1",
-    mcpClientManager: { getServerConfig: vi.fn(() => ({ url: "x" })) },
+    mcpClientManager: { getServerConfig: vi.fn(() => ({ url: "x" })), getAllToolAnnotations: vi.fn(() => ({})) },
     selectedServers: ["srv-a"],
     // Required whenever servers are selected, even on host-executed delivery
     // (the turn asserts it before it knows which arm it is on).
@@ -377,6 +379,7 @@ describe("runHarnessTurn forwards host tool-construction options", () => {
           mcp__srv__read: { needsApproval: false },
         },
         keyToServerId: {},
+        toolRegistry: new Map(),
       } as never);
 
       await runHarnessTurn(
@@ -405,6 +408,7 @@ describe("runHarnessTurn forwards host tool-construction options", () => {
       projectSpy.mockResolvedValueOnce({
         tools: { mcp__srv__load: { needsApproval: () => false } },
         keyToServerId: {},
+        toolRegistry: new Map(),
       } as never);
 
       await runHarnessTurn(
@@ -732,7 +736,7 @@ it("keeps retained App presentation separate from saved model history", async ()
   const onConversationComplete = vi.fn();
   projectSpy.mockImplementationOnce(async args => {
     args.onRawResult?.({ toolCallId: "app-call", raw });
-    return { tools: {}, keyToServerId: {} };
+    return { tools: {}, keyToServerId: {}, toolRegistry: new Map() };
   });
   harnessState.streamParts = [
     { type: "tool-call", toolCallId: "app-call", toolName: "app", input: {} },
@@ -762,5 +766,53 @@ it("keeps retained App presentation separate from saved model history", async ()
   } finally {
     harnessState.streamParts = [{ type: "finish", finishReason: "stop" }];
     vi.unstubAllEnvs();
+  }
+});
+
+it("records a host-executed call under the identity MCPJam registered for its name", async () => {
+  // `a_b_2` is the alias MCPJam picked for `a.b` beside a real `a_b`; parsing
+  // the name alone would record the wrong tool.
+  projectSpy.mockResolvedValueOnce({
+    tools: { mcp__srv__a_b: {}, mcp__srv__a_b_2: {} },
+    keyToServerId: { srv: "srv-a" },
+    toolRegistry: new Map([
+      ["mcp__srv__a_b", { serverId: "srv-a", toolName: "a_b" }],
+      ["mcp__srv__a_b_2", { serverId: "srv-a", toolName: "a.b" }],
+    ]),
+  } as never);
+  harnessState.streamParts = [
+    { type: "tool-call", toolCallId: "call-1", toolName: "mcp__srv__a_b_2", input: {} },
+    { type: "tool-result", toolCallId: "call-1", toolName: "mcp__srv__a_b_2", output: "ok" },
+    { type: "finish", finishReason: "stop" },
+  ];
+  const onToolCall = vi.fn(async () => {});
+  const onToolResult = vi.fn(async () => {});
+  try {
+    await runHarnessTurn(baseOptions({ onToolCall, onToolResult }) as never, "none");
+    expect(onToolCall).toHaveBeenCalledWith(expect.objectContaining({ toolName: "a.b", serverId: "srv-a" }));
+    expect(onToolResult).toHaveBeenCalledWith(expect.objectContaining({ toolName: "a.b", serverId: "srv-a" }));
+  } finally {
+    harnessState.streamParts = [{ type: "finish", finishReason: "stop" }];
+  }
+});
+
+it("ignores a host-channel envelope in the input of a runtime that doesn't wrap names", async () => {
+  projectSpy.mockResolvedValueOnce({
+    tools: { mcp__srv__a_b_2: {} },
+    keyToServerId: { srv: "srv-a" },
+    toolRegistry: new Map([["mcp__srv__a_b_2", { serverId: "srv-a", toolName: "a.b" }]]),
+  } as never);
+  const input = { providerIdentifier: "ai-sdk-harness-tools", toolName: "mcp__srv__a_b_2" };
+  harnessState.streamParts = [
+    { type: "tool-call", toolCallId: "call-1", toolName: "Bash", input },
+    { type: "tool-result", toolCallId: "call-1", toolName: "Bash", output: "ok" },
+    { type: "finish", finishReason: "stop" },
+  ];
+  const onToolCall = vi.fn(async () => {});
+  try {
+    await runHarnessTurn(baseOptions({ onToolCall }) as never, "none");
+    expect(onToolCall).toHaveBeenCalledWith(expect.objectContaining({ toolName: "Bash", serverId: undefined }));
+  } finally {
+    harnessState.streamParts = [{ type: "finish", finishReason: "stop" }];
   }
 });

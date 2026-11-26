@@ -130,14 +130,16 @@ vi.mock("../harness-session-state.js", async (importOriginal) => {
 });
 
 vi.mock("../harness-model-broker.js", () => ({
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
-  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
     proxyBaseUrl: "https://broker.example",
   })),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
+  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 vi.mock("../mcp-config.js", async (importOriginal) => {
@@ -158,6 +160,8 @@ import {
   runtimeSkills,
   type ResolvedEnvironmentRuntime,
 } from "../../../services/environments/runtime";
+import type { TurnSkills } from "../../../services/environments/turn-skills";
+import { capabilitySkillFiles } from "../plugin-delivery";
 
 /**
  * The hidden environment: the client's selected skill, one plugin's, and a
@@ -228,17 +232,32 @@ function hiddenEnvironment(versionId: string) {
     ],
     pluginVersions: [version],
   };
-  const capabilities = resolveEffectiveCapabilities(spec, {
+  const attribution = {
     serverOrigins: new Map(),
     skillOrigins: new Map([
       ["sk_plugin", { modelRef: "bits/keycaps", plugin: version }],
     ]),
     unattributedVersionIds: [],
-  });
-  return {
-    runtimeSkillsOverride: runtimeSkills(spec),
-    effectiveCapabilities: capabilities,
   };
+  const capabilities = resolveEffectiveCapabilities(spec, attribution);
+  // A client's turn: its servers are connected now, so the plan is live. The
+  // runner carries out whatever plan it is handed, so the plan is built here
+  // by hand rather than by the planner this file mocks around.
+  const skillPlan = {
+    runtime: { kind: "harness", harnessId: "claude-code" },
+    set: capabilities,
+    delivered: [],
+    excluded: [],
+    serverSkillsVia: "none",
+    agent: null,
+    harness: {
+      mode: "environment",
+      skills: runtimeSkills(spec),
+      files: capabilitySkillFiles(capabilities),
+      live: true,
+    },
+  } as unknown as TurnSkills;
+  return { skillPlan, effectiveCapabilities: capabilities };
 }
 
 function baseOptions(overrides: Record<string, unknown> = {}) {
@@ -326,7 +345,7 @@ describe("runHarnessTurn — the Playground's hidden environment", () => {
       ["sk_notes", "notes"],
     ]);
     expect(claimArgs().skillsHash).toBe(
-      skillsFingerprint(environment.runtimeSkillsOverride),
+      skillsFingerprint(environment.skillPlan.harness?.skills ?? []),
     );
   });
 

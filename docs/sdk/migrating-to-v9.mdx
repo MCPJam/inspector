@@ -33,7 +33,7 @@ Model-visible MCP tool images are now emitted as AI SDK 7 `file` parts:
 // SDK 9.0 shape (AI SDK 7)
 { type: "file", mediaType: "image/png", data: { type: "data", data: "<base64>" } }
 
-// SDK 8.x shape (AI SDK 6) — rejected by AI SDK 7
+// SDK 8.x shape (AI SDK 6); rejected by AI SDK 7
 { type: "media", ... }
 ```
 
@@ -45,8 +45,8 @@ import { readModelOutputImage } from "@mcpjam/sdk";
 for (const part of result.messages.flatMap((m) => m.content ?? [])) {
   const img = readModelOutputImage(part);
   if (img) {
-    // img.mediaType — e.g. "image/png"
-    // img.data      — base64 string
+    // img.mediaType, e.g. "image/png"
+    // img.data, base64 string
   }
 }
 ```

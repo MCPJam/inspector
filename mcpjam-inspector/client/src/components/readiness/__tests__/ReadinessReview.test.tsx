@@ -5,6 +5,7 @@
  * submitted" records the receipt the review page then shows.
  */
 import { render, screen, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildDirectoryHandoff } from "@mcpjam/sdk/browser";
@@ -81,8 +82,13 @@ const api = vi.hoisted(() => ({
 vi.mock("@/lib/apis/directory-submissions-api", () => api);
 
 async function openRehearsal() {
-  render(<ReadinessRoute />);
-  await userEvent.click(screen.getByRole("button", { name: /MCP connector/ }));
+  render(
+    <MemoryRouter>
+      <ReadinessRoute />
+    </MemoryRouter>,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Claude" }));
+  await userEvent.click(screen.getByRole("button", { name: "Go step by step" }));
   await screen.findByRole("heading", { level: 1, name: "Connection" });
   return within(
     screen.getByRole("navigation", { name: "Claude submission steps" }),

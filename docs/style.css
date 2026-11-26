@@ -495,7 +495,7 @@ th {
 }
 
 td {
-  color: var(--mcj-ink) !important;
+  color: var(--mcj-ink-strong) !important;
   border-top: none !important;
   border-bottom: 1px solid var(--mcj-rule) !important;
   border-left: none !important;
@@ -508,10 +508,7 @@ tbody tr:last-child td {
   border-bottom: none !important;
 }
 
-/* Row hover — minimal lift, matches Anthropic's subtle row treatment */
-tbody tr:hover td {
-  background: var(--mcj-paper-2);
-}
+/* No row hover tint: grey fill under grey text was hard to read. */
 
 /* In-table links — read as part of the sentence, accent on hover only.
    This is the "Read more" treatment from image #5: was too loud. */
@@ -548,6 +545,92 @@ tbody tr:hover td {
 }
 :is([role="tablist"], nav[aria-label*="tab" i], [data-slot="tabs"]) :is(a, button):not([aria-selected="true"]):not([data-state="active"]):hover {
   color: var(--mcj-ink-strong);
+}
+
+.mcp-client-setup-panel {
+  margin: 1.5rem 0;
+  padding: 1rem;
+  border: 1px solid var(--mcj-rule-strong);
+  border-radius: calc(var(--mcj-radius) + 0.25rem);
+  background: var(--mcj-paper);
+  color: var(--mcj-ink);
+}
+
+.mcp-client-setup-panel > :first-child {
+  margin: 0;
+}
+
+/* Mirror design-system Tabs without replacing Mintlify's tab behavior. */
+.mcp-client-setup[data-component-part="tabs-list"] {
+  display: flex;
+  min-width: 0;
+  width: 100%;
+  gap: 0.125rem;
+  overflow: visible;
+  padding: 0.25rem;
+  border: 1px solid var(--mcj-rule);
+  border-radius: calc(var(--mcj-radius) + 0.25rem);
+  background: var(--mcj-paper-2);
+}
+
+.mcp-client-setup[data-component-part="tabs-list"] > [role="tab"] {
+  display: flex;
+  flex: 1 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 2rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: var(--mcj-radius);
+  background: transparent;
+  color: var(--mcj-ink);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+
+.mcp-client-setup [data-component-part="tab-button"] {
+  padding: 0;
+  margin: 0;
+  border: none;
+  color: inherit;
+  font-weight: inherit;
+  line-height: 1.25rem;
+}
+
+.mcp-client-setup[data-component-part="tabs-list"] > [role="tab"]:not([aria-selected="true"]):hover {
+  background: var(--mcj-paper-3);
+  color: var(--mcj-ink-strong);
+}
+
+.mcp-client-setup[data-component-part="tabs-list"] > [role="tab"][aria-selected="true"] {
+  border-color: var(--mcj-rule-strong);
+  background: var(--mcj-paper);
+  color: var(--mcj-ink-strong);
+  font-weight: 600;
+}
+
+.mcp-client-setup[data-component-part="tabs-list"] > [role="tab"]:focus-visible {
+  outline: 2px solid var(--mcj-orange-edge);
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .mcp-client-setup[data-component-part="tabs-list"] {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .mcp-client-setup[data-component-part="tabs-list"] > [role="tab"] {
+    min-height: 2.75rem;
+  }
+}
+
+@media (max-width: 380px) {
+  .mcp-client-setup[data-component-part="tabs-list"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 /* SDK version pill — visible interim signal that the docs describe v1.x of
@@ -618,31 +701,40 @@ button[aria-label*="helpful" i]:hover {
   color: var(--mcj-ink-strong) !important;
 }
 
-/* Previous/Next pager — Mintlify renders it as one rounded slab.
-   Flatten the container, let prev/next read as separate affordances. */
+/* Previous/Next pager — Mintlify renders it as one bordered slab with
+   bordered links. Drop every border; the hover background marks the target. */
 nav[aria-label*="agination" i],
 nav[aria-label*="age navigation" i],
-[class*="pagination" i] {
+[class*="pagination" i],
+#pagination {
   background: transparent !important;
-  border: 1px solid var(--mcj-rule);
-  border-radius: var(--mcj-radius);
+  border: none !important;
   box-shadow: none !important;
   margin-top: 1.25rem;
 }
 
 nav[aria-label*="agination" i] a,
 nav[aria-label*="age navigation" i] a,
-[class*="pagination" i] a {
+[class*="pagination" i] a,
+#pagination a {
   background: transparent !important;
+  border: none !important;
   color: var(--mcj-ink) !important;
-  border-radius: 0;
+  border-radius: var(--mcj-radius);
   transition: background 120ms ease-out, color 120ms ease-out;
 }
 nav[aria-label*="agination" i] a:hover,
 nav[aria-label*="age navigation" i] a:hover,
-[class*="pagination" i] a:hover {
+[class*="pagination" i] a:hover,
+#pagination a:hover {
   background: var(--mcj-paper-2) !important;
   color: var(--mcj-ink-strong) !important;
+}
+
+/* The 1px separator Mintlify puts between Previous and Next. */
+#pagination div.w-px,
+nav[aria-label*="agination" i] div.w-px {
+  display: none !important;
 }
 
 /* ── Footer ──────────────────────────────────────────────────────────────
@@ -659,7 +751,6 @@ footer,
   padding: 1rem 1.5rem !important;
   min-height: 0 !important;
   height: auto !important;
-  margin: 0 !important;
 }
 
 /* Collapse any inner wrappers that would otherwise force a tall slab */
@@ -667,6 +758,17 @@ footer > *,
 [role="contentinfo"] > * {
   min-height: 0 !important;
   height: auto !important;
+}
+
+/* Mintlify's inner wrapper ships py-16/md:py-20/lg:py-28 and gap-12, and the
+   logo column adds md:gap-y-24. Tighten all three. */
+#footer > div {
+  padding-top: 1.5rem !important;
+  padding-bottom: 1.5rem !important;
+  gap: 1.25rem !important;
+}
+#footer [class~="md:gap-y-24"] {
+  row-gap: 0 !important;
 }
 
 /* Footer links — muted resting, orange on hover */
@@ -696,3 +798,169 @@ footer [class*="powered" i],
 .card-group:has(a[href="/inspector/playground"]):has(a[href="https://app.mcpjam.com"]) [data-component-part="card-title"] {
   font-size: 1.25rem !important;
 }
+
+/* Collapsible sub-groups (nested groups in docs.json) render as
+   button[aria-expanded] too, but they are clickable rows, not section
+   labels: undo the all-caps label treatment so they read like the page
+   links around them, with the chevron as the affordance. */
+:is(#sidebar, aside[aria-label="sidebar"]) .sidebar-group button[aria-expanded] {
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  color: var(--mcj-ink) !important;
+  margin-top: 0 !important;
+  padding-top: 6px !important;
+  padding-bottom: 6px !important;
+  border-top: none !important;
+  border-radius: 6px;
+  align-items: center !important;
+}
+:is(#sidebar, aside[aria-label="sidebar"]) .sidebar-group button[aria-expanded]:hover {
+  color: var(--mcj-ink-strong) !important;
+  background: var(--mcj-paper-2);
+}
+:is(#sidebar, aside[aria-label="sidebar"]) .sidebar-group button[aria-expanded="true"] {
+  color: var(--mcj-ink-strong) !important;
+}
+:is(#sidebar, aside[aria-label="sidebar"]) .sidebar-group button[aria-expanded] svg {
+  color: var(--mcj-ink-muted) !important;
+}
+
+/* ── "On this page" (right rail) — larger, higher-contrast text ─────────── */
+#table-of-contents {
+  font-size: 15px !important;
+  line-height: 1.5 !important;
+}
+#table-of-contents [data-layout-item="toc-title"] button {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mcj-ink-strong);
+}
+#table-of-contents [data-layout-item="toc-item-link"] {
+  color: var(--mcj-ink);
+}
+#table-of-contents [data-layout-item="toc-item-link"]:hover {
+  color: var(--mcj-ink-strong);
+}
+#table-of-contents [data-layout-item="toc-item-link"][data-active="true"] {
+  color: var(--mcj-orange) !important;
+  font-weight: 500;
+}
+
+/* ── Reading progress — 2px hairline under the top bar ──────────────────
+   CSS scroll-driven animation, no script. Browsers without
+   animation-timeline simply show no bar. */
+@supports (animation-timeline: scroll()) {
+  #navbar-transition-maple::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 2px;
+    background: var(--mcj-orange);
+    transform-origin: 0 50%;
+    transform: scaleX(0);
+    pointer-events: none;
+    animation: mcj-read-progress linear both;
+    animation-timeline: scroll(root block);
+  }
+  @keyframes mcj-read-progress {
+    from { transform: scaleX(0); }
+    to { transform: scaleX(1); }
+  }
+}
+
+/* ── Connect MCPJam to your agent: client chips + app cards ─────────────── */
+.mcj-connect { margin: 1rem 0 1.25rem; display: flex; flex-direction: column; gap: 12px; }
+.mcj-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.mcj-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 16px; border: 1px solid var(--mcj-rule); border-radius: 999px;
+  background: var(--mcj-paper); color: var(--mcj-ink-strong) !important;
+  font-size: 14px; font-weight: 500; line-height: 1.2; cursor: pointer;
+  text-decoration: none !important; transition: background 120ms ease-out, border-color 120ms ease-out;
+}
+.mcj-chip:hover { background: var(--mcj-paper-2); border-color: var(--mcj-rule-strong); }
+.mcj-chip:focus-visible, .mcj-card:focus-visible { outline: 2px solid var(--mcj-orange); outline-offset: 2px; }
+.mcj-chip img { width: 16px; height: 16px; object-fit: contain; border-radius: 3px; flex: none; }
+.mcj-ext { width: 14px; height: 14px; color: var(--mcj-ink-muted); flex: none; }
+.mcj-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 640px) { .mcj-cards { grid-template-columns: minmax(0, 1fr); } }
+.mcj-card {
+  position: relative; display: flex; flex-direction: column; gap: 12px; padding: 16px;
+  border: 1px solid var(--mcj-rule); border-radius: 12px; background: var(--mcj-paper);
+  color: var(--mcj-ink-strong) !important; text-decoration: none !important;
+  transition: background 120ms ease-out, border-color 120ms ease-out;
+}
+.mcj-card:hover { background: var(--mcj-paper-2); border-color: var(--mcj-rule-strong); }
+.mcj-card .mcj-ext { position: absolute; top: 16px; right: 16px; width: 16px; height: 16px; }
+.mcj-card-icons { display: flex; align-items: center; gap: 12px; }
+.mcj-card-client { width: 32px; height: 32px; object-fit: contain; border-radius: 6px; }
+.mcj-card-app {
+  width: 48px; height: 48px; border-radius: 13px; display: grid; place-items: center;
+  background: #fff; border: 1px solid var(--mcj-rule);
+}
+.mcj-card-app img { width: 30px; height: 30px; object-fit: contain; }
+.mcj-card-name { font-size: 14px; font-weight: 500; }
+
+/* ── One-click install buttons (Add to Cursor, Add to VS Code) ──────────── */
+a.mcj-btn {
+  display: inline-block;
+  padding: 4px 12px;
+  border: 1px solid var(--mcj-rule-strong);
+  border-radius: var(--mcj-radius);
+  background: var(--mcj-paper-2);
+  color: var(--mcj-ink-strong) !important;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  text-decoration: none !important;
+  white-space: nowrap;
+}
+a.mcj-btn:hover {
+  border-color: var(--mcj-orange);
+  color: var(--mcj-orange) !important;
+}
+
+/* Plugin card: whole card opens the web link; the desktop link sits above it */
+div.mcj-card { position: relative; }
+.mcj-card-main { color: inherit; text-decoration: none; }
+.mcj-card-main::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
+.mcj-card-main:focus-visible { outline: none; }
+div.mcj-card:has(.mcj-card-main:focus-visible) { outline: 2px solid var(--mcj-orange); outline-offset: 2px; }
+.mcj-card-alt { position: relative; z-index: 1; align-self: flex-start; font-size: 13px; color: var(--mcj-ink-muted); text-decoration: underline; text-underline-offset: 2px; }
+.mcj-card-alt:hover { color: var(--mcj-orange); }
+
+/* Setup help panel under the chips: manual steps in case a deeplink or copy fails */
+.mcj-help {
+  display: flex; flex-direction: column; gap: 10px; padding: 14px 16px;
+  border: 1px solid var(--mcj-rule); border-radius: 12px; background: var(--mcj-paper-2);
+  color: var(--mcj-ink);
+}
+.mcj-help-head { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--mcj-ink-strong); }
+.mcj-help-head img { width: 16px; height: 16px; object-fit: contain; border-radius: 3px; }
+.mcj-help-close {
+  margin-left: auto; width: 28px; height: 28px; display: grid; place-items: center;
+  border: 0; border-radius: 6px; background: transparent; color: var(--mcj-ink-muted); cursor: pointer;
+}
+.mcj-help-close:hover { background: var(--mcj-paper); color: var(--mcj-ink-strong); }
+.mcj-help-close svg { width: 16px; height: 16px; }
+.mcj-help-text { margin: 0; font-size: 14px; line-height: 1.5; }
+.mcj-help-text a { color: var(--mcj-orange); text-decoration: underline; text-underline-offset: 2px; }
+.mcj-help-code { position: relative; }
+.mcj-help-code pre {
+  margin: 0; padding: 12px 72px 12px 14px; overflow-x: auto;
+  border: 1px solid var(--mcj-rule); border-radius: 8px; background: var(--mcj-paper);
+  font-size: 13px; line-height: 1.5; white-space: pre;
+}
+.mcj-help-copy {
+  position: absolute; top: 8px; right: 8px; padding: 4px 10px;
+  border: 1px solid var(--mcj-rule); border-radius: 6px; background: var(--mcj-paper-2);
+  color: var(--mcj-ink-strong); font-size: 12px; font-weight: 500; cursor: pointer;
+}
+.mcj-help-copy:hover { border-color: var(--mcj-rule-strong); }
+.mcj-help-close:focus-visible, .mcj-help-copy:focus-visible { outline: 2px solid var(--mcj-orange); outline-offset: 2px; }

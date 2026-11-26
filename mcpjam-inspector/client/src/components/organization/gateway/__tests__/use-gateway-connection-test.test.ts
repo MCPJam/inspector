@@ -15,7 +15,7 @@ vi.mock("@/lib/apis/web/base", async (importOriginal) => ({
 }));
 
 const ADMINS_ONLY =
-  "Only organization admins and owners can test a gateway. Ask an admin to add it.";
+  "Only organization admins and owners can test a custom provider. Ask an admin to add it.";
 
 function runLocalTest() {
   const { result } = renderHook(() => useGatewayConnectionTest("org_1"));

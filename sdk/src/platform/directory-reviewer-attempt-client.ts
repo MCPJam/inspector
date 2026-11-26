@@ -51,6 +51,11 @@ export abstract class DirectoryReviewerAttemptClient extends DirectorySubmission
     return this.request("POST", path(projectId, submissionId, attemptId, "resume"), {}, options);
   }
 
+  createDirectoryReviewerHandoff(params: Attempt, options?: RequestOptions): Promise<{ handoffUrl: string; expiresAt: number }> {
+    const { projectId, submissionId, attemptId } = params;
+    return this.request("POST", path(projectId, submissionId, attemptId, "handoff"), {}, options);
+  }
+
   cancelDirectoryReviewerAttempt(params: Attempt, options?: RequestOptions): Promise<PlatformReviewerAttempt> {
     const { projectId, submissionId, attemptId } = params;
     return this.request("POST", path(projectId, submissionId, attemptId, "cancel"), {}, options);

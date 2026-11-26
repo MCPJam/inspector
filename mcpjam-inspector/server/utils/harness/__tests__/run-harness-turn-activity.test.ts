@@ -149,14 +149,16 @@ vi.mock("../harness-session-state.js", async (importOriginal) => {
 });
 
 vi.mock("../harness-model-broker.js", () => ({
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
     proxyBaseUrl: "https://broker.example",
     forwarding: { owners: [], origin: "https://forward.example" },
   })),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 vi.mock("../mcp-config.js", async (importOriginal) => {
@@ -186,7 +188,7 @@ function options(overrides: Record<string, unknown> = {}) {
     authHeader: "Bearer test",
     projectId: "project-1",
     chatSessionId: "chat-1",
-    mcpClientManager: { getServerConfig: vi.fn() },
+    mcpClientManager: { getServerConfig: vi.fn(), getAllToolAnnotations: vi.fn(() => ({})) },
     selectedServers: [],
     requireToolApproval: false,
     sourceType: "direct",
@@ -279,6 +281,7 @@ describe("runHarnessTurn activity", () => {
           respectToolVisibility: false,
           mcpClientManager: {
             getServerConfig: () => ({ url: "https://mcp.example/mcp", clientCapabilities: {} }),
+            getAllToolAnnotations: () => ({}),
             getInitializationInfo: () => ({ transport: "streamable-http", protocolVersion: "2025-11-25", clientCapabilities: {} }),
           },
           harnessMcpProxy: { plane: "web-authorized", mode: "relay" },

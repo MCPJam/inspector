@@ -106,7 +106,7 @@ describe("suitesKeptBySettings", () => {
   it("keeps the requested suites the settings select, in request order", () => {
     const settings: ConformanceRunSettings = {
       source: "saved",
-      selection: { apps: [], tasks: ["tasks-wire-resolvable"] },
+      selection: { apps: [], tasks: ["tasks-invalid-task-id-rejected"] },
       probes: {},
       runTimeoutSeconds: 300,
     };

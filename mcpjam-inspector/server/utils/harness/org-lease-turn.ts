@@ -35,6 +35,7 @@ import {
   harnessOrgUpstreamProfile,
 } from "@/shared/harness-gateway-model";
 import type { HarnessUpstreamProfile } from "@/shared/harness-model-support";
+import { accountLimitCode } from "@/shared/swarm-attempt-error";
 import {
   getCanonicalModelId,
   hostedProviderFromCanonicalId,
@@ -45,13 +46,18 @@ import {
   type ModelEndpointOwnership,
 } from "../infra-failure-evidence.js";
 import {
+  BOX_RETIRED_CODE,
+  waitOutBoxPreparation,
+} from "./box-preparing-wait.js";
+import {
   orgHarnessSelection,
   type OrgHarnessSelection,
 } from "./harness-availability.js";
 import {
+  releaseHarnessBoxReservation,
   reserveHarnessBox,
-  startHarnessModelBroker,
-} from "./harness-model-broker.js";
+} from "./harness-box-reservation.js";
+import { startHarnessModelBroker } from "./harness-model-broker.js";
 import {
   failedTurnEvidence,
   type HarnessOrgLeaseUpstream,
@@ -70,6 +76,19 @@ import {
 } from "./org-credential-continuity.js";
 import type { MCPJamHandlerOptions } from "../mcpjam-stream-handler.js";
 import type { HarnessRuntimeAdapter } from "./registry.js";
+
+/**
+ * A box whose preparation ended uncertain is retired: a call it made may still
+ * reach the box, so the backend refuses every turn on it (`box_retired`). The
+ * Send stops here, before any sandbox command, and the person sends again.
+ */
+function refuseRetiredBox(result: { ok: boolean; code?: string }): void {
+  if (result.ok || result.code !== BOX_RETIRED_CODE) return;
+  throw new HarnessInfraSetupError(
+    "This conversation's computer was replaced. Send your message again.",
+    { source: "sandbox_setup", code: BOX_RETIRED_CODE, httpStatus: 409 },
+  );
+}
 
 export class OrgLeaseTurn {
   /** MCPJam's model proxy, or on the org's key the endpoint the lease reaches. */
@@ -180,21 +199,42 @@ export class OrgLeaseTurn {
    * concurrency control. An org selection is resolved by the backend HERE,
    * before anything is installed, and one it refused is a CONFIGURATION
    * failure that keeps the backend's own code (`provider_mismatch`, …).
+   * A preparation holding the box is waited out (`box-preparing-wait.ts`),
+   * and a box one left uncertain is refused (`refuseRetiredBox`).
+   * A try the backend may have answered after it was given up leaves a claim
+   * nobody holds, so it is handed back, by run, as a failed preparation's is.
    */
   async reserve(
     args: Omit<Parameters<typeof reserveHarnessBox>[0], "modelSelection">,
   ): Promise<void> {
-    const reservation = await reserveHarnessBox({
-      ...args,
-      ...this.selectionField,
+    const handBack = () =>
+      void releaseHarnessBoxReservation({
+        box: args.box,
+        harnessId: args.harnessId,
+        modelId: args.modelId,
+        runId: args.runId,
+        bearer: args.bearer,
+        signal: AbortSignal.timeout(15_000),
+      });
+    const reservation = await waitOutBoxPreparation(
+      (signal) =>
+        reserveHarnessBox({ ...args, ...this.selectionField, signal }),
+      args.signal,
+    ).catch((error: unknown) => {
+      handBack();
+      throw error;
     });
     if (!reservation.ok) {
+      if (reservation.status >= 500) handBack();
+      refuseRetiredBox(reservation);
+      // The organization's own limit (the native harness trial) keeps its
+      // code on every key, so each surface can say what to do about it.
+      const kept =
+        reservation.code &&
+        (this.selection || accountLimitCode(undefined, reservation.code));
       throw new HarnessInfraSetupError(reservation.error, {
         source: "sandbox_setup",
-        code:
-          this.selection && reservation.code
-            ? reservation.code
-            : "harness_box_reservation_failed",
+        code: kept ? reservation.code : "harness_box_reservation_failed",
         httpStatus: reservation.status,
       });
     }
@@ -203,7 +243,11 @@ export class OrgLeaseTurn {
 
   /**
    * Start the box's lease. An org start carries the revision `/reserve`
-   * prepared, so a key replaced since is refused.
+   * prepared, so a key replaced since is refused. A preparation holding the
+   * box is waited out first (`box-preparing-wait.ts`); a lease a given-up try
+   * still installed is revoked by run with the turn's own (`brokerRunId`). A
+   * retired box ends the turn typed (`refuseRetiredBox`); teardown still
+   * revokes by run.
    */
   async start(
     args: Omit<
@@ -211,13 +255,19 @@ export class OrgLeaseTurn {
       "modelSelection" | "expectedCredentialRevision"
     >,
   ) {
-    const broker = await startHarnessModelBroker({
-      ...args,
-      ...this.requestedSelectionField(args.reasoningEffort),
-      ...(this.selection && this.preparedRevision
-        ? { expectedCredentialRevision: this.preparedRevision }
-        : {}),
-    });
+    const broker = await waitOutBoxPreparation(
+      (signal) =>
+        startHarnessModelBroker({
+          ...args,
+          signal,
+          ...this.requestedSelectionField(args.reasoningEffort),
+          ...(this.selection && this.preparedRevision
+            ? { expectedCredentialRevision: this.preparedRevision }
+            : {}),
+        }),
+      args.signal,
+    );
+    refuseRetiredBox(broker);
     if (broker.ok) {
       this.leaseRunId = args.runId;
       if (this.selection) this.upstream = broker.orgUpstream;
@@ -255,7 +305,7 @@ export class OrgLeaseTurn {
       runOwnsSession: this.runOwnsSession,
     });
     if (this.selection) this.upstream = preparation.prepared.orgUpstream;
-    this.leaseRunId = preparation.prepared.brokerRunId;
+    this.leaseRunId = preparation.prepared.brokerRunId ?? undefined;
     return {
       prepared: preparation.prepared,
       sessionId: preparation.sessionId,

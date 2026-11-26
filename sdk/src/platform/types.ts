@@ -3,6 +3,11 @@ export type {
   PlatformReadinessStartBody,
   PlatformReadinessLazyAuthProbe,
 } from "./readiness-start-types.js";
+import type { PlatformEvalRunAccount } from "./eval-run-account-types.js";
+export type {
+  PlatformEvalRunAccount,
+  PlatformEvalRunAccountIdentity,
+} from "./eval-run-account-types.js";
 export type {
   PlatformConformanceCheck,
   PlatformConformanceReport,
@@ -1135,6 +1140,12 @@ export interface PlatformEvalRun {
    * the credential carried no attribution claims.
    */
   attribution?: PlatformEvalRunAttribution;
+  /**
+   * The account the run used on each server, recorded when it started.
+   * ABSENT when the run recorded none (runs from before accounts were
+   * recorded); `[]` means it recorded that it used none.
+   */
+  accounts?: PlatformEvalRunAccount[];
   notes: string | null;
   /**
    * The project environment this run executed against, read from the run's
@@ -1964,8 +1975,9 @@ export interface PlatformEvalSuiteSettingsBase {
    * API deployments.
    *
    * A FLOOR, not a default: it RAISES a case's own count and never lowers it,
-   * where `verdictPolicyDefaults.repetitions` REPLACES it. A case at 7
-   * resolves to 7 under a floor of 3 and to 3 under a default count of 3.
+   * where `verdictPolicyDefaults.repetitions` applies only to a case that sets
+   * no count of its own. A case at 2 resolves to 3 under a floor of 3 and to 2
+   * under a default count of 3; a case at 7 resolves to 7 under either.
    */
   minimumIterations?: number | null;
   matchOptions: PublicMatchOptions | null;
@@ -5480,8 +5492,22 @@ export interface PlatformEvalCheckRepoConnected {
   outagePolicy: "fail_open" | "fail_closed";
 }
 
-/** Receipt for an eval-run insights (serverQuality) request. 202. */
+/** Receipt for an eval run analysis request. 202. */
 export interface PlatformEvalRunInsightsRequested {
+  runId: string;
+  projectId: string;
+  status: "pending";
+}
+
+/** Receipt for cancelling an eval run's analysis. */
+export interface PlatformEvalRunInsightsCanceled {
+  runId: string;
+  projectId: string;
+  canceled: true;
+}
+
+/** Receipt for a findings build. 202: poll `insights.unifiedFindings.job`. */
+export interface PlatformEvalRunFindingsBuildRequested {
   runId: string;
   projectId: string;
   status: "pending";

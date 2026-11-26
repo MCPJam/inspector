@@ -1,5 +1,8 @@
 import type { ConformanceSkipReason } from "../conformance-outcome.js";
-import type { MCPReadinessWarning } from "../mcp-conformance/types.js";
+import type {
+  MCPPassedAdvice,
+  MCPReadinessWarning,
+} from "../mcp-conformance/types.js";
 import type {
   InfoLogEntry,
   HttpHistoryEntry,
@@ -190,6 +193,11 @@ export interface MCPOAuthReadinessWarning extends Omit<
   id: MCPOAuthReadinessId;
 }
 
+/** Advice the run checked and the authorization server already meets. */
+export interface MCPOAuthPassedAdvice extends Omit<MCPPassedAdvice, "id"> {
+  id: MCPOAuthReadinessId;
+}
+
 export interface OAuthConformanceConfig {
   /** Cancels the whole run, including pending requests. */
   signal?: AbortSignal;
@@ -303,6 +311,8 @@ export interface ConformanceResult {
   verification?: VerificationResult;
   /** SHOULD advice, beside the verdict. Absent when there is none. */
   readiness?: MCPOAuthReadinessWarning[];
+  /** Advice the run checked and found nothing to change. Absent when none. */
+  passedAdvice?: MCPOAuthPassedAdvice[];
 }
 
 export interface OAuthConformanceCredentials {
@@ -347,6 +357,8 @@ export type TrackedRequestFn = (
 
 export interface AuthorizationCodeResult {
   code: string;
+  /** RFC 9207 `iss` from the callback, when the authorization server sent one. */
+  iss?: string;
 }
 
 export interface ClientCredentialsResult {
