@@ -68,6 +68,11 @@ describe("CaniuseCapabilityPage", () => {
     fireEvent.change(search, { target: { value: "Sampling" } });
     expect(nav.getByRole("link", { name: "Sampling" })).toHaveAttribute("href", "/capabilities/sampling");
     expect(nav.queryByText("MCP Events")).not.toBeInTheDocument();
+    const sampling = nav.getByRole("link", { name: "Sampling" });
+    sampling.focus();
+    fireEvent.click(sampling);
+    expect(sampling).toHaveFocus();
+    expect(search).toHaveValue("Sampling");
     fireEvent.click(nav.getByRole("button", { name: "Clear search" }));
     expect(nav.getByRole("link", { name: "MCP Events" })).toHaveAttribute("aria-current", "page");
   });

@@ -241,7 +241,6 @@ export function CaniuseCapabilityPage({
                   <Link
                     key={slug}
                     to={buildCaniuseCapabilityPath(slug)}
-                    onClick={() => setNavSearch("")}
                     aria-current={
                       slug === capability?.slug ? "page" : undefined
                     }
