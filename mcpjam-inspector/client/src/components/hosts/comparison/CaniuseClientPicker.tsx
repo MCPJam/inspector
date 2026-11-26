@@ -136,7 +136,7 @@ export function CaniuseClientPicker({
         </DialogTitle>
         <Command className="bg-transparent text-foreground">
           <CommandInput placeholder="Search clients or surfaces" />
-          <CommandList className="max-h-[min(360px,55dvh)]">
+          <CommandList className="scroll-fade-y max-h-[min(360px,55dvh)] scroll-py-5 [--scroll-fade-reveal:24px] [--scroll-fade-size:16px]">
             <CommandEmpty>No matching clients.</CommandEmpty>
             {[...groups].map(([surface, options]) => (
               <CommandGroup key={surface} heading={surface}>
