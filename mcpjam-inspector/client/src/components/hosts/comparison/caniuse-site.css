@@ -73,7 +73,38 @@
 .caniuse-dialog {
   background-color: var(--caniuse-compare-background);
   background-image: none;
+  border-radius: 12px;
   box-shadow: 0 0 50px color-mix(in oklab, var(--primary) 19%, transparent);
+}
+
+.caniuse-dialog [data-slot="dialog-close"] {
+  background-color: transparent;
+}
+
+[data-caniuse-matrix] [data-support-level] {
+  --badge-color: var(--muted-foreground);
+  border: 1px solid color-mix(in oklab, var(--badge-color) 55%, var(--card));
+  border-radius: 5px;
+  background-color: color-mix(in oklab, var(--badge-color) 25%, var(--card));
+  color: color-mix(in oklab, var(--foreground) 65%, var(--badge-color));
+  padding: 2px 6px;
+  line-height: 1.5;
+}
+
+[data-caniuse-matrix] [data-support-level="supported"] {
+  --badge-color: var(--success);
+}
+
+[data-caniuse-matrix] [data-support-level="partial"] {
+  --badge-color: var(--warning);
+}
+
+[data-caniuse-matrix] [data-support-level="unsupported"] {
+  --badge-color: var(--destructive);
+}
+
+[data-caniuse-matrix] [data-support-dot] {
+  display: none;
 }
 
 @media (prefers-reduced-motion: no-preference) {

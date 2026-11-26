@@ -13,6 +13,7 @@ import {
   Copy,
   Filter,
   Flag,
+  Link2,
   Loader2,
   Moon,
   Share2,
@@ -1468,7 +1469,7 @@ export function ShareComparisonDialog({
         {copyOnShare && copied ? (
           <Check className="size-3.5" />
         ) : copyOnShare ? (
-          <Copy className="size-3.5" />
+          <Link2 className="size-3.5" />
         ) : (
           <Share2 className="size-3.5" />
         )}
