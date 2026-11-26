@@ -20,6 +20,7 @@ import {
   modernRequestBody,
   rawRequest,
   resumePolledStream,
+  unreadPolledAnswerMessage,
   versionStopDetails,
   type LegacyVersionStop,
   type RawHttpResult,
@@ -155,6 +156,22 @@ export async function runProtocolChecks(
     // `jsonRpcError` reads JSON and SSE bodies alike off the capture, so the
     // check never has to know how the server framed its answer.
     const rpcError = jsonRpcError(response);
+
+    // The server handed the answer to polling and asked for a longer wait
+    // than the check had: nothing was graded, so this is not a failure.
+    const unread = rpcError
+      ? undefined
+      : unreadPolledAnswerMessage(response.resumed);
+    if (unread !== undefined) {
+      results.push(
+        couldNotRunResult(
+          PROTOCOL_CHECK_METADATA["protocol-invalid-method-error"],
+          unread,
+          { status: response.status },
+        ),
+      );
+      return results;
+    }
 
     if (!rpcError) {
       // `jsonRpcError` only reports a WELL-FORMED error (numeric code + string

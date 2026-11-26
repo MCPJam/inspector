@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 import { runProtocolChecks } from "../../src/mcp-conformance/checks/protocol.js";
 import { runTransportChecks } from "../../src/mcp-conformance/checks/transport.js";
 import {
+  jsonRpcResult,
   legacyInitialize,
   rawRequest,
   resumePolledStream,
@@ -62,7 +63,9 @@ type ResumeMode =
   | "405"
   | "500"
   /** One event with a new id and a new `retry`, then the stream breaks. */
-  | "break-once";
+  | "break-once"
+  /** A response that belongs to another request, then 405. */
+  | "wrong-id";
 
 interface Sent {
   /** `POST <method>`, `GET`, `DELETE`. */
@@ -154,6 +157,16 @@ function scriptedServer(options: {
       }
       gets += 1;
       switch (options.resume ?? "replay") {
+        case "wrong-id":
+          return gets === 1
+            ? sse(
+                `id: 2\nevent: message\ndata: ${JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: 999,
+                  result: { tools: [] },
+                })}\n\n`
+              )
+            : new Response(null, { status: 405 });
         case "break-once":
           return gets === 1
             ? brokenSse("id: moved-1\nretry: 40\ndata: \n\n")
@@ -281,6 +294,8 @@ describe("sseRetryMs", () => {
     expect(sseRetryMs("retry: 10\n\nretry: 25\n\n")).toBe(25);
     expect(sseRetryMs("retry: 10\n\nretry: soon\n\n")).toBe(10);
     expect(sseRetryMs("id: 1\ndata: x\n\n")).toBeUndefined();
+    // A stream that broke mid-line has not finished that field yet.
+    expect(sseRetryMs("retry: 1000\n\nretry: 4")).toBe(1000);
   });
 });
 
@@ -376,9 +391,33 @@ describe("resumePolledStream", () => {
       300
     );
     const posted = await postToolsList(ctx);
+    const result = await resumePolledStream(ctx, posted);
 
-    expect(await resumePolledStream(ctx, posted)).toBe(posted);
     expect(gets(sent)).toEqual([]);
+    expect(result.sse).toEqual(posted.sse);
+    expect(result.resumed).toMatchObject({
+      attempts: [],
+      gotResponse: false,
+      waitTooLong: { waitMs: 5_000 },
+    });
+  });
+
+  it("does not take another request's response as the answer", async () => {
+    const sent: Sent[] = [];
+    const ctx = context(
+      scriptedServer({ sent, answer: "poll", resume: "wrong-id", retryMs: 1 })
+    );
+    const result = await resumePolledStream(ctx, await postToolsList(ctx));
+
+    expect(result.resumed).toMatchObject({
+      attempts: [200, 405],
+      gotResponse: false,
+    });
+    expect(jsonRpcResult(result)).toBeUndefined();
+    // It is still on the wire record, just not tied to this request.
+    expect(
+      ctx.recorder!.observations.find((entry) => entry.id === 999)
+    ).not.toHaveProperty("requestMethod");
   });
 
   it("stops after one GET when the server answers it with 405", async () => {
@@ -503,6 +542,38 @@ describe("raw probes on a server that hands its streams to polling", () => {
       expect(gets(sent)).toHaveLength(4);
     }
   );
+
+  it("checks 11 and 16 could not run when the wait the server asks for is longer than the check has", async () => {
+    const sent: Sent[] = [];
+    const ctx = context(
+      scriptedServer({ sent, answer: "poll", retryMs: 5_000 }),
+      "2025-11-25",
+      300
+    );
+    const protocol = await runProtocolChecks(
+      ctx,
+      new Set<MCPCheckId>(["protocol-invalid-method-error"])
+    );
+    const transport = await runTransportChecks(
+      ctx,
+      new Set<MCPCheckId>(["server-sse-streams-functional"])
+    );
+
+    for (const check of [
+      byId(protocol, "protocol-invalid-method-error"),
+      byId(transport, "server-sse-streams-functional"),
+    ]) {
+      expect(check).toMatchObject({
+        status: "skipped",
+        skipReason: "could-not-run",
+      });
+      expect(check.error?.message).toContain("after 5000 ms");
+    }
+    expect(
+      byId(transport, "server-sse-streams-functional").details
+    ).toMatchObject({ unreadStreams: [0, 1, 2] });
+    expect(gets(sent)).toEqual([]);
+  });
 
   it("reads the answered version through a call-back, so the version stop still works", async () => {
     const sent: Sent[] = [];

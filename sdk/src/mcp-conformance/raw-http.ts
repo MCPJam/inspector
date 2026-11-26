@@ -45,10 +45,15 @@ import {
 } from "./raw-capture.js";
 import {
   resumePolledStream,
+  unreadPolledAnswerMessage,
   type PolledStreamResume,
 } from "./raw-poll-resume.js";
 
-export { resumePolledStream, type PolledStreamResume };
+export {
+  resumePolledStream,
+  unreadPolledAnswerMessage,
+  type PolledStreamResume,
+};
 
 export {
   CLIENT_CAPABILITIES_META_KEY,

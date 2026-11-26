@@ -184,11 +184,14 @@ export function drainFrames(buffer: string): {
  *
  * Read off the raw text rather than added to {@link parseSseEvents}: a frame
  * that holds only `retry:` dispatches no event, and keeping the parser as it
- * is keeps every check's frame count as it is.
+ * is keeps every check's frame count as it is. A line counts only once its
+ * line break has arrived, as in the SSE parser: the last piece of a stream
+ * that broke mid-line is not a field yet.
  */
 export function sseRetryMs(bodyText: string): number | undefined {
   let retry: number | undefined;
-  for (const line of bodyText.replace(/\r\n?/g, "\n").split("\n")) {
+  const lines = bodyText.replace(/\r\n?/g, "\n").split("\n");
+  for (const line of lines.slice(0, -1)) {
     if (!line.startsWith("retry:")) continue;
     const value = line.slice("retry:".length).replace(/^ /, "");
     if (/^\d+$/.test(value)) retry = Number(value);

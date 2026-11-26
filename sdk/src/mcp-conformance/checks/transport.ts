@@ -23,6 +23,7 @@ import {
   rawHeadersProbe,
   rawRequest,
   resumePolledStream,
+  unreadPolledAnswerMessage,
   versionStopDetails,
   type LegacyVersionStop,
   type RawHttpResult,
@@ -603,6 +604,14 @@ export async function runTransportChecks(
               ),
           );
 
+        const unreadStreams = sseResponses.filter(
+          ({ response }) =>
+            unreadPolledAnswerMessage(response.resumed) !== undefined,
+        );
+        const unreadMessage = unreadPolledAnswerMessage(
+          unreadStreams[0]?.response.resumed,
+        );
+
         if (sseResponses.length === 0) {
           results.push(
             requestErrors.some((error) => error !== undefined) || responseFailures
@@ -625,6 +634,16 @@ export async function runTransportChecks(
                     contentTypes,
                   },
                 ),
+          );
+        } else if (unreadMessage !== undefined) {
+          // A stream handed to polling whose call-back could not fit in the
+          // check's time was never read, so it cannot be judged readable.
+          results.push(
+            couldNotRunResult(
+              TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
+              unreadMessage,
+              { unreadStreams: unreadStreams.map(({ index }) => index) },
+            ),
           );
         } else {
           // The frames were already parsed off each capture by the shared

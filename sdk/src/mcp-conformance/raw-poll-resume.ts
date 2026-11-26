@@ -17,6 +17,23 @@ export interface PolledStreamResume {
    * which for a polled answer is the call-back, not the original POST.
    */
   sessionId?: string;
+  /**
+   * Set when the stream was handed to polling but no call-back was sent: the
+   * wait the server asked for does not fit in the time the check has left.
+   * The answer was never read, so a check that grades it could not run.
+   */
+  waitTooLong?: { waitMs: number };
+}
+
+/**
+ * The "could not run" reason for an answer that was handed to polling and
+ * never read, or undefined when the call-back was sent (or not needed).
+ */
+export function unreadPolledAnswerMessage(
+  resumed: PolledStreamResume | undefined
+): string | undefined {
+  if (!resumed?.waitTooLong) return undefined;
+  return `The server handed its answer to polling and asked to be called back after ${resumed.waitTooLong.waitMs} ms, more than this check had left, so the answer was never read. Raise the check timeout (--check-timeout, SDK: checkTimeout) to let MCPJam wait that long.`;
 }
 
 // How the normal client paces its call-backs (`@modelcontextprotocol/client`,
@@ -43,6 +60,18 @@ function isJsonRpcResponse(message: unknown): boolean {
     record !== undefined &&
     "id" in record &&
     ("result" in record || "error" in record)
+  );
+}
+
+/**
+ * The response to the request being resumed. The spec forbids replaying
+ * "messages that would have been delivered on a different stream", so a
+ * response with another id is not this request's answer.
+ */
+function answersRequest(message: unknown, requestId: unknown): boolean {
+  return (
+    isJsonRpcResponse(message) &&
+    String(asRecord(message)?.id) === String(requestId)
   );
 }
 
@@ -93,7 +122,8 @@ interface CallBack {
 async function readCallBack(
   ctx: RawHttpCheckContext,
   headers: Headers,
-  deadline: number
+  deadline: number,
+  requestId: unknown
 ): Promise<CallBack> {
   const events: RawSseEvent[] = [];
   let text = "";
@@ -136,14 +166,16 @@ async function readCallBack(
         const drained = drainFrames(buffer);
         buffer = drained.rest;
         events.push(...drained.frames);
-        if (drained.frames.some((frame) => isJsonRpcResponse(frame.json))) {
+        if (
+          drained.frames.some((frame) => answersRequest(frame.json, requestId))
+        ) {
           break;
         }
       }
     } catch (error) {
       // The stream broke or ran out of time; the frames read so far still count.
       ctx.config.signal?.throwIfAborted();
-      if (!events.some((event) => isJsonRpcResponse(event.json))) {
+      if (!events.some((event) => answersRequest(event.json, requestId))) {
         status = `stream error: ${errorText(error)}`;
       }
     } finally {
@@ -178,7 +210,9 @@ async function readCallBack(
  *
  * The rule for when to call back is the normal client's: the answer was an
  * SSE stream, it ended without a JSON-RPC response, and an event carried an
- * id. Anything else returns `result` unchanged without a request.
+ * id. Anything else returns `result` unchanged without a request. When the
+ * wait the server asked for does not fit in the check's time, nothing is
+ * sent and `resumed.waitTooLong` says why the answer was never read.
  *
  * The answer joins `sse`, so `jsonRpcError` and `jsonRpcResult` find it;
  * status, headers, body and exchange stay the original request's, so a check
@@ -227,7 +261,20 @@ export async function resumePolledStream(
       );
     // Calling back sooner than the server asked would break the MUST, so a
     // wait that does not fit in the time left means no call-back at all.
-    if (Date.now() + delay >= deadline) break;
+    if (Date.now() + delay >= deadline) {
+      if (attempts.length === 0) {
+        return {
+          ...result,
+          resumed: {
+            attempts,
+            lastEventId,
+            gotResponse: false,
+            waitTooLong: { waitMs: delay },
+          },
+        };
+      }
+      break;
+    }
     await waitMs(delay, ctx.config.signal);
 
     let headers: Headers;
@@ -245,10 +292,12 @@ export async function resumePolledStream(
       break;
     }
 
-    const callBack = await readCallBack(ctx, headers, deadline);
+    const callBack = await readCallBack(ctx, headers, deadline, requestId);
     attempts.push(callBack.status);
     resumedEvents.push(...callBack.events);
-    if (callBack.events.some((event) => isJsonRpcResponse(event.json))) {
+    if (
+      callBack.events.some((event) => answersRequest(event.json, requestId))
+    ) {
       answer = callBack;
       break;
     }
@@ -275,7 +324,6 @@ export async function resumePolledStream(
     if (failures >= RESUME_MAX_FAILED_ATTEMPTS) break;
   }
 
-  if (attempts.length === 0) return result;
   const messages = resumedEvents
     .map((event) => event.json)
     .filter((json): json is unknown => json !== undefined);
@@ -286,9 +334,15 @@ export async function resumePolledStream(
       requestId: requestId as string | number,
     });
   }
+  // Every message enters the wire record, but a response to another request
+  // must not be graded as this one's answer.
+  const answerEvents = resumedEvents.filter(
+    (event) =>
+      !isJsonRpcResponse(event.json) || answersRequest(event.json, requestId)
+  );
   return {
     ...result,
-    sse: [...result.sse, ...resumedEvents],
+    sse: [...result.sse, ...answerEvents],
     resumed: {
       attempts,
       lastEventId,
