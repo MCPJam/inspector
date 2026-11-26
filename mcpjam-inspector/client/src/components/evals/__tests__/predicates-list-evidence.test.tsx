@@ -147,3 +147,23 @@ describe("PredicatesList — Not applicable", () => {
     expect(region).toHaveTextContent("1 / 1 assertions passed");
   });
 });
+
+describe("PredicatesList — nothing applied", () => {
+  it("says no assertions applied instead of a green 0 / 0", () => {
+    render(
+      <PredicatesList
+        predicates={[
+          {
+            predicate: { type: "toolResultMatchesSchema", schema: "declared" },
+            passed: true,
+            status: "not_applicable",
+            reason: "no tool declares an output schema",
+          },
+        ]}
+      />,
+    );
+    expect(
+      screen.getByRole("region", { name: "Assertions" }),
+    ).toHaveTextContent("No assertions applied");
+  });
+});
