@@ -62,8 +62,9 @@ export function isContextLengthExceeded(
   if (status !== undefined && status !== 400) return false;
   const record =
     error && typeof error === "object"
-      ? (error as { message?: unknown; responseBody?: unknown })
+      ? (error as { message?: unknown; code?: unknown; responseBody?: unknown })
       : undefined;
+  if (record?.code === "context_length_exceeded") return true;
   // A plain record's serialized form carries its body, history included:
   // read its own message instead.
   const ownMessage =

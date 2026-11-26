@@ -69,6 +69,16 @@ describe("describeError: a chat too long for the model", () => {
     ).not.toBe(SLUG);
   });
 
+  it("keeps a plain record's structured code", () => {
+    expect(
+      describeError({
+        message: "Bad Request",
+        code: "context_length_exceeded",
+        statusCode: 400,
+      }).slug
+    ).toBe(SLUG);
+  });
+
   it("recognizes the backend's own sentence, all an eval card keeps", () => {
     expect(describeError(CONTEXT_LENGTH_EXCEEDED_MESSAGE).slug).toBe(SLUG);
   });
