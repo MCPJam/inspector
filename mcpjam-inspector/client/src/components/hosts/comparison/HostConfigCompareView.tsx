@@ -1445,6 +1445,8 @@ export function ShareComparisonDialog({
     try {
       await navigator.clipboard.writeText(shareUrl);
     } catch {
+      // The modal still shows a selectable URL when the browser blocks clipboard access.
+      console.debug("Comparison link clipboard write failed");
       if (copyOnShare) setOpen(true);
       return;
     }

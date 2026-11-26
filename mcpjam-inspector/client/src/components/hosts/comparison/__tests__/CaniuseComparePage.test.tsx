@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Route, Routes } from "react-router";
 import { describe, expect, it, vi } from "vitest";
+import { AnnouncementQueueProvider, useAnnouncementSlot } from "@/components/announcement-slot";
 import { CaniuseComparePage } from "../CaniuseComparePage";
 
 const { captureSnapshot } = vi.hoisted(() => ({ captureSnapshot: vi.fn() }));
@@ -20,24 +21,39 @@ describe("CaniuseComparePage", () => {
   it("plays the intro only on the initial Compare load", () => {
     vi.useFakeTimers();
     try {
-      render(
-        <MemoryRouter initialEntries={["/compare"]}>
-          <Routes>
-            <Route path="/compare" element={<CaniuseComparePage />} />
-            <Route
-              path="/capabilities/:slug"
-              element={<Link to="/compare">Back to Compare</Link>}
-            />
-          </Routes>
-        </MemoryRouter>,
-      );
-      const matrixSearch = () =>
-        screen.queryByRole("combobox", { name: "Search capabilities" });
-      expect(matrixSearch()).toBeNull();
-      expect(screen.queryByRole("button", { name: "Skip intro" })).toBeNull();
-      for (let step = 0; step < 3; step++) {
-        act(() => vi.advanceTimersByTime(1400));
+      function EarlierAnnouncement({ active }: { active: boolean }) {
+        const { open } = useAnnouncementSlot(active);
+        return open ? <p>Earlier announcement</p> : null;
       }
+      function TestPage({ announcement }: { announcement: boolean }) {
+        return (
+          <AnnouncementQueueProvider>
+            <EarlierAnnouncement active={announcement} />
+            <MemoryRouter initialEntries={["/compare"]}>
+              <Routes>
+                <Route path="/compare" element={<CaniuseComparePage />} />
+                <Route
+                  path="/capabilities/:slug"
+                  element={<Link to="/compare">Back to Compare</Link>}
+                />
+              </Routes>
+            </MemoryRouter>
+          </AnnouncementQueueProvider>
+        );
+      }
+      const { rerender } = render(<TestPage announcement />);
+      const matrixSearch = () =>
+        screen.getByRole("combobox", { name: "Search capabilities" });
+      expect(screen.getByText("Earlier announcement")).toBeVisible();
+      expect(screen.queryByText("elicitation", { exact: true, selector: ".caniuse-prompt span" })).toBeNull();
+      rerender(<TestPage announcement={false} />);
+      expect(screen.getByText("elicitation", { exact: true, selector: ".caniuse-prompt span" })).toBeVisible();
+      expect(matrixSearch()).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Skip intro" })).toBeNull();
+      act(() => vi.advanceTimersByTime(1400));
+      expect(screen.getByText("MCP Apps", { exact: true, selector: ".caniuse-prompt span" })).toBeVisible();
+      fireEvent.focus(matrixSearch());
+      expect(document.querySelector(".caniuse-intro")).toBeNull();
       expect(matrixSearch()).toBeVisible();
       fireEvent.click(screen.getByRole("link", { name: "Capabilities" }));
       fireEvent.click(screen.getByRole("link", { name: "Back to Compare" }));
@@ -60,6 +76,7 @@ describe("CaniuseComparePage", () => {
     expect(screen.getAllByRole("columnheader")[1]).toBe(adoptionHeader);
     expect(score.closest("tr")?.children[1]).toContainElement(score);
     expect(score).toHaveTextContent(/\d+\/\d+/);
+    expect(score).toHaveTextContent(/\d+ with no published result/);
     expect(score).toHaveAttribute("href", "/capabilities/event-delivery");
     expect(
       screen.getByRole("link", { name: /^webhook:/i }),
@@ -70,6 +87,28 @@ describe("CaniuseComparePage", () => {
         /probed clients have confirmed support for at least one delivery mode/,
       ),
     );
+  });
+
+  it("shows the share URL when direct clipboard access is blocked", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(
+      new DOMException("Clipboard access denied", "NotAllowedError"),
+    );
+    const debug = vi.spyOn(console, "debug").mockImplementation(() => {});
+    try {
+      render(
+        <MemoryRouter initialEntries={["/compare?q=Events"]}>
+          <CaniuseComparePage />
+        </MemoryRouter>,
+      );
+      await user.click(screen.getByRole("button", { name: "Copy comparison link" }));
+      const link = await screen.findByRole("textbox", { name: "Shareable link" });
+      expect(link).toHaveValue(writeText.mock.calls[0][0]);
+      expect(debug).toHaveBeenCalledWith("Comparison link clipboard write failed");
+    } finally {
+      writeText.mockRestore();
+      debug.mockRestore();
+    }
   });
 
   it("dismisses hero suggestions without clearing or selecting a capability", async () => {

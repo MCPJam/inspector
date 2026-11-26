@@ -97,6 +97,7 @@ export function capabilityCoverage(
     full,
     probed,
     published,
+    unpublished: probed - published,
     reporting,
     eventsMode,
     score: published ? Math.round((full / probed) * 100) : null,
