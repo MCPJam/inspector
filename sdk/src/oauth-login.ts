@@ -527,6 +527,7 @@ export async function runOAuthLogin(
 
       const initial = await runLoginVerification(config, flowResult.state);
       let verification = initial.verification;
+      let stepUpError: string | undefined;
       let resultState = flowResult.state;
       const firstCall = verification?.callTool;
       if (
@@ -562,11 +563,12 @@ export async function runOAuthLogin(
             ));
           }
         } catch (error) {
+          stepUpError = error instanceof Error ? error.message : String(error);
           verification = {
             ...initial.verification,
             callTool: {
               ...firstCall,
-              error: error instanceof Error ? error.message : String(error),
+              error: stepUpError,
             },
           };
         }
@@ -576,7 +578,8 @@ export async function runOAuthLogin(
         authorizationPlan,
         redirectUrl,
         resultState,
-        verification
+        verification,
+        stepUpError
       );
     }
 
