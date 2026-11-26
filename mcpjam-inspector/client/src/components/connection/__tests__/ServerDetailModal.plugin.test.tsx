@@ -131,7 +131,9 @@ describe("ServerDetailModal for a plugin's server", () => {
     );
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
     expect(
-      h.track.mock.calls.filter(([event]) => event === "extension_launch_completed"),
+      h.track.mock.calls.filter(
+        ([event]) => event === "extension_launch_completed",
+      ),
     ).toEqual([]);
   });
 });

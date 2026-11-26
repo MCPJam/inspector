@@ -624,7 +624,8 @@ export function ServersTab({
     HostsConnectAddServerSlotContext
   );
   const viewPhase = useHostsConnectViewPhase();
-  const extensionsFlag = useFeatureFlagEnabled("plugin-extensions-enabled") === true;
+  const extensionsFlag =
+    useFeatureFlagEnabled("plugin-extensions-enabled") === true;
   const serverCanvasEnabled = useServerCanvasEnabled();
   const { isAuthenticated } = useConvexAuth();
   const { user: signedInUser } = useAuth();

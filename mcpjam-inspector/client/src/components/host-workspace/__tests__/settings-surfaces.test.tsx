@@ -102,13 +102,16 @@ describe("shared settings surfaces", () => {
     const view = renderHook(() => useServerSettingsAvailability(scope, "server"));
     await waitFor(() => expect(view.result.current.failed).toBe(true));
     expect(view.result.current.errorMessage).toContain("settings tools need an outputSchema");
-    expect(view.result.current.errorCode).toBe("PLUGIN_SETTINGS_OUTPUT_SCHEMA_REQUIRED");
+    expect(view.result.current.errorCode).toBe(
+      "PLUGIN_SETTINGS_OUTPUT_SCHEMA_REQUIRED",
+    );
     expect(
       useTrafficLogStore
         .getState()
         .mcpServerItems.filter(
           (item) =>
-            item.method === "plugin-extensions/PLUGIN_SETTINGS_OUTPUT_SCHEMA_REQUIRED",
+            item.method ===
+            "plugin-extensions/PLUGIN_SETTINGS_OUTPUT_SCHEMA_REQUIRED",
         ),
     ).toHaveLength(1);
     act(() => view.result.current.retry());

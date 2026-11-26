@@ -190,7 +190,7 @@ const mockPluginExtensionsAccess = vi.fn(
   (_input: unknown): { enabled: boolean; status: string } => ({
     enabled: false,
     status: "skipped",
-  })
+  }),
 );
 vi.mock("@/hooks/usePluginExtensionsAccess", () => ({
   usePluginExtensionsAccess: (input: unknown) =>
@@ -2253,17 +2253,20 @@ describe("ServersTab plugin Settings access", () => {
   ])(
     "gives a server's details Settings only when %s",
     (_case, enabled, status, expected) => {
-      mockPluginExtensionsAccess.mockImplementation(() => ({ enabled, status }));
+      mockPluginExtensionsAccess.mockImplementation(() => ({
+        enabled,
+        status,
+      }));
       render(<ServersTab {...props} />);
       fireEvent.click(screen.getByText("Open test-server"));
       expect(screen.getByTestId("modal-settings-scope")).toHaveTextContent(
-        expected
+        expected,
       );
       expect(mockPluginExtensionsAccess).toHaveBeenCalledWith({
         flag: true,
         isAuthenticated: true,
         projectId: "convex-project-1",
       });
-    }
+    },
   );
 });

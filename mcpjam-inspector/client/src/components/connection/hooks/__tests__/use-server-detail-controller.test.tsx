@@ -141,10 +141,10 @@ describe("useServerDetailController", () => {
       });
       expect(controller().tabs.showSettings).toBe(false);
       expect(controller().tabs.visible.map((tab) => tab.id)).not.toContain(
-        "settings"
+        "settings",
       );
       expect(controller().settings.showBody).toBe(false);
-    }
+    },
   );
 
   it("keeps the Settings tab when the server declares its settings wrong", () => {
@@ -156,7 +156,7 @@ describe("useServerDetailController", () => {
       extensionSettingsScope: SETTINGS_SCOPE,
     });
     expect(controller().tabs.visible.map((tab) => tab.id)).toContain(
-      "settings"
+      "settings",
     );
     expect(controller().settings.showBody).toBe(true);
   });
