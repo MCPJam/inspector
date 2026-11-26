@@ -2,15 +2,15 @@ import { useMemo, useState } from "react";
 import { Info, TrendingUp, TriangleAlert, X } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@mcpjam/design-system/tooltip";
-import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import { StyleColorSwatch } from "@/components/hosts/style-token-swatch";
 import { getScenarioHostLogo } from "@/lib/scenario-client-style";
@@ -20,8 +20,8 @@ import {
   groupHostConfigFields,
   HOST_CONFIG_FIELDS,
   NOT_SUPPORTED,
-  type StyleVariableByTheme,
   type HostComparisonSubject,
+  type StyleVariableByTheme,
   type HostConfigFieldDef,
 } from "@/lib/host-config-field-schema";
 import { CompactMatrixRows, CompactClientName, CompactVerifiedDate, revealFocusedCell, type MatrixSummaryColumn } from "./compact-matrix-rows";
@@ -33,9 +33,9 @@ import {
   computeVisibleFieldIds,
   getCapabilityCaveats,
   getSupportLevel,
-  type SupportLevel,
   rowCoverage,
   type SupportFilterMode,
+  type SupportLevel,
 } from "./support-level";
 import {
   formatVerifiedAt,
@@ -1032,6 +1032,12 @@ function HostColumnHeader({
   );
 }
 
+/**
+ * Deep-link a preset column to the hosted app's "verify" entry point:
+ * `<base>/hosts?template=claude`. Only preset columns carry a template id;
+ * a non-preset host (shouldn't happen on the public surface) falls back to
+ * the bare base URL. Returns null when verification is disabled.
+ */
 function buildVerifyHref(
   baseUrl: string | undefined,
   hostId: string,
