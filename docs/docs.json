@@ -61,6 +61,7 @@
             "icon": "bug",
             "pages": [
               "inspector/playground",
+              "inspector/events",
               {
                 "group": "Test MCP Apps",
                 "icon": "app-window",
@@ -128,6 +129,24 @@
               },
               "evaluate/troubleshooting",
               "inspector/eval-test-users"
+            ]
+          },
+          {
+            "group": "Swarms",
+            "icon": "users-round",
+            "pages": [
+              "swarms/overview",
+              "swarms/run-your-first-swarm",
+              "swarms/read-results"
+            ]
+          },
+          {
+            "group": "User Testing",
+            "icon": "clipboard-list",
+            "pages": [
+              "user-testing/overview",
+              "user-testing/create-your-first-study",
+              "user-testing/read-results"
             ]
           },
           {
@@ -510,10 +529,6 @@
     {
       "source": "/inspector/plugins",
       "destination": "/inspector/skills"
-    },
-    {
-      "source": "/inspector/events",
-      "destination": "/cli/events"
     },
     {
       "source": "/inspector/workspaces",

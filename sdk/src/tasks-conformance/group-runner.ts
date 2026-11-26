@@ -1,5 +1,5 @@
 import { namesTasksExtension, errorCode } from "./metadata.js";
-import { isTasksToolCheck } from "./types.js";
+import { isTasksToolCheck, taskCheckUsesInput } from "./types.js";
 
 import type { RpcLogEvent } from "../mcp-client-manager/index.js";
 
@@ -511,17 +511,12 @@ export class TaskGroupRunner extends TaskOperations {
           // as parked before it stops — see the note there on why one frame is
           // not enough.
           this.config.signal?.throwIfAborted();
-          const needsPolling = [...selected].some((id) =>
-            [
-              "tasks-ttl-shape",
-              "tasks-inline-result",
-              "tasks-status-payload-shape",
-              "tasks-ttl-integer-shape",
-              "tasks-update-ack-shape",
-            ].includes(id)
-          );
+          let inputRequiredTask: Record<string, unknown> | undefined;
+          let inputLeg: InputRequiredLeg | undefined;
+          const answered = new Set<string>();
+          const inputSnapshots: Record<string, unknown>[] = [];
           const polled =
-            createdTaskId && needsPolling
+            createdTaskId && [...selected].some(taskCheckUsesInput)
               ? await this.pollToTerminal(
                   manager,
                   serverId,
@@ -529,34 +524,49 @@ export class TaskGroupRunner extends TaskOperations {
                   createdTaskId,
                   {
                     stopOnInputRequired: true,
+                    continueAfterInput: async (task) => {
+                      inputRequiredTask ??= task;
+                      if (wire !== "extension") return false;
+                      const leg = await this.runInputRequiredLeg(
+                        manager,
+                        serverId,
+                        createdTaskId,
+                        task,
+                        received,
+                        answered
+                      );
+                      if (
+                        leg.outcome === "no-responses-configured" ||
+                        leg.outcome === "no-matching-responses"
+                      ) {
+                        inputLeg ??= leg;
+                        // The server can repeat acknowledged keys until the update takes effect.
+                        return leg.requested.length > 0 &&
+                          leg.requested.every(key => answered.has(key));
+                      }
+                      // T12 grades actual acknowledgments. A later rejection cannot erase one.
+                      if (
+                        inputLeg?.outcome !== "updated" ||
+                        leg.ackVerdict?.violations.length
+                      )
+                        inputLeg = leg;
+                      if (leg.outcome !== "updated") return false;
+                      inputSnapshots.push(task);
+                      for (const key of leg.answered ?? []) answered.add(key);
+                      return true;
+                    },
                   }
                 )
               : {};
 
-          // The isolated input-required update leg. Opt-in on
-          // `inputResponses` for the same reason the protocol suite's fixtures
-          // are: what a task asks for is server-defined, and inventing an
-          // answer submits arbitrary content into somebody's workflow.
-          const inputRequiredTask = polled.inputRequired
-            ? polled.task
-            : undefined;
-          let inputLeg: InputRequiredLeg | undefined;
-          if (
-            selected.has("tasks-update-ack-shape") &&
-            inputRequiredTask &&
-            createdTaskId &&
-            wire === "extension"
-          ) {
-            inputLeg = await this.runInputRequiredLeg(
-              manager,
-              serverId,
-              createdTaskId,
-              inputRequiredTask,
-              received
-            );
-          }
-
           const finalTask = polled.task;
+          const pendingKeys =
+            polled.timedOut && finalTask?.status === "input_required" &&
+            finalTask !== inputSnapshots.at(-1) && isRecord(finalTask.inputRequests)
+              ? Object.keys(finalTask.inputRequests)
+              : [];
+          const repeatedInputKeys = pendingKeys.length && pendingKeys.every(key => answered.has(key))
+            ? pendingKeys : undefined;
           // Distinguishes "there was never a task" from "polling the task
           // failed", so no dependent check skips under a message that hides a
           // broken read. Every branch here leaves the check UNEXERCISED, so the
@@ -626,6 +636,8 @@ export class TaskGroupRunner extends TaskOperations {
             operations: this,
             wire,
             finalTask,
+            inputSnapshots,
+            repeatedInputKeys,
             createdTaskId,
             noTask,
             selected,

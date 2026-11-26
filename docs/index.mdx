@@ -8,7 +8,7 @@ mode: "wide"
 import AgentConnect from '/snippets/agent-connect.mdx';
 import CapabilitiesVisual from '/snippets/capabilities-visual.mdx';
 
-MCPJam is the open-source testing and evaluations platform for developers shipping **MCP servers, MCP apps, and ChatGPT apps**. Interactively test and debug tools, prompts, resources, and OAuth across 18 client configurations and 170+ LLMs, with every JSON-RPC message visible. Run evals on test cases, track accuracy over time, and gate regressions before they reach production.
+MCPJam is the open-source testing and evaluations platform for developers shipping **MCP servers, MCP apps, and ChatGPT apps**. Interactively test and debug tools, prompts, resources, and OAuth across 18 client configurations and 170+ LLMs, with every JSON-RPC message visible.
 
 <Frame>
   <img
@@ -80,6 +80,18 @@ There are four ways to use MCPJam: your **coding agent** runs MCPJam's tools for
 
 <CapabilitiesVisual />
 
+<CardGroup cols={3}>
+  <Card title="Evaluate" icon="flask-conical" href="/evaluate/overview">
+    Check expected outcomes across clients and models and catch regressions in CI.
+  </Card>
+  <Card title="Swarms" icon="users-round" href="/swarms/overview">
+    Send simulated users through your MCP server to find where they get stuck.
+  </Card>
+  <Card title="User Testing" icon="clipboard-list" href="/user-testing/overview">
+    Share a study with real testers and review their conversations and feedback.
+  </Card>
+</CardGroup>
+
 ## How to test MCP
 
 Find what you want to test, then follow the guide for the tool you use. The MCP column lists the tools [MCPJam's MCP server](/cli/mcp-server) gives your coding agent for that check.
@@ -92,7 +104,7 @@ Find what you want to test, then follow the guide for the tool you use. The MCP 
 | **Prompts**<br />Prompts list and render with their arguments | [MCP Inspector](/inspector/tools-prompts-resources) | [Prompts](/cli/tools-resources-prompts#prompts) | [list_prompts, get_prompt](/cli/mcp-server#exercising-the-target) |
 | **Elicitation and multi-round input**<br />The server asks the user for input mid-call and resumes with the answer | [Elicitation requests](/inspector/tools-prompts-resources#elicitation-requests) | [Tools, Resources & Prompts](/cli/tools-resources-prompts) | — |
 | **Notifications and logs**<br />`list_changed`, log messages and resource updates arrive in a live session | [Tracing & debugging](/inspector/debugging) | [MCPJam as an MCP server](/cli/mcp-server) | [get_notifications](/cli/mcp-server#exercising-the-target) |
-| **MCP Events**<br />The server declares events and delivers them by push, poll or webhook | — | [MCP Events](/cli/events) | — |
+| **MCP Events**<br />The server declares events and delivers them by push, poll or webhook | [Events tab](/inspector/events) | [MCP Events](/cli/events) | — |
 | **MCP Tasks**<br />Long-running calls create, report and finish tasks | [Tasks tab](/inspector/mcp-support#extensions) | [MCP Tasks](/cli/tasks), [Tasks conformance](/cli/tasks-conformance) | — |
 | **Skills over MCP**<br />The server serves skills a client can list and load | [Skills over MCP](/inspector/skills#skills-over-mcp-server-provided-skills) | [Skills from the CLI](/inspector/skills#inspecting-a-server%E2%80%99s-skills-from-the-cli) | [list_skills, get_skill](/cli/mcp-server#skills-over-mcp) |
 | **OAuth**<br />Each step of the authorization flow, across protocol versions | [OAuth Debugger](/inspector/guided-oauth) | [OAuth conformance](/cli/oauth-conformance), [OAuth login](/cli/oauth-login) | [probe_server](/cli/mcp-server#stateless-diagnostics) (auth discovery) |

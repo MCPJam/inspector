@@ -93,10 +93,44 @@ describe("Tasks execution plans", () => {
       "tasks-undeclared-capability-rejected",
       "tasks-undeclared-capability-names-requirements",
     ]);
-    expect(groups.filter((g) => g.inputResponses)).toHaveLength(1);
-    expect(groups.find((g) => g.inputResponses)?.checkIds).toEqual([
-      "tasks-update-ack-shape",
+    expect(
+      groups.filter((g) => g.inputResponses).map((g) => g.checkIds)
+    ).toEqual([
+      [
+        "tasks-result-type-discipline",
+        "tasks-ttl-shape",
+        "tasks-inline-result",
+        "tasks-mcp-name-routing",
+        "tasks-status-payload-shape",
+        "tasks-ttl-integer-shape",
+      ],
+      ["tasks-update-ack-shape"],
     ]);
+  });
+  it("keeps shared, custom, and unanswered polling setups separate for the same tool", () => {
+    const groups = planTasksConformance({
+      toolName: "job",
+      inputResponses: { name: "shared" },
+      checkIds: [
+        "tasks-inline-result",
+        "tasks-ttl-shape",
+        "tasks-status-payload-shape",
+      ],
+      checkOverrides: {
+        "tasks-ttl-shape": {
+          toolName: "job",
+          inputResponses: { name: "custom" },
+        },
+        "tasks-status-payload-shape": { toolName: "job" },
+      },
+    });
+    expect(groups.map((group) => group.inputResponses)).toEqual([
+      { name: "shared" },
+      { name: "custom" },
+      undefined,
+    ]);
+    for (const group of groups)
+      expect(planTasksConformance(group)).toEqual([group]);
   });
   it("does not send tool inputs for task-free selections or unselected overrides", () => {
     expect(

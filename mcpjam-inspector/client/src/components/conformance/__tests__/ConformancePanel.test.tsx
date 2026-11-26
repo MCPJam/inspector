@@ -3092,7 +3092,7 @@ describe("ConformanceTab", () => {
       ).toBeInTheDocument();
     });
 
-    it("asks once for the Tasks tool on any pin, and for answers under the update check", async () => {
+    it("asks once for the shared Tasks tool and its answers", async () => {
       const user = userEvent.setup();
       setupSuccessfulRunMocks();
       await toStep2("auto");
@@ -3151,7 +3151,7 @@ describe("ConformanceTab", () => {
       );
     });
 
-    it("hides the flagged update check and its answers box", async () => {
+    it("keeps the shared answers box when the flagged update check is hidden", async () => {
       enabledFlags.delete("conformance-tasks-update-check");
       const user = userEvent.setup();
       setupSuccessfulRunMocks();
@@ -3173,7 +3173,7 @@ describe("ConformanceTab", () => {
         screen.queryByRole("textbox", {
           name: "Answers to the task's questions (optional)",
         }),
-      ).toBeNull();
+      ).toBeInTheDocument();
     });
 
     it("lists the tools once for every field, across pages", async () => {
