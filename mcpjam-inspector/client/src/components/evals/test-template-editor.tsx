@@ -2318,12 +2318,22 @@ export function TestTemplateEditor({
   // Run test about the saved case it launches (unsaved edits, which it saves
   // first, are not judged here).
   const creditsReason = outOfCreditsReason ?? OUT_OF_CREDITS_MODEL_REASON;
+  // The saved entries a pick launches, selections included: an organization
+  // entry saved under the hosted model's canonical id reads back as the hosted
+  // row's value, and only its selection says it spends no credits.
+  const caseRunEntries = (modelValues: readonly string[]) =>
+    caseModelEntriesForCompareValues(
+      modelValues.map(quickRunModelValue),
+      currentTestCase?.models ?? [],
+      parseModelValue,
+      (entry) => caseModelEntryValue(entry, availableModels),
+    ).filter((entry) => Boolean(entry.provider) && Boolean(entry.model));
   const runOutOfCredits = allModelsOutOfCredits(
-    draftRunEstimateModels,
+    caseRunEntries(selectedModelValues),
     availableModels,
   );
   const retryOutOfCreditsReason = (modelValue: string) =>
-    allModelsOutOfCredits([parseModelValue(modelValue)], availableModels)
+    allModelsOutOfCredits(caseRunEntries([modelValue]), availableModels)
       ? creditsReason
       : null;
   const runTestOutOfCreditsReason =
