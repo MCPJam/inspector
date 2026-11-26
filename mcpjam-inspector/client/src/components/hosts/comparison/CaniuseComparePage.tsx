@@ -130,7 +130,9 @@ function useCompareParams() {
     if (value) next.set("q", value);
     else next.delete("q");
     pendingParams.current = next;
-    setParams(next, { replace: true });
+    // Both controlled inputs read the URL. Commit the new value before
+    // React restores the previous input value at the end of the event.
+    setParams(next, { replace: true, flushSync: true });
   }
 
   function updateSelection(ids: string[]) {
