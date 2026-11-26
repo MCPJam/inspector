@@ -1,16 +1,16 @@
-import { useMemo, useState, type FocusEvent } from "react";
+import { useMemo, useState } from "react";
 import { Info, TrendingUp, TriangleAlert, X } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@mcpjam/design-system/popover";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@mcpjam/design-system/popover";
 import { cn } from "@/lib/utils";
 import { StyleColorSwatch } from "@/components/hosts/style-token-swatch";
 import { getScenarioHostLogo } from "@/lib/scenario-client-style";
@@ -20,10 +20,11 @@ import {
   groupHostConfigFields,
   HOST_CONFIG_FIELDS,
   NOT_SUPPORTED,
-  type HostComparisonSubject,
   type StyleVariableByTheme,
+  type HostComparisonSubject,
   type HostConfigFieldDef,
 } from "@/lib/host-config-field-schema";
+import { CompactMatrixRows, CompactClientName, CompactVerifiedDate, revealFocusedCell, type MatrixSummaryColumn } from "./compact-matrix-rows";
 import { SupportChip } from "./support-chip";
 import { PRESET_HOST_ID_PREFIX } from "./host-compare-presets";
 import { buildHostVerifySearch } from "../host-verify-deep-link";
@@ -32,9 +33,9 @@ import {
   computeVisibleFieldIds,
   getCapabilityCaveats,
   getSupportLevel,
+  type SupportLevel,
   rowCoverage,
   type SupportFilterMode,
-  type SupportLevel,
 } from "./support-level";
 import {
   formatVerifiedAt,
@@ -44,11 +45,7 @@ import {
 
 interface HostConfigComparisonMatrixProps {
   subjects: ReadonlyArray<HostComparisonSubject>;
-  summaryColumn?: {
-    label: string;
-    render: (field: HostConfigFieldDef) => React.ReactNode;
-    renderFieldLabel?: (field: HostConfigFieldDef) => React.ReactNode;
-  };
+  summaryColumn?: MatrixSummaryColumn;
   fields?: ReadonlyArray<HostConfigFieldDef>;
   /** When true, hide rows whose value is identical across every host. */
   divergingOnly?: boolean;
@@ -75,20 +72,6 @@ interface HostConfigComparisonMatrixProps {
   verifyBaseUrl?: string;
   /** Template ids that are visible for reference but cannot be verified yet. */
   disabledVerifyTemplateIds?: ReadonlySet<string>;
-}
-
-function revealFocusedCell({ currentTarget: scrollBox, target }: FocusEvent<HTMLDivElement>) {
-  if (!target.matches(":focus-visible")) return;
-  const cell = target.closest<HTMLTableCellElement>("td, th");
-  const field = cell?.parentElement?.firstElementChild;
-  if (!cell || cell === field || !field) return;
-
-  // A browser can consider the focused element visible behind the sticky cell.
-  const left = field.getBoundingClientRect().right + 3;
-  const right = scrollBox.getBoundingClientRect().left + scrollBox.clientWidth - 3;
-  const bounds = target.getBoundingClientRect();
-  if (bounds.left < left) scrollBox.scrollLeft += Math.floor(bounds.left - left);
-  else if (bounds.right > right) scrollBox.scrollLeft += Math.ceil(bounds.right - right);
 }
 
 /**
@@ -302,7 +285,17 @@ export function HostConfigComparisonMatrix({
                 mobileOptimized={mobileOptimized}
               />
             ) : null}
-            {groups.map((group, groupIndex) => {
+            {summaryColumn ? (
+              <CompactMatrixRows
+                groups={groups}
+                renderCell={FieldCell}
+                visibleFieldIds={visibleFieldIds}
+                subjects={displaySubjects}
+                summaryColumn={summaryColumn}
+                showDescriptions={showDescriptions}
+                mobileOptimized={mobileOptimized}
+              />
+            ) : groups.map((group, groupIndex) => {
               const visibleFieldsInGroup = group.subsections
                 .flatMap((sub) => sub.fields)
                 .filter((f) => visibleFieldIds.has(f.id));
@@ -325,7 +318,6 @@ export function HostConfigComparisonMatrix({
                   visibleFieldIds={visibleFieldIds}
                   showDescriptions={showDescriptions}
                   mobileOptimized={mobileOptimized}
-                  summaryColumn={summaryColumn}
                 />
               );
             })}
@@ -390,7 +382,6 @@ function VerifiedAtRow({
 }
 
 interface SectionRowsProps {
-  summaryColumn?: HostConfigComparisonMatrixProps["summaryColumn"];
   index: number;
   sectionLabel: string;
   divergeCount: number;
@@ -407,7 +398,6 @@ interface SectionRowsProps {
 }
 
 function SectionRows({
-  summaryColumn,
   index,
   sectionLabel,
   divergeCount,
@@ -419,10 +409,10 @@ function SectionRows({
   showDescriptions,
   mobileOptimized,
 }: SectionRowsProps) {
-  const colSpan = subjects.length + (summaryColumn ? 2 : 1);
+  const colSpan = subjects.length + 1;
   return (
     <>
-      {!summaryColumn && <tr>
+      <tr>
         {/* Label lives in its own first-column cell so `sticky left-0` can pin
             it — a colSpan cell spans the whole table and never sticks. */}
         <th
@@ -459,7 +449,7 @@ function SectionRows({
           </motion.div>
         </th>
         <td colSpan={colSpan - 1} className="border-y border-border bg-muted" />
-      </tr>}
+      </tr>
 
       {subsections.map((sub) => {
         const fields = sub.fields.filter((f) => visibleFieldIds.has(f.id));
@@ -468,7 +458,6 @@ function SectionRows({
           <SubsectionRows
             key={`${sectionLabel}-${sub.label}`}
             label={sub.label}
-            sectionLabel={sectionLabel}
             fields={fields}
             subjects={subjects}
             coverageSubjects={coverageSubjects}
@@ -476,7 +465,6 @@ function SectionRows({
             colSpan={colSpan}
             showDescriptions={showDescriptions}
             mobileOptimized={mobileOptimized}
-            summaryColumn={summaryColumn}
           />
         );
       })}
@@ -485,9 +473,7 @@ function SectionRows({
 }
 
 function SubsectionRows({
-  summaryColumn,
   label,
-  sectionLabel,
   fields,
   subjects,
   coverageSubjects,
@@ -496,9 +482,7 @@ function SubsectionRows({
   showDescriptions,
   mobileOptimized,
 }: {
-  summaryColumn?: HostConfigComparisonMatrixProps["summaryColumn"];
   label: string;
-  sectionLabel: string;
   fields: ReadonlyArray<HostConfigFieldDef>;
   subjects: ReadonlyArray<HostComparisonSubject>;
   coverageSubjects: ReadonlyArray<HostComparisonSubject>;
@@ -509,21 +493,12 @@ function SubsectionRows({
 }) {
   return (
     <>
-      {summaryColumn ? (
-        <tr className="border-b border-border bg-muted">
-          <th
-            colSpan={colSpan}
-            className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground sm:px-5"
-          >
-            {sectionLabel === label ? label : `${sectionLabel} / ${label}`}
-          </th>
-        </tr>
-      ) : <tr>
+      <tr>
         <td className="sticky left-0 z-10 border-b border-border bg-card px-3 py-1.5 text-left text-[10px] uppercase tracking-wider text-muted-foreground after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border after:content-[''] sm:px-5">
           {label}
         </td>
         <td colSpan={colSpan - 1} className="border-b border-border bg-card" />
-      </tr>}
+      </tr>
       {fields.map((field) => (
         <FieldRow
           key={field.id}
@@ -533,7 +508,6 @@ function SubsectionRows({
           diverges={divergingIds.has(field.id)}
           showDescriptions={showDescriptions}
           mobileOptimized={mobileOptimized}
-          summaryColumn={summaryColumn}
         />
       ))}
     </>
@@ -541,7 +515,6 @@ function SubsectionRows({
 }
 
 function FieldRow({
-  summaryColumn,
   field,
   subjects,
   coverageSubjects,
@@ -549,7 +522,6 @@ function FieldRow({
   showDescriptions,
   mobileOptimized,
 }: {
-  summaryColumn?: HostConfigComparisonMatrixProps["summaryColumn"];
   field: HostConfigFieldDef;
   subjects: ReadonlyArray<HostComparisonSubject>;
   coverageSubjects: ReadonlyArray<HostComparisonSubject>;
@@ -559,7 +531,7 @@ function FieldRow({
 }) {
   // caniuse "global support" equivalent — only meaningful when comparing ≥2 hosts.
   const coverage =
-    !summaryColumn && coverageSubjects.length >= 2
+    coverageSubjects.length >= 2
       ? rowCoverage(
           field,
           coverageSubjects.map((s) => s.config),
@@ -575,7 +547,7 @@ function FieldRow({
           conflicting with `sticky` and would strip the sticky positioning.
           `sticky` already anchors the absolute diverge gutter below. */}
       <td className="sticky left-0 z-10 bg-card px-3 py-2.5 text-left after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border after:content-[''] sm:px-5">
-        {diverges && !summaryColumn && (
+        {diverges && (
           <motion.span
             aria-hidden="true"
             className="absolute left-0 top-0 bottom-0 w-[3px] bg-primary/70 origin-top"
@@ -594,9 +566,7 @@ function FieldRow({
             mobileOptimized && "min-w-0",
           )}
         >
-          <span className={labelClassName}>
-            {summaryColumn?.renderFieldLabel?.(field) ?? field.label}
-          </span>
+          <span className={labelClassName}>{field.label}</span>
           {coverage && (
             <span
               className="text-[10.5px] text-muted-foreground tabular-nums"
@@ -606,7 +576,7 @@ function FieldRow({
               {coverage.supported}/{coverage.total}
             </span>
           )}
-          {field.description && !showDescriptions && !summaryColumn && (
+          {field.description && !showDescriptions && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
@@ -633,17 +603,6 @@ function FieldRow({
           </div>
         )}
       </td>
-      {summaryColumn && (
-        <td
-          className={cn(
-            "border-l border-border px-2 py-2.5 align-top sm:px-3",
-            // Keep focused adoption links clear of the sticky Field column.
-            mobileOptimized && "[&_a]:scroll-ml-[var(--matrix-field-width)]",
-          )}
-        >
-          {summaryColumn.render(field)}
-        </td>
-      )}
       {subjects.map((s) => (
         <td
           key={s.hostId}
@@ -653,7 +612,6 @@ function FieldRow({
             field={field}
             subject={s}
             mobileOptimized={mobileOptimized}
-            compact={Boolean(summaryColumn)}
           />
         </td>
       ))}
@@ -1012,8 +970,6 @@ function HostColumnHeader({
     disabledVerifyTemplateIds,
   );
   const nameClassName = "min-w-0 max-w-[160px] text-center text-[14px] font-medium leading-tight";
-  const verifiedDate = formatVerifiedAt(subject.verifiedAt);
-  const stale = isVerifiedAtStale(subject.verifiedAt);
 
   return (
     <th className="sticky top-0 z-20 border-b border-l border-border bg-card px-3 py-3 text-center align-top sm:px-4 sm:py-4">
@@ -1046,23 +1002,10 @@ function HostColumnHeader({
           alt=""
           className="mt-0.5 size-4 shrink-0 object-contain"
         />
-        {linkName && verifyHref ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <a
-                href={verifyHref}
-                data-testid={`host-compare-verify-${subject.hostId}`}
-                className={cn(nameClassName, "scroll-ml-[var(--matrix-field-width)] rounded-sm break-words underline decoration-border underline-offset-4 hover:text-primary focus-visible:outline-2 focus-visible:outline-ring")}
-              >
-                {subject.hostName}
-              </a>
-            </TooltipTrigger>
-            <TooltipContent side="top" sideOffset={6} variant="muted" className="dark">
-              Verify against your server
-            </TooltipContent>
-          </Tooltip>
+        {linkName ? (
+          <CompactClientName subject={subject} href={verifyHref} className={nameClassName} />
         ) : (
-          <div className={cn(nameClassName, linkName ? "break-words" : "truncate")} title={linkName ? undefined : subject.hostName}>
+          <div className={cn(nameClassName, "truncate")} title={subject.hostName}>
             {subject.hostName}
           </div>
         )}
@@ -1084,26 +1027,11 @@ function HostColumnHeader({
           </Tooltip>
         ) : null}
       </motion.div>
-      {linkName && verifiedDate !== "—" && (
-        <time
-          dateTime={verifiedDate}
-          title={stale ? STALE_VERIFIED_AT_LABEL : undefined}
-          className="mt-1.5 inline-flex items-center justify-center gap-1 text-[10px] leading-tight font-normal text-muted-foreground"
-        >
-          {stale && <TriangleAlert className="size-3 shrink-0" aria-hidden />}
-          <span>Verified on {verifiedDate}</span>
-        </time>
-      )}
+      {linkName && <CompactVerifiedDate subject={subject} />}
     </th>
   );
 }
 
-/**
- * Deep-link a preset column to the hosted app's "verify" entry point:
- * `<base>/hosts?template=claude`. Only preset columns carry a template id;
- * a non-preset host (shouldn't happen on the public surface) falls back to
- * the bare base URL. Returns null when verification is disabled.
- */
 function buildVerifyHref(
   baseUrl: string | undefined,
   hostId: string,

@@ -7012,7 +7012,7 @@ export default function App() {
   );
 
   return (
-    <AnnouncementQueueProvider enabled={announcementsEnabled}>
+    <AnnouncementQueueProvider enabled={isCaniuseSite || announcementsEnabled}>
       {shell}
     </AnnouncementQueueProvider>
   );
