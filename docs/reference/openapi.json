@@ -4038,7 +4038,7 @@
         "operationId": "deleteEvalSuite",
         "tags": ["Eval runs"],
         "summary": "Delete an eval suite",
-        "description": "Deletes the suite and its cases. Past runs are not deleted.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) can be deleted too. The next suite-file sync or SDK report creates it again.",
+        "description": "Deletes the suite and its cases. Past runs are not deleted.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) can be deleted too, so `declaredSuiteId` is accepted here but changes nothing. The next suite-file sync or SDK report creates the suite again.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -4588,7 +4588,7 @@
         "operationId": "commitEvalAuthoringJob",
         "tags": ["Eval runs"],
         "summary": "Write a finished authoring job's cases into the suite",
-        "description": "Writes the job's drafts into the suite. A draft carrying unresolved blocking issues or proposed additions is **skipped** rather than written, and comes back under `skipped` with a `reviewUrl` for finishing it in the app.\n\nA job whose `source` is `markdown` (the in-app upload) is not committable here and answers `404`: those drafts exist so a person decides on them, and an API commit would decide on their behalf.\n\nOn a CI-owned suite (see `EvalSuiteDetail.managedBy`), this returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"` and writes nothing. Such a suite normally has no job to commit: `cases/generate` and `cases/import` refuse it the same way before a job starts.",
+        "description": "Writes the job's drafts into the suite. A draft carrying unresolved blocking issues or proposed additions is **skipped** rather than written, and comes back under `skipped` with a `reviewUrl` for finishing it in the app.\n\nA job whose `source` is `markdown` (the in-app upload) is not committable here and answers `404`: those drafts exist so a person decides on them, and an API commit would decide on their behalf.\n\nOn a CI-owned suite (see `EvalSuiteDetail.managedBy`), this writes nothing: a suite created by SDK ingest returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`, and a job on a suite with a suite file answers `404`, like a missing job. Such a suite normally has no job to commit: `cases/generate` and `cases/import` refuse it with that `409` before a job starts.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"

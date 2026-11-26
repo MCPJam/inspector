@@ -49,8 +49,8 @@ export function isCiOwnedSuiteDoc(suite: SuiteOwnership): boolean {
  * allows the write iff the id is the suite's own.
  *
  * NOT A CAPABILITY. Naming an id you do not own gets you nothing: the guard is
- * Convex's, and the route-level pre-check (`assertSuiteWritableViaApi`) only
- * ever stands aside for a marker, never vouches for one.
+ * Convex's, and the route-level pre-check (`assertSuiteWritableViaApi`) at
+ * most stands aside for a marker on a file-owned suite, never vouches for one.
  *
  * ============================================================================
  * IT RIDES THE QUERY STRING, NOT THE BODY

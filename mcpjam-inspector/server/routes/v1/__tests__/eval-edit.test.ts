@@ -5453,7 +5453,7 @@ describe("v1 eval-edit — CI-owned suites", () => {
     // The route's copy of the predicate said "writable" (a plain UI suite)
     // but the platform refused anyway — a new locked action, or a predicate
     // this copy lags behind. The backend stays the guard, and its refusal
-    // must land as the identical 409, not a 500.
+    // must land as the same 409 status and reason, not a 500.
     convexQueryMock.mockImplementation((name: string) =>
       defaultQueryImpl(name),
     );
