@@ -466,7 +466,17 @@ export class TaskOperations {
     taskId: string,
     options?: {
       stopOnInputRequired?: boolean;
-      continueAfterInput?: (task: Record<string, unknown>) => Promise<boolean>;
+      /**
+       * Called when the task is seen parked. `remainingMs` is what is left of
+       * the poll budget: whatever the callback does is paid for out of it.
+       * `false` stops on the parked task; `true` goes on polling; `"reread"`
+       * reads the task again at once (the one in hand is stale), even when
+       * the deadline has passed.
+       */
+      continueAfterInput?: (
+        task: Record<string, unknown>,
+        remainingMs: number
+      ) => Promise<boolean | "reread">;
     }
   ): Promise<{
     task?: Record<string, unknown>;
@@ -478,8 +488,10 @@ export class TaskOperations {
     const deadline = Date.now() + this.config.pollTimeoutMs;
     let last: Record<string, unknown> | undefined;
     let consecutiveInputRequired = 0;
+    let rereadNow = false;
 
-    while (Date.now() < deadline) {
+    while (rereadNow || Date.now() < deadline) {
+      rereadNow = false;
       this.config.signal?.throwIfAborted();
       try {
         const task =
@@ -516,8 +528,20 @@ export class TaskOperations {
       ) {
         consecutiveInputRequired += 1;
         if (consecutiveInputRequired >= PARKED_INPUT_REQUIRED_POLLS) {
-          if (!(await options.continueAfterInput?.(last)))
-            return { task: last, inputRequired: true };
+          const next = await options.continueAfterInput?.(
+            last,
+            deadline - Date.now()
+          );
+          if (!next) return { task: last, inputRequired: true };
+          if (next === "reread") {
+            // The task in hand is from before the callback, and it has moved
+            // or will not: read it now, not a poll interval later, or a task
+            // that ended near the deadline is reported as never ending. If it
+            // is still parked, that read is enough to ask the callback again.
+            consecutiveInputRequired = PARKED_INPUT_REQUIRED_POLLS - 1;
+            rereadNow = true;
+            continue;
+          }
           consecutiveInputRequired = 0;
         }
       } else {
