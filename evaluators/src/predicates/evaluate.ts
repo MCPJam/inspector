@@ -1509,11 +1509,13 @@ export function evaluatePredicate(
           }
           return pass(predicate, verdict.reason);
         }
+        // Declared mode reads `structuredContent`, which is stored whole; a
+        // capped `text` field does not touch what was validated.
         const gap = incompleteScopeReason(
           transcript,
           "toolResults",
           scope.length,
-          scope.filter((r) => r.truncated === true).length
+          0
         );
         if (gap) {
           return evidenceError(

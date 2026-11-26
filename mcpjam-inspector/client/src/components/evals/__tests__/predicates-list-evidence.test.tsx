@@ -122,3 +122,28 @@ describe("PredicatesList — render-observation evidence", () => {
     expect(screen.getByText("__proto__")).toBeInTheDocument();
   });
 });
+
+describe("PredicatesList — Not applicable", () => {
+  it("shows N/A and leaves the row out of the pass count", () => {
+    render(
+      <PredicatesList
+        predicates={[
+          {
+            predicate: { type: "toolResultMatchesSchema", schema: "declared" },
+            passed: true,
+            status: "not_applicable",
+            reason: "no tool declares an output schema",
+          },
+          {
+            predicate: { type: "noToolErrors" },
+            passed: true,
+            reason: "no tool errors",
+          },
+        ]}
+      />,
+    );
+    const region = screen.getByRole("region", { name: "Assertions" });
+    expect(within(region).getByText("N/A")).toBeInTheDocument();
+    expect(region).toHaveTextContent("1 / 1 assertions passed");
+  });
+});

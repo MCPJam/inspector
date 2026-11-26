@@ -61,6 +61,21 @@ describe("evaluatorStatus", () => {
       ]),
     ).toBe("failed");
   });
+
+  it("never lends a Not applicable Required check's pass to an Advisory miss", () => {
+    expect(
+      evaluatorStatus([
+        { role: "required", status: "not_applicable" },
+        { role: "advisory", status: "failed" },
+      ]),
+    ).toBe("failed");
+    expect(
+      evaluatorStatus([
+        { role: "required", status: "not_applicable" },
+        { role: "advisory", status: "passed" },
+      ]),
+    ).toBe("passed");
+  });
 });
 
 describe("EvaluatorScorecardSummary", () => {
