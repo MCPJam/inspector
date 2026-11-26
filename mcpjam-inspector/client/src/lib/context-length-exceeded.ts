@@ -46,8 +46,17 @@ const toNumber = (digits: string) => Number(digits.replace(/,/g, ""));
 export function contextLengthCounts(
   text: string,
 ): { used: number; limit: number } | null {
+  // Counts come from the current error, never OpenRouter's previous attempts.
+  let current = text;
+  try {
+    current = JSON.stringify(JSON.parse(text), (key, value: unknown) =>
+      key === "previous_errors" ? undefined : value,
+    );
+  } catch {
+    // Not JSON: a provider's plain sentence, read as it is.
+  }
   for (const { pattern, limitFirst } of COUNT_PATTERNS) {
-    const match = pattern.exec(text);
+    const match = pattern.exec(current);
     if (!match) continue;
     const first = toNumber(match[1]);
     const second = toNumber(match[2]);

@@ -60,12 +60,17 @@ export function isContextLengthExceeded(
   status: number | undefined
 ): boolean {
   if (status !== undefined && status !== 400) return false;
-  const rawBody =
+  const record =
     error && typeof error === "object"
-      ? (error as { responseBody?: unknown }).responseBody
+      ? (error as { message?: unknown; responseBody?: unknown })
       : undefined;
+  // A plain record's serialized form carries its body, history included:
+  // read its own message instead.
+  const ownMessage =
+    typeof record?.message === "string" ? record.message : message;
+  const rawBody = record?.responseBody;
   const body = typeof rawBody === "string" ? currentErrorText(rawBody) : "";
   return CONTEXT_LENGTH_PATTERNS.some(
-    (pattern) => pattern.test(message) || pattern.test(body)
+    (pattern) => pattern.test(ownMessage) || pattern.test(body)
   );
 }

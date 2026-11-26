@@ -654,7 +654,7 @@ function resolveSlug(error: unknown): {
 
   // A chat too long for the model. Ahead of the status branches, which read
   // the provider's 400 as nothing in particular.
-  if (isContextLengthExceeded(error, message, getHttpStatus(error))) {
+  if (isContextLengthExceeded(error, message, httpStatusOf(error))) {
     return { slug: "provider/context_length_exceeded" };
   }
 

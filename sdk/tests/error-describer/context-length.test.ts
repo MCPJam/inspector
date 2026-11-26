@@ -50,6 +50,25 @@ describe("describeError: a chat too long for the model", () => {
     }
   );
 
+  it("ignores history in a plain record and keeps a numeric 500", () => {
+    const history = fixtures.noMatch[fixtures.noMatch.length - 1];
+    expect(
+      describeError({
+        message: history.message,
+        statusCode: 400,
+        responseBody: history.responseBody,
+      }).slug
+    ).not.toBe(SLUG);
+    expect(
+      describeError(
+        Object.assign(
+          new Error("prompt is too long: 596303 tokens > 200000 maximum"),
+          { name: "SdkHttpError", code: 500 }
+        )
+      ).slug
+    ).not.toBe(SLUG);
+  });
+
   it("recognizes the backend's own sentence, all an eval card keeps", () => {
     expect(describeError(CONTEXT_LENGTH_EXCEEDED_MESSAGE).slug).toBe(SLUG);
   });

@@ -40,6 +40,23 @@ describe("contextLengthCounts", () => {
   );
 });
 
+describe("contextLengthCounts ignores earlier attempts", () => {
+  it("reads the current error, not previous_errors", () => {
+    const body = JSON.stringify({
+      error: {
+        message:
+          "This model's maximum context length is 128000 tokens. However, your messages resulted in 300000 tokens.",
+        metadata: {
+          previous_errors: [
+            { raw: "prompt is too long: 596303 tokens > 200000 maximum" },
+          ],
+        },
+      },
+    });
+    expect(contextLengthCounts(body)).toEqual({ used: 300000, limit: 128000 });
+  });
+});
+
 describe("describeContextLengthExceeded", () => {
   it("states the counts when the provider gave them", () => {
     const described = describeContextLengthExceeded(
