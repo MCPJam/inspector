@@ -32,22 +32,65 @@ import {
   rememberAccessToken,
   isAccessToken,
 } from "./access-link";
-import {
-  isAccessLinkRequired,
-  readAccessAnswer,
-  SessionTokenError,
-} from "./access-answer";
-
-// Session-token errors live beside the answer they classify; importers keep
-// reading them from here.
-export {
-  SessionTokenError,
-  isAccessLinkRequired,
-  isSessionTokenHostDenied,
-} from "./access-answer";
+import { readAccessAnswer } from "./access-answer";
 
 let cachedToken: string | null = null;
 let initPromise: Promise<string> | null = null;
+
+/**
+ * Error thrown when `/api/session-token` does not confirm the access link (a
+ * non-OK status, or a 2xx without `{ ok: true }`), with its status and code.
+ *
+ * A 403 here is not a bug: the server withholds the token from any host that
+ * isn't localhost or in `MCPJAM_ALLOWED_HOSTS` (see server/utils/localhost-check.ts).
+ * A self-hosted user reaching the inspector over the network hits exactly this,
+ * and it has a self-service fix (allowlist their host) — so it gets a tailored
+ * screen and is NOT reported to Sentry, unlike a real 5xx/transport failure.
+ */
+export class SessionTokenError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  readonly restarted: boolean;
+  readonly contentType?: string;
+  constructor(
+    status: number,
+    {
+      code,
+      restarted = false,
+      contentType,
+    }: { code?: string; restarted?: boolean; contentType?: string } = {},
+  ) {
+    super(`Failed to get session token: ${status}`);
+    this.name = "SessionTokenError";
+    this.status = status;
+    this.code = code;
+    this.restarted = restarted;
+    this.contentType = contentType;
+  }
+}
+
+/**
+ * The Inspector's own host denial (403 `HOST_NOT_ALLOWED`): a config issue the
+ * caller explains instead of reporting. A 403 from anything else is reported.
+ */
+export function isSessionTokenHostDenied(error: unknown): boolean {
+  return (
+    error instanceof SessionTokenError &&
+    error.status === 403 &&
+    error.code === "HOST_NOT_ALLOWED"
+  );
+}
+
+/** The Inspector asking for its access link (401 `ACCESS_LINK_REQUIRED`). */
+export function isAccessLinkRequired(
+  error: unknown,
+): error is SessionTokenError {
+  return (
+    error instanceof SessionTokenError &&
+    error.status === 401 &&
+    error.code === "ACCESS_LINK_REQUIRED"
+  );
+}
 
 type AuthFetchSurface = "scenario";
 
