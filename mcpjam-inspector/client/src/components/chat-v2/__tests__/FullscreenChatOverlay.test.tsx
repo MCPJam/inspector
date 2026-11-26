@@ -779,7 +779,7 @@ describe("FullscreenChatOverlay", () => {
         />,
       );
 
-      const sending = screen.getByRole("button", { name: "Sending message" });
+      const sending = screen.getByRole("button", { name: "Cancel sending" });
       expect(sending).toBeDisabled();
       expect(sending.querySelector("svg.animate-spin")).not.toBeNull();
       fireEvent.keyDown(screen.getByPlaceholderText("Message…"), {
@@ -787,6 +787,27 @@ describe("FullscreenChatOverlay", () => {
       });
       fireEvent.submit(screen.getByTestId("fullscreen-composer"));
       expect(onSend).not.toHaveBeenCalled();
+    });
+
+    it("cancels the send and focuses the text box when the spinner is clicked", () => {
+      const onCancelSubmit = vi.fn();
+      renderWithProviders(
+        <FullscreenChatOverlay
+          {...defaultProps}
+          input="Follow up"
+          canSend={true}
+          isSubmitting={true}
+          onCancelSubmit={onCancelSubmit}
+        />,
+      );
+
+      // A click focuses the button it lands on.
+      const cancel = screen.getByRole("button", { name: "Cancel sending" });
+      cancel.focus();
+      fireEvent.click(cancel);
+
+      expect(onCancelSubmit).toHaveBeenCalledTimes(1);
+      expect(screen.getByPlaceholderText("Message…")).toHaveFocus();
     });
 
     it("sends on Enter again once the preparation is over", () => {
