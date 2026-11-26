@@ -36,20 +36,23 @@ export function useHistoryTarget<P>(
  * move `selection` or the history target. `left` is the leaving alone, and
  * `refuse()` runs `restore` unless the user left: a prompt dropped while the
  * user stayed, such as by the send's own detach, goes back in the composer.
+ * A send whose `signal` is aborted (Cancel sending) counts as left, and
+ * `onLeave` runs on every leave so a send lock can be freed with it.
  */
 export function useThreadSend<P>(
   chatSessionId: string,
   projectId: P,
   selection: { readonly current: number },
+  onLeave?: () => void,
 ) {
   const isCurrentTarget = useHistoryTarget(chatSessionId, projectId);
   const epoch = useRef(0);
   const begin = useCallback(
-    (restore?: () => void) => {
+    (restore?: () => void, signal?: AbortSignal) => {
       const started = epoch.current;
       const selected = selection.current;
       const target = { chatSessionId, projectId };
-      const left = () => epoch.current !== started;
+      const left = () => !!signal?.aborted || epoch.current !== started;
       return {
         left,
         isCurrent: () =>
@@ -63,6 +66,7 @@ export function useThreadSend<P>(
   );
   const leave = useCallback(() => {
     epoch.current += 1;
-  }, []);
+    onLeave?.();
+  }, [onLeave]);
   return { isCurrentTarget, begin, leave };
 }

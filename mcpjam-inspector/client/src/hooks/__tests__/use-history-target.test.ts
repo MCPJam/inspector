@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderHook } from "@testing-library/react";
-import { useHistoryTarget } from "../use-history-target";
+import { useHistoryTarget, useThreadSend } from "../use-history-target";
 
 describe("useHistoryTarget", () => {
   it("matches only the thread that is open now", () => {
@@ -17,5 +17,22 @@ describe("useHistoryTarget", () => {
     expect(result.current).toBe(isOpen);
     expect(isOpen({ chatSessionId: "chat-1", projectId: "p1" })).toBe(false);
     expect(isOpen({ chatSessionId: "chat-2", projectId: "p1" })).toBe(true);
+  });
+});
+
+describe("useThreadSend", () => {
+  it("treats a send whose signal is aborted as one the user left", () => {
+    const { result } = renderHook(() =>
+      useThreadSend("chat-1", "p1", { current: 0 }),
+    );
+    const controller = new AbortController();
+    const send = result.current.begin(undefined, controller.signal);
+    expect(send.isCurrent()).toBe(true);
+    expect(send.left()).toBe(false);
+
+    controller.abort();
+
+    expect(send.isCurrent()).toBe(false);
+    expect(send.left()).toBe(true);
   });
 });

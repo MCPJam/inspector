@@ -73,4 +73,46 @@ describe("useSingleFlight", () => {
     });
     expect(next).toHaveBeenCalledTimes(1);
   });
+
+  it("cancel aborts the run, frees the lock at once and keeps a newer run's lock", async () => {
+    const { result } = renderHook(() => useSingleFlight());
+    const gate = deferred();
+    let firstSignal!: AbortSignal;
+    let first!: Promise<string | undefined>;
+    act(() => {
+      first = result.current.run(async (signal) => {
+        firstSignal = signal;
+        await gate.promise;
+        return "first";
+      });
+    });
+
+    act(() => result.current.cancel());
+    expect(firstSignal.aborted).toBe(true);
+    expect(result.current.pending).toBe(false);
+
+    const second = deferred();
+    act(() => {
+      void result.current.run(() => second.promise);
+    });
+    expect(result.current.pending).toBe(true);
+    await act(async () => gate.resolve());
+    expect(await first).toBe("first");
+    // The cancelled run settling must not free the newer run's lock.
+    expect(result.current.pending).toBe(true);
+    const third = vi.fn(async () => "third");
+    let refused!: Promise<string | undefined>;
+    act(() => {
+      refused = result.current.run(third);
+    });
+    expect(await refused).toBeUndefined();
+    expect(third).not.toHaveBeenCalled();
+    await act(async () => second.resolve());
+  });
+
+  it("cancel with nothing running does nothing", () => {
+    const { result } = renderHook(() => useSingleFlight());
+    act(() => result.current.cancel());
+    expect(result.current.pending).toBe(false);
+  });
 });

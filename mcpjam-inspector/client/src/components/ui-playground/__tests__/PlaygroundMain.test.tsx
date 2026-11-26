@@ -3008,6 +3008,121 @@ describe("PlaygroundMain", () => {
       expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
     });
 
+    describe("Cancel sending", () => {
+      const composer = () =>
+        mockChatInputProps.mock.calls.at(-1)?.[0] as {
+          value: string;
+          disabled?: boolean;
+          isSubmitting?: boolean;
+          onCancelSubmit?: () => void;
+        };
+
+      it("frees Send at once when a send held at the server wait is cancelled, and sends nothing", async () => {
+        const toastError = vi.spyOn(toast, "error");
+        const readiness = holdServerReadiness();
+        await renderWithThreadA({
+          ensureServersReady: readiness.ensureServersReady,
+        });
+        await typeAndSend("draft for A");
+        expect(composer().isSubmitting).toBe(true);
+
+        await act(async () => composer().onCancelSubmit?.());
+
+        expect(composer().isSubmitting).toBe(false);
+        expect(composer().value).toBe("draft for A");
+        // The connect attempt still owns the box until it ends.
+        expect(composer().disabled).toBe(true);
+        await act(async () => readiness.release());
+        await settle();
+        expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+        expect(toastError).not.toHaveBeenCalled();
+        expect(composer().disabled).toBe(false);
+
+        // The next send goes out once.
+        mockSharedAppState.servers["test-server"] = {
+          connectionStatus: "connected",
+        };
+        await act(async () => {
+          fireEvent.submit(screen.getByTestId("chat-input"));
+        });
+        await settle();
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ text: "draft for A" }),
+        );
+      });
+
+      it("hides the read's error when the send was cancelled while the thread was read", async () => {
+        const toastError = vi.spyOn(toast, "error");
+        await openThreadA();
+        let failRead!: () => void;
+        mockReadHistory.mockImplementation(
+          () =>
+            new Promise((_, reject) => {
+              failRead = () => reject(new WebApiError(503, null, "down"));
+            }),
+        );
+        await typeAndSend("draft for A");
+        await settle();
+        expect(composer().isSubmitting).toBe(true);
+
+        await act(async () => composer().onCancelSubmit?.());
+        await act(async () => failRead());
+        await settle();
+
+        expect(toastError).not.toHaveBeenCalled();
+        expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+        expect(composer().value).toBe("draft for A");
+      });
+
+      it.each([
+        {
+          change: "another thread",
+          leave: async () => {
+            await act(async () => {
+              void bridge()?.onSelectThread(sessionB);
+            });
+          },
+        },
+        {
+          change: "New chat",
+          leave: async () => {
+            await act(async () => {
+              void bridge()?.onNewChat();
+            });
+          },
+        },
+        {
+          change: "Clear chat",
+          leave: async () => {
+            fireEvent.click(screen.getByRole("button", { name: "Clear chat" }));
+            fireEvent.click(
+              within(screen.getByTestId("confirm-dialog")).getByRole("button", {
+                name: "Confirm",
+              }),
+            );
+          },
+        },
+      ])(
+        "frees Send at once when the user opens $change during the wait",
+        async ({ leave }) => {
+          const readiness = holdServerReadiness();
+          await renderWithThreadA({
+            ensureServersReady: readiness.ensureServersReady,
+          });
+          await typeAndSend("draft for A");
+          expect(composer().isSubmitting).toBe(true);
+
+          await leave();
+
+          expect(composer().isSubmitting).toBe(false);
+          await act(async () => readiness.release());
+          await settle();
+          expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+        },
+      );
+    });
+
     it("stops at the wait it was in: the old thread's state read is not taken after a switch", async () => {
       // Live state not current, so a send that kept going would read A's state.
       const readiness = holdServerReadiness();
