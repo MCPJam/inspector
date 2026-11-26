@@ -325,6 +325,7 @@ import {
 import { useComparePaneSkillsSection } from "./compare-pane-skills";
 import { useComparePaneControls } from "./use-compare-pane-controls";
 import { useComparePaneDisplayStore } from "@/stores/compare-pane-display-store";
+import { resolveComparePaneTheme } from "@/lib/compare-pane-theme";
 import { usePlaygroundClientInitialization } from "./use-playground-client-initialization";
 import { useMissingLeadFallback } from "./use-missing-lead-fallback";
 import { playgroundClientInitNotice } from "./playground-client-init-notice";
@@ -7715,7 +7716,12 @@ export function PlaygroundMain({
                         );
                         const column = resolution.column;
                         const columnDisplay = paneDisplays[column.compareId];
-                        const columnTheme = columnDisplay?.theme ?? extractHostTheme(column.hostConfig.hostContext) ?? globalThemeMode;
+                        const { theme: columnTheme } = resolveComparePaneTheme(
+                          globalThemeMode,
+                          columnDisplay?.theme,
+                          column.hostConfig.hostContext,
+                          column.preferAppThemeInCompare,
+                        );
                         return (
                         <MultiModelPlaygroundCard
                           className={compareLaneHidden(`host:${column.compareId}`)}
@@ -7806,7 +7812,7 @@ export function PlaygroundMain({
                           hostStyle={column.hostSnapshot.hostStyle}
                           effectiveThreadTheme={columnTheme}
                           deviceType={columnDisplay?.deviceType ?? storeDeviceType}
-                          displayOverrides={columnDisplay}
+                          displayDeviceOverride={columnDisplay?.deviceType}
                           hideInlineEdit={hideInlineEdit}
                           onWidgetStateChange={onWidgetStateChange}
                           toolRenderOverrides={externalToolRenderOverrides}
