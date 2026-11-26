@@ -16,7 +16,11 @@ import {
   stepsToPromptTurns,
 } from "@/shared/steps";
 import type { EvalIteration } from "../evals/types";
-import { describeOrgKeysRefusal, runRefusal } from "@/lib/org-keys-refusal";
+import {
+  describeOrgKeysRefusal,
+  envelopeCode,
+  runRefusal,
+} from "@/lib/org-keys-refusal";
 import { chainForQuickRunIteration } from "./simple-case/quick-run-chain";
 
 /** Recorded error categories. */
@@ -127,11 +131,21 @@ function stoppingReason(chain: EvalRunDecisionChain): StageReason | null {
   return withReason?.reason ?? null;
 }
 
-function causeFromText(error: string | undefined): RunErrorCause | null {
+function causeFromText(
+  error: string | undefined,
+  storedCode: unknown,
+): RunErrorCause | null {
   const text = error?.trim();
   if (!text) return null;
   if (NOT_CONNECTED_PATTERN.test(text)) return "serverUnreachable";
-  return ORIGIN_CAUSE[originOf(describeError(new Error(text)))];
+  // A refusal for a model with no private provider is named only by the code
+  // in the backend's stored body; its sentence alone reads as unknown. Other
+  // codes keep classifying from the text, as before.
+  const described =
+    storedCode === "policy_no_zdr_endpoint"
+      ? Object.assign(new Error(text), { code: storedCode })
+      : new Error(text);
+  return ORIGIN_CAUSE[originOf(describeError(described))];
 }
 
 /**
@@ -202,7 +216,10 @@ function classifyReason(
     return reasonCause;
   }
   return (
-    causeFromText(error) ??
+    causeFromText(
+      error,
+      ownFailure ? envelopeCode(iteration.errorDetails) : undefined,
+    ) ??
     (reasonCause === "platform" ? "platform" : "unknown")
   );
 }
