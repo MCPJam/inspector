@@ -1,12 +1,7 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
-import { MemoryRouter } from "react-router";
+import { Link, MemoryRouter, Route, Routes } from "react-router";
 import { describe, expect, it, vi } from "vitest";
-import {
-  AnnouncementQueueProvider,
-  useAnnouncementSlot,
-} from "@/components/announcement-slot";
 import { CaniuseComparePage } from "../CaniuseComparePage";
 
 vi.mock("@/lib/host-compat/use-host-catalog", async () => {
@@ -15,29 +10,22 @@ vi.mock("@/lib/host-compat/use-host-catalog", async () => {
 });
 
 describe("CaniuseComparePage", () => {
-  it("waits for the announcement slot before showing the skippable intro", () => {
-    function PriorAnnouncement() {
-      const [eligible, setEligible] = useState(true);
-      const { open } = useAnnouncementSlot(eligible);
-      return open ? (
-        <button onClick={() => setEligible(false)}>Dismiss announcement</button>
-      ) : null;
-    }
-
+  it("shows a skippable intro once on the initial Compare load", () => {
     render(
       <MemoryRouter initialEntries={["/compare"]}>
-        <AnnouncementQueueProvider>
-          <PriorAnnouncement />
-          <CaniuseComparePage />
-        </AnnouncementQueueProvider>
+        <Routes>
+          <Route path="/compare" element={<CaniuseComparePage />} />
+          <Route path="/capabilities/:slug" element={<Link to="/compare">Back to Compare</Link>} />
+        </Routes>
       </MemoryRouter>,
     );
-    expect(screen.queryByRole("button", { name: "Skip intro" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Dismiss announcement" }));
     fireEvent.click(screen.getByRole("button", { name: "Skip intro" }));
     expect(
       screen.getByRole("combobox", { name: "Search capabilities" }),
     ).toBeVisible();
+    fireEvent.click(screen.getByRole("link", { name: "Capabilities" }));
+    fireEvent.click(screen.getByRole("link", { name: "Back to Compare" }));
+    expect(screen.queryByRole("button", { name: "Skip intro" })).toBeNull();
   });
 
   it("qualifies the Events score with its published-results denominator", () => {
@@ -69,13 +57,13 @@ describe("CaniuseComparePage", () => {
         <CaniuseComparePage />
       </MemoryRouter>,
     );
-    expect(screen.queryByRole("link", { name: /Verify Claude Code/ })).toBeNull();
-    const share = screen.getByRole("button", { name: "Share" });
+    expect(screen.queryByRole("link", { name: "Claude Code" })).toBeNull();
+    const share = screen.getByRole("button", { name: "Copy comparison link" });
     const heading = screen.getByRole("heading", { name: "Capability matrix" });
     expect(heading.nextElementSibling).toBe(share);
     expect(share).toHaveTextContent(/^$/);
     await user.click(share);
-    expect(await screen.findByText("Link copied")).toHaveClass("sr-only");
+    expect(await within(share).findByText("Link copied")).toHaveClass("sr-only");
     expect(screen.queryByRole("dialog")).toBeNull();
     const params = new URL(writeText.mock.calls[0][0]).searchParams;
     expect(params.get("q")).toBe(query);

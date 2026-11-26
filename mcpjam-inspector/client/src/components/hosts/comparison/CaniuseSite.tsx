@@ -3,6 +3,8 @@ import { Link, useLocation } from "react-router";
 import { getScenarioHostLogo } from "@/lib/scenario-client-style";
 import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
 import { routePaths } from "@/lib/app-navigation";
+import { useServerSupportsFeature } from "@/lib/server-capabilities";
+import { NotifyButton, ReportInconsistencyDialog } from "./HostConfigCompareView";
 import "./caniuse-site.css";
 
 export const CANIUSE_CAPABILITIES_HOME = "/capabilities/event-delivery";
@@ -18,12 +20,11 @@ export function clientLogo(subject: HostComparisonSubject) {
 export function CaniuseSite({
   current,
   children,
-  footer,
 }: {
   current: "compare" | "capabilities";
   children: ReactNode;
-  footer?: ReactNode;
 }) {
+  const publicSiteRelays = useServerSupportsFeature("public-site-relays");
   const scroller = useRef<HTMLDivElement>(null);
   const { pathname } = useLocation();
   useEffect(() => {
@@ -74,7 +75,12 @@ export function CaniuseSite({
       </header>
       <main className="caniuse-wrap pb-10">{children}</main>
       <footer className="caniuse-wrap flex flex-wrap items-center gap-4 pb-8 text-muted-foreground">
-        {footer}
+        {publicSiteRelays !== false && (
+          <>
+            <ReportInconsistencyDialog footer />
+            <NotifyButton footer />
+          </>
+        )}
         <a
           href="https://www.mcpjam.com/"
           aria-label="By MCPJam"

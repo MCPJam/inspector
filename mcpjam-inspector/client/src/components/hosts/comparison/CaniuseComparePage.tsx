@@ -1,18 +1,15 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router";
+import { Link, useLocation, useSearchParams } from "react-router";
 import { useReducedMotion } from "framer-motion";
-import { Search } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { Input } from "@mcpjam/design-system/input";
 import { Switch } from "@mcpjam/design-system/switch";
 import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
-import { useAnnouncementSlot } from "@/components/announcement-slot";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { FLAG_GATED_HOST_IDS } from "@/lib/host-compat/feature-visibility";
-import { useServerSupportsFeature } from "@/lib/server-capabilities";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { buildHostCompareSnapshot } from "@/lib/webmcp/review-surface-snapshots";
-import type { HostConfigFieldDef } from "@/lib/host-config-field-schema";
+import { NOT_SUPPORTED, type HostConfigFieldDef } from "@/lib/host-config-field-schema";
 import { buildPresetCompareEntries } from "./host-compare-presets";
 import {
   parseHostsParam,
@@ -36,11 +33,9 @@ import { clientLogo, CaniuseSite } from "./CaniuseSite";
 import { HostConfigComparisonMatrix } from "./host-config-comparison-matrix";
 import {
   fieldSearchQueryFromParams,
-  NotifyButton,
-  ReportInconsistencyDialog,
   ShareComparisonDialog,
 } from "./HostConfigCompareView";
-import { fieldMatchesQuery } from "./support-level";
+import { CaniuseCapabilitySearch, matchesCaniuseQuery } from "./CaniuseCapabilitySearch";
 
 const DEFAULT_CLIENTS = ["preset:claude", "preset:chatgpt", "preset:cursor"];
 const INTRO_PROMPTS = [
@@ -52,7 +47,6 @@ let introSeen = false;
 
 export function CaniuseComparePage() {
   const { catalog } = useHostCatalog();
-  const publicSiteRelays = useServerSupportsFeature("public-site-relays");
   const source = catalog ?? bundledHostCompatCatalog();
   const { hosts, subjects } = useMemo(
     () => buildPresetCompareEntries(source),
@@ -67,6 +61,7 @@ export function CaniuseComparePage() {
     [subjects],
   );
   const [params, setParams] = useSearchParams();
+  const location = useLocation();
   const pendingParams = useRef(params);
   useLayoutEffect(() => {
     pendingParams.current = params;
@@ -75,10 +70,9 @@ export function CaniuseComparePage() {
   const [showDescriptions, setShowDescriptions] = useState(false);
   const reduceMotion = useReducedMotion();
   const [intro, setIntro] = useState(() =>
-    !introSeen && !params.size && !reduceMotion ? 0 : null,
-  );
-  const { open: showIntro, contentRef: introRef } = useAnnouncementSlot(
-    intro !== null && !params.size && !reduceMotion,
+    !introSeen && location.key === "default" && !params.size && !reduceMotion
+      ? 0
+      : null,
   );
   const known = new Set(clients.map(({ hostId }) => hostId));
   const pinnedIds = reconcileHostCompareSelection(
@@ -97,19 +91,7 @@ export function CaniuseComparePage() {
   const selected = selectedIds.map((id) => subjects[id]);
   const matchingFields = useMemo(
     () =>
-      fields
-        .filter(
-          (field) =>
-            fieldMatchesQuery(field, query) ||
-            caniuseTitle(field)
-              .toLowerCase()
-              .includes(query.trim().toLowerCase()),
-        )
-        .map((field) =>
-          caniuseTitle(field) === field.label
-            ? field
-            : { ...field, label: caniuseTitle(field) },
-        ),
+      fields.filter((field) => matchesCaniuseQuery(field, query)),
     [fields, query],
   );
   const summaries = useMemo(
@@ -133,6 +115,55 @@ export function CaniuseComparePage() {
       ),
     [fields, clients],
   );
+  const protocol = fields.find((field) => field.id === "supportedProtocolVersions");
+  const versions = protocol ? summaries.get(protocol.id)?.slices ?? [] : [];
+  const matrixFields = fields.flatMap((field) => {
+    const matches = matchingFields.includes(field);
+    if (field !== protocol || versions.length === 0) {
+      return matches ? [{ ...field, label: caniuseTitle(field) }] : [];
+    }
+    const rows: HostConfigFieldDef[] = [];
+    if (matches) {
+      rows.push({
+        ...field,
+        label: caniuseTitle(field),
+        kind: { kind: "boolean" },
+        read: (config) => {
+          const value = field.read(config);
+          if (Array.isArray(value)) return value.length > 0;
+          return value === NOT_SUPPORTED ? false : undefined;
+        },
+      });
+    }
+    for (const { slice } of versions) {
+      if (!matches && !slice.includes(query.trim())) continue;
+      rows.push({
+        ...field,
+        id: `${field.id}:${slice}`,
+        label: slice,
+        description: undefined,
+        kind: { kind: "boolean" },
+        read: (config) => {
+          const value = field.read(config);
+          if (Array.isArray(value)) return value.includes(slice);
+          return value === NOT_SUPPORTED ? false : undefined;
+        },
+      });
+    }
+    return rows;
+  });
+  const versionScores = new Map(versions.map(({ slice, score }) => [
+    `supportedProtocolVersions:${slice}`,
+    { slice, score },
+  ]));
+
+  function fieldDestination(field: HostConfigFieldDef) {
+    const version = versionScores.get(field.id);
+    const capability = getCaniuseCapabilityForField(version && protocol ? protocol : field);
+    if (!capability) return null;
+    const path = buildCaniuseCapabilityPath(capability.slug);
+    return version ? `${path}?slice=${encodeURIComponent(version.slice)}` : path;
+  }
 
   useSurfaceAgentBridge({
     surfaceId: "host-compare",
@@ -151,13 +182,13 @@ export function CaniuseComparePage() {
   });
 
   useEffect(() => {
-    if (!showIntro || intro === null) return;
+    if (intro === null || reduceMotion) return;
     introSeen = true;
     const timer = window.setTimeout(() => {
       setIntro(intro + 1 < INTRO_PROMPTS.length ? intro + 1 : null);
-    }, 1050);
+    }, 1400);
     return () => window.clearTimeout(timer);
-  }, [intro, showIntro]);
+  }, [intro, reduceMotion]);
 
   function updateQuery(value: string) {
     const next = new URLSearchParams(pendingParams.current);
@@ -175,11 +206,11 @@ export function CaniuseComparePage() {
     setParams(next);
   }
 
-  if (showIntro && intro !== null) {
+  if (intro !== null && !reduceMotion) {
     const prompt = INTRO_PROMPTS[intro];
     return (
       <div className="dark caniuse-site h-full overflow-auto bg-background text-foreground" data-page="compare">
-        <div ref={introRef} className="caniuse-wrap pt-24 sm:pt-36">
+        <div className="caniuse-wrap pt-24 sm:pt-36">
           <div
             className="caniuse-hero flex flex-wrap items-baseline gap-x-[0.23em] gap-y-1 font-bold"
             aria-hidden="true"
@@ -217,27 +248,12 @@ export function CaniuseComparePage() {
   }
 
   return (
-    <CaniuseSite
-      current="compare"
-      footer={publicSiteRelays !== false && (
-        <>
-          <ReportInconsistencyDialog footer />
-          <NotifyButton footer />
-        </>
-      )}
-    >
+    <CaniuseSite current="compare">
       <div className="caniuse-reveal">
         <div className="pb-10 pt-12 sm:pb-14 sm:pt-20">
-          <div className="caniuse-hero flex flex-wrap items-baseline gap-x-[0.23em] gap-y-1 font-bold">
+          <div className="caniuse-hero relative z-10 flex flex-wrap items-baseline gap-x-[0.23em] gap-y-1 font-bold">
             <h1 className="whitespace-nowrap">Can I use</h1>
-            <input
-              aria-label="Type a capability"
-              placeholder="type a capability…"
-              value={query}
-              onChange={(event) => updateQuery(event.target.value)}
-              list="caniuse-suggestions"
-              className="min-w-0 max-w-[13em] flex-[1_1_9em] border-b border-primary/40 bg-transparent pb-1 text-primary focus-visible:border-ring focus-visible:outline-none"
-            />
+            <CaniuseCapabilitySearch fields={fields} query={query} onQueryChange={updateQuery} hero />
           </div>
           <p className="caniuse-byline mt-5 text-muted-foreground">
             Compare MCP client support for protocol versions, features, and
@@ -250,8 +266,8 @@ export function CaniuseComparePage() {
           onChange={updateSelection}
         />
         <section aria-labelledby="caniuse-matrix-heading" className="min-w-0 rounded-xl border border-border bg-card">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-3 sm:px-5">
-            <div className="flex basis-full items-center gap-2 sm:mr-auto sm:basis-auto">
+          <div className="relative z-40 flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-3 sm:px-5">
+            <div className="flex basis-full items-center gap-2 sm:basis-auto">
               <h2 id="caniuse-matrix-heading" className="font-bold">
                 Capability matrix
               </h2>
@@ -273,28 +289,13 @@ export function CaniuseComparePage() {
               />{" "}
               Show descriptions
             </label>
-            <div className="relative min-w-28 flex-1 sm:min-w-36 sm:max-w-xs">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                className="pl-9"
-                aria-label="Search capabilities"
-                placeholder="Search capabilities…"
-                value={query}
-                onChange={(event) => updateQuery(event.target.value)}
-                list="caniuse-suggestions"
-              />
-            </div>
-            <datalist id="caniuse-suggestions">
-              {fields.map((field) => (
-                <option key={field.id} value={caniuseTitle(field)} />
-              ))}
-            </datalist>
+            <CaniuseCapabilitySearch fields={fields} query={query} onQueryChange={updateQuery} />
           </div>
           {selected.length > 0 && (
             <div className="min-w-0 [&>div]:rounded-t-none [&>div]:border-x-0 [&>div]:border-b-0">
               <HostConfigComparisonMatrix
                 subjects={selected}
-                fields={matchingFields}
+                fields={matrixFields}
                 showDescriptions={showDescriptions}
                 themeMode="dark"
                 mobileOptimized
@@ -302,7 +303,24 @@ export function CaniuseComparePage() {
                 disabledVerifyTemplateIds={FLAG_GATED_HOST_IDS}
                 summaryColumn={{
                   label: "Client adoption",
+                  renderFieldLabel: (field) => {
+                    const href = fieldDestination(field);
+                    return href && (
+                      <Link to={href} className="rounded-sm hover:text-primary hover:underline focus-visible:outline-2 focus-visible:outline-ring">
+                        {field.label}{" "}
+                        <ArrowUpRight aria-hidden className="inline size-3 text-muted-foreground" />
+                      </Link>
+                    );
+                  },
                   render: (field) => {
+                    const version = versionScores.get(field.id);
+                    if (version) {
+                      return (
+                        <div className="text-center text-xs font-bold tabular-nums text-primary">
+                          {version.score === null ? "No results" : `${version.score}%`}
+                        </div>
+                      );
+                    }
                     const summary = summaries.get(field.id);
                     return (
                       summary && (
@@ -361,7 +379,7 @@ function MatrixAdoption({
           {label}
         </Link>
       )}
-      {slices.map(({ slice, score }) => (
+      {field.id !== "supportedProtocolVersions" && slices.map(({ slice, score }) => (
         <span key={slice} className="text-[11px]">
           {sliceLabel(slice)} {score === null ? "–" : `${score}%`}
         </span>

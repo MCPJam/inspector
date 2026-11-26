@@ -3163,9 +3163,13 @@ export default function App() {
   const isConformanceSharedRoute =
     barePathname === routePaths.conformanceShared ||
     barePathname.startsWith(`${routePaths.conformanceShared}/`);
-  const isBareCaniuseRoute =
-    barePathname === routePaths.embedHostCompare ||
+  const isCaniuseSite =
     barePathname === routePaths.caniuseCompare ||
+    barePathname === routePaths.capabilities ||
+    barePathname.startsWith(`${routePaths.capabilities}/`);
+  const isBareCaniuseRoute =
+    isCaniuseSite ||
+    barePathname === routePaths.embedHostCompare ||
     barePathname === routePaths.embedScore ||
     barePathname === routePaths.embedBench ||
     // `/embed/bench/<runId>` is the same chrome-less screen resumed, so the
@@ -3175,8 +3179,7 @@ export default function App() {
     barePathname.startsWith(`${routePaths.benchResults}/`) ||
     barePathname.startsWith(`${routePaths.scoreResults}/`) ||
     isConformanceSharedRoute ||
-    barePathname.startsWith(`${routePaths.evalsShared}/`) ||
-    barePathname.startsWith(`${routePaths.capabilities}/`);
+    barePathname.startsWith(`${routePaths.evalsShared}/`);
   // The WorkOS Initiate Login URL, where an IdP-initiated login (the Okta app
   // tile) is parked for the instant it takes `LoginInitiationRoute` to start a
   // fresh sign-in. `/login` is not a known tab segment, so it resolves to the
@@ -6004,7 +6007,7 @@ export default function App() {
     !isDebugCallback &&
     !isHostedChatRoute &&
     pendingCheckoutIntent === null &&
-    !isBareCaniuseRoute &&
+    !isCaniuseSite &&
     !isLoginInitiationRoute &&
     !hasHostTemplateVerifyParam &&
     isProjectScopedFirstRunDestinationReady &&
@@ -6630,6 +6633,7 @@ export default function App() {
     "billing",
   ].includes(activeTab);
   const announcementsEnabled =
+    !isBareCaniuseRoute &&
     !isWorkOsLoading &&
     !isAuthLoading &&
     effectiveHostedShellGateState === "ready" &&
@@ -6999,9 +7003,8 @@ export default function App() {
     </PreferencesStoreProvider>
   );
 
-  const isPublicCompare = barePathname === routePaths.caniuseCompare;
   return (
-    <AnnouncementQueueProvider enabled={announcementsEnabled || isPublicCompare}>
+    <AnnouncementQueueProvider enabled={announcementsEnabled}>
       {shell}
     </AnnouncementQueueProvider>
   );
