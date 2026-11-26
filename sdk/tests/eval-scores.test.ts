@@ -525,6 +525,57 @@ describe("predicateScorer", () => {
       /hosted run captures/
     );
   });
+
+  it("keeps one id for a rule however its library version is tagged", () => {
+    const ids = [
+      predicateScorer({ type: "noToolErrors" }),
+      predicateScorer({
+        type: "noToolErrors",
+        evaluator: { id: "actionable-tool-errors", version: 1 },
+      }),
+      predicateScorer({
+        type: "noToolErrors",
+        evaluator: { id: "actionable-tool-errors", version: 2 },
+      }),
+    ].map((scorer) => scorer.definition.scorerId);
+    expect(new Set(ids).size).toBe(1);
+  });
+
+  it("does not score a declared-schema check it could not measure", async () => {
+    const scorer = predicateScorer({
+      type: "toolResultMatchesSchema",
+      schema: "declared",
+    });
+    // A result, but no captured declarations: an evidence error, not a 0.
+    await expect(
+      Promise.resolve().then(() =>
+        scorer.score({
+          version: 1,
+          scenario: { title: "declared schema" },
+          trace: { messages: [] },
+          transcript: {
+            toolCalls: [],
+            toolResults: [
+              {
+                toolName: "get_order",
+                structuredContent: {},
+                size: {
+                  bytes: 2,
+                  basis: "model_visible_output",
+                  complete: true,
+                },
+              },
+            ],
+            capture: {
+              toolInventory: "absent",
+              toolResults: "complete",
+              toolCallTimings: "absent",
+            },
+          },
+        })
+      )
+    ).rejects.toThrow(/declarations/);
+  });
 });
 
 describe("judgeScorer", () => {

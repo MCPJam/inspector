@@ -26,6 +26,7 @@ import type { InfraFailureEvidence } from "../../utils/infra-failure-evidence.js
  */
 
 import type { ModelMessage } from "ai";
+import type { TranscriptToolDeclaration } from "@mcpjam/sdk/predicates";
 import type { PredicateResult, ToolErrorRecord } from "@/shared/eval-matching";
 import {
   buildIterationTranscript,
@@ -129,6 +130,13 @@ export interface StepExecutionState {
   skippedSteps: SkippedStep[];
   /** Accumulated usage across `prompt` steps. */
   usage: UsageSummary;
+  /**
+   * What the selected servers declared, so an `assert` step's checks that
+   * read declarations (such as declared output schemas) see the same
+   * inventory the case-level verdict does.
+   */
+  toolDeclarations?: TranscriptToolDeclaration[];
+  declarationsCaptured?: "complete" | "partial" | "absent";
 }
 
 /** A step that fail-fast skipped (an earlier step failed). */
@@ -140,8 +148,14 @@ export interface SkippedStep {
   reason: string;
 }
 
-export function createStepExecutionState(): StepExecutionState {
+export function createStepExecutionState(
+  declarations: Pick<
+    StepExecutionState,
+    "toolDeclarations" | "declarationsCaptured"
+  > = {},
+): StepExecutionState {
   return {
+    ...declarations,
     messages: [],
     toolCalls: [],
     toolCallsByTurn: [],
@@ -330,6 +344,8 @@ function snapshotTranscript(state: StepExecutionState) {
     resultsCaptured: evidence.resultsCaptured,
     toolCallTimings: evidence.toolCallTimings,
     timingsCaptured: evidence.timingsCaptured,
+    toolDeclarations: state.toolDeclarations,
+    declarationsCaptured: state.declarationsCaptured,
     ...(finalAssistantMessage !== undefined ? { finalAssistantMessage } : {}),
     usage:
       state.usage.inputTokens ||

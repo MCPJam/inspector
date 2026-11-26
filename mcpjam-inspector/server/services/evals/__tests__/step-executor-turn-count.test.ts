@@ -123,3 +123,60 @@ describe("step-executor turnCountUnder assert", () => {
     expect(result!.reason).toContain("1 tool error(s)");
   });
 });
+
+describe("step-executor declared-schema assert", () => {
+  it("reads the declarations the state was created with", async () => {
+    const state = createStepExecutionState({
+      declarationsCaptured: "complete",
+      toolDeclarations: [
+        {
+          serverKey: "shop",
+          name: "get_order",
+          inputSchema: { type: "object" },
+          outputSchema: {
+            type: "object",
+            properties: { status: { type: "string" } },
+            required: ["status"],
+          },
+        },
+      ],
+    });
+    await executeSteps({
+      steps: [
+        prompt("p0"),
+        {
+          id: "a",
+          kind: "assert",
+          assertion: { type: "toolResultMatchesSchema", schema: "declared" },
+        },
+      ],
+      state,
+      browser: makeBrowser(),
+      handlers: {
+        onPrompt: vi.fn(async ({ step }): Promise<StepEngineOutcome> => ({
+          messages: [
+            { role: "user", content: step.prompt },
+            {
+              role: "tool",
+              content: [
+                {
+                  type: "tool-result",
+                  toolCallId: "c1",
+                  toolName: "get_order",
+                  output: { type: "json", value: { status: "ok" } },
+                  result: { structuredContent: { status: "ok" } },
+                },
+              ],
+            },
+            { role: "assistant", content: "ok" },
+          ],
+          toolCalls: [],
+        })),
+        onToolCall: vi.fn(),
+      },
+    });
+    const [result] = state.assertionResults;
+    expect(result!.reason).not.toContain("declarations were not captured");
+    expect(result!.passed).toBe(true);
+  });
+});

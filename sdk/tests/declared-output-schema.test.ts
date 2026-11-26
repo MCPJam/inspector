@@ -101,11 +101,78 @@ describe("toolResultMatchesSchema with the declared schema", () => {
   test("fails a tool with an output schema that returns no structuredContent", () => {
     const verdict = run(
       transcript([
-        result("get_order", { text: '{"status":"confirmed","total":42}' }),
+        result("get_order", {
+          text: '{"status":"confirmed","total":42}',
+          rawBytes: 40,
+        }),
       ])
     );
     expect(verdict.passed).toBe(false);
     expect(verdict.reason).toContain("returned no structuredContent");
+  });
+
+  test("reports a result stored without its raw CallToolResult as unmeasured", () => {
+    const verdict = run(
+      transcript([
+        result("get_order", { text: '{"status":"confirmed","total":42}' }),
+      ])
+    );
+    expect(verdict.status).toBe("error");
+    expect(verdict.reason).toContain("without the raw CallToolResult");
+  });
+
+  test("does not guess when two servers declare one name with different schemas", () => {
+    const fromA = { ...getOrder, serverKey: "a" };
+    const fromB = {
+      ...getOrder,
+      serverKey: "b",
+      outputSchema: {
+        type: "object",
+        properties: { b: { type: "string" } },
+        required: ["b"],
+      },
+    };
+    for (const payload of [{ b: "ok" }, { status: "x", total: 1 }]) {
+      const verdict = run(
+        transcript(
+          [result("get_order", { structuredContent: payload, rawBytes: 20 })],
+          [fromA, fromB]
+        )
+      );
+      expect(verdict.status).toBe("error");
+      expect(verdict.reason).toContain("more than one server");
+    }
+  });
+
+  test("still passes when servers share a name and an identical schema", () => {
+    const verdict = run(
+      transcript(
+        [
+          result("get_order", {
+            structuredContent: { status: "ok", total: 1 },
+            rawBytes: 30,
+          }),
+        ],
+        [getOrder, { ...getOrder, serverKey: "other" }]
+      )
+    );
+    expect(verdict.passed).toBe(true);
+    expect(verdict.status).toBeUndefined();
+  });
+
+  test("a capped text field does not stop a complete structured result passing", () => {
+    const verdict = run(
+      transcript([
+        result("get_order", {
+          text: "{...",
+          truncated: true,
+          structuredContent: { status: "ok", total: 1 },
+          rawBytes: 30,
+        }),
+      ])
+    );
+    expect(verdict.passed).toBe(true);
+    expect(verdict.status).toBeUndefined();
   });
 
   test("skips error results and tools without an output schema", () => {
