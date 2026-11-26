@@ -34,6 +34,7 @@ function renderShell(props: {
 
 describe("CanvasShell", () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
@@ -105,4 +106,18 @@ describe("CanvasShell", () => {
       clearTimeoutSpy.mockRestore();
     },
   );
+
+  it("does not schedule a reveal if React Flow initializes after unmount", async () => {
+    vi.useFakeTimers();
+    const setTimeoutSpy = vi.spyOn(window, "setTimeout");
+    const { unmount } = renderShell({});
+
+    unmount();
+    setTimeoutSpy.mockClear();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20);
+    });
+
+    expect(setTimeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), 60);
+  });
 });
