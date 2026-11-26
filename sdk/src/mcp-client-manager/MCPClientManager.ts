@@ -327,6 +327,21 @@ import { http1Fetch } from "../http1-fetch.js";
  * in-band `RequestTimeout` (-32001), which is what `ClientRequestOptions.timeout`
  * actually raises and is therefore the one most likely to be hit.
  */
+/**
+ * A request that ran out of time: the upstream client's `REQUEST_TIMEOUT`, the
+ * in-band `RequestTimeout` (-32001), or a `TimeoutError`. Not a cancel, and
+ * not a closed connection.
+ */
+function isRequestTimeout(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const { code, name } = error as { code?: unknown; name?: unknown };
+  return (
+    code === "REQUEST_TIMEOUT" ||
+    code === MCP_ERROR_CODES.RequestTimeout ||
+    name === "TimeoutError"
+  );
+}
+
 function isAbortError(error: unknown): boolean {
   if (typeof DOMException !== "undefined" && error instanceof DOMException) {
     return error.name === "AbortError" || error.name === "TimeoutError";
@@ -2026,18 +2041,38 @@ export class MCPClientManager {
    * there; its result is discarded and the ping contract's `EmptyResult`
    * returned, so callers stay era-agnostic. Legacy connections keep the
    * wire-identical `ping`.
+   *
+   * A `ping` that gets no answer in time ends the connection. Every 2025
+   * revision says of a ping: "Timeouts SHOULD be treated as connection
+   * failures" (basic/utilities/ping.mdx, Error Handling). The timeout is still
+   * thrown; the next call on this server opens a new connection. A caller's
+   * own abort is not a timeout and leaves the connection as it is, and so
+   * does the modern `server/discover` probe, which that rule does not cover.
    */
   async pingServer(
     serverId: string,
     options?: RequestOptions
   ): Promise<Awaited<ReturnType<Client["ping"]>>> {
-    return this.runRetryableReadOperation(serverId, options, async (client) => {
-      if (client.getProtocolEra?.() === "modern" && client.discover) {
-        await client.discover(options);
-        return {} as Awaited<ReturnType<Client["ping"]>>;
+    let sentPing = false;
+    try {
+      return await this.runRetryableReadOperation(
+        serverId,
+        options,
+        async (client) => {
+          if (client.getProtocolEra?.() === "modern" && client.discover) {
+            await client.discover(options);
+            return {} as Awaited<ReturnType<Client["ping"]>>;
+          }
+          sentPing = true;
+          return client.ping(options);
+        }
+      );
+    } catch (error) {
+      if (sentPing && !options?.signal?.aborted && isRequestTimeout(error)) {
+        await this.disconnectServer(serverId).catch(() => undefined);
       }
-      return client.ping(options);
-    });
+      throw error;
+    }
   }
 
   /**

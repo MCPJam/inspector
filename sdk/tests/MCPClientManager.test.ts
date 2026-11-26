@@ -871,6 +871,65 @@ describe("MCPClientManager", () => {
       expect(fakeClient.ping).toHaveBeenCalledTimes(2);
     });
 
+    it("drops the connection when a ping gets no answer in time", async () => {
+      // 2025 revisions, basic/utilities/ping.mdx: "Timeouts SHOULD be treated
+      // as connection failures".
+      const timeout = Object.assign(new Error("Request timed out"), {
+        code: "REQUEST_TIMEOUT",
+      });
+      const fakeClient = { ping: jest.fn().mockRejectedValue(timeout) };
+
+      seedRegisteredServer(manager, "ping-timeout", {
+        url: new URL("https://example.test/mcp"),
+      });
+      seedLiveState(manager, "ping-timeout", { client: fakeClient });
+      expect(manager.getConnectionStatus("ping-timeout")).toBe("connected");
+
+      await expect(manager.pingServer("ping-timeout")).rejects.toBe(timeout);
+
+      expect(manager.getConnectionStatus("ping-timeout")).toBe("disconnected");
+    });
+
+    it("keeps the connection when a ping fails for another reason", async () => {
+      const refused = Object.assign(new Error("Method not found"), {
+        code: -32601,
+      });
+      const fakeClient = { ping: jest.fn().mockRejectedValue(refused) };
+
+      seedRegisteredServer(manager, "ping-refused", {
+        url: new URL("https://example.test/mcp"),
+      });
+      seedLiveState(manager, "ping-refused", { client: fakeClient });
+
+      await expect(manager.pingServer("ping-refused")).rejects.toBe(refused);
+
+      expect(manager.getConnectionStatus("ping-refused")).toBe("connected");
+    });
+
+    it("keeps the connection when the modern server/discover probe times out", async () => {
+      const timeout = Object.assign(new Error("Request timed out"), {
+        code: "REQUEST_TIMEOUT",
+      });
+      const fakeClient = {
+        getProtocolEra: jest.fn().mockReturnValue("modern"),
+        discover: jest.fn().mockRejectedValue(timeout),
+        ping: jest.fn(),
+      };
+
+      seedRegisteredServer(manager, "modern-ping-timeout", {
+        url: new URL("https://example.test/mcp"),
+      });
+      seedLiveState(manager, "modern-ping-timeout", { client: fakeClient });
+
+      await expect(manager.pingServer("modern-ping-timeout")).rejects.toBe(
+        timeout
+      );
+
+      expect(manager.getConnectionStatus("modern-ping-timeout")).toBe(
+        "connected"
+      );
+    });
+
     it("probes with server/discover instead of ping on a modern-era connection", async () => {
       // `ping` was removed from the 2026-07-28 vocabulary — the upstream
       // client throws MethodNotSupportedByProtocolVersion rather than send it
