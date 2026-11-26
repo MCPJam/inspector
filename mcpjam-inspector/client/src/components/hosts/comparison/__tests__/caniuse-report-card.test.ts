@@ -45,12 +45,22 @@ describe("caniuse report card", () => {
   it("prints the numerator and all probed clients alongside the score", async () => {
     const coverage = capabilityCoverage(events, clients);
     expect(coverage.probed).toBeGreaterThan(coverage.published);
-    expect(await cardText(coverage)).toEqual(
+    const labels = await cardText(coverage);
+    expect(labels).toEqual(
       expect.arrayContaining([
         `${coverage.score}%`,
         `${coverage.full} of ${coverage.probed} probed clients`,
+        `${coverage.probed - coverage.published} without a published result`,
       ]),
     );
+  });
+
+  it("prints the site name once, before the capability title", async () => {
+    const labels = await cardText(capabilityCoverage(events, clients));
+    expect(labels[0]).toBe("caniuse.dev");
+    expect(labels.filter((label) => label.includes("caniuse.dev"))).toEqual([
+      "caniuse.dev",
+    ]);
   });
 
   it("keeps an unmeasured capability distinct from measured zero support", async () => {

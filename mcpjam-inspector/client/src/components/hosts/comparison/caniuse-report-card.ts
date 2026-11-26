@@ -149,7 +149,7 @@ export async function drawCaniuseReportCard(
   ctx.globalAlpha = 1;
 
   font(600, 23);
-  text("CAN I USE MCP", INSET, 57, "--muted-foreground");
+  text("caniuse.dev", INSET, 57, "--muted-foreground");
   const titleWidth = 820;
   const measure = (line: string) => ctx.measureText(line).width;
   font(700, 53);
@@ -306,16 +306,16 @@ export async function drawCaniuseReportCard(
     y = top + Math.ceil(clients.length / columns) * (tileHeight + 8) + groupSpacing - 53;
   }
 
-  font(500, 19);
   const unknown = coverage.probed - coverage.published;
-  text(
-    unknown
-      ? `caniuse.dev   ·   ${unknown} without a published result`
-      : "caniuse.dev",
-    INSET,
-    587,
-    "--muted-foreground",
-  );
+  if (unknown > 0) {
+    font(500, 19);
+    text(
+      `${unknown} without a published result`,
+      INSET,
+      587,
+      "--muted-foreground",
+    );
+  }
   if (wordmark)
     drawImage(ctx, wordmark, CARD_WIDTH - INSET - 152, 557, 152, 39);
   else {
