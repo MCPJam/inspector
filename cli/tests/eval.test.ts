@@ -7491,7 +7491,12 @@ test("eval run --compose-model variadic launches one group without attaching", a
     assert.equal(run.result.exitCode, 0);
     assert.equal(fixture.composeBodies.length, 2);
     assert.equal(fixture.attachBodies.length, 0);
-    assert.deepEqual(fixture.groupBodies.at(-1), {
+    // A keyless fan-out is given a key, so a refused target's replay dedupes.
+    const { idempotencyKey, ...groupBody } = fixture.groupBodies.at(-1) as {
+      idempotencyKey?: unknown;
+    };
+    assert.match(String(idempotencyKey), /^[0-9a-f-]{36}$/);
+    assert.deepEqual(groupBody, {
       suiteId: "suite-1",
       ephemeralEnvironment: true,
       targets: [
