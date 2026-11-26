@@ -7,7 +7,7 @@ const state = vi.hoisted(() => ({
   error: null as string | null,
   truncated: false,
   revoke: vi.fn(),
-  organizations: [{ _id: "org-a", name: "Acme" }] as any[],
+  organizations: [{ _id: "org-a", name: "Acme" }],
   activeOrganizationId: null as string | null,
 }));
 vi.mock("convex/react", () => ({
