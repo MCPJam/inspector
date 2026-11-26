@@ -452,6 +452,19 @@ describe("buildReportOnlyContentSecurityPolicy", () => {
     expect(policy.get("connect-src")).toContain("https://o123.ingest.us.sentry.io");
   });
 
+  it("includes eligible campaign websites in the hosted connect policy", () => {
+    const production = directives(buildReportOnlyContentSecurityPolicy()).get("connect-src");
+    expect(production).toEqual(expect.arrayContaining(["https://mcpjam.com", "https://www.mcpjam.com"]));
+    const staging = directives(buildReportOnlyContentSecurityPolicy({
+      signupCampaignAppOrigin: "https://app.stage.test",
+      signupCampaignWebsiteOrigins: "https://site.stage.test,https://*.stage.test,http://other.test,https://path.test/path",
+    })).get("connect-src");
+    expect(staging).toContain("https://site.stage.test");
+    for (const excluded of ["https://*.stage.test", "http://other.test", "https://path.test", "https://mcpjam.com"]) {
+      expect(staging).not.toContain(excluded);
+    }
+  });
+
   it("allows the events inbox origin the hosted feed connects to", () => {
     const saved = process.env.EVENTS_INBOX_URL;
     try {

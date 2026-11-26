@@ -1,12 +1,8 @@
-import { MCPJAM_HOSTED_APP_ORIGIN } from "./oauth/constants";
+import { signupCampaignWebsiteOrigins } from "@/shared/signup-campaign-origins";
 import { browserAnalyticsOptedOut, getRuntimeConfig } from "./runtime-config";
 // The campaign stays in an HttpOnly, host-only marketing-site cookie. The
 // app remembers only the expiry of the last visit it successfully attributed.
 const receiptName = "__Host-mcpjam_signup_consumed";
-const productionWebsiteOrigins = [
-  "https://www.mcpjam.com",
-  "https://mcpjam.com",
-] as const;
 export type SignupCampaign = { label: string; expiresAt: number };
 
 function consumedThrough(): number {
@@ -14,27 +10,6 @@ function consumedThrough(): number {
     .split("; ")
     .find((entry) => entry.startsWith(receiptName + "="));
   return Number(receipt?.slice(receiptName.length + 1)) || 0;
-}
-
-function websiteOrigins(): readonly string[] {
-  if (location.origin === MCPJAM_HOSTED_APP_ORIGIN)
-    return productionWebsiteOrigins;
-  const config = getRuntimeConfig();
-  if (
-    location.protocol !== "https:" ||
-    config?.signupCampaignAppOrigin !== location.origin
-  )
-    return [];
-  return (config.signupCampaignWebsiteOrigins ?? "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter((value) => {
-      try {
-        return value.startsWith("https://") && new URL(value).origin === value;
-      } catch {
-        return false;
-      }
-    });
 }
 
 async function fromWebsite(
@@ -69,7 +44,7 @@ export async function readSignupCampaign(
 ): Promise<SignupCampaign | undefined> {
   try {
     if (browserAnalyticsOptedOut() || !canCapture()) return;
-    const origins = websiteOrigins();
+    const origins = signupCampaignWebsiteOrigins(location.origin, getRuntimeConfig());
     if (!origins.length) return;
     const signal = AbortSignal.timeout(1200);
     const visits = await Promise.all(

@@ -148,7 +148,7 @@ async function ensureUserWithRetry(
         return;
       }
       const outcome = await ensureCampaign({ ...args, signupCampaign: signupCampaign.label });
-      if (outcome?.campaignApplied && shouldContinue()) {
+      if (outcome?.campaignApplied) {
         acknowledgeSignupCampaign(signupCampaign);
       }
       return;

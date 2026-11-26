@@ -34,6 +34,7 @@ import { randomBytes } from "node:crypto";
 import type { Context, Next } from "hono";
 import { HOSTED_MODE, SANDBOX_HOSTS } from "../config.js";
 import { getInspectorClientRuntimeConfig } from "../env.js";
+import { MCPJAM_HOSTED_APP_ORIGIN, signupCampaignWebsiteOrigins } from "../../shared/signup-campaign-origins.js";
 import { SENTRY_DSN } from "../../shared/sentry-config.js";
 import { getEventsInboxUrl } from "../services/events/config.js";
 
@@ -148,6 +149,10 @@ function reportOnlyDirectives(
     `https://${workosHost}`,
     ...(sentry ? [sentry.origin] : []),
     ...(eventsInbox ? [eventsInbox.origin] : []),
+    ...signupCampaignWebsiteOrigins(
+      runtimeConfig.signupCampaignAppOrigin ?? MCPJAM_HOSTED_APP_ORIGIN,
+      runtimeConfig,
+    ),
     ...STRIPE_CONNECT_SOURCES,
   ]);
   const frameSources = new Set<string>(["'self'"]);

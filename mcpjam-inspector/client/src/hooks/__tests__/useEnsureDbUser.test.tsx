@@ -762,6 +762,34 @@ describe("useEnsureDbUser", () => {
     }
   });
 
+  it("keeps a confirmed receipt when the first account unmounts before the mutation returns", async () => {
+    mockState.auth.user = { id: "first-account" };
+    mockState.actorKey = "first-account";
+    mockState.posthog = { is_capturing: () => true };
+    vi.stubGlobal("location", new URL("https://app.mcpjam.com/"));
+    websiteVisit(Date.now() + 900_000);
+    const cookies = campaignCookieJar();
+    let confirm!: () => void;
+    mockState.ensureCampaign.mockImplementationOnce(
+      () => new Promise((resolve) => { confirm = () => resolve({ campaignApplied: true }); }),
+    );
+    try {
+      const first = renderHook(() => useEnsureDbUser());
+      await waitFor(() => expect(mockState.ensureCampaign).toHaveBeenCalledTimes(1));
+      first.unmount();
+      await act(async () => confirm());
+      mockState.auth.user = { id: "second-account" };
+      mockState.actorKey = "second-account";
+      const second = renderHook(() => useEnsureDbUser());
+      await waitFor(() => expect(second.result.current.isUserReady).toBe(true));
+      expect(mockState.ensureCampaign).toHaveBeenCalledTimes(1);
+      expect(mockState.ensureUser).toHaveBeenCalledWith({});
+    } finally {
+      cookies.restore();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("uses only the configured staging origins and honors GPC before fetching", async () => {
     vi.stubGlobal("location", new URL("https://staging.mcpjam.com"));
     window.__MCP_RUNTIME_CONFIG__ = {signupCampaignAppOrigin: location.origin, signupCampaignWebsiteOrigins: "https://website-staging.mcpjam.com"};
