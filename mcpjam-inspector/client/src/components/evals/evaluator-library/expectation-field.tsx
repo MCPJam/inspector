@@ -30,13 +30,19 @@ export function ExpectationField({
       aria-label={title}
       className="flex flex-col gap-2 rounded-lg border border-border bg-popover p-3.5"
     >
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <h4 className="text-sm font-semibold text-card-foreground">{title}</h4>
         {isNew ? (
           <span className="rounded-sm bg-primary/10 px-1.5 py-0.5 text-[11px] font-semibold text-primary">
             New
           </span>
         ) : null}
+        {readBy.length ? null : (
+          // An unused field is one compact line: no editor, just the reason.
+          <p className="text-xs text-muted-foreground">
+            No evaluator on this suite reads this field.
+          </p>
+        )}
       </div>
       {readBy.length ? (
         <>
@@ -45,11 +51,7 @@ export function ExpectationField({
             Read by {readBy.map((e) => e.name).join(", ")}
           </p>
         </>
-      ) : (
-        <p className="text-xs text-muted-foreground">
-          No evaluator on this suite reads this field.
-        </p>
-      )}
+      ) : null}
     </section>
   );
 }

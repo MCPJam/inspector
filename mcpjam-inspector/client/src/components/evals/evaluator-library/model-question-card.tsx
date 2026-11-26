@@ -84,6 +84,7 @@ export function ModelQuestionCard({
         </span>
         {onRemove ? (
           <Button
+            type="button"
             size="sm"
             variant="ghost"
             aria-label="Remove question"
