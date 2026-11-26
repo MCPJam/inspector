@@ -90,7 +90,7 @@ export function CaniuseShareDialog({
   function download() {
     canvas?.toBlob((blob) => {
       if (!blob) {
-        setFeedback("Couldn't download the card. Try again.");
+        setFeedback("Couldn't download the report card. Try again.");
         return;
       }
       const href = URL.createObjectURL(blob);
@@ -140,7 +140,7 @@ export function CaniuseShareDialog({
             >
               {imageState === "loading"
                 ? "Preparing the report card…"
-                : "Couldn't generate the card. Close Share and try again."}
+                : "Couldn't generate the report card. Close Share and try again."}
             </p>
           )}
         </div>
