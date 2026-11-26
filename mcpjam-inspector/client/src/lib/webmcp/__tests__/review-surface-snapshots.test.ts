@@ -164,6 +164,7 @@ describe("review-surface snapshots redact and bound", () => {
     const snapshot = buildCaniuseCapabilitySnapshot({
       capabilitySlug: "elicitation",
       capabilityLabel: "Elicitation",
+      slice: null,
       rows,
     });
     expectNoSecrets(snapshot);

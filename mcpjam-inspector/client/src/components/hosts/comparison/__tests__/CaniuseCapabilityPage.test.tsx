@@ -3,6 +3,13 @@ import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { CaniuseCapabilityPage } from "../CaniuseCapabilityPage";
 
+const { captureSnapshot } = vi.hoisted(() => ({ captureSnapshot: vi.fn() }));
+vi.mock("@/lib/webmcp/use-surface-agent-bridge", () => ({
+  useSurfaceAgentBridge: ({ snapshot }: { snapshot: () => unknown }) => {
+    captureSnapshot(snapshot());
+  },
+}));
+
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => false,
 }));
@@ -86,5 +93,8 @@ describe("CaniuseCapabilityPage", () => {
     expect(screen.getByText("MCPJam")).toBeVisible();
     expect(within(cursor!).getByText("Not supported")).toBeVisible();
     expect(within(claude!).getByText("Supported")).toBeVisible();
+    expect(captureSnapshot).toHaveBeenLastCalledWith(
+      expect.objectContaining({ slice: "2026-07-28" }),
+    );
   });
 });

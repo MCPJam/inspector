@@ -91,6 +91,7 @@ export function CaniuseCapabilityPage({
       buildCaniuseCapabilitySnapshot({
         capabilitySlug: capability?.slug,
         capabilityLabel: capability?.field.label ?? null,
+        slice: slice && slice !== "any" ? slice : null,
         rows: results.map(({ subject, level, label }) => ({
           hostName: subject.hostName,
           supportLevel: level,
