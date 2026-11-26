@@ -532,11 +532,14 @@ export interface MapRuntimeErrorOptions {
    * the first capture decision stamps the error, so a policy applied afterwards
    * would decide nothing. See `CapturePolicy`.
    */
-  capture?: (mapped: {
-    status: number;
-    code: string;
-    details?: Record<string, unknown>;
-  }) => CapturePolicy | undefined;
+  capture?: (mapped: MappedRuntimeError) => CapturePolicy | undefined;
+}
+
+/** What `mapRuntimeError` hands a surface's `capture` rule. */
+export interface MappedRuntimeError {
+  status: number;
+  code: string;
+  details?: Record<string, unknown>;
 }
 
 /**

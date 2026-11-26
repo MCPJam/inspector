@@ -132,7 +132,11 @@ describe("mcpjam-agent route failure capture", () => {
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       Response.json(
-        { ok: false, error: "Not a member of this project" },
+        {
+          ok: false,
+          code: "project_access_refused",
+          error: "Not a member of this project",
+        },
         { status: 403 },
       ),
     );
@@ -150,6 +154,29 @@ describe("mcpjam-agent route failure capture", () => {
       expect(captureException).toHaveBeenCalledTimes(1);
       expect(context().tags.page_class).toBe("routine");
       expect(context().level).toBe("warning");
+    } finally {
+      vi.unstubAllEnvs();
+      vi.restoreAllMocks();
+    }
+  });
+
+  // A code-less 403 can be a failed membership read on the backend: ours.
+  it("pages on a code-less 403 from the org model config", async () => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example/");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json(
+        { ok: false, error: "Not a member of this project" },
+        { status: 403 },
+      ),
+    );
+    try {
+      const response = await post();
+
+      expect(streamWebChatTurnMock).not.toHaveBeenCalled();
+      expect(captureException).toHaveBeenCalledTimes(1);
+      expect(context().tags.page_class).toBe("incident");
+      expect(response.status).toBe(500);
     } finally {
       vi.unstubAllEnvs();
       vi.restoreAllMocks();

@@ -173,7 +173,11 @@ describe("resolveOrgModelConfig", () => {
     process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       Response.json(
-        { ok: false, error: "Not a member of this project" },
+        {
+          ok: false,
+          code: "project_access_refused",
+          error: "Not a member of this project",
+        },
         { status: 403 },
       ),
     );
@@ -213,18 +217,48 @@ describe("resolveOrgModelConfig", () => {
           { status: 403 },
         ),
     ],
+    // The backend sends these code-less: they say nothing about membership,
+    // and a failed membership read must keep paging.
+    [
+      "a code-less refusal, as a failed membership read answers",
+      () =>
+        Response.json(
+          { ok: false, error: "Not a member of this project" },
+          { status: 403 },
+        ),
+    ],
+    [
+      "a guest refusal",
+      () =>
+        Response.json(
+          { ok: false, error: "Guest sessions must provide a scenarioId" },
+          { status: 403 },
+        ),
+    ],
+    [
+      "the nonprod lockdown",
+      () =>
+        Response.json(
+          {
+            ok: false,
+            error:
+              "Non-production access is restricted to MCPJam employee accounts",
+          },
+          { status: 403 },
+        ),
+    ],
     [
       "a JSON body that is not an object",
       () => Response.json(["Not a member of this project"], { status: 403 }),
     ],
     ["a 403 with no body", () => new Response(null, { status: 403 })],
-  ])("keeps %s an untyped failure", async (_label, answer) => {
+  ])("keeps %s an untyped failure", async (label, answer) => {
     process.env.CONVEX_HTTP_URL = "https://convex.example/";
     process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => answer());
 
     const failure = await resolveOrgModelConfig(
-      { projectId: `project_org_config_other_403_${_label.length}` },
+      { projectId: `project_org_config_other_403: ${label}` },
       { bearerToken: "user-other-403" },
     ).catch((error: unknown) => error);
 

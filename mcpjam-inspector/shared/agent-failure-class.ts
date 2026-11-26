@@ -19,8 +19,10 @@ export const AGENT_SURFACE = "mcpjam_agent";
 
 /**
  * The backend refused the caller the project a request named: they are not a
- * member of it. `resolveOrgModelConfig` puts it in a 403 FORBIDDEN's
- * `details.code`, which stays distinct from every other FORBIDDEN.
+ * member of it. The backend's org-model-config resolve sends this same code
+ * (mcpjam-backend `convex/http.ts`), so change both together.
+ * `resolveOrgModelConfig` puts it in a 403 FORBIDDEN's `details.code`, which
+ * stays distinct from every other FORBIDDEN.
  */
 export const PROJECT_ACCESS_REFUSED_CODE = "project_access_refused";
 

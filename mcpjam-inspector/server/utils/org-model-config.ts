@@ -24,9 +24,6 @@ import { logger } from "./logger";
 import { backendFailureText } from "./backend-failure-text.js";
 import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 import { PROJECT_ACCESS_REFUSED_CODE } from "@/shared/agent-failure-class";
-
-const PROJECT_ACCESS_REFUSED_MESSAGE =
-  "You don't have access to this project. Ask a project owner for access.";
 import {
   getServiceCredential,
   INSPECTOR_SERVICE_TOKEN_HEADER,
@@ -56,6 +53,9 @@ import {
   runtimeResolveCache,
   type LocalOrgAttemptRequest,
 } from "./org-runtime-admission.js";
+
+const PROJECT_ACCESS_REFUSED_MESSAGE =
+  "You don't have access to this project. Ask a project owner for access.";
 
 // The hosted-mode SSRF guard on a provider's base URL lives with the request
 // plumbing; re-exported for callers that import it from here.
@@ -303,7 +303,7 @@ export async function resolveOrgModelConfig(
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
-      let parsed: { error?: unknown } | null = null;
+      let parsed: { error?: unknown; code?: unknown } | null = null;
       try {
         const value = JSON.parse(body);
         if (value && typeof value === "object") parsed = value;
@@ -317,16 +317,13 @@ export async function resolveOrgModelConfig(
       if (!inspectorServiceToken && response.status === 404 && !parsed) {
         throw new ServiceCredentialUnavailableError(ORG_MODEL_CONFIG_FEATURE);
       }
-      // The caller is not a member of the project: the one JSON 403 the
-      // handler writes with no `code`. Its others, the org's provider key
-      // refused (`provider_secret_…`) and `credential_not_allowed`, stay
-      // untyped. Matched on shape, not text, which production may mask.
+      // The caller may not read the project: the backend codes this one
+      // refusal. Its other 403s (guest checks, nonprod lockdowns, a failed
+      // membership read, `provider_secret_…`, `credential_not_allowed`) stay
+      // untyped, so they keep paging.
       if (
         response.status === 403 &&
-        parsed &&
-        !Array.isArray(parsed) &&
-        !("code" in parsed) &&
-        !String(parsed.error ?? "").startsWith("provider_secret_")
+        parsed?.code === PROJECT_ACCESS_REFUSED_CODE
       ) {
         throw new WebRouteError(
           403,

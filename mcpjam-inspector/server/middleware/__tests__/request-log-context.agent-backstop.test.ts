@@ -142,6 +142,18 @@ describe("request-log backstop for Ask MCPJam", () => {
     },
   );
 
+  // Ask MCPJam's client sends POSTs, so one no route answered means a route
+  // went missing.
+  it("captures a POST that no route answered as an incident", async () => {
+    const res = await app((a) =>
+      a.post(AGENT, (c) => c.json({ ok: true })),
+    ).request(`${AGENT}/widget-content`, { method: "POST" });
+
+    expect(res.status).toBe(404);
+    expect(capture).toHaveBeenCalledTimes(1);
+    expect(captureTags().page_class).toBe("incident");
+  });
+
   it("keeps a route's own 404 classified by its code", async () => {
     await app((a) =>
       a.post(AGENT, (c) => {

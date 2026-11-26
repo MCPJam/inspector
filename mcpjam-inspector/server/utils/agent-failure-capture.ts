@@ -1,4 +1,5 @@
 import type { CapturePolicy } from "./error-origin-capture.js";
+import type { MappedRuntimeError } from "../routes/web/errors.js";
 import {
   AGENT_SURFACE,
   PROJECT_ACCESS_REFUSED_CODE,
@@ -69,12 +70,7 @@ export const MCPJAM_AGENT_FAILURE_CAPTURE: FailureCapture = {
  * checks) stay incidents.
  */
 export const agentRouteCapture =
-  (source: string) =>
-  (mapped: {
-    status: number;
-    code: string;
-    details?: Record<string, unknown>;
-  }) =>
+  (source: string) => (mapped: MappedRuntimeError) =>
     agentCapturePolicy({
       source,
       httpStatus: mapped.status,

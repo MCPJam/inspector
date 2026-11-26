@@ -93,7 +93,11 @@ describe("org model config resolution failures", () => {
   it.each([
     [
       "a refused config lookup",
-      () => Response.json({ ok: false, error: BACKEND_TEXT }, { status: 403 }),
+      () =>
+        Response.json(
+          { ok: false, code: "project_access_refused", error: BACKEND_TEXT },
+          { status: 403 },
+        ),
       "You don't have access to this project. Ask a project owner for access.",
     ],
     [
