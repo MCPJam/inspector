@@ -89,8 +89,12 @@ export function predicateScorer(
   // same rule than one who spelled it `"gating"`, and the two would stop
   // joining to each other's score history.
   if (options?.id === undefined && options?.ordinal === undefined) {
+    // Library provenance is not part of the rule: the same check tagged v1,
+    // v2 or untagged is one scorer, as it is for `assertion()`. Dropping the
+    // key leaves an untagged rule's digest unchanged.
+    const { evaluator: _origin, ...rule } = predicate;
     definition.scorerId = `predicate:${predicate.type}#${canonicalDigest(
-      canonicalizeCheckRole(predicate),
+      canonicalizeCheckRole(rule),
     )}`;
   }
 
@@ -111,7 +115,8 @@ export function predicateScorer(
       if (
         (predicate.type === "responseCloseTo" ||
           predicate.type === "toolInputMatches" ||
-          predicate.type === "toolResultMatches") &&
+          predicate.type === "toolResultMatches" ||
+          predicate.type === "toolResultMatchesSchema") &&
         result.status === "error"
       )
         throw new Error(result.reason);

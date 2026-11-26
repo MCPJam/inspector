@@ -103,4 +103,7 @@ export {
 } from "./policy.js";
 export { DECLARED_OUTPUT_SCHEMA } from "./declared-schema.js";
 
-export type { TranscriptToolDeclaration } from "./types.js";
+export type {
+  AuthoredResultSchema,
+  TranscriptToolDeclaration,
+} from "./types.js";

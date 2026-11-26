@@ -69,6 +69,7 @@ import {
   MAX_MATCH_PATTERNS,
   parseMatchPath,
   predicateSchema,
+  type AuthoredResultSchema,
   type MatchPatternFlags,
   type MatchUnit,
 } from "@mcpjam/sdk/predicates";
@@ -3568,13 +3569,28 @@ function schemaKeyOf(schema: unknown): string {
   return schema === undefined ? "\u0000undefined" : JSON.stringify(schema);
 }
 
+/** Any value `JSON.parse` returns, except a string. */
+function isAuthoredResultSchema(value: unknown): value is AuthoredResultSchema {
+  return typeof value !== "string" && value !== undefined;
+}
+
 function parseSchemaDraft(
   text: string,
 ):
-  | { ok: true; parsed: unknown; error: null }
+  | { ok: true; parsed: AuthoredResultSchema; error: null }
   | { ok: false; parsed: null; error: string } {
   try {
-    return { ok: true, parsed: JSON.parse(text), error: null };
+    const parsed: unknown = JSON.parse(text);
+    if (isAuthoredResultSchema(parsed)) {
+      return { ok: true, parsed, error: null };
+    }
+    // A bare string is not a schema document; "declared" is chosen with the
+    // library's own control, not typed here.
+    return {
+      ok: false,
+      parsed: null,
+      error: "a schema is a JSON object, not a string",
+    };
   } catch (parseError) {
     return {
       ok: false,
