@@ -22,11 +22,18 @@ In the sidebar, select **Connect**. The top of the page switches between **Serve
 
 How the model works with tools during a chat.
 
-- **Model** and **Reasoning effort**: the model the client runs, and how hard it thinks.
+- **Model** and **Reasoning effort**: the model the client runs, and how much reasoning it does before answering.
 - **Temperature** (0 to 2): lower values make answers more consistent across runs; higher values allow more variation.
-- **Require tool approval**: pauses before tool calls so you can approve or deny each one. It only raises the bar: some calls always pause, and read-only lookups of your own project never do. See [Workspace tools](/inspector/playground#workspace-tools) for which project tools pause.
+- **Require tool approval**: pauses before tool calls so you can approve or deny each one. Turning it off doesn't skip every pause: calls that change your project always pause, and read-only lookups of your own project never do. See [Workspace tools](/inspector/playground#workspace-tools) for which project tools pause.
 - **Respect tool visibility**: honors the SEP-1865 `_meta.ui.visibility` field. When on, tools whose visibility is `["app"]` are hidden from the model. When off, every tool goes to the model, like hosts that don't filter by visibility.
 - **Progressive tools** (`Auto`, `On`, `Off`): when on, the model gets `search_mcp_tools` and `load_mcp_tools` instead of the full tool list and loads only the tools it needs. **Auto** turns it on once the client has about 30 tools, 10k tokens of tool definitions, or 3% of the model's context window; **On** always uses it; **Off** never does.
+- **Tool results sent to the model**: which parts of a tool result the model receives. Each part (`content`, `structuredContent`, `_meta`) is a toggle; select or clear it. The line under the setting describes the current choice.
+  - With all three on (the default), the model gets the whole result as one JSON string.
+  - With `content` and `structuredContent` on, the model gets each of them once, without `_meta`.
+  - With only `content` on, the model gets `content`. If `content` is empty, it gets `structuredContent` instead.
+  - With only `structuredContent` on, the model gets `structuredContent`. If there is none, it gets `content` instead.
+
+  This is what the model reads. What a widget receives when it calls a tool is set by **Widget tool results** on the Apps tab.
 - **MCP tool-result images** and **UI placement**: whether images in tool results reach the model and where previews appear.
 
 ## MCP Protocol tab
@@ -44,7 +51,7 @@ What MCPJam advertises when it connects to your server, and how it handles reque
 
 ### Per-server overrides
 
-To change the timeout or headers for one server only, open **Servers**, select the server's **⋯** menu, choose **Configure**, and expand **Connection overrides**. Other servers keep the client's defaults. See [Request timeout](/inspector/connecting-servers#request-timeout).
+To change the timeout or headers for one server only, open **Servers**, select the server's **⋯** menu, choose **Configure**, and expand **Connection overrides**. The timeout is in milliseconds. Other servers keep the client's defaults. See [Request timeout](/inspector/connecting-servers#request-timeout).
 
 ## Apps tab
 
@@ -77,8 +84,8 @@ Appears only when the browser tool is available to your account, or when the cli
 - **Who can change clients**: only project **Admins** can create, edit, duplicate or delete clients. **Editors** can use them. An Admin changes your role from the project's **Share** dialog; see [Sharing Projects](/inspector/projects#sharing-projects).
 - **Duplicate** a client to make a variant without changing the original.
 - **Delete** can be disabled for two reasons, shown as the button's tooltip:
-  - "You need at least one client.": it's the project's last client. Create another client first.
-  - "In use by a test suite.": an eval suite still runs on it. Open each suite's **Suite settings** and remove the client under **Where it runs**. See [Run a suite](/evaluate/run-a-suite).
+  - **You need at least one client.** It's the project's last client. Create another client first.
+  - **In use by a test suite.** An eval suite still runs on it. Open each suite's **Suite settings** and remove the client under **Where it runs**. See [Run a suite](/evaluate/run-a-suite).
 - Clients belong to the project. Everyone in a shared project sees the same list, and saves sync.
 
 ## Servers for evals
