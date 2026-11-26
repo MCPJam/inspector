@@ -350,6 +350,19 @@ test("conformance run runs every check of a suite no --check-id names", () => {
   assert.equal(input.tasks?.readinessIds, undefined);
 });
 
+test("conformance run routes a removed tasks id to the tasks suite, which drops it or refuses it alone", () => {
+  const input = runInput([
+    ...["--check-id", "tasks-declaration-hygiene"],
+    ...["--check-id", "tasks-ttl-shape"],
+  ]);
+  assert.deepEqual(input.tasks?.checkIds, ["tasks-ttl-shape"]);
+
+  assert.throws(
+    () => runInput(["--check-id", "tasks-wire-resolvable"]),
+    isUsageError("Tasks check tasks-wire-resolvable was removed"),
+  );
+});
+
 test("conformance run sends retired and renamed ids to their suite", () => {
   const [retired] = Object.keys(RETIRED_MCP_CHECK_IDS);
   const [renamed] = Object.entries(RENAMED_MCP_TASKS_CHECK_IDS);

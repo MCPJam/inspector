@@ -95,11 +95,7 @@ it("waits for a tool when Not set is picked on this check alone", async () => {
   );
 });
 
-it.each([
-  "tasks-wire-resolvable",
-  "tasks-declaration-hygiene",
-  "tasks-invalid-task-id-rejected",
-])("has no picker for %s", (checkId) => {
+it.each(["tasks-invalid-task-id-rejected"])("has no picker for %s", (checkId) => {
   render(<Editor checkId={checkId} />);
   expect(screen.queryByRole("checkbox")).toBeNull();
   expect(screen.queryByRole("combobox")).toBeNull();

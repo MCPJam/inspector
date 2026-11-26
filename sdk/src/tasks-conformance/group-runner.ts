@@ -48,7 +48,6 @@ import {
   decideOutcome,
   toolTaskSupport,
   resolveProbeTool,
-  findDeclarationViolations,
   type ProbeToolResolution,
 } from "./metadata.js";
 import { validateCreateTaskShape } from "./shapes.js";
@@ -103,25 +102,6 @@ export class TaskGroupRunner extends TaskOperations {
           const wire = support.wire;
           const protocolVersion =
             manager.getNegotiatedProtocolVersion(serverId);
-
-          if (selected.has("tasks-wire-resolvable")) {
-            const stepStartedAt = Date.now();
-            // Listing the extension on 2025-11-25 is not judged: nothing
-            // forbids it, and SEP-2663 only forbids USING it there.
-            checks.push(
-              protocolVersion
-                ? passed("tasks-wire-resolvable", Date.now() - stepStartedAt, {
-                    protocolVersion,
-                    wire,
-                    support,
-                  })
-                : failed(
-                    "tasks-wire-resolvable",
-                    Date.now() - stepStartedAt,
-                    'server did not expose a negotiated protocol version; tasks dispatch fails closed to "none"'
-                  )
-            );
-          }
 
           const needsTool = [...selected].some(isTasksToolCheck);
           const tools = needsTool
@@ -658,24 +638,6 @@ export class TaskGroupRunner extends TaskOperations {
           this.config.signal?.throwIfAborted();
           await runMutationChecks(context);
           this.config.signal?.throwIfAborted();
-          if (selected.has("tasks-declaration-hygiene")) {
-            const stepStartedAt = Date.now();
-            const violations = findDeclarationViolations(wire, sent);
-            checks.push(
-              violations.length === 0
-                ? passed(
-                    "tasks-declaration-hygiene",
-                    Date.now() - stepStartedAt,
-                    { inspectedRequests: sent.length, wire }
-                  )
-                : failed(
-                    "tasks-declaration-hygiene",
-                    Date.now() - stepStartedAt,
-                    `${violations.length} declaration hygiene violation(s)`,
-                    { violations }
-                  )
-            );
-          }
 
           // Which of these the `mcp-tasks` profile scores. A check outside the
           // frozen manifest still ran and still shows its verdict in `checks`,

@@ -142,8 +142,6 @@ export const APPS_CHECK_INTRUSIVENESS = {
 
 /** Tasks suite. Every check that calls a tool or creates a task is side-effecting by type. */
 export const TASKS_CHECK_INTRUSIVENESS = {
-  "tasks-wire-resolvable": "passive",
-  "tasks-declaration-hygiene": "passive",
   "tasks-result-type-discipline": "side-effecting",
   "tasks-undeclared-creation-refused": "side-effecting",
   "tasks-undeclared-capability-rejected": "side-effecting",

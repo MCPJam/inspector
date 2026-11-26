@@ -127,10 +127,14 @@ describe("the mcp-tasks profile", () => {
     expect([...TASKS.scored].sort()).toEqual([...MCP_TASKS_CHECK_IDS].sort());
   });
 
-  it("bumps to v2026-11-02.1 for the two stricter -32021 checks", () => {
-    // Same checks; a refusal that is not -32021 now fails, and so does a
-    // -32021 that does not name the tasks extension.
-    expect(TASKS.version).toBe("2026-11-02.1");
+  it("bumps to v2026-11-26.1 and scores 12 checks without the two client checks", () => {
+    // v2026-11-02.1 scored tasks-wire-resolvable and tasks-declaration-hygiene.
+    // Both graded MCPJam's own client and are gone from the suite, so they are
+    // gone from the manifest too; their rules are client tests in CI.
+    expect(TASKS.version).toBe("2026-11-26.1");
+    expect(TASKS.scored).toHaveLength(12);
+    expect(TASKS.scored).not.toContain("tasks-wire-resolvable");
+    expect(TASKS.scored).not.toContain("tasks-declaration-hygiene");
   });
 });
 
