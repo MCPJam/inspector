@@ -1,7 +1,13 @@
 import { useSignOutStore } from "@/stores/sign-out-store";
 import { SignOutBoundary } from "@/components/SignOutBoundary";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  act,
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+} from "@testing-library/react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import {
@@ -43,13 +49,37 @@ vi.mock("convex/react", () => ({
     Object.fromEntries(Object.keys(queries).map((key) => [key, null])),
 }));
 
+const popover = vi.hoisted(() => ({
+  onOpenChange: null as ((open: boolean) => void) | null,
+}));
 vi.mock("@mcpjam/design-system/popover", () => ({
-  Popover: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  Popover: ({
+    children,
+    open,
+    onOpenChange,
+  }: {
+    children: ReactNode;
+    open?: boolean;
+    onOpenChange?: (open: boolean) => void;
+  }) => {
+    popover.onOpenChange = onOpenChange ?? null;
+    return (
+      <div data-testid="notifications-popover" data-open={String(!!open)}>
+        {children}
+      </div>
+    );
+  },
   PopoverAnchor: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
 vi.mock("@/components/notifications/NotificationsPanel", () => ({
-  NotificationsPanelContent: () => <div data-testid="notifications-panel" />,
+  NotificationsPanelContent: ({ onNavigate }: { onNavigate?: () => void }) => (
+    <div data-testid="notifications-panel">
+      <button type="button" onClick={onNavigate}>
+        Open a request row
+      </button>
+    </div>
+  ),
 }));
 
 // Represent local/npx mode (VITE_MCPJAM_HOSTED_MODE unset). Guests get no
@@ -95,6 +125,10 @@ vi.mock("@mcpjam/design-system/dropdown-menu", () => ({
   ),
 }));
 
+const sidebar = vi.hoisted(() => ({
+  isMobile: false,
+  setOpenMobile: vi.fn(),
+}));
 vi.mock("@/components/ui/sidebar", () => ({
   SidebarMenu: ({ children }: any) => (
     <div data-testid="sidebar-menu">{children}</div>
@@ -103,13 +137,41 @@ vi.mock("@/components/ui/sidebar", () => ({
   SidebarMenuButton: ({ children, ...props }: any) => (
     <button {...props}>{children}</button>
   ),
-  useSidebar: () => ({ isMobile: false }),
+  useSidebar: () => sidebar,
 }));
 
 import { SidebarUser } from "../sidebar-user";
 import { useAuthExitCleanup } from "@/hooks/use-sign-out";
 
 describe("SidebarUser", () => {
+  it("closes the notifications and the mobile sidebar when a row opens a page", () => {
+    authState.user = {
+      email: "owner@example.com",
+      firstName: "Owner",
+      lastName: "Example",
+    };
+    sidebar.isMobile = true;
+    sidebar.setOpenMobile.mockReset();
+    try {
+      render(<SidebarUser />);
+      act(() => popover.onOpenChange?.(true));
+      expect(screen.getByTestId("notifications-popover")).toHaveAttribute(
+        "data-open",
+        "true",
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: "Open a request row" }),
+      );
+      expect(screen.getByTestId("notifications-popover")).toHaveAttribute(
+        "data-open",
+        "false",
+      );
+      expect(sidebar.setOpenMobile).toHaveBeenCalledWith(false);
+    } finally {
+      sidebar.isMobile = false;
+    }
+  });
+
   it("opens Support in Settings from the account menu", async () => {
     authState.user = { email: "owner@example.com", firstName: "Owner" };
     render(

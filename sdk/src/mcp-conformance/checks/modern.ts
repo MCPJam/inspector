@@ -28,6 +28,7 @@
  * -32602 without specifying an HTTP status.
  */
 
+import { DiscoveryResultError, requireCompleteDiscovery } from "../../discovery-result.js";
 import type {
   MCPCheckSkipReason,
   MCPCheckId,
@@ -646,6 +647,17 @@ async function badArgsResult(
   });
 }
 
+/**
+ * The track's one `server/discover`. The runner sends this same request before
+ * a raw-only 2026 pin to learn whether the server refuses the pin, and hands
+ * the answer over in `ctx.discover`, so the run asks once.
+ */
+export function probeServerDiscover(
+  ctx: RawHttpCheckContext
+): Promise<RawHttpResult> {
+  return modernProbe(ctx, { id: 7001, method: "server/discover" });
+}
+
 async function discoverOnce(
   ctx: RawHttpCheckContext,
   state: ModernRunState
@@ -653,7 +665,9 @@ async function discoverOnce(
   if (!state.discover) {
     state.discover = await track(
       state,
-      modernProbe(ctx, { id: 7001, method: "server/discover" })
+      ctx.discover !== undefined
+        ? Promise.resolve(ctx.discover)
+        : probeServerDiscover(ctx)
     );
   }
   return state.discover;
@@ -671,7 +685,9 @@ async function track(
 function advertisedCapabilities(
   discover: RawHttpResult
 ): Record<string, unknown> {
-  const capabilities = jsonRpcResult(discover)?.capabilities;
+  const payload = jsonRpcResult(discover);
+  if (payload) requireCompleteDiscovery(payload);
+  const capabilities = payload?.capabilities;
   return capabilities !== null && typeof capabilities === "object"
     ? (capabilities as Record<string, unknown>)
     : {};
@@ -744,6 +760,7 @@ async function runServerDiscoverCheck(
     );
   }
 
+  requireCompleteDiscovery(payload);
   const supportedVersions = payload.supportedVersions;
   const serverInfo = readServerIdentity(payload);
   const problems: string[] = [];
@@ -806,6 +823,10 @@ async function collectCacheableResults(
     { method: "server/discover", result: discover },
   ];
 
+  // Check 23 still needs the raw discriminator when the discovery reply is invalid.
+  // Its capabilities cannot be used to select follow-up requests.
+  const type = jsonRpcResult(discover)?.resultType;
+  if (type !== undefined && type !== COMPLETE_RESULT_TYPE) return collected;
   let id = 7100;
   for (const method of cacheableListMethods(advertisedCapabilities(discover))) {
     collected.push({
@@ -832,6 +853,7 @@ function runResultTypeCheck(
     }
     const resultType = payload.resultType;
     observed[method] = resultType;
+    if (method === "server/discover") requireCompleteDiscovery(payload);
     if (typeof resultType !== "string" || resultType.length === 0) {
       missing.push(method);
     }
@@ -869,6 +891,7 @@ function runCacheHintsCheck(
     if (!payload) {
       continue;
     }
+    if (method === "server/discover") requireCompleteDiscovery(payload);
     observed[method] = {
       ttlMs: payload.ttlMs,
       cacheScope: payload.cacheScope,
@@ -3265,6 +3288,10 @@ export async function runModernChecks(
       );
     } catch (error) {
       ctx.config.signal?.throwIfAborted();
+      if (error instanceof DiscoveryResultError && id !== "modern-result-type-present") {
+        results.push(couldNotRunResult(MODERN_CHECK_METADATA[id], error.message));
+        continue;
+      }
       results.push(
         failedResult(
           MODERN_CHECK_METADATA[id],

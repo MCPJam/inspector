@@ -38,11 +38,15 @@ import {
   createEventAgentToolExecutor,
   type EventAgentToolExecutor,
 } from "./event-agent-tools";
+import { withArrival, withOutcome, type RecentEvent } from "./recent-events";
 
 export interface PlaygroundEventBinding extends EventBinding {
   event: EventDescriptorView;
   subscription?: EventsSubscriptionView;
-  lastResult?: string;
+  /** The latest occurrences that reached this binding, newest first. */
+  recentEvents?: RecentEvent[];
+  /** Why the connection stopped, when no occurrence explains it. */
+  notice?: string;
   ownerScope: string;
   /** A short name the agent gave it (`mcpjam_subscribe_to_event`). */
   title?: string;
@@ -99,7 +103,7 @@ function useRuntime(
           ? {
               ...binding,
               enabled: false,
-              lastResult:
+              notice:
                 "Agent or conversation changed. Resume to connect this event here.",
             }
           : binding,
@@ -130,10 +134,31 @@ function useRuntime(
       connected: (binding) =>
         current.current.servers[binding.serverName]?.connectionStatus ===
         "connected",
-      result: (id, lastResult) =>
+      received: (id, entry) =>
         setBindings((previous) =>
           previous.map((binding) =>
-            binding.id === id ? { ...binding, lastResult } : binding,
+            binding.id === id
+              ? {
+                  ...binding,
+                  recentEvents: withArrival(binding.recentEvents, entry),
+                  notice: undefined,
+                }
+              : binding,
+          ),
+        ),
+      result: (id, entry, outcome) =>
+        setBindings((previous) =>
+          previous.map((binding) =>
+            binding.id === id
+              ? {
+                  ...binding,
+                  recentEvents: withOutcome(
+                    binding.recentEvents,
+                    entry,
+                    outcome,
+                  ),
+                }
+              : binding,
           ),
         ),
     });
@@ -201,7 +226,7 @@ function useRuntime(
         previous.map((binding) => ({
           ...binding,
           enabled: false,
-          lastResult: "Page restored. Resume to listen for new events.",
+          notice: "Page restored. Resume to listen for new events.",
         })),
       );
     };
@@ -559,6 +584,7 @@ function useRuntime(
               ...(afterSeq !== undefined
                 ? {
                     afterSeq,
+                    notice: undefined,
                     agentScope:
                       useEventAgentBridge.getState().agent?.scope ??
                       binding.agentScope,
