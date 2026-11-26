@@ -6,7 +6,10 @@
  * remain connected to multiple SSE streams simultaneously" (2025
  * `basic/transports.mdx`) is a client MAY, which is why Multiple POST Streams
  * was removed. A refused POST therefore costs the server nothing here; a
- * stream it did open must still be readable and carry a complete event.
+ * stream it did open must still be readable and, as "The SSE stream SHOULD
+ * eventually include a JSON-RPC response for the JSON-RPC request sent in the
+ * POST body" asks, carry the response to its own request. Any other event
+ * is not enough.
  */
 
 import { describe, expect, it } from "vitest";
@@ -20,7 +23,20 @@ import { normalizeMCPConformanceConfig } from "../../src/mcp-conformance/validat
 
 const SSE: MCPCheckId = "server-sse-streams-functional";
 
-type Answer = "sse" | "json" | "broken-sse" | "429" | "throw";
+type Answer =
+  | "sse"
+  | "json"
+  | "broken-sse"
+  | "429"
+  | "throw"
+  // A stream that carries only a notification, never the response.
+  | "no-answer"
+  // A stream that carries the response to some other request's id.
+  | "wrong-id"
+  // A notification first, then the response to this request.
+  | "notice-then-answer"
+  // The response is a JSON-RPC error, which is still the response.
+  | "error-answer";
 
 function json(
   payload: unknown,
@@ -85,9 +101,22 @@ function server(answers: Answer[]) {
     }
     const answer = answers[next++] ?? "sse";
     const frame = `data: ${JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { tools: [] } })}\n\n`;
+    const notice = `data: ${JSON.stringify({ jsonrpc: "2.0", method: "notifications/message", params: { level: "info", data: "working" } })}\n\n`;
     switch (answer) {
       case "sse":
         return sse([frame]);
+      case "no-answer":
+        return sse([notice]);
+      case "wrong-id":
+        return sse([
+          `data: ${JSON.stringify({ jsonrpc: "2.0", id: 999, result: { tools: [] } })}\n\n`,
+        ]);
+      case "notice-then-answer":
+        return sse([notice, frame]);
+      case "error-answer":
+        return sse([
+          `data: ${JSON.stringify({ jsonrpc: "2.0", id: body.id, error: { code: -32603, message: "Internal error" } })}\n\n`,
+        ]);
       case "broken-sse":
         return sse([new Error("stream boom")]);
       case "json":
@@ -148,11 +177,14 @@ describe("Functional SSE Streams grades only the streams that came back", () => 
     const result = await run(["sse", "broken-sse", "429"]);
 
     expect(result.status).toBe("failed");
-    expect(result.error?.message).toContain("no readable events");
+    expect(result.error?.message).toContain(
+      "ended without the JSON-RPC response to its request"
+    );
     expect(result.details).toMatchObject({
       // The probe varies with the declared capabilities; a failure names it.
       probeMethod: "tools/list",
       eventCounts: [1, 0],
+      unansweredStreams: [1],
       readErrors: [undefined, expect.stringContaining("stream boom")],
     });
   });
@@ -202,5 +234,41 @@ describe("Functional SSE Streams grades only the streams that came back", () => 
 
     expect(result.status).toBe("passed");
     expect(result.details).toMatchObject({ probeMethod: "tools/list" });
+  });
+});
+
+describe("Functional SSE Streams needs each stream to carry its own response", () => {
+  it("fails a readable stream that never sends the response", async () => {
+    // A complete event arrived, but it is a notification, not the answer.
+    const result = await run(["sse", "no-answer", "sse"]);
+
+    expect(result.status).toBe("failed");
+    expect(result.error?.message).toBe(
+      "One or more concurrent SSE streams ended without the JSON-RPC response to its request"
+    );
+    expect(result.details).toMatchObject({
+      eventCounts: [1, 1, 1],
+      unansweredStreams: [1],
+    });
+  });
+
+  it("fails a stream that carries the response to another request", async () => {
+    const result = await run(["sse", "sse", "wrong-id"]);
+
+    expect(result.status).toBe("failed");
+    expect(result.details).toMatchObject({ unansweredStreams: [2] });
+  });
+
+  it("passes a stream that sends a notification before its response", async () => {
+    const result = await run(["notice-then-answer", "sse", "sse"]);
+
+    expect(result.status).toBe("passed");
+    expect(result.details).toMatchObject({ eventCounts: [2, 1, 1] });
+  });
+
+  it("counts a JSON-RPC error on the stream as its response", async () => {
+    const result = await run(["error-answer", "sse", "sse"]);
+
+    expect(result.status).toBe("passed");
   });
 });

@@ -103,6 +103,22 @@ function answersRequest(message: unknown, requestId: unknown): boolean {
   );
 }
 
+/**
+ * Whether a request's stream delivered its answer: "The SSE stream SHOULD
+ * eventually include a JSON-RPC response for the JSON-RPC request sent in the
+ * POST body." Only a complete event counts, and only the response with this
+ * request's id. Other events, or a response to another request, do not.
+ * `events` includes what a call-back added (see {@link resumePolledStream}).
+ */
+export function streamAnswersRequest(
+  events: readonly RawSseEvent[] | undefined,
+  requestId: unknown
+): boolean {
+  return (events ?? []).some(
+    (event) => event.terminated && answersRequest(event.json, requestId)
+  );
+}
+
 /** The id of the last complete event that had one: the next `Last-Event-ID`. */
 function lastEventIdOf(events: readonly RawSseEvent[]): string | undefined {
   let lastEventId: string | undefined;

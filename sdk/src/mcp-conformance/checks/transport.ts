@@ -26,6 +26,7 @@ import {
   rawRequest,
   pollingOutcome,
   resumePolledStream,
+  streamAnswersRequest,
   versionStopDetails,
   type LegacyVersionStop,
   type RawHttpResult,
@@ -638,10 +639,16 @@ export async function runTransportChecks(
           ({ response }) => response.bodyError,
         );
         // Only the streams that came back: each must be read to the end and
-        // carry at least one complete event.
+        // carry the JSON-RPC response to its own request, not just any event.
+        const unansweredStreams = sseResponses
+          .filter(
+            ({ response, index }) =>
+              !streamAnswersRequest(response.sse, 1000 + index),
+          )
+          .map(({ index }) => index);
         const allStreamsReadable =
           readErrors.every((error) => error === undefined) &&
-          eventCounts.every((count) => count > 0);
+          unansweredStreams.length === 0;
 
         results.push(
           allStreamsReadable
@@ -658,11 +665,14 @@ export async function runTransportChecks(
             : failedResult(
                 TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
                 Date.now() - multiStreamStartedAt,
-                "One or more concurrent SSE streams produced no readable events",
+                unansweredStreams.length > 0
+                  ? "One or more concurrent SSE streams ended without the JSON-RPC response to its request"
+                  : "One or more concurrent SSE streams could not be read to the end",
                 {
                   contentTypes,
                   ...acceptance,
                   eventCounts,
+                  unansweredStreams,
                   readErrors,
                   sseStreamCount: sseResponses.length,
                   sseResponseIndexes: sseResponses.map(({ index }) => index),

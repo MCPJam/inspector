@@ -195,6 +195,8 @@ describe("Functional SSE Streams and the ping fallback", () => {
     expect(sent("tools/list")).toBe(3);
     expect(sent("ping")).toBe(0);
     expect(byId(SSE).status).toBe("failed");
-    expect(byId(SSE).error?.message).toContain("no readable events");
+    expect(byId(SSE).error?.message).toContain(
+      "ended without the JSON-RPC response to its request"
+    );
   });
 });
