@@ -2607,7 +2607,7 @@ describe("PlaygroundMain", () => {
           name: "Sonnet",
           provider: "anthropic",
         },
-      ] as any;
+      ];
       mockUseChatSession.multiModelEnabled = true;
       const read = FileReader.prototype.readAsDataURL;
       const held: Array<() => void> = [];

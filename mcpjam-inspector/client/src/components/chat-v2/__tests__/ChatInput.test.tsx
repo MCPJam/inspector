@@ -2182,7 +2182,7 @@ describe("ChatInput", () => {
     // The popover and the skill card call back after their fetch, with the
     // callback from the render where it started. A send can clear the
     // composer in between.
-    const item = (name: string) => ({ name }) as any;
+    const item = (name: string) => ({ name });
     const renderLate = (overrides: Record<string, unknown>) => {
       const onChange = vi.fn();
       const props = { ...defaultProps, onChange, ...overrides };
