@@ -37,7 +37,7 @@ export function CaniuseSite({
       className="dark caniuse-site flex h-full min-w-0 flex-col overflow-auto bg-background text-foreground"
       data-page={current}
     >
-      <header className="shrink-0 border-b border-border/65 bg-card">
+      <header className="shrink-0 border-b border-border/65 bg-background">
         <div className="caniuse-wrap flex h-16 items-center gap-5 sm:gap-8">
           <a
             className="caniuse-brand rounded-md focus-visible:outline-2 focus-visible:outline-ring"
@@ -74,7 +74,7 @@ export function CaniuseSite({
         </div>
       </header>
       <main className="caniuse-wrap grow shrink-0 pb-10">{children}</main>
-      <footer className="shrink-0 border-t border-border/65 bg-card text-muted-foreground">
+      <footer className="shrink-0 border-t border-border/65 bg-background text-muted-foreground">
         <div className="caniuse-wrap flex min-h-16 flex-wrap items-center gap-x-4 gap-y-2 py-3">
           {publicSiteRelays !== false && (
             <>
