@@ -88,9 +88,18 @@ export function buildOptionPrompt(
       row.kind !== "contrast" &&
       (row.iterationId === undefined || scope.has(row.iterationId)),
   );
-  const causes = problem.explanations.filter((row) =>
+  const overlapping = problem.explanations.filter((row) =>
     row.iterationIds.some((id) => scope.has(id)),
   );
+  // An option names the mechanism it acts on; other explanations that touch
+  // the same iterations are context, never part of this option's cause.
+  const linked = option.mechanismId
+    ? overlapping.filter((row) => row.id === option.mechanismId)
+    : [];
+  const causes = linked.length ? linked : overlapping;
+  const others = linked.length
+    ? overlapping.filter((row) => row.id !== option.mechanismId)
+    : [];
   const unresolved = problem.coverage.unresolvedIterationIds.filter((id) =>
     scope.has(id),
   );
@@ -108,6 +117,14 @@ export function buildOptionPrompt(
           proposal(...causes.map((row) => `- ${row.rootCause ?? row.title}`)),
         ]
       : ["", "## Cause", "Not established for these iterations."]),
+    ...(others.length
+      ? [
+          "",
+          "## Other explanations for these iterations",
+          "Context only: this option does not act on these.",
+          proposal(...others.map((row) => `- ${row.rootCause ?? row.title}`)),
+        ]
+      : []),
     ...(unresolved.length
       ? [
           "",

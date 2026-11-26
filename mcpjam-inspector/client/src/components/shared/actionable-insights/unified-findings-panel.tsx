@@ -365,11 +365,14 @@ export function UnifiedFindingsPanel({
           ) : null}
         </div>
       ) : null}
-      {problemsView?.status === "historical_unlinked" ? (
+      {problemsView && problemsView.unlinkedExplanations.length > 0 ? (
         <div className="mb-5">
           <StateNote testId="unified-findings-historical">
             These explanations are not linked to problems.
-            {analyze.available && !analyze.pending && !visitor
+            {problemsView.status === "historical_unlinked" &&
+            analyze.available &&
+            !analyze.pending &&
+            !visitor
               ? " Analyze again to link them."
               : ""}
           </StateNote>

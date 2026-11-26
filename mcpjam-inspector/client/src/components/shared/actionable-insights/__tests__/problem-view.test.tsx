@@ -319,6 +319,22 @@ describe("the observation view", () => {
     ).not.toHaveTextContent("Analyze again");
   });
 
+  it("keeps returned explanations visible while a rerun is pending", () => {
+    renderPanel({
+      analyze: { available: true, pending: true, error: null, onRun: vi.fn() },
+      problemsView: view({
+        status: "pending",
+        unlinkedExplanations: [
+          { id: "m", title: "Old cause", rootCause: null },
+        ],
+      }),
+    });
+    expect(screen.getByText("Old cause")).toBeVisible();
+    expect(
+      screen.getByTestId("unified-findings-historical"),
+    ).not.toHaveTextContent("Analyze again");
+  });
+
   it("names the skill version the recommendations follow", () => {
     renderPanel();
     expect(
@@ -372,6 +388,50 @@ describe("problem details", () => {
     expect(
       screen.getByText(/You decide the next action and start any rerun/),
     ).toBeVisible();
+  });
+
+  it("marks which iterations belong to the selected option", async () => {
+    const user = userEvent.setup();
+    const row = (iterationId: string, caseTitle: string) => ({
+      iterationId,
+      caseTitle,
+      iterationNumber: null,
+      client: null,
+      model: null,
+      result: "failed" as const,
+      canOpen: false,
+    });
+    render(
+      <ProblemDetailsContent
+        problem={problem({
+          options: [
+            option({ iterationIds: ["it_1"] }),
+            { ...alternative, iterationIds: ["it_2"] },
+          ],
+        })}
+        iterationRows={{
+          it_1: row("it_1", "Case one"),
+          it_2: row("it_2", "Case two"),
+        }}
+      />,
+    );
+    const rowText = (title: string) =>
+      screen.getByText(title).closest("li")?.textContent ?? "";
+    expect(rowText("Case one")).toContain("In selected option");
+    expect(rowText("Case two")).toContain("Not in selected option");
+    await user.click(
+      screen.getByRole("combobox", { name: "Choose an option" }),
+    );
+    await user.click(screen.getByRole("option", { name: /Alternative/ }));
+    expect(rowText("Case one")).toContain("Not in selected option");
+    expect(rowText("Case two")).toContain("In selected option");
+  });
+
+  it("shows the recorded excerpt under Evidence", () => {
+    render(<ProblemDetailsContent problem={problem({ options: [] })} />);
+    const excerpts = screen.getAllByTestId("problem-evidence-excerpt");
+    expect(excerpts[0]).toHaveTextContent("customer not found");
+    expect(screen.getByText(/tool error, iteration it_1/)).toBeInTheDocument();
   });
 
   it("shows the prompt to select when the clipboard refuses", async () => {
@@ -471,6 +531,33 @@ describe("buildOptionPrompt", () => {
     expect(prompt).not.toContain("other iteration");
     expect(prompt).toContain("<<<UNTRUSTED");
     expect(prompt).toContain("You re-ran this eval suite and checked both");
+  });
+
+  it("keeps another mechanism's explanation out of the selected fix's cause", () => {
+    const linked = problem({
+      explanations: [
+        ...problem().explanations,
+        {
+          id: "obs_lookup:mechanism:2",
+          title: "Second mechanism",
+          rootCause: "The search returned a stale id.",
+          attribution: "server_contract",
+          iterationIds: ["it_1"],
+          citations: [],
+        },
+      ],
+    });
+    const prompt = buildOptionPrompt(
+      linked,
+      option({ mechanismId: "obs_lookup:mechanism:1" }),
+    );
+    const cause = prompt.split("## Reviewed explanation")[1].split("## ")[0];
+    expect(cause).toContain("passed the customer name");
+    expect(cause).not.toContain("stale id");
+    expect(prompt).toContain("## Other explanations for these iterations");
+    expect(
+      prompt.split("## Other explanations for these iterations")[1],
+    ).toContain("stale id");
   });
 
   it("names unresolved iterations instead of folding them into the cause", () => {

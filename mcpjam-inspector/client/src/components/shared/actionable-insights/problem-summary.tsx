@@ -121,7 +121,7 @@ export function ProblemSummary({
           <SheetHeader className="sticky top-0 z-10 bg-background px-6 pt-6 pr-12 pb-5">
             <SheetTitle className="text-lg">Problem details</SheetTitle>
             <SheetDescription>
-              {option ? OPTION_KIND_LABEL[option.kind] : problem.title}
+              <FindingText text={problem.title} />
             </SheetDescription>
           </SheetHeader>
           <ProblemDetailsContent

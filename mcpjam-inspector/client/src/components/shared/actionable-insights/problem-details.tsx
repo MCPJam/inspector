@@ -18,7 +18,7 @@ import type {
   FindingOption,
   FindingProblem,
 } from "@/lib/insights-envelope-api";
-import type { FindingPromptContext } from "./finding-prompts";
+import { evidenceLabel, type FindingPromptContext } from "./finding-prompts";
 import type { FindingEvidenceLocator } from "./finding-evidence";
 import {
   AffectedIterationsList,
@@ -186,6 +186,15 @@ export function ProblemDetailsContent({
   );
   const unresolved = new Set(problem.coverage.unresolvedIterationIds);
   const target = option ? optionTargetLabel(option) : null;
+  const excerpts = problem.evidence.filter(
+    (row) => row.kind !== "contrast" && row.excerpt,
+  );
+  const status = (id: string) =>
+    explained.has(id)
+      ? "Evidence reviewed"
+      : unresolved.has(id)
+        ? "Unresolved"
+        : "Covered by another option";
   return (
     <div className="space-y-6 px-6 pb-8 text-sm leading-relaxed">
       <section>
@@ -199,6 +208,20 @@ export function ProblemDetailsContent({
               <p className="mt-2 break-words">
                 <FindingText text={problem.observed} />
               </p>
+              {excerpts.map((row, index) => (
+                <figure key={index} className="mt-2 min-w-0">
+                  <figcaption className="text-xs text-muted-foreground">
+                    {evidenceLabel(row)}
+                  </figcaption>
+                  <pre
+                    tabIndex={0}
+                    className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded bg-[var(--code-bg)] p-2 font-code text-xs text-[var(--code-text)]"
+                    data-testid="problem-evidence-excerpt"
+                  >
+                    {row.excerpt}
+                  </pre>
+                </figure>
+              ))}
             </details>
           </li>
         </ul>
@@ -331,13 +354,13 @@ export function ProblemDetailsContent({
           total={problem.affected.count}
           ariaLabel="Affected iterations"
           detail={(row) =>
-            explained.has(row.iterationId)
-              ? "Evidence reviewed"
-              : unresolved.has(row.iterationId)
-                ? "Unresolved"
-                : scope.has(row.iterationId)
-                  ? "Addressed by this option"
-                  : "Covered by another option"
+            !option
+              ? status(row.iterationId)
+              : scope.has(row.iterationId)
+                ? explained.has(row.iterationId)
+                  ? "In selected option · Evidence reviewed"
+                  : "In selected option"
+                : `Not in selected option · ${status(row.iterationId)}`
           }
           {...(onOpenEvidence
             ? {

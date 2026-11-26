@@ -9,7 +9,10 @@ import type { EvalIteration } from "../evals/types";
 import { computeIterationResult } from "../evals/pass-criteria";
 import type { AffectedIterationRow } from "@/components/shared/actionable-insights/affected-iterations-list";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
-import type { EvalRunDecisionChain } from "@mcpjam/sdk/contract";
+import type {
+  EvalRunDecisionChain,
+  EvalRunDecisionDiagnostic,
+} from "@mcpjam/sdk/contract";
 import { iterationReasoningEffort } from "../evals/run-metrics";
 import { reasoningEffortLabel } from "@/components/effort/effort-control";
 
@@ -47,12 +50,18 @@ export function affectedRowsById(
   iterations: readonly EvalIteration[],
   clientLabel?: string | null,
   chains?: ReadonlyMap<string, EvalRunDecisionChain>,
+  diagnostics: readonly EvalRunDecisionDiagnostic[] = [],
 ): Record<string, AffectedIterationRow> {
+  // The run diagnostic is authoritative, as in the case report; the separate
+  // chain read is page-capped and can miss an iteration it describes.
+  const fromDiagnostics = new Map(
+    diagnostics.map((row) => [row.iterationId, row.chain]),
+  );
   const rows: Record<string, AffectedIterationRow> = {};
   for (const iteration of iterations) {
     rows[iteration._id] = {
       ...affectedRowFor(iteration, clientLabel),
-      chain: chains?.get(iteration._id),
+      chain: fromDiagnostics.get(iteration._id) ?? chains?.get(iteration._id),
     };
   }
   return rows;
