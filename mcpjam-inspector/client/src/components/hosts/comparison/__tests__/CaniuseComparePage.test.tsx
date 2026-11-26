@@ -80,9 +80,8 @@ describe("CaniuseComparePage", () => {
       </MemoryRouter>,
     );
     const search = screen.getByRole("combobox", { name: "Type a capability" });
-    await user.click(search);
-    fireEvent.change(search, { target: { value: "Events" } });
-    await user.click(search);
+    await user.type(search, "Events");
+    expect(search).toHaveFocus();
     expect(search).toHaveAttribute("aria-expanded", "true");
     expect(screen.getAllByRole("option").length).toBeGreaterThan(0);
     await user.keyboard("{Escape}{Enter}");
@@ -92,6 +91,25 @@ describe("CaniuseComparePage", () => {
     await user.keyboard("{ArrowDown}");
     expect(search).toHaveAttribute("aria-expanded", "true");
     expect(screen.getAllByRole("option").length).toBeGreaterThan(0);
+  });
+
+  it("highlights the first match when reopening suggestions from the keyboard", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/compare?q=resource"]}>
+        <CaniuseComparePage />
+      </MemoryRouter>,
+    );
+    const search = screen.getByRole("combobox", { name: "Type a capability" });
+    await user.click(search);
+    const options = screen.getAllByRole("option");
+    expect(options.length).toBeGreaterThan(1);
+    await user.keyboard("{ArrowDown}");
+    expect(search).toHaveAttribute("aria-activedescendant", options[1].id);
+    await user.keyboard("{Escape}");
+    expect(search).not.toHaveAttribute("aria-activedescendant");
+    await user.keyboard("{ArrowDown}");
+    expect(search).toHaveAttribute("aria-activedescendant", options[0].id);
   });
 
   it("copies the exact comparison on the first click and hides gated verification", async () => {
