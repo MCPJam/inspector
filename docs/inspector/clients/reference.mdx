@@ -23,8 +23,8 @@ In the sidebar, select **Connect**. The top of the page switches between **Serve
 How the model works with tools during a chat.
 
 - **Model** and **Reasoning effort**: the model the client runs, and how hard it thinks.
-- **Temperature.**
-- **Require tool approval**: pauses before tool calls so you can approve or deny each one. It only raises the bar: some calls always pause, and read-only lookups of your own project never do.
+- **Temperature** (0 to 2): lower values make answers more consistent across runs; higher values allow more variation.
+- **Require tool approval**: pauses before tool calls so you can approve or deny each one. It only raises the bar: some calls always pause, and read-only lookups of your own project never do. See [Workspace tools](/inspector/playground#workspace-tools) for which project tools pause.
 - **Respect tool visibility**: honors the SEP-1865 `_meta.ui.visibility` field. When on, tools whose visibility is `["app"]` are hidden from the model. When off, every tool goes to the model, like hosts that don't filter by visibility.
 - **Progressive tools** (`Auto`, `On`, `Off`): when on, the model gets `search_mcp_tools` and `load_mcp_tools` instead of the full tool list and loads only the tools it needs. **Auto** turns it on once the client has about 30 tools, 10k tokens of tool definitions, or 3% of the model's context window; **On** always uses it; **Off** never does.
 - **MCP tool-result images** and **UI placement**: whether images in tool results reach the model and where previews appear.
