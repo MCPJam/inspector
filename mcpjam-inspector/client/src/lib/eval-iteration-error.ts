@@ -5,6 +5,13 @@ import {
   runRefusal,
   orgKeysRefusalNextStep,
 } from "@/lib/org-keys-refusal";
+import {
+  PLATFORM_FEE_HEADLINE,
+  textNamesPlatformFee,
+} from "@/lib/platform-fee-refusal";
+
+/** The slug a surface keys on to offer the billing actions instead. */
+export const PLATFORM_FEE_ERROR_SLUG = "eval/platform_fee_required";
 
 /** Preserve diagnostics without making worker internals the run's headline. */
 export function describeEvalIterationError(
@@ -36,6 +43,24 @@ export function describeEvalIterationError(
           readText,
         )
       : undefined;
+  // The organization's credits could not pay the platform fee. Billing, not
+  // setup: the code never reaches the reader, and neither do server checks.
+  const feeRefused =
+    !timeout &&
+    (textNamesPlatformFee(iteration.infraError?.code) ||
+      (readText &&
+        textNamesPlatformFee(iteration.error, iteration.errorDetails)));
+  if (feeRefused)
+    return {
+      ...describeError(PLATFORM_FEE_HEADLINE),
+      slug: PLATFORM_FEE_ERROR_SLUG,
+      title: "Not enough credits",
+      severity: "warning",
+      oneLine: PLATFORM_FEE_HEADLINE,
+      likelyCauses: [],
+      nextSteps: ["Buy credits or turn on auto-reload, then run it again."],
+      rawMessage: PLATFORM_FEE_HEADLINE,
+    };
   if (!timeout && !setup && !cancelled && !iteration.error && !refusal)
     return null;
 

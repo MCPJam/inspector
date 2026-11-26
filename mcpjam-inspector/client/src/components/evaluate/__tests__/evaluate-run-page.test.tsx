@@ -439,6 +439,19 @@ describe("pairingDecision", () => {
       ),
     ).toEqual({ word: "Inconclusive", tone: "pending" });
   });
+
+  it("does not hold a run the platform fee stopped before it started", () => {
+    expect(
+      pairingDecision(
+        makeRun({
+          _id: "g",
+          status: "failed",
+          result: "failed",
+          stopReason: "platform_fee_required",
+        }),
+      ),
+    ).toEqual({ word: "Not started", tone: "pending" });
+  });
 });
 
 it("navigates directly to the comparison page when Compare runs is clicked", async () => {

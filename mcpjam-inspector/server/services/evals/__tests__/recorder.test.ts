@@ -665,6 +665,13 @@ describe("startSuiteRunWithRecorder", () => {
             reason: backendCode,
           }),
         );
+        // A fee refusal leaves no raw error text on the rows.
+        expect(mutation).toHaveBeenCalledWith(
+          "testSuites:markSetupPendingIterationsFailed",
+          detailsKey === "reason"
+            ? { runId: "run-1" }
+            : { runId: "run-1", error: expect.any(String) },
+        );
         // A refused run still ends failed rather than pending.
         expect(mutation).toHaveBeenCalledWith(
           "testSuites:updateTestSuiteRun",

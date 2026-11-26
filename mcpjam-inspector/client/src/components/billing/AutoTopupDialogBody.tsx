@@ -1,4 +1,11 @@
 import { useEffect, useRef, useState } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@mcpjam/design-system/dialog";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useAutoTopup, type AutoTopupSetup } from "@/hooks/useAutoTopup";
 import { AutoTopupSettings } from "./AutoTopupSettings";
@@ -100,5 +107,36 @@ export function AutoTopupDialogBody(props: AutoTopupDialogBodyProps) {
     >
       <ConnectedAutoTopupSettings {...props} />
     </ErrorBoundary>
+  );
+}
+
+/** The auto-reload settings dialog, opened from billing and from refusals. */
+export function AutoTopupDialog({
+  open,
+  onOpenChange,
+  organizationId,
+  canManage,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  organizationId?: string | null;
+  canManage: boolean;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Auto-reload</DialogTitle>
+          <DialogDescription>
+            Automatically purchase credits when you’re running low.
+          </DialogDescription>
+        </DialogHeader>
+        <AutoTopupDialogBody
+          organizationId={organizationId}
+          canManage={canManage}
+          onClose={() => onOpenChange(false)}
+        />
+      </DialogContent>
+    </Dialog>
   );
 }

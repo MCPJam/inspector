@@ -24,7 +24,10 @@ import { forgetShadowMismatchRun } from "./shadow-mismatch.js";
 import { findPrecreatedIterationByCase } from "./precreated-iteration.js";
 import { retrySuiteStartOnConflict } from "./suite-start-retry.js";
 import { rerunRefusalError } from "./rerun-refusal.js";
-import { platformFeeRefusalError } from "./platform-fee-refusal.js";
+import {
+  isPlatformFeeRefusal,
+  platformFeeRefusalError,
+} from "./platform-fee-refusal.js";
 import { localHarnessCapabilities, runnerCapabilities } from "./runner-capabilities.js";
 import type { RunCiMetadata, RunLauncher } from "../../utils/launch-context.js";
 import type { IterationStatus as ContractIterationStatus } from "@mcpjam/sdk/contract";
@@ -990,9 +993,11 @@ export const startSuiteRunWithRecorder = async ({
       });
     }
     try {
+      // A fee refusal is the organization's billing, not a fault, and its raw
+      // text would reach the rows as diagnostics, code and all.
       await convexClient.mutation(
         "testSuites:markSetupPendingIterationsFailed" as any,
-        { runId, error: cause },
+        isPlatformFeeRefusal(refusal) ? { runId } : { runId, error: cause },
       );
     } catch (cleanupError) {
       logger.warn("[evals] Failed to mark setup iterations failed", {
