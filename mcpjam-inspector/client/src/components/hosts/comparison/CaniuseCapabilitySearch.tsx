@@ -60,10 +60,7 @@ export function CaniuseCapabilitySearch({
         aria-label={hero ? "Type a capability" : "Search capabilities"}
         aria-expanded={expanded}
         placeholder={hero ? "type a capability…" : "Search capabilities…"}
-        className={cn(
-          "focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
-          hero && "h-auto rounded-none pb-1 pt-0 text-[length:inherit] font-[weight:inherit] leading-[inherit] tracking-[inherit] text-primary",
-        )}
+        className={hero ? "h-auto rounded-none pb-1 pt-0 text-[length:inherit] font-[weight:inherit] leading-[inherit] tracking-[inherit] text-primary" : undefined}
         value={query}
         onFocus={() => setOpen(true)}
         onValueChange={(value) => {

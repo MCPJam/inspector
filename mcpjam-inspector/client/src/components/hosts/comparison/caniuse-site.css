@@ -42,6 +42,14 @@
   color: color-mix(in oklab, var(--muted-foreground) 72%, var(--primary));
 }
 
+:is(.caniuse-site, .caniuse-dialog)
+  :is(input:not([type]), input[type="text"], input[type="email"], input[type="search"], textarea):focus-visible {
+  --ring: var(--input);
+  background-color: color-mix(in oklab, var(--foreground) 8%, transparent);
+  outline: none;
+  box-shadow: none;
+}
+
 .caniuse-nav-link {
   display: flex;
   align-items: center;
