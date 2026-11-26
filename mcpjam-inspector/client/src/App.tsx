@@ -6654,9 +6654,9 @@ export default function App() {
   const appContent = (
     <SettingsDraftProvider enabled={settingsShellActive}>
       <SidebarProvider defaultOpen={true}>
-        {/* Wide working surfaces (Playground, Evaluate, OAuth Debugger, Swarms)
-          collapse the sidebar to its icon rail; navigating back out of them
-          expands it again. */}
+        {/* With the opt-in Appearance setting on, wide working surfaces
+          (Playground, Evaluate, OAuth Debugger, Swarms) collapse the sidebar
+          to its icon rail; navigating back out of them expands it again. */}
         <SidebarAutoCollapse activeTab={activeTab} />
         <AppChromeSidebar
           hidden={playgroundOnboarding || settingsShellActive}

@@ -1,6 +1,7 @@
 import * as React from "react";
 
 import { useSidebar } from "@/components/ui/sidebar";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 /**
  * Tabs whose working surface is wide enough that the 16rem sidebar costs more
@@ -27,7 +28,8 @@ export function isWideSurfaceTab(activeTab: string | undefined): boolean {
 }
 
 /**
- * Drives the sidebar's open state from the active tab.
+ * Drives the sidebar's open state from the active tab, only while the
+ * opt-in "Auto-collapse sidebar" appearance setting is on.
  *
  * Only the *crossing* between a wide-surface tab and a normal one applies a
  * state, so a manual toggle sticks: collapse the sidebar on Home and it stays
@@ -43,6 +45,7 @@ export function SidebarAutoCollapse({
 }: {
   activeTab: string | undefined;
 }) {
+  const enabled = usePreferencesStore((s) => s.autoCollapseSidebarEnabled);
   const { setOpen, isMobile } = useSidebar();
   const isWide = isWideSurfaceTab(activeTab);
   // null until the first desktop pass, so the initial tab gets its state
@@ -59,12 +62,18 @@ export function SidebarAutoCollapse({
     if (isMobile) {
       return;
     }
+    // Turning the setting off leaves the sidebar as it is; turning it back on
+    // re-applies the current tab's state.
+    if (!enabled) {
+      lastAppliedWideRef.current = null;
+      return;
+    }
     if (lastAppliedWideRef.current === isWide) {
       return;
     }
     lastAppliedWideRef.current = isWide;
     setOpen(!isWide);
-  }, [isWide, isMobile, setOpen]);
+  }, [enabled, isWide, isMobile, setOpen]);
 
   return null;
 }

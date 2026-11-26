@@ -28,11 +28,13 @@ import {
   type RawHttpCheckContext,
 } from "./types.js";
 import {
+  legacyInitialize,
+} from "./legacy-handshake.js";
+import {
   DEFAULT_LEGACY_PROTOCOL_VERSION,
   jsonRpcError,
   jsonRpcResult,
   legacyHeaders,
-  legacyInitialize,
   logRecords,
   rawHeadersProbe,
   mirroredToolCall,
@@ -427,7 +429,7 @@ async function sessionTerminationAdvice(
     );
   }
 
-  const { result, sessionId, negotiatedVersion, versionStop } =
+  const { result, sessionId, negotiatedVersion, versionStop, stop } =
     await legacyInitialize(ctx);
   if (result.status < 200 || result.status >= 300 || !sessionId) {
     // No session to terminate — nothing to advise on.
@@ -448,11 +450,12 @@ async function sessionTerminationAdvice(
     }),
     timeoutMs: Math.min(ctx.config.checkTimeout, 3_000),
   });
-  if (versionStop !== undefined) {
-    // The server did not answer with the run's version, so the run grades
-    // nothing on this session. The DELETE still goes out, because ending the
-    // session is how a Streamable HTTP client disconnects, but its answer is
-    // not advice about this run's version.
+  if (stop !== undefined) {
+    // The handshake did not end in a session on the run's version (another
+    // version, a refused `initialize`, or an `initialized` notification that
+    // never arrived), so the run grades nothing on this session. The DELETE
+    // still goes out, because ending the session is how a Streamable HTTP
+    // client disconnects, but its answer is not advice about this server.
     try {
       await deleteRequest;
     } catch {

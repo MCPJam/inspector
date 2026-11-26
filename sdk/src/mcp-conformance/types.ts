@@ -4,6 +4,7 @@ import type {
 } from "../conformance-outcome.js";
 import type { ConformanceProfileStamp } from "../conformance-profile.js";
 import type { WireObservationRecorder } from "./wire-observations.js";
+import type { RawHttpResult } from "./raw-http.js";
 import type {
   ManagedMcpClient,
   MCPClientManager,
@@ -693,6 +694,12 @@ export interface RawHttpCheckContext {
    * have nothing to record into.
    */
   recorder?: WireObservationRecorder;
+  /**
+   * The `server/discover` answer the runner already has: on a raw-only 2026
+   * pin it asks once, before the raw checks, whether the server refuses the
+   * pin. The modern track grades this answer instead of sending its own.
+   */
+  discover?: RawHttpResult;
 }
 
 export interface MCPClientCheckDefinition {
