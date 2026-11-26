@@ -105,6 +105,10 @@ describe("CaniuseCapabilityPage", () => {
     expect(
       screen.queryByRole("region", { name: "Not supported" }),
     ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    const x = screen.getByRole<HTMLAnchorElement>("link", { name: "Post to X" });
+    expect(new URL(x.href).searchParams.get("text")).toContain("No published client results yet");
+    expect(screen.getByRole("img", { name: /No published client results yet/ })).toBeInTheDocument();
   });
 
   it("opens verification details on the first tap and dismisses them on the second", async () => {

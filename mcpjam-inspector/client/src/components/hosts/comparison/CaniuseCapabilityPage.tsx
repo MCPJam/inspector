@@ -289,9 +289,7 @@ export function CaniuseCapabilityPage({
                     </div>
                     <p className="mt-2 text-sm text-foreground/85">
                       {coverage.score === null
-                        ? "No probed clients yet."
-                        : coverage.published === 0
-                          ? "No published client results yet."
+                        ? "No published client results yet."
                         : coverage.eventsMode
                           ? eventsSupportSummary(coverage)
                           : coverage.reporting

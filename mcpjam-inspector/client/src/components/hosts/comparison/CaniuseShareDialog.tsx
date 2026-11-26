@@ -50,7 +50,7 @@ export function CaniuseShareDialog({
     title,
     label,
     coverage.score === null
-      ? "No probed clients yet"
+      ? "No published client results yet"
       : coverage.eventsMode
         ? eventsSupportSummary(coverage)
         : `${coverage.full} of ${coverage.probed} probed clients ${coverage.reporting ? "report a value" : "fully support this capability"}`,
