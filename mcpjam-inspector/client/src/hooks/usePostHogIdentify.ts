@@ -9,7 +9,11 @@ import {
 } from "@/lib/analytics";
 import { refreshServerFeatureFlagsForActor } from "@/lib/server-feature-flags";
 import { HOSTED_MODE } from "@/lib/config";
-import { reapplyAnalyticsConsent } from "@/lib/analytics-consent";
+import {
+  hasAnalyticsConsent,
+  reapplyAnalyticsConsent,
+  subscribeAnalyticsConsent,
+} from "@/lib/analytics-consent";
 import { useActorKey } from "@/hooks/use-actor-key";
 import {
   subscribeTelemetryPolicy,
@@ -35,7 +39,8 @@ import {
  * under an earlier full answer stay on the PostHog person. This is
  * independent of the session's replay recording level. Desktop content
  * remains strict, so identify is withheld. A delivery-blocking permission
- * window permits one fresh profile retry after full content returns.
+ * window permits one fresh profile retry after full content returns, and so
+ * does analytics consent arriving after the SDK dropped the first attempt.
  */
 export function usePostHogIdentify() {
   const posthog = usePostHog();
@@ -56,9 +61,14 @@ export function usePostHogIdentify() {
     subscribeTelemetryPolicy,
     currentTelemetryProfileRetryRevision,
   );
+  const consented = useSyncExternalStore(
+    subscribeAnalyticsConsent,
+    hasAnalyticsConsent,
+  );
   const profileAttemptRef = useRef<{
     actor: string;
     revision: number;
+    consented: boolean;
     client: typeof posthog;
   } | null>(null);
   const previousActorRef = useRef<{ key: string; wasAuthed: boolean } | null>(
@@ -136,15 +146,18 @@ export function usePostHogIdentify() {
         !isActorChange &&
         previousAttempt?.actor === actorKey &&
         previousAttempt.client === posthog &&
-        previousAttempt.revision !== profileRetryRevision
+        (previousAttempt.revision !== profileRetryRevision ||
+          (consented && !previousAttempt.consented))
       ) {
-        // Bypass SDK profile dedup after a delivery-blocking permission window.
+        // Bypass SDK profile dedup after a delivery-blocking permission window
+        // or consent the earlier attempt was made without.
         // capture still enforces opt-out, capture-time grants and live send policy.
         retryPersonProfile(posthog, personProperties, actorKey);
       }
       profileAttemptRef.current = {
         actor: actorKey,
         revision: profileRetryRevision,
+        consented,
         client: posthog,
       };
     }
@@ -169,5 +182,6 @@ export function usePostHogIdentify() {
     identity,
     contentFull,
     profileRetryRevision,
+    consented,
   ]);
 }

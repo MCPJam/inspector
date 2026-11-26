@@ -390,6 +390,8 @@ describe("syncSentryReplay", () => {
       const posthog = {
         opt_in_capturing: vi.fn(),
         opt_out_capturing: vi.fn(),
+        is_capturing: vi.fn(() => false),
+        clear_opt_in_out_capturing: vi.fn(),
         set_config: vi.fn(),
       };
 
@@ -549,6 +551,8 @@ describe("Sentry Replay waits for analytics consent", () => {
   const posthog = {
     opt_in_capturing: vi.fn(),
     opt_out_capturing: vi.fn(),
+    is_capturing: vi.fn(() => false),
+    clear_opt_in_out_capturing: vi.fn(),
     set_config: vi.fn(),
   };
 

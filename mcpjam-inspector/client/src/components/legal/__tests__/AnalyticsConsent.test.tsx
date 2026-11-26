@@ -4,6 +4,8 @@ import { afterEach, expect, it, vi } from "vitest";
 const posthog = vi.hoisted(() => ({
   opt_in_capturing: vi.fn(),
   opt_out_capturing: vi.fn(),
+  is_capturing: vi.fn(() => false),
+  clear_opt_in_out_capturing: vi.fn(),
   set_config: vi.fn(),
 }));
 vi.mock("posthog-js/react", () => ({ usePostHog: () => posthog }));

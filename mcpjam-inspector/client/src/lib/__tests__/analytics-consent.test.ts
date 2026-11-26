@@ -12,6 +12,8 @@ function client() {
   return {
     opt_in_capturing: vi.fn(),
     opt_out_capturing: vi.fn(),
+    is_capturing: vi.fn(() => false),
+    clear_opt_in_out_capturing: vi.fn(),
     set_config: vi.fn(),
   };
 }
@@ -205,7 +207,41 @@ describe("analytics consent", () => {
     });
     setAnalyticsConsent(posthog, "denied");
 
+    expect(posthog.is_capturing()).toBe(false);
     expect(posthog.capture("after_withdrawal")).toBeUndefined();
+  });
+
+  it("asks again on the next visit after a withdrawal storage refused", async () => {
+    window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = true;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}")));
+    const config = {
+      api_host: window.location.origin,
+      persistence: "memory" as const,
+      advanced_disable_flags: true,
+      disable_session_recording: true,
+      capture_pageview: false,
+      autocapture: false,
+    };
+    const { PostHog } = await import("posthog-js");
+    const posthog = new PostHog();
+    posthog.init("phc_consent_reload_test", { ...options, ...config });
+    setAnalyticsConsent(posthog, "granted");
+    vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
+      throw new Error("quota exceeded");
+    });
+    setAnalyticsConsent(posthog, "denied");
+
+    // A reload drops this page's in-memory refusal.
+    vi.resetModules();
+    const reloaded = await import("../analytics-consent");
+    const { options: reloadedOptions } = await import("../PosthogUtils");
+    const { PostHog: ReloadedPostHog } = await import("posthog-js");
+    const next = new ReloadedPostHog();
+    next.init("phc_consent_reload_test", { ...reloadedOptions, ...config });
+
+    expect(reloaded.getAnalyticsConsent()).toBeNull();
+    expect(next.is_capturing()).toBe(false);
+    expect(next.capture("after_reload")).toBeUndefined();
   });
 
   it("stops capture when another tab clears a grant a visitor must give", () => {
@@ -219,6 +255,20 @@ describe("analytics consent", () => {
 
     expect(getAnalyticsConsent()).toBeNull();
     expect(posthog.opt_out_capturing).toHaveBeenCalledTimes(1);
+  });
+
+  it("resumes capture when another tab clears a refusal where the server would not ask", () => {
+    window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = false;
+    const posthog = client();
+    setAnalyticsConsent(posthog, "denied");
+    followAnalyticsConsentAcrossTabs(posthog);
+
+    window.localStorage.clear();
+    window.dispatchEvent(new StorageEvent("storage", { key: null }));
+
+    expect(getAnalyticsConsent()).toBeNull();
+    expect(hasAnalyticsConsent()).toBe(true);
+    expect(posthog.opt_in_capturing).toHaveBeenCalledTimes(1);
   });
 
   it("applies a withdrawal made in another tab", () => {

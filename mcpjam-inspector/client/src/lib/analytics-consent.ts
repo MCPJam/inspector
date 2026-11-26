@@ -12,6 +12,8 @@ export type AnalyticsConsent = "granted" | "denied";
 export interface AnalyticsConsentClient {
   opt_in_capturing: (options?: { captureEventName?: false }) => void;
   opt_out_capturing: () => void;
+  is_capturing: () => boolean;
+  clear_opt_in_out_capturing: () => void;
   set_config: (config: {
     disable_conversations: boolean;
     opt_out_capturing_by_default: boolean;
@@ -77,9 +79,20 @@ export function setAnalyticsConsent(
     // The choice still applies to this page; it is asked again next visit.
     pageChoice = consent;
     console.debug("[analytics-consent] could not store the choice", error);
+    // Storage that refuses writes may still allow removal. Dropping the earlier
+    // grant keeps it from deciding the next visit.
+    if (consent === "denied") forgetStoredChoice();
   }
   applyToClient(client, consent);
   notify();
+}
+
+function forgetStoredChoice(): void {
+  try {
+    window.localStorage.removeItem(STORAGE_KEY);
+  } catch (error) {
+    console.debug("[analytics-consent] could not remove the stored choice", error);
+  }
 }
 
 function applyToClient(
@@ -99,6 +112,10 @@ function applyToClient(
     opt_out_persistence_by_default: refused,
   });
   if (!refused) return;
+  // If posthog-js could not store the refusal either, it still reads its
+  // earlier grant. Removing that grant leaves the opt-out default set above in
+  // charge.
+  if (client.is_capturing()) client.clear_opt_in_out_capturing();
   // Outside cookieless mode, opting out leaves a running recorder and a
   // loaded Conversations widget in place. Re-checking stops the recorder
   // now that capture is off; reset removes the widget and its stored session.
@@ -140,14 +157,11 @@ if (
     // `key` is null when another tab cleared all of storage.
     if (event.key !== STORAGE_KEY && event.key !== null) return;
     pageChoice = null;
-    const consent = getAnalyticsConsent();
+    // posthog-js keeps the choice it applied earlier, so a cleared store
+    // applies this location's default: off where the visitor must opt in, on
+    // where they need not.
     if (followedClient) {
-      if (consent !== null) applyToClient(followedClient, consent);
-      // A cleared store leaves posthog-js on the grant it applied earlier; a
-      // visitor who must opt in is undecided again, so capture stops.
-      else if (isAnalyticsConsentRequired()) {
-        applyToClient(followedClient, "denied");
-      }
+      applyToClient(followedClient, hasAnalyticsConsent() ? "granted" : "denied");
     }
     notify();
   });
