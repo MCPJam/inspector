@@ -1,4 +1,4 @@
-import { useId, useState, type KeyboardEvent } from "react";
+import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { SearchIcon } from "lucide-react";
 import { cn } from "@mcpjam/design-system/cn";
 import type { HostConfigFieldDef } from "@/lib/host-config-field-schema";
@@ -25,6 +25,7 @@ export function CaniuseCapabilitySearch({
 }) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
   const listId = useId();
   const label = hero ? "Type a capability" : "Search capabilities";
   const suggestions = fields
@@ -33,6 +34,10 @@ export function CaniuseCapabilitySearch({
   const expanded = open && suggestions.length > 0;
   const currentIndex = Math.min(activeIndex, suggestions.length - 1);
   const optionId = (index: number) => `${listId}-${index}`;
+
+  useLayoutEffect(() => {
+    if (expanded && listRef.current) listRef.current.scrollTop = 0;
+  }, [expanded, query]);
 
   function openSuggestions() {
     setActiveIndex(0);
@@ -111,6 +116,7 @@ export function CaniuseCapabilitySearch({
         />
       </div>
       <div
+        ref={listRef}
         id={listId}
         role="listbox"
         aria-label={label}
