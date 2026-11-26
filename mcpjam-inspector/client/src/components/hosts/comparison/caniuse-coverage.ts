@@ -41,9 +41,11 @@ export function capabilityResults(
     const value = field.read(subject.config);
     if (reporting) {
       const status =
-        value != null && value !== NOT_SUPPORTED && value !== ""
-          ? "supported"
-          : "unknown";
+        value === NOT_SUPPORTED
+          ? "unsupported"
+          : value != null && value !== ""
+            ? "supported"
+            : "unknown";
       return { subject, status } as const;
     }
     if (
@@ -97,7 +99,7 @@ export function capabilityCoverage(
     published,
     reporting,
     eventsMode,
-    score: probed ? Math.round((full / probed) * 100) : null,
+    score: published ? Math.round((full / probed) * 100) : null,
   };
 }
 

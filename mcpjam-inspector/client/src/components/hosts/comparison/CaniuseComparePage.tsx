@@ -370,7 +370,7 @@ function MatrixAdoption({
           className="font-bold text-primary hover:underline"
           title={
             overall.score === null
-              ? "No probed clients"
+              ? "No results published yet"
               : overall.eventsMode
                 ? eventsSupportSummary(overall)
                 : `${overall.full} of ${overall.probed} probed clients have confirmed support`

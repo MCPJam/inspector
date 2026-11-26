@@ -21,7 +21,7 @@ describe("caniuse adoption", () => {
     const field = hostConfigField("appsCap.cspConnectDomains.fetch");
     expect(
       capabilityCoverage({ ...field, read: () => undefined }, clients),
-    ).toMatchObject({ probed: probed.length, published: 0, score: 0 });
+    ).toMatchObject({ probed: probed.length, published: 0, score: null });
   });
 
   it("counts inline-only widget rendering for its slice but not for full display-mode support", () => {

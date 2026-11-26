@@ -74,7 +74,7 @@ export function CaniuseCapabilityPage({
   const results =
     capabilityResult?.rows.map(({ subject, status: level }) => {
       const label = capabilityResult.reporting
-        ? level === "supported" ? "Reported" : "No published result"
+        ? level === "supported" ? "Reported" : "Unreported"
         : getCaniuseSupportLabel(level, capability?.field.id);
       return { subject, level, label };
     }) ?? [];
