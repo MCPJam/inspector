@@ -552,11 +552,15 @@ export async function runTransportChecks(
       const answered = responses.filter(
         (response) => response !== undefined && isOk(response),
       ).length;
+      const anyRequestError = requestErrors.some(
+        (error) => error !== undefined,
+      );
+      // Every verdict names the probe: it follows the declared capabilities,
+      // so it can be any of the three listings or a ping.
       const acceptance = {
+        probeMethod: probe.method,
         statuses,
-        ...(requestErrors.some((error) => error !== undefined)
-          ? { requestErrors }
-          : {}),
+        ...(anyRequestError ? { requestErrors } : {}),
       };
       const sseResponses = responses
         .map((response, index) => ({ response, index }))
@@ -574,12 +578,21 @@ export async function runTransportChecks(
       const polling = pollingOutcome(sseResponses);
       if (sseResponses.length === 0) {
         results.push(
-          answered === 0
-            ? // Nothing came back to grade. Refusing concurrent requests is
-              // not a server fault, so this cannot fail the server.
+          answered === 0 && !anyRequestError
+            ? // Every request was turned down with an HTTP status. A server may
+              // refuse concurrent requests, so there is no stream to grade, and
+              // that must not hold the run at "incomplete" either.
+              notApplicableResult(
+                TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
+                `The server turned down all three concurrent requests (HTTP ${statuses.join(", ")}), so there was no stream to check. A server does not have to accept concurrent requests.`,
+                { ...acceptance, contentTypes },
+              )
+            : answered === 0
+            ? // A request that never got an HTTP answer might have streamed:
+              // unknown, so this was not tested rather than not applicable.
               couldNotRunResult(
                 TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
-                "None of the three concurrent requests was answered, so no stream came back to check. A server does not have to accept concurrent requests.",
+                `None of the three concurrent requests was accepted (${requestErrors.filter((error) => error !== undefined).length} failed before any HTTP answer), so no stream came back to check.`,
                 { ...acceptance, contentTypes },
               )
             : probe.capability === undefined
@@ -594,7 +607,6 @@ export async function runTransportChecks(
                 {
                   message:
                     "Concurrent requests returned JSON responses instead of SSE streams",
-                  probeMethod: probe.method,
                   contentTypes,
                   ...acceptance,
                 },
@@ -606,7 +618,10 @@ export async function runTransportChecks(
           couldNotRunResult(
             TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
             polling.unreadMessage,
-            { unreadStreams: polling.unreadStreams },
+            {
+              probeMethod: probe.method,
+              unreadStreams: polling.unreadStreams,
+            },
           ),
         );
       } else {
@@ -634,7 +649,6 @@ export async function runTransportChecks(
                 TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
                 Date.now() - multiStreamStartedAt,
                 {
-                  probeMethod: probe.method,
                   eventCounts,
                   sseStreamCount: sseResponses.length,
                   ...acceptance,

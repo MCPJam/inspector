@@ -10,6 +10,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { decideConformanceOutcome } from "../../src/conformance-outcome.js";
 import { runTransportChecks } from "../../src/mcp-conformance/checks/transport.js";
 import type {
   MCPCheckId,
@@ -149,20 +150,28 @@ describe("Functional SSE Streams grades only the streams that came back", () => 
     expect(result.status).toBe("failed");
     expect(result.error?.message).toContain("no readable events");
     expect(result.details).toMatchObject({
+      // The probe varies with the declared capabilities; a failure names it.
+      probeMethod: "tools/list",
       eventCounts: [1, 0],
       readErrors: [undefined, expect.stringContaining("stream boom")],
     });
   });
 
-  it("could not run when every POST was refused, since no stream came back", async () => {
+  it("is not applicable when the server turns every POST down, and the run can still pass", async () => {
     const result = await run(["429", "429", "429"]);
 
+    // A refusal is an answer: the server chose not to take concurrent
+    // requests, which it may, so there is no stream behavior to grade.
     expect(result.status).toBe("skipped");
-    expect(result.skipReason).toBe("could-not-run");
+    expect(result.skipReason).toBe("not-applicable");
     expect(result.error?.message).toContain(
-      "None of the three concurrent requests was answered"
+      "The server turned down all three concurrent requests (HTTP 429, 429, 429)"
     );
-    expect(result.details).toMatchObject({ statuses: [429, 429, 429] });
+    expect(result.details).toMatchObject({
+      probeMethod: "tools/list",
+      statuses: [429, 429, 429],
+    });
+    expect(decideConformanceOutcome([result]).outcome).not.toBe("incomplete");
   });
 
   it("could not run when every request errored before an answer", async () => {
@@ -170,6 +179,22 @@ describe("Functional SSE Streams grades only the streams that came back", () => 
 
     expect(result.status).toBe("skipped");
     expect(result.skipReason).toBe("could-not-run");
+    expect(result.error?.message).toContain(
+      "None of the three concurrent requests was accepted"
+    );
+    expect(result.details).toMatchObject({ probeMethod: "tools/list" });
+  });
+
+  it("could not run when a request errored and the rest were turned down", async () => {
+    // Whether the errored request would have streamed is unknown.
+    const result = await run(["429", "throw", "429"]);
+
+    expect(result.status).toBe("skipped");
+    expect(result.skipReason).toBe("could-not-run");
+    expect(result.details).toMatchObject({
+      probeMethod: "tools/list",
+      statuses: [429, null, 429],
+    });
   });
 
   it("judges the JSON answers it got when another POST was refused", async () => {
