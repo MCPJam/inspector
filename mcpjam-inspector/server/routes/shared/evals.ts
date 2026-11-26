@@ -3,6 +3,7 @@ import type {
   EvalAccountSelection,
   QuickRunAccounts,
 } from "../../services/evals/suite-account-choices.js";
+import { makeFunctionReference } from "convex/server";
 import { localHarnessIdOf, shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import { freezeEvalRunWebAccounts } from "../../services/web-clients/web-client-run.js";
 import { localHarnessCapabilities } from "../../services/evals/runner-capabilities.js";
@@ -1291,13 +1292,28 @@ async function loadSuiteDefaultPredicates(
 async function loadSuiteEnvironment(
   convexClient: ConvexHttpClient,
   suiteId?: string,
+  namedHostId?: string,
 ): Promise<unknown> {
   if (!suiteId) return undefined;
   try {
     const suite = await convexClient.query("testSuites:getTestSuite" as any, {
       suiteId,
     });
-    return (suite as { environment?: unknown } | undefined)?.environment;
+    if (suite?.environment?.serverBindings?.length) return suite.environment;
+    const getServerSelection = makeFunctionReference<"query",
+      { suiteId: string; namedHostId?: string },
+      { serverIds: string[]; serverNames: string[] } | null
+    >("testSuites:getSuiteRunServerSelection");
+    const selection = await convexClient.query(getServerSelection, {
+      suiteId,
+      ...(namedHostId ? { namedHostId } : {}),
+    });
+    if (!selection?.serverIds?.length) return suite?.environment;
+    return buildPersistedSuiteEnvironment({
+      resolvedServerIds: selection.serverIds,
+      persistedServerRefs: selection.serverIds,
+      serverNames: selection.serverNames,
+    });
   } catch {
     return undefined;
   }
@@ -3701,6 +3717,7 @@ export async function prepareSingleCaseExecution(
         suiteEnvironment: await loadSuiteEnvironment(
           convexClient,
           testCase.testSuiteId ?? testCase.evalTestSuiteId,
+          namedHostId,
         ),
       });
   const test = buildSingleCaseRuntimeTest({

@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
-import { sourceRevision } from "./jamroom-source.mjs";
+import { sourceRevision } from "../scripts/jamroom-source.mjs";
 
 const [envPath, fixturePath] = process.argv.slice(2);
 if (!envPath || !fixturePath) {
