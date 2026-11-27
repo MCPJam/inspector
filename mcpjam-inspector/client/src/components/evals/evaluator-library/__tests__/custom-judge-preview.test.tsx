@@ -125,7 +125,7 @@ describe("CustomJudgePreview", () => {
       screen.getByRole("button", { name: "Test on a past iteration" }),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "You just tested this judge on this iteration. Wait a few seconds, then try again.",
+      "You tested this judge on this iteration moments ago. Wait a few seconds, then try again.",
     );
   });
 
