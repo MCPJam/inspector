@@ -304,7 +304,16 @@ describe("judge evaluators", () => {
   it("only ships judges the backend's checks accept", () => {
     for (const evaluator of LIBRARY_EVALUATORS) {
       for (const judge of taggedJudges(evaluator)) {
-        expect(judgeProblem(judge, []), judge.id).toBeUndefined();
+        expect(
+          judgeProblem(judge, [], [
+            "user_prompt",
+            "final_answer",
+            "tool_calls",
+            "tool_results",
+            "expected_output",
+          ]),
+          judge.id,
+        ).toBeUndefined();
       }
     }
   });

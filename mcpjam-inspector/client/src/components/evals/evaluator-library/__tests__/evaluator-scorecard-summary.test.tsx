@@ -111,16 +111,34 @@ describe("EvaluatorScorecardSummary", () => {
     expect(card).toHaveTextContent("Passed");
   });
 
-  it("groups a library judge row under its evaluator", () => {
-    renderWithProviders(
+  it("groups a judge only when its recorded origin is the library evaluator", () => {
+    const judge = {
+      key: "judge:custom:answers-the-question-answers",
+      label: "Answers what the user asked",
+      role: "advisory",
+      result: { state: "failed", source: "scoreRow", reason: "Off topic." },
+    } as const;
+    const { rerender } = renderWithProviders(
       <EvaluatorScorecardSummary
         rows={[
           {
-            key: "judge:custom:answers-the-question-answers",
-            label: "Answers what the user asked",
-            role: "advisory",
+            ...judge,
             customJudge: { id: "answers-the-question-answers" },
-            result: { state: "failed", source: "scoreRow", reason: "Off topic." },
+          },
+        ]}
+      />,
+    );
+    expect(screen.queryByRole("region", { name: "Answers the Question" }))
+      .not.toBeInTheDocument();
+    rerender(
+      <EvaluatorScorecardSummary
+        rows={[
+          {
+            ...judge,
+            customJudge: {
+              id: "answers-the-question-answers",
+              evaluatorId: "answers-the-question",
+            },
           },
         ]}
       />,

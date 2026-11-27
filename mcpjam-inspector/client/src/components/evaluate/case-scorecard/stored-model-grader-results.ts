@@ -5,6 +5,8 @@ type StoredModelGraderResult = {
   label: string;
   result: TrialRowResult;
   evidence?: TrialRowEvidence;
+  evaluatorId?: string;
+  outputKind?: "score" | "passfail";
 };
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -113,7 +115,19 @@ export function readStoredCustomJudgeResults(
       typeof entry.reason === "string" ? entry.reason : undefined,
       output?.kind === "passfail" ? 0.5 : output?.threshold,
     );
-    if (result) results.push({ key: entry.id, label: entry.label, result });
+    if (!result) continue;
+    const origin = record(entry.evaluator);
+    results.push({
+      key: entry.id,
+      label: entry.label,
+      result,
+      ...(typeof origin?.id === "string" && origin.id
+        ? { evaluatorId: origin.id }
+        : {}),
+      ...(output?.kind === "score" || output?.kind === "passfail"
+        ? { outputKind: output.kind }
+        : {}),
+    });
   }
   return results;
 }

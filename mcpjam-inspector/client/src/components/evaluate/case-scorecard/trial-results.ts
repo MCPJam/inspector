@@ -695,11 +695,11 @@ export function customJudgeTrialRows(
     const evidence = scoreEvidence(score, definition, row);
     rows.set(scorerId, { ...row, ...(evidence ? { evidence } : {}) });
   }
-  for (const { key, label, result } of readStoredCustomJudgeResults(
+  for (const { key, label, result, evaluatorId, outputKind } of readStoredCustomJudgeResults(
     metadata.customJudgesVerdict,
   )) {
-    const row = customJudgeRow(key, label, result);
-    if (!rows.has(row.key)) rows.set(row.key, row);
+    const row = customJudgeRow(key, label, result, evaluatorId, outputKind);
+    rows.set(row.key, row);
   }
   return [...rows.values()];
 }
@@ -708,6 +708,8 @@ function customJudgeRow(
   id: string,
   label: string,
   result: TrialRowResult,
+  evaluatorId?: string,
+  outputKind?: "score" | "passfail",
 ): JoinedScorecardRow {
   const scorerId = `${HOSTED_CUSTOM_JUDGE_SCORER_PREFIX}${id}`;
   return {
@@ -719,7 +721,13 @@ function customJudgeRow(
     role: "advisory",
     roleLock: "judge",
     editable: false,
-    customJudge: { id },
+    customJudge: { id, evaluatorId, outputKind },
+    expectation:
+      outputKind !== "passfail" &&
+      "threshold" in result &&
+      result.threshold !== undefined
+        ? `Score of ${result.threshold} or higher`
+        : "Pass",
     tooltip: "A judge prompt this suite wrote. Advisory.",
     join: { kind: "judge", slot: "rubricChecks", scorerId },
     result,

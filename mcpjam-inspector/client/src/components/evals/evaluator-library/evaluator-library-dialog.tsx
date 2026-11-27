@@ -9,6 +9,7 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { ArrowLeft, Library } from "lucide-react";
 import { useState } from "react";
+import { MAX_CUSTOM_JUDGES } from "@/components/shared/session-quality/judge-config";
 import { formatCriterion } from "@/shared/predicate-kinds";
 import { EvaluatorCard } from "./evaluator-card";
 import { useEvaluatorLibraryEnabled } from "./evaluator-library-flag";
@@ -36,32 +37,50 @@ export function EvaluatorLibraryButton({
   suite,
   support,
   onAdd,
+  judgeLimit,
 }: {
   suite: LibrarySuiteParts;
   support: LibrarySupport;
   onAdd: (addition: LibraryAddition) => void;
+  judgeLimit?: number;
 }) {
   const enabled = useEvaluatorLibraryEnabled();
   const anyAuthorable = LIBRARY_EVALUATORS.some((e) => isAuthorable(e, support));
   if (!enabled || !anyAuthorable) return null;
-  return <EvaluatorLibraryDialog suite={suite} support={support} onAdd={onAdd} />;
+  return (
+    <EvaluatorLibraryDialog
+      suite={suite}
+      support={support}
+      onAdd={onAdd}
+      judgeLimit={judgeLimit}
+    />
+  );
 }
 
 export function EvaluatorLibraryDialog({
   suite,
   support,
   onAdd,
+  judgeLimit = MAX_CUSTOM_JUDGES,
 }: {
   suite: LibrarySuiteParts;
   support: LibrarySupport;
   onAdd: (addition: LibraryAddition) => void;
+  judgeLimit?: number;
 }) {
   const [open, setOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const available = LIBRARY_EVALUATORS.filter((e) => isAuthorable(e, support));
   const selected = available.find((e) => e.id === selectedId);
-  const add = (evaluator: LibraryEvaluator) =>
-    onAdd(missingParts(evaluator, suite));
+  const blockedReason = (evaluator: LibraryEvaluator) => {
+    const { judges } = missingParts(evaluator, suite);
+    return judges.length > 0 && (suite.judges?.length ?? 0) + judges.length > judgeLimit
+      ? `Remove a judge to add this preset. Each suite can have ${judgeLimit} judges.`
+      : undefined;
+  };
+  const add = (evaluator: LibraryEvaluator) => {
+    if (!blockedReason(evaluator)) onAdd(missingParts(evaluator, suite));
+  };
   return (
     <Dialog
       open={open}
@@ -91,6 +110,7 @@ export function EvaluatorLibraryDialog({
           <EvaluatorDetail
             evaluator={selected}
             inSuite={isInSuite(selected, suite)}
+            addDisabledReason={blockedReason(selected)}
             onBack={() => setSelectedId(null)}
             onAdd={() => add(selected)}
           />
@@ -106,7 +126,7 @@ export function EvaluatorLibraryDialog({
                 builtFrom={builtFrom(evaluator)}
                 inSuite={isInSuite(evaluator, suite)}
                 onOpen={() => setSelectedId(evaluator.id)}
-                onAdd={() => add(evaluator)}
+                onAdd={blockedReason(evaluator) ? undefined : () => add(evaluator)}
               />
             ))}
           </div>
@@ -119,11 +139,13 @@ export function EvaluatorLibraryDialog({
 function EvaluatorDetail({
   evaluator,
   inSuite,
+  addDisabledReason,
   onBack,
   onAdd,
 }: {
   evaluator: LibraryEvaluator;
   inSuite: boolean;
+  addDisabledReason?: string;
   onBack: () => void;
   onAdd: () => void;
 }) {
@@ -178,12 +200,15 @@ function EvaluatorDetail({
           </li>
         ))}
       </ul>
+      {addDisabledReason ? (
+        <p className="text-sm text-muted-foreground">{addDisabledReason}</p>
+      ) : null}
       <div className="flex justify-between gap-2">
         <Button type="button" variant="ghost" onClick={onBack}>
           <ArrowLeft aria-hidden />
           All evaluators
         </Button>
-        <Button type="button" onClick={onAdd} disabled={inSuite}>
+        <Button type="button" onClick={onAdd} disabled={inSuite || Boolean(addDisabledReason)}>
           {inSuite ? "In this suite" : "Add to suite"}
         </Button>
       </div>

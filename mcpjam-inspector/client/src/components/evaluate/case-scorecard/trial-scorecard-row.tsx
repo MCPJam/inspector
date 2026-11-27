@@ -256,6 +256,13 @@ export function TrialScorecardRow({
               <span data-narrative-source={narrative ? "ai" : "recorded"}>
                 {actual}
               </span>
+              {row.customJudge &&
+              row.customJudge.outputKind !== "passfail" &&
+              "value" in row.result &&
+              typeof row.result.value === "number" &&
+              (narrative || recorded.length > 0) ? (
+                <span className="mt-1 block">Score {row.result.value}</span>
+              ) : null}
               {floor ? (
                 <span
                   className="mt-1 block"

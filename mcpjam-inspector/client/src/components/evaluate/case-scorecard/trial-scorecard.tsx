@@ -319,7 +319,8 @@ export function TrialScorecard({
       groups.some((group) =>
         group.rows.some(
           (row) =>
-            row.provenance === "judge" && row.result.state !== "notMeasured",
+            (row.provenance === "judge" || row.provenance === "rubricCheck") &&
+            row.result.state !== "notMeasured",
         ),
       ));
 
@@ -534,7 +535,13 @@ export function TrialScorecard({
     <div className="flex flex-col gap-6 p-4" data-testid="trial-scorecard">
       {chainNotice}
       <EvaluatorScorecardSummary
-        rows={sections.flatMap((section) => section.rows)}
+        rows={sections.flatMap((section) =>
+          judgeHidden
+            ? section.rows.filter(
+                (row) => row.provenance !== "judge" && row.provenance !== "rubricCheck",
+              )
+            : section.rows,
+        )}
       />
       <section className="space-y-6" aria-label="User value chain">
         {railed ? (

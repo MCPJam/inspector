@@ -18,7 +18,7 @@ import {
 export type PromptVariable = {
   /** Name used in the prompt, without braces: `tool_results`. */
   name: string;
-  /** Path into `EvaluatorContextV1`: `transcript.toolResults`. */
+  /** Description or path of the source field. */
   path: string;
   /** The value in the iteration picked for preview, already truncated. */
   preview?: string;
@@ -27,10 +27,10 @@ export type PromptVariable = {
 export type VariableMappingTableProps = {
   variables: readonly PromptVariable[];
   /** Every path a variable may come from. */
-  paths: readonly string[];
+  paths?: readonly string[];
   /** Label for the preview column, e.g. "Iteration #3". */
   previewLabel?: string;
-  onPathChange: (name: string, path: string) => void;
+  onPathChange?: (name: string, path: string) => void;
 };
 
 /**
@@ -51,9 +51,11 @@ export function VariableMappingTable({
           <TableRow>
             <TableHead>Variable</TableHead>
             <TableHead>Comes from</TableHead>
-            <TableHead>
-              {previewLabel ? `Value in ${previewLabel}` : "Value"}
-            </TableHead>
+            {paths ? (
+              <TableHead>
+                {previewLabel ? `Value in ${previewLabel}` : "Value"}
+              </TableHead>
+            ) : null}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -65,32 +67,38 @@ export function VariableMappingTable({
                 </code>
               </TableCell>
               <TableCell>
-                <Select
-                  value={variable.path}
-                  onValueChange={(path) => onPathChange(variable.name, path)}
-                >
-                  <SelectTrigger
-                    aria-label={`Source for ${variable.name}`}
-                    className="h-8 w-64 font-mono text-xs"
+                {paths && onPathChange ? (
+                  <Select
+                    value={variable.path}
+                    onValueChange={(path) => onPathChange(variable.name, path)}
                   >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {paths.map((path) => (
-                      <SelectItem
-                        key={path}
-                        value={path}
-                        className="font-mono text-xs"
-                      >
-                        {path}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                    <SelectTrigger
+                      aria-label={`Source for ${variable.name}`}
+                      className="h-8 w-64 font-mono text-xs"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {paths.map((path) => (
+                        <SelectItem
+                          key={path}
+                          value={path}
+                          className="font-mono text-xs"
+                        >
+                          {path}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  variable.path
+                )}
               </TableCell>
-              <TableCell className="max-w-72 truncate font-mono text-xs text-muted-foreground">
-                {variable.preview ?? "No preview iteration"}
-              </TableCell>
+              {paths ? (
+                <TableCell className="max-w-72 truncate font-mono text-xs text-muted-foreground">
+                  {variable.preview ?? "No preview iteration"}
+                </TableCell>
+              ) : null}
             </TableRow>
           ))}
         </TableBody>

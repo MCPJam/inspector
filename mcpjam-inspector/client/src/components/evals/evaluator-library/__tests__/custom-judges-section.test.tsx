@@ -17,7 +17,7 @@ const capabilities = {
       templateVersion: 1,
       maxJudges: 5,
       maxPromptLength: 4000,
-      variables: [],
+      variables: ["final_answer", "expected_output"],
       execution: "wired",
     },
   },
@@ -65,7 +65,7 @@ describe("CustomJudgesSection", () => {
     );
     expect(onChange).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText("Judge prompt"), {
-      target: { value: "Does {{final_answer}} state the order number?" },
+      target: { value: "Does {{final_answer}} match {{expected_output}}?" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save judge" }));
     const next = onChange.mock.calls[0][0] as EvalJudgeConfig;
@@ -73,7 +73,7 @@ describe("CustomJudgesSection", () => {
       {
         id: "judge",
         label: "Cites the order number",
-        prompt: "Does {{final_answer}} state the order number?",
+        prompt: "Does {{final_answer}} match {{expected_output}}?",
         output: { kind: "passfail" },
       },
     ]);
@@ -119,7 +119,7 @@ describe("custom judge model", () => {
 
   it("asks for a variable and a passing score in range", () => {
     const base = { id: "j", label: "J", output: { kind: "passfail" as const } };
-    expect(judgeProblem({ ...base, prompt: "Is it good?" }, [])).toContain(
+    expect(judgeProblem({ ...base, prompt: "Is it good?" }, [], [])).toContain(
       "at least one variable",
     );
     expect(
@@ -130,7 +130,22 @@ describe("custom judge model", () => {
           output: { kind: "score", threshold: 0 },
         },
         [],
+        ["final_answer"],
       ),
     ).toContain("passing score");
+  });
+
+  it("keeps a saved prompt editable when the backend advertises an alias", () => {
+    const judge = {
+      id: "j",
+      label: "J",
+      prompt: "Compare with {{expected_outcome}}",
+      output: { kind: "passfail" as const },
+    };
+    expect(
+      judgeProblem(judge, [], ["expected_output"], {
+        expected_outcome: "expected_output",
+      }),
+    ).toBeUndefined();
   });
 });

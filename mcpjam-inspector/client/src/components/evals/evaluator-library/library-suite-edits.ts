@@ -60,15 +60,7 @@ function withLibraryLists(
     });
   }
   if (edits.judges) {
-    next = {
-      ...(next ?? {}),
-      customJudges: {
-        enabled: true,
-        judges: edits
-          .judges(next?.customJudges?.judges ?? [])
-          .slice(0, MAX_CUSTOM_JUDGES),
-      },
-    };
+    next = withJudges(next, edits.judges(next?.customJudges?.judges ?? []));
   }
   return next;
 }
@@ -96,6 +88,13 @@ export function librarySuiteEdits(
   };
   return {
     add({ checks, questions, judges }: LibraryAddition) {
+      if (
+        judges.length > 0 &&
+        (judgeConfig?.customJudges?.judges?.length ?? 0) + judges.length >
+          MAX_CUSTOM_JUDGES
+      ) {
+        return;
+      }
       if (checks.length) {
         scope.onPredicatesChange((previous: Predicate[]) => [
           ...previous,

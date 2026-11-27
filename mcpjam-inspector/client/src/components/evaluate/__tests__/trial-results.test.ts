@@ -20,6 +20,7 @@ import {
   type CaseScorecardInput,
 } from "../case-scorecard/case-scorecard-model";
 import {
+  customJudgeTrialRows,
   joinTrialResults,
   summarizeTrialScorecard,
   type JoinedScorecardRow,
@@ -107,6 +108,54 @@ function predicateDefinition(
     ...overrides,
   };
 }
+
+describe("recorded custom judge results", () => {
+  it("shows the fresh verdict while the previous score projection is still stored", () => {
+    const previous = scoreFixture([
+      {
+        definition: {
+          scorerId: "judge:custom:answers-the-question-answers",
+          idSource: "platform",
+          scorerVersion: "1",
+          implementationHash: "impl-judge",
+          deterministic: false,
+          passThreshold: 0.7,
+          role: "advisory",
+        },
+        result: { status: "scored", value: 1, rationale: "Previous answer" },
+      },
+    ]);
+    const trial = iteration({
+      ...previous,
+      customJudgesVerdict: {
+        judges: [
+          {
+            id: "answers-the-question-answers",
+            label: "Answers what the user asked",
+            evaluator: { id: "answers-the-question", version: 1 },
+            status: "scored",
+            passed: false,
+            value: 0.699,
+            output: { kind: "score", threshold: 0.7 },
+            reason: "Current answer misses the question.",
+          },
+        ],
+      },
+    });
+    expect(customJudgeTrialRows(trial)).toMatchObject([
+      {
+        customJudge: { evaluatorId: "answers-the-question" },
+        expectation: "Score of 0.7 or higher",
+        result: {
+          state: "failed",
+          value: 0.699,
+          threshold: 0.7,
+          reason: "Current answer misses the question.",
+        },
+      },
+    ]);
+  });
+});
 
 describe("joinTrialResults — step rows", () => {
   it("shows the step's own verdict, with the reason the runner recorded", () => {

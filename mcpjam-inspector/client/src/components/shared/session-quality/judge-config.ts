@@ -135,13 +135,6 @@ export type CustomJudgesSlot = {
   judges?: CustomJudge[];
 };
 
-export const CUSTOM_JUDGE_VARIABLES = [
-  "user_prompt",
-  "final_answer",
-  "tool_calls",
-  "tool_results",
-  "expected_outcome",
-] as const;
 export const MAX_CUSTOM_JUDGES = 5;
 export const MAX_CUSTOM_JUDGE_PROMPT_LENGTH = 4000;
 

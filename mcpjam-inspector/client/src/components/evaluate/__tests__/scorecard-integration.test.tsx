@@ -104,6 +104,11 @@ describe("scorecard integration regressions", () => {
       );
       expect(row).toHaveAttribute("data-state", state);
       expect(row).toHaveAttribute("data-role", "advisory");
+      if (label === "Includes a Link") {
+        expect(row).toHaveTextContent("Score of 0.8 or higher");
+        expect(row).toHaveTextContent("Score 0.6");
+        expect(row).toHaveTextContent("No export link in the answer.");
+      }
     }
     expect(computeIterationResult(savedTrial)).toBe("passed");
   });

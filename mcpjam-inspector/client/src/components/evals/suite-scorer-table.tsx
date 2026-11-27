@@ -42,7 +42,7 @@ import {
   hasYesNoRubricQuestionsCapability,
   type SuiteCapabilities,
 } from "@/hooks/use-suite-capabilities";
-import { DEFAULT_JUDGE_THRESHOLD } from "@/components/shared/session-quality/judge-config";
+import { DEFAULT_JUDGE_THRESHOLD, MAX_CUSTOM_JUDGES } from "@/components/shared/session-quality/judge-config";
 import { ValidatorsSection } from "./validators-section";
 import { CheckRow, blankPredicate } from "./checks-section";
 import { SuiteScorerLibraryMenu } from "./suite-scorer-library-menu";
@@ -430,6 +430,10 @@ export function SuiteScorerTable({
                   canJudge: hasCustomJudgesCapability(capabilities),
                 }}
                 onAdd={library.add}
+                judgeLimit={Math.min(
+                  MAX_CUSTOM_JUDGES,
+                  capabilities?.judges?.custom?.maxJudges ?? MAX_CUSTOM_JUDGES,
+                )}
               />
             ) : null}
             <SuiteScorerLibraryMenu

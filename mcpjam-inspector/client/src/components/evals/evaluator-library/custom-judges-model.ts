@@ -1,5 +1,4 @@
 import {
-  CUSTOM_JUDGE_VARIABLES,
   MAX_CUSTOM_JUDGE_PROMPT_LENGTH,
   MAX_CUSTOM_JUDGES,
   type CustomJudge,
@@ -8,19 +7,27 @@ import type { EvalJudgeConfig } from "../types";
 import { usedVariables } from "./prompt-editor";
 import type { PromptVariable } from "./variable-mapping-table";
 
-/** The run data a judge prompt may name, with where each comes from. */
-export const JUDGE_PROMPT_VARIABLES: readonly PromptVariable[] = [
-  { name: "user_prompt", path: "The user's request" },
-  { name: "final_answer", path: "The agent's final answer" },
-  { name: "tool_calls", path: "Each tool call and its arguments" },
-  { name: "tool_results", path: "Each tool step with its result" },
-  { name: "expected_outcome", path: "The case's expected outcome" },
-];
+const VARIABLE_DESCRIPTIONS = new Map([
+  ["user_prompt", "The user's request"],
+  ["final_answer", "The agent's final answer"],
+  ["tool_calls", "Each tool call and its arguments"],
+  ["tool_results", "Each tool step with its result"],
+  ["expected_output", "The case's expected output"],
+]);
+
+export function judgePromptVariables(names: readonly string[]): PromptVariable[] {
+  return names.map((name) => ({
+    name,
+    path: VARIABLE_DESCRIPTIONS.get(name) ?? "Trial data",
+  }));
+}
 
 /** Mirrors the backend's write-time checks, so a save is not refused later. */
 export function judgeProblem(
   judge: CustomJudge,
   others: readonly CustomJudge[],
+  availableVariables: readonly string[],
+  variableAliases?: Readonly<Record<string, string>>,
 ): string | undefined {
   if (!judge.label.trim()) return "Give the judge a name.";
   if (!judge.prompt.trim()) return "Write the judge prompt.";
@@ -29,7 +36,11 @@ export function judgeProblem(
   }
   const used = usedVariables(judge.prompt);
   const unknown = used.filter(
-    (name) => !(CUSTOM_JUDGE_VARIABLES as readonly string[]).includes(name),
+    (name) =>
+      !availableVariables.includes(name) &&
+      !(variableAliases &&
+        Object.hasOwn(variableAliases, name) &&
+        availableVariables.includes(variableAliases[name])),
   );
   if (unknown.length) {
     return `${unknown.map((n) => `{{${n}}}`).join(", ")} ${unknown.length === 1 ? "isn't an available variable" : "aren't available variables"}.`;
@@ -96,7 +107,7 @@ export function withJudges(
   return {
     ...(judgeConfig ?? {}),
     customJudges: {
-      enabled: true,
+      enabled: judgeConfig?.customJudges?.enabled ?? true,
       judges: judges.slice(0, MAX_CUSTOM_JUDGES),
     },
   };

@@ -4,10 +4,7 @@ import type { TrialRowResult } from "@/components/evaluate/case-scorecard/trial-
 import type { ScorerUiRole } from "../suite-scorer-table-model";
 import { useEvaluatorLibraryEnabled } from "./evaluator-library-flag";
 import { findLibraryEvaluator } from "./library-catalog";
-import {
-  evaluatorIdForLibraryId,
-  evaluatorIdForQuestionKey,
-} from "./library-suite-edits";
+import { evaluatorIdForQuestionKey } from "./library-suite-edits";
 import { ScorecardEvaluatorCard } from "./scorecard-evaluator-card";
 import type { VerdictStatus } from "./verdict-pill";
 
@@ -19,8 +16,7 @@ export type SummaryRow = {
   predicate?: Predicate;
   /** Rubric-check rows: the `q:<id>` key, which names a library question. */
   rubricCheck?: { key: string };
-  /** Custom-judge rows: the judge id, `<evaluator>-<slug>` when from the library. */
-  customJudge?: { id: string };
+  customJudge?: { id: string; evaluatorId?: string };
   result: TrialRowResult;
 };
 
@@ -81,7 +77,7 @@ export function EvaluatorScorecardSummary({
     const id =
       row.predicate?.evaluator?.id ??
       evaluatorIdForQuestionKey(row.rubricCheck?.key) ??
-      evaluatorIdForLibraryId(row.customJudge?.id);
+      row.customJudge?.evaluatorId;
     if (!id) continue;
     byEvaluator.set(id, [...(byEvaluator.get(id) ?? []), row]);
   }

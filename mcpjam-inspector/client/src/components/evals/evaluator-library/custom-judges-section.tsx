@@ -16,7 +16,7 @@ import { judgeMode } from "../suite-grading-model";
 import type { EvalJudgeConfig } from "../types";
 import {
   blankJudge,
-  JUDGE_PROMPT_VARIABLES,
+  judgePromptVariables,
   judgeProblem,
   withJudges,
 } from "./custom-judges-model";
@@ -24,6 +24,7 @@ import { useEvaluatorLibraryEnabled } from "./evaluator-library-flag";
 import { findLibraryEvaluator } from "./library-catalog";
 import { CustomJudgePreview } from "./custom-judge-preview";
 import { PromptEditor } from "./prompt-editor";
+import { VariableMappingTable } from "./variable-mapping-table";
 
 /**
  * Judges the suite writes itself, and customized copies of library judges.
@@ -45,7 +46,8 @@ export function CustomJudgesSection({
   const [editing, setEditing] = useState<CustomJudge | null>(null);
   const [isNew, setIsNew] = useState(false);
   // Custom judges ride the goal-completion judge, so its Off pauses them.
-  const goalJudgeOff = judgeMode(judgeConfig) === "off";
+  const goalJudgeOff =
+    judgeMode(judgeConfig, capabilities?.judges?.goalCompletion?.policy) === "off";
   const change = (next: EvalJudgeConfig) => onJudgeConfigChange?.(next);
   const save = (judge: CustomJudge) => {
     const next = isNew
@@ -64,6 +66,7 @@ export function CustomJudgesSection({
   const atMax = all.length >= MAX_CUSTOM_JUDGES;
   if (!enabled || !onJudgeConfigChange) return null;
   if (!hasCustomJudgesCapability(capabilities)) return null;
+  const variables = capabilities?.judges?.custom?.variables ?? [];
   return (
     <section
       aria-label="Judges you write"
@@ -115,8 +118,11 @@ export function CustomJudgesSection({
       ) : null}
       {editing ? (
         <JudgeEditor
+          key={editing.id}
           suiteId={capabilities?.suiteId}
           judge={editing}
+          variables={variables}
+          variableAliases={capabilities?.judges?.custom?.variableAliases}
           others={all.filter((j) => isNew || j.id !== editing.id)}
           onCancel={() => setEditing(null)}
           onSave={save}
@@ -180,12 +186,16 @@ function JudgeRow({
 function JudgeEditor({
   suiteId,
   judge,
+  variables,
+  variableAliases,
   others,
   onCancel,
   onSave,
 }: {
   suiteId?: string;
   judge: CustomJudge;
+  variables: readonly string[];
+  variableAliases?: Readonly<Record<string, string>>;
   others: readonly CustomJudge[];
   onCancel: () => void;
   onSave: (judge: CustomJudge) => void;
@@ -193,7 +203,8 @@ function JudgeEditor({
   const id = useId();
   const [draft, setDraft] = useState(judge);
   const [tried, setTried] = useState(false);
-  const problem = judgeProblem(draft, others);
+  const problem = judgeProblem(draft, others, variables, variableAliases);
+  const variableMappings = judgePromptVariables(variables);
   const threshold = draft.output.kind === "score" ? draft.output.threshold : 0.7;
   return (
     <div className="mt-2 flex flex-col gap-3 rounded-md border border-border bg-muted/20 p-3">
@@ -212,10 +223,16 @@ function JudgeEditor({
       <PromptEditor
         value={draft.prompt}
         onChange={(prompt) => setDraft({ ...draft, prompt })}
-        variables={JUDGE_PROMPT_VARIABLES}
+        variables={variableMappings}
         scope="iteration"
         maxLength={MAX_CUSTOM_JUDGE_PROMPT_LENGTH}
       />
+      <details className="text-xs">
+        <summary className="mb-2 cursor-pointer text-muted-foreground">
+          Variable reference
+        </summary>
+        <VariableMappingTable variables={variableMappings} />
+      </details>
       <div className="flex flex-col gap-1.5 text-xs">
         <span className="font-medium">Result</span>
         <RadioGroup

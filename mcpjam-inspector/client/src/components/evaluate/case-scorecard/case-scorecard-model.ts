@@ -327,7 +327,11 @@ export type ScorecardRow = {
   /** Rubric-check rows only: the question's key, and whether it is a criterion. */
   rubricCheck?: { key: string; criterion: boolean };
   /** Custom-judge rows: the judge's id, which may name a library judge. */
-  customJudge?: { id: string };
+  customJudge?: {
+    id: string;
+    evaluatorId?: string;
+    outputKind?: "score" | "passfail";
+  };
   /**
    * The EXPECTED line, for a row whose configuration is neither a predicate
    * nor the route question it belongs to. See `expectationOf`.

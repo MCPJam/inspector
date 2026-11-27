@@ -150,6 +150,7 @@ export type SuiteCapabilities = {
       maxJudges: number;
       maxPromptLength: number;
       variables: string[];
+      variableAliases?: Record<string, string>;
       execution: "wired";
     };
   };

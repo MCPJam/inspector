@@ -209,7 +209,7 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
         slug: "meets",
         label: "Reaches the expected outcome",
         prompt:
-          "Compare the run with the expected outcome. Pass only if the tool results and the final answer show the outcome was reached, not just described.\n\nExpected outcome:\n{{expected_outcome}}\n\nTool results:\n{{tool_results}}\n\nFinal answer:\n{{final_answer}}",
+          "Compare the run with the expected output. Pass only if the tool results and the final answer show the outcome was reached, not just described.\n\nExpected output:\n{{expected_output}}\n\nTool results:\n{{tool_results}}\n\nFinal answer:\n{{final_answer}}",
         output: { kind: "passfail" },
       },
     ],

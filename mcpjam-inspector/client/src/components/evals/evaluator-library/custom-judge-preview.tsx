@@ -7,6 +7,7 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import type { CustomJudge } from "@/components/shared/session-quality/judge-config";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { useAction, useQuery } from "convex/react";
 import { makeFunctionReference } from "convex/server";
 import { useState } from "react";
@@ -17,6 +18,7 @@ type PreviewTrial = {
   runNumber: number | null;
   title: string;
   result: string | null;
+  createdAt: number;
 };
 
 type PreviewResult =
@@ -24,6 +26,7 @@ type PreviewResult =
   | {
       ok: true;
       prompt: string | null;
+      promptTruncated?: boolean;
       result: {
         status: "scored" | "error";
         value?: number;
@@ -69,9 +72,18 @@ export function CustomJudgePreview({
   const preview = useAction(previewRef);
   const [iterationId, setIterationId] = useState<string>("");
   const [running, setRunning] = useState(false);
-  const [outcome, setOutcome] = useState<PreviewResult | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
-  const chosen = iterationId || trials?.[0]?.iterationId || "";
+  const [completed, setCompleted] = useState<{
+    input: string;
+    outcome?: PreviewResult;
+    failure?: string;
+  } | null>(null);
+  const chosen =
+    trials?.find((trial) => trial.iterationId === iterationId)?.iterationId ??
+    trials?.[0]?.iterationId ??
+    "";
+  const input = JSON.stringify({ suiteId, iterationId: chosen, judge });
+  const outcome = completed?.input === input ? completed.outcome : undefined;
+  const failure = completed?.input === input ? completed.failure : undefined;
 
   if (trials && trials.length === 0) {
     return (
@@ -83,15 +95,19 @@ export function CustomJudgePreview({
 
   const run = async () => {
     setRunning(true);
-    setFailure(null);
+    setCompleted(null);
     try {
-      setOutcome(await preview({ suiteId, iterationId: chosen, judge }));
+      const outcome = await preview({ suiteId, iterationId: chosen, judge });
+      setCompleted({ input, outcome });
     } catch (caught) {
-      setFailure(
-        caught instanceof Error && caught.message
-          ? caught.message
-          : "Could not test the judge. Try again.",
-      );
+      setCompleted({
+        input,
+        failure: getBillingErrorMessage(
+          caught,
+          "Could not test the judge. Try again.",
+          false,
+        ),
+      });
     } finally {
       setRunning(false);
     }
@@ -105,11 +121,13 @@ export function CustomJudgePreview({
             <SelectValue placeholder="Loading trials…" />
           </SelectTrigger>
           <SelectContent>
-            {(trials ?? []).map((t) => (
-              <SelectItem key={t.iterationId} value={t.iterationId}>
+            {(trials ?? []).map((t, index) => (
+              <SelectItem key={t.iterationId} value={t.iterationId} title={t.iterationId}>
+                {`Trial ${index + 1} · `}
                 {t.runNumber !== null ? `Run #${t.runNumber} · ` : ""}
                 {t.title}
                 {t.result ? ` · ${t.result}` : ""}
+                {` · ${new Date(t.createdAt).toLocaleString()}`}
               </SelectItem>
             ))}
           </SelectContent>
@@ -146,7 +164,7 @@ export function CustomJudgePreview({
             <VerdictPill status={statusOf(outcome.result)} />
             {outcome.result.value !== undefined && judge.output.kind === "score" ? (
               <span className="font-mono">
-                {outcome.result.value.toFixed(2)} / {judge.output.threshold}
+                {outcome.result.value} / {judge.output.threshold}
               </span>
             ) : null}
           </div>
@@ -154,7 +172,9 @@ export function CustomJudgePreview({
           {outcome.prompt ? (
             <details>
               <summary className="cursor-pointer text-muted-foreground">
-                What the judge read
+                {outcome.promptTruncated
+                  ? "What the judge read (excerpt)"
+                  : "What the judge read"}
               </summary>
               <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 font-mono text-[11px]">
                 {outcome.prompt}
