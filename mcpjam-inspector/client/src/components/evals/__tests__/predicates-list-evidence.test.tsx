@@ -164,6 +164,6 @@ describe("PredicatesList — nothing applied", () => {
     );
     expect(
       screen.getByRole("region", { name: "Assertions" }),
-    ).toHaveTextContent("No assertions applied");
+    ).toHaveTextContent("No assertions applied. Each row says why.");
   });
 });
