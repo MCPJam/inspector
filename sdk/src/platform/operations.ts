@@ -2916,6 +2916,7 @@ async function resolveSuiteEnvironmentTargets(
 /** The knobs both launch shapes forward, in the wire's own vocabulary. */
 function runKnobBody(
   input: {
+    accounts?: Array<{ serverId: string; accountId: string }>;
     iterations?: number;
     /** Legacy spelling of iterations. */
     repetitions?: number;
@@ -2930,6 +2931,7 @@ function runKnobBody(
   caseIds: string[] | undefined
 ): Record<string, unknown> {
   return {
+    ...(input.accounts ? { accounts: input.accounts } : {}),
     ...(input.iterations !== undefined || input.repetitions !== undefined
       ? { iterationOverride: input.iterations ?? input.repetitions }
       : {}),
@@ -4110,8 +4112,18 @@ const RUN_KNOB_FIELDS = {
     ),
 } as const;
 
+const evalAccountSelectionsSchema = z.array(z.object({
+  serverId: z.string().trim().min(1),
+  accountId: z.string().trim().min(1),
+}).strict()).min(1).max(32);
+
+const evalRunAccountSelectionSchema = evalAccountSelectionsSchema.optional().describe(
+  "Project account IDs to use for this run only, one for each selected MCP server ID. Explicit case selections still apply."
+);
+
 const runEvalSuiteInput = z
   .object({
+    accounts: evalRunAccountSelectionSchema,
     project: z
       .string()
       .trim()
@@ -4791,6 +4803,7 @@ export const runEvalSuiteOperation: PlatformOperation<
 
 const runEvalCaseInput = z
   .object({
+    accounts: evalRunAccountSelectionSchema,
     project: z
       .string()
       .trim()
@@ -5000,6 +5013,7 @@ export const runEvalCaseOperation: PlatformOperation<
           body: {
             suiteId: suite.id,
             caseIds: [testCase.id],
+            ...(input.accounts ? { accounts: input.accounts } : {}),
             ...(overrideServers
               ? {
                   serverIds: overrideServers.map((server) => server.id),
@@ -5759,6 +5773,7 @@ const declaredSuiteIdField = z
 // never happened. A refusal that names the key is the honest answer.
 const updateEvalSuiteInput = z
   .strictObject({
+    accounts: evalAccountSelectionsSchema.nullable().optional(),
     project: z
       .string()
       .trim()
@@ -6064,6 +6079,7 @@ export const updateEvalSuiteOperation: PlatformOperation<
       }
     }
     for (const key of [
+      "accounts",
       "name",
       "description",
       "environment",
@@ -6589,6 +6605,7 @@ export const createEvalCasesOperation: PlatformOperation<
 };
 
 const updateEvalCaseInput = z.object({
+  accounts: evalAccountSelectionsSchema.nullable().optional(),
   project: z
     .string()
     .trim()
@@ -6663,6 +6680,7 @@ export const updateEvalCaseOperation: PlatformOperation<
           // field either, so it is added here rather than widening that shape.
           body: {
             ...buildCaseBody(input),
+            ...(input.accounts !== undefined ? { accounts: input.accounts } : {}),
             ...(input.declaredSuiteId
               ? { declaredSuiteId: input.declaredSuiteId }
               : {}),

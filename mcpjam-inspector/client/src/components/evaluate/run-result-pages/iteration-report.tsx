@@ -65,6 +65,7 @@ export function IterationReport({
     // The trace below names the account each tool call ran on.
     <RunAccountsProvider
       accounts={target.run.accountsAtRun ?? fullRun?.accountsAtRun}
+      testCaseId={iteration.testCaseId}
     >
       <div className="flex min-h-0 flex-1 flex-col">
         <IterationDetails
