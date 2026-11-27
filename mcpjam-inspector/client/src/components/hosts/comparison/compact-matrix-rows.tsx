@@ -96,7 +96,7 @@ function CompactFieldRow({
           mobileOptimized && "[&_a]:scroll-ml-[var(--matrix-field-width)]",
         )}
       >
-        <div className="flex flex-col gap-1 tabular-nums">
+        <div className="flex flex-col gap-1 text-left tabular-nums">
           {summaryColumn.render(field)}
           {slices && <div role="group" aria-label="Adoption by mode" className="mt-1 grid grid-cols-3 gap-x-1.5 gap-y-2 border-t border-border pt-2">{slices}</div>}
         </div>
