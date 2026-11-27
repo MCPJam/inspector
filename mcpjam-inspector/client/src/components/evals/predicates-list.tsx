@@ -185,7 +185,7 @@ export function PredicatesList({
             <XCircle className="h-3 w-3 shrink-0" aria-hidden />
           )}
           {gating.length === 0
-            ? "No assertions applied"
+            ? "No assertions applied. Each row says why."
             : allPassed
               ? `${gating.length} / ${gating.length} assertions passed`
               : `${passed} / ${gating.length} assertions passed`}
