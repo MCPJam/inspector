@@ -814,6 +814,10 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
     "Same as create_mock_server: it needs the bounded field reads to patch a late entry. Available on REST and the SDK.",
   get_mock_server:
     "Same as create_mock_server: the read here is small, and the paged reads come with the MCP tools. Available on REST and the SDK.",
+  patch_mock_server:
+    "Same as create_mock_server. Available on REST and the SDK.",
+  refresh_mock_server:
+    "Same as create_mock_server. Available on REST and the SDK.",
   get_mock_forwarding_policy:
     "Same as create_mock_server. Available on REST and the SDK.",
   set_mock_forwarding_policy:

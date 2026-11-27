@@ -172,6 +172,58 @@ describe("discovery while forwarding is blocked", () => {
   });
 });
 
+describe("the real server is down while forwarding is allowed", () => {
+  const pinnedTools = [
+    { name: "lookup_ticket", description: "Reads a ticket.", inputSchema: { type: "object", properties: { id: { type: "string" } } } },
+    { name: "echo", description: "Echoes.", inputSchema: { type: "object" } },
+  ];
+  const withPinned = () =>
+    serve(definition, httpDoor(), { capabilities: { tools: {} }, tools: pinnedTools as never });
+
+  beforeEach(async () => {
+    await ticket.close();
+  });
+  // `afterEach` closes the fixture again; closing twice is harmless.
+
+  it("lists from the pinned contract, as blocked mode does", async () => {
+    const client = await dialMock(withPinned());
+    const listed = await client.listTools("mock");
+    expect(listed.tools.map((t) => t.name).sort()).toEqual(["echo", "lookup_ticket"]);
+    await client.disconnectAllServers();
+  });
+
+  it("keeps answering a self-contained saved answer", async () => {
+    const result = await call(withPinned(), "lookup_ticket", { id: "123" });
+    expect(result.isError).not.toBe(true);
+    expect(result.content[0].text).toBe("saved 123");
+  });
+
+  it("refuses a call that needs the base, saying the real server is unreachable", async () => {
+    const result = await call(withPinned(), "echo", { message: "x" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/could not reach the real server/i);
+  });
+
+  it("lists the saved prompts and resources", async () => {
+    const door = serve(definition, httpDoor(), {
+      capabilities: { prompts: {}, resources: {}, tools: {} },
+      tools: pinnedTools as never,
+      prompts: [{ name: "greet" }],
+      resources: [{ uri: "note://welcome", name: "note" }],
+    });
+    const client = await dialMock(door);
+    expect((await client.listPrompts("mock")).prompts.map((p) => p.name)).toEqual(["greet"]);
+    expect((await client.listResources("mock")).resources.map((r) => r.uri)).toEqual(["note://welcome"]);
+    await client.disconnectAllServers();
+  });
+
+  it("reports the outage when nothing was pinned, rather than listing nothing", async () => {
+    const client = await dialMock(serve());
+    await expect(client.listTools("mock")).rejects.toThrow(/could not reach the real server/i);
+    await client.disconnectAllServers();
+  });
+});
+
 describe("provenance", () => {
   const run = async (door: MockDoor) => {
     const headers: Array<string | null> = [];

@@ -340,6 +340,56 @@ describe.each<Era>(["legacy", "modern"])("buildMock (%s era)", (era) => {
       /"say" \(real tool "echo"\)/
     );
   });
+
+  it("names the override path in the error, and repairs nothing on its own", async () => {
+    const { client } = await connectMock(
+      { tools: { say: { answer: { tool: "echo" } } } },
+      era,
+      ["echo"]
+    );
+    const failure = await client.listTools().then(
+      () => undefined,
+      (error: { data?: unknown; message?: string }) => error
+    );
+    expect(failure?.message).toContain("tools.say.answer.tool");
+    expect(failure?.data).toMatchObject({
+      issues: [{ path: "tools.say.answer.tool", code: "target_missing" }],
+    });
+  });
+
+  it("refuses a call whose fixed value no longer fits, naming the path, before anything is forwarded", async () => {
+    const { client } = await connectMock(
+      { tools: { add: { params: { a: { fixed: "one" } } } } },
+      era
+    );
+    const failure = await client
+      .callTool({ name: "add", arguments: { b: 2 } })
+      .then(
+        () => undefined,
+        (error: { data?: unknown }) => error
+      );
+    expect(failure?.data).toMatchObject({
+      mockCode: "mock_binding_invalid",
+      issues: [{ path: "tools.add.params.a.fixed", code: "value_incompatible" }],
+    });
+    expect(state.calls).toHaveLength(0);
+  });
+
+  it("keeps a saved answer working when the real tool it sits on is gone", async () => {
+    const { client } = await connectMock(
+      {
+        tools: {
+          echo: {
+            answer: { from: "saved", cases: [{ result: { content: [{ type: "text", text: "saved" }] } }] },
+          },
+        },
+      },
+      era,
+      ["echo"]
+    );
+    const result = await client.callTool({ name: "echo", arguments: { message: "x" } });
+    expect(result.content).toEqual([{ type: "text", text: "saved" }]);
+  });
 });
 
 describe("buildMock without a reachable real server", () => {

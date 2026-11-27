@@ -1,4 +1,5 @@
 import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
+import type { MockBindingIssue } from "./bindings.js";
 import type { MockForwardBlockReason } from "./mock-observer.js";
 
 /**
@@ -30,19 +31,37 @@ export interface MissingEditedTool {
   realTool: string;
 }
 
-export function editedToolMissingError(
-  missing: MissingEditedTool[]
-): ProtocolError {
-  const names = missing.map((m) =>
-    m.tool === m.realTool
-      ? `"${m.tool}"`
-      : `"${m.tool}" (real tool "${m.realTool}")`
-  );
-  return new ProtocolError(
-    MOCK_ERROR_CODES.editedToolMissing,
-    `The mock edits ${names.join(", ")}, which the real server no longer lists. Update the mock to drop or retarget ${missing.length === 1 ? "that edit" : "those edits"}.`,
-    { mockCode: "mock_edited_tool_missing", tools: missing }
-  );
+/**
+ * An override the real server no longer fits. It names each override by its
+ * path in the definition so the author can repair exactly that, and it never
+ * picks a new target on the author's behalf.
+ */
+export function bindingError(issues: MockBindingIssue[]): ProtocolError {
+  const missingOnly = issues.every((issue) => issue.code === "target_missing");
+  const paths = issues.map((issue) => issue.path).join(", ");
+  const these = issues.length === 1 ? "that override" : "those overrides";
+  let message: string;
+  if (missingOnly) {
+    const names = issues.map((issue) =>
+      issue.tool === issue.realTool
+        ? `"${issue.tool}"`
+        : `"${issue.tool}" (real tool "${issue.realTool}")`
+    );
+    message = `The mock edits ${names.join(", ")}, which the real server no longer lists. Update ${paths} to drop or retarget ${these}.`;
+  } else {
+    const what = issues.map((issue) => `${issue.path}: ${issue.message}`);
+    message = `The mock's overrides no longer fit the real server. ${what.join(" ")} Update ${paths} to repair ${these}.`;
+  }
+  const tools = [
+    ...new Map(
+      issues.map((issue) => [issue.tool, { tool: issue.tool, realTool: issue.realTool }])
+    ).values(),
+  ];
+  return new ProtocolError(MOCK_ERROR_CODES.editedToolMissing, message, {
+    mockCode: missingOnly ? "mock_edited_tool_missing" : "mock_binding_invalid",
+    tools,
+    issues,
+  });
 }
 
 export function methodUnavailableError(
@@ -93,6 +112,14 @@ export function realUnreachableError(cause: unknown): ProtocolError {
     {
       mockCode: "mock_real_unreachable",
     }
+  );
+}
+
+/** Whether `error` is the mock's report that the real server could not be reached. */
+export function isRealUnreachable(error: unknown): error is ProtocolError {
+  return (
+    error instanceof ProtocolError &&
+    error.code === MOCK_ERROR_CODES.realUnreachable
   );
 }
 

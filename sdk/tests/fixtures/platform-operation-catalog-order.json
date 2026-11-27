@@ -20,6 +20,8 @@
   "create_mock_server",
   "update_mock_server",
   "get_mock_server",
+  "patch_mock_server",
+  "refresh_mock_server",
   "get_mock_forwarding_policy",
   "set_mock_forwarding_policy",
   "list_server_accounts",

@@ -93,6 +93,8 @@ const KNOWN_UNDOCUMENTED = new Set([
   "post /projects/{projectId}/mock-servers",
   "post /projects/{projectId}/mock-servers/{mockId}/versions",
   "get /projects/{projectId}/mock-servers/{mockId}",
+  "patch /projects/{projectId}/mock-servers/{mockId}",
+  "post /projects/{projectId}/mock-servers/{mockId}/refresh",
   "get /projects/{projectId}/mock-servers/{mockId}/forwarding-policy",
   "get /projects/{projectId}/mock-forwarding-policy",
   "put /projects/{projectId}/mock-forwarding-policy",

@@ -4,8 +4,10 @@ import {
   MOCK_READ_LIMIT,
   MOCK_TEXT_BUDGET,
   MockCursorError,
+  applyFieldEdit,
   changeEntries,
   chunkText,
+  findBindingIssues,
   openMockCursor,
   readMockView,
   sealMockCursor,
@@ -138,5 +140,48 @@ describe("cursors", () => {
     expect(refusal({ ...binding, scope: "user-2:mock-1" })).toBe("other_caller");
     expect(refusal({ ...binding, query: { family: "prompts" } })).toBe("other_query");
     expect(refusal(binding, "not-a-cursor")).toBe("malformed");
+  });
+});
+
+describe("field edits", () => {
+  it("sets one nested path without touching the rest", () => {
+    const result = applyFieldEdit(definition, { family: "tools", name: LAST, path: ["description"], value: "New." });
+    expect(result).toMatchObject({ ok: true, path: ["tools", LAST, "description"] });
+    expect((result as { definition: MockDefinition }).definition.tools?.[LAST]).toEqual({ hidden: true, description: "New." });
+    expect(definition.tools?.[LAST]).toEqual({ hidden: true });
+  });
+  it("removes a path and drops entries it leaves empty", () => {
+    const result = applyFieldEdit({ tools: { a: { description: "d" } } }, { family: "tools", name: "a", path: ["description"], remove: true });
+    expect((result as { definition: MockDefinition }).definition).toEqual({});
+  });
+  it("refuses unclear edits by saying what to give", () => {
+    expect(applyFieldEdit({}, { name: "a", value: 1 })).toMatchObject({ ok: false });
+    expect(applyFieldEdit({}, { path: ["a"] })).toMatchObject({ ok: false });
+    expect(applyFieldEdit({}, { path: ["__proto__"], value: 1 })).toMatchObject({ ok: false });
+    expect(applyFieldEdit({ instructions: "x" }, { path: ["instructions", "a"], value: 1 })).toMatchObject({ ok: false });
+  });
+});
+
+describe("binding issues", () => {
+  const real: Tool[] = [
+    { name: "search", inputSchema: { type: "object", properties: { q: { type: "string" }, n: { type: "integer" } }, required: ["q"] } },
+  ];
+  it("names the override path for a missing target, a gone parameter, a hidden required one and a wrong type", () => {
+    const issues = findBindingIssues(
+      {
+        tools: {
+          find: { answer: { tool: "lookup" } },
+          search: { params: { gone: { hidden: true }, q: { hidden: true }, n: { fixed: "ten" } } },
+          saved: { answer: { from: "saved", cases: [{ result: { content: [] } }] } },
+        },
+      },
+      real
+    );
+    expect(issues.map((i) => [i.path, i.code])).toEqual([
+      ["tools.find.answer.tool", "target_missing"],
+      ["tools.search.params.gone", "param_missing"],
+      ["tools.search.params.q", "param_required"],
+      ["tools.search.params.n.fixed", "value_incompatible"],
+    ]);
   });
 });

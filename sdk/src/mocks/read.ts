@@ -14,6 +14,7 @@
 import type { Tool } from "@modelcontextprotocol/server";
 import { realToolNameFor } from "./definition-types.js";
 import type { MockDefinition, MockTool } from "./definition-types.js";
+import { MOCK_FAMILIES, type MockFamily } from "./field-edit.js";
 import { MockCursorError } from "./read-cursor.js";
 import { mergeTool } from "./resolve-tools.js";
 
@@ -25,14 +26,6 @@ export const MOCK_READ_LIMIT = 20_000;
 export const MOCK_CHUNK_LIMIT = 12_000;
 export const MOCK_DEFAULT_PAGE = 50;
 export const MOCK_MAX_PAGE = 200;
-
-export const MOCK_FAMILIES = [
-  "tools",
-  "prompts",
-  "resources",
-  "resourceTemplates",
-] as const;
-export type MockFamily = (typeof MOCK_FAMILIES)[number];
 
 type Obj = Record<string, unknown>;
 const isObj = (value: unknown): value is Obj =>

@@ -15,6 +15,7 @@ import { readJsonObjectBody } from "./adapter.js";
 import { requireProjectIdArg } from "./convex-id-param.js";
 import { v1Resource } from "./envelope.js";
 import { bearerOf, createConvexClient, fn, readMock, readRealServer, saved } from "./mock-server-io.js";
+import { patchBody, patchMock, refreshBody, refreshMock } from "./mock-server-edits.js";
 import { readMockPage, readQuery, writeSummary } from "./mock-server-reads.js";
 import { readMockPolicy, readProjectPolicy, writeProjectPolicy } from "./mock-policy-backend.js";
 import {
@@ -140,6 +141,24 @@ mockServers.get("/projects/:projectId/mock-servers/:mockId", async (c) => {
   const projectId = projectIdOf(c);
   const mockId = c.req.param("mockId") ?? "";
   return v1Resource(c, await readMockPage(c, projectId, mockId, parseWithSchema(readQuery, c.req.query())));
+});
+
+// PATCH /v1/projects/:projectId/mock-servers/:mockId: set or remove one path,
+// against `expectedVersion`.
+mockServers.patch("/projects/:projectId/mock-servers/:mockId", async (c) => {
+  const projectId = projectIdOf(c);
+  const body = parseWithSchema(patchBody, await readJsonObjectBody(c));
+  const { result, status } = await patchMock(c, projectId, c.req.param("mockId") ?? "", body);
+  return v1Resource(c, result, status);
+});
+
+// POST /v1/projects/:projectId/mock-servers/:mockId/refresh: preview the real
+// server's changes since the saved listing, and save them when `apply` is set.
+mockServers.post("/projects/:projectId/mock-servers/:mockId/refresh", async (c) => {
+  const projectId = projectIdOf(c);
+  const body = parseWithSchema(refreshBody, await readJsonObjectBody(c));
+  const result = await refreshMock(c, projectId, c.req.param("mockId") ?? "", body);
+  return v1Resource(c, result, result.applied ? 201 : 200);
 });
 
 // GET /v1/projects/:projectId/mock-servers/:mockId/forwarding-policy: the

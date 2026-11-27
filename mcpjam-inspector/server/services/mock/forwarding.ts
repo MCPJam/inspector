@@ -11,7 +11,8 @@
  *   saved, with no network read of the base.
  */
 import type { MCPClientManager } from "@mcpjam/sdk";
-import type { MockRealServer } from "@mcpjam/sdk/mocks";
+import { isRealUnreachable, realUnreachableError, type MockRealServer } from "@mcpjam/sdk/mocks";
+import { ErrorCode } from "../../routes/web/errors.js";
 import { logger } from "../../utils/logger.js";
 import type { PinnedDiscovery, ResolvedMock } from "./backend.js";
 import type { OpenReal } from "./connection.js";
@@ -86,9 +87,35 @@ export function forwardingRealServer(input: ForwardingInput): ForwardingReal {
         mockId: resolved.mockId,
         error: error instanceof Error ? error.name : typeof error,
       });
-      throw unreachable(error);
+      const reason = unreachable(error);
+      // An approval the person must give is not an outage: it keeps its own words.
+      if ((error as { code?: unknown } | null)?.code === ErrorCode.STDIO_COMMAND_APPROVAL_REQUIRED) throw reason;
+      throw realUnreachableError(reason);
     }
   };
+  /**
+   * Discovery while the base is down: the pinned contract serves it, so a
+   * mock's own entries and self-contained answers keep working through an
+   * outage. A version with nothing pinned has nothing to serve and says the
+   * base is unreachable.
+   */
+  const duringOutage = async <T>(read: () => Promise<T>, pinnedAnswer: () => T): Promise<T> => {
+    try {
+      return await read();
+    } catch (error) {
+      if (!resolved.discovery || !isRealUnreachable(error)) throw error;
+      logger.warn("[mock-route] the real server is unreachable; serving the pinned listing", {
+        mockId: resolved.mockId,
+        error: error instanceof Error ? error.name : typeof error,
+      });
+      return pinnedAnswer();
+    }
+  };
+  const pinnedInfo = () => ({
+    capabilities: pinned.capabilities ?? {},
+    ...(pinned.serverInfo && { serverInfo: pinned.serverInfo }),
+    ...(pinned.instructions !== undefined && { instructions: pinned.instructions }),
+  });
   /** Discovery may touch the base only when forwarding is allowed right now. */
   const mayReadBase = async (signal?: AbortSignal) => {
     try {
@@ -105,14 +132,12 @@ export function forwardingRealServer(input: ForwardingInput): ForwardingReal {
   const real: MockRealServer = {
     describe: async (options) =>
       (await mayReadBase(options?.signal))
-        ? (await live()).describe(options)
-        : {
-            capabilities: pinned.capabilities ?? {},
-            ...(pinned.serverInfo && { serverInfo: pinned.serverInfo }),
-            ...(pinned.instructions !== undefined && { instructions: pinned.instructions }),
-          },
+        ? duringOutage(async () => (await live()).describe(options), pinnedInfo)
+        : pinnedInfo(),
     listTools: async (options) =>
-      (await mayReadBase(options?.signal)) ? (await live()).listTools(options) : (pinned.tools ?? []),
+      (await mayReadBase(options?.signal))
+        ? duringOutage(async () => (await live()).listTools(options), () => pinned.tools ?? [])
+        : (pinned.tools ?? []),
     // Every family, from the saved contract; the backend already left out what this caller may not read.
     pinnedListing: async (family) => (pinned[family] ?? []) as never,
     authorizeForward: async (_request, options) => {

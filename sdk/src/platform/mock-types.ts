@@ -171,6 +171,36 @@ export type PlatformMockReadSelector = {
   cursor?: string;
 };
 
+/** One override the real server no longer fits. */
+export type PlatformMockBinding = {
+  path: string;
+  tool: string;
+  realTool: string;
+  code: "target_missing" | "param_missing" | "param_required" | "value_incompatible";
+  message: string;
+};
+
+/** What a refresh found: the real server now against the listing the version saved. */
+export type PlatformMockRefresh = PlatformMockReadBase & {
+  view: "refresh";
+  applied: boolean;
+  differences: {
+    family: PlatformMockFamily;
+    added: string[];
+    removed: string[];
+    changed: string[];
+    /** Names beyond the ones listed. */
+    more: number;
+  }[];
+  brokenOverrides: PlatformMockBinding[];
+  brokenTotal: number;
+  /** Set when `apply` saved the new listing as a new version. */
+  saved?: PlatformMockSaved;
+};
+
+/** A one-path patch's answer: the saved version and the definition path changed. */
+export type PlatformMockPatched = PlatformMockSaved & { path: string[] };
+
 export type PlatformMockForwardingPolicy = PlatformMockPolicy & {
   projectId: string;
   /** The mock the policy was read for; absent for the project's own setting. */

@@ -671,6 +671,11 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   get_project_skill:
     "Paired with the list above; /skills renders the SKILL.md body next to the aggregateHash that says which version it is, and the body is mutable so that pairing is the point.",
 
+  patch_mock_server:
+    "Changes one path of a mock and saves a version. It is an agent-surface edit that reports binding errors by path; chat has no place to show them.",
+  refresh_mock_server:
+    "Re-reads the real server and proposes changes to a mock. It dials the real server and returns a change list, which an agent surface reviews before saving.",
+
   // Mock servers: authoring and the forwarding policy belong to the API, CLI and
   // MCP agent surfaces, which hold the tier and the flag. Chat gets no mock tool.
   create_mock_server:
