@@ -52,6 +52,9 @@ import {
   type SuiteRunReviewProps,
 } from "./suite-run-review";
 import { useSuiteRunPreflight } from "./suite-run-preflight";
+import { SuiteRunVenues } from "./suite-run-venues";
+import { useLocalHarnessEvalVenues } from "./use-local-harness-eval-venues";
+import { asLocalHarnessClientId, type LocalHarnessClientId } from "@/lib/local-harness-consent";
 import { caseLaunchTarget } from "./case-workspace/case-launch-preview";
 import { resolveCaseLaunchEnvironments } from "./case-workspace/pending-case-launches";
 
@@ -527,6 +530,13 @@ export function ConfiguredSuiteRunReview(
       (capabilities !== undefined &&
         capabilities.ephemeralEnvironmentLaunch !== true) ||
       suite.projectId !== projectId);
+  // Where each local harness client in this run would run, before Start.
+  const venues = useLocalHarnessEvalVenues(
+    projectId,
+    (runInSaved ? [savedEnvironment?.hostId] : plan.map(({ stack }) => stack.hostId))
+      .map((hostId) => asLocalHarnessClientId(effectiveHarnessId(hosts.find((host) => host.hostId === hostId))))
+      .filter((id): id is LocalHarnessClientId => id !== null),
+  );
   // Every branch below renders through the content, which shows these. They
   // cover what this run launches: the matrix's cells (and the setup a new
   // cell copies), the saved environment it runs in, or, for a suite without
@@ -601,7 +611,7 @@ export function ConfiguredSuiteRunReview(
                 ? withoutSetups
                   ? "Pick a server group to run this suite."
                   : "A selected client has no server group, so its run would connect no servers. Pick a server group in suite settings."
-                : null);
+                : venues.startBlockedReason);
   const startMatrix: SuiteRunReviewProps["onStart"] = async (_, options) => {
     const missing = plan.filter((item) => !item.environmentId);
     if (missing.length) {
@@ -770,6 +780,7 @@ export function ConfiguredSuiteRunReview(
                 />
               </>
             )}
+            <SuiteRunVenues venues={venues} disabled={starting} />
           </div>
         ),
       }}

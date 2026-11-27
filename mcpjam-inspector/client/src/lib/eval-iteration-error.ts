@@ -6,6 +6,25 @@ import {
   orgKeysRefusalNextStep,
 } from "@/lib/org-keys-refusal";
 
+/** What the backend stores on every iteration a launch never started. */
+const NEVER_STARTED_ERROR = "Failed to prepare eval test attempts.";
+
+/**
+ * The reason a launch never started this iteration, when the launch stored a
+ * sentence a member can read (`markSetupPendingIterationsFailed` keeps it in
+ * `errorDetails`). Other callers store raw causes, which keep the generic card.
+ */
+export function neverStartedReason(
+  iteration: Pick<EvalIteration, "status" | "error" | "errorDetails">,
+): string | null {
+  if (iteration.status !== "failed" || iteration.error !== NEVER_STARTED_ERROR)
+    return null;
+  const details = iteration.errorDetails?.trim() ?? "";
+  if (details.length > 400 || /[\n{}[\]]|\[Request ID|\bCONVEX\b|\w+Error:/.test(details))
+    return null;
+  return /^[A-Z][^]*[.!?]$/.test(details) ? details : null;
+}
+
 /** Preserve diagnostics without making worker internals the run's headline. */
 export function describeEvalIterationError(
   iteration: Pick<
@@ -63,6 +82,18 @@ export function describeEvalIterationError(
       rawCode: refusal.stated,
     };
   }
+  const notStarted = timeout ? null : neverStartedReason(iteration);
+  if (notStarted)
+    return {
+      ...base,
+      slug: "eval/not_started",
+      title: "Run didn't start",
+      severity: "error",
+      oneLine: notStarted,
+      likelyCauses: [],
+      nextSteps: [],
+      rawMessage,
+    };
   if (timeout)
     return {
       ...base,
