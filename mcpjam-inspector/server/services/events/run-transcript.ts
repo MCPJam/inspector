@@ -31,6 +31,7 @@ import {
 import type { SyntheticModelSource } from "../../utils/org-model-config.js";
 import { logger } from "../../utils/logger.js";
 import { fetchJsonBlob } from "../../routes/v1/blob-read.js";
+import type { EventRunTurnRecord } from "./run-turn-record.js";
 
 const DETAIL_TIMEOUT_MS = 10_000;
 const BLOB_TIMEOUT_MS = 10_000;
@@ -124,6 +125,8 @@ export async function persistEventRunTranscript(args: {
   /** This run's whole history, starting with the rendered event message. */
   runMessages: ModelMessage[];
   turnTrace?: PersistedTurnTrace;
+  /** The event, environment and skills the turn records (`eventRunTurnRecord`). */
+  turnRecord?: EventRunTurnRecord;
   startedAt: number;
 }): Promise<{ chatSessionId: string; persisted: boolean }> {
   const port = args.port ?? defaultTranscriptPort;
@@ -167,6 +170,7 @@ export async function persistEventRunTranscript(args: {
           spans: [],
           modelId: args.modelId,
         }),
+        ...(args.turnRecord ?? {}),
         turnId,
         // This run's prompt is the next one in the THREAD, not prompt 0 of a
         // fresh conversation (which is what the engine saw).
