@@ -660,11 +660,14 @@ export function ChatInput({
   const transcriptionAbortRef = useRef<TranscriptionAbortState | null>(null);
   const mountedRef = useRef(true);
   const valueRef = useRef(value);
-  // What the user last wrote; a send's own trim does not count as an edit.
-  const typedRef = useRef<string | null>(null);
+  // The user's writes to the draft; a send's own trim is not one. A pick
+  // compares the count from its render with the latest.
+  const [writes, setWrites] = useState(0);
+  const writesRef = useRef(0);
   const change = useCallback(
     (next: string) => {
-      typedRef.current = next;
+      writesRef.current += 1;
+      setWrites(writesRef.current);
       onChange(next);
     },
     [onChange],
@@ -818,8 +821,6 @@ export function ChatInput({
 
   useEffect(() => {
     valueRef.current = value;
-    // A change from outside, such as a send's trim, is not the user's.
-    if (value !== typedRef.current) typedRef.current = null;
   }, [value]);
 
   const stopAudioStream = useCallback(() => {
@@ -886,10 +887,10 @@ export function ChatInput({
     const trigger = value.slice(0, caretIndex).match(/\/\s*$/);
     const end = current.length - (value.length - caretIndex);
     const start = end - (trigger?.[0].length ?? 0);
-    const edited = typedRef.current !== null && typedRef.current !== value;
+    const edited = writesRef.current !== writes;
     if (!trigger || edited || !value.endsWith(current) || start < 0) return;
     onChange(current.slice(0, start) + current.slice(end));
-  }, [value, caretIndex, onChange]);
+  }, [value, caretIndex, writes, onChange]);
 
   const onMCPPromptSelected = useCallback(
     (mcpPromptResult: MCPPromptResult) => {

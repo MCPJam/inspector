@@ -2294,6 +2294,35 @@ describe("ChatInput", () => {
       expect(onChange).toHaveBeenLastCalledWith("");
     });
 
+    it("leaves the box alone when the user wrote during the pick and a send trimmed it back", () => {
+      const { onChange, rerender } = renderLate({ value: "first /" });
+      const pickLater = promptsPopover.props!.onSkillSelected;
+      const field = screen.getByPlaceholderText("Type your message...");
+
+      fireEvent.change(field, { target: { value: "first first /" } });
+      rerender({ value: "first first /" });
+      rerender({ value: "first /" });
+      onChange.mockClear();
+      act(() => pickLater(item("picked")));
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("leaves a slash the user deleted and typed again", () => {
+      const { onChange, rerender } = renderLate({ value: "first /" });
+      const pickLater = promptsPopover.props!.onSkillSelected;
+      const field = screen.getByPlaceholderText("Type your message...");
+
+      fireEvent.change(field, { target: { value: "" } });
+      rerender({ value: "" });
+      fireEvent.change(field, { target: { value: "first /" } });
+      rerender({ value: "first /" });
+      onChange.mockClear();
+      act(() => pickLater(item("picked")));
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
     it.each([
       ["a different draft", "https://example.com/path/"],
       ["a box the send emptied with its slash", ""],
