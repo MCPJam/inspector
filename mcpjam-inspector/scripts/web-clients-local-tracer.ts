@@ -58,13 +58,12 @@ async function main() {
     fail("Keep the browser profile outside the repository. Pass --profile with a folder in your home directory.");
   }
   if (values["sign-in"]) {
-    // A person signs in by hand: nothing here touches the page.
-    const { chromium } = await import("playwright");
-    const context = await chromium.launchPersistentContext(profile, { headless: false });
-    const page = context.pages()[0] ?? (await context.newPage());
-    await page.goto(SIGN_IN[vendor].url);
+    // A person signs in by hand in a plain browser: no automation flags or
+    // remote control, which a site's human check would refuse.
+    const { openSignInWindow } = await import("../server/services/web-clients/local-browser-launch");
+    const signedIn = openSignInWindow({ profileDir: profile, url: SIGN_IN[vendor].url });
     process.stdout.write(`Sign in to ${SIGN_IN[vendor].site} in the window that opened, then close the window.\n`);
-    await new Promise<void>((done) => context.on("close", () => done()));
+    await signedIn;
     process.exit(0);
   }
   const tunnel = values["tunnel-url"];

@@ -107,8 +107,11 @@ server the client uses gets a capability connector in the registry above.
 3. Run a client whose runtime is Claude web or ChatGPT web. Each turn opens a
    browser window on the profile, adds the connector, sends the prompt and
    closes the window. Set `MCPJAM_WEB_CLIENTS_HEADLESS=true` to run without a
-   window. When the vendor asks for a sign-in or a human check, the turn stops
-   with "Needs sign-in"; sign in with step 1, then run again.
+   window. Step 1's sign-in window is a plain browser with no automation
+   flags; a turn's browser drops Playwright's `--enable-automation` flag so it
+   reuses the profile's cookies, but nothing answers a check for it. When the
+   vendor asks for a sign-in or a human check, the turn stops with
+   "Needs sign-in"; sign in with step 1, then run again.
 
 A server reaches the vendor's app with the URL and headers this Inspector
 connects to it with, so a server must be connected over HTTP, with an access
