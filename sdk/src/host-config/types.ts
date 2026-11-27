@@ -53,6 +53,10 @@ export type HostConfigStyle = string;
  * host styles via the client's `lib/host-styles` registry without an SDK or
  * backend deploy). Don't "tighten" this to `'mcpjam' | 'claude' | 'chatgpt'`;
  * it would break BYO hosts.
+ *
+ * The MCP Apps rendering style. A client's protocol behavior and capabilities
+ * live in `mcpProfile`; read them through their feature's resolver, not by
+ * comparing styles.
  */
 export type HostStyleId = HostConfigStyle;
 
@@ -1176,6 +1180,7 @@ export type HostConfigInputV2 = {
   // `false` → show every tool (faithful to hosts that don't implement
   // SEP-1865). `undefined` → "use the spec default" (filter).
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   // Personal computer opt-in (resource only; capabilities ride
   // `builtInToolIds`). Optional + absent ⇒ no computer, hashing
   // byte-identically to pre-feature rows (the `progressiveToolDiscovery`
@@ -1284,6 +1289,7 @@ export type CanonicalHostConfigV2 = {
   // Mirrors HostConfigInputV2.respectToolVisibility. Same undefined-vs-set
   // policy.
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   // Mirrors HostConfigInputV2.computer with input `null` collapsed to
   // undefined, so the canonical JSON for "no computer" is byte-identical to
   // pre-feature rows.

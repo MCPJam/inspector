@@ -1,3 +1,4 @@
+import { requireCompleteDiscovery } from "../discovery-result.js";
 import { validBetaHttpEventTypes, withEventsBetaRouting } from "./events-beta-routing.js";
 import { readServerEventTypes } from "../server-list-reads.js";
 import { guardToolResponseStreams } from "./tool-response-stream.js";
@@ -284,6 +285,7 @@ import {
   type MrtrLegSender,
   type MrtrLegMiddleware,
 } from "./mrtr-driver.js";
+import { http1Fetch } from "../http1-fetch.js";
 
 /**
  * Manages multiple MCP server connections with support for tools, resources,
@@ -340,6 +342,18 @@ function isAbortError(error: unknown): boolean {
     error instanceof Error &&
     (error.name === "AbortError" || error.name === "TimeoutError")
   );
+}
+
+/**
+ * A request that ran out of time on our side: the upstream client's
+ * `REQUEST_TIMEOUT`, or a `TimeoutError`. Not a cancel, and not a closed
+ * connection. A numeric `-32001` does not count: here that code only arrives
+ * as the server's own JSON-RPC error, so the server did answer.
+ */
+function isRequestTimeout(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const { code, name } = error as { code?: unknown; name?: unknown };
+  return code === "REQUEST_TIMEOUT" || name === "TimeoutError";
 }
 
 /** The server's `-32020` (HeaderMismatch): it refused the request's headers. */
@@ -2024,6 +2038,14 @@ export class MCPClientManager {
    * there; its result is discarded and the ping contract's `EmptyResult`
    * returned, so callers stay era-agnostic. Legacy connections keep the
    * wire-identical `ping`.
+   *
+   * A `ping` that gets no answer in time ends the connection. Every 2025
+   * revision says of a ping: "Timeouts SHOULD be treated as connection
+   * failures" (basic/utilities/ping.mdx, Error Handling). The timeout is still
+   * thrown; a retry, or the next call on this server, opens a new connection.
+   * A caller's own abort is not a timeout and leaves the connection as it is,
+   * and so does the modern `server/discover` probe, which that rule does not
+   * cover.
    */
   async pingServer(
     serverId: string,
@@ -2034,7 +2056,23 @@ export class MCPClientManager {
         await client.discover(options);
         return {} as Awaited<ReturnType<Client["ping"]>>;
       }
-      return client.ping(options);
+      try {
+        return await client.ping(options);
+      } catch (error) {
+        // Close here, before any retry, so a retry cannot reuse the connection
+        // that timed out. Only close the connection that sent this ping: by
+        // now another call may have opened a new one for the same server.
+        if (
+          !options?.signal?.aborted &&
+          isRequestTimeout(error) &&
+          this.liveClientStates.get(serverId)?.client === client
+        ) {
+          await this.destroyLiveState(serverId, {
+            abortRetryOperations: false,
+          });
+        }
+        throw error;
+      }
     });
   }
 
@@ -2514,6 +2552,26 @@ export class MCPClientManager {
       this.getTasksWire(serverId) === "legacy" &&
       supportsTasksCancel(this.getServerCapabilities(serverId))
     );
+  }
+
+  /**
+   * The client capabilities this connection advertises: once connected, the
+   * set `initialize` actually sent (stored on the live state, as
+   * `getServerConnectionInfo` reads it); before that, the configured set after
+   * the same handler gates (an exact set loses `elicitation` when nothing is
+   * registered to answer it). A server may only send requests for these
+   * (2025-11-25 `basic/lifecycle.mdx`), so this is the set to judge "can the
+   * server ask me something I cannot answer" against. `undefined` for a
+   * server that is not registered.
+   */
+  getAdvertisedClientCapabilities(
+    serverId: string
+  ): ClientCapabilityOptions | undefined {
+    const sent =
+      this.liveClientStates.get(serverId)?.initializedClientCapabilities;
+    if (sent) return sent;
+    const config = this.registeredServers.get(serverId)?.config;
+    return config ? this.buildCapabilities(serverId, config) : undefined;
   }
 
   /**
@@ -3276,9 +3334,10 @@ export class MCPClientManager {
             input: Parameters<typeof fetch>[0],
             init?: RequestInit
           ) => {
-            // Resolve the default at request time so fetch instrumentation
-            // added after startup still observes established connections.
-            const baseFetch = configuredFetch ?? globalThis.fetch;
+            // `http1Fetch` resolves the global fetch at request time, so fetch
+            // instrumentation added after startup still observes established
+            // connections.
+            const baseFetch = configuredFetch ?? http1Fetch;
             const caller = startupSignal;
             if (!caller) return baseFetch(input, init);
             caller.throwIfAborted();
@@ -3367,6 +3426,12 @@ export class MCPClientManager {
         throw new Error(`MCP server "${serverId}" connection was cancelled.`);
       }
 
+      // All transports have finished negotiation here. A rejected reply goes
+      // through connection cleanup without triggering another transport attempt.
+      const discovery = upstreamClient.getDiscoverResult?.();
+      if (discovery) {
+        requireCompleteDiscovery(discovery, upstreamClient.getNegotiatedProtocolVersion());
+      }
       state.client = client;
       state.transport = transport;
       // Post-negotiation re-resolution: now that the era is known, a
@@ -4828,8 +4893,9 @@ export class MCPClientManager {
     // `baseFetch` is the INNERMOST layer, under the logger: the guard has to
     // see the request that actually leaves, including the routing headers
     // added above it, and the logger has to record the bytes that guard sent.
-    // Absent ⇒ both wrappers fall back to `globalThis.fetch` exactly as before.
-    const baseFetch = config.baseFetch ?? this.defaultBaseFetch;
+    // Absent ⇒ `http1Fetch`: the global fetch, kept on HTTP/1.1 where it
+    // would negotiate HTTP/2 (see `http1-fetch.ts`).
+    const baseFetch = config.baseFetch ?? this.defaultBaseFetch ?? http1Fetch;
     const betaCatalogVersion = () => config.eventsWireProfile === "legacy"
       ? undefined
       : this.eventsCapabilityCapture.betaCatalogVersion(serverId);

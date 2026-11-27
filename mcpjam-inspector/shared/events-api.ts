@@ -147,6 +147,12 @@ export interface EventsSubscriptionView {
 }
 
 export interface EventsCreateSubscriptionRequest {
+  /**
+   * Local only: the project the subscription belongs to. Local subscriptions
+   * and their feed are per project, like hosted ones; omitted is the local
+   * runtime's default project.
+   */
+  projectId?: string;
   serverId: string;
   eventName: string;
   arguments: Record<string, unknown>;

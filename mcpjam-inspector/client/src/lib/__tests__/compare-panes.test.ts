@@ -11,6 +11,7 @@ import {
   promoteLeadPane,
   retargetPane,
   saveComparePanes,
+  singleChatPanes,
   subscribeComparePanes,
   syncLeadPane,
   type ComparePane,
@@ -330,5 +331,30 @@ describe("environment panes", () => {
     expect(paneTargetKey({ kind: "environment", environmentId: "x" })).toBe(
       "environment:x",
     );
+  });
+});
+
+describe("singleChatPanes", () => {
+  const env = (environmentId: string): ComparePane => ({
+    paneId: environmentId,
+    target: { kind: "environment", environmentId },
+  });
+
+  it("leaves one pane for a column with no client, environments included", () => {
+    expect(singleChatPanes([env("staging"), env("prod")], undefined)).toEqual([
+      env("staging"),
+    ]);
+  });
+
+  it("keeps only the column's client pane, dropping environment panes", () => {
+    expect(
+      singleChatPanes([env("staging"), host("a"), host("b", "b-pane")], "b"),
+    ).toEqual([host("b", "b-pane")]);
+  });
+
+  it("makes a pane for a column whose client is not in the lineup", () => {
+    expect(singleChatPanes([env("staging"), host("a")], "c")).toEqual([
+      host("c"),
+    ]);
   });
 });

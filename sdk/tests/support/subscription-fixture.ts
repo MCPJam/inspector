@@ -216,7 +216,11 @@ export function createSubscriptionFixtureHandler(
   };
 }
 
-/** The ways a listen stream can violate one of the three subscription MUSTs. */
+/**
+ * The ways a hand-rolled listen stream differs from the conforming one. The
+ * first four each violate one of the three subscription MUSTs. The two `ack-`
+ * modes violate none: they acknowledge a filter other than the requested one.
+ */
 export type MisbehavingSubscriptionMode =
   /** Emits a notification BEFORE the acknowledgement. */
   | "notification-before-ack"
@@ -225,7 +229,35 @@ export type MisbehavingSubscriptionMode =
   /** Emits messages without the subscription-id tag. */
   | "untagged"
   /** Ends the stream without the completion result. */
-  | "close-without-completion";
+  | "close-without-completion"
+  /** Acknowledges the requested filter without `promptsListChanged`. */
+  | "ack-narrowed"
+  /** Acknowledges the requested filter plus a resource nobody asked for. */
+  | "ack-widened";
+
+/** The resource URI the `ack-widened` mode adds to its acknowledgement. */
+export const SUBSCRIPTION_FIXTURE_UNREQUESTED_URI = "test://never-requested";
+
+/** The filter a mode acknowledges, given the one the client requested. */
+function acknowledgedFilter(
+  mode: MisbehavingSubscriptionMode,
+  requested: Record<string, unknown>
+): Record<string, unknown> {
+  if (mode === "ack-narrowed") {
+    const { promptsListChanged: _declined, ...honored } = requested;
+    return honored;
+  }
+  if (mode === "ack-widened") {
+    const uris = Array.isArray(requested.resourceSubscriptions)
+      ? requested.resourceSubscriptions
+      : [];
+    return {
+      ...requested,
+      resourceSubscriptions: [...uris, SUBSCRIPTION_FIXTURE_UNREQUESTED_URI],
+    };
+  }
+  return requested;
+}
 
 interface WireMessage {
   jsonrpc: "2.0";
@@ -279,7 +311,7 @@ export function createMisbehavingSubscriptionHandler(
       {
         jsonrpc: "2.0",
         method: "notifications/subscriptions/acknowledged",
-        params: { notifications: requested },
+        params: { notifications: acknowledgedFilter(mode, requested) },
       },
       subscriptionId,
       tag
@@ -291,7 +323,7 @@ export function createMisbehavingSubscriptionHandler(
         ? {
             jsonrpc: "2.0",
             method: "notifications/resources/updated",
-            params: { uri: "test://never-requested" },
+            params: { uri: SUBSCRIPTION_FIXTURE_UNREQUESTED_URI },
           }
         : { jsonrpc: "2.0", method: "notifications/tools/list_changed" },
       subscriptionId,

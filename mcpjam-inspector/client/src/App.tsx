@@ -29,6 +29,7 @@ import { toast } from "@/lib/toast";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
+import { AccountCreatedToast } from "./components/sidebar/sidebar-guest-signup-prompt";
 import { TrialDecisionDialog } from "./components/billing/TrialDecisionDialog";
 import { AnnouncementQueueProvider } from "./components/announcement-slot";
 import { StdioCommandApprovalDialog } from "./components/connection/StdioCommandApprovalDialog";
@@ -301,6 +302,7 @@ import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-co
 import { type ProjectSignInReturnRecoveryIntent } from "./lib/project-route-recovery";
 import {
   captureAppSignInReturnPath,
+  isAccessRequestPathname,
   writeAppSignInReturnPath,
 } from "./lib/app-signin-return-path";
 import { isHostedTabBlocked } from "./lib/hosted-tab-policy";
@@ -2514,16 +2516,25 @@ export function TasksRoute() {
 }
 
 export function EventsRoute() {
+  const fallback = useCurrentSearchParam("fallback");
   const {
     selectedMCPConfig,
     appState,
+    activeProjectId,
     convexProjectId,
     activeHost,
     activeHostId,
   } = useAppRouteContext();
   const eventsEnabled = useEventsEnabledState();
   if (eventsEnabled === false) {
-    return <ScopedNavigate to={routePaths.servers} replace />;
+    return (
+      <ScopedNavigate
+        to={
+          fallback === "playground" ? routePaths.playground : routePaths.servers
+        }
+        replace
+      />
+    );
   }
   if (eventsEnabled === undefined) return null;
   return (
@@ -2536,6 +2547,7 @@ export function EventsRoute() {
           appState.servers[appState.selectedServer]?.connectionStatus
         }
         projectId={convexProjectId ?? null}
+        localProjectId={activeProjectId ?? null}
         activeHostId={activeHostId ?? null}
         activeHost={activeHost ?? null}
       />
@@ -3160,7 +3172,12 @@ export default function App() {
   const isConformanceSharedRoute =
     barePathname === routePaths.conformanceShared ||
     barePathname.startsWith(`${routePaths.conformanceShared}/`);
+  const isCaniuseSite =
+    barePathname === routePaths.caniuseCompare ||
+    barePathname === routePaths.capabilities ||
+    barePathname.startsWith(`${routePaths.capabilities}/`);
   const isBareCaniuseRoute =
+    isCaniuseSite ||
     barePathname === routePaths.embedHostCompare ||
     barePathname === routePaths.embedScore ||
     barePathname === routePaths.embedBench ||
@@ -3171,8 +3188,7 @@ export default function App() {
     barePathname.startsWith(`${routePaths.benchResults}/`) ||
     barePathname.startsWith(`${routePaths.scoreResults}/`) ||
     isConformanceSharedRoute ||
-    barePathname.startsWith(`${routePaths.evalsShared}/`) ||
-    barePathname.startsWith(`${routePaths.capabilities}/`);
+    barePathname.startsWith(`${routePaths.evalsShared}/`);
   // The WorkOS Initiate Login URL, where an IdP-initiated login (the Okta app
   // tile) is parked for the instant it takes `LoginInitiationRoute` to start a
   // fresh sign-in. `/login` is not a known tab segment, so it resolves to the
@@ -3182,6 +3198,9 @@ export default function App() {
   // visitor to Playground mid-sign-in, stranding exactly the enterprise entry
   // point this route exists to fix.
   const isLoginInitiationRoute = barePathname === routePaths.login;
+  // An owner opening a request email, often signed out in a fresh browser,
+  // has to stay on the request instead of being sent to Home's welcome.
+  const isAccessRequestRoute = isAccessRequestPathname(barePathname);
 
   const defaultHubRoute = useMemo((): "home" | "connect" | "servers" => {
     return "home";
@@ -6002,6 +6021,7 @@ export default function App() {
     pendingCheckoutIntent === null &&
     !isBareCaniuseRoute &&
     !isLoginInitiationRoute &&
+    !isAccessRequestRoute &&
     !hasHostTemplateVerifyParam &&
     isProjectScopedFirstRunDestinationReady &&
     !isWorkOsLoading &&
@@ -6040,6 +6060,7 @@ export default function App() {
     !isHostedChatRoute &&
     !isBareCaniuseRoute &&
     !isLoginInitiationRoute &&
+    !isAccessRequestRoute &&
     !hasHostTemplateVerifyParam;
   const shouldShowFirstRunOverlay =
     shouldKeepFirstRunOverlayOpen ||
@@ -6626,6 +6647,7 @@ export default function App() {
     "billing",
   ].includes(activeTab);
   const announcementsEnabled =
+    !isBareCaniuseRoute &&
     !isWorkOsLoading &&
     !isAuthLoading &&
     effectiveHostedShellGateState === "ready" &&
@@ -6645,9 +6667,9 @@ export default function App() {
   const appContent = (
     <SettingsDraftProvider enabled={settingsShellActive}>
       <SidebarProvider defaultOpen={true}>
-        {/* Wide working surfaces (Playground, Evaluate, OAuth Debugger, Swarms)
-          collapse the sidebar to its icon rail; navigating back out of them
-          expands it again. */}
+        {/* With the opt-in Appearance setting on, wide working surfaces
+          (Playground, Evaluate, OAuth Debugger, Swarms) collapse the sidebar
+          to its icon rail; navigating back out of them expands it again. */}
         <SidebarAutoCollapse activeTab={activeTab} />
         <AppChromeSidebar
           hidden={playgroundOnboarding || settingsShellActive}
@@ -6888,6 +6910,7 @@ export default function App() {
             <DarkDefaultNudge enabled={announcementsEnabled} />
             <MCPJamLimitDialog />
             <PlanLimitDialog />
+            <AccountCreatedToast />
             <StdioCommandApprovalDialog />
             <LauncherProjectChoiceDialog />
             <UnavailableOrganizationDialog
@@ -6995,7 +7018,7 @@ export default function App() {
   );
 
   return (
-    <AnnouncementQueueProvider enabled={announcementsEnabled}>
+    <AnnouncementQueueProvider enabled={isCaniuseSite || announcementsEnabled}>
       {shell}
     </AnnouncementQueueProvider>
   );

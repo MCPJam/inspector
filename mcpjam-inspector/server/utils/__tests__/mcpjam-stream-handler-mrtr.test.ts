@@ -57,10 +57,6 @@ vi.mock("@/shared/http-tool-calls", async () => {
   };
 });
 
-vi.mock("../mcpjam-tool-helpers", () => ({
-  serializeToolsForConvex: vi.fn(() => []),
-}));
-
 vi.mock("../logger", () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
 }));

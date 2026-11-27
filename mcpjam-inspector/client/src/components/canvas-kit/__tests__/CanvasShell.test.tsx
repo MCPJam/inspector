@@ -34,7 +34,6 @@ function renderShell(props: {
 
 describe("CanvasShell", () => {
   afterEach(() => {
-    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
@@ -75,6 +74,21 @@ describe("CanvasShell", () => {
     expect(shell).toHaveAttribute("data-viewport-ready", "true");
   });
 
+  it("does not schedule a reveal when React Flow initializes after unmount", async () => {
+    vi.useFakeTimers();
+    const setTimeoutSpy = vi.spyOn(window, "setTimeout");
+    const { unmount } = renderShell({});
+    unmount();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20);
+    });
+
+    const scheduledReveal = setTimeoutSpy.mock.calls.some(([, ms]) => ms === 60);
+    setTimeoutSpy.mockRestore();
+    expect(scheduledReveal).toBe(false);
+  });
+
   // A reveal left pending after unmount fired once the test environment was
   // gone and failed CI with "window is not defined".
   it.each([
@@ -106,18 +120,4 @@ describe("CanvasShell", () => {
       clearTimeoutSpy.mockRestore();
     },
   );
-
-  it("does not schedule a reveal if React Flow initializes after unmount", async () => {
-    vi.useFakeTimers();
-    const setTimeoutSpy = vi.spyOn(window, "setTimeout");
-    const { unmount } = renderShell({});
-
-    unmount();
-    setTimeoutSpy.mockClear();
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(20);
-    });
-
-    expect(setTimeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), 60);
-  });
 });

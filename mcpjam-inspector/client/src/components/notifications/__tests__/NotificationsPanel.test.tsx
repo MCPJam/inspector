@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import type { Notification } from "@/hooks/useNotifications";
@@ -52,9 +52,9 @@ function notification(overrides: Partial<Notification>): Notification {
   } as Notification;
 }
 
-function renderWith(notifications: Notification[]) {
+function renderWith(notifications: Notification[], onNavigate?: () => void) {
   mockUseNotifications.mockReturnValue({ notifications, isLoading: false });
-  return render(<NotificationsPanelContent />);
+  return render(<NotificationsPanelContent onNavigate={onNavigate} />);
 }
 
 describe("NotificationsPanelContent", () => {
@@ -124,5 +124,98 @@ describe("NotificationsPanelContent", () => {
     ]);
     expect(container.querySelector(".bg-success\\/10")).not.toBeNull();
     expect(container.querySelector(".bg-destructive\\/10")).not.toBeNull();
+  });
+
+  it("opens the access request page from a project access request", () => {
+    const markAsRead = vi.fn();
+    mockUseNotificationMutations.mockReturnValue({
+      markAsRead,
+      markAllAsRead: vi.fn(),
+      clearAllNotifications: vi.fn(),
+    });
+    window.history.replaceState({}, "", "/");
+    const { container } = renderWith([
+      notification({
+        _id: "n-access",
+        type: "project_access_requested",
+        entityId: "req_1",
+        entityName: "Payments",
+        actorName: "Ada",
+      }),
+    ]);
+
+    const row = screen.getByText('Ada asked for access to project "Payments"');
+    expect(container.querySelector(".bg-primary\\/10")).not.toBeNull();
+    fireEvent.click(row);
+    expect(markAsRead).toHaveBeenCalledWith({ notificationId: "n-access" });
+    expect(window.location.pathname).toBe("/access-requests/req_1");
+  });
+
+  it("opens the access request page from the keyboard", () => {
+    const markAsRead = vi.fn();
+    mockUseNotificationMutations.mockReturnValue({
+      markAsRead,
+      markAllAsRead: vi.fn(),
+      clearAllNotifications: vi.fn(),
+    });
+    window.history.replaceState({}, "", "/");
+    renderWith([
+      notification({
+        _id: "n-access",
+        type: "project_access_requested",
+        entityId: "req_1",
+        entityName: "Payments",
+        actorName: "Ada",
+      }),
+      notification({ _id: "n-org", type: "organization_added" }),
+    ]);
+
+    // Only the row that opens a page is a link; the others stay plain rows.
+    const link = screen.getByRole("link", {
+      name: /Ada asked for access to project "Payments"/,
+    });
+    expect(screen.getAllByRole("link")).toHaveLength(1);
+    expect(link).toHaveAttribute("tabindex", "0");
+    link.focus();
+    fireEvent.keyDown(link, { key: "Enter" });
+    expect(markAsRead).toHaveBeenCalledWith({ notificationId: "n-access" });
+    expect(window.location.pathname).toBe("/access-requests/req_1");
+  });
+
+  it("tells the caller after a row opens a page, and not for other rows", () => {
+    mockUseNotificationMutations.mockReturnValue({
+      markAsRead: vi.fn(),
+      markAllAsRead: vi.fn(),
+      clearAllNotifications: vi.fn(),
+    });
+    window.history.replaceState({}, "", "/");
+    const onNavigate = vi.fn();
+    renderWith(
+      [
+        notification({
+          _id: "n-access",
+          type: "project_access_requested",
+          entityId: "req_1",
+          entityName: "Payments",
+          actorName: "Ada",
+        }),
+        notification({
+          _id: "n-org",
+          type: "organization_added",
+          entityName: "Acme",
+          actorName: "Ada",
+        }),
+      ],
+      onNavigate,
+    );
+
+    fireEvent.click(screen.getByText('Ada added you to organization "Acme"'));
+    expect(onNavigate).not.toHaveBeenCalled();
+    fireEvent.keyDown(
+      screen.getByRole("link", { name: /Ada asked for access/ }),
+      { key: "Enter" },
+    );
+    expect(window.location.pathname).toBe("/access-requests/req_1");
+    expect(onNavigate).toHaveBeenCalledTimes(1);
   });
 });

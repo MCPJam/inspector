@@ -3,7 +3,6 @@ import { useConvexAuth } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useProjectServers, type RemoteServer } from "@/hooks/useProjects";
 import { useSoftQuery } from "@/hooks/use-soft-query";
-import { useEvalAccountSelectionEnabled } from "@/hooks/useEvalAccountSelectionEnabled";
 import { getMcpServerDisplayName } from "@/lib/mcp-server-display-name";
 import { getEffectiveSuiteServers } from "@/components/evals/helpers";
 import type { EvalSuite } from "@/components/evals/types";
@@ -21,8 +20,7 @@ export type SuiteAccountsViewState = {
 };
 
 /**
- * The person's accounts for these servers of a suite, read only while the
- * rollout flag is on.
+ * The accounts available for the suite's servers.
  *
  * A soft read: a failure comes back as `error` instead of being thrown during
  * render, because the Set up run sheet and the settings page must keep working
@@ -36,11 +34,10 @@ export function useSuiteAccountsView({
   suiteId: string | null | undefined;
   serverIds: readonly string[];
 }): SuiteAccountsViewState {
-  const enabled = useEvalAccountSelectionEnabled();
   const { isAuthenticated } = useConvexAuth();
   const isUserReady = useDbUserReady();
   const args =
-    enabled && isAuthenticated && isUserReady && suiteId && serverIds.length
+    isAuthenticated && isUserReady && suiteId && serverIds.length
       ? { suiteId, serverIds: [...serverIds] }
       : "skip";
   const { data, error } = useSoftQuery<SuiteAccountsView>(

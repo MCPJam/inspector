@@ -4,6 +4,7 @@ import type {
 } from "../conformance-outcome.js";
 import type { ConformanceProfileStamp } from "../conformance-profile.js";
 import type { WireObservationRecorder } from "./wire-observations.js";
+import type { RawHttpResult } from "./raw-http.js";
 import type {
   ManagedMcpClient,
   MCPClientManager,
@@ -43,7 +44,6 @@ export const MCP_CHECK_IDS = [
   "localhost-host-rebinding-rejected",
   "localhost-host-valid-accepted",
   "server-sse-polling-session",
-  "server-accepts-multiple-post-streams",
   "server-sse-streams-functional",
   // Streamable HTTP transport MUSTs stated verbatim by the 2025 revisions:
   // a notification-only POST answers `202 Accepted` with no body, a GET either
@@ -169,7 +169,7 @@ export const MCP_PROTOCOL_VERSION_ERA_IDS = Object.keys(
  *   - Legacy-only checks assert 2025-era wire mechanics that do not exist in
  *     the sessionless 2026 era: the `initialize` handshake
  *     (`server-initialize`), the stateful session id + concurrent POST/SSE
- *     stream semantics (`server-sse-*`, `server-accepts-multiple-post-streams`),
+ *     stream semantics (`server-sse-*`),
  *     and consistency/health probes (`capabilities-consistent`, `ping`) whose
  *     modern equivalents are Phase 7 work.
  *   - Both-era checks either self-skip on an unadvertised capability
@@ -214,7 +214,6 @@ export const CHECK_ERAS: Record<MCPCheckId, MCPCheckEras> = {
   ping: ["legacy"],
   "capabilities-consistent": ["legacy", "modern"],
   "server-sse-polling-session": ["legacy"],
-  "server-accepts-multiple-post-streams": ["legacy"],
   "server-sse-streams-functional": ["legacy"],
   // Client-to-server notifications, the GET stream endpoint, and sessions were
   // all removed by 2026-07-28 (the revision even states that header
@@ -255,13 +254,44 @@ export const CHECK_ERAS: Record<MCPCheckId, MCPCheckEras> = {
   "modern-removed-methods-not-found": ["modern"],
   "modern-resource-not-found-invalid-params": ["modern"],
   "modern-resource-read-no-empty-contents": ["modern"],
-  "modern-tool-output-schema-conformant": ["modern"],
+  // The output schema MUST is in 2025-06-18, 2025-11-25 and 2026-07-28.
+  // 2025-03-26 has no `outputSchema`: see CHECK_FIRST_PROTOCOL_VERSION.
+  "modern-tool-output-schema-conformant": ["legacy", "modern"],
   "modern-logs-require-log-level": ["modern"],
   "modern-subscription-ack-precedes-notifications": ["modern"],
   "modern-subscription-filter-and-tagging": ["modern"],
   "modern-subscription-graceful-close": ["modern"],
   "wire-schema-valid": ["legacy", "modern"],
 } as const satisfies Record<MCPCheckId, MCPCheckEras>;
+
+/**
+ * A check whose rule starts at a later revision than its era does. Eras are
+ * coarse: "legacy" is every 2025 revision, and a rule can be younger than
+ * that. Tools gained `outputSchema` in 2025-06-18, so on 2025-03-26 the
+ * output schema check has nothing to grade.
+ */
+export const CHECK_FIRST_PROTOCOL_VERSION: Partial<
+  Record<MCPCheckId, McpProtocolVersion>
+> = {
+  "modern-tool-output-schema-conformant": "2025-06-18",
+};
+
+/**
+ * Whether `id` has anything to grade on a run pinned to `protocolVersion`:
+ * the version's era is one of the check's, and the version is not older than
+ * the check's rule. Revisions are dates, so they order as strings.
+ */
+export function checkRunsOnVersion(
+  id: MCPCheckId,
+  protocolVersion: McpProtocolVersion
+): boolean {
+  const eras: readonly MCPCheckEra[] = CHECK_ERAS[id];
+  const first = CHECK_FIRST_PROTOCOL_VERSION[id];
+  return (
+    eras.includes(PROTOCOL_VERSION_ERAS[protocolVersion]) &&
+    (first === undefined || protocolVersion >= first)
+  );
+}
 
 export interface MCPCheckResult {
   id: MCPCheckId;
@@ -308,9 +338,10 @@ export interface MCPConformanceConfig {
   categories?: MCPCheckCategory[];
   /**
    * Run only these checks. A retired id ({@link RETIRED_MCP_CHECK_IDS}) runs
-   * the advice that replaced it.
+   * the advice that replaced it. A removed id ({@link REMOVED_MCP_CHECK_IDS})
+   * is dropped: nothing runs in its place.
    */
-  checkIds?: (MCPCheckId | RetiredMCPCheckId)[];
+  checkIds?: (MCPCheckId | RetiredMCPCheckId | RemovedMCPCheckId)[];
   /**
    * Run only these advice probes (the readiness channel). Absent ⇒ every
    * advice. Unlike `checkIds`, an empty list means NO advice: advice never
@@ -516,6 +547,27 @@ export const RETIRED_MCP_CHECK_IDS = {
 export type RetiredMCPCheckId = keyof typeof RETIRED_MCP_CHECK_IDS;
 
 /**
+ * Check ids an older SDK accepted that were removed with nothing in their
+ * place, each with the reason. Kept so a config or `--check-id` list written
+ * for that SDK still runs its other checks instead of failing as unknown.
+ *
+ * `server-accepts-multiple-post-streams` (Multiple POST Streams) sent three
+ * requests at once and failed the server unless all three were answered 2xx.
+ * The only rule behind it is "The client MAY remain connected to multiple SSE
+ * streams simultaneously", which permits something to the client. No 2025
+ * revision requires a server to accept concurrent POSTs, so the check failed
+ * servers for a requirement the spec does not state. Functional SSE Streams
+ * still sends the same three requests and grades what the spec does ask of the
+ * streams that come back.
+ */
+export const REMOVED_MCP_CHECK_IDS = {
+  "server-accepts-multiple-post-streams":
+    "It graded a rule that binds the client, not the server: the 2025 revisions only say the client MAY remain connected to multiple SSE streams.",
+} as const satisfies Record<string, string>;
+
+export type RemovedMCPCheckId = keyof typeof REMOVED_MCP_CHECK_IDS;
+
+/**
  * The eras each advice can show up in, so a UI lists only the advice a pinned
  * run can produce. Mirrors the era guards in `readiness.ts`: an advice listed
  * for an era may still find nothing to say there (its probe decides).
@@ -693,6 +745,12 @@ export interface RawHttpCheckContext {
    * have nothing to record into.
    */
   recorder?: WireObservationRecorder;
+  /**
+   * The `server/discover` answer the runner already has: on a raw-only 2026
+   * pin it asks once, before the raw checks, whether the server refuses the
+   * pin. The modern track grades this answer instead of sending its own.
+   */
+  discover?: RawHttpResult;
 }
 
 export interface MCPClientCheckDefinition {

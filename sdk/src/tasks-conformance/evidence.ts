@@ -321,7 +321,11 @@ export async function runUndeclaredProbe(
 }
 
 export interface InputRequiredLeg {
-  outcome: "no-responses-configured" | "update-rejected" | "updated";
+  outcome:
+    | "no-responses-configured"
+    | "no-matching-responses"
+    | "update-rejected"
+    | "updated";
   /** Keys the task asked the client to answer. */
   requested: string[];
   /** Keys the operator supplied. */

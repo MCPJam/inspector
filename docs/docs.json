@@ -61,6 +61,7 @@
             "icon": "bug",
             "pages": [
               "inspector/playground",
+              "inspector/events",
               {
                 "group": "Test MCP Apps",
                 "icon": "app-window",
@@ -85,9 +86,17 @@
                 ]
               },
               {
-                "group": "Inspect your server",
+                "group": "Inspector",
                 "icon": "search",
-                "pages": ["inspector/tools-prompts-resources", "inspector/debugging"]
+                "pages": [
+                  "inspector/tools-prompts-resources",
+                  "inspector/tools",
+                  "inspector/resources",
+                  "inspector/prompts",
+                  "inspector/tasks",
+                  "inspector/skills",
+                  "inspector/debugging"
+                ]
               }
             ]
           },
@@ -131,6 +140,29 @@
             ]
           },
           {
+            "group": "Conformance",
+            "icon": "shield-check",
+            "pages": ["conformance/overview"]
+          },
+          {
+            "group": "Swarms",
+            "icon": "users-round",
+            "pages": [
+              "swarms/overview",
+              "swarms/run-your-first-swarm",
+              "swarms/read-results"
+            ]
+          },
+          {
+            "group": "User Testing",
+            "icon": "clipboard-list",
+            "pages": [
+              "user-testing/overview",
+              "user-testing/create-your-first-study",
+              "user-testing/read-results"
+            ]
+          },
+          {
             "group": "Configure",
             "icon": "settings",
             "pages": [
@@ -141,11 +173,11 @@
                 "pages": ["inspector/projects", "inspector/home"]
               },
               "inspector/protocol-versions",
-              "inspector/skills",
               {
                 "group": "Use with other tools",
                 "icon": "plug",
                 "pages": [
+                  "inspector/use-mcpjam-in-chatgpt",
                   "hosted/mcp-server",
                   "inspector/docs-server",
                   "inspector/launch-from-code"
@@ -154,7 +186,7 @@
               {
                 "group": "Enterprise admin",
                 "icon": "building-2",
-                "pages": ["hosted/sso", "hosted/network"]
+                "pages": ["hosted/sso", "hosted/entra-id", "hosted/network"]
               },
               "inspector/telemetry-privacy"
             ]
@@ -509,10 +541,6 @@
     {
       "source": "/inspector/plugins",
       "destination": "/inspector/skills"
-    },
-    {
-      "source": "/inspector/events",
-      "destination": "/cli/events"
     },
     {
       "source": "/inspector/workspaces",

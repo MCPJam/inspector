@@ -131,6 +131,7 @@ describe("streamWebChatTurn — execution binding", () => {
     await engine.onConversationComplete?.([], {});
     expect(m.persist).toHaveBeenCalledWith(
       expect.objectContaining({ systemPrompt: "User-configured prompt" }),
+      expect.anything(),
     );
   });
 

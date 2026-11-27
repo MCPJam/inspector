@@ -1,6 +1,8 @@
 import { UIMessage } from "ai";
 import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
 import type { ModelDefinition } from "./types";
+import type { EventToolsSnapshot } from "./event-agent-tools";
+import type { EventAtTurn } from "./event-at-turn";
 import type {
   McpToolResultImageRenderingPolicy,
   ModelReasoningEffort,
@@ -17,8 +19,31 @@ import type {
 
 export interface ChatRewind {
   parentChatSessionId: string;
+  /** The edited message, or for a multi-model column the last message kept. */
   rewoundFromMessageId: string;
-  reason: "message_edit";
+  reason: "message_edit" | "multi_model_column";
+}
+
+/**
+ * One column of a Playground multi-model session. The columns of one session
+ * share `groupId`; `position` only grows, so a replaced column never reuses one.
+ */
+export interface ChatMultiModelColumn {
+  groupId: string;
+  position: number;
+  columnKind: "model" | "host";
+  compareId: string;
+}
+
+/**
+ * One column of a Playground multi-model session. The columns of one session
+ * share `groupId`; `position` only grows, so a replaced column never reuses one.
+ */
+export interface ChatMultiModelColumn {
+  groupId: string;
+  position: number;
+  columnKind: "model" | "host";
+  compareId: string;
 }
 
 export interface ChatV2Request {
@@ -54,6 +79,8 @@ export interface ChatV2Request {
   browserScope?: "conversation";
   /** Lineage for a new session created by editing an earlier user message. */
   rewind?: ChatRewind;
+  /** Saves this chat as a column of a multi-model session. */
+  multiModel?: ChatMultiModelColumn;
   /** Userless retry of a tool call suspended for SEP-2350 authorization. */
   scopeStepUpResume?: ScopeStepUpResumeRequest;
   /** Userless resolution when the user denied or failed authorization. */
@@ -136,6 +163,7 @@ export interface ChatV2Request {
    * the request is scenario-bound, so the host value wins.
    */
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   /** Host-level MCP tool-result content/resource visibility policy. */
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   /** Host-level UI rendering policy for MCP tool-returned images. */
@@ -181,6 +209,19 @@ export interface ChatV2Request {
    * process, so a hosted turn has nothing to resolve these against.
    */
   pageTools?: PageToolSnapshotEntry[];
+  /**
+   * MCP Events agent tools: the connected servers that declare Events, sent by
+   * a Playground that can run `mcpjam_subscribe_to_event` and its siblings
+   * (`event-agent-tools.ts`). Client-fulfilled like `appTools`; absent means
+   * the turn advertises none.
+   */
+  eventTools?: EventToolsSnapshot;
+  /**
+   * The MCP event that started this turn, sent by the Playground with every
+   * request of an event turn. Recorded on the turn trace and echoed on the live
+   * `turn_start`; it changes nothing about what the model sees.
+   */
+  eventAtTurn?: EventAtTurn;
   /**
    * SEP-1865 `ui/update-model-context` snapshots for the next model turn.
    *

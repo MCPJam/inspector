@@ -241,7 +241,11 @@ import {
   useTrafficLogStore,
 } from "@/stores/traffic-log-store";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
-import type { ChatRewind, WidgetModelContextEntry } from "@/shared/chat-v2";
+import type {
+  ChatMultiModelColumn,
+  ChatRewind,
+  WidgetModelContextEntry,
+} from "@/shared/chat-v2";
 import {
   isScopeStepUpDataPart,
   isScopeStepUpFinishedDataPart,
@@ -275,6 +279,7 @@ import {
 import { parseToolResultAuthChallenge } from "@mcpjam/sdk/browser";
 import {
   getTraceSpansDurationMs,
+  liveChatTraceTurnEvents,
   mergeLiveChatTraceUsage,
   rebaseTraceSpans,
   type LiveChatTraceEnvelope,
@@ -283,6 +288,7 @@ import {
   type LiveChatTraceToolCall,
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
+import { readEventAtTurn, type EventAtTurn } from "@/shared/event-at-turn";
 import {
   applyPreviewSpansUserMessageIndices,
   buildLiveChatPreviewSpans,
@@ -307,7 +313,16 @@ import {
   snapshotPageToolsForTurn,
 } from "@/lib/webmcp-inspector/chat-dispatch";
 import { pageToolCallNeedsApproval } from "@/shared/client-fulfilled-tools";
-import { createUiAwareApprovalResponseHandler } from "@/lib/webmcp/ui-tool-approval";
+import {
+  eventToolCallNeedsApproval,
+  isEventAgentToolName,
+  type EventAgentToolName,
+  type EventToolsSnapshot,
+} from "@/shared/event-agent-tools";
+import {
+  createUiAwareApprovalResponseHandler,
+  findPartByApprovalId,
+} from "@/lib/webmcp/ui-tool-approval";
 import { respondToChatElicitation } from "@/lib/apis/elicitation-api";
 import {
   HOSTED_MRTR_VERSION,
@@ -659,6 +674,7 @@ export interface UseChatSessionOptions {
    * affect the next send without remounting.
    */
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   /** Host-level MCP tool-result content/resource visibility policy. */
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   /** Host-level UI rendering policy for MCP tool-returned images. */
@@ -679,6 +695,8 @@ export interface UseChatSessionOptions {
    * its own. Read through a ref so it reaches the body builder at POST time.
    */
   comparePane?: boolean;
+  /** Saves this chat as a column of a multi-model session. */
+  multiModelColumn?: ChatMultiModelColumn;
   /**
    * Definitions for those built-in tools, as the model is shown them — used by
    * the RAW view of a reopened session and nowhere else.
@@ -699,6 +717,22 @@ export interface UseChatSessionOptions {
    * run code on a third-party site.
    */
   usePageTools?: boolean;
+  /**
+   * The Playground's MCP Events agent tools (`event-agent-tools.ts`):
+   * `snapshot` is read at POST time to advertise them, and `execute` fulfils
+   * each call. Absent on surfaces with no Events pane.
+   */
+  eventAgentTools?: {
+    snapshot: (
+      selectedServers?: readonly string[],
+    ) => EventToolsSnapshot | undefined;
+    execute: (
+      name: EventAgentToolName,
+      toolCallId: string,
+      input: unknown,
+      selectedServers?: readonly string[],
+    ) => Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }>;
+  };
   /** Callback when chat is reset */
   onReset?: (reason?: ChatSessionResetReason) => void;
 }
@@ -789,6 +823,11 @@ export interface UseChatSessionReturn {
     extraParts?: UIMessage["parts"];
     widgetModelContext?: WidgetModelContextEntry[];
     /**
+     * The MCP event that started this turn. Sent with every request of the
+     * turn, its continuations included, until the next send in this session.
+     */
+    eventAtTurn?: EventAtTurn;
+    /**
      * Resolves `true` once the message was actually dispatched, `false` on
      * every fail-closed preflight path (server-id resolution failed, or the
      * target/session changed while it was being prepared). Those paths surface
@@ -837,6 +876,33 @@ export interface UseChatSessionReturn {
      */
     onBeforeBranch?: () => void;
   }) => Promise<{ previousChatSessionId: string } | null>;
+  /**
+   * Sends into a new branch holding the whole transcript (a multi-model
+   * column), with the same composer context an ordinary send carries.
+   */
+  branchFromThread: (
+    options: Omit<
+      Parameters<UseChatSessionReturn["rewindToMessage"]>[0],
+      "messageId"
+    > &
+      Pick<
+        Parameters<UseChatSessionReturn["sendMessage"]>[0],
+        | "pluginMentions"
+        | "extraParts"
+        | "widgetModelContext"
+        | "eventAtTurn"
+        | "isCurrent"
+      > & {
+        /** Attached prompt and skill messages, copied in after the transcript. */
+        prependMessages?: UIMessage[];
+        /**
+         * Runs when the branch went live but its send never ran. The reset
+         * that minted it cleared the composer's queued context, which is
+         * still owed to the next send.
+         */
+        onDispatchRefused?: () => void;
+      },
+  ) => Promise<{ previousChatSessionId: string } | null>;
   stop: () => void;
   status: "submitted" | "streaming" | "ready" | "error";
   error: Error | undefined;
@@ -985,6 +1051,7 @@ export interface UseChatSessionReturn {
         temperature?: number;
         requireToolApproval?: boolean;
         respectToolVisibility?: boolean;
+        runUnloadedToolCalls?: boolean;
         modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
         mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
         selectedServers?: string[];
@@ -1014,6 +1081,7 @@ export interface UseChatSessionReturn {
         requestPayloadsBlobUrl?: string | null;
         modelId?: string;
         pageToolsAtTurn?: MintedPageToolRecord[];
+        eventAtTurn?: EventAtTurn;
       }>;
     },
     options?: {
@@ -1147,6 +1215,8 @@ interface LiveTraceTurnState {
   finishReason?: string;
   /** Persisted model id (rehydration only). */
   modelId?: string;
+  /** The MCP event that started this turn: from `turn_start` live, or the persisted trace. */
+  event?: EventAtTurn;
 }
 
 interface LiveTraceAccumulatorState {
@@ -1222,6 +1292,8 @@ export interface HydratedTurnTrace {
    * array, which means "this turn advertised none".
    */
   pageToolsAtTurn?: MintedPageToolRecord[];
+  /** The MCP event that started this turn, as the backend reader returned it. */
+  eventAtTurn?: EventAtTurn;
 }
 
 interface PersistedWidgetSnapshot {
@@ -1252,6 +1324,7 @@ async function resolveHydratedTurnTraces(
         requestPayloadsBlobUrl?: string | null;
         modelId?: string;
         pageToolsAtTurn?: MintedPageToolRecord[];
+        eventAtTurn?: EventAtTurn;
       }>
     | undefined,
 ): Promise<HydratedTurnTrace[] | undefined> {
@@ -1310,6 +1383,7 @@ async function resolveHydratedTurnTraces(
           );
         }
       }
+      const eventAtTurn = readEventAtTurn(trace.eventAtTurn);
       return {
         turnId: trace.turnId,
         promptIndex: trace.promptIndex,
@@ -1323,6 +1397,7 @@ async function resolveHydratedTurnTraces(
         ...(trace.pageToolsAtTurn !== undefined
           ? { pageToolsAtTurn: trace.pageToolsAtTurn }
           : {}),
+        ...(eventAtTurn ? { eventAtTurn } : {}),
       };
     }),
   );
@@ -1393,6 +1468,7 @@ function buildLiveTraceStateFromTurnTraces(
       ...(trace.pageToolsAtTurn !== undefined
         ? { pageToolsAtTurn: trace.pageToolsAtTurn }
         : {}),
+      ...(trace.eventAtTurn ? { event: trace.eventAtTurn } : {}),
     };
   }
 
@@ -1721,6 +1797,7 @@ function applyLiveTraceEvent(
             actualToolCalls: prev?.actualToolCalls ?? [],
             usage: prev?.usage,
             startedAtMs: event.startedAtMs,
+            ...(event.event ? { event: event.event } : {}),
           },
         },
         activeTurnId: event.turnId,
@@ -1832,6 +1909,7 @@ function buildLiveTraceEnvelope(
   const turns: LiveChatTraceEnvelope["turns"] = [];
   let usage: LiveChatTraceUsage | undefined;
   const actualToolCalls: LiveChatTraceToolCall[] = [];
+  const turnEvents = liveChatTraceTurnEvents(state.turnOrder.map((id) => state.turns[id]));
   let nextOffsetMs = 0;
   let traceStartedAtMs: number | undefined;
 
@@ -1886,6 +1964,7 @@ function buildLiveTraceEnvelope(
     actualToolCalls: dedupeTraceToolCalls(actualToolCalls),
     events: state.events,
     turns,
+    ...(turnEvents.length > 0 ? { turnEvents } : {}),
     requestPayloads:
       state.requestPayloadHistory.length > 0
         ? state.requestPayloadHistory
@@ -2463,6 +2542,11 @@ export function useChatSession(
   // project default for direct chat, etc.) — and the hook just threads it
   // into the request body. Held in a ref so a mid-session flip is
   // reflected on the very next send without remounting.
+  const runUnloadedToolCallsRef = useRef<boolean | undefined>(undefined);
+  const resumedRunUnloadedToolCallsRef = useRef<boolean | undefined>(undefined);
+  runUnloadedToolCallsRef.current =
+    options.runUnloadedToolCalls ??
+    options.executionConfig?.runUnloadedToolCalls;
   const progressiveToolDiscoveryRef = useRef<boolean | undefined>(undefined);
   // Prefer the top-level option when set (used by paths that don't go
   // through ExecutionConfig — e.g. the playground per-host column), but
@@ -2510,11 +2594,18 @@ export function useChatSession(
     options.builtInToolIds ?? options.executionConfig?.builtInToolIds;
   const comparePaneRef = useRef(false);
   comparePaneRef.current = options.comparePane === true;
+  const multiModelColumnRef = useRef(options.multiModelColumn);
+  multiModelColumnRef.current = options.multiModelColumn;
   // Read through a ref for the same reason the ids above are: the transport's
   // body builder is created once and must see the CURRENT value at POST time,
   // not the one captured when the transport was memoized.
   const usePageToolsRef = useRef(false);
   usePageToolsRef.current = options.usePageTools === true;
+  const eventAgentToolsRef = useRef(options.eventAgentTools);
+  eventAgentToolsRef.current = options.eventAgentTools;
+  // The Events tools reach only the servers selected for this conversation.
+  const eventToolServersRef = useRef<readonly string[]>(selectedServers);
+  eventToolServersRef.current = selectedServers;
   const isHostedGuest = HOSTED_MODE && !workOsUser && !isWorkOsLoading;
   const sharedGuestMode =
     isHostedGuest && !isAuthLoading && !!hostedProjectId && !!hostedScenarioId;
@@ -3923,6 +4014,10 @@ export function useChatSession(
   const pendingWidgetModelContextRef = useRef<
     WidgetModelContextEntry[] | undefined
   >(undefined);
+  // The event the last admitted send in a session started from, or that a
+  // restored session's latest turn records (`loadChatSession`). Unlike widget
+  // context it is not drained: a continuation of that turn carries it too.
+  const turnEventAtTurnRef = useRef<{ chatSessionId: string; event: EventAtTurn } | null>(null);
   // Convex server ids resolved by the hosted preflight (`hostedEnsureServerIds`)
   // in `sendMessage`, consumed once by the (synchronous) transport body so the
   // hosted send carries real ids for ad-hoc/App servers, not display names.
@@ -4217,6 +4312,11 @@ export function useChatSession(
           rewindRef.current?.chatSessionId === chatSessionIdRef.current
             ? rewindRef.current.lineage
             : undefined;
+        // MCP Events agent tools, for the servers whose catalog says they
+        // declare Events right now.
+        const eventTools = eventAgentToolsRef.current?.snapshot(
+          eventToolServersRef.current,
+        );
         return {
           harnessStartupRequestId: harnessStartupRequestRef.current,
           ...(ownerRequestId
@@ -4317,6 +4417,7 @@ export function useChatSession(
             : {}),
           requireToolApproval: requireToolApprovalRef.current,
           respectToolVisibility: respectToolVisibilityRef.current,
+          runUnloadedToolCalls: runUnloadedToolCallsRef.current ?? resumedRunUnloadedToolCallsRef.current,
           ...(modelVisibleMcpToolResultsRef.current !== undefined
             ? {
                 modelVisibleMcpToolResults:
@@ -4352,6 +4453,9 @@ export function useChatSession(
             : {}),
           ...(rewind ? { rewind } : {}),
           ...(comparePaneRef.current ? { comparePane: true } : {}),
+          ...(multiModelColumnRef.current
+            ? { multiModel: multiModelColumnRef.current }
+            : {}),
           // Preserve []: it explicitly disables the client's built-in tools.
           ...(builtInToolIdsRef.current !== undefined
             ? { builtInToolIds: builtInToolIdsRef.current }
@@ -4371,6 +4475,11 @@ export function useChatSession(
           // the tool it stood for.
           ...(usePageToolsRef.current
             ? { pageTools: snapshotPageToolsForTurn() }
+            : {}),
+          ...(eventTools ? { eventTools } : {}),
+          ...(turnEventAtTurnRef.current?.chatSessionId ===
+          chatSessionIdRef.current
+            ? { eventAtTurn: turnEventAtTurnRef.current.event }
             : {}),
           // MCPJam UI tools are agent-surface-only; the only uiTools sender
           // is agent-chat-instances.ts (/api/web/mcpjam-agent).
@@ -4540,6 +4649,41 @@ export function useChatSession(
             addToolOutput,
           });
         }
+        return;
+      }
+
+      // MCP Events agent tools: exact names, run by the Playground's events
+      // runtime. A turn always gets an output, or the stream would wait.
+      if (isEventAgentToolName(toolName)) {
+        // A call that changes a watch waits for the approval pill when the
+        // user turned on Require tool approval: the same predicate and the
+        // same per-turn value the server built the tool from. The approval
+        // response handler runs it.
+        if (
+          eventToolCallNeedsApproval(
+            toolName,
+            turnRequireToolApprovalRef.current,
+          )
+        ) {
+          return;
+        }
+        const executor = eventAgentToolsRef.current;
+        const output = executor
+          ? await executor.execute(
+              toolName,
+              pageToolCallId,
+              pageToolInput,
+              eventToolServersRef.current,
+            )
+          : {
+              content: [{ type: "text" as const, text: "MCP Events aren't available in this chat. Open the Events pane to use them." }],
+              isError: true,
+            };
+        addToolOutput({
+          tool: toolName,
+          toolCallId: pageToolCallId,
+          output,
+        } as Parameters<typeof addToolOutput>[0]);
         return;
       }
 
@@ -4745,6 +4889,30 @@ export function useChatSession(
           toast.error(error instanceof Error ? error.message : "Could not prepare the saved servers for this approval. Try approving again.");
           return;
         }
+      }
+      // MCP Events agent tools are client-fulfilled: approving runs the call
+      // here and supplies its output; denying lets the server settle it.
+      const located = findPartByApprovalId(messagesRef.current, response.id);
+      if (located && isEventAgentToolName(located.toolName)) {
+        if (!response.approved) return sdkAddToolApprovalResponse(response);
+        const executor = eventAgentToolsRef.current;
+        const output = executor
+          ? await executor.execute(
+              located.toolName,
+              located.toolCallId,
+              located.input,
+              eventToolServersRef.current,
+            )
+          : {
+              content: [{ type: "text" as const, text: "MCP Events aren't available in this chat. Open the Events pane to use them." }],
+              isError: true,
+            };
+        addToolOutput({
+          tool: located.toolName,
+          toolCallId: located.toolCallId,
+          output,
+        } as Parameters<typeof addToolOutput>[0]);
+        return;
       }
       return respond(response);
     };
@@ -5546,6 +5714,7 @@ export function useChatSession(
       pluginMentions?: PluginMentionSelection[];
       extraParts?: UIMessage["parts"];
       widgetModelContext?: WidgetModelContextEntry[];
+      eventAtTurn?: EventAtTurn;
     }) => {
       if (harnessStopBlockedRef.current) throw new Error("Confirm Stop before continuing this conversation.");
       const {
@@ -5558,6 +5727,7 @@ export function useChatSession(
         prependMessages,
         pluginMentions,
         extraParts,
+        eventAtTurn,
       } = options;
 
       // SEP-2350 turn boundary: a new user turn spins up a fresh per-turn MCP
@@ -5768,6 +5938,9 @@ export function useChatSession(
             ? { body: { scopeStepUpCancel: cancelSignIn } }
             : undefined;
           appMessageTurnRef.current = pluginMessage !== undefined;
+          turnEventAtTurnRef.current = eventAtTurn
+            ? { chatSessionId: sessionAtSend, event: eventAtTurn }
+            : null;
           activeSendSessions.current.add(sessionAtSend);
           admitted = true;
           let sent: Promise<void>;
@@ -5862,6 +6035,7 @@ export function useChatSession(
   const resetChat = useCallback(() => {
     skipNextForkDetectionRef.current = true;
     clearPendingSessionHydration();
+    resumedRunUnloadedToolCallsRef.current = undefined;
     resumedModelVisibleMcpToolResultsRef.current = undefined;
     resumedMcpToolResultImageRenderingRef.current = undefined;
     rewindRef.current = null;
@@ -5998,6 +6172,7 @@ export function useChatSession(
       },
     ) => {
       skipNextForkDetectionRef.current = true;
+      resumedRunUnloadedToolCallsRef.current = undefined;
       resumedModelVisibleMcpToolResultsRef.current = undefined;
       resumedMcpToolResultImageRenderingRef.current = undefined;
       rewindRef.current = null;
@@ -6085,6 +6260,115 @@ export function useChatSession(
    *   `sendMessage` preflight failed closed, having already surfaced its own
    *   error toast. Callers must stay silent and must not touch bookkeeping.
    */
+  type BranchSendOptions = Omit<{
+      messageId: string;
+      text: string;
+      files?: Array<{
+        type: "file";
+        mediaType: string;
+        filename?: string;
+        url: string;
+      }>;
+      metadata?: Record<string, unknown>;
+      /**
+       * Runs immediately before the branch is minted, and ONLY then — every
+       * refusal above this point returns without calling it.
+       *
+       * Callers detach from the resumed thread here (baseline, pending
+       * selection, `resumedVersion`, the conversation URL). That has to happen
+       * before the branch's turn starts, or the post-stream conflict check
+       * captures a baseline naming the ORIGINAL thread. But doing it in the
+       * caller *before* `rewindToMessage` meant a refusal left the session id
+       * unchanged with its optimistic-concurrency guard already torn down: the
+       * next ordinary send then rewrote the original's row carrying no
+       * `expectedVersion`, silently clobbering turns another tab or device had
+       * added. Deferring to this hook keeps the teardown and the branch
+       * atomic — refuse early and the thread is untouched.
+       */
+      onBeforeBranch?: () => void;
+    }, "messageId">;
+  // Mints a branch holding `prefix`, records where it came from, and sends the
+  // new message into it. Shared by message edits and multi-model columns.
+  const forkAndSend = useCallback(
+    async (
+      prefix: UIMessage[],
+      lineageMessageId: string,
+      reason: ChatRewind["reason"],
+      options: BranchSendOptions &
+        Parameters<UseChatSessionReturn["branchFromThread"]>[0],
+      /** Restored Apps data for tool calls the branch copies. */
+      toolRenderOverrides?: Record<string, ToolRenderOverride>,
+    ): Promise<{ previousChatSessionId: string } | null> => {
+      const previousChatSessionId = chatSessionIdRef.current;
+
+      // Past every refusal that leaves the thread untouched — safe to detach.
+      options.onBeforeBranch?.();
+
+      const branchSessionId = await startChatWithMessages(prefix, {
+        resetReason: "fork",
+        toolRenderOverrides,
+      });
+
+      // An awaited resolve is not proof of commit: clearPendingSessionHydration
+      // resolves a SUPERSEDED hydration too. If anything switched sessions in
+      // that window, the live id is either still the original or some third
+      // session an interloper installed — sending into either corrupts a row
+      // that has nothing to do with this branch. Refuse instead.
+      if (chatSessionIdRef.current !== branchSessionId) {
+        return null;
+      }
+
+      rewindRef.current = {
+        chatSessionId: branchSessionId,
+        lineage: {
+          parentChatSessionId: previousChatSessionId,
+          rewoundFromMessageId: lineageMessageId,
+          reason,
+        },
+      };
+
+      // Read through the ref, NOT the closure: the `sendMessage` captured
+      // before the await belongs to the pre-branch `Chat` instance and would
+      // send the original untruncated history. See `sendMessageRef`.
+      // Awaited, not fire-and-forget. `sendMessage` runs its own async preflight
+      // (hosted server-id resolution) that can fail CLOSED — it surfaces its own
+      // toast and returns without ever calling `baseSendMessage` — and by then
+      // the branch has already been minted. Returning success before that
+      // settles gave the user "New branch created" plus a server-resolution
+      // error, sitting on a truncated prefix whose turn never ran and with the
+      // original detached: exactly the orphan branch the pre-mint readiness
+      // checks exist to prevent.
+      //
+      // Note the fail-closed paths RESOLVE rather than reject, so awaiting alone
+      // proves nothing — hence the boolean. The try/catch covers the remaining
+      // case where the underlying send throws, which would otherwise escape as
+      // an unhandled rejection.
+      let dispatched = false;
+      try {
+        dispatched = await sendMessageRef.current({
+          text: options.text,
+          files: options.files,
+          metadata: options.metadata,
+          pluginMentions: options.pluginMentions,
+          extraParts: options.extraParts,
+          widgetModelContext: options.widgetModelContext,
+          eventAtTurn: options.eventAtTurn,
+          isCurrent: options.isCurrent,
+        });
+      } catch {
+        options.onDispatchRefused?.();
+        return null;
+      }
+      if (!dispatched) {
+        options.onDispatchRefused?.();
+        return null;
+      }
+
+      return { previousChatSessionId };
+    },
+    [startChatWithMessages],
+  );
+
   const rewindToMessage = useCallback(
     async (options: {
       messageId: string;
@@ -6129,68 +6413,45 @@ export function useChatSession(
       if (targetIndex < 0) {
         return null;
       }
-
-      const previousChatSessionId = chatSessionIdRef.current;
-      const prefix = messagesRef.current.slice(0, targetIndex);
-
-      // Past every refusal that leaves the thread untouched — safe to detach.
-      options.onBeforeBranch?.();
-
-      const branchSessionId = await startChatWithMessages(prefix, {
-        resetReason: "fork",
-      });
-
-      // An awaited resolve is not proof of commit: clearPendingSessionHydration
-      // resolves a SUPERSEDED hydration too. If anything switched sessions in
-      // that window, the live id is either still the original or some third
-      // session an interloper installed — sending into either corrupts a row
-      // that has nothing to do with this branch. Refuse instead.
-      if (chatSessionIdRef.current !== branchSessionId) {
-        return null;
-      }
-
-      rewindRef.current = {
-        chatSessionId: branchSessionId,
-        lineage: {
-          parentChatSessionId: previousChatSessionId,
-          rewoundFromMessageId: options.messageId,
-          reason: "message_edit",
-        },
-      };
-
-      // Read through the ref, NOT the closure: the `sendMessage` captured
-      // before the await belongs to the pre-branch `Chat` instance and would
-      // send the original untruncated history. See `sendMessageRef`.
-      // Awaited, not fire-and-forget. `sendMessage` runs its own async preflight
-      // (hosted server-id resolution) that can fail CLOSED — it surfaces its own
-      // toast and returns without ever calling `baseSendMessage` — and by then
-      // the branch has already been minted. Returning success before that
-      // settles gave the user "New branch created" plus a server-resolution
-      // error, sitting on a truncated prefix whose turn never ran and with the
-      // original detached: exactly the orphan branch the pre-mint readiness
-      // checks exist to prevent.
-      //
-      // Note the fail-closed paths RESOLVE rather than reject, so awaiting alone
-      // proves nothing — hence the boolean. The try/catch covers the remaining
-      // case where the underlying send throws, which would otherwise escape as
-      // an unhandled rejection.
-      let dispatched = false;
-      try {
-        dispatched = await sendMessageRef.current({
-          text: options.text,
-          files: options.files,
-          metadata: options.metadata,
-        });
-      } catch {
-        return null;
-      }
-      if (!dispatched) {
-        return null;
-      }
-
-      return { previousChatSessionId };
+      return forkAndSend(
+        messagesRef.current.slice(0, targetIndex),
+        options.messageId,
+        "message_edit",
+        options,
+      );
     },
-    [startChatWithMessages],
+    [forkAndSend],
+  );
+
+  /**
+   * Continues a column opened alone from a multi-model session as a new chat:
+   * the whole transcript is copied into a branch so the session itself stays
+   * as it was. The lineage names the last message kept.
+   */
+  const branchFromThread = useCallback(
+    async (
+      options: Parameters<UseChatSessionReturn["branchFromThread"]>[0],
+    ): Promise<{ previousChatSessionId: string } | null> => {
+      if (
+        statusRef.current === "submitted" ||
+        statusRef.current === "streaming"
+      ) {
+        return null;
+      }
+      const transcript = messagesRef.current;
+      const last = transcript[transcript.length - 1];
+      if (!last) return null;
+      // The branch copies the whole transcript, so its Apps keep the raw
+      // results and widget snapshots the column restored.
+      return forkAndSend(
+        [...transcript, ...(options.prependMessages ?? [])],
+        last.id,
+        "multi_model_column",
+        options,
+        restoredToolRenderOverridesRef.current,
+      );
+    },
+    [forkAndSend],
   );
 
   /**
@@ -6267,6 +6528,7 @@ export function useChatSession(
           reasoningEffort?: string;
           requireToolApproval?: boolean;
           respectToolVisibility?: boolean;
+          runUnloadedToolCalls?: boolean;
           modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
           mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
           selectedServers?: string[];
@@ -6416,6 +6678,7 @@ export function useChatSession(
         if (session.resumeConfig?.respectToolVisibility !== undefined) {
           setRespectToolVisibility(session.resumeConfig.respectToolVisibility);
         }
+        resumedRunUnloadedToolCallsRef.current = session.resumeConfig?.runUnloadedToolCalls;
         resumedModelVisibleMcpToolResultsRef.current =
           session.resumeConfig?.modelVisibleMcpToolResults;
         resumedMcpToolResultImageRenderingRef.current =
@@ -6428,6 +6691,15 @@ export function useChatSession(
 
       restoredApprovalSelectionRef.current = Array.isArray(session.resumeConfig?.selectedServers)
         ? { sessionId: session.chatSessionId, serverNames: [...session.resumeConfig.selectedServers] }
+        : null;
+      // A continuation of the restored latest turn (after a tool approval, say)
+      // carries that turn's event, never one this tab sent before the restore.
+      const latestTurn = hydratedTurnTraces?.reduce<HydratedTurnTrace | undefined>(
+        (latest, trace) => (!latest || trace.promptIndex >= latest.promptIndex ? trace : latest),
+        undefined,
+      );
+      turnEventAtTurnRef.current = latestTurn?.eventAtTurn
+        ? { chatSessionId: session.chatSessionId, event: latestTurn.eventAtTurn }
         : null;
       skipNextForkDetectionRef.current = true;
       rewindRef.current = null;
@@ -7032,6 +7304,7 @@ export function useChatSession(
     messages,
     setMessages,
     rewindToMessage,
+    branchFromThread,
     sendMessage,
     stop: stopChat,
     canStopApproval,

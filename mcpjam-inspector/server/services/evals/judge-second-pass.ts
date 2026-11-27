@@ -49,6 +49,7 @@
  * so a duplicate doorbell produces the same rows and the same reports.
  */
 
+import { CODE_SCORER_PREFIX } from "./sandbox-phases/code-score-family.js";
 import type {
   ResolvedScoreDefinition,
   StageEvidence,
@@ -683,7 +684,17 @@ export function deriveIterationPayload(args: {
       ? { rubricChecksVerdict: args.rubricChecksVerdict }
       : {}),
   });
-  const carried = [...(storedTools ?? []), ...storedPlatformGates];
+  // EFTW-90: code evaluators ran once, in the first pass's grading box. Their
+  // rows stay as stored, so their definitions are carried the same way.
+  const storedCode =
+    storedScorerDefinitions(metadata.evaluationConfig, (id) =>
+      id.startsWith(CODE_SCORER_PREFIX),
+    ) ?? [];
+  const carried = [
+    ...(storedTools ?? []),
+    ...storedPlatformGates,
+    ...storedCode,
+  ];
   const evaluationConfig = carried.length
     ? buildEvaluationConfigSnapshot([...builtConfig.definitions, ...carried])
     : builtConfig;
@@ -707,14 +718,16 @@ const TOOL_SCORER_IDS: ReadonlySet<string> = new Set([
  */
 function storedScorerDefinitions(
   evaluationConfig: unknown,
-  scorerIds: ReadonlySet<string>,
+  scorerIds: ReadonlySet<string> | ((scorerId: string) => boolean),
 ): ResolvedScoreDefinition[] | undefined {
+  const wanted =
+    typeof scorerIds === "function" ? scorerIds : (id: string) => scorerIds.has(id);
   const definitions = asRecord(evaluationConfig)?.definitions;
   if (!Array.isArray(definitions)) return undefined;
   const found: ResolvedScoreDefinition[] = [];
   for (const value of definitions) {
     const scorerId = asRecord(value)?.scorerId;
-    if (typeof scorerId !== "string" || !scorerIds.has(scorerId)) {
+    if (typeof scorerId !== "string" || !wanted(scorerId)) {
       continue;
     }
     const parsed = resolvedScoreDefinitionSchema.safeParse(value);
