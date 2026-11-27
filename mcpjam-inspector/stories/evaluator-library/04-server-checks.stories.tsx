@@ -1,14 +1,13 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { CandidateRow } from "@/components/evals/evaluator-library/candidate-row";
-import { CodeEvaluatorPanel } from "@/components/evals/evaluator-library/code-evaluator-panel";
 import { OwaspCoverageCell } from "@/components/evals/evaluator-library/owasp-coverage-cell";
 import { ProbeRow } from "@/components/evals/evaluator-library/probe-row";
 import { SpecKeyword } from "@/components/evals/evaluator-library/spec-keyword";
 import { Grid, Specimen } from "./_frame";
 
-/** Server checks, find-then-confirm candidates and the code evaluator. */
+/** Server checks and find-then-confirm candidates. */
 const meta = {
-  title: "Evaluator Library/4 Server checks and code",
+  title: "Evaluator Library/4 Server checks",
   parameters: { layout: "padded" },
 } satisfies Meta;
 export default meta;
@@ -129,46 +128,6 @@ export const Candidates: Story = {
             verdict="allowed"
           />
         </div>
-      </Specimen>
-    </Grid>
-  ),
-};
-
-const code = `import type { EvaluatorContextV1 } from "@mcpjam/evaluators";
-
-export default {
-  id: "quoted-cart-total-matches",
-  evaluate(context: EvaluatorContextV1) {
-    const total = context.transcript.toolResults.at(-1).cart_total;
-    const quoted = context.transcript.finalText.includes(String(total));
-    return {
-      kind: "scored",
-      score: quoted ? 1 : 0,
-      explanation: \`cart_total is $\${total}\`,
-    };
-  },
-};`;
-
-export const CodeEvaluator: Story = {
-  render: () => (
-    <Grid>
-      <Specimen label="error on a test iteration" width={720}>
-        <CodeEvaluatorPanel
-          fileName="quoted-cart-total.ts"
-          code={code}
-          errorLine={6}
-          consoleOutput={
-            "TypeError: Cannot read properties of undefined (reading 'cart_total')\n    at evaluate (quoted-cart-total.ts:6:58)"
-          }
-          onRunTests={() => {}}
-        />
-      </Specimen>
-      <Specimen label="synced from GitHub" width={720}>
-        <CodeEvaluatorPanel
-          fileName="quoted-cart-total.ts"
-          code={code}
-          source="github"
-        />
       </Specimen>
     </Grid>
   ),
