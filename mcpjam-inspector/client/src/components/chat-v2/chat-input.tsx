@@ -660,8 +660,15 @@ export function ChatInput({
   const transcriptionAbortRef = useRef<TranscriptionAbortState | null>(null);
   const mountedRef = useRef(true);
   const valueRef = useRef(value);
-  // What the user last typed; a send's own trim does not count as an edit.
+  // What the user last wrote; a send's own trim does not count as an edit.
   const typedRef = useRef<string | null>(null);
+  const change = useCallback(
+    (next: string) => {
+      typedRef.current = next;
+      onChange(next);
+    },
+    [onChange],
+  );
   const [caretIndex, setCaretIndex] = useState(0);
   // Extension forms for this chat take the composer's place. The draft and
   // every composer control stay mounted (hidden) underneath and come back
@@ -723,7 +730,7 @@ export function ChatInput({
   const pickMentionPlugin = (plugin: MentionPlugin, token: MentionToken) => {
     if (!mentions) return;
     // The typed "@query" collapses to the plugin's "@" anchor.
-    onChange(value.slice(0, token.start) + "@" + value.slice(token.end));
+    change(value.slice(0, token.start) + "@" + value.slice(token.end));
     const caret = token.start + 1;
     setCaretIndex(caret);
     setMentionScope({ plugin, anchor: token.start, composer: mentions.scope });
@@ -811,6 +818,8 @@ export function ChatInput({
 
   useEffect(() => {
     valueRef.current = value;
+    // A change from outside, such as a send's trim, is not the user's.
+    if (value !== typedRef.current) typedRef.current = null;
   }, [value]);
 
   const stopAudioStream = useCallback(() => {
@@ -1047,7 +1056,7 @@ export function ChatInput({
       const nextValue = mergeTranscriptIntoDraft(valueRef.current, transcript);
       if (nextValue === valueRef.current) return;
 
-      onChange(nextValue);
+      change(nextValue);
       valueRef.current = nextValue;
 
       requestAnimationFrame(() => {
@@ -1059,7 +1068,7 @@ export function ChatInput({
         setCaretIndex(end);
       });
     },
-    [onChange],
+    [change],
   );
 
   const transcribeAudio = useCallback(
@@ -1520,7 +1529,7 @@ export function ChatInput({
           event.preventDefault();
           historyNavigationRef.current = next.navigation;
           if (next.value !== value) {
-            onChange(next.value);
+            change(next.value);
             // Land the caret at the end of the recalled text, where a terminal
             // leaves it — the next thing anyone does is keep typing. After the
             // controlled re-render, hence the frame.
@@ -1750,7 +1759,7 @@ export function ChatInput({
                       select: (selection, range) => {
                         mentions.select(selection, range);
                         setMentionScope(null);
-                        onChange(
+                        change(
                           value.slice(0, range.start) + value.slice(range.end),
                         );
                         setCaretIndex(range.start);
@@ -1887,8 +1896,7 @@ export function ChatInput({
             value={textareaDisplayValue}
             onChange={(e) => {
               if (voiceInputState !== "idle") return;
-              typedRef.current = e.target.value;
-              onChange(e.target.value);
+              change(e.target.value);
               setCaretIndex(e.target.selectionStart);
             }}
             onPaste={handlePaste}

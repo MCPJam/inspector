@@ -2255,6 +2255,45 @@ describe("ChatInput", () => {
       expect(onChange).not.toHaveBeenCalled();
     });
 
+    it("leaves a slash recalled from history alone when the pick lands", () => {
+      const { onChange, rerender } = renderLate({
+        value: "first /",
+        inputHistory: ["/"],
+      });
+      const pickLater = promptsPopover.props!.onSkillSelected;
+      const field = screen.getByPlaceholderText(
+        "Type your message...",
+      ) as HTMLTextAreaElement;
+
+      field.setSelectionRange(0, 0);
+      fireEvent.keyDown(field, { key: "ArrowUp" });
+      expect(onChange).toHaveBeenLastCalledWith("/");
+      rerender({ value: "/" });
+      onChange.mockClear();
+      act(() => pickLater(item("picked")));
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("removes the slash of a pick that starts after a send shortened the typed draft", () => {
+      const { onChange, rerender } = renderLate({ value: "first" });
+      const field = screen.getByPlaceholderText(
+        "Type your message...",
+      ) as HTMLTextAreaElement;
+
+      // Typed while the send of "first" prepares; the send then trims it.
+      fireEvent.change(field, { target: { value: "first /" } });
+      rerender({ value: "first /" });
+      rerender({ value: "/" });
+      field.setSelectionRange(1, 1);
+      fireEvent.keyUp(field);
+      const pickLater = promptsPopover.props!.onSkillSelected;
+      onChange.mockClear();
+      act(() => pickLater(item("picked")));
+
+      expect(onChange).toHaveBeenLastCalledWith("");
+    });
+
     it.each([
       ["a different draft", "https://example.com/path/"],
       ["a box the send emptied with its slash", ""],
