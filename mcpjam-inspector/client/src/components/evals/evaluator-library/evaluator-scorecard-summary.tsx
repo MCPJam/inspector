@@ -16,7 +16,7 @@ export type SummaryRow = {
   predicate?: Predicate;
   /** Rubric-check rows: the `q:<id>` key, which names a library question. */
   rubricCheck?: { key: string };
-  customJudge?: { id: string; evaluatorId?: string };
+  customJudge?: { evaluatorId?: string };
   result: TrialRowResult;
 };
 

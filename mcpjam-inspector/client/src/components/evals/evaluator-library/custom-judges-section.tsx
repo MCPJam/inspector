@@ -31,7 +31,7 @@ export function CustomJudgesSection({
 }: {
   judgeConfig: EvalJudgeConfig | undefined;
   onJudgeConfigChange?: (next: EvalJudgeConfig | undefined) => void;
-  capabilities: SuiteCapabilities | null | undefined;
+  capabilities: Pick<SuiteCapabilities, "suiteId" | "judges"> | null | undefined;
 }) {
   const enabled = useEvaluatorLibraryEnabled();
   const all = judgeConfig?.customJudges?.judges ?? [];

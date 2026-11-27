@@ -117,6 +117,9 @@ function EvaluatorLibraryDialog({
                 icon={evaluator.icon}
                 tone={evaluator.tone}
                 builtFrom={builtFrom(evaluator)}
+                note={
+                  evaluator.judges?.length ? CUSTOM_JUDGE_COST_COPY : undefined
+                }
                 inSuite={isInSuite(evaluator, suite)}
                 onOpen={() => setSelectedId(evaluator.id)}
                 onAdd={

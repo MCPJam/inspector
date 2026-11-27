@@ -341,6 +341,16 @@ describe("yes/no capability", () => {
 describe("judge evaluators", () => {
   it("adds a tagged judge and says each judge is charged separately", () => {
     const onAdd = open();
+    expect(
+      screen
+        .getByRole("heading", { name: "Answers the Question" })
+        .closest("article"),
+    ).toHaveTextContent(
+      "Each judge adds a charged model call per graded iteration.",
+    );
+    expect(
+      screen.getByRole("heading", { name: "No Wasted Calls" }).closest("article"),
+    ).not.toHaveTextContent("charged model call");
     fireEvent.click(screen.getByRole("button", { name: "Answers the Question" }));
     const adds = screen.getByRole("list", { name: "What this evaluator adds" });
     expect(adds).toHaveTextContent("Judge prompt, pass or fail.");

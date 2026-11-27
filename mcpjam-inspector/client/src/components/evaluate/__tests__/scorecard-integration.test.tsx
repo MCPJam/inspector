@@ -64,7 +64,7 @@ const iteration: EvalIteration = {
 
 describe("scorecard integration regressions", () => {
   it("renders saved custom judges on an iteration without projected scores", () => {
-    const savedTrial: EvalIteration = {
+    const savedIteration: EvalIteration = {
       ...iteration,
       resultSource: "reported",
       metadata: {
@@ -93,7 +93,7 @@ describe("scorecard integration regressions", () => {
     };
 
     const { rerender } = render(
-      <TrialScorecard authored={authored} iteration={savedTrial} steps={steps} />,
+      <TrialScorecard authored={authored} iteration={savedIteration} steps={steps} />,
     );
     const rows = screen.getAllByTestId("trial-scorecard-row");
     for (const [label, state] of [
@@ -111,24 +111,41 @@ describe("scorecard integration regressions", () => {
         expect(row).toHaveTextContent("No export link in the answer.");
       }
     }
-    expect(computeIterationResult(savedTrial)).toBe("passed");
+    expect(computeIterationResult(savedIteration)).toBe("passed");
 
     // No goal-judge case means no reveal control, so blind review leaves
     // these rows visible instead of hiding them for good.
     rerender(
       <TrialScorecard
         authored={authored}
-        iteration={savedTrial}
+        iteration={savedIteration}
         steps={steps}
         judgeHidden
       />,
     );
     expect(screen.getByText("Includes a Link")).toBeVisible();
 
+    // With a goal-judge case the reveal control exists, so blind review
+    // withholds the custom judge rows with it.
+    rerender(
+      <TrialScorecard
+        authored={authored}
+        iteration={savedIteration}
+        steps={steps}
+        judgeCase={{ score: 0.9, passed: true, reason: "Goal met" }}
+        judgeHidden
+      />,
+    );
+    const withheld = screen
+      .getAllByTestId("trial-scorecard-row")
+      .find((candidate) => candidate.textContent?.includes("Includes a Link"));
+    expect(withheld).toHaveTextContent("Hidden");
+    expect(withheld).not.toHaveTextContent("No export link in the answer.");
+
     libraryFlag.enabled = false;
     try {
       rerender(
-        <TrialScorecard authored={authored} iteration={savedTrial} steps={steps} />,
+        <TrialScorecard authored={authored} iteration={savedIteration} steps={steps} />,
       );
       expect(screen.queryByText("Includes a Link")).not.toBeInTheDocument();
       expect(screen.queryByText("Answers the Question")).not.toBeInTheDocument();
