@@ -8,7 +8,6 @@ import {
   hasCustomJudgesCapability,
   type SuiteCapabilities,
 } from "@/hooks/use-suite-capabilities";
-import { judgeMode } from "../suite-grading-model";
 import type { EvalJudgeConfig } from "../types";
 import {
   blankJudge,
@@ -21,6 +20,7 @@ import {
 } from "./custom-judges-model";
 import { useEvaluatorLibraryEnabled } from "./evaluator-library-flag";
 import { findLibraryEvaluator } from "./library-catalog";
+import { libraryPauseMessages } from "./library-pause";
 import { CustomJudgePreview } from "./custom-judge-preview";
 import { PromptEditor } from "./prompt-editor";
 import { VariableMappingTable } from "./variable-mapping-table";
@@ -39,11 +39,7 @@ export function CustomJudgesSection({
   const written = all.filter((j) => !j.evaluator);
   const [editing, setEditing] = useState<CustomJudge | null>(null);
   const [isNew, setIsNew] = useState(false);
-  // Custom judges ride the goal-completion judge, so its Off pauses them.
-  const goalJudgeOff =
-    judgeMode(judgeConfig, capabilities?.judges?.goalCompletion?.policy) === "off";
-  // Only the suite API or suite file sets this; the backend then skips them all.
-  const slotOff = judgeConfig?.customJudges?.enabled === false;
+  const pauseMessage = libraryPauseMessages(judgeConfig, capabilities).judges;
   const change = (next: EvalJudgeConfig) => onJudgeConfigChange?.(next);
   const save = (judge: CustomJudge) => {
     const next = isNew
@@ -61,6 +57,9 @@ export function CustomJudgesSection({
     );
   const { maxJudges, maxPromptLength } = customJudgeLimits(capabilities);
   const atMax = all.length >= maxJudges;
+  // Nothing else in the app writes this switch, so turning judges back on
+  // lives here.
+  const off = judgeConfig?.customJudges?.enabled === false;
   if (!enabled || !onJudgeConfigChange) return null;
   if (!hasCustomJudgesCapability(capabilities)) return null;
   const variables = capabilities?.judges?.custom?.variables ?? [];
@@ -76,29 +75,24 @@ export function CustomJudgesSection({
           </h4>
           <p className="text-xs text-muted-foreground">
             {CUSTOM_JUDGE_COST_COPY} Results are advisory.
-            {goalJudgeOff ? " Paused while the goal-completion judge is off." : ""}
-            {slotOff
-              ? " Paused: judges you write are turned off for this suite."
-              : ""}
+            {pauseMessage ? ` ${pauseMessage}` : ""}
           </p>
-          {slotOff ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="link"
-              className="h-auto px-0 text-xs"
-              onClick={() =>
-                change({
-                  ...judgeConfig,
-                  customJudges: { ...judgeConfig?.customJudges, enabled: true },
-                })
-              }
-            >
-              Turn on judges you write
-            </Button>
-          ) : null}
         </div>
-        {editing ? null : (
+        {off ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() =>
+              change({
+                ...judgeConfig,
+                customJudges: { enabled: true, judges: all },
+              })
+            }
+          >
+            Turn on custom judges
+          </Button>
+        ) : editing ? null : (
           <Button
             type="button"
             size="sm"

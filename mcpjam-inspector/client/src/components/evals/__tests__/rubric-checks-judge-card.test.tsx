@@ -2,10 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import type { RubricCheckQuestion } from "@/components/shared/session-quality/judge-config";
-import {
-  RUBRIC_CHECKS_GOAL_OFF_COPY,
-  RubricChecksJudgeCard,
-} from "../rubric-checks-judge-card";
+import { RUBRIC_CHECKS_GOAL_OFF_COPY } from "../evaluator-library/library-pause";
+import { RubricChecksJudgeCard } from "../rubric-checks-judge-card";
 import { SuiteJudgeCard } from "../suite-judge-card";
 import { RUBRIC_CHECK_QUESTION_IDENTITY_HINT } from "../rubric-checks-model";
 
