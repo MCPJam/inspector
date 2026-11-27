@@ -22,7 +22,13 @@ export function addedDependencies(base, head) {
 
 /** Whether the description, outside HTML comments, has a "Dependency intake:" line. */
 export function hasIntakeBlock(body) {
-  const visible = (body ?? "").replace(/<!--[\s\S]*?-->/g, "");
+  // An unterminated comment runs to the end, as in GFM. Repeat until nothing
+  // changes, so removing one comment cannot join the text around it into another.
+  let visible = body ?? "";
+  for (let previous; previous !== visible; ) {
+    previous = visible;
+    visible = visible.replace(/<!--[\s\S]*?(?:-->|$)/g, "");
+  }
   return /^[\s>#*_-]*Dependency intake:/im.test(visible);
 }
 
@@ -49,11 +55,18 @@ export function approvedAtHead(reviews, author, headSha) {
 
 function changedManifests() {
   const git = (...args) => execFileSync("git", args, { encoding: "utf8" });
-  return git("diff", "--name-status", "-M", "--diff-filter=d", "HEAD^1", "HEAD")
-    .split("\n")
-    .map((line) => line.split("\t"))
-    .filter((parts) => parts.length > 1 && /(^|\/)package\.json$/.test(parts.at(-1)))
-    .map(([state, from, to = from]) => ({
+  // -z, because without it git quotes unusual paths and a quoted package.json would not match.
+  const fields = git("diff", "--name-status", "-z", "-M", "--diff-filter=d", "HEAD^1", "HEAD").split("\0");
+  const changes = [];
+  for (let i = 0; fields[i]; ) {
+    const state = fields[i++];
+    const from = fields[i++];
+    // A rename or copy record carries the old path and then the new one.
+    changes.push({ state, from, to: /^[RC]/.test(state) ? fields[i++] : from });
+  }
+  return changes
+    .filter(({ to }) => /(^|\/)package\.json$/.test(to))
+    .map(({ state, from, to }) => ({
       file: to,
       added: addedDependencies(
         state === "A" ? {} : JSON.parse(git("show", `HEAD^1:${from}`)),
@@ -83,7 +96,14 @@ async function main(env = process.env) {
     await api(`/issues/${pr.number}/labels`, { method: "POST", body: JSON.stringify({ labels: [LABEL] }) });
   }
   const intake = hasIntakeBlock(pr.body);
-  const approved = approvedAtHead(await api(`/pulls/${pr.number}/reviews?per_page=100`), pr.user.login, pr.head.sha);
+  // Every page, oldest first, so a request for changes after review 100 still counts.
+  const reviews = [];
+  for (let page = 1; ; page++) {
+    const batch = await api(`/pulls/${pr.number}/reviews?per_page=100&page=${page}`);
+    reviews.push(...batch);
+    if (batch.length < 100) break;
+  }
+  const approved = approvedAtHead(reviews, pr.user.login, pr.head.sha);
   summary(
     [
       "## New dependencies",

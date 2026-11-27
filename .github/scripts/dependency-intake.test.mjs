@@ -29,6 +29,11 @@ test("finds the intake block but not one inside an HTML comment", () => {
     true
   );
   assert.equal(hasIntakeBlock("<!-- Dependency intake: fill me -->"), false);
+  assert.equal(hasIntakeBlock("<!--\nDependency intake: hidden"), false);
+  assert.equal(
+    hasIntakeBlock("<!<!---->--\nDependency intake: hidden"),
+    false
+  );
   assert.equal(hasIntakeBlock(null), false);
 });
 

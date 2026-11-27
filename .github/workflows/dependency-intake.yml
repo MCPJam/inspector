@@ -4,14 +4,14 @@ name: Dependency intake
 # the `new-dependency` label and fails until its description has a
 # "Dependency intake:" block and someone other than the author approves the
 # latest commit (.github/scripts/dependency-intake.mjs). `edited` re-runs it
-# when the description is filled in, and a submitted review re-runs it on
-# approval. `pull_request`, not `pull_request_target`, for the reason in
+# when the description is filled in, and a submitted or dismissed review
+# re-runs it. `pull_request`, not `pull_request_target`, for the reason in
 # pr-links.yml: a fork PR still gets the verdict, only the label is skipped.
 on:
   pull_request:
     types: [opened, synchronize, reopened, edited, labeled, unlabeled]
   pull_request_review:
-    types: [submitted]
+    types: [submitted, dismissed]
 
 permissions:
   contents: read
