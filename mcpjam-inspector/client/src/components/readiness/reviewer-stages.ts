@@ -228,6 +228,9 @@ export function reviewerPathRows(
   const rows = SIGN_IN.flatMap(({ stage: name, label, shown }, index) => {
     const stage = latest(name);
     if (stage) return [rowOf(stage, label)];
+    if (name === "connected" && attempt?.humanSignInCompletedAt && attempt.reviewerAccountId) {
+      return [{ key: name, label, status: "established" as const, detail: "A project member connected the reviewer account in their browser." }];
+    }
     const passed = SIGN_IN.slice(index + 1).some((later) =>
       latest(later.stage),
     );
@@ -254,12 +257,12 @@ export interface Handover {
   since: number;
 }
 
-/** The requester completes sign-in before a resumed run grades the account. */
+const FINISHER = "A project member with access to the reviewer account. Open this submission in your own Inspector session.";
 const NEXT_STEPS = {
-  verification: { finisher: "The person who started this sign-in.", action: "Open Finish reviewer sign-in, complete the verification, then resume this attempt." },
-  "bot-check": { finisher: "The person who started this sign-in.", action: "Open Finish reviewer sign-in, complete the browser check, then resume this attempt." },
-  consent: { finisher: "The person who started this sign-in.", action: "Open Finish reviewer sign-in, approve access, then resume this attempt." },
-  other: { finisher: "The person who started this sign-in.", action: "Open Finish reviewer sign-in, sign in as the reviewer, then resume this attempt." },
+  verification: "Open Finish reviewer sign-in, complete the verification, then resume this attempt.",
+  "bot-check": "Open Finish reviewer sign-in, complete the browser check, then resume this attempt.",
+  consent: "Open Finish reviewer sign-in, approve access, then resume this attempt.",
+  other: "Open Finish reviewer sign-in, sign in as the reviewer, then resume this attempt.",
 };
 
 /** What a person needs to know when the rehearsal stopped for one. */
@@ -269,6 +272,14 @@ export function handoverOf(attempt: ReviewerAttempt | null): Handover | null {
   }
   const { reason, since } = attempt.waitingFor;
   const stop = shownRun(attempt).stages.at(-1);
+  if (attempt.humanSignInCompletedAt && stop?.stage === "identity") {
+    return {
+      asked: reason,
+      since,
+      finisher: "The project member who completed reviewer sign-in.",
+      action: attempt.waitingFor.action,
+    };
+  }
   const detail = unprefixed(reason);
   // The rehearsal files a bot check as a verification step; the page says which.
   const kind =
@@ -282,7 +293,8 @@ export function handoverOf(attempt: ReviewerAttempt | null): Handover | null {
   return {
     asked: detail ?? reason,
     frame: frameOf(stop?.evidence?.screenshotArtifactId),
-    ...NEXT_STEPS[kind],
+    finisher: FINISHER,
+    action: NEXT_STEPS[kind],
     since,
   };
 }
