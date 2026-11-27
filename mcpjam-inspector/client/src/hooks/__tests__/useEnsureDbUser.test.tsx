@@ -1,3 +1,5 @@
+import { getFunctionName, type FunctionReference } from "convex/server";
+import { readSignupCampaign, withSignupCampaignClaim } from "@/lib/signup-campaign";
 import { guestTabRecovery } from "@/lib/auth/guest-tab-recovery";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -24,6 +26,7 @@ const mockState = vi.hoisted(() => ({
     isAuthenticated: true,
     isLoading: false,
   },
+  ensureCampaign: vi.fn(),
   ensureUser: vi.fn().mockResolvedValue(undefined),
   getGuestPromotionProof: vi.fn().mockResolvedValue(null),
   revokeGuestSessionAndCookie: vi.fn().mockResolvedValue(false),
@@ -34,6 +37,7 @@ const mockState = vi.hoisted(() => ({
   sentrySetUser: vi.fn(),
   sentrySetTag: vi.fn(),
   posthog: null as {
+    is_capturing?: () => boolean;
     get_property?: (key: string) => unknown;
     get_distinct_id?: () => string;
   } | null,
@@ -41,7 +45,8 @@ const mockState = vi.hoisted(() => ({
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => mockState.convexAuth,
-  useMutation: () => mockState.ensureUser,
+  useMutation: (ref: FunctionReference<"mutation">) =>
+    getFunctionName(ref) === "users:ensureUserWithOutcome" ? mockState.ensureCampaign : mockState.ensureUser,
 }));
 
 vi.mock("posthog-js/react", () => ({
@@ -702,6 +707,180 @@ describe("useEnsureDbUser", () => {
     });
     expect(mockState.isGuestActivated).toHaveBeenCalledWith("guest-activated");
     expect(mockState.revokeGuestSessionAndCookie).not.toHaveBeenCalled();
+  });
+
+  function websiteVisit(expiresAt: number, label = "linkedin/fall_launch") {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      status: 200, json: async () => ({ expiresAt, label, visitId: "11111111-1111-4111-8111-111111111111" }),
+    })));
+  }
+
+  function campaignCookieJar() {
+    let receipt = "";
+    const write = vi.fn((value: string) => {
+      receipt = value.split(";")[0];
+    });
+    const previous = Object.getOwnPropertyDescriptor(document, "cookie");
+    Object.defineProperty(document, "cookie", {
+      configurable: true,
+      get: () => receipt,
+      set: write,
+    });
+    return {
+      write,
+      restore() {
+        if (previous) Object.defineProperty(document, "cookie", previous);
+        else Reflect.deleteProperty(document, "cookie");
+      },
+    };
+  }
+
+  it.each([false, true])("acknowledges only the visit passed to the mutation (opt-out during signup: %s)", async (optOut) => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    mockState.posthog = { is_capturing: () => true };
+    vi.stubGlobal("location", new URL("https://app.mcpjam.com/"));
+    const expiresAt = Date.now() + 1_905_000; // Website clock is two minutes ahead.
+    websiteVisit(expiresAt);
+    const cookies = campaignCookieJar();
+    mockState.ensureCampaign.mockImplementationOnce(async () => {
+      if (optOut) mockState.posthog = { is_capturing: () => false };
+      websiteVisit(expiresAt + 1000, "linkedin/winter_launch");
+      return { userId: "user-row", campaignApplied: true };
+    });
+    try {
+      const { result } = renderHook(() => useEnsureDbUser());
+      await waitFor(() => expect(result.current.isUserReady).toBe(true));
+      expect(mockState.ensureCampaign).toHaveBeenCalledWith({ signupCampaign: "linkedin/fall_launch", signupVisit: { expiresAt, visitId: "11111111-1111-4111-8111-111111111111" } });
+      expect(document.cookie).toBe("__Host-mcpjam_signup_consumed=" + expiresAt);
+      expect(await readSignupCampaign(() => true)).toMatchObject({label: "linkedin/winter_launch"});
+      websiteVisit(expiresAt);
+      expect(await readSignupCampaign(() => true)).toBeUndefined();
+    } finally {
+      cookies.restore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("attributes the newer visit if the campaign changes during handoff", async () => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    mockState.posthog = { is_capturing: () => true };
+    vi.stubGlobal("location", new URL("https://app.mcpjam.com/"));
+    const expiresAt = Date.now() + 900_000;
+    const first = { label: "linkedin/fall_launch", visitId: "11111111-1111-4111-8111-111111111111", expiresAt };
+    const next = { label: "linkedin/winter_launch", visitId: "22222222-2222-4222-8222-222222222222", expiresAt: expiresAt + 1 };
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValue({ status: 200, json: async () => next })
+      .mockResolvedValueOnce({ status: 200, json: async () => first })
+      .mockResolvedValueOnce({ status: 200, json: async () => first }));
+    const cookies = campaignCookieJar();
+    try {
+      const { result } = renderHook(() => useEnsureDbUser());
+      await waitFor(() => expect(result.current.isUserReady).toBe(true));
+      expect(mockState.ensureCampaign).toHaveBeenCalledWith({
+        signupCampaign: next.label,
+        signupVisit: { visitId: next.visitId, expiresAt: next.expiresAt },
+      });
+    } finally {
+      cookies.restore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("lets a queued claim time out without running it after release", async () => {
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const first = withSignupCampaignClaim("visit", new AbortController().signal, () => pending);
+    const controller = new AbortController();
+    const claim = vi.fn();
+    const second = withSignupCampaignClaim("visit", controller.signal, claim);
+    controller.abort();
+    expect(await second).toBe(false);
+    release();
+    expect(await first).toBe(true);
+    expect(claim).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])("serializes overlapping account claims (first applied: %s)", async (campaignApplied) => {
+    mockState.auth.user = { id: "first-account" };
+    mockState.actorKey = "first-account";
+    mockState.posthog = { is_capturing: () => true };
+    vi.stubGlobal("location", new URL("https://app.mcpjam.com/"));
+    websiteVisit(Date.now() + 900_000);
+    const cookies = campaignCookieJar();
+    let confirm!: () => void;
+    mockState.ensureCampaign.mockImplementationOnce(
+      () => new Promise((resolve) => { confirm = () => resolve({ campaignApplied }); }),
+    );
+    try {
+      const first = renderHook(() => useEnsureDbUser());
+      await waitFor(() => expect(mockState.ensureCampaign).toHaveBeenCalledTimes(1));
+      first.unmount();
+      mockState.auth.user = { id: "second-account" };
+      mockState.actorKey = "second-account";
+      const second = renderHook(() => useEnsureDbUser());
+      await act(async () => {});
+      expect(mockState.ensureCampaign).toHaveBeenCalledTimes(1);
+      expect(mockState.ensureUser).not.toHaveBeenCalled();
+      await act(async () => confirm());
+      await waitFor(() => expect(second.result.current.isUserReady).toBe(true));
+      expect(mockState.ensureCampaign).toHaveBeenCalledTimes(campaignApplied ? 1 : 2);
+      expect(mockState.ensureUser).toHaveBeenCalledTimes(campaignApplied ? 1 : 0);
+    } finally {
+      cookies.restore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("uses only the configured staging origins and honors GPC before fetching", async () => {
+    vi.stubGlobal("location", new URL("https://staging.mcpjam.com"));
+    window.__MCP_RUNTIME_CONFIG__ = {signupCampaignAppOrigin: location.origin, signupCampaignWebsiteOrigins: "https://website-staging.mcpjam.com"};
+    websiteVisit(Date.now() + 60_000);
+    try {
+      await readSignupCampaign(() => true);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(fetch).toHaveBeenCalledWith("https://website-staging.mcpjam.com/api/signup-campaign", expect.anything());
+      vi.stubGlobal("navigator", {globalPrivacyControl:true});
+      expect(await readSignupCampaign(() => true)).toBeUndefined();
+      expect(fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      delete window.__MCP_RUNTIME_CONFIG__;
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each(["revoked session", "returning user", "opt-out before retry"])("retains the campaign after %s", async (scenario) => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    const capturing = vi.fn(() => true);
+    mockState.posthog = { is_capturing: capturing };
+    vi.stubGlobal("location", new URL("https://app.mcpjam.com/"));
+    websiteVisit(Date.now() + 900_000);
+    const cookies = campaignCookieJar();
+    if (scenario === "revoked session") {
+      mockState.ensureCampaign.mockResolvedValueOnce(null);
+    } else if (scenario === "returning user") {
+      mockState.ensureCampaign.mockResolvedValueOnce({ userId: "existing" });
+    } else {
+      mockState.ensureCampaign.mockImplementationOnce(async () => {
+        capturing.mockReturnValue(false);
+        throw new Error('Documents read from or written to the "users" table changed while this mutation was being run');
+      });
+    }
+    try {
+      const { result } = renderHook(() => useEnsureDbUser());
+      await waitFor(() => expect(result.current.isUserReady).toBe(true));
+      expect(mockState.ensureCampaign.mock.calls[0][0]).toMatchObject({ signupCampaign: "linkedin/fall_launch" });
+      if (scenario === "opt-out before retry") {
+        expect(mockState.ensureUser).toHaveBeenCalledWith({});
+        expect(mockState.ensureCampaign).toHaveBeenCalledTimes(1);
+      }
+      expect(cookies.write).not.toHaveBeenCalled();
+    } finally {
+      cookies.restore();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("sends posthogAnonDistinctId ($device_id) for WorkOS auth", async () => {

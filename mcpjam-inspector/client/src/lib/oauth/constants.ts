@@ -2,7 +2,8 @@
  * OAuth Constants for MCPJam Inspector
  */
 
-export const MCPJAM_HOSTED_APP_ORIGIN = "https://app.mcpjam.com";
+import { MCPJAM_HOSTED_APP_ORIGIN } from "@/shared/signup-campaign-origins";
+export { MCPJAM_HOSTED_APP_ORIGIN };
 const LOCALHOST_HOSTNAMES = new Set(["localhost", "127.0.0.1"]);
 /**
  * Hosts that receive their OWN OAuth callback rather than the app's.

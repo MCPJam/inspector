@@ -1,6 +1,8 @@
+import { withSignupCampaignClaim, readSignupCampaign, acknowledgeSignupCampaign, type SignupCampaign } from "@/lib/signup-campaign";
 import { guestTabRecovery } from "@/lib/auth/guest-tab-recovery";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
+import { makeFunctionReference } from "convex/server";
 import { useAuth } from "@workos-inc/authkit-react";
 import { usePostHog } from "posthog-js/react";
 import { setSentryActor } from "@/lib/sentry-identity";
@@ -31,6 +33,8 @@ const ENSURE_USER_RETRY_DELAYS_MS = [50, 150];
 const ENSURE_USER_RECOVERY_DELAYS_MS = [1_000, 5_000, 15_000];
 
 type EnsureUserArgs = {
+  signupCampaign?: string;
+  signupVisit?: { visitId: string; expiresAt: number };
   guestProofJwt?: string;
   /**
    * The browser's pre-signup anonymous PostHog id ($device_id — stable even
@@ -44,7 +48,14 @@ type EnsureUserArgs = {
   posthogAnonDistinctId?: string;
 };
 
-type EnsureUserMutation = (args: EnsureUserArgs) => Promise<unknown>;
+const ensureUserRef = makeFunctionReference<"mutation", EnsureUserArgs, string | null>(
+  "users:ensureUser"
+);
+const ensureCampaignRef = makeFunctionReference<
+  "mutation",
+  EnsureUserArgs,
+  { campaignApplied?: boolean } | null
+>("users:ensureUserWithOutcome");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -121,15 +132,41 @@ function retryDelayMs(retryIndex: number) {
 }
 
 async function ensureUserWithRetry(
-  ensureUser: EnsureUserMutation,
+  ensureUser: (args: EnsureUserArgs) => Promise<string | null>,
+  ensureCampaign: (args: EnsureUserArgs) => Promise<{ campaignApplied?: boolean } | null>,
   args: EnsureUserArgs,
-  shouldContinue: () => boolean
+  shouldContinue: () => boolean,
+  getCampaign: (signal: AbortSignal) => Promise<SignupCampaign | undefined>
 ) {
   for (let attempt = 0; ; attempt++) {
     if (!shouldContinue()) return;
 
     try {
-      await ensureUser(args);
+      if (typeof AbortSignal === "undefined" || typeof AbortSignal.timeout !== "function") {
+        await ensureUser(args);
+        return;
+      }
+      const signal = AbortSignal.timeout(1200);
+      let visit = await getCampaign(signal);
+      while (visit && !signal.aborted && shouldContinue()) {
+        const candidate = visit;
+        visit = undefined;
+        let submitted = false;
+        await withSignupCampaignClaim(candidate.visitId, signal, async () => {
+          const eligible = await getCampaign(signal);
+          if (!eligible || signal.aborted || !shouldContinue()) return;
+          if (eligible.visitId !== candidate.visitId || eligible.expiresAt !== candidate.expiresAt || eligible.label !== candidate.label) {
+            visit = eligible;
+            return;
+          }
+          const { visitId, expiresAt, label } = eligible;
+          submitted = true;
+          const outcome = await ensureCampaign({ ...args, signupCampaign: label, signupVisit: { visitId, expiresAt } });
+          if (outcome?.campaignApplied) acknowledgeSignupCampaign(eligible);
+        });
+        if (submitted) return;
+      }
+      if (shouldContinue()) await ensureUser(args);
       return;
     } catch (err) {
       if (
@@ -165,9 +202,8 @@ export function useEnsureDbUser() {
   const posthog = usePostHog();
   const { isAuthenticated, isLoading } = useConvexAuth();
   const actorKey = useActorKey();
-  const ensureUser = useMutation(
-    "users:ensureUser" as any
-  ) as EnsureUserMutation;
+  const ensureUser = useMutation(ensureUserRef);
+  const ensureCampaign = useMutation(ensureCampaignRef);
   // Three refs coordinate dedup, cancellation, and shared in-flight calls.
   // They are deliberately distinct — collapsing any two reintroduces a race:
   //
@@ -388,6 +424,9 @@ export function useEnsureDbUser() {
         return;
       }
 
+      const getCampaign = (signal: AbortSignal) => readSignupCampaign(
+        () => isWorkOsAuth && !!posthog?.is_capturing?.(), signal
+      );
       const ensureArgs: EnsureUserArgs = {
         ...(guestProofJwt ? { guestProofJwt } : {}),
         ...(posthogAnonDistinctId ? { posthogAnonDistinctId } : {}),
@@ -398,9 +437,9 @@ export function useEnsureDbUser() {
           : undefined;
       let ensurePromise = inFlightEnsureRef.current?.promise;
       if (inFlightEnsureRef.current?.identityKey !== identityKey) {
-        ensurePromise = ensureUserWithRetry(ensureUser, ensureArgs, () => {
+        ensurePromise = ensureUserWithRetry(ensureUser, ensureCampaign, ensureArgs, () => {
           return activeEnsureIdentityRef.current === identityKey;
-        });
+        }, getCampaign);
         inFlightEnsureRef.current = {
           identityKey,
           promise: ensurePromise,
@@ -496,6 +535,7 @@ export function useEnsureDbUser() {
     isLoading,
     workosUserId,
     ensureUser,
+    ensureCampaign,
     posthog,
     ensureRecoveryToken,
   ]);

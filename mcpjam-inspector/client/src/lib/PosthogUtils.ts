@@ -9,7 +9,7 @@ import { getCachedGuestSession } from "./guest-session";
 import { getPostHogTabStorageOptions } from "./posthog-tab-storage";
 import { VANITY_LANDING_HOSTS } from "./vanity-landing-hosts";
 import { HOSTED_MODE } from "./config";
-import { getRuntimeDoNotTrack } from "./runtime-config";
+import { browserAnalyticsOptedOut } from "./runtime-config";
 import { scrubSensitiveUrl } from "../../../shared/credential-url";
 import { stampPostHogEvent } from "./telemetry-context";
 import {
@@ -193,7 +193,7 @@ export const LANDING_ANALYTICS_HOSTS = VANITY_LANDING_HOSTS;
 export const isPostHogDisabled =
   import.meta.env.VITE_DISABLE_POSTHOG_LOCAL === "true" ||
   getPostHogApiHost() === "/tlm" ||
-  getRuntimeDoNotTrack();
+  browserAnalyticsOptedOut();
 
 // DO_NOT_TRACK sends nothing at all, not even the remote config and survey
 // loads the opted-out branch otherwise still makes. Flags are the server's
@@ -387,7 +387,7 @@ export const getPostHogOptions = (
         // every page load for events that are then discarded.
         disable_session_recording: true,
         capture_exceptions: false,
-        ...(getRuntimeDoNotTrack() ? NO_REQUEST_OPTIONS : {}),
+        ...(browserAnalyticsOptedOut() ? NO_REQUEST_OPTIONS : {}),
         // Disable event capture; flags still arrive through the server bootstrap.
         // Must be `opt_out_capturing_by_default` — `opt_out_capturing` is a method,
         // not a config field, so passing it here was silently ignored and dev
