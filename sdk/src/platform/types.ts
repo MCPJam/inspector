@@ -4799,9 +4799,12 @@ export interface PlatformTraceDestination {
   /**
    * Which traces this destination subscribes to. `direct` is Playground, and
    * only sessions SHARED to the workspace are ever sent — a private Playground
-   * session is excluded server-side and cannot be opted in.
+   * session is excluded server-side and cannot be opted in. `event` is
+   * background trigger runs; a Playground event turn is still `direct`.
    */
-  sourceTypes: Array<"eval" | "scenario" | "study" | "swarm" | "direct">;
+  sourceTypes: Array<
+    "eval" | "scenario" | "study" | "swarm" | "direct" | "event"
+  >;
   /**
    * False (the default) redacts prompts, outputs, tool arguments and
    * screenshots. The message envelopes still ship, so a vendor's GenAI views

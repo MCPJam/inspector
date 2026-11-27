@@ -245,7 +245,7 @@ export function resolveAttributes(
   return { ...out };
 }
 
-const SOURCE_TYPES = ["eval", "scenario", "swarm", "direct"] as const;
+const SOURCE_TYPES = ["eval", "scenario", "swarm", "direct", "event"] as const;
 type SourceType = (typeof SOURCE_TYPES)[number];
 
 export function resolveSourceTypes(
@@ -359,7 +359,7 @@ export function registerTraceDestinationsCommands(program: Command): void {
     )
     .option(
       "--source <type>",
-      "Repeatable: eval, scenario, swarm or direct. `direct` is Playground, and only sessions SHARED to the workspace are ever sent. Defaults to the server's default set.",
+      "Repeatable: eval, scenario, swarm, direct or event. `direct` is Playground, and only sessions SHARED to the workspace are ever sent. `event` is background trigger runs. Defaults to the server's default set.",
       collect
     )
     .option(

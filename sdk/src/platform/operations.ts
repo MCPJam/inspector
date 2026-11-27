@@ -14797,6 +14797,7 @@ const traceDestinationSourceTypes = z.enum([
   "study",
   "swarm",
   "direct",
+  "event",
 ]);
 
 const listTraceDestinationsInput = z.object({
@@ -14898,7 +14899,7 @@ const createTraceDestinationInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Which traces to stream. `direct` is Playground, and only sessions SHARED to the workspace are ever sent — a private Playground session is excluded server-side. `swarm` is high volume: one run is many sessions."
+      "Which traces to stream. `direct` is Playground, and only sessions SHARED to the workspace are ever sent — a private Playground session is excluded server-side. `event` is background trigger runs; a Playground event turn stays `direct`. `swarm` is high volume: one run is many sessions."
     ),
   includeContent: z
     .boolean()
