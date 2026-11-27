@@ -340,11 +340,11 @@ export function IterationDetails({
   /** The run's engine, when the host has the run; `harness:<id>` lists unmatched calls. */
   executionEngine?: string;
 }) {
+  const evaluatorLibraryEnabled = useEvaluatorLibraryEnabled();
   // The Scores list prints the same judge number the review panel hides.
   // Own the flag here so hiding starts on first paint (before the panel's
   // read lands) and so a trial switch cannot leave the previous trial's
   // reveal open on this one.
-  const evaluatorLibraryEnabled = useEvaluatorLibraryEnabled();
   const reviewActive = Boolean(enableJudgeReview && iteration.suiteRunId);
   const [judgeHidden, setJudgeHidden] = useState(reviewActive);
   useEffect(() => {

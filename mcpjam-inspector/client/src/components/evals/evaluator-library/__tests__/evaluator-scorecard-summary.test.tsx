@@ -141,7 +141,7 @@ describe("EvaluatorScorecardSummary", () => {
         rows={[
           {
             ...judge,
-            customJudge: { id: "answers-the-question-answers" },
+            customJudge: {},
           },
         ]}
       />,
@@ -153,10 +153,7 @@ describe("EvaluatorScorecardSummary", () => {
         rows={[
           {
             ...judge,
-            customJudge: {
-              id: "answers-the-question-answers",
-              evaluatorId: "answers-the-question",
-            },
+            customJudge: { evaluatorId: "answers-the-question" },
           },
         ]}
       />,

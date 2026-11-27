@@ -14,6 +14,7 @@ const base: EvaluatorCardProps = {
     { kind: "question", label: "1 choice question" },
   ],
   onOpen: () => {},
+  onAdd: () => {},
 };
 
 describe("EvaluatorCard", () => {

@@ -26,10 +26,11 @@ export type EvaluatorCardProps = {
   icon: LucideIcon;
   tone: EvaluatorTone;
   builtFrom: readonly BuiltFromPart[];
+  /** A short line under the question, such as a judge's cost. */
+  note?: string;
   inSuite?: boolean;
   onOpen: () => void;
-  /** Omit to hide the Add action, e.g. when the suite is read-only. */
-  onAdd?: () => void;
+  onAdd: () => void;
   addDisabledReason?: string;
 };
 
@@ -46,6 +47,7 @@ export function EvaluatorCard({
   icon,
   tone,
   builtFrom,
+  note,
   inSuite = false,
   onOpen,
   onAdd,
@@ -56,7 +58,7 @@ export function EvaluatorCard({
       <div className="flex items-start gap-2.5">
         <EvaluatorPresetIcon icon={icon} tone={tone} />
         <div className="min-w-0 flex-1">
-          <h3 className="text-sm font-semibold text-card-foreground">
+          <h4 className="text-sm font-semibold text-card-foreground">
             <button
               type="button"
               onClick={onOpen}
@@ -64,15 +66,18 @@ export function EvaluatorCard({
             >
               {name}
             </button>
-          </h3>
+          </h4>
           <p className="text-sm text-muted-foreground">{question}</p>
+          {note ? (
+            <p className="text-xs text-muted-foreground">{note}</p>
+          ) : null}
         </div>
         {inSuite ? (
           <span className="relative inline-flex shrink-0 items-center gap-1 rounded-sm bg-success/15 px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-success">
             <Check aria-hidden className="size-3" />
             In suite
           </span>
-        ) : onAdd ? (
+        ) : (
           <Button
             type="button"
             size="sm"
@@ -86,7 +91,7 @@ export function EvaluatorCard({
             <Plus aria-hidden />
             Add
           </Button>
-        ) : null}
+        )}
       </div>
       {addDisabledReason && !inSuite ? (
         <p className="text-xs text-muted-foreground">{addDisabledReason}</p>

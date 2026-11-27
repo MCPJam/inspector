@@ -1,4 +1,3 @@
-import { MAX_JUDGE_INSTRUCTIONS_LENGTH } from "@mcpjam/sdk/contract";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import { useId, useLayoutEffect, useRef, useState } from "react";
@@ -44,13 +43,12 @@ export function PromptEditor({
   value,
   onChange,
   variables,
-  maxLength = MAX_JUDGE_INSTRUCTIONS_LENGTH,
+  maxLength,
 }: {
   value: string;
   onChange: (next: string) => void;
   variables: readonly PromptVariable[];
-  /** Defaults to the goal judge's instructions limit. */
-  maxLength?: number;
+  maxLength: number;
 }) {
   const id = useId();
   const ref = useRef<HTMLTextAreaElement>(null);

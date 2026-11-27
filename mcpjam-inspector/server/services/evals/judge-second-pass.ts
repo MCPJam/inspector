@@ -312,15 +312,20 @@ export function readRubricChecksVerdict(
   return readStoredVerdict(metadata, "rubricChecksVerdict");
 }
 
-/** A server-written verdict object off iteration metadata, by key. */
-function readStoredVerdict<T>(
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * A server-written verdict object off iteration metadata, by key. Every
+ * field stays `unknown`; the row builders validate what they read.
+ */
+function readStoredVerdict(
   metadata: Record<string, unknown> | undefined,
   key: string,
-): T | undefined {
+): Record<string, unknown> | undefined {
   const verdict = metadata?.[key];
-  return typeof verdict === "object" && verdict !== null
-    ? (verdict as T)
-    : undefined;
+  return isRecord(verdict) ? verdict : undefined;
 }
 
 /**
@@ -939,7 +944,7 @@ export async function runJudgeSecondPass(
       !goalCompletionFailed
     ) {
       const rubricChecksVerdict = readRubricChecksVerdict(iteration.metadata);
-      const customJudgesVerdict = readStoredVerdict<HostedCustomJudgesVerdictLike>(
+      const customJudgesVerdict = readStoredVerdict(
         iteration.metadata,
         "customJudgesVerdict",
       );

@@ -233,6 +233,14 @@ function EvaluatorLibraryDialog({
               method?.description ??
               "Choose what to check on each iteration."}
           </DialogDescription>
+          {/* In the header, which never hides, so the confirmation is read
+              out after an editor closes. */}
+          <p
+            aria-live="polite"
+            className="col-span-full text-sm text-muted-foreground empty:hidden"
+          >
+            {status}
+          </p>
         </DialogHeader>
         <div className={browsing ? "grid min-h-0" : "hidden"}>
           <EvaluatorLibraryBrowse
@@ -241,7 +249,6 @@ function EvaluatorLibraryDialog({
             filters={filters}
             onFiltersChange={setFilters}
             methods={authoring.methods}
-            status={status}
             onMethod={(method) => show({ type: "method", method })}
             onOpen={(id) => show({ type: "preset", id })}
             onAdd={add}

@@ -33,23 +33,9 @@ const COPY_BY_CODE: Readonly<Record<string, string>> = {
     "You tested this judge on this iteration moments ago. Wait a few seconds, then try again.",
 };
 
-/** The `code` a backend `ConvexError` carries, if any. */
-export function convexErrorCode(error: unknown): string | undefined {
-  if (typeof error !== "object" || error === null || !("data" in error)) {
-    return undefined;
-  }
-  const { data } = error;
-  return typeof data === "object" &&
-    data !== null &&
-    "code" in data &&
-    typeof data.code === "string"
-    ? data.code
-    : undefined;
-}
-
 /** Readable copy for a failure code, or undefined for one the backend never sends. */
 export function customJudgeFailureCopy(
-  code: string | undefined,
+  code: string | null | undefined,
 ): string | undefined {
   if (!code) return undefined;
   const known = COPY_BY_CODE[code];
