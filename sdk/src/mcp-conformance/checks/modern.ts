@@ -72,6 +72,7 @@ import {
 import { scanXMcpHeaderDeclarations } from "../../mcp-client-manager/mcp-header-mirror.js";
 import { DialectAwareJsonSchemaValidator } from "../../mcp-client-manager/dialect-aware-json-schema-validator.js";
 import {
+  compareAcknowledgedFilter,
   filterRequests,
   isSubscriptionNotificationMethod,
   observeListenStream,
@@ -2797,12 +2798,19 @@ function subscriptionNotifications(observation: ListenObservation): Array<{
   );
 }
 
+/**
+ * What every subscription check reports about the stream. The acknowledged
+ * filter is compared with the requested one here, as a client SHOULD. A
+ * server may honor only part of the request, so a difference is reported and
+ * never fails a check.
+ */
 function observationDetails(
   observation: ListenObservation
 ): Record<string, unknown> {
   return {
     subscriptionId: observation.subscriptionId,
     requestedFilter: observation.requestedFilter,
+    ...compareAcknowledgedFilter(observation),
     messageCount: observation.messages.length,
     streamOutcome: observation.outcome,
     observedMs: observation.observedMs,
@@ -2860,9 +2868,6 @@ async function runSubscriptionAckOrderingCheck(
   return passedResult(meta, Date.now() - startedAt, {
     ...details,
     notificationCount: notifications.length,
-    acknowledgedFilter: (
-      observation.messages[ackIndex] as { params?: Record<string, unknown> }
-    ).params?.notifications,
   });
 }
 

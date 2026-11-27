@@ -14,6 +14,7 @@ import type { ChatSessionStageDerivation } from "@/components/shared/user-value-
 import type { SessionCriteria } from "@/lib/swarm-api";
 import type { SessionSentiment } from "@/hooks/scenario-usage-filters";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
+import type { EventAtTurn } from "@/shared/event-at-turn";
 
 export type SharedChatSourceType = "scenario" | "swarm";
 
@@ -364,6 +365,8 @@ export interface SharedChatTurnTrace {
   pageToolsAtTurn?: MintedPageToolRecord[];
   /** Harness turns only: the MCP route the turn ran on; see `ChatHistoryTurnTrace`. */
   harnessMcpAtTurn?: HarnessMcpAtTurn;
+  /** The MCP event that started this turn; see `ChatHistoryTurnTrace`. */
+  eventAtTurn?: EventAtTurn;
 }
 
 export function useSharedChatTurnTraces({

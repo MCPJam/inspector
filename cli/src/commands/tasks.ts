@@ -57,6 +57,7 @@ import {
 import {
   assertWireCapability,
   buildTaskInputDriverOptions,
+  canPromptForTaskInput,
   driveTaskWatch,
   getTaskForWire,
   parseTasksWireOption,
@@ -778,6 +779,10 @@ function registerTaskWatch(tasks: Command): void {
       interactive: options.interactive,
       yes: options.yes,
     });
+    const canPrompt = canPromptForTaskInput({
+      interactive: options.interactive,
+      yes: options.yes,
+    });
     const onState = watchStateReporter(globalOptions);
 
     // `withWatchSignals` goes INSIDE the connect, not around it. Its listeners
@@ -804,6 +809,7 @@ function registerTaskWatch(tasks: Command): void {
               taskId,
               tuning: taskWatchTuningFrom(options),
               ...(input ? { input } : {}),
+              canPrompt,
               signal,
               ...(onState ? { onState } : {}),
             }),

@@ -30,6 +30,7 @@ import {
   type ResolvedScoreDefinition,
   type ScoreDefinition,
   type ScorerRole,
+  type ScoreRawOutcome,
   type ScoreResult,
 } from "./types.js";
 import { authoredRequiredRole } from "./policy-spelling.js";
@@ -129,12 +130,24 @@ export function scoreResultFromPredicateResult(
       ...(result.scope ? { scope: result.scope } : {}),
     });
   }
-  return finalizeScoreResult(definition, {
+  return finalizeScoreResult(definition, predicateScoreOutcome(result));
+}
+
+/** Project a verdict where the caller has already handled evidence errors. */
+export function predicateScoreOutcome(result: PredicateResult): ScoreRawOutcome {
+  if (result.status === "not_applicable") {
+    return {
+      kind: "not_applicable",
+      rationale: result.reason,
+      ...(result.scope ? { scope: result.scope } : {}),
+    };
+  }
+  return {
     kind: "scored",
     value: result.passed ? 1 : 0,
     rationale: result.reason,
     ...(result.scope ? { scope: result.scope } : {}),
-  });
+  };
 }
 
 /**

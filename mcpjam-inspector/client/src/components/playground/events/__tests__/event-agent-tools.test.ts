@@ -13,6 +13,8 @@ import type {
   ServerEventCatalog,
 } from "../PlaygroundEventsProvider";
 import { useEventAgentBridge } from "../event-agent-bridge";
+import { MCPJAM_EVENTS_EXTENSION_ID } from "@mcpjam/sdk/browser";
+import { describeClientEvents } from "@/shared/client-events";
 
 const flightEvent: EventDescriptorView = {
   name: "flight.status_changed",
@@ -336,6 +338,49 @@ describe("mcpjam_subscribe_to_events", () => {
     expect(second).toBe(first);
     expect(runtime.add).toHaveBeenCalledTimes(1);
   });
+});
+
+describe("the agent's tools and pickMode agree", () => {
+  // Every set of client modes, in both runtimes: the Events view offers the
+  // tools exactly when subscribe finds a mode for an event offering them all.
+  const sets: Array<Array<"poll" | "push" | "webhook">> = [
+    [],
+    ["poll"],
+    ["push"],
+    ["webhook"],
+    ["poll", "push"],
+    ["poll", "webhook"],
+    ["push", "webhook"],
+    ["poll", "push", "webhook"],
+  ];
+  for (const hosted of [false, true]) {
+    for (const modes of sets) {
+      it(`${hosted ? "hosted" : "local"}, modes [${modes.join(", ")}]`, async () => {
+        const config = {
+          mcpProfile: {
+            profileVersion: 1,
+            extensions: {
+              [MCPJAM_EVENTS_EXTENSION_ID]: Object.fromEntries(
+                modes.map((mode) => [mode, true]),
+              ),
+            },
+          },
+        };
+        runtime.hosted = hosted;
+        runtime.host = { id: "host_1", name: "Client", modes, missing: false };
+        const result = await runEventAgentTool(
+          runtime,
+          EVENT_AGENT_TOOL_NAMES.subscribe,
+          subscribeInput,
+        );
+        const offered = describeClientEvents(config, {
+          runtime: hosted ? "hosted" : "local",
+        }).agentTools.available;
+        expect(result.isError ?? false).toBe(!offered);
+        expect(vi.mocked(runtime.add).mock.calls.length).toBe(offered ? 1 : 0);
+      });
+    }
+  }
 });
 
 describe("managing subscriptions", () => {
