@@ -108,7 +108,8 @@ export function CustomJudgePreview({
     }
   };
 
-  const content = iterations?.length === 0 ? (
+  const noIterations = iterations?.length === 0;
+  const content = noIterations ? (
     <p className="text-xs text-muted-foreground">
       Run this suite once to test a judge on a past iteration.
     </p>
@@ -147,7 +148,11 @@ export function CustomJudgePreview({
           title={disabledReason}
           onClick={run}
         >
-          {running ? "Testing…" : inDialog ? "Run test" : "Test on a past iteration"}
+          {running
+            ? "Testing…"
+            : inDialog
+              ? "Run test"
+              : "Test on a past iteration"}
         </Button>
         <span className="text-xs text-muted-foreground">
           Graded by the judge this run used, as one charged call. Saves nothing.

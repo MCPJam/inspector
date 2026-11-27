@@ -124,16 +124,13 @@ describe("library groups in the suite table", () => {
     ]);
   });
 
-  it("offers assertion authoring where the backend predates the presets", () => {
-    // No capabilities means a deployment that predates the kind list: no
-    // preset can be saved, but the legacy assertion kinds can be authored.
+  it("hides the library on a deployment that cannot save any of it", () => {
+    // No capabilities means a deployment that predates the kind list, which
+    // accepts only the legacy kinds. Every library evaluator needs a newer
+    // kind, so there is nothing to offer.
     renderTable([]);
-    fireEvent.click(screen.getByRole("button", { name: "From library" }));
-    const dialog = within(screen.getByRole("dialog"));
-    expect(dialog.getByRole("button", { name: "Assertions" })).toBeEnabled();
-    expect(dialog.getByRole("button", { name: /^Judge prompt/ })).toBeDisabled();
     expect(
-      dialog.queryByRole("button", { name: /^Calling tools/ }),
+      screen.queryByRole("button", { name: "From library" }),
     ).not.toBeInTheDocument();
   });
 

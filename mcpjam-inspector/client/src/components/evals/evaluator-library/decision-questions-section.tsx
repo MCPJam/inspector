@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { Pencil, Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { EvaluatorEditorLayout } from "./evaluator-editor-layout";
-import { stableStringifyJson } from "@mcpjam/sdk/widget-runtime";
+import { draftChanged, EvaluatorEditorLayout } from "./evaluator-editor-layout";
 import type { RubricCheckQuestion } from "@/components/shared/session-quality/judge-config";
 import {
   blankRubricCheckQuestion,
   libraryQuestionIdError,
+  questionIdError,
   rubricCheckQuestionError,
   withQuestionLabel,
   withRubricChecks,
@@ -18,7 +18,6 @@ import {
   type SuiteCapabilities,
 } from "@/hooks/use-suite-capabilities";
 import { useEvaluatorLibraryEnabled } from "./evaluator-library-flag";
-import { libraryPauseMessages } from "./library-pause";
 
 export function DecisionQuestionsSection({
   capabilities,
@@ -30,7 +29,6 @@ export function DecisionQuestionsSection({
   onChange: (next: EvalJudgeConfig) => void;
 }) {
   const canAskYesNo = hasYesNoRubricQuestionsCapability(capabilities);
-  const pauseMessage = libraryPauseMessages(judgeConfig, capabilities).questions;
   const libraryEnabled = useEvaluatorLibraryEnabled();
   const [editingId, setEditingId] = useState<string | null>(null);
   const questions = judgeConfig?.rubricChecks?.questions ?? [];
@@ -48,12 +46,8 @@ export function DecisionQuestionsSection({
       aria-label="Decision questions"
       className="rounded-lg border border-border p-3"
     >
+      {/* The Rubric checks card in this stage says when these are paused. */}
       <h4 className="text-sm font-medium">Decision questions</h4>
-      {pauseMessage ? (
-        <p role="status" className="text-xs text-muted-foreground">
-          {pauseMessage}
-        </p>
-      ) : null}
       <ul className="divide-y divide-border">
         {authored.map((question) => (
           <li key={question.id} className="py-2">
@@ -96,7 +90,10 @@ export function DecisionQuestionsSection({
                     (current) => current.id !== question.id,
                   )}
                   onCancel={() => setEditingId(null)}
-                  onSave={(draft) => save(question.id, draft)}
+                  onSave={(draft) => {
+                    save(question.id, draft);
+                    return undefined;
+                  }}
                 />
               </div>
             ) : null}
@@ -129,7 +126,8 @@ export function DecisionEditor({
   initialQuestion?: RubricCheckQuestion;
   questions: RubricCheckQuestion[];
   onCancel: () => void;
-  onSave: (question: RubricCheckQuestion) => void;
+  /** Saves the question, or says why the suite refused it. */
+  onSave: (question: RubricCheckQuestion) => string | undefined;
   /** The dialog asks before closing over a changed draft. */
   onDirtyChange?: (dirty: boolean) => void;
 }) {
@@ -141,21 +139,21 @@ export function DecisionEditor({
   const [question, setQuestionState] = useState(start);
   const setQuestion = (next: RubricCheckQuestion) => {
     setQuestionState(next);
-    onDirtyChange?.(stableStringifyJson(next) !== stableStringifyJson(start));
+    onDirtyChange?.(draftChanged(next, start));
   };
-  const [original] = useState(() =>
-    stableStringifyJson(initialQuestion ?? null),
-  );
+  const [original] = useState(initialQuestion);
   const [tried, setTried] = useState(false);
-  const conflict = stableStringifyJson(initialQuestion ?? null) !== original;
+  // Why the suite refused the save, when the draft itself was fine.
+  const [refusal, setRefusal] = useState<string>();
+  const conflict = draftChanged(initialQuestion, original);
+  const all = [...questions, question];
+  const idError =
+    libraryQuestionIdError(question, initialQuestion?.id) ??
+    questionIdError(question, questions.length, all);
   const error =
     !canAskYesNo && question.kind === "yesno"
       ? "Choose Choice or Score on this deployment."
-      : (libraryQuestionIdError(question, initialQuestion?.id) ??
-        rubricCheckQuestionError(question, questions.length, [
-          ...questions,
-          question,
-        ]));
+      : (idError ?? rubricCheckQuestionError(question, questions.length, all));
 
   return (
     <EvaluatorEditorLayout
@@ -163,11 +161,11 @@ export function DecisionEditor({
       inlineClassName="space-y-3"
       action={initialQuestion ? "Save question" : "Add question"}
       disabled={conflict}
-      error={inDialog && tried ? error : undefined}
+      error={inDialog && tried ? (error ?? refusal) : undefined}
       onCancel={onCancel}
       onSubmit={() => {
         setTried(true);
-        if (!conflict && !error) onSave(question);
+        if (!conflict && !error) setRefusal(onSave(question));
       }}
     >
       {pauseMessage ? (
@@ -175,7 +173,11 @@ export function DecisionEditor({
           {pauseMessage}
         </p>
       ) : null}
-      <div role="group" aria-label="Question type" className="flex flex-wrap gap-2">
+      <div
+        role="group"
+        aria-label="Question type"
+        className="flex flex-wrap gap-2"
+      >
         {QUESTION_TYPES.filter(
           ({ kind }) => canAskYesNo || kind !== "yesno",
         ).map(({ kind, label }) => (
@@ -206,12 +208,11 @@ export function DecisionEditor({
         index={0}
         question={question}
         error={tried ? error : undefined}
+        idError={tried ? idError : undefined}
         disabled={false}
         onChange={setQuestion}
         onLabelChange={(label) =>
-          setQuestion(
-            withQuestionLabel(question, label, questions),
-          )
+          setQuestion(withQuestionLabel(question, label, questions))
         }
       />
       {conflict ? (

@@ -44,8 +44,8 @@ import { ValidatorsSection } from "./validators-section";
 import { CheckRow, blankPredicate } from "./checks-section";
 import { SuiteScorerLibraryMenu } from "./suite-scorer-library-menu";
 import { SuiteEvaluatorLibrary } from "./evaluator-library/suite-evaluator-library";
-import { EvaluatorStageRows } from "./evaluator-library/evaluator-stage-rows";
 import { useEvaluatorLibraryEnabled } from "./evaluator-library/evaluator-library-flag";
+import { EvaluatorStageRows } from "./evaluator-library/evaluator-stage-rows";
 import { CustomJudgesSection } from "./evaluator-library/custom-judges-section";
 import { DecisionQuestionsSection } from "./evaluator-library/decision-questions-section";
 import { customJudgeLimits } from "./evaluator-library/custom-judges-model";
@@ -494,7 +494,8 @@ export function SuiteScorerTable({
               data-stage-group={group.stage}
               className={cn(
                 "grid grid-cols-1 gap-y-3 border-b border-border py-5",
-                !stackedStages && "gap-x-6 sm:grid-cols-[minmax(10rem,1fr)_2fr]",
+                !stackedStages &&
+                  "gap-x-6 sm:grid-cols-[minmax(10rem,1fr)_2fr]",
               )}
             >
               <div>
@@ -603,7 +604,6 @@ export function SuiteScorerTable({
                 group.stage === "userValue" ? (
                   <RubricChecksJudgeCard
                     judgeConfig={judgeConfig}
-                    onJudgeConfigChange={onJudgeConfigChange}
                     judgesCapabilities={capabilities?.judges}
                     criteria={judgeRubric?.criteria ?? []}
                     goalJudgeOff={judgeMode(judgeConfig, goalPolicy) === "off"}

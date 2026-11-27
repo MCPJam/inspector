@@ -139,3 +139,69 @@ describe("decision question drafts", () => {
     );
   });
 });
+
+const tone = {
+  id: "tone",
+  kind: "choice",
+  label: "Tone",
+  instructions: "Which fits the reply?",
+  options: [
+    { id: "warm", label: "Warm" },
+    { id: "curt", label: "Curt" },
+  ],
+  pass: { anyOf: [] },
+} satisfies RubricCheckQuestion;
+
+describe("editing a decision question", () => {
+  it("shows why an authored question cannot be saved yet", () => {
+    const onChange = vi.fn();
+    renderWithProviders(section([tone], onChange));
+    click("Edit Tone");
+    click("Save question");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /at least one option as passing/,
+    );
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("marks an option as passing through the pass line", () => {
+    const onChange = vi.fn();
+    renderWithProviders(section([tone], onChange));
+    click("Edit Tone");
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Question 1 option 1 passes" }),
+    );
+    click("Save question");
+    expect(onChange).toHaveBeenCalledWith({
+      rubricChecks: { questions: [{ ...tone, pass: { anyOf: ["warm"] } }] },
+    });
+  });
+
+  it("says an unsure answer counts as No when the question passes on No", () => {
+    renderWithProviders(
+      section([{ ...first, pass: { answer: "no" } }], vi.fn()),
+    );
+    click("Edit Citations");
+    expect(
+      screen.getByTestId("rubric-question-1-unsure-note"),
+    ).toHaveTextContent(
+      "An unsure answer counts as No, so this question passes when the grader can't tell.",
+    );
+    click("Yes");
+    expect(
+      screen.queryByTestId("rubric-question-1-unsure-note"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows a kind from a newer backend by name, with no pass-line editor or error", () => {
+    // As the wire delivers it: this build's types do not know the kind.
+    const ranking: RubricCheckQuestion = JSON.parse(
+      JSON.stringify({ ...first, kind: "ranking", pass: {} }),
+    );
+    renderWithProviders(section([ranking], vi.fn()));
+    click("Edit Citations");
+    expect(screen.getByText("ranking")).toBeInTheDocument();
+    expect(screen.queryByText("Levels, lowest first.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});

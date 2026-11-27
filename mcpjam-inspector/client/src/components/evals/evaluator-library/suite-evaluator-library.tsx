@@ -14,9 +14,9 @@ import { JudgeEditor } from "./custom-judges-section";
 import { DecisionEditor } from "./decision-questions-section";
 import type { MethodAvailability } from "./evaluator-library-browse";
 import { EvaluatorLibraryButton } from "./evaluator-library-dialog";
-import { EvaluatorEditorLayout } from "./evaluator-editor-layout";
+import { draftChanged, EvaluatorEditorLayout } from "./evaluator-editor-layout";
 import type { LibraryAddition, LibrarySuiteParts } from "./library-catalog";
-import { libraryPauseMessages } from "./library-pause";
+import { CUSTOM_JUDGES_OFF_COPY, libraryPauseMessages } from "./library-pause";
 
 /** The library entry point in suite settings, with its Method cards. */
 export function SuiteEvaluatorLibrary({
@@ -52,10 +52,14 @@ export function SuiteEvaluatorLibrary({
         : null,
     judge: !canJudge
       ? "This deployment does not support custom judges."
-      : judges.length >= maxJudges
-        ? `Remove a judge to add another. Each suite can have ${maxJudges} judges.`
-        : null,
+      : judgeConfig?.customJudges?.enabled === false
+        ? CUSTOM_JUDGES_OFF_COPY
+        : judges.length >= maxJudges
+          ? `Remove a judge to add another. Each suite can have ${maxJudges} judges.`
+          : null,
   };
+  // Until capabilities load, every method would read as unsupported.
+  if (!capabilities) return null;
 
   return (
     <EvaluatorLibraryButton
@@ -75,6 +79,7 @@ export function SuiteEvaluatorLibrary({
               ...addition,
             });
             if (!refused) close(true);
+            return refused;
           };
           const cancel = () => close(false);
           switch (method) {
@@ -130,25 +135,28 @@ function AssertionsEditor({
 }: {
   kinds: readonly Predicate["type"][];
   onCancel: () => void;
-  onSave: (checks: Predicate[]) => void;
+  /** Saves the checks, or says why the suite refused them. */
+  onSave: (checks: Predicate[]) => string | undefined;
   onDirtyChange: (dirty: boolean) => void;
 }) {
   const [checks, setChecksState] = useState<Predicate[]>([]);
   const setChecks = (next: Predicate[]) => {
     setChecksState(next);
-    onDirtyChange(next.length > 0);
+    onDirtyChange(draftChanged(next, []));
   };
   const [invalidDraft, setInvalidDraft] = useState(false);
   const [tried, setTried] = useState(false);
+  const [refusal, setRefusal] = useState<string>();
   return (
     <EvaluatorEditorLayout
       inDialog
       action="Add assertions"
       disabled={!checks.length || invalidDraft}
+      error={refusal}
       onCancel={onCancel}
       onSubmit={() => {
         setTried(true);
-        if (areAllChecksValid(checks)) onSave(checks);
+        if (areAllChecksValid(checks)) setRefusal(onSave(checks));
       }}
     >
       <ChecksSection

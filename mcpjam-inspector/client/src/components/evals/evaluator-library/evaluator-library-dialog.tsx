@@ -18,7 +18,13 @@ import {
   DialogTrigger,
 } from "@mcpjam/design-system/dialog";
 import { ArrowLeft, Library } from "lucide-react";
-import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { cn } from "@/lib/utils";
 import { formatCriterion } from "@/shared/predicate-kinds";
 import { CUSTOM_JUDGE_COST_COPY } from "./custom-judges-model";
@@ -63,13 +69,15 @@ type LibraryProps = {
   pause: { questions?: string; judges?: string };
   authoring: {
     methods: MethodAvailability;
-    render: (method: EvaluatorMethod, actions: MethodEditorActions) => ReactNode;
+    render: (
+      method: EvaluatorMethod,
+      actions: MethodEditorActions,
+    ) => ReactNode;
   };
 };
 
 type LibraryView =
-  | { type: "preset"; id: string }
-  | { type: "method"; method: EvaluatorMethod };
+  { type: "preset"; id: string } | { type: "method"; method: EvaluatorMethod };
 
 const DEFAULT_FILTERS: LibraryFilters = { category: "all", search: "" };
 
@@ -211,7 +219,8 @@ function EvaluatorLibraryDialog({
         <DialogHeader
           className={cn(
             "gap-1 border-b border-border px-4 py-4 pr-12 text-left sm:px-5 sm:pr-12",
-            method && "grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3",
+            method &&
+              "grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3",
           )}
         >
           {method ? backButton : null}
@@ -271,7 +280,10 @@ function EvaluatorLibraryDialog({
           </div>
         ) : method ? (
           authoring.methods[method.value] ? (
-            <p role="status" className="p-4 text-sm text-muted-foreground sm:p-5">
+            <p
+              role="status"
+              className="p-4 text-sm text-muted-foreground sm:p-5"
+            >
               {authoring.methods[method.value]}
             </p>
           ) : (

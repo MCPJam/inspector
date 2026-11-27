@@ -8,6 +8,11 @@ import {
 import { SuiteEvaluatorLibrary } from "../suite-evaluator-library";
 import { SuiteScorerTable } from "../../suite-scorer-table";
 import type { EvalJudgeConfig } from "../../types";
+import {
+  CUSTOM_JUDGES_OFF_COPY,
+  RUBRIC_CHECKS_GOAL_OFF_COPY,
+  RUBRIC_CHECKS_OFF_COPY,
+} from "../library-pause";
 
 vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
   ProviderLogo: () => <span aria-hidden="true" />,
@@ -95,8 +100,8 @@ const v1Capabilities: SuiteCapabilities = {
 function open(
   judgeConfig?: EvalJudgeConfig,
   support: SuiteCapabilities = capabilities,
+  onAdd = vi.fn(),
 ) {
-  const onAdd = vi.fn();
   renderWithProviders(
     <SuiteEvaluatorLibrary
       predicates={[]}
@@ -316,9 +321,9 @@ describe("starting an evaluator from scratch", () => {
       screen.queryByRole("spinbutton", { name: "Passing score" }),
     ).toBeNull();
     fireEvent.click(screen.getByRole("radio", { name: "Score from 0 to 1" }));
-    expect(screen.getByRole("spinbutton", { name: "Passing score" })).toHaveValue(
-      0.7,
-    );
+    expect(
+      screen.getByRole("spinbutton", { name: "Passing score" }),
+    ).toHaveValue(0.7);
     fireEvent.click(screen.getByRole("radio", { name: "Pass or fail" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
       target: { value: "Checks citations" },
@@ -364,28 +369,121 @@ describe("starting an evaluator from scratch", () => {
       rubricChecks: { enabled: false },
       customJudges: { enabled: false, judges: [] },
     });
+    // Judges stay off until turned on, so the card says where.
+    const judge = screen.getByRole("button", { name: "Judge prompt" });
+    expect(judge).toBeDisabled();
+    expect(judge).toHaveAccessibleDescription(CUSTOM_JUDGES_OFF_COPY);
     click("Decision questions");
-    expect(
-      screen.getByText(
-        "Decision questions are off for this suite, so they will not run. Turn them on in the evaluators table.",
-      ),
-    ).toBeVisible();
-    click("Back to library");
-    click("Judge prompt");
-    expect(
-      screen.getByText("Custom judges are off for this suite, so they will not run."),
-    ).toBeVisible();
+    expect(screen.getByText(RUBRIC_CHECKS_OFF_COPY)).toBeVisible();
   });
 
-  it("says decision questions, not trials, while the goal judge is off", () => {
+  it("names the Rubric checks switch, not trials, while the goal judge is off", () => {
     open({ goalCompletion: { enabled: false } });
     click("Decision questions");
-    expect(
-      screen.getByText(
-        "Decision questions are paused while the goal-completion judge is off. Turn it on to run them.",
-      ),
-    ).toBeVisible();
+    expect(screen.getByText(RUBRIC_CHECKS_GOAL_OFF_COPY)).toBeVisible();
     expect(screen.queryByText(/trials/)).not.toBeInTheDocument();
+  });
+
+  it("keeps From library hidden until capabilities load", () => {
+    renderWithProviders(
+      <SuiteEvaluatorLibrary
+        predicates={[]}
+        authorableKinds={["finalAssistantMessageNonEmpty"]}
+        judgeConfig={undefined}
+        capabilities={null}
+        onAdd={vi.fn()}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "From library" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows why the suite refused an add and keeps the draft", () => {
+    const onAdd = vi.fn(() => "This suite already has that question.");
+    open(undefined, capabilities, onAdd);
+    click("Decision questions");
+    fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+      target: { value: "Cites evidence" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "Question" }), {
+      target: { value: "Does it cite evidence?" },
+    });
+    click("Add question");
+    expect(onAdd).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "This suite already has that question.",
+    );
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+      "Cites evidence",
+    );
+  });
+
+  it("opens Question ID only for an ID error and keeps it open once fixed", () => {
+    const { onAdd } = open();
+    click("Decision questions");
+    const id = screen.getByRole("textbox", { name: "Question ID" });
+    click("Add question");
+    expect(screen.getByRole("alert")).toHaveTextContent("A label is required");
+    expect(id).not.toBeVisible();
+    fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+      target: { value: "Cites evidence" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "Question" }), {
+      target: { value: "Does it cite evidence?" },
+    });
+    fireEvent.change(id, { target: { value: "cites evidence" } });
+    click("Add question");
+    expect(screen.getByRole("alert")).toHaveTextContent(/^Id must be/);
+    expect(id).toBeVisible();
+    // Fixing the ID clears the error without hiding the field mid-edit.
+    fireEvent.change(id, { target: { value: "cites-evidence" } });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(id).toBeVisible();
+    click("Add question");
+    expect(onAdd).toHaveBeenCalledWith(
+      expect.objectContaining({
+        questions: [expect.objectContaining({ id: "cites-evidence" })],
+      }),
+    );
+  });
+
+  it("adds an authored question to the suite's judge config from the table", () => {
+    const onJudgeConfigChange = vi.fn();
+    renderWithProviders(
+      <SuiteScorerTable
+        scope={{ kind: "suite", predicates: [], onPredicatesChange: vi.fn() }}
+        judgeConfig={{ goalCompletion: { threshold: 0.8 } }}
+        onJudgeConfigChange={onJudgeConfigChange}
+        onAddProvider={null}
+        capabilities={capabilities}
+        passOrFailHint=""
+        judgeHint=""
+      />,
+    );
+    click("From library");
+    click("Decision questions");
+    fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+      target: { value: "Cites evidence" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "Question" }), {
+      target: { value: "Does it cite evidence?" },
+    });
+    click("Add question");
+    expect(onJudgeConfigChange).toHaveBeenCalledWith({
+      goalCompletion: { threshold: 0.8 },
+      rubricChecks: {
+        questions: [
+          {
+            id: "cites-evidence",
+            kind: "yesno",
+            label: "Cites evidence",
+            instructions: "Does it cite evidence?",
+            pass: { answer: "yes" },
+          },
+        ],
+      },
+    });
   });
 
   it("goes back to the library on Escape and asks before dropping a changed draft", () => {
@@ -434,25 +532,29 @@ describe("starting an evaluator from scratch", () => {
     });
     click("Add judge");
     expect(
-      screen.getByText("Added to your unsaved changes. Save settings to keep it."),
+      screen.getByText(
+        "Added to your unsaved changes. Save settings to keep it.",
+      ),
     ).toBeVisible();
   });
 
-  it("explains why a method has reached its suite limit", () => {
-    open({
-      rubricChecks: {
-        questions: Array.from(
-          { length: MAX_RUBRIC_CHECK_QUESTIONS },
-          (_, i) => ({
-            id: `q-${i}`,
-            kind: "yesno",
-            label: `Question ${i}`,
-            instructions: "Is it true?",
-            pass: { answer: "yes" },
-          }),
-        ),
-      },
-    });
+  it("counts library questions toward the limit and says why the card is off", () => {
+    const own = Array.from(
+      { length: MAX_RUBRIC_CHECK_QUESTIONS - 1 },
+      (_, i): RubricCheckQuestion => ({
+        id: `q-${i}`,
+        kind: "yesno",
+        label: `Question ${i}`,
+        instructions: "Is it true?",
+        pass: { answer: "yes" },
+      }),
+    );
+    const library = {
+      ...own[0],
+      id: "reports-tool-errors-reports-failures",
+      evaluator: { id: "reports-tool-errors", version: 1 },
+    };
+    open({ rubricChecks: { questions: [library, ...own] } });
     const decision = screen.getByRole("button", { name: "Decision questions" });
     expect(decision).toBeDisabled();
     expect(decision).toHaveAccessibleDescription(/Remove a question/);

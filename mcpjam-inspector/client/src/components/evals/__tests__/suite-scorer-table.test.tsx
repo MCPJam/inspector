@@ -154,7 +154,9 @@ describe("SuiteScorerTable rubric checks", () => {
     expect(card.queryByRole("button", { name: "Yes/no" })).toBeNull();
     expect(card.queryByRole("button", { name: "Choice" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "From library" }));
-    await user.click(screen.getByRole("button", { name: "Decision questions" }));
+    await user.click(
+      screen.getByRole("button", { name: "Decision questions" }),
+    );
     const types = within(screen.getByRole("group", { name: "Question type" }));
     expect(types.getByRole("button", { name: "Yes/no" })).toBeInTheDocument();
   });
@@ -163,7 +165,9 @@ describe("SuiteScorerTable rubric checks", () => {
     const user = userEvent.setup();
     renderTable({ capabilities: withRubricChecks(true) });
     await user.click(screen.getByRole("button", { name: "From library" }));
-    await user.click(screen.getByRole("button", { name: "Decision questions" }));
+    await user.click(
+      screen.getByRole("button", { name: "Decision questions" }),
+    );
     const types = within(screen.getByRole("group", { name: "Question type" }));
     expect(types.queryByRole("button", { name: "Yes/no" })).toBeNull();
     expect(types.getByRole("button", { name: "Choice" })).toBeEnabled();

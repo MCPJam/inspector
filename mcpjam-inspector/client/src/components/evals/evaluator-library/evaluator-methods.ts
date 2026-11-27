@@ -1,9 +1,4 @@
-import {
-  ListChecks,
-  ListTodo,
-  Scale,
-  type LucideIcon,
-} from "lucide-react";
+import { ListChecks, ListTodo, Scale, type LucideIcon } from "lucide-react";
 import { CUSTOM_JUDGE_COST_COPY } from "./custom-judges-model";
 import type { EvaluatorMethod } from "./evaluator-library-types";
 

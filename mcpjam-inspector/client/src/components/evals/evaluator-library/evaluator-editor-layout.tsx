@@ -1,6 +1,12 @@
 import { Button } from "@mcpjam/design-system/button";
 import { DialogFooter } from "@mcpjam/design-system/dialog";
+import { stableStringifyJson } from "@mcpjam/sdk/widget-runtime";
 import type { ReactNode } from "react";
+
+/** Whether an editor's draft differs from where it started. */
+export function draftChanged(draft: unknown, start: unknown): boolean {
+  return stableStringifyJson(draft) !== stableStringifyJson(start);
+}
 
 export function EvaluatorEditorLayout({
   inDialog = false,
@@ -55,7 +61,9 @@ export function EvaluatorEditorLayout({
       <div className="space-y-2 border-t border-border px-4 py-3 sm:px-5">
         {problem}
         <DialogFooter className="flex-row flex-wrap items-center justify-between">
-          <span className="text-xs text-muted-foreground">Suite draft</span>
+          <span className="text-xs text-muted-foreground">
+            Adds to your unsaved suite changes.
+          </span>
           <div className="ml-auto flex gap-2">{buttons}</div>
         </DialogFooter>
       </div>

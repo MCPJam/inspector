@@ -33,6 +33,13 @@ const libraryJudge = {
   evaluator: { id: "answers-the-question", version: 1 },
 };
 
+const written = {
+  id: "judge",
+  label: "Cites the order number",
+  prompt: "Is the order number in {{final_answer}}?",
+  output: { kind: "passfail" as const },
+};
+
 describe("CustomJudgesSection", () => {
   it("renders nothing where the backend cannot run judges", () => {
     const { container } = renderWithProviders(
@@ -45,11 +52,11 @@ describe("CustomJudgesSection", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("writes a judge, refusing an unknown variable first", () => {
+  it("edits a written judge, refusing an unknown variable first", () => {
     const onChange = vi.fn();
     renderWithProviders(
       <CustomJudgesSection
-        judgeConfig={undefined}
+        judgeConfig={{ customJudges: { judges: [written] } }}
         onJudgeConfigChange={onChange}
         capabilities={capabilities}
       />,
@@ -59,14 +66,15 @@ describe("CustomJudgesSection", () => {
     ).toHaveTextContent(
       "Each judge adds a charged model call per graded iteration.",
     );
-    fireEvent.click(screen.getByRole("button", { name: "Write a judge" }));
-    fireEvent.change(screen.getByLabelText("Name"), {
-      target: { value: "Cites the order number" },
-    });
+    // The library's Judge prompt card is the one way to add a judge.
+    expect(screen.queryByRole("button", { name: "Write a judge" })).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: `Edit ${written.label}` }),
+    );
     fireEvent.change(screen.getByLabelText("Judge prompt"), {
       target: { value: "Is {{order_note}} in {{final_answer}}?" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Add judge" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save judge" }));
     expect(screen.getByRole("alert")).toHaveTextContent(
       "{{order_note}} isn't an available variable.",
     );
@@ -74,16 +82,51 @@ describe("CustomJudgesSection", () => {
     fireEvent.change(screen.getByLabelText("Judge prompt"), {
       target: { value: "Does {{final_answer}} match {{expected_output}}?" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Add judge" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save judge" }));
     const next = onChange.mock.calls[0][0] as EvalJudgeConfig;
     expect(next.customJudges?.judges).toEqual([
       {
-        id: "judge",
-        label: "Cites the order number",
+        ...written,
         prompt: "Does {{final_answer}} match {{expected_output}}?",
-        output: { kind: "passfail" },
       },
     ]);
+  });
+
+  it("renders nothing until the suite has written a judge", () => {
+    const { container } = renderWithProviders(
+      <CustomJudgesSection
+        judgeConfig={{ customJudges: { judges: [libraryJudge] } }}
+        onJudgeConfigChange={() => {}}
+        capabilities={capabilities}
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("turns custom judges back on when the suite has them off", () => {
+    const onChange = vi.fn();
+    renderWithProviders(
+      <CustomJudgesSection
+        judgeConfig={{
+          goalCompletion: { threshold: 0.8 },
+          customJudges: { enabled: false, judges: [libraryJudge] },
+        }}
+        onJudgeConfigChange={onChange}
+        capabilities={capabilities}
+      />,
+    );
+    expect(
+      screen.getByRole("region", { name: "Judges you write" }),
+    ).toHaveTextContent(
+      "Custom judges are off for this suite, so they will not run. Turn them on under Judges you write.",
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Turn on custom judges" }),
+    );
+    expect(onChange).toHaveBeenCalledWith({
+      goalCompletion: { threshold: 0.8 },
+      customJudges: { enabled: true, judges: [libraryJudge] },
+    });
   });
 
   it("lists customized copies with their library parent, not library judges", () => {
@@ -100,34 +143,23 @@ describe("CustomJudgesSection", () => {
     expect(section.querySelectorAll("li")).toHaveLength(1);
   });
 
-  it("reads the judge limit and prompt length from the backend's capability", () => {
+  it("reads the prompt length from the backend's capability", () => {
     const custom = capabilities.judges?.custom;
     if (!custom) throw new Error("Expected the custom judge capability");
-    const tight: Pick<SuiteCapabilities, "suiteId" | "judges"> = {
-      ...capabilities,
-      judges: {
-        ...capabilities.judges,
-        custom: { ...custom, maxJudges: 1, maxPromptLength: 30 },
-      },
-    };
-    const { unmount } = renderWithProviders(
-      <CustomJudgesSection
-        judgeConfig={{ customJudges: { judges: [libraryJudge] } }}
-        onJudgeConfigChange={() => {}}
-        capabilities={tight}
-      />,
-    );
-    expect(screen.getByRole("button", { name: "Write a judge" })).toBeDisabled();
-    unmount();
     renderWithProviders(
       <CustomJudgesSection
-        judgeConfig={undefined}
+        judgeConfig={{ customJudges: { judges: [written] } }}
         onJudgeConfigChange={() => {}}
-        capabilities={tight}
+        capabilities={{
+          ...capabilities,
+          judges: { custom: { ...custom, maxPromptLength: 50 } },
+        }}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Write a judge" }));
-    expect(screen.getByText("0/30")).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: `Edit ${written.label}` }),
+    );
+    expect(screen.getByText(`${written.prompt.length}/50`)).toBeInTheDocument();
   });
 });
 
