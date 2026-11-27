@@ -4,6 +4,11 @@ import {
   LogLevelMetaClient,
   TraceContextMetaClient,
 } from "../src/mcp-client-manager";
+import {
+  ProtocolError,
+  SdkError,
+  SdkErrorCode,
+} from "@modelcontextprotocol/client";
 import { realpathSync, rmSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -1639,4 +1644,112 @@ describe("MCPClientManager", () => {
     });
   });
 
+  describe("best-effort schema lookups", () => {
+    // Before a modern tools/call the manager reads the tool's schema with a
+    // tools/list. A miss degrades into the call. A lookup that timed out,
+    // was cancelled or lost its connection must stop the call instead.
+    let manager: MCPClientManager;
+
+    beforeEach(() => {
+      manager = new MCPClientManager();
+    });
+
+    afterEach(async () => {
+      await manager.disconnectAllServers();
+    });
+
+    function seedModernServer(
+      lookupError: Error,
+      config: Record<string, unknown>
+    ) {
+      const client = {
+        getProtocolEra: jest.fn().mockReturnValue("modern"),
+        listTools: jest.fn().mockRejectedValue(lookupError),
+        callTool: jest.fn().mockResolvedValue({ content: [] }),
+        requestWithSchema: jest.fn().mockResolvedValue({ content: [] }),
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+      seedRegisteredServer(manager, "lookup", {
+        url: new URL("https://example.test/mcp"),
+        ...config,
+      });
+      seedLiveState(manager, "lookup", { client });
+      return client;
+    }
+
+    describe.each([
+      ["plain", { mirrorToolParamHeaders: false }, "callTool"],
+      ["MRTR", {}, "requestWithSchema"],
+    ] as const)("%s tools/call", (path, config, send) => {
+      function executeTool() {
+        if (path === "MRTR") {
+          manager.setMrtrInputCollector("lookup", async () => {
+            throw new Error("the tool does not ask for input");
+          });
+        }
+        return manager.executeTool("lookup", "echo", {});
+      }
+
+      // What the upstream client raises itself: string codes, never a number.
+      it.each([SdkErrorCode.RequestTimeout, SdkErrorCode.ConnectionClosed])(
+        "does not send the call after the client's %s",
+        async (code) => {
+          const error = new SdkError(code, "The request ended on this side");
+          const client = seedModernServer(error, config);
+
+          await expect(executeTool()).rejects.toBe(error);
+          expect(client[send]).not.toHaveBeenCalled();
+        }
+      );
+
+      // A numeric code is a JSON-RPC error answer: the server did answer.
+      it.each([-32001, -32000])(
+        "still sends the call when the server answers %i",
+        async (code) => {
+          const client = seedModernServer(
+            new ProtocolError(code, "Server error"),
+            config
+          );
+
+          await expect(executeTool()).resolves.toMatchObject({ content: [] });
+          expect(client[send]).toHaveBeenCalledTimes(1);
+        }
+      );
+    });
+
+    // The hosted path builds a leg's headers with these, then sends the leg.
+    describe("hosted leg headers", () => {
+      const refused = new ProtocolError(-32020, "Header mismatch");
+      const headersAfterMismatch = () =>
+        manager.mrtrToolParamHeadersAfterMismatch("lookup", "echo", {}, {
+          error: refused,
+          headers: {},
+        });
+
+      it.each([SdkErrorCode.RequestTimeout, SdkErrorCode.ConnectionClosed])(
+        "are not built after the client's %s",
+        async (code) => {
+          const error = new SdkError(code, "The request ended on this side");
+          seedModernServer(error, {});
+
+          await expect(
+            manager.mrtrToolParamHeaders("lookup", "echo", {})
+          ).rejects.toBe(error);
+          await expect(headersAfterMismatch()).rejects.toBe(error);
+        }
+      );
+
+      it.each([-32001, -32000])(
+        "come back empty when the server answers %i",
+        async (code) => {
+          seedModernServer(new ProtocolError(code, "Server error"), {});
+
+          await expect(
+            manager.mrtrToolParamHeaders("lookup", "echo", {})
+          ).resolves.toEqual({});
+          await expect(headersAfterMismatch()).resolves.toBeUndefined();
+        }
+      );
+    });
+  });
 });
