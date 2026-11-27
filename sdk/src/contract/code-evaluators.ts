@@ -23,6 +23,8 @@ export const MAX_CODE_SCRIPTS_TOTAL_BYTES = 256 * 1024;
 export const MAX_GRADING_FILES = 20;
 /** Declared files must live under the box user's home. */
 export const GRADING_FILES_ROOT = "/home/user/";
+/** Per declared path, in characters, as the platform counts them. */
+export const MAX_GRADING_FILE_PATH_CHARS = 512;
 
 export const CODE_EVALUATOR_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 /** The extension picks the interpreter: `.sh` bash, `.py` python3, `.ts`/`.js` node. */
@@ -45,6 +47,9 @@ const scriptSchema = z
  * grader's own input or code Python or Node load on start.
  */
 export function gradingFilePathProblem(path: string): string | undefined {
+  if (path.length > MAX_GRADING_FILE_PATH_CHARS) {
+    return `is longer than ${MAX_GRADING_FILE_PATH_CHARS} characters`;
+  }
   if ([...path].some((ch) => ch.charCodeAt(0) < 0x20 || ch === "\u007f")) {
     return "has a control character";
   }
