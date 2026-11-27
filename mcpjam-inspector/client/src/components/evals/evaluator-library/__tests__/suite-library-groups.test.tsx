@@ -72,7 +72,7 @@ describe("library groups in the suite table", () => {
   });
 
   it("puts each check that did not come from the library in its own card", () => {
-    renderTable(tagged);
+    const { next } = renderTable(tagged);
     const rows = Array.from(
       document.querySelectorAll<HTMLElement>("li[data-scorer-row]"),
     );
@@ -89,9 +89,24 @@ describe("library groups in the suite table", () => {
     }
     // No badge marks a card as default; only the library group says Library.
     expect(screen.queryByText("Default")).not.toBeInTheDocument();
-    // The authored check keeps its on/off box in the card's header.
+    // Each card keeps its on/off box in its header, and the box still
+    // switches the check: on for a standard check, off for an authored one.
+    const offBox = loose
+      .filter((li) => li.dataset.scorerRow === "preset")
+      .map((li) => within(li).getByRole("checkbox"))
+      .find((checkbox) => !checkbox.hasAttribute("disabled"));
+    if (!offBox) throw new Error("Expected a standard check that can be turned on");
+    expect(offBox).not.toBeChecked();
+    fireEvent.click(offBox);
+    expect(next()).toHaveLength(tagged.length + 1);
     const authored = loose.find((li) => li.dataset.scorerRow === "predicate");
-    expect(authored && within(authored).getByRole("checkbox")).toBeChecked();
+    if (!authored) throw new Error("Expected the authored check's card");
+    const box = within(authored).getAllByRole("checkbox")[0];
+    expect(box).toBeChecked();
+    fireEvent.click(box);
+    expect(next()).toEqual(
+      tagged.filter((predicate) => predicate.type !== "noToolErrors"),
+    );
   });
 
   it("tags an existing required check when adding the evaluator", () => {
