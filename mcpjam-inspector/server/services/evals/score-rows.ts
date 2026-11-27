@@ -34,6 +34,11 @@ import {
 } from "@/shared/rubric-check-verdict";
 import type { AgentActivityAssessment } from "./agent-activity.js";
 import {
+  customJudgeDefinitionInputs,
+  customJudgeScoreRows,
+  type HostedCustomJudgesVerdictLike,
+} from "./custom-judge-rows.js";
+import {
   hostedPlatformGateRows,
   type PlatformGateEvidence,
 } from "./platform-gate-rows.js";
@@ -151,6 +156,8 @@ export type HostedScoreRowInputs = {
   agentActivity?: AgentActivityAssessment;
   /** Absent on the first pass; present on the judge second pass. */
   rubricChecksVerdict?: HostedRubricChecksVerdictLike;
+  /** Absent on the first pass; present on the judge second pass. */
+  customJudgesVerdict?: HostedCustomJudgesVerdictLike;
   /** First pass only: what the platform rows are graded from. */
   platformGates?: PlatformGateEvidence;
 };
@@ -253,7 +260,9 @@ export function hostedScoreDefinitionInputs(
 ): HostedScoreDefinitionInputs {
   const judge = inputs.judgeVerdict;
   const rubricChecks = rubricCheckQuestionsFrom(inputs.rubricChecksVerdict);
+  const customJudges = customJudgeDefinitionInputs(inputs.customJudgesVerdict);
   return {
+    ...(customJudges.length > 0 ? { customJudges } : {}),
     ...(inputs.predicateResults?.length
       ? {
           predicates: inputs.predicateResults.map((result) => ({
@@ -565,6 +574,7 @@ export function buildHostedScoreRows(
     );
   }
 
+  rows.push(...customJudgeScoreRows(inputs.customJudgesVerdict, byId));
   return rows;
 }
 
