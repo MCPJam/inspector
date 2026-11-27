@@ -94,6 +94,27 @@ describe.each([
     expect(screen.queryByTestId(tab)).not.toBeInTheDocument();
   });
 
+  it("opens Playground from a caniuse link only when Events is unavailable", () => {
+    const link = () => (
+      <MemoryRouter initialEntries={["/events?fallback=playground"]}>
+        <Route />
+      </MemoryRouter>
+    );
+    const { rerender } = render(link());
+    expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
+
+    state.flag = true;
+    rerender(link());
+    expect(screen.getByTestId(tab)).toBeInTheDocument();
+
+    state.flag = false;
+    rerender(link());
+    expect(screen.getByTestId("navigate")).toHaveAttribute(
+      "data-to",
+      routePaths.playground,
+    );
+  });
+
   it("closes an open workspace when the flag turns off", () => {
     state.flag = true;
     const { rerender } = render(<MemoryRouter><Route /></MemoryRouter>);

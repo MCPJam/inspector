@@ -63,6 +63,10 @@ import {
   type GradingEngineMode,
 } from "./grading-mode.js";
 import {
+  codeEvaluatorLogs,
+  type CodeGradingResult,
+} from "./sandbox-phases/code-score-family.js";
+import {
   buildHostedScoreContract,
   shadowVerdictFromScores,
   type HostedEvaluationLike,
@@ -425,6 +429,7 @@ function buildScoreMetadata(args: {
   /** The authoritative verdict, compared against but never derived from. */
   passed: boolean;
   stageMetadata: Record<string, unknown>;
+  codeGrading?: CodeGradingResult;
 }): {
   keys: Record<string, unknown>;
   /** Present ONLY at `enforce`. The verdict the gating rows derive. */
@@ -441,6 +446,7 @@ function buildScoreMetadata(args: {
     ...(args.isNegativeTest ? { isNegativeTest: true } : {}),
     ...(args.agentActivity ? { agentActivity: args.agentActivity } : {}),
     ...(args.platformGates ? { platformGates: args.platformGates } : {}),
+    ...(args.codeGrading ? { codeGrading: args.codeGrading } : {}),
     // The judge has not run yet on this pass; its row arrives in the second.
   });
   if (scores.length === 0) {
@@ -633,6 +639,8 @@ function buildSelectionToolCatalogMetadata(args: {
 export function buildIterationFinishParams(args: {
   iterationId: string | undefined;
   passed: boolean;
+  /** EFTW-90: the code evaluators' outcomes, or why grading didn't run. */
+  codeGrading?: CodeGradingResult;
   /** @see assessAgentActivity */
   agentActivity?: AgentActivityAssessment;
   /** The verdict's gate inputs, for the platform score rows. */
@@ -873,6 +881,7 @@ export function buildIterationFinishParams(args: {
     ...(iterationId ? { iterationId } : {}),
     ...(scoreMatchOptions ? { matchOptions: scoreMatchOptions } : {}),
     ...(isNegativeTest ? { isNegativeTest } : {}),
+    ...(args.codeGrading ? { codeGrading: args.codeGrading } : {}),
   });
   // Gated on the same `gradingMode` that decides whether `scoreMetadata`
   // above writes anything — D7 changes nothing outside `dual_write` (see the
@@ -1038,6 +1047,9 @@ export function buildIterationFinishParams(args: {
         ? { agentActivity: args.agentActivity }
         : {}),
       ...scoreMetadata,
+      ...(args.codeGrading && Object.keys(args.codeGrading.outcomes).length
+        ? { codeEvaluatorLogs: codeEvaluatorLogs(args.codeGrading) }
+        : {}),
       ...selectionToolCatalogMetadata,
       ...(setupAudit ?? {}),
       ...(hostPolicy && toolSignals

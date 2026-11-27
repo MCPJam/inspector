@@ -6,7 +6,7 @@ import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
 import { executeSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";
 import {
-  localReplayServers,
+  projectReplayServers,
   openLocalEvalRun,
 } from "../../services/evals/local-run-manager.js";
 import "../../types/hono";
@@ -163,7 +163,7 @@ evals.post("/replay-run", async (c) => {
         modelApiKeys,
         notes,
         passCriteria,
-        openReplayServers: localReplayServers(c, convexAuthToken),
+        openReplayServers: projectReplayServers(c, convexAuthToken),
       });
       return c.json(result);
     } catch (err) {

@@ -108,6 +108,7 @@ function projectWrite(origin: () => string): Route {
 export function fakeMcpjamRoutes(origin: () => string): Record<string, Route> {
   return {
     "GET /api/v1/me": (_request, response) => json(response, 200, ME),
+    "GET /api/v1/organizations": (_request, response) => json(response, 200, { items: [] }),
     "GET /api/v1/projects": (_request, response) =>
       json(response, 200, {
         items: [{ id: PROJECT_ID, name: "Default", organizationId: "org_a", updatedAt: 1 }],

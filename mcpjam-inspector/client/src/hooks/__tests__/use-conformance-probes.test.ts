@@ -32,13 +32,29 @@ describe("probesForRun", () => {
     ).toEqual({ logProbe, inputRequiredProbe });
   });
 
-  it("sends none on a run these checks do not apply to", () => {
+  it("sends no 2026-07-28 tool on a run those checks do not apply to", () => {
     // Auto never reaches 2026-07-28, and a legacy pin skips its checks.
-    for (const pin of ["auto", "2025-11-25"] as const) {
-      expect(probesApply(pin)).toBe(false);
-      expect(probesForRun({ logProbe }, undefined, pin)).toEqual({});
+    for (const pin of ["auto", "2025-03-26", "2025-11-25"] as const) {
+      expect(
+        probesForRun({ logProbe, inputRequiredProbe }, undefined, pin),
+      ).toEqual({});
     }
-    expect(probesApply("2026-07-28")).toBe(true);
+  });
+
+  it("sends the output tool wherever the output schema rule exists", () => {
+    // 2025-06-18 and 2025-11-25 state the rule too. Auto negotiates a 2025
+    // revision, so the check runs there as well.
+    for (const pin of ["auto", "2025-06-18", "2025-11-25", "2026-07-28"] as const) {
+      expect(probesApply(pin)).toBe(true);
+      expect(probesForRun({ logProbe, toolCallProbe }, undefined, pin)).toEqual(
+        pin === "2026-07-28" ? { logProbe, toolCallProbe } : { toolCallProbe },
+      );
+    }
+  });
+
+  it("asks for no tool on 2025-03-26, which has no outputSchema", () => {
+    expect(probesApply("2025-03-26")).toBe(false);
+    expect(probesForRun({ toolCallProbe }, undefined, "2025-03-26")).toEqual({});
   });
 
   it("drops a probe whose checks are all left out", () => {
