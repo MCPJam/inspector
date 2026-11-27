@@ -83,10 +83,12 @@ describe("CustomJudgePreview", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(copy);
   });
 
-  it("says each test is a charged judge call", () => {
+  it("says each test is a charged call to the judge the run used", () => {
     renderWithProviders(<CustomJudgePreview suiteId="s1" judge={judge} />);
     expect(
-      screen.getByText("Uses one charged judge call. Saves nothing."),
+      screen.getByText(
+        "Graded by the judge this run used, as one charged call. Saves nothing.",
+      ),
     ).toBeInTheDocument();
   });
 
@@ -111,6 +113,43 @@ describe("CustomJudgePreview", () => {
     expect(evidence.parentElement).not.toHaveAttribute("open");
     fireEvent.click(evidence);
     expect(evidence.parentElement).toHaveAttribute("open");
+  });
+
+  it("shows a failed judge call as a failed test, with its reason", async () => {
+    convex.preview.mockResolvedValue({
+      ok: true,
+      prompt: null,
+      result: {
+        status: "error",
+        error: "judge_output_invalid",
+        reason: "The score 1.4 is outside 0 to 1.",
+      },
+    });
+    renderWithProviders(<CustomJudgePreview suiteId="s1" judge={judge} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Test on a past iteration" }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "The score 1.4 is outside 0 to 1.",
+    );
+  });
+
+  it("asks to wait after testing the same iteration twice in a row", async () => {
+    convex.preview.mockRejectedValue(
+      Object.assign(new Error("ConvexError"), {
+        data: {
+          code: "EVAL_CUSTOM_JUDGE_PREVIEW_COOLDOWN",
+          message: "Slow down.",
+        },
+      }),
+    );
+    renderWithProviders(<CustomJudgePreview suiteId="s1" judge={judge} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Test on a past iteration" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "You just tested this judge on this iteration. Wait a few seconds, then try again.",
+    );
   });
 
   it("asks for a run first on a suite with no finished iterations", () => {

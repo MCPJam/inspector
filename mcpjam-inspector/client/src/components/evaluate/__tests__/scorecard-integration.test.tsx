@@ -113,6 +113,18 @@ describe("scorecard integration regressions", () => {
     }
     expect(computeIterationResult(savedTrial)).toBe("passed");
 
+    // No goal-judge case means no reveal control, so blind review leaves
+    // these rows visible instead of hiding them for good.
+    rerender(
+      <TrialScorecard
+        authored={authored}
+        iteration={savedTrial}
+        steps={steps}
+        judgeHidden
+      />,
+    );
+    expect(screen.getByText("Includes a Link")).toBeVisible();
+
     libraryFlag.enabled = false;
     try {
       rerender(
