@@ -727,7 +727,7 @@ function resolveSlug(error: unknown): {
   return { slug: "internal/unknown" };
 }
 
-const SPAWN_ERRNO = /\bspawn\s+\S+\s+(?:ENOENT|EACCES|EPERM)\b/;
+const SPAWN_ERRNO = /\bspawn\s+\S.*?\s+(?:ENOENT|EACCES|EPERM)\b/;
 
 function isSpawnFailure(error: unknown, message: string): boolean {
   const syscall =

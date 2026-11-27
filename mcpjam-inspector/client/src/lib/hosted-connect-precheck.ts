@@ -6,7 +6,8 @@ import { isPrivateNetworkUrl } from "@/shared/private-address";
  * The hosted backend runs in the cloud: it cannot start a local command and
  * cannot reach this computer's loopback, so those inputs are refused here with
  * a way forward instead of failing a connect. Private network addresses only
- * warn, because a tunnel or VPN can make them reachable.
+ * warn, because a self-hosted install can allowlist them
+ * (`MCPJAM_PRIVATE_EGRESS_ALLOWLIST`).
  */
 export type HostedInputCheck =
   | { kind: "ok" }
@@ -39,6 +40,14 @@ function isLoopbackUrl(input: string): boolean {
     return false;
   }
   host = host.replace(/^\[|\]$/g, "").replace(/\.+$/, "");
+  // `new URL()` rewrites IPv4-mapped IPv6 into hex (`[::ffff:127.0.0.1]` →
+  // `::ffff:7f00:1`), so decode it back before the dotted comparison.
+  const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
+  if (mapped) {
+    const high = parseInt(mapped[1], 16);
+    const low = parseInt(mapped[2], 16);
+    host = `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`;
+  }
   return (
     host === "localhost" ||
     host.endsWith(".localhost") ||
@@ -67,6 +76,11 @@ export function checkHostedServerInput(
   }
   if (isPrivateNetworkUrl(url)) return { kind: "private_network" };
   return { kind: "ok" };
+}
+
+/** A bare host goes out as HTTPS, the only scheme the hosted validator accepts. */
+export function withDefaultUrlScheme(input: string): string {
+  return HAS_SCHEME.test(input) ? input : `https://${input}`;
 }
 
 /**

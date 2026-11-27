@@ -5,7 +5,7 @@ import {
   connectFailureActionLabel,
   describeConnectFailure,
   EDIT_INPUT_SLUGS,
-  START_OAUTH_PREFIXES,
+  START_OAUTH_SLUGS,
 } from "../connect-failure";
 
 describe("describeConnectFailure", () => {
@@ -28,18 +28,27 @@ describe("describeConnectFailure", () => {
     );
     expect(describeConnectFailure(undefined).slug).toBe("connect/unclassified");
   });
+
+  it("keeps the server block's diagnostics when it reclassifies", () => {
+    const unknown = {
+      ...describeError(new Error("Upstream said no")),
+      requestId: "req_123",
+      stack: "Error: Upstream said no",
+      cause: { name: "TypeError", message: "fetch failed" },
+    };
+    expect(describeConnectFailure("ignored", unknown)).toMatchObject({
+      slug: "connect/unclassified",
+      requestId: "req_123",
+      stack: "Error: Upstream said no",
+      cause: { name: "TypeError", message: "fetch failed" },
+    });
+  });
 });
 
 describe("connect failure action", () => {
   it("maps only to slugs the catalog has", () => {
-    for (const slug of EDIT_INPUT_SLUGS) {
+    for (const slug of [...EDIT_INPUT_SLUGS, ...START_OAUTH_SLUGS]) {
       expect(ERROR_CATALOG[slug], slug).toBeDefined();
-    }
-    for (const prefix of START_OAUTH_PREFIXES) {
-      expect(
-        Object.keys(ERROR_CATALOG).some((slug) => slug.startsWith(prefix)),
-        prefix,
-      ).toBe(true);
     }
   });
 
@@ -49,6 +58,11 @@ describe("connect failure action", () => {
     ["transport/econnrefused", "http", "edit_input", "Edit URL"],
     ["transport/spawn_failed", "stdio", "edit_input", "Edit command"],
     ["auth/http_401", "stdio", "reconnect", "Reconnect"],
+    ["auth/missing_bearer", "http", "reconnect", "Reconnect"],
+    ["auth/proxy_rejected", "http", "reconnect", "Reconnect"],
+    ["auth/authorization_server_unreachable", "http", "reconnect", "Reconnect"],
+    ["oauth/well_known_unreachable", "http", "reconnect", "Reconnect"],
+    ["oauth/redirect_mismatch", "http", "reconnect", "Reconnect"],
     ["connect/unclassified", "http", "reconnect", "Reconnect"],
   ] as const)("%s over %s offers %s", (slug, transport, kind, label) => {
     expect(connectFailureActionKind(slug, transport)).toBe(kind);

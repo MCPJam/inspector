@@ -13,9 +13,12 @@ export function describeConnectFailure(
   normalized?: NormalizedError,
 ): NormalizedError {
   if (normalized && normalized.slug !== "internal/unknown") return normalized;
-  return describeError(normalized?.rawMessage || error || "", {
+  const described = describeError(normalized?.rawMessage || error || "", {
     phase: "connect",
   });
+  // Keep the server block's requestId, stack and cause; only the slug and
+  // the catalog copy change.
+  return normalized ? { ...normalized, ...described } : described;
 }
 
 /**
@@ -27,8 +30,22 @@ export function describeConnectFailure(
  */
 export type ConnectFailureActionKind = "start_oauth" | "edit_input" | "reconnect";
 
-/** Slug families a fresh OAuth sign-in addresses. */
-export const START_OAUTH_PREFIXES: readonly string[] = ["auth/", "oauth/"];
+/**
+ * Failures a fresh OAuth sign-in fixes. Listed one by one: other auth slugs
+ * (the MCPJam session, a proxy, an unreachable authorization server or
+ * discovery endpoint, a redirect mismatch) fail the same way again.
+ */
+export const START_OAUTH_SLUGS: readonly string[] = [
+  "auth/http_401",
+  "auth/http_403",
+  "auth/insufficient_scope",
+  "auth/oauth_refresh_failed",
+  "auth/consent_required",
+  "oauth/invalid_grant",
+  "oauth/invalid_client",
+  "oauth/no_bearer_challenge",
+  "oauth/non_compliant_challenge",
+];
 
 /** Failures that mean the URL or command itself is wrong. */
 export const EDIT_INPUT_SLUGS: readonly string[] = [
@@ -45,10 +62,7 @@ export function connectFailureActionKind(
   transport: "http" | "stdio",
 ): ConnectFailureActionKind {
   // OAuth only exists for HTTP servers; a stdio server has nothing to sign in to.
-  if (
-    transport === "http" &&
-    START_OAUTH_PREFIXES.some((prefix) => slug.startsWith(prefix))
-  ) {
+  if (transport === "http" && START_OAUTH_SLUGS.includes(slug)) {
     return "start_oauth";
   }
   if (EDIT_INPUT_SLUGS.includes(slug)) return "edit_input";

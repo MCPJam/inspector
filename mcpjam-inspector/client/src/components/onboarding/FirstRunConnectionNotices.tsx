@@ -88,8 +88,8 @@ const HOSTED_INPUT_COPY = {
 
 /**
  * Why the hosted app will not submit what was pasted, with the two ways to
- * connect it anyway. A private address only warns: a tunnel or VPN can make
- * it reachable, so the next Connect goes through.
+ * connect it anyway. A private address only warns: a self-hosted install can
+ * allowlist it, so the next Connect goes through.
  */
 export function HostedInputNotice({ check }: { check: HostedInputCheck }) {
   if (check.kind === "ok") return null;
@@ -104,7 +104,8 @@ export function HostedInputNotice({ check }: { check: HostedInputCheck }) {
           aria-hidden
         />
         <p className="text-[11.5px] leading-[1.5] text-card-foreground">
-          This address is on a private network. Connect again to try anyway.
+          This private address connects only on a self-hosted MCPJam that lists
+          it in MCPJAM_PRIVATE_EGRESS_ALLOWLIST. Connect again to try anyway.
         </p>
       </div>
     );

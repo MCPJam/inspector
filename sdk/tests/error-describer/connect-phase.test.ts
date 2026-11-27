@@ -61,6 +61,13 @@ describe("describeError — stdio spawn failures", () => {
     );
   });
 
+  it("classifies a message whose command path has spaces", () => {
+    const message = String.raw`spawn C:\Program Files\nodejs\node.exe ENOENT`;
+    expect(describeError(new Error(message)).slug).toBe(
+      "transport/spawn_failed",
+    );
+  });
+
   it("leaves an ENOENT from another syscall alone", () => {
     const error = Object.assign(
       new Error("ENOENT: no such file or directory, open 'config.json'"),

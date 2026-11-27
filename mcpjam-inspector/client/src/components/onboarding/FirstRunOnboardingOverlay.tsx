@@ -42,7 +42,10 @@ import {
   connectFailureActionLabel,
   describeConnectFailure,
 } from "@/lib/connect-failure";
-import { inferFirstRunTransport } from "@/lib/hosted-connect-precheck";
+import {
+  inferFirstRunTransport,
+  withDefaultUrlScheme,
+} from "@/lib/hosted-connect-precheck";
 import {
   ConnectionFailureNotice,
   HostedInputNotice,
@@ -416,7 +419,6 @@ export function FirstRunOnboardingOverlay({
       }
 
       setServerUrlError(null);
-      setServerUrlOrCommand(trimmedUrlOrCommand);
       // The choice screen starts a new server connection. Always derive its
       // identity from the URL entered here instead of reusing a name hydrated
       // from an earlier OAuth recovery attempt.
@@ -425,7 +427,12 @@ export function FirstRunOnboardingOverlay({
         trimmedUrlOrCommand,
         HOSTED_MODE,
       );
-      if (!hostedInputGate.allow(trimmedUrlOrCommand, inferredTransport)) {
+      const urlOrCommand =
+        inferredTransport === "http"
+          ? withDefaultUrlScheme(trimmedUrlOrCommand)
+          : trimmedUrlOrCommand;
+      setServerUrlOrCommand(urlOrCommand);
+      if (!hostedInputGate.allow(urlOrCommand, inferredTransport)) {
         trackFirstRunConnectionFailed(
           { serverKind: "personal", transport: inferredTransport },
           "validation",
@@ -437,73 +444,75 @@ export function FirstRunOnboardingOverlay({
       onConnectOwnServer({
         name: inferredName,
         transport: inferredTransport,
-        urlOrCommand: trimmedUrlOrCommand,
+        urlOrCommand,
         authentication: "auto",
       });
     },
     [hostedInputGate, onConnectOwnServer, serverUrlOrCommand],
   );
 
-  const validateSelectedAuthentication = useCallback(() => {
-    setBearerTokenError(null);
-    setClientIdError(null);
-    setClientSecretError(null);
-    setXaaConfigurationError(null);
+  const validateSelectedAuthentication = useCallback(
+    (authentication: ServerFormAuthType = serverAuthentication) => {
+      setBearerTokenError(null);
+      setClientIdError(null);
+      setClientSecretError(null);
+      setXaaConfigurationError(null);
 
-    if (serverTransport === "stdio") return true;
+      if (serverTransport === "stdio") return true;
 
-    if (serverAuthentication === "bearer" && !bearerToken.trim()) {
-      setBearerTokenError("Enter a bearer token to continue.");
-      bearerTokenInputRef.current?.focus();
-      return false;
-    }
+      if (authentication === "bearer" && !bearerToken.trim()) {
+        setBearerTokenError("Enter a bearer token to continue.");
+        bearerTokenInputRef.current?.focus();
+        return false;
+      }
 
-    const usesPreregisteredCredentials =
-      serverAuthentication === "xaa"
-        ? registrationMode === "auto" || registrationMode === "preregistered"
-        : (serverAuthentication === "oauth" ||
-            serverAuthentication === "auto") &&
-          registrationMode === "preregistered";
-    const clientIdValidation = usesPreregisteredCredentials
-      ? validateOAuthClientId(clientId)
-      : null;
-    if (clientIdValidation) {
-      setClientIdError(clientIdValidation);
-      window.setTimeout(() => {
-        contentRef.current
-          ?.querySelector<HTMLInputElement>('input[aria-required="true"]')
-          ?.focus();
-      }, 0);
-      return false;
-    }
-    const clientSecretValidation = usesPreregisteredCredentials
-      ? validateOAuthClientSecret(clientSecret)
-      : null;
-    if (clientSecretValidation) {
-      setClientSecretError(clientSecretValidation);
-      return false;
-    }
-    if (serverAuthentication !== "xaa") return true;
-    if ((xaaSubject.trim() === "") !== (xaaEmail.trim() === "")) {
-      setXaaConfigurationError(XAA_PARTIAL_OVERRIDE_ERROR);
-      return false;
-    }
-    if (confidentialCimdBlockReason) {
-      setXaaConfigurationError(confidentialCimdBlockReason);
-      return false;
-    }
-    return true;
-  }, [
-    bearerToken,
-    clientId,
-    clientSecret,
-    confidentialCimdBlockReason,
-    registrationMode,
-    serverAuthentication,
-    serverTransport,
-    xaaEmail,
-    xaaSubject,
-  ]);
+      const usesPreregisteredCredentials =
+        authentication === "xaa"
+          ? registrationMode === "auto" || registrationMode === "preregistered"
+          : (authentication === "oauth" || authentication === "auto") &&
+            registrationMode === "preregistered";
+      const clientIdValidation = usesPreregisteredCredentials
+        ? validateOAuthClientId(clientId)
+        : null;
+      if (clientIdValidation) {
+        setClientIdError(clientIdValidation);
+        window.setTimeout(() => {
+          contentRef.current
+            ?.querySelector<HTMLInputElement>('input[aria-required="true"]')
+            ?.focus();
+        }, 0);
+        return false;
+      }
+      const clientSecretValidation = usesPreregisteredCredentials
+        ? validateOAuthClientSecret(clientSecret)
+        : null;
+      if (clientSecretValidation) {
+        setClientSecretError(clientSecretValidation);
+        return false;
+      }
+      if (authentication !== "xaa") return true;
+      if ((xaaSubject.trim() === "") !== (xaaEmail.trim() === "")) {
+        setXaaConfigurationError(XAA_PARTIAL_OVERRIDE_ERROR);
+        return false;
+      }
+      if (confidentialCimdBlockReason) {
+        setXaaConfigurationError(confidentialCimdBlockReason);
+        return false;
+      }
+      return true;
+    },
+    [
+      bearerToken,
+      clientId,
+      clientSecret,
+      confidentialCimdBlockReason,
+      registrationMode,
+      serverAuthentication,
+      serverTransport,
+      xaaEmail,
+      xaaSubject,
+    ],
+  );
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -572,16 +581,18 @@ export function FirstRunOnboardingOverlay({
     ],
   );
 
+  // Every details-form connect runs these checks, including Start OAuth,
+  // which overrides only the authentication it submits.
   const submitServerDetails = useCallback(
-    (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
+    (authenticationOverride?: ServerFormAuthType) => {
+      const authentication = authenticationOverride ?? serverAuthentication;
       const trimmedUrlOrCommand = serverUrlOrCommand.trim();
       if (!trimmedUrlOrCommand) {
         trackFirstRunConnectionFailed(
           {
             serverKind: "personal",
             transport: serverTransport,
-            authentication: serverAuthentication,
+            authentication,
           },
           "validation",
         );
@@ -596,18 +607,21 @@ export function FirstRunOnboardingOverlay({
           {
             serverKind: "personal",
             transport: serverTransport,
-            authentication: serverAuthentication,
+            authentication,
           },
           "validation",
         );
         return;
       }
-      if (!validateSelectedAuthentication()) return;
+      if (!validateSelectedAuthentication(authentication)) return;
+      const draft = buildServerDraft(
+        serverName.trim() || deriveServerName(trimmedUrlOrCommand),
+        trimmedUrlOrCommand,
+      );
       onConnectOwnServer(
-        buildServerDraft(
-          serverName.trim() || deriveServerName(trimmedUrlOrCommand),
-          trimmedUrlOrCommand,
-        ),
+        authenticationOverride
+          ? { ...draft, authentication: authenticationOverride }
+          : draft,
       );
     },
     [
@@ -635,15 +649,8 @@ export function FirstRunOnboardingOverlay({
         serverDetailsUrlInputRef.current?.focus();
         serverDetailsUrlInputRef.current?.select();
       } else if (kind === "start_oauth") {
-        const urlOrCommand = serverUrlOrCommand.trim();
         changeServerAuthentication("oauth");
-        onConnectOwnServer({
-          ...buildServerDraft(
-            serverName.trim() || deriveServerName(urlOrCommand),
-            urlOrCommand,
-          ),
-          authentication: "oauth",
-        });
+        submitServerDetails("oauth");
       } else {
         serverDetailsFormRef.current?.requestSubmit();
       }
@@ -1288,7 +1295,13 @@ export function FirstRunOnboardingOverlay({
               </div>
             </div>
           ) : (
-            <form ref={serverDetailsFormRef} onSubmit={submitServerDetails}>
+            <form
+              ref={serverDetailsFormRef}
+              onSubmit={(event) => {
+                event.preventDefault();
+                submitServerDetails();
+              }}
+            >
               <DialogHeader className="gap-0 text-left">
                 <DialogTitle className="pb-0 text-[17px] leading-6 font-bold tracking-[-0.02em] text-card-foreground">
                   Set up your server

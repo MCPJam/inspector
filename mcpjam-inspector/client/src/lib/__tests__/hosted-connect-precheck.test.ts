@@ -3,6 +3,7 @@ import {
   checkHostedServerInput,
   inferFirstRunTransport,
   LOCAL_INSPECTOR_COMMAND,
+  withDefaultUrlScheme,
 } from "../hosted-connect-precheck";
 
 describe("checkHostedServerInput", () => {
@@ -21,6 +22,8 @@ describe("checkHostedServerInput", () => {
     "http://[::1]:3000/mcp",
     "http://app.localhost/mcp",
     "http://localhost./mcp",
+    "https://[::ffff:7f00:1]:3000/mcp",
+    "https://[::ffff:127.0.0.1]/mcp",
   ])("blocks loopback %s", (input) => {
     expect(checkHostedServerInput(input, "http")).toEqual({
       kind: "blocked",
@@ -58,5 +61,15 @@ describe("inferFirstRunTransport", () => {
     ["http://localhost:3000", false, "http"],
   ] as const)("%s (hosted %s) is %s", (input, hosted, expected) => {
     expect(inferFirstRunTransport(input, hosted)).toBe(expected);
+  });
+});
+
+describe("withDefaultUrlScheme", () => {
+  it.each([
+    ["mcp.example.com/mcp", "https://mcp.example.com/mcp"],
+    ["https://mcp.example.com/mcp", "https://mcp.example.com/mcp"],
+    ["http://mcp.example.com/mcp", "http://mcp.example.com/mcp"],
+  ])("%s becomes %s", (input, expected) => {
+    expect(withDefaultUrlScheme(input)).toBe(expected);
   });
 });

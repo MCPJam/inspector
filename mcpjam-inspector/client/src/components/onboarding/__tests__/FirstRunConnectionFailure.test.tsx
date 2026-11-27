@@ -105,6 +105,25 @@ describe("first-run connection failure card", () => {
     );
   });
 
+  it("runs the hosted localhost check before Start OAuth submits", () => {
+    hostedState.hosted = true;
+    const { fail, submit, onConnectOwnServer } = renderOverlay();
+    submit("https://mcp.example.com/mcp");
+    const raw = "Streamable HTTP error: Error POSTing to endpoint (HTTP 401)";
+    fail(raw, {
+      normalized: describeError(Object.assign(new Error(raw), { code: 401 })),
+    });
+
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "https://localhost:3000/mcp" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start OAuth" }));
+    expect(onConnectOwnServer).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByText("The web app cannot reach localhost"),
+    ).toBeVisible();
+  });
+
   it("shows an unknown failure's raw message as the reason and reconnects", () => {
     const { fail, submit, onConnectOwnServer } = renderOverlay();
     submit("https://mcp.example.com/mcp");
@@ -178,7 +197,9 @@ describe("hosted input check", () => {
     hostedState.hosted = true;
     const { submit, onConnectOwnServer } = renderOverlay();
     submit("http://192.168.1.20:8080/mcp");
-    expect(screen.getByRole("alert")).toHaveTextContent("private network");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "MCPJAM_PRIVATE_EGRESS_ALLOWLIST",
+    );
     expect(onConnectOwnServer).not.toHaveBeenCalled();
 
     submit("http://192.168.1.20:8080/mcp");
@@ -195,7 +216,7 @@ describe("hosted input check", () => {
     expect(onConnectOwnServer).toHaveBeenCalledWith(
       expect.objectContaining({
         transport: "http",
-        urlOrCommand: "mcp.example.com/mcp",
+        urlOrCommand: "https://mcp.example.com/mcp",
       }),
     );
   });
