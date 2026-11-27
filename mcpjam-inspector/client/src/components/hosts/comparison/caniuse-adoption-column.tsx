@@ -95,15 +95,7 @@ function AdoptionLink({
       title={[detail, unpublishedLabel].filter(Boolean).join(" ")}
     >
       {label && <span className="block font-medium capitalize [overflow-wrap:anywhere]">{label}</span>}
-      <span
-        className={
-          score === null
-            ? undefined
-            : label
-              ? "text-xs font-bold text-primary"
-              : "text-base font-bold leading-tight text-primary"
-        }
-      >
+      <span className={score === null ? undefined : label ? "font-bold text-primary" : "text-base font-bold leading-tight text-primary"}>
         {percentage}
         {reporting && score !== null && (
           <span className="ml-1 text-xs font-medium">reported</span>
