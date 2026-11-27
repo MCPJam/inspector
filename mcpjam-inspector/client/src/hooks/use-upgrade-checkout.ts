@@ -219,8 +219,15 @@ export interface UpgradeStartResult {
 export type UpgradeStartFailure =
   | "no_organization"
   | "prices_loading"
+  | "plan_unavailable"
   | "no_supported_interval"
   | "start_failed";
+
+export interface UpgradeStartOptions {
+  /** Checked before leaving for Stripe; false once the caller has moved on,
+   * e.g. its dialog closed while checkout was starting. */
+  stillWanted?: () => boolean;
+}
 
 function failedStart(failure: UpgradeStartFailure): UpgradeStartResult {
   return { redirected: false, shouldDismiss: false, failure };
@@ -346,156 +353,161 @@ export function useUpgradeCheckout({
     ],
   );
 
-  const start = useCallback(async (): Promise<UpgradeStartResult> => {
-    if (!organizationId) return failedStart("no_organization");
-    // The catalog is a separate query from billingStatus, so the CTA can be
-    // live while prices and interval support are still unknown. Never send
-    // anyone to checkout on a price we haven't shown them.
-    if (isLoadingPlanCatalog || !teamEntry) {
-      return failedStart("prices_loading");
-    }
-    const checkoutInterval = resolveUpgradeInterval(
-      interval,
-      annualSupported,
-      monthlySupported,
-    );
-    if (!checkoutInterval) {
-      if (!inlineErrors) {
-        toast.error("Checkout is not available for this plan right now.");
-      }
-      track("plan_limit_upgrade_failed", {
-        location: "plan_limit_dialog",
-        organization_id: organizationId,
-        limit_kind: limitKind,
-        origin,
-        error_kind: "no_supported_interval",
-        current_plan: currentPlan,
-        effective_plan: effectivePlan,
-        can_manage_billing: canManageBilling,
-        annual_supported: annualSupported,
-        monthly_supported: monthlySupported,
-      });
-      return failedStart("no_supported_interval");
-    }
-
-    const url = new URL(window.location.href);
-    url.searchParams.set(UPGRADE_RETURN_PARAM, "return");
-    url.searchParams.set(UPGRADE_RETURN_ORG_PARAM, organizationId);
-    url.searchParams.set(UPGRADE_RETURN_ORIGIN_PARAM, origin);
-
-    try {
-      // Start the real checkout work before emitting analytics. We never await
-      // analytics, and track() is failure-isolated.
-      const resultPromise = startPlanChange(
-        url.toString(),
-        targetPlan,
-        checkoutInterval,
-        {
-          confirmPaidPlanChange: false,
-        },
+  const start = useCallback(
+    async (options?: UpgradeStartOptions): Promise<UpgradeStartResult> => {
+      if (!organizationId) return failedStart("no_organization");
+      // The catalog is a separate query from billingStatus, so the CTA can be
+      // live while prices and interval support are still unknown. Never send
+      // anyone to checkout on a price we haven't shown them.
+      if (isLoadingPlanCatalog) return failedStart("prices_loading");
+      if (!teamEntry) return failedStart("plan_unavailable");
+      const checkoutInterval = resolveUpgradeInterval(
+        interval,
+        annualSupported,
+        monthlySupported,
       );
-      track("plan_limit_upgrade_clicked", {
-        location: "plan_limit_dialog",
-        organization_id: organizationId,
-        limit_kind: limitKind,
-        origin,
-        billing_interval: checkoutInterval,
-        current_plan: currentPlan,
-        effective_plan: effectivePlan,
-        can_manage_billing: canManageBilling,
-        annual_supported: annualSupported,
-        monthly_supported: monthlySupported,
-      });
-      const result = await resultPromise;
-      // The user is about to change plan, or has: a swarm wave that ran out
-      // before this and runs out again after it is news, not a repeat (a
-      // create-flow Retry reuses its wave). A change that only takes effect at
-      // renewal lifts nothing yet, and it is this organization's waves only.
-      if (result.kind !== "scheduled") {
-        useMCPJamLimitDialogStore
-          .getState()
-          .forgetNotifiedWaves(organizationId);
-      }
-      if (result.kind === "checkout" || result.kind === "portal") {
-        const nextUrl =
-          result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
-        if (isDesktopApp()) {
-          // Return-in-place is impossible here: the shell opens Stripe in the
-          // system browser, so the return URL lands in a different session.
-          // Say where checkout went and release the dialog, rather than
-          // leaving it open behind a page that will never navigate.
-          window.open(nextUrl, "_blank", "noopener,noreferrer");
-          toast.info(
-            "Finish checkout in your browser. Your new plan unlocks here automatically.",
-          );
-          return { redirected: true, shouldDismiss: true };
+      if (!checkoutInterval) {
+        if (!inlineErrors) {
+          toast.error("Checkout is not available for this plan right now.");
         }
-        // Same tab, so the return URL brings the user back in place. The token
-        // is what makes that return trustworthy on the way back.
-        if (userId) stashUpgradeReturnToken(organizationId, origin, userId);
-        window.location.assign(nextUrl);
-        return { redirected: true, shouldDismiss: false };
+        track("plan_limit_upgrade_failed", {
+          location: "plan_limit_dialog",
+          organization_id: organizationId,
+          limit_kind: limitKind,
+          origin,
+          error_kind: "no_supported_interval",
+          current_plan: currentPlan,
+          effective_plan: effectivePlan,
+          can_manage_billing: canManageBilling,
+          annual_supported: annualSupported,
+          monthly_supported: monthlySupported,
+        });
+        return failedStart("no_supported_interval");
       }
 
-      if (result.kind === "updated") {
-        toast.success(
-          `Plan updated to ${formatPlanName(
-            result.subscription.plan ?? "team",
-          )}.`,
+      const url = new URL(window.location.href);
+      url.searchParams.set(UPGRADE_RETURN_PARAM, "return");
+      url.searchParams.set(UPGRADE_RETURN_ORG_PARAM, organizationId);
+      url.searchParams.set(UPGRADE_RETURN_ORIGIN_PARAM, origin);
+
+      try {
+        // Start the real checkout work before emitting analytics. We never await
+        // analytics, and track() is failure-isolated.
+        const resultPromise = startPlanChange(
+          url.toString(),
+          targetPlan,
+          checkoutInterval,
+          {
+            confirmPaidPlanChange: false,
+          },
         );
-      } else {
-        toast.success("Plan change scheduled for renewal.");
+        track("plan_limit_upgrade_clicked", {
+          location: "plan_limit_dialog",
+          organization_id: organizationId,
+          limit_kind: limitKind,
+          origin,
+          billing_interval: checkoutInterval,
+          current_plan: currentPlan,
+          effective_plan: effectivePlan,
+          can_manage_billing: canManageBilling,
+          annual_supported: annualSupported,
+          monthly_supported: monthlySupported,
+        });
+        const result = await resultPromise;
+        // The user is about to change plan, or has: a swarm wave that ran out
+        // before this and runs out again after it is news, not a repeat (a
+        // create-flow Retry reuses its wave). A change that only takes effect at
+        // renewal lifts nothing yet, and it is this organization's waves only.
+        if (result.kind !== "scheduled") {
+          useMCPJamLimitDialogStore
+            .getState()
+            .forgetNotifiedWaves(organizationId);
+        }
+        if (result.kind === "checkout" || result.kind === "portal") {
+          const nextUrl =
+            result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
+          if (isDesktopApp()) {
+            // Return-in-place is impossible here: the shell opens Stripe in the
+            // system browser, so the return URL lands in a different session.
+            // Say where checkout went and release the dialog, rather than
+            // leaving it open behind a page that will never navigate.
+            window.open(nextUrl, "_blank", "noopener,noreferrer");
+            toast.info(
+              "Finish checkout in your browser. Your new plan unlocks here automatically.",
+            );
+            return { redirected: true, shouldDismiss: true };
+          }
+          if (options?.stillWanted && !options.stillWanted()) {
+            return { redirected: false, shouldDismiss: false };
+          }
+          // Same tab, so the return URL brings the user back in place. The token
+          // is what makes that return trustworthy on the way back.
+          if (userId) stashUpgradeReturnToken(organizationId, origin, userId);
+          window.location.assign(nextUrl);
+          return { redirected: true, shouldDismiss: false };
+        }
+
+        if (result.kind === "updated") {
+          toast.success(
+            `Plan updated to ${formatPlanName(
+              result.subscription.plan ?? "team",
+            )}.`,
+          );
+        } else {
+          toast.success("Plan change scheduled for renewal.");
+        }
+        track("plan_limit_upgrade_resolved", {
+          location: "plan_limit_dialog",
+          organization_id: organizationId,
+          limit_kind: limitKind,
+          origin,
+          result_kind: result.kind,
+          billing_interval: checkoutInterval,
+          resulting_plan: result.subscription.plan ?? "team",
+          current_plan: currentPlan,
+          effective_plan: effectivePlan,
+        });
+        return { redirected: false, shouldDismiss: true };
+      } catch (error) {
+        if (!inlineErrors) {
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : "Couldn't start checkout. Please try again.",
+          );
+        }
+        track("plan_limit_upgrade_failed", {
+          location: "plan_limit_dialog",
+          organization_id: organizationId,
+          limit_kind: limitKind,
+          origin,
+          error_kind: "start_plan_change_failed",
+          billing_interval: checkoutInterval,
+          current_plan: currentPlan,
+          effective_plan: effectivePlan,
+          can_manage_billing: canManageBilling,
+        });
+        return failedStart("start_failed");
       }
-      track("plan_limit_upgrade_resolved", {
-        location: "plan_limit_dialog",
-        organization_id: organizationId,
-        limit_kind: limitKind,
-        origin,
-        result_kind: result.kind,
-        billing_interval: checkoutInterval,
-        resulting_plan: result.subscription.plan ?? "team",
-        current_plan: currentPlan,
-        effective_plan: effectivePlan,
-      });
-      return { redirected: false, shouldDismiss: true };
-    } catch (error) {
-      if (!inlineErrors) {
-        toast.error(
-          error instanceof Error
-            ? error.message
-            : "Couldn't start checkout. Please try again.",
-        );
-      }
-      track("plan_limit_upgrade_failed", {
-        location: "plan_limit_dialog",
-        organization_id: organizationId,
-        limit_kind: limitKind,
-        origin,
-        error_kind: "start_plan_change_failed",
-        billing_interval: checkoutInterval,
-        current_plan: currentPlan,
-        effective_plan: effectivePlan,
-        can_manage_billing: canManageBilling,
-      });
-      return failedStart("start_failed");
-    }
-  }, [
-    annualSupported,
-    canManageBilling,
-    currentPlan,
-    effectivePlan,
-    inlineErrors,
-    interval,
-    isLoadingPlanCatalog,
-    limitKind,
-    monthlySupported,
-    organizationId,
-    origin,
-    startPlanChange,
-    teamEntry,
-    targetPlan,
-    userId,
-  ]);
+    },
+    [
+      annualSupported,
+      canManageBilling,
+      currentPlan,
+      effectivePlan,
+      inlineErrors,
+      interval,
+      isLoadingPlanCatalog,
+      limitKind,
+      monthlySupported,
+      organizationId,
+      origin,
+      startPlanChange,
+      teamEntry,
+      targetPlan,
+      userId,
+    ],
+  );
 
   return {
     interval,

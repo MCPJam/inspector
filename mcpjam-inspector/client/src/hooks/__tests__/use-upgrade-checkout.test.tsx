@@ -287,7 +287,7 @@ describe("useUpgradeCheckout", () => {
     expect(startPlanChange).not.toHaveBeenCalled();
   });
 
-  it("holds checkout when the catalog resolved without a Team entry", async () => {
+  it("reports the plan as unavailable when the catalog resolved without a Team entry", async () => {
     // Distinct from the loading case above: nothing is in flight, there is
     // simply no plan to sell. The `!teamEntry` guard is the one that stops it.
     billingState.planCatalog = undefined;
@@ -308,9 +308,35 @@ describe("useUpgradeCheckout", () => {
     expect(outcome!).toEqual({
       redirected: false,
       shouldDismiss: false,
-      failure: "prices_loading",
+      failure: "plan_unavailable",
     });
     expect(startPlanChange).not.toHaveBeenCalled();
+  });
+
+  it("stays on the page when the caller no longer wants checkout", async () => {
+    billingState.planCatalog = planCatalog(["annual"]);
+    startPlanChange.mockResolvedValue({
+      kind: "checkout",
+      checkoutUrl: "https://checkout.stripe.com/c/pay/cs_test_123",
+      subscription: { plan: "team" },
+    });
+    const { result } = renderHook(() =>
+      useUpgradeCheckout({
+        organizationId: "org-1",
+        origin: "credits",
+        limitKind: "credits",
+      }),
+    );
+
+    let outcome: Awaited<ReturnType<typeof result.current.start>>;
+    await act(async () => {
+      outcome = await result.current.start({ stillWanted: () => false });
+    });
+
+    expect(outcome!).toEqual({ redirected: false, shouldDismiss: false });
+    expect(
+      window.sessionStorage.getItem("mcpjam.upgradeReturnToken:user-1"),
+    ).toBeNull();
   });
 
   it("hands checkout to the browser on desktop instead of navigating in place", async () => {

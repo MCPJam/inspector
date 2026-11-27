@@ -275,6 +275,12 @@ export function MCPJamLimitDialog() {
     inlineErrors: true,
   });
   const [checkoutFailed, setCheckoutFailed] = useState(false);
+  // Bumped on every open and close, so a checkout started from an earlier
+  // opening can neither redirect nor leave its failure on the next one.
+  const checkoutAttemptRef = useRef(0);
+  useEffect(() => {
+    checkoutAttemptRef.current += 1;
+  }, [showTopupDialog]);
   const {
     recipients: requestRecipients,
     isLoading: isLoadingRequestRecipients,
@@ -491,7 +497,10 @@ export function MCPJamLimitDialog() {
     // Sent before start(): a successful start navigates the tab away, and an
     // event queued after that may never leave the page.
     track("plan_limit_checkout_clicked", checkoutContext);
-    const result = await creditsUpgrade.start();
+    const attempt = checkoutAttemptRef.current;
+    const stillWanted = () => checkoutAttemptRef.current === attempt;
+    const result = await creditsUpgrade.start({ stillWanted });
+    if (!stillWanted()) return;
     // The desktop app hands checkout to the system browser and asks to close.
     if (result.shouldDismiss) dismiss();
     if (result.failure) {
