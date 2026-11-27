@@ -67,6 +67,9 @@ jobs:
       - name: Check canonical error rules
         run: npm run errors:check && node --test scripts/__tests__/error-rules.test.mjs
 
+      - name: Test the runtime guards in test:checks
+        run: node --test scripts/__tests__/check-runtime-guards.test.mjs
+
       - name: Verify Docker workspace dependency manifests
         run: node --test .github/scripts/docker-workspaces.test.mjs
 
