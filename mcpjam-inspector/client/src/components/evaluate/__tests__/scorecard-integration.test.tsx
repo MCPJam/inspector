@@ -9,7 +9,10 @@ import {
 import type { EvalIteration } from "@/components/evals/types";
 import { useSuggestedScorers } from "../case-scorecard/suggested-from-run-section";
 import { TrialScorecard } from "../case-scorecard/trial-scorecard";
-import { JudgeVerdictPanel } from "@/components/evals/goal-completion-presentation";
+import {
+  JudgeVerdictPanel,
+  type JudgeCase,
+} from "@/components/evals/goal-completion-presentation";
 import { groupCaseIterations } from "@/components/evals/runs/group-case-iterations";
 import { computeIterationResult } from "@/components/evals/pass-criteria";
 import { authoredForTrial } from "../case-scorecard/trial-authored";
@@ -17,6 +20,9 @@ import { buildCaseScorecard } from "../case-scorecard/case-scorecard-model";
 
 vi.mock("convex/react", () => ({ useAction: () => vi.fn() }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: (name: string) => name === "evaluator-library",
+}));
 
 const steps = [{ id: "p", kind: "prompt" as const, prompt: "Find my account" }];
 const authored = {
@@ -236,6 +242,47 @@ describe("scorecard integration regressions", () => {
     fireEvent.click(screen.getByRole("button", { name: "pass", exact: true }));
     expect(onReview).toHaveBeenCalledWith("pass", { blind: true });
     expect(screen.queryByText("0.93")).not.toBeInTheDocument();
+  });
+
+  it("withholds a library question's verdict in blind review", () => {
+    const judgeCase: Partial<JudgeCase> = {
+      score: 0.93,
+      passed: true,
+      reason: "Judge",
+    };
+    const graded = {
+      ...iteration,
+      metadata: {
+        rubricChecksVerdict: {
+          questions: [
+            {
+              key: "q:answer-grounded-in-results-grounded",
+              kind: "boolean",
+              label: "Every claim is backed by a tool result",
+              contentDigest: "d",
+              passThreshold: 0.5,
+              status: "scored",
+              value: 0.02,
+              rationale: "Invented a refund amount",
+            },
+          ],
+        },
+      },
+    } as EvalIteration;
+    const props = {
+      authored,
+      iteration: graded,
+      steps,
+      judgeCase: judgeCase as JudgeCase,
+    };
+    const view = render(<TrialScorecard {...props} judgeHidden />);
+    const summary = screen.getByRole("region", { name: "Library evaluators" });
+    expect(summary).not.toHaveTextContent(/failed/i);
+    expect(screen.queryByText(/Invented a refund amount/)).toBeNull();
+    view.rerender(<TrialScorecard {...props} judgeHidden={false} />);
+    expect(
+      screen.getByRole("region", { name: "Library evaluators" }),
+    ).toHaveTextContent(/failed/i);
   });
 
   it("uses a historical no-tool route instead of the current tools choice", () => {

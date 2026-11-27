@@ -48,6 +48,42 @@ describe("RubricChecksJudgeCard", () => {
     );
   });
 
+  it("offers Yes/no questions only on template v2", () => {
+    const { rerender } = render(
+      <RubricChecksJudgeCard
+        judgeConfig={undefined}
+        onJudgeConfigChange={vi.fn()}
+        judgesCapabilities={judgesCapabilities}
+        criteria={criteria}
+        goalJudgeOff={false}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Yes/no" }),
+    ).not.toBeInTheDocument();
+    const onChange = vi.fn();
+    const v2 = {
+      ...judgesCapabilities,
+      rubricChecks: {
+        ...judgesCapabilities.rubricChecks,
+        template: { version: 2, hash: "h2" },
+      },
+    } as NonNullable<SuiteCapabilities["judges"]>;
+    rerender(
+      <RubricChecksJudgeCard
+        judgeConfig={undefined}
+        onJudgeConfigChange={onChange}
+        judgesCapabilities={v2}
+        criteria={criteria}
+        goalJudgeOff={false}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Yes/no" }));
+    expect(onChange.mock.calls[0][0].rubricChecks.questions[0].kind).toBe(
+      "yesno",
+    );
+  });
+
   it("says where criteria come from when there are none", () => {
     render(
       <RubricChecksJudgeCard

@@ -10,6 +10,7 @@ import type { ScorerTableScope } from "../suite-scorer-table";
 import type { EvalJudgeConfig } from "../types";
 import {
   findLibraryEvaluator,
+  hasLibraryIdConflict,
   LIBRARY_EVALUATORS,
   taggedJudges,
   taggedQuestions,
@@ -25,15 +26,10 @@ export function evaluatorIdForQuestionKey(
   key: string | undefined,
 ): string | undefined {
   if (!key?.startsWith("q:")) return undefined;
-  return evaluatorIdForLibraryId(key.slice(2));
-}
-
-/** The evaluator a library question or judge id came from (`<evaluator>-<slug>`). */
-export function evaluatorIdForLibraryId(
-  id: string | undefined,
-): string | undefined {
-  if (!id) return undefined;
-  return LIBRARY_EVALUATORS.find((e) => id.startsWith(`${e.id}-`))?.id;
+  const id = key.slice(2);
+  return LIBRARY_EVALUATORS.find((e) =>
+    taggedQuestions(e).some((q) => q.id === id),
+  )?.id;
 }
 
 type ListEdit<T> = (current: T[]) => T[];
@@ -47,16 +43,15 @@ function withLibraryLists(
   judgeConfig: EvalJudgeConfig | undefined,
   edits: {
     questions?: ListEdit<RubricCheckQuestion>;
+    enableQuestions?: boolean;
     judges?: ListEdit<CustomJudge>;
   },
 ): EvalJudgeConfig | undefined {
   let next = judgeConfig;
   if (edits.questions) {
     next = withRubricChecks(next, {
-      enabled: true,
-      questions: edits
-        .questions(next?.rubricChecks?.questions ?? [])
-        .slice(0, MAX_RUBRIC_CHECK_QUESTIONS),
+      ...(edits.enableQuestions ? { enabled: true } : {}),
+      questions: edits.questions(next?.rubricChecks?.questions ?? []),
     });
   }
   if (edits.judges) {
@@ -82,6 +77,8 @@ export function librarySuiteEdits(
     ((next: EvalJudgeConfig | undefined) => void) | undefined,
 ) {
   if (scope.kind !== "suite") return undefined;
+  const currentQuestions = judgeConfig?.rubricChecks?.questions ?? [];
+  const currentJudges = judgeConfig?.customJudges?.judges ?? [];
   const editLists = (edits: Parameters<typeof withLibraryLists>[1]) => {
     if (!edits.questions && !edits.judges) return;
     onJudgeConfigChange?.(withLibraryLists(judgeConfig, edits));
@@ -89,9 +86,9 @@ export function librarySuiteEdits(
   return {
     add({ checks, questions, judges }: LibraryAddition) {
       if (
-        judges.length > 0 &&
-        (judgeConfig?.customJudges?.judges?.length ?? 0) + judges.length >
-          MAX_CUSTOM_JUDGES
+        (judges.length > 0 && currentJudges.length + judges.length > MAX_CUSTOM_JUDGES) ||
+        (questions.length > 0 &&
+          currentQuestions.length + questions.length > MAX_RUBRIC_CHECK_QUESTIONS)
       ) {
         return;
       }
@@ -104,6 +101,7 @@ export function librarySuiteEdits(
       editLists({
         ...(questions.length
           ? {
+              enableQuestions: true,
               questions: (current) => [
                 ...current,
                 ...questions.filter((q) => !current.some((c) => c.id === q.id)),
@@ -136,18 +134,28 @@ export function librarySuiteEdits(
     },
     update(evaluatorId: string) {
       const entry = findLibraryEvaluator(evaluatorId);
-      if (!entry) return;
-      scope.onPredicatesChange((previous) =>
-        withEvaluatorUpdated(previous, evaluatorId),
-      );
+      if (
+        !entry ||
+        hasLibraryIdConflict(entry, {
+          questions: currentQuestions,
+          judges: currentJudges,
+        })
+      ) return;
       const keep = notFrom(evaluatorId);
       const questions = taggedQuestions(entry);
       const judges = taggedJudges(entry);
+      if (
+        currentQuestions.filter(keep).length + questions.length > MAX_RUBRIC_CHECK_QUESTIONS ||
+        currentJudges.filter(keep).length + judges.length > MAX_CUSTOM_JUDGES
+      ) return;
+      scope.onPredicatesChange((previous) =>
+        withEvaluatorUpdated(previous, evaluatorId),
+      );
       editLists({
-        ...(questions.length
+        ...(questions.length || currentQuestions.some((q) => !keep(q))
           ? { questions: (current) => [...current.filter(keep), ...questions] }
           : {}),
-        ...(judges.length
+        ...(judges.length || currentJudges.some((j) => !keep(j))
           ? { judges: (current) => [...current.filter(keep), ...judges] }
           : {}),
       });

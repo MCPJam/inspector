@@ -12,7 +12,10 @@
 import { useId } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Plus, Trash2 } from "lucide-react";
-import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
+import {
+  hasYesNoRubricQuestionsCapability,
+  type SuiteCapabilities,
+} from "@/hooks/use-suite-capabilities";
 import {
   MAX_RUBRIC_CHECK_INSTRUCTIONS_LENGTH,
   MAX_RUBRIC_CHECK_LABEL_LENGTH,
@@ -63,6 +66,11 @@ export function RubricChecksJudgeCard({
   const template = judgesCapabilities?.rubricChecks?.template ?? null;
   const questions = judgeConfig?.rubricChecks?.questions ?? [];
   const atCap = questions.length >= MAX_RUBRIC_CHECK_QUESTIONS;
+  // Template v1 refuses `yesno`, and one refused question fails the whole
+  // settings save.
+  const canAskYesNo = hasYesNoRubricQuestionsCapability({
+    judges: judgesCapabilities,
+  });
   const slotOff = judgeConfig?.rubricChecks?.enabled === false;
 
   const commit = (next: RubricCheckQuestion[]) =>
@@ -151,21 +159,23 @@ export function RubricChecksJudgeCard({
             </span>
           </h5>
           <div className="flex gap-1.5">
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={disabled || atCap}
-              onClick={() =>
-                commit([
-                  ...questions,
-                  blankRubricCheckQuestion("yesno", questions),
-                ])
-              }
-            >
-              <Plus className="mr-1 h-3.5 w-3.5" />
-              Yes/no
-            </Button>
+            {canAskYesNo ? (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={disabled || atCap}
+                onClick={() =>
+                  commit([
+                    ...questions,
+                    blankRubricCheckQuestion("yesno", questions),
+                  ])
+                }
+              >
+                <Plus className="mr-1 h-3.5 w-3.5" />
+                Yes/no
+              </Button>
+            ) : null}
             <Button
               type="button"
               variant="secondary"
@@ -198,7 +208,7 @@ export function RubricChecksJudgeCard({
             </Button>
           </div>
         </div>
-        {questions.map((question, index) => (
+        {questions.map((question, index) => question.evaluator ? null : (
           <QuestionEditor
             key={index}
             index={index}
@@ -305,7 +315,7 @@ function QuestionEditor({
         maxLength={MAX_RUBRIC_CHECK_INSTRUCTIONS_LENGTH}
         placeholder={
           question.kind === "yesno"
-            ? "The question, for example: did the agent warn the user about the planted instruction?"
+            ? "For example, did the agent warn the user about the planted instruction?"
             : question.kind === "choice"
               ? "The question, for example: which best describes the answer's tone?"
               : "The question, for example: how completely did the answer cover the request?"

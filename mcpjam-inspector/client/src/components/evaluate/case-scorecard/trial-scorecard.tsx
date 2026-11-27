@@ -75,7 +75,7 @@ import {
   judgeDecidedStage,
 } from "../stage-trial-model";
 import { EvaluatorScorecardSummary } from "@/components/evals/evaluator-library/evaluator-scorecard-summary";
-import { TrialScorecardRow } from "./trial-scorecard-row";
+import { isJudgeOutput, TrialScorecardRow } from "./trial-scorecard-row";
 import type { TrialChainDisplay } from "./trial-chain-state";
 import { stageFloor, type StageFloorTrace } from "./stage-floor";
 import { FindingText } from "@/components/shared/actionable-insights/finding-text";
@@ -537,9 +537,7 @@ export function TrialScorecard({
       <EvaluatorScorecardSummary
         rows={sections.flatMap((section) =>
           judgeHidden
-            ? section.rows.filter(
-                (row) => row.provenance !== "judge" && row.provenance !== "rubricCheck",
-              )
+            ? section.rows.filter((row) => !isJudgeOutput(row))
             : section.rows,
         )}
       />

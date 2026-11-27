@@ -9,12 +9,16 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { ArrowLeft, Library } from "lucide-react";
 import { useState } from "react";
-import { MAX_CUSTOM_JUDGES } from "@/components/shared/session-quality/judge-config";
+import {
+  MAX_CUSTOM_JUDGES,
+  MAX_RUBRIC_CHECK_QUESTIONS,
+} from "@/components/shared/session-quality/judge-config";
 import { formatCriterion } from "@/shared/predicate-kinds";
 import { EvaluatorCard } from "./evaluator-card";
 import { useEvaluatorLibraryEnabled } from "./evaluator-library-flag";
 import {
   builtFrom,
+  hasLibraryIdConflict,
   isAuthorable,
   isInSuite,
   LIBRARY_EVALUATORS,
@@ -73,10 +77,19 @@ export function EvaluatorLibraryDialog({
   const available = LIBRARY_EVALUATORS.filter((e) => isAuthorable(e, support));
   const selected = available.find((e) => e.id === selectedId);
   const blockedReason = (evaluator: LibraryEvaluator) => {
-    const { judges } = missingParts(evaluator, suite);
-    return judges.length > 0 && (suite.judges?.length ?? 0) + judges.length > judgeLimit
-      ? `Remove a judge to add this preset. Each suite can have ${judgeLimit} judges.`
-      : undefined;
+    if (hasLibraryIdConflict(evaluator, suite)) {
+      return "A question or judge already uses this preset's ID. Remove it to add the preset.";
+    }
+    const { judges, questions } = missingParts(evaluator, suite);
+    if (
+      questions.length > 0 &&
+      (suite.questions?.length ?? 0) + questions.length > MAX_RUBRIC_CHECK_QUESTIONS
+    ) {
+      return `This suite already has ${MAX_RUBRIC_CHECK_QUESTIONS} rubric-check questions. Remove one to add this evaluator.`;
+    }
+    if (judges.length > 0 && (suite.judges?.length ?? 0) + judges.length > judgeLimit) {
+      return `Remove a judge to add this preset. Each suite can have ${judgeLimit} judges.`;
+    }
   };
   const add = (evaluator: LibraryEvaluator) => {
     if (!blockedReason(evaluator)) onAdd(missingParts(evaluator, suite));
@@ -200,7 +213,7 @@ function EvaluatorDetail({
           </li>
         ))}
       </ul>
-      {addDisabledReason ? (
+      {!inSuite && addDisabledReason ? (
         <p className="text-sm text-muted-foreground">{addDisabledReason}</p>
       ) : null}
       <div className="flex justify-between gap-2">

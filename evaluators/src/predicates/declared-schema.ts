@@ -15,6 +15,7 @@ export type DeclaredSchemaVerdict =
   | { kind: "pass"; reason: string }
   | { kind: "fail"; reason: string }
   | { kind: "error"; reason: string }
+  | { kind: "empty_scope"; reason: string }
   | { kind: "not_applicable"; reason: string };
 
 /**
@@ -124,11 +125,13 @@ export function checkDeclaredSchemas(
       reason: `${uncaptured} result(s) were stored without the raw CallToolResult, so their structuredContent could not be checked`,
     };
   }
-  return {
-    kind: "pass",
-    reason:
-      checked === 0
-        ? "no result in scope came from a tool that declares an output schema; nothing to validate"
-        : `${checked} result(s) match their tool's declared output schema`,
-  };
+  return checked === 0
+    ? {
+        kind: "empty_scope",
+        reason: "no successful result in scope came from a tool that declares an output schema",
+      }
+    : {
+        kind: "pass",
+        reason: `${checked} result(s) match their tool's declared output schema`,
+      };
 }

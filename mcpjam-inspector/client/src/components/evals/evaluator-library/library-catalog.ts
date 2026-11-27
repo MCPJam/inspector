@@ -151,11 +151,11 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
     checks: [],
     questions: [
       {
-        slug: "invented",
-        label: "Answer invented a result a tool did not return",
+        slug: "reports-failures",
+        label: "Answer reports each tool failure",
         instructions:
-          "Compare the final answer with the tool results. Answer yes if the answer states a result that no tool returned, including after a tool error.",
-        passOn: "no",
+          "Find every tool call that failed or returned an error. Answer yes if no tool failed, or if the final answer tells the user about each failure instead of presenting a result that tool did not return. Answer no if any failure is left out or covered by an invented result.",
+        passOn: "yes",
       },
     ],
   },
@@ -297,13 +297,31 @@ export function missingParts(
   evaluator: LibraryEvaluator,
   suite: LibrarySuiteParts,
 ): LibraryAddition {
-  const questionIds = new Set((suite.questions ?? []).map((q) => q.id));
-  const judgeIds = new Set((suite.judges ?? []).map((j) => j.id));
+  const questionIds = new Set(
+    suite.questions?.filter((q) => q.evaluator?.id === evaluator.id).map((q) => q.id),
+  );
+  const judgeIds = new Set(
+    suite.judges?.filter((j) => j.evaluator?.id === evaluator.id).map((j) => j.id),
+  );
   return {
     checks: missingChecks(evaluator, suite.predicates),
     questions: taggedQuestions(evaluator).filter((q) => !questionIds.has(q.id)),
     judges: taggedJudges(evaluator).filter((j) => !judgeIds.has(j.id)),
   };
+}
+
+export function hasLibraryIdConflict(
+  evaluator: LibraryEvaluator,
+  suite: Pick<LibrarySuiteParts, "questions" | "judges">,
+): boolean {
+  return (
+    taggedQuestions(evaluator).some((expected) =>
+      suite.questions?.some((q) => q.id === expected.id && q.evaluator?.id !== evaluator.id),
+    ) ||
+    taggedJudges(evaluator).some((expected) =>
+      suite.judges?.some((j) => j.id === expected.id && j.evaluator?.id !== evaluator.id),
+    )
+  );
 }
 
 /**

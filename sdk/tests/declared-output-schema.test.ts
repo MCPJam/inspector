@@ -207,8 +207,23 @@ describe("toolResultMatchesSchema with the declared schema", () => {
         result("search", { structuredContent: { anything: true } }),
       ])
     );
-    expect(verdict.passed).toBe(true);
-    expect(verdict.reason).toContain("nothing to validate");
+    expect(verdict).toMatchObject({
+      status: "not_applicable",
+      passed: true,
+    });
+  });
+
+  test("does not apply when a schema-less tool is the only result", () => {
+    const complete = transcript([result("search", { text: "free text" })]);
+    expect(run(complete)).toMatchObject({
+      status: "not_applicable",
+      passed: true,
+    });
+    const partial = {
+      ...complete,
+      capture: { ...complete.capture!, toolResults: "partial" as const },
+    };
+    expect(run(partial).status).toBe("error");
   });
 
   test("does not apply when no tool declares an output schema", () => {

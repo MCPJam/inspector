@@ -69,29 +69,47 @@ function iteration(): EvalIteration {
 }
 
 describe("rubricCheckTrialRows", () => {
+  const asked = { kind: "boolean", contentDigest: "d", passThreshold: 0.5 };
   const questions = [
     {
+      ...asked,
       key: "c:cites",
       label: "Cites a source as originally asked",
       status: "scored",
       passed: false,
       value: 0.1,
-      passThreshold: 0.5,
       rationale: "No",
       evidence: ["No source link"],
     },
     {
+      ...asked,
       key: "c:uncertain",
       label: "Names the file",
       status: "scored",
       passed: true,
       value: 0.51,
-      passThreshold: 0.5,
     },
-    { key: "q:skipped", label: "Tone", status: "skipped" },
-    { key: "q:error", label: "Format", status: "error", error: "no_answer" },
+    {
+      ...asked,
+      kind: "choice",
+      key: "q:skipped",
+      label: "Tone",
+      status: "skipped",
+    },
+    {
+      ...asked,
+      kind: "choice",
+      key: "q:error",
+      label: "Format",
+      status: "error",
+      error: "no_answer",
+    },
+    // No pass line: the server cannot resolve a definition, so neither side
+    // shows it.
     {
       key: "c:incomplete",
+      kind: "boolean",
+      contentDigest: "d",
       label: "No recorded verdict",
       status: "scored",
       value: 0,
@@ -135,6 +153,50 @@ describe("rubricCheckTrialRows", () => {
       source: "scoreRow",
     });
     expect(rows.some((row) => row.rubricCheck?.key === "q:skipped")).toBe(true);
+  });
+
+  it("keeps the verdict's order when only some questions were projected", () => {
+    const trial = iteration();
+    const rows = rubricCheckTrialRows({
+      ...trial,
+      metadata: {
+        ...trial.metadata,
+        rubricChecksVerdict: {
+          questions: [
+            { ...asked, key: "q:new", label: "New", status: "scored", value: 1 },
+            {
+              ...asked,
+              key: "c:cites",
+              label: "Cites",
+              status: "scored",
+              value: 0.93,
+            },
+            { ...asked, key: "q:later", label: "Later", status: "scored", value: 0 },
+          ],
+        },
+      },
+    });
+    expect(rows.map((row) => row.rubricCheck?.key)).toEqual([
+      "q:new",
+      "c:cites",
+      "q:later",
+      "c:polite",
+      "c:unsure",
+      "q:tone",
+    ]);
+    expect(rows[1]?.result.source).toBe("scoreRow");
+  });
+
+  it("keeps a question with an unknown status as an error, like the server", () => {
+    const rows = rubricCheckTrialRows({
+      ...iteration(),
+      metadata: {
+        rubricChecksVerdict: {
+          questions: [{ ...asked, key: "q:odd", label: "Odd", status: "pending" }],
+        },
+      },
+    });
+    expect(rows.map((row) => row.result.state)).toEqual(["error"]);
   });
 
   it("lists what the trial was asked, in the backend's order", () => {
