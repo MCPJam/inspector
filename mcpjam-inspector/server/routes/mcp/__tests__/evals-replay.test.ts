@@ -393,7 +393,7 @@ describe("mcp replay route", () => {
               hasServerReplayConfig: true,
               environment: { servers: ["excalidraw"] },
             };
-          case "testSuiteAccountSelections:getMySuiteAccountChoices":
+          case "testSuiteAccountSelections:getPersonalSuiteAccountChoices":
             return [{ serverId: "srv_excalidraw", connectionIds: ["acct_b"] }];
           case "servers:getProjectServers":
             return [

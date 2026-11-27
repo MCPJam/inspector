@@ -1,5 +1,10 @@
 import { logLegacyEvalRequest } from "../../services/evals/legacy-eval-telemetry.js";
-import { loadSuiteConnectionIdSets } from "../../services/evals/suite-account-choices.js";
+import {
+  loadEvalRunAccountPlan,
+  loadSuiteConnectionIdSets,
+  openEvalAccountGroups,
+} from "../../services/evals/suite-account-choices.js";
+import type { ConnectionIdSets } from "../../utils/oauth-account-sets.js";
 import {
   captureToolSnapshotForEvalAuthoring,
   requireConvexHttpUrl,
@@ -47,7 +52,12 @@ import {
   toSuspectedConditionProjection,
 } from "./eval-friction-projection.js";
 import { toExecutionProjection } from "./eval-execution-projection.js";
-import { toRunAccountsProjection } from "./eval-run-accounts.js";
+import {
+  accountSelectionsForRead,
+  accountSelectionsForStorage,
+  runAccountsSchema,
+  toRunAccountsProjection,
+} from "./eval-run-accounts.js";
 import {
   buildEvalRunDecisionSummaryResponse,
   decisionSummaryPageIsComplete,
@@ -671,6 +681,7 @@ const createEvalRunSchema = RunEvalsRequestSchema.omit({
     // Inline tests are optional on the public surface: a bare `suiteId`
     // rerun is the simplest possible call.
     tests: z.array(publicInlineTestSchema).max(MAX_V1_TESTS).default([]),
+    accounts: runAccountsSchema.optional(),
     hosts: z
       .array(
         z.object({
@@ -2294,7 +2305,9 @@ function toPublicCaseImportClaim(
 
 function toCaseDto(testCase: CaseDoc, vocabulary: EvalVocabulary = 1) {
   const importClaim = toPublicCaseImportClaim(testCase.import);
+  const accounts = accountSelectionsForRead(testCase.accounts);
   return {
+    ...(accounts ? { accounts } : {}),
     id: String(testCase._id),
     // The EFFECTIVE declared identity — what the case answers to in a suite
     // file, an import, or a CLI argument — so a caller can read back the id it
@@ -2432,7 +2445,9 @@ function toSuiteDetailDto(
 ) {
   const goal =
     suite.judgePolicy?.effective ?? suite.judgeConfig?.goalCompletion;
+  const accounts = accountSelectionsForRead(suite.accounts);
   return {
+    ...(accounts ? { accounts } : {}),
     id: String(suite._id),
     ...(typeof suite.declaredSuiteId === "string"
       ? { declaredId: suite.declaredSuiteId }
@@ -3179,6 +3194,7 @@ const createCaseExtras = {
 
 /** What a PATCH adds to the case body, in either vocabulary. */
 const updateCaseExtras = {
+  accounts: runAccountsSchema.nullable().optional(),
   ...fileSyncBodyShape,
   /**
    * The converter's CLAIM about this case, or `null` to remove one.
@@ -3506,6 +3522,7 @@ const suiteSettingsSchemaV2 = z
  * here. Nothing else should import it — the route is the only writer.
  */
 const updateSuiteShape = {
+  accounts: runAccountsSchema.nullable().optional(),
   ...fileSyncBodyShape,
   name: z.string().min(1).optional(),
   description: z.string().optional(),
@@ -3898,8 +3915,8 @@ function buildCaseMutationArgs(
         : { goalCompletion: body.judge };
 
   // The case body is the `steps` contract. Project it onto the internal case
-  // fields. The derived kind (render-check ⇔ a single model-free `toolCall`
-  // step) is IMMUTABLE after create — updateTestCase doesn't accept caseType,
+  // fields. The derived model-free or prompt kind is immutable after
+  // create — updateTestCase doesn't accept caseType,
   // so reject a real change on update and never forward caseType there.
   if (body.steps !== undefined) {
     const steps = normalizeStepRolesForVocabulary(
@@ -3909,9 +3926,8 @@ function buildCaseMutationArgs(
     ) as TestStep[];
     args.steps = steps;
     const derived = stepsToInternalCaseFields(steps);
-    isModelFreeStepsCase = derived.caseType === "widget_probe";
-    const derivedKind =
-      derived.caseType === "widget_probe" ? "render-check" : "prompt";
+    isModelFreeStepsCase = isModelFree(steps);
+    const derivedKind = isModelFreeStepsCase ? "render-check" : "prompt";
     // Recognize the persisted kind from EITHER the legacy `caseType` OR the
     // shape of the stored `steps` (a model-free case is render-check), so
     // step-native render-checks without a `caseType` aren't misread as prompt.
@@ -4350,9 +4366,12 @@ async function launchEvalRun(params: {
   body: Record<string, unknown> & {
     tests: PublicInlineTest[];
     suiteId?: string;
+    caseIds?: string[];
+    accounts?: z.infer<typeof runAccountsSchema>;
     matchOptionsOverride?: MatchOptionsInput;
   };
   suiteRerun: boolean;
+  accountSource?: { runId?: string; caseIds?: string[] };
   environmentId: string | undefined;
   environmentLaunch: ResolvedEnvironmentForLaunch | undefined;
   serverIds: string[];
@@ -4416,12 +4435,25 @@ async function launchEvalRun(params: {
         conformanceKnobsFromMcpProfile(params.hostConfig.mcpProfile),
       )
     : undefined;
-  // The key owner's saved accounts for this suite; an inline suite has none.
-  const connectionIdSets = await loadSuiteConnectionIdSets(
-    createConvexClients(convexAuthToken).convexClient,
-    { suiteId: body.suiteId },
-  );
-  const { manager } = await createAuthorizedManager(
+  if (body.accounts && !body.suiteId) {
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "Save the suite before selecting run accounts.");
+  }
+  const runAccounts = body.accounts?.map(({ serverId, accountId }) => ({
+    serverId,
+    connectionId: accountId,
+  }));
+  const { convexClient } = createConvexClients(convexAuthToken);
+  const accountCaseIds = params.accountSource?.caseIds ?? body.caseIds;
+  const plan = body.suiteId
+    ? await loadEvalRunAccountPlan(convexClient, {
+        suiteId: body.suiteId,
+        ...(accountCaseIds?.length ? { caseIds: accountCaseIds } : {}),
+        ...(params.accountSource?.runId ? { sourceRunId: params.accountSource.runId } : {}),
+        serverIds,
+        ...(runAccounts ? { runAccounts } : {}),
+      })
+    : null;
+  const open = (connectionIdSets?: ConnectionIdSets) => createAuthorizedManager(
     params.callerContext,
     convexAuthToken,
     projectId,
@@ -4453,6 +4485,12 @@ async function launchEvalRun(params: {
         : {}),
     },
   );
+  const connectionIdSets = await loadSuiteConnectionIdSets(convexClient, { suiteId: body.suiteId, serverIds });
+  const groups = plan
+    ? await openEvalAccountGroups(plan, async (sets) => (await open(sets)).manager, connectionIdSets)
+    : undefined;
+  const manager = groups?.first ?? (await open(connectionIdSets)).manager;
+  const close = () => groups ? groups.close() : manager.disconnectAllServers();
 
   let prepared: PreparedEvalRun;
   try {
@@ -4487,6 +4525,9 @@ async function launchEvalRun(params: {
       // re-select the same environment unpinned.
       environmentId,
       projectId,
+      ...(groups && plan ? {
+        evalAccounts: { plan, requested: runAccounts, managerForCase: groups.forCase },
+      } : {}),
       suiteRerun,
       convexAuthToken,
       // STAMPED, and deliberately unchanged. Everything that reaches this
@@ -4500,7 +4541,7 @@ async function launchEvalRun(params: {
       ...(environmentLaunch ? { resolvedEnvironment: environmentLaunch } : {}),
     });
   } catch (error) {
-    await manager.disconnectAllServers().catch(() => {});
+    await close();
     throw error;
   }
 
@@ -4514,7 +4555,7 @@ async function launchEvalRun(params: {
     logContext: { projectId },
     cleanup: () => {
       onSettled();
-      return manager.disconnectAllServers();
+      return close();
     },
   });
 
@@ -4895,6 +4936,7 @@ const evalRunGroupTargetSchema = z.union([
 const createEvalRunGroupSchema = z
   .object({
     suiteId: z.string().min(1),
+    accounts: runAccountsSchema.optional(),
     targets: z
       .array(evalRunGroupTargetSchema)
       .min(1)
@@ -5165,6 +5207,14 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
         { reason: "HARNESS_UNAVAILABLE", harness: admission.harness },
       );
     }
+    await loadEvalRunAccountPlan(createConvexClients(convexAuthToken).convexClient, {
+      suiteId: body.suiteId,
+      ...(body.caseIds ? { caseIds: body.caseIds } : {}),
+      serverIds: servers.serverIds,
+      ...(body.accounts ? { runAccounts: body.accounts.map(({ serverId, accountId }) => ({
+        serverId, connectionId: accountId,
+      })) } : {}),
+    });
     resolved.push({ target, servers, hostConfig });
   }
 
@@ -5215,6 +5265,7 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
         body: {
           suiteId: body.suiteId,
           tests: [],
+          ...(body.accounts ? { accounts: body.accounts } : {}),
           runGroupId,
           ...(body.iterationOverride !== undefined
             ? { iterationOverride: body.iterationOverride }
@@ -6122,6 +6173,10 @@ evals.post("/projects/:projectId/eval-runs/:runId/rerun", async (c) => {
         ...(idempotencyKey ? { idempotencyKey } : {}),
       },
       suiteRerun: true,
+      accountSource: {
+        runId: sourceRun!.accountsAtRun?.some((entry: { cases?: unknown[] }) => entry.cases?.length) ? runId : undefined,
+        caseIds: preview.selectedCaseIds.length ? preview.selectedCaseIds : undefined,
+      },
       environmentId: servers.environmentId,
       environmentLaunch: servers.environmentLaunch,
       serverIds: servers.serverIds,
@@ -8135,6 +8190,9 @@ evals.post(
       ...(caseIds ? { caseIds } : {}),
       ...(iterationOverride !== undefined ? { iterationOverride } : {}),
     };
+    const accountSource = sourceRun?.accountsAtRun?.some((entry: { cases?: unknown[] }) => entry.cases?.length)
+      ? { runId: sourceRunId }
+      : undefined;
 
     let original: LaunchedEvalRun | undefined;
     try {
@@ -8150,6 +8208,7 @@ evals.post(
           idempotencyKey: `${experimentId}:original`,
         },
         suiteRerun: true,
+        accountSource,
         environmentId: servers.environmentId,
         environmentLaunch: servers.environmentLaunch,
         serverIds: servers.serverIds,
@@ -8182,6 +8241,7 @@ evals.post(
           toolDescriptionOverride: { experimentId },
         },
         suiteRerun: true,
+        accountSource,
         environmentId: servers.environmentId,
         environmentLaunch: servers.environmentLaunch,
         serverIds: servers.serverIds,
@@ -8699,6 +8759,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   }
 
   const updateArgs: Record<string, unknown> = { suiteId };
+  if (body.accounts !== undefined) updateArgs.accounts = accountSelectionsForStorage(body.accounts);
   if (body.name !== undefined) updateArgs.name = body.name;
   if (body.description !== undefined) updateArgs.description = body.description;
   // An ENVIRONMENT suite's servers and image are its environments'. On a
@@ -9653,6 +9714,9 @@ evals.patch(
         {
           testCaseId: caseId,
           changeSource: "manual",
+          ...(body.accounts !== undefined ? {
+            accounts: accountSelectionsForStorage(body.accounts),
+          } : {}),
           ...args,
           ...fileSyncArg(
             c.req.query("declaredSuiteId") ?? body.declaredSuiteId,

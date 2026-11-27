@@ -956,6 +956,67 @@ describe("useChatSession fork preservation", () => {
     });
   });
 
+  it("carries each reopened turn's event onto the trace envelope", async () => {
+    // A trigger's thread as `/direct-chat/detail` returns it: three turns, the
+    // second of them started by an event.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify([
+            { role: "user", content: "first" },
+            { role: "assistant", content: "one" },
+            { role: "user", content: "event message" },
+            { role: "assistant", content: "two" },
+            { role: "user", content: "third" },
+            { role: "assistant", content: "three" },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+    const event = {
+      name: "comment.created",
+      eventId: "evt_1",
+      receivedAt: 1_500,
+      delivery: "poll" as const,
+      origin: "server" as const,
+      subscriptionId: "esub_1",
+      triggerId: "trg_1",
+    };
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: { projectId: "project-1", selectedServerIds: [] },
+      }),
+    );
+
+    act(() => {
+      void result.current.loadChatSession({
+        chatSessionId: "event-trigger-trg_1",
+        messagesBlobUrl: "https://storage.test/thread.json",
+        version: 3,
+        turnTraces: [
+          { turnId: "t0", promptIndex: 0, startedAt: 1_000, endedAt: 1_100 },
+          {
+            turnId: "t1",
+            promptIndex: 1,
+            startedAt: 2_000,
+            endedAt: 2_100,
+            eventAtTurn: event,
+          },
+          { turnId: "t2", promptIndex: 2, startedAt: 3_000, endedAt: 3_100 },
+        ],
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.liveTraceEnvelope?.turnEvents).toEqual([
+        { promptIndex: 1, turnStartedAtMs: 2_000, event },
+      ]);
+    });
+  });
+
   it("restores empty sessions even when the transcript blob URL is missing", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

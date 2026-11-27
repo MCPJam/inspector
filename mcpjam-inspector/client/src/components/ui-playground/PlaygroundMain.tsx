@@ -1,4 +1,5 @@
 import { usePublishEventAgent } from "@/components/playground/events/event-agent-bridge";
+import type { EventAtTurn } from "@/shared/event-at-turn";
 import { usePlaygroundEventAgentTools } from "@/components/playground/events/PlaygroundEventsProvider";
 import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 import {
@@ -5164,7 +5165,8 @@ export function PlaygroundMain({
   pluginMessageDispatchRef.current = pluginMessage.send;
 
   const handleSendFollowUp = useCallback(
-    (text: string, isCurrent: () => boolean = () => true) => {
+    // `eventAtTurn`: an MCP event turn's record of the event that started it.
+    (text: string, isCurrent: () => boolean = () => true, eventAtTurn?: EventAtTurn) => {
       return (async () => {
         // Same gate as the composer, and for the same reason: a widget-driven
         // follow-up on a reopened conversation would otherwise be the FIRST
@@ -5210,6 +5212,7 @@ export function PlaygroundMain({
           text,
           metadata: outgoingSenderMetadata,
           widgetModelContext: sentContext,
+          ...(eventAtTurn ? { eventAtTurn } : {}),
           // The gates above can finish and this call can still await server
           // preparation. The study block has to be read again at dispatch.
           isCurrent: () => isCurrent() && !conversationSendBlockedRef.current,
