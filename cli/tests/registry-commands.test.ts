@@ -69,23 +69,27 @@ async function startRegistryFixture(): Promise<Fixture> {
       res.end(JSON.stringify({ items: [] }));
       return;
     }
+    // Read back by the install follow-up hint, which resolves the id against
+    // the project's servers first. Non-OAuth so the SDK does not try to mint
+    // a browser connect link.
+    const installed = {
+      id: "srv-1",
+      projectId: "proj-any",
+      name: "linear",
+      enabled: true,
+      transportType: "http",
+      url: "https://mcp.linear.app/mcp",
+      useOAuth: false,
+      hasClientSecret: false,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    if (/^\/api\/v1\/projects\/[^/]+\/servers$/.test(url.pathname)) {
+      res.end(JSON.stringify({ items: [installed] }));
+      return;
+    }
     if (/^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+$/.test(url.pathname)) {
-      // Read back by the install follow-up hint. Non-OAuth so the SDK does
-      // not try to mint a browser connect link.
-      res.end(
-        JSON.stringify({
-          id: "srv-1",
-          projectId: "proj-any",
-          name: "linear",
-          enabled: true,
-          transportType: "http",
-          url: "https://mcp.linear.app/mcp",
-          useOAuth: false,
-          hasClientSecret: false,
-          createdAt: 1,
-          updatedAt: 1,
-        })
-      );
+      res.end(JSON.stringify(installed));
       return;
     }
     res.statusCode = 404;
