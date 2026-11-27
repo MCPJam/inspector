@@ -6,6 +6,7 @@ import { stableStringifyJson } from "@mcpjam/sdk/widget-runtime";
 import type { RubricCheckQuestion } from "@/components/shared/session-quality/judge-config";
 import {
   blankRubricCheckQuestion,
+  libraryQuestionIdError,
   rubricCheckQuestionError,
   withQuestionLabel,
   withRubricChecks,
@@ -150,10 +151,11 @@ export function DecisionEditor({
   const error =
     !canAskYesNo && question.kind === "yesno"
       ? "Choose Choice or Score on this deployment."
-      : rubricCheckQuestionError(question, questions.length, [
+      : (libraryQuestionIdError(question, initialQuestion?.id) ??
+        rubricCheckQuestionError(question, questions.length, [
           ...questions,
           question,
-        ]);
+        ]));
 
   return (
     <EvaluatorEditorLayout

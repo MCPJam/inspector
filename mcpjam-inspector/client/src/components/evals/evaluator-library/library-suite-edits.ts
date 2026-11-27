@@ -119,9 +119,14 @@ export function librarySuiteEdits(
       const judgeEdit = judgesWithAdded(judges, addition.judges, judgeLimit);
       if (judgeEdit.refused !== undefined) return judgeEdit.refused;
       if (addition.checks.length) {
-        scope.onPredicatesChange((previous: Predicate[]) =>
-          withLibraryChecks(previous, addition.checks),
-        );
+        // A preset's checks reuse a matching assertion; ones written from
+        // scratch are appended as "Add assertion" would, role and all.
+        const fromPreset = addition.checks.filter((check) => check.evaluator);
+        const written = addition.checks.filter((check) => !check.evaluator);
+        scope.onPredicatesChange((previous: Predicate[]) => [
+          ...withLibraryChecks(previous, fromPreset),
+          ...written,
+        ]);
       }
       write({
         ...(addition.questions.length

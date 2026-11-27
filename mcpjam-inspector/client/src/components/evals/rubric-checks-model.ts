@@ -57,12 +57,6 @@ export function rubricCheckQuestionError(
   if (!JUDGE_CRITERION_ID_PATTERN.test(question.id)) {
     return "Id must be 1 to 64 letters, digits, hyphens or underscores.";
   }
-  // A score row keeps only the question's id, so a question written here
-  // must not take a library preset's id and read as that preset's.
-  const presetId = LIBRARY_QUESTION_IDS.get(question.id);
-  if (presetId && question.evaluator?.id !== presetId) {
-    return "This ID belongs to a library preset. Enter a different ID.";
-  }
   if (all.some((other, at) => at !== index && other.id === question.id)) {
     return "Ids must be unique: each one names a score row.";
   }
@@ -154,6 +148,24 @@ export function rubricCheckQuestionError(
   // validates it on save. Refusing it here would block every other setting
   // in the same save, with no way to fix the question from this build.
   return undefined;
+}
+
+/**
+ * A score row keeps only the question's id, so a question written here must
+ * not take a library preset's id and read as that preset's. Checked where a
+ * question is written, against the id it had (`savedId`), and not in
+ * `areRubricChecksValid`: a stored question that already holds one must not
+ * block saving the rest of the suite's settings.
+ */
+export function libraryQuestionIdError(
+  question: RubricCheckQuestion,
+  savedId?: string,
+): string | undefined {
+  if (question.id === savedId) return undefined;
+  const presetId = LIBRARY_QUESTION_IDS.get(question.id);
+  return presetId && question.evaluator?.id !== presetId
+    ? "This ID belongs to a library preset. Enter a different ID."
+    : undefined;
 }
 
 /** True when the slot can be saved. An absent slot is valid. */

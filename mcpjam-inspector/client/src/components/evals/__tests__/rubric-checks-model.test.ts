@@ -3,6 +3,7 @@ import type { RubricCheckQuestion } from "@/components/shared/session-quality/ju
 import {
   areRubricChecksValid,
   blankRubricCheckQuestion,
+  libraryQuestionIdError,
   rubricCheckQuestionError,
   rubricChecksRun,
   withAddedOption,
@@ -234,7 +235,7 @@ describe("library question IDs", () => {
   };
 
   it("refuses a library preset's ID on a question written here", () => {
-    expect(rubricCheckQuestionError(authored, 0, [authored])).toBe(
+    expect(libraryQuestionIdError(authored)).toBe(
       "This ID belongs to a library preset. Enter a different ID.",
     );
   });
@@ -244,7 +245,13 @@ describe("library question IDs", () => {
       ...authored,
       evaluator: { id: "reports-tool-errors", version: 1 },
     };
-    expect(rubricCheckQuestionError(fromPreset, 0, [fromPreset])).toBeUndefined();
+    expect(libraryQuestionIdError(fromPreset)).toBeUndefined();
+  });
+
+  it("never blocks saving a stored question that already holds one", () => {
+    expect(libraryQuestionIdError(authored, reserved)).toBeUndefined();
+    expect(rubricCheckQuestionError(authored, 0, [authored])).toBeUndefined();
+    expect(areRubricChecksValid({ questions: [authored] })).toBe(true);
   });
 
   it("never names a question with a library preset's ID", () => {

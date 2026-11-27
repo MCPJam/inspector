@@ -374,6 +374,27 @@ describe("library question edits", () => {
   });
 });
 
+describe("assertions written from scratch", () => {
+  it("adds a required assertion beside an advisory one with the same criterion", () => {
+    const advisory: Predicate = {
+      type: "finalAssistantMessageNonEmpty",
+      role: "advisory",
+    };
+    const { state, edits } = draft(undefined, [advisory]);
+    expect(
+      edits().add({
+        checks: [{ type: "finalAssistantMessageNonEmpty" }],
+        questions: [],
+        judges: [],
+      }),
+    ).toBeUndefined();
+    expect(state.predicates).toEqual([
+      advisory,
+      { type: "finalAssistantMessageNonEmpty" },
+    ]);
+  });
+});
+
 describe("library judge edits", () => {
   const answers = findLibraryEvaluator("answers-the-question");
   if (!answers) throw new Error("Expected Answers the Question");
