@@ -241,11 +241,14 @@ describe("CustomJudgesSection", () => {
     ]);
   });
 
-  it("says when the suite turned judges you write off, and turns them on", () => {
+  it("turns custom judges back on when the suite has them off", () => {
     const onChange = vi.fn();
     renderWithProviders(
       <CustomJudgesSection
-        judgeConfig={{ customJudges: { enabled: false, judges: [] } }}
+        judgeConfig={{
+          goalCompletion: { threshold: 0.8 },
+          customJudges: { enabled: false, judges: [libraryJudge] },
+        }}
         onJudgeConfigChange={onChange}
         capabilities={capabilities}
       />,
@@ -253,13 +256,14 @@ describe("CustomJudgesSection", () => {
     expect(
       screen.getByRole("region", { name: "Judges you write" }),
     ).toHaveTextContent(
-      "Paused: judges you write are turned off for this suite.",
+      "Custom judges are off for this suite, so they will not run. Turn them on under Judges you write.",
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "Turn on judges you write" }),
+      screen.getByRole("button", { name: "Turn on custom judges" }),
     );
     expect(onChange).toHaveBeenCalledWith({
-      customJudges: { enabled: true, judges: [] },
+      goalCompletion: { threshold: 0.8 },
+      customJudges: { enabled: true, judges: [libraryJudge] },
     });
   });
 
