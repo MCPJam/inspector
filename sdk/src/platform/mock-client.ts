@@ -14,6 +14,8 @@ import type {
   PlatformMockRead,
   PlatformMockReadSelector,
   PlatformMockRefresh,
+  PlatformMockRun,
+  PlatformMockRunClosed,
   PlatformMockWritten,
 } from "./mock-types.js";
 
@@ -106,6 +108,38 @@ export abstract class MockServerClient extends DirectoryReviewerAttemptClient {
   ): Promise<PlatformMockRefresh> {
     const { projectId, mockId, ...body } = params;
     return this.request("POST", mocksPath(projectId, `/${encodeURIComponent(mockId)}/refresh`), { body }, options);
+  }
+
+  /**
+   * Open a test run on a version (the head by default): its own copy of the
+   * version's records, at a URL only the caller can use for 24 hours.
+   */
+  openMockRun(
+    params: { projectId: string; mockId: string; version?: number; platformRunId?: string },
+    options?: Options
+  ): Promise<PlatformMockRun> {
+    const { projectId, mockId, ...body } = params;
+    return this.request("POST", mocksPath(projectId, `/${encodeURIComponent(mockId)}/runs`), { body }, options);
+  }
+
+  /** Restore the run's pinned seed. Returns the next epoch's URL; the old one is refused. */
+  resetMockRun(
+    params: { projectId: string; mockId: string; runId: string; expectedEpoch: number },
+    options?: Options
+  ): Promise<PlatformMockRun> {
+    const { projectId, mockId, runId, expectedEpoch } = params;
+    const path = mocksPath(projectId, `/${encodeURIComponent(mockId)}/runs/${encodeURIComponent(runId)}/reset`);
+    return this.request("POST", path, { body: { expectedEpoch } }, options);
+  }
+
+  /** End the run's access at once. Repeating it is safe. */
+  closeMockRun(
+    params: { projectId: string; mockId: string; runId: string },
+    options?: Options
+  ): Promise<PlatformMockRunClosed> {
+    const { projectId, mockId, runId } = params;
+    const path = mocksPath(projectId, `/${encodeURIComponent(mockId)}/runs/${encodeURIComponent(runId)}/close`);
+    return this.request("POST", path, { body: {} }, options);
   }
 
   /** The policy in force for a mock, or for the project's workspace when no mock is named. */

@@ -671,6 +671,13 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   get_project_skill:
     "Paired with the list above; /skills renders the SKILL.md body next to the aggregateHash that says which version it is, and the body is mutable so that pairing is the point.",
 
+  open_mock_run:
+    "Starts a test run of a mock and returns its URL for a test harness. Runs belong to the harness that opens and closes them, not to a chat turn.",
+  reset_mock_run:
+    "Discards a run's records so a harness can start over. The harness that holds the run calls it; a chat turn does not own one.",
+  close_mock_run:
+    "Ends a test run and releases its records. Run lifecycle belongs to whoever opened the run.",
+
   patch_mock_server:
     "Changes one path of a mock and saves a version. It is an agent-surface edit that reports binding errors by path; chat has no place to show them.",
   refresh_mock_server:

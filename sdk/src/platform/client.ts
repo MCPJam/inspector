@@ -3981,7 +3981,12 @@ export class PlatformApiClient extends MockServerClient {
    */
   callServerTool(
     params: ServerScope & {
-      body: { toolName: string; parameters?: Record<string, unknown> };
+      body: {
+        toolName: string;
+        parameters?: Record<string, unknown>;
+        /** Makes a write to a mock's records safe to retry; sent as `_meta["mcpjam.com/operationKey"]`. */
+        operationKey?: string;
+      };
     },
     options?: RequestOptions
   ): Promise<Record<string, unknown>> {

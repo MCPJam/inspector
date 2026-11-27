@@ -3,11 +3,14 @@ import { describe, expect, it, vi } from "vitest";
 import {
   OPERATION_FEATURES,
   PlatformApiClient,
+  closeMockRunOperation,
   createMockServerOperation,
   getMockForwardingPolicyOperation,
   getMockServerOperation,
+  openMockRunOperation,
   isOperationAvailable,
   patchMockServerOperation,
+  resetMockRunOperation,
   refreshMockServerOperation,
   setMockForwardingPolicyOperation,
   updateMockServerOperation,
@@ -170,6 +173,7 @@ describe("results match the shared surface fixture", () => {
   const { project, base, mock } = fixture.ids as Record<string, string>;
   const root = `/api/v1/projects/${project}/mock-servers`;
 
+  const runBodies: unknown[] = [];
   function stub() {
     const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
       const url = new URL(String(input));
@@ -186,6 +190,12 @@ describe("results match the shared surface fixture", () => {
       if (key === `POST ${root}`) return Response.json(fixture.created, { status: 201 });
       if (key === `GET ${root}/${mock}`) return Response.json(url.searchParams.has("path") ? fixture.value : fixture.summary);
       if (key === `PATCH ${root}/${mock}`) return Response.json(fixture.patched, { status: 201 });
+      if (key === `POST ${root}/${mock}/runs`) return Response.json(fixture.run, { status: 201 });
+      if (key === `POST ${root}/${mock}/runs/run-1/reset`) {
+        runBodies.push(JSON.parse(String(init?.body)));
+        return Response.json(fixture.reset);
+      }
+      if (key === `POST ${root}/${mock}/runs/run-1/close`) return Response.json(fixture.closed);
       throw new Error(`unexpected ${key}`);
     });
     return new PlatformApiClient({ baseUrl: "https://api.test/api/v1", getAuth: () => "t", fetch: fetchMock as unknown as typeof fetch });
@@ -199,5 +209,14 @@ describe("results match the shared surface fixture", () => {
     expect(await run(getMockServerOperation, { mock: "markets (mock)", family: "tools", name: "tool_001", path: "description" }, client)).toEqual(withProject(fixture.value));
     const patched = await run(patchMockServerOperation, { mock: "markets (mock)", expectedVersion: 2, family: "tools", name: "tool_001", path: ["description"], value: "Second." }, client);
     expect(patched).toEqual(withProject(fixture.patched));
+  });
+
+  it("open, reset and close a test run", async () => {
+    const client = stub();
+    expect(await run(openMockRunOperation, { mock: "markets (mock)" }, client)).toEqual(withProject(fixture.run));
+    const reset = await run(resetMockRunOperation, { mock: "markets (mock)", runId: "run-1", expectedEpoch: 1 }, client);
+    expect(reset).toEqual(withProject(fixture.reset));
+    expect(runBodies).toEqual([{ expectedEpoch: 1 }]);
+    expect(await run(closeMockRunOperation, { mock: "markets (mock)", runId: "run-1" }, client)).toEqual(withProject(fixture.closed));
   });
 });

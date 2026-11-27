@@ -530,6 +530,35 @@ test("tools call without --ui preserves raw output and does not contact Inspecto
   }
 });
 
+test("tools call --operation-key sends the key as the call's _meta, and no key sends none", async () => {
+  const server = await startMockServer({});
+  const callParams = () =>
+    server.requests
+      .filter((entry) => entry.url === "/mcp")
+      .map((entry) => entry.body as { method?: string; params?: { _meta?: Record<string, unknown> } })
+      .filter((body) => body.method === "tools/call")
+      .map((body) => body.params?._meta?.["mcpjam.com/operationKey"]);
+  const call = (extra: string[]) =>
+    runCli([
+      "--format", "json", "tools", "call",
+      "--url", `http://127.0.0.1:${server.port}/mcp`,
+      "--tool-name", "create_view", "--tool-args", "{}",
+      ...extra,
+    ]);
+
+  try {
+    const first = await call(["--operation-key", "retry-1"]);
+    assert.equal(first.exitCode, 0, first.stderr + first.stdout);
+    assert.equal((await call([])).exitCode, 0);
+    assert.deepEqual(callParams(), ["retry-1", undefined]);
+    const refused = await call(["--operation-key", "x".repeat(257)]);
+    assert.notEqual(refused.exitCode, 0);
+    assert.match(refused.stderr + refused.stdout, /shorter key/);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("tools call --ui --no-open in JSON mode skips render without an active Inspector client", async () => {
   const toolResult = { content: [{ type: "text", text: "view created" }] };
   const server = await startMockServer({ hasActiveClient: false, toolResult });

@@ -1,10 +1,13 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  closeMockRunOperation,
   createMockServerOperation,
   getMockServerOperation,
+  openMockRunOperation,
   patchMockServerOperation,
   refreshMockServerOperation,
+  resetMockRunOperation,
   setMockForwardingPolicyOperation,
 } from "@mcpjam/sdk/platform";
 import { MOCK_TEXT_BUDGET, readMockView, type MockDefinition, type MockListing } from "@mcpjam/sdk/mocks";
@@ -104,6 +107,37 @@ describe("mock tools return what REST answers", () => {
       `POST /${mock}/refresh`,
       `PUT /api/v1/projects/${project}/mock-forwarding-policy`,
     ]);
+  });
+});
+
+describe("test runs", () => {
+  it("open, reset and close match the shared fixture, and send the run's routes", async () => {
+    const requests = stubApi((_method, url) =>
+      Response.json(url.pathname.endsWith("/reset") ? fixture.reset : url.pathname.endsWith("/close") ? fixture.closed : fixture.run, {
+        status: url.pathname.endsWith("/runs") ? 201 : 200,
+      })
+    );
+    const opened = await call(openMockRunOperation, { mock: "markets (mock)", version: 2 });
+    expect(withoutProject(opened.structuredContent!)).toEqual(fixture.run);
+    const reset = await call(resetMockRunOperation, { mock: "markets (mock)", runId: "run-1", expectedEpoch: 1 });
+    expect(withoutProject(reset.structuredContent!)).toEqual(fixture.reset);
+    const closed = await call(closeMockRunOperation, { mock: "markets (mock)", runId: "run-1" });
+    expect(withoutProject(closed.structuredContent!)).toEqual(fixture.closed);
+    expect(requests.map((r) => [r.method, r.path.replace(ROOT, ""), r.body])).toEqual([
+      ["POST", `/${mock}/runs`, { version: 2 }],
+      ["POST", `/${mock}/runs/run-1/reset`, { expectedEpoch: 1 }],
+      ["POST", `/${mock}/runs/run-1/close`, {}],
+    ]);
+  });
+});
+
+describe("the limit on open test runs", () => {
+  it("open_mock_run answers a tool error that says to close a run or wait", async () => {
+    const message = "You have 100 open test runs. Close one, or wait for one to expire; a run lasts 24 hours.";
+    stubApi(() => Response.json({ code: "CONFLICT", message, details: { code: "MOCK_RUN_LIMIT", limit: 100 } }, { status: 409 }));
+    const result = await call(openMockRunOperation, { mock: "markets (mock)" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain("You have 100 open test runs. Close one, or wait for one to expire");
   });
 });
 

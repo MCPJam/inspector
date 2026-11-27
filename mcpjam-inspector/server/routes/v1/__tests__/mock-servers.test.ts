@@ -315,6 +315,25 @@ describe("POST /mock-servers", () => {
     expect(mocks.mutation).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["create", "mockServers:createMock", `${MOCKS}`, { name: "m", definition: {} }],
+    ["save", "mockServers:saveMockVersion", `${MOCKS}/${MOCK}/versions`, { definition: {}, expectedVersion: 2 }],
+    ["patch", "mockServers:saveMockVersion", `${MOCKS}/${MOCK}/versions`, { patch: { instructions: "x" }, expectedVersion: 2 }],
+  ])("a seed the backend finds too big on %s is the SDK's 400, not a 500", async (_name, fn, path, body) => {
+    mutations[fn] = () => {
+      throw refusal("MOCK_SEED_TOO_MANY_RECORDS", "seed holds 2001 records; at most 2000.");
+    };
+    const response = await request("POST", path, { body });
+    expect(response.status).toBe(400);
+    const out = await json(response);
+    expect(out.details).toMatchObject({
+      code: "MOCK_DEFINITION_INVALID",
+      issues: [{ code: "too_large", path: "seed" }],
+    });
+    expect(out.message).toContain('"seed"');
+    expect(out.message).toContain("2001 records");
+  });
+
   it("answers a name already taken with 409", async () => {
     mutations["mockServers:createMock"] = () => {
       throw refusal("CONFLICT", "A server with that name exists.");

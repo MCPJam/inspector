@@ -147,6 +147,11 @@ import {
   updateMockServerOperation,
 } from "./mock-operations.js";
 import {
+  closeMockRunOperation,
+  openMockRunOperation,
+  resetMockRunOperation,
+} from "./mock-run-operations.js";
+import {
   deleteServerAccountOperation,
   getServerAccountOperation,
   listServerAccountsOperation,
@@ -1292,6 +1297,15 @@ const callServerToolInput = serverScopedInput.extend({
     .record(z.string(), z.unknown())
     .optional()
     .describe("Tool arguments matching the tool's input schema."),
+  operationKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(256)
+    .optional()
+    .describe(
+      "A key that makes a write to a mock server's records safe to retry: sent with the same call again, it returns the first outcome and writes once. A different call with the same key is refused. Ignored by other servers."
+    ),
 });
 
 export type CallServerToolInput = z.infer<typeof callServerToolInput>;
@@ -1447,6 +1461,7 @@ export const callServerToolOperation: PlatformOperation<
         body: {
           toolName: input.toolName,
           parameters: input.parameters ?? {},
+          ...(input.operationKey !== undefined && { operationKey: input.operationKey }),
         },
       },
       { signal }
@@ -19452,6 +19467,9 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getMockServerOperation,
   patchMockServerOperation,
   refreshMockServerOperation,
+  openMockRunOperation,
+  resetMockRunOperation,
+  closeMockRunOperation,
   getMockForwardingPolicyOperation,
   setMockForwardingPolicyOperation,
   // Server accounts. Tokens are write-only, and the upload and the update are

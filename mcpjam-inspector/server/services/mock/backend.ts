@@ -37,6 +37,8 @@ export interface ResolvedMock {
    * Absent when none was captured or it is another member's private capture.
    */
   discovery?: PinnedDiscovery;
+  /** Set when the request came in on a test run's URL: the run the backend just verified. */
+  run?: { runId: string; epoch: number; expiresAt: number };
 }
 
 /** What B1 stores of the base's listing (`discoveryJson`); MCP list entries. */
@@ -85,6 +87,11 @@ const KIND_BY_BACKEND_CODE: Record<string, MockRefusalKind> = {
   MOCK_FORBIDDEN: "forbidden",
   MOCK_NOT_FOUND: "not_found",
   MOCK_VERSION_NOT_FOUND: "not_found",
+  MOCK_RUN_NOT_FOUND: "run_not_found",
+  MOCK_RUN_FORBIDDEN: "run_forbidden",
+  MOCK_RUN_CLOSED: "run_closed",
+  MOCK_RUN_EXPIRED: "run_expired",
+  MOCK_RUN_STALE_EPOCH: "run_stale_epoch",
 };
 const KIND_BY_STATUS: Record<number, MockRefusalKind> = {
   401: "unauthorized",
@@ -117,7 +124,16 @@ function asResolved(body: unknown): ResolvedMock {
     definition: validated.definition,
     baseServerId: typeof b.baseServerId === "string" ? b.baseServerId : null,
     discovery: readPinnedDiscovery(b.discovery),
+    ...readRun(b.run),
   };
+}
+
+/** The run a resolve answered for, when it did; a malformed one is as good as none. */
+function readRun(raw: unknown): { run?: ResolvedMock["run"] } {
+  const run = raw as { runId?: unknown; epoch?: unknown; expiresAt?: unknown } | null | undefined;
+  return typeof run?.runId === "string" && Number.isInteger(run.epoch) && typeof run.expiresAt === "number"
+    ? { run: { runId: run.runId, epoch: run.epoch as number, expiresAt: run.expiresAt } }
+    : {};
 }
 
 export interface ResolveInput {
@@ -126,6 +142,8 @@ export interface ResolveInput {
   bearerToken: string;
   /** In process only: the grant the dialer holds. Absent over HTTP. */
   grant?: string;
+  /** Over HTTP only: the test run the request's URL names. The backend checks it on every request. */
+  run?: { runId: string; epoch: number };
 }
 
 export async function resolveMock(
@@ -142,7 +160,13 @@ export async function resolveMock(
     response = await (deps.fetch ?? fetch)(`${convexUrl}/web/mock/resolve`, {
       method: "POST",
       headers: buildConvexAuthHeaders(input.caller, input.bearerToken),
-      body: JSON.stringify(input.grant ? { grant: input.grant } : { mockId: input.mockId }),
+      body: JSON.stringify(
+        input.grant
+          ? { grant: input.grant }
+          : input.run
+            ? { runId: input.run.runId, epoch: input.run.epoch, mockId: input.mockId }
+            : { mockId: input.mockId },
+      ),
       signal: AbortSignal.timeout(RESOLVE_TIMEOUT_MS),
     });
   } catch (error) {

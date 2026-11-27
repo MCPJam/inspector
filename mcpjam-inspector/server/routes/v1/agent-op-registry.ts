@@ -157,6 +157,9 @@ import {
   getMockServerOperation,
   patchMockServerOperation,
   refreshMockServerOperation,
+  openMockRunOperation,
+  resetMockRunOperation,
+  closeMockRunOperation,
   getMockForwardingPolicyOperation,
   setMockForwardingPolicyOperation,
   listServerAccountsOperation,
@@ -1779,6 +1782,9 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   { operation: getMockServerOperation, tier: "direct" },
   { operation: patchMockServerOperation, tier: "direct" },
   { operation: refreshMockServerOperation, tier: "direct" },
+  { operation: openMockRunOperation, tier: "direct" },
+  { operation: resetMockRunOperation, tier: "direct" },
+  { operation: closeMockRunOperation, tier: "direct" },
   { operation: getMockForwardingPolicyOperation, tier: "direct" },
   {
     // Decides whether every mock in a workspace may call its real server: who

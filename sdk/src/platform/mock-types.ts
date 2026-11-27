@@ -206,3 +206,24 @@ export type PlatformMockForwardingPolicy = PlatformMockPolicy & {
   /** The mock the policy was read for; absent for the project's own setting. */
   mockId?: string;
 };
+
+/**
+ * A test run of a mock: a version pinned, with its own copy of the version's
+ * records, at a URL only the person who opened it can use. `reset` returns a
+ * fresh URL at the next epoch; the old one is refused.
+ */
+export type PlatformMockRun = {
+  runId: string;
+  mockId: string;
+  projectId: string;
+  /** The version the run pinned. */
+  version: number;
+  /** Raised by every reset; a call on an older epoch's URL is refused. */
+  epoch: number;
+  /** Epoch milliseconds; a run lasts 24 hours from opening. */
+  expiresAt: number;
+  /** The run's MCP URL; null when this deployment has no public address to give. */
+  runUrl: string | null;
+};
+
+export type PlatformMockRunClosed = { runId: string; projectId: string; closed: true };

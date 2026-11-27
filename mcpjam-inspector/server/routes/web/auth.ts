@@ -313,6 +313,8 @@ export const toolsExecuteSchema = projectServerSchema
   .extend({
     toolName: z.string().min(1),
     parameters: z.record(z.string(), z.unknown()).default({}),
+    // Makes a retried write to a mock's records apply once (1 to 256 characters).
+    operationKey: z.string().min(1).max(256).optional(),
     taskOptions: taskOptionsSchema.optional(),
     // Extension wire: the client only declares that a task response is
     // acceptable; the server decides whether to create one.
