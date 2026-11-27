@@ -16,6 +16,8 @@ const progressIndicatorVariants = cva(
       pace: {
         default: "",
         gradual: "duration-700 ease-out",
+        // For a bar that animates in from empty, such as a refilled balance.
+        fill: "duration-1000 ease-[cubic-bezier(0.22,1,0.36,1)]",
       },
     },
     defaultVariants: {
