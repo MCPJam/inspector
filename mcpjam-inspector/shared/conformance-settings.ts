@@ -14,6 +14,7 @@ import type {
 } from "@mcpjam/sdk";
 import {
   CHECK_ERAS,
+  checkRunsOnVersion,
   MCP_APPS_CHECK_IDS,
   MCP_CHECK_IDS,
   MCP_OAUTH_READINESS_IDS,
@@ -129,9 +130,7 @@ export function runnableSelection(
   const pinnedEra =
     versionPin === "auto" ? undefined : PROTOCOL_VERSION_ERAS[versionPin];
   const protocolIds = MCP_CHECK_IDS.filter(
-    (id) =>
-      pinnedEra === undefined ||
-      (CHECK_ERAS[id] as readonly string[]).includes(pinnedEra),
+    (id) => versionPin === "auto" || checkRunsOnVersion(id, versionPin),
   );
   const adviceIds = MCP_READINESS_IDS.filter(
     (id) =>
@@ -238,6 +237,22 @@ function erasOf(id: MCPCheckId | MCPReadinessId): readonly string[] {
 }
 
 /**
+ * Whether a check or advice has anything to do on a run with this pin. An
+ * unpinned run negotiates a 2025 revision, so "auto" is the legacy era. A
+ * pinned check also has to be old enough for the version: the output schema
+ * check does not run on 2025-03-26, which has no `outputSchema`.
+ */
+function runsOnPin(
+  id: MCPCheckId | MCPReadinessId,
+  pin: ProtocolVersionPin,
+): boolean {
+  if (pin === "auto") return erasOf(id).includes("legacy");
+  return isAdvice(id)
+    ? erasOf(id).includes(PROTOCOL_VERSION_ERAS[pin])
+    : checkRunsOnVersion(id, pin);
+}
+
+/**
  * Whether the advice's own log tool counts: only while the logging check is
  * picked too. Alone, the advice row sets the shared log tool itself, so that
  * is the one it calls. `protocolCheckIds` absent means every check.
@@ -270,10 +285,10 @@ export function probeKeyFor(checkId: string): ConformanceProbeKey | undefined {
 
 /**
  * Whether a protocol probe's tool is called on a run with this pin: one of
- * its checks or advice runs in the pin's era (and, with `checkIds` /
- * `readinessIds`, is picked). Never on "auto": an unpinned client does not
- * offer 2026-07-28, so the run stays in the legacy era, where these checks do
- * not apply.
+ * its checks or advice runs on the pin's version (and, with `checkIds` /
+ * `readinessIds`, is picked). On "auto" an unpinned client does not offer
+ * 2026-07-28, so the run stays in the legacy era: only a check that also runs
+ * there calls its tool, which today is the output schema check.
  */
 function probeRuns(
   key: ProtocolProbeKey,
@@ -293,11 +308,9 @@ function runsWithPin(
   checkIds?: readonly string[],
   readinessIds?: readonly string[],
 ): boolean {
-  if (pin === "auto") return false;
   const picked = isAdvice(id) ? readinessIds : checkIds;
   return (
-    erasOf(id).includes(PROTOCOL_VERSION_ERAS[pin]) &&
-    (picked === undefined || picked.includes(id))
+    runsOnPin(id, pin) && (picked === undefined || picked.includes(id))
   );
 }
 

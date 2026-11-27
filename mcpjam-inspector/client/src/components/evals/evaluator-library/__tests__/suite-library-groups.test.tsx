@@ -195,6 +195,25 @@ function draft(
   return { state, edits };
 }
 
+/**
+ * What the backend stores for a settings save (`mergeOmittedJudgeSlots`): a
+ * reserved judge slot the write leaves out keeps its stored value. Undefined
+ * is sent as null, which clears the whole config.
+ */
+function savedJudgeConfig(
+  stored: EvalJudgeConfig,
+  written: EvalJudgeConfig | undefined,
+): EvalJudgeConfig | undefined {
+  if (written === undefined) return undefined;
+  const saved = { ...written };
+  for (const slot of ["groundedness", "rubricChecks"] as const) {
+    if (!(slot in written) && stored[slot] !== undefined) {
+      Object.assign(saved, { [slot]: stored[slot] });
+    }
+  }
+  return saved;
+}
+
 describe("library question edits", () => {
   it("adds and removes an evaluator's question, leaving the config as it was", () => {
     const { state, edits } = draft(undefined, [{ type: "noToolErrors" }]);
@@ -207,12 +226,33 @@ describe("library question edits", () => {
     expect(state.predicates).toEqual([{ type: "noToolErrors" }]);
   });
 
-  it("keeps the rest of the judge config when the last question goes", () => {
+  it("keeps the rest of the judge config, and an empty slot, when the last question goes", () => {
     const goal = { goalCompletion: { enabled: true } };
     const { state, edits } = draft(goal);
     edits().add(questionsOf(reports));
     edits().remove("reports-tool-errors");
-    expect(state.judgeConfig).toEqual(goal);
+    expect(state.judgeConfig).toEqual({ ...goal, rubricChecks: {} });
+  });
+
+  it("removes the last stored question in a way the backend will not restore", () => {
+    const stored = {
+      goalCompletion: { enabled: true },
+      rubricChecks: { questions: [reportsQuestion] },
+    };
+    const { state, edits } = draft(stored);
+    edits().remove("reports-tool-errors");
+    expect(state.judgeConfig).toEqual({
+      goalCompletion: { enabled: true },
+      rubricChecks: {},
+    });
+    expect(savedJudgeConfig(stored, state.judgeConfig)).toEqual({
+      goalCompletion: { enabled: true },
+      rubricChecks: {},
+    });
+    // Leaving the slot out, as before, brings the questions back.
+    expect(
+      savedJudgeConfig(stored, { goalCompletion: { enabled: true } }),
+    ).toEqual(stored);
   });
 
   it("turns rubric checks back on only when adding to a suite that turned them off", () => {
@@ -271,6 +311,26 @@ describe("library question edits", () => {
     });
     edits().update("no-wasted-calls");
     expect(state.judgeConfig).toBeUndefined();
+  });
+
+  it("clears the stored slot when an update empties it beside other config", () => {
+    const stored = {
+      goalCompletion: { threshold: 0.8 },
+      rubricChecks: {
+        questions: [
+          {
+            ...own("no-wasted-calls-old"),
+            evaluator: { id: "no-wasted-calls", version: 0 },
+          },
+        ],
+      },
+    };
+    const { state, edits } = draft(stored);
+    edits().update("no-wasted-calls");
+    expect(savedJudgeConfig(stored, state.judgeConfig)).toEqual({
+      goalCompletion: { threshold: 0.8 },
+      rubricChecks: {},
+    });
   });
 
   it("writes no judge config when a check-only evaluator is updated", () => {
