@@ -19,11 +19,12 @@ export function revealFocusedCell({ currentTarget: scrollBox, target }: FocusEve
   else if (bounds.right > right) scrollBox.scrollLeft += Math.ceil(bounds.right - right);
 }
 
-type MatrixCell = (props: {
+export type CompactMatrixCell = (props: {
   field: HostConfigFieldDef;
   subject: HostComparisonSubject;
   mobileOptimized: boolean;
   compact: boolean;
+  stacked?: boolean;
 }) => ReactNode;
 
 export type MatrixSummaryColumn = {
@@ -34,7 +35,7 @@ export type MatrixSummaryColumn = {
 };
 
 interface CompactRowProps {
-  renderCell: MatrixCell;
+  renderCell: CompactMatrixCell;
   subjects: readonly HostComparisonSubject[];
   summaryColumn: MatrixSummaryColumn;
   showDescriptions: boolean;
@@ -75,6 +76,7 @@ function CompactFieldRow({
   showDescriptions,
   mobileOptimized,
 }: CompactRowProps & { field: HostConfigFieldDef }) {
+  const slices = summaryColumn.renderSlices?.(field);
   return (
     <tr className="border-b border-border last:border-b-0">
       <th scope="row" className="sticky left-0 z-10 bg-card font-normal px-3 py-2.5 text-left after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border after:content-[''] sm:px-5">
@@ -94,9 +96,9 @@ function CompactFieldRow({
           mobileOptimized && "[&_a]:scroll-ml-[var(--matrix-field-width)]",
         )}
       >
-        <div className="flex flex-col gap-1 tabular-nums">
+        <div className="flex flex-col gap-1 text-left tabular-nums">
           {summaryColumn.render(field)}
-          {summaryColumn.renderSlices?.(field)}
+          {slices && <div role="group" aria-label="Adoption by mode" className="mt-1 grid grid-cols-3 gap-x-1.5 gap-y-2 border-t border-border pt-2">{slices}</div>}
         </div>
       </td>
       {subjects.map((s) => (
@@ -140,7 +142,7 @@ export function CompactClientName({ subject, href, className }: {
   );
 }
 
-export function CompactVerifiedDate({ subject }: { subject: HostComparisonSubject }) {
+export function CompactVerifiedDate({ subject, className }: { subject: HostComparisonSubject; className?: string }) {
   const date = formatVerifiedAt(subject.verifiedAt);
   const stale = isVerifiedAtStale(subject.verifiedAt);
   if (date === "—") return null;
@@ -148,10 +150,12 @@ export function CompactVerifiedDate({ subject }: { subject: HostComparisonSubjec
     <time
       dateTime={date}
       title={stale ? STALE_VERIFIED_AT_LABEL : undefined}
-      className="mt-1.5 inline-flex items-center justify-center gap-1 text-[10px] leading-tight font-normal text-muted-foreground"
+      className={cn("mt-1.5 inline-flex items-center gap-1 text-[10px] leading-tight font-normal text-muted-foreground", className)}
     >
       {stale && <TriangleAlert className="size-3 shrink-0" aria-hidden />}
-      <span>Verified on {date}</span>
+      <span>
+        Verified on <span className="whitespace-nowrap">{date}</span>
+      </span>
     </time>
   );
 }

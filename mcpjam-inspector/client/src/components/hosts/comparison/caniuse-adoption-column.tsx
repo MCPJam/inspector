@@ -95,7 +95,7 @@ function AdoptionLink({
       className="w-fit rounded-sm text-xs text-muted-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
       title={[detail, unpublishedLabel].filter(Boolean).join(" ")}
     >
-      {label && <span className="mr-1">{label}</span>}
+      {label && <span className="block font-medium capitalize [overflow-wrap:anywhere]">{label}</span>}
       <span
         className={
           score === null
@@ -111,7 +111,7 @@ function AdoptionLink({
         )}
       </span>
       {score !== null && (
-        <span className={label ? "ml-1 inline-block" : "block"}>
+        <span className="ml-1 inline-block">
           {full}/{probed}
         </span>
       )}

@@ -25,6 +25,7 @@ import {
   type HostConfigFieldDef,
 } from "@/lib/host-config-field-schema";
 import { CompactMatrixRows, CompactClientName, CompactVerifiedDate, revealFocusedCell, type MatrixSummaryColumn } from "./compact-matrix-rows";
+import { StackedMatrixResults } from "./stacked-matrix-results";
 import { SupportChip } from "./support-chip";
 import { PRESET_HOST_ID_PREFIX } from "./host-compare-presets";
 import { buildHostVerifySearch } from "../host-verify-deep-link";
@@ -63,6 +64,7 @@ interface HostConfigComparisonMatrixProps {
   onRemoveHost?: (hostId: string) => void;
   themeMode?: HostThemeMode;
   mobileOptimized?: boolean;
+  stacked?: boolean;
   /**
    * When set, each column header gets a "Verify against your server" action
    * deep-linking to `<verifyBaseUrl>/hosts?template=<templateId>` — the hosted
@@ -93,6 +95,7 @@ export function HostConfigComparisonMatrix({
   onRemoveHost,
   themeMode = "light",
   mobileOptimized = false,
+  stacked = false,
   verifyBaseUrl,
   disabledVerifyTemplateIds,
 }: HostConfigComparisonMatrixProps) {
@@ -166,6 +169,23 @@ export function HostConfigComparisonMatrix({
     );
   }
 
+  if (stacked && summaryColumn) {
+    return (
+      <StackedMatrixResults
+        groups={groups}
+        visibleFieldIds={visibleFieldIds}
+        subjects={displaySubjects}
+        summaryColumn={summaryColumn}
+        showDescriptions={showDescriptions}
+        themeMode={themeMode}
+        renderCell={FieldCell}
+        verifyHref={(hostId) =>
+          buildVerifyHref(verifyBaseUrl, hostId, disabledVerifyTemplateIds)
+        }
+      />
+    );
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -223,7 +243,7 @@ export function HostConfigComparisonMatrix({
             mobileOptimized
               ? {
                   width:
-                    140 + (summaryColumn ? 104 : 0) + displaySubjects.length * 132,
+                    140 + (summaryColumn ? 224 : 0) + displaySubjects.length * 132,
                 }
               : undefined
           }
@@ -236,7 +256,7 @@ export function HostConfigComparisonMatrix({
                   : "w-[168px] sm:w-[300px]"
               }
             />
-            {summaryColumn && <col className="w-[104px] sm:w-[144px]" />}
+            {summaryColumn && <col className="w-56" />}
             {displaySubjects.map((s) => (
               <col
                 key={s.hostId}
@@ -624,11 +644,13 @@ function FieldCell({
   subject,
   mobileOptimized,
   compact = false,
+  stacked = false,
 }: {
   field: HostConfigFieldDef;
   subject: HostComparisonSubject;
   mobileOptimized: boolean;
   compact?: boolean;
+  stacked?: boolean;
 }) {
   const value = field.read(subject.config);
   const kind = field.kind;
@@ -647,6 +669,7 @@ function FieldCell({
     kind.kind !== "tri-state" &&
     kind.kind !== "capability"
   ) {
+    if (stacked) return <SupportChip level="unknown" label="No result" />;
     return (
       <span className="text-xs text-muted-foreground">
         {compact && <span className="sr-only">No result</span>}

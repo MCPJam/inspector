@@ -2516,6 +2516,7 @@ export function TasksRoute() {
 }
 
 export function EventsRoute() {
+  const fallback = useCurrentSearchParam("fallback");
   const {
     selectedMCPConfig,
     appState,
@@ -2526,7 +2527,14 @@ export function EventsRoute() {
   } = useAppRouteContext();
   const eventsEnabled = useEventsEnabledState();
   if (eventsEnabled === false) {
-    return <ScopedNavigate to={routePaths.servers} replace />;
+    return (
+      <ScopedNavigate
+        to={
+          fallback === "playground" ? routePaths.playground : routePaths.servers
+        }
+        replace
+      />
+    );
   }
   if (eventsEnabled === undefined) return null;
   return (

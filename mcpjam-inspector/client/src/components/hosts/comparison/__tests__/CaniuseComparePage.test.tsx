@@ -79,15 +79,48 @@ describe("CaniuseComparePage", () => {
     expect(score).toHaveTextContent(/\d+\/\d+/);
     expect(score).toHaveTextContent(/\d+ with no published result/);
     expect(score).toHaveAttribute("href", "/capabilities/event-delivery");
-    expect(
-      screen.getByRole("link", { name: /^webhook:/i }),
-    ).toHaveAttribute("href", "/capabilities/event-delivery?slice=webhook");
+    const modes = screen.getByRole("group", { name: "Adoption by mode" });
+    expect(score.closest("td")).toContainElement(modes);
+    expect(within(modes).getAllByRole("link").map((link) => link.getAttribute("href")))
+      .toEqual(["poll", "push", "webhook"].map((slice) => `/capabilities/event-delivery?slice=${slice}`));
     expect(score).toHaveAttribute(
       "title",
       expect.stringMatching(
         /probed clients have confirmed support for at least one delivery mode/,
       ),
     );
+  });
+
+  it("stacks the selected clients and preserves Events adoption links on mobile", () => {
+    const width = vi.spyOn(window, "innerWidth", "get").mockReturnValue(320);
+    try {
+      render(
+        <MemoryRouter initialEntries={["/compare?capability=event-delivery"]}>
+          <CaniuseComparePage />
+        </MemoryRouter>,
+      );
+      const matrix = within(screen.getByTestId("compare-matrix"));
+      const events = within(matrix.getByRole("article", { name: "MCP Events" }));
+      expect(matrix.queryByRole("table")).not.toBeInTheDocument();
+      const rows = events.getAllByRole("listitem");
+      expect(rows).toHaveLength(3);
+      for (const [index, client] of ["Claude", "ChatGPT", "Cursor"].entries()) {
+        expect(rows[index]).toHaveTextContent(client);
+        expect(rows[index].querySelector("[data-support-level]")).toBeInTheDocument();
+        const date = rows[index].querySelector("time");
+        expect(date).toHaveAttribute("datetime", expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/));
+        expect(date?.querySelector(".whitespace-nowrap")).toHaveTextContent(
+          /^\d{4}-\d{2}-\d{2}$/,
+        );
+      }
+      expect(events.getByRole("link", { name: /^\d+%, \d+ of \d+ probed clients/ }))
+        .toHaveAttribute("href", "/capabilities/event-delivery");
+      const modes = within(events.getByRole("group", { name: "Adoption by mode" }));
+      expect(modes.getByRole("link", { name: /^webhook:/i }))
+        .toHaveAttribute("href", "/capabilities/event-delivery?slice=webhook");
+    } finally {
+      width.mockRestore();
+    }
   });
 
   it("shows the share URL when direct clipboard access is blocked", async () => {
