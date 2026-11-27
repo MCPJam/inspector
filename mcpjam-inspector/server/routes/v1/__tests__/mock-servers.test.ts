@@ -194,6 +194,70 @@ describe("POST /mock-servers", () => {
     expect(mocks.mutation).not.toHaveBeenCalled();
   });
 
+  it("refuses a definition that leaves the base's tool impossible to call, naming the field and the fix", async () => {
+    const response = await request("POST", MOCKS, {
+      body: { name: "m", serverId: BASE, definition: { tools: { search: { params: { query: { hidden: true } } } } } },
+    });
+    expect(response.status).toBe(400);
+    const body = await json(response);
+    expect(body.message).toContain("tools.search");
+    expect(body.message).toContain("query");
+    expect(mocks.mutation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["an unknown property type", { inputSchema: { type: "object", properties: { id: { type: "bogus-type" } } } }, "tools.a.inputSchema.properties.id.type", "one of array, boolean"],
+    ["a required list that is a string", { inputSchema: { type: "object", required: "id" } }, "tools.a.inputSchema.required", "required"],
+  ])("refuses a tool with %s, naming the field path and what to change", async (_name, tool, path, phrase) => {
+    const response = await request("POST", MOCKS, {
+      body: { name: "m", definition: { tools: { a: { description: "x", ...tool } } } },
+    });
+    expect(response.status).toBe(400);
+    const body = await json(response);
+    expect(body.message).toContain(phrase);
+    expect(body.details.issues[0]).toMatchObject({ code: "invalid_schema", path });
+    expect(mocks.mutation).not.toHaveBeenCalled();
+  });
+
+  it("refuses an output schema that does not compile, at the tool's outputSchema", async () => {
+    const response = await request("POST", MOCKS, {
+      body: {
+        name: "m",
+        definition: { tools: { a: { description: "x", outputSchema: { type: "object", properties: { n: { type: "numbr" } } } } } },
+      },
+    });
+    expect(response.status).toBe(400);
+    const body = await json(response);
+    expect(body.message).toContain("does not compile");
+    expect(body.details.issues[0]).toMatchObject({ code: "invalid_value", path: "tools.a.outputSchema" });
+    expect(mocks.mutation).not.toHaveBeenCalled();
+  });
+
+  it("refuses an invalid schema in a patch too", async () => {
+    queries["mockServers:getMock"] = () => stored({ tools: { a: { description: "x" } } });
+    const response = await request("POST", `${MOCKS}/${MOCK}/versions`, {
+      body: { patch: { tools: { a: { inputSchema: { type: "object", required: "id" } } } }, expectedVersion: 2 },
+    });
+    expect(response.status).toBe(400);
+    expect((await json(response)).details.issues[0].path).toBe("tools.a.inputSchema.required");
+    expect(mocks.mutation).not.toHaveBeenCalled();
+  });
+
+  it("accepts a valid draft-07 schema and a dialect it cannot judge", async () => {
+    const response = await request("POST", MOCKS, {
+      body: {
+        name: "m",
+        definition: {
+          tools: {
+            a: { description: "x", inputSchema: { $schema: "http://json-schema.org/draft-07/schema#", type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
+            b: { description: "y", inputSchema: { $schema: "https://example.com/own-dialect", type: "object", properties: { id: { type: "bogus" } } } },
+          },
+        },
+      },
+    });
+    expect(response.status).toBe(201);
+  });
+
   it("refuses a saved result that breaks its own output schema, naming the case, before the backend is called", async () => {
     const response = await request("POST", MOCKS, {
       body: {
@@ -276,6 +340,20 @@ describe("POST /mock-servers/:mockId/versions", () => {
   it("refuses a patch whose result is not a valid definition, without calling the backend", async () => {
     const response = await request("POST", path, { body: { patch: { tools: { search: { nope: 1 } } }, expectedVersion: 2 } });
     expect(response.status).toBe(400);
+    expect(mocks.mutation).not.toHaveBeenCalled();
+  });
+
+  it("checks a patch against the version's saved listing before saving", async () => {
+    queries["mockServers:getMock"] = () =>
+      stored(
+        { tools: { search: { description: "Find things." } } },
+        { discovery: { visibility: "project", listingJson: JSON.stringify({ tools: [SEARCH] }) } },
+      );
+    const response = await request("POST", path, {
+      body: { patch: { tools: { search: { params: { query: { hidden: true } } } } }, expectedVersion: 2 },
+    });
+    expect(response.status).toBe(400);
+    expect((await json(response)).message).toContain("tools.search");
     expect(mocks.mutation).not.toHaveBeenCalled();
   });
 

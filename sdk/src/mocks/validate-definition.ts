@@ -13,6 +13,7 @@ export type MockIssueCode =
   | "unknown_field"
   | "param_conflict"
   | "uncallable_input"
+  | "invalid_schema"
   /** A field the stored shape has room for that is out of scope (model answers). */
   | "unsupported";
 

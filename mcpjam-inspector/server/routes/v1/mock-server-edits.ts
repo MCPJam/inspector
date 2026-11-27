@@ -22,7 +22,7 @@ import type {
 } from "@mcpjam/sdk/platform";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { bearerOf, createConvexClient, fn, readMock, readRealServer, saved, staleHead } from "./mock-server-io.js";
-import { discoveryOf, translateMockWriteError, validatedDefinition } from "./mock-server-support.js";
+import { assertCallable, discoveryOf, savedTools, translateMockWriteError, validatedDefinition } from "./mock-server-support.js";
 
 export const patchBody = z
   .strictObject({
@@ -67,7 +67,7 @@ export async function patchMock(
     return { result: { ...result, path: applied.path }, status: 200 };
   }
   if (head.headVersion !== expectedVersion) throw staleHead(head.headVersion);
-  validatedDefinition(applied.definition);
+  assertCallable(validatedDefinition(applied.definition), savedTools(head.discovery?.listingJson));
   let result: SaveResult;
   try {
     result = await createConvexClient(await bearerOf(c)).mutation(fn.save, {

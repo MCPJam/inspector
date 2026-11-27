@@ -3,8 +3,9 @@
  *
  * A client outside MCPJam (Claude Code, Cursor, the SDK's own client) dials
  * this with its MCPJam API key or OAuth token as the bearer. The chain, in
- * order: bearer auth, the refusal of anything that is not a signed-in person,
- * then the handler, which asks the backend about this caller on every request.
+ * order: a per-source limit, bearer auth, the refusal of anything that is not
+ * a signed-in person, a per-key limit, then the handler, which asks the backend
+ * about this caller on every request.
  * A grant opens nothing here (`services/mock/registry.ts` is the only door
  * for one).
  *
@@ -13,6 +14,8 @@
  */
 import { Hono, type Context, type Next } from "hono";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
+import { mcpOperationRateLimit } from "../../middleware/mcp-operation-rate-limit.js";
+import { mockDoorSourceLimit } from "../../middleware/mock-door-source-limit.js";
 import { looksLikeMockGrant } from "../../services/mock/grant-claims.js";
 import { mockRefusalResponse, type MockRefusalKind } from "../../services/mock/refusal.js";
 import { DEFAULT_MOCK_PROFILE, serveMock } from "../../services/mock/route.js";
@@ -79,10 +82,22 @@ export async function mockCallerGate(c: Context, next: Next) {
   return next();
 }
 
-/** Mounted before the router, in this order, at `/mock-mcp/*`. */
-export const mockDoorMiddleware = [mockBearerGate, bearerAuthMiddleware, mockCallerGate] as const;
+/**
+ * Mounted before the router, in this order, at `/mock-mcp/*`. The source limit
+ * runs inside the gate (so its refusal is JSON-RPC) and before bearer auth.
+ */
+export const mockDoorMiddleware = [
+  mockBearerGate,
+  mockDoorSourceLimit,
+  bearerAuthMiddleware,
+  mockCallerGate,
+] as const;
 
 const mockMcp = new Hono();
+
+// Per caller and per mock, after auth has said who the caller is and before the
+// handler asks the backend anything. `serverId` is the name the limiter reads.
+mockMcp.use("/:serverId", mcpOperationRateLimit("mock-mcp"));
 
 mockMcp.all("/:mockId", (c) =>
   serveMock(c.req.raw, c.req.param("mockId"), {

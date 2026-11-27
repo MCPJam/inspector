@@ -16,6 +16,7 @@ import { ErrorCode } from "../../routes/web/errors.js";
 import { logger } from "../../utils/logger.js";
 import type { PinnedDiscovery, ResolvedMock } from "./backend.js";
 import type { OpenReal } from "./connection.js";
+import { forwardFanOutMessage } from "./forward-fan-out.js";
 import { FORWARD_REFUSAL_MESSAGES, type ForwardVerdict } from "./forward-policy.js";
 import { realServerOn, type LiveRealServer } from "./real-server.js";
 import type { MockDialProfile } from "./registry.js";
@@ -30,6 +31,11 @@ export interface ForwardingInput {
   open: OpenReal;
   /** The policy and access check, bound to this request. */
   check: (signal?: AbortSignal) => Promise<ForwardVerdict>;
+  /**
+   * Takes one forward from the caller's fan-out allowance, or says how long to
+   * wait. Set by the in-process door; a limited forward is never dispatched.
+   */
+  takeForward?: () => { retryAfterSeconds: number } | null;
 }
 
 export interface ForwardingReal {
@@ -153,8 +159,19 @@ export function forwardingRealServer(input: ForwardingInput): ForwardingReal {
         ? { allowed: true }
         : { allowed: false, reason: verdict.reason, message: FORWARD_REFUSAL_MESSAGES[verdict.reason] };
     },
-    callTool: async (call) => (await live()).callTool(call),
-    request: async (request, options) => (await live()).request(request, options),
+    callTool: async (call) => {
+      const limited = input.takeForward?.();
+      if (limited) {
+        // A tool error, so the agent reads it and waits, rather than a failure of the mock.
+        return { isError: true, content: [{ type: "text", text: forwardFanOutMessage(limited.retryAfterSeconds) }] };
+      }
+      return (await live()).callTool(call);
+    },
+    request: async (request, options) => {
+      const limited = input.takeForward?.();
+      if (limited) throw new Error(forwardFanOutMessage(limited.retryAfterSeconds));
+      return (await live()).request(request, options);
+    },
     // A stateless request has no stream to carry a list change to the client.
     onListChanged: () => () => undefined,
   };

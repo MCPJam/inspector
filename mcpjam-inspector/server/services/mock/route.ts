@@ -21,6 +21,7 @@ import { MOCK_CALLS_HEADER, formatMockCalls } from "./answer-marks.js";
 import { actorDigest, resolveMock, type ResolvedMock } from "./backend.js";
 import { openAuthorizedReal, type OpenReal } from "./connection.js";
 import { checkForwardWithBackend, type ForwardVerdict } from "./forward-policy.js";
+import { takeMockForward } from "./forward-fan-out.js";
 import { forwardingRealServer, type ForwardingReal } from "./forwarding.js";
 import { IN_APP_REFUSAL_MESSAGES, MockRefusal, mockRefusalResponse } from "./refusal.js";
 import type { MockDialProfile, MockDoorContext } from "./registry.js";
@@ -144,6 +145,10 @@ export async function serveMock(
       signal: request.signal,
       open: deps.open ?? openAuthorizedReal,
       check,
+      // Only MCPJam's own dialers fan out this way; the HTTP door has its own limits.
+      ...(door.kind === "in-process" && {
+        takeForward: () => takeMockForward(caller.workosUserId ?? actorDigest(caller, bearerToken)),
+      }),
     });
     real = forwarding.real;
   }

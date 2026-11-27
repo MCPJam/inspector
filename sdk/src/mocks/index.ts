@@ -12,6 +12,8 @@ export * from "./output-schema.js";
 export * from "./record-store.js";
 export { MOCK_SEED_MAX_RECORDS } from "./validate-state.js";
 export { checkStateOutputs } from "./state-outputs.js";
+export * from "./uncallable-input.js";
+export { findInvalidSchemas } from "./invalid-schema.js";
 export * from "./mock-errors.js";
 export * from "./build-mock.js";
 export * from "./real-server.js";
