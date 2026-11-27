@@ -642,4 +642,29 @@ describe("PlaygroundLeftRail — Compare panes", () => {
       screen.queryByRole("button", { name: "Reconnect a server" }),
     ).toBeNull();
   });
+
+  it("offers no reconnect while an assigned server is authorizing in the browser", () => {
+    playgroundState.servers = {
+      ...playgroundState.servers,
+      GitHub: createServer({ name: "GitHub", connectionStatus: "oauth-flow" }),
+    };
+    useComparePaneStore.getState().publishPanes([
+      {
+        paneId: "a",
+        label: "Claude",
+        hostId: "claude",
+        environmentId: null,
+        serverNames: ["GitHub", "Docs"],
+        onServerChosen: vi.fn(),
+      },
+    ]);
+
+    render(<PlaygroundLeftRail />);
+    expect(
+      screen.getByText(/GitHub.*Authorizing in browser/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Reconnect a server" }),
+    ).toBeNull();
+  });
 });

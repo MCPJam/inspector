@@ -62,7 +62,8 @@ export function PlaygroundServerConnectButton({
     (name) =>
       onAddServer ||
       name === pendingName ||
-      servers[name].connectionStatus !== "connecting",
+      (servers[name].connectionStatus !== "connecting" &&
+        servers[name].connectionStatus !== "oauth-flow"),
   );
   const pickerLabel = onAddServer
     ? "Connect a saved server"
