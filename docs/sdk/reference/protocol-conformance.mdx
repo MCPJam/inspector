@@ -214,7 +214,7 @@ Each `MCPCheckResult` includes a `skipReason` field whenever `status` is `"skipp
 |----------|------|-------------|
 | `name` | `string` | Suite name |
 | `serverUrl` | `string` | Shared server URL |
-| `passed` | `boolean` | `true` iff every run passed |
+| `passed` | `boolean` | `true` only when every run passes |
 | `results` | `Array<MCPConformanceResult & { label: string }>` | Per-run results |
 | `summary` | `string` | Human-readable suite summary |
 | `durationMs` | `number` | Total suite duration |
