@@ -890,6 +890,11 @@ export function MCPSidebar({
                   buildOrganizationPath(activeOrganizationId, "plans"),
                 )
               }
+              onBuyCredits={() =>
+                appNavigate(
+                  `${buildOrganizationPath(activeOrganizationId, "billing")}?topup=open`,
+                )
+              }
             />
           ) : null}
           {canOpenInviteDialog ? (
