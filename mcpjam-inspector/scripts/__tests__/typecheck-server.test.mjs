@@ -48,28 +48,28 @@ test("project-level errors are reported, not read as zero file errors", () => {
 });
 
 test("a tsc that crashed or reported nothing fails instead of counting zero", () => {
-  // Through npx, running out of memory is exit 134 with nothing on stdout.
+  // Running out of memory aborts tsc, with nothing on stdout.
   const oom = tscFailure({
-    status: 134,
-    signal: null,
+    status: null,
+    signal: "SIGABRT",
     stdout: "",
     stderr:
       "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\n",
   });
-  assert.match(oom, /exited with status 134 without reporting a diagnostic/);
-  assert.match(oom, /NODE_OPTIONS=--max-old-space-size=8192/);
+  assert.match(oom, /was killed by SIGABRT without reporting a diagnostic/);
+  assert.match(oom, /raise TSC_HEAP_MB/);
   // Killed mid-run (or past maxBuffer): partial stdout is not a result.
   assert.match(
     tscFailure({ status: null, signal: "SIGTERM", stdout: OUTPUT, stderr: "" }),
     /was killed by SIGTERM/,
   );
-  // npx failing to start tsc also exits 1, with nothing on stdout.
+  // A tsc that throws exits 1 like one reporting errors, but prints none.
   assert.match(
     tscFailure({
       status: 1,
       signal: null,
       stdout: "",
-      stderr: "npm error could not determine executable to run\n",
+      stderr: "TypeError: Cannot read properties of undefined (reading 'flags')\n",
     }),
     /status 1 without reporting a diagnostic.*stderr is above/,
   );

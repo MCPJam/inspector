@@ -14,6 +14,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -31,6 +32,11 @@ const GENERATED_MODULE =
   /Cannot find module '[^']*\.(?:bundled|generated)(?:\.js)?'/;
 /** The exit statuses tsc itself uses when it has printed diagnostics. */
 const TSC_REPORTED = new Set([1, 2, 3, 4]);
+/**
+ * Heap for tsc. The server project peaks at 3.5 to 5 GB, above V8's default
+ * limit on some machines, and a plain local run should not need NODE_OPTIONS.
+ */
+const TSC_HEAP_MB = 8192;
 
 export function countErrors(output) {
   const counts = {};
@@ -90,10 +96,23 @@ function writeTelemetryCatalogs() {
 }
 
 function runTsc() {
+  // Run under node, not npx, so the heap flag reaches tsc itself. It also
+  // overrides a heap limit inherited through NODE_OPTIONS.
+  const tsc = createRequire(join(INSPECTOR, "package.json")).resolve(
+    "typescript/bin/tsc",
+  );
   try {
     execFileSync(
-      "npx",
-      ["tsc", "--noEmit", "--pretty", "false", "-p", "server/tsconfig.json"],
+      process.execPath,
+      [
+        `--max-old-space-size=${TSC_HEAP_MB}`,
+        tsc,
+        "--noEmit",
+        "--pretty",
+        "false",
+        "-p",
+        "server/tsconfig.json",
+      ],
       { cwd: INSPECTOR, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 },
     );
     return "";
@@ -111,8 +130,8 @@ function runTsc() {
 /**
  * Why a tsc run that exited non-zero left nothing to count, or null when its
  * stdout is the result. tsc exits 1 to 4 when it prints diagnostics. A crash
- * prints none, and through `npx` running out of memory is exit 134, not a
- * signal; counting its empty stdout would report zero errors and pass.
+ * prints none: running out of memory aborts it with SIGABRT, and a tsc that
+ * throws exits 1. Counting either's empty stdout would report zero errors.
  */
 export function tscFailure({ status, signal, stdout, stderr }) {
   const reported =
@@ -123,7 +142,7 @@ export function tscFailure({ status, signal, stdout, stderr }) {
   if (reported) return null;
   const ended = signal ? `was killed by ${signal}` : `exited with status ${status}`;
   const next = (stderr ?? "").includes("JavaScript heap out of memory")
-    ? "It ran out of memory: rerun with NODE_OPTIONS=--max-old-space-size=8192."
+    ? `It ran out of memory at ${TSC_HEAP_MB} MB: raise TSC_HEAP_MB in mcpjam-inspector/scripts/typecheck-server.mjs.`
     : "Its stderr is above.";
   return `tsc ${ended} without reporting a diagnostic, so there are no errors to count. ${next}`;
 }
