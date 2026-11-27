@@ -1,6 +1,4 @@
 import { MAX_JUDGE_INSTRUCTIONS_LENGTH } from "@mcpjam/sdk/contract";
-import { Label } from "@mcpjam/design-system/label";
-import { Textarea } from "@mcpjam/design-system/textarea";
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { PromptVariable } from "./variable-mapping-table";
@@ -15,7 +13,7 @@ export function usedVariables(value: string): string[] {
 }
 
 /** A variable as it appears in the prompt. Unknown ones are flagged. */
-function VariableChip({
+export function VariableChip({
   name,
   known,
 }: {
@@ -91,8 +89,10 @@ export function PromptEditor({
 
   return (
     <div className="flex flex-col gap-1.5">
-      <Label htmlFor={id}>Judge prompt</Label>
-      <Textarea
+      <label htmlFor={id} className="text-xs font-medium">
+        Judge prompt
+      </label>
+      <textarea
         ref={ref}
         id={id}
         rows={6}
@@ -100,7 +100,7 @@ export function PromptEditor({
         maxLength={maxLength}
         aria-invalid={unknown.length > 0}
         aria-describedby={`${id}-help`}
-        className="min-h-28 field-sizing-fixed font-mono md:text-sm"
+        className="w-full rounded-md border border-input bg-background px-2.5 py-2 font-mono text-xs text-foreground"
         onChange={(event) => {
           const next = event.target.value;
           const caret = event.target.selectionStart;

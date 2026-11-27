@@ -37,17 +37,18 @@ import { Input } from "@mcpjam/design-system/input";
 import type { ModelDefinition } from "@/shared/types";
 import {
   hasRubricChecksCapability,
+  hasCustomJudgesCapability,
+  hasYesNoRubricQuestionsCapability,
   type SuiteCapabilities,
 } from "@/hooks/use-suite-capabilities";
 import { DEFAULT_JUDGE_THRESHOLD } from "@/components/shared/session-quality/judge-config";
 import { ValidatorsSection } from "./validators-section";
 import { CheckRow, blankPredicate } from "./checks-section";
 import { SuiteScorerLibraryMenu } from "./suite-scorer-library-menu";
-import { SuiteEvaluatorLibrary } from "./evaluator-library/suite-evaluator-library";
-import { EvaluatorStageRows } from "./evaluator-library/evaluator-stage-rows";
+import { EvaluatorLibraryButton } from "./evaluator-library/evaluator-library-dialog";
 import { useEvaluatorLibraryEnabled } from "./evaluator-library/evaluator-library-flag";
+import { EvaluatorStageRows } from "./evaluator-library/evaluator-stage-rows";
 import { CustomJudgesSection } from "./evaluator-library/custom-judges-section";
-import { DecisionQuestionsSection } from "./evaluator-library/decision-questions-section";
 import { customJudgeLimits } from "./evaluator-library/custom-judges-model";
 import {
   libraryModelRows,
@@ -268,7 +269,6 @@ export function SuiteScorerTable({
     onJudgeConfigChange,
     judgeLimit,
   );
-  const stackedStages = evaluatorLibraryEnabled && scope.kind === "suite";
   const addPredicate = (predicate: Predicate) => {
     if (scope.kind === "suite") {
       scope.onPredicatesChange((previous) => [...previous, predicate]);
@@ -428,12 +428,19 @@ export function SuiteScorerTable({
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
             {headerActions}
             {library && scope.kind === "suite" ? (
-              <SuiteEvaluatorLibrary
-                predicates={scope.predicates}
-                authorableKinds={authorableKinds}
-                judgeConfig={judgeConfig}
-                capabilities={capabilities}
+              <EvaluatorLibraryButton
+                suite={{
+                  predicates: scope.predicates,
+                  questions: judgeConfig?.rubricChecks?.questions,
+                  judges: judgeConfig?.customJudges?.judges,
+                }}
+                support={{
+                  authorableKinds,
+                  canAskYesNo: hasYesNoRubricQuestionsCapability(capabilities),
+                  canJudge: hasCustomJudgesCapability(capabilities),
+                }}
                 onAdd={library.add}
+                judgeLimit={judgeLimit}
               />
             ) : null}
             <SuiteScorerLibraryMenu
@@ -461,19 +468,10 @@ export function SuiteScorerTable({
         ) : null}
 
         <div>
-          <div
-            className={cn(
-              "border-b border-border pb-2 text-sm text-muted-foreground",
-              stackedStages
-                ? "flex flex-wrap items-center justify-between gap-3"
-                : "grid grid-cols-1 gap-x-6 sm:grid-cols-[minmax(10rem,1fr)_2fr]",
-            )}
-          >
+          <div className="grid grid-cols-1 gap-x-6 border-b border-border pb-2 text-sm text-muted-foreground sm:grid-cols-[minmax(10rem,1fr)_2fr]">
             <span>Stage of user value chain</span>
             <div className="flex min-w-0 items-center justify-between gap-3">
-              {stackedStages ? null : (
-                <span className="hidden sm:block">Evaluators</span>
-              )}
+              <span className="hidden sm:block">Evaluators</span>
               {showEditEvaluators ? (
                 <Button
                   type="button"
@@ -492,10 +490,7 @@ export function SuiteScorerTable({
             <section
               key={group.stage}
               data-stage-group={group.stage}
-              className={cn(
-                "grid grid-cols-1 gap-y-3 border-b border-border py-5",
-                !stackedStages && "gap-x-6 sm:grid-cols-[minmax(10rem,1fr)_2fr]",
-              )}
+              className="grid grid-cols-1 gap-x-6 gap-y-3 border-b border-border py-5 sm:grid-cols-[minmax(10rem,1fr)_2fr]"
             >
               <div>
                 <h4 className="font-medium">{group.label}</h4>
@@ -579,16 +574,6 @@ export function SuiteScorerTable({
                     )}
                   />
                 )}
-                {library &&
-                group.stage === "userValue" &&
-                onJudgeConfigChange &&
-                rubricChecks ? (
-                  <DecisionQuestionsSection
-                    capabilities={capabilities}
-                    judgeConfig={judgeConfig}
-                    onChange={onJudgeConfigChange}
-                  />
-                ) : null}
                 {library && group.stage === "userValue" ? (
                   <CustomJudgesSection
                     judgeConfig={judgeConfig}

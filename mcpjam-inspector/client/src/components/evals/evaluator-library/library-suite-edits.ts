@@ -22,17 +22,23 @@ import type { LibraryModelRow } from "./evaluator-stage-rows";
 import { customizedCopy, withJudges } from "./custom-judges-model";
 
 /**
- * The judge config with these rubric-check questions. The author's on/off
- * switch is kept: adding to a suite that turned rubric checks off leaves them
- * off, and the settings say the questions will not run. A slot or config this
- * empties is dropped, so adding an evaluator and removing it again leaves the
- * config as it was.
+ * The judge config with these rubric-check questions. Adding turns rubric
+ * checks back on if the author had turned them off, because adding asks for
+ * questions to run; a switch that was never set already means on, so it
+ * stays unset. A slot or config this empties is dropped, so adding an
+ * evaluator and removing it again leaves the config as it was.
  */
 function withQuestions(
   judgeConfig: EvalJudgeConfig | undefined,
   questions: RubricCheckQuestion[],
+  turnOn: boolean,
 ): EvalJudgeConfig | undefined {
-  const next = withRubricChecks(judgeConfig, { questions });
+  const next = withRubricChecks(judgeConfig, {
+    ...(turnOn && judgeConfig?.rubricChecks?.enabled === false
+      ? { enabled: true }
+      : {}),
+    questions,
+  });
   if (next.rubricChecks && Object.keys(next.rubricChecks).length > 0) {
     return next;
   }
@@ -43,7 +49,7 @@ function withQuestions(
 
 /** The two lists one library edit writes. Absent means unchanged. */
 type ListsEdit = {
-  questions?: RubricCheckQuestion[];
+  questions?: { list: RubricCheckQuestion[]; turnOn: boolean };
   judges?: CustomJudge[];
 };
 
@@ -67,7 +73,9 @@ function withLibraryLists(
   edit: ListsEdit,
 ): EvalJudgeConfig | undefined {
   let next = judgeConfig;
-  if (edit.questions) next = withQuestions(next, edit.questions);
+  if (edit.questions) {
+    next = withQuestions(next, edit.questions.list, edit.questions.turnOn);
+  }
   if (edit.judges) next = withJudges(next, edit.judges);
   return next;
 }
@@ -119,18 +127,13 @@ export function librarySuiteEdits(
       const judgeEdit = judgesWithAdded(judges, addition.judges, judgeLimit);
       if (judgeEdit.refused !== undefined) return judgeEdit.refused;
       if (addition.checks.length) {
-        // A preset's checks reuse a matching assertion; ones written from
-        // scratch are appended as "Add assertion" would, role and all.
-        const fromPreset = addition.checks.filter((check) => check.evaluator);
-        const written = addition.checks.filter((check) => !check.evaluator);
-        scope.onPredicatesChange((previous: Predicate[]) => [
-          ...withLibraryChecks(previous, fromPreset),
-          ...written,
-        ]);
+        scope.onPredicatesChange((previous: Predicate[]) =>
+          withLibraryChecks(previous, addition.checks),
+        );
       }
       write({
         ...(addition.questions.length
-          ? { questions: questionEdit.questions }
+          ? { questions: { list: questionEdit.questions, turnOn: true } }
           : {}),
         ...(addition.judges.length ? { judges: judgeEdit.judges } : {}),
       });
@@ -143,7 +146,12 @@ export function librarySuiteEdits(
       const from = fromEvaluator(evaluatorId);
       write({
         ...(questions.some(from)
-          ? { questions: questions.filter((q) => !from(q)) }
+          ? {
+              questions: {
+                list: questions.filter((q) => !from(q)),
+                turnOn: false,
+              },
+            }
           : {}),
         ...(judges.some(from) ? { judges: judges.filter((j) => !from(j)) } : {}),
       });
@@ -159,7 +167,7 @@ export function librarySuiteEdits(
       const from = fromEvaluator(evaluatorId);
       write({
         ...(edit.entry.questions?.length || questions.some(from)
-          ? { questions: edit.questions }
+          ? { questions: { list: edit.questions, turnOn: false } }
           : {}),
         ...(edit.entry.judges?.length || judges.some(from)
           ? { judges: edit.judges }

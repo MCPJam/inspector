@@ -13,9 +13,6 @@
 
 import { useId } from "react";
 import { Button } from "@mcpjam/design-system/button";
-import { Input } from "@mcpjam/design-system/input";
-import { Label } from "@mcpjam/design-system/label";
-import { Textarea } from "@mcpjam/design-system/textarea";
 import { Plus, Trash2 } from "lucide-react";
 import {
   hasYesNoRubricQuestionsCapability,
@@ -43,7 +40,6 @@ import {
   withRubricChecks,
 } from "./rubric-checks-model";
 import type { EvalJudgeConfig, EvalJudgeRubricCriterion } from "./types";
-import { useEvaluatorLibraryEnabled } from "./evaluator-library/evaluator-library-flag";
 
 export const RUBRIC_CHECKS_CARD_COPY =
   "Each grading criterion is also asked on its own, as a yes or no question with a probability. Advisory: rubric checks describe a trial and never decide a run.";
@@ -85,9 +81,6 @@ export function RubricChecksJudgeCard({
     judges: judgesCapabilities,
   });
   const slotOff = judgeConfig?.rubricChecks?.enabled === false;
-  // With the library on, Decision questions in the same stage lists and
-  // edits these questions; one place to edit them, not two.
-  const libraryEnabled = useEvaluatorLibraryEnabled();
 
   const commit = (next: RubricCheckQuestion[]) =>
     onJudgeConfigChange(withRubricChecks(judgeConfig, { questions: next }));
@@ -166,7 +159,6 @@ export function RubricChecksJudgeCard({
         )}
       </div>
 
-      {libraryEnabled ? null : (
       <div className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h5 className="text-xs font-medium text-foreground">
@@ -271,12 +263,11 @@ export function RubricChecksJudgeCard({
           </p>
         ) : null}
       </div>
-      )}
     </section>
   );
 }
 
-export function QuestionEditor({
+function QuestionEditor({
   index,
   question,
   error,
@@ -284,7 +275,6 @@ export function QuestionEditor({
   onChange,
   onLabelChange,
   onRemove,
-  inDialog = false,
 }: {
   index: number;
   question: RubricCheckQuestion;
@@ -292,84 +282,56 @@ export function QuestionEditor({
   disabled: boolean;
   onChange: (next: RubricCheckQuestion) => void;
   onLabelChange: (label: string) => void;
-  onRemove?: () => void;
-  inDialog?: boolean;
+  onRemove: () => void;
 }) {
   const fieldId = useId();
   const n = index + 1;
   // A kind from a newer backend shows its own name and no pass-line editor.
   const kindLabel = KIND_LABELS[question.kind] ?? question.kind;
-  const NameInput = inDialog ? Input : "input";
-  const QuestionInput = inDialog ? Textarea : "textarea";
-  const idInput = (
-    <NameInput
-      id={`${fieldId}-id`}
-      className={
-        inDialog
-          ? "max-w-xs font-mono"
-          : `${INPUT_CLASS} w-20 min-w-0 font-mono text-[11px] sm:w-28`
-      }
-      value={question.id}
-      placeholder="id"
-      aria-label={inDialog ? undefined : `Question ${n} id`}
-      disabled={disabled}
-      onChange={(event) => onChange({ ...question, id: event.target.value })}
-    />
-  );
   return (
     <div
-      className={
-        inDialog ? "space-y-4" : "space-y-1.5 rounded-md border border-border/60 p-2"
-      }
+      className="space-y-1.5 rounded-md border border-border/60 p-2"
       data-rubric-question-index={index}
       aria-invalid={error ? true : undefined}
     >
-      <div className={inDialog ? "space-y-1.5" : "flex items-center gap-2"}>
-        {inDialog ? (
-          <Label htmlFor={`${fieldId}-name`}>Name</Label>
-        ) : (
-          <span className="shrink-0 text-[11px] text-muted-foreground">
-            {kindLabel}
-          </span>
-        )}
-        <NameInput
-          id={`${fieldId}-name`}
-          className={inDialog ? undefined : `${INPUT_CLASS} min-w-0 flex-1`}
+      <div className="flex items-center gap-2">
+        <span className="shrink-0 text-[11px] text-muted-foreground">
+          {kindLabel}
+        </span>
+        <input
+          className={`${INPUT_CLASS} flex-1`}
           value={question.label}
           maxLength={MAX_RUBRIC_CHECK_LABEL_LENGTH}
           placeholder="Short name, shown on the scorecard"
-          aria-label={inDialog ? undefined : `Question ${n} label`}
+          aria-label={`Question ${n} label`}
           disabled={disabled}
           onChange={(event) => onLabelChange(event.target.value)}
         />
-        {inDialog ? null : idInput}
-        {onRemove ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-            aria-label={`Remove question ${n}`}
-            disabled={disabled}
-            onClick={onRemove}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
-        ) : null}
+        <input
+          className={`${INPUT_CLASS} w-28 font-mono text-[11px]`}
+          value={question.id}
+          placeholder="id"
+          aria-label={`Question ${n} id`}
+          disabled={disabled}
+          onChange={(event) =>
+            onChange({ ...question, id: event.target.value })
+          }
+        />
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+          aria-label={`Remove question ${n}`}
+          disabled={disabled}
+          onClick={onRemove}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
       </div>
-      {inDialog ? (
-        <Label htmlFor={`${fieldId}-question`} className="mb-1.5">
-          Question
-        </Label>
-      ) : null}
-      <QuestionInput
-        id={`${fieldId}-question`}
-        className={
-          inDialog
-            ? "min-h-20"
-            : "w-full rounded-md border border-input bg-background px-2 py-1 text-[11px] text-foreground"
-        }
-        rows={inDialog ? 3 : 2}
+      <textarea
+        className="w-full rounded-md border border-input bg-background px-2 py-1 text-[11px] text-foreground"
+        rows={2}
         value={question.instructions}
         maxLength={MAX_RUBRIC_CHECK_INSTRUCTIONS_LENGTH}
         placeholder={
@@ -379,7 +341,7 @@ export function QuestionEditor({
               ? "For example, which best describes the answer's tone?"
               : "For example, how completely did the answer cover the request?"
         }
-        aria-label={inDialog ? undefined : `Question ${n} text`}
+        aria-label={`Question ${n} text`}
         disabled={disabled}
         onChange={(event) =>
           onChange({ ...question, instructions: event.target.value })
@@ -408,23 +370,7 @@ export function QuestionEditor({
           onChange={onChange}
         />
       ) : null}
-      {inDialog ? (
-        // Open while an error shows, so a refused ID is never out of sight.
-        <details
-          className="text-sm text-muted-foreground"
-          open={error ? true : undefined}
-        >
-          <summary className="w-fit cursor-pointer">Question ID</summary>
-          <div className="mt-2 space-y-1.5">
-            <Label htmlFor={`${fieldId}-id`} className="sr-only">
-              Question ID
-            </Label>
-            {idInput}
-            <p className="text-xs">Changing the ID starts a new score history.</p>
-          </div>
-        </details>
-      ) : null}
-      {!inDialog && error ? (
+      {error ? (
         <p className="text-[11px] text-destructive" role="alert">
           {error}
         </p>

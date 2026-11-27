@@ -19,19 +19,6 @@ vi.mock("posthog-js/react", () => ({
     name === "evaluator-library" ? flag.on : undefined,
 }));
 
-// Method cards stay closed here, so only presets decide what shows.
-const libraryProps = {
-  pause: {},
-  authoring: {
-    methods: {
-      assertions: "Not here.",
-      decision: "Not here.",
-      judge: "Not here.",
-    },
-    render: () => null,
-  },
-};
-
 function open(onAdd = vi.fn(), predicates = []) {
   renderWithProviders(
     <EvaluatorLibraryButton
@@ -39,7 +26,6 @@ function open(onAdd = vi.fn(), predicates = []) {
       support={{ canAskYesNo: true, canJudge: true }}
       onAdd={onAdd}
       judgeLimit={5}
-      {...libraryProps}
     />,
   );
   fireEvent.click(screen.getByRole("button", { name: "From library" }));
@@ -55,7 +41,6 @@ describe("EvaluatorLibraryButton", () => {
         support={{}}
         onAdd={() => undefined}
         judgeLimit={5}
-        {...libraryProps}
       />,
     );
     expect(
@@ -111,7 +96,6 @@ describe("EvaluatorLibraryButton", () => {
         support={{}}
         onAdd={onAdd}
         judgeLimit={5}
-        {...libraryProps}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "From library" }));
@@ -144,7 +128,6 @@ describe("EvaluatorLibraryButton", () => {
         support={{ authorableKinds: ["noToolErrors", "toolErrorNamesInput"] }}
         onAdd={() => undefined}
         judgeLimit={5}
-        {...libraryProps}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "From library" }));
@@ -171,7 +154,6 @@ describe("EvaluatorLibraryButton", () => {
         support={{ canAskYesNo: true }}
         onAdd={onAdd}
         judgeLimit={5}
-        {...libraryProps}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "From library" }));
@@ -382,7 +364,6 @@ describe("yes/no capability", () => {
         support={{}}
         onAdd={() => undefined}
         judgeLimit={5}
-        {...libraryProps}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "From library" }));
@@ -422,7 +403,6 @@ describe("judge evaluators", () => {
         support={{ canAskYesNo: true }}
         onAdd={() => undefined}
         judgeLimit={5}
-        {...libraryProps}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "From library" }));
@@ -447,7 +427,6 @@ describe("judge evaluators", () => {
         support={{ canJudge: true }}
         onAdd={onAdd}
         judgeLimit={1}
-        {...libraryProps}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "From library" }));
@@ -499,7 +478,6 @@ describe("question cap", () => {
         support={{ canAskYesNo: true }}
         onAdd={onAdd}
         judgeLimit={5}
-        {...libraryProps}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "From library" }));

@@ -109,16 +109,13 @@ describe("library groups in the suite table", () => {
     ]);
   });
 
-  it("offers assertion authoring where the backend predates the presets", () => {
-    // No capabilities means a deployment that predates the kind list: no
-    // preset can be saved, but the legacy assertion kinds can be authored.
+  it("hides the library on a deployment that cannot save any of it", () => {
+    // No capabilities means a deployment that predates the kind list, which
+    // accepts only the legacy kinds. Every library evaluator needs a newer
+    // kind, so there is nothing to offer.
     renderTable([]);
-    fireEvent.click(screen.getByRole("button", { name: "From library" }));
-    const dialog = within(screen.getByRole("dialog"));
-    expect(dialog.getByRole("button", { name: "Assertions" })).toBeEnabled();
-    expect(dialog.getByRole("button", { name: /^Judge prompt/ })).toBeDisabled();
     expect(
-      dialog.queryByRole("button", { name: /^Calling tools/ }),
+      screen.queryByRole("button", { name: "From library" }),
     ).not.toBeInTheDocument();
   });
 
@@ -247,15 +244,13 @@ describe("library question edits", () => {
     expect(state.judgeConfig).toEqual(goal);
   });
 
-  it("keeps rubric checks off when adding to a suite that turned them off", () => {
+  it("turns rubric checks back on only when adding to a suite that turned them off", () => {
     const { state, edits } = draft({ rubricChecks: { enabled: false } });
     edits().add(questionsOf(reports));
-    expect(state.judgeConfig?.rubricChecks).toEqual({
-      enabled: false,
-      questions: [reportsQuestion],
-    });
+    expect(state.judgeConfig?.rubricChecks?.enabled).toBe(true);
     edits().remove("reports-tool-errors");
-    expect(state.judgeConfig).toEqual({ rubricChecks: { enabled: false } });
+    // Removing keeps the author's switch where adding left it.
+    expect(state.judgeConfig).toEqual({ rubricChecks: { enabled: true } });
   });
 
   it("keeps rubric checks off when an evaluator is updated or removed", () => {
@@ -371,27 +366,6 @@ describe("library question edits", () => {
     expect(group).toHaveTextContent(
       'v1 available. A question already uses the ID "reports-tool-errors-reports-failures".',
     );
-  });
-});
-
-describe("assertions written from scratch", () => {
-  it("adds a required assertion beside an advisory one with the same criterion", () => {
-    const advisory: Predicate = {
-      type: "finalAssistantMessageNonEmpty",
-      role: "advisory",
-    };
-    const { state, edits } = draft(undefined, [advisory]);
-    expect(
-      edits().add({
-        checks: [{ type: "finalAssistantMessageNonEmpty" }],
-        questions: [],
-        judges: [],
-      }),
-    ).toBeUndefined();
-    expect(state.predicates).toEqual([
-      advisory,
-      { type: "finalAssistantMessageNonEmpty" },
-    ]);
   });
 });
 

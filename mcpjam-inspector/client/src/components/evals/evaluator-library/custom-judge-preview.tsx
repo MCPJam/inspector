@@ -1,5 +1,4 @@
 import { Button } from "@mcpjam/design-system/button";
-import { cn } from "@mcpjam/design-system/cn";
 import {
   Select,
   SelectContent,
@@ -10,7 +9,6 @@ import {
 import type { CustomJudge } from "@/components/shared/session-quality/judge-config";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { useAction, useQuery } from "convex/react";
-import { ChevronRight } from "lucide-react";
 import { makeFunctionReference } from "convex/server";
 import { useState } from "react";
 import {
@@ -64,12 +62,10 @@ export function CustomJudgePreview({
   suiteId,
   judge,
   disabledReason,
-  inDialog = false,
 }: {
   suiteId: string;
   judge: CustomJudge;
   disabledReason?: string;
-  inDialog?: boolean;
 }) {
   const iterations = useQuery(listIterationsRef, { suiteId });
   const preview = useAction(previewRef);
@@ -87,6 +83,14 @@ export function CustomJudgePreview({
   const input = JSON.stringify({ suiteId, iterationId: chosen, judge });
   const outcome = completed?.input === input ? completed.outcome : undefined;
   const failure = completed?.input === input ? completed.failure : undefined;
+
+  if (iterations && iterations.length === 0) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        Run this suite once to test a judge on a past iteration.
+      </p>
+    );
+  }
 
   const run = async () => {
     setRunning(true);
@@ -110,23 +114,11 @@ export function CustomJudgePreview({
     }
   };
 
-  const content = iterations?.length === 0 ? (
-    <p className="text-xs text-muted-foreground">
-      Run this suite once to test a judge on a past iteration.
-    </p>
-  ) : (
-    <div
-      className={cn(
-        "flex min-w-0 flex-col gap-2",
-        !inDialog && "rounded-md border border-border/60 p-2.5",
-      )}
-    >
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-border/60 p-2.5">
       <div className="flex flex-wrap items-center gap-2">
         <Select value={chosen} onValueChange={setIterationId}>
-          <SelectTrigger
-            aria-label="Past iteration"
-            className="h-8 w-64 max-w-full text-xs"
-          >
+          <SelectTrigger aria-label="Past iteration" className="h-8 w-64 text-xs">
             <SelectValue placeholder="Loading iterations…" />
           </SelectTrigger>
           <SelectContent>
@@ -149,7 +141,7 @@ export function CustomJudgePreview({
           title={disabledReason}
           onClick={run}
         >
-          {running ? "Testing…" : inDialog ? "Run test" : "Test on a past iteration"}
+          {running ? "Testing…" : "Test on a past iteration"}
         </Button>
         <span className="text-xs text-muted-foreground">
           Graded by the judge this run used, as one charged call. Saves nothing.
@@ -167,13 +159,7 @@ export function CustomJudgePreview({
         </p>
       ) : null}
       {outcome?.ok ? (
-        <div
-          role="status"
-          className={cn(
-            "flex min-w-0 flex-col gap-1.5 text-xs",
-            inDialog && "rounded-md border border-border bg-background p-3",
-          )}
-        >
+        <div role="status" className="flex flex-col gap-1.5 text-xs">
           <div className="flex items-center gap-2">
             <VerdictPill status={statusOf(outcome.result)} />
             {outcome.result.value !== undefined && judge.output.kind === "score" ? (
@@ -194,12 +180,7 @@ export function CustomJudgePreview({
                   ? "What the judge read (excerpt)"
                   : "What the judge read"}
               </summary>
-              <pre
-                className={cn(
-                  "mt-1 whitespace-pre-wrap rounded bg-muted p-2 font-mono text-[11px]",
-                  inDialog ? "wrap-anywhere" : "max-h-64 overflow-auto",
-                )}
-              >
+              <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 font-mono text-[11px]">
                 {outcome.prompt}
               </pre>
             </details>
@@ -207,19 +188,5 @@ export function CustomJudgePreview({
         </div>
       ) : null}
     </div>
-  );
-  if (!inDialog) return content;
-
-  return (
-    <details className="group rounded-md border border-border bg-muted/30">
-      <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring">
-        <ChevronRight
-          aria-hidden
-          className="size-4 shrink-0 text-muted-foreground group-open:rotate-90"
-        />
-        Test on a past iteration
-      </summary>
-      <div className="border-t border-border p-3">{content}</div>
-    </details>
   );
 }
