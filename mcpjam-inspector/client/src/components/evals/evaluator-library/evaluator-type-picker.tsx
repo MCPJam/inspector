@@ -1,9 +1,9 @@
-import { Check, Code2, ListChecks, ListTodo, Scale } from "lucide-react";
+import { Check, ListChecks, ListTodo, Scale } from "lucide-react";
 import { useRef, type KeyboardEvent } from "react";
 import { cn } from "@/lib/utils";
 import type { EvaluatorMethod } from "./evaluator-library-types";
 
-/** Cheapest first, so the order nudges authors toward code checks. */
+/** List built-in assertions before methods that require a model. */
 const METHODS = [
   {
     value: "assertions",
@@ -27,14 +27,6 @@ const METHODS = [
       "Ask typed questions a small classifier answers. Cheaper and steadier than a judge.",
     icon: ListTodo,
     tone: "bg-success/10 text-success",
-  },
-  {
-    value: "code",
-    title: "Code",
-    description:
-      "Write a TypeScript evaluator. It gets the full iteration record and returns a score.",
-    icon: Code2,
-    tone: "bg-info/10 text-info",
   },
 ] as const satisfies readonly {
   value: EvaluatorMethod;
@@ -78,7 +70,7 @@ export function EvaluatorTypePicker({
     <div
       role="radiogroup"
       aria-label="How should this evaluator decide?"
-      className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+      className="grid gap-3 sm:grid-cols-3"
     >
       {METHODS.map((method, index) => {
         const checked = method.value === value;

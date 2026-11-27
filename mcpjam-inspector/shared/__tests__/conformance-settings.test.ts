@@ -169,7 +169,7 @@ describe("conformanceSuiteConfigs", () => {
     tasksProbe: createTask,
   };
 
-  it("never runs the update check or sends its saved answers", () => {
+  it("shares default answers with polling checks even when the update check is excluded", () => {
     const { tasks } = conformanceSuiteConfigs(
       {
         selection: {},
@@ -178,7 +178,7 @@ describe("conformanceSuiteConfigs", () => {
       "2026-07-28",
     );
     expect(tasks.checkIds).not.toContain("tasks-update-ack-shape");
-    expect(tasks.inputResponses).toBeUndefined();
+    expect(tasks.inputResponses).toEqual({ ok: 1 });
   });
 
   it("sends a tool only for a picked check that runs at the pin", () => {
@@ -236,7 +236,7 @@ describe("conformanceSuiteConfigs", () => {
 
   it("reports a suite the settings leave out", () => {
     const { selection, apps } = conformanceSuiteConfigs(
-      { selection: { apps: [], tasks: ["tasks-wire-resolvable"] }, probes },
+      { selection: { apps: [], tasks: ["tasks-invalid-task-id-rejected"] }, probes },
       "2026-07-28",
     );
     expect(isSelected(selection?.apps)).toBe(false);
@@ -247,10 +247,10 @@ describe("conformanceSuiteConfigs", () => {
   it("gives the Tasks suite its tool only when a picked check calls it", () => {
     expect(
       conformanceSuiteConfigs(
-        { selection: { tasks: ["tasks-wire-resolvable"] }, probes },
+        { selection: { tasks: ["tasks-invalid-task-id-rejected"] }, probes },
         "2026-07-28",
       ).tasks,
-    ).toEqual({ checkIds: ["tasks-wire-resolvable"] });
+    ).toEqual({ checkIds: ["tasks-invalid-task-id-rejected"] });
     expect(
       conformanceSuiteConfigs(
         { selection: { tasks: ["tasks-ttl-shape"] }, probes },

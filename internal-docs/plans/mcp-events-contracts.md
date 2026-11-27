@@ -4,6 +4,13 @@ Status: settled contracts for the implementation of [`mcp-events.md`](./mcp-even
 
 Draft pin: `modelcontextprotocol/experimental-ext-triggers-events` @ [`28ec35e`](https://github.com/modelcontextprotocol/experimental-ext-triggers-events/blob/28ec35e905daa241f019981e2836b4a02f1c0368/docs/design-sketch-proposal.md).
 
+## Events Beta compatibility
+
+- The `beta@c77b843` profile uses MCP `2026-07-28` with `capabilities.extensions["io.modelcontextprotocol/events"]` in `server/discover`. `draft@28ec35e` and the dated ChatGPT profiles use top-level `capabilities.events`.
+- Beta RPC results require `resultType: "complete"` on the wire. Its errors use `-32023` through `-32027`. Streamable HTTP requests named in the extension carry an encoded `Mcp-Name` and the annotated `Mcp-Param-*` arguments.
+- The Events tab requests catalog invalidations when the Beta server advertises `listChanged`. It refreshes on an acknowledged subscription and drops the watch on disconnect or a server change.
+- The saved-host policy key is `com.mcpjam/events`. [Events Beta specification](https://github.com/modelcontextprotocol/ext-events/blob/c77b84395eff0ae32f53b0516c2214fe276ed050/specification/beta/events/events.mdx)
+
 ## Where each contract lives in code
 
 | Contract | Inspector repo | Backend repo |
@@ -190,11 +197,12 @@ Convex `eventTriggers` rows (`projectId, environmentId, subscriptionId, name, in
 | Point | Check |
 |---|---|
 | Register receiver (allocate slot) | inspector: project `member` for the subscription's project; admin token to the inbox |
-| Issue viewer token | inspector: project `member` now; token `{inboxId, projectId, userId, epoch, exp ≤ 10 min, scope: "feed:read"}` HMAC-signed with `EVENTS_INBOX_VIEWER_KEY` |
+| Issue viewer token | inspector: `eventSubscriptions:authorizeFeed` (read with the caller's bearer, so the backend's `requireEventsProjectMember` decides: org `member` or higher, never a guest or a benchmark or scoped GitHub bearer); token `{inboxId, projectId, userId, epoch, exp ≤ 10 min, scope: "feed:read"}` HMAC-signed with `EVENTS_INBOX_VIEWER_KEY` |
+| Read slot state | inspector: `eventSubscriptions:authorizeFeed`, and the subscription is in the project |
 | Refresh | keeper: Convex re-checks the owner is still a project member and the binding's server is still in the project before leasing; the keeper connects with the subscription's pinned OAuth connection (`connectionIds`), and a refusal parks it `paused_auth` |
 | Author a trigger (create, edit, enable) | Convex: the caller is the subscription's **owner**. A run acts with the owner's credentials, so no one else (a project admin included) decides what it does |
 | Stop a trigger (disable, remove) | Convex: the owner or a project admin; stopping runs nothing, and a run already in flight stops at its next checkpoint or tool call |
-| Simulate an event | inspector: project `member`, the subscription is in the project, and `eventSubscriptions:authorizeSimulation` (read with the caller's bearer) confirms the caller owns it; a simulated event runs the triggers with the owner's credentials |
+| Simulate an event | inspector: `eventSubscriptions:authorizeFeed`, the subscription is in the project, and `eventSubscriptions:authorizeSimulation` (read with the caller's bearer) confirms the caller owns it; a simulated event runs the triggers with the owner's credentials |
 | Dispatch a run | enqueue mutation: subscription not removed, trigger enabled, owner still a member |
 | Start a run | claim mutation: trigger enabled, subscription neither removed, paused nor terminated, owner still authorized (a refusal parks the subscription `paused_auth`), then the rate limit and spend cap |
 | Keep a run acting | `runs/checkpoint` and `runs/begin-call`: the claim's authority checks and the spend cap run again, before the step or tool call. A refusal ends the run `failed` with the reason and takes back its lease, so the executor gets `409 lease_lost` and stops |

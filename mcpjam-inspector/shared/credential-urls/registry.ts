@@ -45,6 +45,14 @@ export interface CredentialRoute {
    * `/connect/server/request/<id>` carries nothing secret.
    */
   reserved?: readonly string[];
+  /**
+   * In free text, match only where the route starts a path: at the start of
+   * the text, after a space, quote or other delimiter, or right after a
+   * URL's host. Other routes match after any slash, which is right for a
+   * prefix no other path ends with. `/mcp/<id>` is a credential, but
+   * `/api/mcp/servers` ends with the same prefix and is not one.
+   */
+  rootOnly?: boolean;
   /** What it is, for the docs and the reviewer. */
   note: string;
 }
@@ -179,6 +187,34 @@ export const CREDENTIAL_ROUTES = [
     scope: "api",
     ttl: "permanent",
     note: "Legacy conformance share read behind /conformance/shared/<token>.",
+  },
+  {
+    id: "api-local-web-connector",
+    pattern: "/api/web-clients/local-connectors/:connectorId",
+    secretParam: "connectorId",
+    secretIn: "path",
+    scope: "api",
+    ttl: "permanent",
+    note: "A local Inspector's capability connector for Claude web or ChatGPT web, in its turn and remove routes. The id is the connector's only credential.",
+  },
+  {
+    id: "web-connector",
+    pattern: "/mcp/:connectorId",
+    secretParam: "connectorId",
+    secretIn: "path",
+    scope: "api",
+    ttl: "permanent",
+    rootOnly: true,
+    note: "The forwarding endpoint Claude web and ChatGPT web connect to, the URL a tunnel exposes. A capability connector's id is its only credential.",
+  },
+  {
+    id: "web-connector-metadata",
+    pattern: "/.well-known/oauth-protected-resource/mcp/:connectorId",
+    secretParam: "connectorId",
+    secretIn: "path",
+    scope: "api",
+    ttl: "permanent",
+    note: "The forwarding endpoint's protected-resource metadata, which its sign-in challenge names. Carries the same connector id.",
   },
   {
     id: "app-view-local",

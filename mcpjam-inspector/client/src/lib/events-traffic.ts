@@ -8,7 +8,11 @@ import type { EventsFeedEntryView } from "@/shared/events-api";
 const MAX_WEBHOOK_ROW_BYTES = 1024 * 1024;
 
 /**
- * Record MCP Events feed entries in Tracing as `webhook` RECEIVE rows.
+ * Record MCP Events feed entries in Tracing as RECEIVE rows named by the
+ * delivery mode that carried them and the event type (`push event ·
+ * flight.status_changed`, `poll event · …`, `webhook event · …`, `simulation
+ * event · …`): the feed journals every mode, not only webhooks. The row is the inbox's record of the occurrence, not a wire
+ * message; a push or poll's own JSON-RPC traffic is logged separately.
  *
  * The payload is the journal entry itself, which never holds a webhook secret
  * or a viewer token (contract C8: the inbox journals the delivery's event,
@@ -37,7 +41,7 @@ export function logEventsFeedEntries(
         serverName: server.serverName,
         kind: "webhook",
         direction: "RECEIVE",
-        method: `webhook ${entry.kind}`,
+        method: `${entry.origin} ${entry.kind}${entry.name ? ` · ${entry.name}` : ""}`,
         timestamp: new Date(entry.receivedAt).toISOString(),
         payload: probeSerializedSize(entry, MAX_WEBHOOK_ROW_BYTES).exceeded
           ? truncateRpcPayload(entry, MAX_WEBHOOK_ROW_BYTES)

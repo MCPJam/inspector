@@ -229,6 +229,9 @@ describe("POST /api/web/chat/prepare", () => {
       },
     ],
     ["no conversation", { hostedBody: { projectId: "project_1" } }],
+    // The vendor's own app runs a web client's turn: no box to prepare.
+    ["a Claude web chat", { resolvedExecution: { harness: "claude-web" } }],
+    ["a ChatGPT web chat", { resolvedExecution: { harness: "chatgpt-web" } }],
   ])("skips %s", async (_name, overrides) => {
     mocks.setup.mockResolvedValue(setupValue(overrides));
     const res = await post();

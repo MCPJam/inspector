@@ -82,6 +82,36 @@ describe("planMCPAppsResourceReads", () => {
 });
 
 describe("gradeMCPApps", () => {
+  it("lists the deprecated-field advice as met when every UI tool uses _meta.ui", () => {
+    const modernTools = tools.filter((tool) => tool.name !== "old_widget");
+    const grading = gradeMCPApps({
+      tools: modernTools,
+      resources,
+      readOutcomes: [],
+      checkIds: ["ui-tool-metadata-valid"],
+    });
+
+    expect(grading.readiness).toEqual([]);
+    expect(grading.passedAdvice).toEqual([
+      {
+        id: "apps-readiness-deprecated-resource-uri",
+        title: "Deprecated ui/resourceUri Field",
+        specStrength: "Deprecation Notice",
+      },
+    ]);
+  });
+
+  it("claims no pass when there are no UI tools to look at", () => {
+    const grading = gradeMCPApps({
+      tools: [{ name: "plain", inputSchema: { type: "object" } }] as never,
+      resources: [],
+      readOutcomes: [],
+      checkIds: ["ui-tool-metadata-valid"],
+    });
+
+    expect(grading.passedAdvice).toEqual([]);
+  });
+
   it("grades lists and reads without a connection", () => {
     const plan = planMCPAppsResourceReads(tools, resources);
     const grading = gradeMCPApps({
@@ -104,6 +134,8 @@ describe("gradeMCPApps", () => {
     expect(grading.readiness.map((warning) => warning.id)).toEqual([
       "apps-readiness-deprecated-resource-uri",
     ]);
+    // A tool still uses the flat field, so the advice is not also a pass.
+    expect(grading.passedAdvice).toEqual([]);
     expect(grading.discovery).toEqual({
       toolCount: 3,
       uiToolCount: 2,

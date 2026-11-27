@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { dynamicTool, jsonSchema, type ToolSet } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { extractToolErrors } from "@mcpjam/evaluators/internal/eval-tool-execution";
 import { HostRunner } from "../src/HostRunner.js";
 import { Host } from "../src/host-config/host.js";
 import type { Tool } from "../src/mcp-client-manager/types.js";
@@ -8,13 +13,14 @@ import type { Tool } from "../src/mcp-client-manager/types.js";
 /**
  * `HostRunner` follows the host's Progressive tools setting the way hosted
  * runs do: On, and Auto at 30 tools, start the model on the search/load
- * meta-tools with a forced first search. Unset is Auto only where the caller
+ * meta-tools. Unset is Auto only where the caller
  * says a saved client or template is behind it; a host built in code that
  * leaves it unset, Off, and a runner without a host send every tool. Before,
  * the runner sent every tool whatever the setting.
  */
 
-type Step = { call: string; input: Record<string, unknown> } | { text: string };
+type Call = { call: string; input: Record<string, unknown>; id?: string };
+type Step = Call | { calls: Call[] } | { text: string };
 
 type SeenCall = { tools: string[]; toolChoice: unknown };
 
@@ -40,14 +46,12 @@ function scriptedModel(steps: Step[]) {
         };
       }
       return {
-        content: [
-          {
-            type: "tool-call" as const,
-            toolCallId: `call-${seen.length}`,
-            toolName: step.call,
-            input: JSON.stringify(step.input),
-          },
-        ],
+        content: ("calls" in step ? step.calls : [step]).map((call, index) => ({
+          type: "tool-call" as const,
+          toolCallId: call.id ?? (index === 0 ? `call-${seen.length}` : `call-${seen.length}-${index}`),
+          toolName: call.call,
+          input: JSON.stringify(call.input),
+        })),
         finishReason: { unified: "tool-calls" as const, raw: "tool_use" },
         usage,
         warnings: [],
@@ -80,10 +84,12 @@ function runner(
   progressiveToolDiscovery: boolean | undefined,
   tools: ToolSet | Tool[],
   model: MockLanguageModelV3,
-  progressiveToolDiscoveryWhenUnset?: "auto"
+  progressiveToolDiscoveryWhenUnset?: "auto",
+  runUnloadedToolCalls?: boolean,
 ) {
   const host = new Host({
     style: "claude",
+    runUnloadedToolCalls,
     model: "anthropic/claude-haiku-4.5",
     ...(progressiveToolDiscovery === undefined
       ? {}
@@ -124,11 +130,7 @@ describe("HostRunner progressive tool discovery", () => {
       ["ctrl_tool_7", ...META],
       ["ctrl_tool_7", ...META],
     ]);
-    expect(seen[0].toolChoice).toEqual({
-      type: "tool",
-      toolName: "search_mcp_tools",
-    });
-    expect(seen[1].toolChoice).not.toEqual(seen[0].toolChoice);
+    expect(seen[0].toolChoice).toEqual({ type: "auto" });
     expect(ran).toEqual(["ctrl_tool_7"]);
     expect(result.toolsCalled()).toEqual([
       "search_mcp_tools",
@@ -206,7 +208,7 @@ describe("HostRunner progressive tool discovery", () => {
       { call: "ctrl_tool_7", input: { id: "x" } },
       { text: "Record found." },
     ]);
-    const result = await runner(true, makeTools(30, ran), model).run(
+    const result = await runner(true, makeTools(30, ran), model, undefined, false).run(
       "Look up record x"
     );
 
@@ -217,6 +219,85 @@ describe("HostRunner progressive tool discovery", () => {
       "load_mcp_tools",
       "ctrl_tool_7",
     ]);
+  });
+
+  it("rejects well-formed invalid early arguments before dispatch and preserves a valid retry", async () => {
+    const ran: string[] = [];
+    const { model, seen } = scriptedModel([
+      { call: "ctrl_tool_7", input: { id: 7 } },
+      { call: "ctrl_tool_7", input: { id: "x" } },
+      { text: "Recovered." },
+    ]);
+    const result = await runner(true, makeTools(30, ran), model).run("Find record x");
+    expect(seen.every(step => !step.tools.includes("ctrl_tool_7"))).toBe(true);
+    expect(ran).toEqual(["ctrl_tool_7"]);
+    expect(result.toolsCalled()).toEqual(["ctrl_tool_7"]);
+    expect(JSON.stringify(result.getMessages())).toContain('"rejectedToolCall":true');
+  });
+
+  it.each(["load-first", "call-first"])("preserves both calls in a parallel %s batch", async order => {
+    const ran: string[] = [];
+    const load = { call: "load_mcp_tools", input: { names: ["ctrl_tool_7"] } };
+    const invoke = { call: "ctrl_tool_7", input: { id: "value" } };
+    const { model, seen } = scriptedModel([{ calls: order === "load-first" ? [load, invoke] : [invoke, load] }, { text: "done" }]);
+    const result = await runner(true, makeTools(30, ran), model).run("Look up a record");
+    expect(seen[0].tools).toEqual(META);
+    expect(seen[1].tools).toContain("ctrl_tool_7");
+    expect(ran).toEqual(["ctrl_tool_7"]);
+    expect(result.toolsCalled().sort()).toEqual(["ctrl_tool_7", "load_mcp_tools"]);
+  });
+
+  it("keeps the loaded tool's original validation behavior", async () => {
+    const ran: string[] = [];
+    const { model } = scriptedModel([
+      {call: "load_mcp_tools", input: {names: ["ctrl_tool_7"]}},
+      {call: "ctrl_tool_7", input: {id: 7}},
+      {text: "done"},
+    ]);
+    await runner(true, makeTools(30, ran), model).run("Load and call a record tool");
+    expect(ran).toEqual(["ctrl_tool_7"]);
+  });
+
+  it("restores a deferred provider alias even when a safe tool owns the unsuffixed name", async () => {
+    const ran: string[] = [];
+    const handlers = makeTools(2, ran);
+    const {model, seen} = scriptedModel([{call:"cart_add_2",input:{}},{text:"done"}]);
+    const result = await runner(true, {"cart.add":handlers.ctrl_tool_0,cart_add:handlers.ctrl_tool_1},model).run("Add to cart");
+    expect(seen[0].tools).toEqual(META);
+    expect(ran).toEqual(["ctrl_tool_0"]);
+    expect(result.toolsCalled()).toEqual(["cart.add"]);
+  });
+  it("counts MCP receipts and attributes a later server error by call ID", async () => {
+    const received: unknown[] = [];
+    const server = new Server({ name: "receiver", version: "1" }, { capabilities: { tools: {} } });
+    server.setRequestHandler(CallToolRequestSchema, async ({params}) => {
+      received.push(params.arguments);
+      const failed = params.arguments?.message === "fail";
+      return { isError: failed, content: [{ type: "text", text: failed ? "receiver failed" : "ok" }] };
+    });
+    const client = new Client({ name: "host", version: "1" });
+    const [hostTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    try {
+      await client.connect(hostTransport);
+      const schema = jsonSchema<{message: string}>({type: "object", required: ["message"], properties: {message: {type: "string"}}});
+      const tools = {echo: dynamicTool({inputSchema: schema,
+        execute: async input => client.callTool({name: "echo", arguments: input as {message: string}})})};
+      const {model, seen} = scriptedModel([
+        {call: "echo", input: {}}, {call: "echo", input: {message: "ok"}},
+        {call: "echo", input: {message: "fail"}}, {text: "done"}
+      ]);
+      const result = await runner(true, tools, model).run("echo");
+      expect(received).toEqual([{message: "ok"}, {message: "fail"}]);
+      expect(seen.every(step => !step.tools.includes("echo"))).toBe(true);
+      expect(result.toolsCalled()).toEqual(["echo", "echo"]);
+      expect(extractToolErrors(result.getMessages())).toEqual([
+        expect.objectContaining({toolCallId: "call-3", toolName: "echo"}),
+      ]);
+    } finally {
+      await client.close();
+      await server.close();
+    }
   });
 
   it("runs discovery over Tool[] input, as from manager.getTools()", async () => {
@@ -314,4 +395,43 @@ describe("HostRunner progressive tool discovery", () => {
     );
     expect(seen).toHaveLength(0);
   });
+});
+
+it("gives a dispatched retry and the next prompt their own IDs", async () => {
+  const tools = makeTools(1);
+  tools.ctrl_tool_0.execute = async () => {
+    throw new Error("fixture server failed");
+  };
+  const { model } = scriptedModel([
+    { call: "invented", input: {}, id: "call_0" },
+    { call: "ctrl_tool_0", input: {}, id: "call_0" },
+    { text: "Finished" },
+    { call: "ctrl_tool_0", input: {}, id: "call_0" },
+    { text: "Finished again" },
+  ]);
+  const host = runner(false, tools, model);
+  const first = await host.run("First prompt");
+  const next = await host.run("Second prompt", { context: [first] });
+  const calls = [...first.getMessages(), ...next.getMessages()].flatMap((msg) =>
+    msg.role === "assistant" && Array.isArray(msg.content)
+      ? msg.content.filter((part) => part.type === "tool-call")
+      : []
+  );
+  expect(new Set(calls.map((part) => part.toolCallId)).size).toBe(3);
+  expect(calls.map((part) => part.providerOptions?.mcpjam?.rejectedToolCall))
+    .toEqual([true, undefined, undefined]);
+  expect(first.toolsCalled()).toEqual(["ctrl_tool_0"]);
+  expect(next.toolsCalled()).toEqual(["ctrl_tool_0"]);
+});
+
+it("keeps the hidden catalog out of a typo refusal sent back to the model", async () => {
+  const { model, seen } = scriptedModel([
+    { call: "typo", input: {} },
+    { text: "Finished" },
+  ]);
+  const result = await runner(true, makeTools(30), model).run("Test a typo");
+  expect(seen[0]?.tools).toEqual(META);
+  const history = JSON.stringify(result.getMessages());
+  expect(history).toContain("The tool is unavailable in this step.");
+  expect(history).not.toContain("ctrl_tool_");
 });

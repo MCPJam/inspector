@@ -104,7 +104,7 @@ beta; they are listed [after the table](#held-tools).
 | `get_conformance_report` | Page through a conformance run's failing checks, 50 at a time, each with the suite and id to read it in full. | — |
 | `get_conformance_check` | Read one conformance check in full: its failure, duration, and stored details and output, each capped at 16 KB. | — |
 | `list_eval_suites` | List the eval suites saved in an MCPJam project, with latest-run summaries and pass-rate trends. | ✅ |
-| `list_eval_suite_runs` | List recent runs of an eval suite, newest first, with status, pass/fail result, and summary counts. | ✅ |
+| `list_eval_suite_runs` | List recent runs of an eval suite, newest first, with status, pass/fail result, and summary counts. Without a suite, lists the one holding the project's most recent run; when no listed run has finished, adds the newest one that has. | ✅ |
 | `run_eval_case` | Start an asynchronous run of ONE case in an existing eval suite — a persisted, fully-queryable run scoped to just that case (inspect it with get_eval_run / list_eval_run_iterations / get_eval_run_steps, same as a full run). | — |
 | `run_eval_suite` | Start an asynchronous rerun of an existing eval suite, against one target or several. Fan-out is explicit: a suite with several attached targets refuses with TARGET_REQUIRED unless you name targets or pass allAttached, and each target is one PAID run. | — |
 | `create_eval_suite` | Create a runnable eval suite from authored test cases. | — |
