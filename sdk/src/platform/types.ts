@@ -1536,9 +1536,12 @@ export type PlatformEvalLlmTouchpointId =
   | "goalCompletion"
   | "groundedness"
   | "rubricChecks"
+  | "customJudges"
   | "serverQuality"
   | "runInsights"
   | "runGroupQuality"
+  | "metadataAttribution"
+  | "suspectedCondition"
   | "evalFindingsPipeline";
 
 export type PlatformDisclosureFires =

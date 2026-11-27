@@ -38,6 +38,7 @@ import { Input } from "@mcpjam/design-system/input";
 import type { ModelDefinition } from "@/shared/types";
 import {
   hasRubricChecksCapability,
+  hasCustomJudgesCapability,
   hasYesNoRubricQuestionsCapability,
   type SuiteCapabilities,
 } from "@/hooks/use-suite-capabilities";
@@ -48,7 +49,12 @@ import { SuiteScorerLibraryMenu } from "./suite-scorer-library-menu";
 import { EvaluatorLibraryButton } from "./evaluator-library/evaluator-library-dialog";
 import { useEvaluatorLibraryEnabled } from "./evaluator-library/evaluator-library-flag";
 import { EvaluatorStageRows } from "./evaluator-library/evaluator-stage-rows";
-import { librarySuiteEdits } from "./evaluator-library/library-suite-edits";
+import { CustomJudgesSection } from "./evaluator-library/custom-judges-section";
+import { customJudgeLimits } from "./evaluator-library/custom-judges-model";
+import {
+  libraryModelRows,
+  librarySuiteEdits,
+} from "./evaluator-library/library-suite-edits";
 import { RubricChecksJudgeCard } from "./rubric-checks-judge-card";
 import type { GroundednessRunEvidence } from "./suite-judge-card";
 import { JudgeModelControl } from "./judges-section";
@@ -257,7 +263,13 @@ export function SuiteScorerTable({
       scope.onDraftChange(removeCaseRule(scope.draft, rule.index));
     }
   };
-  const library = librarySuiteEdits(scope, judgeConfig, onJudgeConfigChange);
+  const judgeLimit = customJudgeLimits(capabilities).maxJudges;
+  const library = librarySuiteEdits(
+    scope,
+    judgeConfig,
+    onJudgeConfigChange,
+    judgeLimit,
+  );
   const addPredicate = (predicate: Predicate) => {
     if (scope.kind === "suite") {
       scope.onPredicatesChange((previous) => [...previous, predicate]);
@@ -418,11 +430,18 @@ export function SuiteScorerTable({
             {headerActions}
             {library && scope.kind === "suite" ? (
               <EvaluatorLibraryButton
-                predicates={scope.predicates}
-                questions={judgeConfig?.rubricChecks?.questions}
-                authorableKinds={authorableKinds}
-                canAskYesNo={hasYesNoRubricQuestionsCapability(capabilities)}
+                suite={{
+                  predicates: scope.predicates,
+                  questions: judgeConfig?.rubricChecks?.questions,
+                  judges: judgeConfig?.customJudges?.judges,
+                }}
+                support={{
+                  authorableKinds,
+                  canAskYesNo: hasYesNoRubricQuestionsCapability(capabilities),
+                  canJudge: hasCustomJudgesCapability(capabilities),
+                }}
                 onAdd={library.add}
+                judgeLimit={judgeLimit}
               />
             ) : null}
             <SuiteScorerLibraryMenu
@@ -494,9 +513,12 @@ export function SuiteScorerTable({
                         ? rules[row.predicateIndex]?.predicate
                         : undefined
                     }
-                    questions={
+                    modelRows={
                       group.stage === "userValue"
-                        ? judgeConfig?.rubricChecks?.questions
+                        ? libraryModelRows(
+                            judgeConfig,
+                            library ? onJudgeConfigChange : undefined,
+                          )
                         : undefined
                     }
                     onRemoveEvaluator={library?.remove}
@@ -553,6 +575,13 @@ export function SuiteScorerTable({
                     )}
                   />
                 )}
+                {library && group.stage === "userValue" ? (
+                  <CustomJudgesSection
+                    judgeConfig={judgeConfig}
+                    onJudgeConfigChange={onJudgeConfigChange}
+                    capabilities={capabilities}
+                  />
+                ) : null}
                 {evaluatorLibraryEnabled &&
                 rubricChecks &&
                 scope.kind === "suite" &&

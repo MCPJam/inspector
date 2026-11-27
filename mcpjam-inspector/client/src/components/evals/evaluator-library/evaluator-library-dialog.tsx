@@ -7,65 +7,72 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@mcpjam/design-system/dialog";
-import type { Predicate } from "@mcpjam/sdk/predicates";
-import type { RubricCheckQuestion } from "@/components/shared/session-quality/judge-config";
 import { ArrowLeft, Library } from "lucide-react";
 import { useState } from "react";
 import { formatCriterion } from "@/shared/predicate-kinds";
+import { CUSTOM_JUDGE_COST_COPY } from "./custom-judges-model";
 import { EvaluatorCard } from "./evaluator-card";
 import { useEvaluatorLibraryEnabled } from "./evaluator-library-flag";
 import {
   builtFrom,
   isAuthorable,
   isInSuite,
+  judgesWithAdded,
   LIBRARY_EVALUATORS,
+  missingParts,
   questionsWithAdded,
-  taggedChecks,
+  taggedJudges,
   taggedQuestions,
+  type LibraryAddition,
   type LibraryEvaluator,
+  type LibrarySuiteParts,
+  type LibrarySupport,
 } from "./library-catalog";
 
 type LibraryProps = {
-  predicates: readonly Predicate[];
-  /** The suite's rubric-check questions, to mark evaluators already added. */
-  questions?: readonly RubricCheckQuestion[];
-  authorableKinds?: readonly Predicate["type"][];
-  /** Whether this deployment accepts yes/no rubric-check questions. */
-  canAskYesNo?: boolean;
-  onAdd: (
-    checks: readonly Predicate[],
-    questions: readonly RubricCheckQuestion[],
-  ) => void;
+  /** What the suite already has, to mark evaluators already added. */
+  suite: LibrarySuiteParts;
+  /** What this deployment can save. */
+  support: LibrarySupport;
+  /** Saves the addition, or says why it could not. */
+  onAdd: (addition: LibraryAddition) => string | undefined;
+  /** The backend's `judges.custom.maxJudges`. */
+  judgeLimit: number;
 };
 
 export function EvaluatorLibraryButton(props: LibraryProps) {
   const enabled = useEvaluatorLibraryEnabled();
   if (!enabled) return null;
   const available = LIBRARY_EVALUATORS.filter((e) =>
-    isAuthorable(e, props.authorableKinds, props.canAskYesNo),
+    isAuthorable(e, props.support),
   );
   if (available.length === 0) return null;
   return <EvaluatorLibraryDialog {...props} available={available} />;
 }
 
 function EvaluatorLibraryDialog({
-  predicates,
-  questions = [],
+  suite,
   onAdd,
+  judgeLimit,
   available,
-}: Omit<LibraryProps, "authorableKinds" | "canAskYesNo"> & {
+}: Omit<LibraryProps, "support"> & {
   available: readonly LibraryEvaluator[];
 }) {
   const [open, setOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = available.find((e) => e.id === selectedId);
-  // The same check the suite edit makes, so Add is never offered for an
+  // The same checks the suite edit makes, so Add is never offered for an
   // edit that would be refused.
-  const reasonAddDisabled = (evaluator: LibraryEvaluator) =>
-    questionsWithAdded(questions, taggedQuestions(evaluator)).refused;
+  const reasonAddDisabled = (evaluator: LibraryEvaluator) => {
+    const { questions, judges } = missingParts(evaluator, suite);
+    return (
+      questionsWithAdded(suite.questions ?? [], questions).refused ??
+      judgesWithAdded(suite.judges ?? [], judges, judgeLimit).refused
+    );
+  };
   const add = (evaluator: LibraryEvaluator) => {
     if (reasonAddDisabled(evaluator)) return;
-    onAdd(taggedChecks(evaluator), taggedQuestions(evaluator));
+    onAdd(missingParts(evaluator, suite));
   };
   return (
     <Dialog
@@ -89,13 +96,13 @@ function EvaluatorLibraryDialog({
           <DialogDescription>
             {selected
               ? selected.question
-              : "Each evaluator adds a set of assertions to this suite. You can change or remove them afterwards like any other assertion."}
+              : "Each evaluator adds assertions, questions or judges to this suite. You can change or remove them afterwards."}
           </DialogDescription>
         </DialogHeader>
         {selected ? (
           <EvaluatorDetail
             evaluator={selected}
-            inSuite={isInSuite(selected, predicates, questions)}
+            inSuite={isInSuite(selected, suite)}
             reasonAddDisabled={reasonAddDisabled(selected)}
             onBack={() => setSelectedId(null)}
             onAdd={() => add(selected)}
@@ -110,7 +117,10 @@ function EvaluatorLibraryDialog({
                 icon={evaluator.icon}
                 tone={evaluator.tone}
                 builtFrom={builtFrom(evaluator)}
-                inSuite={isInSuite(evaluator, predicates, questions)}
+                note={
+                  evaluator.judges?.length ? CUSTOM_JUDGE_COST_COPY : undefined
+                }
+                inSuite={isInSuite(evaluator, suite)}
                 onOpen={() => setSelectedId(evaluator.id)}
                 onAdd={
                   !reasonAddDisabled(evaluator)
@@ -156,6 +166,23 @@ function EvaluatorDetail({
                 Yes/no question, passes on{" "}
                 {q.pass.answer === "yes" ? "Yes" : "No"}. Asked with the
                 goal-completion judge.
+              </span>
+            </span>
+            <span className="text-xs text-muted-foreground">Advisory</span>
+          </li>
+        ))}
+        {taggedJudges(evaluator).map((j) => (
+          <li
+            key={j.id}
+            className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm"
+          >
+            <span>
+              {j.label}
+              <span className="block text-xs text-muted-foreground">
+                {j.output.kind === "score"
+                  ? `Judge prompt, passes at a score of ${j.output.threshold} or more.`
+                  : "Judge prompt, pass or fail."}{" "}
+                {CUSTOM_JUDGE_COST_COPY}
               </span>
             </span>
             <span className="text-xs text-muted-foreground">Advisory</span>
