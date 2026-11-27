@@ -73,7 +73,7 @@ import {
 } from "@/components/evals/runner-checks";
 import type { ScorecardGroup, ScorecardRow } from "./case-scorecard-model";
 import { stageFloor, type StageFloorTrace } from "./stage-floor";
-import { readStoredRubricCheckResults } from "./stored-model-grader-results";
+import { rubricCheckVerdictQuestions } from "@/shared/rubric-check-verdict";
 import { isRequiredRole } from "@mcpjam/sdk/predicates";
 
 export type TrialRowResultSource =
@@ -604,7 +604,7 @@ function joinRow(row: ScorecardRow, ctx: JoinContext): JoinedScorecardRow {
 }
 
 /**
- * The band, on P(yes), where a rubric-check criterion reads Uncertain. A
+ * The band, on P(yes), where a boolean rubric check reads Uncertain. A
  * classifier at 0.51 has not said yes; it has declined to decide.
  */
 export const RUBRIC_CHECK_UNCERTAIN_BAND = { from: 0.4, below: 0.6 } as const;
@@ -621,6 +621,11 @@ export function rubricCheckTrialRows(
     parseIterationScores(metadata),
     parseEvaluationConfig(metadata),
   );
+  const questions = new Map(
+    rubricCheckVerdictQuestions(metadata.rubricChecksVerdict).map(
+      (question) => [question.key, question],
+    ),
+  );
   const rows = new Map<string, JoinedScorecardRow>();
   for (const [scorerId, { score, definition }] of scores.byScorerId) {
     if (!scorerId.startsWith(HOSTED_RUBRIC_CHECKS_SCORER_PREFIX)) continue;
@@ -629,25 +634,28 @@ export function rubricCheckTrialRows(
     const label = stored.startsWith(RUBRIC_CHECK_LABEL_PREFIX)
       ? stored.slice(RUBRIC_CHECK_LABEL_PREFIX.length)
       : stored || key.slice(2);
-    const row = rubricCheckRow(key, label, resultFromScore(score, definition));
+    const question = questions.get(key);
+    const result = resultFromScore(score, definition);
+    const criterion = key.startsWith("c:");
+    const booleanResult = criterion || question?.kind === "boolean";
+    const row = rubricCheckRow(
+      key,
+      label,
+      booleanResult
+        ? uncertainIfUndecided(result, criterion ? undefined : question?.probability)
+        : result,
+    );
     const evidence = scoreEvidence(score, definition, row);
     rows.set(scorerId, { ...row, ...(evidence ? { evidence } : {}) });
   }
-  // The verdict lists questions in the order the backend asked them, so it
-  // sets the order; a projected row wins over the saved verdict it came from.
+  // The verdict orders the projected rows by when the questions were asked.
   const ordered: JoinedScorecardRow[] = [];
-  for (const { key, label, result, evidence } of readStoredRubricCheckResults(
-    metadata.rubricChecksVerdict,
-  )) {
+  for (const key of questions.keys()) {
     const scorerId = hostedRubricCheckScorerId(key);
     const projected = rows.get(scorerId);
+    if (!projected) continue;
+    ordered.push(projected);
     rows.delete(scorerId);
-    ordered.push(
-      projected ?? {
-        ...rubricCheckRow(key, label, result),
-        ...(evidence ? { evidence } : {}),
-      },
-    );
   }
   return [...ordered, ...rows.values()];
 }
@@ -673,27 +681,26 @@ function rubricCheckRow(
       ? "A suite criterion, asked on its own as a yes or no question. Advisory."
       : "A question the suite added to its rubric checks. Advisory.",
     join: { kind: "judge", slot: "rubricChecks", scorerId },
-    result: criterion ? uncertainIfUndecided(result) : result,
+    result,
   };
 }
 
-function uncertainIfUndecided(result: TrialRowResult): TrialRowResult {
+function uncertainIfUndecided(
+  result: TrialRowResult,
+  probability: number | undefined,
+): TrialRowResult {
   if (
     (result.state !== "passed" && result.state !== "failed") ||
-    (result.source !== "scoreRow" && result.source !== "modelVerdict") ||
-    typeof result.value !== "number" ||
-    result.value < RUBRIC_CHECK_UNCERTAIN_BAND.from ||
-    result.value >= RUBRIC_CHECK_UNCERTAIN_BAND.below
+    result.source !== "scoreRow"
   ) {
     return result;
   }
-  return {
-    state: "uncertain",
-    source: result.source,
-    value: result.value,
-    ...(result.reason ? { reason: result.reason } : {}),
-    ...(result.threshold !== undefined ? { threshold: result.threshold } : {}),
-  };
+  const pYes = probability ?? result.value;
+  return typeof pYes === "number" &&
+    pYes >= RUBRIC_CHECK_UNCERTAIN_BAND.from &&
+    pYes < RUBRIC_CHECK_UNCERTAIN_BAND.below
+    ? { ...result, state: "uncertain" }
+    : result;
 }
 
 /** "Failed because the server reported a tool error." — the chain's own words. */
