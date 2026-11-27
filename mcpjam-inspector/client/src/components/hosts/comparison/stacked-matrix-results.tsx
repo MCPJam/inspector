@@ -55,7 +55,7 @@ export function StackedMatrixResults({
                   <article key={field.id} aria-label={field.label} className="border-b border-border last:border-b-0">
                     <div className="flex items-start justify-between gap-3 px-3 py-3">
                       <div className="min-w-0">
-                        <h4 className="text-sm font-semibold [overflow-wrap:anywhere]">
+                        <h4 className="text-base font-semibold [overflow-wrap:anywhere]">
                           {summaryColumn.renderFieldLabel?.(field) ?? field.label}
                         </h4>
                         {showDescriptions && field.description && (
@@ -65,7 +65,7 @@ export function StackedMatrixResults({
                         )}
                       </div>
                       {adoption && (
-                        <div className="max-w-28 shrink-0 text-right tabular-nums">
+                        <div className="max-w-[45%] shrink-0 tabular-nums">
                           <div className="text-[10px] text-muted-foreground">{summaryColumn.label}</div>
                           {adoption}
                         </div>
@@ -75,23 +75,23 @@ export function StackedMatrixResults({
                       {clients.map(({ subject, href, logo }) => (
                         <li
                           key={subject.hostId}
-                          className="grid grid-cols-2 items-center gap-3 border-t border-border px-3 py-2.5"
+                          className="grid grid-cols-[minmax(0,1fr)_fit-content(44%)] items-center gap-3 border-t border-border px-3 py-2.5"
                         >
                           <div className="flex min-w-0 items-center gap-2">
-                            <img src={logo} alt="" className="size-4 shrink-0 object-contain" />
+                            <img src={logo} alt="" className="size-5 shrink-0 object-contain" />
                             <div className="min-w-0 [overflow-wrap:anywhere]">
-                              <CompactClientName subject={subject} href={href} className="text-xs font-semibold" />
-                              <div><CompactVerifiedDate subject={subject} /></div>
+                              <CompactClientName subject={subject} href={href} className="block text-sm font-semibold leading-tight" />
+                              <CompactVerifiedDate subject={subject} className="mt-0.5 text-xs" />
                             </div>
                           </div>
-                          <div className="min-w-0 text-right [overflow-wrap:anywhere] [&>*]:max-w-full [&_[data-support-level]]:whitespace-normal">
+                          <div className="min-w-0 text-left leading-tight [overflow-wrap:anywhere] [&>*]:max-w-full [&>.inline-flex]:justify-start [&_[data-support-level]]:text-xs [&_[data-support-level]]:whitespace-normal">
                             <Cell field={field} subject={subject} mobileOptimized compact stacked />
                           </div>
                         </li>
                       ))}
                     </ul>
                     {slices && (
-                      <div className="flex flex-wrap gap-x-3 gap-y-1 border-t border-border px-3 py-2.5 tabular-nums">
+                      <div className="border-t border-border px-3 py-2.5 tabular-nums">
                         {slices}
                       </div>
                     )}

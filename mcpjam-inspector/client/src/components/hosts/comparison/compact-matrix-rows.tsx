@@ -141,7 +141,7 @@ export function CompactClientName({ subject, href, className }: {
   );
 }
 
-export function CompactVerifiedDate({ subject }: { subject: HostComparisonSubject }) {
+export function CompactVerifiedDate({ subject, className }: { subject: HostComparisonSubject; className?: string }) {
   const date = formatVerifiedAt(subject.verifiedAt);
   const stale = isVerifiedAtStale(subject.verifiedAt);
   if (date === "—") return null;
@@ -149,7 +149,7 @@ export function CompactVerifiedDate({ subject }: { subject: HostComparisonSubjec
     <time
       dateTime={date}
       title={stale ? STALE_VERIFIED_AT_LABEL : undefined}
-      className="mt-1.5 inline-flex items-center justify-center gap-1 text-[10px] leading-tight font-normal text-muted-foreground"
+      className={cn("mt-1.5 inline-flex items-center gap-1 text-[10px] leading-tight font-normal text-muted-foreground", className)}
     >
       {stale && <TriangleAlert className="size-3 shrink-0" aria-hidden />}
       <span>Verified on {date}</span>

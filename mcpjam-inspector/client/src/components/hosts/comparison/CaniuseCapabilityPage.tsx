@@ -337,11 +337,6 @@ export function CaniuseCapabilityPage({
                       <span className="text-foreground/85">/{coverage.probed}</span>
                     </p>
                     <p className="mt-2 text-sm text-foreground/85">Probed clients</p>
-                    {coverage.unpublished > 0 && (
-                      <p className="text-sm text-foreground/85">
-                        {coverage.unpublished} with no published result
-                      </p>
-                    )}
                   </div>
                 </div>
                 {slices.length > 0 && (

@@ -79,9 +79,10 @@ describe("CaniuseComparePage", () => {
     expect(score).toHaveTextContent(/\d+\/\d+/);
     expect(score).toHaveTextContent(/\d+ with no published result/);
     expect(score).toHaveAttribute("href", "/capabilities/event-delivery");
-    expect(
-      screen.getByRole("link", { name: /^webhook:/i }),
-    ).toHaveAttribute("href", "/capabilities/event-delivery?slice=webhook");
+    const modes = screen.getByRole("group", { name: "Adoption by mode" });
+    expect(score.closest("td")).toContainElement(modes);
+    expect(within(modes).getAllByRole("link").map((link) => link.getAttribute("href")))
+      .toEqual(["poll", "push", "webhook"].map((slice) => `/capabilities/event-delivery?slice=${slice}`));
     expect(score).toHaveAttribute(
       "title",
       expect.stringMatching(
@@ -109,7 +110,8 @@ describe("CaniuseComparePage", () => {
       }
       expect(events.getByRole("link", { name: /^\d+%, \d+ of \d+ probed clients/ }))
         .toHaveAttribute("href", "/capabilities/event-delivery");
-      expect(events.getByRole("link", { name: /^webhook:/i }))
+      const modes = within(events.getByRole("group", { name: "Adoption by mode" }));
+      expect(modes.getByRole("link", { name: /^webhook:/i }))
         .toHaveAttribute("href", "/capabilities/event-delivery?slice=webhook");
     } finally {
       width.mockRestore();

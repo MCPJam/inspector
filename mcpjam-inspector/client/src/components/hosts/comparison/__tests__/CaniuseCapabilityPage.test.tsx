@@ -55,6 +55,7 @@ describe("CaniuseCapabilityPage", () => {
     expect(
       score.getByText("Published results"),
     ).toBeVisible();
+    expect(score.queryByText(/with no published result/)).not.toBeInTheDocument();
     expect(
       screen.getByRole("region", { name: "Supports at least one delivery mode" }),
     ).toBeVisible();

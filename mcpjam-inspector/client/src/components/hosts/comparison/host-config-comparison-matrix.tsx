@@ -243,7 +243,7 @@ export function HostConfigComparisonMatrix({
             mobileOptimized
               ? {
                   width:
-                    140 + (summaryColumn ? 104 : 0) + displaySubjects.length * 132,
+                    140 + (summaryColumn ? 192 : 0) + displaySubjects.length * 132,
                 }
               : undefined
           }
@@ -256,7 +256,7 @@ export function HostConfigComparisonMatrix({
                   : "w-[168px] sm:w-[300px]"
               }
             />
-            {summaryColumn && <col className="w-[104px] sm:w-[144px]" />}
+            {summaryColumn && <col className="w-48" />}
             {displaySubjects.map((s) => (
               <col
                 key={s.hostId}

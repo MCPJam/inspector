@@ -58,14 +58,13 @@ export function caniuseAdoptionColumn(
       const slices = summaries.get(field.id)?.slices;
       if (!slices?.length) return null;
       const path = fieldDestination(field);
-      return path && slices.map(({ slice, coverage }) => (
-        <AdoptionLink
-          key={slice}
-          path={`${path}?slice=${encodeURIComponent(slice)}`}
-          coverage={coverage}
-          label={sliceLabel(slice)}
-        />
-      ));
+      return path && (
+        <div role="group" aria-label="Adoption by mode" className="grid grid-cols-3 gap-x-1.5 gap-y-2 text-left md:border-t md:border-border md:pt-2">
+          {slices.map(({ slice, coverage }) => (
+            <AdoptionLink key={slice} path={`${path}?slice=${encodeURIComponent(slice)}`} coverage={coverage} label={sliceLabel(slice)} />
+          ))}
+        </div>
+      );
     },
   };
 }
@@ -92,16 +91,16 @@ function AdoptionLink({
     <Link
       to={path}
       aria-label={label ? `${label}: ${summary}` : summary}
-      className="w-fit rounded-sm text-xs text-muted-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+      className="w-fit max-w-full rounded-sm text-xs text-muted-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
       title={[detail, unpublishedLabel].filter(Boolean).join(" ")}
     >
-      {label && <span className="mr-1">{label}</span>}
+      {label && <span className="block font-medium capitalize [overflow-wrap:anywhere]">{label}</span>}
       <span
         className={
           score === null
             ? undefined
             : label
-              ? "text-sm font-bold text-primary"
+              ? "text-xs font-bold text-primary"
               : "text-base font-bold leading-tight text-primary"
         }
       >
@@ -111,7 +110,7 @@ function AdoptionLink({
         )}
       </span>
       {score !== null && (
-        <span className={label ? "ml-1 inline-block" : "block"}>
+        <span className="ml-1 inline-block">
           {full}/{probed}
         </span>
       )}
