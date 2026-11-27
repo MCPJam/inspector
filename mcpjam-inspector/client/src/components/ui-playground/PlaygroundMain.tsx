@@ -4213,11 +4213,11 @@ export function PlaygroundMain({
       if (!sendInColumn) return sendMessage(message);
       const context = message.widgetModelContext ?? [];
       // Callers just checked the thread, which the branch leaves on purpose.
-      const { left } = beginThreadSend();
+      const thread = beginThreadSend(() => restoreModelContext(context));
       return sendInColumn({
         ...message,
-        isCurrent: () => !left() && !conversationSendBlockedRef.current,
-        onDispatchRefused: () => restoreModelContext(context),
+        isCurrent: () => !thread.left() && !conversationSendBlockedRef.current,
+        onDispatchRefused: thread.refuse,
       });
     },
     [sendInColumn, restoreModelContext, sendMessage, beginThreadSend],

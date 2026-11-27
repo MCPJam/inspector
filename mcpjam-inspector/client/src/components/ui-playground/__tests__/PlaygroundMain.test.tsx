@@ -4331,7 +4331,9 @@ describe("PlaygroundMain", () => {
 
     it("keeps a send that branches the column current past the branch's own detach, until New chat", async () => {
       await openColumnAlone();
-      let branched: { isCurrent?: () => boolean } | undefined;
+      let branched:
+        | { isCurrent?: () => boolean; onDispatchRefused?: () => void }
+        | undefined;
       // What `forkAndSend` does before it sends: the real detach, then a new
       // chat.
       vi.mocked(mockUseChatSession.branchFromThread).mockImplementation(
@@ -4348,6 +4350,11 @@ describe("PlaygroundMain", () => {
         session: { ...column, chatSessionId: "chat-session-1" },
       });
       try {
+        act(() => {
+          mockThread.mock.calls.at(-1)?.[0].onModelContextUpdate?.("call_1", {
+            structuredContent: { rows: 3 },
+          });
+        });
         fireEvent.change(screen.getByTestId("chat-input-field"), {
           target: { value: "next message" },
         });
@@ -4376,6 +4383,21 @@ describe("PlaygroundMain", () => {
           void bridge?.onNewChat();
         });
         expect(branched?.isCurrent?.()).toBe(false);
+
+        // The refusal leaves the old chat's App context out of New chat.
+        act(() => branched?.onDispatchRefused?.());
+        mockUseChatSession.sendMessage.mockClear();
+        fireEvent.change(screen.getByTestId("chat-input-field"), {
+          target: { value: "fresh" },
+        });
+        await act(async () => {
+          fireEvent.submit(screen.getByTestId("chat-input"));
+        });
+        await waitFor(() => {
+          expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ text: "fresh", widgetModelContext: [] }),
+          );
+        });
       } finally {
         mockUseChatSession.chatSessionId = "chat-session-1";
       }
