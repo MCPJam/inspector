@@ -28,6 +28,10 @@ const SETUP_TICK_MS = 15_000;
 /** The most run cleanup waits for iterations still cleaning up after a stop. */
 const SETTLE_WAIT_MS = PHASE_LIMITS_MS.capacity + PHASE_LIMITS_MS.cleanup;
 
+type RunScriptResults = Partial<
+  Record<"runSetup" | "runCleanup", IterationScriptResult>
+>;
+
 export type RunPhaseContext = {
   config: FrozenCodeGrading;
   runId: string;
@@ -38,7 +42,9 @@ export type RunPhaseContext = {
   isStopped: () => Promise<boolean>;
   signal?: AbortSignal;
   /** Each script's result, for the run's record. */
-  results: Partial<Record<"runSetup" | "runCleanup", IterationScriptResult>>;
+  results: RunScriptResults;
+  /** Stores results on the run, where the app and the API show them. */
+  record: (results: RunScriptResults) => Promise<unknown>;
   cleanedUp?: boolean;
   deps?: PhaseBoxDeps;
 };
@@ -47,6 +53,9 @@ const HEARTBEAT = makeFunctionReference<"mutation">(
   "testSuites:heartbeatTestSuiteRun",
 );
 const GET_RUN = makeFunctionReference<"query">("testSuites:getTestSuiteRun");
+const RECORD = makeFunctionReference<"mutation">(
+  "evalRunScripts:recordRunScriptResults",
+);
 
 export function runPhaseContext(args: {
   config: FrozenCodeGrading | undefined;
@@ -55,6 +64,7 @@ export function runPhaseContext(args: {
   convexClient?: Pick<ConvexHttpClient, "mutation" | "query">;
   heartbeat?: () => Promise<unknown>;
   isStopped?: () => Promise<boolean>;
+  record?: (results: RunScriptResults) => Promise<unknown>;
   bearer: () => string;
   signal?: AbortSignal;
 }): RunPhaseContext | undefined {
@@ -77,9 +87,26 @@ export function runPhaseContext(args: {
             status?: string;
           } | null
         )?.status !== "running"),
+    record:
+      args.record ??
+      (async (results) =>
+        await convexClient?.mutation(RECORD, { runId, ...results })),
     ...(args.signal ? { signal: args.signal } : {}),
     results: {},
   };
+}
+
+/** Best effort: the record is for people, and no verdict reads it. */
+async function report(
+  ctx: RunPhaseContext,
+  results: RunScriptResults,
+): Promise<void> {
+  await ctx.record(results).catch((error: unknown) => {
+    logger.warn("[evals] could not record a run script result", {
+      runId: ctx.runId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
 }
 
 async function runRunScript(
@@ -185,6 +212,7 @@ export async function runRunSetupOrThrow(
       signal,
     );
     ctx.results.runSetup = result;
+    await report(ctx, { runSetup: result });
     if (cancelled) return;
     if (result.status !== "passed") throw new RunSetupFailedError(result);
   } finally {
@@ -213,13 +241,15 @@ export async function runRunCleanupOnce(
   if (timer) clearTimeout(timer);
   try {
     // Its own clock and signal: it also runs after the run's was aborted.
-    ctx.results.runCleanup = await runRunScript(
+    const result = await runRunScript(
       ctx,
       "run_cleanup",
       script,
       PHASE_LIMITS_MS.cleanup,
       undefined,
     );
+    ctx.results.runCleanup = result;
+    await report(ctx, { runCleanup: result });
   } catch (error) {
     logger.warn("[evals] run cleanup failed", {
       runId: ctx.runId,

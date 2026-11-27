@@ -119,6 +119,10 @@ describe("run setup and cleanup (EFTW-90)", () => {
     const setupBox = scriptedBox({ "/tmp/mcpjam/run_setup.sh": { exit: 1 } });
     const cleanupBox = scriptedBox({ "/tmp/mcpjam/run_cleanup.sh": {} });
     const deps = boxDeps([setupBox.sandbox, cleanupBox.sandbox]);
+    // The first report fails: recording is best effort.
+    const record = vi
+      .fn(async (_results: unknown) => undefined)
+      .mockRejectedValueOnce(new Error("backend down"));
     const ctx = {
       ...runPhaseContext({
         config: {
@@ -129,6 +133,7 @@ describe("run setup and cleanup (EFTW-90)", () => {
         bearer: () => "token",
         heartbeat: async () => undefined,
         isStopped: async () => false,
+        record,
       })!,
       deps,
     };
@@ -139,6 +144,30 @@ describe("run setup and cleanup (EFTW-90)", () => {
     await runRunCleanupOnce(ctx);
     expect(deps.provisioned).toEqual(["run_setup", "run_cleanup"]);
     expect(ctx.results.runCleanup).toMatchObject({ status: "passed" });
+    expect(record.mock.calls).toEqual([
+      [
+        {
+          runSetup: expect.objectContaining({ status: "failed", exitCode: 1 }),
+        },
+      ],
+      [{ runCleanup: expect.objectContaining({ status: "passed" }) }],
+    ]);
+  });
+
+  it("records through the runner's client by default", async () => {
+    const mutation = vi.fn(async () => ({ recorded: true }));
+    const ctx = runPhaseContext({
+      config: { ...config, scripts: { runCleanup: "drop" } },
+      runId: "run",
+      convexClient: { mutation, query: vi.fn() } as never,
+      bearer: () => "token",
+    })!;
+    const result = { status: "passed" as const, output: "", durationMs: 1 };
+    await ctx.record({ runCleanup: result });
+    expect(mutation).toHaveBeenCalledWith(expect.anything(), {
+      runId: "run",
+      runCleanup: result,
+    });
   });
 
   it("run setup heartbeats the run while it works", async () => {

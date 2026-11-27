@@ -119,3 +119,21 @@ export function hasIterationPhases(config: FrozenCodeGrading): boolean {
 export function hasRequiredCodeEvaluator(config: FrozenCodeGrading): boolean {
   return config.codeEvaluators.some((e) => e.role === "required");
 }
+
+/**
+ * What a local-harness run can't honour (EFTW-90, amendment P3): its agent
+ * runs on the member's machine, so there is no box to set up, clean up or
+ * copy declared files from. Advisory evaluators still grade the transcript.
+ */
+export function localRunUnsupportedCodeGrading(
+  config: FrozenCodeGrading | undefined,
+): string[] {
+  if (!config) return [];
+  return [
+    ...(config.scripts.iterationSetup || config.scripts.iterationCleanup
+      ? ["iteration setup and cleanup scripts"]
+      : []),
+    ...(config.grading.files?.length ? ["files declared for grading"] : []),
+    ...(hasRequiredCodeEvaluator(config) ? ["Required code evaluators"] : []),
+  ];
+}

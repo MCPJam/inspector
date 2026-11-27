@@ -291,3 +291,36 @@ describe("setup and cleanup", () => {
     });
   });
 });
+
+describe("what a local-harness run can't honour (EFTW-90 P3)", () => {
+  it("names iteration scripts, declared files and Required evaluators", async () => {
+    const { localRunUnsupportedCodeGrading, readFrozenCodeGrading } =
+      await import("../sandbox-phases/frozen-config.js");
+    expect(localRunUnsupportedCodeGrading(undefined)).toEqual([]);
+    expect(
+      localRunUnsupportedCodeGrading(
+        readFrozenCodeGrading({
+          codeEvaluators: [
+            { id: "a", fileName: "a.py", script: "x", role: "advisory" },
+          ],
+          scripts: { runSetup: "seed" },
+        }),
+      ),
+    ).toEqual([]);
+    expect(
+      localRunUnsupportedCodeGrading(
+        readFrozenCodeGrading({
+          codeEvaluators: [
+            { id: "a", fileName: "a.py", script: "x", role: "required" },
+          ],
+          scripts: { iterationCleanup: "drop" },
+          grading: { files: ["/home/user/out.json"] },
+        }),
+      ),
+    ).toEqual([
+      "iteration setup and cleanup scripts",
+      "files declared for grading",
+      "Required code evaluators",
+    ]);
+  });
+});

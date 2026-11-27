@@ -6,6 +6,7 @@ import {
   runIterationSetupOrThrow,
 } from "./evals/sandbox-phases/iteration-hooks.js";
 import { buildGradingInput } from "./evals/sandbox-phases/grading-input.js";
+import { localRunUnsupportedCodeGrading } from "./evals/sandbox-phases/frozen-config.js";
 import {
   runPhaseContext,
   runRunCleanupOnce,
@@ -536,6 +537,8 @@ export type EvalTestCase = {
    */
   hostConfigOverride?: Record<string, unknown>;
   testCaseId?: string;
+  /** EFTW-90: a quick run's code evaluators, declared Not run. */
+  codeGradingNotRun?: import("./evals/sandbox-phases/code-score-family.js").CodeGradingResult;
   /**
    * Case kind. Absent ⇒ prompt case. `widget_probe` carries `probeConfig`
    * and skips the LLM path entirely (`runTestCase` forks before any model
@@ -6970,6 +6973,7 @@ const runHostedIterationWithBrowser = async (
     });
     if (harnessExecutionTarget) {
       assertLocalHarnessCapabilities({ builtInToolIds: resolvedExecution.builtInToolIds, computerEnvironmentId: pinnedEnvironmentId, browserToolPolicy: resolvedExecution.browserToolPolicy, harnessId: resolvedExecution.harness });
+      assertLocalHarnessCapabilities({ codeGradingFeatures: localRunUnsupportedCodeGrading(recorder?.codeGrading), harnessId: resolvedExecution.harness });
       if (runId) {
         const attachments = await resolveEvalRunAttachments({ bearer: bearerNow(convexAuthToken), runId: String(runId), signal: abortSignal });
         if (!attachments.ok) throw new Error("Could not verify this run's attachment requirements");
@@ -7879,7 +7883,7 @@ const runHostedIterationWithBrowser = async (
         }),
     },
     iterationMetadataBase,
-  );
+  ) ?? test.codeGradingNotRun;
   const finishParams = buildIterationFinishParams({
     iterationId,
     platformGates,
