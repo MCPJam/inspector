@@ -62,8 +62,9 @@ export function judgeProblem(
   ) {
     return "Set a passing score above 0 and at most 1.";
   }
-  if (others.some((o) => o.id === judge.id))
-    return "Judge ID already used. Close and reopen the editor.";
+  if (others.some((o) => o.id === judge.id)) {
+    return "Another judge in this suite has the same ID. Remove one of them, then save.";
+  }
   return undefined;
 }
 
@@ -77,6 +78,20 @@ function judgeIdFor(label: string, taken: readonly string[]): string {
   let id = base;
   for (let n = 2; taken.includes(id); n += 1) id = `${base}-${n}`;
   return id;
+}
+
+/**
+ * A new judge's ID is picked when its editor opens. If another judge took it
+ * meanwhile (added from the library, say), the new judge takes the next free
+ * ID instead of refusing to save.
+ */
+export function withFreeId(
+  judge: CustomJudge,
+  taken: readonly string[],
+): CustomJudge {
+  return taken.includes(judge.id)
+    ? { ...judge, id: judgeIdFor("judge", taken) }
+    : judge;
 }
 
 export function blankJudge(taken: readonly string[]): CustomJudge {
