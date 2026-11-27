@@ -30,7 +30,7 @@ const COPY_BY_CODE: Readonly<Record<string, string>> = {
   judge_reasoning_effort_unsupported:
     "The suite's judge reasoning effort is not supported by its model. Choose a supported effort or clear it, then try again.",
   EVAL_CUSTOM_JUDGE_PREVIEW_COOLDOWN:
-    "You just tested this judge on this iteration. Wait a few seconds, then try again.",
+    "You tested this judge on this iteration moments ago. Wait a few seconds, then try again.",
 };
 
 /** The `code` a backend `ConvexError` carries, if any. */
