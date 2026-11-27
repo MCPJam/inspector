@@ -7,6 +7,11 @@ import type {
   EvalTraceSpan,
 } from "@/shared/eval-trace";
 import { selectAxisTickPercents, TraceTimeline } from "../trace-timeline";
+import {
+  describeMockCall,
+  MOCK_ANSWER_SPAN_PREFIX,
+  type MockCallMark,
+} from "@/shared/mock-answer-span";
 
 const mockCapture = vi.fn();
 
@@ -218,6 +223,59 @@ describe("harness span metadata", () => {
     expect(codeEl.textContent).toContain("-32602");
     expect(codeEl.textContent).toContain("Invalid params");
     expect(codeEl.textContent).not.toContain("JSON-RPC error code");
+  });
+
+  describe("a tool call a mock handled", () => {
+    const sources: Array<[string, MockCallMark, string]> = [
+      ["its saved answer", { mockId: "m1", version: 2, tool: "echo", source: "saved" }, "its saved answer"],
+      ["a saved case", { mockId: "m1", version: 2, tool: "echo", source: "saved", caseIndex: 1 }, "its saved answer (case 2)"],
+      [
+        "a catch-all case",
+        { mockId: "m1", version: 2, tool: "echo", source: "saved", caseIndex: 0, catchAll: true },
+        "its catch-all answer (case 1, which matches any input)",
+      ],
+      ["its records", { mockId: "m1", version: 2, tool: "echo", source: "state" }, "its records"],
+      [
+        "a forward to the real tool",
+        { mockId: "m1", version: 2, tool: "echo", source: "forwarded", realServerId: "real1", realTool: "say" },
+        "forwarded to say on server real1",
+      ],
+      [
+        "a blocked forward",
+        { mockId: "m1", version: 2, tool: "echo", source: "blocked", realTool: "say", refusal: "blocked_by_policy" },
+        "a forward to say was refused (blocked_by_policy)",
+      ],
+      ["no saved answer", { mockId: "m1", version: 2, tool: "echo", source: "unmatched" }, "no saved answer matched"],
+    ];
+
+    const spansWith = (mark?: MockCallMark): EvalTraceSpan[] => [
+      { id: "step-0", name: "Step 1", category: "step", startMs: 0, endMs: 500, stepIndex: 0 },
+      { id: "tool-a", parentId: "step-0", name: "echo", category: "tool", startMs: 100, endMs: 300, stepIndex: 0, toolCallId: "a", toolName: "echo", toolOrigin: "mcp" },
+      ...(mark
+        ? [{ id: "mock-a", parentId: "tool-a", name: `${MOCK_ANSWER_SPAN_PREFIX}${describeMockCall(mark)}`, category: "step" as const, startMs: 100, endMs: 300, stepIndex: 0 }]
+        : []),
+    ];
+
+    const openEcho = () =>
+      fireEvent.click(
+        within(
+          screen.getAllByTestId("trace-row").find((el) => el.textContent?.includes("echo"))!,
+        ).getByTestId("trace-row-label-button"),
+      );
+
+    it.each(sources)("says who answered: %s", (_name, mark, phrase) => {
+      render(<TraceTimeline recordedSpans={spansWith(mark)} transcriptMessages={[]} />);
+      openEcho();
+      expect(screen.getByTestId("trace-span-metadata").textContent).toContain(
+        `Answered by: the mock: ${phrase} (mock m1, version 2)`,
+      );
+    });
+
+    it("says nothing on a call no mock handled", () => {
+      render(<TraceTimeline recordedSpans={spansWith()} transcriptMessages={[]} />);
+      openEcho();
+      expect(screen.queryByTestId("trace-span-metadata")).toBeNull();
+    });
   });
 
   it("omits the error-code line when no mcpErrorCode is present", () => {

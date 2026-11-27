@@ -153,8 +153,8 @@ const SELF_DIALING_ALLOWED = new Map(
     [
       ["routes", "shared", "conformance-connection.ts"],
       {
-        guard: /baseFetch:\s*(?:deadlineFetch\(\s*)?createConformanceFetch\(/,
-        why: "the temporary version check uses the conformance fetch guard",
+        guard: /baseFetch:[^,;]*createConformanceFetch\(/,
+        why: "the temporary version check uses the conformance fetch guard; only a mock's in-process transport stands in for it",
       },
     ],
     [

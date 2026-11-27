@@ -10,6 +10,8 @@
  * Bodies are `strictObject`, like the readiness routes: an unknown key is a
  * 400, never a silent forward.
  */
+import { refuseMockServer } from "../../utils/mock-servers.js";
+
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import type { ConvexHttpClient } from "convex/browser";
@@ -427,6 +429,11 @@ directorySubmissions.post(`${ONE}/runs`, async (c) => {
     (await runnableReviewerAttemptId(convex, { projectId, submissionId }, body.reviewerAttemptId, (error) =>
       readRefusal(error, "Reviewer attempt"),
     ));
+  const authorized = await authorizeServer(c, convexAuthToken, projectId, serverId);
+  refuseMockServer(
+    authorized,
+    "Directory submissions do not take mock servers. A mock is served only to you, so a directory cannot reach it. Submit the server the mock is based on.",
+  );
   const receipt = await startHostedReadinessRun({
     convex,
     projectId,
@@ -438,7 +445,7 @@ directorySubmissions.post(`${ONE}/runs`, async (c) => {
     ...graded,
     ...(reviewerAttemptId ? { reviewerAttemptId } : {}),
     testPlanRevision: body.testPlanRevision,
-    authorized: await authorizeServer(c, convexAuthToken, projectId, serverId),
+    authorized,
     reviewer: await reviewerAccountForRun(convex, submissionId, (connectionId) =>
       authorizeServer(c, convexAuthToken, projectId, serverId, { connectionId }),
     ),

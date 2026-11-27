@@ -17,6 +17,7 @@ import type { McpProtocolVersion } from "@mcpjam/sdk";
 import type { RunLauncher } from "../../utils/launch-context.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { toHttpConfig } from "../web/auth.js";
+import { mockTransportOf, type MockDial } from "../../utils/mock-servers.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
   BlockedEgressTargetError,
@@ -72,6 +73,8 @@ export interface AuthorizedConformanceServer {
     url?: string;
     headers?: Record<string, string>;
     useOAuth?: boolean;
+    /** A mock's id: the grant is in `oauthAccessToken` and the address is a placeholder. */
+    mock?: { mockId: string };
   };
   oauthAccessToken?: string | null;
 }
@@ -89,6 +92,11 @@ export interface StartHostedConformanceRunInput {
   settings?: ConformanceSettingsMode;
   /** The client's declared launcher, from the launch headers. */
   launcher?: RunLauncher;
+  /**
+   * The caller's auth context, captured while the request existed, so a run
+   * of a mock dials it as that caller and renews its grant in the background.
+   */
+  mockDial?: MockDial;
   /** Whose start budget a start spends. Absent: no per-caller limit. */
   startLimitKey?: string;
   translateError: (error: unknown) => Error;
@@ -210,17 +218,32 @@ export async function startHostedConformanceRun(
       };
     }
   }
-  await assertConformanceTarget(config.url, "Server URL");
+  // A mock's address is a placeholder reached in process as the caller, so
+  // there is no target to judge and its transport must not be replaced.
+  if (!config.mock) await assertConformanceTarget(config.url, "Server URL");
 
   const httpConfig = toHttpConfig(
     input.authorized as never,
     WEB_CALL_TIMEOUT_MS,
     input.authorized.oauthAccessToken ?? undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    input.mockDial,
   );
+  const mockTransport = config.mock ? mockTransportOf(httpConfig) : undefined;
+  if (config.mock && !mockTransport) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "This mock server could not be opened for a conformance run. Start the run again.",
+    );
+  }
   const server = {
     ...httpConfig,
-    fetchFn: createConformanceFetch("MCP server"),
-    baseFetch: createConformanceFetch("MCP server"),
+    fetchFn: mockTransport ?? createConformanceFetch("MCP server"),
+    baseFetch: mockTransport ?? createConformanceFetch("MCP server"),
   };
   const settings = await readConformanceRunSettings(convex, {
     projectId: input.projectId,

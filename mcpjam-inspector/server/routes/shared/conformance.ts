@@ -52,6 +52,7 @@ import {
   type OAuthConformanceSession,
 } from "../../services/conformance-oauth-sessions.js";
 import { createStreamingPinnedFetch } from "../../utils/pinned-fetch.js";
+import { mockTransportOf } from "../../utils/mock-servers.js";
 import { http1Fetch } from "@mcpjam/sdk/internal/network-proxy";
 import {
   bindCredentialHeaders,
@@ -169,6 +170,8 @@ export interface ResolvedHttpConfig extends ConformanceDeadlineInput {
   customHeaders?: Record<string, string>;
   /** The connection's delivered credentials, held to their origins. */
   credentialBinding?: CredentialHeaderBinding;
+  /** A mock's in-process transport: the suite reaches `serverUrl` through it, not the network. */
+  transport?: typeof fetch;
   /** Pin the run to one protocol version; absent ⇒ adopt the negotiated one. */
   protocolVersion?: McpProtocolVersion;
   /** Run only these checks; absent ⇒ every check the revision has. */
@@ -178,6 +181,10 @@ export interface ResolvedHttpConfig extends ConformanceDeadlineInput {
   /** Per-check limit in ms; absent ⇒ the SDK default. */
   checkTimeout?: number;
 }
+
+/** Why the sign-in checks refuse a mock: it has no sign-in of its own to grade. */
+export const MOCK_HAS_NO_OAUTH =
+  "OAuth checks grade a real server's sign-in, and a mock server has none. Run them on the server the mock is based on.";
 
 export class UnsupportedTransportError extends Error {
   readonly code = "unsupportedTransport" as const;
@@ -189,6 +196,9 @@ export function assertHttpSupported(
   config: MCPServerConfig,
 ): void {
   const support = canRunConformance(suite, config);
+  if (suite === "oauth" && mockTransportOf(config)) {
+    throw new UnsupportedTransportError(MOCK_HAS_NO_OAUTH);
+  }
   if (!support.supported) {
     throw new UnsupportedTransportError(support.reason ?? "Unsupported transport");
   }
@@ -219,7 +229,7 @@ export async function runProtocolConformance(
     // belong in this change") was taken up by the runner, and then by every
     // hosted connection factory when the gap it left became MJ-001.
     fetchFn: deadlineFetch(
-      createConformanceFetch("MCP server", input.credentialBinding),
+      input.transport ?? createConformanceFetch("MCP server", input.credentialBinding),
       signal,
     ),
     // The browser counts the whole run once; a suite request must not.

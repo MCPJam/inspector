@@ -158,7 +158,7 @@ import {
 import { getConfidentialCimdProviderForOrg } from "../../services/xaa-confidential-cimd.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { isOrgBoundCredential } from "../../utils/org-bound-credential.js";
-import { dialMockOr, type MockAuthorizeEntry, type MockDial } from "../../utils/mock-servers.js";
+import { carryMockTransport, dialMockOr, type MockAuthorizeEntry, type MockDial } from "../../utils/mock-servers.js";
 import { observeMockAnswered } from "../../services/mock/answer-marks.js";
 import {
   deliveryContractHeaders,
@@ -2987,8 +2987,11 @@ export async function createAuthorizedManager(
           {
             ...connectionConfig,
             // A mock dialed at its address marks its calls on a response header.
-            baseFetch: observeConnectionFetch(
-              observeMockAnswered(withServerCheckSignal(fetchFn)),
+            baseFetch: carryMockTransport(
+              config,
+              observeConnectionFetch(
+                observeMockAnswered(withServerCheckSignal(fetchFn)),
+              ),
             ),
           },
         ],

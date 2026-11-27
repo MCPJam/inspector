@@ -12,6 +12,7 @@ import { z } from "zod";
 import { MCP_PROTOCOL_VERSIONS } from "@mcpjam/sdk";
 import { ConvexHttpClient } from "convex/browser";
 import { authorizeServer, parseWithSchema } from "../web/auth.js";
+import { mockDialForRequest } from "../web/mock-dial.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { requireProjectIdArg } from "./convex-id-param.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
@@ -186,6 +187,8 @@ conformanceRuns.post(
       engineVersion: body.engineVersion,
       settings: body.settings,
       launcher: readLaunchContext(c)?.launcher,
+      // A mock is dialed as this caller, with the context captured now.
+      mockDial: mockDialForRequest(c, convexAuthToken, projectId, serverId),
       // 30 starts per user per 10 minutes: every start dials a third-party
       // server, and an agent in a loop would otherwise keep dialling.
       startLimitKey: c.get("workosUserId")

@@ -53,6 +53,47 @@ export interface MockDial {
   reauthorize(): Promise<MockAuthorized>;
 }
 
+/**
+ * The transports `dispatchMockInProcess` built. A saved mock's placeholder
+ * address may stay on a config only with one of these beside it, so a dialer
+ * that reads the address (conformance) can tell a mock it must not dial from a
+ * mock it reaches in process. A function is the only proof: nothing a caller
+ * sends can put one here.
+ */
+const mockDispatchers = new WeakMap<object, typeof fetch>();
+
+/** The in-process transport of a mock's config, or `undefined` for every other server. */
+export function mockTransportOf(config: object): typeof fetch | undefined {
+  const transport = "baseFetch" in config ? config.baseFetch : undefined;
+  return typeof transport === "function" ? mockDispatchers.get(transport) : undefined;
+}
+
+/**
+ * Records that `wrapped` is the mock's transport behind a layer a dialer put
+ * over it (the backpressure, observation and deadline wrappers), so
+ * `mockTransportOf` still recognizes the config the manager holds. A config
+ * with no mock transport is left as it is.
+ */
+export function carryMockTransport(config: object, wrapped: typeof fetch): typeof fetch {
+  const transport = mockTransportOf(config);
+  if (transport) mockDispatchers.set(wrapped, transport);
+  return wrapped;
+}
+
+/**
+ * Refuses a mock for a feature that reads the server's address (the authorize
+ * URL), which for a mock is a placeholder that resolves nowhere. `refusal`
+ * says what the feature does not take and where to run it instead.
+ */
+export function refuseMockServer(
+  authorized: { serverConfig?: { mock?: unknown } },
+  refusal: string,
+): void {
+  if (authorized.serverConfig?.mock) {
+    throw new WebRouteError(400, ErrorCode.FEATURE_NOT_SUPPORTED, refusal);
+  }
+}
+
 /** A new grant is fetched this long before the old one expires. */
 const RENEW_BEFORE_MS = 30_000;
 
@@ -150,6 +191,7 @@ export function dispatchMockInProcess(
     });
   };
 
+  mockDispatchers.set(baseFetch, baseFetch);
   const headers = new Headers(config.requestInit?.headers);
   headers.set("Authorization", `Bearer ${grant.token}`);
   return {

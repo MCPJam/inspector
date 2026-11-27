@@ -19,6 +19,7 @@ import { mountWebClientRuntime } from "../runtime-mount";
 import { createInMemoryToolCallLedger } from "../tool-call-ledger";
 import { createInMemoryTurnWindowStore } from "../turn-windows";
 import { setWebClientEnvironment, webClientEnvironmentFor } from "../web-client-environment";
+import { dispatchMockInProcess } from "../../../utils/mock-servers";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -144,6 +145,29 @@ describe("a local web client environment", () => {
     await expect(
       environment().ensureConnector({ projectId: "p", webAccountId: "local:chatgpt", serverId: "shell", auth: "oauth" }),
     ).rejects.toThrow("shell isn't a server with a URL");
+  });
+
+  it("refuses a mock server rather than forward to its placeholder address", async () => {
+    const registry = createLocalConnectorRegistry();
+    const authorized = {
+      ok: true,
+      oauthAccessToken: "grant-1",
+      serverConfig: {
+        url: "https://mock.mcpjam.invalid/mock1",
+        mock: { mockId: "mock1", version: 1, contentHash: "h".repeat(64), grantExpiresAt: Date.now() + 60_000 },
+      },
+    };
+    const config = dispatchMockInProcess(
+      { url: "https://mock.mcpjam.invalid/mock1" },
+      authorized,
+      { timeoutMs: 1000 },
+      { caller: {}, bearerToken: "bearer", projectId: "p", reauthorize: async () => authorized },
+    );
+    const env = environment({ registry, servers: { getServerConfig: () => config } });
+    await expect(
+      env.ensureConnector({ projectId: "p", webAccountId: "local:chatgpt", serverId: "tickets", auth: "oauth" }),
+    ).rejects.toThrow(/tickets is a mock server.*Run it from Playground/);
+    expect(registry.list()).toEqual([]);
   });
 
   it("opens one browser per profile at a time and frees it on close or a failed launch", async () => {

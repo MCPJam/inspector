@@ -179,6 +179,19 @@ describe("hosted server-features observations route", () => {
     });
   });
 
+  it("refuses a mock server by name and records nothing", async () => {
+    mocks.authorize.mockResolvedValue({
+      success: true,
+      serverConfig: { mock: { mockId: "m1" } },
+    });
+    const response = await post(BODY);
+    expect(response.status).toBe(400);
+    expect(JSON.stringify(await response.json())).toContain(
+      "Feature observations do not take mock servers",
+    );
+    expect(mocks.mutation).not.toHaveBeenCalled();
+  });
+
   it("writes the time the batch arrived, not the browser's", async () => {
     const future = RECEIVED_AT + 365 * 24 * 60 * 60 * 1000;
     const response = await post({

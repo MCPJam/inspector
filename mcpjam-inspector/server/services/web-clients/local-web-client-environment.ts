@@ -19,6 +19,7 @@ import {
 } from "@/shared/web-clients";
 import { configuredInspectorPublicUrl } from "../../utils/inspector-public-url.js";
 import { logger } from "../../utils/logger.js";
+import { mockTransportOf } from "../../utils/mock-servers.js";
 import { isOutsideRepository } from "../../utils/outside-repository.js";
 import { createMemorySendJournal } from "../../utils/harness/real-ui/drive-turn.js";
 import { RealUiError } from "../../utils/harness/real-ui/page-module.js";
@@ -87,6 +88,13 @@ async function upstreamOf(
   if (!config || !("url" in config) || !config.url) {
     throw new Error(
       `${serverId} isn't a server with a URL, so the vendor's app can't reach it. Connect it over HTTP, then run again.`,
+    );
+  }
+  // A mock has no address the vendor's app could reach; this Inspector serves
+  // it in process, and the forwarder would dial the placeholder instead.
+  if (mockTransportOf(config)) {
+    throw new Error(
+      `${serverId} is a mock server, which only MCPJam can reach, so the vendor's app can't use it. Run it from Playground, or point the vendor's app at the server the mock is based on.`,
     );
   }
   const headers: Record<string, string> = {};

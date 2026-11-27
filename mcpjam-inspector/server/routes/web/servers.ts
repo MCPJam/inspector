@@ -1,4 +1,5 @@
 import { mockDialForRequest } from "./mock-dial.js";
+import { mockTransportOf } from "../../utils/mock-servers.js";
 import { Hono } from "hono";
 import {
   runServerDoctor,
@@ -127,7 +128,12 @@ export async function validateServerCore(
   // The doctor's target check, so a stored URL the hosted inspector will not
   // dial is answered as the caller's to fix (400) rather than as a failed
   // connection. A no-op outside hosted mode.
-  const configuredUrl = manager.getServerConfig?.(body.serverId)?.url;
+  const config = manager.getServerConfig?.(body.serverId);
+  // A mock's address is a placeholder that resolves nowhere: it is reached
+  // through the in-process door as the caller, so there is no target to judge
+  // and nothing downstream may read the address.
+  const isMock = Boolean(config && mockTransportOf(config));
+  const configuredUrl = isMock ? undefined : config?.url;
   if (typeof configuredUrl === "string" || configuredUrl instanceof URL) {
     await assertHostedServerTarget(String(configuredUrl));
   }
@@ -296,7 +302,7 @@ servers.post("/canvas/refresh", async (c) => {
       projectServerSchema,
       async (manager) => {
         const config = manager.getServerConfig(body.serverId);
-        if (config && "url" in config && config.url) {
+        if (config && "url" in config && config.url && !mockTransportOf(config)) {
           await assertHostedServerTarget(String(config.url));
         }
         // Claimed once authorized, so only a caller with access joins a run.
@@ -411,7 +417,10 @@ export async function runHostedDoctor(
   // conformance routes make, and a no-op outside hosted mode. This is the
   // caller-facing refusal: a stored URL that is already a private address gets
   // a 400 naming the host they typed, rather than a transport error.
-  await assertHostedServerTarget(config.url);
+  // A mock is reached through its in-process door as the caller: no target to
+  // judge, and the probes and the connection use the door, never the network.
+  const mockDoor = mockTransportOf(config);
+  if (!mockDoor) await assertHostedServerTarget(config.url);
 
   // THE DOCTOR'S TWO LEGS, ON ONE TRANSPORT.
   //
@@ -422,7 +431,7 @@ export async function runHostedDoctor(
   // into the socket, and re-run all of it on every redirect hop. One transport
   // rather than two so the probe and the connection cannot disagree about what
   // is dialable.
-  const doctorFetch = hostedMcpBaseFetch();
+  const doctorFetch = mockDoor ?? hostedMcpBaseFetch();
 
   const result = await runServerDoctor({
     // A hosted doctor run is not SDK usage, so the SDK sends nothing for it.

@@ -296,6 +296,23 @@ describe("v1 directory readiness", () => {
       expect("claimedFeatures" in execution).toBe(false);
     });
 
+    it("refuses a mock server by name before anything is started", async () => {
+      authorizeServerMock.mockResolvedValue({
+        ...HTTP_SERVER,
+        serverConfig: { ...HTTP_SERVER.serverConfig, mock: { mockId: "m1" } },
+      });
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/readiness-runs/claude",
+        { body: {} },
+      );
+      expect(res.status).toBe(422);
+      expect(JSON.stringify(await res.json())).toContain(
+        "Directory readiness does not take mock servers",
+      );
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
     it("forwards the lazy-auth probe and claims to the backend and the execution", async () => {
       authorizeServerMock.mockResolvedValue({
         ...HTTP_SERVER,
