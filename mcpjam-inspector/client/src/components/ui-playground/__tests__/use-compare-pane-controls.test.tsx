@@ -9,6 +9,7 @@ import {
   type PlaygroundClientResolution,
 } from "@/lib/playground-client-columns";
 import { resolveEnvironmentPaneColumn } from "@/lib/compare-environment-columns";
+import { getScenarioHostLogo } from "@/lib/scenario-client-style";
 import type { ComparePaneEnvironment } from "@/hooks/use-compare-environment-panes";
 import type { ComparePaneTargetOption } from "../compare-pane-target-select";
 import { useComparePaneStore } from "@/stores/compare-pane-store";
@@ -179,6 +180,7 @@ describe("Compare pane settings", () => {
       />,
     );
     const pane = useComparePaneStore.getState().panes[0];
+    expect(pane.serverSummary).toBe("No servers");
     act(() => pane.onServerChosen?.("Docs"));
     expect(calls.setPaneOverrides).toHaveBeenCalledExactlyOnceWith(
       panes[0].paneId,
@@ -306,7 +308,10 @@ describe("Compare pane settings", () => {
       screen.getByRole("button", { name: "Pane settings for codex" }),
     );
     expect(screen.getByTestId("compare-pane-device")).toHaveTextContent("Fill");
-    await user.click(screen.getByRole("radio", { name: "Dark" }));
+    const theme = screen.getByRole("combobox", { name: "Theme for codex" });
+    expect(theme).toHaveTextContent("Match MCPJam");
+    await user.click(theme);
+    await user.click(screen.getByRole("option", { name: "Dark" }));
     expect(useComparePaneDisplayStore.getState().byPane).toEqual({
       codex: { theme: "dark" },
     });
@@ -319,10 +324,13 @@ describe("Compare pane settings", () => {
     expect(screen.getByTestId("compare-pane-summary")).toHaveTextContent(
       "Phone",
     );
-    expect(screen.getByRole("radio", { name: "Dark" })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
+    expect(theme).toHaveTextContent("Dark");
+    await user.click(theme);
+    await user.click(screen.getByRole("option", { name: "Match MCPJam" }));
+    expect(theme).toHaveTextContent("Match MCPJam");
+    expect(useComparePaneDisplayStore.getState().byPane).toEqual({
+      codex: { deviceType: "mobile", theme: "app" },
+    });
     useComparePaneDisplayStore.setState({ byPane: {} });
   });
 
@@ -412,6 +420,9 @@ describe("Compare pane settings", () => {
       {
         paneId: "codex",
         label: "codex",
+        logoSrc: getScenarioHostLogo("chatgpt", undefined, "light"),
+        modelName: "openai/gpt-5.5",
+        serverSummary: "2 servers",
         hostId: "codex",
         environmentId: null,
         serverNames: null,
@@ -419,6 +430,9 @@ describe("Compare pane settings", () => {
       {
         paneId: "cursor",
         label: "cursor",
+        logoSrc: getScenarioHostLogo("chatgpt", undefined, "light"),
+        modelName: "Cursor Auto",
+        serverSummary: "2 servers",
         hostId: "cursor",
         environmentId: null,
         serverNames: null,
@@ -655,16 +669,37 @@ describe("Compare pane settings", () => {
 
     it("publishes an environment pane for the Tools rail with its narrowing", () => {
       render(
-        <EnvHarness spies={spies()} overrides={{ env_1: { serverIds: [] } }} />,
+        <EnvHarness
+          spies={spies()}
+          overrides={{ env_1: { serverIds: ["srv-notion"] } }}
+        />,
       );
       expect(useComparePaneStore.getState().panes[0]).toEqual({
         paneId: "env_1",
         label: "E1",
+        logoSrc: getScenarioHostLogo("chatgpt", undefined, "light"),
+        modelName: "openai/gpt-5-mini",
+        serverSummary: "1 server",
         hostId: "codex",
         environmentId: "env_1",
-        environmentOverrides: { serverIds: [] },
+        environmentOverrides: { serverIds: ["srv-notion"] },
         serverNames: null,
       });
+    });
+
+    it.each([
+      ["hidden", { ...environment, visible: false }],
+      ["without a preview", { ...environment, preview: null }],
+    ])("reports no server count for an environment pane %s", (_, entry) => {
+      render(
+        <EnvHarness
+          spies={spies()}
+          paneEnvironments={new Map([["env_1", entry]])}
+        />,
+      );
+      expect(
+        useComparePaneStore.getState().panes[0].serverSummary,
+      ).toBeUndefined();
     });
   });
 });

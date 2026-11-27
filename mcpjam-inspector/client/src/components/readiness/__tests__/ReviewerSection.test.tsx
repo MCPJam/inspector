@@ -297,11 +297,7 @@ describe("ReviewerSection", () => {
     await status("Credentials saved; reviewer sign-in waiting for a person");
     // On the stage that stopped it, and again in the handover.
     expect(screen.getAllByText(ASKED)).toHaveLength(2);
-    expect(
-      screen.getByText(
-        /^Turn off the verification step for the reviewer account/,
-      ),
-    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Finish reviewer sign-in" })).toBeVisible();
     expect(
       screen.getByText(
         "A teammate or an agent can resume this attempt with its id.",

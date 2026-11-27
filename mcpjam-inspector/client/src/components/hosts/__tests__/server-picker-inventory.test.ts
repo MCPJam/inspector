@@ -78,6 +78,10 @@ const ALLOWED: Record<string, string> = {
     "server whose App discovery failed, with a Retry button that re-runs " +
     "discovery. Nothing is selected and no serverAttachmentId is written.",
 
+  "components/playground/events/AddPlaygroundEvent.tsx":
+    "Event selection. Connected servers are section headings, and each " +
+    "button selects an event to configure for the active Playground agent.",
+
   "components/plugins/PluginSettingsSection.tsx":
     "A plugin version's declared server components, listed with their setup " +
     "state in the plugin's Settings. The rows open a requirement editor, they " +

@@ -24,9 +24,14 @@ import { Hono } from "hono";
 
 type Upstream = (request: Request) => Response | Promise<Response>;
 
-const { upstream, validateGuestTokenMock } = vi.hoisted(() => ({
+const { upstream, validateGuestTokenMock, canvasRollout } = vi.hoisted(() => ({
   upstream: { current: undefined as Upstream | undefined },
   validateGuestTokenMock: vi.fn(),
+  canvasRollout: { enabled: false },
+}));
+
+vi.mock("../../../utils/server-canvas-rollout.js", () => ({
+  resolveServerCanvasRollout: async () => canvasRollout.enabled,
 }));
 
 vi.mock("../../../utils/hosted-mcp-base-fetch.js", async (importOriginal) => {
@@ -473,6 +478,7 @@ const originalServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  canvasRollout.enabled = false;
   validateGuestTokenMock.mockResolvedValue({ valid: false });
   serverUrlRef.current = SERVER_URL;
   process.env.CONVEX_HTTP_URL = "https://example.convex.site";
@@ -927,6 +933,92 @@ describe("hosted validate responses (web and v1)", () => {
         },
         clientCapabilities: expect.any(Object),
         instructions: `Use search first.${"i".repeat(8175)}`,
+      });
+    },
+  );
+
+  it.each([
+    ["web", webValidate],
+    ["v1", v1Validate],
+  ])(
+    "%s: with server-canvas on, adds declared extension ids and icons, bounded",
+    async (_surface, validate) => {
+      canvasRollout.enabled = true;
+      upstream.current = async (request) => {
+        const message = await readMessage(request.clone());
+        if (message?.method === "initialize") {
+          return json(
+            {
+              jsonrpc: "2.0",
+              id: message.id,
+              result: {
+                protocolVersion: "2025-06-18",
+                capabilities: {
+                  tools: { listChanged: true },
+                  extensions: {
+                    "io.modelcontextprotocol/ui": {
+                      mimeTypes: ["text/html;profile=mcp-app"],
+                      note: `${"n".repeat(200)}UNEXPECTED_MARKER_70`,
+                    },
+                    "vendor.oversized": {
+                      blob: Array.from({ length: 16 }, () => "b".repeat(128)),
+                      tail: "UNEXPECTED_MARKER_71",
+                    },
+                    "id with spaces UNEXPECTED_MARKER_72": {},
+                  },
+                  experimental: {
+                    "vendor.flag": {
+                      deep: { a: { b: { c: { d: "UNEXPECTED_MARKER_73" } } } },
+                    },
+                  },
+                  unknownTopLevel: { value: "UNEXPECTED_MARKER_74" },
+                },
+                serverInfo: {
+                  name: "fixture-server",
+                  version: "1.0.0",
+                  icons: [
+                    {
+                      src: "https://cdn.example.test/icon.png",
+                      mimeType: "image/png",
+                      sizes: ["48x48"],
+                      extra: "UNEXPECTED_MARKER_75",
+                    },
+                    { src: "data:image/png;base64,UNEXPECTED_MARKER_76" },
+                  ],
+                },
+                instructions: "Use search first.",
+              },
+            },
+            { headers: { "mcp-session-id": "session-1" } },
+          );
+        }
+        return mcpServer()(request);
+      };
+      const res = await validate(routes);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(JSON.stringify(body)).not.toMatch(MARKER);
+      expect(body.initInfo.serverCapabilities).toEqual({
+        tools: { listChanged: true },
+        extensions: {
+          // The note is no token of 128 characters or fewer: dropped, not cut.
+          "io.modelcontextprotocol/ui": {
+            mimeTypes: ["text/html;profile=mcp-app"],
+          },
+          "vendor.oversized": {},
+        },
+        experimental: { "vendor.flag": { deep: { a: { b: {} } } } },
+      });
+      expect(body.initInfo.serverVersion).toEqual({
+        name: "fixture-server",
+        version: "1.0.0",
+        icons: [
+          {
+            src: "https://cdn.example.test/icon.png",
+            mimeType: "image/png",
+            sizes: ["48x48"],
+          },
+        ],
       });
     },
   );

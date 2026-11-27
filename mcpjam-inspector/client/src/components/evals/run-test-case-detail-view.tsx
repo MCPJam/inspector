@@ -126,7 +126,7 @@ export function RunTestCaseDetailView({
 
       <div className={cn("min-h-0 flex-1")}>
         {/* Each iteration's trace names the account its tool calls ran on. */}
-        <RunAccountsProvider accounts={run.accountsAtRun}>
+        <RunAccountsProvider accounts={run.accountsAtRun} testCaseId={tableTestCase._id}>
           <TestCaseIterationsTable
             testCase={tableTestCase}
             iterations={iterations}

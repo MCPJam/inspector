@@ -191,6 +191,12 @@ cases:
 test("end to end: the iteration is classified, the report carries it, and stderr says what to run", async (t) => {
   const platform = await evalIdentityFixture();
   t.after(() => platform.close());
+  // `main` reports a failed verdict through `process.exitCode`; restore it so
+  // the verdict this test asserts on does not become the test file's exit.
+  const previousExitCode = process.exitCode;
+  t.after(() => {
+    process.exitCode = previousExitCode;
+  });
   const dir = mkdtempSync(path.join(tmpdir(), "mcpjam-test-sign-in-"));
   const callsFile = path.join(dir, "calls.log");
   mkdirSync(path.join(dir, ".mcpjam", "evals"), { recursive: true });

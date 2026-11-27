@@ -25,6 +25,10 @@ import {
   resolveDeployment,
 } from "@mcpjam/sdk/internal/deployment";
 import {
+  listAccountOrganizations,
+  type AccountOrganization,
+} from "./account-organizations.js";
+import {
   clearStoredAuth,
   getAuthFilePath,
   writeStoredAuth,
@@ -182,7 +186,8 @@ export interface PlatformLoginResult {
   apiUrl: string;
   expiresAt?: number;
   email?: string;
-  plan?: string;
+  /** Absent when the lookup after login failed. */
+  organizations?: AccountOrganization[];
 }
 
 export interface PlatformLoginTarget {
@@ -195,7 +200,7 @@ export interface PlatformLoginTarget {
   apiUrl: string;
   /**
    * Edge-authenticator headers (`--api-header`). Sent to this server's login
-   * settings and `/me` only, never to the sign-in provider.
+   * settings, `/me` and `/organizations` only, never to the sign-in provider.
    */
   headers?: Readonly<Record<string, string>>;
 }
@@ -312,8 +317,9 @@ export async function runPlatformLogout(
 }
 
 /**
- * Best-effort `getMe()` after a completed login write. Lookup failure and
- * enrichment-write failure must not turn a successful login into a failed one.
+ * Best-effort account details after a completed login write: the email from
+ * `getMe()`, saved with the login, and the organizations with their plans.
+ * A failed lookup or save must not turn a successful login into a failed one.
  */
 async function enrichStoredAuthWithAccount(
   stored: StoredPlatformAuth,
@@ -324,59 +330,62 @@ async function enrichStoredAuthWithAccount(
     headers?: Readonly<Record<string, string>>;
     warn: (message: string) => void;
   }
-): Promise<{ email?: string; plan?: string }> {
-  let email: string | undefined;
-  let plan: string | undefined;
+): Promise<{ email?: string; organizations?: AccountOrganization[] }> {
+  const client = new PlatformApiClient({
+    baseUrl: deps.apiUrl,
+    getAuth: async () => stored.accessToken,
+    fetch: deps.fetchFn,
+    ...(deps.headers ? { extraHeaders: { ...deps.headers } } : {}),
+  });
+  const me = await lookUpAfterLogin("account details", deps.warn, () =>
+    client.getMe()
+  );
+  const organizations = await lookUpAfterLogin("organizations", deps.warn, () =>
+    listAccountOrganizations(client)
+  );
+  const email =
+    typeof me?.email === "string" && me.email.trim()
+      ? me.email.trim()
+      : undefined;
+
+  if (email !== undefined) {
+    try {
+      await writeStoredAuth({ ...stored, email }, deps.authFilePath);
+    } catch (error) {
+      deps.warn(
+        `Logged in, but could not save account details to ${deps.authFilePath}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+
+  return {
+    ...(email !== undefined ? { email } : {}),
+    ...(organizations !== undefined ? { organizations } : {}),
+  };
+}
+
+/** One lookup after login: a failure warns, and leaves that detail out. */
+async function lookUpAfterLogin<T>(
+  what: string,
+  warn: (message: string) => void,
+  lookup: () => Promise<T>
+): Promise<T | undefined> {
   try {
-    const client = new PlatformApiClient({
-      baseUrl: deps.apiUrl,
-      getAuth: async () => stored.accessToken,
-      fetch: deps.fetchFn,
-      ...(deps.headers ? { extraHeaders: { ...deps.headers } } : {}),
-    });
-    const me = await client.getMe();
-    if (typeof me.email === "string" && me.email.trim()) {
-      email = me.email.trim();
-    }
-    if (typeof me.plan === "string" && me.plan.trim()) {
-      plan = me.plan.trim();
-    }
+    return await lookup();
   } catch (error) {
     // A refused redirect is the server address being wrong, not a lookup
     // that failed: every later command would refuse it too.
     const refusal = deploymentRefusalOf(error);
     if (refusal) throw deploymentCliError(refusal);
-    deps.warn(
-      `Could not load account details after login: ${
+    warn(
+      `Could not load ${what} after login: ${
         error instanceof Error ? error.message : String(error)
       }`
     );
-    return {};
+    return undefined;
   }
-
-  if (email === undefined && plan === undefined) return {};
-
-  try {
-    await writeStoredAuth(
-      {
-        ...stored,
-        ...(email !== undefined ? { email } : {}),
-        ...(plan !== undefined ? { plan } : {}),
-      },
-      deps.authFilePath
-    );
-  } catch (error) {
-    deps.warn(
-      `Logged in, but could not save account details to ${deps.authFilePath}: ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    );
-  }
-
-  return {
-    ...(email !== undefined ? { email } : {}),
-    ...(plan !== undefined ? { plan } : {}),
-  };
 }
 
 async function fetchCliAuthConfig(

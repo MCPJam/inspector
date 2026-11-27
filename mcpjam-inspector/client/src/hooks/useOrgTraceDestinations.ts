@@ -34,7 +34,7 @@ import { useOrgScopedWrite } from "@/hooks/useOrgScopedWrite";
 
 /** A source of traces a destination can subscribe to. Mirrors the backend union. */
 export type TraceDestinationSourceType =
-  "eval" | "scenario" | "swarm" | "direct";
+  "eval" | "scenario" | "swarm" | "direct" | "event";
 
 export interface TraceDestinationHealth {
   lastAttemptAt: number | null;

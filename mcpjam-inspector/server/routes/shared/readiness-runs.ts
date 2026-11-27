@@ -117,6 +117,8 @@ export interface StartHostedReadinessRunInput {
   testPlanRevision?: number;
   /** The submission's reviewer account, authorized as itself (`reviewerAccountForRun`). */
   reviewer?: ReadinessReviewerAccount;
+  /** Authorizes the account the run's sign-in connects (`reviewerAuthorizerFor`). */
+  authorizeReviewer?: (accountId: string) => Promise<ReadinessReviewerAccount>;
   /** The output of the surface's own authorize exchange. */
   authorized: AuthorizedReadinessServer;
   /**
@@ -271,6 +273,9 @@ export async function startHostedReadinessRun(
           ? { reviewerAttemptId: input.reviewerAttemptId }
           : {}),
         ...(input.reviewer ? { reviewer: input.reviewer } : {}),
+        ...(input.authorizeReviewer
+          ? { authorizeReviewer: input.authorizeReviewer }
+          : {}),
         analyticsActor: input.analyticsActor,
       },
       input.authorized,

@@ -2,6 +2,14 @@ import type { TurnAuthorization } from "../services/turn-authorization.js";
 import { streamDirectChatWithLiveTrace } from "../services/chat-turn/direct-stream.js";
 import { buildLocalExecutionRecord, type LocalExecutionAttempt } from "./local-execution-record.js";
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
+import type { ModelCallCostEvidence } from "@mcpjam/sdk";
+import {
+  MAX_WRITEBACK_CALLS,
+  localUsageCallsBody,
+  readLocalUsageCosts,
+  withLocalUsageCost,
+  type TurnModelCall,
+} from "./call-cost/local-usage-cost.js";
 /**
  * Org BYOK Stream Handler
  *
@@ -83,6 +91,7 @@ import {
   isProviderOverloadError,
 } from "./provider-error-normalization.js";
 import { type LiveChatTraceUsage } from "@/shared/live-chat-trace";
+import type { EventAtTurn } from "@/shared/event-at-turn";
 import {
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
@@ -149,6 +158,8 @@ export interface OrgModelHandlerOptions {
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
+  /** The MCP event that started this turn, echoed on `turn_start`. */
+  eventAtTurn?: EventAtTurn;
   onLiveTextDelta?: (delta: string) => void;
   /**
    * The end user's Authorization header from the inbound request. Forwarded
@@ -358,6 +369,8 @@ export interface OrgLocalModelHandlerOptions {
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
+  /** The MCP event that started this turn, echoed on `turn_start`. */
+  eventAtTurn?: EventAtTurn;
   onLiveTextDelta?: (delta: string) => void;
   /**
    * Inbound request abort signal. Passed to streamText so a client
@@ -392,7 +405,8 @@ export interface OrgLocalModelHandlerOptions {
 
 /**
  * Whether this local-runtime turn hits the approval gap the handler cannot
- * serve, and must fail loudly instead.
+ * serve, and must fail loudly instead. A synthetic run on this runtime has no
+ * approval loop either, and is held to the same rule (`resolve-turn-runtime.ts`).
  *
  * The gap is SERVER-EXECUTED tools THAT WOULD ASK: approving one resumes the
  * turn by running it here, and that resume path has never been supported (or
@@ -406,14 +420,13 @@ export interface OrgLocalModelHandlerOptions {
  * is nothing for the refusal to protect.
  *
  * A FUNCTION-form declaration does NOT trip this guard. It cannot be evaluated
- * here — this runs before the model has produced an input — and the skill
- * tools that use the form (`effective-skill-tools`) declare it
- * UNCONDITIONALLY and answer `false` on the common path. Reading
- * "unevaluable" as "asks" refused every local-runtime turn that carried a
- * skill tool, switch or no switch, where before it ran. `streamText` evaluates
- * the function per call, exactly as it did before the declaration was unified;
- * a call that does answer `true` still reaches the unsupported resume, which is
- * the pre-existing gap this guard never covered.
+ * here — this runs before the model has produced an input. Skill tools
+ * declare `never`; the form's one user is the acting-skill gate below.
+ * Reading "unevaluable" as "asks" refused every local-runtime turn that
+ * carried a skill tool, switch or no switch, where before it ran.
+ * `streamText` evaluates the function per call, exactly as it did before the
+ * declaration was unified; a call that does answer `true` still reaches the
+ * unsupported resume, which is the pre-existing gap this guard never covered.
  *
  * The acting-skill gate (`server-skill-acting-gate.ts`) wraps `bash` and
  * `read_server_resource` in a function on every turn. The guard reads the
@@ -433,7 +446,7 @@ export interface OrgLocalModelHandlerOptions {
  * here would break the UI-only agent surface for local-runtime orgs while
  * protecting nothing.
  */
-function hasUnsupportedLocalApprovalGate(tools: ToolSet): boolean {
+export function hasUnsupportedLocalApprovalGate(tools: ToolSet): boolean {
   return Object.entries(tools).some(([name, tool]) => {
     const declared = unwrapActingServerSkillGate(
       (tool as { needsApproval?: unknown } | undefined)?.needsApproval,
@@ -683,6 +696,7 @@ export function handleLocalOrgChatModel(
     abortSignal: options.abortSignal,
     maxSteps: resolvedMaxSteps,
     onLiveTextDelta,
+    ...(options.eventAtTurn ? { eventAtTurn: options.eventAtTurn } : {}),
     onEngineError: () => { streamErrored = true; },
     ...(historyPresentation ? {
       transformStepMessages: (stepMessages) =>
@@ -765,7 +779,7 @@ function buildLocalOrgOnPersist(params: {
     params;
   return async (event) => {
     // Best-effort usage accounting must not delay transcript persistence.
-    postLocalUsage({
+    const usageCost = postLocalUsage({
       projectId: options.projectId,
       providerKey: options.provider.providerKey,
       model: options.modelId,
@@ -780,6 +794,7 @@ function buildLocalOrgOnPersist(params: {
         outcome: isStreamErrored() ? { kind: "error", code: "provider_error" } : { kind: "ok" }, at: Date.now(),
       }),
       usage: event.usage,
+      calls: event.calls,
       finishReason: event.finishReason,
       chatSessionId: options.chatSessionId,
       sourceType: options.sourceType,
@@ -794,6 +809,7 @@ function buildLocalOrgOnPersist(params: {
       logger.warn("[org/local] Failed to post local usage", {
         error: err instanceof Error ? err.message : String(err),
       });
+      return undefined;
     });
 
     // Usage is recorded even when a partial transcript cannot be persisted.
@@ -801,7 +817,10 @@ function buildLocalOrgOnPersist(params: {
 
     const fullHistory: ModelMessage[] = [...options.messages];
     appendDedupedModelMessages(fullHistory, event.responseMessages);
-    const outcome = await onConversationComplete(fullHistory, event.turnTrace);
+    const outcome = await onConversationComplete(
+      fullHistory,
+      await withLocalUsageCost(event.turnTrace, event.calls, usageCost),
+    );
     if (outcome) {
       onOutcome?.(outcome, event.turnTrace.turnId);
     }
@@ -821,6 +840,13 @@ export async function postLocalUsage(params: {
   providerKey: string;
   model: string;
   usage?: LiveChatTraceUsage;
+  /**
+   * Each provider request of the turn. The backend stores and prices each on
+   * its own usage (a context tier is per request) and returns each cost by
+   * call id. `usage` stays the turn's sum, which a backend without per-call
+   * writeback records instead.
+   */
+  calls?: TurnModelCall[];
   finishReason?: string;
   chatSessionId?: string;
   sourceType?: string;
@@ -861,9 +887,9 @@ export async function postLocalUsage(params: {
    * of that selection and rebuilds the stored record from its plan.
    */
   execution?: LocalExecutionRecord;
-}): Promise<void> {
+}): Promise<Record<string, ModelCallCostEvidence> | undefined> {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-  if (!convexHttpUrl) return;
+  if (!convexHttpUrl) return undefined;
 
   const url = `${convexHttpUrl.replace(/\/$/, "")}/stream/org/local-usage`;
   const controller = new AbortController();
@@ -881,6 +907,10 @@ export async function postLocalUsage(params: {
         providerKey: params.providerKey,
         model: params.model,
         ...(params.usage ? { usage: params.usage } : {}),
+        // A turn over the cap is written back as its sum alone, as before.
+        ...(params.calls?.length && params.calls.length <= MAX_WRITEBACK_CALLS
+          ? { calls: localUsageCallsBody(params.calls) }
+          : {}),
         ...(params.finishReason ? { finishReason: params.finishReason } : {}),
         ...(params.chatSessionId
           ? { chatSessionId: params.chatSessionId }
@@ -918,7 +948,10 @@ export async function postLocalUsage(params: {
         status: response.status,
         preview: preview.slice(0, 200),
       });
+      return undefined;
     }
+    // The backend prices each call it stored, with the org's rates.
+    return readLocalUsageCosts(await response.json());
   } finally {
     clearTimeout(timeout);
   }
@@ -967,6 +1000,7 @@ export async function handleHostedOrgChatModel(
     onConversationComplete: options.onConversationComplete,
     onStreamComplete: options.onStreamComplete,
     onStreamWriterReady: options.onStreamWriterReady,
+    ...(options.eventAtTurn ? { eventAtTurn: options.eventAtTurn } : {}),
     onLiveTextDelta: options.onLiveTextDelta,
     clientIp: options.clientIp,
     abortSignal: options.abortSignal,

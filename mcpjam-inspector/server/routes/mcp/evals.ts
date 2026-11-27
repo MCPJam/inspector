@@ -5,6 +5,10 @@ import { z } from "zod";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
 import { executeSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";
+import {
+  projectReplayServers,
+  openLocalEvalRun,
+} from "../../services/evals/local-run-manager.js";
 import "../../types/hono";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import {
@@ -16,6 +20,7 @@ import {
   generateNegativeEvalTestsWithManager,
   passCriteriaSchema,
   prepareEvalRun,
+  type PreparedEvalRun,
   runEvalTestCaseWithManager,
   streamEvalTestCaseWithManager,
 } from "../shared/evals.js";
@@ -88,18 +93,26 @@ evals.post("/run", async (c) => {
       );
     }
 
-    const prepared = await prepareEvalRun(c.mcpClientManager, {
-      ...validationResult.data,
-    });
+    const data = validationResult.data;
+    // The run's own connections, authorized for it now, never the UI's.
+    const run = await openLocalEvalRun(c, { ...data, suiteHost: true });
+    let prepared: PreparedEvalRun;
+    try {
+      prepared = await prepareEvalRun(run.manager, { ...data, ...run.request });
+    } catch (error) {
+      await run.close();
+      throw error;
+    }
 
     detachPreparedEvalRun({
       prepared,
-      convexAuthToken: validationResult.data.convexAuthToken,
+      convexAuthToken: data.convexAuthToken,
       logPrefix: "[mcp evals]",
       logContext: {
         route: "/api/mcp/evals/run",
-        projectId: validationResult.data.projectId,
+        projectId: data.projectId,
       },
+      cleanup: run.close,
     });
 
     return c.json(
@@ -150,6 +163,7 @@ evals.post("/replay-run", async (c) => {
         modelApiKeys,
         notes,
         passCriteria,
+        openReplayServers: projectReplayServers(c, convexAuthToken),
       });
       return c.json(result);
     } catch (err) {
@@ -185,12 +199,19 @@ evals.post("/run-test-case", async (c) => {
       );
     }
 
-    return c.json(
-      await runEvalTestCaseWithManager(c.mcpClientManager, {
-        ...validationResult.data,
-        runtimeVenue: await requestRuntimeVenue(validationResult.data),
-      }),
-    );
+    const data = validationResult.data;
+    const run = await openLocalEvalRun(c, data);
+    try {
+      return c.json(
+        await runEvalTestCaseWithManager(run.manager, {
+          ...data,
+          ...run.request,
+          runtimeVenue: await requestRuntimeVenue(data),
+        }),
+      );
+    } finally {
+      await run.close();
+    }
   } catch (error) {
     reportRouteFailure("[Error running test case]", error, {
       // Drives tools on the user's own server.
@@ -215,12 +236,27 @@ evals.post("/stream-test-case", async (c) => {
       );
     }
 
-    const stream = await streamEvalTestCaseWithManager(
-      c.mcpClientManager,
-      { ...validationResult.data, runtimeVenue: await requestRuntimeVenue(validationResult.data) },
-      // Client disconnect aborts the run (including any awaited task).
-      { requestSignal: c.req.raw.signal },
-    );
+    const data = validationResult.data;
+    const run = await openLocalEvalRun(c, data);
+    let stream: ReadableStream<Uint8Array>;
+    try {
+      stream = await streamEvalTestCaseWithManager(
+        run.manager,
+        {
+          ...data,
+          ...run.request,
+          runtimeVenue: await requestRuntimeVenue(data),
+        },
+        {
+          // Client disconnect aborts the run (including any awaited task).
+          requestSignal: c.req.raw.signal,
+          onStreamComplete: () => void run.close(),
+        },
+      );
+    } catch (error) {
+      await run.close();
+      throw error;
+    }
 
     return new Response(stream, {
       headers: {

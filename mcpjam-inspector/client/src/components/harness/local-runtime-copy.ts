@@ -45,4 +45,22 @@ export const LOCAL_RUNTIME_COPY: {
     setup:
       "It doesn’t run commands or change files itself, and it calls only the tools a chat gives it. Evals and swarms use this client’s approval settings.",
   },
+  cursor: {
+    trust: [
+      "Cursor CLI can read and change any files your account can access, including files outside this folder.",
+      "With Tool Approval on, commands and file changes need your approval.",
+      "Usage runs on your organization’s Cursor account. Personal Cursor subscriptions don’t apply.",
+    ],
+    setup:
+      "It runs commands in its project folder with your account’s permissions. Evals and swarms use this client’s approval settings.",
+  },
+  opencode: {
+    trust: [
+      "OpenCode can read and change any files your account can access, including files outside this folder.",
+      "With Tool Approval on, commands and file changes need your approval.",
+      "Usage is billed through MCPJam credits or your organization’s API key. Personal subscriptions you use with OpenCode don’t apply.",
+    ],
+    setup:
+      "It runs commands in its project folder with your account’s permissions. Evals and swarms use this client’s approval settings.",
+  },
 };

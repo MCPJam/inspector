@@ -421,7 +421,7 @@ export function registerOAuthCommands(program: Command): void {
         ...config,
         __suppressTelemetry: true,
       });
-      captureConformanceRunEvent();
+      captureConformanceRunEvent("oauth", "single");
       const result = await test.run();
       let credentialsFilePath: string | undefined;
       let credentialsFileError: unknown;
@@ -525,7 +525,7 @@ export function registerOAuthCommands(program: Command): void {
         ...config,
         __suppressTelemetry: true,
       });
-      captureConformanceRunEvent();
+      captureConformanceRunEvent("oauth", "suite");
       const result = await suite.run();
       const credentialsResultIndex = findCredentialsResultIndex(result);
       let credentialsFilePath: string | undefined;

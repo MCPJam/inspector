@@ -63,6 +63,11 @@ const capabilitiesRef = makeFunctionReference<
   { projectId: string },
   ChatCapabilities
 >("projects:getProjectCapabilities");
+const environmentCapabilitiesRef = makeFunctionReference<
+  "query",
+  { projectId: string },
+  { visibleSkillScope?: boolean }
+>("projectEnvironments:getCapabilities");
 
 /** The project's chat capabilities, the first thing the environment step reads. */
 export function readChatCapabilities(
@@ -97,6 +102,12 @@ export async function resolveChatSessionEnvironment(
       ErrorCode.FEATURE_NOT_SUPPORTED,
       "Chat requires a backend with saved setup support. Upgrade the backend before sending messages.",
     );
+  // Older backends reject unknown query arguments and redact the validation
+  // detail in production. Check support before sending the optional scope.
+  const visibleSkillScope =
+    !input.environmentId &&
+    (await client.query(environmentCapabilitiesRef, { projectId }))
+      ?.visibleSkillScope === true;
   const args: Parameters<typeof resolveChatTurn>[0] = {
     target: input.environmentId
       ? { kind: "environment", environmentId: input.environmentId }
@@ -107,7 +118,7 @@ export async function resolveChatSessionEnvironment(
     client,
     bearer: context.authHeader,
     signal: context.signal,
-    ...(input.environmentId ? {} : { skillScope: "visible" as const }),
+    ...(visibleSkillScope ? { skillScope: "visible" } : {}),
     selection: input.environmentId
       ? { kind: "environment-default" }
       : input.serverIds !== undefined

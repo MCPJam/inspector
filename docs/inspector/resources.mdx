@@ -1,0 +1,34 @@
+---
+title: "Resources"
+description: "Browse and read MCP resources, test resource templates, and watch resource subscriptions."
+icon: "book-open"
+---
+
+Use the **Resources** tab to check what data your server makes available and what it returns for a specific URI.
+
+1. [Connect your server](/inspector/connecting-servers) and open **Inspect** → **Resources**. Select the server you want to test.
+2. Select a resource to read it and inspect its URI, MIME type, and content.
+3. In the local Inspector, select a resource template, fill in its URI parameters, and click **Read Resource** to check the resolved URI and content.
+4. Open the [traffic log](/inspector/debugging#json-rpc-logging) to see the underlying `resources/list`, `resources/templates/list`, or `resources/read` exchange.
+
+If a resource read returns `input_required` on MCP 2026-07-28, answer the [input dialog](/inspector/tools#multi-round-input-mcp-2026-07-28-input_required). Inspector retries the read with your answers.
+
+## Subscription stream panel
+
+In the local Inspector, connect a server and open **Resources**. Scroll to **Subscriptions** to watch for resource updates and see which notifications the server sends. The badge beside **Subscriptions** shows which subscription method your connection uses.
+
+### MCP 2026-07-28 (`subscriptions/listen`)
+
+1. Under **Desired filter**, choose which list changes to watch. Under **Resource updates**, select the URIs you want to watch. Changing either selection replaces the current stream.
+2. Under **Streams**, compare **Requested** with **Acknowledged** to see which notifications the server agreed to send. **Not honored** lists requested notifications the server left out. The stream row also shows its status and any close reason or error.
+3. Click **Cancel stream** to stop listening.
+
+### Earlier versions (`resources/subscribe`)
+
+1. Under **Resource updates**, click **Subscribe** beside the URI you want to watch.
+2. Update the resource on your server and look for a notification in **History**.
+3. Click **Unsubscribe** beside the URI when you're done.
+
+### History
+
+After subscribing, change a watched resource on the server and look for a `notification` entry. If you see `rejected`, check which notifications the server acknowledged. To investigate an interruption, look for `closed-graceful` when the server ended the stream, `closed-remote` when the connection dropped, or `reconnected` when Inspector tried to listen again.

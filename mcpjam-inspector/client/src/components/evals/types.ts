@@ -1,5 +1,8 @@
 import type { JudgeRubric } from "@mcpjam/sdk/contract";
-import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
+import type {
+  ModelCostRollup,
+  RequestedModelSelection,
+} from "@mcpjam/sdk/browser";
 import type { CaseSource } from "@mcpjam/sdk/contract";
 import type {
   EvalSuiteFileCaseImport,
@@ -265,6 +268,7 @@ export type EvalSuiteEnvironmentTarget = {
 
 export type EvalSuite = {
   _id: string;
+  accounts?: import("@/lib/evals/eval-accounts").SharedEvalAccountSelection[];
   createdBy: string;
   projectId?: string;
   name: string;
@@ -471,6 +475,7 @@ export type EvalServerAttachment = {
 
 export type EvalCase = {
   _id: string;
+  accounts?: import("@/lib/evals/eval-accounts").SharedEvalAccountSelection[];
   testSuiteId: string;
   createdBy: string;
   projectId?: string;
@@ -576,6 +581,8 @@ export type EvalIterationUsage = {
   estimatedCostUsd?: number;
   cacheHit?: boolean;
   costBasis?: EvalIterationCostBasis;
+  /** Sum of the iteration's per-call cost evidence, beside the estimate above. */
+  costRollup?: ModelCostRollup;
 };
 export type EvalIteration = {
   _id: string;
@@ -924,6 +931,10 @@ export type EvalSuiteRunSummary = {
  */
 export type EvalRunAccount = {
   serverId: string;
+  cases?: Array<{
+    testCaseId: string;
+    source: "case" | "run" | "suite" | "default";
+  }>;
   /** A person's own account, a shared server's project account, or an XAA identity. */
   kind: "account" | "shared" | "xaa";
   connectionId?: string;
@@ -931,6 +942,29 @@ export type EvalRunAccount = {
   profileId?: string;
   /** The simulated identity an XAA server ran as. */
   xaaSubject?: string;
+  // The stored token's facts when the run started; absent from older backends.
+  /** Who stored the token, by the name teammates see. */
+  tokenStoredBy?: string;
+  tokenStoredAt?: number;
+  /** Uploaded through the accounts API rather than signed in. */
+  tokenUploaded?: boolean;
+  tokenExpiresAt?: number;
+  identity?: EvalRunAccountIdentity;
+};
+
+/**
+ * Whose an account's token was: from the server's profile tool (`profile`)
+ * or from the token's own unverified claims (`token`). Only `email` holds an
+ * address, and the backend leaves it out for a viewer who may not see it.
+ */
+export type EvalRunAccountIdentity = {
+  source: "profile" | "token";
+  name?: string;
+  subject?: string;
+  issuer?: string;
+  email?: string;
+  /** Where `email` came from, which can differ from `source`. */
+  emailSource?: "profile" | "token";
 };
 
 export type EvalSuiteRun = {
@@ -1667,6 +1701,7 @@ export type EvalSuiteRunListItem = Pick<
 /** One-case suite launch, with the same transient setup as the suite sheet. */
 export type CaseRunLaunchOptions = {
   caseLaunchId?: string;
+  runAccounts?: import("@/lib/evals/eval-accounts").SharedEvalAccountSelection[];
   iterationOverride?: number;
   skipJudge?: boolean;
   ephemeralEnvironment?: boolean;

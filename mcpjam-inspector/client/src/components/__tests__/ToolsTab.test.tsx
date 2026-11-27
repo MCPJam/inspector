@@ -1209,9 +1209,8 @@ describe("ToolsTab", () => {
 
       render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
 
-      // Tools tab should be selected (has active styling)
-      const toolsTabButton = screen.getByRole("button", { name: /^tools/i });
-      expect(toolsTabButton.className).toContain("text-primary");
+      const toolsTab = screen.getByRole("tab", { name: /^tools/i });
+      expect(toolsTab).toHaveAttribute("aria-selected", "true");
     });
 
     it("can switch to saved tab", async () => {
@@ -1221,13 +1220,14 @@ describe("ToolsTab", () => {
 
       render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
 
-      const savedTabButton = screen.getByRole("button", {
-        name: /^saved/i,
-      });
-      fireEvent.click(savedTabButton);
+      const savedTab = screen.getByRole("tab", { name: /^saved/i });
+      fireEvent.click(savedTab);
 
-      // After clicking, saved tab should have active styling
-      expect(savedTabButton.className).toContain("text-primary");
+      expect(savedTab).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("tab", { name: /^tools/i })).toHaveAttribute(
+        "aria-selected",
+        "false",
+      );
     });
   });
 

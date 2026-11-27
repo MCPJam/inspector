@@ -6,7 +6,7 @@
  * pane and the center share state). Renders `PlaygroundMain` directly — the
  * tools sidebar UI lives in the docked `tools` pane instead.
  */
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Wrench } from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PlaygroundSkeleton } from "@/components/playground/PlaygroundSkeleton";
@@ -20,6 +20,11 @@ import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSel
 import type { ProjectHostContextDraft } from "@/lib/client-config";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
+import {
+  clearHomeChecklistAutorun,
+  readHomeChecklistAutorun,
+} from "@/components/home/checklist/playground-autorun";
+import { updateChecklistProgress } from "@/components/home/checklist/checklist-progress";
 
 interface PlaygroundCenterProps {
   activeProjectId?: string | null;
@@ -52,6 +57,7 @@ export function PlaygroundCenter({
   onFirstRunPromptConsumed,
 }: PlaygroundCenterProps) {
   const state = usePlaygroundStateContext();
+  const [homeAutorun] = useState(readHomeChecklistAutorun);
   const isGuidedPostConnect = state.onboarding.isGuidedPostConnect;
   const isFirstRunUnfinished = state.onboarding.isFirstRunUnfinished;
   // The prompt depends on the tool list, so it waits for tools/list to answer
@@ -127,12 +133,31 @@ export function PlaygroundCenter({
         // JSDoc).
         showPostConnectGuide={false}
         showPostConnectGuideCopy={isGuidedPostConnect}
+        autoRunInput={homeAutorun?.prompt}
+        // Kept only for a mount that ended before trying it.
+        onAutoRunStarted={homeAutorun ? clearHomeChecklistAutorun : undefined}
+        onAutoRunSent={
+          homeAutorun
+            ? () =>
+                updateChecklistProgress(homeAutorun.progressKey, {
+                  chat: true,
+                })
+            : undefined
+        }
         // The copy needs the server up; retiring the run does not. A message
         // sent while Excalidraw is still connecting — or failed to — finishes
         // the run all the same, and is its only exit now that a run resumes.
         onFirstMessageSent={
-          isFirstRunUnfinished || firstRunPrompt
+          isFirstRunUnfinished || firstRunPrompt || homeAutorun
             ? () => {
+                // A deferred auto-run is sent from the composer instead, and
+                // a send before the auto-run commits makes it moot.
+                if (homeAutorun) {
+                  clearHomeChecklistAutorun();
+                  updateChecklistProgress(homeAutorun.progressKey, {
+                    chat: true,
+                  });
+                }
                 if (isFirstRunUnfinished) {
                   state.onboarding.completeOnboarding();
                 }

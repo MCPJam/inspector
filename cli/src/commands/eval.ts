@@ -61,6 +61,10 @@ import {
   validateImportToolReferences,
   type ImportToolFinding,
 } from "../lib/eval-import-live-validation.js";
+import {
+  runAccountServerNames,
+  writeRunAccounts,
+} from "../lib/eval-run-accounts.js";
 import { JsonInputContext } from "../lib/json-input.js";
 import {
   type RenderedScreenshot,
@@ -131,6 +135,7 @@ import type {
   RunEvalSuiteResult,
 } from "@mcpjam/sdk/platform";
 import { writeFileAtomic } from "../lib/atomic-write.js";
+import { registerEvalInsightsCommands } from "./eval-insights.js";
 import {
   buildSuiteFileFromPlatform,
   defaultSuiteFilePath,
@@ -796,9 +801,7 @@ function writeRunDisclosure(
  * are a contract scripts parse. A trailing prose line would break every one
  * of them, so the gate lives here at the call site.
  *
- * The route is the unflagged `/evals/suite/:suiteId/runs/:runId` — the
- * `/ci-evals` twin is behind the `evaluate-ci` flag and its redirect drops
- * the run path.
+ * Uses the current `/evaluate` run URL from the shared permalink builder.
  */
 function writeRunLink(
   format: string,
@@ -3524,6 +3527,10 @@ export function registerEvalCommands(program: Command): void {
       "Start an eval run of an existing suite, or upload a versioned suite file and run it. " +
         "The upload-and-launch has a 120s deadline overall, not per request (raise it with the global --timeout <ms>); --wait-timeout bounds the RUN instead."
     )
+    .option(
+      "--account <server-id=account-id...>",
+      "Choose a project account per MCP server for this run only"
+    )
     .option("--suite <id-or-name>", "Eval suite name or ID")
     .option(
       "--file <path>",
@@ -3675,6 +3682,7 @@ export function registerEvalCommands(program: Command): void {
           suite?: string;
           file?: string;
           server?: string[];
+          account?: string[];
           environment?: string[];
           client?: string[];
           host?: string[];
@@ -3709,6 +3717,14 @@ export function registerEvalCommands(program: Command): void {
             "Use --iterations or --repetitions, not both — they are two spellings of one flag."
           );
         }
+        const accounts = options.account?.map((selection) => {
+          const parts = selection.split("=");
+          const [serverId, accountId] = parts.map((part) => part.trim());
+          if (parts.length !== 2 || !serverId || !accountId) {
+            throw usageError("Use --account <server-id=account-id>.");
+          }
+          return { serverId, accountId };
+        });
         // One selector from here down: `--client` is canonical under
         // `cloud eval`, `--host` is its deprecated alias, and both at once is
         // a refusal rather than a precedence rule.
@@ -3812,6 +3828,7 @@ export function registerEvalCommands(program: Command): void {
                     label: options.file === "-" ? "<stdin>" : options.file,
                     projectSelector: resolved.project ?? options.project,
                     knobs: {
+                      ...(accounts ? { accounts } : {}),
                       ...(options.server ? { server: options.server } : {}),
                       ...(options.environment
                         ? { environment: options.environment }
@@ -3857,6 +3874,7 @@ export function registerEvalCommands(program: Command): void {
                   {
                     project: resolved.project ?? options.project,
                     suite: options.suite!,
+                    ...(accounts ? { accounts } : {}),
                     ...(options.server ? { servers: options.server } : {}),
                     // ONE value maps to the singular field, several to the plural:
                     // the op rejects sending both, and the singular carries the
@@ -3969,6 +3987,7 @@ export function registerEvalCommands(program: Command): void {
           }
           throw error;
         }
+        let accountServerNames: ReadonlyMap<string, string> = new Map();
         const completion = await runPlatformCommand(
           platformOptionsOf(command),
           // The extension has to be in the OUTER budget too. That budget aborts
@@ -4018,6 +4037,13 @@ export function registerEvalCommands(program: Command): void {
             );
             const runs = waited.flatMap((entry) =>
               entry.ok ? [entry.run] : []
+            );
+            accountServerNames = await runAccountServerNames(
+              client,
+              signal,
+              result.project.id,
+              runs,
+              globalOptions.format
             );
             const waitErrors = waited.flatMap((entry) =>
               !entry.ok
@@ -4237,6 +4263,11 @@ export function registerEvalCommands(program: Command): void {
             },
             globalOptions.format
           );
+          writeRunAccounts(
+            globalOptions.format,
+            completion.runs,
+            accountServerNames
+          );
           writeRunGroupSummary(globalOptions.format, webOrigin, result);
           // Human only, and after the receipt: the receipt carries the run ids
           // and must reach stdout first whatever else happens.
@@ -4318,6 +4349,7 @@ export function registerEvalCommands(program: Command): void {
         const globalOptions = evalGlobalOptions(command);
         // Set by the operation's first step, before any use.
         let webOrigin = "";
+        let accountServerNames: ReadonlyMap<string, string> = new Map();
         let decisionSummary: EvalRunDecisionSummary | undefined;
         const resolved = resolveCloudProjectArgs(options);
         // VALIDATED, not cast. The cast this replaced asserted a shape rather
@@ -4357,6 +4389,13 @@ export function registerEvalCommands(program: Command): void {
               client: context.client,
               signal: context.signal,
             });
+            accountServerNames = await runAccountServerNames(
+              context.client,
+              context.signal,
+              result.project.id,
+              [result.run],
+              globalOptions.format
+            );
             // Any terminal run that did NOT pass — not just a failed one.
             // `inconclusive` and a run that stopped without a verdict are the
             // outcomes a reader is least able to explain on their own, and the
@@ -4395,6 +4434,7 @@ export function registerEvalCommands(program: Command): void {
               })()
             : result;
         writeResult(resultForOutput, globalOptions.format);
+        writeRunAccounts(globalOptions.format, [result.run], accountServerNames);
         writeJudgeSummary(globalOptions.format, result.run.judges);
         // Payload, then WHY, then WHERE. The `View:` line stays last on purpose:
         // it is the one thing a reader acts on after reading the rest, and a
@@ -4833,6 +4873,7 @@ export function registerEvalCommands(program: Command): void {
       const resolved = resolveCloudProjectArgs(options);
       // Set by the operation's first step, before any use.
       let webOrigin = "";
+      let accountServerNames: ReadonlyMap<string, string> = new Map();
 
       let outcome;
       try {
@@ -4886,6 +4927,13 @@ export function registerEvalCommands(program: Command): void {
                 Date.now() + waitTimeoutMs,
                 gradingExtensionMs
               );
+              accountServerNames = await runAccountServerNames(
+                client,
+                signal,
+                projectId,
+                [run],
+                format
+              );
               return { projectId, rerun, run };
             } catch (error) {
               // Not thrown from here: the receipt below is the only place the
@@ -4935,6 +4983,7 @@ export function registerEvalCommands(program: Command): void {
         { rerun, ...(run ? { run } : {}), ...(waitError ? { waitError } : {}) },
         format
       );
+      writeRunAccounts(format, run ? [run] : [], accountServerNames);
       writeRunLink(format, webOrigin, {
         projectId: outcome.projectId,
         suiteId: rerun.suiteId,
@@ -6642,4 +6691,6 @@ export function registerEvalCommands(program: Command): void {
         await executeOp(importEvalCasesOperation, input, options, command);
       }
     );
+
+  registerEvalInsightsCommands(evals);
 }

@@ -1,6 +1,7 @@
 import { makeFunctionReference } from "convex/server";
 import {
   emulatedServerPluginId,
+  isStandalonePublishedPluginId,
   parsePluginDeepLink,
   pluginDeepLinkMatchesRuntime,
   type PluginDeepLink,
@@ -48,7 +49,12 @@ export function pluginDeepLinkAliases(
   if (serverIdentity.kind !== "plugin")
     return {
       key: `server:${serverIdentity.serverId}`,
-      aliases: [emulatedServerPluginId(serverIdentity.serverId)],
+      aliases: [
+        emulatedServerPluginId(serverIdentity.serverId),
+        ...(isStandalonePublishedPluginId(names?.publishedId)
+          ? [names.publishedId]
+          : []),
+      ],
       marketplace: undefined,
     };
   return {

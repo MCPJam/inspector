@@ -67,8 +67,10 @@ describe("credentialRefusalMessage", () => {
   });
 
   it("points at the organization policy for an export refusal", () => {
-    expect(credentialRefusalMessage({ kind: "export_denied" }, "Docs")).toMatch(
-      /organization admin/,
+    const message = credentialRefusalMessage({ kind: "export_denied" }, "Docs");
+    expect(message).toMatch(/organization admin/);
+    expect(message).toContain(
+      "turn on Allow credential export in Organization settings under Security",
     );
   });
 });
@@ -110,7 +112,7 @@ describe("withCredentialRefusal", () => {
         { success: false, error: "Forbidden", exportDenied: true },
         "Docs",
       ) as { error: string };
-      expect(result.error).toMatch(/export policy/);
+      expect(result.error).toMatch(/Allow credential export/);
       expect(listener).not.toHaveBeenCalled();
     } finally {
       unsubscribe();
@@ -167,17 +169,26 @@ describe("withCredentialRefusal", () => {
   });
 });
 
-describe("a hosted-only account's refusal", () => {
+describe("a shared or uploaded account's refusal", () => {
   const SENTENCE =
-    '"Docs" uses an account that only MCPJam-hosted runs can use, so its token can\'t be used from here. Run it as a hosted run, or connect a separate account for local use.';
+    "Local runs aren't allowed yet for this server's shared sign-in. Ask a project admin to turn on Allow local runs in the server's sharing settings.";
 
-  it("is its own kind, on a local envelope and a hosted result", () => {
+  it("is its own kind, with its cause, on a local envelope and a hosted result", () => {
     expect(
       readCredentialRefusal({ exportDenied: true, policy: "hostedOnlyAccount" }),
     ).toEqual({ kind: "hosted_only" });
     expect(
-      readCredentialRefusal({ credentialRefusal: { kind: "hosted_only" } }),
-    ).toEqual({ kind: "hosted_only" });
+      readCredentialRefusal({
+        exportDenied: true,
+        policy: "hostedOnlyAccount",
+        cause: "not_acknowledged",
+      }),
+    ).toEqual({ kind: "hosted_only", cause: "not_acknowledged" });
+    expect(
+      readCredentialRefusal({
+        credentialRefusal: { kind: "hosted_only", cause: "not_acknowledged" },
+      }),
+    ).toEqual({ kind: "hosted_only", cause: "not_acknowledged" });
   });
 
   it("keeps the server's sentence instead of pointing at the export policy", () => {
@@ -187,17 +198,50 @@ describe("a hosted-only account's refusal", () => {
         error: SENTENCE,
         exportDenied: true,
         policy: "hostedOnlyAccount",
+        cause: "not_acknowledged",
       },
       "Docs",
     ) as { error: string; normalized: NormalizedError };
     expect(result.error).toBe(SENTENCE);
     expect(result.error).not.toMatch(/organization admin/);
-    expect(result.normalized.title).toBe("Account for hosted runs only");
+    expect(result.normalized.title).toBe("Local runs not allowed yet");
   });
 
-  it("names the rule itself when the result carries no sentence", () => {
-    const message = credentialRefusalMessage({ kind: "hosted_only" }, "Docs");
-    expect(message).toMatch(/hosted runs only/);
+  it("names the admin's step when the result carries no sentence", () => {
+    const message = credentialRefusalMessage(
+      { kind: "hosted_only", cause: "not_acknowledged" },
+      "Docs",
+    );
+    expect(message).toMatch(/Allow local runs/);
     expect(message).not.toMatch(/organization admin/);
+    expect(
+      credentialRefusalMessage({ kind: "hosted_only" }, "Docs"),
+    ).toMatch(/shared or uploaded account/);
+  });
+
+  it("asks for an update when the backend says this app is too old", () => {
+    expect(
+      credentialRefusalMessage(
+        { kind: "hosted_only", cause: "client_upgrade_required" },
+        "Docs",
+      ),
+    ).toBe(
+      '"Docs" signs in with a shared or uploaded account. Update MCPJam to use it locally.',
+    );
+  });
+});
+
+describe("a moved server named by only its new address", () => {
+  it("says where it points now", () => {
+    expect(
+      credentialRefusalMessage(
+        {
+          kind: "origin_mismatch",
+          boundOrigin: null,
+          targetOrigin: "https://new.example.com",
+        },
+        "Docs",
+      ),
+    ).toContain("It now points at https://new.example.com");
   });
 });

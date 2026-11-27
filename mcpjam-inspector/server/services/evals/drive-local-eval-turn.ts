@@ -33,8 +33,18 @@ import {
   type UnifiedTurnResult,
 } from "../../utils/turn-execution.js";
 import type { createLlmModel } from "../../utils/chat-helpers.js";
+import { createDirectCallPricer } from "../../utils/call-cost/direct-call-pricer.js";
+import {
+  withCallCosts,
+  type TurnModelCall,
+} from "../../utils/call-cost/local-usage-cost.js";
+import type { ModelCallCostEvidence } from "@mcpjam/sdk";
 import type { PrepareChatV2Result } from "../../utils/chat-v2-orchestration.js";
-import { buildPinnedTurnAccounting, runPinnedTurn } from "./pinned-turn.js";
+import {
+  buildPinnedTurnAccounting,
+  runPinnedTurn,
+  type PinnedCallEvidence,
+} from "./pinned-turn.js";
 import type { PinnedTurnSsePayload } from "./pinned-turn-sse.js";
 import { EVAL_WIDGET_MODEL_CONTEXT } from "../../config.js";
 import { withWidgetContextSystemPrompt } from "./widget-interaction-context.js";
@@ -114,7 +124,8 @@ export function modelLayerForErrorSpan(
 }
 
 export type LocalEvalTurnOutcome =
-  | { kind: "completed" }
+  // `pinnedCall`: a pinned turn's own result, for the assertions that grade it.
+  | { kind: "completed"; pinnedCall?: PinnedCallEvidence }
   | { kind: "cancelled" }
   | { kind: "failed"; timeout: TimeoutMetadata };
 
@@ -170,6 +181,8 @@ export type LocalModelCallSettled = {
   code?: string;
   /** This turn's token usage, with the reasoning / cached-input breakdown. */
   usage?: UsageTotals;
+  /** Each provider request of the turn, written back one row per call. */
+  calls?: TurnModelCall[];
   finishReason?: string;
   /** The model id the provider reported serving, when it reported one. */
   upstreamModel?: string;
@@ -220,9 +233,12 @@ export type DriveLocalEvalTurnParams = {
    * How this turn's model call ended, once it has: `ok`, `error` (with a
    * machine code), or `aborted` (cancelled, not by the turn clock). Fired
    * once per model turn, never for a pinned turn. The runner uses it for the
-   * local-runtime usage writeback and its execution record.
+   * local-runtime usage writeback and its execution record, and the per-call
+   * prices that writeback returns go on this turn's llm spans.
    */
-  onModelCallSettled?: (event: LocalModelCallSettled) => void;
+  onModelCallSettled?: (
+    event: LocalModelCallSettled
+  ) => Promise<Record<string, ModelCallCostEvidence> | undefined> | void;
   /** Re-admit the effective toolset and transcript before a local org call. */
   beforeModelCall?: (workload: {
     tools: ToolSet;
@@ -315,7 +331,7 @@ export async function driveLocalEvalTurn(
         ? { iterationError: pinnedResult.iterationError }
         : {}),
     });
-    return { kind: "completed" };
+    return { kind: "completed", pinnedCall: accounting.evidence };
   }
 
   if (!llmModel || !prepared) {
@@ -376,6 +392,16 @@ export async function driveLocalEvalTurn(
       llmModel: admittedModel ?? llmModel,
       modelId: test.model,
       ...(providerOptions ? { providerOptions } : {}),
+      // A personal key is priced here. A local org call is not: the org's
+      // rates live in the backend, which prices it on usage writeback.
+      ...(params.beforeModelCall
+        ? {}
+        : {
+            priceStepCall: createDirectCallPricer({
+              providerKey: test.provider,
+              modelId: test.model,
+            }),
+          }),
     },
     streamSink: "none",
     messages: appendPluginModelContext(
@@ -490,17 +516,21 @@ export async function driveLocalEvalTurn(
   }
   // Set by `onTraceContext` before the stream was consumed.
   if (!acc.activeTraceCtx) throw new Error("eval: local turn lost its trace");
+  const traceCtx = acc.activeTraceCtx;
   const turnTimedOut = turnDeadline.firedClock() === "turn";
   const turnElapsedMs = turnDeadline.elapsedMs();
   // How the model call ended, reported once (see `onModelCallSettled`).
   const turnUsage = turn.direct?.totalUsage
     ? (liveChatTraceUsageFromAiSdk(turn.direct.totalUsage) ?? {})
     : undefined;
-  const settle = (outcome: "ok" | "error" | "aborted", code?: string) =>
-    onModelCallSettled?.({
+  // A local org call's price comes back from the writeback, and goes on its
+  // step's llm span before this turn's spans are captured.
+  const settle = async (outcome: "ok" | "error" | "aborted", code?: string) => {
+    const costs = onModelCallSettled?.({
       outcome,
       ...(code ? { code } : {}),
       ...(turnUsage ? { usage: turnUsage } : {}),
+      ...(turn.modelCalls ? { calls: turn.modelCalls } : {}),
       ...(typeof turn.finishReason === "string"
         ? { finishReason: turn.finishReason }
         : {}),
@@ -509,6 +539,14 @@ export async function driveLocalEvalTurn(
         : {}),
       at: Date.now(),
     });
+    if (!costs || !turn.modelCalls) return;
+    const spans = traceCtx.recordedSpans;
+    spans.splice(
+      0,
+      spans.length,
+      ...(await withCallCosts(spans, turn.modelCalls, costs))
+    );
+  };
 
   // Checked BEFORE the cancellation branch below, and that order is the whole
   // point: the turn clock aborts the same composed signal a user cancel does,
@@ -532,7 +570,7 @@ export async function driveLocalEvalTurn(
       elapsedMs: turnElapsedMs,
     };
     acc.iterationError = `Turn exceeded its ${turnTimeoutMs}ms budget (elapsed ${turnElapsedMs}ms)`;
-    settle("error", "turn_timeout");
+    await settle("error", "turn_timeout");
     // The provider held the connection open past the bound. No other layer
     // reaches this branch.
     acc.stepErrorSource = "model";
@@ -568,7 +606,7 @@ export async function driveLocalEvalTurn(
   }
 
   if (turn.aborted || localIsAborted()) {
-    settle("aborted");
+    await settle("aborted");
     logger.debug(
       "[evals] local-BYOK iteration aborted mid-turn; skipping record"
     );
@@ -594,7 +632,7 @@ export async function driveLocalEvalTurn(
   if (promptResponseMessages.length === 0) {
     acc.iterationError =
       "Stream returned no content (local-BYOK driver failed)";
-    settle("error", "empty_response");
+    await settle("error", "empty_response");
     // The model stream itself returned nothing. Unambiguously the model-call
     // layer — there is no other layer this branch can be reached from.
     acc.stepErrorSource = "model";
@@ -635,7 +673,7 @@ export async function driveLocalEvalTurn(
   );
   if (stepErrorSpan) {
     acc.iterationError = `Local-BYOK step failed mid-turn: ${stepErrorSpan.name}`;
-    settle("error", "provider_error");
+    await settle("error", "provider_error");
     acc.stepErrorSource = modelLayerForErrorSpan(stepErrorSpan);
     // The stream's typed error, when the failed span is the MODEL's: a
     // connection or discovery span says nothing about the provider.
@@ -680,7 +718,15 @@ export async function driveLocalEvalTurn(
     return { kind: "completed" };
   }
 
-  settle("ok");
+  await settle("ok");
+  // Settling can wait for the usage writeback; a cancel in that window still
+  // cancels the iteration rather than recording the turn.
+  if (localIsAborted()) {
+    logger.debug(
+      "[evals] local-BYOK iteration aborted while settling; skipping record"
+    );
+    return { kind: "cancelled" };
+  }
   const promptToolsCalled = params.extractToolCalls({
     steps: turn.direct?.steps,
     messages: promptResponseMessages,

@@ -201,6 +201,19 @@ if (probe) {
     // Copilot's bridge drives the CLI through the pack's SDK, its one external.
     const sdk = await import("@github/copilot-sdk");
     if (typeof sdk.CopilotClient !== "function") throw new Error("the pack's Copilot SDK exports no CopilotClient");
+  } else if (layer.harnessId === "cursor") {
+    // Cursor's bridge starts the pack's own CLI, which must be where the
+    // runner's implementation descriptor points.
+    if (vendorRoot === null || !existsSync(join(vendorRoot, "node_modules", "@anysphere", "agent-cli-runtime", "index.js"))) {
+      throw new Error("the pack has no node_modules/@anysphere/agent-cli-runtime/index.js");
+    }
+  } else if (layer.harnessId === "opencode") {
+    // OpenCode's bridge starts the CLI through the pack's SDK and finds
+    // ripgrep through the pack's wrapper, its two externals.
+    const sdk = await import("@opencode-ai/sdk/v2");
+    if (typeof sdk.createOpencodeServer !== "function") throw new Error("the pack's OpenCode SDK exports no createOpencodeServer");
+    const { rgPath } = await import("@vscode/ripgrep");
+    if (!existsSync(rgPath)) throw new Error("the pack's ripgrep wrapper names no ripgrep binary");
   }
   process.stdout.write(`${JSON.stringify(result)}\n`);
   process.exit(0);

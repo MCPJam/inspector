@@ -42,6 +42,8 @@ describe("authFetch bearer on reviewer sign-in attempts", () => {
     `${ATTEMPTS}/att_1`,
     `${ATTEMPTS}/att_1/resume`,
     `${ATTEMPTS}/att_1/cancel`,
+    // "Finish reviewer sign-in": without it the route answers 401.
+    `${ATTEMPTS}/att_1/handoff`,
   ]) {
     it(`attaches the bearer to ${path}`, async () => {
       await sessionToken.authFetch(path, { method: "POST" });
@@ -53,6 +55,7 @@ describe("authFetch bearer on reviewer sign-in attempts", () => {
     // Another action, or one segment too many under an attempt.
     `${ATTEMPTS}/att_1/stages`,
     `${ATTEMPTS}/att_1/resume/now`,
+    `${ATTEMPTS}/att_1/handoff/extra`,
     // A path that merely starts the same way.
     `${ATTEMPTS}-export`,
     // Attempts belong to one submission, never to the project.

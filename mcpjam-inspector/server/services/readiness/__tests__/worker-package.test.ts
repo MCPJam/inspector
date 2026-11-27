@@ -15,7 +15,7 @@
 
 import JSZip from "jszip";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createZipPluginFileSource } from "@mcpjam/sdk";
+import { canonicalDigest, createZipPluginFileSource } from "@mcpjam/sdk";
 import { parsePluginBundle } from "@mcpjam/sdk/plugin-bundle";
 import {
   SAMPLE_SERVER_URL,
@@ -225,6 +225,18 @@ describe("a run that grades a stored plugin version", () => {
       unknown
     >;
     expect(report.gradedPluginVersion).toEqual({ ...VERSION, bundleHash });
+    expect(report.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "openai.package.manifest",
+        inputs: expect.arrayContaining([
+          {
+            kind: "package",
+            key: "pluginVersionId",
+            fingerprint: canonicalDigest(VERSION.pluginVersionId),
+          },
+        ]),
+      }),
+    ]));
 
     // The lease route carries the lease and the service token; the link
     // authorizes itself and never sees the token.

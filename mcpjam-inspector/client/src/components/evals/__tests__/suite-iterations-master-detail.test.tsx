@@ -1,9 +1,10 @@
-import { beforeEach, describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { withDataRouter } from "./settings-sheet-harness";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SuiteIterationsView } from "../suite-iterations-view";
 import type { EvalSuite } from "../types";
+import type { CaseStepsPageProps } from "../../evaluate/case-steps/case-steps-page";
 import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 
 // The judge model picker's logo reads the preferences store.
@@ -62,6 +63,47 @@ vi.mock("../test-template-editor", () => ({
     </div>
   ),
 }));
+
+// Off for the whole file, so every other case opens in today's editor.
+const stepsEditor = vi.hoisted(() => ({
+  enabled: false as boolean | undefined,
+}));
+vi.mock("@/hooks/use-test-case-steps-editor-enabled", () => ({
+  useTestCaseStepsEditorEnabled: () => stepsEditor.enabled,
+}));
+vi.mock(
+  "../../evaluate/case-steps/case-steps-page",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("../../evaluate/case-steps/case-steps-page")
+    >()),
+    CaseStepsPage: ({
+      testCaseId,
+      readOnly,
+      onRunCase,
+      onDeleteTestCasesBatch,
+      navigation,
+    }: Partial<CaseStepsPageProps>) => (
+      <div
+        data-testid="case-steps-page"
+        data-case={testCaseId}
+        data-readonly={String(readOnly)}
+        data-run={String(Boolean(onRunCase))}
+      >
+        <button onClick={() => void onDeleteTestCasesBatch?.([testCaseId!])}>
+          Delete case
+        </button>
+        <button
+          onClick={() =>
+            navigation?.toTestEdit("suite-1", testCaseId!, { checks: true })
+          }
+        >
+          Open evaluators
+        </button>
+      </div>
+    ),
+  }),
+);
 
 vi.mock("convex/react", () => ({
   useConvex: () => ({ query: async () => null }),
@@ -1250,5 +1292,147 @@ describe("SuiteIterationsView suiteDetailOverview", () => {
     expect(screen.getByTestId("suite-dashboard")).toBeInTheDocument();
     expect(screen.getByText(/All runs/i)).toBeInTheDocument();
     expect(screen.queryByTestId("evaluate-run-page")).toBeNull();
+  });
+});
+
+describe("SuiteIterationsView behind eval-test-case-steps-editor", () => {
+  const savedCase = {
+    _id: "case-1",
+    testSuiteId: "suite-1",
+    createdBy: "u",
+    title: "Case 1",
+    query: "Prompt",
+    models: [],
+    runs: 1,
+    expectedToolCalls: [],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    stepsEditor.enabled = false;
+  });
+
+  afterEach(() => {
+    stepsEditor.enabled = false;
+  });
+
+  const renderCase = (
+    route: Record<string, unknown>,
+    props: Partial<Record<string, unknown>> = {},
+    navigation = noopNav,
+  ) =>
+    render(
+      withDataRouter(
+        <SuiteIterationsView
+          suite={baseSuite}
+          cases={[savedCase as any]}
+          iterations={[]}
+          allIterations={[]}
+          runs={[]}
+          runsLoading={false}
+          aggregate={null}
+          onRerun={vi.fn()}
+          onCancelRun={vi.fn()}
+          onDelete={vi.fn()}
+          onDeleteRun={vi.fn()}
+          onDirectDeleteRun={vi.fn().mockResolvedValue(undefined)}
+          connectedServerNames={new Set()}
+          canDeleteSuite={false}
+          rerunningSuiteId={null}
+          cancellingRunId={null}
+          deletingSuiteId={null}
+          deletingRunId={null}
+          availableModels={[]}
+          route={
+            {
+              type: "test-edit",
+              suiteId: "suite-1",
+              testId: "case-1",
+              ...route,
+            } as any
+          }
+          navigation={navigation}
+          evaluateCaseEditor
+          onRunCase={vi.fn()}
+          {...(props as any)}
+        />,
+      ),
+    );
+
+  it("waits while the flag loads instead of opening today's editor", () => {
+    stepsEditor.enabled = undefined;
+    renderCase({});
+    expect(screen.getByTestId("suite-rows-loading")).toBeInTheDocument();
+    expect(screen.queryByTestId("case-workspace")).toBeNull();
+    expect(screen.queryByTestId("case-steps-page")).toBeNull();
+  });
+
+  it("keeps today's editor with the flag off", () => {
+    stepsEditor.enabled = false;
+    renderCase({});
+    expect(screen.getByTestId("case-workspace")).toBeInTheDocument();
+    expect(screen.queryByTestId("case-steps-page")).toBeNull();
+  });
+
+  it("opens a saved case in the steps editor with the flag on", () => {
+    stepsEditor.enabled = true;
+    renderCase({});
+    expect(screen.getByTestId("case-steps-page")).toHaveAttribute(
+      "data-case",
+      "case-1",
+    );
+    expect(screen.queryByTestId("case-workspace")).toBeNull();
+  });
+
+  it.each([
+    ["the evaluators page", { checks: true }, {}],
+    ["a link into past results", { openCompare: true }, {}],
+    ["a link to one iteration", { iteration: "it-1" }, {}],
+    ["a Describe draft", { testId: "draft:describe" }, {}],
+    ["the legacy Evals tab", {}, { evaluateCaseEditor: false }],
+  ])("keeps today's editor for %s with the flag on", (_name, route, props) => {
+    stepsEditor.enabled = true;
+    renderCase(route, props);
+    expect(screen.getByTestId("case-workspace")).toBeInTheDocument();
+    expect(screen.queryByTestId("case-steps-page")).toBeNull();
+  });
+
+  it("passes the suite's lock, and Run only to a viewer who can run", () => {
+    stepsEditor.enabled = true;
+    renderCase({}, { readOnlyConfig: true });
+    const page = screen.getByTestId("case-steps-page");
+    expect(page).toHaveAttribute("data-readonly", "true");
+    expect(page).toHaveAttribute("data-run", "true");
+  });
+
+  it("keeps a direct guest on today's editor, which has their runner", () => {
+    stepsEditor.enabled = true;
+    renderCase({}, { isDirectGuest: true });
+    expect(screen.getByTestId("case-workspace")).toBeInTheDocument();
+    expect(screen.queryByTestId("case-steps-page")).toBeNull();
+  });
+
+  it("opens a New case from Add manually in the steps editor with the flag on", () => {
+    stepsEditor.enabled = true;
+    renderCase({ testId: "draft:prompt" });
+    expect(screen.getByTestId("case-steps-page")).toHaveAttribute(
+      "data-case",
+      "draft:prompt",
+    );
+    expect(screen.queryByTestId("case-workspace")).toBeNull();
+  });
+
+  it("hands the page the suite's delete and navigation", async () => {
+    stepsEditor.enabled = true;
+    const onDeleteTestCasesBatch = vi.fn().mockResolvedValue(undefined);
+    const navigation = { ...noopNav, toTestEdit: vi.fn() };
+    renderCase({}, { onDeleteTestCasesBatch }, navigation);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Delete case" }));
+    await user.click(screen.getByRole("button", { name: "Open evaluators" }));
+    expect(onDeleteTestCasesBatch).toHaveBeenCalledWith(["case-1"]);
+    expect(navigation.toTestEdit).toHaveBeenCalledWith("suite-1", "case-1", {
+      checks: true,
+    });
   });
 });

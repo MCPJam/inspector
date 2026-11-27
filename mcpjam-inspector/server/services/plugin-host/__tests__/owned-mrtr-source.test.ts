@@ -56,6 +56,7 @@ describe("owned MRTR form source failure after a resuspension", () => {
       throw new PluginInvocationError("FORM_SOURCE_LIMIT");
     });
     const service = createOwnedPluginMrtr({
+      identity: { actorId: "actor", projectId: "project", workspaceId: "workspace", subject: "subject" },
       c: {} as any,
       bearer: "disposable-bearer",
       projectId: "project",
@@ -132,7 +133,7 @@ it.each(["decline", "cancel", "accept"] as const)(
       },
       requestedSchema: schema,
       expiresAt: Date.now() + 10000,
-    });
+    }, "subject");
     const commit = vi.fn();
     seams.resume.mockImplementationOnce(async (options) => {
       const prepared = await options.prepareLeg(
@@ -164,6 +165,7 @@ it.each(["decline", "cancel", "accept"] as const)(
       return { outcome: "completed", result: { content: [] } };
     });
     const service = createOwnedPluginMrtr({
+      identity: { actorId: "actor", projectId: "project", workspaceId: "workspace", subject: "subject" },
       c: {} as any,
       bearer: "disposable",
       projectId: "project",
@@ -238,6 +240,7 @@ describe("a pending MRTR form and the client's current Forms toggle", () => {
   };
   function service(forms: { on: boolean }) {
     return createOwnedPluginMrtr({
+      identity: { actorId: "actor", projectId: "project", workspaceId: "workspace", subject: "subject" },
       c: {} as any,
       bearer: "disposable-bearer",
       projectId: "project",
@@ -304,7 +307,7 @@ describe("a pending MRTR form and the client's current Forms toggle", () => {
       parent,
       requestedSchema: schema,
       expiresAt: Date.now() + 10000,
-    });
+    }, "subject");
   });
   afterEach(() => source.release());
 
@@ -313,7 +316,7 @@ describe("a pending MRTR form and the client's current Forms toggle", () => {
     seams.resume.mockResolvedValueOnce({ outcome: "failed", reason: "admission refused", terminal: true });
     await expect(resume(service({ on: true }))).rejects.toMatchObject({ code: "CONTINUATION_FAILED", outcomeUnknown: false });
     expect(closeGrants).toHaveBeenCalledWith(owner, "operation");
-    expect(() => pluginFormSources.get(source.token, owner, parent)).toThrow("FORM_SOURCE_UNAVAILABLE");
+    expect(() => pluginFormSources.get(source.token, { ...owner, subject: "subject" }, parent)).toThrow("FORM_SOURCE_UNAVAILABLE");
     expect(seams.cancel).not.toHaveBeenCalled();
   });
 
@@ -332,7 +335,7 @@ describe("a pending MRTR form and the client's current Forms toggle", () => {
       continuationId: "parent",
       reason: "plugin_forms_disabled",
     });
-    expect(() => pluginFormSources.get(source.token, owner, parent)).toThrow(
+    expect(() => pluginFormSources.get(source.token, { ...owner, subject: "subject" }, parent)).toThrow(
       "FORM_SOURCE_UNAVAILABLE",
     );
   });
@@ -373,7 +376,7 @@ describe("a pending MRTR form and the client's current Forms toggle", () => {
     await expect(resume(live)).rejects.toMatchObject({ code: "PLUGIN_FORMS_DISABLED", outcomeUnknown: false });
     expect(delivered).not.toHaveBeenCalled();
     expect(seams.cancel).toHaveBeenCalledOnce();
-    expect(() => pluginFormSources.get(source.token, owner, parent)).toThrow("FORM_SOURCE_UNAVAILABLE");
+    expect(() => pluginFormSources.get(source.token, { ...owner, subject: "subject" }, parent)).toThrow("FORM_SOURCE_UNAVAILABLE");
   });
 
   it("delivers the answer when Forms is turned off and on again before submit", async () => {
@@ -439,6 +442,7 @@ describe('an owned MRTR form whose schema rides in _meta["openai/elicitation"]',
   };
   const live = (forms = { on: true }) =>
     createOwnedPluginMrtr({
+      identity: { actorId: "actor", projectId: "project", workspaceId: "workspace", subject: "subject" },
       c: {} as any,
       bearer: "disposable-bearer",
       projectId: "project",
@@ -483,7 +487,7 @@ describe('an owned MRTR form whose schema rides in _meta["openai/elicitation"]',
       parent,
       requestedSchema: extended,
       expiresAt: Date.now() + 10000,
-    });
+    }, "subject");
   });
   afterEach(() => source.release());
 
