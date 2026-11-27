@@ -159,7 +159,7 @@ describe("a local quick run's servers, through the route", () => {
         switch (typeof ref === "string" ? ref : getFunctionName(ref)) {
           case "testSuites:getTestCase":
             return testCase;
-          case "testSuiteAccountSelections:getMySuiteAccountChoices":
+          case "testSuiteAccountSelections:getPersonalSuiteAccountChoices":
             return [];
           case "servers:getProjectServers":
             return [{ _id: "srv_linear", name: "Linear" }];

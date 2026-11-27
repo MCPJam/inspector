@@ -290,7 +290,8 @@ export type StagePredicateResultLike = {
    * `passed: false` on the wire because the field is required, and reading
    * that as a failure would attribute to the server a measurement WE could not
    * take. Absent ⇒ `"scored"`, which is every row written before the field
-   * existed.
+   * existed. `"not_applicable"` ⇒ nothing to judge; it carries `passed: true`
+   * and is dropped the same way.
    */
   status?: string;
   /**
@@ -976,7 +977,8 @@ function isAdvisoryPredicateResult(r: StagePredicateResultLike): boolean {
 /**
  * Rows that may decide a stage: gating (analyzer v10) AND scored (v11).
  *
- * An `error` row is dropped rather than counted as a failure. The two
+ * An `error` row is dropped rather than counted as a failure, and a
+ * `not_applicable` row rather than counted as a pass. The two
  * exclusions are separate facts about the same row — one is the author's
  * policy, the other is whether there was anything to grade — but they have
  * the same consequence here, so they are applied in one place.
@@ -985,7 +987,10 @@ function gatingPredicateResults(
   results: readonly StagePredicateResultLike[] | undefined
 ): StagePredicateResultLike[] {
   return (results ?? []).filter(
-    (r) => !isAdvisoryPredicateResult(r) && r.status !== "error"
+    (r) =>
+      !isAdvisoryPredicateResult(r) &&
+      r.status !== "error" &&
+      r.status !== "not_applicable"
   );
 }
 

@@ -35,6 +35,7 @@ import {
 import { MCP_APPS_NO_CLAIMS } from "../../host-compat/capabilities.js";
 import { SLACK_FONT_CSS, getSlackStyleVariables } from "./slack-style.js";
 import { CHATGPT_MODEL_CONTEXT_POLICY } from "./chatgpt-model-context-policy.js";
+import { MCPJAM_EVENTS_EXTENSION_ID } from "../events-support.js";
 import { OPENCODE_TEMPLATE } from "./opencode-template.js";
 
 type HostThemeMode = "light" | "dark";
@@ -490,6 +491,15 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // inspector's MCP-side and Apps-side identities stay in lockstep.
       base.mcpProfile = {
         profileVersion: 1,
+        // The MCP Events delivery modes this client receives (MCPJam policy,
+        // never sent to a server). MCPJam's own client receives every mode.
+        extensions: {
+          [MCPJAM_EVENTS_EXTENSION_ID]: {
+            poll: true,
+            push: true,
+            webhook: true,
+          },
+        },
         initialize: {
           clientInfo: {
             name: "mcpjam-inspector",
@@ -1486,6 +1496,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // an MCP app can never reach a domain ChatGPT itself wouldn't allow.
       base.mcpProfile = {
         profileVersion: 1,
+        // MCPJam policy, never sent to a server: personal ChatGPT receives no
+        // MCP Events (OpenAI: Events work only in Work chats). Saved as `{}`,
+        // not left out, so caniuse.dev shows "none" rather than "Not yet
+        // tested".
+        extensions: {
+          [MCPJAM_EVENTS_EXTENSION_ID]: {},
+        },
         mcpProtocolVersion: "auto",
         // The 2026-08-24 prober capture (2026-07-28 lane) walked `nextCursor`
         // and fetched page two of tools/list.
@@ -1694,6 +1711,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       };
       base.mcpProfile = {
         profileVersion: 1,
+        // MCPJam policy: no MCP Events, as on the `chatgpt` template.
+        extensions: {
+          [MCPJAM_EVENTS_EXTENSION_ID]: {},
+        },
         mcpProtocolVersion: "auto",
         // From OpenAI's published Apps SDK auth docs, as on the chatgpt
         // template.
@@ -1828,6 +1849,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       };
       base.mcpProfile = {
         profileVersion: 1,
+        // MCPJam policy, never sent to a server: ChatGPT Work receives MCP
+        // Events by webhook only (CHATGPT_PROFILE in the SDK).
+        extensions: {
+          [MCPJAM_EVENTS_EXTENSION_ID]: { webhook: true },
+        },
         mcpProtocolVersion: "auto",
         // From OpenAI's published Apps SDK auth docs, as on the chatgpt
         // template.
@@ -1966,6 +1992,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       };
       base.mcpProfile = {
         profileVersion: 1,
+        // MCPJam policy: webhook-only MCP Events, as on the `chatgpt-work`
+        // template.
+        extensions: {
+          [MCPJAM_EVENTS_EXTENSION_ID]: { webhook: true },
+        },
         mcpProtocolVersion: "auto",
         // From OpenAI's published Apps SDK auth docs, as on the chatgpt
         // template.

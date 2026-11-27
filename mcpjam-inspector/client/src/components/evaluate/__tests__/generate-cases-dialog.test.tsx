@@ -3,6 +3,8 @@ import { within } from "@testing-library/react";
 import { renderWithProviders, screen, userEvent } from "@/test";
 import { GenerateCasesDialog } from "../generate-cases-dialog";
 import { SuiteDetailOverview } from "../suite-detail-overview";
+
+vi.mock("../suite-runs-as", () => ({ SuiteRunsAsLine: () => null }));
 import { metricsByRunFromIterations } from "../../evals/run-metrics";
 import { authoringRequest } from "@/lib/apis/eval-authoring-api";
 import type { EvalSuite } from "../../evals/types";

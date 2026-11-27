@@ -1,3 +1,9 @@
+import type {
+  EvalAccountPlan,
+  EvalAccountSelection,
+  QuickRunAccounts,
+} from "../../services/evals/suite-account-choices.js";
+import { makeFunctionReference } from "convex/server";
 import { localHarnessIdOf, shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import { freezeEvalRunWebAccounts } from "../../services/web-clients/web-client-run.js";
 import { localHarnessCapabilities } from "../../services/evals/runner-capabilities.js";
@@ -59,6 +65,7 @@ import {
   assertEnvironmentQuickRunModel,
   assertNoConflictingEnvironmentOverrides,
   commitEnvironmentQuickRun,
+  commitLegacyAccountQuickRun,
   failCommittedQuickRun,
   loadCommittedQuickRunSkills,
   type CommittedQuickRun,
@@ -142,6 +149,11 @@ import {
   casePredicatesSchema,
   type MatchOptionsDTO,
 } from "@/shared/eval-matching";
+import {
+  bearerNow,
+  followBearer,
+  type RunBearer,
+} from "../../utils/run-bearer.js";
 
 const toolChoiceSchema = z.union([
   z.enum(["auto", "none", "required"]),
@@ -332,6 +344,10 @@ export const passCriteriaSchema = z
 export const RunEvalsRequestSchema = z.object({
   projectId: z.string().optional(),
   suiteId: z.string().optional(),
+  runAccounts: z.array(z.object({
+    serverId: z.string().min(1),
+    connectionId: z.string().min(1),
+  }).strict()).min(1).max(32).optional(),
   suiteName: z.string().optional(),
   suiteDescription: z.string().optional(),
   toolPolicy: evalSuiteFileToolPolicySchema.optional(),
@@ -643,7 +659,14 @@ export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
  * API callers cannot spoof run provenance. The pairing rule lives in
  * {@link EvalRunProvenance} beside the mutation call that has to honour it.
  */
-type RunEvalsWithManagerRequest = RunEvalsRequest & {
+type RunEvalsWithManagerRequest = Omit<RunEvalsRequest, "convexAuthToken"> & {
+  /** A scheduled run's job token renews while it runs (`run-bearer.ts`). */
+  convexAuthToken: RunBearer;
+  evalAccounts?: {
+    plan: EvalAccountPlan;
+    requested?: EvalAccountSelection[];
+    managerForCase: (caseId: string | undefined) => MCPClientManager;
+  };
   runtimeVenue?: "local" | "hosted";
   /** Already resolved by the public inline-suite boundary. */
   hostAttachments?: Array<{
@@ -828,6 +851,7 @@ export function applyCommittedRoutingSelection(
 
 export const RunTestCaseRequestSchema = z.object({
   testCaseId: z.string(),
+  runAccounts: RunEvalsRequestSchema.shape.runAccounts,
   /**
    * ENVIRONMENT quick run: execute the case in this project environment. The
    * environment decides the model, the client (and its configuration) and the
@@ -959,7 +983,7 @@ type RunTestCaseWithManagerRequest = RunTestCaseRequest & {
 export const MAX_TOTAL_LLM_CALLS = 300;
 
 export function assertSuiteRunWithinCap(
-  request: RunEvalsRequest,
+  request: Omit<RunEvalsRequest, "convexAuthToken">,
   configCount = 1,
 ) {
   const override = request.iterationOverride;
@@ -1268,13 +1292,28 @@ async function loadSuiteDefaultPredicates(
 async function loadSuiteEnvironment(
   convexClient: ConvexHttpClient,
   suiteId?: string,
+  namedHostId?: string,
 ): Promise<unknown> {
   if (!suiteId) return undefined;
   try {
     const suite = await convexClient.query("testSuites:getTestSuite" as any, {
       suiteId,
     });
-    return (suite as { environment?: unknown } | undefined)?.environment;
+    if (suite?.environment?.serverBindings?.length) return suite.environment;
+    const getServerSelection = makeFunctionReference<"query",
+      { suiteId: string; namedHostId?: string },
+      { serverIds: string[]; serverNames: string[] } | null
+    >("testSuites:getSuiteRunServerSelection");
+    const selection = await convexClient.query(getServerSelection, {
+      suiteId,
+      ...(namedHostId ? { namedHostId } : {}),
+    });
+    if (!selection?.serverIds?.length) return suite?.environment;
+    return buildPersistedSuiteEnvironment({
+      resolvedServerIds: selection.serverIds,
+      persistedServerRefs: selection.serverIds,
+      serverNames: selection.serverNames,
+    });
   } catch {
     return undefined;
   }
@@ -1313,7 +1352,7 @@ function buildRuntimeEnvironmentWithBindings(args: {
   };
 }
 
-export function createConvexClients(convexAuthToken: string) {
+export function createConvexClients(convexAuthToken: RunBearer) {
   const convexUrl = process.env.CONVEX_URL;
   if (!convexUrl) {
     throw new Error("CONVEX_URL is not set");
@@ -1327,7 +1366,7 @@ export function createConvexClients(convexAuthToken: string) {
   const convexClient = new ConvexHttpClient(convexUrl, {
     fetch: convexReadFetch,
   });
-  convexClient.setAuth(convexAuthToken);
+  followBearer(convexAuthToken, (token) => convexClient.setAuth(token));
 
   return { convexClient, convexHttpUrl };
 }
@@ -2567,7 +2606,7 @@ export async function prepareEvalRun(
   // Unattended: an eval runs with nobody to approve anything, so a harness is
   // local only where its unattended evidence (Codex: its command sandbox) holds.
   let localAvailable = environmentHostConfig && venueProjectId
-    ? await shouldUseLocalHarness(harnessOfHostConfig(environmentHostConfig), convexAuthToken, venueProjectId, { scope: "unattended" })
+    ? await shouldUseLocalHarness(harnessOfHostConfig(environmentHostConfig), bearerNow(convexAuthToken), venueProjectId, { scope: "unattended" })
     : false;
   const requestedVenue = localAvailable ? "local" as const : "hosted" as const;
   // The ONE harness this launch will run locally, declared to the backend so
@@ -2731,7 +2770,7 @@ export async function prepareEvalRun(
     convexClient, resolvedSuiteId, environmentLaunch?.hostId ?? namedHostId,
   );
   if (!environmentId && venueProjectId) {
-    localAvailable = await shouldUseLocalHarness(harnessOfHostConfig(launchHostConfig), convexAuthToken, venueProjectId, { scope: "unattended" });
+    localAvailable = await shouldUseLocalHarness(harnessOfHostConfig(launchHostConfig), bearerNow(convexAuthToken), venueProjectId, { scope: "unattended" });
   }
   const launchVenue = localAvailable ? "local" as const : "hosted" as const;
   const launchLocalHarness = localAvailable
@@ -2800,6 +2839,10 @@ export async function prepareEvalRun(
     // backend refusing a run they did approve.
     ...(importApprovals?.length ? { importApprovals } : {}),
     accountsAtRun: managerAccountsAtRun(clientManager),
+    ...(request.evalAccounts ? {
+      evalAccountPlan: request.evalAccounts.plan,
+      runAccounts: request.evalAccounts.requested,
+    } : {}),
     // Same rule, same reason. Spread apart rather than as one `launchContext`
     // object because the recorder's parameter list is the mutation's argument
     // list, and the backend takes the two as siblings of `source`.
@@ -3074,15 +3117,21 @@ export async function prepareEvalRun(
     namedHostId,
   );
 
-  const replayConfigsToStore = filterAndRemapReplayConfigs(
-    clientManager.getServerReplayConfigs(),
-    resolvedServerIds,
-    persistedServerRefs,
-    (serverId) => clientManager.getServerConfig(serverId),
-  );
+  const replayConfigsToStore = request.evalAccounts
+    ? []
+    : filterAndRemapReplayConfigs(
+        clientManager.getServerReplayConfigs(),
+        resolvedServerIds,
+        persistedServerRefs,
+        (serverId) => clientManager.getServerConfig(serverId),
+      );
   if (replayConfigsToStore.length > 0) {
     try {
-      await storeReplayConfig(runId, replayConfigsToStore, convexAuthToken);
+      await storeReplayConfig(
+        runId,
+        replayConfigsToStore,
+        bearerNow(convexAuthToken),
+      );
     } catch (error) {
       logger.warn("[evals] Failed to store replay config for suite run", {
         runId,
@@ -3113,7 +3162,7 @@ export async function prepareEvalRun(
     if (orgConfigTarget) {
       try {
         const orgConfig = await resolveOrgModelConfig(orgConfigTarget, {
-          bearerToken: convexAuthToken,
+          bearerToken: bearerNow(convexAuthToken),
           scenarioId,
           accessVersion,
           serverIds: resolvedServerIds,
@@ -3235,6 +3284,7 @@ export async function prepareEvalRun(
       convexHttpUrl,
       convexAuthToken,
       mcpClientManager: clientManager,
+      accountManagerForCase: request.evalAccounts?.managerForCase,
       recorder,
       suiteInjectOpenAiCompat,
       hostExecutionPolicy: suiteHostPolicy,
@@ -3328,6 +3378,7 @@ export type RunEvalTestCaseWithManagerOptions = {
  * commit asserts equal to the one the manager connected.
  */
 type SingleCaseExecutionRequest = RunTestCaseWithManagerRequest & {
+  quickRunAccounts?: QuickRunAccounts;
   resolvedEnvironment?: ResolvedEnvironmentForLaunch;
 };
 
@@ -3453,6 +3504,7 @@ function environmentRuntimeEnvironment(
 
 /** Everything a single-case run needs, decided before anything executes. */
 export type PreparedSingleCaseExecution = {
+  accountCommit?: Pick<CommittedQuickRun, "iterationIds" | "replayed">;
   harnessRuntimeVenue: "local" | "hosted";
   convexClient: ConvexHttpClient;
   convexHttpUrl: string;
@@ -3664,7 +3716,8 @@ export async function prepareSingleCaseExecution(
         resolvedServerIds,
         suiteEnvironment: await loadSuiteEnvironment(
           convexClient,
-          testCase.evalTestSuiteId,
+          testCase.testSuiteId ?? testCase.evalTestSuiteId,
+          namedHostId,
         ),
       });
   const test = buildSingleCaseRuntimeTest({
@@ -3765,6 +3818,8 @@ export async function prepareSingleCaseExecution(
 
   let suiteHostConfig = liveHostConfig;
   let environment: PreparedSingleCaseExecution["environment"];
+  const snapshotForCommit = () =>
+    buildQuickRunCommitSnapshot(test as unknown as EvalTestCase);
   if (environmentLaunch) {
     // The commit reserves this case's iterations, so a server that cannot be
     // listed is refused first, as the suite launch does.
@@ -3799,15 +3854,14 @@ export async function prepareSingleCaseExecution(
     }
     const committed = await commitEnvironmentQuickRun(convexClient, {
       testCaseId,
-      testCaseSnapshot: buildQuickRunCommitSnapshot(
-        test as unknown as EvalTestCase,
-      ),
+      testCaseSnapshot: snapshotForCommit(),
       count: test.runs,
       startedAt: Date.now(),
       resolved: environmentLaunch,
       // The caller's key makes a retried request replay; without one, this
       // request's own key still makes the backend call retry-safe.
       idempotencyKey: idempotencyKey ?? `quick-run:${randomUUID()}`,
+      accounts: request.quickRunAccounts,
     });
     // The preflight was waived only because the key had a quick run to
     // replay. A fresh commit (the request row expired between the lookup and
@@ -3860,6 +3914,18 @@ export async function prepareSingleCaseExecution(
     };
   }
 
+  const accountCommit = !environment && request.quickRunAccounts
+    ? await commitLegacyAccountQuickRun(convexClient, {
+        testCaseId,
+        testCaseSnapshot: snapshotForCommit(),
+        count: test.runs,
+        startedAt: Date.now(),
+        idempotencyKey: idempotencyKey ?? `quick-run:${randomUUID()}`,
+        namedHostId,
+        runtimeVenue: request.runtimeVenue,
+        accounts: request.quickRunAccounts,
+      })
+    : undefined;
   return {
     convexClient,
     convexHttpUrl,
@@ -3883,6 +3949,7 @@ export async function prepareSingleCaseExecution(
       : {}),
     ...(orgModelConfigTarget ? { orgModelConfigTarget } : {}),
     ...(environment ? { environment } : {}),
+    ...(accountCommit ? { accountCommit } : {}),
   };
 }
 
@@ -3906,7 +3973,9 @@ function environmentExecutionOptions(prepared: PreparedSingleCaseExecution): {
   pinnedSkillSource?: PinnedSkillSource;
 } {
   const environment = prepared.environment;
-  if (!environment) return {};
+  if (!environment) return prepared.accountCommit ? {
+    committedQuickRunIterationIds: prepared.accountCommit.iterationIds,
+  } : {};
   return {
     committedQuickRunIterationIds: environment.committed.iterationIds,
     projectEnvironmentId: environment.resolved.environmentRef.environmentId,
@@ -3924,7 +3993,7 @@ function environmentExecutionOptions(prepared: PreparedSingleCaseExecution): {
 async function replayedQuickRunIteration(
   prepared: PreparedSingleCaseExecution,
 ): Promise<{ iterationId: string; iteration: unknown }> {
-  const iterationId = prepared.environment!.committed.iterationIds[0]!;
+  const iterationId = (prepared.environment?.committed ?? prepared.accountCommit)!.iterationIds[0]!;
   const iteration = await prepared.convexClient.query(
     "testSuites:getTestIteration" as any,
     { iterationId },
@@ -3948,7 +4017,8 @@ export async function runEvalTestCaseWithManager(
   const prepared = await prepareSingleCaseExecution(clientManager, request);
   const { convexClient, convexHttpUrl, testCase } = prepared;
 
-  if (prepared.environment?.committed.replayed) {
+  const committed = prepared.environment?.committed ?? prepared.accountCommit;
+  if (committed?.replayed) {
     const replay = await replayedQuickRunIteration(prepared);
     return {
       success: true,
@@ -3992,10 +4062,10 @@ export async function runEvalTestCaseWithManager(
     // attempt took its row: after an environment commit nothing may be left
     // running. A row an attempt did take is already terminal, and the
     // backend ignores a later write to a terminal quick-run row.
-    if (prepared.environment) {
+    if (committed) {
       await failCommittedQuickRun(
         convexClient,
-        prepared.environment.committed.iterationIds,
+        committed.iterationIds,
         error instanceof Error ? error.message : String(error),
       );
     }
@@ -4005,9 +4075,7 @@ export async function runEvalTestCaseWithManager(
   // An environment run answers with ITS committed row, never "the latest
   // iteration of this case" — which could be another run's, and would report
   // a rejected or crashed execution as this one's success.
-  const expectedIterationId = prepared.environment
-    ? prepared.environment.committed.iterationIds[0]
-    : quickResult?.quickRunIterationOutcomes?.[0]?.iterationId;
+  const expectedIterationId = committed?.iterationIds[0] ?? quickResult?.quickRunIterationOutcomes?.[0]?.iterationId;
 
   let latestIteration: unknown = null;
   if (expectedIterationId) {
@@ -4016,7 +4084,7 @@ export async function runEvalTestCaseWithManager(
       { iterationId: expectedIterationId },
     );
   }
-  if (!latestIteration && !prepared.environment) {
+  if (!latestIteration && !committed) {
     const recentIterations = await convexClient.query(
       "testSuites:listTestIterations" as any,
       { testCaseId },
@@ -4325,7 +4393,8 @@ export async function streamEvalTestCaseWithManager(
   const sseEncode = (event: EvalStreamEvent): Uint8Array =>
     encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
 
-  if (prepared.environment?.committed.replayed) {
+  const committed = prepared.environment?.committed ?? prepared.accountCommit;
+  if (committed?.replayed) {
     // An earlier request with this idempotency key owns these iterations.
     // Report where they stand; never execute them a second time.
     const replay = await replayedQuickRunIteration(prepared);
@@ -4419,10 +4488,10 @@ export async function streamEvalTestCaseWithManager(
     // After an environment commit nothing may be left running: the rows were
     // reserved for attempts that now cannot start.
     releaseRequestAbortListener();
-    if (prepared.environment) {
+    if (committed) {
       await failCommittedQuickRun(
         convexClient,
-        prepared.environment.committed.iterationIds,
+        committed.iterationIds,
         error instanceof Error ? error.message : String(error),
       );
     }
@@ -4441,10 +4510,10 @@ export async function streamEvalTestCaseWithManager(
       : undefined;
   } catch (error) {
     releaseRequestAbortListener();
-    if (prepared.environment) {
+    if (committed) {
       await failCommittedQuickRun(
         convexClient,
-        prepared.environment.committed.iterationIds,
+        committed.iterationIds,
         error instanceof Error ? error.message : String(error),
       );
     }
@@ -4523,7 +4592,7 @@ export async function streamEvalTestCaseWithManager(
         // briefly for the terminal row before emitting.
         // An environment run reports ITS committed row — never another run's.
         const expectedIterationId =
-          prepared.environment?.committed.iterationIds[0] ??
+          committed?.iterationIds[0] ??
           outcomes[0]?.iterationId;
         let latestIteration: unknown = null;
         if (expectedIterationId) {
@@ -4544,7 +4613,7 @@ export async function streamEvalTestCaseWithManager(
           }
         }
         if (
-          prepared.environment &&
+          committed &&
           expectedIterationId &&
           !isTerminalIteration(latestIteration)
         ) {
