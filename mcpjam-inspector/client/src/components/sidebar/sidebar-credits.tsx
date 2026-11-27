@@ -1,5 +1,4 @@
 import { Info } from "lucide-react";
-import { Fragment } from "react";
 import {
   HoverCard,
   HoverCardContent,
@@ -229,17 +228,14 @@ export function SidebarCredits({
                 </div>
               ) : null}
 
-              {meters.map((meter, index) => (
-                <Fragment key={meter.testId}>
-                  <UsageRow
-                    meter={meter}
-                    storageKey={`mcpjam:credits-last-seen:${organizationId}:${meter.testId}`}
-                  />
-                  {index === 0 && showTopUps ? (
-                    <TopUpRow remaining={topUpRemaining} />
-                  ) : null}
-                </Fragment>
+              {meters.map((meter) => (
+                <UsageRow
+                  key={meter.testId}
+                  meter={meter}
+                  storageKey={`mcpjam:credits-last-seen:${organizationId}:${meter.testId}`}
+                />
               ))}
+              {showTopUps ? <TopUpRow remaining={topUpRemaining} /> : null}
 
               {showUpsell ? (
                 <div
