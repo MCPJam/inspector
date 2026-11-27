@@ -92,7 +92,10 @@ function parseData(data: unknown): unknown {
  * `Authorization: Bearer`.
  *
  * Entries are deduplicated by `seq`, so a replayed backlog after any
- * reconnect is harmless.
+ * reconnect is harmless. New entries are committed together on the next
+ * task: a backlog arrives as a burst of messages in one task, and one commit
+ * per message made React count them as nested updates and throw "maximum
+ * update depth exceeded".
  */
 export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
   const { hosted, projectId, enabled } = options;
@@ -107,16 +110,17 @@ export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
   const feedKeyRef = useRef<string | null>(null);
   const callbacksRef = useRef(options);
   callbacksRef.current = options;
+  const pendingRef = useRef<EventsFeedEntryView[]>([]);
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const ingestEntries = useCallback((incoming: EventsFeedEntryView[]) => {
-    const fresh: EventsFeedEntryView[] = [];
-    for (const entry of incoming) {
-      if (seenRef.current.has(entry.seq)) continue;
-      seenRef.current.add(entry.seq);
-      afterRef.current = Math.max(afterRef.current, entry.seq);
-      fresh.push(entry);
+  const flushEntries = useCallback(() => {
+    if (flushTimerRef.current !== null) {
+      clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
     }
+    const fresh = pendingRef.current;
     if (fresh.length === 0) return;
+    pendingRef.current = [];
     fresh.sort((a, b) => a.seq - b.seq);
     setEntries((previous) => {
       const next = [...previous, ...fresh].sort((a, b) => a.seq - b.seq);
@@ -126,6 +130,29 @@ export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
     });
     callbacksRef.current.onNewEntries?.(fresh);
   }, []);
+
+  const ingestEntries = useCallback(
+    (incoming: EventsFeedEntryView[]) => {
+      for (const entry of incoming) {
+        if (seenRef.current.has(entry.seq)) continue;
+        seenRef.current.add(entry.seq);
+        afterRef.current = Math.max(afterRef.current, entry.seq);
+        pendingRef.current.push(entry);
+      }
+      if (pendingRef.current.length > 0 && flushTimerRef.current === null) {
+        flushTimerRef.current = setTimeout(flushEntries, 0);
+      }
+    },
+    [flushEntries],
+  );
+
+  useEffect(
+    () => () => {
+      if (flushTimerRef.current !== null) clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    },
+    [],
+  );
 
   const addGap = useCallback((gap: { fromSeq: number; toSeq: number }) => {
     setGaps((previous) =>
@@ -149,6 +176,8 @@ export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
         : typeof raw.outcome === "string"
           ? raw.outcome
           : undefined;
+    // The entry it updates may still be waiting in the batch.
+    flushEntries();
     setEntries((previous) =>
       previous.map((entry) =>
         entry.seq === raw.seq
@@ -160,7 +189,7 @@ export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
           : entry,
       ),
     );
-  }, []);
+  }, [flushEntries]);
 
   // A different feed (mode or project) starts from scratch. Both the local
   // runtime and the hosted inbox serve one project's feed at a time.
@@ -170,6 +199,7 @@ export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
     feedKeyRef.current = feedKey;
     seenRef.current = new Set();
     afterRef.current = 0;
+    pendingRef.current = [];
   }
   useEffect(() => {
     setEntries([]);

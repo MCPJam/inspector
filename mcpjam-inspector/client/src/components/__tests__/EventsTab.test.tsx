@@ -714,7 +714,9 @@ describe("EventsTab (local)", () => {
         receivedAt: Date.now(),
       },
     });
-    expect(screen.getByRole("tab", { name: /^Occurrences/ })).toHaveTextContent("1");
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /^Occurrences/ })).toHaveTextContent("1"),
+    );
 
     // A Convex project wins, and nothing from the previous project carries over.
     rerender(tab("convex_project"));
