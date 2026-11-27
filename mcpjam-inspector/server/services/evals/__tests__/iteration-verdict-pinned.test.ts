@@ -74,6 +74,13 @@ const ALLOWED_IMPORTS = [
   // score rows decide nothing and this boolean still does — a guard that only
   // produced a row would let a vacuous pass stand in the modes most runs use.
   "./agent-activity",
+  // ADDED DELIBERATELY, per the note above, and for a TYPE only.
+  //
+  // `account-routing.ts` imports nothing. The verdict passes its
+  // `AccountRouting` through to `extractTranscriptEvidence`, so a declared
+  // output schema check can resolve a multi-account tool key back to the
+  // server's tool name. It is evidence input, like `transcript-evidence`.
+  "./account-routing",
 ];
 
 /** The extractor is held to the same seal, so widening it is not a back door. */
