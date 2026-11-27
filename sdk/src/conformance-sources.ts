@@ -87,9 +87,6 @@ export const PROTOCOL_CHECK_SOURCES = {
   "server-sse-polling-session": {
     legacy: `${LEGACY_TRANSPORTS}#session-management`,
   },
-  "server-accepts-multiple-post-streams": {
-    legacy: `${LEGACY_TRANSPORTS}#multiple-connections`,
-  },
   "server-sse-streams-functional": {
     legacy: `${LEGACY_TRANSPORTS}#listening-for-messages-from-the-server`,
   },
@@ -193,14 +190,6 @@ export const APPS_CHECK_SOURCES = {
  * exist on the extension wire name only that.
  */
 export const TASKS_CHECK_SOURCES = {
-  "tasks-wire-resolvable": {
-    legacy: `${LEGACY_TASKS_SPEC}#capabilities`,
-    modern: `${TASKS_EXTENSION_SPEC}#capability-negotiation`,
-  },
-  "tasks-declaration-hygiene": {
-    legacy: `${LEGACY_TASKS_SPEC}#tool-level-negotiation`,
-    modern: `${TASKS_EXTENSION_SPEC}#capability-negotiation`,
-  },
   "tasks-result-type-discipline": {
     legacy: `${LEGACY_TASKS_SPEC}#creating-tasks`,
     modern: `${TASKS_EXTENSION_SPEC}#polymorphic-results`,

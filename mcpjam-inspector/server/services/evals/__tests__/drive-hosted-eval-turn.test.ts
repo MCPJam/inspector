@@ -595,6 +595,38 @@ describe("infra evidence reaches the turn outcome untouched", () => {
     expect(untyped.kind).toBe("failed");
     expect(untyped).not.toHaveProperty("errorInfra");
   });
+
+  it("keeps the calls a web client run sent before its page stopped", async () => {
+    const { WebClientRunError } = await import("../../web-clients/web-client-harness-turn");
+    const sent = {
+      id: "web-tool-0",
+      name: "echo",
+      category: "tool" as const,
+      startMs: 0,
+      endMs: 1,
+      promptIndex: 0,
+      stepIndex: 0,
+      status: "ok" as const,
+      toolCallId: "ledger-1",
+      toolName: "echo",
+      wireCorroborated: true,
+    };
+    runAssistantTurnMock.mockImplementationOnce(async () => {
+      throw new WebClientRunError(
+        { kind: "driver", step: "read_conversation", message: "The chat could not be read." },
+        "Claude web stopped before the reply finished.",
+        undefined,
+        { turnId: "turn-1", promptIndex: 0, startedAt: 0, endedAt: 1, spans: [sent], finishReason: "error", modelId: "m" },
+      );
+    });
+    const params = baseParams();
+    // The page stopped, so the run failed: it stays out of the server's pass rate.
+    expect(await driveHostedEvalTurn(params)).toMatchObject({
+      kind: "failed",
+      errorInfra: { source: "web_client", code: "driver" },
+    });
+    expect(params.acc.capturedSpans).toEqual([sent]);
+  });
 });
 
 it("does not read App state from a view dismissed before the next turn", async () => {
@@ -608,12 +640,12 @@ it("does not read App state from a view dismissed before the next turn", async (
   expect(JSON.stringify(params.acc.messageHistory)).not.toContain("Selected bolt");
 });
 
-describe("a failed turn's log line is not a second Sentry capture of an empty step", () => {
+describe("a failed turn's log line captures only what the engine's reporter did not record", () => {
   beforeEach(() => {
     runAssistantTurnMock.mockReset();
   });
 
-  const failWith = (code: string) =>
+  const failWith = (code: string, reported: Record<string, unknown> = {}) =>
     runAssistantTurnMock.mockImplementationOnce((async (opts: any) => {
       opts.onEngineError?.({
         message: "Backend step returned no content (stream error or empty response)",
@@ -622,6 +654,7 @@ describe("a failed turn's log line is not a second Sentry capture of an empty st
         promptIndex: 0,
         stepIndex: 0,
         phase: "stream",
+        ...reported,
       });
       return {
         messages: [{ role: "user", content: "hello" }],
@@ -632,7 +665,11 @@ describe("a failed turn's log line is not a second Sentry capture of an empty st
   it("logs an empty step as a warning: the engine already reported it", async () => {
     const error = vi.spyOn(logger, "error").mockImplementation(() => {});
     const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
-    failWith("provider_empty_response");
+    // A provider-owned empty step is reported as `ambiguous` on purpose.
+    failWith("provider_empty_response", {
+      reportedOrigin: "ambiguous",
+      reportedCaptured: false,
+    });
 
     const outcome = await driveHostedEvalTurn(baseParams());
 
@@ -648,14 +685,136 @@ describe("a failed turn's log line is not a second Sentry capture of an empty st
     warn.mockRestore();
   });
 
-  it("keeps every other failed turn on logger.error", async () => {
+  it("logs a refusal the engine already reported as a warning (INSPECTOR-HONO-70)", async () => {
     const error = vi.spyOn(logger, "error").mockImplementation(() => {});
-    failWith("provider_error");
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    // The prod nightly's refusal: `buildSpendRefusalBody` in the backend.
+    const refusal =
+      "MCPJam model limit reached for the moment: 4 in-flight request(s) hold the remaining credits and release them as they finish.";
+    runAssistantTurnMock.mockImplementationOnce((async (opts: any) => {
+      opts.onEngineError?.({
+        message: `${refusal} Retry in a few seconds.`,
+        rawText: `${refusal} Retry in a few seconds.`,
+        code: "user_rate_limit",
+        details: "Retry in a few seconds.",
+        httpStatus: 429,
+        refusalReason: "holds_committed",
+        outstandingHolds: 4,
+        promptIndex: 0,
+        stepIndex: 0,
+        phase: "stream",
+        // The reporter declined it as user-owned.
+        reportedOrigin: "user_config",
+        reportedCaptured: false,
+      });
+      return {
+        messages: [{ role: "user", content: "hello" }],
+        turnTrace: { spans: [] },
+      } as never;
+    }) as never);
+
+    const outcome = await driveHostedEvalTurn(baseParams());
+
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      iterationError: `${refusal} Retry in a few seconds.`,
+      errorCode: "user_rate_limit",
+      errorHttpStatus: 429,
+    });
+    expect(error).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("engineError=user_rate_limit"),
+    );
+    error.mockRestore();
+    warn.mockRestore();
+  });
+
+  const setupInfra = (httpStatus: number) => ({
+    source: "sandbox_setup",
+    code: "harness_broker_unavailable",
+    httpStatus,
+  });
+
+  it.each([
+    [
+      "paged on",
+      "capability_missing",
+      { reportedOrigin: "mcpjam", reportedCaptured: true },
+    ],
+    [
+      "declined as the user's server",
+      "provider_error",
+      { reportedOrigin: "user_server", reportedCaptured: false },
+    ],
+    [
+      "paged on in a harness setup step",
+      "harness_broker_unavailable",
+      { reportedCaptured: true, infra: setupInfra(503) },
+    ],
+  ])(
+    "logs a failure the reporter %s as a warning",
+    async (_label, code, reported) => {
+      const error = vi.spyOn(logger, "error").mockImplementation(() => {});
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+      failWith(code, reported);
+
+      await driveHostedEvalTurn(baseParams());
+
+      expect(error).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining(`engineError=${code}`),
+      );
+      error.mockRestore();
+      warn.mockRestore();
+    },
+  );
+
+  it.each([
+    [
+      "the reporter left unclassified",
+      "provider_error",
+      { reportedOrigin: "ambiguous", reportedCaptured: false },
+    ],
+    ["no reporter recorded", "provider_error", {}],
+    // The harness reports no origin: it classifies from the message alone,
+    // so a 429 from our own broker reads as the user's.
+    [
+      "the harness reporter declined",
+      "harness_broker_unavailable",
+      { reportedCaptured: false, infra: setupInfra(429) },
+    ],
+  ])("keeps a failure %s on logger.error", async (_label, code, reported) => {
+    const error = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    failWith(code, reported);
 
     await driveHostedEvalTurn(baseParams());
 
     expect(error).toHaveBeenCalledWith(
-      expect.stringContaining("engineError=provider_error"),
+      expect.stringContaining(`engineError=${code}`),
+    );
+    expect(warn).not.toHaveBeenCalledWith(
+      expect.stringContaining("engineError="),
+    );
+    error.mockRestore();
+    warn.mockRestore();
+  });
+
+  it("keeps a failure with no engine error on logger.error", async () => {
+    const error = vi.spyOn(logger, "error").mockImplementation(() => {});
+    runAssistantTurnMock.mockImplementationOnce(
+      async () =>
+        ({
+          messages: [{ role: "user", content: "hello" }],
+          turnTrace: { spans: [] },
+        }) as never,
+    );
+
+    expect(await driveHostedEvalTurn(baseParams())).toMatchObject({
+      kind: "failed",
+    });
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("engineError=none"),
     );
     error.mockRestore();
   });

@@ -203,6 +203,43 @@ export function extractTranscriptEvidence(trace: unknown): ExtractedEvidence {
   };
 }
 
+/**
+ * A row for a result held as a raw `CallToolResult` rather than as a
+ * `tool-result` part: a pinned call's, which no model ever saw. Its text is
+ * every text block, and its bytes are measured on the whole result
+ * (`raw_result`), because there is no model-visible output to measure.
+ */
+export function callToolResultRow(
+  toolName: string,
+  result: unknown,
+  toolCallId?: string,
+): TranscriptToolResult | undefined {
+  if (!isRecord(result)) return undefined;
+  const texts = Array.isArray(result.content)
+    ? result.content.flatMap((part) =>
+        isRecord(part) && part.type === "text" && typeof part.text === "string"
+          ? [part.text]
+          : [],
+      )
+    : [];
+  const bytes = jsonBytes(result);
+  return {
+    ...(toolCallId !== undefined ? { toolCallId } : {}),
+    toolName,
+    ...(texts.length > 0 ? { text: texts.join("\n") } : {}),
+    ...(result.structuredContent !== undefined
+      ? { structuredContent: result.structuredContent }
+      : {}),
+    ...(typeof result.isError === "boolean" ? { isError: result.isError } : {}),
+    size: {
+      bytes: bytes ?? 0,
+      basis: "raw_result",
+      complete: bytes !== undefined,
+    },
+    ...(bytes !== undefined ? { rawBytes: bytes } : {}),
+  };
+}
+
 /** One advertised tool, as a check needs to see it. */
 export type SelectionToolLike = {
   description?: unknown;

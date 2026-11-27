@@ -64,7 +64,6 @@ export const Labels: Story = {
           <EvaluatorKindBadge method="assertions" />
           <EvaluatorKindBadge method="judge" />
           <EvaluatorKindBadge method="decision" />
-          <EvaluatorKindBadge method="code" />
         </div>
       </Specimen>
       <Specimen label="origin · OWASP">

@@ -5,6 +5,7 @@ import {
   harnessSurfaceRefusal,
 } from "@/shared/harness-descriptors";
 import { harnessOrgUpstreamProfile } from "@/shared/harness-gateway-model";
+import { WEB_CLIENT_SITES, webClientVendorForRuntime } from "@/shared/web-clients";
 import { buildBrokerDummyAuth } from "../../registry";
 import { LOCAL_HARNESS_MANIFEST } from "../../local/compatibility";
 import { localRuntimeOf } from "../../local/runtimes/index";
@@ -39,6 +40,17 @@ describe.each(CASES)(
         expect(adapter.externalAccountCredentialEnv).toBeUndefined();
         return;
       }
+      if ("kind" in descriptor.credential) {
+        // A web account is a saved browser profile, never a key in the env.
+        expect(descriptor.credential.kind).toBe("web-account");
+        expect(adapter.externalAccountCredentialEnv).toBeUndefined();
+        expect(adapter.webAccount?.vendor).toBe(webClientVendorForRuntime(id));
+        expect(descriptor.credential.sites).toEqual(
+          WEB_CLIENT_SITES[webClientVendorForRuntime(id)!],
+        );
+        return;
+      }
+      expect(adapter.webAccount).toBeUndefined();
       expect(adapter.externalAccountCredentialEnv).toEqual([
         descriptor.credential.env,
       ]);

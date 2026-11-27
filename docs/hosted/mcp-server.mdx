@@ -1,0 +1,295 @@
+---
+title: "MCPJam MCP server"
+description: "Connect your agent or MCP client to your MCPJam account: projects, saved servers, and evals"
+icon: "plug"
+---
+
+Connect your agent to your MCPJam account.
+
+- **Access:** Projects, saved servers, and evals.
+- **Client support:** Remote MCP over Streamable HTTP with OAuth sign-in.
+- **Setup:** No MCPJam installation or API key required.
+
+## Connect your client
+
+- **Server URL:** `https://mcp.mcpjam.com/mcp`
+- **Client differences:** Setup options and approvals vary by client, plan, and workspace.
+
+<div className="mcp-client-setup-panel">
+
+<Tabs className="mcp-client-setup">
+  <Tab title="Claude Code">
+    Add the remote server:
+
+    ```bash
+    claude mcp add --transport http mcpjam https://mcp.mcpjam.com/mcp
+    ```
+
+    Then run `/mcp`, choose **mcpjam**, and sign in with your MCPJam account.
+
+    See [Claude Code's MCP guide](https://code.claude.com/docs/en/mcp).
+  </Tab>
+  <Tab title="Codex">
+    Add the remote server and complete OAuth sign-in in your browser:
+
+    ```bash
+    codex mcp add mcpjam --url https://mcp.mcpjam.com/mcp
+    ```
+
+    If sign-in does not start during setup, run:
+
+    ```bash
+    codex mcp login mcpjam
+    ```
+
+    Codex stores MCP server configuration in `~/.codex/config.toml`. See
+    [Codex's MCP guide](https://developers.openai.com/codex/mcp).
+  </Tab>
+  <Tab title="Cursor">
+    Add this entry to `.cursor/mcp.json` in your project, or
+    `~/.cursor/mcp.json` for all projects. If the file already exists, merge
+    the entry into its `mcpServers` object.
+
+    ```json
+    {
+      "mcpServers": {
+        "mcpjam": {
+          "url": "https://mcp.mcpjam.com/mcp"
+        }
+      }
+    }
+    ```
+
+    Open Cursor's MCP settings and complete the OAuth sign-in for **mcpjam**.
+    Enable its tools for your agent. See
+    [Cursor's MCP guide](https://cursor.com/docs/context/mcp).
+  </Tab>
+  <Tab title="VS Code">
+    In VS Code with GitHub Copilot:
+
+    1. Open the Command Palette and run **MCP: Add Server**.
+    2. Choose **HTTP** and enter `https://mcp.mcpjam.com/mcp`.
+    3. Enter **mcpjam** as the server ID and choose where to save the configuration.
+    4. Review the server trust prompt and complete the OAuth sign-in with your
+       MCPJam account when prompted.
+    5. Use Copilot's agent chat and enable the MCPJam tools if they are not
+       already available.
+
+    See [VS Code's MCP setup guide](https://code.visualstudio.com/docs/copilot/customization/mcp-servers).
+  </Tab>
+  <Tab title="Claude">
+    In Claude on the web or desktop:
+
+    1. Open [**Customize → Connectors**](https://claude.ai/customize/connectors)
+       and add a custom connector.
+    2. Name it **MCPJam** and enter `https://mcp.mcpjam.com/mcp`.
+    3. Click **Connect** and sign in with your MCPJam account. The connector shows
+       **Connected** under **Your connectors** when sign-in finishes.
+    4. In a chat, turn it on from **+ → Connectors**.
+
+    On Team and Enterprise plans, an owner may need to add the connector for the
+    organization first. See Anthropic's
+    [connector setup guide](https://claude.com/docs/connectors/custom/add-unlisted#add-a-connector-by-url).
+  </Tab>
+  <Tab title="ChatGPT">
+    Custom MCP server access depends on your ChatGPT plan and workspace
+    permissions. A workspace admin may need to enable or publish the connection.
+
+    1. Open **Plugins**, select **+**, then **Add custom MCP server**. In the
+       legacy Apps experience, use **Settings → Apps → Create** instead.
+    2. Name it **MCPJam** and enter `https://mcp.mcpjam.com/mcp` as the server URL.
+    3. Choose **OAuth**, review the access warning, and sign in with your MCPJam
+       account when prompted.
+    4. Review the discovered tools, finish creating the connection, and select
+       MCPJam in a chat.
+
+    If the option is missing, check OpenAI's
+    [custom MCP server guide](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt-beta)
+    for current plan requirements and admin controls.
+  </Tab>
+</Tabs>
+
+</div>
+
+### Other MCP clients
+
+Add a remote MCP server named **MCPJam** with the URL
+`https://mcp.mcpjam.com/mcp`, select **Streamable HTTP** if your client asks for
+a transport, and complete OAuth sign-in in your browser. Clients that only
+support local stdio servers cannot connect directly to this hosted endpoint.
+
+## Before you start
+
+- **An MCPJam account.** Sign up at [app.mcpjam.com](https://app.mcpjam.com).
+  The free plan works.
+- **A project.** Your agent can list your projects and create a new one, and every
+  project tool falls back to your most recently updated project when you don't
+  name one.
+- **MCP servers to work with** (optional). Servers you already saved in the
+  MCPJam app are available right away. Your agent can also connect a new server by
+  URL; when that server needs OAuth, it gives you a sign-in link to open.
+- **Plan and feature access.** Some features depend on your plan, your project
+  role, or features enabled for your account. Ask your agent what you can do in a
+  project. It reads that from your account, and a tool you can't use is
+  refused with a clear error.
+
+| | |
+| --- | --- |
+| Server URL | `https://mcp.mcpjam.com/mcp` |
+| Transport | Streamable HTTP |
+| Sign-in | OAuth with your MCPJam account (`login.mcpjam.com`) |
+| Acts as | You. Every call uses your own MCPJam identity and your own project access |
+
+<Note>
+  This server connects your agent to your MCPJam account. To inspect MCP
+  servers locally through an agent instead, see the [CLI MCP server](/cli/mcp-server).
+</Note>
+
+## Verify the connection
+
+Ask your agent:
+
+> Use MCPJam to show which account I'm signed in with and list my projects.
+
+Check that it calls `get_me` and `list_projects` and returns the account and
+projects you expect. This checks the connection without changing your data
+or spending MCPJam credits.
+
+## Sign-in and account access
+
+The server is an OAuth 2.0 protected resource. Your client discovers MCPJam's
+sign-in page from the server, you sign in with your MCPJam account, and the client
+receives a token for this server. Any request without a valid token is refused
+with `401`, which is what starts sign-in.
+
+- **Your access, no more.** Each tool call is forwarded to MCPJam's API with
+  your token, so you see exactly the organizations and projects your account
+  can see, and writes need the same role they need in the app.
+- **Nothing stored by the server.** The server is stateless. It keeps no
+  session and no copy of your token between requests.
+- **Credentials you save stay write-only.** Server headers, environment values
+  and client secrets you save are encrypted at rest. No tool returns a stored
+  secret's value.
+- **Disconnecting.** Remove or disable MCPJam in your client's MCP server,
+  connector, or app settings to stop that client from calling MCPJam.
+
+## Tool permissions
+
+Each tool declares what kind of action it is:
+
+- **Read-only** tools only read your account: listing projects, reading a run's
+  results, fetching a trace.
+- Tools that **create** something new, such as a project, an eval suite or a
+  run, are not read-only.
+- Tools that **change, replace, cancel, revoke or delete** something that
+  already exists are marked destructive.
+  So are `call_server_tool` and `send_chat_message`, because they run tools on
+  your own MCP servers, and those tools can do anything.
+
+Your client controls whether it asks for approval before running a tool.
+Review its tool permissions before enabling writes or credit-spending
+actions. Do not assume every client will prompt before running them.
+
+## Costs
+
+Most tools are free to call. These spend your organization's MCPJam credits,
+or the model-provider keys your organization configured, and their
+descriptions say so:
+
+| Tool | Spends on |
+| --- | --- |
+| `run_eval_suite`, `run_eval_case` | Model calls for every iteration of every case |
+| `request_eval_run_judge`, `backtest_eval_run_judge` | LLM-as-judge grading |
+| `send_chat_message` | Each Playground message |
+
+These are included with MCPJam and are not charged to you, but they count
+against per-minute and daily usage limits: `generate_eval_cases` and
+`import_eval_cases`. A tool that hits a limit is refused with `RATE_LIMITED`
+and the time it can be called again.
+Adding credits does not lift these limits.
+
+## Examples
+
+**See where things stand**
+
+> Which MCPJam projects do I have, and which servers are in the most recent one?
+
+Your agent uses `list_projects`, then `list_project_servers`.
+
+**Check a server**
+
+> Diagnose the "billing" server in my Payments project. It stopped connecting.
+
+Your agent uses `diagnose_server`, which probes the URL, connects, and reports
+what failed.
+
+**Run and read evals**
+
+> Run the "checkout flows" eval suite in Payments and tell me which cases fail.
+
+Your agent uses `run_eval_suite`, then `get_eval_run` until the run finishes,
+then `get_eval_run_steps` for a failing case. The run spends credits; check
+your client's approval settings before requesting it.
+
+**Did a change break anything?**
+
+> Compare the latest "checkout flows" run with the one before it.
+
+Your agent uses `compare_eval_run`, which classifies each case as regressed,
+fixed, new, removed, changed, or unchanged.
+
+**Add a server**
+
+> Connect https://example.com/mcp to my Payments project.
+
+Your agent uses `connect_project_server`. If the server needs OAuth, it gives
+you a sign-in link to open, then calls `get_project_server_connection_status`
+until the connection is ready.
+
+## Troubleshooting
+
+**Your client asks you to sign in again.** Your MCPJam sign-in expired or was
+revoked. Reconnect MCPJam from your client's MCP server, connector, or app
+settings and complete OAuth sign-in again.
+
+**Your client cannot add the server or start sign-in.** Confirm it supports
+Streamable HTTP and OAuth for remote MCP servers, and use the full
+`https://mcp.mcpjam.com/mcp` URL. Check whether your client plan or workspace
+policy restricts custom servers. Do not configure this endpoint as a local
+stdio command or use the MCPJam CLI's stdio configuration for it.
+
+**You see a different account's projects.** You signed in with another
+MCPJam account. Disconnect MCPJam in your client, connect again, and choose the account
+you meant on the MCPJam sign-in page. `get_me` shows which account your client is
+using.
+
+**`NOT_FOUND` for a project, server, suite or run.** The name or id did not
+match anything your account can see. Project tools default to your most
+recently updated project, so name the project when you have several.
+
+**`403 FORBIDDEN`.** Your role or plan does not allow that action, or the
+feature is not enabled for your account. A refusal for a feature carries
+`details.code: "FEATURE_UNAVAILABLE"` and names the feature.
+
+**`RATE_LIMITED`.** A usage limit was reached. The error says when the tool can
+be called again.
+
+**`TARGET_REQUIRED` from `run_eval_suite`.** The suite is attached to several
+environments or clients. The error lists them; tell your agent which one to run.
+
+**Anything else.** Email [support@mcpjam.com](mailto:support@mcpjam.com) with
+the request id from the error message when there is one.
+
+## Privacy and terms
+
+The MCP server processes your MCPJam data under MCPJam's
+[Privacy Policy](https://www.mcpjam.com/privacy-policy) and
+[Terms of Use](https://www.mcpjam.com/terms-of-use).
+
+- Tools that run models (evals, judges, Playground messages, and generation
+  tools) send the content they work on to the model
+  providers MCPJam uses.
+- `call_server_tool` and `send_chat_message` send their inputs to your own MCP
+  servers.
+- `send_feedback` sends the text you give it to the MCPJam team, where it is
+  kept for 180 days.

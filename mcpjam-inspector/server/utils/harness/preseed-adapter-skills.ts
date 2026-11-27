@@ -71,23 +71,37 @@ function adapterManifestNames(parsed: unknown): string[] {
     .filter((name): name is string => typeof name === "string");
 }
 
-async function readManifestNames(
+/** A manifest's text: null when the box has none, undefined when it can't be read. */
+async function readManifestText(
   session: PreseedSession,
   path: string,
-  extract: (parsed: unknown) => string[],
-): Promise<Set<string> | null> {
-  let raw: string | null;
+): Promise<string | null | undefined> {
   try {
-    raw = await session.readTextFile({ path });
+    return await session.readTextFile({ path });
   } catch {
-    return null; // unreadable ≠ empty: the caller must not treat this as "owns nothing"
+    return undefined; // unreadable ≠ empty: the caller must not treat this as "owns nothing"
   }
+}
+
+function manifestNames(
+  raw: string | null | undefined,
+  extract: (parsed: unknown) => string[],
+): Set<string> | null {
+  if (raw === undefined) return null;
   if (!raw) return new Set();
   try {
     return new Set(extract(JSON.parse(raw)));
   } catch {
     return null;
   }
+}
+
+async function readManifestNames(
+  session: PreseedSession,
+  path: string,
+  extract: (parsed: unknown) => string[],
+): Promise<Set<string> | null> {
+  return manifestNames(await readManifestText(session, path), extract);
 }
 
 /**
@@ -215,21 +229,87 @@ export async function clearAdapterSkills(args: {
   session: PreseedSession;
   skillsBase: string;
   signal?: AbortSignal;
+  /** With no manifest on the box, put down the empty one the adapter writes. */
+  seedIfMissing?: boolean;
 }): Promise<void> {
-  const owned = await readManifestNames(
-    args.session,
-    `${args.skillsBase}/${ADAPTER_MANIFEST_BASENAME}`,
-    adapterManifestNames,
-  );
+  const manifestPath = `${args.skillsBase}/${ADAPTER_MANIFEST_BASENAME}`;
+  const raw = await readManifestText(args.session, manifestPath);
+  if (raw === null && args.seedIfMissing) {
+    await seedEmptyAdapterManifest({ ...args, manifestPath });
+    return;
+  }
+  const owned = manifestNames(raw, adapterManifestNames);
   if (!owned?.size) return;
   try {
     await preseedAdapterSkills({
-      ...args,
+      session: args.session,
+      skillsBase: args.skillsBase,
+      ...(args.signal ? { signal: args.signal } : {}),
       payload: [],
       trailingNewline: false,
     });
   } catch (error) {
     logger.warn("[preseed-adapter-skills] could not clear skills folder", {
+      skillsBase: args.skillsBase,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
+ * `MCPJAM_HARNESS_SEED_SKILLS_MANIFEST=1` (read per call): a turn with no
+ * skills, on a box with no adapter manifest, gets the empty manifest in one
+ * command before its runtime starts. The adapter's own write at dispatch then
+ * finds it and only reads, instead of five calls (mkdir, a pending manifest
+ * and a complete one, each written and moved) after the prompt is sent.
+ */
+export function seedSkillsManifestEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env.MCPJAM_HARNESS_SEED_SKILLS_MANIFEST === "1";
+}
+
+/**
+ * What the adapter's own `writeSkills` leaves on a box for a turn with no
+ * skills, byte for byte (VERSION LOCKSTEP above: the test runs this package's
+ * `writeSkills` on an empty box and compares).
+ */
+export const EMPTY_ADAPTER_MANIFEST = `${JSON.stringify(
+  { version: 1, state: "complete", skills: [] },
+  null,
+  2,
+)}\n`;
+
+/** Written to a temporary file and moved, as the adapter writes it. Best-effort:
+ *  if it fails the adapter writes the manifest itself, as without the seed. */
+async function seedEmptyAdapterManifest(args: {
+  session: PreseedSession;
+  skillsBase: string;
+  manifestPath: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  const temporary = `${args.manifestPath}.tmp`;
+  const command = [
+    `mkdir -p ${shellQuote(args.skillsBase)}`,
+    `printf '%s' ${shellQuote(EMPTY_ADAPTER_MANIFEST)} > ${shellQuote(temporary)}`,
+    `mv -f ${shellQuote(temporary)} ${shellQuote(args.manifestPath)}`,
+  ].join(" && ");
+  try {
+    const result = await args.session.run({
+      command,
+      ...(args.signal ? { abortSignal: args.signal } : {}),
+    });
+    if (result.exitCode !== 0) {
+      logger.warn(
+        "[preseed-adapter-skills] could not seed the skills manifest",
+        {
+          skillsBase: args.skillsBase,
+          exitCode: result.exitCode,
+        },
+      );
+    }
+  } catch (error) {
+    logger.warn("[preseed-adapter-skills] could not seed the skills manifest", {
       skillsBase: args.skillsBase,
       error: error instanceof Error ? error.message : String(error),
     });

@@ -58,7 +58,12 @@ import {
 } from "../../utils/computers/rfb-handshake.js";
 import { logger } from "../../utils/logger.js";
 
-/** Same ladder the frame socket uses: 4401 stop trying, 4404 gone, 4503 later. */
+/**
+ * Same ladder the frame socket uses: 4401 stop trying, 4404 gone, 4503 later.
+ * 1001 is only the upstream stream ending while the browser runs on, so the
+ * viewer reconnects, as it does when a deploy drains a replica.
+ */
+const CLOSE_GOING_AWAY = 1001;
 const CLOSE_UNAUTHORIZED = 4401;
 const CLOSE_GONE = 4404;
 const CLOSE_UNAVAILABLE = 4503;
@@ -563,7 +568,7 @@ export function createComputerBrowserStreamWsHandler(
           shutdown(CLOSE_UNAVAILABLE, "The browser stream failed.");
         });
         upstream.onClose(() =>
-          shutdown(CLOSE_GONE, "The browser stream ended."),
+          shutdown(CLOSE_GOING_AWAY, "The browser stream ended."),
         );
 
         // Stashed for `onMessage` below, which has no closure over these.

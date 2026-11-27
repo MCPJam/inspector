@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { MCPServerConfig, TaskAwaitOutcome } from "@mcpjam/sdk";
+import type { MCPClientManager, TasksSupport } from "@mcpjam/sdk";
 import {
   abortedDuringResultFetch,
   buildTaskInputDriverOptions,
   detectCreatedTask,
+  canPromptForTaskInput,
+  driveTaskWatch,
+  legacyInputResultCallFor,
   parseTasksWireOption,
   taskWatchExitCode,
 } from "../src/lib/tasks-cli.js";
@@ -368,4 +372,111 @@ test("abortedDuringResultFetch reclassifies only a real interrupt", () => {
   for (const outcome of ["failed", "timeout", "input-required", "aborted"]) {
     assert.equal(abortedDuringResultFetch({ ...base, outcome }), false);
   }
+});
+
+test("canPromptForTaskInput is true only for --interactive on a terminal", () => {
+  assert.equal(
+    canPromptForTaskInput({ interactive: true, stdinIsTTY: true, env: {} }),
+    true,
+  );
+  const cannotPrompt = [
+    { interactive: false, stdinIsTTY: true, env: {} },
+    { interactive: true, yes: true, stdinIsTTY: true, env: {} },
+    { interactive: true, stdinIsTTY: false, env: {} },
+    { interactive: true, stdinIsTTY: true, env: { CI: "1" } },
+  ];
+  for (const scenario of cannotPrompt) {
+    assert.equal(canPromptForTaskInput(scenario), false, JSON.stringify(scenario));
+  }
+});
+
+test("legacyInputResultCallFor judges the call on what initialize advertised", () => {
+  // The 2025-11-25 `tasks/result` call is where the server sends its
+  // question. Holding it open is only worth it when someone can answer.
+  assert.equal(
+    legacyInputResultCallFor({ canPrompt: true, advertisedCapabilities: {} }),
+    "wait",
+  );
+  // Nothing a server could ask for: a short call is safe. An exact set's
+  // unanswerable `elicitation` never reaches initialize, so it is not here.
+  assert.equal(
+    legacyInputResultCallFor({
+      canPrompt: false,
+      advertisedCapabilities: { extensions: {} },
+    }),
+    "short",
+  );
+  // Advertised but nothing answers it: `roots` from a host template, or the
+  // declining handler `--interactive --yes` registers.
+  for (const advertised of [{ roots: {} }, { elicitation: {} }]) {
+    assert.equal(
+      legacyInputResultCallFor({
+        canPrompt: false,
+        advertisedCapabilities: advertised,
+      }),
+      "skip",
+      JSON.stringify(advertised),
+    );
+  }
+});
+
+const legacySupport = {
+  wire: "legacy",
+  toolCalls: true,
+  list: false,
+  cancel: true,
+  update: false,
+  inlineResult: false,
+} as TasksSupport;
+
+/** A legacy task parked on `input_required`, and every `tasks/result` sent. */
+function parkedLegacyManager(advertised: Record<string, unknown> = {}) {
+  const resultCalls: unknown[] = [];
+  const manager = {
+    getAdvertisedClientCapabilities: () => advertised,
+    getTask: async () => ({
+      taskId: "t-1",
+      status: "input_required",
+      createdAt: "2026-11-26T00:00:00Z",
+      lastUpdatedAt: "2026-11-26T00:00:00Z",
+      ttl: 60_000,
+    }),
+    getTaskResult: (_serverId: string, _taskId: string, options?: unknown) => {
+      resultCalls.push(options);
+      return new Promise<never>(() => undefined);
+    },
+  } as unknown as MCPClientManager;
+  return { manager, resultCalls };
+}
+
+test("driveTaskWatch holds the input call for what is left of the watch", async () => {
+  const { manager, resultCalls } = parkedLegacyManager();
+  const envelope = await driveTaskWatch({
+    manager,
+    serverId: "srv",
+    support: legacySupport,
+    taskId: "t-1",
+    tuning: { durationMs: 50 },
+    canPrompt: true,
+  });
+  // The request carries its own finite timeout, so the default `--timeout`
+  // cannot end it while the user is answering.
+  assert.equal(resultCalls.length, 1);
+  const options = resultCalls[0] as { timeout?: number };
+  assert.ok(Number.isFinite(options.timeout), JSON.stringify(options));
+  assert.ok((options.timeout ?? 0) <= 50, JSON.stringify(options));
+  assert.equal(envelope.outcome, "timeout");
+});
+
+test("driveTaskWatch sends no input call when it would refuse the question", async () => {
+  const { manager, resultCalls } = parkedLegacyManager({ roots: {} });
+  const envelope = await driveTaskWatch({
+    manager,
+    serverId: "srv",
+    support: legacySupport,
+    taskId: "t-1",
+    tuning: { durationMs: 10_000 },
+  });
+  assert.equal(resultCalls.length, 0);
+  assert.equal(envelope.outcome, "input-required");
 });

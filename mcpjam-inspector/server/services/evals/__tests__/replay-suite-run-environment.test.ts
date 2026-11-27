@@ -2,6 +2,7 @@ const admission = vi.hoisted(() => ({ execution: vi.fn(() => ({ ok: true })), ha
 vi.mock("../harness-admission.js", async (original) => ({ ...await original<typeof import("../harness-admission.js")>(), checkEvalExecutionAdmission: admission.execution, checkEvalHarnessAdmission: admission.harness, casesAssertingWidgetRender: () => [], failRunBeforeExecution: admission.failed }));
 vi.mock("../../../utils/harness/harness-proxy-policy-enforcement.js", () => ({ harnessToolPolicyLaunchRefusal: admission.policy }));
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { ConvexError } from "convex/values";
 
 // Replays use the frozen client and environment; old backends fail closed
 // when they cannot identify the environment whose secrets would be delivered.
@@ -169,6 +170,35 @@ it.each(["execution", "harness", "policy"] as const)("refuses replay when %s adm
   await expect(prepareSuiteReplayFromRun({ convexClient: convexClient(), convexAuthToken: "token", sourceRunId: "refused-run" })).rejects.toThrow();
   expect(admission.failed).toHaveBeenCalledOnce();
   expect(runEvalSuiteWithAiSdkMock).not.toHaveBeenCalled();
+});
+
+describe("a web client's replay", () => {
+  function replay(record: () => Promise<unknown>) {
+    admission.harness.mockReturnValueOnce({ ok: true, harness: "claude-web" } as never);
+    admission.failed.mockClear();
+    const mutation = vi.fn(async (_name: string, _args: unknown) => record());
+    const client = { ...(convexClient() as unknown as Record<string, unknown>), mutation };
+    const prepared = prepareSuiteReplayFromRun({ convexClient: client as never, convexAuthToken: "token", sourceRunId: "source-run-1" });
+    return { mutation, prepared };
+  }
+
+  it("freezes its web accounts before any turn", async () => {
+    const { mutation, prepared } = replay(async () => []);
+    await (await prepared).execute();
+    expect(mutation).toHaveBeenCalledWith("webClientSuites:recordWebAccountsAtRun", { runId: "replay-run-1", vendor: "claude" });
+    expect(runEvalSuiteWithAiSdkMock).toHaveBeenCalledOnce();
+  });
+
+  it("stops before any turn when the backend won't freeze them", async () => {
+    const { prepared } = replay(async () => {
+      throw new ConvexError({ code: "VALIDATION", message: "Web clients are off for this project." });
+    });
+    await expect(prepared).rejects.toMatchObject({ status: 400, message: "Web clients are off for this project." });
+    expect(admission.failed).toHaveBeenCalledWith(expect.anything(), expect.anything(), "replay-run-1", {
+      reason: "Web clients are off for this project.",
+    });
+    expect(runEvalSuiteWithAiSdkMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("prepareSuiteReplayFromRun — a replay that brings its own keys", () => {
