@@ -1,12 +1,7 @@
 import { LOG_LEVEL_META_KEY } from "@modelcontextprotocol/server";
 import type { LoggingLevel, ServerContext } from "@modelcontextprotocol/server";
+import type { MockNotifier } from "./notifier.js";
 import type { MockRealCall, MockRealServer } from "./real-server.js";
-
-const LIST_CHANGED_METHODS = {
-  tools: "notifications/tools/list_changed",
-  prompts: "notifications/prompts/list_changed",
-  resources: "notifications/resources/list_changed",
-} as const;
 
 export interface CallRelay extends Required<
   Pick<MockRealCall, "onProgress" | "onLog">
@@ -20,14 +15,16 @@ export interface CallRelay extends Required<
 /**
  * Passes what the real server sends during one call on to the caller: progress
  * (only when the caller asked with a progress token), log messages (filtered by
- * the caller's own log level), and list-changed notifications. Call `stop`
+ * the caller's own log level), and list-changed notifications (sent where the
+ * caller's revision wants them: `notifier`). Call `stop`
  * when the call ends and await `flush` before returning its result, so a
  * notification that could not be sent fails the call instead of vanishing.
  */
 export function relayDuringCall(
   real: MockRealServer,
   progressToken: string | number | undefined,
-  ctx: ServerContext
+  ctx: ServerContext,
+  notifier: MockNotifier
 ): CallRelay {
   const sent: Promise<void>[] = [];
   let failure: { error: unknown } | undefined;
@@ -36,9 +33,7 @@ export function relayDuringCall(
   const track = (sending: Promise<void>) => {
     sent.push(sending.catch((error: unknown) => void (failure ??= { error })));
   };
-  const stop = real.onListChanged((kind) =>
-    track(ctx.mcpReq.notify({ method: LIST_CHANGED_METHODS[kind] }))
-  );
+  const stop = real.onListChanged((kind) => track(notifier.listChanged(kind)));
   return {
     stop,
     flush: async () => {

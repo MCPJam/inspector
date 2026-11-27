@@ -96,6 +96,12 @@ export const fillInputs = <T extends JsonValue | undefined>(
   input: Obj
 ): T => fillScope(value, input, INPUT_PLACEHOLDERS);
 
+/** `{{steps.<id>.x}}`: what the client replied to a step's question. */
+export const fillSteps = <T extends JsonValue | undefined>(
+  value: T,
+  replies: Obj
+): T => fillScope(value, replies, placeholders("steps"));
+
 export type SavedOutcome =
   | { kind: "answered"; caseIndex: number; result: CallToolResult }
   | { kind: "no_match" };
@@ -114,12 +120,18 @@ export function chooseCase(
 }
 
 /**
- * What a chosen case answers, with `{{input.x}}` filled. A case that holds a
- * protocol error throws it, as a real server would.
+ * What a chosen case answers once its steps are done: `{{input.x}}` is filled
+ * from the call, and `{{steps.<id>.x}}` from `replies` (what the client said
+ * to each question by step id). A case that holds a protocol error throws it,
+ * as a real server would.
  */
-export function finishCase(chosen: MockSavedCase, input: Obj): CallToolResult {
+export function finishCase(
+  chosen: MockSavedCase,
+  input: Obj,
+  replies: Obj = {}
+): CallToolResult {
   const fill = <T extends JsonValue | undefined>(value: T): T =>
-    fillInputs(value, input);
+    fillSteps(fillInputs(value, input), replies);
   if (chosen.error) {
     const { code, message, data } = chosen.error;
     throw new ProtocolError(
@@ -131,7 +143,7 @@ export function finishCase(chosen: MockSavedCase, input: Obj): CallToolResult {
   return fill(chosen.result ?? { content: [] }) as CallToolResult;
 }
 
-/** The first case whose `when` matches the input answers. */
+/** The first case whose `when` matches the input answers (its steps are not run here). */
 export function answerFromSaved(
   answer: MockSavedAnswer,
   input: Obj

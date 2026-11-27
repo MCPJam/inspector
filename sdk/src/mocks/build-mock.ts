@@ -2,9 +2,20 @@ import { createMcpHandler, Server } from "@modelcontextprotocol/server";
 import type {
   McpHttpHandler,
   Result,
+  ServerContext,
   ServerCapabilities,
+  ServerEventBus,
+  ServerNotifier,
 } from "@modelcontextprotocol/server";
+import { definitionHasStep } from "./definition-types.js";
 import type { MockDefinition } from "./definition-types.js";
+import { notifierFor } from "./notifier.js";
+import { registerSubscribeHandlers } from "./protocol-handlers.js";
+import {
+  capabilitiesForRevision,
+  MODERN_REVISION,
+  revisionOf,
+} from "./revision.js";
 import type { MockObserver } from "./mock-observer.js";
 import {
   methodUnavailableError,
@@ -12,6 +23,7 @@ import {
   isRealUnreachable,
   realUnreachableError,
 } from "./mock-errors.js";
+import { forRevision } from "./legacy-result.js";
 import { NO_REAL_SERVER } from "./real-server.js";
 import type {
   MockListingFamily,
@@ -35,6 +47,17 @@ const METHOD_FAMILIES: Array<
   ["logging/", "logging"],
 ];
 
+/** Methods a revision dropped; the server SDK or the real server must not see them from a caller on that revision. */
+const DROPPED_IN_MODERN = [
+  "logging/setLevel",
+  "resources/subscribe",
+  "resources/unsubscribe",
+  "tasks/list",
+  "tasks/result",
+  "ping",
+];
+const ONLY_IN_MODERN = ["subscriptions/listen", "server/discover"];
+
 /**
  * The real server's capabilities with the definition's laid over them; `null`
  * removes one. A family is declared only when the real server has it or the
@@ -43,7 +66,8 @@ const METHOD_FAMILIES: Array<
  */
 function effectiveCapabilities(
   real: ServerCapabilities,
-  definition: MockDefinition
+  definition: MockDefinition,
+  revision: string
 ): ServerCapabilities {
   const merged: Record<string, unknown> = { ...real };
   const stated = definition.capabilities ?? {};
@@ -56,10 +80,41 @@ function effectiveCapabilities(
   const own = ownsItems(definition);
   if (own.prompts && !("prompts" in stated)) merged.prompts ??= {};
   if (own.resources && !("resources" in stated)) merged.resources ??= {};
-  if (definitionServesSkills(definition) && !("extensions" in stated)) {
+  const modern = revision === MODERN_REVISION;
+  // `extensions` is a 2026-07-28 field: the mock adds to it only there.
+  if (
+    modern &&
+    definitionServesSkills(definition) &&
+    !("extensions" in stated)
+  ) {
     merged.extensions = { ...skillsCapability(), ...(real.extensions ?? {}) };
   }
-  return merged as ServerCapabilities;
+  // A case that logs makes the mock a server that logs; one that announces a
+  // change makes it a server that announces it.
+  const has = (kind: string) =>
+    definitionHasStep(definition, (step) => step.kind === kind);
+  if (has("log") && !("logging" in stated)) merged.logging ??= {};
+  for (const list of ["tools", "prompts", "resources"] as const) {
+    if (
+      definitionHasStep(
+        definition,
+        (step) => step.kind === "listChanged" && step.list === list
+      ) &&
+      !(list in stated)
+    ) {
+      merged[list] = {
+        ...(merged[list] as object | undefined),
+        listChanged: true,
+      };
+    }
+  }
+  if (has("resourceUpdated") && !("resources" in stated)) {
+    merged.resources = {
+      ...(merged.resources as object | undefined),
+      subscribe: true,
+    };
+  }
+  return capabilitiesForRevision(merged as ServerCapabilities, revision);
 }
 
 /** The list methods a pinned listing can answer, by the family and result field. */
@@ -93,14 +148,25 @@ function unreachableServer(error: Error): Server {
 export interface BuildMockOptions {
   /** Told about each tool call: where its answer came from, and the real tool of a forward. */
   observer?: MockObserver;
+  /**
+   * Where 2026-07-28 change notifications go (`subscriptions/listen` streams
+   * subscribe to it). Share one across the requests of a caller so a stream
+   * open on one request hears a change a call on another raised; left out,
+   * each handler has its own.
+   */
+  bus?: ServerEventBus;
 }
 
 async function buildServer(
   definition: MockDefinition,
   real: MockRealServer,
   options: BuildMockOptions,
-  signal?: AbortSignal
+  era: "legacy" | "modern",
+  bus: () => ServerNotifier,
+  request?: Request
 ): Promise<Server> {
+  const signal = request?.signal;
+  const revision = await revisionOf(era, request);
   let info: MockRealServerInfo;
   try {
     info = await real.describe({ signal });
@@ -109,7 +175,11 @@ async function buildServer(
     // server that answers every request with the reason instead.
     return unreachableServer(realUnreachableError(cause));
   }
-  const mockCapabilities = effectiveCapabilities(info.capabilities, definition);
+  const mockCapabilities = effectiveCapabilities(
+    info.capabilities,
+    definition,
+    revision
+  );
   const instructions = definition.instructions ?? info.instructions;
   const server = new Server(
     {
@@ -125,19 +195,37 @@ async function buildServer(
       ...(instructions !== undefined && { instructions }),
     }
   );
-  const context = { definition, real, observer: options.observer };
+  const context = {
+    definition,
+    real,
+    observer: options.observer,
+    revision,
+    notifierFor: (ctx?: ServerContext) => notifierFor(era, bus, ctx),
+  };
   if (mockCapabilities.tools) registerToolHandlers(server, context);
   const itemContext = {
     definition,
     real,
     realCapabilities: info.capabilities,
     mockCapabilities,
+    revision,
   };
   registerItemHandlers(server, itemContext);
+  if (revision !== MODERN_REVISION && mockCapabilities.resources?.subscribe) {
+    registerSubscribeHandlers(server, itemContext);
+  }
 
   // Every other method goes to the real server when both sides have it, and is
   // refused by name when only one does. The host decides each forward first.
   server.fallbackRequestHandler = async (request, ctx) => {
+    // A method the caller's revision lacks is not found, whatever the real server speaks.
+    const modern = revision === MODERN_REVISION;
+    if (
+      (modern && DROPPED_IN_MODERN.includes(request.method)) ||
+      (!modern && ONLY_IN_MODERN.includes(request.method))
+    ) {
+      throw unknownMethodError(request.method);
+    }
     const skills = await answerSkillsMethod(
       request,
       itemContext,
@@ -154,11 +242,25 @@ async function buildServer(
       if (!info.capabilities[capability])
         throw methodUnavailableError(request.method, "real", capability);
     }
+    if (
+      request.method.startsWith("resources/") &&
+      /subscribe$/i.test(request.method) &&
+      !mockCapabilities.resources?.subscribe
+    ) {
+      throw methodUnavailableError(
+        request.method,
+        "mock",
+        "resource subscriptions"
+      );
+    }
     await assertRequestForward(context, request.method, ctx.mcpReq.signal);
     try {
-      return await real.request(
-        { method: request.method, params: request.params },
-        { signal: ctx.mcpReq.signal }
+      return forRevision(
+        await real.request(
+          { method: request.method, params: request.params },
+          { signal: ctx.mcpReq.signal }
+        ),
+        revision
       );
     } catch (cause) {
       // The base is down: a list the mock does not edit comes from the
@@ -197,9 +299,19 @@ export function buildMock(
   real: MockRealServer = NO_REAL_SERVER,
   options: BuildMockOptions = {}
 ): McpHttpHandler {
-  return createMcpHandler(
-    (ctx: { requestInfo?: Request }) =>
-      buildServer(definition, real, options, ctx.requestInfo?.signal),
-    { legacy: "stateless" }
+  // The factory runs once per request, after the handler exists; the handler
+  // owns the bus the `subscriptions/listen` streams read.
+  const handler: McpHttpHandler = createMcpHandler(
+    (ctx: { era: "legacy" | "modern"; requestInfo?: Request }) =>
+      buildServer(
+        definition,
+        real,
+        options,
+        ctx.era,
+        () => handler.notify,
+        ctx.requestInfo
+      ),
+    { legacy: "stateless", ...(options.bus && { bus: options.bus }) }
   );
+  return handler;
 }

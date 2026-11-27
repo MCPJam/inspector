@@ -1,10 +1,15 @@
+import { isInputRequiredResult } from "@modelcontextprotocol/server";
 import type {
   CallToolResult,
+  InputRequiredResult,
   Server,
   ServerContext,
 } from "@modelcontextprotocol/server";
 import { findBindingIssues } from "./bindings.js";
+import { forRevision } from "./legacy-result.js";
+import { stepHostFor } from "./case-call.js";
 import { answersItself, type MockDefinition } from "./definition-types.js";
+import type { MockNotifier } from "./notifier.js";
 import {
   bindingError,
   forwardBlockedError,
@@ -27,11 +32,15 @@ export interface ToolHandlerContext {
   definition: MockDefinition;
   real: MockRealServer;
   observer?: MockObserver;
+  /** The protocol revision this request is served under. */
+  revision: string;
+  /** Where change notifications go, for the call's steps and the real server's list changes. */
+  notifierFor: (ctx: ServerContext | undefined) => MockNotifier;
 }
 
 /** The host's answer, or a refusal when the host could not give one. */
 export async function decideForward(
-  c: ToolHandlerContext,
+  c: Pick<ToolHandlerContext, "real">,
   request: Parameters<MockRealServer["authorizeForward"]>[0],
   signal: AbortSignal
 ): Promise<MockForwardDecision & { cause?: unknown }> {
@@ -60,7 +69,7 @@ async function forwardCall(
   plan: { realName: string; arguments: Record<string, unknown> },
   ctx: ServerContext,
   progressToken: string | number | undefined
-): Promise<CallToolResult> {
+): Promise<CallToolResult | InputRequiredResult> {
   const { real, observer } = c;
   const decision = await decideForward(
     c,
@@ -83,7 +92,7 @@ async function forwardCall(
     });
     return toolErrorResult(decision.message);
   }
-  const relay = relayDuringCall(real, progressToken, ctx);
+  const relay = relayDuringCall(real, progressToken, ctx, c.notifierFor(ctx));
   try {
     const result = await real.callTool({
       name: plan.realName,
@@ -92,9 +101,16 @@ async function forwardCall(
       logLevel: callerLogLevel(ctx),
       onProgress: relay.onProgress,
       onLog: relay.onLog,
+      inputResponses: ctx.mcpReq.inputResponses,
+      requestState: ctx.mcpReq.requestState(),
     });
     await relay.flush();
-    return result;
+    if (isInputRequiredResult(result) && c.revision !== "2026-07-28") {
+      return toolErrorResult(
+        `The real server asked a question while running ${plan.realName}, and a connection on protocol revision ${c.revision} cannot be asked one through a mock. Connect with 2026-07-28.`
+      );
+    }
+    return forRevision(result, c.revision);
   } catch (error) {
     // A call that needs the live base says so, as a tool error the agent can
     // read; the mock's own saved answers never reach this path.
@@ -142,7 +158,7 @@ export function registerToolHandlers(
     }
     if (answer?.from === "saved") {
       const realTools = await real.listTools({ signal: ctx.mcpReq.signal });
-      const answered = answerItself({
+      const answered = await answerItself({
         tool: resolveMockTools(definition, realTools).tools.find(
           (tool) => tool.name === name
         ),
@@ -151,6 +167,16 @@ export function registerToolHandlers(
         input: request.params.arguments ?? {},
         realHasTool: realTools.some((tool) => tool.name === plan.realName),
         observer,
+        canAsk: c.revision === "2026-07-28",
+        caseCall: {
+          host: stepHostFor(
+            ctx,
+            request.params._meta?.progressToken,
+            c.notifierFor(ctx)
+          ),
+          responses: ctx.mcpReq.inputResponses,
+          requestState: ctx.mcpReq.requestState(),
+        },
       });
       if (answered) return answered;
     }
@@ -160,7 +186,7 @@ export function registerToolHandlers(
 
 /** Refuses a forward of any other method, as a JSON-RPC error, when the host does not allow it. */
 export async function assertRequestForward(
-  c: ToolHandlerContext,
+  c: Pick<ToolHandlerContext, "real">,
   method: string,
   signal: AbortSignal
 ): Promise<void> {

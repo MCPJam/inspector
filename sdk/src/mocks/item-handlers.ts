@@ -38,6 +38,7 @@ import {
   listMockSkills,
   skillNotFoundError,
 } from "./mock-skills.js";
+import { forRevision } from "./legacy-result.js";
 import { assertRequestForward, decideForward } from "./tool-handlers.js";
 
 /** What the handlers need about both sides of the mock. */
@@ -48,6 +49,8 @@ export interface ItemHandlerContext {
   realCapabilities: ServerCapabilities;
   /** What the mock declares after the definition's edits. */
   mockCapabilities: ServerCapabilities;
+  /** The revision this request is served under; a forwarded result is shown as that revision's. */
+  revision?: string;
 }
 
 type Obj = Record<string, unknown>;
@@ -57,14 +60,15 @@ type Obj = Record<string, unknown>;
  * item the definition does not state goes through here, so a blocked policy or
  * a caller without access stops it before anything is dispatched.
  */
-async function forwardToReal(
+export async function forwardToReal(
   c: ItemHandlerContext,
   method: string,
   params: Obj | undefined,
   signal: AbortSignal
 ): Promise<Obj> {
   await assertRequestForward(c, method, signal);
-  return c.real.request({ method, params }, { signal });
+  const result = await c.real.request({ method, params }, { signal });
+  return c.revision ? forRevision(result, c.revision) : result;
 }
 
 interface RealItems<T> {

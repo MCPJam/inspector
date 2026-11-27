@@ -15,7 +15,11 @@ export type MockCallSource = "saved" | "forwarded" | "blocked" | "unmatched";
 
 /** Why a mock refused a call itself, when the call was refused. */
 export type MockRefusal =
-  "invalid_input" | "invalid_output" | MockForwardBlockReason;
+  | "invalid_input"
+  | "invalid_output"
+  /** A saved case asks a question and the caller's revision cannot be asked one. */
+  | "input_unavailable"
+  | MockForwardBlockReason;
 
 /** Why a forward was not made; the real-server interface says it. */
 export type MockForwardBlockReason =

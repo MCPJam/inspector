@@ -2,10 +2,18 @@
  * An in-process "real" MCP server for the mock tests, and the adapter that
  * reaches it as the Inspector's route will: through `MCPClientManager`.
  */
-import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
-import type { McpHttpHandler } from "@modelcontextprotocol/server";
+import {
+  createMcpHandler,
+  inputRequired,
+  McpServer,
+} from "@modelcontextprotocol/server";
+import type {
+  McpHttpHandler,
+  ServerContext,
+} from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { MCPClientManager } from "../../mcp-client-manager/index.js";
+import type { McpProtocolVersion } from "../../mcp-client-manager/mcp-protocol-version.js";
 import type {
   MockForwardDecision,
   MockListChangedKind,
@@ -25,6 +33,14 @@ export interface RealCalls {
   resourcesOnly?: boolean;
   /** Also serve one prompt, `greet`, so the mock has a real prompt to pass through or edit. */
   withPrompts?: boolean;
+  /** Also serve `extra` (a result with a field the spec does not name) and `ask` (a question on 2026-07-28). */
+  withProtocolTools?: boolean;
+  /** Declare resource subscriptions and record each subscribe and unsubscribe. */
+  withSubscribe?: boolean;
+  subscribed?: Array<{ method: string; uri: string }>;
+  /** Declare completions, answering `real-1`, `real-2`, and record each request. */
+  withCompletions?: boolean;
+  completed?: Array<Record<string, unknown>>;
 }
 
 function registerTools(server: McpServer, state: RealCalls): void {
@@ -94,8 +110,58 @@ function registerTools(server: McpServer, state: RealCalls): void {
       return { content: [{ type: "text" as const, text: "done" }] };
     }
   );
+  if (state.withProtocolTools) registerProtocolTools(server, registered);
   // A tool the test removed from the real server is neither listed nor callable.
   for (const name of state.hideTools) registered[name]?.disable();
+}
+
+function registerProtocolTools(
+  server: McpServer,
+  registered: Record<string, { disable(): void }>
+): void {
+  registered.extra = server.registerTool(
+    "extra",
+    {
+      description: "Answers with a field the spec does not name.",
+      inputSchema: {},
+    },
+    async () =>
+      ({
+        content: [{ type: "text" as const, text: "extra" }],
+        vendorField: { kept: true },
+      }) as never
+  );
+  // Asks the person's name through the 2026-07-28 multi round trip, then greets by it.
+  registered.ask = server.registerTool(
+    "ask",
+    { description: "Asks for a name, then greets.", inputSchema: {} },
+    (async (_args: unknown, ctx: ServerContext) => {
+      const reply = ctx.mcpReq.inputResponses?.name as
+        { action?: string; content?: { who?: string } } | undefined;
+      if (!reply) {
+        return inputRequired({
+          inputRequests: {
+            name: inputRequired.elicit({
+              message: "Who are you?",
+              requestedSchema: {
+                type: "object",
+                properties: { who: { type: "string" } },
+              },
+            }),
+          },
+          requestState: "real-state",
+        });
+      }
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `hello ${String(reply.content?.who)} (${ctx.mcpReq.requestState()})`,
+          },
+        ],
+      };
+    }) as never
+  );
 }
 
 export function buildRealHandler(state: RealCalls): McpHttpHandler {
@@ -109,11 +175,33 @@ export function buildRealHandler(state: RealCalls): McpHttpHandler {
               ? { resources: {} }
               : { tools: {}, resources: {}, logging: {} }),
             ...(state.withPrompts && { prompts: {} }),
+            ...(state.withCompletions && { completions: {} }),
+            ...(state.withSubscribe && { resources: { subscribe: true } }),
           },
           instructions: "Real instructions.",
         }
       );
       if (!state.resourcesOnly) registerTools(server, state);
+      if (state.withSubscribe) {
+        for (const method of [
+          "resources/subscribe",
+          "resources/unsubscribe",
+        ] as const) {
+          server.server.setRequestHandler(method, async (request) => {
+            state.subscribed?.push({ method, uri: request.params.uri });
+            return {};
+          });
+        }
+      }
+      if (state.withCompletions) {
+        server.server.setRequestHandler(
+          "completion/complete",
+          async (request) => {
+            state.completed?.push(request.params as Record<string, unknown>);
+            return { completion: { values: ["real-1", "real-2"] } };
+          }
+        );
+      }
       if (state.withPrompts) {
         server.registerPrompt(
           "greet",
@@ -150,12 +238,15 @@ export function buildRealHandler(state: RealCalls): McpHttpHandler {
 /** Connects a manager to the fixture and wraps it as the mock's real server. */
 export async function connectRealServer(
   handler: McpHttpHandler,
-  state?: RealCalls
+  state?: RealCalls,
+  /** Pin the connection to one revision, as a host does when the caller's revision is pinned. */
+  mcpProtocolVersion?: McpProtocolVersion
 ): Promise<{ real: MockRealServer; close: () => Promise<void> }> {
   const manager = new MCPClientManager();
   const id = "real";
   await manager.connectToServer(id, {
     url: "http://real.local/mcp",
+    ...(mcpProtocolVersion && { mcpProtocolVersion }),
     baseFetch: (input, init) =>
       handler.fetch(new Request(input as string | URL, init)),
   });

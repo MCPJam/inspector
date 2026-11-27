@@ -5,10 +5,9 @@
  * `params` and `answer`.
  *
  * Prompts, resources (skills and MCP Apps among them) and templates are
- * validated and served. The step types are here so a later stage adds their
- * runtime without changing the stored shape; the validator refuses them until
- * then. Answers from a model are out of scope: `answer.from` is `"real"` or
- * `"saved"`.
+ * validated and served, and so are a saved case's `steps` (what it sends and
+ * asks while it runs) and `task`. Answers from a model are out of scope:
+ * `answer.from` is `"real"` or `"saved"`.
  */
 
 export type JsonValue =
@@ -74,6 +73,9 @@ interface StepTiming {
   delayMs?: number;
 }
 
+/** The lists a `listChanged` step announces. */
+export type MockListKind = "tools" | "prompts" | "resources";
+
 /**
  * One thing a saved case does before it answers. `ask`, `askUrl` and `sample`
  * need an `id`: the reply is read in the result as `{{steps.<id>.action}}`,
@@ -84,6 +86,10 @@ export type MockStep = StepTiming &
   (
     | { kind: "progress"; progress: number; total?: number; message?: string }
     | { kind: "log"; level: MockLogLevel; data: JsonValue; logger?: string }
+    /** Tells the client a list changed (`notifications/<list>/list_changed`). */
+    | { kind: "listChanged"; list: MockListKind }
+    /** Tells subscribers a resource of the mock changed (`notifications/resources/updated`). */
+    | { kind: "resourceUpdated"; uri: string }
     /** A question to the person, as a form. */
     | { kind: "ask"; id: string; message: string; requestedSchema: JsonObject }
     /** A question that sends the person to a page. */
@@ -97,6 +103,34 @@ export type MockStep = StepTiming &
         maxTokens: number;
       }
   );
+
+export const MAX_CASE_STEPS = 20;
+export const MAX_STEP_DELAY_MS = 5000;
+export const MAX_CASE_DELAY_MS = 20000;
+export const MAX_SAMPLE_TOKENS = 4096;
+
+/** Whether the step waits for the client (a question or a model request). */
+export function isInputStep(
+  step: MockStep
+): step is Extract<MockStep, { kind: "ask" | "askUrl" | "sample" }> {
+  return (
+    step.kind === "ask" || step.kind === "askUrl" || step.kind === "sample"
+  );
+}
+
+function savedCasesOf(definition: MockDefinition): MockSavedCase[] {
+  return Object.values(definition.tools ?? {}).flatMap((tool) =>
+    tool.answer?.from === "saved" ? tool.answer.cases : []
+  );
+}
+
+/** Whether any saved case of any tool has a step that satisfies `test`. */
+export function definitionHasStep(
+  definition: MockDefinition,
+  test: (step: MockStep) => boolean
+): boolean {
+  return savedCasesOf(definition).some((c) => c.steps?.some(test));
+}
 
 /** Cases are tried in order and the first that matches answers. There is no memory of earlier calls. */
 export interface MockSavedAnswer {
