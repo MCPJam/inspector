@@ -104,7 +104,7 @@ export const PROTOCOL_CHECK_CATALOG = {
   "notification-post-accepted": {
     title: "Notification POST Accepted",
     description:
-      "A POST carrying only a JSON-RPC notification is answered with HTTP 202 Accepted and no body.",
+      "A notification-only POST returns HTTP 202 Accepted with no body or an HTTP error if the server cannot accept it.",
   },
   "get-stream-or-405": {
     title: "GET Opens SSE Or Returns 405",
