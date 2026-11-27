@@ -39,6 +39,7 @@ export function DecisionQuestionsSection({
       : questions.filter((current) => current.id !== id);
     onChange(withRubricChecks(judgeConfig, { questions: next }));
     setEditingId((editing) => (editing === id ? null : editing));
+    return undefined;
   };
   if (!libraryEnabled || authored.length === 0) return null;
   return (
@@ -90,10 +91,7 @@ export function DecisionQuestionsSection({
                     (current) => current.id !== question.id,
                   )}
                   onCancel={() => setEditingId(null)}
-                  onSave={(draft) => {
-                    save(question.id, draft);
-                    return undefined;
-                  }}
+                  onSave={(draft) => save(question.id, draft)}
                 />
               </div>
             ) : null}

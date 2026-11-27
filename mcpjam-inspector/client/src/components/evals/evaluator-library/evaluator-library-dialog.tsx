@@ -18,13 +18,8 @@ import {
   DialogTrigger,
 } from "@mcpjam/design-system/dialog";
 import { ArrowLeft, Library } from "lucide-react";
-import {
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { formatCriterion } from "@/shared/predicate-kinds";
 import { CUSTOM_JUDGE_COST_COPY } from "./custom-judges-model";

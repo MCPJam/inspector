@@ -41,12 +41,8 @@ export function CustomJudgesSection({
   const pauseMessage = libraryPauseMessages(judgeConfig, capabilities).judges;
   const change = (next: EvalJudgeConfig) => onJudgeConfigChange?.(next);
   const save = (judge: CustomJudge) => {
-    change(
-      withJudges(
-        judgeConfig,
-        all.map((j) => (j.id === judge.id ? judge : j)),
-      ),
-    );
+    const next = all.map((j) => (j.id === judge.id ? judge : j));
+    change(withJudges(judgeConfig, next));
     setEditing(null);
     return undefined;
   };

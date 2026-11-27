@@ -51,10 +51,7 @@ const KIND_LABELS: Record<string, string> = {
   score: "Score",
 };
 
-/**
- * What rubric checks will ask, from the suite's criteria. Questions the
- * suite writes are edited under Decision questions in the same stage.
- */
+/** What rubric checks ask from the criteria; Decision questions edits the rest. */
 export function RubricChecksJudgeCard({
   judgeConfig,
   judgesCapabilities,
