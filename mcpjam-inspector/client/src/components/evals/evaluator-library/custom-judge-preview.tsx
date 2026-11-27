@@ -61,7 +61,6 @@ export function CustomJudgePreview({
 }: {
   suiteId: string;
   judge: CustomJudge;
-  /** Set while the draft would be refused, so the call is not wasted. */
   disabledReason?: string;
 }) {
   const trials = useQuery(listTrialsRef, { suiteId });

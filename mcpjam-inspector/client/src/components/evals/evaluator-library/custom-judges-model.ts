@@ -22,7 +22,6 @@ export function judgePromptVariables(names: readonly string[]): PromptVariable[]
   }));
 }
 
-/** Mirrors the backend's write-time checks, so a save is not refused later. */
 export function judgeProblem(
   judge: CustomJudge,
   others: readonly CustomJudge[],
@@ -58,7 +57,6 @@ export function judgeProblem(
   return undefined;
 }
 
-/** A lowercase id the backend accepts, unique among `taken`. */
 export function judgeIdFor(label: string, taken: readonly string[]): string {
   const base =
     label
@@ -80,11 +78,7 @@ export function blankJudge(taken: readonly string[]): CustomJudge {
   };
 }
 
-/**
- * An editable copy of a library judge. It replaces the library judge, so the
- * trial is not graded twice, and keeps a "based on" note instead of an
- * update offer.
- */
+/** Keep preset attribution on the editable copy. */
 export function customizedCopy(
   judge: CustomJudge,
   taken: readonly string[],
@@ -99,7 +93,6 @@ export function customizedCopy(
   };
 }
 
-/** The config with its judges list replaced; always keeps other slots. */
 export function withJudges(
   judgeConfig: EvalJudgeConfig | undefined,
   judges: readonly CustomJudge[],

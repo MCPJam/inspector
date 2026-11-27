@@ -26,7 +26,6 @@ import { CustomJudgePreview } from "./custom-judge-preview";
 import { PromptEditor } from "./prompt-editor";
 import { VariableMappingTable } from "./variable-mapping-table";
 
-/** Unmodified library judges appear in their evaluator's group. */
 export function CustomJudgesSection({
   judgeConfig,
   onJudgeConfigChange,
