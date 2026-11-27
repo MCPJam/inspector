@@ -41,7 +41,7 @@ export function UserMessageBubble({
         <span aria-hidden="true" className="shrink-0 text-muted-foreground">
           {terminal.prompt}
         </span>
-        <div className="min-w-0 flex-1">{children}</div>
+        <div className="min-w-0 flex-1 space-y-3">{children}</div>
       </div>
     );
   }
