@@ -182,12 +182,21 @@ describe("collecting from the agent's box", () => {
       bytes: 5,
       entries: [{ type: "file", path: "home/user/app/a.txt" }],
     });
-    const [command] = agent.run.mock.calls[0] as unknown as [string];
+    const [command, runOpts] = agent.run.mock.calls[0] as unknown as [
+      string,
+      { retainOutput?: boolean },
+    ];
     expect(command).toContain(`'home/user/app' 'home/user/it'\\''s here'`);
     expect(command).toContain("--files-from=");
     expect(command).not.toMatch(/ -h | --dereference/);
+    // A fresh, unguessable directory: no planted link at the archive path.
+    const dir = /mkdir (\/tmp\/mcpjam-files-[0-9a-f-]{36}) /.exec(command)?.[1];
+    expect(dir).toBeDefined();
+    expect(command).not.toContain("mkdir -p");
+    // Nothing the box prints is kept.
+    expect(runOpts.retainOutput).toBe(false);
     expect(agent.read).toHaveBeenCalledWith(
-      "/tmp/mcpjam/grading-files.tar",
+      `${dir}/files.tar`,
       expect.objectContaining({ format: "stream" }),
     );
   });
