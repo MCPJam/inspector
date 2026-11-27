@@ -378,17 +378,17 @@ describe("SidebarCredits", () => {
     expect(screen.queryByTestId("sidebar-usage-daily")).not.toBeInTheDocument();
   });
 
-  it("shows top-up credits only once regular credits run out", () => {
+  it("shows top-up credits while any remain, and hides them at zero", () => {
     balanceState = { ...balanceState!, paidCreditsRemaining: 988 };
     const { unmount } = renderCredits();
-    expect(screen.queryByTestId("sidebar-usage-topup")).not.toBeInTheDocument();
+    const topUps = screen.getByTestId("sidebar-usage-topup");
+    expect(topUps).toHaveTextContent("Top-up credits");
+    expect(topUps).toHaveTextContent("988 left");
     unmount();
 
-    balanceState = { ...balanceState!, freeDailyCreditsRemaining: 0 };
+    balanceState = { ...balanceState!, paidCreditsRemaining: 0 };
     renderCredits();
-    const topUps = screen.getByTestId("sidebar-usage-topup");
-    expect(topUps).toHaveTextContent("Using top-up credits");
-    expect(topUps).toHaveTextContent("988 left");
+    expect(screen.queryByTestId("sidebar-usage-topup")).not.toBeInTheDocument();
   });
 
   it("hides the eval iteration bar for an organization with no cap", () => {

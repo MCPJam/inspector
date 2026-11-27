@@ -171,11 +171,9 @@ export function SidebarCredits({
   }
 
   const creditMeter = meters[0];
-  // Top-ups have no total to draw a bar against, so they appear only once
-  // they are what's being spent.
+  // Same combined balance as Settings' "Top-up credits"; hidden at zero.
   const topUpRemaining = balance?.paidCreditsRemaining ?? 0;
-  const showTopUps =
-    !creditMeter.isLoading && creditMeter.remaining <= 0 && topUpRemaining > 0;
+  const showTopUps = !creditMeter.isLoading && topUpRemaining > 0;
   const isLowOnCredits =
     !creditMeter.isLoading &&
     creditMeter.total > 0 &&
@@ -210,7 +208,7 @@ export function SidebarCredits({
             side="right"
             align="end"
             sideOffset={8}
-            className="w-72 border-0 shadow-lg"
+            className="w-80 border-0 shadow-lg"
             data-testid="sidebar-credits-card"
           >
             <div className="flex flex-col gap-4">
@@ -238,7 +236,7 @@ export function SidebarCredits({
                     storageKey={`mcpjam:credits-last-seen:${organizationId}:${meter.testId}`}
                   />
                   {index === 0 && showTopUps ? (
-                    <TopUpCallout remaining={topUpRemaining} />
+                    <TopUpRow remaining={topUpRemaining} />
                   ) : null}
                 </Fragment>
               ))}
@@ -365,15 +363,15 @@ function UsageValue({ meter }: { meter: UsageMeter }) {
   );
 }
 
-function TopUpCallout({ remaining }: { remaining: number }) {
+// Top-ups have no total to draw a bar against, so the row shows only the count.
+function TopUpRow({ remaining }: { remaining: number }) {
   return (
     <div
-      className="-mt-1 flex items-center justify-between gap-2 rounded-md bg-primary/10 px-2.5 py-2"
+      className="flex items-baseline justify-between gap-3"
       data-testid="sidebar-usage-topup"
     >
-      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground">
-        <CoinStackIcon aria-hidden="true" className="size-3.5 text-primary" />
-        Using top-up credits
+      <span className="min-w-0 text-xs font-medium text-foreground">
+        Top-up credits
       </span>
       <span className="shrink-0 whitespace-nowrap tabular-nums">
         <span className="text-sm font-semibold text-foreground">
