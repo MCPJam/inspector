@@ -42,6 +42,7 @@ import {
   collectStepSpanIdsWithChildren,
   type TraceRevealSelection,
 } from "./trace-timeline";
+import { traceTurnEventsByPromptIndex } from "./trace-turn-event";
 import {
   RecordedTraceToolbar,
   type TimelineFilter,
@@ -509,6 +510,10 @@ export function TraceViewer({
   );
   const turnRuntimeByPromptIndex = useMemo(
     () => getTraceTurnRuntimeByPromptIndex(trace),
+    [trace]
+  );
+  const turnEventByPromptIndex = useMemo(
+    () => traceTurnEventsByPromptIndex(trace),
     [trace]
   );
   // PR 7: browser-rendered MCP App eval artifacts (render observations +
@@ -1100,6 +1105,7 @@ export function TraceViewer({
                   hasRecordedSpans ? timelineViewportMaxMs : undefined
                 }
                 turnRuntimeByPromptIndex={turnRuntimeByPromptIndex}
+                turnEventByPromptIndex={turnEventByPromptIndex}
                 fillContent={fillContent}
                 detailPlacement={traceDetailPlacement}
                 iterationCost={iterationCost}

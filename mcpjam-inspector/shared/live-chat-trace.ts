@@ -102,6 +102,35 @@ export type LiveChatTraceRequestPayloadEntry = {
   payload: ResolvedModelRequestPayload;
 };
 
+/** A turn an MCP event started: the event, and when the turn itself started. */
+export type LiveChatTraceTurnEvent = {
+  promptIndex: number;
+  turnStartedAtMs?: number;
+  event: EventAtTurn;
+};
+
+/** `turnEvents` for an envelope: each turn that carries an event, in prompt order. */
+export function liveChatTraceTurnEvents(
+  turns: ReadonlyArray<
+    | { promptIndex: number; startedAtMs?: number; event?: EventAtTurn }
+    | undefined
+  >,
+): LiveChatTraceTurnEvent[] {
+  const turnEvents: LiveChatTraceTurnEvent[] = [];
+  for (const turn of turns) {
+    if (!turn?.event) continue;
+    turnEvents.push({
+      promptIndex: turn.promptIndex,
+      ...(typeof turn.startedAtMs === "number" &&
+      Number.isFinite(turn.startedAtMs)
+        ? { turnStartedAtMs: turn.startedAtMs }
+        : {}),
+      event: turn.event,
+    });
+  }
+  return turnEvents.sort((left, right) => left.promptIndex - right.promptIndex);
+}
+
 export type LiveChatTraceEnvelope = EvalTraceBlobV1 & {
   /** Messages combine turns whose original segment boundaries can differ. */
   projectedMessages?: true;
@@ -109,6 +138,8 @@ export type LiveChatTraceEnvelope = EvalTraceBlobV1 & {
   actualToolCalls?: LiveChatTraceToolCall[];
   events?: LiveChatTraceEvent[];
   turns?: LiveChatTraceTurnSummary[];
+  /** The turns an MCP event started; absent when none did. */
+  turnEvents?: LiveChatTraceTurnEvent[];
   requestPayloads?: LiveChatTraceRequestPayloadEntry[];
   /**
    * Wall-clock bounds for the merged timeline (first turn_start through last span offset).
