@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   OPERATION_FEATURES,
@@ -92,18 +93,26 @@ describe("mock server operations", () => {
 
   it("update takes a whole definition or a patch, never both or neither", () => {
     const schema = updateMockServerOperation.inputSchema;
-    expect(schema.safeParse({ mock: "m", expectedVersion: 1 }).success).toBe(false);
-    expect(schema.safeParse({ mock: "m", expectedVersion: 1, patch: {}, definition: {} }).success).toBe(false);
-    expect(schema.safeParse({ mock: "m", expectedVersion: 1, definition: {} }).success).toBe(true);
+    expect(schema.safeParse({ mock: "markets (mock)", expectedVersion: 1 }).success).toBe(false);
+    expect(schema.safeParse({ mock: "markets (mock)", expectedVersion: 1, patch: {}, definition: {} }).success).toBe(false);
+    expect(schema.safeParse({ mock: "markets (mock)", expectedVersion: 1, definition: {} }).success).toBe(true);
   });
 
   it("get reads one version without a definition body", async () => {
-    const read = { ...SAVED, headVersion: 2, policy: { forwarding: "allow", scope: "workspace", updatedAt: null }, counts: { tools: 1, prompts: 0, resources: 0, resourceTemplates: 0 }, changedPaths: { paths: ["tools.a.hidden"], total: 1, truncated: false }, createdAt: 1 };
+    const read = { ...SAVED, view: "summary", headVersion: 2, policy: { forwarding: "allow", scope: "workspace", updatedAt: null }, counts: { changes: 1, tools: 1, prompts: 0, resources: 0, resourceTemplates: 0 }, changes: { items: [], page: { offset: 0, count: 0, total: 1, end: true } }, createdAt: 1 };
     const { client, lastUrl } = clientWith({ "GET /api/v1/projects/project-1/mock-servers/mock-1": read });
     const result = await run(getMockServerOperation, { mock: "markets (mock)", version: 1 }, client);
     expect(lastUrl().searchParams.get("version")).toBe("1");
-    expect(result).toMatchObject({ headVersion: 2, changedPaths: { total: 1 } });
+    expect(result).toMatchObject({ headVersion: 2, counts: { changes: 1 } });
     expect(result).not.toHaveProperty("definition");
+  });
+
+  it("get sends its selectors, with a path that has a dotted key as a JSON list", async () => {
+    const { client, lastUrl } = clientWith({ "GET /api/v1/projects/project-1/mock-servers/mock-1": { view: "value" } });
+    await run(getMockServerOperation, { mock: "markets (mock)", family: "tools", name: "t", path: "description", cursor: "c", limit: 5 }, client);
+    expect(Object.fromEntries(lastUrl().searchParams)).toEqual({ family: "tools", name: "t", path: "description", cursor: "c", limit: "5" });
+    await run(getMockServerOperation, { mock: "markets (mock)", family: "tools", name: "t", path: ["a.b", "c"] }, client);
+    expect(lastUrl().searchParams.get("path")).toBe('["a.b","c"]');
   });
 
   it("reads the workspace's policy, or a mock's", async () => {
@@ -129,5 +138,43 @@ describe("mock server operations", () => {
       expect(OPERATION_FEATURES[name]).toBeNull();
       expect(isOperationAvailable(name, {} as never)).toBe(true);
     }
+  });
+});
+
+// The REST route answers these bodies (its own test pins them); every surface
+// returns them unchanged, with the project the operation resolved.
+describe("results match the shared surface fixture", () => {
+  const fixture = JSON.parse(
+    readFileSync(new URL("../fixtures/mock-surfaces.json", import.meta.url), "utf8"),
+  ) as Record<string, any>;
+  const { project, base, mock } = fixture.ids as Record<string, string>;
+  const root = `/api/v1/projects/${project}/mock-servers`;
+
+  function stub() {
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = new URL(String(input));
+      const key = `${init?.method ?? "GET"} ${url.pathname}`;
+      if (key.endsWith("/projects")) return Response.json({ items: [{ ...PROJECT, id: project }] });
+      if (key.endsWith("/servers")) {
+        return Response.json({
+          items: [
+            { ...REAL, id: base, projectId: project },
+            { ...MOCK, id: mock, projectId: project },
+          ],
+        });
+      }
+      if (key === `POST ${root}`) return Response.json(fixture.created, { status: 201 });
+      if (key === `GET ${root}/${mock}`) return Response.json(url.searchParams.has("path") ? fixture.value : fixture.summary);
+      throw new Error(`unexpected ${key}`);
+    });
+    return new PlatformApiClient({ baseUrl: "https://api.test/api/v1", getAuth: () => "t", fetch: fetchMock as unknown as typeof fetch });
+  }
+  const withProject = (body: object) => ({ ...body, project: expect.objectContaining({ id: project }) });
+
+  it("create and read", async () => {
+    const client = stub();
+    expect(await run(createMockServerOperation, { name: "markets (mock)", server: "markets", definition: {} }, client)).toEqual(withProject(fixture.created));
+    expect(await run(getMockServerOperation, { mock: "markets (mock)" }, client)).toEqual(withProject(fixture.summary));
+    expect(await run(getMockServerOperation, { mock: "markets (mock)", family: "tools", name: "tool_001", path: "description" }, client)).toEqual(withProject(fixture.value));
   });
 });

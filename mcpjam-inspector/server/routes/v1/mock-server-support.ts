@@ -5,8 +5,8 @@
  * how a backend refusal becomes a public error.
  */
 import type { Tool } from "@modelcontextprotocol/server";
-import { checkSavedOutputs, validateMockDefinition, type MockDefinition, type MockIssue } from "@mcpjam/sdk/mocks";
-import type { PlatformMockChangedPaths, PlatformMockCounts } from "@mcpjam/sdk/platform";
+import { changeEntries, checkSavedOutputs, validateMockDefinition, type MockDefinition, type MockIssue } from "@mcpjam/sdk/mocks";
+import type { PlatformMockCounts } from "@mcpjam/sdk/platform";
 import { MOCK_SERVERS_FLAG } from "../../../shared/mock-address.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { convexErrorData, translateConvexWriteError } from "./convex-errors.js";
@@ -27,8 +27,6 @@ export type RealServerRead = {
 
 /** B1 refuses a saved listing over this many bytes. */
 const MAX_DISCOVERY_BYTES = 256 * 1024;
-/** The small read lists this many changed paths; `total` says how many there are. */
-const MAX_CHANGED_PATHS = 100;
 
 const isRecord = (value: unknown): value is Obj => typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -94,31 +92,12 @@ export function discoveryOf(real: RealServerRead): string | undefined {
 export function countsOf(definition: MockDefinition): PlatformMockCounts {
   const size = (map: object | undefined) => (map ? Object.keys(map).length : 0);
   return {
+    changes: changeEntries(definition).length,
     tools: size(definition.tools),
     prompts: size(definition.prompts),
     resources: size(definition.resources),
     resourceTemplates: size(definition.resourceTemplates),
   };
-}
-
-/** Fields whose contents are one value for a reader: a schema, a list or a block of metadata. */
-const ATOMIC = new Set(["inputSchema", "outputSchema", "_meta", "icons", "cases", "capabilities"]);
-const MAX_PATH_DEPTH = 5;
-
-/** The paths a definition states, as dotted paths, bounded; `total` counts them all. */
-export function changedPathsOf(definition: MockDefinition): PlatformMockChangedPaths {
-  const paths: string[] = [];
-  let total = 0;
-  const walk = (value: unknown, path: string, depth: number) => {
-    if (isRecord(value) && depth < MAX_PATH_DEPTH && !ATOMIC.has(path.split(".").at(-1) ?? "") && Object.keys(value).length > 0) {
-      for (const [key, inner] of Object.entries(value)) walk(inner, path ? `${path}.${key}` : key, depth + 1);
-      return;
-    }
-    total += 1;
-    if (paths.length < MAX_CHANGED_PATHS) paths.push(path);
-  };
-  walk(definition, "", 0);
-  return { paths, total, truncated: total > paths.length };
 }
 
 /** The backend's own mock codes, answered with the status each deserves. */

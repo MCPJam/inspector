@@ -26,3 +26,37 @@ export {
   finishCase,
   jsonEqual,
 } from "./saved-answers.js";
+export {
+  changeEntries,
+  diffMockDefinitions,
+  type ChangeEntry,
+  type MockChange,
+  type MockChangeKind,
+  type MockChangeTarget,
+  type MockFieldChange,
+} from "./change-list.js";
+export { mockPathOf } from "./change-kinds.js";
+export { MOCK_FAMILIES, type MockFamily } from "./read.js";
+export {
+  MockCursorError,
+  openMockCursor,
+  sealMockCursor,
+  type MockCursorBinding,
+  type MockCursorRefusal,
+  type MockCursorState,
+} from "./read-cursor.js";
+export {
+  MOCK_CHUNK_LIMIT,
+  MOCK_READ_LIMIT,
+  MOCK_TEXT_BUDGET,
+  chunkText,
+  fitPage,
+  readMockView,
+  readSelectorProblem,
+  textSize,
+  type MockListing,
+  type MockPage,
+  type MockPageHost,
+  type MockReadSelector,
+  type MockReadSource,
+} from "./read.js";
