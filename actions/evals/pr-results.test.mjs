@@ -168,7 +168,11 @@ for (const scenario of [
       invoke,
       (line) => logs.push(line),
       undefined,
-      fetchImpl
+      fetchImpl,
+      async (selector) => {
+        assert.equal(selector, "6");
+        return "6.4.1";
+      }
     );
     assert.equal(state.result, result);
     const summary = await readFile(env.GITHUB_STEP_SUMMARY, "utf8");
