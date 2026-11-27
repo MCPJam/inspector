@@ -59,6 +59,19 @@ const SOURCE_STRENGTH: readonly EvidenceSource[] = [
   "detected",
 ];
 
+/**
+ * The chip names what the evidence shows, not how MCPJam fetched it: a probe
+ * that reads a listing or a metadata document found a declaration.
+ */
+function presentSource(
+  channel: RuleEvidenceArgs["source"],
+  via: Extract<NonNullable<FeatureRuleOutcome>, { kind: "present" }>["via"],
+): EvidenceSource {
+  if (via === "detected") return "detected";
+  if (via === "advertised") return "declared";
+  return channel;
+}
+
 function emptyCounts(): Record<FeatureUserState, number> {
   return Object.fromEntries(
     FEATURE_USER_STATES.map((state) => [state, 0]),
@@ -127,10 +140,7 @@ function evidenceFromRule(args: RuleEvidenceArgs): FeatureEvidence | null {
     case "present":
       return {
         ...base,
-        source:
-          args.source === "declared" && outcome.via === "detected"
-            ? "detected"
-            : args.source,
+        source: presentSource(args.source, outcome.via),
         outcome: "present",
         coverage: "complete",
         detail: outcome.detail,
@@ -468,7 +478,10 @@ const PARENT_STATE_ORDER: readonly FeatureUserState[] = [
   "not-applicable",
 ];
 
-/** A parent without evidence of its own takes the strongest child state. */
+/**
+ * A parent without evidence of its own takes the strongest child state, and
+ * the sources of the children in that state, so its chip says what they say.
+ */
 function rollUpParent(
   own: FeatureAssessment,
   children: readonly FeatureAssessment[],
@@ -479,7 +492,14 @@ function rollUpParent(
       children.some((child) => child.state === candidate),
     ) ?? own.state;
   if (state === own.state) return own;
-  return { ...own, state, reason: undefined, nextAction: undefined };
+  const rolled = { ...own, state, reason: undefined, nextAction: undefined };
+  if (state !== "supported") return rolled;
+  const sources = SOURCE_STRENGTH.filter((source) =>
+    children.some(
+      (child) => child.state === "supported" && child.sources.includes(source),
+    ),
+  );
+  return { ...rolled, sources };
 }
 
 export function evaluateServerFeatures(

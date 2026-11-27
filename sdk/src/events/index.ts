@@ -54,6 +54,7 @@ export {
   createRpcLogRedactor,
 } from "../mcp-client-manager/rpc-log-redaction.js";
 export * from "./identity.js";
+export * from "./receiver.js";
 export * from "./profiles.js";
 export * from "./standard-webhooks.js";
 export * from "./types.js";

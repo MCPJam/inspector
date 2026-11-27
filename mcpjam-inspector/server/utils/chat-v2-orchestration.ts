@@ -70,6 +70,11 @@ import {
 } from "@/shared/client-fulfilled-tools";
 import { needsApprovalFor } from "@/shared/tool-approval";
 import {
+  buildEventAgentToolDefinitions,
+  eventToolCallNeedsApproval,
+  type EventToolsSnapshot,
+} from "@/shared/event-agent-tools";
+import {
   WIDGET_MODEL_CONTEXT_MAX_CONTENT_BLOCKS,
   WIDGET_MODEL_CONTEXT_MAX_ENTRIES,
   WIDGET_MODEL_CONTEXT_MAX_JSON_BYTES,
@@ -739,6 +744,7 @@ export interface PrepareChatV2Options {
    * Cursor template to mirror hosts that don't yet implement visibility.
    */
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   /**
    * MCP tool names this surface refuses to advertise, whichever server offers
    * them. Applied right after the visibility filter, so it only ever removes
@@ -792,6 +798,11 @@ export interface PrepareChatV2Options {
    * two above, these run code on a third-party site.
    */
   pageTools?: PageToolEntry[];
+  /**
+   * MCP Events agent tools (`mcpjam_subscribe_to_event`, …), client-fulfilled:
+   * the Playground runs each call through its "Connect event" path.
+   */
+  eventTools?: EventToolsSnapshot;
   /** Server-side built-in tools (e.g. web_search) with their own execute. */
   builtInTools?: ToolSet;
   /**
@@ -1285,6 +1296,7 @@ export async function prepareChatV2(
     appTools,
     uiTools,
     pageTools,
+    eventTools,
     builtInTools,
     pageToolsMayGrow,
     skills,
@@ -1547,6 +1559,29 @@ export async function prepareChatV2(
     pageTools,
     requireToolApproval === true,
   );
+  // MCP Events agent tools — client-fulfilled under fixed MCPJam names. No
+  // approval floor (ChatGPT shows no approval card), but the tools that change a
+  // watch follow the user's Require tool approval switch. A harness turn
+  // has no browser to fulfil them. On an exact collision the server's own
+  // tool wins, as for `ui_*`.
+  const eventToolEntries: ToolSet = {};
+  for (const definition of eventTools && !harness
+    ? buildEventAgentToolDefinitions(eventTools)
+    : []) {
+    if (Object.prototype.hasOwnProperty.call(mcpTools, definition.name)) {
+      logger.warn(
+        `[chat-v2] MCP server tool '${definition.name}' collides with the MCPJam Events tool of the same name; keeping the server tool`,
+      );
+      continue;
+    }
+    eventToolEntries[definition.name] = toNoExecuteAiSdkTool({
+      ...definition,
+      needsApproval: eventToolCallNeedsApproval(
+        definition.name,
+        requireToolApproval === true,
+      ),
+    });
+  }
   // COPIED, because the page-tool policy below removes entries from it and the
   // caller's object is the resolver's own return value.
   const builtInToolEntries: ToolSet = { ...(builtInTools ?? {}) };
@@ -1592,6 +1627,7 @@ export async function prepareChatV2(
     Object.prototype.hasOwnProperty.call(appToolEntries, name) ||
     Object.prototype.hasOwnProperty.call(uiToolEntries, name) ||
     Object.prototype.hasOwnProperty.call(pageToolEntries, name) ||
+    Object.prototype.hasOwnProperty.call(eventToolEntries, name) ||
     Object.prototype.hasOwnProperty.call(finalSkillTools, name);
   const advertisedPageToolNames: string[] = [];
   for (const name of Object.keys(builtInToolEntries)) {
@@ -1629,6 +1665,7 @@ export async function prepareChatV2(
       Object.prototype.hasOwnProperty.call(appToolEntries, name) ||
       Object.prototype.hasOwnProperty.call(uiToolEntries, name) ||
       Object.prototype.hasOwnProperty.call(pageToolEntries, name) ||
+      Object.prototype.hasOwnProperty.call(eventToolEntries, name) ||
       Object.prototype.hasOwnProperty.call(finalSkillTools, name)
     ) {
       throw new Error(
@@ -1664,6 +1701,7 @@ export async function prepareChatV2(
     ...appToolEntries,
     ...uiToolEntries,
     ...pageToolEntries,
+    ...eventToolEntries,
     ...finalSkillTools,
     ...builtInToolEntries,
   } as ToolSet);
@@ -1692,9 +1730,12 @@ export async function prepareChatV2(
   // the model has already left — and a model told to SEARCH for the tools of
   // the page it is looking at has been given a puzzle instead of a capability.
   const catalogSource: ToolSet = { ...realTools };
+  // The Events agent tools are exempt for the `ui_*` reason: a small
+  // first-party control surface the model must see to subscribe at all.
   for (const name of [
     ...Object.keys(uiToolEntries),
     ...Object.keys(pageToolEntries),
+    ...Object.keys(eventToolEntries),
     ...advertisedPageToolNames,
   ]) {
     delete catalogSource[name];
@@ -1722,7 +1763,7 @@ export async function prepareChatV2(
     modelContextLength: modelDefinition.contextLength,
     options: harness
       ? { ...(options.progressiveToolDiscovery ?? {}), enabled: false }
-      : options.progressiveToolDiscovery,
+      : { ...options.progressiveToolDiscovery, runUnloadedToolCalls: options.runUnloadedToolCalls },
     envOverride,
   });
 

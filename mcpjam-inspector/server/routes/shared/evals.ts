@@ -1,4 +1,5 @@
 import { localHarnessIdOf, shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
+import { freezeEvalRunWebAccounts } from "../../services/web-clients/web-client-run.js";
 import { localHarnessCapabilities } from "../../services/evals/runner-capabilities.js";
 import { casesAssertingWidgetRender, failRunBeforeExecution } from "../../services/evals/harness-admission.js";
 import { singleCaseHarnessBoxRefusal } from "../../services/evals/needs-ephemeral-sandbox.js";
@@ -141,6 +142,11 @@ import {
   casePredicatesSchema,
   type MatchOptionsDTO,
 } from "@/shared/eval-matching";
+import {
+  bearerNow,
+  followBearer,
+  type RunBearer,
+} from "../../utils/run-bearer.js";
 
 const toolChoiceSchema = z.union([
   z.enum(["auto", "none", "required"]),
@@ -642,7 +648,9 @@ export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
  * API callers cannot spoof run provenance. The pairing rule lives in
  * {@link EvalRunProvenance} beside the mutation call that has to honour it.
  */
-type RunEvalsWithManagerRequest = RunEvalsRequest & {
+type RunEvalsWithManagerRequest = Omit<RunEvalsRequest, "convexAuthToken"> & {
+  /** A scheduled run's job token renews while it runs (`run-bearer.ts`). */
+  convexAuthToken: RunBearer;
   runtimeVenue?: "local" | "hosted";
   /** Already resolved by the public inline-suite boundary. */
   hostAttachments?: Array<{
@@ -958,7 +966,7 @@ type RunTestCaseWithManagerRequest = RunTestCaseRequest & {
 export const MAX_TOTAL_LLM_CALLS = 300;
 
 export function assertSuiteRunWithinCap(
-  request: RunEvalsRequest,
+  request: Omit<RunEvalsRequest, "convexAuthToken">,
   configCount = 1,
 ) {
   const override = request.iterationOverride;
@@ -1312,7 +1320,7 @@ function buildRuntimeEnvironmentWithBindings(args: {
   };
 }
 
-export function createConvexClients(convexAuthToken: string) {
+export function createConvexClients(convexAuthToken: RunBearer) {
   const convexUrl = process.env.CONVEX_URL;
   if (!convexUrl) {
     throw new Error("CONVEX_URL is not set");
@@ -1326,7 +1334,7 @@ export function createConvexClients(convexAuthToken: string) {
   const convexClient = new ConvexHttpClient(convexUrl, {
     fetch: convexReadFetch,
   });
-  convexClient.setAuth(convexAuthToken);
+  followBearer(convexAuthToken, (token) => convexClient.setAuth(token));
 
   return { convexClient, convexHttpUrl };
 }
@@ -2566,7 +2574,7 @@ export async function prepareEvalRun(
   // Unattended: an eval runs with nobody to approve anything, so a harness is
   // local only where its unattended evidence (Codex: its command sandbox) holds.
   let localAvailable = environmentHostConfig && venueProjectId
-    ? await shouldUseLocalHarness(harnessOfHostConfig(environmentHostConfig), convexAuthToken, venueProjectId, { scope: "unattended" })
+    ? await shouldUseLocalHarness(harnessOfHostConfig(environmentHostConfig), bearerNow(convexAuthToken), venueProjectId, { scope: "unattended" })
     : false;
   const requestedVenue = localAvailable ? "local" as const : "hosted" as const;
   // The ONE harness this launch will run locally, declared to the backend so
@@ -2730,7 +2738,7 @@ export async function prepareEvalRun(
     convexClient, resolvedSuiteId, environmentLaunch?.hostId ?? namedHostId,
   );
   if (!environmentId && venueProjectId) {
-    localAvailable = await shouldUseLocalHarness(harnessOfHostConfig(launchHostConfig), convexAuthToken, venueProjectId, { scope: "unattended" });
+    localAvailable = await shouldUseLocalHarness(harnessOfHostConfig(launchHostConfig), bearerNow(convexAuthToken), venueProjectId, { scope: "unattended" });
   }
   const launchVenue = localAvailable ? "local" as const : "hosted" as const;
   const launchLocalHarness = localAvailable
@@ -3008,6 +3016,13 @@ export async function prepareEvalRun(
       { reason: "HARNESS_UNAVAILABLE", harness: harnessAdmission.harness },
     );
   }
+  // A web client's run freezes the web accounts it runs on, before any turn.
+  await freezeEvalRunWebAccounts({
+    convexClient,
+    runId,
+    harness: harnessAdmission.harness,
+    failRun: (reason) => failRunBeforeExecution(convexClient, recorder, runId, { reason }),
+  });
   // A NATIVE-delivery harness makes its MCP calls out of process, so the policy
   // is enforced at the MCP proxy the generated `.mcp.json` points at — sealed
   // into the proxy token, so dropping the policy drops the credential. Refused
@@ -3074,7 +3089,11 @@ export async function prepareEvalRun(
   );
   if (replayConfigsToStore.length > 0) {
     try {
-      await storeReplayConfig(runId, replayConfigsToStore, convexAuthToken);
+      await storeReplayConfig(
+        runId,
+        replayConfigsToStore,
+        bearerNow(convexAuthToken),
+      );
     } catch (error) {
       logger.warn("[evals] Failed to store replay config for suite run", {
         runId,
@@ -3105,7 +3124,7 @@ export async function prepareEvalRun(
     if (orgConfigTarget) {
       try {
         const orgConfig = await resolveOrgModelConfig(orgConfigTarget, {
-          bearerToken: convexAuthToken,
+          bearerToken: bearerNow(convexAuthToken),
           scenarioId,
           accessVersion,
           serverIds: resolvedServerIds,

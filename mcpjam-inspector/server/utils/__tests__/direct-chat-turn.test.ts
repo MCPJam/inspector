@@ -326,7 +326,7 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
     expect(Array.isArray((await prepareStepReturn).activeTools)).toBe(true);
   });
 
-  it("forces the initial progressive-discovery step to search tools", async () => {
+  it("allows eligible unloaded calls without forcing an initial search", async () => {
     let prepareStepReturn: any;
     streamTextMock.mockImplementationOnce((options: any) => {
       prepareStepReturn = options.prepareStep({ stepNumber: 0 });
@@ -380,9 +380,9 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
         "search_mcp_tools",
         "load_mcp_tools",
       ]),
-      toolChoice: { type: "tool", toolName: "search_mcp_tools" },
     });
-    expect((await prepareStepReturn).activeTools).not.toContain("show_squad");
+    expect(await prepareStepReturn).not.toHaveProperty("toolChoice");
+    expect((await prepareStepReturn).activeTools).toContain("show_squad");
   });
 
   it("preserves explicit toolChoice instead of forcing initial progressive search", async () => {

@@ -99,6 +99,46 @@ function getClient(forFeatureFlags = false): PostHog | null {
   return client;
 }
 
+let batchedClient: PostHog | null = null;
+
+/**
+ * For high-volume events, such as one per Platform API request, where an
+ * event lost at process exit costs a data point, not a decision. The default
+ * client flushes each event on its own POST.
+ */
+function getBatchedClient(): PostHog | null {
+  if (isAnalyticsDisabled()) return null;
+  if (!batchedClient) {
+    batchedClient = new PostHog(POSTHOG_PROJECT_KEY, {
+      host: POSTHOG_HOST,
+      disableCompression: true,
+      enableExceptionAutocapture: false,
+      fetch: analyticsTransport(
+        POSTHOG_HOST,
+        POSTHOG_PROJECT_KEY,
+        isAnalyticsDisabled,
+      ),
+      flushAt: 20,
+      flushInterval: 5000,
+    });
+  }
+  return batchedClient;
+}
+
+/**
+ * API-key and AuthKit bearer callers never pass the Convex authorize exchange
+ * that fills `userExternalId`; the WorkOS user id from bearer auth IS the
+ * actorKey the identity contract requires. Call before `captureServerEvent`
+ * on a `/v1` route.
+ */
+export function fillAnalyticsActorFromBearer(c: Context): void {
+  const ctx = c.var.requestLogContext as RequestLogContext | undefined;
+  const workosUserId = c.get("workosUserId");
+  if (ctx && !ctx.userExternalId && workosUserId) {
+    c.set("requestLogContext", { ...ctx, userExternalId: workosUserId });
+  }
+}
+
 /**
  * Capture a server-authoritative event for the actor behind a request.
  * Never throws; silently drops when analytics is disabled or the request
@@ -152,9 +192,10 @@ export function captureServerEventForActor(
   actor: ServerAnalyticsActor,
   event: ServerAnalyticsEventName,
   properties: Record<string, unknown> = {},
+  options: { batched?: boolean } = {},
 ): void {
   try {
-    const posthog = getClient();
+    const posthog = options.batched ? getBatchedClient() : getClient();
     if (!posthog) return;
     posthog.capture({
       event,
@@ -289,11 +330,18 @@ export async function evaluateClientFeatureFlags(
 }
 
 export async function shutdownAnalytics(): Promise<void> {
-  if (!client) return;
-  try {
-    await client.shutdown(2000);
-  } catch {
-    // Losing a final flush beats hanging shutdown.
-  }
+  const clients = [client, batchedClient].filter(
+    (c): c is PostHog => c !== null,
+  );
   client = null;
+  batchedClient = null;
+  await Promise.all(
+    clients.map(async (c) => {
+      try {
+        await c.shutdown(2000);
+      } catch {
+        // Losing a final flush beats hanging shutdown.
+      }
+    }),
+  );
 }

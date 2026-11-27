@@ -98,7 +98,7 @@ function listContains(
   if (found.length > 0) {
     return {
       kind: "present",
-      via: "probed",
+      via: "advertised",
       detail: `${field} lists ${found.join(", ")}`,
     };
   }

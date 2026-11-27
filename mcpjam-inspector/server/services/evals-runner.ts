@@ -18,6 +18,7 @@ import { modelWorkloadFor } from "../utils/model-workload.js";
 import { listBaseServers } from "../utils/mcp-connections.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { isCreditExhaustion } from "../../shared/credit-exhaustion.js";
+import { NATIVE_HARNESS_TRIAL_EXHAUSTED_CODE } from "../../shared/native-harness-trial.js";
 import { providerErrorDetails } from "./evals/provider-error-details.js";
 import { redactSecretShapes } from "../../shared/secret-shape-redaction.js";
 import { EVAL_SANDBOX_CAPACITY_POLICY } from "../utils/run-supervisor/capacity-retry.js";
@@ -65,6 +66,7 @@ import {
   singleCaseHarnessBoxRefusal,
 } from "./evals/needs-ephemeral-sandbox";
 import { createStepExecutionState, executeSteps } from "./evals/step-executor";
+import { caseConcurrencyForRun } from "./evals/run-sandbox-slots";
 import { classifyEvalInfraError } from "./evals/infra-error-classification";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
 import {
@@ -99,6 +101,12 @@ import {
   harnessOfHostConfig,
   isModelFreeCase,
 } from "./evals/harness-admission.js";
+import { isWebClientRuntimeId } from "@/shared/web-clients";
+import {
+  WEB_CLIENT_RUN_UNREAD,
+  webClientRunOfEvalRun,
+  type WebClientRunContext,
+} from "./web-clients/web-client-run.js";
 import {
   readTasksPolicy,
   type MCPClientManager,
@@ -307,6 +315,14 @@ import type {
   EvalStreamEvent,
   EvalStreamToolCall,
 } from "@/shared/eval-stream-events";
+import {
+  bearerForCleanup,
+  bearerNow,
+  bearerTurnAuthorization,
+  isBearerRefusal,
+  type RunBearer,
+} from "../utils/run-bearer.js";
+import type { RunAssistantTurnAuthContext } from "../utils/assistant-turn.js";
 
 /**
  * Max render-check (`widget_probe`) cases that may execute at once. Each one
@@ -627,7 +643,7 @@ export type RunEvalSuiteOptions = {
   orgModelConfigTarget?: ResolveOrgModelConfigTarget;
   convexClient: ConvexHttpClient;
   convexHttpUrl: string;
-  convexAuthToken: string;
+  convexAuthToken: RunBearer;
   mcpClientManager: MCPClientManager;
   recorder?: SuiteRunRecorder | null;
   testCaseId?: string; // For quick runs, associate iterations with a specific test case
@@ -699,12 +715,20 @@ export type RunEvalSuiteOptions = {
   benchmarkWriteGuard?: BenchmarkWriteGuard;
 };
 
+const CREDITS_EXHAUSTED_NOTE =
+  "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews.";
+
+/** Shared across a run's cases: once set, their untouched iterations are skipped with `note`. */
+type RunStop = { exhausted: boolean; note?: string };
+
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
 export type EvalIterationOutcome = {
   evaluation: EvaluationResult;
   iterationId?: string;
   policyBlockCount?: number;
   creditsExhausted?: boolean;
+  /** The setup refusal, when the organization's native harness trial is used up. */
+  nativeHarnessTrialRefusal?: string;
   /**
    * OUR infrastructure failed this trial. The run summary leaves it out of
    * `total`/`passed`/`failed`, as the backend's legacy header does.
@@ -2024,8 +2048,9 @@ export function describeModelRefusalForIteration(
 }
 
 /**
- * Record a case's model refusal on its pre-created rows. The case never
- * reached a model, so each row finalizes `setup_failed` (the verdict is
+ * Record a case's refusal on its pre-created rows: a refused model selection,
+ * an unreadable client profile, or a job token the backend stopped renewing.
+ * Those rows never ran, so each finalizes `setup_failed` (the verdict is
  * withheld, never a server failure) with the refusal as its error. Only the
  * refused case's PENDING rows are touched; a row another worker already
  * claimed is left alone.
@@ -2035,7 +2060,7 @@ async function persistCaseRefusal(args: {
   convexClient: ConvexHttpClient;
   recorder: SuiteRunRecorder | null;
   test: EvalTestCase;
-  refusal: ModelResolutionRefusalError | InvalidClientProfileError;
+  refusal: Error;
   runStartedAt: number;
 }): Promise<void> {
   if (!args.test.testCaseId) return;
@@ -2207,7 +2232,7 @@ async function finalizeIterationWithBrowserArtifacts(args: {
   recorder: SuiteRunRecorder | null;
   convexClient: ConvexHttpClient;
   /** The bearer `convexClient` writes with; the evidence uploads use it too. */
-  convexAuthToken: string;
+  convexAuthToken: RunBearer;
   finishParams: Omit<
     EvalIterationFinishParams,
     "videoBytes" | "videoMime" | "videoMeta"
@@ -2243,7 +2268,7 @@ async function finalizeIterationWithBrowserArtifacts(args: {
       convexClient: args.convexClient,
       finishParams: {
         ...args.finishParams,
-        convexAuthToken: args.convexAuthToken,
+        convexAuthToken: bearerForCleanup(args.convexAuthToken),
       },
     },
   });
@@ -2381,7 +2406,7 @@ type RunIterationBaseParams = {
   projectEnvironmentUnresolvedReason?: string;
   /** Run caller's Convex bearer — used to provision/release the reproducible
    * eval sandbox when the suite pins a computerEnvironment. */
-  convexAuthToken: string;
+  convexAuthToken: RunBearer;
   /**
    * The run's frozen skills (see {@link RunEvalSuiteOptions.pinnedSkillSource}).
    * Eval runs NEVER use local-FS skills (decision 10): absent means none.
@@ -2423,7 +2448,7 @@ type EvalOrgLocalUsageContext = {
 type RunIterationBackendParams = RunIterationBaseParams & {
   harnessExecutionTarget?: LocalHarnessExecutionTarget;
   convexHttpUrl: string;
-  convexAuthToken: string;
+  convexAuthToken: RunBearer;
   modelId: string;
   /** Resolved model definition, fed to `prepareChatV2`. */
   modelDefinition: ModelDefinition;
@@ -2675,7 +2700,7 @@ function postEvalOrgLocalUsage(args: {
   effectiveSettings: EffectiveModelSettings;
   iterationId: string | undefined;
   runId: string | null;
-  convexAuthToken: string | undefined;
+  convexAuthToken: RunBearer | undefined;
   selectedServers: string[];
 }): Promise<Record<string, ModelCallCostEvidence> | undefined> | undefined {
   const { context, event } = args;
@@ -2700,8 +2725,10 @@ function postEvalOrgLocalUsage(args: {
     ...(event.calls ? { calls: event.calls } : {}),
     ...(event.finishReason ? { finishReason: event.finishReason } : {}),
     sourceType: "eval",
+    // Records a model call that already happened, so after a refused renewal
+    // it still goes out with the last token issued rather than throwing here.
     ...(args.convexAuthToken
-      ? { authHeader: `Bearer ${args.convexAuthToken}` }
+      ? { authHeader: `Bearer ${bearerForCleanup(args.convexAuthToken)}` }
       : {}),
     ...(args.selectedServers.length ? { serverIds: args.selectedServers } : {}),
     ...(args.iterationId ? { evalIterationId: String(args.iterationId) } : {}),
@@ -2723,7 +2750,7 @@ async function resolveOrgByokEvalRuntime(args: {
   modelApiKeys?: Record<string, string>;
   orgModelConfig?: ResolvedOrgModelConfig;
   orgModelConfigTarget?: ResolveOrgModelConfigTarget;
-  convexAuthToken: string;
+  convexAuthToken: RunBearer;
   /**
    * An explicit `org` selection: the org connection is the choice, so keys the
    * request happens to carry do not divert it onto the local path.
@@ -2775,7 +2802,7 @@ async function resolveOrgByokEvalRuntime(args: {
     target,
     providerKey,
     String(args.modelDefinition.id),
-    { bearerToken: args.convexAuthToken },
+    { bearerToken: bearerNow(args.convexAuthToken) },
     args.modelSelection ? { modelSelection: args.modelSelection } : undefined,
   );
   if (runtime.runtimeLocation === "cloud") {
@@ -2824,7 +2851,7 @@ const runHostedIteration = async (
       // local harness has its own runtime, authorization and grant, and a
       // target minted for one is never valid for another.
       const resources = await prepareLocalHarnessRun({
-        bearer: params.convexAuthToken,
+        bearer: bearerNow(params.convexAuthToken),
         projectId: project.projectId,
         harnessId: localHarnessIdOf(harnessOfHostConfig(params.suiteHostConfig)) ?? "claude-code",
       });
@@ -3135,7 +3162,7 @@ const executeTestCase = async (params: {
   orgModelConfig?: ResolvedOrgModelConfig;
   orgModelConfigTarget?: ResolveOrgModelConfigTarget;
   convexHttpUrl: string;
-  convexAuthToken: string;
+  convexAuthToken: RunBearer;
   convexClient: ConvexHttpClient;
   testCaseId?: string;
   suiteId?: string;
@@ -3143,7 +3170,7 @@ const executeTestCase = async (params: {
   abortSignal?: AbortSignal;
   /** Lifecycle abort hook: an iteration timeout aborts the whole run through it. */
   abortRun?: (error: EvalRunStoppedError) => void;
-  creditStop?: { exhausted: boolean };
+  creditStop?: RunStop;
   compareRunId?: string;
   /**
    * See {@link RunEvalSuiteOptions.committedQuickRunIterationIds}. When set,
@@ -3318,6 +3345,18 @@ const executeTestCase = async (params: {
           event: "evals.credits_exhausted",
           iterationId: startedIterationId,
         });
+      }
+      // The trial is per organization: every later iteration would be refused.
+      if (outcome.nativeHarnessTrialRefusal && !creditStop.exhausted) {
+        creditStop.exhausted = true;
+        creditStop.note = `${outcome.nativeHarnessTrialRefusal} Completed results are saved; remaining iterations were skipped.`;
+        logger.info(
+          "[evals] native harness trial used up; remaining iterations skipped",
+          {
+            event: "evals.native_harness_trial_exhausted",
+            iterationId: startedIterationId,
+          },
+        );
       }
       return outcome;
     };
@@ -3750,8 +3789,7 @@ const executeTestCase = async (params: {
           result: "failed",
           actualToolCalls: [],
           tokensUsed: 0,
-          error:
-            "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews.",
+          error: creditStop.note ?? CREDITS_EXHAUSTED_NOTE,
         });
       }
       continue;
@@ -4066,10 +4104,6 @@ export const runEvalSuiteWithAiSdk = async ({
   benchmarkWriteGuard,
   extraHeaders,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
-  const harnessRuntimeVenue = requestedHarnessRuntimeVenue ??
-    (await shouldUseLocalHarness(harnessOfHostConfig(suiteHostConfig), convexAuthToken,
-      orgModelConfigTarget && "projectId" in orgModelConfigTarget ? orgModelConfigTarget.projectId : undefined,
-      { scope: "unattended" }) ? "local" : "hosted");
   // One resolution for the whole run. When the launch response carried frozen
   // budgets we consume them verbatim — they are the decision, already made,
   // against the platform ceilings; org ceilings apply once the backend
@@ -4169,6 +4203,12 @@ export const runEvalSuiteWithAiSdk = async ({
   let resolvedToolPolicyWarnings: string[] | undefined;
 
   try {
+    // Inside the setup `try`: reading a job token whose renewal was refused
+    // throws, and the catch below is what marks the precreated rows failed.
+    const harnessRuntimeVenue = requestedHarnessRuntimeVenue ??
+      (await shouldUseLocalHarness(harnessOfHostConfig(suiteHostConfig), bearerNow(convexAuthToken),
+        orgModelConfigTarget && "projectId" in orgModelConfigTarget ? orgModelConfigTarget.projectId : undefined,
+        { scope: "unattended" }) ? "local" : "hosted");
     toolDescriptionOverride = readToolDescriptionOverrideMarker(
       toolDescriptionOverrideRaw,
     );
@@ -4352,7 +4392,7 @@ export const runEvalSuiteWithAiSdk = async ({
         modelIdentifiers,
       });
     }
-    const creditStop = { exhausted: false };
+    const creditStop: RunStop = { exhausted: false };
     const runOne = (test: (typeof tests)[number]) =>
       runTestCase({
         test,
@@ -4413,6 +4453,22 @@ export const runEvalSuiteWithAiSdk = async ({
         ...(evalTasksSeam ? { tasks: evalTasksSeam } : {}),
         ...(extraHeaders ? { extraHeaders } : {}),
       });
+    // A web client's account runs one turn per server at a time (a second
+    // is refused as turn_running), so its cases take turns. Otherwise cases
+    // that boot boxes wait for one of the run's box slots before their first
+    // iteration (and its clock) starts; see `run-sandbox-slots.ts`.
+    const sandboxSlots = caseConcurrencyForRun({
+      suiteHostConfig,
+      environment: config.environment,
+      runId,
+    });
+    const caseLimit = isWebClientRuntimeId(
+      harnessOfHostConfig(suiteHostConfig),
+    )
+      ? createConcurrencyLimiter(1)
+      : sandboxSlots
+        ? createConcurrencyLimiter(sandboxSlots)
+        : undefined;
     const testPromises = tests.map((test) =>
       // Cap concurrent headless browsers for every model-free render check
       // (legacy widget_probe OR a unified case whose turns are all pinned),
@@ -4423,7 +4479,9 @@ export const runEvalSuiteWithAiSdk = async ({
         promptTurns: resolveEvalTestCase(test).promptTurns,
       })
         ? renderCheckLimit(() => runOne(test))
-        : runOne(test),
+        : caseLimit
+          ? caseLimit(() => runOne(test))
+          : runOne(test),
     );
 
     // Poll the run status: user cancellation, or a `timed_out` status set
@@ -4634,6 +4692,11 @@ export const runEvalSuiteWithAiSdk = async ({
             code: result.reason.code,
             message: result.reason.message,
           });
+        } else if (isBearerRefusal(result.reason)) {
+          // The backend ending the job (owner gone, lease lost), not a fault.
+          logger.warn("[evals] Test case stopped by a refused job token:", {
+            message: result.reason.message,
+          });
         } else {
           logger.error("[evals] Test case failed:", result.reason);
         }
@@ -4641,14 +4704,17 @@ export const runEvalSuiteWithAiSdk = async ({
         summary.total += 1;
         summary.failed += 1;
         // A refused model selection or an unreadable client profile never
-        // started an iteration, so without this its pre-created rows would say
-        // nothing about why: the reason goes on each of that case's pending rows.
+        // started an iteration, and a refused job token stops the case's loop
+        // with its later rows unstarted. Without this, those pre-created rows
+        // stay `pending` and say nothing about why: the reason goes on each of
+        // that case's pending rows.
         const refusedTest = tests[resultIndex];
         if (
           runId !== null &&
           refusedTest &&
           (result.reason instanceof ModelResolutionRefusalError ||
-            result.reason instanceof InvalidClientProfileError)
+            result.reason instanceof InvalidClientProfileError ||
+            isBearerRefusal(result.reason))
         ) {
           try {
             await persistCaseRefusal({
@@ -4682,10 +4748,7 @@ export const runEvalSuiteWithAiSdk = async ({
       await recorder.finalize({
         status: creditStop.exhausted ? "failed" : "completed",
         ...(creditStop.exhausted
-          ? {
-              notes:
-                "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews.",
-            }
+          ? { notes: creditStop.note ?? CREDITS_EXHAUSTED_NOTE }
           : {}),
         summary: {
           total: summary.total,
@@ -5188,6 +5251,23 @@ const runLocalIteration = async ({
   // Maps account-routed calls back to the server's tools. Declared out here
   // because the catch below records a failed turn's calls too.
   let accountRouting: AccountRouting | undefined;
+  // A pinned-only case (render check) with no authored predicates defaults to
+  // "the widget rendered" — the model-free equivalent of the legacy probe
+  // verdict. Mirrors the former runIterationWithAiSdk post-loop. Out here so
+  // the failure path declares the same checks.
+  const effectivePredicates = test.successPredicates?.length
+    ? test.successPredicates
+    : isPinnedOnly({ caseType: test.caseType, promptTurns })
+      ? ([{ type: "widgetRendered" }] as NonNullable<
+          typeof test.successPredicates
+        >)
+      : undefined;
+  // The checks' results once the verdict has measured them. Out here so a
+  // failure after that (finalization included) reports them as measured.
+  let measuredPredicateResults: PredicateResult[] | undefined;
+  // Failed interact / widget-DOM-assert steps. Out here so a failure after
+  // they were recorded still reports them on the `platform:widgetCheck` row.
+  let stepScriptedFailures: { toolName: string; reason: string }[] = [];
 
   try {
     // See `runIterationWithAiSdk`: adopt the chat-side pipeline inside the try
@@ -5219,6 +5299,7 @@ const runLocalIteration = async ({
           resolvedExecution.requireToolApproval,
         ),
         respectToolVisibility: hostPolicy?.respectToolVisibility,
+        runUnloadedToolCalls: resolvedExecution.runUnloadedToolCalls,
         modelVisibleMcpToolResults: hostPolicy?.modelVisibleMcpToolResults,
         ...(resolvedExecution.harness
           ? { harness: resolvedExecution.harness }
@@ -5315,7 +5396,7 @@ const runLocalIteration = async ({
         const capacityStartedAt = Date.now();
         evalSandbox = await provisionEvalSandbox({
           timeoutMs: capacityBudgetMs,
-          bearer: convexAuthToken,
+          bearer: bearerNow(convexAuthToken),
           runId: String(runId),
           ...(iterationId ? { iterationId: String(iterationId) } : {}),
           ...(abortSignal ? { signal: abortSignal } : {}),
@@ -5346,7 +5427,7 @@ const runLocalIteration = async ({
         // This path is TERMINAL-only (see the comment on the branch), so the
         // reader is always the `bash` tool injected on the next line.
         attachmentsNote = await seedAndAnnotateEvalAttachments({
-          bearer: convexAuthToken,
+          bearer: bearerNow(convexAuthToken),
           runId: String(runId),
           // The EFFECTIVE id. Today the fallback is unreachable here — the
           // outer `testCaseId` is the quick/single-case surface, which passes
@@ -5509,9 +5590,9 @@ const runLocalIteration = async ({
     // (the clean per-step contract the public /steps API projects).
     let stepResults: unknown[] = [];
     // §2: failed interact / widget-DOM-assert steps recorded in StepExecutionState
-    // (not in browser.scriptedCheckFailures) — folded into the verdict's
-    // scripted-check gate so they actually fail the iteration.
-    let stepScriptedFailures: { toolName: string; reason: string }[] = [];
+    // (not in browser.scriptedCheckFailures) are folded into the verdict's
+    // scripted-check gate, via `stepScriptedFailures` above, so they actually
+    // fail the iteration.
     // Drive the iteration through the sequential executeSteps engine: the handlers
     // wrap driveLocalEvalTurn (which mutates `acc`), so the post-loop verdict +
     // finishParams below consume `acc` + the executor's StepExecutionState.
@@ -5563,7 +5644,7 @@ const runLocalIteration = async ({
                 { projectId: orgLocalUsage.projectId },
                 orgLocalUsage.providerKey,
                 String(modelDefinition.id),
-                { bearerToken: convexAuthToken },
+                { bearerToken: bearerNow(convexAuthToken) },
                 {
                   modelSelection: orgLocalUsage.modelSelection,
                   modelWorkload: modelWorkloadFor({
@@ -5694,16 +5775,6 @@ const runLocalIteration = async ({
             }>,
           }
         : undefined;
-    // A pinned-only case (render check) with no authored predicates defaults to
-    // "the widget rendered" — the model-free equivalent of the legacy probe
-    // verdict. Mirrors the former runIterationWithAiSdk post-loop.
-    const effectivePredicates = test.successPredicates?.length
-      ? test.successPredicates
-      : isPinnedOnly({ caseType: test.caseType, promptTurns })
-        ? ([{ type: "widgetRendered" }] as NonNullable<
-            typeof test.successPredicates
-          >)
-        : undefined;
     // Flush the last turn's groups so a trailing turn's unrun checks still fail
     // closed, before the shared verdict reads scripted-check failures. (Flush
     // only mutates `scriptedCheckFailures`, which no earlier gate reads, so
@@ -5714,7 +5785,7 @@ const runLocalIteration = async ({
       selectedServers,
     );
     // Single verdict boundary — matcher + case predicates + ordering + all gates.
-    const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
+    const { evaluation, passed, predicateResults, platformGates } = buildEvalIterationVerdict({
       ...collectToolDeclarations(mcpClientManager, selectedServers),
       promptTurns,
       toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
@@ -5785,6 +5856,7 @@ const runLocalIteration = async ({
         }),
       }),
     });
+    measuredPredicateResults = predicateResults;
     const promptTraceSummaries = buildPromptTraceSummaries(
       evaluation,
       turnCheckResults,
@@ -5794,7 +5866,7 @@ const runLocalIteration = async ({
       injectOpenAiCompat,
       messages: acc.conversationMessages,
       mcpClientManager,
-      uploadTarget: evalSnapshotUploadTarget(convexAuthToken, iterationId),
+      uploadTarget: evalSnapshotUploadTarget(bearerForCleanup(convexAuthToken), iterationId),
     });
     // PR (this change): the resolved system prompt now flows through
     // `appendEvalTurnTrace.systemPrompt`. The `withSystemPrefix`
@@ -5817,6 +5889,7 @@ const runLocalIteration = async ({
         );
     const finishParams = buildIterationFinishParams({
       iterationId,
+      platformGates,
       // The layer that failed, when this driver could tell — the local twin of
       // the hosted path's `stepError`. Without it a local-BYOK trial that died
       // on the model call finalizes uncategorised, which is the very failure
@@ -6082,7 +6155,7 @@ const runLocalIteration = async ({
       injectOpenAiCompat,
       messages: failMessages,
       mcpClientManager,
-      uploadTarget: evalSnapshotUploadTarget(convexAuthToken, iterationId),
+      uploadTarget: evalSnapshotUploadTarget(bearerForCleanup(convexAuthToken), iterationId),
     });
 
     // PR6: SSE failure signal only in streaming mode (batch has no emit).
@@ -6136,6 +6209,31 @@ const runLocalIteration = async ({
     // success path.
     const failParams = buildIterationFinishParams({
       iterationId,
+      // The same platform rows a finished iteration declares, so this case's
+      // evaluation config does not change between iterations of one run.
+      platformGates: {
+        failOnToolError: failsOnToolError(advancedConfig),
+        trace: { messages: failMessages, spans: acc.capturedSpans },
+        pinnedToolErrors: acc.pinnedToolErrors,
+        iterationError: errorMessage ?? acc.iterationError ?? "iteration failed",
+        // Whatever the widget checks had already found, so the row still says
+        // why when a later step (finalization included) is what threw.
+        scriptedCheckFailures: [
+          ...browser.scriptedCheckFailures,
+          ...stepScriptedFailures,
+        ],
+      },
+      // The case's checks: a finished iteration declares them, and one case
+      // can't report two evaluation configs in a run. As measured when the
+      // verdict ran before the failure; unmeasured only when it never did.
+      predicateResults:
+        measuredPredicateResults ??
+        (effectivePredicates ?? []).map((predicate): PredicateResult => ({
+          predicate,
+          passed: false,
+          status: "error",
+          reason: "the iteration failed before this check ran",
+        })),
       // Same as the success path: carry the layer when the driver could tell.
       // This branch is the one a model-call failure most often ends on, so
       // omitting it here would leave the fix half-applied.
@@ -6349,7 +6447,10 @@ const runHostedIterationWithBrowser = async (
   });
   browser.setWidgetToolCallPolicy(evalWidgetServerCall(toolPolicyGate, mcpClientManager));
 
-
+  // A web client's turns act as the run's owner on the accounts it froze.
+  let webClientRun: WebClientRunContext | undefined;
+  /** Set when a web client's run could not be read; the iteration stops on it. */
+  let webClientRunUnread: string | undefined;
   // Check if run was cancelled before starting iteration
   if (runId !== null) {
     try {
@@ -6357,6 +6458,13 @@ const runHostedIterationWithBrowser = async (
         "testSuites:getTestSuiteRun" as any,
         { runId },
       );
+      const fromRow = webClientRunOfEvalRun({
+        harness: harnessOfHostConfig(suiteHostConfig),
+        runId,
+        run: currentRun,
+      });
+      if (fromRow === null) webClientRunUnread = WEB_CLIENT_RUN_UNREAD;
+      else webClientRun = fromRow;
       if (currentRun?.status === "cancelled") {
         return {
           // A cancelled / deleted-run iteration never executed — never score it
@@ -6396,6 +6504,16 @@ const runHostedIterationWithBrowser = async (
           },
           iterationId: undefined,
         };
+      }
+      // Without the run's row a web client's turn would act as this
+      // request's bearer on the project's default account, not as the run's
+      // owner on the accounts the run froze, so it never starts.
+      if (isWebClientRuntimeId(harnessOfHostConfig(suiteHostConfig))) {
+        logger.warn("[evals] a web client iteration could not read its run", {
+          runId,
+          error: errorMessage,
+        });
+        webClientRunUnread = WEB_CLIENT_RUN_UNREAD;
       }
     }
   }
@@ -6597,7 +6715,7 @@ const runHostedIterationWithBrowser = async (
             ...(builtInTarget && "projectId" in builtInTarget
               ? { projectId: builtInTarget.projectId }
               : { projectId: undefined }),
-            bearer: convexAuthToken,
+            bearer: bearerNow(convexAuthToken),
             sandboxRowId: browserBox.sandboxRowId,
             // A cancelled run must not sit out the peek's full deadline before
             // its cancellation takes effect.
@@ -6609,7 +6727,7 @@ const runHostedIterationWithBrowser = async (
     // never become env vars; the box itself still receives none.
     const browserSecrets = browserApprovalDelivery
       ? await resolveBrowserSecrets({
-          bearer: convexAuthToken,
+          bearer: bearerNow(convexAuthToken),
           ...(builtInTarget && "projectId" in builtInTarget
             ? { projectId: builtInTarget.projectId }
             : {}),
@@ -6622,7 +6740,7 @@ const runHostedIterationWithBrowser = async (
       { builtInToolIds: resolvedExecution.builtInToolIds },
       builtInTarget && "projectId" in builtInTarget
         ? {
-            authHeader: convexAuthToken,
+            authHeader: () => bearerNow(convexAuthToken),
             projectId: builtInTarget.projectId,
             requireToolApproval: appliedToolApproval(
               "eval",
@@ -6633,7 +6751,7 @@ const runHostedIterationWithBrowser = async (
               ? {
                   browserSecrets,
                   onBrowserSecretDelivered: () => {
-                    void markRuntimeSecretsDelivered(convexAuthToken, {
+                    void markRuntimeSecretsDelivered(bearerNow(convexAuthToken), {
                       projectId: builtInTarget.projectId,
                       ...(projectEnvironmentId
                         ? { environmentId: projectEnvironmentId }
@@ -6735,7 +6853,11 @@ const runHostedIterationWithBrowser = async (
     await box?.release();
   };
   let prepared: PrepareChatV2Result;
+  let evalAuthContext: RunAssistantTurnAuthContext;
   try {
+    // First, so the failed read records as this iteration's setup failure
+    // before anything is provisioned and before any turn reaches the vendor.
+    if (webClientRunUnread) throw new Error(webClientRunUnread);
     throwIfDescriptionOverrideOnHarness(
       toolDescriptionOverride,
       resolvedExecution.harness,
@@ -6767,7 +6889,7 @@ const runHostedIterationWithBrowser = async (
     if (harnessExecutionTarget) {
       assertLocalHarnessCapabilities({ builtInToolIds: resolvedExecution.builtInToolIds, computerEnvironmentId: pinnedEnvironmentId, browserToolPolicy: resolvedExecution.browserToolPolicy, harnessId: resolvedExecution.harness });
       if (runId) {
-        const attachments = await resolveEvalRunAttachments({ bearer: convexAuthToken, runId: String(runId), signal: abortSignal });
+        const attachments = await resolveEvalRunAttachments({ bearer: bearerNow(convexAuthToken), runId: String(runId), signal: abortSignal });
         if (!attachments.ok) throw new Error("Could not verify this run's attachment requirements");
         assertLocalHarnessCapabilities({ hasAttachments: attachments.value.cases.some(entry => entry.attachments.length > 0), harnessId: resolvedExecution.harness });
       }
@@ -6813,7 +6935,7 @@ const runHostedIterationWithBrowser = async (
         provision: async () => {
           const result = await provisionEvalSandbox({
             timeoutMs: capacityBudgetMs,
-            bearer: convexAuthToken,
+            bearer: bearerNow(convexAuthToken),
             ...(runId
               ? {
                   runId: String(runId),
@@ -6894,8 +7016,15 @@ const runHostedIterationWithBrowser = async (
     // NEVER A PERSONAL COMPUTER. A hosted harness turn with no box of its own
     // falls through to `resolveHarnessSandbox`, the acting member's computer.
     // Every path above boots one or throws; this is the last check before the
-    // first turn, so a future gap fails here instead of running there.
-    if (resolvedExecution.harness && !harnessExecutionTarget && !evalBox) {
+    // first turn, so a future gap fails here instead of running there. A web
+    // client has no box and no such fallback: `runHarnessTurn` hands its turn
+    // to the vendor's page before it resolves any sandbox.
+    if (
+      resolvedExecution.harness &&
+      !isWebClientRuntimeId(resolvedExecution.harness) &&
+      !harnessExecutionTarget &&
+      !evalBox
+    ) {
       throw new Error(
         "This eval runs on a harness but no disposable computer was " +
           "provisioned for it, so it was refused rather than run on a " +
@@ -6955,6 +7084,7 @@ const runHostedIterationWithBrowser = async (
         resolvedExecution.requireToolApproval,
       ),
       respectToolVisibility: hostPolicy?.respectToolVisibility,
+        runUnloadedToolCalls: resolvedExecution.runUnloadedToolCalls,
       modelVisibleMcpToolResults: hostPolicy?.modelVisibleMcpToolResults,
       ...(resolvedExecution.harness
         ? { harness: resolvedExecution.harness }
@@ -7015,7 +7145,7 @@ const runHostedIterationWithBrowser = async (
       // (parity with the local-BYOK path). Fail-honest — a throw here is caught
       // below and persisted as a failed iteration, never a silent run.
       attachmentsNote = await seedAndAnnotateEvalAttachments({
-        bearer: convexAuthToken,
+        bearer: bearerNow(convexAuthToken),
         runId: String(runId),
         // The EFFECTIVE id — see the identical note on the local path.
         testCaseId: test.testCaseId ?? testCaseId,
@@ -7041,6 +7171,16 @@ const runHostedIterationWithBrowser = async (
         sandboxId: sandboxBinding.sandboxId,
       });
     }
+    // Inside the try: a renewal refused during setup reaches the catch, which
+    // releases the box and records the setup failure. `runAssistantTurn`
+    // sends `token` on each per-step Convex fetch, or reads
+    // `turnAuthorization` on each step when the bearer renews.
+    const turnAuthorization = bearerTurnAuthorization(convexAuthToken);
+    evalAuthContext = {
+      kind: "user_bearer",
+      token: `Bearer ${bearerNow(convexAuthToken)}`,
+      ...(turnAuthorization ? { turnAuthorization } : {}),
+    };
   } catch (error) {
     // Release any sandbox provisioned before a later line in the try threw.
     await releaseEvalSandboxIfAny();
@@ -7049,7 +7189,16 @@ const runHostedIterationWithBrowser = async (
     }
     const errorMessage = error instanceof Error ? error.message : String(error);
     const setupCode = harnessFailureEvidenceOf(error)?.code;
-    logger.error("[evals] iteration setup failed (prepareChatV2)", error);
+    // A used-up trial is the plan's answer, not a fault: it stays out of Sentry.
+    const trialRefused = setupCode === NATIVE_HARNESS_TRIAL_EXHAUSTED_CODE;
+    if (trialRefused) {
+      logger.info(
+        "[evals] iteration setup refused: native harness trial used up",
+        { code: setupCode },
+      );
+    } else {
+      logger.error("[evals] iteration setup failed (prepareChatV2)", error);
+    }
     if (toolDescriptionOverride) {
       stampDescriptionExperiment(
         iterationMetadataBase,
@@ -7103,6 +7252,7 @@ const runHostedIterationWithBrowser = async (
     failedEvaluation.passed = false;
     return {
       creditsExhausted: isCreditExhaustion(error),
+      ...(trialRefused ? { nativeHarnessTrialRefusal: errorMessage } : {}),
       evaluation: failedEvaluation,
       iterationId,
       ...(toolPolicyGate?.blocks.length
@@ -7121,15 +7271,8 @@ const runHostedIterationWithBrowser = async (
   // approval handling. Eval owns the per-turn `runAssistantTurn` call,
   // SSE callback wiring (text deltas via `onLiveTextDelta`, tool
   // call/result/step events via the PR 5b-pre callbacks), failure
-  // detection, persistence, and grading.
-  //
-  // `runAssistantTurn` reads `authContext.token` and forwards it as the
-  // Authorization header on the per-step Convex fetch — same shape used
-  // by `runIterationViaBackend` above (PR 3/4d).
-  const evalAuthContext = {
-    kind: "user_bearer" as const,
-    token: `Bearer ${convexAuthToken}`,
-  };
+  // detection, persistence, and grading. The auth context is built at the
+  // end of the setup try above.
 
   // Cursor review fix (mirrors PR 4b for the non-stream backend
   // runner): the engine swallows AbortError internally (sets its
@@ -7313,6 +7456,7 @@ const runHostedIterationWithBrowser = async (
           },
         }
       : {}),
+    ...(webClientRun ? { webClientRun } : {}),
     // The sealed policy + the sink that accounts its refusals. Blocks land on
     // the SAME gate the in-process path records into, so `policyBlocks` and the
     // matcher exclusion below cover both origins with no second code path.
@@ -7559,7 +7703,7 @@ const runHostedIterationWithBrowser = async (
     mcpClientManager,
     selectedServers,
   );
-  const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
+  const { evaluation, passed, predicateResults, platformGates } = buildEvalIterationVerdict({
     ...collectToolDeclarations(mcpClientManager, selectedServers),
     promptTurns,
     toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
@@ -7625,7 +7769,7 @@ const runHostedIterationWithBrowser = async (
     injectOpenAiCompat,
     messages: messageHistory,
     mcpClientManager,
-    uploadTarget: evalSnapshotUploadTarget(convexAuthToken, iterationId),
+    uploadTarget: evalSnapshotUploadTarget(bearerForCleanup(convexAuthToken), iterationId),
   });
   // PR (this change): the resolved system prompt now flows through
   // `appendEvalTurnTrace.systemPrompt`. The `withSystemPrefix` closure
@@ -7634,6 +7778,7 @@ const runHostedIterationWithBrowser = async (
   // transcript).
   const finishParams = buildIterationFinishParams({
     iterationId,
+    platformGates,
     ...(runId !== null ? { runId: String(runId) } : {}),
     ...(gradingMode ? { gradingMode } : {}),
     scoreMatchOptions: scoreMatchOptionsFor(test),
@@ -7662,6 +7807,7 @@ const runHostedIterationWithBrowser = async (
     ...(skillsAtTurnForPersist ? { skillsAtTurn: skillsAtTurnForPersist } : {}),
     spans: capturedSpans,
     requestPayloads,
+    nativeHarness: Boolean(resolvedExecution.harness),
     harnessMcpByPromptIndex,
     prompts: promptTraceSummaries,
     // Where the friction signals read their tool results from. THREE TIERS,
@@ -7805,7 +7951,7 @@ export const streamTestCase = async (
 ) => {
   const target = params.orgModelConfigTarget;
   const harnessRuntimeVenue = params.harnessRuntimeVenue ??
-    (await shouldUseLocalHarness(harnessOfHostConfig(params.suiteHostConfig), params.convexAuthToken,
+    (await shouldUseLocalHarness(harnessOfHostConfig(params.suiteHostConfig), bearerNow(params.convexAuthToken),
       target && "projectId" in target ? target.projectId : undefined,
       { scope: "unattended" }) ? "local" : "hosted");
   const pinned = { ...params, harnessRuntimeVenue };

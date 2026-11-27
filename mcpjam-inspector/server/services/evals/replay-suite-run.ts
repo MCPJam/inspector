@@ -5,6 +5,7 @@ import { localHarnessIdOf, shouldUseLocalHarness } from "../../utils/harness/loc
 import type { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import { managerAccountsAtRun } from "../../utils/mcp-connections.js";
+import { freezeEvalRunWebAccounts } from "../web-clients/web-client-run.js";
 import { runEvalSuiteWithAiSdk } from "../evals-runner.js";
 import {
   startSuiteRunWithRecorder,
@@ -234,6 +235,14 @@ export async function prepareSuiteReplayFromRun(
       await failRunBeforeExecution(convexClient, recorder, runId, { reason: refusal });
       throw new Error(refusal);
     }
+    // A replay is a run like any other: a web client's freezes its web
+    // accounts before any turn.
+    await freezeEvalRunWebAccounts({
+      convexClient,
+      runId,
+      harness: harnessAdmission.harness,
+      failRun: (reason) => failRunBeforeExecution(convexClient, recorder, runId, { reason }),
+    });
     // Like an eval run, a replay whose frozen skill can't be fetched stops
     // here, before its first model call, rather than run without it.
     let frozenSkills: BuiltPinnedSkillSource;
