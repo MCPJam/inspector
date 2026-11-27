@@ -125,10 +125,14 @@ export function buildOptionPrompt(
           // One fence per explanation: a fence clips its body, so a shared one
           // would silently drop the later explanations.
           ...others.map((row) =>
-            fence(
-              "Other explanation (context, not this option's work)",
-              `${row.rootCause ?? row.title} (iterations ${ids(row.iterationIds.filter((id) => scope.has(id)))})`,
-            ),
+            // The ids sit outside the fence so its length cap never clips them.
+            [
+              fence(
+                "Other explanation (context, not this option's work)",
+                row.rootCause ?? row.title,
+              ),
+              `Supported by iterations: ${ids(row.iterationIds.filter((id) => scope.has(id)))}.`,
+            ].join("\n"),
           ),
         ]
       : []),

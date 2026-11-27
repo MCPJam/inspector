@@ -48,4 +48,21 @@ describe("affectedRowsById", () => {
     expect(rows.it_a.chain).toBe(SELECTION_FAILED);
     expect(rows.it_a.canOpen).toBe(false);
   });
+
+  it("seeds an unloaded row from the chain read off the diagnostic page", () => {
+    const rows = affectedRowsById(
+      [],
+      null,
+      new Map([["it_b", SELECTION_FAILED]]),
+    );
+    expect(rows.it_b.chain).toBe(SELECTION_FAILED);
+  });
+
+  it("keeps diagnostic precedence for an unloaded row", () => {
+    const other = { status: "withheld" } as EvalRunDecisionChain;
+    const rows = affectedRowsById([], null, new Map([["it_a", other]]), [
+      diagnostic,
+    ]);
+    expect(rows.it_a.chain).toBe(SELECTION_FAILED);
+  });
 });

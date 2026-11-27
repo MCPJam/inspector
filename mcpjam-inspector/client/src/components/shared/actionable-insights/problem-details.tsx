@@ -159,9 +159,12 @@ export function ProblemDetailsContent({
   problem,
   context,
   iterationRows = {},
+  caveat = null,
   onOpenEvidence,
 }: {
   problem: FindingProblem;
+  /** How the observation was sampled, when it was not measured run-wide. */
+  caveat?: string | null;
   context?: FindingPromptContext;
   iterationRows?: Record<string, AffectedIterationRow>;
   onOpenEvidence?: (locator: FindingEvidenceLocator) => void;
@@ -198,6 +201,14 @@ export function ProblemDetailsContent({
               <p className="mt-2 break-words">
                 <FindingText text={problem.observed} />
               </p>
+              {caveat ? (
+                <p
+                  className="mt-1 text-xs text-muted-foreground"
+                  data-testid="problem-sampling-caveat"
+                >
+                  <FindingText text={caveat} />
+                </p>
+              ) : null}
               {excerpts.map((row, index) => (
                 <figure key={index} className="mt-2 min-w-0">
                   <figcaption className="text-xs text-muted-foreground">
@@ -336,8 +347,13 @@ export function ProblemDetailsContent({
             {problem.explanations.map((row) => (
               <li key={row.id}>
                 <FindingText text={row.rootCause ?? row.title} />{" "}
-                <span className="text-muted-foreground">
-                  ({plural(row.iterationIds.length, "iteration")})
+                <span className="break-words text-muted-foreground">
+                  ({plural(row.iterationIds.length, "iteration")}:{" "}
+                  {row.iterationIds.join(", ")}
+                  {row.citations.length
+                    ? `; cited ${row.citations.join(", ")}`
+                    : ""}
+                  )
                 </span>
               </li>
             ))}

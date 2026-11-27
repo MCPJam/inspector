@@ -69,8 +69,13 @@ export function affectedRowsById(
   }
   // A diagnostic for an iteration whose metadata did not load still carries
   // its verified stage, so the rubric can read it by id.
-  for (const [id, chain] of fromDiagnostics) {
-    rows[id] ??= { ...unloadedRow(id), chain };
+  // The chain read covers iterations past the diagnostic page; the
+  // diagnostic still wins when both have one.
+  for (const id of [...(chains?.keys() ?? []), ...fromDiagnostics.keys()]) {
+    rows[id] ??= {
+      ...unloadedRow(id),
+      chain: fromDiagnostics.get(id) ?? chains?.get(id),
+    };
   }
   return rows;
 }

@@ -27,8 +27,10 @@ export function ProblemSummary({
   context,
   onOpenEvidence,
   iterationRows = {},
+  caveat = null,
 }: {
   problem: FindingProblem;
+  caveat?: string | null;
   lead?: boolean;
   context?: FindingPromptContext;
   onOpenEvidence?: (locator: FindingEvidenceLocator) => void;
@@ -81,7 +83,8 @@ export function ProblemSummary({
             </>
           ) : (
             <li>
-              <strong>Next:</strong> No action is available for this problem yet.
+              <strong>Next:</strong> No action is available for this problem
+              yet.
             </li>
           )}
         </ul>
@@ -128,6 +131,7 @@ export function ProblemSummary({
             problem={problem}
             context={context}
             iterationRows={iterationRows}
+            caveat={caveat}
             onOpenEvidence={openEvidence}
           />
         </SheetContent>

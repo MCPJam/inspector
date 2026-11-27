@@ -445,6 +445,25 @@ describe("problem details", () => {
     );
   });
 
+  it("shows the sampling caveat beside the observed failure", () => {
+    render(
+      <ProblemDetailsContent
+        problem={problem()}
+        caveat="Tool identity came from inspected exemplars only."
+      />,
+    );
+    expect(screen.getByTestId("problem-sampling-caveat")).toHaveTextContent(
+      "inspected exemplars only",
+    );
+  });
+
+  it("names each explanation's supporting iterations and citations", () => {
+    render(<ProblemDetailsContent problem={problem()} />);
+    expect(
+      screen.getByText(/2 iterations: it_1, it_2; cited it_1\/tc:0/),
+    ).toBeInTheDocument();
+  });
+
   it("lists the selected option's trace citations", () => {
     render(<ProblemDetailsContent problem={problem({ evidence: [] })} />);
     expect(screen.getByTestId("problem-option-citations")).toHaveTextContent(
@@ -641,7 +660,27 @@ describe("buildOptionPrompt", () => {
     expect(prompt).not.toContain("## Reviewed explanation");
     expect(
       prompt.split("## Other explanations for these iterations")[1],
-    ).toMatch(/\(iterations it_1\)/);
+    ).toContain("Supported by iterations: it_1.");
+  });
+
+  it("keeps the supporting iteration ids outside a long clipped explanation", () => {
+    const long = "x".repeat(700);
+    const prompt = buildOptionPrompt(
+      problem({
+        explanations: [
+          {
+            id: "obs_lookup:mechanism:1",
+            title: "Long",
+            rootCause: long,
+            attribution: "server_contract",
+            iterationIds: ["it_1", "it_2"],
+            citations: [],
+          },
+        ],
+      }),
+      option({ kind: "investigation", iterationIds: ["it_1", "it_2", "it_3"] }),
+    );
+    expect(prompt).toContain("Supported by iterations: it_1, it_2.");
   });
 
   it("carries the option's trace citations even with no sampled excerpt", () => {

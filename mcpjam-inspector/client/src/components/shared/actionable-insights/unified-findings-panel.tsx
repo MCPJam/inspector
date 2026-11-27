@@ -1,4 +1,5 @@
 /** Product findings view: a lead problem/fix, and evidence drawers. */
+import { mechanismCaveat } from "./finding-provenance";
 import { useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -196,6 +197,15 @@ export function UnifiedFindingsPanel({
     () => new Map(provenance.map((p) => [p.candidateId, p])),
     [provenance],
   );
+  // A problem shares its id with the candidate it was projected from.
+  const problemCaveats = useMemo(() => {
+    const out = new Map<string, string>();
+    for (const row of provenance) {
+      const caveat = mechanismCaveat(row);
+      if (caveat) out.set(row.candidateId, caveat);
+    }
+    return out;
+  }, [provenance]);
   // Every finding the envelope carries, so a consolidated finding can name
   // the measured groups it came from even when this view shows only it.
   const findingsById = useMemo(
@@ -455,6 +465,7 @@ export function UnifiedFindingsPanel({
             context={context}
             onOpenEvidence={onOpenEvidence}
             iterationRows={iterationRows}
+            caveats={problemCaveats}
             setApi={carousel.setApi}
           />
           <p className="mt-3 text-xs text-muted-foreground">

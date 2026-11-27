@@ -346,9 +346,12 @@ export function ProblemsCarousel({
   context,
   onOpenEvidence,
   iterationRows,
+  caveats,
   setApi,
 }: {
   problems: readonly FindingProblem[];
+  /** The sampling caveat for each problem, keyed by problem id. */
+  caveats?: ReadonlyMap<string, string>;
   context?: FindingPromptContext;
   onOpenEvidence?: (locator: FindingEvidenceLocator) => void;
   iterationRows?: Record<string, AffectedIterationRow>;
@@ -381,6 +384,7 @@ export function ProblemsCarousel({
                 context={context}
                 onOpenEvidence={onOpenEvidence}
                 iterationRows={iterationRows}
+                caveat={caveats?.get(problem.id) ?? null}
               />
             </CarouselItem>
           ))}
