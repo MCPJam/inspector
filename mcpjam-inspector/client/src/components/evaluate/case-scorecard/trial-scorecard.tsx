@@ -67,6 +67,7 @@ import {
   type JoinedScorecardGroup,
   type JoinedScorecardRow,
 } from "./trial-results";
+import { customJudgeIterationRows } from "./custom-judge-iteration-rows";
 import { ScorecardGroupSection } from "./scorecard-group";
 import { StageRail, buildStageRailCells } from "./stage-rail";
 import {
@@ -74,6 +75,7 @@ import {
   judgeDecidedStage,
 } from "../stage-trial-model";
 import { EvaluatorScorecardSummary } from "@/components/evals/evaluator-library/evaluator-scorecard-summary";
+import { useEvaluatorLibraryEnabled } from "@/components/evals/evaluator-library/evaluator-library-flag";
 import { isJudgeOutput, TrialScorecardRow } from "./trial-scorecard-row";
 import type { TrialChainDisplay } from "./trial-chain-state";
 import { stageFloor, type StageFloorTrace } from "./stage-floor";
@@ -245,6 +247,7 @@ export function TrialScorecard({
   syncedStepId?: string | null;
   onSyncStep?: (stepId: string | null) => void;
 }) {
+  const evaluatorLibraryEnabled = useEvaluatorLibraryEnabled();
   const groups = useMemo(() => {
     const card = buildCaseScorecard(authored);
     // Every stage the verified chain measured gets its runner check, including
@@ -270,7 +273,10 @@ export function TrialScorecard({
           trace,
         }),
       ),
-      rubricCheckTrialRows(iteration),
+      [
+        ...rubricCheckTrialRows(iteration),
+        ...(evaluatorLibraryEnabled ? customJudgeIterationRows(iteration) : []),
+      ],
     );
     // Keyed on the FIELDS, not the input object: callers build that object in
     // render, so an identity dep would rebuild — and re-digest every criterion
@@ -291,6 +297,7 @@ export function TrialScorecard({
     authored.judgeConfigOverride,
     authored.suiteJudgeConfig,
     authored.suiteJudgeRubric,
+    evaluatorLibraryEnabled,
     iteration,
     steps,
     chain,
@@ -315,7 +322,8 @@ export function TrialScorecard({
       groups.some((group) =>
         group.rows.some(
           (row) =>
-            row.provenance === "judge" && row.result.state !== "notMeasured",
+            (row.provenance === "judge" || row.provenance === "customJudge") &&
+            row.result.state !== "notMeasured",
         ),
       ));
 
@@ -394,9 +402,11 @@ export function TrialScorecard({
     if (floor) return { text: floor.actual, source: "recorded" };
     // Advisory rubric checks describe the trial; they never explain why a
     // stage failed, so they must not displace the chain's own sentence.
+    // Custom judges are advisory in the same way.
     const explained = rows.some(
       (row) =>
         row.provenance !== "rubricCheck" &&
+        row.provenance !== "customJudge" &&
         (row.result.state === "failed" || row.result.state === "error"),
     );
     if (explained) return null;
@@ -532,11 +542,9 @@ export function TrialScorecard({
       <EvaluatorScorecardSummary
         questions={authored.suiteJudgeConfig?.rubricChecks?.questions}
         rows={sections.flatMap((section) =>
-          section.rows.map((row) =>
-            judgeHidden && isJudgeOutput(row)
-              ? { ...row, result: { state: "notMeasured" as const } }
-              : row,
-          ),
+          judgeHidden
+            ? section.rows.filter((row) => !isJudgeOutput(row))
+            : section.rows,
         )}
       />
       <section className="space-y-6" aria-label="User value chain">

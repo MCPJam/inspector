@@ -107,14 +107,19 @@ function formatValue(result: TrialRowResult): string | null {
 }
 
 /**
- * Rows blind review withholds. Rubric checks are judge output too: a blind
- * label taken beside them is not blind, so they are withheld with the goal
- * judge's own row, here and in every summary built from these rows.
+ * Rows blind review withholds. Rubric checks and custom judges are judge
+ * output too: a blind label taken beside them is not blind, so they are
+ * withheld with the goal judge's own row, here and in every summary built
+ * from these rows.
  */
 export function isJudgeOutput(
   row: Pick<JoinedScorecardRow, "provenance">,
 ): boolean {
-  return row.provenance === "judge" || row.provenance === "rubricCheck";
+  return (
+    row.provenance === "judge" ||
+    row.provenance === "rubricCheck" ||
+    row.provenance === "customJudge"
+  );
 }
 
 export function TrialScorecardRow({
@@ -265,6 +270,13 @@ export function TrialScorecardRow({
               <span data-narrative-source={narrative ? "ai" : "recorded"}>
                 {actual}
               </span>
+              {row.customJudge &&
+              row.customJudge.outputKind !== "passfail" &&
+              "value" in row.result &&
+              typeof row.result.value === "number" &&
+              (narrative || recorded.length > 0) ? (
+                <span className="mt-1 block">Score {row.result.value}</span>
+              ) : null}
               {floor ? (
                 <span
                   className="mt-1 block"

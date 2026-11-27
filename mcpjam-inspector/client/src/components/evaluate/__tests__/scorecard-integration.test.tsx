@@ -21,13 +21,16 @@ import {
   type JudgeCase,
 } from "@/components/evals/goal-completion-presentation";
 import { groupCaseIterations } from "@/components/evals/runs/group-case-iterations";
+import { computeIterationResult } from "@/components/evals/pass-criteria";
 import { authoredForTrial } from "../case-scorecard/trial-authored";
 import { buildCaseScorecard } from "../case-scorecard/case-scorecard-model";
 
 vi.mock("convex/react", () => ({ useAction: () => vi.fn() }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
+const libraryFlag = vi.hoisted(() => ({ enabled: true }));
 vi.mock("posthog-js/react", () => ({
-  useFeatureFlagEnabled: (name: string) => name === "evaluator-library",
+  useFeatureFlagEnabled: (name: string) =>
+    name === "evaluator-library" && libraryFlag.enabled,
 }));
 
 const steps = [{ id: "p", kind: "prompt" as const, prompt: "Find my account" }];
@@ -60,6 +63,68 @@ const iteration: EvalIteration = {
 } as EvalIteration;
 
 describe("scorecard integration regressions", () => {
+  it("renders saved custom judges on an iteration without projected scores", () => {
+    const savedTrial: EvalIteration = {
+      ...iteration,
+      resultSource: "reported",
+      metadata: {
+        customJudgesVerdict: {
+          judges: [
+            {
+              id: "answers-the-question",
+              label: "Answers the Question",
+              status: "scored",
+              passed: true,
+              value: 1,
+              output: { kind: "passfail" },
+            },
+            {
+              id: "includes-link",
+              label: "Includes a Link",
+              status: "scored",
+              passed: false,
+              value: 0.6,
+              output: { kind: "score", threshold: 0.8 },
+              reason: "No export link in the answer.",
+            },
+          ],
+        },
+      },
+    };
+
+    const { rerender } = render(
+      <TrialScorecard authored={authored} iteration={savedTrial} steps={steps} />,
+    );
+    const rows = screen.getAllByTestId("trial-scorecard-row");
+    for (const [label, state] of [
+      ["Answers the Question", "passed"],
+      ["Includes a Link", "failed"],
+    ] as const) {
+      const row = rows.find((candidate) =>
+        candidate.textContent?.includes(label),
+      );
+      expect(row).toHaveAttribute("data-state", state);
+      expect(row).toHaveAttribute("data-role", "advisory");
+      if (label === "Includes a Link") {
+        expect(row).toHaveTextContent("Score of 0.8 or higher");
+        expect(row).toHaveTextContent("Score 0.6");
+        expect(row).toHaveTextContent("No export link in the answer.");
+      }
+    }
+    expect(computeIterationResult(savedTrial)).toBe("passed");
+
+    libraryFlag.enabled = false;
+    try {
+      rerender(
+        <TrialScorecard authored={authored} iteration={savedTrial} steps={steps} />,
+      );
+      expect(screen.queryByText("Includes a Link")).not.toBeInTheDocument();
+      expect(screen.queryByText("Answers the Question")).not.toBeInTheDocument();
+    } finally {
+      libraryFlag.enabled = true;
+    }
+  });
+
   it("does not offer requirements from an unjudged case with zero checks", async () => {
     const batch = groupCaseIterations([iteration])[0];
     const { result } = renderHook(() =>
@@ -272,8 +337,9 @@ describe("scorecard integration regressions", () => {
       judgeCase: judgeCase as JudgeCase,
     };
     const view = render(<TrialScorecard {...props} judgeHidden />);
-    const summary = screen.getByRole("region", { name: "Library evaluators" });
-    expect(summary).not.toHaveTextContent(/failed/i);
+    expect(
+      screen.queryByRole("region", { name: "Library evaluators" }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText(/Invented a refund amount/)).toBeNull();
     view.rerender(<TrialScorecard {...props} judgeHidden={false} />);
     expect(
