@@ -32,7 +32,7 @@ This page lists each capability in the MCP specification and its extensions, whe
 | Capability | Support | Where to test it |
 | --- | --- | --- |
 | Elicitation, form mode (`elicitation/create`) | ✅ Supported | **Tools** tab and **Playground** show a form dialog. Turn the capability on or off per client. See [Elicitation requests](/inspector/tools#elicitation-requests) and [Clients](/inspector/clients). |
-| Elicitation, URL mode | ✅ Supported | **Playground** asks before opening the URL. Turn URL mode on per client. See [Playground](/inspector/playground#url-elicitation) and [Clients](/inspector/clients). |
+| Elicitation, URL mode | ✅ Supported | **Playground** asks before opening the URL. Turn URL mode on per client. See [Playground](/inspector/playground/reference#elicitation) and [Clients](/inspector/clients). |
 | Multi-round input (`input_required`, 2026-07-28) | ✅ Supported | Tools, resources and prompts that return `input_required` collect input in the same dialog and retry. Only elicitation can be embedded. See [Multi-round input](/inspector/tools#multi-round-input-mcp-2026-07-28-input_required). |
 | Sampling (`sampling/createMessage`) | — Not yet | MCPJam never advertises or answers sampling. An embedded sampling request in an `input_required` result is reported as a rejection. |
 | Roots (`roots/list`) | — Not yet | MCPJam never advertises or answers roots. An embedded `roots/list` in an `input_required` result is reported as a rejection. |

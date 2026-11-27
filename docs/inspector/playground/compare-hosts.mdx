@@ -1,0 +1,73 @@
+---
+title: "Compare clients"
+sidebarTitle: "Compare clients"
+description: "Compare one prompt across Claude, ChatGPT and Cursor panes: the tool arguments each model wrote, how the widget rendered, and any requests the sandbox blocked. About 10 minutes."
+icon: "joystick"
+---
+
+Each pane runs its own model inside an emulated client: MCPJam renders the widget with that client's settings and sandbox, but it is not the Claude, ChatGPT or Cursor app itself. One prompt can produce different results in each pane. When panes differ, check three things separately: the arguments the model wrote, what the widget rendered, and which operations the sandbox blocked.
+
+## Before you start
+
+This tutorial picks up where [Chat and inspect tool calls](/inspector/playground) ends, with all three panes answering `Draw a rectangle with the text Hello inside it.` If you came here directly, connect the Excalidraw demo server as in [Start testing](/#start-testing), open **Playground**, and send that prompt.
+
+<Steps titleSize="h3">
+  <Step title="Compare the renders" id="compare-the-renders">
+    Look at what the widget rendered in each pane and note any difference. In the example run¹, **Claude** and **Cursor** drew a filled light-blue rectangle, and **ChatGPT** drew an outline with small text. Your run may look the same in every pane, or differ in other ways.
+  </Step>
+  <Step title="Compare the tool arguments" id="compare-the-arguments">
+    If a pane shows only text, select **Trace** in that pane and check which tool the model called, if any. If the pane shows **No servers**, connect **Excalidraw (App)**. If it still shows **No servers**, open that pane's **Pane settings**, select **Excalidraw (App)** under **Servers for this chat**, and send the prompt again. If the server is connected but the model chose a different tool, note that difference; it is already a result. Compare widget inputs only in panes that called `create_view`.
+
+    In each pane you want to compare, select **Edit input & output** and read **INPUT**. Each pane's model writes its own `create_view` call, so the inputs don't have to match.
+
+    In the example¹, the models in the Claude and Cursor panes sent a rectangle with `"backgroundColor":"#a5d8ff"` on a 400×300 canvas. The model in the ChatGPT pane sent a rectangle with no background color on an 800×600 canvas. That explains the outline and the smaller text: the widget drew what it was given.
+
+    Select **Done editing** in each pane when you finish.
+  </Step>
+  <Step title="Check for blocked requests" id="check-blocked-requests">
+    Look at the **Sandbox** icon in each widget toolbar. A number on it counts the operations that pane's emulated sandbox blocked.
+
+    <Frame>
+      <img src="/images/playground/v1/chatgpt-cursor-badges.png" alt="The top of the ChatGPT pane, with an outlined Hello rectangle, above the top of the Cursor pane, with a filled one. In both widget toolbars, the Sandbox icon shows the number 4" width="330" />
+    </Frame>
+
+    - **If there is a number:** select **Sandbox** in that pane. Each blocked request shows its type, what was blocked, and why. In the example¹, the ChatGPT and Cursor panes each listed **CSP** · `eval`, blocked because the Content Security Policy directive `script-src` does not allow it.
+    - **If there is no number:** no blocked request was reported for that widget in this run. That covers only what this run did; other prompts or interactions can still hit a block.
+
+    <Frame>
+      <img src="/images/playground/v1/chatgpt-csp.png" alt="The ChatGPT pane with the Sandbox panel open, listing a blocked CSP eval request above the outlined Hello rectangle" width="330" />
+    </Frame>
+
+    A block doesn't always change how the widget looks. In the example¹, the Cursor pane drew the same filled rectangle as Claude despite its blocks.
+  </Step>
+  <Step title="Decide what to do" id="decide-what-to-do">
+    Match what you saw to one of these cases:
+
+    - **Different arguments.** First check whether the difference breaks the request. The prompt didn't ask for a fill color, so a plain outline still meets it. If an argument does contradict the request, review your tool's description and input schema.
+    - **Same relevant arguments, different rendering.** Compare what each client supports and how your widget handles it. If the inputs differ, these runs alone can't tell you whether the client caused the rendering difference. Before you report it as a client bug, confirm it in the client's own app: a pane is an emulation.
+    - **A blocked request.** Read the blocked operation and the policy that blocked it, then find the code in your widget that makes the request. Decide whether the widget needs it before you change anything.
+    - **No unexpected difference and no block.** You are done.
+  </Step>
+  <Step title="Change which clients you compare" id="change-clients">
+    At the bottom of the chat box, select the client chips (**Claude**, **ChatGPT**, **Cursor**) to open the client list.
+
+    <Frame>
+      <img src="/images/playground/v1/compare-panes.png" alt="The client list with Claude, ChatGPT and Cursor checked, MCPJam unchecked, the note Remove a pane to add another client, and Add clients" width="300" />
+    </Frame>
+
+    Each row has a checkbox. Select or clear a checkbox to add or remove that client's pane. You can compare up to three clients at once. To show a single client instead, hover its row and select **Only**.
+
+    To change one pane's client, model or servers, select the settings icon at the top right of the pane to open **Pane settings**.
+  </Step>
+</Steps>
+
+## Your own server
+
+To test your own server, connect it instead of the demo, as described in [Start testing](/#start-testing), and repeat these steps.
+
+<sub>¹ Example observed on November 16, 2026 in the emulated panes on app.mcpjam.com, signed out, with the Excalidraw demo server. Models write different arguments on each run. Not tested in the native Claude, ChatGPT or Cursor apps.</sub>
+
+## Related
+
+- [Playground reference](/inspector/playground/reference): panes, the Sandbox panel, and the JSON-RPC log.
+- [Test a widget](/inspector/playground/test-widgets): the widget toolbar and the tool input and result.

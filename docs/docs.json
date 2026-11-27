@@ -60,7 +60,15 @@
             "group": "Test and debug",
             "icon": "bug",
             "pages": [
-              "inspector/playground",
+              {
+                "group": "Playground",
+                "pages": [
+                  "inspector/playground",
+                  "inspector/playground/test-widgets",
+                  "inspector/playground/compare-hosts",
+                  "inspector/playground/reference"
+                ]
+              },
               "inspector/events",
               {
                 "group": "Test MCP Apps",
