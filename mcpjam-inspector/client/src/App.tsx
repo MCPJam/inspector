@@ -302,6 +302,7 @@ import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-co
 import { type ProjectSignInReturnRecoveryIntent } from "./lib/project-route-recovery";
 import {
   captureAppSignInReturnPath,
+  isAccessRequestPathname,
   writeAppSignInReturnPath,
 } from "./lib/app-signin-return-path";
 import { isHostedTabBlocked } from "./lib/hosted-tab-policy";
@@ -3189,6 +3190,9 @@ export default function App() {
   // visitor to Playground mid-sign-in, stranding exactly the enterprise entry
   // point this route exists to fix.
   const isLoginInitiationRoute = barePathname === routePaths.login;
+  // An owner opening a request email, often signed out in a fresh browser,
+  // has to stay on the request instead of being sent to Home's welcome.
+  const isAccessRequestRoute = isAccessRequestPathname(barePathname);
 
   const defaultHubRoute = useMemo((): "home" | "connect" | "servers" => {
     return "home";
@@ -6009,6 +6013,7 @@ export default function App() {
     pendingCheckoutIntent === null &&
     !isBareCaniuseRoute &&
     !isLoginInitiationRoute &&
+    !isAccessRequestRoute &&
     !hasHostTemplateVerifyParam &&
     isProjectScopedFirstRunDestinationReady &&
     !isWorkOsLoading &&
@@ -6047,6 +6052,7 @@ export default function App() {
     !isHostedChatRoute &&
     !isBareCaniuseRoute &&
     !isLoginInitiationRoute &&
+    !isAccessRequestRoute &&
     !hasHostTemplateVerifyParam;
   const shouldShowFirstRunOverlay =
     shouldKeepFirstRunOverlayOpen ||
@@ -6653,9 +6659,9 @@ export default function App() {
   const appContent = (
     <SettingsDraftProvider enabled={settingsShellActive}>
       <SidebarProvider defaultOpen={true}>
-        {/* Wide working surfaces (Playground, Evaluate, OAuth Debugger, Swarms)
-          collapse the sidebar to its icon rail; navigating back out of them
-          expands it again. */}
+        {/* With the opt-in Appearance setting on, wide working surfaces
+          (Playground, Evaluate, OAuth Debugger, Swarms) collapse the sidebar
+          to its icon rail; navigating back out of them expands it again. */}
         <SidebarAutoCollapse activeTab={activeTab} />
         <AppChromeSidebar
           hidden={playgroundOnboarding || settingsShellActive}

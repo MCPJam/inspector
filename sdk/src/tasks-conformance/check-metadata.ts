@@ -3,20 +3,6 @@ export const CHECK_METADATA: Record<
   MCPTasksCheckId,
   Pick<MCPTasksCheckResult, "id" | "category" | "title" | "description">
 > = {
-  "tasks-wire-resolvable": {
-    id: "tasks-wire-resolvable",
-    category: "dispatch",
-    title: "Tasks Wire Resolvable",
-    description:
-      "The negotiated protocol version and advertised capabilities resolve to exactly one tasks wire.",
-  },
-  "tasks-declaration-hygiene": {
-    id: "tasks-declaration-hygiene",
-    category: "dispatch",
-    title: "Per-Version Declaration Hygiene",
-    description:
-      "Outgoing requests carry `params.task` only on the legacy wire and the tasks extension declaration only on the extension wire; a connection with no tasks wire sends neither.",
-  },
   "tasks-result-type-discipline": {
     id: "tasks-result-type-discipline",
     category: "creation",

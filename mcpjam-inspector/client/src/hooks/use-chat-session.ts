@@ -279,6 +279,7 @@ import {
 import { parseToolResultAuthChallenge } from "@mcpjam/sdk/browser";
 import {
   getTraceSpansDurationMs,
+  liveChatTraceTurnEvents,
   mergeLiveChatTraceUsage,
   rebaseTraceSpans,
   type LiveChatTraceEnvelope,
@@ -287,6 +288,7 @@ import {
   type LiveChatTraceToolCall,
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
+import { readEventAtTurn, type EventAtTurn } from "@/shared/event-at-turn";
 import {
   applyPreviewSpansUserMessageIndices,
   buildLiveChatPreviewSpans,
@@ -311,7 +313,16 @@ import {
   snapshotPageToolsForTurn,
 } from "@/lib/webmcp-inspector/chat-dispatch";
 import { pageToolCallNeedsApproval } from "@/shared/client-fulfilled-tools";
-import { createUiAwareApprovalResponseHandler } from "@/lib/webmcp/ui-tool-approval";
+import {
+  eventToolCallNeedsApproval,
+  isEventAgentToolName,
+  type EventAgentToolName,
+  type EventToolsSnapshot,
+} from "@/shared/event-agent-tools";
+import {
+  createUiAwareApprovalResponseHandler,
+  findPartByApprovalId,
+} from "@/lib/webmcp/ui-tool-approval";
 import { respondToChatElicitation } from "@/lib/apis/elicitation-api";
 import {
   HOSTED_MRTR_VERSION,
@@ -706,6 +717,22 @@ export interface UseChatSessionOptions {
    * run code on a third-party site.
    */
   usePageTools?: boolean;
+  /**
+   * The Playground's MCP Events agent tools (`event-agent-tools.ts`):
+   * `snapshot` is read at POST time to advertise them, and `execute` fulfils
+   * each call. Absent on surfaces with no Events pane.
+   */
+  eventAgentTools?: {
+    snapshot: (
+      selectedServers?: readonly string[],
+    ) => EventToolsSnapshot | undefined;
+    execute: (
+      name: EventAgentToolName,
+      toolCallId: string,
+      input: unknown,
+      selectedServers?: readonly string[],
+    ) => Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }>;
+  };
   /** Callback when chat is reset */
   onReset?: (reason?: ChatSessionResetReason) => void;
 }
@@ -796,6 +823,11 @@ export interface UseChatSessionReturn {
     extraParts?: UIMessage["parts"];
     widgetModelContext?: WidgetModelContextEntry[];
     /**
+     * The MCP event that started this turn. Sent with every request of the
+     * turn, its continuations included, until the next send in this session.
+     */
+    eventAtTurn?: EventAtTurn;
+    /**
      * Resolves `true` once the message was actually dispatched, `false` on
      * every fail-closed preflight path (server-id resolution failed, or the
      * target/session changed while it was being prepared). Those paths surface
@@ -855,7 +887,11 @@ export interface UseChatSessionReturn {
     > &
       Pick<
         Parameters<UseChatSessionReturn["sendMessage"]>[0],
-        "pluginMentions" | "extraParts" | "widgetModelContext" | "isCurrent"
+        | "pluginMentions"
+        | "extraParts"
+        | "widgetModelContext"
+        | "eventAtTurn"
+        | "isCurrent"
       > & {
         /** Attached prompt and skill messages, copied in after the transcript. */
         prependMessages?: UIMessage[];
@@ -1045,6 +1081,7 @@ export interface UseChatSessionReturn {
         requestPayloadsBlobUrl?: string | null;
         modelId?: string;
         pageToolsAtTurn?: MintedPageToolRecord[];
+        eventAtTurn?: EventAtTurn;
       }>;
     },
     options?: {
@@ -1178,6 +1215,8 @@ interface LiveTraceTurnState {
   finishReason?: string;
   /** Persisted model id (rehydration only). */
   modelId?: string;
+  /** The MCP event that started this turn: from `turn_start` live, or the persisted trace. */
+  event?: EventAtTurn;
 }
 
 interface LiveTraceAccumulatorState {
@@ -1253,6 +1292,8 @@ export interface HydratedTurnTrace {
    * array, which means "this turn advertised none".
    */
   pageToolsAtTurn?: MintedPageToolRecord[];
+  /** The MCP event that started this turn, as the backend reader returned it. */
+  eventAtTurn?: EventAtTurn;
 }
 
 interface PersistedWidgetSnapshot {
@@ -1283,6 +1324,7 @@ async function resolveHydratedTurnTraces(
         requestPayloadsBlobUrl?: string | null;
         modelId?: string;
         pageToolsAtTurn?: MintedPageToolRecord[];
+        eventAtTurn?: EventAtTurn;
       }>
     | undefined,
 ): Promise<HydratedTurnTrace[] | undefined> {
@@ -1341,6 +1383,7 @@ async function resolveHydratedTurnTraces(
           );
         }
       }
+      const eventAtTurn = readEventAtTurn(trace.eventAtTurn);
       return {
         turnId: trace.turnId,
         promptIndex: trace.promptIndex,
@@ -1354,6 +1397,7 @@ async function resolveHydratedTurnTraces(
         ...(trace.pageToolsAtTurn !== undefined
           ? { pageToolsAtTurn: trace.pageToolsAtTurn }
           : {}),
+        ...(eventAtTurn ? { eventAtTurn } : {}),
       };
     }),
   );
@@ -1424,6 +1468,7 @@ function buildLiveTraceStateFromTurnTraces(
       ...(trace.pageToolsAtTurn !== undefined
         ? { pageToolsAtTurn: trace.pageToolsAtTurn }
         : {}),
+      ...(trace.eventAtTurn ? { event: trace.eventAtTurn } : {}),
     };
   }
 
@@ -1752,6 +1797,7 @@ function applyLiveTraceEvent(
             actualToolCalls: prev?.actualToolCalls ?? [],
             usage: prev?.usage,
             startedAtMs: event.startedAtMs,
+            ...(event.event ? { event: event.event } : {}),
           },
         },
         activeTurnId: event.turnId,
@@ -1863,6 +1909,7 @@ function buildLiveTraceEnvelope(
   const turns: LiveChatTraceEnvelope["turns"] = [];
   let usage: LiveChatTraceUsage | undefined;
   const actualToolCalls: LiveChatTraceToolCall[] = [];
+  const turnEvents = liveChatTraceTurnEvents(state.turnOrder.map((id) => state.turns[id]));
   let nextOffsetMs = 0;
   let traceStartedAtMs: number | undefined;
 
@@ -1917,6 +1964,7 @@ function buildLiveTraceEnvelope(
     actualToolCalls: dedupeTraceToolCalls(actualToolCalls),
     events: state.events,
     turns,
+    ...(turnEvents.length > 0 ? { turnEvents } : {}),
     requestPayloads:
       state.requestPayloadHistory.length > 0
         ? state.requestPayloadHistory
@@ -2553,6 +2601,11 @@ export function useChatSession(
   // not the one captured when the transport was memoized.
   const usePageToolsRef = useRef(false);
   usePageToolsRef.current = options.usePageTools === true;
+  const eventAgentToolsRef = useRef(options.eventAgentTools);
+  eventAgentToolsRef.current = options.eventAgentTools;
+  // The Events tools reach only the servers selected for this conversation.
+  const eventToolServersRef = useRef<readonly string[]>(selectedServers);
+  eventToolServersRef.current = selectedServers;
   const isHostedGuest = HOSTED_MODE && !workOsUser && !isWorkOsLoading;
   const sharedGuestMode =
     isHostedGuest && !isAuthLoading && !!hostedProjectId && !!hostedScenarioId;
@@ -3961,6 +4014,10 @@ export function useChatSession(
   const pendingWidgetModelContextRef = useRef<
     WidgetModelContextEntry[] | undefined
   >(undefined);
+  // The event the last admitted send in a session started from, or that a
+  // restored session's latest turn records (`loadChatSession`). Unlike widget
+  // context it is not drained: a continuation of that turn carries it too.
+  const turnEventAtTurnRef = useRef<{ chatSessionId: string; event: EventAtTurn } | null>(null);
   // Convex server ids resolved by the hosted preflight (`hostedEnsureServerIds`)
   // in `sendMessage`, consumed once by the (synchronous) transport body so the
   // hosted send carries real ids for ad-hoc/App servers, not display names.
@@ -4255,6 +4312,11 @@ export function useChatSession(
           rewindRef.current?.chatSessionId === chatSessionIdRef.current
             ? rewindRef.current.lineage
             : undefined;
+        // MCP Events agent tools, for the servers whose catalog says they
+        // declare Events right now.
+        const eventTools = eventAgentToolsRef.current?.snapshot(
+          eventToolServersRef.current,
+        );
         return {
           harnessStartupRequestId: harnessStartupRequestRef.current,
           ...(ownerRequestId
@@ -4413,6 +4475,11 @@ export function useChatSession(
           // the tool it stood for.
           ...(usePageToolsRef.current
             ? { pageTools: snapshotPageToolsForTurn() }
+            : {}),
+          ...(eventTools ? { eventTools } : {}),
+          ...(turnEventAtTurnRef.current?.chatSessionId ===
+          chatSessionIdRef.current
+            ? { eventAtTurn: turnEventAtTurnRef.current.event }
             : {}),
           // MCPJam UI tools are agent-surface-only; the only uiTools sender
           // is agent-chat-instances.ts (/api/web/mcpjam-agent).
@@ -4582,6 +4649,41 @@ export function useChatSession(
             addToolOutput,
           });
         }
+        return;
+      }
+
+      // MCP Events agent tools: exact names, run by the Playground's events
+      // runtime. A turn always gets an output, or the stream would wait.
+      if (isEventAgentToolName(toolName)) {
+        // A call that changes a watch waits for the approval pill when the
+        // user turned on Require tool approval: the same predicate and the
+        // same per-turn value the server built the tool from. The approval
+        // response handler runs it.
+        if (
+          eventToolCallNeedsApproval(
+            toolName,
+            turnRequireToolApprovalRef.current,
+          )
+        ) {
+          return;
+        }
+        const executor = eventAgentToolsRef.current;
+        const output = executor
+          ? await executor.execute(
+              toolName,
+              pageToolCallId,
+              pageToolInput,
+              eventToolServersRef.current,
+            )
+          : {
+              content: [{ type: "text" as const, text: "MCP Events aren't available in this chat. Open the Events pane to use them." }],
+              isError: true,
+            };
+        addToolOutput({
+          tool: toolName,
+          toolCallId: pageToolCallId,
+          output,
+        } as Parameters<typeof addToolOutput>[0]);
         return;
       }
 
@@ -4787,6 +4889,30 @@ export function useChatSession(
           toast.error(error instanceof Error ? error.message : "Could not prepare the saved servers for this approval. Try approving again.");
           return;
         }
+      }
+      // MCP Events agent tools are client-fulfilled: approving runs the call
+      // here and supplies its output; denying lets the server settle it.
+      const located = findPartByApprovalId(messagesRef.current, response.id);
+      if (located && isEventAgentToolName(located.toolName)) {
+        if (!response.approved) return sdkAddToolApprovalResponse(response);
+        const executor = eventAgentToolsRef.current;
+        const output = executor
+          ? await executor.execute(
+              located.toolName,
+              located.toolCallId,
+              located.input,
+              eventToolServersRef.current,
+            )
+          : {
+              content: [{ type: "text" as const, text: "MCP Events aren't available in this chat. Open the Events pane to use them." }],
+              isError: true,
+            };
+        addToolOutput({
+          tool: located.toolName,
+          toolCallId: located.toolCallId,
+          output,
+        } as Parameters<typeof addToolOutput>[0]);
+        return;
       }
       return respond(response);
     };
@@ -5588,6 +5714,7 @@ export function useChatSession(
       pluginMentions?: PluginMentionSelection[];
       extraParts?: UIMessage["parts"];
       widgetModelContext?: WidgetModelContextEntry[];
+      eventAtTurn?: EventAtTurn;
     }) => {
       if (harnessStopBlockedRef.current) throw new Error("Confirm Stop before continuing this conversation.");
       const {
@@ -5600,6 +5727,7 @@ export function useChatSession(
         prependMessages,
         pluginMentions,
         extraParts,
+        eventAtTurn,
       } = options;
 
       // SEP-2350 turn boundary: a new user turn spins up a fresh per-turn MCP
@@ -5810,6 +5938,9 @@ export function useChatSession(
             ? { body: { scopeStepUpCancel: cancelSignIn } }
             : undefined;
           appMessageTurnRef.current = pluginMessage !== undefined;
+          turnEventAtTurnRef.current = eventAtTurn
+            ? { chatSessionId: sessionAtSend, event: eventAtTurn }
+            : null;
           activeSendSessions.current.add(sessionAtSend);
           admitted = true;
           let sent: Promise<void>;
@@ -6221,6 +6352,7 @@ export function useChatSession(
           pluginMentions: options.pluginMentions,
           extraParts: options.extraParts,
           widgetModelContext: options.widgetModelContext,
+          eventAtTurn: options.eventAtTurn,
           isCurrent: options.isCurrent,
         });
       } catch {
@@ -6559,6 +6691,15 @@ export function useChatSession(
 
       restoredApprovalSelectionRef.current = Array.isArray(session.resumeConfig?.selectedServers)
         ? { sessionId: session.chatSessionId, serverNames: [...session.resumeConfig.selectedServers] }
+        : null;
+      // A continuation of the restored latest turn (after a tool approval, say)
+      // carries that turn's event, never one this tab sent before the restore.
+      const latestTurn = hydratedTurnTraces?.reduce<HydratedTurnTrace | undefined>(
+        (latest, trace) => (!latest || trace.promptIndex >= latest.promptIndex ? trace : latest),
+        undefined,
+      );
+      turnEventAtTurnRef.current = latestTurn?.eventAtTurn
+        ? { chatSessionId: session.chatSessionId, event: latestTurn.eventAtTurn }
         : null;
       skipNextForkDetectionRef.current = true;
       rewindRef.current = null;

@@ -62,6 +62,7 @@ export interface HostDetail {
   hostId: string;
   name: string;
   config: HostConfigDtoV2;
+  preferAppThemeInCompare?: boolean;
   /** As on `HostListItem`: read with `harnessTargetOfHost`. */
   runtime?: HostConfigDtoV2["harness"] | null;
   // Additive: the Scenario surface reads this to decide whether to render the

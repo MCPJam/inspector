@@ -1501,6 +1501,8 @@ export type {
 } from "./mcp-conformance/index.js";
 export {
   CHECK_ERAS,
+  CHECK_FIRST_PROTOCOL_VERSION,
+  checkRunsOnVersion,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
   MCP_LOG_LEVELS,
@@ -1508,6 +1510,7 @@ export {
   MCP_READINESS_IDS,
   PROTOCOL_VERSION_ERAS,
   READINESS_ERAS,
+  REMOVED_MCP_CHECK_IDS,
   RETIRED_MCP_CHECK_IDS,
   canRunConformance,
   isHttpServerConfig,
@@ -1587,6 +1590,8 @@ export {
   MCP_TASKS_CHECK_CATEGORIES,
   MCP_TASKS_CHECK_IDS,
   MCP_TASKS_READINESS_IDS,
+  REMOVED_MCP_TASKS_CHECK_CATEGORIES,
+  REMOVED_MCP_TASKS_CHECK_IDS,
   RENAMED_MCP_TASKS_CHECK_IDS,
   resolveProbeTool,
 } from "./tasks-conformance/index.js";
@@ -2110,14 +2115,11 @@ export type {
 export {
   MCPJAM_EVENTS_EXTENSION_ID,
   EVENT_DELIVERY_MODES,
-  HOST_STYLE_EVENT_DELIVERY_MODES,
   RUNTIME_EVENT_DELIVERY_MODES,
   isEventDeliveryMode,
   readEventsHostSetting,
-  hostStyleEventDeliveryModes,
   resolveHostEventDeliveryModes,
   setEventsHostSetting,
-  clearEventsHostSetting,
   subscribableModes,
   describeModeRefusal,
   describeNoSubscribableMode,

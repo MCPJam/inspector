@@ -19,21 +19,21 @@ This page lists each capability in the MCP specification and its extensions, whe
 
 | Capability | Support | Where to test it |
 | --- | --- | --- |
-| Tools (`tools/list`, `tools/call`) | ✅ Supported | **Tools** tab and **Playground**. See [MCP Inspector](/inspector/tools-prompts-resources#tools) and [Playground](/inspector/playground). |
-| Tool output schemas and `structuredContent` | ✅ Supported | **Tools** tab checks `structuredContent` against the tool's `outputSchema`. See [MCP Inspector](/inspector/tools-prompts-resources#tools). |
-| Resources (`resources/list`, `resources/read`) | ✅ Supported | **Resources** tab. See [MCP Inspector](/inspector/tools-prompts-resources#resources). |
-| Resource templates (`resources/templates/list`) | ◐ Partial | **Resources** tab in the local inspector (Terminal, Desktop, Docker); the hosted app hides templates. See [MCP Inspector](/inspector/tools-prompts-resources#resources). |
-| Resource subscriptions (`resources/subscribe`, and `subscriptions/listen` on 2026-07-28) | ◐ Partial | **Subscriptions** panel in the **Resources** tab. Local inspector only; the hosted app does not show it. See [Subscription stream panel](/inspector/tools-prompts-resources#subscription-stream-panel). |
-| Prompts (`prompts/list`, `prompts/get`) | ✅ Supported | **Prompts** tab. See [MCP Inspector](/inspector/tools-prompts-resources#prompts). |
-| Completion (`completion/complete`) | ◐ Partial | **Conformance** checks that your server answers `completion/complete`. Prompt and template arguments are not autocompleted in the UI. See [Protocol conformance](/sdk/reference/protocol-conformance). |
+| Tools (`tools/list`, `tools/call`) | ✅ Supported | **Tools** tab and **Playground**. See [Tools](/inspector/tools) and [Playground](/inspector/playground). |
+| Tool output schemas and `structuredContent` | ✅ Supported | **Tools** tab checks `structuredContent` against the tool's `outputSchema`. See [Tools](/inspector/tools). |
+| Resources (`resources/list`, `resources/read`) | ✅ Supported | **Resources** tab. See [Resources](/inspector/resources). |
+| Resource templates (`resources/templates/list`) | ◐ Partial | **Resources** tab in the local inspector (Terminal, Desktop, Docker); the hosted app hides templates. See [Resources](/inspector/resources). |
+| Resource subscriptions (`resources/subscribe`, and `subscriptions/listen` on 2026-07-28) | ◐ Partial | **Subscriptions** panel in the **Resources** tab. Local inspector only; the hosted app does not show it. See [Subscription stream panel](/inspector/resources#subscription-stream-panel). |
+| Prompts (`prompts/list`, `prompts/get`) | ✅ Supported | **Prompts** tab. See [Prompts](/inspector/prompts). |
+| Completion (`completion/complete`) | ◐ Partial | **Conformance** checks that your server answers `completion/complete`. Prompt and template arguments are not autocompleted in the UI. See [Conformance](/conformance/overview). |
 
 ## Client capabilities
 
 | Capability | Support | Where to test it |
 | --- | --- | --- |
-| Elicitation, form mode (`elicitation/create`) | ✅ Supported | **Tools** tab and **Playground** show a form dialog. Turn the capability on or off per client. See [Elicitation requests](/inspector/tools-prompts-resources#elicitation-requests) and [Clients](/inspector/clients). |
+| Elicitation, form mode (`elicitation/create`) | ✅ Supported | **Tools** tab and **Playground** show a form dialog. Turn the capability on or off per client. See [Elicitation requests](/inspector/tools#elicitation-requests) and [Clients](/inspector/clients). |
 | Elicitation, URL mode | ✅ Supported | **Playground** asks before opening the URL. Turn URL mode on per client. See [Playground](/inspector/playground#url-elicitation) and [Clients](/inspector/clients). |
-| Multi-round input (`input_required`, 2026-07-28) | ✅ Supported | Tools, resources and prompts that return `input_required` collect input in the same dialog and retry. Only elicitation can be embedded. See [Multi-round input](/inspector/tools-prompts-resources#multi-round-input-mcp-2026-07-28-input_required). |
+| Multi-round input (`input_required`, 2026-07-28) | ✅ Supported | Tools, resources and prompts that return `input_required` collect input in the same dialog and retry. Only elicitation can be embedded. See [Multi-round input](/inspector/tools#multi-round-input-mcp-2026-07-28-input_required). |
 | Sampling (`sampling/createMessage`) | — Not yet | MCPJam never advertises or answers sampling. An embedded sampling request in an `input_required` result is reported as a rejection. |
 | Roots (`roots/list`) | — Not yet | MCPJam never advertises or answers roots. An embedded `roots/list` in an `input_required` result is reported as a rejection. |
 
@@ -46,7 +46,7 @@ This page lists each capability in the MCP specification and its extensions, whe
 | Cancellation (`notifications/cancelled`, stream close on 2026-07-28) | ✅ Supported | Stop a **Playground** turn while a tool runs. On 2025 versions MCPJam sends `notifications/cancelled`; on 2026-07-28 it closes the request's response stream. See [Playground](/inspector/playground). |
 | Ping | ✅ Supported | MCPJam pings a connected server to check its status. See [Connecting servers](/inspector/connecting-servers). |
 | Pagination (`cursor`, `nextCursor`) | ✅ Supported | Tool, resource and prompt lists follow every page. See [MCP Inspector](/inspector/tools-prompts-resources). |
-| `list_changed` notifications | ◐ Partial | Toggle `tools/list_changed`, `prompts/list_changed` and `resources/list_changed` in the **Subscriptions** panel. Local inspector only. See [Subscription stream panel](/inspector/tools-prompts-resources#subscription-stream-panel). |
+| `list_changed` notifications | ◐ Partial | Toggle `tools/list_changed`, `prompts/list_changed` and `resources/list_changed` in the **Subscriptions** panel. Local inspector only. See [Subscription stream panel](/inspector/resources#subscription-stream-panel). |
 
 ## Authorization
 
@@ -57,7 +57,7 @@ This page lists each capability in the MCP specification and its extensions, whe
 | Dynamic Client Registration (DCR) | ✅ Supported | **OAuth Debugger**, and on connect. See [OAuth Debugger](/inspector/guided-oauth) and [OAuth conformance](/cli/oauth-conformance). |
 | Pre-registered clients | ✅ Supported | **OAuth Debugger**, and on connect. See [Pre-registered clients](/inspector/guided-oauth#pre-registered-clients). |
 | Client ID Metadata Documents (CIMD) | ✅ Supported | **OAuth Debugger** on 2025-11-25 and 2026-07-28. See [OAuth Debugger](/inspector/guided-oauth). |
-| Scope step-up (`insufficient_scope`) | ✅ Supported | A tool call that returns `403 insufficient_scope` prompts a new sign-in. See [OAuth scope step-up](/inspector/tools-prompts-resources#oauth-scope-step-up-on-tool-calls). |
+| Scope step-up (`insufficient_scope`) | ✅ Supported | A tool call that returns `403 insufficient_scope` prompts a new sign-in. See [OAuth scope step-up](/inspector/tools#oauth-scope-step-up-on-tool-calls). |
 | OAuth conformance suite | ✅ Supported | `mcpjam` CLI, across registration methods and protocol versions. See [OAuth conformance](/cli/oauth-conformance). |
 | Cross-App Access (XAA, ID-JAG) | ✅ Supported | **XAA Debugger**, with MCPJam as the test identity provider. See [XAA Debugger](/inspector/xaa-debugger) and [XAA Debugger (CLI)](/cli/xaa). |
 
@@ -86,12 +86,12 @@ This page lists each capability in the MCP specification and its extensions, whe
 | --- | --- | --- |
 | MCP Apps (SEP-1865, `io.modelcontextprotocol/ui`, `ui://` resources) | ✅ Supported | **Playground** renders widgets in a sandboxed iframe. See [Playground](/inspector/playground) and [MCP Apps conformance](/cli/apps-conformance). |
 | OpenAI Apps SDK (`openai/outputTemplate`, `window.openai`) | ✅ Supported | **Playground** injects the `window.openai` shim for hosts that use it, such as ChatGPT. See [Host compatibility](/inspector/host-compat). |
-| Skills | ◐ Partial | **Skills** tab, then use them in **Playground**. Always shown in the local inspector; in the hosted app it appears only where Skills has rolled out. See [Skills](/inspector/skills). |
+| Skills | ◐ Partial | Open **Connect** → **Skills**, then use skills in **Playground**. The tab is always visible in the local Inspector and appears in the hosted app where Skills has rolled out. See [Skills](/inspector/skills). |
 | Skills over MCP (SEP-2640, `io.modelcontextprotocol/skills`, `skill://`) | ✅ Supported | Turn on **Skills over MCP** for the client. See [Skills over MCP](/inspector/skills#skills-over-mcp-server-provided-skills). |
-| Tasks (2025-11-25 `tasks/*`) | ✅ Supported | **Tasks** tab and `mcpjam` CLI. See [MCP Tasks](/cli/tasks) and [MCP Tasks conformance](/cli/tasks-conformance). |
-| Tasks extension (SEP-2663, `io.modelcontextprotocol/tasks`) | ✅ Supported | **Tasks** tab and `mcpjam` CLI. See [MCP Tasks](/cli/tasks) and [MCP Tasks conformance](/cli/tasks-conformance). |
+| Tasks (2025-11-25 `tasks/*`) | ✅ Supported | **Tasks** tab and `mcpjam` CLI. See [Tasks in Inspector](/inspector/tasks), [MCP Tasks](/cli/tasks), and [MCP Tasks conformance](/cli/tasks-conformance). |
+| Tasks extension (SEP-2663, `io.modelcontextprotocol/tasks`) | ✅ Supported | **Tasks** tab and `mcpjam` CLI. See [Tasks in Inspector](/inspector/tasks), [MCP Tasks](/cli/tasks), and [MCP Tasks conformance](/cli/tasks-conformance). |
 | Enterprise-managed authorization (`io.modelcontextprotocol/enterprise-managed-authorization`) | ✅ Supported | Advertised on XAA connections, and optionally per client. See [XAA Debugger](/inspector/xaa-debugger) and [Clients](/inspector/clients). |
-| MCP Events (triggers) | ◐ Partial | `mcpjam events` in the CLI. See [MCP Events](/cli/events). |
+| MCP Events Beta (SEP-3415, `io.modelcontextprotocol/events`) | ✅ Supported | **Events** tab, **Playground** and `mcpjam` CLI. Hosted subscriptions support poll and webhook; push needs the local app. See [MCP Events](/inspector/events) and [MCP Events in the CLI](/cli/events). |
 
 ## Test against other hosts
 

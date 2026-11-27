@@ -138,6 +138,36 @@ describe("rubric-check rows", () => {
     expect(fallback.evaluationConfig.hash).toBe(jev.evaluationConfig.hash);
   });
 
+  test("a yes/no question that passes on No keeps the backend's P(pass)", () => {
+    // The backend scores it as 1 - P(yes); the row must not flip it back.
+    const { scores } = contract({
+      ...verdict,
+      questions: [
+        {
+          key: "q:invented-result",
+          kind: "boolean",
+          label: "Presents a result no tool returned",
+          contentDigest: "d-invented",
+          passThreshold: 0.5,
+          status: "scored",
+          value: 0.9,
+          passed: true,
+          probability: 0.1,
+          rationale: "No · P(yes) 0.10",
+          evidence: ["decided by Jev"],
+        },
+      ],
+    });
+    expect(scores).toEqual([
+      expect.objectContaining({
+        scorerId: "judge:rubricChecks:q:invented-result",
+        status: "scored",
+        value: 0.9,
+        passed: true,
+      }),
+    ]);
+  });
+
   test("an unanswered question is an error row, never a zero", () => {
     const polite = contract(verdict).scores.find(
       (row) => row.scorerId === "judge:rubricChecks:c:polite",

@@ -98,11 +98,13 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
+      # Backend main supplies the evaluator tag, the "declared" schema option,
+      # and the "not_applicable" predicate result status.
       - name: Checkout pinned backend contract
         uses: actions/checkout@v7
         with:
           repository: MCPJam/mcpjam-backend
-          ref: c7e79944049dfd2cc2b81c6a08a4a540d20fa9bb
+          ref: d202d7ed2bb7c7059bbb42530a5278cefc314775
           token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
           path: .authoring-backend
           persist-credentials: false

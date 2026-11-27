@@ -1,4 +1,7 @@
 import { usePublishEventAgent } from "@/components/playground/events/event-agent-bridge";
+import type { EventAtTurn } from "@/shared/event-at-turn";
+import { usePlaygroundEventAgentTools } from "@/components/playground/events/PlaygroundEventsProvider";
+import { chatOffersEventAgentTools } from "@/components/playground/events/agent-tools-gate";
 import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 import {
   hasComparisonAuthRecoveryRequest,
@@ -324,6 +327,7 @@ import {
 import { useComparePaneSkillsSection } from "./compare-pane-skills";
 import { useComparePaneControls } from "./use-compare-pane-controls";
 import { useComparePaneDisplayStore } from "@/stores/compare-pane-display-store";
+import { resolveComparePaneTheme } from "@/lib/compare-pane-theme";
 import { usePlaygroundClientInitialization } from "./use-playground-client-initialization";
 import { useMissingLeadFallback } from "./use-missing-lead-fallback";
 import { playgroundClientInitNotice } from "./playground-client-init-notice";
@@ -1418,6 +1422,17 @@ export function PlaygroundMain({
     [hostStyle, previewedHost?.config?.agentLoop, previewedHost?.config?.harness, previewedHost?.config?.mcpProfile],
   );
   const pluginExtensionsEnabled = pluginExtensions.enabled;
+  // The agent subscribes to MCP Events from the conversation when the chat's
+  // client receives events by a mode it can use here (ChatGPT's behaviour).
+  const eventAgentToolExecutor = usePlaygroundEventAgentTools();
+  const eventAgentTools = chatOffersEventAgentTools({
+    config: previewedHost?.config ?? null,
+    configUnresolved: previewedHostConfigUnresolved,
+    study: !!tester,
+    hosted: HOSTED_MODE,
+  })
+    ? (eventAgentToolExecutor ?? undefined)
+    : undefined;
   // ChatGPT's or Claude's rules for this client's Apps: how they choose a
   // display mode, and where an entry App that can't go fullscreen opens.
   const pluginExtensionHost = {
@@ -1569,6 +1584,7 @@ export function PlaygroundMain({
     // Opt-in from the Tools panel's Page tools section. Off unless the user
     // ticked it for the page they currently have open in the WebMCP tab.
     usePageTools: webmcpPageToolsEnabled,
+    ...(eventAgentTools ? { eventAgentTools } : {}),
     directVisibility: pendingDirectVisibility,
     hostedOrgModelConfig,
     inheritedEnvironmentModel: isEnvironmentMode ? playgroundEnvironment.preview?.host : undefined,
@@ -5151,7 +5167,8 @@ export function PlaygroundMain({
   pluginMessageDispatchRef.current = pluginMessage.send;
 
   const handleSendFollowUp = useCallback(
-    (text: string, isCurrent: () => boolean = () => true) => {
+    // `eventAtTurn`: an MCP event turn's record of the event that started it.
+    (text: string, isCurrent: () => boolean = () => true, eventAtTurn?: EventAtTurn) => {
       return (async () => {
         // Same gate as the composer, and for the same reason: a widget-driven
         // follow-up on a reopened conversation would otherwise be the FIRST
@@ -5197,6 +5214,7 @@ export function PlaygroundMain({
           text,
           metadata: outgoingSenderMetadata,
           widgetModelContext: sentContext,
+          ...(eventAtTurn ? { eventAtTurn } : {}),
           // The gates above can finish and this call can still await server
           // preparation. The study block has to be read again at dispatch.
           isCurrent: () => isCurrent() && !conversationSendBlockedRef.current,
@@ -7703,7 +7721,12 @@ export function PlaygroundMain({
                         );
                         const column = resolution.column;
                         const columnDisplay = paneDisplays[column.compareId];
-                        const columnTheme = columnDisplay?.theme ?? extractHostTheme(column.hostConfig.hostContext) ?? globalThemeMode;
+                        const { theme: columnTheme } = resolveComparePaneTheme(
+                          globalThemeMode,
+                          columnDisplay?.theme,
+                          column.hostConfig.hostContext,
+                          column.preferAppThemeInCompare,
+                        );
                         return (
                         <MultiModelPlaygroundCard
                           className={compareLaneHidden(`host:${column.compareId}`)}
@@ -7794,7 +7817,7 @@ export function PlaygroundMain({
                           hostStyle={column.hostSnapshot.hostStyle}
                           effectiveThreadTheme={columnTheme}
                           deviceType={columnDisplay?.deviceType ?? storeDeviceType}
-                          displayOverrides={columnDisplay}
+                          displayDeviceOverride={columnDisplay?.deviceType}
                           hideInlineEdit={hideInlineEdit}
                           onWidgetStateChange={onWidgetStateChange}
                           toolRenderOverrides={externalToolRenderOverrides}

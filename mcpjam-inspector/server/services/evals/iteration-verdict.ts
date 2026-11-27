@@ -37,6 +37,8 @@ import {
   type SelectionToolLike,
 } from "./transcript-evidence";
 import type { AgentActivityAssessment } from "./agent-activity";
+import type { AccountRouting } from "./account-routing";
+import { evaluateWithPinnedResults, type PinnedCallRecord } from "./pinned-call-grading";
 
 type EvalArgs = Parameters<typeof evaluateMultiTurnResults>;
 type TranscriptArgs = Parameters<typeof buildIterationTranscript>[0];
@@ -90,6 +92,9 @@ export interface EvalIterationVerdictInput {
   selectionToolAnnotations?: Record<string, Record<string, unknown>>;
   toolDeclarations?: import("@mcpjam/sdk/predicates").TranscriptToolDeclaration[];
   declarationsCaptured?: "complete" | "partial" | "absent";
+  accountRouting?: AccountRouting;
+  connectionKeys?: ReadonlyMap<string, string>;
+  pinnedCalls?: readonly PinnedCallRecord[];
 
   // ── gates ──
   iterationError: string | undefined;
@@ -154,9 +159,9 @@ export function buildEvalIterationVerdict(
   // Extracted once, outside the `effectivePredicates` guard's branch, so the
   // capture states describe THIS iteration rather than whether anybody
   // happened to author a check over it.
-  const evidence = extractTranscriptEvidence(input.trace);
+  const evidence = extractTranscriptEvidence(input.trace, input.accountRouting, input.connectionKeys);
   const casePredicateResults = input.effectivePredicates?.length
-    ? evaluatePredicates(
+    ? evaluateWithPinnedResults(
         buildIterationTranscript({
           trace: input.trace as TranscriptArgs["trace"],
           // `evaluation.toolsCalled` already includes widget calls (merged into
@@ -184,6 +189,7 @@ export function buildEvalIterationVerdict(
             : {}),
         }),
         input.effectivePredicates,
+        input.pinnedCalls,
       )
     : [];
 

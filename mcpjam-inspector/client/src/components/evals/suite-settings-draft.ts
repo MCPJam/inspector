@@ -24,6 +24,7 @@
  */
 
 import type { EvalMatchOptions } from "@/shared/eval-matching";
+import type { SharedEvalAccountSelection } from "@/lib/evals/eval-accounts";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import {
   EVAL_ITERATION_RULE_LABELS,
@@ -63,6 +64,7 @@ export {
  */
 export type SuiteSettingsValues = {
   name: string;
+  accounts?: SharedEvalAccountSelection[];
   defaultPassCriteria: { minimumPassRate: number } | undefined;
   minIterations: number | undefined;
   computerEnvironmentId: string | undefined;
@@ -128,6 +130,7 @@ export type SuiteSettingsKey = keyof SuiteSettingsValues;
 
 export const SUITE_SETTINGS_KEYS: readonly SuiteSettingsKey[] = [
   "name",
+  "accounts",
   "defaultPassCriteria",
   "minIterations",
   "computerEnvironmentId",
@@ -236,6 +239,7 @@ export function suiteImageSetting(suite: {
 /** Read a suite document into the draft's value shape. */
 export function readSuiteSettingsValues(suite: {
   name?: string;
+  accounts?: SharedEvalAccountSelection[];
   defaultPassCriteria?: { minimumPassRate?: number };
   minIterations?: number;
   environment?: { computerEnvironmentId?: string };
@@ -261,6 +265,7 @@ export function readSuiteSettingsValues(suite: {
 }): SuiteSettingsValues {
   return {
     name: suite.name ?? "",
+    accounts: suite.accounts,
     defaultPassCriteria:
       suite.defaultPassCriteria?.minimumPassRate === undefined
         ? undefined
@@ -588,6 +593,9 @@ export function toUpdateArgs(
       case "name":
         args.name = normalized.name;
         break;
+      case "accounts":
+        args.accounts = value ?? [];
+        break;
       case "defaultPassCriteria":
         // OMITTED when absent, never `null`: the mutation's validator is
         // `v.optional(passCriteriaValidator)` with no null member, so a `null`
@@ -801,6 +809,13 @@ export function describeChange(
         label: "Computer environment",
         before: before.computerEnvironmentId ?? "None",
         after: after.computerEnvironmentId ?? "None",
+      };
+    case "accounts":
+      return {
+        key,
+        label: "MCP server account defaults",
+        before: `${before.accounts?.length ?? 0} configured`,
+        after: `${after.accounts?.length ?? 0} configured`,
       };
     case "defaultMatchOptions":
       return {
