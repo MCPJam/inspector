@@ -22,6 +22,7 @@ import { PostHogProvider } from "posthog-js/react";
 import { AuthKitProvider } from "@workos-inc/authkit-react";
 import { WorkosAuthUnavailableDialog } from "./components/auth/WorkosAuthUnavailableDialog";
 import { SignInAttemptSettler } from "./components/auth/SignInAttemptSettler";
+import { settleSignInOnLoad } from "./lib/auth/signin-tracking";
 import { ConvexReactClient, ConvexProviderWithAuth } from "convex/react";
 import { installConvexAuthRecovery } from "./lib/convex-auth-recovery";
 import { AuthRecoveryBoundary } from "./components/AuthRecoveryBoundary";
@@ -440,6 +441,10 @@ if (isInIframe) {
        * then calls this), so navigating away here does not race the login.
        */
       onRedirectCallback={({ state }) => {
+        // AuthKit calls this only after a successful code exchange. Settle
+        // here because an unscoped return below navigates away before
+        // SignInAttemptSettler gets a render with `isLoading` false.
+        settleSignInOnLoad("code_callback", true);
         const carried = state as Record<string, unknown> | null;
         const promoReturn = promoSignInReturn(carried);
         const savedPath = readAppSignInReturnPath();

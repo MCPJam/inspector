@@ -8,8 +8,9 @@
  * window) and settled once AuthKit has finished loading on the next load.
  * An attempt with no callback for 30 minutes is reported as abandoned.
  */
+import posthog from "posthog-js";
 import { track } from "@/lib/analytics";
-import { detectPlatform } from "@/lib/PosthogUtils";
+import { detectPlatform, isPostHogDisabled } from "@/lib/PosthogUtils";
 import { isRecord } from "@/lib/host-capabilities";
 
 export type SignInIntent = "sign_in" | "sign_up";
@@ -29,6 +30,8 @@ export interface SignInAttempt {
 }
 
 interface PendingSignIn extends SignInAttempt {
+  /** Tabs share the marker, so an attempt acts on it only while this matches. */
+  id: string;
   startedAt: number;
 }
 
@@ -69,11 +72,13 @@ function readPending(): PendingSignIn | null {
       isRecord(parsed) &&
       isIntent(parsed.intent) &&
       isLocation(parsed.location) &&
+      typeof parsed.id === "string" &&
       typeof parsed.startedAt === "number"
     ) {
       return {
         intent: parsed.intent,
         location: parsed.location,
+        id: parsed.id,
         startedAt: parsed.startedAt,
       };
     }
@@ -104,6 +109,17 @@ function takePending(): PendingSignIn | null {
   return pending;
 }
 
+/**
+ * The pending marker exists only for analytics, so it is not written when
+ * nothing would be sent: telemetry turned off, or a page that never
+ * initializes PostHog (the standalone `/connect/server/<token>` root).
+ */
+function isTrackingOff(): boolean {
+  return (
+    isPostHogDisabled || !posthog.__loaded || posthog.has_opted_out_capturing()
+  );
+}
+
 function properties({ intent, location }: SignInAttempt) {
   return { location, intent, signin_platform: signInPlatform() };
 }
@@ -112,19 +128,32 @@ function fail(attempt: SignInAttempt, reason: SignInFailureReason): void {
   track("signin_failed", { ...properties(attempt), reason });
 }
 
-/** Opens an attempt. An earlier one that never came back is settled first. */
-export function trackSignInStarted(attempt: SignInAttempt): void {
+/**
+ * Opens an attempt and returns its id, or null when tracking is off. An
+ * earlier one that never came back is settled first.
+ */
+export function trackSignInStarted(attempt: SignInAttempt): string | null {
+  if (isTrackingOff()) return null;
   const previous = takePending();
   if (previous) fail(previous, "abandoned");
-  writePending({ ...attempt, startedAt: Date.now() });
+  // Not `crypto.randomUUID`: it is missing on the insecure LAN origins whose
+  // attempts fail with `insecure_origin`.
+  const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  writePending({ ...attempt, id, startedAt: Date.now() });
   track("signin_started", properties(attempt));
+  return id;
 }
 
-/** Ends an attempt that never left for WorkOS. */
+/**
+ * Ends an attempt that never left for WorkOS. Once another tab has started an
+ * attempt, this one was already reported abandoned and the marker is not its.
+ */
 export function trackSignInFailedBeforeRedirect(
+  attemptId: string | null,
   attempt: SignInAttempt,
   reason: "insecure_origin" | "start_error",
 ): void {
+  if (attemptId === null || readPending()?.id !== attemptId) return;
   writePending(null);
   fail(attempt, reason);
 }
@@ -149,6 +178,7 @@ export function settleSignInOnLoad(
   signedIn: boolean,
   now: number = Date.now(),
 ): void {
+  if (isTrackingOff()) return;
   if (load === "other") {
     const pending = readPending();
     if (pending && now - pending.startedAt >= SIGN_IN_ABANDONED_AFTER_MS) {

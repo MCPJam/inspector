@@ -1,8 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { trackMock } = vi.hoisted(() => ({ trackMock: vi.fn() }));
+const { trackMock, telemetry } = vi.hoisted(() => ({
+  trackMock: vi.fn(),
+  telemetry: { disabled: false, loaded: true, optedOut: false },
+}));
 vi.mock("@/lib/analytics", () => ({ track: trackMock }));
-vi.mock("@/lib/PosthogUtils", () => ({ detectPlatform: () => "web" }));
+vi.mock("@/lib/PosthogUtils", () => ({
+  detectPlatform: () => "web",
+  get isPostHogDisabled() {
+    return telemetry.disabled;
+  },
+}));
+vi.mock("posthog-js", () => ({
+  default: {
+    get __loaded() {
+      return telemetry.loaded;
+    },
+    has_opted_out_capturing: () => telemetry.optedOut,
+  },
+}));
 
 import {
   PENDING_SIGN_IN_STORAGE_KEY,
@@ -10,6 +26,7 @@ import {
   readSignInLoad,
   settleSignInOnLoad,
   signInPlatform,
+  trackSignInFailedBeforeRedirect,
   trackSignInStarted,
 } from "../signin-tracking";
 import { startWorkosAuth } from "../workos-auth-start";
@@ -24,6 +41,7 @@ function events() {
 
 beforeEach(() => {
   trackMock.mockClear();
+  Object.assign(telemetry, { disabled: false, loaded: true, optedOut: false });
   localStorage.clear();
   useWorkosAuthUnavailableStore.getState().dismiss();
 });
@@ -123,11 +141,53 @@ describe("settleSignInOnLoad", () => {
     ]);
   });
 
+  it("does not let a superseded attempt clear the newer one's marker", () => {
+    const first = trackSignInStarted(attempt);
+    // Another tab starts its own attempt before the first one's start fails.
+    trackSignInStarted({ intent: "sign_up", location: "promo_redemption" });
+    trackMock.mockClear();
+    trackSignInFailedBeforeRedirect(first, attempt, "start_error");
+    expect(trackMock).not.toHaveBeenCalled();
+    settleSignInOnLoad("code_callback", true);
+    expect(events()).toEqual([
+      [
+        "signin_completed",
+        { ...base, intent: "sign_up", location: "promo_redemption" },
+      ],
+    ]);
+  });
+
   it("drops a marker it does not recognize", () => {
     localStorage.setItem(PENDING_SIGN_IN_STORAGE_KEY, '{"intent":"other"}');
     settleSignInOnLoad("code_callback", true);
     expect(trackMock).not.toHaveBeenCalled();
     expect(localStorage.getItem(PENDING_SIGN_IN_STORAGE_KEY)).toBeNull();
+  });
+});
+
+describe.each([
+  ["telemetry is disabled", { disabled: true }],
+  ["the user opted out", { optedOut: true }],
+  ["PostHog was never initialized", { loaded: false }],
+])("when %s", (_, state) => {
+  it("neither writes the marker nor sends an event", async () => {
+    Object.assign(telemetry, state);
+    expect(
+      await startWorkosAuth(vi.fn(), attempt, "http://192.168.1.50:6274"),
+    ).toBe("blocked");
+    expect(trackSignInStarted(attempt)).toBeNull();
+    expect(localStorage.getItem(PENDING_SIGN_IN_STORAGE_KEY)).toBeNull();
+    expect(trackMock).not.toHaveBeenCalled();
+  });
+
+  it("leaves an existing marker unsettled", () => {
+    trackSignInStarted(attempt);
+    const marker = localStorage.getItem(PENDING_SIGN_IN_STORAGE_KEY);
+    trackMock.mockClear();
+    Object.assign(telemetry, state);
+    settleSignInOnLoad("code_callback", true);
+    expect(trackMock).not.toHaveBeenCalled();
+    expect(localStorage.getItem(PENDING_SIGN_IN_STORAGE_KEY)).toBe(marker);
   });
 });
 

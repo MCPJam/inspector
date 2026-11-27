@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { readSignInLoad, settleSignInOnLoad } from "@/lib/auth/signin-tracking";
 
@@ -10,17 +10,20 @@ let settledThisLoad = false;
  * Settles a pending sign-in attempt once per page load. The URL is read on
  * the first render, before AuthKit's effect strips `code` from it. AuthKit
  * has no callback for "finished loading" (`onRedirectCallback` fires only on
- * success), so the first render that sees `isLoading` false settles the
- * attempt. That render is also after PostHog has initialized.
+ * success), so the attempt is settled once `isLoading` turns false. That is
+ * also after PostHog has initialized. A successful return that navigates away
+ * is settled earlier, in `onRedirectCallback`.
  */
 export function SignInAttemptSettler({ redirectUri }: { redirectUri: string }) {
   const { isLoading, user } = useAuth();
   const [load] = useState(() =>
     readSignInLoad(window.location.href, redirectUri),
   );
-  if (!isLoading && !settledThisLoad) {
+  const signedIn = user != null;
+  useEffect(() => {
+    if (isLoading || settledThisLoad) return;
     settledThisLoad = true;
-    settleSignInOnLoad(load, user != null);
-  }
+    settleSignInOnLoad(load, signedIn);
+  }, [isLoading, load, signedIn]);
   return null;
 }

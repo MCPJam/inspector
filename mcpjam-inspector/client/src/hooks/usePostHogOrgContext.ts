@@ -17,9 +17,14 @@ export function usePostHogOrgContext(
     }
   }, [posthog, organizationId]);
 
-  // Derived from this render's inputs and read by `track()` when an event
-  // fires, like a ref assigned in render. Idempotent, so no effect is needed.
-  setAnalyticsOrganizationGroup(
-    isMember && organizationId ? organizationId : null,
-  );
+  // Set during render so a child's mount effect already tracks with it. The
+  // effect clears it once App unmounts (AuthRecoveryBoundary can replace App
+  // with a sign-in banner) and sets it again, since StrictMode runs that
+  // cleanup once on mount.
+  const group = isMember && organizationId ? organizationId : null;
+  setAnalyticsOrganizationGroup(group);
+  useEffect(() => {
+    setAnalyticsOrganizationGroup(group);
+    return () => setAnalyticsOrganizationGroup(null);
+  }, [group]);
 }

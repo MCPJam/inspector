@@ -21,18 +21,18 @@ export async function startWorkosAuth(
   attempt: SignInAttempt,
   origin = globalThis.location.origin,
 ): Promise<WorkosAuthStartResult> {
-  trackSignInStarted(attempt);
+  const attemptId = trackSignInStarted(attempt);
   // WorkOS production callbacks require HTTPS outside loopback, even if a
   // browser exposes Web Crypto on an explicitly trusted HTTP origin.
   if (isUnsupportedWorkosAuthOrigin(origin)) {
-    trackSignInFailedBeforeRedirect(attempt, "insecure_origin");
+    trackSignInFailedBeforeRedirect(attemptId, attempt, "insecure_origin");
     useWorkosAuthUnavailableStore.getState().show();
     return "blocked";
   }
   try {
     await start();
   } catch (error) {
-    trackSignInFailedBeforeRedirect(attempt, "start_error");
+    trackSignInFailedBeforeRedirect(attemptId, attempt, "start_error");
     throw error;
   }
   return "started";

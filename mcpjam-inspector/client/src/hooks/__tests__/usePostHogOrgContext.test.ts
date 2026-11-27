@@ -50,6 +50,15 @@ it("stops grouping when the member signs out or leaves the organization", () => 
   expect(captured()).not.toHaveProperty("$groups");
 });
 
+it("stops grouping once the hook's owner unmounts", () => {
+  // AuthRecoveryBoundary replaces App with a sign-in banner whose tracking
+  // must not carry the organization App last had.
+  const { unmount } = renderHook(() => usePostHogOrgContext("org_1", true));
+  unmount();
+  track("signin_started", { location: "session-refresh" });
+  expect(captured()).not.toHaveProperty("$groups");
+});
+
 it("lets a billing event keep the organization it names", () => {
   renderHook(() => usePostHogOrgContext("org_in_view", true));
   track("billing_flow_started", { organization_id: "org_billed" });

@@ -27,6 +27,16 @@ vi.mock("@/lib/analytics", () => ({
   track: mockState.track,
 }));
 
+// Sign-in tracking is skipped while telemetry is off (`.env.local` turns it
+// off for tests) or before PostHog has initialized.
+vi.mock("@/lib/PosthogUtils", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/PosthogUtils")>()),
+  isPostHogDisabled: false,
+}));
+vi.mock("posthog-js", () => ({
+  default: { __loaded: true, has_opted_out_capturing: () => false },
+}));
+
 vi.mock("@/lib/app-signin-return-path", () => ({
   captureAppSignInReturnPath: mockState.captureAppSignInReturnPath,
 }));
