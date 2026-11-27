@@ -430,9 +430,18 @@ describe("2025-11-25: answers that leave nothing to grade", () => {
         }),
       ],
     });
-    const result = await grade(server, { fixtures: FIXTURE });
+    const result = await grade(server, {
+      fixtures: FIXTURE,
+      surfaceTools: [
+        {
+          name: "hello-typed",
+          inputSchema: { type: "object", properties: {} },
+          outputSchema: GREETING_SCHEMA,
+        },
+      ],
+    });
 
-    // A refused call is not a result that broke its schema.
+    // The client session allowed empty arguments, but the probe session did not.
     expect(result.skipReason).toBe("could-not-run");
     expect(result.details).toMatchObject({
       missingInput: "toolCallProbe",
@@ -544,7 +553,7 @@ describe("2025-11-25: how the server is addressed", () => {
     expect(server.seen.every((request) => request.sessionId === null)).toBe(true);
   });
 
-  it("takes the schemas from the client's listing when the run has one", async () => {
+  it("grades against the probe session's output schema when the client listing differs", async () => {
     const server = scriptedServer();
     const result = await grade(server, {
       fixtures: FIXTURE,
@@ -552,15 +561,19 @@ describe("2025-11-25: how the server is addressed", () => {
         {
           name: "hello-typed",
           inputSchema: { type: "object", properties: {} },
-          outputSchema: GREETING_SCHEMA,
+          outputSchema: {
+            type: "object",
+            properties: { greeting: { type: "number" } },
+            required: ["greeting"],
+          },
         },
       ],
     });
 
     expect(result.status).toBe("passed");
-    // No second listing: the run already read the tools.
     expect(wire(server)).toEqual([
       ...HANDSHAKE,
+      "tools/list",
       "tools/call hello-typed",
       "DELETE",
     ]);

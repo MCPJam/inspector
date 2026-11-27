@@ -30,7 +30,6 @@ import {
   resumePolledStream,
   walkToolsList,
   type RawHttpResult,
-  type ToolsListWalk,
 } from "../raw-http.js";
 import {
   CHECK_FIRST_PROTOCOL_VERSION,
@@ -128,34 +127,35 @@ export async function runLegacyToolOutputSchemaCheck(
         { sessionId, protocolVersion }
       );
 
-    let walk: Promise<ToolsListWalk> | undefined;
-    const walkOnce = () =>
-      (walk ??= walkToolsList({
-        startId: 7960,
-        request: ({ id, cursor }) =>
-          send(id, "tools/list", cursor === undefined ? undefined : { cursor }),
-      }));
-
-    const { schemas: declared, complete } = await declaredOutputSchemas(
-      ctx,
-      walkOnce
-    );
+    // Read the declarations on the session that will make the calls. The
+    // client's earlier listing can describe different schemas.
+    const firstListId = 7960;
+    const walk = await walkToolsList({
+      startId: firstListId,
+      request: ({ id, cursor }) =>
+        send(id, "tools/list", cursor === undefined ? undefined : { cursor }),
+    });
+    const declared = new Map<string, unknown>();
+    for (const tool of walk.tools) {
+      if (typeof tool.name === "string" && tool.outputSchema !== undefined) {
+        declared.set(tool.name, tool.outputSchema);
+      }
+    }
+    let nextId = firstListId + walk.pagesRead;
     return await gradeToolOutputSchemas(meta, startedAt, {
       fixtures: ctx.config.fixtures.toolCalls,
       declared,
-      complete,
-      callTool: (fixture, id) =>
-        send(id, "tools/call", {
+      complete: walk.termination === "complete" && !walk.malformedPage,
+      callTool: (fixture) =>
+        send(nextId++, "tools/call", {
           name: fixture.toolName,
           arguments: fixture.arguments ?? {},
         }),
       badArgs: async (toolName, args, httpStatus) => {
         // On a 401 the login is the gap to report, not the arguments.
         if (httpStatus === 401) return undefined;
-        const verdict = checkToolArgs(
-          await toolInputSchema(ctx, walkOnce, toolName),
-          args ?? {}
-        );
+        const tool = walk.tools.find((entry) => entry.name === toolName);
+        const verdict = checkToolArgs(tool?.inputSchema, args ?? {});
         if (verdict.verdict !== "invalid") return undefined;
         const text = badToolArgsMessage(toolName, verdict.message);
         return couldNotRunResult(meta, text, {
@@ -177,50 +177,5 @@ export async function runLegacyToolOutputSchemaCheck(
   } finally {
     // The session was this check's own: it is ended whatever the verdict.
     await terminateSession(ctx, sessionId, negotiatedVersion);
-  }
-}
-
-/**
- * Tool name to declared `outputSchema`: from the client phase's snapshot when
- * it holds one, else from a raw walk of the listing, which also says whether
- * every page was read. The same two sources, in the same order, as on
- * 2026-07-28.
- */
-async function declaredOutputSchemas(
-  ctx: RawHttpCheckContext,
-  walkOnce: () => Promise<ToolsListWalk>
-): Promise<{ schemas: Map<string, unknown>; complete: boolean }> {
-  const schemas = new Map<string, unknown>();
-  for (const tool of ctx.surface?.tools ?? []) {
-    const outputSchema = (tool as { outputSchema?: unknown }).outputSchema;
-    if (outputSchema !== undefined) schemas.set(tool.name, outputSchema);
-  }
-  if (schemas.size > 0) return { schemas, complete: true };
-
-  const walk = await walkOnce();
-  for (const entry of walk.tools) {
-    if (typeof entry.name === "string" && entry.outputSchema !== undefined) {
-      schemas.set(entry.name, entry.outputSchema);
-    }
-  }
-  return {
-    schemas,
-    complete: walk.termination === "complete" && !walk.malformedPage,
-  };
-}
-
-/** The declared `inputSchema` of `toolName`, or undefined when unknown. */
-async function toolInputSchema(
-  ctx: RawHttpCheckContext,
-  walkOnce: () => Promise<ToolsListWalk>,
-  toolName: string
-): Promise<unknown> {
-  const listed = ctx.surface?.tools.find((tool) => tool.name === toolName);
-  if (listed) return listed.inputSchema;
-  try {
-    const walk = await walkOnce();
-    return walk.tools.find((entry) => entry.name === toolName)?.inputSchema;
-  } catch {
-    return undefined;
   }
 }
