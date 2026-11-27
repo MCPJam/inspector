@@ -167,6 +167,47 @@ describe("a protocol-level tool failure", () => {
     expect(toolResults[0]).toMatchObject({ callFailure: "protocol" });
     expect(toolResults[0]).not.toHaveProperty("isError");
   });
+
+  it.each([
+    [
+      'TypeError: Tool "get_order" structured content does not match its output schema: data/limit must be a number.',
+      "output_schema_mismatch",
+    ],
+    [
+      'Tool "get_order" has an output schema but did not return structured content.',
+      "missing_structured_content",
+    ],
+  ])("classifies MRTR rejections on account variants: %s", (value, callFailure) => {
+    const evidence = extractTranscriptEvidence(
+      {
+        messages: [{
+          role: "tool",
+          content: [{
+            type: "tool-result",
+            toolName: "get_order__work",
+            output: { type: "error-text", value },
+          }],
+        }],
+      },
+      new Map([["get_order__work", { serverToolName: "get_order", selectsAccount: false }]]),
+    );
+    expect(evidence.toolResults[0]).toMatchObject({
+      toolName: "get_order__work",
+      declaredToolName: "get_order",
+      callFailure,
+    });
+    const transcript = buildIterationTranscript({
+      ...evidence,
+      toolCalls: [{ toolName: "get_order", arguments: {} }],
+      toolDeclarations: [{ name: "get_order", serverKey: "fixture", outputSchema: SCHEMA }],
+      declarationsCaptured: "complete",
+    });
+    expect(evaluatePredicate(transcript, {
+      type: "toolResultMatchesSchema",
+      schema: "declared",
+      toolName: "get_order",
+    })).toMatchObject({ passed: false });
+  });
 });
 
 it("grades output-schema rejections through the MCP client and AI SDK", async () => {

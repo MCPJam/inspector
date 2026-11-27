@@ -10,7 +10,7 @@ type Cluster<Row> = { evaluatorId: string; version: number; rows: Row[] };
 
 /**
  * Splits a stage's rows into hand-written ones and one cluster per library
- * evaluator, in first-appearance order.
+ * evaluator version, in first-appearance order.
  */
 export function clusterByEvaluator<Row>(
   rows: readonly Row[],
@@ -24,7 +24,9 @@ export function clusterByEvaluator<Row>(
       loose.push(row);
       continue;
     }
-    const cluster = clusters.find((c) => c.evaluatorId === origin.id);
+    const cluster = clusters.find(
+      (c) => c.evaluatorId === origin.id && c.version === origin.version,
+    );
     if (cluster) cluster.rows.push(row);
     else
       clusters.push({
@@ -73,8 +75,8 @@ export function EvaluatorStageRows<Row extends { id: string }>({
           entry && entry.version > cluster.version ? entry.version : undefined;
         return (
           <section
-            key={cluster.evaluatorId}
-            aria-label={`${name} in ${stageLabel}`}
+            key={`${cluster.evaluatorId}:${cluster.version}`}
+            aria-label={`${name} in ${stageLabel}, version ${cluster.version}`}
             data-evaluator-group={cluster.evaluatorId}
             className="rounded-lg border border-border bg-muted/20 p-3"
           >

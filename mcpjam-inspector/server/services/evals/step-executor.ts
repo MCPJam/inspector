@@ -65,6 +65,7 @@ import {
 } from "./pinned-call-grading";
 import type { PinnedCallEvidence } from "./pinned-turn";
 import { extractTranscriptEvidence } from "./transcript-evidence";
+import type { AccountRouting } from "./account-routing";
 import { logger } from "../../utils/logger.js";
 
 /** Accumulated token usage in AI-SDK-canonical shape. */
@@ -150,6 +151,8 @@ export interface StepExecutionState {
    */
   toolDeclarations?: TranscriptToolDeclaration[];
   declarationsCaptured?: "complete" | "partial" | "absent";
+  accountRouting?: AccountRouting;
+  connectionKeys?: ReadonlyMap<string, string>;
 }
 
 /** A step that fail-fast skipped (an earlier step failed). */
@@ -164,7 +167,7 @@ export interface SkippedStep {
 export function createStepExecutionState(
   declarations: Pick<
     StepExecutionState,
-    "toolDeclarations" | "declarationsCaptured"
+    "toolDeclarations" | "declarationsCaptured" | "accountRouting" | "connectionKeys"
   > = {},
 ): StepExecutionState {
   return {
@@ -356,10 +359,11 @@ function snapshotTranscript(
   // steps so far produced — exactly how the case-level verdict reads them from
   // the finished trace (`iteration-verdict.ts`). Without these, every result or
   // timing check scored at an assert step reported "no tool results captured".
-  const evidence = extractTranscriptEvidence({
-    messages: state.messages,
-    spans: state.spans,
-  });
+  const evidence = extractTranscriptEvidence(
+    { messages: state.messages, spans: state.spans },
+    state.accountRouting,
+    state.connectionKeys,
+  );
   return buildIterationTranscript({
     toolCalls: state.toolCalls,
     toolResults: evidence.toolResults,

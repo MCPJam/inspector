@@ -106,6 +106,19 @@ describe("library catalog edits", () => {
     expect(clusters[0].rows).toHaveLength(2);
   });
 
+  it("keeps different versions of the same evaluator in separate groups", () => {
+    const first: Predicate = { type: "noToolErrors", evaluator: wasted };
+    const second: Predicate = {
+      ...first,
+      evaluator: { ...wasted, version: wasted.version + 1 },
+    };
+    const { clusters } = clusterByEvaluator([first, second], (row) => row);
+    expect(clusters.map(({ version, rows }) => ({ version, rows }))).toEqual([
+      { version: wasted.version, rows: [first] },
+      { version: wasted.version + 1, rows: [second] },
+    ]);
+  });
+
   it("removes and replaces only one evaluator's checks", () => {
     expect(withoutEvaluator(tagged, "no-wasted-calls")).toEqual([
       { type: "noToolErrors" },

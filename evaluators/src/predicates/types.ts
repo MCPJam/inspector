@@ -517,12 +517,18 @@ const checkPolicyShape = {
   role: z.enum(["gating", "advisory", "required"]).optional(),
   severity: z.literal("warn").optional(),
   evaluator: z
-    .object({
+    .strictObject({
       id: z.string().min(1).max(MAX_EVALUATOR_ID_CHARS),
       version: z.number().int().positive(),
     })
     .optional(),
 };
+
+export const authoredResultSchemaRoot = z.union([
+  z.literal("declared"),
+  z.record(z.string(), z.unknown()),
+  z.boolean(),
+]);
 
 /**
  * The fields `toolInputMatches` and `toolResultMatches` share, in the order
@@ -742,19 +748,17 @@ export const predicateUnion = z.discriminatedUnion("type", [
     // backend mirror. Enforce the supported root types during parsing.
     schema: z
       .union([
-        z.literal("declared"),
-        z.record(z.string(), z.unknown()),
+        authoredResultSchemaRoot.options[0],
+        authoredResultSchemaRoot.options[1],
         z.array(z.unknown()),
         z.number(),
-        z.boolean(),
+        authoredResultSchemaRoot.options[2],
         z.null(),
       ])
       .refine(
         (value): value is AuthoredResultSchema | "declared" =>
-          value === "declared" ||
-          typeof value === "boolean" ||
-          (value !== null && typeof value === "object" && !Array.isArray(value)),
-        'schema must be an object, a boolean or "declared"',
+          authoredResultSchemaRoot.safeParse(value).success,
+        'Replace this schema with a JSON Schema object, true, false, or "declared".',
       )
       .refine(
         (value) => canonicalSize(value) <= MAX_SCHEMA_BYTES,
@@ -1002,6 +1006,10 @@ export type TranscriptToolResultSize = {
 export type TranscriptToolResult = {
   toolCallId?: string;
   toolName: string;
+  /** Server tool name when the AI SDK exposed it under an account variant key. */
+  declaredToolName?: string;
+  /** Catalog key of the server connection that executed the call. */
+  declaredServerKey?: string;
   /** Flattened model-visible text, capped. See `truncated`. */
   text?: string;
   /** True when `text` was capped for storage. Never changes `size.bytes`. */

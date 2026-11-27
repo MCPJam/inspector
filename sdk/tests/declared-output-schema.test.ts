@@ -250,6 +250,21 @@ describe("toolResultMatchesSchema with the declared schema", () => {
     expect(verdict.reason).toContain("no tool declares an output schema");
   });
 
+  test("uses the responding connection when declarations share a name", () => {
+    const matching = result("get_order", {
+      declaredServerKey: "account-b",
+      structuredContent: { status: "confirmed", total: 42 },
+    });
+    const evidence = transcript([matching]);
+    evidence.toolDeclarations = [
+      { name: "get_order", serverKey: "account-a", outputSchema: false },
+      ...evidence.toolDeclarations!.map((tool) => ({ ...tool, serverKey: "account-b" })),
+    ];
+    expect(run(evidence)).toMatchObject({ passed: true });
+    matching.declaredServerKey = "unknown";
+    expect(run(evidence)).toMatchObject({ status: "error" });
+  });
+
   test("cannot pass on a partial or missing result capture", () => {
     const matching = result("get_order", {
       structuredContent: { status: "confirmed", total: 42 },

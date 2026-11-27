@@ -1477,8 +1477,12 @@ export function evaluatePredicate(
     }
 
     case "toolResultMatchesSchema": {
-      const scope = resultScope(transcript, predicate.toolName);
       if (predicate.schema === DECLARED_OUTPUT_SCHEMA) {
+        const scope = (transcript.toolResults ?? []).filter(
+          (result) =>
+            predicate.toolName === undefined ||
+            (result.declaredToolName ?? result.toolName) === predicate.toolName,
+        );
         if (
           transcript.capture?.toolDeclarations !== "complete" ||
           !transcript.toolDeclarations
@@ -1527,6 +1531,7 @@ export function evaluatePredicate(
           ? notApplicable(predicate, verdict.reason)
           : pass(predicate, verdict.reason);
       }
+      const scope = resultScope(transcript, predicate.toolName);
       if (scope.length === 0) {
         const empty = emptyScopeIsScored(
           transcript,
