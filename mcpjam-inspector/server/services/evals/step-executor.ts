@@ -348,11 +348,12 @@ function applyOutcome(
 
 /**
  * Snapshot the state as an `IterationTranscript` for point-in-time predicate
- * eval. `scope` replaces the channels one assertion reads differently.
+ * eval. `scope` replaces the channels one assertion reads differently, and
+ * its `pinnedResults` join the snapshot's own results.
  */
 function snapshotTranscript(
   state: StepExecutionState,
-  scope: AssertionScope = {},
+  { pinnedResults = [], ...scope }: AssertionScope = {},
 ) {
   const finalAssistantMessage = extractFinalAssistantMessage(state.messages);
   // Tool results and per-call timings, read from the messages and spans the
@@ -366,7 +367,7 @@ function snapshotTranscript(
   );
   return buildIterationTranscript({
     toolCalls: state.toolCalls,
-    toolResults: evidence.toolResults,
+    toolResults: [...evidence.toolResults, ...pinnedResults],
     resultsCaptured: evidence.resultsCaptured,
     toolCallTimings: evidence.toolCallTimings,
     timingsCaptured: evidence.timingsCaptured,

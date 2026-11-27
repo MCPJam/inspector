@@ -4,26 +4,38 @@
  * A pinned call is a fixture: the case makes it, not the agent. Its transcript
  * entry is a one-line summary, because hosted `/stream` input must stay
  * text-only, so its result reaches grading through the executor state
- * (`StepExecutionState.pinnedCalls`) instead. Two kinds of assertion read it:
+ * (`StepExecutionState.pinnedCalls`) instead. Three kinds of assertion read it:
  *
  *   - A result-content assertion (`toolResultContains`, `toolResultMatches`,
- *     `toolResultMatchesSchema`) that names a tool the case pinned before it
- *     grades the result of the most recent pinned call of that tool, and only
- *     that result. An earlier pinned read cannot rescue it, nor can the
- *     agent's own call of the tool, and a pinned call with nothing to grade
- *     (an error, no result, a blocked call) is missing evidence, never a pass.
+ *     `toolResultMatchesSchema` with an authored schema) that names a tool the
+ *     case pinned before it grades the result of the most recent pinned call
+ *     of that tool, and only that result. An earlier pinned read cannot
+ *     rescue it, nor can the agent's own call of the tool, and a pinned call
+ *     with nothing to grade (an error, no result, a blocked call) is missing
+ *     evidence, never a pass.
  *   - `toolCalledAtLeastOnce` and `firstToolWas` describe the agent's path, so
  *     they read every call except the pinned ones.
+ *   - A declared output-schema check reads every pinned call's result beside
+ *     the transcript's own, as the case-level check does after the run (see
+ *     `gradesPinnedResults`).
  *
  * Every other assertion reads the transcript exactly as before, pinned calls
  * included. `toolResultSizeUnder` stays there too: it budgets what a model
  * was handed, and a pinned call hands a model nothing.
  */
-import type { BuildTranscriptInput, Predicate } from "@mcpjam/sdk/predicates";
+import type {
+  BuildTranscriptInput,
+  Predicate,
+  TranscriptToolResult,
+} from "@mcpjam/sdk/predicates";
 import type { ToolCallStep } from "@/shared/steps";
 import type { PinnedCallEvidence } from "./pinned-turn";
 import type { StepEngineOutcome, StepExecutionState } from "./step-executor";
-import { callToolResultRow, toolCallFailure } from "./transcript-evidence";
+import {
+  callToolResultRow,
+  gradesPinnedResults,
+  pinnedResultRows,
+} from "./transcript-evidence";
 
 /** One `toolCall` step that ran, with what its call returned. */
 export interface PinnedCallRecord extends PinnedCallEvidence {
@@ -37,7 +49,10 @@ export interface PinnedCallRecord extends PinnedCallEvidence {
 /** Transcript channels one assertion reads in place of the snapshot's own. */
 export type AssertionScope = Partial<
   Pick<BuildTranscriptInput, "toolCalls" | "toolResults" | "resultsCaptured">
->;
+> & {
+  /** Rows graded beside the snapshot's own results, not instead of them. */
+  pinnedResults?: TranscriptToolResult[];
+};
 
 type GradingState = Pick<StepExecutionState, "toolCalls" | "pinnedCalls">;
 
@@ -89,19 +104,18 @@ export function assertionScope(
   ) {
     return {};
   }
+  if (gradesPinnedResults(assertion)) {
+    return { pinnedResults: pinnedResultRows(state.pinnedCalls) };
+  }
   const graded = latestPinnedCall(state.pinnedCalls, assertion.toolName);
   if (!graded) return {};
-  const declared = assertion.type === "toolResultMatchesSchema" && assertion.schema === "declared";
-  const failure = declared && graded.failureMessage !== undefined
-    ? toolCallFailure({ type: "error-text", value: graded.failureMessage }, graded.toolName)
-    : undefined;
-  const row = graded.isError && !declared
+  const row = graded.isError
     ? undefined
-    : callToolResultRow(graded.toolName, graded.result, graded.toolCallId, graded.declaredServerKey);
+    : callToolResultRow(graded.toolName, graded.result, graded.toolCallId);
   // Nothing to grade reads as an uncaptured result: the check reports missing
   // evidence instead of scoring an empty one, which `max: 0` would pass.
   return row
-    ? { toolResults: [{ ...row, callFailure: failure }], resultsCaptured: true }
+    ? { toolResults: [row], resultsCaptured: true }
     : { toolResults: undefined, resultsCaptured: false };
 }
 

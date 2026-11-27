@@ -5790,6 +5790,7 @@ const runLocalIteration = async ({
     const { evaluation, passed, predicateResults, platformGates } = buildEvalIterationVerdict({
       ...toolDeclarations,
       accountRouting,
+      pinnedCalls: stepState.pinnedCalls,
       promptTurns,
       toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
       isNegativeTest: test.isNegativeTest,
@@ -7711,6 +7712,7 @@ const runHostedIterationWithBrowser = async (
   const { evaluation, passed, predicateResults, platformGates } = buildEvalIterationVerdict({
     ...toolDeclarations,
     accountRouting,
+    pinnedCalls: stepState.pinnedCalls,
     promptTurns,
     toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
     isNegativeTest: test.isNegativeTest,

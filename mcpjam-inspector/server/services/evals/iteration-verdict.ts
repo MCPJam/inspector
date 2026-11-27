@@ -33,7 +33,10 @@ import {
 import { finalizePassedForEval } from "@mcpjam/sdk";
 import {
   extractTranscriptEvidence,
+  gradesPinnedResults,
+  pinnedResultRows,
   toTranscriptToolInventory,
+  type PinnedResultEvidence,
   type SelectionToolLike,
 } from "./transcript-evidence";
 import type { AgentActivityAssessment } from "./agent-activity";
@@ -43,6 +46,7 @@ type EvalArgs = Parameters<typeof evaluateMultiTurnResults>;
 type TranscriptArgs = Parameters<typeof buildIterationTranscript>[0];
 type FinalizeTrace = Parameters<typeof finalizePassedForEval>[0]["trace"];
 type EffectivePredicates = Parameters<typeof evaluatePredicates>[1];
+type TranscriptToolResult = NonNullable<TranscriptArgs["toolResults"]>[number];
 
 export interface EvalIterationVerdictInput {
   // ── matcher (tool-match summary + negative-test semantics) ──
@@ -93,6 +97,11 @@ export interface EvalIterationVerdictInput {
   declarationsCaptured?: "complete" | "partial" | "absent";
   accountRouting?: AccountRouting;
   connectionKeys?: ReadonlyMap<string, string>;
+  /**
+   * The pinned (`toolCall` step) calls that ran. Their results never enter
+   * the trace, so the checks `gradesPinnedResults` names read them here.
+   */
+  pinnedCalls?: readonly PinnedResultEvidence[];
 
   // ── gates ──
   iterationError: string | undefined;
@@ -158,37 +167,45 @@ export function buildEvalIterationVerdict(
   // capture states describe THIS iteration rather than whether anybody
   // happened to author a check over it.
   const evidence = extractTranscriptEvidence(input.trace, input.accountRouting, input.connectionKeys);
-  const casePredicateResults = input.effectivePredicates?.length
-    ? evaluatePredicates(
-        buildIterationTranscript({
-          trace: input.trace as TranscriptArgs["trace"],
-          // `evaluation.toolsCalled` already includes widget calls (merged into
-          // the matcher input by the caller).
-          toolCalls: evaluation.toolsCalled,
-          usage: input.usage,
-          renderObservations: input.renderObservations,
-          // Pinned turns have no trace; thread their tool errors explicitly.
-          ...(input.toolErrors !== undefined
-            ? { toolErrors: input.toolErrors }
-            : {}),
-          toolResults: evidence.toolResults,
-          resultsCaptured: evidence.resultsCaptured,
-          toolCallTimings: evidence.toolCallTimings,
-          timingsCaptured: evidence.timingsCaptured,
-          toolDeclarations: input.toolDeclarations,
-          declarationsCaptured: input.declarationsCaptured,
-          ...(input.selectionTools
-            ? {
-                toolInventory: toTranscriptToolInventory(
-                  input.selectionTools,
-                  input.selectionToolAnnotations,
-                ),
-              }
-            : {}),
-        }),
-        input.effectivePredicates,
-      )
-    : [];
+  const transcriptFor = (pinnedResults: readonly TranscriptToolResult[]) =>
+    buildIterationTranscript({
+      trace: input.trace as TranscriptArgs["trace"],
+      // `evaluation.toolsCalled` already includes widget calls (merged into
+      // the matcher input by the caller).
+      toolCalls: evaluation.toolsCalled,
+      usage: input.usage,
+      renderObservations: input.renderObservations,
+      // Pinned turns have no trace; thread their tool errors explicitly.
+      ...(input.toolErrors !== undefined
+        ? { toolErrors: input.toolErrors }
+        : {}),
+      toolResults: [...evidence.toolResults, ...pinnedResults],
+      resultsCaptured: evidence.resultsCaptured,
+      toolCallTimings: evidence.toolCallTimings,
+      timingsCaptured: evidence.timingsCaptured,
+      toolDeclarations: input.toolDeclarations,
+      declarationsCaptured: input.declarationsCaptured,
+      ...(input.selectionTools
+        ? {
+            toolInventory: toTranscriptToolInventory(
+              input.selectionTools,
+              input.selectionToolAnnotations,
+            ),
+          }
+        : {}),
+    });
+  const predicates = input.effectivePredicates ?? [];
+  const transcript = transcriptFor([]);
+  const withPinned = predicates.some(gradesPinnedResults)
+    ? transcriptFor(pinnedResultRows(input.pinnedCalls ?? []))
+    : transcript;
+  // One predicate at a time keeps the authored order of the results.
+  const casePredicateResults = predicates.flatMap((predicate) =>
+    evaluatePredicates(
+      gradesPinnedResults(predicate) ? withPinned : transcript,
+      [predicate],
+    ),
+  );
 
   // Case-level + per-turn (scope-tagged) results gate AND persist together, in
   // `[case, …per-turn]` order (NOT execution order).

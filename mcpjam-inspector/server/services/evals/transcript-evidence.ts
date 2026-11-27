@@ -38,10 +38,12 @@ import { isCallToolResult, type MCPClientManager } from "@mcpjam/sdk";
  */
 
 import type { EvalTraceSpan } from "@/shared/eval-trace";
-import type {
-  TranscriptToolCallTiming,
-  TranscriptToolInventoryEntry,
-  TranscriptToolResult,
+import {
+  DECLARED_OUTPUT_SCHEMA,
+  type Predicate,
+  type TranscriptToolCallTiming,
+  type TranscriptToolInventoryEntry,
+  type TranscriptToolResult,
 } from "@mcpjam/sdk/predicates";
 import type { AccountRouting } from "./account-routing";
 
@@ -86,6 +88,18 @@ function outputText(output: unknown): string | undefined {
   }
 }
 
+/**
+ * Why a call that produced no `CallToolResult` failed.
+ *
+ * Output-schema rejections are recognized by their wording because nothing
+ * else survives. `@modelcontextprotocol/client` throws a `ProtocolError` whose
+ * codes (-32602, -32600) are the ones a server's own JSON-RPC errors carry,
+ * the SDK's multi-round-trip check throws a plain `TypeError`, and the
+ * transcript keeps only the message. `pinned-declared-output-schema.test.ts`
+ * and `transcript-evidence-declarations.test.ts` read these messages from the
+ * installed client and SDK, so a reworded message fails CI instead of turning
+ * a rejection into `protocol`.
+ */
 export function toolCallFailure(
   output: unknown,
   toolName: string,
@@ -287,6 +301,57 @@ export function callToolResultRow(
     },
     ...(bytes !== undefined ? { rawBytes: bytes } : {}),
   };
+}
+
+/** What a pinned (`toolCall` step) call kept for grading. See `pinned-turn.ts`. */
+export type PinnedResultEvidence = {
+  toolName: string;
+  toolCallId?: string;
+  declaredServerKey?: string;
+  failureMessage?: string;
+  result?: unknown;
+};
+
+/**
+ * Whether a check reads every pinned call's result beside the transcript's.
+ *
+ * A pinned call's transcript entry is a text summary, so its result reaches no
+ * check through the trace, and a check over every result counts the call as
+ * one without a result. The declared output-schema check is about the server's
+ * contract, which a fixture call's result must meet too. Other result checks
+ * keep the rules in `pinned-call-grading.ts`.
+ */
+export function gradesPinnedResults(predicate: Predicate): boolean {
+  // Stored predicates are loosely typed. A malformed one must reach
+  // `evaluatePredicates`, which reports it, instead of throwing here.
+  return (
+    isRecord(predicate) &&
+    predicate.type === "toolResultMatchesSchema" &&
+    predicate.schema === DECLARED_OUTPUT_SCHEMA
+  );
+}
+
+/** Rows for the pinned calls that returned something, with any schema rejection. */
+export function pinnedResultRows(
+  calls: readonly PinnedResultEvidence[],
+): TranscriptToolResult[] {
+  return calls.flatMap((call) => {
+    const row = callToolResultRow(
+      call.toolName,
+      call.result,
+      call.toolCallId,
+      call.declaredServerKey,
+    );
+    if (!row) return [];
+    const callFailure =
+      call.failureMessage === undefined
+        ? undefined
+        : toolCallFailure(
+            { type: "error-text", value: call.failureMessage },
+            call.toolName,
+          );
+    return [callFailure ? { ...row, callFailure } : row];
+  });
 }
 
 /** One advertised tool, as a check needs to see it. */
