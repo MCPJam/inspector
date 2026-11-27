@@ -234,7 +234,7 @@ function scriptedServer(options: {
         return sse(`id: poll.${encode(message)}\n${retry}data: \n\n`, 500);
       case "no-response":
         return sse(
-          `id: 1\n${retry}event: message\ndata: ${JSON.stringify({
+          `id: no-response.${body.id}\n${retry}event: message\ndata: ${JSON.stringify({
             jsonrpc: "2.0",
             method: "notifications/message",
             params: { level: "info", data: "Working on it" },
@@ -490,6 +490,30 @@ describe("resumePolledStream", () => {
 });
 
 describe("raw probes on a server that hands its streams to polling", () => {
+  it("detects a broadcast response delivered on a resumed stream", async () => {
+    const fetch = scriptedServer({ sent: [], answer: "poll", retryMs: 1 });
+    const reply = (id: number) => ({ jsonrpc: "2.0", id, result: { tools: [] } });
+    const frame = (id: number) => `data: ${JSON.stringify(reply(id))}\n\n`;
+    const otherStreamCursor = `poll.${encode(reply(1001))}`;
+    const ctx = context(async (input, init) => {
+      if (new Headers(init?.headers).get("Last-Event-ID") === otherStreamCursor) {
+        return sse(frame(1000) + frame(1001));
+      }
+      return fetch(input, init);
+    });
+
+    const results = await runTransportChecks(
+      ctx,
+      new Set<MCPCheckId>(["server-sse-streams-functional"]),
+    );
+
+    expect(byId(results, "server-sse-streams-functional")).toMatchObject({
+      status: "failed",
+      error: { message: expect.stringContaining("same JSON-RPC message") },
+      details: { streamIndexes: [0, 1] },
+    });
+  });
+
   it.each(LEGACY_VERSIONS)(
     "%s: the invalid-method probe gets its error by calling back",
     async (version) => {
@@ -683,7 +707,7 @@ describe("streams that are not handed to polling keep today's verdicts", () => {
       byId(transport, "server-sse-streams-functional").details
     ).not.toHaveProperty("resumedStreams");
     for (const get of gets(sent)) {
-      expect(get.headers.get("last-event-id")).toBe("1");
+      expect(get.headers.get("last-event-id")).toMatch(/^no-response\.\d+$/);
     }
   });
 });

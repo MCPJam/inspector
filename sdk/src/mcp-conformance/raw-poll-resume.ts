@@ -103,22 +103,6 @@ function answersRequest(message: unknown, requestId: unknown): boolean {
   );
 }
 
-/**
- * Whether a request's stream delivered its answer: "The SSE stream SHOULD
- * eventually include a JSON-RPC response for the JSON-RPC request sent in the
- * POST body." Only a complete event counts, and only the response with this
- * request's id. Other events, or a response to another request, do not.
- * `events` includes what a call-back added (see {@link resumePolledStream}).
- */
-export function streamAnswersRequest(
-  events: readonly RawSseEvent[] | undefined,
-  requestId: unknown
-): boolean {
-  return (events ?? []).some(
-    (event) => event.terminated && answersRequest(event.json, requestId)
-  );
-}
-
 /** The id of the last complete event that had one: the next `Last-Event-ID`. */
 function lastEventIdOf(events: readonly RawSseEvent[]): string | undefined {
   let lastEventId: string | undefined;
@@ -167,7 +151,7 @@ async function readCallBack(
   ctx: RawHttpCheckContext,
   headers: Headers,
   deadline: number,
-  requestId: unknown
+  isAnswer: (event: RawSseEvent) => boolean
 ): Promise<CallBack> {
   const events: RawSseEvent[] = [];
   let text = "";
@@ -210,16 +194,14 @@ async function readCallBack(
         const drained = drainFrames(buffer);
         buffer = drained.rest;
         events.push(...drained.frames);
-        if (
-          drained.frames.some((frame) => answersRequest(frame.json, requestId))
-        ) {
+        if (drained.frames.some(isAnswer)) {
           break;
         }
       }
     } catch (error) {
       // The stream broke or ran out of time; the frames read so far still count.
       ctx.config.signal?.throwIfAborted();
-      if (!events.some((event) => answersRequest(event.json, requestId))) {
+      if (!events.some(isAnswer)) {
         status = `stream error: ${errorText(error)}`;
       }
     } finally {
@@ -269,13 +251,21 @@ async function readCallBack(
 export async function resumePolledStream(
   ctx: RawHttpCheckContext,
   result: RawHttpResult,
-  options: { sessionId?: string; protocolVersion?: string } = {}
+  options: {
+    sessionId?: string;
+    protocolVersion?: string;
+    /** Keep other requests' responses and handle March 2025 batches for the stream grader. */
+    inspectAllMessages?: boolean;
+  } = {}
 ): Promise<RawHttpResult> {
   if (ctx.config.era === "modern") return result;
   const request = asRecord(result.exchange.request.json);
   const requestId = request?.id;
   const requestMethod =
     typeof request?.method === "string" ? request.method : undefined;
+  const allowBatch = options.inspectAllMessages && options.protocolVersion === "2025-03-26";
+  const messagesIn = (event: RawSseEvent): readonly unknown[] =>
+    allowBatch && Array.isArray(event.json) ? event.json : [event.json];
   if (
     requestMethod === undefined ||
     requestId === undefined ||
@@ -283,13 +273,15 @@ export async function resumePolledStream(
     result.status < 200 ||
     result.status >= 300 ||
     !result.sse ||
-    result.sse.some((event) => isJsonRpcResponse(event.json))
+    result.sse.some((event) => messagesIn(event).some(isJsonRpcResponse))
   ) {
     return result;
   }
   let lastEventId = lastEventIdOf(result.sse);
   if (lastEventId === undefined) return result;
   let retryMs = sseRetryMs(result.bodyText);
+  const isAnswer = (event: RawSseEvent) =>
+    messagesIn(event).some((message) => answersRequest(message, requestId));
 
   const deadline = Date.now() + ctx.config.checkTimeout;
   const attempts: Array<number | string> = [];
@@ -336,12 +328,10 @@ export async function resumePolledStream(
       break;
     }
 
-    const callBack = await readCallBack(ctx, headers, deadline, requestId);
+    const callBack = await readCallBack(ctx, headers, deadline, isAnswer);
     attempts.push(callBack.status);
     resumedEvents.push(...callBack.events);
-    if (
-      callBack.events.some((event) => answersRequest(event.json, requestId))
-    ) {
+    if (callBack.events.some(isAnswer)) {
       answer = callBack;
       break;
     }
@@ -380,10 +370,12 @@ export async function resumePolledStream(
   }
   // Every message enters the wire record, but a response to another request
   // must not be graded as this one's answer.
-  const answerEvents = resumedEvents.filter(
-    (event) =>
-      !isJsonRpcResponse(event.json) || answersRequest(event.json, requestId)
-  );
+  const answerEvents = options.inspectAllMessages
+    ? resumedEvents
+    : resumedEvents.filter(
+        (event) =>
+          !isJsonRpcResponse(event.json) || answersRequest(event.json, requestId)
+      );
   return {
     ...result,
     sse: [...result.sse, ...answerEvents],

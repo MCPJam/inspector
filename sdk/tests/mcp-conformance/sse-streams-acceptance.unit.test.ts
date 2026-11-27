@@ -36,7 +36,9 @@ type Answer =
   // A notification first, then the response to this request.
   | "notice-then-answer"
   // The response is a JSON-RPC error, which is still the response.
-  | "error-answer";
+  | "error-answer"
+  | "batched-answer"
+  | { before: string };
 
 function json(
   payload: unknown,
@@ -72,7 +74,7 @@ function sse(chunks: Array<string | Error>) {
  * A 2025 server that declares tools and answers the three concurrent
  * `tools/list` POSTs in the order given by `answers`.
  */
-function server(answers: Answer[]) {
+function server(answers: Answer[], protocolVersion: string) {
   let next = 0;
   return (async (_input: RequestInfo | URL, init?: RequestInit) => {
     const method = String(init?.method ?? "GET").toUpperCase();
@@ -87,7 +89,7 @@ function server(answers: Answer[]) {
           jsonrpc: "2.0",
           id: body.id,
           result: {
-            protocolVersion: "2025-11-25",
+            protocolVersion,
             capabilities: { tools: {} },
             serverInfo: { name: "acceptance", version: "1.0.0" },
           },
@@ -100,11 +102,15 @@ function server(answers: Answer[]) {
       return new Response(null, { status: 202 });
     }
     const answer = answers[next++] ?? "sse";
-    const frame = `data: ${JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { tools: [] } })}\n\n`;
+    const reply = { jsonrpc: "2.0", id: body.id, result: { tools: [] } };
+    const frame = `data: ${JSON.stringify(reply)}\n\n`;
     const notice = `data: ${JSON.stringify({ jsonrpc: "2.0", method: "notifications/message", params: { level: "info", data: "working" } })}\n\n`;
+    if (typeof answer === "object") return sse([answer.before, frame]);
     switch (answer) {
       case "sse":
         return sse([frame]);
+      case "batched-answer":
+        return sse([`id: batch-${body.id}\nretry: 1000\ndata: ${JSON.stringify([reply])}\n\n`]);
       case "no-answer":
         return sse([notice]);
       case "wrong-id":
@@ -136,12 +142,12 @@ function server(answers: Answer[]) {
   }) as typeof fetch;
 }
 
-async function run(answers: Answer[]) {
+async function run(answers: Answer[], protocolVersion = "2025-11-25") {
   const config = normalizeMCPConformanceConfig({
     serverUrl: "https://acceptance.example.test/mcp",
-    protocolVersion: "2025-11-25",
+    protocolVersion,
     checkTimeout: 500,
-    fetchFn: server(answers),
+    fetchFn: server(answers, protocolVersion),
   });
   const ctx: RawHttpCheckContext = {
     config,
@@ -270,5 +276,61 @@ describe("Functional SSE Streams needs each stream to carry its own response", (
     const result = await run(["error-answer", "sse", "sse"]);
 
     expect(result.status).toBe("passed");
+  });
+});
+
+describe("Functional SSE Streams validates all messages", () => {
+  it.each(["{", '{"jsonrpc":"2.0","id":1000}'])(
+    "fails for malformed data %s followed by a valid response",
+    async (data) => {
+      const result = await run([{ before: `data: ${data}\n\n` }]);
+      expect(result.status).toBe("failed");
+      expect(result.error?.message).toContain("malformed JSON-RPC");
+      expect(result.details).toMatchObject({ streamIndexes: [0], eventIndex: 0 });
+    },
+  );
+
+  it("fails when two streams carry the same notification event", async () => {
+    const result = await run([
+      { before: 'id: notice\ndata: {"jsonrpc":"2.0","method":"notifications/tools/list_changed"}\n\n' },
+      { before: 'id: notice\ndata: {"method":"notifications/tools/list_changed","jsonrpc":"2.0"}\n\n' },
+    ]);
+    expect(result.status).toBe("failed");
+    expect(result.error?.message).toContain("same JSON-RPC message");
+    expect(result.details).toMatchObject({ streamIndexes: [0, 1] });
+  });
+
+  it("fails when another stream also delivers a response to the same request", async () => {
+    const result = await run([
+      "sse",
+      { before: 'id: other\ndata: {"jsonrpc":"2.0","id":1000,"result":{"tools":[]}}\n\n' },
+    ]);
+    expect(result.status).toBe("failed");
+    expect(result.error?.message).toContain("same JSON-RPC message");
+    expect(result.details).toMatchObject({ streamIndexes: [0, 1] });
+  });
+
+  it.each([["id: first\n", "id: second\n"], ["", ""]])(
+    "passes separate notifications with identical payloads and event ID fields %j and %j",
+    async (first, second) => {
+      const notice = 'data: {"jsonrpc":"2.0","method":"notifications/tools/list_changed"}\n\n';
+      const result = await run([
+        { before: `${first}${notice}` },
+        { before: `${second}${notice}` },
+      ]);
+      expect(result.status).toBe("passed");
+    },
+  );
+
+  it("ignores empty and non-message events like the client SDK", async () => {
+    const result = await run([{ before: "id: prime\ndata:\n\nevent: custom\ndata: hello\n\n" }]);
+    expect(result.status).toBe("passed");
+  });
+
+  it("accepts an SSE batch only on 2025-03-26", async () => {
+    expect((await run(["batched-answer"], "2025-03-26")).status).toBe("passed");
+    expect((await run(["batched-answer"], "2025-06-18")).error?.message).toContain(
+      "malformed JSON-RPC",
+    );
   });
 });

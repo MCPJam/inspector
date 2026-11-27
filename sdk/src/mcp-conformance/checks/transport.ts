@@ -6,6 +6,7 @@ import type {
 import { CHECK_ERAS } from "../types.js";
 import { jsonRpcResult } from "../raw-http.js";
 import { concurrentProbe, PING_ANSWERED_AS_JSON } from "./concurrent-probe.js";
+import { inspectSseStreamMessages } from "./sse-stream-messages.js";
 import {
   blockedResult,
   errorMessage,
@@ -26,7 +27,6 @@ import {
   rawRequest,
   pollingOutcome,
   resumePolledStream,
-  streamAnswersRequest,
   type RawHttpResult,
 } from "../raw-http.js";
 
@@ -536,6 +536,7 @@ export async function runTransportChecks(
         ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION;
       const multiStreamStartedAt = Date.now();
       const probe = concurrentProbe(session.capabilities);
+      const firstRequestId = 1000;
       const settledResponses = await Promise.allSettled(
         Array.from({ length: 3 }).map((_, index) =>
           rawRequest(ctx, {
@@ -546,12 +547,13 @@ export async function runTransportChecks(
               }),
               Accept: "text/event-stream, application/json",
             },
-            body: probe.body(1000 + index),
+            body: probe.body(firstRequestId + index),
           }).then((response) =>
             // A polled answer needs a call-back; the three wait at once.
             resumePolledStream(ctx, response, {
               sessionId: activeSessionId,
               protocolVersion: streamVersion,
+              inspectAllMessages: true,
             }),
           ),
         ),
@@ -598,8 +600,23 @@ export async function runTransportChecks(
             ),
         );
 
+      const inspection = inspectSseStreamMessages(
+        sseResponses,
+        streamVersion,
+        firstRequestId,
+      );
       const polling = pollingOutcome(sseResponses);
-      if (sseResponses.length === 0) {
+      if ("violation" in inspection) {
+        const { message, ...evidence } = inspection.violation;
+        results.push(
+          failedResult(
+            TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
+            Date.now() - multiStreamStartedAt,
+            message,
+            { ...acceptance, ...evidence },
+          ),
+        );
+      } else if (sseResponses.length === 0) {
         results.push(
           answered === 0 && !anyRequestError
             ? // Every request was turned down with an HTTP status. A server may
@@ -648,23 +665,7 @@ export async function runTransportChecks(
           ),
         );
       } else {
-        // For the details. Only DELIMITED frames count: a stream cut mid-frame
-        // leaves an unterminated tail, which is not a delivered event.
-        const eventCounts = sseResponses.map(
-          ({ response }) =>
-            response.sse?.filter((event) => event.terminated).length ?? 0,
-        );
-        const readErrors = sseResponses.map(
-          ({ response }) => response.bodyError,
-        );
-        // Only the streams that came back: each must be read to the end and
-        // carry the JSON-RPC response to its own request, not just any event.
-        const unansweredStreams = sseResponses
-          .filter(
-            ({ response, index }) =>
-              !streamAnswersRequest(response.sse, 1000 + index),
-          )
-          .map(({ index }) => index);
+        const { unansweredStreams, eventCounts, readErrors } = inspection;
         const allStreamsReadable =
           readErrors.every((error) => error === undefined) &&
           unansweredStreams.length === 0;

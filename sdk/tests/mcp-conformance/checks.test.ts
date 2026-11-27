@@ -829,7 +829,10 @@ describe("mcp conformance unit checks", () => {
   it("returns structured transport failures instead of throwing on stream errors", async () => {
     let postCount = 0;
     const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+      const body = JSON.parse(String(init?.body ?? "{}")) as {
+        method?: string;
+        id?: number;
+      };
 
       if (body.method === "initialize") {
         return jsonResponse(
@@ -852,7 +855,9 @@ describe("mcp conformance unit checks", () => {
         throw new Error("request boom");
       }
       if (postCount === 2) {
-        return sseResponse(["data: ok\n\n"]);
+        return sseResponse([
+          `data: ${JSON.stringify({ jsonrpc: "2.0", id: body.id, result: {} })}\n\n`,
+        ]);
       }
 
       return sseResponse([new Error("stream boom")]);

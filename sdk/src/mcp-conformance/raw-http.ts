@@ -45,7 +45,6 @@ import {
 import {
   pollingOutcome,
   resumePolledStream,
-  streamAnswersRequest,
   unreadPolledAnswerMessage,
   type PolledStreamResume,
 } from "./raw-poll-resume.js";
@@ -53,7 +52,6 @@ import {
 export {
   pollingOutcome,
   resumePolledStream,
-  streamAnswersRequest,
   unreadPolledAnswerMessage,
   type PolledStreamResume,
 };
