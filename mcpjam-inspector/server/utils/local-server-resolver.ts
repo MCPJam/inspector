@@ -130,6 +130,7 @@ import {
   WORKOS_API_KEY_FEATURE,
 } from "../services/service-credential.js";
 import { recordConnectionEffectiveAuth } from "./connection-effective-auth.js";
+import { pointAtMockRoute } from "./mock-servers.js";
 
 type LocalAuthorizeServerConfig =
   | {
@@ -1738,7 +1739,12 @@ export async function resolveLocalServerForConnect(
     xaaUnauthorizedHandler,
     xaaPolicy,
   });
-  return { config, authorizeResult: result, effectiveAuth };
+  // A mock's saved address is a placeholder: dial the mock route as this caller.
+  return {
+    config: pointAtMockRoute(config, bearerToken),
+    authorizeResult: result,
+    effectiveAuth,
+  };
 }
 
 // ---------------------------------------------------------------------------

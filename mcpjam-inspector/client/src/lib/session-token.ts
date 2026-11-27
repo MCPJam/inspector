@@ -10,7 +10,6 @@
  * - Get auth headers for fetch requests
  * - Add token to URLs for SSE/EventSource (which can't use headers)
  */
-
 import { HOSTED_MODE } from "@/lib/config";
 import {
   getApiAuthorizationHeader,
@@ -25,7 +24,6 @@ import {
   isSessionRevokedResponse,
   notifySessionRevoked,
 } from "@/lib/auth/session-revoked";
-
 import {
   ACCESS_REQUIRED_EVENT,
   readAccessToken,
@@ -33,6 +31,7 @@ import {
   isAccessToken,
 } from "./access-link";
 import { readAccessAnswer } from "./access-answer";
+import { HOSTED_MOCK_AUTH_PATH_PATTERNS } from "./hosted-mock-paths";
 
 let cachedToken: string | null = null;
 let initPromise: Promise<string> | null = null;
@@ -547,6 +546,7 @@ const HOSTED_AUTH_PATH_PATTERNS = [
   // route answers "Bearer token required" — which reaches the user as a failed
   // cancel on a run that is still burning model spend.
   /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/cancel$/,
+  ...HOSTED_MOCK_AUTH_PATH_PATTERNS,
 ];
 
 function pathMatchesHostedPrefix(pathname: string): boolean {

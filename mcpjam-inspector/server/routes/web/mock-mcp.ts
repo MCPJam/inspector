@@ -1,0 +1,86 @@
+/**
+ * The mock server's HTTP door: `/api/web/mock-mcp/:mockId`.
+ *
+ * A client outside MCPJam (Claude Code, Cursor, the SDK's own client) dials
+ * this with its MCPJam API key or OAuth token as the bearer. The chain, in
+ * order: bearer auth, the refusal of anything that is not a signed-in person,
+ * then the handler, which asks the backend about this caller on every request.
+ *
+ * `/api/web/*`'s body cap and the app-wide Host and Origin checks run in front
+ * of all of it; this file adds neither.
+ */
+import { Hono, type Context, type Next } from "hono";
+import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
+import { mockRefusalResponse, type MockRefusalKind } from "../../services/mock/refusal.js";
+import { serveMock } from "../../services/mock/route.js";
+import { callerContextFromHono } from "./auth.js";
+
+/** The credential kinds that are a signed-in person acting. */
+const PERSON_AUTH_METHODS: ReadonlySet<string> = new Set([
+  "workos_api_key",
+  "workos_agent",
+  "authkit_jwt",
+  "unverified_passthrough",
+]);
+
+function bearerOf(c: Context): string | undefined {
+  const header = c.req.header("authorization");
+  if (!header?.startsWith("Bearer ")) return undefined;
+  return header.slice("Bearer ".length).trim() || undefined;
+}
+
+/**
+ * Whatever the bearer chain refused with, a client of this route reads
+ * JSON-RPC: a refusal in any other shape is rewritten, keeping its status.
+ */
+export async function mockBearerGate(c: Context, next: Next) {
+  if (!bearerOf(c)) return mockRefusalResponse("unauthorized");
+  await next();
+  const response = c.res;
+  if (response.status < 400) return;
+  let parsed: { jsonrpc?: unknown; message?: unknown } | undefined;
+  try {
+    parsed = JSON.parse(await response.clone().text()) as typeof parsed;
+  } catch {
+    parsed = undefined; // not JSON: the status alone decides
+  }
+  if (parsed?.jsonrpc === "2.0") return;
+  const kind: MockRefusalKind =
+    response.status === 401
+      ? "unauthorized"
+      : response.status === 403
+        ? "forbidden"
+        : response.status === 429
+          ? "rate_limited"
+          : "unavailable";
+  const retryAfter = Number(response.headers.get("retry-after"));
+  c.res = mockRefusalResponse(kind, {
+    authMethod: c.get("authMethod") as string | undefined,
+    ...(typeof parsed?.message === "string" && parsed.message.length <= 300
+      ? { message: parsed.message }
+      : {}),
+    ...(Number.isFinite(retryAfter) && retryAfter > 0 ? { retryAfterSeconds: retryAfter } : {}),
+  });
+}
+
+/** Only a signed-in person gets past: a guest and a service credential are refused by name. */
+export async function mockCallerGate(c: Context, next: Next) {
+  const method = c.get("authMethod") as string | undefined;
+  if (method === "guest") return mockRefusalResponse("guest");
+  if (!method || !PERSON_AUTH_METHODS.has(method)) return mockRefusalResponse("forbidden");
+  return next();
+}
+
+/** Mounted before the router, in this order, at `/mock-mcp/*`. */
+export const mockDoorMiddleware = [mockBearerGate, bearerAuthMiddleware, mockCallerGate] as const;
+
+const mockMcp = new Hono();
+
+mockMcp.all("/:mockId", (c) =>
+  serveMock(c.req.raw, c.req.param("mockId"), {
+    bearerToken: bearerOf(c) as string,
+    caller: callerContextFromHono(c),
+  }),
+);
+
+export default mockMcp;
