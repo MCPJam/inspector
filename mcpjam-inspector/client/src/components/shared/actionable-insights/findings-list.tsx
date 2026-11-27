@@ -70,7 +70,6 @@ export function FindingsList({
             provenance={provenanceById.get(finding.id) ?? null}
             view={view}
             lead={index === 0}
-            showCopy
             context={context}
             onOpenEvidence={onOpenEvidence}
             iterationRows={iterationRows}

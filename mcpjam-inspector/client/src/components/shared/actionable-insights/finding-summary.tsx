@@ -323,7 +323,6 @@ export function FindingSummary({
   provenance,
   view,
   lead = false,
-  showCopy = !lead,
   context,
   onOpenEvidence,
   iterationRows = {},
@@ -333,8 +332,6 @@ export function FindingSummary({
   provenance: InsightsFindingProvenance | null;
   view: FindingView;
   lead?: boolean;
-  /** Header Copy tracks the current slide; slides omit their own button. */
-  showCopy?: boolean;
   context?: FindingPromptContext;
   onOpenEvidence?: (locator: FindingEvidenceLocator) => void;
   /** Recorded iterations by id, for the affected list. */
@@ -422,9 +419,7 @@ export function FindingSummary({
           ) : null}
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
             <FindingDetailsLink onOpen={openWhy} />
-            {showCopy ? (
-              <CopyFindingPrompt finding={finding} context={context} />
-            ) : null}
+            <CopyFindingPrompt finding={finding} context={context} />
           </div>
         </section>
       </div>
