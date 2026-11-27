@@ -392,7 +392,13 @@ describe("EventsTab (local)", () => {
         serverConfig={serverConfig()}
         serverName={SERVER}
         activeHostId="host_chatgpt"
-        activeHost={{ hostStyle: "chatgpt" }}
+        activeHost={{
+          // Saved, as the template saves it: the Apps style decides nothing.
+          mcpProfile: {
+            profileVersion: 1,
+            extensions: { "com.mcpjam/events": { webhook: true } },
+          },
+        }}
       />,
     );
 

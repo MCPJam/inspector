@@ -9,8 +9,13 @@
  *
  *  - A mode counts only when `true`; `{}` is "receives no events".
  *  - A malformed value is "no modes": it never widens what a host accepts.
- *  - Absent: the host style's default, so older hosts need no migration.
+ *  - Absent is "no modes" too. Templates save the setting, and saved clients
+ *    made before it existed were backfilled.
+ *  - A vendor harness (`agentLoop` or `harness`) is "no modes": the vendor's
+ *    own client decides, and none of them receives MCP Events.
  *  - No host at all is MCPJam (built-in), which accepts every mode.
+ *
+ * The client's MCP Apps style plays no part in any of this.
  */
 
 export const MCPJAM_EVENTS_EXTENSION_ID = "com.mcpjam/events" as const;
@@ -21,14 +26,6 @@ export const EVENT_DELIVERY_MODES: readonly EventDeliveryMode[] = [
   "push",
   "webhook",
 ];
-
-/** Host styles whose real client receives events, and how. */
-export const HOST_STYLE_EVENT_DELIVERY_MODES: Readonly<
-  Record<string, readonly EventDeliveryMode[]>
-> = {
-  chatgpt: ["webhook"],
-  mcpjam: EVENT_DELIVERY_MODES,
-};
 
 /** Where a subscription is kept refreshed and its events received. */
 export type EventsRuntime = "hosted" | "local";
@@ -43,8 +40,10 @@ export const RUNTIME_EVENT_DELIVERY_MODES: Readonly<
 
 /** The parts of a host config this module reads and writes. */
 export interface EventsSupportHost {
-  hostStyle?: string | null;
   mcpProfile?: unknown;
+  /** A vendor harness that runs the client's agent loop (see `effectiveHarnessId`). */
+  harness?: string | null;
+  agentLoop?: string | null;
 }
 
 export type EventsHostSetting =
@@ -67,7 +66,7 @@ export function isEventDeliveryMode(
   return (EVENT_DELIVERY_MODES as readonly unknown[]).includes(value);
 }
 
-/** The saved setting, without applying the style default. */
+/** The saved setting as stored, before the harness rule. */
 export function readEventsHostSetting(
   host: EventsSupportHost | null | undefined
 ): EventsHostSetting {
@@ -97,40 +96,21 @@ export function readEventsHostSetting(
   };
 }
 
-/** The style default for a host with no saved setting. */
-export function hostStyleEventDeliveryModes(
-  hostStyle: string | null | undefined
-): EventDeliveryMode[] {
-  // Own entries only: a style such as `constructor` must not reach an
-  // inherited Object member.
-  return typeof hostStyle === "string" &&
-    Object.prototype.hasOwnProperty.call(
-      HOST_STYLE_EVENT_DELIVERY_MODES,
-      hostStyle
-    )
-    ? [...HOST_STYLE_EVENT_DELIVERY_MODES[hostStyle]]
-    : [];
-}
-
 /**
  * The delivery modes a host receives events by. `null` / `undefined` is
- * MCPJam (built-in): every mode.
+ * MCPJam (built-in): every mode. A vendor harness, an absent setting and an
+ * unreadable one all receive none.
  */
 export function resolveHostEventDeliveryModes(
   host: EventsSupportHost | null | undefined
 ): EventDeliveryMode[] {
   if (!host) return [...EVENT_DELIVERY_MODES];
+  if (host.agentLoop ?? host.harness) return [];
   const setting = readEventsHostSetting(host);
-  if (setting.kind === "valid") return setting.modes;
-  if (setting.kind === "invalid") return [];
-  return hostStyleEventDeliveryModes(host.hostStyle);
+  return setting.kind === "valid" ? setting.modes : [];
 }
 
-/**
- * A host with `modes` saved explicitly. `[]` saves `{}` — "receives no
- * events" — which differs from {@link clearEventsHostSetting} (back to the
- * style default).
- */
+/** A host with `modes` saved explicitly. `[]` saves `{}`: "receives no events". */
 export function setEventsHostSetting<T extends EventsSupportHost>(
   host: T,
   modes: readonly EventDeliveryMode[]
@@ -151,39 +131,6 @@ export function setEventsHostSetting<T extends EventsSupportHost>(
       extensions: { ...extensions, [MCPJAM_EVENTS_EXTENSION_ID]: entry },
     },
   };
-}
-
-/**
- * A host with the setting removed, back to the style default. Leaves no
- * empty containers behind: host configs are content-addressed, so residue
- * would mint a new config row for an unchanged host.
- */
-export function clearEventsHostSetting<T extends EventsSupportHost>(
-  host: T
-): T {
-  const profile = host.mcpProfile;
-  if (!isRecord(profile) || !isRecord(profile.extensions)) return host;
-  if (
-    !Object.prototype.hasOwnProperty.call(
-      profile.extensions,
-      MCPJAM_EVENTS_EXTENSION_ID
-    )
-  )
-    return host;
-  const { [MCPJAM_EVENTS_EXTENSION_ID]: _removed, ...extensions } =
-    profile.extensions;
-  const { extensions: _dropped, ...profileRest } = profile;
-  const nextProfile =
-    Object.keys(extensions).length > 0
-      ? { ...profileRest, extensions }
-      : profileRest;
-  // `{ profileVersion: 1 }` alone hashes differently from no profile.
-  const { profileVersion: _version, ...content } = nextProfile;
-  if (Object.keys(content).length > 0) {
-    return { ...host, mcpProfile: nextProfile };
-  }
-  const { mcpProfile: _removedProfile, ...rest } = host;
-  return rest as T;
 }
 
 /** Which side ruled a mode out. */
