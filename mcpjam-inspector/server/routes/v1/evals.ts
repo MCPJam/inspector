@@ -863,6 +863,10 @@ const syncFileOwnedSuiteSchema = z
       .safeExtend({ model: judgeModelIdSchema.optional() })
       .nullable()
       .optional(),
+    // EFTW-90: `null` clears, as for `judge`.
+    codeEvaluators: codeEvaluatorsSchema.nullable().optional(),
+    scripts: suiteScriptsSchema.nullable().optional(),
+    grading: suiteGradingSchema.nullable().optional(),
     declaredSuiteId: opaqueIdSchema,
     name: z.string().trim().min(1).max(200),
     description: z.string().optional(),
@@ -5537,6 +5541,11 @@ evals.post("/projects/:projectId/eval-suites/from-file", async (c) => {
       {
         projectId,
         ...(body.judge !== undefined ? { judge: body.judge } : {}),
+        ...(body.codeEvaluators !== undefined
+          ? { codeEvaluators: body.codeEvaluators }
+          : {}),
+        ...(body.scripts !== undefined ? { scripts: body.scripts } : {}),
+        ...(body.grading !== undefined ? { grading: body.grading } : {}),
         declaredSuiteId: body.declaredSuiteId,
         name: body.name,
         ...(body.description !== undefined
