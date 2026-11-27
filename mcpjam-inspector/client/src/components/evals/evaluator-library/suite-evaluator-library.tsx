@@ -1,6 +1,5 @@
 import { useState } from "react";
 import type { Predicate } from "@mcpjam/sdk/predicates";
-import { Button } from "@mcpjam/design-system/button";
 import {
   MAX_CUSTOM_JUDGES,
   MAX_RUBRIC_CHECK_QUESTIONS,
@@ -20,6 +19,7 @@ import { JudgeEditor } from "./custom-judges-section";
 import { DecisionEditor } from "./decision-questions-section";
 import type { MethodAvailability } from "./evaluator-library-browse";
 import { EvaluatorLibraryButton } from "./evaluator-library-dialog";
+import { EvaluatorEditorLayout } from "./evaluator-editor-layout";
 import type { LibraryAddition, LibrarySuiteParts } from "./library-catalog";
 
 export function SuiteEvaluatorLibrary({
@@ -92,39 +92,34 @@ export function SuiteEvaluatorLibrary({
               );
             case "decision":
               return (
-                <div className="space-y-3">
-                  {goalJudgeOff ? (
-                    <p className="text-sm text-muted-foreground">
-                      {RUBRIC_CHECKS_GOAL_OFF_COPY}
-                    </p>
-                  ) : null}
-                  <DecisionEditor
-                    canAskYesNo={canAskYesNo}
-                    questions={questions}
-                    onCancel={onBack}
-                    onSave={(question) => add({ questions: [question] })}
-                  />
-                </div>
+                <DecisionEditor
+                  inDialog
+                  pauseMessage={
+                    goalJudgeOff ? RUBRIC_CHECKS_GOAL_OFF_COPY : undefined
+                  }
+                  canAskYesNo={canAskYesNo}
+                  questions={questions}
+                  onCancel={onBack}
+                  onSave={(question) => add({ questions: [question] })}
+                />
               );
             case "judge":
               return (
-                <div className="space-y-3">
-                  {goalJudgeOff ? (
-                    <p className="text-sm text-muted-foreground">
-                      Custom judges are paused while the goal-completion judge
-                      is off.
-                    </p>
-                  ) : null}
-                  <JudgeEditor
-                    suiteId={capabilities?.suiteId}
-                    judge={blankJudge(judges.map((judge) => judge.id))}
-                    variables={capabilities?.judges?.custom?.variables ?? []}
-                    variableAliases={capabilities?.judges?.custom?.variableAliases}
-                    others={judges}
-                    onCancel={onBack}
-                    onSave={(judge) => add({ judges: [judge] })}
-                  />
-                </div>
+                <JudgeEditor
+                  inDialog
+                  pauseMessage={
+                    goalJudgeOff
+                      ? "Custom judges are paused while the goal-completion judge is off."
+                      : undefined
+                  }
+                  suiteId={capabilities?.suiteId}
+                  judge={blankJudge(judges.map((judge) => judge.id))}
+                  variables={capabilities?.judges?.custom?.variables ?? []}
+                  variableAliases={capabilities?.judges?.custom?.variableAliases}
+                  others={judges}
+                  onCancel={onBack}
+                  onSave={(judge) => add({ judges: [judge] })}
+                />
               );
           }
         },
@@ -146,33 +141,27 @@ function AssertionsEditor({
   const [invalidDraft, setInvalidDraft] = useState(false);
   const [tried, setTried] = useState(false);
   return (
-    <div className="space-y-4">
+    <EvaluatorEditorLayout
+      inDialog
+      action="Add assertions"
+      disabled={!checks.length || invalidDraft}
+      onCancel={onCancel}
+      onSubmit={() => {
+        setTried(true);
+        if (areAllChecksValid(checks)) onSave(checks);
+      }}
+    >
       <ChecksSection
         value={checks}
         onChange={setChecks}
         title=""
-        emptyStateText="Choose an assertion type."
+        hideEmptyState
+        addPlaceholder={checks.length ? undefined : "Choose an assertion type"}
         allowedKinds={kinds}
         noun="assertion"
         onDraftValidityChange={setInvalidDraft}
         showAllErrors={tried}
       />
-      <div className="flex justify-end gap-2">
-        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          disabled={!checks.length || invalidDraft}
-          onClick={() => {
-            setTried(true);
-            if (areAllChecksValid(checks)) onSave(checks);
-          }}
-        >
-          Add assertions
-        </Button>
-      </div>
-    </div>
+    </EvaluatorEditorLayout>
   );
 }

@@ -244,6 +244,9 @@ describe("starting an evaluator from scratch", () => {
     expect(
       screen.getByRole("dialog", { name: "Assertions" }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("combobox")).toHaveTextContent(
+      "Choose an assertion type",
+    );
     expect(
       screen.getByRole("button", { name: "Add assertions" }),
     ).toBeDisabled();
@@ -270,17 +273,16 @@ describe("starting an evaluator from scratch", () => {
     click("Add question");
     expect(screen.getByRole("alert")).toHaveTextContent("A label is required");
     expect(onAdd).not.toHaveBeenCalled();
-    fireEvent.change(
-      screen.getByRole("textbox", { name: "Question 1 label" }),
-      { target: { value: "Cites evidence" } },
-    );
-    fireEvent.change(screen.getByRole("textbox", { name: "Question 1 text" }), {
+    fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+      target: { value: "Cites evidence" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "Question" }), {
       target: { value: "Is evidence missing?" },
     });
     click("Choice");
-    expect(
-      screen.getByRole("textbox", { name: "Question 1 text" }),
-    ).toHaveValue("Is evidence missing?");
+    expect(screen.getByRole("textbox", { name: "Question" })).toHaveValue(
+      "Is evidence missing?",
+    );
     click("Yes/no");
     click("No");
     click("Add question");
@@ -309,6 +311,14 @@ describe("starting an evaluator from scratch", () => {
     expect(onAdd).not.toHaveBeenCalled();
     click("Judge prompt");
     expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("");
+    expect(
+      screen.queryByRole("spinbutton", { name: "Passing score" }),
+    ).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: "Score from 0 to 1" }));
+    expect(screen.getByRole("spinbutton", { name: "Passing score" })).toHaveValue(
+      0.7,
+    );
+    fireEvent.click(screen.getByRole("radio", { name: "Pass or fail" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
       target: { value: "Checks citations" },
     });

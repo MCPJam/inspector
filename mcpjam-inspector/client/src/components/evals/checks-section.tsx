@@ -134,6 +134,7 @@ export interface ChecksSectionProps {
    * than gate (swarm rubrics) pass their own sentence.
    */
   emptyStateText?: string;
+  addPlaceholder?: string;
   /** Hide the Add-check button (used by the inherited read-only summary). */
   readOnly?: boolean;
   /**
@@ -283,6 +284,7 @@ export function ChecksSection({
   title = "Default checks",
   description,
   emptyStateText,
+  addPlaceholder,
   readOnly = false,
   hideAddButton = false,
   hideEmptyState = false,
@@ -415,6 +417,7 @@ export function ChecksSection({
         {!readOnly && !hideAddButton ? (
           <AddCheckMenu
             onAdd={addOfKind}
+            placeholder={addPlaceholder}
             allowedKinds={
               globalGatesMenu ? GLOBAL_POLICY_MENU_KINDS : allowedKinds
             }
@@ -432,6 +435,7 @@ export function AddCheckMenu({
   allowedKinds,
   globalGatesMenu = false,
   noun = "check",
+  placeholder = `Add ${noun}…`,
 }: {
   onAdd: (kind: Predicate["type"]) => void;
   /** When set, restrict the menu to these kinds. */
@@ -439,6 +443,7 @@ export function AddCheckMenu({
   globalGatesMenu?: boolean;
   /** @see ChecksSectionProps.noun */
   noun?: string;
+  placeholder?: string;
 }) {
   if (globalGatesMenu) {
     return <AddGlobalGateMenu onAdd={onAdd} />;
@@ -465,7 +470,7 @@ export function AddCheckMenu({
       >
         <SelectTrigger className="h-8 w-auto gap-2 text-xs">
           <Plus className="h-3.5 w-3.5" />
-          <SelectValue placeholder={`Add ${noun}…`} />
+          <SelectValue placeholder={placeholder} />
         </SelectTrigger>
         <SelectContent>
           {kinds.map((kind) => (

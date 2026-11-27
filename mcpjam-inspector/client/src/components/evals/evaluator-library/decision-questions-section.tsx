@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Pencil, Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import { EvaluatorEditorLayout } from "./evaluator-editor-layout";
 import { stableStringifyJson } from "@mcpjam/sdk/widget-runtime";
 import type { RubricCheckQuestion } from "@/components/shared/session-quality/judge-config";
 import {
@@ -101,12 +102,16 @@ const QUESTION_TYPES = [
 ] as const;
 
 export function DecisionEditor({
+  inDialog = false,
+  pauseMessage,
   canAskYesNo,
   initialQuestion,
   questions,
   onCancel,
   onSave,
 }: {
+  inDialog?: boolean;
+  pauseMessage?: string;
   canAskYesNo: boolean;
   initialQuestion?: RubricCheckQuestion;
   questions: RubricCheckQuestion[];
@@ -134,11 +139,29 @@ export function DecisionEditor({
           ]);
 
   return (
-    <div className="space-y-3">
+    <EvaluatorEditorLayout
+      inDialog={inDialog}
+      inlineClassName="space-y-3"
+      action={initialQuestion ? "Save question" : "Add question"}
+      disabled={conflict}
+      error={inDialog && tried ? error : undefined}
+      onCancel={onCancel}
+      onSubmit={() => {
+        setTried(true);
+        if (!conflict && !error) onSave(question);
+      }}
+    >
+      {pauseMessage ? (
+        <p className="text-sm text-muted-foreground">{pauseMessage}</p>
+      ) : null}
       <div
         role="group"
         aria-label="Question type"
-        className="flex flex-wrap gap-2"
+        className={
+          inDialog
+            ? "flex w-fit flex-wrap gap-1 rounded-md bg-muted/50 p-1"
+            : "flex flex-wrap gap-2"
+        }
       >
         {QUESTION_TYPES.filter(
           ({ kind }) => canAskYesNo || kind !== "yesno",
@@ -146,7 +169,9 @@ export function DecisionEditor({
           <Button
             key={kind}
             type="button"
-            variant={question.kind === kind ? "secondary" : "outline"}
+            variant={
+              question.kind === kind ? "secondary" : inDialog ? "ghost" : "outline"
+            }
             aria-pressed={question.kind === kind}
             size="sm"
             onClick={() => {
@@ -166,9 +191,10 @@ export function DecisionEditor({
         ))}
       </div>
       <QuestionEditor
+        inDialog={inDialog}
         index={0}
         question={question}
-        error={tried ? error : undefined}
+        error={!inDialog && tried ? error : undefined}
         disabled={false}
         onChange={setQuestion}
         onLabelChange={(label) =>
@@ -188,22 +214,6 @@ export function DecisionEditor({
           to keep, then cancel and reopen the question.
         </p>
       ) : null}
-      <div className="flex justify-end gap-2">
-        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          disabled={conflict}
-          onClick={() => {
-            setTried(true);
-            if (!conflict && !error) onSave(question);
-          }}
-        >
-          {initialQuestion ? "Save question" : "Add question"}
-        </Button>
-      </div>
-    </div>
+    </EvaluatorEditorLayout>
   );
 }

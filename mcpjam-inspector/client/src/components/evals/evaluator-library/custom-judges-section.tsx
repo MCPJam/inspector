@@ -1,5 +1,6 @@
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
+import { Label } from "@mcpjam/design-system/label";
 import { RadioGroup, RadioGroupItem } from "@mcpjam/design-system/radio-group";
 import {
   MAX_CUSTOM_JUDGE_PROMPT_LENGTH,
@@ -21,6 +22,7 @@ import {
   withJudges,
 } from "./custom-judges-model";
 import { useEvaluatorLibraryEnabled } from "./evaluator-library-flag";
+import { EvaluatorEditorLayout } from "./evaluator-editor-layout";
 import { findLibraryEvaluator } from "./library-catalog";
 import { CustomJudgePreview } from "./custom-judge-preview";
 import { PromptEditor } from "./prompt-editor";
@@ -179,6 +181,8 @@ function JudgeRow({
 }
 
 export function JudgeEditor({
+  inDialog = false,
+  pauseMessage,
   suiteId,
   judge,
   variables,
@@ -187,6 +191,8 @@ export function JudgeEditor({
   onCancel,
   onSave,
 }: {
+  inDialog?: boolean;
+  pauseMessage?: string;
   suiteId?: string;
   judge: CustomJudge;
   variables: readonly string[];
@@ -202,11 +208,22 @@ export function JudgeEditor({
   const variableMappings = judgePromptVariables(variables);
   const threshold = draft.output.kind === "score" ? draft.output.threshold : 0.7;
   return (
-    <div className="mt-2 flex flex-col gap-3 rounded-md border border-border bg-muted/20 p-3">
+    <EvaluatorEditorLayout
+      inDialog={inDialog}
+      inlineClassName="mt-2 flex flex-col gap-3 rounded-md border border-border bg-muted/20 p-3"
+      action="Save judge"
+      error={tried ? problem : undefined}
+      onCancel={onCancel}
+      onSubmit={() => {
+        setTried(true);
+        if (!problem) onSave({ ...draft, label: draft.label.trim() });
+      }}
+    >
+      {pauseMessage ? (
+        <p className="text-sm text-muted-foreground">{pauseMessage}</p>
+      ) : null}
       <div className="flex flex-col gap-1.5">
-        <label htmlFor={`${id}-name`} className="text-xs font-medium">
-          Name
-        </label>
+        <Label htmlFor={`${id}-name`}>Name</Label>
         <Input
           id={`${id}-name`}
           value={draft.label}
@@ -222,14 +239,16 @@ export function JudgeEditor({
         scope="iteration"
         maxLength={MAX_CUSTOM_JUDGE_PROMPT_LENGTH}
       />
-      <details className="text-xs">
-        <summary className="mb-2 cursor-pointer text-muted-foreground">
+      <details className="text-sm text-muted-foreground">
+        <summary className="w-fit cursor-pointer">
           Variable reference
         </summary>
-        <VariableMappingTable variables={variableMappings} />
+        <div className="mt-2">
+          <VariableMappingTable variables={variableMappings} />
+        </div>
       </details>
-      <div className="flex flex-col gap-1.5 text-xs">
-        <span className="font-medium">Result</span>
+      <div className="flex flex-col gap-2 text-sm">
+        <p className="font-medium">Result</p>
         <RadioGroup
           aria-label="Result"
           value={draft.output.kind}
@@ -240,7 +259,7 @@ export function JudgeEditor({
                 kind === "score" ? { kind: "score", threshold } : { kind: "passfail" },
             })
           }
-          className="flex flex-wrap items-center gap-3"
+          className="flex flex-wrap items-center gap-x-4 gap-y-2"
         >
           <label htmlFor={`${id}-passfail`} className="flex items-center gap-1.5">
             <RadioGroupItem id={`${id}-passfail`} value="passfail" />
@@ -248,53 +267,38 @@ export function JudgeEditor({
           </label>
           <label htmlFor={`${id}-score`} className="flex items-center gap-1.5">
             <RadioGroupItem id={`${id}-score`} value="score" />
-            Score from 0 to 1, passing at
+            Score from 0 to 1
           </label>
-          <Input
-            type="number"
-            aria-label="Passing score"
-            className="h-7 w-20"
-            min={0.05}
-            max={1}
-            step={0.05}
-            disabled={draft.output.kind !== "score"}
-            value={threshold}
-            onChange={(e) =>
-              setDraft({
-                ...draft,
-                output: { kind: "score", threshold: Number(e.target.value) },
-              })
-            }
-          />
         </RadioGroup>
+        {draft.output.kind === "score" ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Label htmlFor={`${id}-threshold`}>Passing score</Label>
+            <Input
+              id={`${id}-threshold`}
+              type="number"
+              className="w-24"
+              min={0.05}
+              max={1}
+              step={0.05}
+              value={threshold}
+              onChange={(e) =>
+                setDraft({
+                  ...draft,
+                  output: { kind: "score", threshold: Number(e.target.value) },
+                })
+              }
+            />
+          </div>
+        ) : null}
       </div>
       {suiteId ? (
         <CustomJudgePreview
+          inDialog={inDialog}
           suiteId={suiteId}
           judge={draft}
           disabledReason={problem}
         />
       ) : null}
-      {tried && problem ? (
-        <p role="alert" className="text-xs text-destructive">
-          {problem}
-        </p>
-      ) : null}
-      <div className="flex justify-end gap-2">
-        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          onClick={() => {
-            setTried(true);
-            if (!problem) onSave({ ...draft, label: draft.label.trim() });
-          }}
-        >
-          Save judge
-        </Button>
-      </div>
-    </div>
+    </EvaluatorEditorLayout>
   );
 }

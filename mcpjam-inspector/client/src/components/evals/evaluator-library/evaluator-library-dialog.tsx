@@ -9,6 +9,7 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { ArrowLeft, Library } from "lucide-react";
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { cn } from "@/lib/utils";
 import { formatCriterion } from "@/shared/predicate-kinds";
 import {
   MAX_CUSTOM_JUDGES,
@@ -93,6 +94,18 @@ export function EvaluatorLibraryDialog({
       : undefined;
   const browsing = !selected && !method;
   const goBack = () => setView(null);
+  const backButton = (
+    <Button
+      type="button"
+      size="sm"
+      variant="ghost"
+      className="-ml-2 w-fit"
+      onClick={goBack}
+    >
+      <ArrowLeft aria-hidden />
+      Back to library
+    </Button>
+  );
   const show = (next: LibraryView) => {
     const focused = document.activeElement;
     returnFocus.current = focused instanceof HTMLElement ? focused : null;
@@ -104,7 +117,7 @@ export function EvaluatorLibraryDialog({
       returnFocus.current?.focus({ preventScroll: true });
       returnFocus.current = null;
     } else {
-      headingRef.current?.focus();
+      headingRef.current?.focus({ preventScroll: true });
     }
   }, [browsing, open]);
   const getAddDisabledReason = (evaluator: LibraryEvaluator) => {
@@ -147,16 +160,42 @@ export function EvaluatorLibraryDialog({
           From library
         </Button>
       </DialogTrigger>
-      <DialogContent className="h-[min(48rem,calc(100dvh-2rem))] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden p-0 sm:max-w-[58rem]">
+      <DialogContent
+        className={cn(
+          "max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden p-0",
+          method ? "sm:max-w-2xl" : "h-[48rem] sm:max-w-[58rem]",
+        )}
+      >
         <DialogHeader className="gap-1 border-b border-border px-4 py-4 pr-12 text-left sm:px-5 sm:pr-12">
-          <DialogTitle ref={headingRef} tabIndex={-1} className="outline-none">
-            {selected?.name ?? method?.title ?? "Evaluator library"}
-          </DialogTitle>
-          <DialogDescription>
-            {selected?.question ??
-              method?.description ??
-              "Choose what to check on each iteration."}
-          </DialogDescription>
+          {method ? backButton : null}
+          <div
+            className={cn("flex min-w-0 items-center gap-3", method && "mt-2")}
+          >
+            {method ? (
+              <span
+                className={cn(
+                  "grid size-9 shrink-0 place-items-center rounded-md",
+                  method.tone,
+                )}
+              >
+                <method.icon aria-hidden className="size-4" />
+              </span>
+            ) : null}
+            <div className="min-w-0">
+              <DialogTitle
+                ref={headingRef}
+                tabIndex={-1}
+                className="outline-none"
+              >
+                {selected?.name ?? method?.title ?? "Evaluator library"}
+              </DialogTitle>
+              <DialogDescription>
+                {selected?.question ??
+                  method?.description ??
+                  "Choose what to check on each iteration."}
+              </DialogDescription>
+            </div>
+          </div>
         </DialogHeader>
         <div className={browsing ? "grid min-h-0" : "hidden"}>
           <EvaluatorLibraryBrowse
@@ -171,30 +210,28 @@ export function EvaluatorLibraryDialog({
             getAddDisabledReason={getAddDisabledReason}
           />
         </div>
-        {browsing ? null : (
-          <div className="min-h-0 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">
-            <Button type="button" size="sm" variant="ghost" onClick={goBack}>
-              <ArrowLeft aria-hidden />
-              Back to library
-            </Button>
-            {selected ? (
-              <EvaluatorDetail
-                evaluator={selected}
-                inSuite={isInSuite(selected, suite)}
-                onAdd={() => add(selected)}
-                addDisabledReason={getAddDisabledReason(selected)}
-              />
-            ) : method && authoring ? (
-              authoring.methods[method.value] ? (
-                <p role="status" className="text-sm text-muted-foreground">
-                  {authoring.methods[method.value]}
-                </p>
-              ) : (
-                authoring.render(method.value, goBack)
-              )
-            ) : null}
+        {selected ? (
+          <div
+            key={selected.id}
+            className="min-h-0 min-w-0 space-y-4 overflow-y-auto overscroll-contain p-4 sm:p-5"
+          >
+            {backButton}
+            <EvaluatorDetail
+              evaluator={selected}
+              inSuite={isInSuite(selected, suite)}
+              onAdd={() => add(selected)}
+              addDisabledReason={getAddDisabledReason(selected)}
+            />
           </div>
-        )}
+        ) : method && authoring ? (
+          authoring.methods[method.value] ? (
+            <p role="status" className="p-4 text-sm text-muted-foreground sm:p-5">
+              {authoring.methods[method.value]}
+            </p>
+          ) : (
+            authoring.render(method.value, goBack)
+          )
+        ) : null}
       </DialogContent>
     </Dialog>
   );

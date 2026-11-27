@@ -1,4 +1,6 @@
 import { MAX_JUDGE_INSTRUCTIONS_LENGTH } from "@mcpjam/sdk/contract";
+import { Label } from "@mcpjam/design-system/label";
+import { Textarea } from "@mcpjam/design-system/textarea";
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { PromptVariable } from "./variable-mapping-table";
@@ -93,10 +95,8 @@ export function PromptEditor({
 
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor={id} className="text-xs font-medium">
-        Judge prompt
-      </label>
-      <textarea
+      <Label htmlFor={id}>Judge prompt</Label>
+      <Textarea
         ref={ref}
         id={id}
         rows={6}
@@ -104,7 +104,7 @@ export function PromptEditor({
         maxLength={maxLength}
         aria-invalid={unknown.length > 0}
         aria-describedby={`${id}-help`}
-        className="w-full rounded-md border border-input bg-background px-2.5 py-2 font-mono text-xs text-foreground"
+        className="min-h-28 field-sizing-fixed font-mono md:text-sm"
         onChange={(event) => {
           const next = event.target.value;
           const caret = event.target.selectionStart;
@@ -146,11 +146,12 @@ export function PromptEditor({
         id={`${id}-help`}
         className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground"
       >
-        <span>
-          {scope === "iteration"
-            ? "Reads one iteration."
-            : "Reads the whole conversation."}
-        </span>
+        {scope === "conversation" ? <span>Reads the whole conversation.</span> : null}
+        {variables.length > 0 ? (
+          <span>
+            Type <code>{"{{"}</code> to insert a variable.
+          </span>
+        ) : null}
         {used.map((name) => (
           <VariableChip key={name} name={name} known={known.has(name)} />
         ))}

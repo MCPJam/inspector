@@ -1,4 +1,5 @@
 import { Button } from "@mcpjam/design-system/button";
+import { cn } from "@mcpjam/design-system/cn";
 import {
   Select,
   SelectContent,
@@ -10,6 +11,7 @@ import type { CustomJudge } from "@/components/shared/session-quality/judge-conf
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { useAction, useQuery } from "convex/react";
 import { makeFunctionReference } from "convex/server";
+import { ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { VerdictPill, type VerdictStatus } from "./verdict-pill";
 
@@ -55,10 +57,12 @@ function statusOf(result: Extract<PreviewResult, { ok: true }>["result"]) {
 
 /** Preview costs a judge call, so run it only on request. */
 export function CustomJudgePreview({
+  inDialog = false,
   suiteId,
   judge,
   disabledReason,
 }: {
+  inDialog?: boolean;
   suiteId: string;
   judge: CustomJudge;
   disabledReason?: string;
@@ -80,14 +84,6 @@ export function CustomJudgePreview({
   const outcome = completed?.input === input ? completed.outcome : undefined;
   const failure = completed?.input === input ? completed.failure : undefined;
 
-  if (trials && trials.length === 0) {
-    return (
-      <p className="text-xs text-muted-foreground">
-        Run this suite once to test a judge on a past trial.
-      </p>
-    );
-  }
-
   const run = async () => {
     setRunning(true);
     setCompleted(null);
@@ -108,11 +104,23 @@ export function CustomJudgePreview({
     }
   };
 
-  return (
-    <div className="flex flex-col gap-2 rounded-md border border-border/60 p-2.5">
+  const content = trials?.length === 0 ? (
+    <p className="text-xs text-muted-foreground">
+      Run this suite once to test a judge on a past trial.
+    </p>
+  ) : (
+    <div
+      className={cn(
+        "flex min-w-0 flex-col gap-2",
+        !inDialog && "rounded-md border border-border/60 p-2.5",
+      )}
+    >
       <div className="flex flex-wrap items-center gap-2">
         <Select value={chosen} onValueChange={setIterationId}>
-          <SelectTrigger aria-label="Past trial" className="h-8 w-64 text-xs">
+          <SelectTrigger
+            aria-label="Past trial"
+            className="h-8 w-64 max-w-full text-xs"
+          >
             <SelectValue placeholder="Loading trials…" />
           </SelectTrigger>
           <SelectContent>
@@ -135,7 +143,7 @@ export function CustomJudgePreview({
           title={disabledReason}
           onClick={run}
         >
-          {running ? "Testing…" : "Test on a past trial"}
+          {running ? "Testing…" : inDialog ? "Run test" : "Test on a past trial"}
         </Button>
         <span className="text-xs text-muted-foreground">
           Uses one judge call. Saves nothing.
@@ -154,7 +162,13 @@ export function CustomJudgePreview({
         </p>
       ) : null}
       {outcome?.ok ? (
-        <div role="status" className="flex flex-col gap-1.5 text-xs">
+        <div
+          role="status"
+          className={cn(
+            "flex min-w-0 flex-col gap-1.5 text-xs",
+            inDialog && "rounded-md border border-border bg-background p-3",
+          )}
+        >
           <div className="flex items-center gap-2">
             <VerdictPill status={statusOf(outcome.result)} />
             {outcome.result.value !== undefined && judge.output.kind === "score" ? (
@@ -171,7 +185,12 @@ export function CustomJudgePreview({
                   ? "What the judge read (excerpt)"
                   : "What the judge read"}
               </summary>
-              <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 font-mono text-[11px]">
+              <pre
+                className={cn(
+                  "mt-1 whitespace-pre-wrap rounded bg-muted p-2 font-mono text-[11px]",
+                  inDialog ? "wrap-anywhere" : "max-h-64 overflow-auto",
+                )}
+              >
                 {outcome.prompt}
               </pre>
             </details>
@@ -179,5 +198,19 @@ export function CustomJudgePreview({
         </div>
       ) : null}
     </div>
+  );
+  if (!inDialog) return content;
+
+  return (
+    <details className="group rounded-md border border-border bg-muted/30">
+      <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring">
+        <ChevronRight
+          aria-hidden
+          className="size-4 shrink-0 text-muted-foreground group-open:rotate-90"
+        />
+        Test on a past trial
+      </summary>
+      <div className="border-t border-border p-3">{content}</div>
+    </details>
   );
 }

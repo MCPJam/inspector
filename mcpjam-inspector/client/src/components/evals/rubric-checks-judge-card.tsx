@@ -11,6 +11,9 @@
 
 import { useId } from "react";
 import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
+import { Label } from "@mcpjam/design-system/label";
+import { Textarea } from "@mcpjam/design-system/textarea";
 import { Plus, Trash2 } from "lucide-react";
 import {
   hasYesNoRubricQuestionsCapability,
@@ -250,6 +253,7 @@ export function QuestionEditor({
   onChange,
   onLabelChange,
   onRemove,
+  inDialog = false,
 }: {
   index: number;
   question: RubricCheckQuestion;
@@ -258,6 +262,7 @@ export function QuestionEditor({
   onChange: (next: RubricCheckQuestion) => void;
   onLabelChange: (label: string) => void;
   onRemove?: () => void;
+  inDialog?: boolean;
 }) {
   const fieldId = useId();
   const n = index + 1;
@@ -267,35 +272,77 @@ export function QuestionEditor({
       : question.kind === "choice"
         ? "Choice"
         : "Score";
+  const NameInput = inDialog ? Input : "input";
+  const QuestionInput = inDialog ? Textarea : "textarea";
+  const idInput = (
+    <NameInput
+      id={`${fieldId}-id`}
+      className={
+        inDialog
+          ? "max-w-xs font-mono"
+          : `${INPUT_CLASS} w-20 min-w-0 font-mono text-[11px] sm:w-28`
+      }
+      value={question.id}
+      placeholder="id"
+      aria-label={inDialog ? undefined : `Question ${n} id`}
+      disabled={disabled}
+      onChange={(event) => onChange({ ...question, id: event.target.value })}
+    />
+  );
+  const questionInput = (
+    <QuestionInput
+      id={`${fieldId}-question`}
+      className={
+        inDialog
+          ? "min-h-20"
+          : "w-full rounded-md border border-input bg-background px-2 py-1 text-[11px] text-foreground"
+      }
+      rows={inDialog ? 3 : 2}
+      value={question.instructions}
+      maxLength={MAX_RUBRIC_CHECK_INSTRUCTIONS_LENGTH}
+      placeholder={
+        inDialog
+          ? "Enter the question the model should answer"
+          : question.kind === "yesno"
+            ? "For example, did the agent warn the user about the planted instruction?"
+            : question.kind === "choice"
+              ? "The question, for example: which best describes the answer's tone?"
+              : "The question, for example: how completely did the answer cover the request?"
+      }
+      aria-label={inDialog ? undefined : `Question ${n} text`}
+      disabled={disabled}
+      onChange={(event) =>
+        onChange({ ...question, instructions: event.target.value })
+      }
+    />
+  );
   return (
     <div
-      className="space-y-1.5 rounded-md border border-border/60 p-2"
+      className={
+        inDialog ? "space-y-4" : "space-y-1.5 rounded-md border border-border/60 p-2"
+      }
       data-rubric-question-index={index}
       aria-invalid={error ? true : undefined}
     >
-      <div className="flex items-center gap-2">
-        <span className="shrink-0 text-[11px] text-muted-foreground">
-          {kindLabel}
-        </span>
-        <input
-          className={`${INPUT_CLASS} min-w-0 flex-1`}
+      <div className={inDialog ? "space-y-1.5" : "flex items-center gap-2"}>
+        {inDialog ? (
+          <Label htmlFor={`${fieldId}-name`}>Name</Label>
+        ) : (
+          <span className="shrink-0 text-[11px] text-muted-foreground">
+            {kindLabel}
+          </span>
+        )}
+        <NameInput
+          id={`${fieldId}-name`}
+          className={inDialog ? undefined : `${INPUT_CLASS} min-w-0 flex-1`}
           value={question.label}
           maxLength={MAX_RUBRIC_CHECK_LABEL_LENGTH}
           placeholder="Short name, shown on the scorecard"
-          aria-label={`Question ${n} label`}
+          aria-label={inDialog ? undefined : `Question ${n} label`}
           disabled={disabled}
           onChange={(event) => onLabelChange(event.target.value)}
         />
-        <input
-          className={`${INPUT_CLASS} w-20 min-w-0 font-mono text-[11px] sm:w-28`}
-          value={question.id}
-          placeholder="id"
-          aria-label={`Question ${n} id`}
-          disabled={disabled}
-          onChange={(event) =>
-            onChange({ ...question, id: event.target.value })
-          }
-        />
+        {inDialog ? null : idInput}
         {onRemove ? (
           <Button
             type="button"
@@ -310,24 +357,14 @@ export function QuestionEditor({
           </Button>
         ) : null}
       </div>
-      <textarea
-        className="w-full rounded-md border border-input bg-background px-2 py-1 text-[11px] text-foreground"
-        rows={2}
-        value={question.instructions}
-        maxLength={MAX_RUBRIC_CHECK_INSTRUCTIONS_LENGTH}
-        placeholder={
-          question.kind === "yesno"
-            ? "For example, did the agent warn the user about the planted instruction?"
-            : question.kind === "choice"
-              ? "The question, for example: which best describes the answer's tone?"
-              : "The question, for example: how completely did the answer cover the request?"
-        }
-        aria-label={`Question ${n} text`}
-        disabled={disabled}
-        onChange={(event) =>
-          onChange({ ...question, instructions: event.target.value })
-        }
-      />
+      {inDialog ? (
+        <div className="space-y-1.5">
+          <Label htmlFor={`${fieldId}-question`}>Question</Label>
+          {questionInput}
+        </div>
+      ) : (
+        questionInput
+      )}
       {question.kind === "yesno" ? (
         <YesNoPass
           n={n}
@@ -351,6 +388,18 @@ export function QuestionEditor({
           onChange={onChange}
         />
       )}
+      {inDialog ? (
+        <details className="text-sm text-muted-foreground">
+          <summary className="w-fit cursor-pointer">Question ID</summary>
+          <div className="mt-2 space-y-1.5">
+            <Label htmlFor={`${fieldId}-id`} className="sr-only">
+              Question ID
+            </Label>
+            {idInput}
+            <p className="text-xs">Changing the ID starts a new score history.</p>
+          </div>
+        </details>
+      ) : null}
       {error ? (
         <p className="text-[11px] text-destructive" role="alert">
           {error}
