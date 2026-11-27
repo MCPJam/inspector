@@ -19,7 +19,11 @@ vi.mock("posthog-js/react", () => ({
 
 function open(onAdd = vi.fn(), predicates = []) {
   renderWithProviders(
-    <EvaluatorLibraryButton predicates={predicates} onAdd={onAdd} />,
+    <EvaluatorLibraryButton
+      predicates={predicates}
+      canAskYesNo
+      onAdd={onAdd}
+    />,
   );
   fireEvent.click(screen.getByRole("button", { name: "From library" }));
   return onAdd;
@@ -43,10 +47,13 @@ describe("EvaluatorLibraryButton", () => {
       screen.getByRole("button", { name: "Add No Wasted Calls to suite" }),
     );
     const tag = { id: "no-wasted-calls", version: 1 };
-    expect(onAdd).toHaveBeenCalledWith([
-      { type: "toolCallCountUnder", count: 10, evaluator: tag },
-      { type: "noRepeatedIdenticalCall", role: "advisory", evaluator: tag },
-    ]);
+    expect(onAdd).toHaveBeenCalledWith(
+      [
+        { type: "toolCallCountUnder", count: 10, evaluator: tag },
+        { type: "noRepeatedIdenticalCall", role: "advisory", evaluator: tag },
+      ],
+      [],
+    );
   });
 
   it("opens the detail with each assertion and adds from there", () => {
@@ -55,15 +62,18 @@ describe("EvaluatorLibraryButton", () => {
       screen.getByRole("button", { name: "Valid Tool Arguments" }),
     );
     expect(
-      screen.getByRole("list", { name: "Assertions this evaluator adds" }),
+      screen.getByRole("list", { name: "What this evaluator adds" }),
     ).toHaveTextContent("Arguments match the tool's schema");
     fireEvent.click(screen.getByRole("button", { name: "Add to suite" }));
-    expect(onAdd).toHaveBeenCalledWith([
-      {
-        type: "argumentsMatchToolSchema",
-        evaluator: { id: "valid-tool-arguments", version: 1 },
-      },
-    ]);
+    expect(onAdd).toHaveBeenCalledWith(
+      [
+        {
+          type: "argumentsMatchToolSchema",
+          evaluator: { id: "valid-tool-arguments", version: 1 },
+        },
+      ],
+      [],
+    );
     fireEvent.click(screen.getByRole("button", { name: "All evaluators" }));
     expect(screen.getByText("Evaluator library")).toBeInTheDocument();
   });
@@ -82,17 +92,20 @@ describe("EvaluatorLibraryButton", () => {
         name: "Add Actionable Tool Errors to suite",
       }),
     );
-    expect(onAdd).toHaveBeenCalledWith([
-      {
-        type: "noToolErrors",
-        evaluator: { id: "actionable-tool-errors", version: 1 },
-      },
-      {
-        type: "toolErrorNamesInput",
-        role: "advisory",
-        evaluator: { id: "actionable-tool-errors", version: 1 },
-      },
-    ]);
+    expect(onAdd).toHaveBeenCalledWith(
+      [
+        {
+          type: "noToolErrors",
+          evaluator: { id: "actionable-tool-errors", version: 1 },
+        },
+        {
+          type: "toolErrorNamesInput",
+          role: "advisory",
+          evaluator: { id: "actionable-tool-errors", version: 1 },
+        },
+      ],
+      [],
+    );
   });
 
   it("hides evaluators this deployment cannot save", () => {
@@ -106,6 +119,37 @@ describe("EvaluatorLibraryButton", () => {
     fireEvent.click(screen.getByRole("button", { name: "From library" }));
     expect(screen.getByText("Actionable Tool Errors")).toBeInTheDocument();
     expect(screen.queryByText("No Wasted Calls")).not.toBeInTheDocument();
+  });
+
+  it("explains a preset question ID conflict without marking it installed", () => {
+    const onAdd = vi.fn();
+    renderWithProviders(
+      <EvaluatorLibraryButton
+        predicates={[]}
+        questions={[
+          {
+            id: "reports-tool-errors-reports-failures",
+            kind: "yesno",
+            label: "My question",
+            instructions: "Grade my custom criterion.",
+            pass: { answer: "yes" },
+          },
+        ]}
+        canAskYesNo
+        onAdd={onAdd}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "From library" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Reports Tool Errors" }),
+    );
+    expect(screen.getByRole("button", { name: "Add to suite" })).toBeDisabled();
+    expect(
+      screen.getByText(
+        'A question already uses the ID "reports-tool-errors-reports-failures". Rename or remove it to add this evaluator.',
+      ),
+    ).toBeInTheDocument();
+    expect(onAdd).not.toHaveBeenCalled();
   });
 });
 
@@ -196,15 +240,112 @@ describe("Results Match Output Schema", () => {
       screen.getByRole("button", { name: "Results Match Output Schema" }),
     );
     expect(
-      screen.getByRole("list", { name: "Assertions this evaluator adds" }),
+      screen.getByRole("list", { name: "What this evaluator adds" }),
     ).toHaveTextContent("Every tool result matches its declared output schema");
     fireEvent.click(screen.getByRole("button", { name: "Add to suite" }));
-    expect(onAdd).toHaveBeenCalledWith([
-      {
-        type: "toolResultMatchesSchema",
-        schema: "declared",
-        evaluator: { id: "results-match-output-schema", version: 1 },
-      },
-    ]);
+    expect(onAdd).toHaveBeenCalledWith(
+      [
+        {
+          type: "toolResultMatchesSchema",
+          schema: "declared",
+          evaluator: { id: "results-match-output-schema", version: 1 },
+        },
+      ],
+      [],
+    );
+  });
+});
+
+describe("question-only evaluators", () => {
+  it("adds a tagged yes/no question and no assertions", () => {
+    const onAdd = open();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Reports Tool Errors" }),
+    );
+    expect(
+      screen.getByRole("list", { name: "What this evaluator adds" }),
+    ).toHaveTextContent("Yes/no question, passes on Yes");
+    fireEvent.click(screen.getByRole("button", { name: "Add to suite" }));
+    expect(onAdd).toHaveBeenCalledWith(
+      [],
+      [
+        expect.objectContaining({
+          id: "reports-tool-errors-reports-failures",
+          kind: "yesno",
+          pass: { answer: "yes" },
+          evaluator: { id: "reports-tool-errors", version: 1 },
+        }),
+      ],
+    );
+  });
+
+  it("asks nothing the grader cannot see, so an unseen error cannot pass", () => {
+    const entry = findLibraryEvaluator("reports-tool-errors");
+    expect(entry?.questions).toHaveLength(1);
+    const [question] = entry?.questions ?? [];
+    expect(question?.passOn).toBe("yes");
+    expect(question?.instructions).toMatch(/every tool call/);
+    expect(question?.instructions).toMatch(/Answer no in every other case/);
+    expect(findLibraryEvaluator("answer-grounded-in-results")).toBeUndefined();
+  });
+
+  it("keeps every question inside the grader's instruction clip", () => {
+    // The backend clips a question's instructions at 600 characters.
+    for (const evaluator of LIBRARY_EVALUATORS) {
+      for (const q of evaluator.questions ?? []) {
+        expect(q.instructions.length, q.slug).toBeLessThanOrEqual(600);
+      }
+    }
+  });
+});
+
+describe("yes/no capability", () => {
+  it("hides question evaluators on a deployment that cannot ask yes/no", () => {
+    renderWithProviders(
+      <EvaluatorLibraryButton predicates={[]} onAdd={() => {}} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "From library" }));
+    expect(screen.getByText("No Wasted Calls")).toBeInTheDocument();
+    expect(screen.queryByText("Reports Tool Errors")).not.toBeInTheDocument();
+  });
+});
+
+describe("question cap", () => {
+  it("offers no Add for a question evaluator when the suite is full", () => {
+    const full = Array.from({ length: 10 }, (_, i) => ({
+      id: `mine-${i}`,
+      kind: "yesno" as const,
+      label: `Mine ${i}`,
+      instructions: "Mine.",
+      pass: { answer: "yes" as const },
+    }));
+    const onAdd = vi.fn();
+    renderWithProviders(
+      <EvaluatorLibraryButton
+        predicates={[]}
+        questions={full}
+        canAskYesNo
+        onAdd={onAdd}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "From library" }));
+    expect(
+      screen.queryByRole("button", {
+        name: "Add Reports Tool Errors to suite",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Add No Wasted Calls to suite" }),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Reports Tool Errors" }),
+    );
+    expect(screen.getByRole("button", { name: "Add to suite" })).toBeDisabled();
+    expect(
+      screen.getByText(
+        "Suites can ask up to 10 rubric-check questions, and adding this evaluator would make 11. Remove a question first.",
+      ),
+    ).toBeInTheDocument();
+    expect(onAdd).not.toHaveBeenCalled();
   });
 });

@@ -38,6 +38,7 @@ import { Input } from "@mcpjam/design-system/input";
 import type { ModelDefinition } from "@/shared/types";
 import {
   hasRubricChecksCapability,
+  hasYesNoRubricQuestionsCapability,
   type SuiteCapabilities,
 } from "@/hooks/use-suite-capabilities";
 import { DEFAULT_JUDGE_THRESHOLD } from "@/components/shared/session-quality/judge-config";
@@ -45,8 +46,10 @@ import { ValidatorsSection } from "./validators-section";
 import { CheckRow, blankPredicate } from "./checks-section";
 import { SuiteScorerLibraryMenu } from "./suite-scorer-library-menu";
 import { EvaluatorLibraryButton } from "./evaluator-library/evaluator-library-dialog";
+import { useEvaluatorLibraryEnabled } from "./evaluator-library/evaluator-library-flag";
 import { EvaluatorStageRows } from "./evaluator-library/evaluator-stage-rows";
 import { librarySuiteEdits } from "./evaluator-library/library-suite-edits";
+import { RubricChecksJudgeCard } from "./rubric-checks-judge-card";
 import type { GroundednessRunEvidence } from "./suite-judge-card";
 import { JudgeModelControl } from "./judges-section";
 import {
@@ -111,6 +114,7 @@ export function SuiteScorerTable({
   stageFacts,
   capabilities,
   passOrFailHint,
+  judgeRubric,
   headerContent,
   headerDescription,
   headerActions,
@@ -167,6 +171,7 @@ export function SuiteScorerTable({
   // Only a deployment that grades rubric checks stores the slot, so the row
   // and its card appear only when the capability says so.
   const rubricChecks = hasRubricChecksCapability(capabilities);
+  const evaluatorLibraryEnabled = useEvaluatorLibraryEnabled();
   // The deployment's effective goal-judge policy. A suite that stores no
   // `enabled` inherits it, and rubric checks ride that judge's job, so every
   // "is the goal judge off" question on this page has to read it too.
@@ -252,7 +257,7 @@ export function SuiteScorerTable({
       scope.onDraftChange(removeCaseRule(scope.draft, rule.index));
     }
   };
-  const library = librarySuiteEdits(scope);
+  const library = librarySuiteEdits(scope, judgeConfig, onJudgeConfigChange);
   const addPredicate = (predicate: Predicate) => {
     if (scope.kind === "suite") {
       scope.onPredicatesChange((previous) => [...previous, predicate]);
@@ -411,10 +416,12 @@ export function SuiteScorerTable({
             ))}
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
             {headerActions}
-            {library ? (
+            {library && scope.kind === "suite" ? (
               <EvaluatorLibraryButton
-                predicates={library.predicates}
+                predicates={scope.predicates}
+                questions={judgeConfig?.rubricChecks?.questions}
                 authorableKinds={authorableKinds}
+                canAskYesNo={hasYesNoRubricQuestionsCapability(capabilities)}
                 onAdd={library.add}
               />
             ) : null}
@@ -487,8 +494,14 @@ export function SuiteScorerTable({
                         ? rules[row.predicateIndex]?.predicate
                         : undefined
                     }
+                    questions={
+                      group.stage === "userValue"
+                        ? judgeConfig?.rubricChecks?.questions
+                        : undefined
+                    }
                     onRemoveEvaluator={library?.remove}
                     onUpdateEvaluator={library?.update}
+                    updateRefusal={library?.updateRefusal}
                     renderRow={(row) => (
                       <ScorerRow
                         key={row.id}
@@ -540,6 +553,19 @@ export function SuiteScorerTable({
                     )}
                   />
                 )}
+                {evaluatorLibraryEnabled &&
+                rubricChecks &&
+                scope.kind === "suite" &&
+                onJudgeConfigChange &&
+                group.stage === "userValue" ? (
+                  <RubricChecksJudgeCard
+                    judgeConfig={judgeConfig}
+                    onJudgeConfigChange={onJudgeConfigChange}
+                    judgesCapabilities={capabilities?.judges}
+                    criteria={judgeRubric?.criteria ?? []}
+                    goalJudgeOff={judgeMode(judgeConfig, goalPolicy) === "off"}
+                  />
+                ) : null}
                 {scope.kind === "suite" &&
                 onMatchOptionsChange &&
                 group.stage === "selection" ? (
@@ -577,8 +603,7 @@ export function SuiteScorerTable({
       {hasJudgeEditor && onJudgeConfigChange ? (
         // Its own section, not a disclosure under User value. Only the model
         // is shown for now: the judge's other settings (gate, grading
-        // instructions, rubric checks, groundedness) keep their stored values
-        // and are not rendered here until they are simpler to explain. The
+        // instructions, groundedness) keep their stored values. The
         // Goal completion row above stays the judge's on/off.
         <section
           className="border-b border-border py-8"

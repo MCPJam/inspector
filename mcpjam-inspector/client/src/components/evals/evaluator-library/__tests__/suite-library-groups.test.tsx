@@ -3,13 +3,18 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import { SuiteScorerTable } from "../../suite-scorer-table";
 import { clusterByEvaluator } from "../evaluator-stage-rows";
+import type { RubricCheckQuestion } from "@/components/shared/session-quality/judge-config";
+import type { EvalJudgeConfig } from "../../types";
 import {
+  findLibraryEvaluator,
   LIBRARY_EVALUATORS,
   taggedChecks,
+  taggedQuestions,
   withLibraryChecks,
   withEvaluatorUpdated,
   withoutEvaluator,
 } from "../library-catalog";
+import { librarySuiteEdits } from "../library-suite-edits";
 
 const flag = vi.hoisted(() => ({ on: true }));
 vi.mock("posthog-js/react", () => ({
@@ -34,6 +39,7 @@ function renderTable(predicates: Predicate[]) {
       matchOptions={undefined}
       scope={{ kind: "suite", predicates, onPredicatesChange }}
       judgeConfig={undefined}
+      onJudgeConfigChange={vi.fn()}
       availableModels={[]}
       passOrFailHint=""
       judgeHint=""
@@ -135,5 +141,192 @@ describe("library catalog edits", () => {
       ...taggedChecks(entry),
     ]);
     expect(withEvaluatorUpdated(edited, "unknown")).toEqual(edited);
+  });
+});
+
+const reports = findLibraryEvaluator("reports-tool-errors");
+if (!reports) throw new Error("Expected Reports Tool Errors");
+const [reportsQuestion] = taggedQuestions(reports);
+
+function own(id: string): RubricCheckQuestion {
+  return {
+    id,
+    kind: "yesno",
+    label: `Mine ${id}`,
+    instructions: "Mine.",
+    pass: { answer: "yes" },
+  };
+}
+
+/** Library edits over a draft that applies each change, as the page does. */
+function draft(
+  judgeConfig: EvalJudgeConfig | undefined,
+  predicates: Predicate[] = [],
+) {
+  const state = { judgeConfig, predicates, judgeWrites: 0 };
+  const edits = () => {
+    const next = librarySuiteEdits(
+      {
+        kind: "suite",
+        predicates: state.predicates,
+        onPredicatesChange: (change) => {
+          state.predicates =
+            typeof change === "function" ? change(state.predicates) : change;
+        },
+      },
+      state.judgeConfig,
+      (change) => {
+        state.judgeConfig = change;
+        state.judgeWrites += 1;
+      },
+    );
+    if (!next) throw new Error("Expected suite edits");
+    return next;
+  };
+  return { state, edits };
+}
+
+describe("library question edits", () => {
+  it("adds and removes an evaluator's question, leaving the config as it was", () => {
+    const { state, edits } = draft(undefined, [{ type: "noToolErrors" }]);
+    expect(edits().add([], taggedQuestions(reports))).toBeUndefined();
+    expect(state.judgeConfig).toEqual({
+      rubricChecks: { questions: [reportsQuestion] },
+    });
+    edits().remove("reports-tool-errors");
+    expect(state.judgeConfig).toBeUndefined();
+    expect(state.predicates).toEqual([{ type: "noToolErrors" }]);
+  });
+
+  it("keeps the rest of the judge config when the last question goes", () => {
+    const goal = { goalCompletion: { enabled: true } };
+    const { state, edits } = draft(goal);
+    edits().add([], taggedQuestions(reports));
+    edits().remove("reports-tool-errors");
+    expect(state.judgeConfig).toEqual(goal);
+  });
+
+  it("turns rubric checks back on only when adding to a suite that turned them off", () => {
+    const { state, edits } = draft({ rubricChecks: { enabled: false } });
+    edits().add([], taggedQuestions(reports));
+    expect(state.judgeConfig?.rubricChecks?.enabled).toBe(true);
+    edits().remove("reports-tool-errors");
+    // Removing keeps the author's switch where adding left it.
+    expect(state.judgeConfig).toEqual({ rubricChecks: { enabled: true } });
+  });
+
+  it("keeps rubric checks off when an evaluator is updated or removed", () => {
+    const old = {
+      ...reportsQuestion,
+      instructions: "Old wording.",
+      evaluator: { id: reports.id, version: 0 },
+    };
+    const { state, edits } = draft({
+      rubricChecks: { enabled: false, questions: [old] },
+    });
+    expect(edits().update("reports-tool-errors")).toBeUndefined();
+    expect(state.judgeConfig?.rubricChecks).toEqual({
+      enabled: false,
+      questions: [reportsQuestion],
+    });
+    edits().remove("reports-tool-errors");
+    expect(state.judgeConfig).toEqual({ rubricChecks: { enabled: false } });
+  });
+
+  it("updates a question in place, so a version-only update keeps the order", () => {
+    const old = {
+      ...reportsQuestion,
+      evaluator: { id: reports.id, version: 0 },
+    };
+    const { state, edits } = draft({
+      rubricChecks: { questions: [own("first"), old, own("last")] },
+    });
+    edits().update("reports-tool-errors");
+    expect(state.judgeConfig?.rubricChecks?.questions).toEqual([
+      own("first"),
+      reportsQuestion,
+      own("last"),
+    ]);
+  });
+
+  it("clears an evaluator's old questions when its new version has none", () => {
+    const { state, edits } = draft({
+      rubricChecks: {
+        questions: [
+          {
+            ...own("no-wasted-calls-old"),
+            evaluator: { id: "no-wasted-calls", version: 0 },
+          },
+        ],
+      },
+    });
+    edits().update("no-wasted-calls");
+    expect(state.judgeConfig).toBeUndefined();
+  });
+
+  it("writes no judge config when a check-only evaluator is updated", () => {
+    const { state, edits } = draft(undefined, tagged);
+    edits().update("no-wasted-calls");
+    expect(state.judgeWrites).toBe(0);
+  });
+
+  it("refuses an add past the cap instead of dropping questions", () => {
+    const full = Array.from({ length: 10 }, (_, i) => own(`mine-${i}`));
+    const { state, edits } = draft({ rubricChecks: { questions: full } });
+    expect(edits().add([], taggedQuestions(reports))).toBe(
+      "Suites can ask up to 10 rubric-check questions, and adding this evaluator would make 11. Remove a question first.",
+    );
+    expect(state.judgeWrites).toBe(0);
+    expect(state.judgeConfig?.rubricChecks?.questions).toEqual(full);
+  });
+
+  it("refuses an update whose question ID the author already uses, and says so up front", () => {
+    const old = {
+      ...reportsQuestion,
+      id: "reports-tool-errors-older",
+      evaluator: { id: reports.id, version: 0 },
+    };
+    const mine = own(reportsQuestion.id);
+    const { state, edits } = draft({
+      rubricChecks: { questions: [old, mine] },
+    });
+    const reason =
+      'A question already uses the ID "reports-tool-errors-reports-failures". Rename or remove it to update this evaluator.';
+    expect(edits().updateRefusal("reports-tool-errors")).toBe(reason);
+    expect(edits().update("reports-tool-errors")).toBe(reason);
+    expect(state.judgeWrites).toBe(0);
+    expect(edits().updateRefusal("no-wasted-calls")).toBeUndefined();
+  });
+
+  it("shows the refusal in place of Update in the suite table", () => {
+    const old = {
+      ...reportsQuestion,
+      id: "reports-tool-errors-older",
+      evaluator: { id: reports.id, version: 0 },
+    };
+    render(
+      <SuiteScorerTable
+        matchOptions={undefined}
+        scope={{ kind: "suite", predicates: [], onPredicatesChange: vi.fn() }}
+        judgeConfig={{
+          rubricChecks: { questions: [old, own(reportsQuestion.id)] },
+        }}
+        onJudgeConfigChange={vi.fn()}
+        availableModels={[]}
+        passOrFailHint=""
+        judgeHint=""
+      />,
+    );
+    const group = screen.getByRole("region", {
+      name: /^Reports Tool Errors in .*, version 0$/,
+    });
+    expect(
+      within(group).queryByRole("button", {
+        name: /^Update Reports Tool Errors/,
+      }),
+    ).not.toBeInTheDocument();
+    expect(group).toHaveTextContent(
+      'v1 available. A question already uses the ID "reports-tool-errors-reports-failures".',
+    );
   });
 });

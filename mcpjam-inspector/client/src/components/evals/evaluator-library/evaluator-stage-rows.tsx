@@ -1,5 +1,6 @@
 import { Button } from "@mcpjam/design-system/button";
 import type { Predicate } from "@mcpjam/sdk/predicates";
+import type { RubricCheckQuestion } from "@/components/shared/session-quality/judge-config";
 import { Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { EvaluatorKindBadge } from "./evaluator-kind-badge";
@@ -44,20 +45,37 @@ export function EvaluatorStageRows<Row extends { id: string }>({
   stageLabel,
   predicateOf,
   renderRow,
+  questions = [],
   onRemoveEvaluator,
   onUpdateEvaluator,
+  updateRefusal,
 }: {
   rows: readonly Row[];
   stageLabel: string;
   predicateOf: (row: Row) => Predicate | undefined;
   renderRow: (row: Row) => ReactNode;
+  /** Rubric-check questions to show under their evaluator in this stage. */
+  questions?: readonly RubricCheckQuestion[];
   /** Omitted where the rows are inherited and cannot be edited here. */
   onRemoveEvaluator?: (evaluatorId: string) => void;
   onUpdateEvaluator?: (evaluatorId: string) => void;
+  /** Why Update cannot apply; shown in its place, so it is never a no-op. */
+  updateRefusal?: (evaluatorId: string) => string | undefined;
 }) {
   const enabled = useEvaluatorLibraryEnabled();
   if (!enabled) return <ul className="space-y-3">{rows.map(renderRow)}</ul>;
   const { loose, clusters } = clusterByEvaluator(rows, predicateOf);
+  const inCluster = (q: RubricCheckQuestion, c: Cluster<Row>) =>
+    q.evaluator?.id === c.evaluatorId && q.evaluator.version === c.version;
+  for (const q of questions) {
+    if (q.evaluator && !clusters.some((c) => inCluster(q, c))) {
+      clusters.push({
+        evaluatorId: q.evaluator.id,
+        version: q.evaluator.version,
+        rows: [],
+      });
+    }
+  }
   return (
     <div className="space-y-3">
       {loose.length ? (
@@ -68,6 +86,10 @@ export function EvaluatorStageRows<Row extends { id: string }>({
         const name = entry?.name ?? cluster.evaluatorId;
         const newer =
           entry && entry.version > cluster.version ? entry.version : undefined;
+        const refusal =
+          newer && onUpdateEvaluator
+            ? updateRefusal?.(cluster.evaluatorId)
+            : undefined;
         return (
           <section
             key={`${cluster.evaluatorId}:${cluster.version}`}
@@ -84,7 +106,11 @@ export function EvaluatorStageRows<Row extends { id: string }>({
               </span>
               <EvaluatorKindBadge origin="library" />
               <span className="ml-auto flex items-center gap-1">
-                {newer && onUpdateEvaluator ? (
+                {refusal ? (
+                  <span className="text-xs text-muted-foreground">
+                    v{newer} available. {refusal}
+                  </span>
+                ) : newer && onUpdateEvaluator ? (
                   <Button
                     type="button"
                     size="sm"
@@ -110,7 +136,28 @@ export function EvaluatorStageRows<Row extends { id: string }>({
                 ) : null}
               </span>
             </div>
-            <ul className="space-y-3">{cluster.rows.map(renderRow)}</ul>
+            <ul className="space-y-3">
+              {cluster.rows.map(renderRow)}
+              {questions
+                .filter((q) => inCluster(q, cluster))
+                .map((q) => (
+                  <li
+                    key={q.id}
+                    className="flex items-start justify-between gap-3 text-sm"
+                  >
+                    <span>
+                      <span className="text-foreground">{q.label}</span>
+                      <span className="block text-xs text-muted-foreground">
+                        Yes/no question, passes on{" "}
+                        {q.pass.answer === "no" ? "No" : "Yes"}
+                      </span>
+                    </span>
+                    <span className="rounded-sm border border-border/60 px-1.5 py-px text-[10px] uppercase tracking-[0.06em] text-muted-foreground">
+                      Advisory
+                    </span>
+                  </li>
+                ))}
+            </ul>
           </section>
         );
       })}

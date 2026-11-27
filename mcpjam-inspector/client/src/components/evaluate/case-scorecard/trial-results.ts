@@ -72,6 +72,7 @@ import {
 } from "@/components/evals/runner-checks";
 import type { ScorecardGroup, ScorecardRow } from "./case-scorecard-model";
 import { stageFloor, type StageFloorTrace } from "./stage-floor";
+import { rubricCheckVerdictQuestions } from "@/shared/rubric-check-verdict";
 import { isRequiredRole } from "@mcpjam/sdk/predicates";
 
 export type TrialRowResultSource =
@@ -604,7 +605,7 @@ function joinRow(row: ScorecardRow, ctx: JoinContext): JoinedScorecardRow {
 }
 
 /**
- * The band, on P(yes), where a rubric-check criterion reads Uncertain. A
+ * The band, on P(yes), where a boolean rubric check reads Uncertain. A
  * classifier at 0.51 has not said yes; it has declined to decide.
  */
 export const RUBRIC_CHECK_UNCERTAIN_BAND = { from: 0.4, below: 0.6 } as const;
@@ -620,6 +621,9 @@ const RUBRIC_CHECK_LABEL_PREFIX = "rubric check: ";
  * would otherwise show a row this trial was never asked, and a deployment
  * that does not grade rubric checks would show rows that never fill in.
  * Returned in the order the backend asked them, criteria first.
+ *
+ * The stored verdict is read only to tell which rows are yes/no answers and
+ * what P(yes) each got; a question with no score row gets no row here.
  */
 export function rubricCheckTrialRows(
   iteration: EvalIteration | null,
@@ -629,6 +633,11 @@ export function rubricCheckTrialRows(
   const scores = indexScores(
     parseIterationScores(metadata),
     parseEvaluationConfig(metadata),
+  );
+  const booleanAnswers = new Map(
+    rubricCheckVerdictQuestions(metadata.rubricChecksVerdict)
+      .filter((question) => question.kind === "boolean")
+      .map((question) => [question.key, question]),
   );
   const rows: JoinedScorecardRow[] = [];
   for (const [scorerId, { score, definition }] of scores.byScorerId) {
@@ -656,22 +665,42 @@ export function rubricCheckTrialRows(
     };
     const result = resultFromScore(score, definition);
     const evidence = scoreEvidence(score, definition, row);
+    // Every criterion is a yes/no answer; an authored question is one only
+    // when the verdict says so; a choice or score value is never P(yes).
+    const answer = booleanAnswers.get(key);
     rows.push({
       ...row,
-      result: criterion ? uncertainIfUndecided(result) : result,
+      result:
+        criterion || answer
+          ? uncertainIfUndecided(result, answer?.probability)
+          : result,
       ...(evidence ? { evidence } : {}),
     });
   }
   return rows;
 }
 
-function uncertainIfUndecided(result: TrialRowResult): TrialRowResult {
+/**
+ * Uncertain when P(yes) is inside the band. The row's value is P(pass), which
+ * for a question that passes on No is 1 - P(yes), so the band reads the
+ * verdict's own P(yes) when the grader gave one. Without one the answer came
+ * from a model that gives no probability, and the value is 0 or 1.
+ */
+function uncertainIfUndecided(
+  result: TrialRowResult,
+  pYes: number | undefined,
+): TrialRowResult {
   if (
     (result.state !== "passed" && result.state !== "failed") ||
     result.source !== "scoreRow" ||
-    typeof result.value !== "number" ||
-    result.value < RUBRIC_CHECK_UNCERTAIN_BAND.from ||
-    result.value >= RUBRIC_CHECK_UNCERTAIN_BAND.below
+    typeof result.value !== "number"
+  ) {
+    return result;
+  }
+  const p = pYes ?? result.value;
+  if (
+    p < RUBRIC_CHECK_UNCERTAIN_BAND.from ||
+    p >= RUBRIC_CHECK_UNCERTAIN_BAND.below
   ) {
     return result;
   }

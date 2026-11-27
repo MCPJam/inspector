@@ -8,6 +8,7 @@ import {
   DialogTrigger,
 } from "@mcpjam/design-system/dialog";
 import type { Predicate } from "@mcpjam/sdk/predicates";
+import type { RubricCheckQuestion } from "@/components/shared/session-quality/judge-config";
 import { ArrowLeft, Library } from "lucide-react";
 import { useState } from "react";
 import { formatCriterion } from "@/shared/predicate-kinds";
@@ -18,21 +19,30 @@ import {
   isAuthorable,
   isInSuite,
   LIBRARY_EVALUATORS,
+  questionsWithAdded,
   taggedChecks,
+  taggedQuestions,
   type LibraryEvaluator,
 } from "./library-catalog";
 
 type LibraryProps = {
   predicates: readonly Predicate[];
+  /** The suite's rubric-check questions, to mark evaluators already added. */
+  questions?: readonly RubricCheckQuestion[];
   authorableKinds?: readonly Predicate["type"][];
-  onAdd: (checks: readonly Predicate[]) => void;
+  /** Whether this deployment accepts yes/no rubric-check questions. */
+  canAskYesNo?: boolean;
+  onAdd: (
+    checks: readonly Predicate[],
+    questions: readonly RubricCheckQuestion[],
+  ) => void;
 };
 
 export function EvaluatorLibraryButton(props: LibraryProps) {
   const enabled = useEvaluatorLibraryEnabled();
   if (!enabled) return null;
   const available = LIBRARY_EVALUATORS.filter((e) =>
-    isAuthorable(e, props.authorableKinds),
+    isAuthorable(e, props.authorableKinds, props.canAskYesNo),
   );
   if (available.length === 0) return null;
   return <EvaluatorLibraryDialog {...props} available={available} />;
@@ -40,14 +50,22 @@ export function EvaluatorLibraryButton(props: LibraryProps) {
 
 function EvaluatorLibraryDialog({
   predicates,
+  questions = [],
   onAdd,
   available,
-}: Omit<LibraryProps, "authorableKinds"> & { available: readonly LibraryEvaluator[] }) {
+}: Omit<LibraryProps, "authorableKinds" | "canAskYesNo"> & {
+  available: readonly LibraryEvaluator[];
+}) {
   const [open, setOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = available.find((e) => e.id === selectedId);
+  // The same check the suite edit makes, so Add is never offered for an
+  // edit that would be refused.
+  const reasonAddDisabled = (evaluator: LibraryEvaluator) =>
+    questionsWithAdded(questions, taggedQuestions(evaluator)).refused;
   const add = (evaluator: LibraryEvaluator) => {
-    onAdd(taggedChecks(evaluator));
+    if (reasonAddDisabled(evaluator)) return;
+    onAdd(taggedChecks(evaluator), taggedQuestions(evaluator));
   };
   return (
     <Dialog
@@ -77,7 +95,8 @@ function EvaluatorLibraryDialog({
         {selected ? (
           <EvaluatorDetail
             evaluator={selected}
-            inSuite={isInSuite(selected, predicates)}
+            inSuite={isInSuite(selected, predicates, questions)}
+            reasonAddDisabled={reasonAddDisabled(selected)}
             onBack={() => setSelectedId(null)}
             onAdd={() => add(selected)}
           />
@@ -91,9 +110,13 @@ function EvaluatorLibraryDialog({
                 icon={evaluator.icon}
                 tone={evaluator.tone}
                 builtFrom={builtFrom(evaluator)}
-                inSuite={isInSuite(evaluator, predicates)}
+                inSuite={isInSuite(evaluator, predicates, questions)}
                 onOpen={() => setSelectedId(evaluator.id)}
-                onAdd={() => add(evaluator)}
+                onAdd={
+                  !reasonAddDisabled(evaluator)
+                    ? () => add(evaluator)
+                    : undefined
+                }
               />
             ))}
           </div>
@@ -106,20 +129,38 @@ function EvaluatorLibraryDialog({
 function EvaluatorDetail({
   evaluator,
   inSuite,
+  reasonAddDisabled,
   onBack,
   onAdd,
 }: {
   evaluator: LibraryEvaluator;
   inSuite: boolean;
+  reasonAddDisabled: string | undefined;
   onBack: () => void;
   onAdd: () => void;
 }) {
   return (
     <div className="flex flex-col gap-4">
       <ul
-        aria-label="Assertions this evaluator adds"
+        aria-label="What this evaluator adds"
         className="divide-y divide-border rounded-lg border border-border"
       >
+        {taggedQuestions(evaluator).map((q) => (
+          <li
+            key={q.id}
+            className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm"
+          >
+            <span>
+              {q.label}
+              <span className="block text-xs text-muted-foreground">
+                Yes/no question, passes on{" "}
+                {q.pass.answer === "yes" ? "Yes" : "No"}. Asked with the
+                goal-completion judge.
+              </span>
+            </span>
+            <span className="text-xs text-muted-foreground">Advisory</span>
+          </li>
+        ))}
         {evaluator.checks.map((check) => (
           <li
             key={check.type}
@@ -132,12 +173,19 @@ function EvaluatorDetail({
           </li>
         ))}
       </ul>
+      {!inSuite && reasonAddDisabled ? (
+        <p className="text-sm text-muted-foreground">{reasonAddDisabled}</p>
+      ) : null}
       <div className="flex justify-between gap-2">
         <Button type="button" variant="ghost" onClick={onBack}>
           <ArrowLeft aria-hidden />
           All evaluators
         </Button>
-        <Button type="button" onClick={onAdd} disabled={inSuite}>
+        <Button
+          type="button"
+          onClick={onAdd}
+          disabled={inSuite || Boolean(reasonAddDisabled)}
+        >
           {inSuite ? "In this suite" : "Add to suite"}
         </Button>
       </div>

@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen } from "@/test";
+import type { RubricCheckQuestion } from "@/components/shared/session-quality/judge-config";
 import {
   EvaluatorScorecardSummary,
+  evaluatorIdForQuestionKey,
   evaluatorStatus,
   type SummaryRow,
 } from "../evaluator-scorecard-summary";
@@ -92,6 +94,66 @@ describe("EvaluatorScorecardSummary", () => {
     expect(card).toHaveTextContent("Failed");
     expect(card).toHaveTextContent("12 calls");
     expect(card).not.toHaveTextContent("No tool errors");
+  });
+
+  const reportsId = "reports-tool-errors-reports-failures";
+  const question: RubricCheckQuestion = {
+    id: reportsId,
+    kind: "yesno",
+    label: "Answer reports each tool error",
+    instructions: "Check each error.",
+    pass: { answer: "yes" },
+  };
+  const questionRow: SummaryRow = {
+    key: `judge:rubricChecks:q:${reportsId}`,
+    label: "Answer reports each tool error",
+    role: "advisory",
+    rubricCheck: { key: `q:${reportsId}` },
+    result: {
+      state: "passed",
+      source: "scoreRow",
+      reason: "Yes · P(yes) 0.97",
+    },
+  };
+
+  it("groups a yes/no question row under the evaluator its question is tagged with", () => {
+    renderWithProviders(
+      <EvaluatorScorecardSummary
+        rows={[questionRow]}
+        questions={[
+          { ...question, evaluator: { id: "reports-tool-errors", version: 1 } },
+        ]}
+      />,
+    );
+    const card = screen.getByRole("region", { name: "Reports Tool Errors" });
+    expect(card).toHaveTextContent("Passed");
+  });
+
+  it("leaves out an untagged question whose id matches a library question", () => {
+    const { container } = renderWithProviders(
+      <EvaluatorScorecardSummary rows={[questionRow]} questions={[question]} />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("maps a rubric-check key to an evaluator only through the question's tag", () => {
+    const tagged = {
+      ...question,
+      evaluator: { id: "reports-tool-errors", version: 1 },
+    };
+    expect(evaluatorIdForQuestionKey(`q:${reportsId}`, [tagged])).toBe(
+      "reports-tool-errors",
+    );
+    expect(
+      evaluatorIdForQuestionKey(`q:${reportsId}`, [question]),
+    ).toBeUndefined();
+    expect(evaluatorIdForQuestionKey(`q:${reportsId}`, [])).toBeUndefined();
+    expect(
+      evaluatorIdForQuestionKey(`q:${reportsId}`, [
+        { ...question, evaluator: { id: "not-in-library", version: 1 } },
+      ]),
+    ).toBeUndefined();
+    expect(evaluatorIdForQuestionKey("c:criterion", [tagged])).toBeUndefined();
   });
 
   it("renders nothing with the flag off or no library checks", () => {
