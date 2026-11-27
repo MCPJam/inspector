@@ -1073,6 +1073,106 @@ describe("v1 write routes", () => {
         );
         expect(prepareEvalRunMock).not.toHaveBeenCalled();
       });
+
+      // PLB-238: a launch that writes the suite is refused up front on a
+      // CI-owned suite, before any connection; a launch that only runs it is not.
+      describe("on a CI-owned suite", () => {
+        const RUNS =
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs";
+        const SUITE_ID = "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx";
+
+        function mockCiSuite(environmentIds: string[] = []): void {
+          mockConvexQueries({
+            "testSuites:getTestSuite": () => ({
+              ...SUITE_DOC,
+              declaredSuiteId: "s_from_file",
+              environmentIds,
+            }),
+            "testSuites:getSuiteRunServerSelection": () => ({
+              serverIds: ["s_alpha"],
+              serverNames: ["alpha"],
+              source: "hostconfigxxxxxxxxxxxxxxxxxxxxxx",
+            }),
+            "projectEnvironments:listEnvironments": () => PROJECT_ENVIRONMENTS,
+            "projectEnvironments:resolveEnvironmentForLaunch": () =>
+              RESOLVED_ENVIRONMENT,
+            "hosts:getHost": () => ({ config: { hostStyle: "mcpjam" } }),
+          });
+        }
+
+        it.each([
+          [
+            "inline tests",
+            { suiteId: SUITE_ID, serverIds: ["s_alpha"], tests: [inlineTest] },
+            [],
+          ],
+          [
+            // An environment launch writes no snapshot, but still upserts
+            // inline tests, so it is refused like any other.
+            "inline tests in an environment",
+            { suiteId: SUITE_ID, tests: [inlineTest] },
+            ["env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+          ],
+          [
+            "refreshSnapshot",
+            { suiteId: SUITE_ID, suiteRerun: true, refreshSnapshot: true },
+            [],
+          ],
+          [
+            // Not a regression: Convex refused this snapshot write before.
+            "refreshSnapshot on a bare rerun",
+            { suiteId: SUITE_ID, refreshSnapshot: true },
+            [],
+          ],
+        ])(
+          "refuses a launch that writes the suite (%s)",
+          async (_label, body, environmentIds) => {
+            mockHappyCreate();
+            mockCiSuite(environmentIds);
+            const res = await request(makeApp(), "POST", RUNS, body);
+            expect(res.status).toBe(409);
+            expect(
+              ((await res.json()) as { details?: { reason?: string } }).details
+                ?.reason,
+            ).toBe("CI_OWNED_SUITE_READ_ONLY");
+            expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+            expect(prepareEvalRunMock).not.toHaveBeenCalled();
+            expect(convexMutationMock).not.toHaveBeenCalled();
+          },
+        );
+
+        it.each([
+          ["a bare rerun", { suiteId: SUITE_ID }, []],
+          ["an explicit rerun", { suiteId: SUITE_ID, suiteRerun: true }, []],
+          [
+            // Inline tests on a rerun are run, not saved, so they pass.
+            "a rerun with inline tests",
+            { suiteId: SUITE_ID, suiteRerun: true, tests: [inlineTest] },
+            [],
+          ],
+          [
+            // What `eval run --file` sends after syncing the suite.
+            "the CLI's file launch",
+            {
+              suiteId: SUITE_ID,
+              caseIds: ["case1xxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+              sourceHash: "a".repeat(64),
+            },
+            [],
+          ],
+          [
+            "an environment rerun with refreshSnapshot",
+            { suiteId: SUITE_ID, suiteRerun: true, refreshSnapshot: true },
+            ["env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+          ],
+        ])("starts %s", async (_label, body, environmentIds) => {
+          mockHappyCreate();
+          mockCiSuite(environmentIds);
+          const res = await request(makeApp(), "POST", RUNS, body);
+          expect(res.status).toBe(202);
+          expect(prepareEvalRunMock).toHaveBeenCalledTimes(1);
+        });
+      });
     });
 
     describe("inline test model validation", () => {
@@ -3501,6 +3601,23 @@ describe("v1 write routes", () => {
         usage: { inputTokens: 1100, outputTokens: 242 },
         actualToolCalls: [{ toolName: "echo", arguments: { a: 1 } }],
       });
+    });
+
+    it.each([
+      [undefined, {}],
+      [{ runUnloadedToolCalls: false, engineVersion: "3.24.1", privateNote: "internal" },
+        { runUnloadedToolCalls: false, engineVersion: "3.24.1" }],
+    ])("exports only recorded discovery settings in an eval trace", async (metadata, expected) => {
+      convexQueryMock
+        .mockResolvedValueOnce(RUN_DOC)
+        .mockResolvedValueOnce({ suiteRunId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", metadata });
+      convexActionMock.mockResolvedValueOnce({ messages: [] });
+      const res = await request(
+        makeApp(), "GET",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx/iterations/iter1xxxxxxxxxxxxxxxxxxxxxxxxxxx/trace",
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ messages: [], ...expected });
     });
 
     it("returns the trace blob and 404s with TRACE_NOT_AVAILABLE when missing", async () => {

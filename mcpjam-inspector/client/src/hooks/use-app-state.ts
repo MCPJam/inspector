@@ -1,4 +1,3 @@
-import { recordDesktopActivity } from "@/lib/desktop-diagnostics";
 import {
   useCallback,
   useEffect,
@@ -223,23 +222,6 @@ export function useAppState({
     window.location.search
   }|${hasHostedOAuthCallbackParams() ? "pending" : "idle"}`;
 
-  useEffect(() => {
-    if (!window.electronAPI?.diagnostics) return;
-    const report = () =>
-      recordDesktopActivity({
-        kind: "auth",
-        phase: "state",
-        auth: isWorkOsLoading
-          ? "loading"
-          : currentUserId
-            ? "signed_in"
-            : "guest",
-        version: __APP_VERSION__,
-      });
-    report();
-    const timer = setInterval(report, 15_000);
-    return () => clearInterval(timer);
-  }, [currentUserId, isWorkOsLoading]);
   const isUserReady = useDbUserReady();
   const logger = useLogger("Connections");
   const [appState, dispatch] = useReducer(appReducer, initialAppState);

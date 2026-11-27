@@ -1,0 +1,195 @@
+---
+title: "Troubleshooting"
+description: "Causes and fixes for the errors and surprises you are most likely to hit in Evaluate."
+icon: "life-buoy"
+---
+
+Each heading is the message you see, or the symptom when there is no message.
+
+<AccordionGroup>
+  <Accordion title="Out of MCPJam credits · resets in …">
+    **Cause:** every model the run would use is billed to MCPJam credits, and your organization has none left, so **Start run** is disabled.
+
+    **Fix:** switch the run to a model on your own provider key, or wait for the reset time shown. To keep credits topped up, see [auto-reload](/hosted/overview#auto-reload). See [Run a suite](/evaluate/run-a-suite).
+  </Accordion>
+
+  <Accordion title="Managed by CI — edit the test file, or duplicate to edit here">
+    **Cause:** the suite was created from a suite file or by the MCPJam SDK. Its configuration lives in your repository, and an edit made here would be overwritten. The API refuses the same edits with `409` and `details.reason: "CI_OWNED_SUITE_READ_ONLY"`.
+
+    **Fix:** edit the test file and run it again, or click **Duplicate to edit** for an app-owned copy that CI never touches. An API call that writes as the suite file sends the suite's id as `declaredSuiteId`. See [Run evals in CI](/evaluate/run-evals-in-ci).
+  </Accordion>
+
+  <Accordion title="A run connected no servers, and cases that expect a tool call fail">
+    **Cause:** the run's client has no server group, so the run had no tools to call.
+
+    **Fix:** pick a server group for that client in **Suite settings**; the run sheet refuses to start such a run with "A selected client has no server group, so its run would connect no servers. Pick a server group in suite settings." See [What a run can access](/evaluate/what-a-run-can-access).
+  </Accordion>
+
+  <Accordion title="No rubric — the judge grades against the request itself, with its score capped at 0.85.">
+    **Cause:** the case has no **Expected outcome**, no route and no suite grading criteria, so the judge grades against the prompt alone and its score cannot exceed 0.85.
+
+    **Fix:** write an **Expected outcome** on the case saying what a good answer contains. See [Configure grading](/evaluate/configure-grading).
+  </Accordion>
+
+  <Accordion title="Cost shows a dash (—)">
+    **Cause:** no cost was observed: the model ran on your own provider key, or reported no token usage. A dash never means free.
+
+    **Fix:** nothing is wrong. See [Cost](/evaluate/reference/runs-and-results#cost).
+  </Accordion>
+
+  <Accordion title="The run is Inconclusive">
+    **Cause:** a per-case suite measured too little to decide: too few iterations finished, too many hit evaluator errors, or too few were gradeable under its evidence requirements.
+
+    **Fix:** open the iterations that did not finish or errored, fix the cause and run again, or relax the evidence requirements in **Suite settings**. See [Evidence requirements](/evaluate/reference/suite-settings#evidence-requirements).
+  </Accordion>
+
+  <Accordion title="An SDK suite appeared twice after renaming it">
+    **Cause:** the SDK reporter identifies a suite by its `suiteName`, so a renamed suite is reported as a new one and the old one stays behind.
+
+    **Fix:** delete the suite you no longer report into; its run history goes with it. See [Run evals in CI](/evaluate/run-evals-in-ci).
+  </Accordion>
+
+  <Accordion title="No tools are marked read-only on these servers. Choose Read and write or add read-only tool annotations, then try again.">
+    **Cause:** generation was scoped to read-only tools, and none of the servers' tools declares a read-only annotation. Retrying fails the same way.
+
+    **Fix:** click **Change generation settings** and choose Read and write, or add `readOnlyHint: true` to the annotations of your read-only tools. See [Generate cases](/evaluate/generate-cases).
+  </Accordion>
+
+  <Accordion title="The Run button is disabled">
+    **Cause:** something blocks the run; the button's tooltip says what.
+
+    **Fix:** act on the tooltip:
+
+    | Tooltip | What to do |
+    | --- | --- |
+    | Eval iteration limit reached. Resets … | Wait for the reset time shown. |
+    | Configure suite servers before running the full suite. | Attach a server to the suite. |
+    | Add a test case first. | Add a case. See [Write a case](/evaluate/write-a-case). |
+    | N generated drafts are waiting to be added. Use “Add all to suite” on the suite page before running. | Save or discard the generated drafts. |
+    | A suite or replay is already in progress. | Wait for it to finish, or click **Cancel run**. |
+    | Finish the in-progress test case run first. | Wait for the case run to finish. |
+
+    In the run sheet, **Start run** can also be disabled by "Out of MCPJam credits · resets in …" (above) or "Fix the setup problem above before running."; the notice above the button names the problem.
+  </Accordion>
+</AccordionGroup>
+
+## CLI errors
+
+<Tip>
+  Every `mcpjam` command takes the global `--format` flag: `json` (the default when output is piped) for machine-readable output, `human` for the readable summary. Errors go to stderr. Exit codes for every command are in the [CLI reference](/cli/reference#exit-codes).
+</Tip>
+
+<AccordionGroup>
+  <Accordion title="mcpjam cloud eval run --wait exits 2, 3, 4 or 5">
+    **Cause:** with `--wait`, only a run that completed with a failed verdict exits `1`. The other codes mean the run never produced a usable verdict.
+
+    **Fix:** act on the code:
+
+    | Code | Meaning | What to do |
+    | --- | --- | --- |
+    | `2` | Bad flags, `--reporter`/`--out` without `--wait`, or an invalid suite file | Run `mcpjam cloud eval validate --file <path>` for the findings. |
+    | `3` | No credential, or the platform rejected it, at launch or mid-wait | Run `mcpjam cloud login`, or set `MCPJAM_API_KEY` to an `sk_` key. |
+    | `4` | The launch failed before evaluation: network, timeout, rate limit or a failed fan-out | Retry. Human output names each failure as `Failed: <target> — <code>: <message>`. |
+    | `5` | No valid verdict: inconclusive, cancelled, timed out, or the wait hit its deadline | Open the run. To wait longer, raise `--wait-timeout` (default 2100000 ms). |
+
+    Without `--wait`, the command exits `0` on any launch and `1` on a partial or failed fan-out. See [`cloud eval run`](/cli/reference#cloud-eval-run).
+  </Accordion>
+
+  <Accordion title="mcpjam cloud eval gate exits 3">
+    **Cause:** the gate is incomplete, not failed: the run was cancelled, the wait timed out, the network failed, or the evidence cannot be gated. Both cost gates are non-gateable when cost is unknown or partial, for example on a model that ran on your own provider key. A `--baseline-sha` that matches no completed run in the suite is also exit `3`. A waiver never overrides it.
+
+    **Fix:** retry on `3`; treat only `1` as a real failure. For a cost gate, run on a model billed to MCPJam credits. See [`cloud eval gate`](/cli/reference#cloud-eval-gate).
+  </Accordion>
+
+  <Accordion title="TARGET_REQUIRED">
+    **Cause:** the suite has several attached environments or clients, and the CLI never picks one for you, because each target is a paid run.
+
+    **Fix:** name the targets, or run every one:
+
+    ```bash
+    mcpjam cloud eval run --suite "Notes server" --client "Claude"
+    mcpjam cloud eval run --suite "Notes server" --all-targets
+    ```
+  </Accordion>
+
+  <Accordion title="cloud eval run --host claude finds no client">
+    **Cause:** under `cloud eval`, `--host` is a deprecated alias for `--client` and names a client saved in your project, not a host-compat catalog id.
+
+    **Fix:** list your clients and pass one with `--client`:
+
+    ```bash
+    mcpjam cloud clients list
+    mcpjam cloud eval run --suite "Notes server" --client "Claude"
+    ```
+  </Accordion>
+
+  <Accordion title="SUITE_FILE_INVALID">
+    **Cause:** the suite file parsed but breaks the suite-file contract. `eval validate` exits `1`; `eval run --file` exits `2` and starts no run.
+
+    **Fix:** list every finding, each with a `pointer` such as `cases[1].id`:
+
+    ```bash
+    mcpjam cloud eval validate --file .mcpjam/evals/notes.yaml --format json
+    ```
+  </Accordion>
+
+  <Accordion title="REPETITIONS_CAP">
+    **Cause:** a count in the suite file is above 10 (`repetitions` in a `schemaVersion: "1"` file, `iterations` in `"2"`). It is refused, not clamped.
+
+    **Fix:** set the count to 10 or less.
+  </Accordion>
+
+  <Accordion title="NO_ENABLED_CASES">
+    **Cause:** every case in the suite file is `disabled: true`, so `eval run --file` refuses rather than launch the whole stored suite.
+
+    **Fix:** enable at least one case.
+  </Accordion>
+
+  <Accordion title="TOOL_REFERENCE_UNRESOLVED">
+    **Cause:** a `toolCall` step names a tool the target server does not expose. The message reads like `Server "billing" in environment prod exposes no tool named "render_gone".` For a selected case, `eval run --file` refuses before syncing the suite: nothing is written or billed.
+
+    **Fix:** correct the tool name, then check the file against your project's live servers:
+
+    ```bash
+    mcpjam cloud eval validate --file .mcpjam/evals/notes.yaml --project "My project"
+    ```
+  </Accordion>
+
+  <Accordion title="cloud eval update refuses --iterations or --min-iterations">
+    **Cause:** a suite has one iteration rule. A per-case suite takes `--iterations` and `--pass-threshold`; a suite decided by suite accuracy takes `--min-iterations` and `--min-accuracy` or `--pass-threshold`. Passing both flags of a pair is also a usage error.
+
+    **Fix:** read `settings.policy` (`v2` or `legacy`) and use that suite's flags. See [Read and change settings](/evaluate/reference/suite-settings#read-and-change-settings).
+
+    ```bash
+    mcpjam cloud eval get --suite "Notes server" --format json
+    ```
+  </Accordion>
+
+  <Accordion title="RERUN_SOURCE_NOT_TERMINAL or RERUN_NOTHING_TO_RERUN">
+    **Cause:** `cloud eval rerun --failed` was refused with `409`: the run is still executing or grading, or every case passed.
+
+    **Fix:** wait for the run to finish, and preview what would rerun first:
+
+    ```bash
+    mcpjam cloud eval rerun "$RUN_ID" --failed --dry-run --json
+    ```
+  </Accordion>
+
+  <Accordion title="UNSUPPORTED_SUITE_EXPORT">
+    **Cause:** `cloud eval export` found a setting a suite file cannot express, such as automatic LLM-as-judge grading, non-default match options or several attached environments. It exits `1` and writes no file.
+
+    **Fix:** each finding names its field. Change that setting on the suite, or keep editing the suite in the app. See [`cloud eval export`](/cli/reference#cloud-eval-export).
+  </Accordion>
+</AccordionGroup>
+
+<CardGroup cols={3}>
+  <Card title="Run a suite" icon="play" href="/evaluate/run-a-suite">
+    Start a run and pick clients and models.
+  </Card>
+  <Card title="Runs and results" icon="history" href="/evaluate/reference/runs-and-results">
+    Statuses, comparison labels and cost.
+  </Card>
+  <Card title="Suite settings" icon="settings-2" href="/evaluate/reference/suite-settings">
+    Every settings row and its default.
+  </Card>
+</CardGroup>

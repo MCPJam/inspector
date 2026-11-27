@@ -1,3 +1,4 @@
+import { isWebClientRuntimeId } from "../../../shared/web-clients.js";
 import { externalAccountCredentialFor } from "../../../shared/external-credential-selection.js";
 import { markOnboardingPhase } from "../plugin-host/onboarding-trace.js";
 import { makeFunctionReference } from "convex/server";
@@ -154,7 +155,7 @@ export async function resolveChatTurn(args: {
     const harness = raw.runtimeConfig.agentLoop ?? raw.runtimeConfig.harness;
     if (
       typeof harness !== "string" ||
-      !externalAccountCredentialFor(harness) ||
+      (!externalAccountCredentialFor(harness) && !isWebClientRuntimeId(harness)) ||
       (args.target.kind === "host" && raw.hostId !== args.target.hostId)
     ) {
       throw new WebRouteError(

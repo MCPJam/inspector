@@ -164,16 +164,26 @@ export function createInternalEventsRouter(deps: InternalEventsRouterDeps = {}):
       deliveries.forEach((delivery, index) => {
         if (quarantined.has(index) || delivery.kind !== "event") return;
         const found = resolved.get(delivery.logicalSubscriptionId);
-        const schema = found?.descriptor?.payloadSchema;
-        if (!schema || typeof schema !== "object" || Array.isArray(schema)) return;
+        const storedSchema = found?.descriptor?.payloadSchema;
+        if (storedSchema === undefined || storedSchema === null) return;
         let valid: boolean;
         try {
+          // Convex cannot store `$schema`/`$ref` keys as objects. New rows
+          // keep JSON text; existing object-valued descriptors still work.
+          const schema: unknown =
+            typeof storedSchema === "string"
+              ? JSON.parse(storedSchema)
+              : storedSchema;
           // The SDK's dialect-aware check — the same one a canned eval event
           // is held to, so an eval and production agree on "malformed".
-          valid = validateEventPayload(
-            schema as Record<string, unknown>,
-            delivery.data,
-          ).valid;
+          valid =
+            !!schema &&
+            typeof schema === "object" &&
+            !Array.isArray(schema) &&
+            validateEventPayload(
+              schema as Record<string, unknown>,
+              delivery.data,
+            ).valid;
         } catch {
           // A schema that cannot be compiled cannot vouch for any payload.
           valid = false;

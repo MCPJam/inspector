@@ -14,6 +14,7 @@ import type {
 } from "@mcpjam/sdk";
 import {
   CHECK_ERAS,
+  checkRunsOnVersion,
   MCP_APPS_CHECK_IDS,
   MCP_CHECK_IDS,
   MCP_OAUTH_READINESS_IDS,
@@ -24,6 +25,7 @@ import {
   PROTOCOL_VERSION_ERAS,
   READINESS_ERAS,
   RENAMED_MCP_TASKS_CHECK_IDS,
+  taskCheckUsesInput,
   isTasksToolCheck,
   type MCPAppsCheckId,
   type MCPCheckId,
@@ -128,9 +130,7 @@ export function runnableSelection(
   const pinnedEra =
     versionPin === "auto" ? undefined : PROTOCOL_VERSION_ERAS[versionPin];
   const protocolIds = MCP_CHECK_IDS.filter(
-    (id) =>
-      pinnedEra === undefined ||
-      (CHECK_ERAS[id] as readonly string[]).includes(pinnedEra),
+    (id) => versionPin === "auto" || checkRunsOnVersion(id, versionPin),
   );
   const adviceIds = MCP_READINESS_IDS.filter(
     (id) =>
@@ -200,7 +200,7 @@ function isProtocolProbe(key: ConformanceProbeKey): key is ProtocolProbeKey {
   return key !== "tasksProbe";
 }
 
-/** The check that sends the Tasks answers, so its row shows the answers box. */
+/** The check that grades the tasks/update acknowledgment. */
 export const TASK_ANSWERS_CHECK =
   "tasks-update-ack-shape" satisfies MCPTasksCheckId;
 
@@ -237,6 +237,22 @@ function erasOf(id: MCPCheckId | MCPReadinessId): readonly string[] {
 }
 
 /**
+ * Whether a check or advice has anything to do on a run with this pin. An
+ * unpinned run negotiates a 2025 revision, so "auto" is the legacy era. A
+ * pinned check also has to be old enough for the version: the output schema
+ * check does not run on 2025-03-26, which has no `outputSchema`.
+ */
+function runsOnPin(
+  id: MCPCheckId | MCPReadinessId,
+  pin: ProtocolVersionPin,
+): boolean {
+  if (pin === "auto") return erasOf(id).includes("legacy");
+  return isAdvice(id)
+    ? erasOf(id).includes(PROTOCOL_VERSION_ERAS[pin])
+    : checkRunsOnVersion(id, pin);
+}
+
+/**
  * Whether the advice's own log tool counts: only while the logging check is
  * picked too. Alone, the advice row sets the shared log tool itself, so that
  * is the one it calls. `protocolCheckIds` absent means every check.
@@ -269,10 +285,10 @@ export function probeKeyFor(checkId: string): ConformanceProbeKey | undefined {
 
 /**
  * Whether a protocol probe's tool is called on a run with this pin: one of
- * its checks or advice runs in the pin's era (and, with `checkIds` /
- * `readinessIds`, is picked). Never on "auto": an unpinned client does not
- * offer 2026-07-28, so the run stays in the legacy era, where these checks do
- * not apply.
+ * its checks or advice runs on the pin's version (and, with `checkIds` /
+ * `readinessIds`, is picked). On "auto" an unpinned client does not offer
+ * 2026-07-28, so the run stays in the legacy era: only a check that also runs
+ * there calls its tool, which today is the output schema check.
  */
 function probeRuns(
   key: ProtocolProbeKey,
@@ -292,11 +308,9 @@ function runsWithPin(
   checkIds?: readonly string[],
   readinessIds?: readonly string[],
 ): boolean {
-  if (pin === "auto") return false;
   const picked = isAdvice(id) ? readinessIds : checkIds;
   return (
-    erasOf(id).includes(PROTOCOL_VERSION_ERAS[pin]) &&
-    (picked === undefined || picked.includes(id))
+    runsOnPin(id, pin) && (picked === undefined || picked.includes(id))
   );
 }
 
@@ -335,6 +349,29 @@ export function probeInputStatus(
       ? (probes.logLevelOverride ?? probes.logProbe)
       : probes[key];
   return probe?.toolName ? "set" : "missing";
+}
+
+/** A first run can expose inputs that the previous revision never offered. */
+export function hasNewProtocolInputs(
+  previous: McpProtocolVersion,
+  next: McpProtocolVersion,
+  selection: ConformanceSelection,
+  probes: ConformanceProbes,
+): boolean {
+  const { protocol, protocolAdvice } = runnableSelection(selection, next) ?? {};
+  // Advice runs only when at least one Protocol check will run.
+  if (protocol?.length === 0) return false;
+  const inputs = protocolProbesFor(probes, protocol);
+  return PROBE_KEYS.some(
+    (key) =>
+      isProtocolProbe(key) &&
+      PROTOCOL_PROBE_CHECKS[key].some(
+        (id) =>
+          !runsWithPin(id, previous, protocol, protocolAdvice) &&
+          runsWithPin(id, next, protocol, protocolAdvice) &&
+          probeInputStatus(id, inputs) === "missing",
+      ),
+  );
 }
 
 /**
@@ -397,8 +434,7 @@ export function protocolRunOptions(
 /**
  * What a Tasks run sends for the picked checks and advice: those lists, the
  * tool that creates the task (and its arguments) only when a picked check
- * calls it, and the input answers only when the update acknowledgement check
- * runs: the SDK submits them through `tasks/update` for any task that asks.
+ * calls it, and the prefilled answers for each selected polling check.
  */
 export function tasksRunOptions(
   probes: ConformanceProbes,
@@ -413,12 +449,15 @@ export function tasksRunOptions(
     if (override && (!checkIds || checkIds.includes(id)))
       checkOverrides[id] = {
         toolName: override.toolName,
+        ...(taskCheckUsesInput(id) && override.inputResponses
+          ? { inputResponses: override.inputResponses }
+          : {}),
         ...(override.arguments ? { toolArguments: override.arguments } : {}),
       };
   }
-  const update = probes.tasksOverrides?.[TASK_ANSWERS_CHECK] ?? probe;
-  const sendsAnswers =
-    checkIds === undefined || checkIds.includes(TASK_ANSWERS_CHECK);
+  const sendsAnswers = MCP_TASKS_TOOL_CHECK_IDS.some(
+    (id) => taskCheckUsesInput(id) && (!checkIds || checkIds.includes(id)) && !checkOverrides[id],
+  );
   return {
     ...(checkIds ? { checkIds } : {}),
     ...(readinessIds ? { readinessIds } : {}),
@@ -429,8 +468,8 @@ export function tasksRunOptions(
         }
       : {}),
     ...(Object.keys(checkOverrides).length ? { checkOverrides } : {}),
-    ...(sendsAnswers && update?.inputResponses
-      ? { inputResponses: update.inputResponses }
+    ...(sendsAnswers && probe?.inputResponses
+      ? { inputResponses: probe.inputResponses }
       : {}),
   };
 }

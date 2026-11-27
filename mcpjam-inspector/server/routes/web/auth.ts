@@ -164,6 +164,7 @@ import {
   requireServiceCredential,
   WORKOS_API_KEY_FEATURE,
 } from "../../services/service-credential.js";
+import { bearerNow, type RunBearer } from "../../utils/run-bearer.js";
 
 // ── Zod Schemas ──────────────────────────────────────────────────────
 
@@ -1583,7 +1584,7 @@ export function callerOAuthTokenUnlessRefused(
 
 export async function createAuthorizedManager(
   caller: ManagerCallerContext,
-  bearerToken: string,
+  bearerToken: RunBearer,
   projectId: string,
   serverIds: string[],
   timeoutMs: number,
@@ -1831,7 +1832,7 @@ export async function createAuthorizedManager(
         caller.setLogContext?.(partial);
       },
     },
-    bearerToken,
+    bearerNow(bearerToken),
     projectId,
     uniqueServerIds,
     {
@@ -1849,13 +1850,13 @@ export async function createAuthorizedManager(
   const uploadedRecoveries = uploadedAccountRecoveries((id, connectionId) => {
     const connectionIds = { [id]: connectionId };
     return HOSTED_MODE
-      ? authorizeBatch(caller, bearerToken, projectId, [id], {
+      ? authorizeBatch(caller, bearerNow(bearerToken), projectId, [id], {
           connectionIds,
           accessScope: options?.accessScope,
           scenarioId: options?.scenarioId,
           accessVersion: options?.accessVersion,
         })
-      : authorizeBatchLocal(null, bearerToken, projectId, [id], undefined, {
+      : authorizeBatchLocal(null, bearerNow(bearerToken), projectId, [id], undefined, {
           connectionIds,
         });
   });
@@ -2261,7 +2262,7 @@ export async function createAuthorizedManager(
     try {
       recoveredOAuthTokens[recovery.serverId] =
         await refreshHostedOAuthAccessTokenWithLocalFallback(
-          bearerToken,
+          bearerNow(bearerToken),
           projectId,
           recovery.serverId,
           {
@@ -2396,7 +2397,7 @@ export async function createAuthorizedManager(
         // execution lands).
         if (auth.serverConfig.transportType !== "http" && !HOSTED_MODE) {
           const config = await resolveLocalStdioServerConfig(
-            bearerToken,
+            bearerNow(bearerToken),
             projectId,
             serverId,
             {
@@ -2458,7 +2459,7 @@ export async function createAuthorizedManager(
         ) {
           pluginRuntime =
             (await resolvePluginStdioHttpTarget({
-              bearerToken,
+              bearerToken: bearerNow(bearerToken),
               projectId,
               serverId,
               serverDisplayName: displayServerName,
@@ -2718,7 +2719,7 @@ export async function createAuthorizedManager(
           !hasNonEmptyStringRecord(auth.serverConfig.headers)
             ? await fetchRuntimeServerSecrets({
                 expectedTargetUrl: auth.serverConfig.url,
-                bearerToken,
+                bearerToken: bearerNow(bearerToken),
                 projectId,
                 serverId,
                 accessScope: options?.accessScope,
@@ -3000,7 +3001,7 @@ export async function createAuthorizedManager(
       ? {
           featureObserver: hostedFeatureObserver(
             projectId,
-            bearerToken,
+            bearerNow(bearerToken),
             () => manager,
             authorizedUserId,
           ),

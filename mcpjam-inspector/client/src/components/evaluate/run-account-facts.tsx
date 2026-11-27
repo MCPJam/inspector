@@ -154,7 +154,7 @@ function LoadedRunAccountFacts({ launch }: { launch: LaunchAccounts }) {
       data-testid="evaluate-run-account-facts"
     >
       {launch.ranAsName ? (
-        <Fact label="Ran as">
+        <Fact label={launch.accounts.some((account) => account.cases?.length) ? "Started by" : "Ran as"}>
           {launch.ranAsName}
           <RoleTag role={launch.role} />
         </Fact>

@@ -60,6 +60,11 @@ export type HarnessMcpPlanFacts = {
   evalIterationId?: string;
   journeyRunId?: string;
   localExecution: boolean;
+  /**
+   * The adapter declares `mcpNativeDelivery: "web-connector"`: the vendor's
+   * own app dials MCPJam's forwarding endpoint through a connector.
+   */
+  webConnector?: boolean;
   /** The capability check, run once and only for a forwarding candidate. */
   admit: () => HarnessForwardingAdmission;
 };
@@ -93,9 +98,33 @@ export function hostedForwardingSurface(facts: {
   );
 }
 
+/**
+ * A web client's own route, on every surface. The exclusion list above exists
+ * because a CLI runtime that is not forwarded still has MCPJam's proxy to fall
+ * back to; a website has no such route, so its vendor's MCP client always
+ * reaches the servers through the forwarding endpoint, which gates, records
+ * and forwards each call. Admission is not asked: there is nothing to bridge.
+ *
+ * So none of the planner's reasons applies to it, the forwarding flag,
+ * enrollment, the plane and an empty server list included: with no servers
+ * there is simply nothing to forward. Its off switch is `web-clients-enabled`,
+ * which the forwarding endpoint checks on every request to a connector, not
+ * `HARNESS_NATIVE_FORWARDING`.
+ */
+const WEB_CONNECTOR_PLAN: HarnessMcpPlan = {
+  upstream: "harness",
+  delivery: "mcp-endpoint",
+  forwardingKind: "pass-through",
+  surface: true,
+  candidate: true,
+  gaps: [],
+  reasons: [],
+};
+
 export function resolveHarnessMcpPlan(
   facts: HarnessMcpPlanFacts,
 ): HarnessMcpPlan {
+  if (facts.webConnector) return { ...WEB_CONNECTOR_PLAN, gaps: [], reasons: [] };
   const configuredHarnessClient = facts.dispatch.mcpClient === "harness";
   const reasons: HarnessMcpPlanReason[] = [];
   const refuse = (blocked: boolean, reason: HarnessMcpPlanReason) => {
