@@ -16,6 +16,7 @@ import {
   customJudgeLimits,
   judgePromptVariables,
   judgeProblem,
+  withFreeId,
   withJudges,
 } from "./custom-judges-model";
 import { useEvaluatorLibraryEnabled } from "./evaluator-library-flag";
@@ -235,7 +236,10 @@ function JudgeEditor({
   const id = useId();
   const [draft, setDraft] = useState(judge);
   const [tried, setTried] = useState(false);
-  const problem = judgeProblem(draft, others, variables, maxPromptLength);
+  // A judge added while this new one was open cannot clash with its ID.
+  const taken = others.map((o) => o.id);
+  const candidate = isNew ? withFreeId(draft, taken) : draft;
+  const problem = judgeProblem(candidate, others, variables, maxPromptLength);
   const variableMappings = judgePromptVariables(variables);
   const threshold = draft.output.kind === "score" ? draft.output.threshold : 0.7;
   return (
@@ -326,7 +330,7 @@ function JudgeEditor({
           onClick={() => {
             setTried(true);
             if (!problem && !addBlockedReason) {
-              onSave({ ...draft, label: draft.label.trim() });
+              onSave({ ...candidate, label: candidate.label.trim() });
             }
           }}
         >

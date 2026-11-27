@@ -3,7 +3,12 @@ import { fireEvent, renderWithProviders, screen } from "@/test";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import type { EvalJudgeConfig } from "../../types";
 import { CustomJudgesSection } from "../custom-judges-section";
-import { blankJudge, customizedCopy, judgeProblem } from "../custom-judges-model";
+import {
+  blankJudge,
+  customizedCopy,
+  judgeProblem,
+  withFreeId,
+} from "../custom-judges-model";
 import { libraryModelRows } from "../library-suite-edits";
 
 vi.mock("posthog-js/react", () => ({
@@ -199,6 +204,43 @@ describe("CustomJudgesSection", () => {
     expect(screen.getByLabelText("Name")).toHaveValue("Cites the order number");
   });
 
+  it("gives a new judge a free ID when one added meanwhile took it", () => {
+    const taken = {
+      id: "judge",
+      label: "Added meanwhile",
+      prompt: "Is {{final_answer}} right?",
+      output: { kind: "passfail" as const },
+    };
+    const onChange = vi.fn();
+    const { rerender } = renderWithProviders(
+      <CustomJudgesSection
+        judgeConfig={undefined}
+        onJudgeConfigChange={onChange}
+        capabilities={capabilities}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Write a judge" }));
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Cites the order number" },
+    });
+    fireEvent.change(screen.getByLabelText("Judge prompt"), {
+      target: { value: "Does {{final_answer}} cite the order?" },
+    });
+    rerender(
+      <CustomJudgesSection
+        judgeConfig={{ customJudges: { enabled: true, judges: [taken] } }}
+        onJudgeConfigChange={onChange}
+        capabilities={capabilities}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Add judge" }));
+    const next = onChange.mock.calls[0][0] as EvalJudgeConfig;
+    expect(next.customJudges?.judges?.map((j) => j.id)).toEqual([
+      "judge",
+      "judge-2",
+    ]);
+  });
+
   it("says when the suite turned judges you write off, and turns them on", () => {
     const onChange = vi.fn();
     renderWithProviders(
@@ -270,6 +312,12 @@ describe("Customize", () => {
 });
 
 describe("custom judge model", () => {
+  it("keeps a new judge's ID unless another judge took it", () => {
+    const judge = blankJudge([]);
+    expect(withFreeId(judge, ["other"])).toBe(judge);
+    expect(withFreeId(judge, [judge.id]).id).toBe(`${judge.id}-2`);
+  });
+
   it("makes unique ids the backend accepts", () => {
     expect(
       customizedCopy({ ...libraryJudge, label: "Cites the Order #" }, []).id,
