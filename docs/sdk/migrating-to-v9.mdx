@@ -18,10 +18,10 @@ node --version  # must be >= 22.0.0
 
 ### AI SDK 7 (`ai@7`)
 
-The SDK now depends on `ai@7` and the v7 line of every model provider package. If your project imports from `ai` or any `@ai-sdk/*` package directly, upgrade those to their v7 releases as well.
+The SDK now depends on `ai@7` and the provider package releases built for it: `@ai-sdk/anthropic` 4.x and `@ai-sdk/openai` 4.x, for example. If your project imports from `ai` or any `@ai-sdk/*` package directly, upgrade those to the releases that support AI SDK 7 as well.
 
 ```bash
-npm install ai@^7 @ai-sdk/anthropic@^2 @ai-sdk/openai@^2
+npm install ai@^7 @ai-sdk/anthropic@^4 @ai-sdk/openai@^4
 # (adjust for whichever providers you use)
 ```
 
@@ -84,7 +84,7 @@ npm install ai@^7 @ai-sdk/react@^4
   <Step title="Upgrade AI SDK peer dependencies">
     ```bash
     npm install ai@^7
-    # Add any @ai-sdk/* packages your project uses at their v7 releases
+    # Add any @ai-sdk/* packages your project uses at their AI SDK 7 releases
     ```
   </Step>
   <Step title="Replace image-part reads with readModelOutputImage">
