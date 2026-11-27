@@ -25,3 +25,10 @@ it("takes a success tone and a gradual pace", () => {
   expect(className).toContain("duration-700");
   expect(className).toContain("motion-reduce:transition-none");
 });
+
+it("takes a slower, softer fill pace", () => {
+  const { container } = render(<Progress value={40} pace="fill" />);
+  const className = indicator(container)?.className ?? "";
+  expect(className).toContain("duration-1000");
+  expect(className).toContain("motion-reduce:transition-none");
+});
