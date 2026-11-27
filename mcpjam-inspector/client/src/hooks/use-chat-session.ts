@@ -279,6 +279,7 @@ import {
 import { parseToolResultAuthChallenge } from "@mcpjam/sdk/browser";
 import {
   getTraceSpansDurationMs,
+  liveChatTraceTurnEvents,
   mergeLiveChatTraceUsage,
   rebaseTraceSpans,
   type LiveChatTraceEnvelope,
@@ -287,7 +288,7 @@ import {
   type LiveChatTraceToolCall,
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
-import type { EventAtTurn } from "@/shared/event-at-turn";
+import { readEventAtTurn, type EventAtTurn } from "@/shared/event-at-turn";
 import {
   applyPreviewSpansUserMessageIndices,
   buildLiveChatPreviewSpans,
@@ -1080,6 +1081,7 @@ export interface UseChatSessionReturn {
         requestPayloadsBlobUrl?: string | null;
         modelId?: string;
         pageToolsAtTurn?: MintedPageToolRecord[];
+        eventAtTurn?: EventAtTurn;
       }>;
     },
     options?: {
@@ -1213,6 +1215,8 @@ interface LiveTraceTurnState {
   finishReason?: string;
   /** Persisted model id (rehydration only). */
   modelId?: string;
+  /** The MCP event that started this turn: from `turn_start` live, or the persisted trace. */
+  event?: EventAtTurn;
 }
 
 interface LiveTraceAccumulatorState {
@@ -1288,6 +1292,8 @@ export interface HydratedTurnTrace {
    * array, which means "this turn advertised none".
    */
   pageToolsAtTurn?: MintedPageToolRecord[];
+  /** The MCP event that started this turn, as the backend reader returned it. */
+  eventAtTurn?: EventAtTurn;
 }
 
 interface PersistedWidgetSnapshot {
@@ -1318,6 +1324,7 @@ async function resolveHydratedTurnTraces(
         requestPayloadsBlobUrl?: string | null;
         modelId?: string;
         pageToolsAtTurn?: MintedPageToolRecord[];
+        eventAtTurn?: EventAtTurn;
       }>
     | undefined,
 ): Promise<HydratedTurnTrace[] | undefined> {
@@ -1376,6 +1383,7 @@ async function resolveHydratedTurnTraces(
           );
         }
       }
+      const eventAtTurn = readEventAtTurn(trace.eventAtTurn);
       return {
         turnId: trace.turnId,
         promptIndex: trace.promptIndex,
@@ -1389,6 +1397,7 @@ async function resolveHydratedTurnTraces(
         ...(trace.pageToolsAtTurn !== undefined
           ? { pageToolsAtTurn: trace.pageToolsAtTurn }
           : {}),
+        ...(eventAtTurn ? { eventAtTurn } : {}),
       };
     }),
   );
@@ -1459,6 +1468,7 @@ function buildLiveTraceStateFromTurnTraces(
       ...(trace.pageToolsAtTurn !== undefined
         ? { pageToolsAtTurn: trace.pageToolsAtTurn }
         : {}),
+      ...(trace.eventAtTurn ? { event: trace.eventAtTurn } : {}),
     };
   }
 
@@ -1787,6 +1797,7 @@ function applyLiveTraceEvent(
             actualToolCalls: prev?.actualToolCalls ?? [],
             usage: prev?.usage,
             startedAtMs: event.startedAtMs,
+            ...(event.event ? { event: event.event } : {}),
           },
         },
         activeTurnId: event.turnId,
@@ -1898,6 +1909,7 @@ function buildLiveTraceEnvelope(
   const turns: LiveChatTraceEnvelope["turns"] = [];
   let usage: LiveChatTraceUsage | undefined;
   const actualToolCalls: LiveChatTraceToolCall[] = [];
+  const turnEvents = liveChatTraceTurnEvents(state.turnOrder.map((id) => state.turns[id]));
   let nextOffsetMs = 0;
   let traceStartedAtMs: number | undefined;
 
@@ -1952,6 +1964,7 @@ function buildLiveTraceEnvelope(
     actualToolCalls: dedupeTraceToolCalls(actualToolCalls),
     events: state.events,
     turns,
+    ...(turnEvents.length > 0 ? { turnEvents } : {}),
     requestPayloads:
       state.requestPayloadHistory.length > 0
         ? state.requestPayloadHistory
@@ -4003,10 +4016,7 @@ export function useChatSession(
   >(undefined);
   // The event the last admitted send in a session started from. Unlike widget
   // context it is not drained: a continuation of that turn carries it too.
-  const turnEventAtTurnRef = useRef<{
-    chatSessionId: string;
-    event: EventAtTurn;
-  } | null>(null);
+  const turnEventAtTurnRef = useRef<{ chatSessionId: string; event: EventAtTurn } | null>(null);
   // Convex server ids resolved by the hosted preflight (`hostedEnsureServerIds`)
   // in `sendMessage`, consumed once by the (synchronous) transport body so the
   // hosted send carries real ids for ad-hoc/App servers, not display names.
