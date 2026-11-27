@@ -18,6 +18,10 @@ const COPY_BY_CODE: Readonly<Record<string, string>> = {
   spend_budget_reached: SPEND_BUDGET_REACHED_MESSAGE,
   lease_lost:
     "Grading restarted before this judge ran. It runs again when grading resumes.",
+  judge_output_invalid:
+    "The judge's answer was not in the requested format, so this iteration has no grade. Rerun the suite to grade it again.",
+  evidence_unavailable:
+    "This iteration's data could not be loaded, so the judge did not run. Rerun the suite to try again.",
   missing_api_key:
     "The suite's judge model has no provider key, so the judge did not run. Add a key for its provider, then try again.",
   no_billing_subject:

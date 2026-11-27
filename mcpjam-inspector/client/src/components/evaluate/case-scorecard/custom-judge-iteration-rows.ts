@@ -26,6 +26,8 @@ type StoredCustomJudge = {
   result: TrialRowResult;
   evaluatorId?: string;
   outputKind?: CustomJudgeOutputKind;
+  /** The judge's pass line, from its saved output format. */
+  threshold?: number;
 };
 
 const DEFINITION_LABEL_PREFIX = "custom judge: ";
@@ -105,6 +107,7 @@ function readStoredCustomJudges(verdict: unknown): StoredCustomJudge[] {
     }
     const output = record(entry.output);
     const origin = record(entry.evaluator);
+    const threshold = output?.kind === "passfail" ? 0.5 : output?.threshold;
     judges.push({
       id: entry.id,
       label: entry.label,
@@ -115,19 +118,40 @@ function readStoredCustomJudges(verdict: unknown): StoredCustomJudge[] {
       ...(output?.kind === "score" || output?.kind === "passfail"
         ? { outputKind: output.kind }
         : {}),
+      ...(isUnitValue(threshold) ? { threshold } : {}),
     });
   }
   return judges;
+}
+
+/**
+ * The scorer ids of the iteration's hosted custom judges: rows the judge
+ * pass projected, under a platform definition. An SDK judge whose author
+ * named it `judge:custom:…` has an explicit id and is not one.
+ */
+export function hostedCustomJudgeScorerIds(
+  metadata: Record<string, unknown> | undefined,
+): Set<string> {
+  const definitions = parseEvaluationConfig(metadata)?.definitions ?? [];
+  return new Set(
+    definitions
+      .filter(
+        (definition) =>
+          definition.idSource === "platform" &&
+          definition.scorerId.startsWith(HOSTED_CUSTOM_JUDGE_SCORER_PREFIX),
+      )
+      .map((definition) => definition.scorerId),
+  );
 }
 
 function customJudgeRow(
   id: string,
   label: string,
   result: TrialRowResult,
-  identity: Pick<StoredCustomJudge, "evaluatorId" | "outputKind"> = {},
+  identity: Pick<StoredCustomJudge, "evaluatorId" | "outputKind" | "threshold">,
 ): JoinedScorecardRow {
   const scorerId = `${HOSTED_CUSTOM_JUDGE_SCORER_PREFIX}${id}`;
-  const { evaluatorId, outputKind } = identity;
+  const { evaluatorId, outputKind, threshold } = identity;
   return {
     key: scorerId,
     stage: "userValue",
@@ -142,11 +166,10 @@ function customJudgeRow(
       ...(evaluatorId ? { evaluatorId } : {}),
       ...(outputKind ? { outputKind } : {}),
     },
+    // From the judge's configuration, not the result: an error has none.
     expectation:
-      outputKind !== "passfail" &&
-      "threshold" in result &&
-      result.threshold !== undefined
-        ? `Score of ${result.threshold} or higher`
+      outputKind !== "passfail" && threshold !== undefined
+        ? `Score of ${threshold} or higher`
         : "Pass",
     tooltip: "A judge prompt this suite wrote. Advisory.",
     join: { kind: "judge", slot: "customJudges", scorerId },
@@ -178,7 +201,12 @@ export function customJudgeIterationRows(
   );
   const projected = new Map<string, JoinedScorecardRow>();
   for (const [scorerId, { score, definition }] of scores.byScorerId) {
-    if (!scorerId.startsWith(HOSTED_CUSTOM_JUDGE_SCORER_PREFIX)) continue;
+    if (
+      !scorerId.startsWith(HOSTED_CUSTOM_JUDGE_SCORER_PREFIX) ||
+      definition?.idSource !== "platform"
+    ) {
+      continue;
+    }
     const id = scorerId.slice(HOSTED_CUSTOM_JUDGE_SCORER_PREFIX.length);
     const saved = stored.get(scorerId);
     const defined = definition?.label ?? "";
@@ -192,7 +220,11 @@ export function customJudgeIterationRows(
       id,
       label,
       readableError(resultFromScore(score, definition)),
-      saved,
+      {
+        evaluatorId: saved?.evaluatorId,
+        outputKind: saved?.outputKind,
+        threshold: definition.passThreshold,
+      },
     );
     const evidence = scoreEvidence(score, definition, row);
     projected.set(scorerId, { ...row, ...(evidence ? { evidence } : {}) });

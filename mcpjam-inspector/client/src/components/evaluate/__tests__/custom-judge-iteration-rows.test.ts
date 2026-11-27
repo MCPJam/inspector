@@ -7,7 +7,10 @@ import {
   type ScoreDefinition,
 } from "@mcpjam/sdk/contract";
 import type { EvalIteration } from "@/components/evals/types";
-import { customJudgeIterationRows } from "../case-scorecard/custom-judge-iteration-rows";
+import {
+  customJudgeIterationRows,
+  hostedCustomJudgeScorerIds,
+} from "../case-scorecard/custom-judge-iteration-rows";
 
 const answersId = "answers-the-question-answers";
 
@@ -165,6 +168,18 @@ describe("custom judge rows on an iteration", () => {
     expect(lost[0]?.result).toMatchObject({
       reason: expect.stringContaining("Grading restarted"),
     });
+    const stored = customJudgeIterationRows(
+      iteration({
+        customJudgesVerdict: savedVerdict({
+          status: "error",
+          error: "judge_output_invalid",
+          reason: "The score 1.4 is outside 0 to 1.",
+        }),
+      }),
+    );
+    expect(stored[0]?.result).toMatchObject({
+      reason: "The score 1.4 is outside 0 to 1.",
+    });
   });
 
   it("reads a pass-or-fail judge as Pass, not as a score line", () => {
@@ -183,5 +198,43 @@ describe("custom judge rows on an iteration", () => {
       expectation: "Pass",
       customJudge: { outputKind: "passfail" },
     });
+  });
+
+  it("keeps a score judge's pass line on an error row", () => {
+    const rows = customJudgeIterationRows(
+      iteration({
+        evaluationConfig: buildEvaluationConfigSnapshot([answersDefinition]),
+        scores: [
+          errorScoreResult(
+            resolveScoreDefinition(answersDefinition),
+            "lease_lost: Grading restarted before this judge ran.",
+          ),
+        ],
+      }),
+    );
+    expect(rows[0]?.expectation).toBe("Score of 0.7 or higher");
+  });
+
+  it("leaves out an SDK judge whose author named it judge:custom:", () => {
+    const sdkJudge: ScoreDefinition = {
+      ...answersDefinition,
+      idSource: "explicit",
+      role: "required",
+    };
+    const metadata = {
+      evaluationConfig: buildEvaluationConfigSnapshot([sdkJudge]),
+      scores: [
+        finalizeScoreResult(resolveScoreDefinition(sdkJudge), {
+          kind: "scored",
+          value: 0.2,
+          rationale: "Not grounded",
+        }),
+      ],
+    };
+    expect(customJudgeIterationRows(iteration(metadata))).toEqual([]);
+    expect(hostedCustomJudgeScorerIds(metadata).size).toBe(0);
+    expect(
+      hostedCustomJudgeScorerIds(projected(0.9, "Projected")),
+    ).toEqual(new Set([`judge:custom:${answersId}`]));
   });
 });
