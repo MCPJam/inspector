@@ -29222,6 +29222,62 @@
             "items": {
               "$ref": "#/components/schemas/BrowserScreenshot"
             }
+          },
+          "event": {
+            "$ref": "#/components/schemas/ChatSessionTraceEvent"
+          }
+        }
+      },
+      "ChatSessionTraceEvent": {
+        "type": "object",
+        "description": "The MCP event that started the turn. Present only on turns an event started: a background trigger run, or a Playground event turn.",
+        "required": [
+          "name",
+          "receivedAt",
+          "origin"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The event's name."
+          },
+          "eventId": {
+            "type": "string",
+            "description": "The server's id for the event."
+          },
+          "timestamp": {
+            "type": "string",
+            "description": "When the server says the event occurred, exactly as it sent it."
+          },
+          "receivedAt": {
+            "type": "integer",
+            "description": "When MCPJam received the event, in epoch milliseconds like the turn's `startedAt`."
+          },
+          "delivery": {
+            "type": "string",
+            "enum": [
+              "poll",
+              "push",
+              "webhook"
+            ],
+            "description": "The subscription's delivery mode. Absent when it is not known."
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "server",
+              "simulation",
+              "replay"
+            ],
+            "description": "`server` when the MCP server sent the event, `simulation` for a test event. `replay` is reserved."
+          },
+          "subscriptionId": {
+            "type": "string",
+            "description": "MCPJam's id for the event subscription."
+          },
+          "triggerId": {
+            "type": "string",
+            "description": "The background trigger that ran the turn. Present only on background trigger runs."
           }
         }
       },
