@@ -25,14 +25,18 @@ import { runTransportChecks } from "../../src/mcp-conformance/checks/transport.j
 
 const SERVER_URL = "http://127.0.0.1:9/mcp";
 
-function jsonRpcErrorResponse(): Response {
+/**
+ * `-32601` for the unknown method. 200 is what a 2025 server sends; a
+ * 2026-07-28 server MUST send it on 404.
+ */
+function jsonRpcErrorResponse(status = 200): Response {
   return new Response(
     JSON.stringify({
       jsonrpc: "2.0",
       id: 99,
       error: { code: -32601, message: "Method not found" },
     }),
-    { status: 200, headers: { "content-type": "application/json" } }
+    { status, headers: { "content-type": "application/json" } }
   );
 }
 
@@ -297,7 +301,7 @@ describe("runProtocolChecks — era-aware invalid-method probe", () => {
     const calls: Array<RequestInit | undefined> = [];
     const fetchFn = (async (_url: unknown, init?: RequestInit) => {
       calls.push(init);
-      return jsonRpcErrorResponse();
+      return jsonRpcErrorResponse(404);
     }) as unknown as typeof fetch;
 
     const config = normalize({ fetchFn, protocolVersion: "2026-07-28" });
