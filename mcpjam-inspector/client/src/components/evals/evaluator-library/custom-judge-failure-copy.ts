@@ -29,7 +29,23 @@ const COPY_BY_CODE: Readonly<Record<string, string>> = {
   sign_in_required: "Sign in to run a custom judge.",
   judge_reasoning_effort_unsupported:
     "The suite's judge reasoning effort is not supported by its model. Choose a supported effort or clear it, then try again.",
+  EVAL_CUSTOM_JUDGE_PREVIEW_COOLDOWN:
+    "You just tested this judge on this iteration. Wait a few seconds, then try again.",
 };
+
+/** The `code` a backend `ConvexError` carries, if any. */
+export function convexErrorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("data" in error)) {
+    return undefined;
+  }
+  const { data } = error;
+  return typeof data === "object" &&
+    data !== null &&
+    "code" in data &&
+    typeof data.code === "string"
+    ? data.code
+    : undefined;
+}
 
 /** Readable copy for a failure code, or undefined for one the backend never sends. */
 export function customJudgeFailureCopy(
