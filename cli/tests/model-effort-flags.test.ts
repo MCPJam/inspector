@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { Command } from "commander";
 import { registerClientsCommands } from "../src/commands/clients.js";
-import { registerEnvironmentsCommands } from "../src/commands/environments.js";
 import { registerSessionsCommands } from "../src/commands/sessions.js";
 import { addPlatformOptions } from "../src/lib/platform-command.js";
 import {
@@ -35,7 +34,6 @@ function buildProgram(): Command {
   const cloud = program.command("cloud");
   addPlatformOptions(cloud);
   registerClientsCommands(cloud);
-  registerEnvironmentsCommands(cloud);
   registerSessionsCommands(cloud);
   return program;
 }
@@ -115,170 +113,6 @@ test("clients update --set modelSelection parses JSON and --unset clears it", ()
   assert.deepEqual(plain(buildSetBlock(undefined, ["modelSelection"])), {
     modelSelection: null,
   });
-});
-
-test("environments update --effort edits the existing selection on the wire", async () => {
-  const ENV = {
-    id: "env-1",
-    projectId: "project-1",
-    name: "Staging",
-    hostId: "host-1",
-    modelId: "openai/gpt-5",
-    modelSelection: SELECTION,
-    revision: 3,
-    archived: false,
-    createdAt: 1,
-    updatedAt: 2,
-  };
-  const requests = stubApi({
-    "^GET /projects/project-1/environments$": { items: [ENV] },
-    "^GET /projects/project-1/environments/env-1$": {
-      id: "env-1",
-      projectId: "project-1",
-      name: "Staging",
-      hostId: "host-1",
-      modelId: "openai/gpt-5",
-      modelSelection: SELECTION,
-      revision: 3,
-      archived: false,
-      createdAt: 1,
-      updatedAt: 2,
-    },
-    "^GET /projects/project-1/environments/capabilities$": {
-      modelOverrides: true,
-      modelSelections: true,
-    },
-    "^PATCH /projects/project-1/environments/env-1$": {
-      id: "env-1",
-      projectId: "project-1",
-      name: "Staging",
-      hostId: "host-1",
-      revision: 4,
-      archived: false,
-      createdAt: 1,
-      updatedAt: 3,
-    },
-  });
-  await run([
-    "environments",
-    "update",
-    "--project",
-    "Acme",
-    "--environment",
-    "env-1",
-    "--expected-revision",
-    "3",
-    "--effort",
-    "high",
-  ]);
-  const patch = requests.find((request) => request.method === "PATCH");
-  assert.ok(patch, "expected a PATCH");
-  assert.deepEqual((patch.body as Record<string, unknown>).modelSelection, {
-    ...SELECTION,
-    settings: { reasoningEffort: "high" },
-  });
-});
-
-test("environments update --effort on a STORED legacy selection is refused, naming modelSelection", async () => {
-  // A legacy selection means "own key only" and carries no settings: an effort
-  // cannot be edited onto it, and inventing a source would guess who pays.
-  const LEGACY = { source: "legacy", modelId: "llama3" };
-  const ENV = {
-    id: "env-1",
-    projectId: "project-1",
-    name: "Staging",
-    hostId: "host-1",
-    modelId: "llama3",
-    modelSelection: LEGACY,
-    modelSelectionOrigin: "backfill",
-    revision: 3,
-    archived: false,
-    createdAt: 1,
-    updatedAt: 2,
-  };
-  const requests = stubApi({
-    "^GET /projects/project-1/environments$": { items: [ENV] },
-    "^GET /projects/project-1/environments/env-1$": ENV,
-    "^GET /projects/project-1/environments/capabilities$": {
-      modelOverrides: true,
-      modelSelections: true,
-    },
-  });
-  await assert.rejects(
-    run([
-      "environments",
-      "update",
-      "--project",
-      "Acme",
-      "--environment",
-      "env-1",
-      "--expected-revision",
-      "3",
-      "--effort",
-      "high",
-    ]),
-    /legacy model selection[\s\S]*modelSelection/
-  );
-  assert.equal(requests.filter((r) => r.method === "PATCH").length, 0);
-});
-
-test("environments update --model sends the bare id shorthand unchanged", async () => {
-  const ENV = {
-    id: "env-1",
-    projectId: "project-1",
-    name: "Staging",
-    hostId: "host-1",
-    revision: 3,
-    archived: false,
-    createdAt: 1,
-    updatedAt: 2,
-  };
-  const requests = stubApi({
-    "^GET /projects/project-1/environments$": { items: [ENV] },
-    "^GET /projects/project-1/environments/env-1$": ENV,
-    "^GET /projects/project-1/environments/capabilities$": {
-      modelOverrides: true,
-      modelSelections: true,
-    },
-    "^PATCH /projects/project-1/environments/env-1$": { ...ENV, revision: 4 },
-  });
-  await run([
-    "environments",
-    "update",
-    "--project",
-    "Acme",
-    "--environment",
-    "env-1",
-    "--expected-revision",
-    "3",
-    "--model",
-    "openai/gpt-5",
-  ]);
-  const patch = requests.find((request) => request.method === "PATCH");
-  assert.ok(patch, "expected a PATCH");
-  const body = patch.body as Record<string, unknown>;
-  assert.equal(body.modelId, "openai/gpt-5");
-  assert.ok(!("modelSelection" in body), "the CLI never invents a selection");
-});
-
-test("environments update --effort with a level outside the union is a local usage error", async () => {
-  const requests = stubApi({});
-  await assert.rejects(
-    run([
-      "environments",
-      "update",
-      "--project",
-      "Acme",
-      "--environment",
-      "env-1",
-      "--expected-revision",
-      "3",
-      "--effort",
-      "turbo",
-    ]),
-    /--effort expects one of/
-  );
-  assert.equal(requests.filter((r) => r.method !== "GET").length, 0);
 });
 
 test("sessions send --effort reaches the request body", async () => {

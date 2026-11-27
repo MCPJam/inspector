@@ -283,9 +283,8 @@ test("CLI test runner discovers every tests/**/*.test.ts file", () => {
  * It went in paraphrased as one slash-joined sentence — "does not support
  * environment model overrides / secret grants" — which nothing emits, so a
  * reader who pasted it into a search found nothing. There are four distinct
- * messages (two axes × the environment-write and composed-launch surfaces),
- * and only their FIRST sentence is common; the second names the flag to drop
- * and differs per surface.
+ * first sentences for deployment-skew errors surfaced by eval commands. The
+ * rest of each message names the flag or input to omit.
  *
  * So the docs quote the first sentences and say the tail varies, and this
  * pins both halves: every quoted sentence must open a message the code
@@ -295,21 +294,17 @@ test("CLI test runner discovers every tests/**/*.test.ts file", () => {
  */
 test("CLI reference quotes the deployment-skew refusals verbatim", () => {
   const REFUSAL_PREFIX = "This MCPJam deployment does not support";
-  const sources = [
-    path.join(CLI_ROOT, "src/commands/environments.ts"),
+  const source = readFileSync(
     path.join(REPO_ROOT, "sdk/src/platform/operations.ts"),
-  ];
+    "utf8"
+  );
 
   // The first sentence of every refusal the code raises, deduplicated: that is
   // the part a reader can match, and the part the docs promise.
   const emitted = new Set(
-    sources
-      .flatMap((filePath) => [
-        ...readFileSync(filePath, "utf8").matchAll(
-          new RegExp(`${REFUSAL_PREFIX}[^."]*\\.`, "g")
-        ),
-      ])
-      .map((match) => match[0])
+    [...source.matchAll(new RegExp(`${REFUSAL_PREFIX}[^."]*\\.`, "g"))].map(
+      (match) => match[0]
+    )
   );
   assert.ok(
     emitted.size > 0,

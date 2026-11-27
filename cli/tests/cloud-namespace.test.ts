@@ -19,7 +19,6 @@ const MOVED_CLOUD_GROUPS = [
   "eval",
   "sessions",
   "clients",
-  "environments",
   // `journeys` survives as an ALIAS of this row — see the note on `studies`.
   "goals",
   "personas",
@@ -47,6 +46,7 @@ test("root help names local and cloud modes", async () => {
     );
   }
   assert.ok(root.includes("cloud"), "root help must list the cloud command");
+  assert.ok(!root.includes("environments"));
   for (const name of MOVED_CLOUD_GROUPS) {
     assert.ok(
       !root.includes(name),
@@ -79,6 +79,24 @@ test("cloud --help lists the moved account-bound groups", async () => {
       `local command listed under cloud: ${name}`
     );
   }
+  assert.ok(!names.includes("environments"));
+});
+
+test("the old environments create path fails locally as an unknown command", async () => {
+  const run = await runCli([
+    "--format",
+    "json",
+    "cloud",
+    "environments",
+    "create",
+  ]);
+  assert.equal(run.exitCode, 2);
+  assert.equal(run.stdout, "");
+  const payload = JSON.parse(run.stderr) as {
+    error?: { code?: string; message?: string };
+  };
+  assert.equal(payload.error?.code, "USAGE_ERROR");
+  assert.match(payload.error?.message ?? "", /unknown command 'environments'/);
 });
 
 test("root help groups local testing, Cloud, and CLI commands", async () => {
@@ -94,7 +112,7 @@ test("cloud help groups account, workspace, eval, and swarms commands", async ()
   assert.equal(run.exitCode, 0, run.stderr);
   assert.match(run.stdout, /Account:/);
   assert.match(run.stdout, /Workspace:/);
-  assert.match(run.stdout, /Eval and environments:/);
+  assert.match(run.stdout, /Eval and setup:/);
   assert.match(run.stdout, /Swarms and user testing:/);
 });
 
@@ -154,4 +172,3 @@ test("mcpjam cloud login --help is the Cloud account login", async () => {
   assert.match(run.stdout, /Usage: mcpjam cloud login/);
   assert.match(run.stdout, /Log in to MCPJam Cloud/);
 });
-
