@@ -29,6 +29,7 @@ type MatrixCell = (props: {
 export type MatrixSummaryColumn = {
   label: string;
   render: (field: HostConfigFieldDef) => ReactNode;
+  renderSlices?: (field: HostConfigFieldDef) => ReactNode;
   renderFieldLabel?: (field: HostConfigFieldDef) => ReactNode;
 };
 
@@ -93,7 +94,10 @@ function CompactFieldRow({
           mobileOptimized && "[&_a]:scroll-ml-[var(--matrix-field-width)]",
         )}
       >
-        {summaryColumn.render(field)}
+        <div className="flex flex-col gap-1 tabular-nums">
+          {summaryColumn.render(field)}
+          {summaryColumn.renderSlices?.(field)}
+        </div>
       </td>
       {subjects.map((s) => (
         <td

@@ -845,15 +845,15 @@ if (process.env.NODE_ENV === "production") {
   // In-app browser redirect (before SPA fallback)
   app.use("/*", inAppBrowserMiddleware);
 
-  // Vanity-domain landing: caniuse.dev (the "Can I use" host-compare showcase)
-  // points at this same service, so send its root straight to the chrome-less
-  // comparison page (no sidebar/nav, NUX-bypassed). Deep links pass through
-  // untouched. Host-gated so app.mcpjam.com and every other domain keep their
-  // normal home.
+  // Keep old caniuse.dev links working on the new comparison page.
   app.use("/*", async (c, next) => {
     const host = (c.req.header("Host") ?? "").toLowerCase().split(":")[0];
-    if (CANIUSE_LANDING_HOSTS.has(host) && c.req.path === "/") {
-      return c.redirect("/embed/host-compare", 302);
+    if (
+      CANIUSE_LANDING_HOSTS.has(host) &&
+      ["/", "/embed/host-compare", "/embed/host-compare/"].includes(c.req.path)
+    ) {
+      const { search } = new URL(c.req.url);
+      return c.redirect(`/compare${search}`, 302);
     }
     // score.mcpjam.com rides the same service: its root lands on the
     // conformance-score runner. `/results/<token>` deep links fall through so
