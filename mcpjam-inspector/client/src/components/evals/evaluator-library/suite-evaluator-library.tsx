@@ -1,9 +1,6 @@
 import { useState } from "react";
 import type { Predicate } from "@mcpjam/sdk/predicates";
-import {
-  MAX_CUSTOM_JUDGES,
-  MAX_RUBRIC_CHECK_QUESTIONS,
-} from "@/components/shared/session-quality/judge-config";
+import { MAX_RUBRIC_CHECK_QUESTIONS } from "@/components/shared/session-quality/judge-config";
 import {
   hasCustomJudgesCapability,
   hasRubricChecksCapability,
@@ -11,60 +8,52 @@ import {
   type SuiteCapabilities,
 } from "@/hooks/use-suite-capabilities";
 import { areAllChecksValid, ChecksSection } from "../checks-section";
-import { RUBRIC_CHECKS_GOAL_OFF_COPY } from "../rubric-checks-judge-card";
-import { judgeMode } from "../suite-grading-model";
 import type { EvalJudgeConfig } from "../types";
-import { blankJudge } from "./custom-judges-model";
+import { blankJudge, customJudgeLimits } from "./custom-judges-model";
 import { JudgeEditor } from "./custom-judges-section";
 import { DecisionEditor } from "./decision-questions-section";
 import type { MethodAvailability } from "./evaluator-library-browse";
 import { EvaluatorLibraryButton } from "./evaluator-library-dialog";
 import { EvaluatorEditorLayout } from "./evaluator-editor-layout";
 import type { LibraryAddition, LibrarySuiteParts } from "./library-catalog";
+import { libraryPauseMessages } from "./library-pause";
 
+/** The library entry point in suite settings, with its Method cards. */
 export function SuiteEvaluatorLibrary({
   predicates,
   authorableKinds,
   judgeConfig,
-  canEditJudgeConfig,
   capabilities,
   onAdd,
 }: {
   predicates: LibrarySuiteParts["predicates"];
   authorableKinds: readonly Predicate["type"][];
   judgeConfig: EvalJudgeConfig | undefined;
-  canEditJudgeConfig: boolean;
   capabilities?: SuiteCapabilities | null;
-  onAdd: (addition: LibraryAddition) => void;
+  /** Saves the addition, or says why it could not. */
+  onAdd: (addition: LibraryAddition) => string | undefined;
 }) {
   const questions = judgeConfig?.rubricChecks?.questions ?? [];
   const judges = judgeConfig?.customJudges?.judges ?? [];
-  const canAskQuestions =
-    canEditJudgeConfig && hasRubricChecksCapability(capabilities);
+  const canAskQuestions = hasRubricChecksCapability(capabilities);
   const canAskYesNo =
     canAskQuestions && hasYesNoRubricQuestionsCapability(capabilities);
-  const canJudge =
-    canEditJudgeConfig && hasCustomJudgesCapability(capabilities);
-  const goalJudgeOff =
-    judgeMode(judgeConfig, capabilities?.judges?.goalCompletion?.policy) ===
-    "off";
-  const judgeLimit = Math.min(
-    MAX_CUSTOM_JUDGES,
-    capabilities?.judges?.custom?.maxJudges ?? MAX_CUSTOM_JUDGES,
-  );
+  const canJudge = hasCustomJudgesCapability(capabilities);
+  const { maxJudges, maxPromptLength } = customJudgeLimits(capabilities);
+  const pause = libraryPauseMessages(judgeConfig, capabilities);
   const methods: MethodAvailability = {
     assertions: authorableKinds.length
       ? null
       : "No assertion types are available on this deployment.",
     decision: !canAskQuestions
-      ? "This suite does not support decision questions."
+      ? "This deployment does not support decision questions."
       : questions.length >= MAX_RUBRIC_CHECK_QUESTIONS
         ? `Remove a question to add another. Each suite can have ${MAX_RUBRIC_CHECK_QUESTIONS} questions.`
         : null,
     judge: !canJudge
-      ? "This suite does not support custom judges."
-      : judges.length >= judgeLimit
-        ? `Remove a judge to add another. Each suite can have ${judgeLimit} judges.`
+      ? "This deployment does not support custom judges."
+      : judges.length >= maxJudges
+        ? `Remove a judge to add another. Each suite can have ${maxJudges} judges.`
         : null,
   };
 
@@ -73,52 +62,57 @@ export function SuiteEvaluatorLibrary({
       suite={{ predicates, questions, judges }}
       support={{ authorableKinds, canAskYesNo, canJudge }}
       onAdd={onAdd}
-      judgeLimit={judgeLimit}
+      judgeLimit={maxJudges}
+      pause={pause}
       authoring={{
         methods,
-        render: (method, onBack) => {
+        render: (method, { close, onDirtyChange }) => {
           const add = (addition: Partial<LibraryAddition>) => {
-            onAdd({ checks: [], questions: [], judges: [], ...addition });
-            onBack();
+            const refused = onAdd({
+              checks: [],
+              questions: [],
+              judges: [],
+              ...addition,
+            });
+            if (!refused) close(true);
           };
+          const cancel = () => close(false);
           switch (method) {
             case "assertions":
               return (
                 <AssertionsEditor
                   kinds={authorableKinds}
-                  onCancel={onBack}
+                  onCancel={cancel}
                   onSave={(checks) => add({ checks })}
+                  onDirtyChange={onDirtyChange}
                 />
               );
             case "decision":
               return (
                 <DecisionEditor
                   inDialog
-                  pauseMessage={
-                    goalJudgeOff ? RUBRIC_CHECKS_GOAL_OFF_COPY : undefined
-                  }
+                  pauseMessage={pause.questions}
                   canAskYesNo={canAskYesNo}
                   questions={questions}
-                  onCancel={onBack}
+                  onCancel={cancel}
                   onSave={(question) => add({ questions: [question] })}
+                  onDirtyChange={onDirtyChange}
                 />
               );
             case "judge":
               return (
                 <JudgeEditor
                   inDialog
-                  pauseMessage={
-                    goalJudgeOff
-                      ? "Custom judges are paused while the goal-completion judge is off."
-                      : undefined
-                  }
+                  pauseMessage={pause.judges}
                   suiteId={capabilities?.suiteId}
                   judge={blankJudge(judges.map((judge) => judge.id))}
                   variables={capabilities?.judges?.custom?.variables ?? []}
-                  variableAliases={capabilities?.judges?.custom?.variableAliases}
+                  maxPromptLength={maxPromptLength}
+                  isNew
                   others={judges}
-                  onCancel={onBack}
+                  onCancel={cancel}
                   onSave={(judge) => add({ judges: [judge] })}
+                  onDirtyChange={onDirtyChange}
                 />
               );
           }
@@ -132,12 +126,18 @@ function AssertionsEditor({
   kinds,
   onCancel,
   onSave,
+  onDirtyChange,
 }: {
   kinds: readonly Predicate["type"][];
   onCancel: () => void;
   onSave: (checks: Predicate[]) => void;
+  onDirtyChange: (dirty: boolean) => void;
 }) {
-  const [checks, setChecks] = useState<Predicate[]>([]);
+  const [checks, setChecksState] = useState<Predicate[]>([]);
+  const setChecks = (next: Predicate[]) => {
+    setChecksState(next);
+    onDirtyChange(next.length > 0);
+  };
   const [invalidDraft, setInvalidDraft] = useState(false);
   const [tried, setTried] = useState(false);
   return (

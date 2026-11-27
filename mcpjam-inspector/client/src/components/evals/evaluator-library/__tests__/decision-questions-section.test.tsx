@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, renderWithProviders, screen } from "@/test";
 import type { RubricCheckQuestion } from "@/components/shared/session-quality/judge-config";
+import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import {
   DecisionEditor,
   DecisionQuestionsSection,
@@ -19,6 +20,16 @@ const first = {
 } satisfies RubricCheckQuestion;
 const second = { ...first, id: "links", label: "Links" };
 
+const judges: SuiteCapabilities["judges"] = {
+  rubricChecks: {
+    role: "advisory",
+    template: { version: 2, hash: "rubric" },
+    questionKinds: ["yesno", "choice", "score"],
+    execution: "wired",
+    calibration: "unavailable",
+  },
+};
+
 function click(name: string) {
   fireEvent.click(screen.getByRole("button", { name }));
 }
@@ -33,7 +44,7 @@ function section(
 ) {
   return (
     <DecisionQuestionsSection
-      canAskYesNo
+      capabilities={{ judges }}
       judgeConfig={{ rubricChecks: { questions } }}
       onChange={onChange}
     />
@@ -106,14 +117,14 @@ describe("decision question drafts", () => {
     fireEvent.change(
       screen.getByRole("textbox", { name: "Question 1 label" }),
       {
-        target: { value: "Answer Grounded in Results Grounded" },
+        target: { value: "Reports Tool Errors Reports Failures" },
       },
     );
     fireEvent.change(questionText(), {
       target: { value: "Does it cite a source?" },
     });
     const id = screen.getByRole("textbox", { name: "Question 1 id" });
-    const reservedId = "answer-grounded-in-results-grounded";
+    const reservedId = "reports-tool-errors-reports-failures";
     expect(id).toHaveValue(`${reservedId}-2`);
     fireEvent.change(id, { target: { value: reservedId } });
     click("Add question");

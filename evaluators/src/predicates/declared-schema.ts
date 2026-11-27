@@ -15,90 +15,103 @@ export type DeclaredSchemaVerdict =
   | { kind: "pass"; reason: string }
   | { kind: "fail"; reason: string }
   | { kind: "error"; reason: string }
-  | { kind: "empty_scope"; reason: string }
-  | { kind: "not_applicable"; reason: string };
+  | { kind: "empty_scope"; reason: string };
 
 /**
  * Checks each result against the output schema its tool declared.
  *
- * MCP requires a tool with an `outputSchema` to return `structuredContent`
- * that conforms to it, so only `structuredContent` is read; text that happens
- * to parse as JSON is not a structured result. A result stored without its
- * raw CallToolResult is reported as unmeasured, not as a failure. Error
- * results are skipped,
- * because the spec does not hold them to the schema. Tools that declare no
- * output schema have nothing to conform to and are skipped too.
+ * Only raw structured content or a confirmed client schema rejection can
+ * prove a violation. Tool errors and tools without a schema are exempt.
  */
 export function checkDeclaredSchemas(
   results: readonly TranscriptToolResult[],
   declarations: readonly TranscriptToolDeclaration[],
 ): DeclaredSchemaVerdict {
-  // A result records the tool name, not the server that answered it. When
-  // two servers declare the same name with different output schemas, the
-  // schema the result must meet is unknown, so it is not guessed.
-  const schemaFor = new Map<string, unknown>();
-  const ambiguous = new Set<string>();
-  const seen = new Map<string, string>();
+  const byName = new Map<string, TranscriptToolDeclaration[]>();
   for (const tool of declarations) {
-    // Key order is not meaning: two servers with the same schema written
-    // in a different order are not ambiguous.
-    const shape = canonicalJson(tool.outputSchema ?? null);
-    const earlier = seen.get(tool.name);
-    if (earlier !== undefined && earlier !== shape) ambiguous.add(tool.name);
-    seen.set(tool.name, shape);
-    if (tool.outputSchema !== undefined && !schemaFor.has(tool.name)) {
-      schemaFor.set(tool.name, tool.outputSchema);
-    }
-  }
-  if (schemaFor.size === 0) {
-    return {
-      kind: "not_applicable",
-      reason: "no tool declares an output schema",
-    };
+    const sameName = byName.get(tool.name) ?? [];
+    sameName.push(tool);
+    byName.set(tool.name, sameName);
   }
   const failures: string[] = [];
-  const unresolved = new Set<string>();
-  let uncaptured = 0;
+  const unvalidated = new Set<string>();
   let checked = 0;
   for (const result of results) {
     if (result.isError === true) continue;
-    if (ambiguous.has(result.toolName)) {
-      unresolved.add(result.toolName);
+    const name = result.declaredToolName ?? result.toolName;
+    if (
+      result.callFailure === "output_schema_mismatch" ||
+      result.callFailure === "missing_structured_content"
+    ) {
+      checked += 1;
+      failures.push(
+        result.callFailure === "missing_structured_content"
+          ? `"${name}" declares an output schema but returned no structuredContent`
+          : `"${name}" returned structuredContent that the client rejected against its declared output schema`,
+      );
       continue;
     }
-    const schema = schemaFor.get(result.toolName);
+    const candidates = (byName.get(name) ?? []).filter(
+      (tool) => !result.declaredServerKey || result.declaredServerKey === tool.serverKey,
+    );
+    if (candidates.length === 0) {
+      unvalidated.add(`"${name}" could not be matched to a captured tool declaration`);
+      continue;
+    }
+    const schema = candidates[0]?.outputSchema;
+    try {
+      if (candidates.some(({ outputSchema }) =>
+        outputSchema !== schema &&
+        (outputSchema === undefined || schema === undefined ||
+          canonicalJson(outputSchema) !== canonicalJson(schema)),
+      )) {
+        unvalidated.add(
+          `"${name}" is declared by more than one server with different output schemas, and the result does not record which server answered`,
+        );
+        continue;
+      }
+    } catch {
+      unvalidated.add(`"${name}" has an unreadable output schema declaration`);
+      continue;
+    }
     if (schema === undefined) continue;
+    if (result.callFailure === "protocol") {
+      unvalidated.add(
+        `"${name}" did not return a result the client could validate`,
+      );
+      continue;
+    }
     if (result.structuredContent === undefined) {
       // Only a stored raw CallToolResult can show the field was absent. A
       // result kept as model-visible output alone was not measured.
       if (result.rawBytes === undefined) {
-        uncaptured += 1;
+        unvalidated.add(`"${name}" was stored without the raw CallToolResult`);
         continue;
       }
       checked += 1;
       failures.push(
-        `"${result.toolName}" declares an output schema but returned no structuredContent`,
+        `"${name}" declares an output schema but returned no structuredContent`,
+      );
+      continue;
+    }
+    const validation = validateAgainstSchema(schema, result.structuredContent);
+    if (validation.outcome === "unsupported-dialect") {
+      unvalidated.add(
+        `"${name}" declares an unsupported output schema dialect "${validation.dialect}"`,
+      );
+      continue;
+    }
+    if (validation.outcome === "unusable-schema") {
+      unvalidated.add(
+        `"${name}" declares an unusable output schema: ${validation.message}`,
       );
       continue;
     }
     checked += 1;
-    const validation = validateAgainstSchema(schema, result.structuredContent);
     if (validation.outcome === "valid") continue;
-    if (validation.outcome === "unsupported-dialect") {
-      return {
-        kind: "error",
-        reason: `"${result.toolName}" declares dialect "${validation.dialect}", which this validator does not carry; nothing was validated`,
-      };
-    }
-    if (validation.outcome === "unusable-schema") {
-      return {
-        kind: "error",
-        reason: `"${result.toolName}" declares an unusable output schema: ${validation.message}`,
-      };
-    }
     const first = validation.violations[0];
     failures.push(
-      `"${result.toolName}"${first?.at ? ` at ${first.at}` : ""}: ${
+      `"${name}"${first?.at ? ` at ${first.at}` : ""}: ${
         first?.message ?? "did not match its declared schema"
       }`,
     );
@@ -113,16 +126,13 @@ export function checkDeclaredSchemas(
         )}${failures.length > 3 ? ` (+${failures.length - 3} more)` : ""}`,
     };
   }
-  if (unresolved.size > 0) {
-    return {
-      kind: "error",
-      reason: `${[...unresolved].map((n) => `"${n}"`).join(", ")} is declared by more than one server with different output schemas, and the result does not record which server answered`,
-    };
+  if (unvalidated.size > 0) {
+    return { kind: "error", reason: [...unvalidated].slice(0, 3).join("; ") };
   }
-  if (uncaptured > 0) {
+  if (!declarations.some((tool) => tool.outputSchema !== undefined)) {
     return {
-      kind: "error",
-      reason: `${uncaptured} result(s) were stored without the raw CallToolResult, so their structuredContent could not be checked`,
+      kind: "empty_scope",
+      reason: "no tool declares an output schema",
     };
   }
   return checked === 0

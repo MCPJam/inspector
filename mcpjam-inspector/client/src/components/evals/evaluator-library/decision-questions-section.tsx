@@ -12,18 +12,24 @@ import {
 } from "../rubric-checks-model";
 import { QuestionEditor } from "../rubric-checks-judge-card";
 import type { EvalJudgeConfig } from "../types";
+import {
+  hasYesNoRubricQuestionsCapability,
+  type SuiteCapabilities,
+} from "@/hooks/use-suite-capabilities";
 import { useEvaluatorLibraryEnabled } from "./evaluator-library-flag";
-import { LIBRARY_QUESTION_IDS } from "./library-catalog";
+import { libraryPauseMessages } from "./library-pause";
 
 export function DecisionQuestionsSection({
-  canAskYesNo,
+  capabilities,
   judgeConfig,
   onChange,
 }: {
-  canAskYesNo: boolean;
+  capabilities: Pick<SuiteCapabilities, "judges"> | null | undefined;
   judgeConfig: EvalJudgeConfig | undefined;
   onChange: (next: EvalJudgeConfig) => void;
 }) {
+  const canAskYesNo = hasYesNoRubricQuestionsCapability(capabilities);
+  const pauseMessage = libraryPauseMessages(judgeConfig, capabilities).questions;
   const libraryEnabled = useEvaluatorLibraryEnabled();
   const [editingId, setEditingId] = useState<string | null>(null);
   const questions = judgeConfig?.rubricChecks?.questions ?? [];
@@ -42,6 +48,11 @@ export function DecisionQuestionsSection({
       className="rounded-lg border border-border p-3"
     >
       <h4 className="text-sm font-medium">Decision questions</h4>
+      {pauseMessage ? (
+        <p role="status" className="text-xs text-muted-foreground">
+          {pauseMessage}
+        </p>
+      ) : null}
       <ul className="divide-y divide-border">
         {authored.map((question) => (
           <li key={question.id} className="py-2">
@@ -109,6 +120,7 @@ export function DecisionEditor({
   questions,
   onCancel,
   onSave,
+  onDirtyChange,
 }: {
   inDialog?: boolean;
   pauseMessage?: string;
@@ -117,12 +129,19 @@ export function DecisionEditor({
   questions: RubricCheckQuestion[];
   onCancel: () => void;
   onSave: (question: RubricCheckQuestion) => void;
+  /** The dialog asks before closing over a changed draft. */
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
-  const [question, setQuestion] = useState(
+  const [start] = useState(
     () =>
       initialQuestion ??
       blankRubricCheckQuestion(canAskYesNo ? "yesno" : "choice", questions),
   );
+  const [question, setQuestionState] = useState(start);
+  const setQuestion = (next: RubricCheckQuestion) => {
+    setQuestionState(next);
+    onDirtyChange?.(stableStringifyJson(next) !== stableStringifyJson(start));
+  };
   const [original] = useState(() =>
     stableStringifyJson(initialQuestion ?? null),
   );
@@ -131,12 +150,10 @@ export function DecisionEditor({
   const error =
     !canAskYesNo && question.kind === "yesno"
       ? "Choose Choice or Score on this deployment."
-      : LIBRARY_QUESTION_IDS.has(question.id)
-        ? "This ID belongs to a library preset. Enter a different ID."
-        : rubricCheckQuestionError(question, questions.length, [
-            ...questions,
-            question,
-          ]);
+      : rubricCheckQuestionError(question, questions.length, [
+          ...questions,
+          question,
+        ]);
 
   return (
     <EvaluatorEditorLayout
@@ -152,7 +169,9 @@ export function DecisionEditor({
       }}
     >
       {pauseMessage ? (
-        <p className="text-sm text-muted-foreground">{pauseMessage}</p>
+        <p role="status" className="text-sm text-muted-foreground">
+          {pauseMessage}
+        </p>
       ) : null}
       <div role="group" aria-label="Question type" className="flex flex-wrap gap-2">
         {QUESTION_TYPES.filter(
@@ -189,12 +208,7 @@ export function DecisionEditor({
         onChange={setQuestion}
         onLabelChange={(label) =>
           setQuestion(
-            withQuestionLabel(
-              question,
-              label,
-              questions,
-              LIBRARY_QUESTION_IDS.keys(),
-            ),
+            withQuestionLabel(question, label, questions),
           )
         }
       />

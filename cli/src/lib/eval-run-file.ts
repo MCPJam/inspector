@@ -890,6 +890,7 @@ export function mapApprovalsToHostedCases(params: {
 }
 
 export type EvalRunFileKnobs = {
+  accounts?: RunEvalSuiteInput["accounts"];
   server?: string[];
   environment?: string[];
   host?: string[];
@@ -1222,6 +1223,7 @@ export async function executeEvalRunFromFile(
         sourceHash,
         idempotencyKey,
         ...(knobs.server ? { servers: knobs.server } : {}),
+        ...(knobs.accounts ? { accounts: knobs.accounts } : {}),
         ...(knobs.environment?.length === 1
           ? { environment: knobs.environment[0] }
           : knobs.environment?.length

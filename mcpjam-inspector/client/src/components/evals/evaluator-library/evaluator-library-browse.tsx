@@ -9,6 +9,7 @@ import {
   Server,
   Shield,
   Wrench,
+  type LucideIcon,
 } from "lucide-react";
 import { useId } from "react";
 import { cn } from "@/lib/utils";
@@ -28,7 +29,11 @@ const CATEGORIES = [
   { id: "tool-errors", label: "Tool errors", icon: CircleAlert },
   { id: "server-output", label: "Server output", icon: Server },
   { id: "security", label: "Security", icon: Shield },
-] as const;
+] as const satisfies readonly {
+  id: LibraryEvaluator["category"];
+  label: string;
+  icon: LucideIcon;
+}[];
 
 type Category = LibraryEvaluator["category"] | "all";
 export type LibraryFilters = { category: Category; search: string };
@@ -40,6 +45,7 @@ export function EvaluatorLibraryBrowse({
   filters,
   onFiltersChange,
   methods,
+  status,
   onMethod,
   onOpen,
   onAdd,
@@ -49,7 +55,9 @@ export function EvaluatorLibraryBrowse({
   suite: LibrarySuiteParts;
   filters: LibraryFilters;
   onFiltersChange: (filters: LibraryFilters) => void;
-  methods?: MethodAvailability;
+  methods: MethodAvailability;
+  /** A confirmation after a Method card saved into the suite draft. */
+  status: string | null;
   onMethod: (method: EvaluatorMethod) => void;
   onOpen: (id: string) => void;
   onAdd: (evaluator: LibraryEvaluator) => void;
@@ -90,7 +98,8 @@ export function EvaluatorLibraryBrowse({
   ];
   return (
     <div className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] sm:grid-cols-[10.5rem_minmax(0,1fr)] sm:grid-rows-1">
-      <nav
+      <div
+        role="group"
         aria-label="Evaluator categories"
         className="flex gap-1 overflow-x-auto border-b border-border bg-muted/30 p-2 sm:flex-col sm:overflow-y-auto sm:border-r sm:border-b-0 sm:p-3"
       >
@@ -99,7 +108,7 @@ export function EvaluatorLibraryBrowse({
             key={id}
             type="button"
             variant={category === id ? "secondary" : "ghost"}
-            aria-current={category === id ? "true" : undefined}
+            aria-pressed={category === id}
             size="sm"
             className="shrink-0 justify-start gap-2 px-2 sm:w-full"
             onClick={() => onFiltersChange({ category: id, search })}
@@ -114,12 +123,12 @@ export function EvaluatorLibraryBrowse({
             </span>
           </Button>
         ))}
-      </nav>
+      </div>
       <div className="flex min-h-0 min-w-0 flex-col">
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3 sm:px-5">
-          <h2 className="text-sm font-semibold">
+          <h3 className="text-sm font-semibold">
             {activeGroup?.label ?? "All evaluators"}
-          </h2>
+          </h3>
           <div className="relative w-full sm:w-56">
             <Search
               aria-hidden
@@ -144,7 +153,10 @@ export function EvaluatorLibraryBrowse({
           key={category}
           className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5"
         >
-          {all && !query && methods ? (
+          <p aria-live="polite" className="text-sm text-muted-foreground empty:hidden">
+            {status}
+          </p>
+          {all && !query ? (
             <MethodCards methods={methods} onMethod={onMethod} />
           ) : null}
           {visible.every((group) => !group.matches.length) ? (
@@ -176,9 +188,9 @@ export function EvaluatorLibraryBrowse({
                 className="space-y-2"
               >
                 {all ? (
-                  <h3 className="text-sm font-medium text-muted-foreground">
+                  <h4 className="text-sm font-medium text-muted-foreground">
                     {group.label}
-                  </h3>
+                  </h4>
                 ) : null}
                 <div className="grid gap-2.5 md:grid-cols-2">
                   {group.matches.map((evaluator) => (
@@ -193,7 +205,6 @@ export function EvaluatorLibraryBrowse({
                       onOpen={() => onOpen(evaluator.id)}
                       onAdd={() => onAdd(evaluator)}
                       addDisabledReason={getAddDisabledReason(evaluator)}
-                      compact
                     />
                   ))}
                 </div>
@@ -218,9 +229,9 @@ function MethodCards({
       aria-labelledby={id}
       className="space-y-2.5 border-b border-border pb-5"
     >
-      <h3 id={id} className="text-sm font-semibold">
+      <h4 id={id} className="text-sm font-semibold">
         Start from scratch
-      </h3>
+      </h4>
       <div className="grid gap-2.5 md:grid-cols-2">
         {EVALUATOR_METHODS.map(
           ({ value, title, icon: Icon, description, tone }) => {

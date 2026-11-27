@@ -1,9 +1,24 @@
 /**
- * Suite evaluator settings follow the stages a trial goes through, from
- * connection to user value. Each row shows a check and its role. The
- * scorecard shows the results after a run.
+ * "Evaluators", organized by the stage each one measures.
  *
- * CaseChecksPage uses the same SuiteScorerTable in case scope.
+ * THE PROBLEM THIS SOLVES. The settings sheet used to list Tool calls, Default
+ * checks and LLM as Judge as three unrelated rows, in the order the fields
+ * happen to be stored. A person could read the whole page and still not know
+ * which parts of their server the suite actually checks — the page described
+ * the storage, not the measurement.
+ *
+ * This section describes the measurement. The same fields, the same controls,
+ * now one table in user-value-chain order: connection, discovery, selection,
+ * tool call, response, user value. Each group names the question it answers
+ * and lists what will grade it.
+ *
+ * WHAT IT IS NOT. It shows no results. A chain is one trial's journey and a
+ * funnel is a population statistic; this is neither. Every chip here says what
+ * a grader IS (a gate, a warn, or a report), never what a run DID.
+ *
+ * The table is shared with a case's checks page (`CaseChecksPage`), which
+ * mounts the same `SuiteScorerTable` in case scope. Do not add a second list
+ * of the stages above it: one numbered 01–06 layout is the point.
  */
 
 import type { UserValueStage } from "@mcpjam/sdk/contract";

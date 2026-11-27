@@ -26,6 +26,7 @@ import {
   slugifyCriterionId,
   uniqueCriterionId,
 } from "./judge-rubric-editor";
+import { LIBRARY_QUESTION_IDS } from "./evaluator-library/library-catalog";
 import type { EvalJudgeConfig } from "./types";
 
 /**
@@ -55,6 +56,12 @@ export function rubricCheckQuestionError(
 ): string | undefined {
   if (!JUDGE_CRITERION_ID_PATTERN.test(question.id)) {
     return "Id must be 1 to 64 letters, digits, hyphens or underscores.";
+  }
+  // A score row keeps only the question's id, so a question written here
+  // must not take a library preset's id and read as that preset's.
+  const presetId = LIBRARY_QUESTION_IDS.get(question.id);
+  if (presetId && question.evaluator?.id !== presetId) {
+    return "This ID belongs to a library preset. Enter a different ID.";
   }
   if (all.some((other, at) => at !== index && other.id === question.id)) {
     return "Ids must be unique: each one names a score row.";
@@ -115,30 +122,37 @@ export function rubricCheckQuestionError(
     return undefined;
   }
 
-  const levels = question.levels ?? [];
-  if (
-    levels.length < MIN_RUBRIC_CHECK_LEVELS ||
-    levels.length > MAX_RUBRIC_CHECK_LEVELS
-  ) {
-    return `A score needs ${MIN_RUBRIC_CHECK_LEVELS} to ${MAX_RUBRIC_CHECK_LEVELS} levels.`;
+  if (question.kind === "score") {
+    const levels = question.levels ?? [];
+    if (
+      levels.length < MIN_RUBRIC_CHECK_LEVELS ||
+      levels.length > MAX_RUBRIC_CHECK_LEVELS
+    ) {
+      return `A score needs ${MIN_RUBRIC_CHECK_LEVELS} to ${MAX_RUBRIC_CHECK_LEVELS} levels.`;
+    }
+    for (const level of levels) {
+      const error = boundedTextError(
+        level,
+        MAX_RUBRIC_CHECK_LABEL_LENGTH,
+        "Each level",
+      );
+      if (error) return error;
+    }
+    const minLevel = question.pass.minLevel;
+    if (
+      minLevel === undefined ||
+      !Number.isInteger(minLevel) ||
+      minLevel < 1 ||
+      minLevel > levels.length - 1
+    ) {
+      return "Pick the lowest passing level; the lowest level itself cannot pass.";
+    }
+    return undefined;
   }
-  for (const level of levels) {
-    const error = boundedTextError(
-      level,
-      MAX_RUBRIC_CHECK_LABEL_LENGTH,
-      "Each level",
-    );
-    if (error) return error;
-  }
-  const minLevel = question.pass.minLevel;
-  if (
-    minLevel === undefined ||
-    !Number.isInteger(minLevel) ||
-    minLevel < 1 ||
-    minLevel > levels.length - 1
-  ) {
-    return "Pick the lowest passing level; the lowest level itself cannot pass.";
-  }
+
+  // A kind this build does not know came from a newer backend, which
+  // validates it on save. Refusing it here would block every other setting
+  // in the same save, with no way to fix the question from this build.
   return undefined;
 }
 
@@ -224,7 +238,6 @@ export function withQuestionLabel(
   question: RubricCheckQuestion,
   label: string,
   others: readonly RubricCheckQuestion[],
-  reservedIds: Iterable<string> = [],
 ): RubricCheckQuestion {
   const shouldMint =
     question.label.trim().length === 0 && label.trim().length > 0;
@@ -234,7 +247,10 @@ export function withQuestionLabel(
     label,
     id: uniqueCriterionId(
       slugifyCriterionId(label),
-      new Set([...reservedIds, ...others.map((other) => other.id)]),
+      new Set([
+        ...LIBRARY_QUESTION_IDS.keys(),
+        ...others.map((other) => other.id),
+      ]),
     ),
   };
 }

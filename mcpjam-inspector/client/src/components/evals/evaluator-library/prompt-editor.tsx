@@ -15,7 +15,7 @@ export function usedVariables(value: string): string[] {
 }
 
 /** A variable as it appears in the prompt. Unknown ones are flagged. */
-export function VariableChip({
+function VariableChip({
   name,
   known,
 }: {
@@ -80,7 +80,7 @@ export function PromptEditor({
     ref.current?.focus();
     // The picker bypasses maxLength, so check the limit here and leave the
     // prompt as it was when the token does not fit.
-    if (next.length > MAX_JUDGE_INSTRUCTIONS_LENGTH) {
+    if (next.length > maxLength) {
       setNoRoom(name);
       return;
     }

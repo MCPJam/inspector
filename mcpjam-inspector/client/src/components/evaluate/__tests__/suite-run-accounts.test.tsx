@@ -172,13 +172,17 @@ describe("the Runs as you line", () => {
     );
   });
 
-  it("asks for nothing while the rollout flag is off", () => {
+  it("shows a saved shared choice while account editing is off", () => {
     state.flag = false;
-    const { container } = render(
-      <SuiteRunsAsLine suite={suite} projectId="project" />,
-    );
-    expect(container).toBeEmptyDOMElement();
-    expect(state.queried).toEqual([]);
+    state.view = {
+      servers: [{
+        serverId: "srv-asana", mode: "shared", managed: true,
+        accounts: [live, dummy], chosen: null, suiteConnectionId: "conn-dummy",
+      }],
+      scheduleOwners: [],
+    } satisfies SuiteAccountsView;
+    render(<SuiteRunsAsLine suite={suite} projectId="project" />);
+    expect(screen.getByTestId("suite-runs-as")).toHaveTextContent("Asana Dummy");
   });
 });
 

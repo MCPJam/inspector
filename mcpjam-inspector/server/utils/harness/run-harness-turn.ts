@@ -3729,6 +3729,7 @@ export async function runHarnessTurn(
           traceBaseMs,
           spans: capturedSpans,
           onStepFinish,
+          ...(options.eventAtTurn ? { event: options.eventAtTurn } : {}),
           harnessMcpAtTurn: turnMcpPlan && buildHarnessMcpAtTurn({
             plan: turnMcpPlan,
             // The plane the proxy config was built on, read after the local plane bound.

@@ -77,7 +77,10 @@ function renderTable(
 
 describe("SuiteScorerTable rubric checks", () => {
   /** A deployment that grades rubric checks, with this goal-judge policy. */
-  function withRubricChecks(goalEnabled: boolean, version = 1): SuiteCapabilities {
+  function withRubricChecks(
+    goalEnabled: boolean,
+    yesNo = false,
+  ): SuiteCapabilities {
     return {
       judge: judgeCapabilities(),
       judges: {
@@ -100,7 +103,8 @@ describe("SuiteScorerTable rubric checks", () => {
         },
         rubricChecks: {
           role: "advisory",
-          template: { version, hash: "r" },
+          template: { version: 1, hash: "r" },
+          ...(yesNo ? { questionKinds: ["choice", "score", "yesno"] } : {}),
           execution: "wired",
           calibration: "unavailable",
         },
@@ -143,28 +147,26 @@ describe("SuiteScorerTable rubric checks", () => {
     );
   });
 
-  it("offers yes/no authoring under User value on template v2", async () => {
+  it("authors questions in one place: the library, not the card", async () => {
     const user = userEvent.setup();
-    const { onJudgeConfigChange } = renderTable({
-      capabilities: withRubricChecks(true, 2),
-    });
-    const card = screen.getByTestId("suite-judge-card-rubricChecks");
-    await user.click(within(card).getByRole("button", { name: "Yes/no" }));
-    expect(onJudgeConfigChange).toHaveBeenCalledWith({
-      rubricChecks: {
-        questions: [
-          expect.objectContaining({ kind: "yesno", pass: { answer: "yes" } }),
-        ],
-      },
-    });
-  });
-
-  it("offers choice and score authoring on template v1", () => {
-    renderTable({ capabilities: withRubricChecks(true) });
+    renderTable({ capabilities: withRubricChecks(true, true) });
     const card = within(screen.getByTestId("suite-judge-card-rubricChecks"));
     expect(card.queryByRole("button", { name: "Yes/no" })).toBeNull();
-    expect(card.getByRole("button", { name: "Choice" })).toBeEnabled();
-    expect(card.getByRole("button", { name: "Score" })).toBeEnabled();
+    expect(card.queryByRole("button", { name: "Choice" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "From library" }));
+    await user.click(screen.getByRole("button", { name: "Decision questions" }));
+    const types = within(screen.getByRole("group", { name: "Question type" }));
+    expect(types.getByRole("button", { name: "Yes/no" })).toBeInTheDocument();
+  });
+
+  it("offers only choice and score where yes/no is not listed", async () => {
+    const user = userEvent.setup();
+    renderTable({ capabilities: withRubricChecks(true) });
+    await user.click(screen.getByRole("button", { name: "From library" }));
+    await user.click(screen.getByRole("button", { name: "Decision questions" }));
+    const types = within(screen.getByRole("group", { name: "Question type" }));
+    expect(types.queryByRole("button", { name: "Yes/no" })).toBeNull();
+    expect(types.getByRole("button", { name: "Choice" })).toBeEnabled();
   });
 });
 

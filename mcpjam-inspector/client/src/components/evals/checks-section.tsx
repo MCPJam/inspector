@@ -59,6 +59,7 @@ import type {
   CasePredicates,
 } from "@/shared/eval-matching";
 import {
+  DECLARED_OUTPUT_SCHEMA,
   MATCH_PATTERN_FLAGS,
   matchBoundsError,
   matchPathError,
@@ -1125,7 +1126,7 @@ function CheckFields({
         />
       );
     case "toolResultMatchesSchema":
-      return predicate.schema === "declared" ? (
+      return predicate.schema === DECLARED_OUTPUT_SCHEMA ? (
         <DeclaredSchemaFields
           onChange={onChange}
           predicate={predicate}
@@ -3574,9 +3575,11 @@ function schemaKeyOf(schema: unknown): string {
   return schema === undefined ? "\u0000undefined" : JSON.stringify(schema);
 }
 
-/** Any value `JSON.parse` returns, except a string. */
 function isAuthoredResultSchema(value: unknown): value is AuthoredResultSchema {
-  return typeof value !== "string" && value !== undefined;
+  return (
+    typeof value === "boolean" ||
+    (typeof value === "object" && value !== null && !Array.isArray(value))
+  );
 }
 
 function parseSchemaDraft(
@@ -3589,19 +3592,18 @@ function parseSchemaDraft(
     if (isAuthoredResultSchema(parsed)) {
       return { ok: true, parsed, error: null };
     }
-    // A bare string is not a schema document; "declared" is chosen with the
-    // library's own control, not typed here.
     return {
       ok: false,
       parsed: null,
-      error: "remove the quotes and write the schema as JSON",
+      error: "Use a JSON object, true, or false.",
     };
   } catch (parseError) {
     return {
       ok: false,
       parsed: null,
-      error:
-        parseError instanceof Error ? parseError.message : String(parseError),
+      error: parseError instanceof SyntaxError
+        ? "Not valid JSON. Check the syntax."
+        : "Couldn't read the schema. Enter a JSON object, true, or false.",
     };
   }
 }
@@ -3621,10 +3623,7 @@ function ToolResultSchemaFields({
   const paper = useContext(PaperFieldsContext);
   // Same draft model as `RawArgsJsonEditor`: the text knows which schema it is
   // for, and is re-derived in render when the schema arrives from outside.
-  // The identity comes from ONE function in all three places (initial state,
-  // the render-phase check, the write-through). Any JSON root is legal here,
-  // null included, so the key must not fold null into {} while the value
-  // written is null — that made the box snap back to {} over a stored null.
+  // Keep older stored schemas visible so authors can correct them in place.
   const schemaKey = schemaKeyOf(predicate.schema);
   // The undefined branch is required, not defensive: JSON.stringify(undefined)
   // is not a string. Everything else, null included, renders as itself.
@@ -3688,14 +3687,11 @@ function ToolResultSchemaFields({
         />
         {error ? (
           <p className="text-[11px] text-destructive">
-            Not valid JSON: {error}. Saving now keeps the last schema that
-            parsed, not what is in the box.
+            {error}
           </p>
         ) : !paper ? (
           <p className="text-[11px] text-muted-foreground">
-            Validated against the tool's structured content, then its JSON
-            output, then text that parses as JSON. Any JSON root — an array is
-            legal under protocol 2026-07-28.
+            Write the schema as a JSON object or boolean.
           </p>
         ) : null}
       </div>

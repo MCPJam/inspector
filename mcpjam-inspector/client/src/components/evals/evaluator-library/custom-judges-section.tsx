@@ -2,29 +2,27 @@ import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { RadioGroup, RadioGroupItem } from "@mcpjam/design-system/radio-group";
-import {
-  MAX_CUSTOM_JUDGE_PROMPT_LENGTH,
-  MAX_CUSTOM_JUDGES,
-  type CustomJudge,
-} from "@/components/shared/session-quality/judge-config";
+import type { CustomJudge } from "@/components/shared/session-quality/judge-config";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useId, useState } from "react";
 import {
   hasCustomJudgesCapability,
   type SuiteCapabilities,
 } from "@/hooks/use-suite-capabilities";
-import { judgeMode } from "../suite-grading-model";
 import type { EvalJudgeConfig } from "../types";
 import {
   blankJudge,
+  CUSTOM_JUDGE_COST_COPY,
+  customJudgeLimits,
   judgePromptVariables,
   judgeProblem,
   withJudges,
 } from "./custom-judges-model";
 import { useEvaluatorLibraryEnabled } from "./evaluator-library-flag";
-import { EvaluatorEditorLayout } from "./evaluator-editor-layout";
 import { findLibraryEvaluator } from "./library-catalog";
+import { libraryPauseMessages } from "./library-pause";
 import { CustomJudgePreview } from "./custom-judge-preview";
+import { EvaluatorEditorLayout } from "./evaluator-editor-layout";
 import { PromptEditor } from "./prompt-editor";
 import { VariableMappingTable } from "./variable-mapping-table";
 
@@ -42,9 +40,7 @@ export function CustomJudgesSection({
   const written = all.filter((j) => !j.evaluator);
   const [editing, setEditing] = useState<CustomJudge | null>(null);
   const [isNew, setIsNew] = useState(false);
-  // Custom judges ride the goal-completion judge, so its Off pauses them.
-  const goalJudgeOff =
-    judgeMode(judgeConfig, capabilities?.judges?.goalCompletion?.policy) === "off";
+  const pauseMessage = libraryPauseMessages(judgeConfig, capabilities).judges;
   const change = (next: EvalJudgeConfig) => onJudgeConfigChange?.(next);
   const save = (judge: CustomJudge) => {
     const next = isNew
@@ -60,7 +56,8 @@ export function CustomJudgesSection({
         all.filter((j) => j.id !== id),
       ),
     );
-  const atMax = all.length >= MAX_CUSTOM_JUDGES;
+  const { maxJudges, maxPromptLength } = customJudgeLimits(capabilities);
+  const atMax = all.length >= maxJudges;
   if (!enabled || !onJudgeConfigChange) return null;
   if (!hasCustomJudgesCapability(capabilities)) return null;
   const variables = capabilities?.judges?.custom?.variables ?? [];
@@ -75,8 +72,8 @@ export function CustomJudgesSection({
             Judges you write
           </h4>
           <p className="text-xs text-muted-foreground">
-            Each judge adds one model call per graded trial. Results are advisory.
-            {goalJudgeOff ? " Paused while the goal-completion judge is off." : ""}
+            {CUSTOM_JUDGE_COST_COPY} Results are advisory.
+            {pauseMessage ? ` ${pauseMessage}` : ""}
           </p>
         </div>
         {editing ? null : (
@@ -85,7 +82,7 @@ export function CustomJudgesSection({
             size="sm"
             variant="outline"
             disabled={atMax}
-            title={atMax ? `A suite can have ${MAX_CUSTOM_JUDGES} judges.` : undefined}
+            title={atMax ? `A suite can have ${maxJudges} judges.` : undefined}
             onClick={() => {
               setIsNew(true);
               setEditing(blankJudge(all.map((j) => j.id)));
@@ -119,7 +116,8 @@ export function CustomJudgesSection({
           suiteId={capabilities?.suiteId}
           judge={editing}
           variables={variables}
-          variableAliases={capabilities?.judges?.custom?.variableAliases}
+          maxPromptLength={maxPromptLength}
+          isNew={isNew}
           others={all.filter((j) => isNew || j.id !== editing.id)}
           onCancel={() => setEditing(null)}
           onSave={save}
@@ -180,38 +178,52 @@ function JudgeRow({
   );
 }
 
+/**
+ * Writes or edits one judge, inline in suite settings or in the library
+ * dialog. `pauseMessage` says when the suite will not run it.
+ */
 export function JudgeEditor({
   inDialog = false,
   pauseMessage,
   suiteId,
   judge,
   variables,
-  variableAliases,
+  maxPromptLength,
+  isNew,
   others,
   onCancel,
   onSave,
+  onDirtyChange,
 }: {
   inDialog?: boolean;
   pauseMessage?: string;
   suiteId?: string;
   judge: CustomJudge;
   variables: readonly string[];
-  variableAliases?: Readonly<Record<string, string>>;
+  /** The backend's `judges.custom.maxPromptLength`. */
+  maxPromptLength: number;
+  isNew: boolean;
   others: readonly CustomJudge[];
   onCancel: () => void;
   onSave: (judge: CustomJudge) => void;
+  /** The dialog asks before closing over a changed draft. */
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const id = useId();
-  const [draft, setDraft] = useState(judge);
+  const [draft, setDraftState] = useState(judge);
+  const setDraft = (next: CustomJudge) => {
+    setDraftState(next);
+    onDirtyChange?.(JSON.stringify(next) !== JSON.stringify(judge));
+  };
   const [tried, setTried] = useState(false);
-  const problem = judgeProblem(draft, others, variables, variableAliases);
+  const problem = judgeProblem(draft, others, variables, maxPromptLength);
   const variableMappings = judgePromptVariables(variables);
   const threshold = draft.output.kind === "score" ? draft.output.threshold : 0.7;
   return (
     <EvaluatorEditorLayout
       inDialog={inDialog}
       inlineClassName="mt-2 flex flex-col gap-3 rounded-md border border-border bg-muted/20 p-3"
-      action="Save judge"
+      action={isNew ? "Add judge" : "Save judge"}
       error={tried ? problem : undefined}
       onCancel={onCancel}
       onSubmit={() => {
@@ -219,8 +231,13 @@ export function JudgeEditor({
         if (!problem) onSave({ ...draft, label: draft.label.trim() });
       }}
     >
+      {inDialog ? (
+        <p className="text-sm text-muted-foreground">{CUSTOM_JUDGE_COST_COPY}</p>
+      ) : null}
       {pauseMessage ? (
-        <p className="text-sm text-muted-foreground">{pauseMessage}</p>
+        <p role="status" className="text-sm text-muted-foreground">
+          {pauseMessage}
+        </p>
       ) : null}
       <div className="flex flex-col gap-1.5">
         <Label htmlFor={`${id}-name`}>Name</Label>
@@ -236,7 +253,7 @@ export function JudgeEditor({
         value={draft.prompt}
         onChange={(prompt) => setDraft({ ...draft, prompt })}
         variables={variableMappings}
-        maxLength={MAX_CUSTOM_JUDGE_PROMPT_LENGTH}
+        maxLength={maxPromptLength}
       />
       <details className="text-sm text-muted-foreground">
         <summary className="w-fit cursor-pointer">Variable reference</summary>
@@ -290,10 +307,10 @@ export function JudgeEditor({
       </div>
       {suiteId ? (
         <CustomJudgePreview
-          inDialog={inDialog}
           suiteId={suiteId}
           judge={draft}
           disabledReason={problem}
+          inDialog={inDialog}
         />
       ) : null}
     </EvaluatorEditorLayout>

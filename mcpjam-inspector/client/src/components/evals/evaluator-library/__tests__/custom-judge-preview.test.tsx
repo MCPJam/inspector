@@ -3,7 +3,7 @@ import { fireEvent, renderWithProviders, screen, waitFor } from "@/test";
 import { CustomJudgePreview } from "../custom-judge-preview";
 
 const convex = vi.hoisted(() => ({
-  trials: [
+  iterations: [
     {
       iterationId: "it1",
       runNumber: 36,
@@ -14,7 +14,7 @@ const convex = vi.hoisted(() => ({
   preview: vi.fn(),
 }));
 vi.mock("convex/react", () => ({
-  useQuery: () => convex.trials,
+  useQuery: () => convex.iterations,
   useAction: () => convex.preview,
 }));
 
@@ -26,14 +26,14 @@ const judge = {
 };
 
 describe("CustomJudgePreview", () => {
-  it("grades the newest trial with the draft and shows the verdict", async () => {
+  it("grades the newest iteration with the draft and shows the verdict", async () => {
     convex.preview.mockResolvedValue({
       ok: true,
       prompt: "Grader's question: ...",
       result: { status: "scored", value: 1, passed: true, reason: "Says 42." },
     });
     renderWithProviders(<CustomJudgePreview suiteId="s1" judge={judge} />);
-    fireEvent.click(screen.getByRole("button", { name: "Test on a past trial" }));
+    fireEvent.click(screen.getByRole("button", { name: "Test on a past iteration" }));
     await waitFor(() =>
       expect(screen.getByRole("status")).toHaveTextContent("Says 42."),
     );
@@ -53,20 +53,41 @@ describe("CustomJudgePreview", () => {
       />,
     );
     expect(
-      screen.getByRole("button", { name: "Test on a past trial" }),
+      screen.getByRole("button", { name: "Test on a past iteration" }),
     ).toBeDisabled();
   });
 
-  it("asks for another trial when the selected trial cannot be graded", async () => {
+  it("asks for another iteration when the selected one cannot be graded", async () => {
     convex.preview.mockResolvedValue({
       ok: false,
       reason: "iteration_not_gradable",
     });
     renderWithProviders(<CustomJudgePreview suiteId="s1" judge={judge} />);
-    fireEvent.click(screen.getByRole("button", { name: "Test on a past trial" }));
+    fireEvent.click(screen.getByRole("button", { name: "Test on a past iteration" }));
     expect(await screen.findByRole("status")).toHaveTextContent(
-      "This trial cannot be graded. Choose another trial.",
+      "This iteration cannot be graded. Choose another iteration.",
     );
+  });
+
+  it.each([
+    ["spend_budget_reached", "spend budget is reached"],
+    ["spend_cap_exceeded", "reached its AI spending limit"],
+    ["missing_api_key", "has no provider key"],
+    ["org_keys_required", "requires its own provider keys"],
+  ])("says why a refused test did not run: %s", async (reason, copy) => {
+    convex.preview.mockResolvedValue({ ok: false, reason });
+    renderWithProviders(<CustomJudgePreview suiteId="s1" judge={judge} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Test on a past iteration" }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(copy);
+  });
+
+  it("says each test is a charged judge call", () => {
+    renderWithProviders(<CustomJudgePreview suiteId="s1" judge={judge} />);
+    expect(
+      screen.getByText("Uses one charged judge call. Saves nothing."),
+    ).toBeInTheDocument();
   });
 
   it("keeps the dialog test and grader input collapsed until opened", async () => {
@@ -78,7 +99,7 @@ describe("CustomJudgePreview", () => {
     renderWithProviders(
       <CustomJudgePreview inDialog suiteId="s1" judge={judge} />,
     );
-    const preview = screen.getByText("Test on a past trial");
+    const preview = screen.getByText("Test on a past iteration");
     expect(preview.parentElement).not.toHaveAttribute("open");
     fireEvent.click(preview);
     expect(preview.parentElement).toHaveAttribute("open");
@@ -92,11 +113,11 @@ describe("CustomJudgePreview", () => {
     expect(evidence.parentElement).toHaveAttribute("open");
   });
 
-  it("asks for a run first on a suite with no finished trials", () => {
-    convex.trials = [];
+  it("asks for a run first on a suite with no finished iterations", () => {
+    convex.iterations = [];
     renderWithProviders(<CustomJudgePreview suiteId="s1" judge={judge} />);
     expect(
-      screen.getByText("Run this suite once to test a judge on a past trial."),
+      screen.getByText("Run this suite once to test a judge on a past iteration."),
     ).toBeInTheDocument();
   });
 });

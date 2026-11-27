@@ -18,8 +18,12 @@ const state = vi.hoisted(() => ({
 const toast = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
 
 vi.mock("convex/react", () => ({
-  useQuery: (name: string) =>
-    name === "testSuites:getTestSuite" ? state.suite : state.cases,
+  useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
+  useQueries: () => ({}),
+  useQuery: (name: string, args?: unknown) => {
+    if (args === "skip") return undefined;
+    return name === "testSuites:getTestSuite" ? state.suite : state.cases;
+  },
   useMutation: (name: string) =>
     name === "testSuites:updateTestCase"
       ? state.update

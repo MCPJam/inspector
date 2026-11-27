@@ -8,11 +8,15 @@
  */
 
 import { evaluatePredicates } from "../predicates/evaluate.js";
+import { DECLARED_OUTPUT_SCHEMA } from "../predicates/declared-schema.js";
 import {
   requiresRenderObservations,
   type Predicate,
 } from "../predicates/types.js";
-import { predicateScoreDefinition } from "../contract/adapters.js";
+import {
+  predicateScoreDefinition,
+  predicateScoreOutcome,
+} from "../contract/adapters.js";
 import { canonicalDigest } from "../contract/canonical.js";
 import { canonicalizeCheckRole } from "../predicates/policy.js";
 import type { ScorerRole } from "../contract/types.js";
@@ -116,23 +120,12 @@ export function predicateScorer(
         (predicate.type === "responseCloseTo" ||
           predicate.type === "toolInputMatches" ||
           predicate.type === "toolResultMatches" ||
-          predicate.type === "toolResultMatchesSchema") &&
+          (predicate.type === "toolResultMatchesSchema" &&
+            predicate.schema === DECLARED_OUTPUT_SCHEMA)) &&
         result.status === "error"
       )
         throw new Error(result.reason);
-      if (result.status === "not_applicable") {
-        return {
-          kind: "not_applicable",
-          rationale: result.reason,
-          ...(result.scope ? { scope: result.scope } : {}),
-        };
-      }
-      return {
-        kind: "scored",
-        value: result.passed ? 1 : 0,
-        rationale: result.reason,
-        ...(result.scope ? { scope: result.scope } : {}),
-      };
+      return predicateScoreOutcome(result);
     },
   };
 }

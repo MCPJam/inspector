@@ -7057,7 +7057,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Comma-separated source filter."
+            "description": "Comma-separated source types to export: `direct` (Playground), `scenario`, `eval`, `event` (background trigger runs) and `swarm`. Without it the export holds `direct`, `scenario`, `eval` and `event`; `swarm` is exported only when named, since one swarm run is many sessions. Until background trigger runs export under their own source type, a server-side rollout, they still match `direct` and not `event`. Under `x-mcpjam-api-vocabulary: 2`, `scenario` may also be named `study`. An unknown value is refused with a 400."
           },
           {
             "name": "includeContent",
@@ -16151,6 +16151,12 @@
         "type": "object",
         "description": "Partial update. Every field is optional; omitted fields are left as they are. `steps` REPLACES the definition rather than merging into it.",
         "properties": {
+          "accounts": {
+            "type": ["array", "null"],
+            "minItems": 1,
+            "maxItems": 32,
+            "items": { "$ref": "#/components/schemas/EvalAccountSelection" }
+          },
           "judge": {
             "type": "object",
             "additionalProperties": false,
@@ -18071,6 +18077,12 @@
           {
             "required": ["suiteName", "tests", "serverIds"],
             "properties": {
+          "accounts": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "items": { "$ref": "#/components/schemas/EvalAccountSelection" }
+          },
               "tests": {
                 "minItems": 1
               }
@@ -18322,6 +18334,12 @@
         "required": ["suiteId", "targets"],
         "description": "Launch one run per target under a single server-minted group id.\n\n`targets` fan out along ONE axis: every entry is an `environmentId`, or every entry is a `namedHostId`. A mixed list returns `400` with `details.reason: \"HETEROGENEOUS_TARGETS\"`: mixing them would have to answer whether a host runs inside an environment or beside it, and every answer to that is a cross product nobody asked for. Duplicates are deduplicated by id, preserving order.\n\nThe knobs below apply UNIFORMLY to every run in the group. `serverIds` and `refreshSnapshot` are deliberately absent: an environment supplies its own closed server set, a host derives one from its config, and last-writer-wins on a frozen suite snapshot is never what a fan-out means. Inline `tests` are absent for the same reason: a group runs a persisted suite.",
         "properties": {
+          "accounts": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "items": { "$ref": "#/components/schemas/EvalAccountSelection" }
+          },
           "suiteId": {
             "type": "string",
             "description": "The suite every target runs."
@@ -22221,6 +22239,12 @@
         "description": "Partial update of a suite's settings. Omitted fields are left as they are.",
         "additionalProperties": false,
         "properties": {
+          "accounts": {
+            "type": ["array", "null"],
+            "minItems": 1,
+            "maxItems": 32,
+            "items": { "$ref": "#/components/schemas/EvalAccountSelection" }
+          },
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
@@ -24052,11 +24076,31 @@
           }
         }
       },
+      "EvalAccountSelection": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["serverId", "accountId"],
+        "properties": {
+          "serverId": { "type": "string" },
+          "accountId": { "type": "string" }
+        }
+      },
       "EvalRunAccount": {
         "type": "object",
         "description": "One account an eval run used on one server, as it was when the run started. Holds no token.",
         "required": ["serverId", "name", "kind"],
         "properties": {
+          "cases": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["testCaseId", "source"],
+              "properties": {
+                "testCaseId": { "type": "string" },
+                "source": { "type": "string", "enum": ["case", "run", "suite", "default"] }
+              }
+            }
+          },
           "serverId": {
             "type": "string",
             "description": "The saved server, as `GET /projects/{projectId}/servers` lists it."
@@ -29222,6 +29266,62 @@
             "items": {
               "$ref": "#/components/schemas/BrowserScreenshot"
             }
+          },
+          "event": {
+            "$ref": "#/components/schemas/ChatSessionTraceEvent"
+          }
+        }
+      },
+      "ChatSessionTraceEvent": {
+        "type": "object",
+        "description": "The MCP event that started the turn. Present only on turns an event started: a background trigger run, or a Playground event turn.",
+        "required": [
+          "name",
+          "receivedAt",
+          "origin"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The event's name."
+          },
+          "eventId": {
+            "type": "string",
+            "description": "The server's id for the event."
+          },
+          "timestamp": {
+            "type": "string",
+            "description": "When the server says the event occurred, exactly as it sent it."
+          },
+          "receivedAt": {
+            "type": "integer",
+            "description": "When MCPJam received the event, in epoch milliseconds like the turn's `startedAt`."
+          },
+          "delivery": {
+            "type": "string",
+            "enum": [
+              "poll",
+              "push",
+              "webhook"
+            ],
+            "description": "The subscription's delivery mode. Absent when it is not known."
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "server",
+              "simulation",
+              "replay"
+            ],
+            "description": "`server` when the MCP server sent the event, `simulation` for a test event. `replay` is reserved."
+          },
+          "subscriptionId": {
+            "type": "string",
+            "description": "MCPJam's id for the event subscription."
+          },
+          "triggerId": {
+            "type": "string",
+            "description": "The background trigger that ran the turn. Present only on background trigger runs."
           }
         }
       },

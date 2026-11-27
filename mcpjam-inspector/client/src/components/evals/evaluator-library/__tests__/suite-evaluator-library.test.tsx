@@ -65,12 +65,13 @@ const capabilities = {
       role: "advisory",
       calibration: "unavailable",
       template: { version: 2, hash: "rubric" },
+      questionKinds: ["yesno", "choice", "score"],
       execution: "wired",
     },
     custom: {
       role: "advisory",
       variables: ["final_answer", "expected_output"],
-      templateVersion: 1,
+      templateVersion: 2,
       maxJudges: 5,
       maxPromptLength: 10_000,
       execution: "wired",
@@ -86,6 +87,7 @@ const v1Capabilities: SuiteCapabilities = {
     rubricChecks: {
       ...capabilities.judges.rubricChecks,
       template: { version: 1, hash: "rubric-v1" },
+      questionKinds: ["choice", "score"],
     },
   },
 };
@@ -100,7 +102,6 @@ function open(
       predicates={[]}
       authorableKinds={["finalAssistantMessageNonEmpty"]}
       judgeConfig={judgeConfig}
-      canEditJudgeConfig
       capabilities={support}
       onAdd={onAdd}
     />,
@@ -173,9 +174,9 @@ describe("starting an evaluator from scratch", () => {
       } satisfies RubricCheckQuestion;
       const preset = {
         ...authored,
-        id: "answer-grounded-in-results-grounded",
-        label: "Answer Grounded in Results",
-        evaluator: { id: "answer-grounded-in-results", version: 1 },
+        id: "reports-tool-errors-reports-failures",
+        label: "Reports Tool Errors",
+        evaluator: { id: "reports-tool-errors", version: 1 },
       };
       renderWithProviders(
         <SuiteScorerTable
@@ -325,7 +326,7 @@ describe("starting an evaluator from scratch", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Judge prompt" }), {
       target: { value: "Check citations in {{final_answer}}." },
     });
-    click("Save judge");
+    click("Add judge");
     expect(onAdd).toHaveBeenCalledWith({
       checks: [],
       questions: [],
@@ -338,6 +339,99 @@ describe("starting an evaluator from scratch", () => {
         },
       ],
     });
+  });
+
+  it("says each judge is charged, on the method card and in its editor", () => {
+    open();
+    const methods = within(
+      screen.getByRole("region", { name: "Start from scratch" }),
+    );
+    expect(
+      methods.getByRole("button", { name: "Judge prompt" }),
+    ).toHaveAccessibleDescription(
+      "Grade an iteration with a prompt. Each judge adds a charged model call per graded iteration.",
+    );
+    click("Judge prompt");
+    expect(
+      within(screen.getByRole("dialog", { name: "Judge prompt" })).getAllByText(
+        /Each judge adds a charged model call per graded iteration\./,
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("says when the suite will not run what a Method card adds", () => {
+    open({
+      rubricChecks: { enabled: false },
+      customJudges: { enabled: false, judges: [] },
+    });
+    click("Decision questions");
+    expect(
+      screen.getByText(/Rubric checks are off for this suite, so decision questions will not run/),
+    ).toBeVisible();
+    click("Back to library");
+    click("Judge prompt");
+    expect(
+      screen.getByText("Custom judges are off for this suite, so they will not run."),
+    ).toBeVisible();
+  });
+
+  it("says decision questions, not trials, while the goal judge is off", () => {
+    open({ goalCompletion: { enabled: false } });
+    click("Decision questions");
+    expect(
+      screen.getByText(/Decision questions run on the iterations the goal-completion judge grades/),
+    ).toBeVisible();
+    expect(screen.queryByText(/trials/)).not.toBeInTheDocument();
+  });
+
+  it("goes back to the library on Escape and asks before dropping a changed draft", () => {
+    const { onAdd } = open();
+    click("Judge prompt");
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Name" }), {
+      key: "Escape",
+    });
+    expect(
+      screen.getByRole("dialog", { name: "Evaluator library" }),
+    ).toBeInTheDocument();
+    click("Judge prompt");
+    fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+      target: { value: "Half written" },
+    });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Name" }), {
+      key: "Escape",
+    });
+    const confirm = screen.getByRole("alertdialog", {
+      name: "Discard this draft?",
+    });
+    fireEvent.click(
+      within(confirm).getByRole("button", { name: "Keep editing" }),
+    );
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+      "Half written",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(
+      within(
+        screen.getByRole("alertdialog", { name: "Discard this draft?" }),
+      ).getByRole("button", { name: "Discard" }),
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(onAdd).not.toHaveBeenCalled();
+  });
+
+  it("confirms a Method-card save went into the unsaved suite draft", () => {
+    open();
+    click("Judge prompt");
+    fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+      target: { value: "Checks citations" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "Judge prompt" }), {
+      target: { value: "Check citations in {{final_answer}}." },
+    });
+    click("Add judge");
+    expect(
+      screen.getByText("Added to your unsaved changes. Save settings to keep it."),
+    ).toBeVisible();
   });
 
   it("explains why a method has reached its suite limit", () => {

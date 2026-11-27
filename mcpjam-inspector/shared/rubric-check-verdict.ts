@@ -1,10 +1,9 @@
 /**
  * Reads the questions off a stored `metadata.rubricChecksVerdict`.
  *
- * The server projects score rows from these questions and the trial
- * scorecard falls back to them when a projected row is missing, so both
- * sides parse with this one function: the same stored verdict must yield the
- * same questions, in the same order, whichever side reads it.
+ * The server projects score rows from these questions. The trial scorecard
+ * reads the same verdict only to tell which projected rows are yes/no answers
+ * and what P(yes) each got, so both sides parse it with this one function.
  */
 
 export type RubricCheckVerdictQuestion = {
@@ -18,6 +17,7 @@ export type RubricCheckVerdictQuestion = {
   templateHash?: string;
   status: "scored" | "error" | "skipped";
   value?: number;
+  probability?: number;
   error?: string;
   rationale?: string;
   evidence?: string[];
@@ -79,6 +79,7 @@ export function rubricCheckVerdictQuestions(
       ...(typeof templateHash === "string" ? { templateHash } : {}),
       status,
       ...(isFiniteNumber(q.value) ? { value: q.value } : {}),
+      ...(isFiniteNumber(q.probability) ? { probability: q.probability } : {}),
       ...(typeof q.error === "string"
         ? { error: q.error }
         : q.status !== status

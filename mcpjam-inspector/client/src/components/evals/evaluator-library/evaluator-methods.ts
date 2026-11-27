@@ -4,6 +4,7 @@ import {
   Scale,
   type LucideIcon,
 } from "lucide-react";
+import { CUSTOM_JUDGE_COST_COPY } from "./custom-judges-model";
 import type { EvaluatorMethod } from "./evaluator-library-types";
 
 export const EVALUATOR_METHODS = [
@@ -24,7 +25,7 @@ export const EVALUATOR_METHODS = [
   {
     value: "judge",
     title: "Judge prompt",
-    description: "Grade an iteration with a prompt.",
+    description: `Grade an iteration with a prompt. ${CUSTOM_JUDGE_COST_COPY}`,
     icon: Scale,
     tone: "bg-primary/10 text-primary",
   },

@@ -1,3 +1,4 @@
+import type { EvalAccountPlan, EvalAccountSelection } from "./suite-account-choices.js";
 import { asCapacityRouteError } from "../../utils/capacity-route-error.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
@@ -616,6 +617,8 @@ export const startSuiteRunWithRecorder = async ({
   ephemeralEnvironment,
   importApprovals,
   accountsAtRun,
+  evalAccountPlan,
+  runAccounts,
   launcher,
   ciMetadata,
 }: EvalRunProvenance & {
@@ -780,6 +783,8 @@ export const startSuiteRunWithRecorder = async ({
    * itself, so nothing sent here can put an email on the run.
    */
   accountsAtRun?: Array<{ serverId: string; connectionIds: string[] }>;
+  evalAccountPlan?: EvalAccountPlan;
+  runAccounts?: EvalAccountSelection[];
   /**
    * The run's DECLARED launcher, read off `x-mcpjam-launcher` at the `/v1`
    * boundary. A LABEL, not an authorization input: `source` is still stamped
@@ -840,6 +845,8 @@ export const startSuiteRunWithRecorder = async ({
       ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
       ...(importApprovals && importApprovals.length ? { importApprovals } : {}),
       ...(accountsAtRun?.length ? { accountsAtRun } : {}),
+      ...(evalAccountPlan ? { evalAccountPlan } : {}),
+      ...(runAccounts?.length ? { runAccounts } : {}),
       // Forwarded only when present. An older backend's `startTestSuiteRun`
       // validator does not know these args and rejects the whole call for an
       // unknown field, so sending `launcher: undefined` would break every
@@ -860,7 +867,9 @@ export const startSuiteRunWithRecorder = async ({
       // A backend that predates run accounts rejects the argument outright.
       // Every run carries it, so start without it there rather than fail
       // every launch; that backend has nowhere to keep it anyway.
-      if (!/extra field `?accountsAtRun/.test(String(error))) throw error;
+      if (evalAccountPlan || runAccounts?.length || !/extra field `?accountsAtRun/.test(String(error))) {
+        throw error;
+      }
       const { accountsAtRun: _unsupported, ...older } = mutationArgs;
       return start(older);
     });

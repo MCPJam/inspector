@@ -8,10 +8,8 @@ import {
   Sparkles,
   type LucideIcon,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { CaseFieldDependency } from "./case-field-dependency";
 import { EvaluatorPresetIcon } from "./evaluator-preset-icon";
-import type { BuiltFromPart, CaseField, EvaluatorTone } from "./evaluator-library-types";
+import type { BuiltFromPart, EvaluatorTone } from "./evaluator-library-types";
 
 const PART_ICON: Record<BuiltFromPart["kind"], LucideIcon> = {
   assertions: ListChecks,
@@ -28,11 +26,7 @@ export type EvaluatorCardProps = {
   icon: LucideIcon;
   tone: EvaluatorTone;
   builtFrom: readonly BuiltFromPart[];
-  /** The case field this evaluator compares the run against, if any. */
-  dependency?: CaseField;
   inSuite?: boolean;
-  selected?: boolean;
-  compact?: boolean;
   onOpen: () => void;
   /** Omit to hide the Add action, e.g. when the suite is read-only. */
   onAdd?: () => void;
@@ -52,24 +46,13 @@ export function EvaluatorCard({
   icon,
   tone,
   builtFrom,
-  dependency,
   inSuite = false,
-  selected = false,
-  compact = false,
   onOpen,
   onAdd,
   addDisabledReason,
 }: EvaluatorCardProps) {
   return (
-    <article
-      aria-current={selected ? "true" : undefined}
-      className={cn(
-        "group relative flex flex-col gap-2.5 rounded-lg border border-border bg-popover p-3.5 transition-[border-color,box-shadow]",
-        !compact && "min-h-40",
-        "hover:border-foreground/25 focus-within:border-ring",
-        selected && "border-primary ring-[3px] ring-primary/15",
-      )}
-    >
+    <article className="group relative flex flex-col gap-2.5 rounded-lg border border-border bg-popover p-3.5 transition-[border-color,box-shadow] hover:border-foreground/25 focus-within:border-ring">
       <div className="flex items-start gap-2.5">
         <EvaluatorPresetIcon icon={icon} tone={tone} />
         <div className="min-w-0 flex-1">
@@ -97,11 +80,8 @@ export function EvaluatorCard({
             onClick={onAdd}
             disabled={Boolean(addDisabledReason)}
             aria-label={`Add ${name} to suite`}
-            className={cn(
-              // Keep a disabled Add above the stretched details button.
-              "relative z-10 h-7 shrink-0 disabled:pointer-events-auto",
-              !compact && "opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 group-focus-within:opacity-100",
-            )}
+            // Keep a disabled Add above the stretched details button.
+            className="relative z-10 h-7 shrink-0 disabled:pointer-events-auto"
           >
             <Plus aria-hidden />
             Add
@@ -121,14 +101,6 @@ export function EvaluatorCard({
             </span>
           );
         })}
-        {dependency ? (
-          <span className="ml-auto"><CaseFieldDependency field={dependency} /></span>
-        ) : !compact ? (
-          <span className="ml-auto inline-flex items-center gap-1.5">
-            <span aria-hidden className="size-2 rounded-full bg-success" />
-            Ready
-          </span>
-        ) : null}
       </div>
     </article>
   );

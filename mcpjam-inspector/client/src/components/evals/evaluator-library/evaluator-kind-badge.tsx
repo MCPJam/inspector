@@ -1,39 +1,9 @@
 import { Badge } from "@mcpjam/design-system/badge";
-import {
-  Copy,
-  GitBranch,
-  Library,
-  ListChecks,
-  ListTodo,
-  Scale,
-  type LucideIcon,
-} from "lucide-react";
+import { Library, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { EvaluatorMethod, EvaluatorOrigin } from "./evaluator-library-types";
+import type { EvaluatorOrigin } from "./evaluator-library-types";
 
 type KindPresentation = { label: string; icon: LucideIcon; className: string };
-
-/**
- * Method and origin are separate badges on purpose: a library copy can use any
- * method, and a reader scanning a suite needs both answers.
- */
-const METHOD: Record<EvaluatorMethod, KindPresentation> = {
-  assertions: {
-    label: "Assertions",
-    icon: ListChecks,
-    className: "text-muted-foreground",
-  },
-  judge: {
-    label: "Judge prompt",
-    icon: Scale,
-    className: "border-info/40 bg-info/5 text-info",
-  },
-  decision: {
-    label: "Decision questions",
-    icon: ListTodo,
-    className: "border-success/40 bg-success/5 text-success",
-  },
-};
 
 const ORIGIN: Record<EvaluatorOrigin, KindPresentation> = {
   library: {
@@ -41,24 +11,11 @@ const ORIGIN: Record<EvaluatorOrigin, KindPresentation> = {
     icon: Library,
     className: "border-primary/40 bg-primary/5 text-primary",
   },
-  "library-copy": {
-    label: "Library copy",
-    icon: Copy,
-    className: "border-primary/40 bg-primary/5 text-primary",
-  },
-  github: {
-    label: "From GitHub",
-    icon: GitBranch,
-    className: "bg-muted text-foreground",
-  },
 };
 
-export type EvaluatorKindBadgeProps =
-  | { method: EvaluatorMethod; origin?: never }
-  | { origin: EvaluatorOrigin; method?: never };
-
-export function EvaluatorKindBadge(props: EvaluatorKindBadgeProps) {
-  const kind = props.method ? METHOD[props.method] : ORIGIN[props.origin];
+/** Where an evaluator in a suite came from. */
+export function EvaluatorKindBadge({ origin }: { origin: EvaluatorOrigin }) {
+  const kind = ORIGIN[origin];
   const Icon = kind.icon;
   return (
     <Badge variant="outline" className={cn("font-medium", kind.className)}>

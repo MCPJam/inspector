@@ -1,7 +1,8 @@
 /**
  * Evaluators as one checklist, stage by stage, in user-value-chain order.
  *
- * This table configures evaluators. Run results appear on the scorecard.
+ * Configuration only. There is no Last run or Trend — those are a later
+ * slice that needs run data this page does not have.
  *
  * ONE LIST, TWO PAGES. The suite settings page and a case's assertions page
  * render this same component. Each stage is a heading over rows of
@@ -12,14 +13,15 @@
  *
  *   - `suite`: every rule is the suite's. Off removes it; a preset row
  *     switched on appends the standard check's preset.
- *   - `case`: inherited suite rules appear first and are read-only. The
- *     backend stores overrides for whole standard-check families. Case rules
- *     appear after inherited rules and use the same editor as suite rules.
- *     Enabling a preset adds a case rule and moves an inheriting case to
- *     `extend`.
+ *   - `case`: the suite's rules are listed first as inherited — read-only,
+ *     and switchable off only as a whole standard-check family, which is
+ *     the one suppression the backend stores. The case's own rules follow
+ *     and edit like the suite's. A preset row switched on authors a case
+ *     rule, moving an inheriting case to `extend`.
  *
- * Each stage lists available standard checks with their preset criterion
- * and role so users can see what a check does before enabling it.
+ * Every stage also lists the standard checks nothing authors yet, off, with
+ * the preset's criterion and role — so "what could I turn on here" is read
+ * in the same place as "what is on".
  */
 
 import { useMemo, useState } from "react";
@@ -35,7 +37,6 @@ import { Input } from "@mcpjam/design-system/input";
 import type { ModelDefinition } from "@/shared/types";
 import {
   hasRubricChecksCapability,
-  hasYesNoRubricQuestionsCapability,
   type SuiteCapabilities,
 } from "@/hooks/use-suite-capabilities";
 import { DEFAULT_JUDGE_THRESHOLD } from "@/components/shared/session-quality/judge-config";
@@ -45,9 +46,9 @@ import { SuiteScorerLibraryMenu } from "./suite-scorer-library-menu";
 import { SuiteEvaluatorLibrary } from "./evaluator-library/suite-evaluator-library";
 import { EvaluatorStageRows } from "./evaluator-library/evaluator-stage-rows";
 import { useEvaluatorLibraryEnabled } from "./evaluator-library/evaluator-library-flag";
-import { ScorerRowBadges } from "./evaluator-library/scorer-row-badges";
 import { CustomJudgesSection } from "./evaluator-library/custom-judges-section";
 import { DecisionQuestionsSection } from "./evaluator-library/decision-questions-section";
+import { customJudgeLimits } from "./evaluator-library/custom-judges-model";
 import {
   libraryModelRows,
   librarySuiteEdits,
@@ -64,6 +65,7 @@ import {
   type ScorerUiRole,
 } from "./suite-scorer-table-model";
 import { RoleChip, RoleSegmentGroup } from "./scorer-role-control";
+import { ScorerRowBadge } from "./scorer-row-badge";
 import { groupGradersByStage, judgeMode } from "./suite-grading-model";
 import { rolesForPredicateKind } from "@/shared/predicate-kinds";
 import type { EvalJudgeConfig, EvalJudgeRubric } from "./types";
@@ -259,9 +261,14 @@ export function SuiteScorerTable({
       scope.onDraftChange(removeCaseRule(scope.draft, rule.index));
     }
   };
-  const library = librarySuiteEdits(scope, judgeConfig, onJudgeConfigChange);
-  const libraryEnabled = useEvaluatorLibraryEnabled();
-  const stackedStages = libraryEnabled && scope.kind === "suite";
+  const judgeLimit = customJudgeLimits(capabilities).maxJudges;
+  const library = librarySuiteEdits(
+    scope,
+    judgeConfig,
+    onJudgeConfigChange,
+    judgeLimit,
+  );
+  const stackedStages = evaluatorLibraryEnabled && scope.kind === "suite";
   const addPredicate = (predicate: Predicate) => {
     if (scope.kind === "suite") {
       scope.onPredicatesChange((previous) => [...previous, predicate]);
@@ -425,7 +432,6 @@ export function SuiteScorerTable({
                 predicates={scope.predicates}
                 authorableKinds={authorableKinds}
                 judgeConfig={judgeConfig}
-                canEditJudgeConfig={Boolean(onJudgeConfigChange)}
                 capabilities={capabilities}
                 onAdd={library.add}
               />
@@ -505,6 +511,7 @@ export function SuiteScorerTable({
                 ) : (
                   <EvaluatorStageRows
                     rows={group.rows}
+                    stageLabel={group.label}
                     predicateOf={(row) =>
                       row.predicateIndex !== undefined
                         ? rules[row.predicateIndex]?.predicate
@@ -520,11 +527,11 @@ export function SuiteScorerTable({
                     }
                     onRemoveEvaluator={library?.remove}
                     onUpdateEvaluator={library?.update}
-                    renderRow={(row, isDefault) => (
+                    updateRefusal={library?.updateRefusal}
+                    renderRow={(row) => (
                       <ScorerRow
                         key={row.id}
                         row={row}
-                        isDefault={isDefault}
                         rule={
                           row.predicateIndex !== undefined
                             ? rules[row.predicateIndex]
@@ -577,7 +584,7 @@ export function SuiteScorerTable({
                 onJudgeConfigChange &&
                 rubricChecks ? (
                   <DecisionQuestionsSection
-                    canAskYesNo={hasYesNoRubricQuestionsCapability(capabilities)}
+                    capabilities={capabilities}
                     judgeConfig={judgeConfig}
                     onChange={onJudgeConfigChange}
                   />
@@ -683,9 +690,10 @@ function hasOnControl(row: ScorerTableRow): boolean {
 }
 
 /**
- * Edit evaluators opens rows even when the check is off. Built-in runner
- * checks and match rows have no row editor. Any settings for those rows
- * are in the stage editor.
+ * A row Edit evaluators opens. Built-in runner checks and match rows stay
+ * closed: their settings are either absent or live in the stage's own
+ * disclosure. An off check still opens — the checkbox and Edit evaluators
+ * reveal every check, selected or not. The title itself is not a control.
  */
 function rowOpensEditor(row: ScorerTableRow): boolean {
   return row.kind !== "observed" && row.kind !== "match";
@@ -693,7 +701,6 @@ function rowOpensEditor(row: ScorerTableRow): boolean {
 
 function ScorerRow({
   row,
-  isDefault,
   rule,
   scope,
   onDisabledReason,
@@ -709,7 +716,6 @@ function ScorerRow({
   facts,
 }: {
   row: ScorerTableRow;
-  isDefault: boolean;
   rule: EffectiveRule | undefined;
   scope: ScorerTableScope["kind"];
   onDisabledReason: string | undefined;
@@ -819,10 +825,7 @@ function ScorerRow({
                 </span>
               ) : null}
             </div>
-            <ScorerRowBadges
-              kind={row.kind}
-              isDefault={isDefault && rule?.source !== "case"}
-            />
+            <ScorerRowBadge kind={row.kind} />
           </div>
           {sourceLine ? (
             <span className="block text-xs text-muted-foreground">
@@ -922,8 +925,8 @@ function JudgeThresholdInput({
       aria-label="Judge threshold"
       className="h-7 w-20 text-xs"
       onChange={(event) => {
-        // Number("") is 0, which would make a gating judge pass every score
-        // while the user is clearing the field to enter a new threshold.
+        // `Number("")` is 0. An emptied field is someone retyping, not a
+        // threshold of zero — which on a gating judge would pass any score.
         const raw = event.target.value.trim();
         if (raw === "") return;
         const next = Number(raw);
@@ -986,15 +989,20 @@ function RoleCell({
       return <RoleChip role={row.role} />;
     }
     if (!checkPolicy) {
-      // Preserve the saved role for SDK and CLI checks when the backend
-      // does not support editing it.
+      // Read-only, but honest: an SDK- or CLI-authored advisory check still
+      // reads Advisory here rather than being relabelled Required — and the
+      // chip says why it is not a control.
       return <RoleChip role={row.role} note={BACKEND_SUPPORT_HINT} />;
     }
-    // The schema accepts only Advisory for observations because these
-    // heuristics cannot determine whether an iteration passes.
+    // Observations get one segment, the same way groundedness does: a
+    // heuristic must not decide a release, and offering a Required the schema
+    // is going to refuse is a control that lies.
     return (
       <RoleSegmentGroup
         value={row.role}
+        // An observation is a heuristic, so it is offered as Advisory only and
+        // never as Required — the same rule the Zod schema enforces at the
+        // save, surfaced as an absent segment rather than a refused save.
         roles={rolesForPredicateKind(predicate.type)}
         ariaLabel="Assertion role"
         onChange={(role) =>

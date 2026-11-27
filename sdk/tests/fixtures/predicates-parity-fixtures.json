@@ -994,6 +994,13 @@
       }
     },
     {
+      "label": "toolResultMatchesSchema — a boolean schema",
+      "value": {
+        "type": "toolResultMatchesSchema",
+        "schema": false
+      }
+    },
+    {
       "label": "noToolErrors — added from a library evaluator",
       "value": {
         "type": "noToolErrors",
@@ -2201,6 +2208,21 @@
         "schema": "object"
       },
       "why": "the only string a schema may be is \"declared\""
+    },
+    {
+      "label": "toolResultMatchesSchema — an array schema",
+      "value": { "type": "toolResultMatchesSchema", "schema": [] },
+      "why": "a JSON Schema root cannot be an array"
+    },
+    {
+      "label": "toolResultMatchesSchema — a null schema",
+      "value": { "type": "toolResultMatchesSchema", "schema": null },
+      "why": "a JSON Schema root cannot be null"
+    },
+    {
+      "label": "toolResultMatchesSchema — a numeric schema",
+      "value": { "type": "toolResultMatchesSchema", "schema": 42 },
+      "why": "a JSON Schema root cannot be a number"
     },
     {
       "label": "noToolErrors — evaluator tag with an empty id",

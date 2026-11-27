@@ -1,4 +1,7 @@
-import type { PersistedRequestPayloadEntry } from "@/shared/live-chat-trace";
+import type {
+  LiveChatTraceTurnEvent,
+  PersistedRequestPayloadEntry,
+} from "@/shared/live-chat-trace";
 // Inspector boundary shim over @mcpjam/chat-ui/trace.
 //
 // The Tier-A-compatible trace/replay adaptation LOGIC is single-sourced in the
@@ -74,6 +77,8 @@ export interface TraceEnvelope {
   videoMeta?: EvalTraceVideoMeta | null;
   traceStartedAtMs?: number;
   traceEndedAtMs?: number;
+  /** The turns an MCP event started, for the timeline's event label and section. */
+  turnEvents?: LiveChatTraceTurnEvent[];
   [key: string]: unknown;
 }
 
