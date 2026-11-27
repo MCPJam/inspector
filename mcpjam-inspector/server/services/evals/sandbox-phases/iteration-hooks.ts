@@ -81,7 +81,8 @@ export async function runIterationCleanupInto(
   ctx: IterationPhaseContext | undefined,
   metadata: Record<string, unknown>,
 ): Promise<void> {
-  if (!ctx) return;
+  if (!ctx || ctx.cleanedUp) return;
+  ctx.cleanedUp = true;
   const cleanup = await runIterationCleanup(ctx);
   if (!cleanup) return;
   const scripts = (metadata as ScriptsMetadata).iterationScripts ?? {};
@@ -121,6 +122,45 @@ export async function collectDeclaredGradingFiles(
 }
 
 /**
+ * The own-key runner's end of an iteration, in E3's order: bring the declared
+ * files off the agent's box, release it (so an iteration never holds two of
+ * the run's boxes), then grade or declare Not run, then clean up.
+ */
+export async function finishLocalIterationPhases(
+  ctx: IterationPhaseContext | undefined,
+  args: {
+    notRun?: string;
+    input?: () => EvaluatorContextV1;
+    agentSandboxId?: string;
+    releaseAgentBox: () => Promise<void>;
+  },
+  metadata: Record<string, unknown>,
+): Promise<CodeGradingResult | undefined> {
+  if (!ctx) return undefined;
+  const files = args.notRun
+    ? undefined
+    : await collectDeclaredGradingFiles(ctx, args.agentSandboxId);
+  await args.releaseAgentBox();
+  return await finishIterationPhases(
+    ctx,
+    {
+      ...(args.input ? { input: args.input } : {}),
+      ...(args.notRun ? { notRun: args.notRun } : {}),
+      ...(files ? { files } : {}),
+    },
+    metadata,
+  );
+}
+
+/** Whether the iteration's setup script ran and didn't pass. */
+export function iterationSetupFailed(
+  metadata: Record<string, unknown>,
+): boolean {
+  const setup = (metadata as ScriptsMetadata).iterationScripts?.setup;
+  return setup !== undefined && setup.status !== "passed";
+}
+
+/**
  * After the agent's box is gone: grade when the agent finished, then clean
  * up. The result declares every frozen evaluator, graded or not, so each
  * iteration of a case carries the same score definitions.
@@ -130,7 +170,8 @@ export async function finishIterationPhases(
   args: {
     /** Why grading doesn't run (the agent failed, the server never came up). */
     notRun?: string;
-    input: () => EvaluatorContextV1;
+    /** The grader's input; without it grading doesn't run. */
+    input?: () => EvaluatorContextV1;
     /** What {@link collectDeclaredGradingFiles} brought off the agent's box. */
     files?: CollectedGradingFiles;
   },
@@ -141,8 +182,8 @@ export async function finishIterationPhases(
   const result: CodeGradingResult | undefined =
     evaluators.length === 0
       ? undefined
-      : args.notRun
-        ? { evaluators, outcomes: {}, notRun: args.notRun }
+      : args.notRun || !args.input
+        ? { evaluators, outcomes: {}, notRun: args.notRun ?? "Not run." }
         : await gradeIteration(ctx, args.input(), args.files);
   await runIterationCleanupInto(ctx, metadata);
   return result;
