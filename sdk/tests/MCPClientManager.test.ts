@@ -1719,12 +1719,17 @@ describe("MCPClientManager", () => {
 
     // The hosted path builds a leg's headers with these, then sends the leg.
     describe("hosted leg headers", () => {
-      const refused = new ProtocolError(-32020, "Header mismatch");
+      const refused = {
+        error: new ProtocolError(-32020, "Header mismatch"),
+        headers: {},
+      };
       const headersAfterMismatch = () =>
-        manager.mrtrToolParamHeadersAfterMismatch("lookup", "echo", {}, {
-          error: refused,
-          headers: {},
-        });
+        manager.mrtrToolParamHeadersAfterMismatch(
+          "lookup",
+          "echo",
+          {},
+          refused
+        );
 
       it.each([SdkErrorCode.RequestTimeout, SdkErrorCode.ConnectionClosed])(
         "are not built after the client's %s",
