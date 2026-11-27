@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { getFunctionName } from "convex/server";
+import { ConvexError } from "convex/values";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -11,6 +12,7 @@ const {
   startSuiteRunWithRecorderMock,
   runEvalSuiteWithAiSdkMock,
   disconnectAllServersMock,
+  captureExceptionMock,
 } = vi.hoisted(() => ({
   convexQueryMock: vi.fn(),
   captureToolSnapshotForEvalAuthoringMock: vi.fn(),
@@ -19,6 +21,13 @@ const {
   startSuiteRunWithRecorderMock: vi.fn(),
   runEvalSuiteWithAiSdkMock: vi.fn(),
   disconnectAllServersMock: vi.fn().mockResolvedValue(undefined),
+  captureExceptionMock: vi.fn(),
+}));
+
+// The real reporter and logger run; only Sentry's transport is stubbed.
+vi.mock("@sentry/node", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@sentry/node")>()),
+  captureException: captureExceptionMock,
 }));
 
 vi.mock("@mcpjam/sdk", async () => {
@@ -441,6 +450,39 @@ describe("mcp replay route", () => {
     expect(disconnectAllServersMock).toHaveBeenCalledTimes(1);
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+  });
+
+  describe("a replay the backend refuses", () => {
+    beforeEach(() => {
+      vi.stubEnv("DO_NOT_TRACK", "");
+      captureExceptionMock.mockReset();
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("answers a gating judge the suite cannot honour with 409 and the backend's sentence, and reports nothing", async () => {
+      const message =
+        "A gating judge requires the grading engine in enforce mode, otherwise its verdict would be computed and then ignored. The run was not started.";
+      startSuiteRunWithRecorderMock.mockRejectedValueOnce(
+        new ConvexError({
+          code: "JUDGE_GATE_NOT_AVAILABLE",
+          message,
+          gradingEngineMode: "off",
+        }),
+      );
+
+      const response = await replayRun();
+
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toEqual({
+        code: "CONFLICT",
+        error: message,
+        details: { code: "JUDGE_GATE_NOT_AVAILABLE" },
+      });
+      expect(captureExceptionMock).not.toHaveBeenCalled();
+    });
   });
 
   // `passCriteria` here was a bare, unbounded `z.object({ minimumPassRate:

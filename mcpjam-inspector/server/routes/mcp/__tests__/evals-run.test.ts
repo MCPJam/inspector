@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { getFunctionName } from "convex/server";
+import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMockMcpClientManager } from "./helpers/index.js";
 import { managerAccountsAtRun } from "../../../utils/mcp-connections.js";
@@ -18,6 +19,13 @@ const mocks = vi.hoisted(() => ({
     connectToServer: ReturnType<typeof vi.fn>;
     hasServer(id: string): boolean;
   }>,
+  captureException: vi.fn(),
+}));
+
+// The real reporter and logger run; only Sentry's transport is stubbed.
+vi.mock("@sentry/node", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@sentry/node")>()),
+  captureException: mocks.captureException,
 }));
 
 // Every run-scoped manager `createAuthorizedManager` builds, with the configs
@@ -433,6 +441,94 @@ describe("local eval runs", () => {
 
     expect(response.status).toBe(500);
     expect(mocks.managers[0].disconnectAllServers).toHaveBeenCalledTimes(1);
+  });
+
+  describe("a launch the backend refuses", () => {
+    beforeEach(() => {
+      vi.stubEnv("DO_NOT_TRACK", "");
+      mocks.captureException.mockReset();
+    });
+
+    it("answers a gating judge the suite cannot honour with 409 and the backend's sentence, and reports nothing", async () => {
+      const message =
+        "A gating judge requires the grading engine in enforce mode, otherwise its verdict would be computed and then ignored. The run was not started.";
+      mocks.prepareEvalRun.mockRejectedValueOnce(
+        new ConvexError({
+          code: "JUDGE_GATE_NOT_AVAILABLE",
+          message,
+          gradingEngineMode: "off",
+        }),
+      );
+
+      const response = await post(
+        createApp(createMockMcpClientManager()),
+        "run",
+        runSuiteBody,
+      );
+
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toEqual({
+        code: "CONFLICT",
+        error: message,
+        details: { code: "JUDGE_GATE_NOT_AVAILABLE" },
+      });
+      expect(mocks.captureException).not.toHaveBeenCalled();
+    });
+
+    it("answers a coded refusal with no branch of its own with 400 and its message, and reports nothing", async () => {
+      const message = "That environment is archived.";
+      mocks.prepareEvalRun.mockRejectedValueOnce(
+        new ConvexError({ code: "ENV_ARCHIVED", message }),
+      );
+
+      const response = await post(
+        createApp(createMockMcpClientManager()),
+        "run",
+        runSuiteBody,
+      );
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({
+        code: "VALIDATION_ERROR",
+        error: message,
+        details: { code: "ENV_ARCHIVED" },
+      });
+      expect(mocks.captureException).not.toHaveBeenCalled();
+    });
+
+    it("answers an authorization refusal with 403 and its message, and reports nothing", async () => {
+      const message =
+        "Insufficient permissions for run.launch: requires editor";
+      mocks.prepareEvalRun.mockRejectedValueOnce(
+        new ConvexError({ kind: "forbidden", action: "run.launch", message }),
+      );
+
+      const response = await post(
+        createApp(createMockMcpClientManager()),
+        "run",
+        runSuiteBody,
+      );
+
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toEqual({
+        code: "FORBIDDEN",
+        error: message,
+      });
+      expect(mocks.captureException).not.toHaveBeenCalled();
+    });
+
+    it("still answers a failure with no backend code with 500 and reports it", async () => {
+      mocks.prepareEvalRun.mockRejectedValueOnce(new Error("snapshot failed"));
+
+      const response = await post(
+        createApp(createMockMcpClientManager()),
+        "run",
+        runSuiteBody,
+      );
+
+      expect(response.status).toBe(500);
+      expect(mocks.captureException).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("refuses a server the project does not have instead of using the app's connection", async () => {
