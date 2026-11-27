@@ -1,3 +1,4 @@
+import { gzipSync } from "node:zlib";
 import { describe, expect, it, vi } from "vitest";
 import { Header } from "tar";
 import type { PhaseSandbox } from "../sandbox-phases/exec.js";
@@ -153,6 +154,54 @@ describe("which archive entries are copied", () => {
     );
     expect(many).toMatchObject({ ok: false });
   });
+
+  it("stops at the cap without reading the rest of the archive", async () => {
+    // Malformed after the over-cap file: reading on would fail there and
+    // report that instead of the cap.
+    const parsed = await parseGradingArchive(
+      new Uint8Array(
+        Buffer.concat([
+          tarEntry("home/user/app/big.bin", "File", {
+            data: Buffer.alloc(MAX_GRADING_FILES_BYTES + 1),
+          }),
+          Buffer.alloc(512, 0x41),
+          Buffer.alloc(1024),
+        ]),
+      ),
+      ROOTS,
+    );
+    expect(parsed).toEqual({
+      ok: false,
+      problem: "The files declared for grading are over 25 MB together.",
+    });
+  });
+
+  it("refuses a compressed archive unread, whatever it would inflate to", async () => {
+    // A replaced `tar` can hand back a gzip or zstd bomb, which the parser
+    // would inflate on its own.
+    const refused = {
+      ok: false,
+      problem:
+        "The declared files couldn't be read: the agent's box returned a compressed archive, and only a plain tar is accepted.",
+    };
+    const gzipped = gzipSync(
+      archive(
+        tarEntry("home/user/app/zeros.bin", "File", {
+          data: Buffer.alloc(4 * 1024 * 1024),
+        }),
+      ),
+    );
+    expect(await parseGradingArchive(new Uint8Array(gzipped), ROOTS)).toEqual(
+      refused,
+    );
+    const zstdMagic = Buffer.concat([
+      Buffer.from([0x28, 0xb5, 0x2f, 0xfd]),
+      Buffer.alloc(1020),
+    ]);
+    expect(await parseGradingArchive(new Uint8Array(zstdMagic), ROOTS)).toEqual(
+      refused,
+    );
+  });
 });
 
 describe("collecting from the agent's box", () => {
@@ -203,7 +252,9 @@ describe("collecting from the agent's box", () => {
 
   it("stops reading an archive past the cap, whatever the box claims", async () => {
     const chunk = new Uint8Array(1024 * 1024);
-    const agent = agentBox(streamOf(...Array.from({ length: 40 }, () => chunk)));
+    const agent = agentBox(
+      streamOf(...Array.from({ length: 40 }, () => chunk)),
+    );
     expect(
       await collectGradingFiles(agent.box, ["/home/user/app"], {
         timeoutMs: 1000,
@@ -360,7 +411,9 @@ describe("grading with declared files", () => {
       ],
     });
     const restored = grading.log.indexOf("write /home/user/app/out.json");
-    const prepared = grading.log.findIndex((l) => l.includes("mkdir -p /mcpjam"));
+    const prepared = grading.log.findIndex((l) =>
+      l.includes("mkdir -p /mcpjam"),
+    );
     expect(restored).toBeGreaterThanOrEqual(0);
     expect(restored).toBeLessThan(prepared);
   });
