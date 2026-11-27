@@ -44,14 +44,14 @@ export function SuiteEvaluatorLibrary({
   const methods: MethodAvailability = {
     assertions: authorableKinds.length
       ? null
-      : "No assertion types are available on this deployment.",
+      : "This deployment has no assertion types yet. Use a decision question or judge prompt instead.",
     decision: !canAskQuestions
-      ? "This deployment does not support decision questions."
+      ? "This deployment does not support decision questions yet. Use an assertion or judge prompt instead."
       : questions.length >= MAX_RUBRIC_CHECK_QUESTIONS
         ? `Remove a question to add another. Each suite can have ${MAX_RUBRIC_CHECK_QUESTIONS} questions.`
         : null,
     judge: !canJudge
-      ? "This deployment does not support custom judges."
+      ? "This deployment does not support custom judges yet. Use an assertion or decision question instead."
       : judgeConfig?.customJudges?.enabled === false
         ? CUSTOM_JUDGES_OFF_COPY
         : judges.length >= maxJudges
