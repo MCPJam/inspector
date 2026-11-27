@@ -8,6 +8,7 @@ import { answerCase } from "./case-call.js";
 import type { CaseCall } from "./case-call.js";
 import { isInputStep } from "./definition-types.js";
 import type { MockSavedAnswer } from "./definition-types.js";
+import type { TaskCreated } from "./mock-server.js";
 import type { MockObserver } from "./mock-observer.js";
 import { checkStructuredOutput } from "./output-schema.js";
 import { chooseCase, finishCase } from "./saved-answers.js";
@@ -37,13 +38,14 @@ export interface SelfAnswerCall {
  * listed schema, then the first matching saved case answers, and its result
  * must fit the tool's output schema. Returns `undefined` only when no saved
  * case matched and the real server has the tool, so the caller forwards the
- * call. A case with steps runs them first; one that asks a question stops
- * with the questions (2026-07-28). Throws a saved case's protocol error. Each call
+ * call. A case with steps runs them first; one that runs as a task answers
+ * with the task handle, and one that asks a question stops with the
+ * questions (2026-07-28). Throws a saved case's protocol error. Each call
  * reports once.
  */
 export async function answerItself(
   call: SelfAnswerCall
-): Promise<CallToolResult | InputRequiredResult | undefined> {
+): Promise<CallToolResult | InputRequiredResult | TaskCreated | undefined> {
   const { name, answer, input, observer } = call;
   const verdict = checkToolArgs(call.tool?.inputSchema, input);
   if (verdict.verdict === "invalid") {
@@ -89,7 +91,7 @@ export async function answerItself(
   };
   // A protocol error is thrown by `finishCase`; it still counts as a saved answer.
   try {
-    if (call.caseCall && chosen.steps) {
+    if (call.caseCall && (chosen.steps || chosen.task)) {
       return await answerCase(chosen, input, call.caseCall, finish);
     }
     return finish({});

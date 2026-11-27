@@ -72,6 +72,15 @@ export {
   type MockReadSelector,
   type MockReadSource,
 } from "./read.js";
+export { isTerminalTask, TASKS_EXTENSION_ID } from "./mock-tasks.js";
+export type {
+  MockTaskPatch,
+  MockTaskRecord,
+  MockTaskStatus,
+  MockTaskStore,
+  MockTasks,
+} from "./mock-tasks.js";
+export { MODERN_REVISION } from "./revision.js";
 export { matchTemplate, templateVariables } from "./uri-template.js";
 export { listMockSkills } from "./mock-skills.js";
 export {

@@ -24,6 +24,167 @@ const h = useProtocolHarness();
 const MODERN: Revision = "2026-07-28";
 const LEGACY = REVISIONS.filter((r) => !isModern(r));
 
+const prompts = {
+  greet: {
+    messages: [
+      {
+        role: "user" as const,
+        content: { type: "text", text: "hi {{input.who}}" },
+      },
+    ],
+  },
+};
+const withCompletions: MockDefinition = {
+  prompts,
+  resourceTemplates: { "doc://{id}": { text: "doc {{input.id}}" } },
+  completions: {
+    prompts: { greet: { who: ["ada", "alan", "grace"] } },
+    resourceTemplates: { "doc://{id}": { id: ["1", "10", "2"] } },
+  },
+};
+
+describe.each(REVISIONS)("completions (%s)", (revision) => {
+  const complete = (
+    handler: Parameters<typeof h.rpc>[0],
+    ref: object,
+    name: string,
+    value: string
+  ) =>
+    h.rpc(handler, revision, "completion/complete", {
+      ref,
+      argument: { name, value },
+    });
+
+  it("completes a prompt argument and a template variable from the definition", async () => {
+    const { client, handler } = await h.connect(withCompletions, { revision });
+    expect(client.getServerCapabilities()?.completions).toBeDefined();
+    expect(
+      (
+        await complete(
+          handler,
+          { type: "ref/prompt", name: "greet" },
+          "who",
+          "a"
+        )
+      ).result
+    ).toMatchObject({
+      completion: { values: ["ada", "alan"], total: 2, hasMore: false },
+    });
+    expect(
+      (
+        await complete(
+          handler,
+          { type: "ref/resource", uri: "doc://{id}" },
+          "id",
+          "1"
+        )
+      ).result?.completion.values
+    ).toEqual(["1", "10"]);
+  });
+
+  it("caps a result at 100 and says there is more", async () => {
+    const many = Array.from({ length: 150 }, (_, i) => `v${i}`);
+    const { handler } = await h.connect(
+      {
+        ...withCompletions,
+        completions: { prompts: { greet: { who: many } } },
+      },
+      { revision }
+    );
+    const { completion } = (
+      await complete(handler, { type: "ref/prompt", name: "greet" }, "who", "")
+    ).result!;
+    expect(completion.values).toHaveLength(100);
+    expect(completion).toMatchObject({ total: 150, hasMore: true });
+  });
+
+  it("gives no suggestions for an argument the definition does not list, and none from a real server without completions", async () => {
+    const { handler } = await h.connect(withCompletions, { revision });
+    expect(
+      (
+        await complete(
+          handler,
+          { type: "ref/prompt", name: "greet" },
+          "other",
+          ""
+        )
+      ).result?.completion.values
+    ).toEqual([]);
+  });
+
+  it("is not offered unless the definition lists suggestions or the real server completes", async () => {
+    const { client, handler } = await h.connect(
+      workDefinition([{ result: text("x") }]),
+      { revision }
+    );
+    expect(client.getServerCapabilities()?.completions).toBeUndefined();
+    expect(
+      (
+        await complete(
+          handler,
+          { type: "ref/prompt", name: "greet" },
+          "who",
+          ""
+        )
+      ).error?.code
+    ).toBe(-32601);
+  });
+
+  it("passes an argument the definition does not list to the real server, after the host allows it", async () => {
+    h.state.withCompletions = true;
+    h.state.completed = [];
+    const { handler } = await h.connect(
+      { completions: withCompletions.completions },
+      { revision, backed: true }
+    );
+    const ref = { type: "ref/prompt", name: "greet" };
+    const real = await complete(handler, ref, "elsewhere", "r");
+    expect(real.result?.completion.values).toEqual(["real-1", "real-2"]);
+    expect(h.state.completed).toEqual([
+      expect.objectContaining({
+        ref,
+        argument: { name: "elsewhere", value: "r" },
+      }),
+    ]);
+    expect(h.state.asked).toContainEqual({
+      kind: "request",
+      name: "completion/complete",
+    });
+    // The definition's own list still answers without a forward.
+    h.state.asked = [];
+    expect(
+      (await complete(handler, ref, "who", "g")).result?.completion.values
+    ).toEqual(["grace"]);
+    expect(h.state.asked).toEqual([]);
+  });
+
+  it("dispatches nothing to the real server when the host refuses the forward", async () => {
+    h.state.withCompletions = true;
+    h.state.completed = [];
+    h.state.decide = (): MockForwardDecision => ({
+      allowed: false,
+      reason: "blocked_by_policy",
+      message:
+        "Live calls are blocked in this workspace. Ask an admin to allow them.",
+    });
+    const { handler } = await h.connect(
+      { completions: withCompletions.completions },
+      { revision, backed: true }
+    );
+    const refused = await complete(
+      handler,
+      { type: "ref/prompt", name: "greet" },
+      "elsewhere",
+      ""
+    );
+    expect(refused.error).toMatchObject({
+      code: -32013,
+      message: expect.stringContaining("blocked"),
+    });
+    expect(h.state.completed).toEqual([]);
+  });
+});
+
 describe.each(LEGACY)("resource subscriptions (%s)", (revision) => {
   it("passes subscribe and unsubscribe to the real server, after the host allows them", async () => {
     h.state.withSubscribe = true;

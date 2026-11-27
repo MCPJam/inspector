@@ -127,6 +127,14 @@ export function isRealUnreachable(error: unknown): error is ProtocolError {
   );
 }
 
+/** A forward the host refused (`forwardBlockedError`). */
+export function isForwardBlocked(error: unknown): error is ProtocolError {
+  return (
+    error instanceof ProtocolError &&
+    error.code === MOCK_ERROR_CODES.forwardBlocked
+  );
+}
+
 /** A request the mock would pass to the real server, refused before dispatch. */
 export function forwardBlockedError(
   method: string,

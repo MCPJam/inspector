@@ -7,10 +7,20 @@ import type {
   ServerEventBus,
   ServerNotifier,
 } from "@modelcontextprotocol/server";
-import { definitionHasStep } from "./definition-types.js";
+import { definitionHasStep, definitionRunsTasks } from "./definition-types.js";
 import type { MockDefinition } from "./definition-types.js";
+import { definitionCompletes } from "./completions.js";
+import { MockServer } from "./mock-server.js";
+import { answerTaskMethod, TASKS_EXTENSION_ID } from "./mock-tasks.js";
+import type { MockTasks } from "./mock-tasks.js";
 import { notifierFor } from "./notifier.js";
-import { registerSubscribeHandlers } from "./protocol-handlers.js";
+import {
+  listLegacyTasks,
+  registerCompletionHandler,
+  registerSubscribeHandlers,
+  registerTaskExtensionHandlers,
+  taskNotHeld,
+} from "./protocol-handlers.js";
 import {
   capabilitiesForRevision,
   MODERN_REVISION,
@@ -67,7 +77,8 @@ const ONLY_IN_MODERN = ["subscriptions/listen", "server/discover"];
 function effectiveCapabilities(
   real: ServerCapabilities,
   definition: MockDefinition,
-  revision: string
+  revision: string,
+  tasks: MockTasks | undefined
 ): ServerCapabilities {
   const merged: Record<string, unknown> = { ...real };
   const stated = definition.capabilities ?? {};
@@ -114,6 +125,36 @@ function effectiveCapabilities(
       subscribe: true,
     };
   }
+  if (definitionCompletes(definition) && !("completions" in stated)) {
+    merged.completions ??= {};
+  }
+  // A case that runs as a task makes the mock a task server, on the wire the
+  // caller's revision speaks: the 2025-11-25 utility or the 2026-07-28 extension.
+  if (tasks && definitionRunsTasks(definition)) {
+    if (modern && !("extensions" in stated)) {
+      merged.extensions = {
+        ...(merged.extensions as object | undefined),
+        [TASKS_EXTENSION_ID]: {},
+      };
+    } else if (revision === "2025-11-25" && !("tasks" in stated)) {
+      // Merged into what the real server states, which may name only some of
+      // these: a client checks `cancel` and `requests.tools.call` before it
+      // cancels or starts a task.
+      const inherited = (merged.tasks ?? {}) as Record<string, unknown>;
+      const requests = (inherited.requests ?? {}) as Record<string, unknown>;
+      const tools = (requests.tools ?? {}) as Record<string, unknown>;
+      // A list names every task `tasks/get` can read, so the mock offers one
+      // only when it can name the real server's tasks too: a real server that
+      // runs tasks but cannot list them leaves the mock with no list.
+      const lists = merged.tasks === undefined || inherited.list !== undefined;
+      merged.tasks = {
+        ...inherited,
+        ...(lists && { list: inherited.list ?? {} }),
+        cancel: inherited.cancel ?? {},
+        requests: { ...requests, tools: { ...tools, call: tools.call ?? {} } },
+      };
+    }
+  }
   return capabilitiesForRevision(merged as ServerCapabilities, revision);
 }
 
@@ -149,6 +190,12 @@ export interface BuildMockOptions {
   /** Told about each tool call: where its answer came from, and the real tool of a forward. */
   observer?: MockObserver;
   /**
+   * Where the tasks of `task` cases live, and whose they are. Without it such
+   * a case answers in place and the mock declares no tasks. The host supplies
+   * the store (the backend's, so any replica polls a task) and the owner.
+   */
+  tasks?: MockTasks;
+  /**
    * Where 2026-07-28 change notifications go (`subscriptions/listen` streams
    * subscribe to it). Share one across the requests of a caller so a stream
    * open on one request hears a change a call on another raised; left out,
@@ -178,10 +225,11 @@ async function buildServer(
   const mockCapabilities = effectiveCapabilities(
     info.capabilities,
     definition,
-    revision
+    revision,
+    options.tasks
   );
   const instructions = definition.instructions ?? info.instructions;
-  const server = new Server(
+  const server = new MockServer(
     {
       ...info.serverInfo,
       ...definition.serverInfo,
@@ -195,12 +243,21 @@ async function buildServer(
       ...(instructions !== undefined && { instructions }),
     }
   );
+  // Tasks run only when the host gave a store and this revision declares them.
+  const tasks = (
+    revision === MODERN_REVISION
+      ? Boolean(mockCapabilities.extensions?.[TASKS_EXTENSION_ID])
+      : Boolean(mockCapabilities.tasks)
+  )
+    ? options.tasks
+    : undefined;
   const context = {
     definition,
     real,
     observer: options.observer,
     revision,
     notifierFor: (ctx?: ServerContext) => notifierFor(era, bus, ctx),
+    tasks,
   };
   if (mockCapabilities.tools) registerToolHandlers(server, context);
   const itemContext = {
@@ -211,8 +268,13 @@ async function buildServer(
     revision,
   };
   registerItemHandlers(server, itemContext);
+  if (mockCapabilities.completions)
+    registerCompletionHandler(server, itemContext);
   if (revision !== MODERN_REVISION && mockCapabilities.resources?.subscribe) {
     registerSubscribeHandlers(server, itemContext);
+  }
+  if (tasks && revision === MODERN_REVISION) {
+    registerTaskExtensionHandlers(server, itemContext, tasks);
   }
 
   // Every other method goes to the real server when both sides have it, and is
@@ -225,6 +287,30 @@ async function buildServer(
       (!modern && ONLY_IN_MODERN.includes(request.method))
     ) {
       throw unknownMethodError(request.method);
+    }
+    if (tasks && !modern && request.method.startsWith("tasks/")) {
+      if (request.method === "tasks/list") {
+        return (await listLegacyTasks(
+          tasks,
+          itemContext,
+          request.params,
+          ctx.mcpReq.signal
+        )) as Result;
+      }
+      const answered = await answerTaskMethod(
+        tasks,
+        "legacy",
+        request.method,
+        request.params,
+        ctx.mcpReq.signal
+      );
+      if (answered) return answered as Result;
+      return (await taskNotHeld(
+        itemContext,
+        request.method,
+        request.params,
+        ctx.mcpReq.signal
+      )) as Result;
     }
     const skills = await answerSkillsMethod(
       request,
