@@ -8,6 +8,8 @@ import {
 } from "@mcpjam/sdk/browser";
 import { useHostList, type HostListItem } from "@/hooks/useClients";
 import { clientDisplayName } from "@/lib/client-display-name";
+import { harnessDisplayName } from "@/shared/client-events";
+import { effectiveHarnessId } from "@/shared/harness-descriptors";
 
 /** How MCPJam's own client is named when no saved client is chosen. */
 export const BUILT_IN_EVENTS_HOST_NAME = "MCPJam (built-in)";
@@ -21,13 +23,22 @@ export interface EventsHostChoice {
   modes: EventDeliveryMode[];
   /** The chosen client no longer exists, so nothing can subscribe as it. */
   missing: boolean;
+  /** The vendor harness that runs it, which receives no MCP Events. */
+  harnessName?: string;
+}
+
+function harnessOf(
+  config: { agentLoop?: string | null; harness?: string | null } | null,
+): { harnessName: string } | Record<string, never> {
+  const id = effectiveHarnessId(config);
+  return id ? { harnessName: harnessDisplayName(id) } : {};
 }
 
 /**
  * The chosen client, resolved against the project's client list (`undefined`
  * while it loads). A chosen client that is gone is `missing`, never swapped
  * for built-in. The active client's own config decides its modes; others come
- * from the list, or their style default on an older backend.
+ * from the list, and receive none when the list doesn't say.
  */
 export function resolveEventsHostChoice(args: {
   hostId: string | null;
@@ -50,6 +61,7 @@ export function resolveEventsHostChoice(args: {
       name: listed ? clientDisplayName(listed) : "Active client",
       modes: resolveHostEventDeliveryModes(args.activeHost),
       missing: false,
+      ...harnessOf(args.activeHost),
     };
   }
   if (!args.hosts) return undefined;
@@ -64,24 +76,27 @@ export function resolveEventsHostChoice(args: {
   return {
     id: args.hostId,
     name: clientDisplayName(listed),
-    modes:
-      listed.eventDeliveryModes ??
-      resolveHostEventDeliveryModes({ hostStyle: listed.hostStyle ?? null }),
+    modes: listed.eventDeliveryModes ?? [],
     missing: false,
+    ...harnessOf(listed),
   };
 }
 
 /**
- * The client the Events tab subscribes as. Hosted: MCPJam (built-in), so a
- * project-wide subscription never borrows a saved client's identity. Local:
- * the active client, because the local runtime reuses the connection that
- * client opened. Neither is a choice: client policy lives in Clients.
+ * The client a subscription is made as. The Events tab, project-wide, uses
+ * MCPJam (built-in) when hosted, so it never borrows a saved client's
+ * identity, and the active client locally, because the local runtime reuses
+ * the connection that client opened. The Playground passes
+ * `subscribeAsActiveClient`: a chat's subscriptions are made as the chat's
+ * client in both runtimes, the way ChatGPT subscribes as the client the user
+ * is chatting with. Neither is a choice: client policy lives in Clients.
  */
 export function useEventsHost(args: {
   hosted: boolean;
   projectId: string | null;
   activeHostId?: string | null;
   activeHost?: EventsSupportHost | null;
+  subscribeAsActiveClient?: boolean;
 }) {
   const { isAuthenticated } = useConvexAuth();
   const { hosts, isLoading } = useHostList({
@@ -89,7 +104,8 @@ export function useEventsHost(args: {
     projectId: args.projectId,
   });
   const activeHostId = args.activeHostId ?? null;
-  const hostId = args.hosted ? null : activeHostId;
+  const hostId =
+    args.hosted && !args.subscribeAsActiveClient ? null : activeHostId;
 
   const choice = useMemo(
     () =>

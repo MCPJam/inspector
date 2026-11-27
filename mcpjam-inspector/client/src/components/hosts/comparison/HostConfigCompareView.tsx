@@ -13,6 +13,7 @@ import {
   Copy,
   Filter,
   Flag,
+  Link2,
   Loader2,
   Moon,
   Share2,
@@ -39,6 +40,7 @@ import {
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import { Textarea } from "@mcpjam/design-system/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@mcpjam/design-system/tooltip";
 import {
   Command,
   CommandEmpty,
@@ -161,7 +163,7 @@ function capabilityForSearchQuery(
   return null;
 }
 
-function fieldSearchQueryFromParams(searchParams: URLSearchParams): string {
+export function fieldSearchQueryFromParams(searchParams: URLSearchParams): string {
   const capability = getCaniuseCapabilityBySlug(
     searchParams.get(CAPABILITY_QUERY_PARAM)
   );
@@ -197,13 +199,18 @@ function writeFieldSearchParams(
 function buildShareComparisonUrl(
   hostIds: ReadonlyArray<string>,
   query: string,
-  fields: ReadonlyArray<HostConfigFieldDef>
+  fields: ReadonlyArray<HostConfigFieldDef>,
+  preserveQuery: boolean
 ): string {
   const params = new URLSearchParams();
   if (hostIds.length > 0) {
     params.set(HOSTS_QUERY_PARAM, hostIds.join(","));
   }
-  writeFieldSearchParams(params, query, fields);
+  if (preserveQuery) {
+    if (query) params.set(SEARCH_QUERY_PARAM, query);
+  } else {
+    writeFieldSearchParams(params, query, fields);
+  }
   const search = params.toString();
   if (typeof window === "undefined") {
     return search ? `?${search}` : "";
@@ -843,7 +850,7 @@ function ThemeToggleButton() {
   );
 }
 
-function NotifyButton() {
+export function NotifyButton({ footer = false }: { footer?: boolean }) {
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<
@@ -886,17 +893,17 @@ function NotifyButton() {
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <Button
         type="button"
-        variant="outline"
+        variant={footer ? "link" : "outline"}
         size="sm"
         aria-label="Notify me of client changes"
         title="Notify me of client changes"
-        className={cn("gap-1.5", CANIUSE_ACTION_BUTTON_CLASS)}
+        className={footer ? "h-9 px-0 text-muted-foreground" : cn("gap-1.5", CANIUSE_ACTION_BUTTON_CLASS)}
         onClick={() => setOpen(true)}
       >
-        <Bell className="size-3.5" />
-        <span>Notify</span>
+        {!footer && <Bell className="size-3.5" />}
+        <span>{footer ? "Notify Me" : "Notify"}</span>
       </Button>
-      <DialogContent className="sm:max-w-[420px]">
+      <DialogContent className={cn("sm:max-w-[420px]", footer && "dark caniuse-dialog border-0 text-foreground")}>
         {status === "succeeded" ? (
           <>
             <DialogHeader>
@@ -958,7 +965,7 @@ function NotifyButton() {
   );
 }
 
-function ReportInconsistencyDialog() {
+export function ReportInconsistencyDialog({ footer = false }: { footer?: boolean }) {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [status, setStatus] = useState<
@@ -999,20 +1006,17 @@ function ReportInconsistencyDialog() {
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <Button
         type="button"
-        variant="outline"
+        variant={footer ? "link" : "outline"}
         size="sm"
         aria-label="Report inconsistency"
         title="Report inconsistency"
-        className={cn(
-          "gap-1.5",
-          CANIUSE_ACTION_BUTTON_CLASS
-        )}
+        className={footer ? "h-9 px-0 text-muted-foreground" : cn("gap-1.5", CANIUSE_ACTION_BUTTON_CLASS)}
         onClick={() => setOpen(true)}
       >
-        <Flag className="size-3.5" />
+        {!footer && <Flag className="size-3.5" />}
         <span>Report</span>
       </Button>
-      <DialogContent className="sm:max-w-[440px]">
+      <DialogContent className={cn("sm:max-w-[440px]", footer && "dark caniuse-dialog border-0 text-foreground")}>
         {status === "succeeded" ? (
           <>
             <DialogHeader>
@@ -1028,14 +1032,14 @@ function ReportInconsistencyDialog() {
             </DialogFooter>
           </>
         ) : (
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className={footer ? "space-y-5" : "space-y-4"}>
             <DialogHeader>
               <DialogTitle>Report inconsistency</DialogTitle>
-              <DialogDescription>
+              <DialogDescription className={footer ? "sr-only" : undefined}>
                 Tell us what looks inconsistent.
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-2">
+            <div className="grid gap-2">
               <label
                 htmlFor="caniuse-report-message"
                 className="text-sm font-medium text-foreground"
@@ -1413,53 +1417,81 @@ function CompareSearchBar({
   );
 }
 
-function ShareComparisonDialog({
+export function ShareComparisonDialog({
   selectedHostIds,
   searchQuery,
   fields,
+  preserveQuery = false,
+  copyOnShare = false,
+  iconOnly = false,
 }: {
   selectedHostIds: ReadonlyArray<string>;
   searchQuery: string;
   fields: ReadonlyArray<HostConfigFieldDef>;
+  preserveQuery?: boolean;
+  copyOnShare?: boolean;
+  iconOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [tooltipOpen, setTooltipOpen] = useState(false);
 
   const shareUrl = useMemo(
-    () => buildShareComparisonUrl(selectedHostIds, searchQuery, fields),
-    [selectedHostIds, searchQuery, fields]
+    () => buildShareComparisonUrl(selectedHostIds, searchQuery, fields, preserveQuery),
+    [selectedHostIds, searchQuery, fields, preserveQuery]
   );
 
   const handleCopy = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(shareUrl);
     } catch {
-      // Clipboard blocked (e.g. insecure context) — the URL stays visible in
-      // the field, so the user can still select and copy it manually.
+      // The modal still shows a selectable URL when the browser blocks clipboard access.
+      console.debug("Comparison link clipboard write failed");
+      if (copyOnShare) setOpen(true);
       return;
     }
     setCopied(true);
     window.setTimeout(() => setCopied(false), 2000);
-  }, [shareUrl]);
+  }, [copyOnShare, shareUrl]);
 
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
+  const trigger = (
       <Button
         type="button"
         variant="outline"
-        size="sm"
-        aria-label="Share"
-        title="Share"
-        onClick={() => setOpen(true)}
+        size={iconOnly ? "icon" : "sm"}
+        aria-label={copyOnShare ? "Copy comparison link" : "Share"}
+        title={copyOnShare ? undefined : "Share"}
+        onClick={() => (copyOnShare ? void handleCopy() : setOpen(true))}
         className={cn(
           "gap-1.5",
-          CANIUSE_ACTION_BUTTON_CLASS
+          CANIUSE_ACTION_BUTTON_CLASS,
+          iconOnly && "size-8 px-0",
         )}
       >
-        <Share2 className="size-3.5" />
-        <span>Share</span>
+        {copyOnShare && copied ? (
+          <Check className="size-3.5" />
+        ) : copyOnShare ? (
+          <Link2 className="size-3.5" />
+        ) : (
+          <Share2 className="size-3.5" />
+        )}
+        <span aria-live="polite" className={iconOnly ? "sr-only" : undefined}>
+          {copyOnShare && copied ? "Link copied" : iconOnly ? "" : "Share"}
+        </span>
       </Button>
-      <DialogContent className="sm:max-w-[460px]">
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      {copyOnShare ? (
+        <Tooltip open={!open && (copied || tooltipOpen)} onOpenChange={setTooltipOpen}>
+          <TooltipTrigger asChild>{trigger}</TooltipTrigger>
+          <TooltipContent side="top" sideOffset={6} variant="muted" className="dark">
+            {copied ? "Link copied" : "Copy a link to this exact comparison"}
+          </TooltipContent>
+        </Tooltip>
+      ) : trigger}
+      <DialogContent className={cn("sm:max-w-[460px]", copyOnShare && "dark caniuse-dialog border-0 text-foreground")}>
         <DialogHeader>
           <DialogTitle>Share this comparison</DialogTitle>
           <DialogDescription>

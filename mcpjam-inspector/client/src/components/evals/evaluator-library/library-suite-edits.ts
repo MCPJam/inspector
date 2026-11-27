@@ -25,8 +25,13 @@ import { customizedCopy, withJudges } from "./custom-judges-model";
  * The judge config with these rubric-check questions. Adding turns rubric
  * checks back on if the author had turned them off, because adding asks for
  * questions to run; a switch that was never set already means on, so it
- * stays unset. A slot or config this empties is dropped, so adding an
- * evaluator and removing it again leaves the config as it was.
+ * stays unset.
+ *
+ * An emptied slot is kept as `rubricChecks: {}` while other judge config
+ * remains: the backend copies any reserved slot a write leaves out from the
+ * stored config, so dropping the key would bring the removed questions back.
+ * Only a config with nothing else left becomes undefined, which the settings
+ * save sends as null to clear it.
  */
 function withQuestions(
   judgeConfig: EvalJudgeConfig | undefined,
@@ -39,12 +44,9 @@ function withQuestions(
       : {}),
     questions,
   });
-  if (next.rubricChecks && Object.keys(next.rubricChecks).length > 0) {
-    return next;
-  }
-  const rest = { ...next };
-  delete rest.rubricChecks;
-  return Object.keys(rest).length > 0 ? rest : undefined;
+  const { rubricChecks, ...rest } = next;
+  const empty = !rubricChecks || Object.keys(rubricChecks).length === 0;
+  return empty && Object.keys(rest).length === 0 ? undefined : next;
 }
 
 /** The two lists one library edit writes. Absent means unchanged. */

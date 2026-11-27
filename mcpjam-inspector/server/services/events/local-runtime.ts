@@ -344,10 +344,12 @@ export class LocalEventsRuntime {
         // The same subscription under another host is a different test:
         // returning it would quietly change the host.
         if (existing.host.id !== host.id) {
+          // Named, because the Playground subscribes as the chat's client and
+          // the Events tab may hold the same subscription under another one.
           throw new LocalEventsError(
             409,
             "EVENTS_CONFLICT",
-            "This event is already subscribed under another client. Remove that subscription first.",
+            `${request.eventName} is already subscribed under ${existing.host.name} with the same arguments. Remove that subscription in the Events tab, then subscribe again.`,
           );
         }
         if (

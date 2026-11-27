@@ -11,6 +11,7 @@ type HostVerifyTabParam =
   | "computer"
   | "protocol"
   | "apps"
+  | "events"
   | "appearance";
 
 const HOST_VERIFY_TAB_TO_FOCUS_TAB: Record<
@@ -23,6 +24,7 @@ const HOST_VERIFY_TAB_TO_FOCUS_TAB: Record<
   computer: "computer",
   protocol: "protocol",
   apps: "apps",
+  events: "events",
   appearance: "appearance",
 };
 
@@ -35,6 +37,7 @@ const FOCUS_TAB_TO_HOST_VERIFY_TAB: Partial<
   computer: "computer",
   protocol: "protocol",
   apps: "apps",
+  events: "events",
   appearance: "appearance",
 };
 

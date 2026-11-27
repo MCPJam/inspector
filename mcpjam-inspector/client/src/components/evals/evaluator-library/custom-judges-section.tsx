@@ -41,6 +41,8 @@ export function CustomJudgesSection({
   // Custom judges ride the goal-completion judge, so its Off pauses them.
   const goalJudgeOff =
     judgeMode(judgeConfig, capabilities?.judges?.goalCompletion?.policy) === "off";
+  // Only the suite API or suite file sets this; the backend then skips them all.
+  const slotOff = judgeConfig?.customJudges?.enabled === false;
   const change = (next: EvalJudgeConfig) => onJudgeConfigChange?.(next);
   const save = (judge: CustomJudge) => {
     const next = isNew
@@ -74,7 +76,26 @@ export function CustomJudgesSection({
           <p className="text-xs text-muted-foreground">
             {CUSTOM_JUDGE_COST_COPY} Results are advisory.
             {goalJudgeOff ? " Paused while the goal-completion judge is off." : ""}
+            {slotOff
+              ? " Paused: judges you write are turned off for this suite."
+              : ""}
           </p>
+          {slotOff ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="link"
+              className="h-auto px-0 text-xs"
+              onClick={() =>
+                change({
+                  ...judgeConfig,
+                  customJudges: { ...judgeConfig?.customJudges, enabled: true },
+                })
+              }
+            >
+              Turn on judges you write
+            </Button>
+          ) : null}
         </div>
         {editing ? null : (
           <Button
@@ -97,9 +118,11 @@ export function CustomJudgesSection({
         <ul className="divide-y divide-border">
           {written.map((judge) =>
             editing?.id === judge.id && !isNew ? null : (
+              // Switching rows while a new judge is open would drop it unsaved.
               <JudgeRow
                 key={judge.id}
                 judge={judge}
+                editDisabled={Boolean(editing) && isNew}
                 onEdit={() => {
                   setIsNew(false);
                   setEditing(judge);
@@ -118,6 +141,11 @@ export function CustomJudgesSection({
           variables={variables}
           maxPromptLength={maxPromptLength}
           isNew={isNew}
+          addBlockedReason={
+            isNew && atMax
+              ? `A suite can have ${maxJudges} judges. Remove one to add this judge.`
+              : undefined
+          }
           others={all.filter((j) => isNew || j.id !== editing.id)}
           onCancel={() => setEditing(null)}
           onSave={save}
@@ -135,10 +163,12 @@ function outputSummary(judge: CustomJudge): string {
 
 function JudgeRow({
   judge,
+  editDisabled,
   onEdit,
   onRemove,
 }: {
   judge: CustomJudge;
+  editDisabled: boolean;
   onEdit: () => void;
   onRemove: () => void;
 }) {
@@ -160,6 +190,7 @@ function JudgeRow({
           size="sm"
           variant="ghost"
           aria-label={`Edit ${judge.label}`}
+          disabled={editDisabled}
           onClick={onEdit}
         >
           <Pencil aria-hidden />
@@ -184,6 +215,7 @@ function JudgeEditor({
   variables,
   maxPromptLength,
   isNew,
+  addBlockedReason,
   others,
   onCancel,
   onSave,
@@ -194,6 +226,8 @@ function JudgeEditor({
   /** The backend's `judges.custom.maxPromptLength`. */
   maxPromptLength: number;
   isNew: boolean;
+  /** Set when the suite filled up after this new judge was opened. */
+  addBlockedReason?: string;
   others: readonly CustomJudge[];
   onCancel: () => void;
   onSave: (judge: CustomJudge) => void;
@@ -277,9 +311,9 @@ function JudgeEditor({
           disabledReason={problem}
         />
       ) : null}
-      {tried && problem ? (
+      {tried && (problem ?? addBlockedReason) ? (
         <p role="alert" className="text-xs text-destructive">
-          {problem}
+          {problem ?? addBlockedReason}
         </p>
       ) : null}
       <div className="flex justify-end gap-2">
@@ -291,7 +325,9 @@ function JudgeEditor({
           size="sm"
           onClick={() => {
             setTried(true);
-            if (!problem) onSave({ ...draft, label: draft.label.trim() });
+            if (!problem && !addBlockedReason) {
+              onSave({ ...draft, label: draft.label.trim() });
+            }
           }}
         >
           {isNew ? "Add judge" : "Save judge"}
