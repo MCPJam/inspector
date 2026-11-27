@@ -98,15 +98,13 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
-      # The head of MCPJam/mcpjam-backend#2700: its step schema carries the
-      # evaluator tag and allows only "declared" as a string schema, and its
-      # predicate results accept status "not_applicable". Bump it to a
-      # backend main commit that includes dfe083f4 once that PR merges.
+      # Backend main supplies the evaluator tag, the "declared" schema option,
+      # and the "not_applicable" predicate result status.
       - name: Checkout pinned backend contract
         uses: actions/checkout@v7
         with:
           repository: MCPJam/mcpjam-backend
-          ref: dfe083f4638869db03cc68c19afc9224fa7467af
+          ref: 287883441571efd468897fa5f277afacc4d6868f
           token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
           path: .authoring-backend
           persist-credentials: false
