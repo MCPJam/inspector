@@ -2233,6 +2233,39 @@
         }
       },
       "why": "evaluator needs both id and version"
+    },
+    {
+      "label": "noToolErrors — evaluator tag with a 65-character id",
+      "value": {
+        "type": "noToolErrors",
+        "evaluator": {
+          "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "version": 1
+        }
+      },
+      "why": "evaluator.id must be 1 to 64 characters"
+    },
+    {
+      "label": "noToolErrors — evaluator tag with a fractional version",
+      "value": {
+        "type": "noToolErrors",
+        "evaluator": {
+          "id": "actionable-tool-errors",
+          "version": 1.5
+        }
+      },
+      "why": "evaluator.version must be a positive whole number"
+    },
+    {
+      "label": "noToolErrors — evaluator tag with a version past the safe integer range",
+      "value": {
+        "type": "noToolErrors",
+        "evaluator": {
+          "id": "actionable-tool-errors",
+          "version": 1152921504606846976
+        }
+      },
+      "why": "evaluator.version must be a safe integer, as Zod's .int() requires"
     }
   ]
 }
