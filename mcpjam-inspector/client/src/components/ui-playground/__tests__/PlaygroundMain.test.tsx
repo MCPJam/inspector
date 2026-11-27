@@ -4403,6 +4403,57 @@ describe("PlaygroundMain", () => {
       }
     });
 
+    it("puts the App context back when a column branch is refused in its chat", async () => {
+      await openColumnAlone();
+      // `forkAndSend`: the detach, the fork's reset, then a refused dispatch.
+      vi.mocked(mockUseChatSession.branchFromThread).mockImplementationOnce(
+        async (options: {
+          onBeforeBranch?: () => void;
+          onDispatchRefused?: () => void;
+        }) => {
+          options.onBeforeBranch?.();
+          capturedChatSessionOptions.onReset("fork");
+          options.onDispatchRefused?.();
+          return null;
+        },
+      );
+      // The pre-send read finds the open chat (the mock keeps its id). The
+      // resend has no read: the branch already detached the thread.
+      mockGetChatHistoryState.mockResolvedValueOnce({
+        ok: true,
+        session: { ...column, chatSessionId: "chat-session-1" },
+      });
+      act(() => {
+        mockThread.mock.calls.at(-1)?.[0].onModelContextUpdate?.("call_1", {
+          structuredContent: { rows: 3 },
+        });
+      });
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "next message" },
+      });
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+      await waitFor(() => {
+        expect(mockUseChatSession.branchFromThread).toHaveBeenCalledTimes(1);
+      });
+
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "next message" },
+      });
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+      const resent = [
+        ...vi.mocked(mockUseChatSession.branchFromThread).mock.calls,
+        ...mockUseChatSession.sendMessage.mock.calls,
+      ].at(-1)?.[0] as { text?: string; widgetModelContext?: unknown[] };
+      expect(resent).toMatchObject({
+        text: "next message",
+        widgetModelContext: [expect.objectContaining({ toolCallId: "call_1" })],
+      });
+    });
+
     it("keeps the column open alone when the edit is refused", async () => {
       // Refused before any branch is minted: `onBeforeBranch` never runs.
       mockUseChatSession.rewindToMessage = vi.fn().mockResolvedValue(null);
