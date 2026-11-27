@@ -43,7 +43,8 @@ export type ReviewerStageName =
   | "sign-in"
   | "verification"
   | "consent"
-  | "connected";
+  | "connected"
+  | "identity";
 
 /** One stage, in the shape the attempt's run route takes it. */
 export interface ReviewerStage {
@@ -304,43 +305,6 @@ async function rehearse(
   },
 ): Promise<Ending> {
   const { signal, scrub } = base;
-  const blocked = (detail: string) =>
-    ending({ stage: "sign-in", status: "blocked", detail });
-  let reserved: Awaited<ReturnType<ReviewerSignInDeps["desktop"]["reserve"]>>;
-  try {
-    reserved = await abortable(deps.desktop.reserve(signal), signal);
-  } catch (error) {
-    if (error instanceof ReadinessLeaseLostError || signal.aborted) throw error;
-    return blocked(
-      `MCPJam could not get a hosted browser for the sign-in: ${said(error, scrub)} ${START_AGAIN}`,
-    );
-  }
-  const { agent } = reserved;
-  // The submitter's pages decide where the browser goes, so it must not reach
-  // the box's loopback, cloud metadata or a private network.
-  if (!agent.features.includes(BROWSERD_PUBLIC_NETWORK_FEATURE)) {
-    return ending({
-      stage: "connect-link",
-      status: "blocked",
-      detail:
-        "This hosted browser cannot keep the sign-in to public internet addresses, so MCPJam did not open the sign-in page. Start a new attempt after MCPJam updates its hosted browser.",
-    });
-  }
-  if (!agent.features.includes("secret-origins")) {
-    return blocked(
-      "This hosted browser cannot limit the reviewer's credentials to the sign-in page, so MCPJam did not type them. Start a new attempt after MCPJam updates its hosted browser.",
-    );
-  }
-  // Without a stop at MCPJam's callback, its app would take the code before
-  // this run could read it, so nothing is started.
-  if (!agent.features.includes("navigation-stop-persistent")) {
-    return ending({
-      stage: "connected",
-      status: "failed",
-      detail:
-        "This hosted browser cannot stop at MCPJam's callback page, so MCPJam could not finish the reviewer's connection and did not sign in. Start a new attempt after MCPJam updates its hosted browser.",
-    });
-  }
   let link: ReviewerConnectLink;
   try {
     link = await abortable(deps.connect.prepare(signal), signal);
@@ -351,6 +315,43 @@ async function rehearse(
       status: "failed",
       detail: `MCPJam could not prepare the reviewer's connection: ${said(error, scrub)} ${START_AGAIN}`,
     });
+  }
+  const blocked = (detail: string) =>
+    ending({ stage: "sign-in", status: "blocked", detail }, PERSON_SIGN_IN);
+  let reserved: Awaited<ReturnType<ReviewerSignInDeps["desktop"]["reserve"]>>;
+  try {
+    reserved = await abortable(deps.desktop.reserve(signal), signal);
+  } catch (error) {
+    if (error instanceof ReadinessLeaseLostError || signal.aborted) throw error;
+    return blocked(
+      `MCPJam could not get a hosted browser for the sign-in: ${said(error, scrub)} No password was entered by this run.`,
+    );
+  }
+  const { agent } = reserved;
+  // The submitter's pages decide where the browser goes, so it must not reach
+  // the box's loopback, cloud metadata or a private network.
+  if (!agent.features.includes(BROWSERD_PUBLIC_NETWORK_FEATURE)) {
+    return ending({
+      stage: "connect-link",
+      status: "blocked",
+      detail:
+        "This hosted browser cannot keep the sign-in to public internet addresses, so MCPJam did not open the sign-in page.",
+    }, PERSON_SIGN_IN);
+  }
+  if (!agent.features.includes("secret-origins")) {
+    return blocked(
+      "This hosted browser cannot limit the reviewer's credentials to the sign-in page, so MCPJam did not type them.",
+    );
+  }
+  // Without a stop at MCPJam's callback, its app would take the code before
+  // this run could read it, so nothing is started.
+  if (!agent.features.includes("navigation-stop-persistent")) {
+    return ending({
+      stage: "connected",
+      status: "blocked",
+      detail:
+        "This hosted browser cannot stop at MCPJam's callback page, so MCPJam could not finish the reviewer's connection and did not sign in.",
+    }, PERSON_SIGN_IN);
   }
   const drive: Drive = { deps, signal, scrub };
   const outcome = await agent.run({
