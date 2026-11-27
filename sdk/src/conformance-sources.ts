@@ -155,9 +155,8 @@ export const PROTOCOL_CHECK_SOURCES = {
   "modern-resource-read-no-empty-contents": {
     modern: `${MODERN_SPEC}/server/resources#error-handling`,
   },
-  "modern-tool-output-schema-conformant": {
-    modern: `${MODERN_SPEC}/server/tools#output-schema`,
-  },
+  // The same sentence in 2025-06-18, 2025-11-25 and 2026-07-28.
+  "modern-tool-output-schema-conformant": bothEras("/server/tools#output-schema"),
   "modern-logs-require-log-level": {
     modern: `${MODERN_SPEC}/server/utilities/logging#per-request-log-level`,
   },

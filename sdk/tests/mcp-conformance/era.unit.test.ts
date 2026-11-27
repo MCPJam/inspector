@@ -122,6 +122,8 @@ describe("CHECK_ERAS map", () => {
       // Every revision publishes its own JSON Schema, so the requirement reads
       // the same on either wire and only the document changes.
       "wire-schema-valid",
+      // Named `modern-`, but its MUST is in 2025-06-18 and 2025-11-25 too.
+      "modern-tool-output-schema-conformant",
     ];
     // Modern-only ids are USUALLY prefixed `modern-`; the SEP-2243 declaration
     // check is not, because it belongs to the tools family and reads as one of
@@ -131,7 +133,9 @@ describe("CHECK_ERAS map", () => {
       "tools-x-mcp-header-declarations-valid",
     ];
     const modernOnly = [
-      ...MCP_CHECK_IDS.filter((id) => id.startsWith("modern-")),
+      ...MCP_CHECK_IDS.filter(
+        (id) => id.startsWith("modern-") && !bothEras.includes(id)
+      ),
       ...modernOnlyExplicit,
     ];
 
@@ -179,9 +183,12 @@ describe("modern checks on a legacy run", () => {
     }) as unknown as typeof fetch;
 
     const config = normalize({ fetchFn });
+    // The output-schema check is left out: it runs on the 2025 revisions.
     const modernIds = MCP_CHECK_IDS.filter(
       (id): id is MCPCheckId =>
-        id.startsWith("modern-") && id !== "modern-client-handshake"
+        id.startsWith("modern-") &&
+        id !== "modern-client-handshake" &&
+        CHECK_ERAS[id].length === 1
     );
     const results = await runModernChecks(
       { config, serverUrl: SERVER_URL, fetchFn: config.fetchFn },
