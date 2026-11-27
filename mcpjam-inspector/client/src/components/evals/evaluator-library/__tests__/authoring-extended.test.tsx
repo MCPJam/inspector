@@ -40,6 +40,7 @@ describe("PromptEditor", () => {
         value=""
         onChange={onChange}
         variables={variables}
+        maxLength={MAX_JUDGE_INSTRUCTIONS_LENGTH}
       />,
     );
     const box = screen.getByLabelText("Judge prompt");
@@ -49,6 +50,7 @@ describe("PromptEditor", () => {
         value="Use {{"
         onChange={onChange}
         variables={variables}
+        maxLength={MAX_JUDGE_INSTRUCTIONS_LENGTH}
       />,
     );
     fireEvent.click(screen.getByRole("option", { name: /tool_results/ }));
@@ -77,6 +79,7 @@ describe("PromptEditor", () => {
         value=""
         onChange={onChange}
         variables={variables}
+        maxLength={MAX_JUDGE_INSTRUCTIONS_LENGTH}
       />,
     );
     fireEvent.change(screen.getByLabelText("Judge prompt"), {
@@ -87,6 +90,7 @@ describe("PromptEditor", () => {
         value={full}
         onChange={onChange}
         variables={variables}
+        maxLength={MAX_JUDGE_INSTRUCTIONS_LENGTH}
       />,
     );
     onChange.mockClear();
@@ -99,6 +103,36 @@ describe("PromptEditor", () => {
     ).toBeInTheDocument();
   });
 
+  it("lets the picker use a longer maxLength, such as a custom judge's", () => {
+    const onChange = vi.fn();
+    const long = `${"x".repeat(2_300)}{{`;
+    const { rerender } = renderWithProviders(
+      <PromptEditor
+        value=""
+        onChange={onChange}
+        variables={variables}
+        maxLength={4_000}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Judge prompt"), {
+      target: { value: long },
+    });
+    rerender(
+      <PromptEditor
+        value={long}
+        onChange={onChange}
+        variables={variables}
+        maxLength={4_000}
+      />,
+    );
+    fireEvent.click(screen.getByRole("option", { name: /tool_results/ }));
+    expect(onChange).toHaveBeenLastCalledWith(
+      `${"x".repeat(2_300)}{{tool_results}}`,
+    );
+    expect(screen.queryByText(/No room for/)).not.toBeInTheDocument();
+    expect(screen.getByText("2302/4000")).toBeInTheDocument();
+  });
+
   it("puts the caret right after a token inserted mid-sentence", () => {
     function Controlled() {
       const [value, setValue] = useState("Check  please");
@@ -107,6 +141,7 @@ describe("PromptEditor", () => {
           value={value}
           onChange={setValue}
           variables={variables}
+        maxLength={MAX_JUDGE_INSTRUCTIONS_LENGTH}
         />
       );
     }

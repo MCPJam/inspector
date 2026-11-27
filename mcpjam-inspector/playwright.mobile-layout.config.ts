@@ -35,6 +35,10 @@ export default defineConfig({
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
         env: {
+          // GitHub caches node_modules, including Vite's dependency bundles.
+          // Rebuild them in isolation before serving the mobile fixtures.
+          CLIENT_CACHE_DIR: "node_modules/.vite-mobile-layout",
+          FORCE_OPTIMIZE: "true",
           MCPJAM_RESOLVED_RUNTIME: "1",
           VITE_CONVEX_URL: "https://visual.invalid",
           VITE_WORKOS_CLIENT_ID: "client_mobile_fixture",

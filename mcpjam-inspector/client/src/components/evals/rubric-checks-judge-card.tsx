@@ -40,12 +40,10 @@ import {
   withRubricChecks,
 } from "./rubric-checks-model";
 import type { EvalJudgeConfig, EvalJudgeRubricCriterion } from "./types";
+import { RUBRIC_CHECKS_GOAL_OFF_COPY } from "./evaluator-library/library-pause";
 
 export const RUBRIC_CHECKS_CARD_COPY =
   "Each grading criterion is also asked on its own, as a yes or no question with a probability. Advisory: rubric checks describe a trial and never decide a run.";
-
-export const RUBRIC_CHECKS_GOAL_OFF_COPY =
-  "Rubric checks run on the trials the goal-completion judge grades, so they are paused while that judge is off.";
 
 const INPUT_CLASS =
   "h-7 rounded-md border border-input bg-background px-2 text-xs text-foreground";

@@ -1,4 +1,3 @@
-import { MAX_JUDGE_INSTRUCTIONS_LENGTH } from "@mcpjam/sdk/contract";
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { PromptVariable } from "./variable-mapping-table";
@@ -42,10 +41,12 @@ export function PromptEditor({
   value,
   onChange,
   variables,
+  maxLength,
 }: {
   value: string;
   onChange: (next: string) => void;
   variables: readonly PromptVariable[];
+  maxLength: number;
 }) {
   const id = useId();
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -75,7 +76,7 @@ export function PromptEditor({
     ref.current?.focus();
     // The picker bypasses maxLength, so check the limit here and leave the
     // prompt as it was when the token does not fit.
-    if (next.length > MAX_JUDGE_INSTRUCTIONS_LENGTH) {
+    if (next.length > maxLength) {
       setNoRoom(name);
       return;
     }
@@ -94,7 +95,7 @@ export function PromptEditor({
         id={id}
         rows={6}
         value={value}
-        maxLength={MAX_JUDGE_INSTRUCTIONS_LENGTH}
+        maxLength={maxLength}
         aria-invalid={unknown.length > 0}
         aria-describedby={`${id}-help`}
         className="w-full rounded-md border border-input bg-background px-2.5 py-2 font-mono text-xs text-foreground"
@@ -155,7 +156,7 @@ export function PromptEditor({
           </span>
         ) : null}
         <span className="ml-auto">
-          {value.length}/{MAX_JUDGE_INSTRUCTIONS_LENGTH}
+          {value.length}/{maxLength}
         </span>
       </div>
     </div>

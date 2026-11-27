@@ -174,7 +174,10 @@
             "group": "Configure",
             "icon": "settings",
             "pages": [
-              "inspector/clients",
+              {
+                "group": "Clients",
+                "pages": ["inspector/clients", "inspector/clients/reference"]
+              },
               {
                 "group": "Manage your workspace",
                 "icon": "users",

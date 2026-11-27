@@ -33,11 +33,11 @@ import { STAGE_CHIP_TONE_CLASS } from "@/components/evaluate/stage-chain-model";
 import { cn } from "@/lib/utils";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
-import { Badge } from "@mcpjam/design-system/badge";
 import { Input } from "@mcpjam/design-system/input";
 import type { ModelDefinition } from "@/shared/types";
 import {
   hasRubricChecksCapability,
+  hasCustomJudgesCapability,
   hasYesNoRubricQuestionsCapability,
   type SuiteCapabilities,
 } from "@/hooks/use-suite-capabilities";
@@ -48,7 +48,12 @@ import { SuiteScorerLibraryMenu } from "./suite-scorer-library-menu";
 import { EvaluatorLibraryButton } from "./evaluator-library/evaluator-library-dialog";
 import { useEvaluatorLibraryEnabled } from "./evaluator-library/evaluator-library-flag";
 import { EvaluatorStageRows } from "./evaluator-library/evaluator-stage-rows";
-import { librarySuiteEdits } from "./evaluator-library/library-suite-edits";
+import { CustomJudgesSection } from "./evaluator-library/custom-judges-section";
+import { customJudgeLimits } from "./evaluator-library/custom-judges-model";
+import {
+  libraryModelRows,
+  librarySuiteEdits,
+} from "./evaluator-library/library-suite-edits";
 import { RubricChecksJudgeCard } from "./rubric-checks-judge-card";
 import type { GroundednessRunEvidence } from "./suite-judge-card";
 import { JudgeModelControl } from "./judges-section";
@@ -61,7 +66,7 @@ import {
   type ScorerUiRole,
 } from "./suite-scorer-table-model";
 import { RoleChip, RoleSegmentGroup } from "./scorer-role-control";
-import { BUILT_IN_BADGE } from "./runner-checks";
+import { ScorerRowBadge } from "./scorer-row-badge";
 import { groupGradersByStage, judgeMode } from "./suite-grading-model";
 import { rolesForPredicateKind } from "@/shared/predicate-kinds";
 import type { EvalJudgeConfig, EvalJudgeRubric } from "./types";
@@ -257,7 +262,13 @@ export function SuiteScorerTable({
       scope.onDraftChange(removeCaseRule(scope.draft, rule.index));
     }
   };
-  const library = librarySuiteEdits(scope, judgeConfig, onJudgeConfigChange);
+  const judgeLimit = customJudgeLimits(capabilities).maxJudges;
+  const library = librarySuiteEdits(
+    scope,
+    judgeConfig,
+    onJudgeConfigChange,
+    judgeLimit,
+  );
   const addPredicate = (predicate: Predicate) => {
     if (scope.kind === "suite") {
       scope.onPredicatesChange((previous) => [...previous, predicate]);
@@ -418,11 +429,18 @@ export function SuiteScorerTable({
             {headerActions}
             {library && scope.kind === "suite" ? (
               <EvaluatorLibraryButton
-                predicates={scope.predicates}
-                questions={judgeConfig?.rubricChecks?.questions}
-                authorableKinds={authorableKinds}
-                canAskYesNo={hasYesNoRubricQuestionsCapability(capabilities)}
+                suite={{
+                  predicates: scope.predicates,
+                  questions: judgeConfig?.rubricChecks?.questions,
+                  judges: judgeConfig?.customJudges?.judges,
+                }}
+                support={{
+                  authorableKinds,
+                  canAskYesNo: hasYesNoRubricQuestionsCapability(capabilities),
+                  canJudge: hasCustomJudgesCapability(capabilities),
+                }}
                 onAdd={library.add}
+                judgeLimit={judgeLimit}
               />
             ) : null}
             <SuiteScorerLibraryMenu
@@ -494,9 +512,12 @@ export function SuiteScorerTable({
                         ? rules[row.predicateIndex]?.predicate
                         : undefined
                     }
-                    questions={
+                    modelRows={
                       group.stage === "userValue"
-                        ? judgeConfig?.rubricChecks?.questions
+                        ? libraryModelRows(
+                            judgeConfig,
+                            library ? onJudgeConfigChange : undefined,
+                          )
                         : undefined
                     }
                     onRemoveEvaluator={library?.remove}
@@ -553,6 +574,13 @@ export function SuiteScorerTable({
                     )}
                   />
                 )}
+                {library && group.stage === "userValue" ? (
+                  <CustomJudgesSection
+                    judgeConfig={judgeConfig}
+                    onJudgeConfigChange={onJudgeConfigChange}
+                    capabilities={capabilities}
+                  />
+                ) : null}
                 {evaluatorLibraryEnabled &&
                 rubricChecks &&
                 scope.kind === "suite" &&
@@ -782,13 +810,7 @@ function ScorerRow({
                 </span>
               ) : null}
             </div>
-            {row.kind === "observed" ? (
-              // A runner check decides nothing, so it wears no role: it is on
-              // for every iteration and reports the stage analysis.
-              <Badge variant="outline">{BUILT_IN_BADGE}</Badge>
-            ) : row.kind === "match" ? (
-              <Badge variant="outline">Required</Badge>
-            ) : null}
+            <ScorerRowBadge kind={row.kind} />
           </div>
           {sourceLine ? (
             <span className="block text-xs text-muted-foreground">
