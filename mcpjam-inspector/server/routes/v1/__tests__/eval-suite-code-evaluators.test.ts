@@ -52,6 +52,14 @@ describe("suite PATCH: code evaluators and scripts", () => {
       { codeEvaluators: [{ ...evaluator, fileName: "grade.rb" }] },
       { codeEvaluators: [{ ...evaluator, threshold: 0 }] },
       { codeEvaluators: [{ ...evaluator, script: "   " }] },
+      // Five evaluators at 60 KB each go over the 256 KB total.
+      {
+        codeEvaluators: Array.from({ length: 5 }, (_, i) => ({
+          ...evaluator,
+          id: `big${i}`,
+          script: "#".repeat(60 * 1024),
+        })),
+      },
       { scripts: { runSetup: "a".repeat(MAX_CODE_SCRIPT_BYTES + 1) } },
       { scripts: { runCleanup: "echo", extra: "x" } },
       { grading: { files: ["/mcpjam/iteration.json"] } },
