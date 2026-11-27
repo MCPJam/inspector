@@ -20,7 +20,7 @@
 
 # 🚀 Quick start
 
-[![Protodex Verified](https://img.shields.io/badge/Protodex-Verified_MCP-2DD9E0?style=flat-square&logo=github)](https://protodex.io/servers/MCPJam-inspector.html)
+[![Protodex Verified](https://img.shields.io/badge/Protodex-Verified_MCP-2DD9E0?style=flat-square&logo=github)](https://protodex.io/servers/mcpjam-inspector.html)
 
 Open the hosted app. No install needed.
 
