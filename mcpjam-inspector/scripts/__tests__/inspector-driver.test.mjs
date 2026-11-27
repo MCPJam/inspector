@@ -17,9 +17,12 @@ import {
   parseAccessToken,
   parseAllowlist,
   parseSelector,
+  recordedToken,
+  redactLog,
   redactStep,
   redactText,
   redactUrl,
+  resolveNpmCli,
   resolveTarget,
   routeMismatch,
   withStartStep,
@@ -101,6 +104,14 @@ test("an access token is read bare or out of an access link", () => {
   );
   assert.equal(parseAccessToken("short"), null);
   assert.equal(parseAccessToken("http://localhost:5173/"), null);
+});
+
+test("the recorded token goes only to the instance that recorded it", () => {
+  const state = { baseUrl: "http://localhost:5174", token: TOKEN };
+  assert.equal(recordedToken("http://localhost:5174/servers", state), TOKEN);
+  assert.equal(recordedToken("https://app.mcpjam.com", state), null);
+  assert.equal(recordedToken("http://localhost:5175", state), null);
+  assert.equal(recordedToken(BASE, null), null);
 });
 
 test("steps normalize from an array or an object with a start", () => {
@@ -287,7 +298,7 @@ test("report text is one line without terminal colors", () => {
   assert.equal(oneLine("x".repeat(30), 10), "xxxxxxx...");
 });
 
-test("credentials in URLs are redacted", () => {
+test("credentials in URLs and the launcher log are redacted", () => {
   assert.equal(
     redactUrl("http://x/cb?code=abc&state=1&access_token=t"),
     "http://x/cb?code=REDACTED&state=1&access_token=REDACTED",
@@ -298,6 +309,10 @@ test("credentials in URLs are redacted", () => {
     "https://x/tools?code=REDACTED",
   );
   assert.equal(redactUrl("not a url"), "not a url");
+  assert.equal(
+    redactLog(`ready\nhttp://localhost:5173/#token=${TOKEN}\nbye`),
+    "ready\n[access link redacted]\nbye",
+  );
 });
 
 test("fill values and URL credentials stay out of steps and free text", () => {
@@ -437,4 +452,37 @@ test("paths shorten the project id and slugs are file-safe", () => {
   assert.equal(displayPath(null), null);
   assert.equal(artifactSlug("Step 2: Add server!"), "step-2-add-server");
   assert.equal(artifactSlug("///"), "page");
+});
+
+test("npm runs through its JS entry point when one can be found", () => {
+  assert.equal(
+    resolveNpmCli({
+      env: { npm_execpath: "/x/npm/bin/npm-cli.js" },
+      exists: () => false,
+    }),
+    "/x/npm/bin/npm-cli.js",
+  );
+  const bundled = join("/node", "node_modules", "npm", "bin", "npm-cli.js");
+  assert.equal(
+    resolveNpmCli({
+      env: {},
+      execPath: join("/node", "node.exe"),
+      exists: (p) => p === bundled,
+    }),
+    bundled,
+  );
+  assert.equal(
+    resolveNpmCli({ env: { npm_execpath: "/x/yarn.js" }, exists: () => false }),
+    null,
+  );
+});
+
+test("a recorded base URL must be a local instance", async () => {
+  const { isLoopbackUrl } =
+    await import("../lib/inspector-driver-instance.mjs");
+  assert.equal(isLoopbackUrl("http://localhost:5173"), true);
+  assert.equal(isLoopbackUrl("http://127.0.0.1:6274"), true);
+  assert.equal(isLoopbackUrl("http://localhost.evil.test:5173"), false);
+  assert.equal(isLoopbackUrl("https://app.mcpjam.com"), false);
+  assert.equal(isLoopbackUrl("not a url"), false);
 });

@@ -5,6 +5,9 @@
  * `node --test` covers it without Playwright.
  */
 
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+
 /** Kinds that fail a run. `console-warning` is reported but never fails. */
 const FAILING_KINDS = new Set([
   "console-error",
@@ -65,6 +68,18 @@ export function parseAccessToken(value) {
     "token",
   );
   return token && /^[A-Za-z0-9_-]{24,}$/.test(token) ? token : null;
+}
+
+/**
+ * The token `start` recorded, only when the driver is pointed at that same
+ * instance: the browser seeds it into the target's localStorage, so another
+ * origin must never receive it.
+ */
+export function recordedToken(baseUrl, state) {
+  if (!state?.token) return null;
+  return new URL(baseUrl).origin === new URL(state.baseUrl).origin
+    ? state.token
+    : null;
 }
 
 // ── steps ─────────────────────────────────────────────────────────────────
@@ -452,4 +467,47 @@ export function artifactSlug(label) {
       .replace(/^-|-$/g, "")
       .slice(0, 60) || "page"
   );
+}
+
+// ── processes ─────────────────────────────────────────────────────────────
+
+/**
+ * npm's JS entry point, run with this Node so no shell is needed: Node
+ * refuses to spawn the Windows `npm.cmd` shim without one (CVE-2024-27980).
+ * Null means "use `npm` from PATH", which is fine outside Windows.
+ */
+export function resolveNpmCli({
+  env = process.env,
+  execPath = process.execPath,
+  exists = existsSync,
+} = {}) {
+  if (env.npm_execpath && /npm-cli\.[cm]?js$/.test(env.npm_execpath)) {
+    return env.npm_execpath;
+  }
+  const bundled = join(
+    dirname(execPath),
+    "node_modules",
+    "npm",
+    "bin",
+    "npm-cli.js",
+  );
+  if (exists(bundled)) return bundled;
+  const unixPrefix = join(
+    dirname(execPath),
+    "..",
+    "lib",
+    "node_modules",
+    "npm",
+    "bin",
+    "npm-cli.js",
+  );
+  return exists(unixPrefix) ? unixPrefix : null;
+}
+
+/** The launcher log without the line that signs a browser in. */
+export function redactLog(text) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => (/[#&]token=/.test(line) ? "[access link redacted]" : line))
+    .join("\n");
 }

@@ -7,13 +7,17 @@
  * the diff. See .agents/skills/run-inspector/SKILL.md.
  *
  *   node scripts/inspector-driver.mjs surfaces
+ *   node scripts/inspector-driver.mjs start [--instance N] [--worker] [--skip-prepare]
+ *                                           [--env-file <profile>]
+ *   node scripts/inspector-driver.mjs status | stop
  *   node scripts/inspector-driver.mjs open <surface|/path|url> [--theme light|dark]
  *   node scripts/inspector-driver.mjs run <steps.json|inline-json> [--start <surface>]
  *   node scripts/inspector-driver.mjs sweep [--only a,b] [--skip a,b]
  *
- * Browser commands drive an instance you started: --base-url /
- * MCPJAM_DRIVER_BASE_URL and --token / MCPJAM_SESSION_TOKEN (a token or the
- * whole access link). Exit codes: 0 clean, 1 an issue was found, 2 the driver itself could not run.
+ * Browser commands use --base-url / MCPJAM_DRIVER_BASE_URL and --token /
+ * MCPJAM_SESSION_TOKEN (a token or the whole access link), falling back to
+ * the instance `start` recorded (its token only ever goes to its own origin).
+ * Exit codes: 0 clean, 1 an issue was found, 2 the driver itself could not run.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -30,6 +34,7 @@ import {
   normalizeSteps,
   parseAccessToken,
   parseAllowlist,
+  recordedToken,
   redactText,
   redactUrl,
   resolveTarget,
@@ -53,10 +58,15 @@ const OPTIONS = {
   start: { type: "string" },
   only: { type: "string" },
   skip: { type: "string" },
+  instance: { type: "string" },
   timeout: { type: "string" },
   "step-timeout": { type: "string" },
+  "ready-timeout": { type: "string" },
   fresh: { type: "boolean" },
   headed: { type: "boolean" },
+  worker: { type: "boolean" },
+  "skip-prepare": { type: "boolean" },
+  "env-file": { type: "string" },
   help: { type: "boolean", short: "h" },
 };
 
@@ -82,15 +92,20 @@ function positiveInt(value, name, fallback) {
   return n;
 }
 
-function connection(values) {
-  const baseUrl = values["base-url"] ?? process.env.MCPJAM_DRIVER_BASE_URL;
+async function connection(values) {
+  const { readState } = await import("./lib/inspector-driver-instance.mjs");
+  const state = readState(INSPECTOR_DIR);
+  const baseUrl =
+    values["base-url"] ?? process.env.MCPJAM_DRIVER_BASE_URL ?? state?.baseUrl;
   if (!baseUrl) {
     throw new Error(
-      "No instance to drive: start one (run-inspector skill) and pass --base-url (or MCPJAM_DRIVER_BASE_URL).",
+      "No instance to drive: run `start`, or pass --base-url (or MCPJAM_DRIVER_BASE_URL).",
     );
   }
   const rawToken = values.token ?? process.env.MCPJAM_SESSION_TOKEN;
-  const token = rawToken ? parseAccessToken(rawToken) : null;
+  const token = rawToken
+    ? parseAccessToken(rawToken)
+    : recordedToken(baseUrl, state);
   if (rawToken && !token) {
     throw new Error("--token is neither an access token nor an access link.");
   }
@@ -135,7 +150,7 @@ function writeReport(outDir, slug, report) {
 
 async function withPage(values, fn) {
   checkTheme(values.theme);
-  const { baseUrl, token } = connection(values);
+  const { baseUrl, token } = await connection(values);
   const surfaces = await loadSurfaces();
   const rules = loadAllowlist(values);
   const outDir = outputDir(values);
@@ -335,6 +350,46 @@ async function cmdSweep(values) {
   });
 }
 
+async function cmdStart(values) {
+  const { startInstance } = await import("./lib/inspector-driver-instance.mjs");
+  const instance =
+    values.instance === undefined ? undefined : Number(values.instance);
+  if (instance !== undefined && (!Number.isInteger(instance) || instance < 0)) {
+    throw new Error("--instance must be a non-negative integer");
+  }
+  const state = await startInstance({
+    inspectorDir: INSPECTOR_DIR,
+    instance,
+    worker: values.worker,
+    prepare: !values["skip-prepare"],
+    envFile: values["env-file"],
+    timeoutSeconds: positiveInt(values["ready-timeout"], "ready-timeout", 300),
+  });
+  process.stdout.write(`base-url ${state.baseUrl}\n`);
+  return 0;
+}
+
+async function cmdStatus() {
+  const { readState, isOurProcess } =
+    await import("./lib/inspector-driver-instance.mjs");
+  const state = readState(INSPECTOR_DIR);
+  if (!state) {
+    process.stdout.write("no driver instance recorded for this checkout\n");
+    return 0;
+  }
+  const alive = isOurProcess(state);
+  process.stdout.write(
+    `instance ${state.instance} ${alive ? "running" : "NOT running"} pid ${state.pid} ${state.baseUrl} log ${state.logPath}\n`,
+  );
+  return alive ? 0 : 1;
+}
+
+async function cmdStop() {
+  const { stopInstance } = await import("./lib/inspector-driver-instance.mjs");
+  await stopInstance({ inspectorDir: INSPECTOR_DIR });
+  return 0;
+}
+
 const HELP = readFileSync(fileURLToPath(import.meta.url), "utf8")
   .split("*/")[0]
   .split("\n")
@@ -356,6 +411,12 @@ async function main(argv) {
   switch (command) {
     case "surfaces":
       return cmdSurfaces();
+    case "start":
+      return cmdStart(values);
+    case "status":
+      return cmdStatus();
+    case "stop":
+      return cmdStop();
     case "open":
       return cmdOpen(values, arg);
     case "run":

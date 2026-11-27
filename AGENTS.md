@@ -15,9 +15,8 @@ and install dependencies with `npm install --legacy-peer-deps`.
   Omit `--no-worker` when testing platform MCP tools. Open the printed access
   link and keep its token private. See CONTRIBUTING.md for environment setup.
 - To check a UI change or reproduce a UI bug, drive the app with
-  `node mcpjam-inspector/scripts/inspector-driver.mjs` (open, run, sweep)
-  against an instance you started, as the run-inspector skill describes, and
-  attach its evidence.
+  `node mcpjam-inspector/scripts/inspector-driver.mjs` (start, open, run,
+  sweep, stop) as the run-inspector skill describes, and attach its evidence.
 - To QA a PR or check signed-in behavior, MCPJam staff use Jamroom, MCPJam's
   MCP server for agent environments, and follow `mcpjam-backend`'s
   `.agents/skills/jamroom/SKILL.md`.
