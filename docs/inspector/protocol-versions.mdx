@@ -132,7 +132,7 @@ If your server already speaks `2026-07-28`, you mostly won't notice. A few thing
 
 The 2026 RC client is a **preview**. Two things work differently from the legacy client:
 
-- **Sampling and roots.** The client never advertises either capability, so it rejects a `sampling/createMessage` or `roots/list` request that a server embeds in an `InputRequiredResult`. Elicitation via `input_required` is supported; see [Multi-round input](/inspector/tools-prompts-resources#multi-round-input-mcp-2026-07-28-input_required).
+- **Sampling and roots.** The client never advertises either capability, so it rejects a `sampling/createMessage` or `roots/list` request that a server embeds in an `InputRequiredResult`. Elicitation via `input_required` is supported; see [Multi-round input](/inspector/tools#multi-round-input-mcp-2026-07-28-input_required).
 - **Automatic detection.** Over HTTP and stdio, automatic detection falls back to the legacy `initialize` handshake when `server/discover` is not available. An explicit 2026 pin remains exact and does not fall back.
 
 For everything else (`tools/list`, `tools/call`, `resources/*`, `prompts/*`, resource subscriptions over `subscriptions/listen`, OAuth refresh, custom headers, progress notifications), the RC client behaves like the legacy one.
