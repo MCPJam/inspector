@@ -1,4 +1,5 @@
 import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
+import type { MockForwardBlockReason } from "./mock-observer.js";
 
 /**
  * JSON-RPC error codes a mock returns. Errors stay JSON-RPC because the hosted
@@ -10,6 +11,8 @@ export const MOCK_ERROR_CODES = {
   editedToolMissing: -32011,
   /** The real server could not be reached for the handshake. */
   realUnreachable: -32012,
+  /** A forward the host refused: the policy, the caller's access, or a failed policy check. */
+  forwardBlocked: -32013,
   /** A method one side lacks (JSON-RPC method not found). */
   methodUnavailable: ProtocolErrorCode.MethodNotFound,
   /** `tools/call` for a name the mock does not list (JSON-RPC invalid params). */
@@ -91,4 +94,17 @@ export function realUnreachableError(cause: unknown): ProtocolError {
       mockCode: "mock_real_unreachable",
     }
   );
+}
+
+/** A request the mock would pass to the real server, refused before dispatch. */
+export function forwardBlockedError(
+  method: string,
+  reason: MockForwardBlockReason,
+  message: string
+): ProtocolError {
+  return new ProtocolError(MOCK_ERROR_CODES.forwardBlocked, message, {
+    mockCode: "mock_forward_blocked",
+    method,
+    reason,
+  });
 }
