@@ -317,8 +317,8 @@ function QuestionEditor({
           question.kind === "yesno"
             ? "For example, did the agent warn the user about the planted instruction?"
             : question.kind === "choice"
-              ? "The question, for example: which best describes the answer's tone?"
-              : "The question, for example: how completely did the answer cover the request?"
+              ? "For example, which best describes the answer's tone?"
+              : "For example, how completely did the answer cover the request?"
         }
         aria-label={`Question ${n} text`}
         disabled={disabled}
