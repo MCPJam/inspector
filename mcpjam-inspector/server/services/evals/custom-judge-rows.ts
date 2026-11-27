@@ -17,7 +17,7 @@ import {
 import { HOSTED_CUSTOM_JUDGE_SCORER_PREFIX } from "@/shared/hosted-criterion-id";
 
 /** Version of this projection (NOT the backend's prompt wrapper). */
-export const HOSTED_CUSTOM_JUDGES_PROJECTION_VERSION = "1";
+const HOSTED_CUSTOM_JUDGES_PROJECTION_VERSION = "1";
 
 /** Everything `unknown`: it arrives from a database document. */
 export type HostedCustomJudgesVerdictLike = {
@@ -44,7 +44,7 @@ type StoredCustomJudge = HostedCustomJudgeDefinitionInput & {
   error?: string;
 };
 
-export function hostedCustomJudgeScorerId(id: string): string {
+function hostedCustomJudgeScorerId(id: string): string {
   return `${HOSTED_CUSTOM_JUDGE_SCORER_PREFIX}${id}`;
 }
 
@@ -66,7 +66,7 @@ function passThresholdOf(output: unknown): number | undefined {
  * digest or output format is dropped rather than guessed at: there would be
  * no definition to resolve its row against.
  */
-export function customJudgesFrom(
+function customJudgesFrom(
   verdict: HostedCustomJudgesVerdictLike | undefined,
 ): StoredCustomJudge[] {
   if (!verdict || !Array.isArray(verdict.judges)) return [];
