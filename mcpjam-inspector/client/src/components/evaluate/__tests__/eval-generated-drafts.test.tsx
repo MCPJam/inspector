@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { ConvexError } from "convex/values";
 // An open authoring draft renders the model picker, which reads shared app
 // state this suite does not mount.
 vi.mock("@/hooks/use-available-models", () => ({
@@ -142,6 +143,40 @@ it("retains failed drafts with visible errors and retries only those remaining",
   await user.click(screen.getByRole("button", { name: "Add all to suite" }));
   await waitFor(() => expect(save).toHaveBeenCalledTimes(3));
   expect(useEvalGeneration.getState().suites[key].drafts).toHaveLength(0);
+});
+
+it("opts generated proposals into name validation and lets a refused draft be renamed", async () => {
+  const message =
+    'A test named "Second" already exists in this suite. Give this test a different name.';
+  save.mockImplementation(async (input) => {
+    if (input.title === "Second")
+      throw new ConvexError({ code: "CONFLICT", field: "title", message });
+    return "saved";
+  });
+  renderWithProviders(<EvalGeneratedDrafts {...scope} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Add all to suite" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(message);
+  expect(save).toHaveBeenCalledWith(
+    expect.objectContaining({ title: "Second", requireUniqueTitle: true }),
+  );
+  expect(screen.queryByText("First")).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Add Second to suite" }),
+  ).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Review case" }));
+  const title = screen.getByRole("textbox", { name: "Generated case title" });
+  await user.clear(title);
+  await user.type(title, "Renamed");
+  await user.click(
+    screen.getByRole("button", { name: "Add Renamed to suite" }),
+  );
+  await waitFor(() =>
+    expect(useEvalGeneration.getState().suites[key].drafts).toHaveLength(0),
+  );
+  expect(save).toHaveBeenLastCalledWith(
+    expect.objectContaining({ title: "Renamed", requireUniqueTitle: true }),
+  );
 });
 
 it("disables duplicate saves while requests are pending", async () => {

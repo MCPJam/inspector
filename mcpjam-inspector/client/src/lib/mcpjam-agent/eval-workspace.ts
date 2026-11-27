@@ -19,6 +19,7 @@ import {
 } from "@/lib/apis/eval-authoring-api";
 import type { EvalAgentScope } from "@/shared/eval-agent-scope";
 import type { CreateEvalTestCaseInput } from "@/lib/evals/generate-and-persist-tests";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
 export interface EvalDraft {
   title: string;
@@ -38,7 +39,9 @@ export interface EvalDraftBridge {
 }
 export interface EvalSuiteBridge {
   read: () => unknown;
-  save: (input: CreateEvalTestCaseInput) => Promise<unknown>;
+  save: (
+    input: CreateEvalTestCaseInput & { requireUniqueTitle?: boolean },
+  ) => Promise<unknown>;
   run?: () => Promise<unknown>;
 }
 const drafts = new Map<string, EvalDraftBridge>();
@@ -607,7 +610,10 @@ export async function saveGeneratedDraft(scope: EvalAgentScope, id: string) {
       if (result.committed?.length !== 1)
         throw new Error("Save outcome is unknown. Retry to confirm.");
     } else {
-      await getEvalSuite(scope).save(current.input);
+      await getEvalSuite(scope).save({
+        ...current.input,
+        requireUniqueTitle: true,
+      });
     }
     updateGeneration(key, (s) => ({
       ...s,
@@ -621,7 +627,14 @@ export async function saveGeneratedDraft(scope: EvalAgentScope, id: string) {
           ? {
               ...d,
               saving: false,
-              error: error instanceof Error ? error.message : String(error),
+              error: current.authoring
+                ? error instanceof Error
+                  ? error.message
+                  : String(error)
+                : getBillingErrorMessage(
+                    error,
+                    "Could not add this test. Try again.",
+                  ),
             }
           : d,
       ),
