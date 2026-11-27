@@ -1,6 +1,7 @@
 import type { ModelMessage } from "ai";
 import type { EvalTraceBlobV1, EvalTraceSpan } from "./eval-trace";
 import type { ResolvedModelRequestPayload } from "./model-request-payload";
+import type { EventAtTurn } from "./event-at-turn";
 
 export type LiveChatTraceUsage = {
   inputTokens?: number;
@@ -125,6 +126,8 @@ export type LiveChatTraceEvent =
       startedAtMs: number;
       engine?: "emulated" | "harness";
       harness?: string;
+      /** The MCP event that started this turn, as its trace records it. */
+      event?: EventAtTurn;
     }
   | {
       type: "text_delta";
