@@ -94,7 +94,6 @@ export interface EvalIterationVerdictInput {
   declarationsCaptured?: "complete" | "partial" | "absent";
   accountRouting?: AccountRouting;
   connectionKeys?: ReadonlyMap<string, string>;
-  /** Pinned calls never put their results in the trace. */
   pinnedCalls?: readonly PinnedCallRecord[];
 
   // ── gates ──

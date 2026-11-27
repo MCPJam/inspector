@@ -86,11 +86,7 @@ function outputText(output: unknown): string | undefined {
   }
 }
 
-/**
- * Matched by wording: the client's `ProtocolError` codes are ones server errors
- * also carry, the SDK's MRTR check throws a `TypeError`, and a transcript keeps
- * only the message. Tests read both from the installed packages to catch rewording.
- */
+/** Matched by wording, the only signal a transcript keeps; tests read it from the installed client and SDK. */
 export function toolCallFailure(
   output: unknown,
   toolName: string,

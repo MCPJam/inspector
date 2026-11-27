@@ -4,7 +4,7 @@
  * A pinned call is a fixture: the case makes it, not the agent. Its transcript
  * entry is a one-line summary, because hosted `/stream` input must stay
  * text-only, so its result reaches grading through the executor state
- * (`StepExecutionState.pinnedCalls`) instead. Three kinds of assertion read it:
+ * (`StepExecutionState.pinnedCalls`) instead. Two kinds of assertion read it:
  *
  *   - A result-content assertion (`toolResultContains`, `toolResultMatches`,
  *     `toolResultMatchesSchema`) that names a tool the case pinned before it
@@ -14,12 +14,11 @@
  *     (an error, no result, a blocked call) is missing evidence, never a pass.
  *   - `toolCalledAtLeastOnce` and `firstToolWas` describe the agent's path, so
  *     they read every call except the pinned ones.
- *   - A declared output-schema check instead reads every pinned call's result
- *     beside the transcript's own, after the run as well as in a step.
  *
  * Every other assertion reads the transcript exactly as before, pinned calls
  * included. `toolResultSizeUnder` stays there too: it budgets what a model
  * was handed, and a pinned call hands a model nothing.
+ * A declared output-schema check reads every pinned result, after the run too.
  */
 import { DECLARED_OUTPUT_SCHEMA, evaluatePredicates } from "@mcpjam/sdk/predicates";
 import type { BuildTranscriptInput, IterationTranscript, Predicate } from "@mcpjam/sdk/predicates";
@@ -105,16 +104,10 @@ export function assertionScope(
 }
 
 /** Stored predicates are loosely typed; `evaluatePredicates` reports a malformed one. */
-function gradesPinnedResults(predicate: Predicate): boolean {
-  return !!predicate && typeof predicate === "object" &&
-    predicate.type === "toolResultMatchesSchema" && predicate.schema === DECLARED_OUTPUT_SCHEMA;
-}
+const gradesPinnedResults = (p: Predicate) => typeof p === "object" && p !== null &&
+  p.type === "toolResultMatchesSchema" && p.schema === DECLARED_OUTPUT_SCHEMA;
 
-/**
- * Evaluates `predicates`, where a declared output-schema check also reads each
- * pinned call's result. Without those rows it counts a pinned call as a call
- * that returned nothing, and a fixture call's result must match too.
- */
+/** Without these rows the declared check counts each pinned call as one that returned nothing. */
 export function evaluateWithPinnedResults(
   transcript: IterationTranscript,
   predicates: readonly Predicate[],
@@ -122,13 +115,11 @@ export function evaluateWithPinnedResults(
 ) {
   const rows = calls.flatMap((call) => {
     const row = callToolResultRow(call.toolName, call.result, call.toolCallId, call.declaredServerKey);
-    const callFailure = call.failureMessage === undefined ? undefined
-      : toolCallFailure({ type: "error-text", value: call.failureMessage }, call.toolName);
-    return row ? [{ ...row, ...(callFailure ? { callFailure } : {}) }] : [];
+    const failure = call.failureMessage && toolCallFailure({ type: "error-text", value: call.failureMessage }, call.toolName);
+    return row ? [{ ...row, ...(failure ? { callFailure: failure } : {}) }] : [];
   });
   const withPinned = { ...transcript, toolResults: [...(transcript.toolResults ?? []), ...rows] };
-  return predicates.flatMap((predicate) =>
-    evaluatePredicates(gradesPinnedResults(predicate) ? withPinned : transcript, [predicate]));
+  return predicates.flatMap((p) => evaluatePredicates(gradesPinnedResults(p) ? withPinned : transcript, [p]));
 }
 
 /** The most recent pinned call of `toolName`; none when no tool is named. */

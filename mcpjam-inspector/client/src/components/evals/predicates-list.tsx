@@ -1,10 +1,4 @@
-import {
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  MinusCircle,
-  XCircle,
-} from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronRight, MinusCircle, XCircle } from "lucide-react";
 import { checkRole } from "@mcpjam/sdk/predicates";
 import type { Predicate, PredicateResult } from "@/shared/eval-matching";
 import {
