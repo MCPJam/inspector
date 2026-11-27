@@ -55,6 +55,7 @@ import {
   toSuspectedConditionProjection,
 } from "./eval-friction-projection.js";
 import { toExecutionProjection } from "./eval-execution-projection.js";
+import { toCodeGradingProjection } from "./eval-code-grading-projection.js";
 import {
   accountSelectionsForRead,
   accountSelectionsForStorage,
@@ -2136,6 +2137,7 @@ function toIterationDto(
     // the contract crosses this boundary. OMITTED on rows written before the
     // record existed (and on a malformed one) — "not recorded", never a guess.
     ...toExecutionProjection(iteration.execution),
+    ...toCodeGradingProjection(iteration.metadata),
   };
 }
 
