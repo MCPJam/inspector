@@ -877,17 +877,95 @@ describe("MCPClientManager", () => {
       const timeout = Object.assign(new Error("Request timed out"), {
         code: "REQUEST_TIMEOUT",
       });
-      const fakeClient = { ping: jest.fn().mockRejectedValue(timeout) };
+      const fakeClient = {
+        ping: jest.fn().mockRejectedValue(timeout),
+        close: jest.fn().mockResolvedValue(undefined),
+      };
 
       seedRegisteredServer(manager, "ping-timeout", {
         url: new URL("https://example.test/mcp"),
       });
       seedLiveState(manager, "ping-timeout", { client: fakeClient });
       expect(manager.getConnectionStatus("ping-timeout")).toBe("connected");
+      const connectSpy = jest
+        .spyOn(manager as any, "connectToServerOnce")
+        .mockRejectedValue(timeout);
 
       await expect(manager.pingServer("ping-timeout")).rejects.toBe(timeout);
 
+      expect(fakeClient.close).toHaveBeenCalledTimes(1);
       expect(manager.getConnectionStatus("ping-timeout")).toBe("disconnected");
+      connectSpy.mockRestore();
+    });
+
+    it("does not send the retry ping on the connection that timed out", async () => {
+      const timeout = Object.assign(new Error("Request timed out"), {
+        code: "REQUEST_TIMEOUT",
+      });
+      const staleClient = {
+        ping: jest.fn().mockRejectedValue(timeout),
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+      const freshClient = {
+        ping: jest.fn().mockResolvedValue(undefined),
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+
+      seedRegisteredServer(manager, "ping-timeout-retry", {
+        url: new URL("https://example.test/mcp"),
+      });
+      seedLiveState(manager, "ping-timeout-retry", { client: staleClient });
+      const connectSpy = jest
+        .spyOn(manager as any, "connectToServerOnce")
+        .mockImplementation(async (serverId: string) => {
+          seedLiveState(manager, serverId, { client: freshClient });
+          return freshClient as any;
+        });
+
+      await expect(
+        manager.pingServer("ping-timeout-retry")
+      ).resolves.toBeUndefined();
+
+      expect(staleClient.ping).toHaveBeenCalledTimes(1);
+      expect(staleClient.close).toHaveBeenCalledTimes(1);
+      expect(connectSpy).toHaveBeenCalledTimes(1);
+      expect(freshClient.ping).toHaveBeenCalledTimes(1);
+      expect(freshClient.close).not.toHaveBeenCalled();
+      connectSpy.mockRestore();
+    });
+
+    it("leaves a newer connection open when an old ping times out", async () => {
+      const timeout = Object.assign(new Error("Request timed out"), {
+        code: "REQUEST_TIMEOUT",
+      });
+      const newerClient = {
+        ping: jest.fn().mockResolvedValue(undefined),
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+      const oldClient = {
+        ping: jest.fn().mockImplementation(async () => {
+          // Another call replaced the connection while this ping was waiting.
+          seedLiveState(manager, "ping-timeout-stale", { client: newerClient });
+          throw timeout;
+        }),
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+
+      seedRegisteredServer(manager, "ping-timeout-stale", {
+        url: new URL("https://example.test/mcp"),
+      });
+      seedLiveState(manager, "ping-timeout-stale", { client: oldClient });
+
+      // The retry ping goes to the newer connection and is answered.
+      await expect(
+        manager.pingServer("ping-timeout-stale")
+      ).resolves.toBeUndefined();
+
+      expect(oldClient.ping).toHaveBeenCalledTimes(1);
+      expect(newerClient.close).not.toHaveBeenCalled();
+      expect(manager.getConnectionStatus("ping-timeout-stale")).toBe(
+        "connected"
+      );
     });
 
     it("keeps the connection when a ping fails for another reason", async () => {

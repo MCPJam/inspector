@@ -2045,34 +2045,38 @@ export class MCPClientManager {
    * A `ping` that gets no answer in time ends the connection. Every 2025
    * revision says of a ping: "Timeouts SHOULD be treated as connection
    * failures" (basic/utilities/ping.mdx, Error Handling). The timeout is still
-   * thrown; the next call on this server opens a new connection. A caller's
-   * own abort is not a timeout and leaves the connection as it is, and so
-   * does the modern `server/discover` probe, which that rule does not cover.
+   * thrown; a retry, or the next call on this server, opens a new connection.
+   * A caller's own abort is not a timeout and leaves the connection as it is,
+   * and so does the modern `server/discover` probe, which that rule does not
+   * cover.
    */
   async pingServer(
     serverId: string,
     options?: RequestOptions
   ): Promise<Awaited<ReturnType<Client["ping"]>>> {
-    let sentPing = false;
-    try {
-      return await this.runRetryableReadOperation(
-        serverId,
-        options,
-        async (client) => {
-          if (client.getProtocolEra?.() === "modern" && client.discover) {
-            await client.discover(options);
-            return {} as Awaited<ReturnType<Client["ping"]>>;
-          }
-          sentPing = true;
-          return client.ping(options);
-        }
-      );
-    } catch (error) {
-      if (sentPing && !options?.signal?.aborted && isRequestTimeout(error)) {
-        await this.disconnectServer(serverId).catch(() => undefined);
+    return this.runRetryableReadOperation(serverId, options, async (client) => {
+      if (client.getProtocolEra?.() === "modern" && client.discover) {
+        await client.discover(options);
+        return {} as Awaited<ReturnType<Client["ping"]>>;
       }
-      throw error;
-    }
+      try {
+        return await client.ping(options);
+      } catch (error) {
+        // Close here, before any retry, so a retry cannot reuse the connection
+        // that timed out. Only close the connection that sent this ping: by
+        // now another call may have opened a new one for the same server.
+        if (
+          !options?.signal?.aborted &&
+          isRequestTimeout(error) &&
+          this.liveClientStates.get(serverId)?.client === client
+        ) {
+          await this.destroyLiveState(serverId, {
+            abortRetryOperations: false,
+          });
+        }
+        throw error;
+      }
+    });
   }
 
   /**
