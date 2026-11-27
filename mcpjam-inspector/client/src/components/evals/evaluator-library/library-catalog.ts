@@ -1,4 +1,4 @@
-import type { Predicate } from "@mcpjam/sdk/predicates";
+import { DECLARED_OUTPUT_SCHEMA, type Predicate } from "@mcpjam/sdk/predicates";
 import {
   MAX_RUBRIC_CHECK_QUESTIONS,
   type RubricCheckQuestion,
@@ -78,7 +78,7 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
       "Did every tool result in this run match the tool's declared output schema?",
     icon: Braces,
     tone: "tools",
-    checks: [{ type: "toolResultMatchesSchema", schema: "declared" }],
+    checks: [{ type: "toolResultMatchesSchema", schema: DECLARED_OUTPUT_SCHEMA }],
   },
   {
     id: "delivers-final-answer",
@@ -208,6 +208,29 @@ export function missingChecks(
   );
 }
 
+/** Reuse matching assertions and preserve their existing role and settings. */
+export function withLibraryChecks(
+  predicates: readonly Predicate[],
+  checks: readonly Predicate[],
+): Predicate[] {
+  const byCriterion = new Map(
+    checks.map((check) => [hostedCriterionId(check), check]),
+  );
+  const present = new Set<string>();
+  const attached = predicates.map((predicate) => {
+    const id = hostedCriterionId(predicate);
+    present.add(id);
+    const check = byCriterion.get(id);
+    return check?.evaluator && !predicate.evaluator
+      ? { ...predicate, evaluator: check.evaluator }
+      : predicate;
+  });
+  return [
+    ...attached,
+    ...checks.filter((check) => !present.has(hostedCriterionId(check))),
+  ];
+}
+
 /**
  * Replaces an evaluator's checks with its current library version. Checks
  * the author already removed come back, because the new version defines the
@@ -250,8 +273,9 @@ export function isInSuite(
   predicates: readonly Predicate[],
   questions: readonly RubricCheckQuestion[] = [],
 ): boolean {
+  const tagged = predicates.filter((p) => p.evaluator?.id === evaluator.id);
   return (
-    missingChecks(evaluator, predicates).length === 0 &&
+    missingChecks(evaluator, tagged).length === 0 &&
     taggedQuestions(evaluator).every((expected) =>
       questions.some(
         (q) => q.id === expected.id && q.evaluator?.id === evaluator.id,

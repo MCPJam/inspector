@@ -76,6 +76,13 @@ describe("evaluatorStatus", () => {
       ]),
     ).toBe("passed");
   });
+
+  it("keeps a required failure when an advisory check errors", () => {
+    expect(evaluatorStatus([
+      { role: "required", status: "failed" },
+      { role: "advisory", status: "error" },
+    ])).toBe("failed");
+  });
 });
 
 describe("EvaluatorScorecardSummary", () => {

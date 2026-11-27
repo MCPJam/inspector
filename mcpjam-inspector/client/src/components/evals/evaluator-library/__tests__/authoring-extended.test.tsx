@@ -6,8 +6,8 @@ import { PromptEditor, usedVariables } from "../prompt-editor";
 
 describe("PromptEditor", () => {
   const variables = [
-    { name: "user_request", path: "trace.messages" },
-    { name: "tool_results", path: "transcript.toolResults" },
+    { name: "user_request", description: "The user's request" },
+    { name: "tool_results", description: "Each tool step with its result" },
   ];
 
   it("lists the variables a prompt uses once each", () => {
@@ -20,7 +20,6 @@ describe("PromptEditor", () => {
         value="Check {{user_request}} against {{cart}}"
         onChange={() => {}}
         variables={variables}
-        scope="iteration"
       />,
     );
     expect(screen.getByLabelText("Judge prompt")).toHaveAttribute(
@@ -41,7 +40,6 @@ describe("PromptEditor", () => {
         value=""
         onChange={onChange}
         variables={variables}
-        scope="iteration"
       />,
     );
     const box = screen.getByLabelText("Judge prompt");
@@ -51,7 +49,6 @@ describe("PromptEditor", () => {
         value="Use {{"
         onChange={onChange}
         variables={variables}
-        scope="iteration"
       />,
     );
     fireEvent.click(screen.getByRole("option", { name: /tool_results/ }));
@@ -64,7 +61,6 @@ describe("PromptEditor", () => {
         value="{{tool_results}} and {{tool-results}}"
         onChange={() => {}}
         variables={variables}
-        scope="iteration"
       />,
     );
     expect(screen.getByLabelText("Judge prompt")).toHaveAttribute(
@@ -81,7 +77,6 @@ describe("PromptEditor", () => {
         value=""
         onChange={onChange}
         variables={variables}
-        scope="iteration"
       />,
     );
     fireEvent.change(screen.getByLabelText("Judge prompt"), {
@@ -92,7 +87,6 @@ describe("PromptEditor", () => {
         value={full}
         onChange={onChange}
         variables={variables}
-        scope="iteration"
       />,
     );
     onChange.mockClear();
@@ -113,7 +107,6 @@ describe("PromptEditor", () => {
           value={value}
           onChange={setValue}
           variables={variables}
-          scope="iteration"
         />
       );
     }

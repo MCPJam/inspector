@@ -78,7 +78,7 @@ describe("EvaluatorLibraryButton", () => {
     expect(screen.getByText("Evaluator library")).toBeInTheDocument();
   });
 
-  it("skips assertions the suite already has and marks a full match", () => {
+  it("offers to include existing untagged assertions in the evaluator", () => {
     const onAdd = vi.fn();
     renderWithProviders(
       <EvaluatorLibraryButton
@@ -94,6 +94,10 @@ describe("EvaluatorLibraryButton", () => {
     );
     expect(onAdd).toHaveBeenCalledWith(
       [
+        {
+          type: "noToolErrors",
+          evaluator: { id: "actionable-tool-errors", version: 1 },
+        },
         {
           type: "toolErrorNamesInput",
           role: "advisory",
@@ -159,14 +163,16 @@ describe("library catalog", () => {
     const wasted = LIBRARY_EVALUATORS.find((e) => e.id === "no-wasted-calls");
     expect(wasted).toBeDefined();
     if (!wasted) return;
-    expect(isInSuite(wasted, [...wasted.checks])).toBe(true);
+    expect(isInSuite(wasted, taggedChecks(wasted))).toBe(true);
+    expect(isInSuite(wasted, [...wasted.checks])).toBe(false);
     expect(isInSuite(wasted, [{ type: "noToolErrors" }])).toBe(false);
   });
 });
 
 describe("library dedupe by criterion", () => {
-  const wasted = findLibraryEvaluator("no-wasted-calls")!;
-  const schema = findLibraryEvaluator("results-match-output-schema")!;
+  const wasted = findLibraryEvaluator("no-wasted-calls");
+  const schema = findLibraryEvaluator("results-match-output-schema");
+  if (!wasted || !schema) throw new Error("Expected library evaluators");
 
   it("adds a check whose arguments differ from the suite's", () => {
     const scoped = [
@@ -187,11 +193,12 @@ describe("library dedupe by criterion", () => {
     expect(isInSuite(schema, [authored])).toBe(false);
   });
 
-  it("ignores role and origin when matching", () => {
+  it("matches tagged checks regardless of role", () => {
+    const evaluator = { id: wasted.id, version: wasted.version };
     expect(
       isInSuite(wasted, [
-        { type: "toolCallCountUnder", count: 10, role: "advisory" },
-        { type: "noRepeatedIdenticalCall" },
+        { type: "toolCallCountUnder", count: 10, role: "advisory", evaluator },
+        { type: "noRepeatedIdenticalCall", evaluator },
       ]),
     ).toBe(true);
   });

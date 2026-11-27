@@ -12,6 +12,7 @@ import {
   LIBRARY_EVALUATORS,
   taggedQuestions,
   withEvaluatorUpdated,
+  withLibraryChecks,
   withoutEvaluator,
 } from "./library-catalog";
 
@@ -67,7 +68,7 @@ export function librarySuiteEdits(
       questions: readonly RubricCheckQuestion[],
     ) {
       if (checks.length) {
-        scope.onPredicatesChange((previous) => [...previous, ...checks]);
+        scope.onPredicatesChange((previous) => withLibraryChecks(previous, checks));
       }
       if (questions.length) {
         setQuestions(

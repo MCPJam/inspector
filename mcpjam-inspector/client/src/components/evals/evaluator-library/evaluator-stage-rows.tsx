@@ -11,7 +11,7 @@ type Cluster<Row> = { evaluatorId: string; version: number; rows: Row[] };
 
 /**
  * Splits a stage's rows into hand-written ones and one cluster per library
- * evaluator, in first-appearance order.
+ * evaluator version, in first-appearance order.
  */
 export function clusterByEvaluator<Row>(
   rows: readonly Row[],
@@ -25,7 +25,9 @@ export function clusterByEvaluator<Row>(
       loose.push(row);
       continue;
     }
-    const cluster = clusters.find((c) => c.evaluatorId === origin.id);
+    const cluster = clusters.find(
+      (c) => c.evaluatorId === origin.id && c.version === origin.version,
+    );
     if (cluster) cluster.rows.push(row);
     else
       clusters.push({
@@ -37,14 +39,10 @@ export function clusterByEvaluator<Row>(
   return { loose, clusters };
 }
 
-/**
- * A stage's rows in the suite table. With the evaluator library on, checks
- * added from the library sit together under their evaluator, with its pinned
- * version, a newer version to accept, and one-click removal. Each check keeps
- * the table's own row, so editing it works exactly as it does today.
- */
+/** Reuses the suite table's check rows so editing stays available in a group. */
 export function EvaluatorStageRows<Row extends { id: string }>({
   rows,
+  stageLabel,
   predicateOf,
   renderRow,
   questions = [],
@@ -52,6 +50,7 @@ export function EvaluatorStageRows<Row extends { id: string }>({
   onUpdateEvaluator,
 }: {
   rows: readonly Row[];
+  stageLabel: string;
   predicateOf: (row: Row) => Predicate | undefined;
   renderRow: (row: Row) => ReactNode;
   /** Rubric-check questions to show under their evaluator in this stage. */
@@ -87,8 +86,8 @@ export function EvaluatorStageRows<Row extends { id: string }>({
           entry && entry.version > cluster.version ? entry.version : undefined;
         return (
           <section
-            key={cluster.evaluatorId}
-            aria-label={name}
+            key={`${cluster.evaluatorId}:${cluster.version}`}
+            aria-label={`${name} in ${stageLabel}, version ${cluster.version}`}
             data-evaluator-group={cluster.evaluatorId}
             className="rounded-lg border border-border bg-muted/20 p-3"
           >
@@ -106,6 +105,8 @@ export function EvaluatorStageRows<Row extends { id: string }>({
                     type="button"
                     size="sm"
                     variant="outline"
+                    aria-label={`Update ${name} to v${newer} across all stages`}
+                    title="Update across all stages"
                     onClick={() => onUpdateEvaluator(cluster.evaluatorId)}
                   >
                     Update to v{newer}
@@ -116,7 +117,8 @@ export function EvaluatorStageRows<Row extends { id: string }>({
                     type="button"
                     size="sm"
                     variant="ghost"
-                    aria-label={`Remove ${name}`}
+                    aria-label={`Remove ${name} from all stages`}
+                    title="Remove from all stages"
                     onClick={() => onRemoveEvaluator(cluster.evaluatorId)}
                   >
                     <Trash2 aria-hidden />
