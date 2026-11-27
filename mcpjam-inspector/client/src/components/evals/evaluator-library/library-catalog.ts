@@ -250,10 +250,24 @@ export function isInSuite(
   predicates: readonly Predicate[],
   questions: readonly RubricCheckQuestion[] = [],
 ): boolean {
-  const ids = new Set(questions.map((q) => q.id));
   return (
     missingChecks(evaluator, predicates).length === 0 &&
-    taggedQuestions(evaluator).every((q) => ids.has(q.id))
+    taggedQuestions(evaluator).every((expected) =>
+      questions.some(
+        (q) => q.id === expected.id && q.evaluator?.id === evaluator.id,
+      ),
+    )
+  );
+}
+
+export function hasQuestionIdConflict(
+  evaluator: LibraryEvaluator,
+  questions: readonly RubricCheckQuestion[],
+): boolean {
+  return taggedQuestions(evaluator).some((expected) =>
+    questions.some(
+      (q) => q.id === expected.id && q.evaluator?.id !== evaluator.id,
+    ),
   );
 }
 

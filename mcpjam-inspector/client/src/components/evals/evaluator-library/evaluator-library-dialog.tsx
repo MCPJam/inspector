@@ -19,6 +19,7 @@ import { EvaluatorCard } from "./evaluator-card";
 import { useEvaluatorLibraryEnabled } from "./evaluator-library-flag";
 import {
   builtFrom,
+  hasQuestionIdConflict,
   hasRoomForQuestions,
   isAuthorable,
   isInSuite,
@@ -92,7 +93,16 @@ export function EvaluatorLibraryDialog({
     isAuthorable(e, authorableKinds, canAskYesNo),
   );
   const selected = available.find((e) => e.id === selectedId);
+  const reasonAddDisabled = (evaluator: LibraryEvaluator) => {
+    if (hasQuestionIdConflict(evaluator, questions)) {
+      return "A question already uses this preset's ID. Remove that question to add the preset.";
+    }
+    if (!hasRoomForQuestions(evaluator, questions)) {
+      return `This suite already has ${MAX_RUBRIC_CHECK_QUESTIONS} rubric-check questions. Remove one to add this evaluator.`;
+    }
+  };
   const add = (evaluator: LibraryEvaluator) => {
+    if (reasonAddDisabled(evaluator)) return;
     const ids = new Set(questions.map((q) => q.id));
     onAdd(
       missingChecks(evaluator, predicates),
@@ -128,7 +138,7 @@ export function EvaluatorLibraryDialog({
           <EvaluatorDetail
             evaluator={selected}
             inSuite={isInSuite(selected, predicates, questions)}
-            hasRoom={hasRoomForQuestions(selected, questions)}
+            reasonAddDisabled={reasonAddDisabled(selected)}
             onBack={() => setSelectedId(null)}
             onAdd={() => add(selected)}
           />
@@ -145,7 +155,7 @@ export function EvaluatorLibraryDialog({
                 inSuite={isInSuite(evaluator, predicates, questions)}
                 onOpen={() => setSelectedId(evaluator.id)}
                 onAdd={
-                  hasRoomForQuestions(evaluator, questions)
+                  !reasonAddDisabled(evaluator)
                     ? () => add(evaluator)
                     : undefined
                 }
@@ -161,13 +171,13 @@ export function EvaluatorLibraryDialog({
 function EvaluatorDetail({
   evaluator,
   inSuite,
-  hasRoom,
+  reasonAddDisabled,
   onBack,
   onAdd,
 }: {
   evaluator: LibraryEvaluator;
   inSuite: boolean;
-  hasRoom: boolean;
+  reasonAddDisabled: string | undefined;
   onBack: () => void;
   onAdd: () => void;
 }) {
@@ -205,10 +215,9 @@ function EvaluatorDetail({
           </li>
         ))}
       </ul>
-      {!inSuite && !hasRoom ? (
+      {!inSuite && reasonAddDisabled ? (
         <p className="text-sm text-muted-foreground">
-          This suite already has {MAX_RUBRIC_CHECK_QUESTIONS} rubric-check
-          questions. Remove one to add this evaluator.
+          {reasonAddDisabled}
         </p>
       ) : null}
       <div className="flex justify-between gap-2">
@@ -219,7 +228,7 @@ function EvaluatorDetail({
         <Button
           type="button"
           onClick={onAdd}
-          disabled={inSuite || !hasRoom}
+          disabled={inSuite || Boolean(reasonAddDisabled)}
         >
           {inSuite ? "In this suite" : "Add to suite"}
         </Button>

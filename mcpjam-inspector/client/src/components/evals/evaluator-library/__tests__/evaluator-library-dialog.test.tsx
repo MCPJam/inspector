@@ -116,6 +116,31 @@ describe("EvaluatorLibraryButton", () => {
     expect(screen.getByText("Actionable Tool Errors")).toBeInTheDocument();
     expect(screen.queryByText("No Wasted Calls")).not.toBeInTheDocument();
   });
+
+  it("explains a preset question ID conflict without marking it installed", () => {
+    const onAdd = vi.fn();
+    renderWithProviders(
+      <EvaluatorLibraryButton
+        predicates={[]}
+        questions={[
+          {
+            id: "answer-grounded-in-results-grounded",
+            kind: "yesno",
+            label: "My question",
+            instructions: "Grade my custom criterion.",
+            pass: { answer: "yes" },
+          },
+        ]}
+        canAskYesNo
+        onAdd={onAdd}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "From library" }));
+    fireEvent.click(screen.getByRole("button", { name: "Answer Grounded in Results" }));
+    expect(screen.getByRole("button", { name: "Add to suite" })).toBeDisabled();
+    expect(screen.getByText(/already uses this preset/)).toBeInTheDocument();
+    expect(onAdd).not.toHaveBeenCalled();
+  });
 });
 
 describe("library catalog", () => {

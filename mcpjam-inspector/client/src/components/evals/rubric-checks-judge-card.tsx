@@ -208,7 +208,7 @@ export function RubricChecksJudgeCard({
             </Button>
           </div>
         </div>
-        {questions.map((question, index) => (
+        {questions.map((question, index) => question.evaluator ? null : (
           <QuestionEditor
             key={index}
             index={index}

@@ -8,6 +8,7 @@ import type { ScorerTableScope } from "../suite-scorer-table";
 import type { EvalJudgeConfig } from "../types";
 import {
   findLibraryEvaluator,
+  hasQuestionIdConflict,
   LIBRARY_EVALUATORS,
   taggedQuestions,
   withEvaluatorUpdated,
@@ -94,7 +95,10 @@ export function librarySuiteEdits(
     },
     update(evaluatorId: string) {
       const entry = findLibraryEvaluator(evaluatorId);
-      if (!entry) return;
+      if (
+        !entry ||
+        hasQuestionIdConflict(entry, judgeConfig?.rubricChecks?.questions ?? [])
+      ) return;
       scope.onPredicatesChange((previous) =>
         withEvaluatorUpdated(previous, evaluatorId),
       );
