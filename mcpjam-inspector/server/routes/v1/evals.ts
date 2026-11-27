@@ -18,6 +18,9 @@ import {
   suiteJudgeSettingsSchema,
   caseJudgeSettingsSchema,
   judgeRubricSchema,
+  codeEvaluatorsSchema,
+  suiteGradingSchema,
+  suiteScriptsSchema,
   suppressedSuiteStandardCheckIdsSchema,
 } from "@mcpjam/sdk/contract";
 /**
@@ -2670,6 +2673,10 @@ function toSuiteDetailDto(
       // Live quality-gate policy. `null` when the suite has none — that is
       // `not_configured` at evaluate time, not an absent feature.
       qualityGate: toQualityGateDto(suite.gatePolicy),
+      // EFTW-90, as stored (the platform normalized them on write).
+      codeEvaluators: suite.codeEvaluators ?? [],
+      scripts: suite.scripts ?? null,
+      grading: suite.grading ?? null,
     },
     schedule: {
       enabled: suite.schedule?.enabled === true,
@@ -3465,6 +3472,10 @@ const suiteSettingsShape = {
   // capability advertises it. See the top-level refine for the required
   // revision precondition and reason.
   qualityGate: z.union([suiteGatePolicySchema, z.null()]).optional(),
+  // EFTW-90. `null` clears; an omitted field is left alone.
+  codeEvaluators: codeEvaluatorsSchema.nullable().optional(),
+  scripts: suiteScriptsSchema.nullable().optional(),
+  grading: suiteGradingSchema.nullable().optional(),
 } as const;
 
 /**
@@ -8954,6 +8965,9 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       updateArgs,
       countFieldNames(vocabularyOf(c)),
     );
+    for (const key of ["codeEvaluators", "scripts", "grading"] as const) {
+      if (s[key] !== undefined) updateArgs[key] = s[key];
+    }
   }
 
   // ONE revision group for the whole request.
