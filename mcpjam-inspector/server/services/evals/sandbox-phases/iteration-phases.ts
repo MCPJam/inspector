@@ -64,6 +64,8 @@ export type IterationPhaseContext = {
   /** When the iteration's own clock runs out (epoch ms). */
   deadlineAt: number;
   signal?: AbortSignal;
+  /** Set once cleanup has run: it runs at most once per iteration. */
+  cleanedUp?: boolean;
   /** Tests only. */
   deps?: PhaseBoxDeps;
 };
