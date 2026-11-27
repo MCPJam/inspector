@@ -384,7 +384,12 @@ function useRuntime(
         protocolVersion: server.catalog?.protocolVersion,
         descriptor,
       }).catch((error: unknown) => {
-        throw new Error(errorMessage(error, "Could not subscribe. Try again."));
+        throw new Error(
+          errorMessage(
+            error,
+            `Couldn't subscribe to ${event.name}. Try again.`,
+          ),
+        );
       });
       subscription = hostedSubscriptionRowToView(row);
     } else {
