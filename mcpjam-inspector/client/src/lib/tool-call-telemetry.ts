@@ -17,7 +17,9 @@ export type ToolCallSource = "chat" | "tools_tab";
 const FIRST_TOOL_CALL_KEY_PREFIX = "mcpjam-first-tool-call-completed";
 
 // A streamed message is finished more than once when client tools continue
-// the turn, so one call id can arrive several times.
+// the turn, so one call id can arrive several times. Repeats come from the
+// same turn, so only recent ids need remembering.
+const MAX_REPORTED_TOOL_CALL_IDS = 500;
 const reportedToolCallIds = new Set<string>();
 
 /**
@@ -49,6 +51,11 @@ export function trackToolCallCompleted({
   if (toolCallId !== undefined) {
     if (reportedToolCallIds.has(toolCallId)) return;
     reportedToolCallIds.add(toolCallId);
+    if (reportedToolCallIds.size > MAX_REPORTED_TOOL_CALL_IDS) {
+      // A Set iterates in insertion order, so the first id is the oldest.
+      const oldest = reportedToolCallIds.values().next().value;
+      if (oldest !== undefined) reportedToolCallIds.delete(oldest);
+    }
   }
   track("tool_call_completed", {
     location: source,

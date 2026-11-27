@@ -40,7 +40,7 @@ interface PlaygroundCenterProps {
   playgroundServerSelectorProps?: PlaygroundServerSelectorProps;
   evalChatHandoff?: EvalChatHandoff | null;
   onEvalChatHandoffConsumed?: (id: string) => void;
-  firstRunPrompt?: string | null;
+  firstRunPrompt?: boolean;
   onFirstRunPromptConsumed?: () => void;
 }
 
@@ -53,7 +53,7 @@ export function PlaygroundCenter({
   playgroundServerSelectorProps,
   evalChatHandoff = null,
   onEvalChatHandoffConsumed,
-  firstRunPrompt = null,
+  firstRunPrompt = false,
   onFirstRunPromptConsumed,
 }: PlaygroundCenterProps) {
   const state = usePlaygroundStateContext();
@@ -62,8 +62,7 @@ export function PlaygroundCenter({
   const isFirstRunUnfinished = state.onboarding.isFirstRunUnfinished;
   // The prompt depends on the tool list, so it waits for tools/list to answer
   // rather than typing one prompt and then swapping it for another.
-  const wantsFirstRunPrompt =
-    Boolean(firstRunPrompt) || state.firstRunComposerSeed;
+  const wantsFirstRunPrompt = firstRunPrompt || state.firstRunComposerSeed;
   const toolList = useMemo(() => Object.values(state.tools), [state.tools]);
   const initialComposerPrompt =
     wantsFirstRunPrompt && state.toolsListed

@@ -660,7 +660,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
               }
               evalChatHandoff={props.evalChatHandoff}
               onEvalChatHandoffConsumed={props.onEvalChatHandoffConsumed}
-              firstRunPrompt={props.firstRunPrompt}
+              firstRunPrompt={Boolean(props.firstRunPrompt)}
               onFirstRunPromptConsumed={props.onFirstRunPromptConsumed}
             />
           </ResizablePanel>

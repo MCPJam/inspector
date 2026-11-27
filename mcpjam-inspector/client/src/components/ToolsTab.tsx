@@ -826,6 +826,7 @@ export function ToolsTab({
     // Handle task creation response (MCP Tasks spec 2025-11-25)
     if ("status" in response && response.status === "task_created") {
       const { task, modelImmediateResponse } = response;
+      trackToolCallCompleted({ source: "tools_tab", isError: false });
 
       // A task-augmented tool that succeeds lands here, not in the `completed`
       // branch — reset the step-up counter on this success path too so a stale
@@ -1086,6 +1087,10 @@ export function ToolsTab({
     setStructuredContentValid(undefined);
     setResponseDurationMs(null);
 
+    // Once the server answers, handleExecutionResponse reports the call; a
+    // later throw in it (auth challenge, output validation) is not a second
+    // call.
+    let responded = false;
     try {
       const params = buildParameters();
       setLastToolName(selectedTool);
@@ -1119,6 +1124,7 @@ export function ToolsTab({
         taskOptions,
         allowTaskResult,
       );
+      responded = true;
       handleExecutionResponse(response, selectedTool, scopeAtCall, {
         kind: "tool",
         surface: "tools",
@@ -1141,7 +1147,9 @@ export function ToolsTab({
         source: "tools_tab_execute",
         extra: { toolName: selectedTool },
       });
-      trackToolCallCompleted({ source: "tools_tab", isError: true });
+      if (!responded) {
+        trackToolCallCompleted({ source: "tools_tab", isError: true });
+      }
       setError(message);
     } finally {
       setToolCallRunning(false);

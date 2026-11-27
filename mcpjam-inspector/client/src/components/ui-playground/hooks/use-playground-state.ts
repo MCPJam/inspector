@@ -297,8 +297,8 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   }, []);
 
   const [fetchingTools, setFetchingTools] = useState(false);
-  // The server whose tools/list last answered, success or failure. An empty
-  // `tools` map cannot say "listed and empty" on its own.
+  // The server whose tools/list last succeeded. An empty `tools` map cannot
+  // say "listed and empty" on its own, and a failed listing is not empty.
   const [toolsListedFor, setToolsListedFor] = useState<string | null>(null);
   const [toolsMetadata, setToolsMetadata] = useState<
     Record<string, Record<string, unknown>>
@@ -510,7 +510,6 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
         if (seq !== toolsRequestSeqRef.current) return;
         console.error("Failed to fetch tools:", err);
         toolsFailedAtRevisionRef.current = requestRevision;
-        setToolsListedFor(serverName);
         setExecutionError(
           err instanceof Error ? err.message : "Failed to fetch tools",
         );

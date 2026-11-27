@@ -72,7 +72,6 @@ vi.mock("@/components/tools/SaveRequestDialog", () => ({
 }));
 
 import { PlaygroundCenter } from "../PlaygroundCenter";
-import { PLAYGROUND_FIRST_RUN_PROMPT } from "@/components/ui-playground/first-run-prompt";
 import {
   readHomeChecklistAutorun,
   writeHomeChecklistAutorun,
@@ -105,7 +104,7 @@ describe("PlaygroundCenter first-run prompt handoff", () => {
     render(
       <PlaygroundCenter
         enableMultiModelChat
-        firstRunPrompt={PLAYGROUND_FIRST_RUN_PROMPT}
+        firstRunPrompt
         onFirstRunPromptConsumed={onFirstRunPromptConsumed}
       />,
     );
@@ -128,12 +127,7 @@ describe("PlaygroundCenter first-run prompt handoff", () => {
 
   it("waits for the tool list before prefilling", () => {
     playgroundState.toolsListed = false;
-    render(
-      <PlaygroundCenter
-        enableMultiModelChat
-        firstRunPrompt={PLAYGROUND_FIRST_RUN_PROMPT}
-      />,
-    );
+    render(<PlaygroundCenter enableMultiModelChat firstRunPrompt />);
     expect(mockPlaygroundMain).toHaveBeenLastCalledWith(
       expect.objectContaining({ initialInput: undefined, pulseSubmit: false }),
     );
@@ -141,12 +135,7 @@ describe("PlaygroundCenter first-run prompt handoff", () => {
 
   it("asks about resources and prompts when every tool is destructive", () => {
     playgroundState.tools = { wipe: tool("wipe", true) };
-    render(
-      <PlaygroundCenter
-        enableMultiModelChat
-        firstRunPrompt={PLAYGROUND_FIRST_RUN_PROMPT}
-      />,
-    );
+    render(<PlaygroundCenter enableMultiModelChat firstRunPrompt />);
     expect(mockPlaygroundMain).toHaveBeenLastCalledWith(
       expect.objectContaining({
         initialInput: "List the resources and prompts this server exposes.",

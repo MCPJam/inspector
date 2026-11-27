@@ -357,7 +357,7 @@ describe("PlaygroundTab loading branch", () => {
 
     expect(mockPlaygroundCenter).toHaveBeenCalledWith(
       expect.objectContaining({
-        firstRunPrompt: "What can this server do?",
+        firstRunPrompt: true,
         onFirstRunPromptConsumed,
       }),
     );

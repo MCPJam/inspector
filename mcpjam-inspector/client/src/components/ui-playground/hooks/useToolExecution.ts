@@ -348,6 +348,9 @@ export function useToolExecution({
       setIsExecuting(true);
       setExecutionError(null);
 
+      // The step-up and auth-challenge handlers run after the outcome is
+      // reported and can throw; the catch must not report the call again.
+      let reported = false;
       try {
         const response = await executeToolApi(
           effectiveServerName,
@@ -357,6 +360,7 @@ export function useToolExecution({
 
         if ("error" in response) {
           trackToolCallCompleted({ source: "tools_tab", isError: true });
+          reported = true;
           // Log tool execution failure
           track("app_builder_tool_executed", {
             location: "app_builder_tab",
@@ -439,6 +443,7 @@ export function useToolExecution({
           source: "tools_tab",
           isError: result.isError === true,
         });
+        reported = true;
         // Log successful tool execution
         track("app_builder_tool_executed", {
           location: "app_builder_tab",
@@ -483,7 +488,9 @@ export function useToolExecution({
         const errorMessage =
           err instanceof Error ? err.message : "Tool execution failed";
 
-        trackToolCallCompleted({ source: "tools_tab", isError: true });
+        if (!reported) {
+          trackToolCallCompleted({ source: "tools_tab", isError: true });
+        }
         track("app_builder_tool_executed", {
           location: "app_builder_tab",
           toolName: effectiveToolName,

@@ -104,4 +104,17 @@ describe("tool_call_completed", () => {
     );
     expect(track).not.toHaveBeenCalled();
   });
+
+  it("remembers only the most recent 500 call ids", () => {
+    const report = (toolCallId: string) =>
+      trackToolCallCompleted({ source: "chat", isError: false, toolCallId });
+    report("cap-oldest");
+    for (let i = 0; i < 500; i++) report(`cap-${i}`);
+    track.mockClear();
+
+    report("cap-499");
+    expect(track).not.toHaveBeenCalled();
+    report("cap-oldest");
+    expect(track).toHaveBeenCalledOnce();
+  });
 });

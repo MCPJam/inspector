@@ -233,6 +233,8 @@ describe("usePlaygroundState — one tools/list per request it would send", () =
     await waitFor(() => expect(listed).toHaveLength(1));
     await act(async () => answers[0](new Error("token expired")));
     await waitFor(() => expect(result.current.fetchingTools).toBe(false));
+    // A failed listing is not a server with no tools.
+    expect(result.current.toolsListed).toBe(false);
 
     // A new token getter leaves the request as it was, and can fix it.
     act(() => {
@@ -243,6 +245,7 @@ describe("usePlaygroundState — one tools/list per request it would send", () =
     await waitFor(() =>
       expect(Object.keys(result.current.tools)).toEqual(["draw"]),
     );
+    expect(result.current.toolsListed).toBe(true);
   });
 
   it("lists again after a refresh of a listed request fails", async () => {
