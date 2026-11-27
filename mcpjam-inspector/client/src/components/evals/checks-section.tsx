@@ -3598,7 +3598,7 @@ function parseSchemaDraft(
       parsed: null,
       error: parseError instanceof SyntaxError
         ? "Not valid JSON. Check the syntax."
-        : "Could not read the schema.",
+        : "Couldn't read the schema. Enter a JSON object, true, or false.",
     };
   }
 }
@@ -3686,9 +3686,7 @@ function ToolResultSchemaFields({
           </p>
         ) : !paper ? (
           <p className="text-[11px] text-muted-foreground">
-            Validated against the tool's structured content, then its JSON
-            output, then text that parses as JSON. Write the schema as a JSON
-            object or boolean.
+            Write the schema as a JSON object or boolean.
           </p>
         ) : null}
       </div>

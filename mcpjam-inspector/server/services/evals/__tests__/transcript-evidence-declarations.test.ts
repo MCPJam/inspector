@@ -13,9 +13,8 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import { jsonSchema } from "ai";
 import { MockLanguageModelV4, convertArrayToReadableStream } from "ai/test";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from "@modelcontextprotocol/sdk/types.js";
+import { NodeStreamableHTTPServerTransport } from "@modelcontextprotocol/node";
+import { InternalError, Server } from "@modelcontextprotocol/server";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { buildIterationTranscript, evaluatePredicate } from "@mcpjam/sdk/predicates";
 import { consumeDirectChatTurnHeadless, runDirectChatTurn } from "../../../utils/direct-chat-turn.js";
@@ -176,16 +175,16 @@ it("grades output-schema rejections through the MCP client and AI SDK", async ()
     { name: "declared-output-fixture", version: "1" },
     { capabilities: { tools: {} } },
   );
-  mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
+  mcp.setRequestHandler("tools/list", async () => ({
     tools: names.map((name) => ({
       name,
       inputSchema: { type: "object" },
       outputSchema: SCHEMA,
     })),
   }));
-  mcp.setRequestHandler(CallToolRequestSchema, async ({ params: { name } }) => {
+  mcp.setRequestHandler("tools/call", async ({ params: { name } }) => {
     if (name === "rpc_error") {
-      throw new McpError(ErrorCode.InternalError, "request interrupted");
+      throw new InternalError("request interrupted");
     }
     return {
       content: [{ type: "text", text: "fixture result" }],
@@ -194,7 +193,7 @@ it("grades output-schema rejections through the MCP client and AI SDK", async ()
       ...(name === "wrong_type" ? { structuredContent: { limit: "five" } } : {}),
     };
   });
-  const transport = new StreamableHTTPServerTransport({
+  const transport = new NodeStreamableHTTPServerTransport({
     sessionIdGenerator: () => "declared-output-fixture",
   });
   await mcp.connect(transport);
