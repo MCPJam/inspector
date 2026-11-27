@@ -3,7 +3,7 @@ import { browserAnalyticsOptedOut, getRuntimeConfig } from "./runtime-config";
 // The campaign stays in an HttpOnly, host-only marketing-site cookie. The
 // app remembers only the expiry of the last visit it successfully attributed.
 const receiptName = "__Host-mcpjam_signup_consumed";
-export type SignupCampaign = { label: string; expiresAt: number };
+export type SignupCampaign = { label: string; expiresAt: number; visitId: string };
 
 function consumedThrough(): number {
   const receipt = document.cookie
@@ -25,14 +25,16 @@ async function fromWebsite(
       signal,
     });
     if (response.status !== 200) return;
-    const { label, expiresAt } = await response.json();
+    const { label, expiresAt, visitId } = await response.json();
     if (
       typeof label === "string" &&
       /^[a-z0-9][a-z0-9_-]{0,63}\/[a-z0-9][a-z0-9_-]{0,63}$/.test(label) &&
+      typeof visitId === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(visitId) &&
       Number.isSafeInteger(expiresAt) &&
       expiresAt > 0
     ) {
-      return { label, expiresAt };
+      return { label, expiresAt, visitId };
     }
   } catch {
     /* One host can redirect, be offline or have no eligible visit. */
@@ -41,12 +43,13 @@ async function fromWebsite(
 
 export async function readSignupCampaign(
   canCapture: () => boolean,
+  signal = AbortSignal.timeout(1200),
 ): Promise<SignupCampaign | undefined> {
   try {
     if (browserAnalyticsOptedOut() || !canCapture()) return;
     const origins = signupCampaignWebsiteOrigins(location.origin, getRuntimeConfig());
     if (!origins.length) return;
-    const signal = AbortSignal.timeout(1200);
+    if (signal.aborted) return;
     const visits = await Promise.all(
       origins.map((origin) => fromWebsite(origin, signal)),
     );
@@ -66,16 +69,18 @@ export async function readSignupCampaign(
 
 // Web Locks coordinate tabs. Older browsers still serialize claims across hook
 // instances within this page. A rejected mutation must release the next waiter.
-const localClaims = new Map<number, Promise<void>>();
+const localClaims = new Map<string, Promise<void>>();
 
 export async function withSignupCampaignClaim(
-  expiresAt: number,
+  visitId: string,
+  signal: AbortSignal,
   claim: () => Promise<void>,
 ): Promise<boolean> {
+  if (signal.aborted) return false;
   if (navigator.locks) {
     let acquired = false;
     try {
-      await navigator.locks.request("mcpjam-signup-campaign-" + expiresAt, async () => {
+      await navigator.locks.request("mcpjam-signup-campaign-" + visitId, { signal }, async () => {
         acquired = true;
         await claim();
       });
@@ -85,14 +90,25 @@ export async function withSignupCampaignClaim(
       return false;
     }
   }
-  const previous = localClaims.get(expiresAt) ?? Promise.resolve();
-  const current = previous.then(claim, claim);
-  localClaims.set(expiresAt, current);
+  while (localClaims.has(visitId)) {
+    let release!: () => void;
+    const aborted = new Promise<void>((resolve) => { release = resolve; });
+    signal.addEventListener("abort", release, { once: true });
+    try {
+      await Promise.race([localClaims.get(visitId), aborted]);
+    } finally {
+      signal.removeEventListener("abort", release);
+    }
+    if (signal.aborted) return false;
+  }
+  let release!: () => void;
+  localClaims.set(visitId, new Promise<void>((resolve) => { release = resolve; }));
   try {
-    await current;
+    await claim();
     return true;
   } finally {
-    if (localClaims.get(expiresAt) === current) localClaims.delete(expiresAt);
+    localClaims.delete(visitId);
+    release();
   }
 }
 

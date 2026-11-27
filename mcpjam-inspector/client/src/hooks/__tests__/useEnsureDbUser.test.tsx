@@ -1,5 +1,5 @@
 import { getFunctionName, type FunctionReference } from "convex/server";
-import { readSignupCampaign } from "@/lib/signup-campaign";
+import { readSignupCampaign, withSignupCampaignClaim } from "@/lib/signup-campaign";
 import { guestTabRecovery } from "@/lib/auth/guest-tab-recovery";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -711,7 +711,7 @@ describe("useEnsureDbUser", () => {
 
   function websiteVisit(expiresAt: number, label = "linkedin/fall_launch") {
     vi.stubGlobal("fetch", vi.fn(async () => ({
-      status: 200, json: async () => ({ expiresAt, label }),
+      status: 200, json: async () => ({ expiresAt, label, visitId: "11111111-1111-4111-8111-111111111111" }),
     })));
   }
 
@@ -751,7 +751,7 @@ describe("useEnsureDbUser", () => {
     try {
       const { result } = renderHook(() => useEnsureDbUser());
       await waitFor(() => expect(result.current.isUserReady).toBe(true));
-      expect(mockState.ensureCampaign).toHaveBeenCalledWith({ signupCampaign: "linkedin/fall_launch" });
+      expect(mockState.ensureCampaign).toHaveBeenCalledWith({ signupCampaign: "linkedin/fall_launch", signupVisit: { expiresAt, visitId: "11111111-1111-4111-8111-111111111111" } });
       expect(document.cookie).toBe("__Host-mcpjam_signup_consumed=" + expiresAt);
       expect(await readSignupCampaign(() => true)).toMatchObject({label: "linkedin/winter_launch"});
       websiteVisit(expiresAt);
@@ -760,6 +760,46 @@ describe("useEnsureDbUser", () => {
       cookies.restore();
       vi.unstubAllGlobals();
     }
+  });
+
+  it("attributes the newer visit if the campaign changes during handoff", async () => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    mockState.posthog = { is_capturing: () => true };
+    vi.stubGlobal("location", new URL("https://app.mcpjam.com/"));
+    const expiresAt = Date.now() + 900_000;
+    const first = { label: "linkedin/fall_launch", visitId: "11111111-1111-4111-8111-111111111111", expiresAt };
+    const next = { label: "linkedin/winter_launch", visitId: "22222222-2222-4222-8222-222222222222", expiresAt: expiresAt + 1 };
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValue({ status: 200, json: async () => next })
+      .mockResolvedValueOnce({ status: 200, json: async () => first })
+      .mockResolvedValueOnce({ status: 200, json: async () => first }));
+    const cookies = campaignCookieJar();
+    try {
+      const { result } = renderHook(() => useEnsureDbUser());
+      await waitFor(() => expect(result.current.isUserReady).toBe(true));
+      expect(mockState.ensureCampaign).toHaveBeenCalledWith({
+        signupCampaign: next.label,
+        signupVisit: { visitId: next.visitId, expiresAt: next.expiresAt },
+      });
+    } finally {
+      cookies.restore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("lets a queued claim time out without running it after release", async () => {
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const first = withSignupCampaignClaim("visit", new AbortController().signal, () => pending);
+    const controller = new AbortController();
+    const claim = vi.fn();
+    const second = withSignupCampaignClaim("visit", controller.signal, claim);
+    controller.abort();
+    expect(await second).toBe(false);
+    release();
+    expect(await first).toBe(true);
+    expect(claim).not.toHaveBeenCalled();
   });
 
   it.each([true, false])("serializes overlapping account claims (first applied: %s)", async (campaignApplied) => {
@@ -831,7 +871,7 @@ describe("useEnsureDbUser", () => {
     try {
       const { result } = renderHook(() => useEnsureDbUser());
       await waitFor(() => expect(result.current.isUserReady).toBe(true));
-      expect(mockState.ensureCampaign.mock.calls[0][0]).toEqual({ signupCampaign: "linkedin/fall_launch" });
+      expect(mockState.ensureCampaign.mock.calls[0][0]).toMatchObject({ signupCampaign: "linkedin/fall_launch" });
       if (scenario === "opt-out before retry") {
         expect(mockState.ensureUser).toHaveBeenCalledWith({});
         expect(mockState.ensureCampaign).toHaveBeenCalledTimes(1);

@@ -34,6 +34,7 @@ const ENSURE_USER_RECOVERY_DELAYS_MS = [1_000, 5_000, 15_000];
 
 type EnsureUserArgs = {
   signupCampaign?: string;
+  signupVisit?: { visitId: string; expiresAt: number };
   guestProofJwt?: string;
   /**
    * The browser's pre-signup anonymous PostHog id ($device_id — stable even
@@ -135,32 +136,37 @@ async function ensureUserWithRetry(
   ensureCampaign: (args: EnsureUserArgs) => Promise<{ campaignApplied?: boolean } | null>,
   args: EnsureUserArgs,
   shouldContinue: () => boolean,
-  getCampaign: () => Promise<SignupCampaign | undefined>
+  getCampaign: (signal: AbortSignal) => Promise<SignupCampaign | undefined>
 ) {
   for (let attempt = 0; ; attempt++) {
     if (!shouldContinue()) return;
 
     try {
-      const signupCampaign = await getCampaign();
-      if (!shouldContinue()) return;
-      if (!signupCampaign) {
+      if (typeof AbortSignal === "undefined" || typeof AbortSignal.timeout !== "function") {
         await ensureUser(args);
         return;
       }
-      const acquired = await withSignupCampaignClaim(signupCampaign.expiresAt, async () => {
-        if (!shouldContinue()) return;
-        // The previous claimant may have written a receipt, or consent may
-        // have changed while this account waited.
-        const eligible = await getCampaign();
-        if (!shouldContinue()) return;
-        if (eligible?.expiresAt !== signupCampaign.expiresAt || eligible.label !== signupCampaign.label) {
-          await ensureUser(args);
-          return;
-        }
-        const outcome = await ensureCampaign({ ...args, signupCampaign: eligible.label });
-        if (outcome?.campaignApplied) acknowledgeSignupCampaign(eligible);
-      });
-      if (!acquired && shouldContinue()) await ensureUser(args);
+      const signal = AbortSignal.timeout(1200);
+      let visit = await getCampaign(signal);
+      while (visit && !signal.aborted && shouldContinue()) {
+        const candidate = visit;
+        visit = undefined;
+        let submitted = false;
+        await withSignupCampaignClaim(candidate.visitId, signal, async () => {
+          const eligible = await getCampaign(signal);
+          if (!eligible || signal.aborted || !shouldContinue()) return;
+          if (eligible.visitId !== candidate.visitId || eligible.expiresAt !== candidate.expiresAt || eligible.label !== candidate.label) {
+            visit = eligible;
+            return;
+          }
+          const { visitId, expiresAt, label } = eligible;
+          submitted = true;
+          const outcome = await ensureCampaign({ ...args, signupCampaign: label, signupVisit: { visitId, expiresAt } });
+          if (outcome?.campaignApplied) acknowledgeSignupCampaign(eligible);
+        });
+        if (submitted) return;
+      }
+      if (shouldContinue()) await ensureUser(args);
       return;
     } catch (err) {
       if (
@@ -418,8 +424,8 @@ export function useEnsureDbUser() {
         return;
       }
 
-      const getCampaign = () => readSignupCampaign(
-        () => isWorkOsAuth && !!posthog?.is_capturing?.()
+      const getCampaign = (signal: AbortSignal) => readSignupCampaign(
+        () => isWorkOsAuth && !!posthog?.is_capturing?.(), signal
       );
       const ensureArgs: EnsureUserArgs = {
         ...(guestProofJwt ? { guestProofJwt } : {}),
