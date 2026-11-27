@@ -15,3 +15,11 @@ export function remainingText(current: string, sent: string): string {
 export function withoutSent<T>(current: readonly T[], sent: readonly T[]): T[] {
   return current.filter((item) => !sent.includes(item));
 }
+
+/** State updaters that clear what a send carried and keep what was added. */
+export const keepUnsentText = (sent: string) => (current: string) =>
+  remainingText(current, sent);
+export const keepUnsent =
+  <T>(sent: readonly T[]) =>
+  (current: readonly T[]) =>
+    withoutSent(current, sent);

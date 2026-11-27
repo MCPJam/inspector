@@ -17,6 +17,7 @@ import {
   validateFile,
   type FileAttachment,
 } from "../chat-v2/chat-input/attachments/file-utils";
+import { withoutSent } from "../chat-v2/composer-sent";
 
 /** One message holds at most 64 blocks; the composer holds no more items. */
 const DRAFT_ITEMS_MAX = 64;
@@ -83,9 +84,7 @@ export function useAppMessageDraft(
   const discard = useCallback(
     (sent: readonly DraftItem[]) =>
       setState((old) =>
-        old.key === key
-          ? { key, items: old.items.filter((item) => !sent.includes(item)) }
-          : old,
+        old.key === key ? { key, items: withoutSent(old.items, sent) } : old,
       ),
     [key],
   );

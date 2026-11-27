@@ -226,7 +226,7 @@ import {
   attachmentsToFileUIParts,
   revokeFileAttachmentUrls,
 } from "@/components/chat-v2/chat-input/attachments/file-utils";
-import { remainingText, withoutSent } from "@/components/chat-v2/composer-sent";
+import { keepUnsent, keepUnsentText } from "@/components/chat-v2/composer-sent";
 import {
   useUIPlaygroundStore,
   type DeviceType,
@@ -5926,9 +5926,7 @@ export function PlaygroundMain({
       if (composerText.trim()) {
         setCompareSentPrompts((prev) => [...prev, composerText]);
       }
-      setModelContextQueue((current) =>
-        withoutSent(current, modelContextQueue),
-      );
+      setModelContextQueue(keepUnsent(modelContextQueue));
     } else {
       trackSendMessage({ single_model_send: true });
       // `sendMessage` writes the prompt and skill turns after its own
@@ -5948,17 +5946,15 @@ export function PlaygroundMain({
       if (!sent) return false;
       composerMentions.discard(composerMentions.selections);
       appMessageDraft.discard(draftItems);
-      setModelContextQueue((current) =>
-        withoutSent(current, modelContextQueue),
-      );
+      setModelContextQueue(keepUnsent(modelContextQueue));
     }
 
     // The box stayed editable during the send: keep what was added meanwhile.
-    composer.setInput((current) => remainingText(current, sentText));
-    setMcpPromptResults((current) => withoutSent(current, mcpPromptResults));
-    setSkillResults((current) => withoutSent(current, skillResults));
+    composer.setInput(keepUnsentText(sentText));
+    setMcpPromptResults(keepUnsent(mcpPromptResults));
+    setSkillResults(keepUnsent(skillResults));
     revokeFileAttachmentUrls(fileAttachments);
-    setFileAttachments((current) => withoutSent(current, fileAttachments));
+    setFileAttachments(keepUnsent(fileAttachments));
     onFirstMessageSent?.();
     return true;
   }, [
@@ -6327,19 +6323,15 @@ export function PlaygroundMain({
             return;
           }
         }
-        setModelContextQueue((current) =>
-          withoutSent(current, modelContextQueue),
-        );
+        setModelContextQueue(keepUnsent(modelContextQueue));
         // Starter sends are text-only: what the composer held at the click is
         // discarded, so it doesn't ride along on the next composer submit.
         // What was added during the send stays.
-        composer.setInput((current) => remainingText(current, inputAtClick));
-        setMcpPromptResults((current) =>
-          withoutSent(current, mcpPromptResults),
-        );
-        setSkillResults((current) => withoutSent(current, skillResults));
+        composer.setInput(keepUnsentText(inputAtClick));
+        setMcpPromptResults(keepUnsent(mcpPromptResults));
+        setSkillResults(keepUnsent(skillResults));
         revokeFileAttachmentUrls(fileAttachments);
-        setFileAttachments((current) => withoutSent(current, fileAttachments));
+        setFileAttachments(keepUnsent(fileAttachments));
         onFirstMessageSent?.();
       });
     },
@@ -6403,9 +6395,7 @@ export function PlaygroundMain({
           composer.setInput(text);
           return;
         }
-        setModelContextQueue((current) =>
-          withoutSent(current, modelContextQueue),
-        );
+        setModelContextQueue(keepUnsent(modelContextQueue));
       } else {
         trackSendMessage({ single_model_send: true });
         const sent = await sendOrBranch({
@@ -6418,9 +6408,7 @@ export function PlaygroundMain({
           composer.setInput(text);
           return;
         }
-        setModelContextQueue((current) =>
-          withoutSent(current, modelContextQueue),
-        );
+        setModelContextQueue(keepUnsent(modelContextQueue));
       }
       onFirstMessageSent?.();
     },

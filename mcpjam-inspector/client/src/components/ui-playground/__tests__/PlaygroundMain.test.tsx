@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, type Dispatch, type SetStateAction } from "react";
 import { useMrtrElicitationStore } from "@/stores/mrtr-elicitation-store";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -2381,10 +2381,19 @@ describe("PlaygroundMain", () => {
       );
     });
 
+    type Items = { id: string }[];
     const composerProps = () =>
       mockChatInputProps.mock.calls.at(-1)?.[0] as {
         value: string;
         isSubmitting?: boolean;
+        onChange: (text: string) => void;
+        onSubmit: (e: { preventDefault: () => void }) => Promise<void>;
+        fileAttachments: Items;
+        mcpPromptResults: Items;
+        skillResults: Items;
+        onChangeFileAttachments: Dispatch<SetStateAction<unknown[]>>;
+        onChangeMcpPromptResults: Dispatch<SetStateAction<unknown[]>>;
+        onChangeSkillResults: Dispatch<SetStateAction<unknown[]>>;
       };
 
     async function openSavedThread() {
@@ -2493,18 +2502,9 @@ describe("PlaygroundMain", () => {
       const revoke = vi
         .spyOn(URL, "revokeObjectURL")
         .mockImplementation(() => {});
-      type Update = (change: (current: unknown[]) => unknown[]) => void;
-      const items = () =>
-        composerProps() as unknown as Record<string, { id: string }[]> &
-          Record<
-            | "onChangeFileAttachments"
-            | "onChangeMcpPromptResults"
-            | "onChangeSkillResults",
-            Update
-          >;
       const add = (id: string) =>
         act(() => {
-          items().onChangeFileAttachments((c) => [
+          composerProps().onChangeFileAttachments((c) => [
             ...c,
             {
               id,
@@ -2512,7 +2512,7 @@ describe("PlaygroundMain", () => {
               previewUrl: `blob:${id}`,
             },
           ]);
-          items().onChangeMcpPromptResults((c) => [
+          composerProps().onChangeMcpPromptResults((c) => [
             ...c,
             {
               id,
@@ -2522,12 +2522,14 @@ describe("PlaygroundMain", () => {
               result: {},
             },
           ]);
-          items().onChangeSkillResults((c) => [
+          composerProps().onChangeSkillResults((c) => [
             ...c,
             { id, skillId: id, name: id, content: "body" },
           ]);
         });
-      const ids = (key: string) => items()[key].map((item) => item.id);
+      const ids = (
+        key: "fileAttachments" | "mcpPromptResults" | "skillResults",
+      ) => composerProps()[key].map((item) => item.id);
       try {
         await openSavedThread();
         const releaseSync = holdPreSendSync();
@@ -2616,27 +2618,20 @@ describe("PlaygroundMain", () => {
         .mockImplementation(function (this: FileReader, blob: Blob) {
           held.push(() => read.call(this, blob));
         });
-      const composer = () =>
-        composerProps() as unknown as {
-          value: string;
-          onChange: (text: string) => void;
-          onSubmit: (e: { preventDefault: () => void }) => Promise<void>;
-          onChangeFileAttachments: (files: unknown[]) => void;
-        };
       try {
         render(<PlaygroundMain {...defaultProps} enableMultiModelChat />);
         await act(async () => {
-          composer().onChangeFileAttachments([
+          composerProps().onChangeFileAttachments([
             { id: "f1", file: new File(["x"], "a.png", { type: "image/png" }) },
           ]);
-          composer().onChange("first");
+          composerProps().onChange("first");
         });
         let submitted!: Promise<void>;
         await act(async () => {
-          submitted = composer().onSubmit({ preventDefault() {} });
+          submitted = composerProps().onSubmit({ preventDefault() {} });
         });
         await waitFor(() => expect(held).toHaveLength(1));
-        await act(async () => composer().onChange("first plus more"));
+        await act(async () => composerProps().onChange("first plus more"));
 
         await act(async () => {
           held.forEach((release) => release());
@@ -2649,7 +2644,7 @@ describe("PlaygroundMain", () => {
               ?.text,
           ).toBe("first"),
         );
-        expect(composer().value).toBe("plus more");
+        expect(composerProps().value).toBe("plus more");
       } finally {
         hold.mockRestore();
         mockUseChatSession.availableModels = [];
