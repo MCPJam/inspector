@@ -4,18 +4,21 @@ description: "Subscribe to MCP Events by poll, push or webhook, and check a serv
 icon: "bell-ring"
 ---
 
-MCP Events let a server tell a client that something happened, such as a new comment, a failed build or an incoming email, so an agent can react without anyone typing. The SDK implements the working-group draft pinned at [`28ec35e`](https://github.com/modelcontextprotocol/experimental-ext-triggers-events/blob/28ec35e905daa241f019981e2836b4a02f1c0368/docs/design-sketch-proposal.md). The draft is not an accepted SEP yet.
+MCP Events let a server tell a client that something happened, such as a new comment, a failed build or an incoming email, so an agent can react without anyone typing. The SDK implements the [Events Beta extension at `c77b843`](https://github.com/modelcontextprotocol/ext-events/blob/c77b84395eff0ae32f53b0516c2214fe276ed050/specification/beta/events/events.mdx) (`io.modelcontextprotocol/events`, SEP-3415), and still supports the earlier working-group draft at [`28ec35e`](https://github.com/modelcontextprotocol/experimental-ext-triggers-events/blob/28ec35e905daa241f019981e2836b4a02f1c0368/docs/design-sketch-proposal.md) and ChatGPT's profile. For how the extension works, see [MCP Events](/inspector/events).
 
 <Note>
-  Events are a **draft** extension. Results name the profile they were judged
-  by: `draft@28ec35e`, or `chatgpt@2026-11-05` for what ChatGPT supports.
-  `chatgpt@2026-09-30` is a historical snapshot that accepted only protocol
-  version `2026-07-28`.
+  Results name the profile they were judged by, exported from
+  `@mcpjam/sdk/events`: `BETA_PROFILE_ID` (`beta@c77b843`) for a server that
+  declares the Beta extension on protocol `2026-07-28`, `DRAFT_PROFILE_ID`
+  (`draft@28ec35e`) for a server that declares the legacy top-level
+  `capabilities.events`, and `CHATGPT_PROFILE_ID` (`chatgpt@2026-11-05`) for
+  what ChatGPT supports. `chatgpt@2026-09-30` is a historical snapshot that
+  accepted only protocol version `2026-07-28`.
 </Note>
 
 ## Discover events
 
-The official client drops a server's top-level `capabilities.events`, so read it through the manager. It captures the raw handshake:
+The official client drops capability keys it does not know, so it never shows Events. Read them through the manager, which captures the raw handshake:
 
 ```typescript
 import { MCPClientManager } from "@mcpjam/sdk";
@@ -24,7 +27,8 @@ const manager = new MCPClientManager();
 await manager.connectToServer("docs", { url: "https://docs.example.com/mcp" });
 
 const support = await manager.ensureEventsSupport("docs");
-// { handshakeObserved: true, declared: true, listChanged: true, source: "server/discover" }
+// { handshakeObserved: true, declared: true, beta: true, listChanged: true, source: "server/discover" }
+// beta is true when the server declared io.modelcontextprotocol/events
 
 const { events } = await manager.listServerEvents("docs");
 // [{ name: "comment.created", delivery: ["webhook", "poll", "push"], inputSchema, payloadSchema }]
@@ -57,7 +61,7 @@ import {
   MemoryEventInbox,
   applySubscriptionPatch,
   computeBindingKey,
-  DRAFT_PROFILE_ID,
+  BETA_PROFILE_ID,
 } from "@mcpjam/sdk/events";
 
 const inbox = new MemoryEventInbox({ publicOrigin: "https://hooks.example.com" });
@@ -77,7 +81,7 @@ let subscription = {
   environmentId: null,
   bindingKey: computeBindingKey({ serverId: "docs", credentialOwnerUserId: "me", credentialFingerprint: null }),
   serverId: "docs",
-  profile: DRAFT_PROFILE_ID,
+  profile: BETA_PROFILE_ID, // or DRAFT_PROFILE_ID for a legacy-draft server
   eventName: "comment.created",
   arguments: { document_id: "doc_123" },
   mode: "poll" as const,
@@ -98,7 +102,9 @@ For **push**, `EventsPushRuntime` holds `events/stream` requests open. It demuxe
 import { EventsPushRuntime, createManagerPushPort } from "@mcpjam/sdk/events";
 
 const push = new EventsPushRuntime({ port: createManagerPushPort(manager, "docs"), inbox });
-const stream = push.start({ ...subscription, mode: "push" }, { onCursor: (cursor) => save(cursor) });
+const stream = push.start({ ...subscription, mode: "push" }, {
+  onCursor: (cursor) => { /* store the cursor so a restart resumes from it */ },
+});
 // later: stream.stop()
 ```
 
@@ -111,11 +117,13 @@ const stream = push.start({ ...subscription, mode: "push" }, { onCursor: (cursor
 ```typescript
 import { runEventsConformance, startEventsConformanceReceiver } from "@mcpjam/sdk";
 
-const receiver = await startEventsConformanceReceiver({ tls: { cert, key } }); // or publicOrigin behind an https tunnel
+// cert and key: PEM strings for a certificate the server under test trusts.
+// Behind an https tunnel, pass { publicOrigin: "https://your-tunnel.example.com" } instead.
+const receiver = await startEventsConformanceReceiver({ tls: { cert, key } });
 const result = await runEventsConformance({
   manager,
   serverId: "docs",
-  profile: "draft@28ec35e", // or "chatgpt@2026-11-05" for ChatGPT readiness
+  profile: "beta@c77b843", // or "draft@28ec35e", or "chatgpt@2026-11-05" for ChatGPT readiness
   receiver,
   eventArguments: { "comment.created": { document_id: "doc_123" } },
   triggerEvent: async () => { /* cause one matching event, e.g. call a tool */ },
@@ -130,6 +138,9 @@ A plain-http receiver is allowed only as a labelled override (`overrides: ["inse
 `runEventStep` runs an event through a host executor. The instruction stays outside, and the event goes into an untrusted data block. A canned event is first validated against its `payloadSchema`.
 
 ```typescript
+// executor: the host executor your eval runs turns with.
+// payloadSchema: the event type's payloadSchema from events/list.
+// expect: your test runner's assertion (Vitest or Jest).
 import { runEventStep } from "@mcpjam/sdk/events";
 
 const result = await runEventStep(executor, {
