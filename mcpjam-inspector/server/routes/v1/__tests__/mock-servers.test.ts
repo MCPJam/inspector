@@ -323,6 +323,45 @@ describe("POST /mock-servers", () => {
   });
 });
 
+/** A ticket mock whose declared record result cannot satisfy the tool's own output schema. */
+const BROKEN_RECORDS = {
+  seed: { tickets: { "123": { id: "123", status: "open" } } },
+  tools: {
+    lookup_ticket: {
+      inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+      outputSchema: { type: "object", properties: { status: { type: "number" } }, required: ["status"] },
+      state: { op: "get", collection: "tickets", key: "{{input.id}}" },
+    },
+  },
+};
+
+describe("a record result is checked against the output schema when a version is saved", () => {
+  it("refuses a create, naming the tool's state path, before the backend is called", async () => {
+    const response = await request("POST", MOCKS, { body: { name: "tickets", definition: BROKEN_RECORDS } });
+    expect(response.status).toBe(400);
+    const body = await json(response);
+    expect(body.message).toContain("tools.lookup_ticket.state");
+    expect(body.message).toContain("output schema");
+    expect(mocks.mutation).not.toHaveBeenCalled();
+  });
+
+  it("refuses a version save the same way", async () => {
+    const response = await request("POST", `${MOCKS}/${MOCK}/versions`, {
+      body: { definition: BROKEN_RECORDS, expectedVersion: 2 },
+    });
+    expect(response.status).toBe(400);
+    expect((await json(response)).message).toContain("tools.lookup_ticket.state");
+    expect(mocks.mutation).not.toHaveBeenCalled();
+  });
+
+  it("accepts the same tool when its seed fits the schema", async () => {
+    const fits = structuredClone(BROKEN_RECORDS);
+    fits.tools.lookup_ticket.outputSchema.properties.status = { type: "string" } as never;
+    const response = await request("POST", MOCKS, { body: { name: "tickets", definition: fits } });
+    expect(response.status).toBe(201);
+  });
+});
+
 describe("POST /mock-servers/:mockId/versions", () => {
   const path = `${MOCKS}/${MOCK}/versions`;
 

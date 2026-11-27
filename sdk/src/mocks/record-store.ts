@@ -99,6 +99,20 @@ export interface MockRecordStore {
   ): Promise<MockRecordOutcome>;
 }
 
+/**
+ * Thrown by a store when it cannot serve a call for a reason the caller should
+ * read and can act on (a test run that was closed or has expired). The runtime
+ * answers the call with a tool error carrying `message`, so it is worded for
+ * the caller. Any other error from a store is an infrastructure failure and
+ * surfaces as a JSON-RPC internal error.
+ */
+export class MockRecordRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MockRecordRefusedError";
+  }
+}
+
 /** What `buildMock` needs to serve tools that declare `state`. */
 export interface MockRecords {
   store: MockRecordStore;

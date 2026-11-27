@@ -8,6 +8,7 @@ import {
   checkStateOutputs,
   fingerprintToolCall,
   MOCK_SEED_MAX_RECORDS,
+  MockRecordRefusedError,
   NO_REAL_SERVER,
   operationKeyMeta,
   validateMockDefinition,
@@ -285,6 +286,27 @@ describe("operations", () => {
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain("10,000 records");
     expect(textOf(result)).toContain("Delete some records");
+  });
+
+  it("answers a store's refusal with a tool error carrying its message, and any other failure as an error", async () => {
+    const refusing: MockRecordStore = {
+      execute: async () => {
+        throw new MockRecordRefusedError("This test run was closed. Open a new run.");
+      },
+    };
+    const client = await connect(ticketMock, { store: refusing, context: version });
+    const result = await client.callTool({ name: "lookup_ticket", arguments: { id: "123" } });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toBe("This test run was closed. Open a new run.");
+    expect(events.map((e) => [e.source, e.refusal])).toEqual([["state", "record_refused"]]);
+
+    const failing: MockRecordStore = {
+      execute: async () => {
+        throw new Error("the store is down");
+      },
+    };
+    const broken = await connect(ticketMock, { store: failing, context: version });
+    await expect(broken.callTool({ name: "lookup_ticket", arguments: { id: "123" } })).rejects.toThrow();
   });
 
   it("validates the input against the tool's schema before binding references", async () => {

@@ -18,6 +18,8 @@ import {
   NO_REAL_SERVER,
   type MockCallEvent,
   type MockRealServer,
+  type MockRecordStore,
+  type MockStateContext,
   type MockTaskStore,
 } from "@mcpjam/sdk/mocks";
 import type { ManagerCallerContext } from "../../routes/web/auth.js";
@@ -32,6 +34,7 @@ import { takeMockForward } from "./forward-fan-out.js";
 import { forwardingRealServer, type ForwardingReal } from "./forwarding.js";
 import { IN_APP_REFUSAL_MESSAGES, MockRefusal, mockRefusalResponse } from "./refusal.js";
 import type { MockDialProfile, MockDoorContext } from "./registry.js";
+import { backendRecordStore } from "./record-store.js";
 import { readRequestFacts } from "./request-facts.js";
 import { backendTaskStore } from "./task-store.js";
 
@@ -55,6 +58,8 @@ export interface MockRouteDeps {
   open?: OpenReal;
   /** Where tasks live (default: the backend's, through the caller's own bearer). */
   taskStore?: (input: { mockId: string; door: MockDoor }) => MockTaskStore;
+  /** Where records live (default: the backend's, through the caller's own bearer). */
+  recordStore?: (input: { mockId: string; version: number; door: MockDoor }) => MockRecordStore;
   /** The forwarding policy and access check (default: the backend's). */
   check?: (input: {
     resolved: ResolvedMock;
@@ -115,11 +120,15 @@ function finish(response: Response, added: Record<string, string>, release: () =
   );
 }
 
+/** The bearer the backend's functions take for this caller. */
+const convexBearerOf = (door: MockDoor) => async () =>
+  door.kind === "http" && door.convexBearer ? door.convexBearer() : door.bearerToken;
+
 const taskStoreFor = ({ mockId, door }: { mockId: string; door: MockDoor }) =>
-  backendTaskStore(
-    async () => (door.kind === "http" && door.convexBearer ? door.convexBearer() : door.bearerToken),
-    mockId,
-  );
+  backendTaskStore(convexBearerOf(door), mockId);
+
+const recordStoreFor = ({ mockId, version, door }: { mockId: string; version: number; door: MockDoor }) =>
+  backendRecordStore(convexBearerOf(door), mockId, version);
 
 export async function serveMock(
   request: Request,
@@ -159,6 +168,8 @@ export async function serveMock(
           signal,
         });
   const facts = await readRequestFacts(request);
+  // An ordinary connection works on the version's shared records.
+  const context: MockStateContext = { scope: "version" };
   let forwarding: ForwardingReal | undefined;
   let real: MockRealServer = NO_REAL_SERVER;
   if (resolved.baseServerId) {
@@ -227,6 +238,10 @@ export async function serveMock(
     const response = await buildMock(resolved.definition, real, {
       observer,
       bus: feedBus ? withFeed(sharedBus.bus, feedBus) : sharedBus.bus,
+      records: {
+        store: (deps.recordStore ?? recordStoreFor)({ mockId, version: resolved.version, door }),
+        context,
+      },
       tasks: {
         store: (deps.taskStore ?? taskStoreFor)({ mockId, door }),
         owner: caller.workosUserId ?? actorDigest(caller, bearerToken),

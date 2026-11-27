@@ -8,12 +8,12 @@ import type { Tool } from "@modelcontextprotocol/server";
 import {
   changeEntries,
   checkSavedOutputs,
+  checkStateOutputs,
   findInvalidSchemas,
   findUncallableInputs,
   validateMockDefinition,
   type MockDefinition,
   type MockIssue,
-  type RealToolInputShape,
 } from "@mcpjam/sdk/mocks";
 import type { PlatformMockCounts } from "@mcpjam/sdk/platform";
 import { MOCK_SERVERS_FLAG } from "../../../shared/mock-address.js";
@@ -83,19 +83,22 @@ export function validatedDefinition(input: unknown): MockDefinition {
  *   create, the version's saved listing on a patch or a save. With no listing
  *   there is nothing to check this against, so the save goes on;
  * - a tool whose input or output schema is not valid JSON Schema (named by its
- *   field path), which no client could read.
+ *   field path), which no client could read;
+ * - a tool whose declared record result breaks its output schema (checked with
+ *   the seed), so a mistake is named at save and not at the first call.
  */
-export function assertCallable(definition: MockDefinition, tools: RealToolInputShape[] | undefined): void {
+export function assertCallable(definition: MockDefinition, tools: Tool[] | undefined): void {
   const issues = [
     ...findInvalidSchemas(definition),
     ...(tools ? findUncallableInputs(definition, tools) : []),
+    ...checkStateOutputs(definition, tools),
   ];
   if (issues.length > 0) throw invalidDefinition(issues);
 }
 
 /** The tools of a saved listing (the text B1 stores with a version), or undefined when there is none. */
-export function savedTools(listingJson: string | undefined): RealToolInputShape[] | undefined {
-  return listingJson === undefined ? undefined : (JSON.parse(listingJson) as { tools?: RealToolInputShape[] }).tools;
+export function savedTools(listingJson: string | undefined): Tool[] | undefined {
+  return listingJson === undefined ? undefined : (JSON.parse(listingJson) as { tools?: Tool[] }).tools;
 }
 
 /**
