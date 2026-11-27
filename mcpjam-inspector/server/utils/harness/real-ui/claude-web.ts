@@ -96,6 +96,25 @@ async function accountEmail(driver: PageDriver): Promise<string | undefined> {
   }
 }
 
+/**
+ * The Free plan's connector page: claude.ai sends `/customize/connectors`
+ * to "Your plugins" under `/plugins`, with an "Add" menu in place of "Add
+ * connector". MCPJam drives only the paid plans' page, so it stops here,
+ * before any connector on the account changes.
+ */
+async function refuseFreePlan(driver: PageDriver): Promise<void> {
+  const free =
+    (await onSite(driver)).pathname.startsWith("/plugins") ||
+    ((await driver.readText(`${PANE} >> text=Your plugins`)) !== undefined &&
+      (await driver.readText(`${PANE} >> ${role("button", "Add connector")}`)) === undefined);
+  if (!free) return;
+  throw new RealUiError({
+    kind: "plan_limit",
+    step: "connector",
+    message: "This Claude account is on the Free plan, which MCPJam can't run yet. Sign in with a Pro, Max, Team or Enterprise account, then run again.",
+  });
+}
+
 async function connectorRowVisible(driver: PageDriver, name: string) {
   return (await driver.readText(`${PANE} >> ${role("button", `View ${name}`)}`)) !== undefined;
 }
@@ -219,6 +238,7 @@ export const claudeWebPageModule: RealUiPageModule = {
       });
     }
     await driver.navigate(CONNECTORS);
+    await refuseFreePlan(driver);
     await waitVisible(driver, `${PANE} [placeholder="Search"]`, ctx, "the connector list", "connector");
     await driver.type(`${PANE} [placeholder="Search"]`, connector.name);
     if (await connectorRowVisible(driver, connector.name)) {
