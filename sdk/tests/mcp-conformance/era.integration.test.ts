@@ -386,6 +386,50 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
   });
 });
 
+describe("Tool Input Schemas Valid", () => {
+  const checkId = "tools-input-schemas-valid";
+  const invalid = { type: "object", properties: { name: { type: 42 } } };
+  const draft07 = {
+    $schema: "http://json-schema.org/draft-07/schema#",
+    type: "object",
+    properties: { pair: { type: "array", items: [{ type: "string" }] } },
+  };
+
+  it.each([
+    ["2025-03-26", invalid, "passed"],
+    ["2025-06-18", invalid, "passed"],
+    ["2025-11-25", invalid, "failed"],
+    ["2026-07-28", invalid, "failed"],
+    [undefined, invalid, "failed"],
+    ["2025-11-25", undefined, "passed"],
+    ["2026-07-28", undefined, "passed"],
+    ["2026-07-28", draft07, "passed"],
+    ["2026-07-28", { ...draft07, $schema: "https://json-schema.org/draft/2019-09/schema" }, "skipped"],
+  ] as const)("on %s with schema %j returns %s", async (protocolVersion, inputSchema, status) => {
+    const handler = createFixtureHandler();
+    const result = await new MCPConformanceTest({
+      serverUrl: "http://localhost/mcp",
+      protocolVersion,
+      checkIds: [checkId],
+      readinessIds: [],
+      fetchFn: async (input, init) => {
+        const request = new Request(input, init);
+        const method = request.method === "POST" ? (await request.clone().json()).method : undefined;
+        const response = await handler.fetch(request);
+        if (method !== "tools/list" || !inputSchema) return response;
+
+        const body = await response.json();
+        body.result.tools[0].inputSchema = inputSchema;
+        return Response.json(body, { headers: response.headers });
+      },
+    }).run();
+    const check = byId(result.checks, checkId);
+    expect(check.status, check.error?.message).toBe(status);
+    if (status === "failed") expect(check.error?.message).toContain("inputSchema/properties/name/type");
+    if (status === "skipped") expect(check.skipReason).toBe("could-not-run");
+  });
+});
+
 describe.each([undefined, "2026-07-28"] as const)("handshake selection %s", (protocolVersion) => {
   it.each([
     ["partial", true, "failed"],
