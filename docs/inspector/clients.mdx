@@ -17,7 +17,7 @@ Use a client when you want to check how your server behaves in a particular host
   <Step title="Open the client view" id="open-the-client-view">
     In the sidebar, select **Connect**, then select **Client** at the top of the page.
 
-    The view shows the active client: a diagram of its settings on the left and its details on the right. The switcher next to **Add client** shows its name and position, for example `3 / 5`.
+    <Check>The view shows the active client, with its settings on the right. The switcher next to **Add client** shows its name and position, for example `3 / 5`.</Check>
   </Step>
   <Step title="Create a client from a template" id="create-a-client">
     Select **Add client**. In the **New Client** dialog, under **Start from template**, select **ChatGPT Desktop**. The **Name** field fills in with the template's name. Select **Create**.
@@ -29,23 +29,23 @@ Use a client when you want to check how your server behaves in a particular host
     <Check>A message says **Client "ChatGPT Desktop" created**, and the switcher now shows **ChatGPT Desktop**.</Check>
   </Step>
   <Step title="Check what the template set" id="check-the-settings">
-    The panel on the right has four tabs: **Agent**, **MCP Protocol**, **Apps** and **Tools**.
+    The panel on the right has the **Agent**, **MCP Protocol** and **Apps** tabs. Depending on your account, it can also show **Tools** and **Browser**.
 
     - **Agent** shows the model the client runs and how it handles tools.
     - **MCP Protocol** shows what MCPJam advertises when it connects to your server.
     - **Apps** shows how MCP App views are rendered and sandboxed.
-    - **Tools** shows the built-in tools the client offers besides your MCP servers, such as web search.
+    - **Tools**, when shown, lists the built-in tools the client offers besides your MCP servers, such as web search.
 
     <Frame>
       <img src="/images/clients/v1/client-panel.png" alt="The ChatGPT Desktop client panel with the Agent, MCP Protocol, Apps and Tools tabs, and the Agent tab showing the model, reasoning effort, temperature and tool settings" width="420" />
     </Frame>
 
-    You don't need to change anything now. Each setting is described in the [Clients reference](/inspector/clients/reference).
+    If the **Agent** tab asks you to select a model, select one; your project may not have the template's model. Otherwise you don't need to change anything now. Each setting is described in the [Clients reference](/inspector/clients/reference).
   </Step>
   <Step title="Use the client in the Playground" id="use-the-client">
-    Open **Playground**. On any pane, select the settings icon to open **Pane settings**, then set **Client** to **ChatGPT Desktop**.
+    Open **Playground**. On any pane, select the settings icon to open **Pane settings**, then set **Client** to **ChatGPT Desktop**. If your project has environments, the field is called **Client or environment**.
 
-    <Check>Under **Pane settings** → **Client**, **ChatGPT Desktop** is selected. Prompts you send in that pane now use the client's model and settings.</Check>
+    <Check>In **Pane settings**, **ChatGPT Desktop** is selected. Prompts you send in that pane now use the client's model and settings.</Check>
   </Step>
 </Steps>
 
