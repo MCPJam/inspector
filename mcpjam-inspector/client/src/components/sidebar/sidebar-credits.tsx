@@ -112,7 +112,7 @@ export function SidebarCredits({
         evalIterationQuota.allowed !== null));
 
   const plan = billingStatus?.effectivePlan;
-  const showExplorePlans = plan !== undefined && !isPaidPlan(plan);
+  const isFreePlan = plan !== undefined && !isPaidPlan(plan);
   const canBuyCredits =
     billingStatus?.canManageBilling === true &&
     balance?.topUpEligible !== false &&
@@ -150,7 +150,7 @@ export function SidebarCredits({
   // Free grants are one-time, so a used-up grant leaves nothing to show.
   if (freeEvalIterations != null && freeEvalIterations > 0) {
     meters.push({
-      label: "Free eval iterations",
+      label: "Free Eval iterations",
       remaining: freeEvalIterations,
       total: FREE_EVAL_ITERATION_GRANT,
       tooltip:
@@ -160,7 +160,7 @@ export function SidebarCredits({
   }
   if (sponsoredAllowance && sponsoredAllowance.remaining > 0) {
     meters.push({
-      label: "Free swarm credits",
+      label: "Free Swarm conversations",
       remaining: sponsoredAllowance.remaining,
       total: sponsoredAllowance.granted,
       tooltip:
@@ -174,7 +174,9 @@ export function SidebarCredits({
     !creditMeter.isLoading &&
     creditMeter.total > 0 &&
     remainingPercent(creditMeter) <= LOW_CREDIT_PERCENT;
-  const showUpsell = isLowOnCredits && (showExplorePlans || canBuyCredits);
+  const showUpsell = isLowOnCredits && (isFreePlan || canBuyCredits);
+  // Free orgs low on credits get Explore plans as the main button instead.
+  const showExplorePlansLink = !(showUpsell && isFreePlan);
 
   return (
     <SidebarMenu>
@@ -216,7 +218,7 @@ export function SidebarCredits({
                   <Badge className="rounded-full border-transparent bg-primary/15 text-foreground">
                     {formatPlanName(plan)} plan
                   </Badge>
-                  {showExplorePlans && !showUpsell ? (
+                  {showExplorePlansLink ? (
                     <button
                       type="button"
                       onClick={onExplorePlans}
@@ -241,7 +243,7 @@ export function SidebarCredits({
                   className="flex gap-2"
                   data-testid="sidebar-credits-upsell"
                 >
-                  {showExplorePlans ? (
+                  {isFreePlan ? (
                     <Button
                       size="sm"
                       className="flex-1"
@@ -253,7 +255,7 @@ export function SidebarCredits({
                   {canBuyCredits ? (
                     <Button
                       size="sm"
-                      variant={showExplorePlans ? "outline" : "default"}
+                      variant={isFreePlan ? "outline" : "default"}
                       className="flex-1"
                       onClick={onBuyCredits}
                     >

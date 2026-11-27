@@ -238,6 +238,9 @@ describe("SidebarCredits", () => {
     expect(screen.getByTestId("sidebar-credits-upsell")).toHaveTextContent(
       /^Buy credits$/,
     );
+    expect(
+      screen.getByRole("button", { name: "Explore plans" }),
+    ).toBeInTheDocument();
     unmount();
 
     billingStatusState = { effectivePlan: "team", canManageBilling: false };
@@ -247,15 +250,15 @@ describe("SidebarCredits", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows the remaining free swarm credits when the user has an allowance", () => {
+  it("shows the remaining free swarm conversations when the user has an allowance", () => {
     allowanceState = { remaining: 412, granted: 500 };
     renderCredits();
 
     const row = screen.getByTestId("sidebar-usage-swarm-sponsored");
-    expect(row).toHaveTextContent("Free swarm credits");
+    expect(row).toHaveTextContent("Free Swarm conversations");
     expect(row).toHaveTextContent("412 / 500");
     expect(
-      screen.getByRole("button", { name: "About Free swarm credits" }),
+      screen.getByRole("button", { name: "About Free Swarm conversations" }),
     ).toBeInTheDocument();
   });
 
@@ -437,10 +440,10 @@ describe("SidebarCredits", () => {
       "30,000 / 50,000",
     );
     expect(screen.getByTestId("sidebar-usage-eval-free")).toHaveTextContent(
-      "Free eval iterations",
+      "Free Eval iterations",
     );
     expect(
-      screen.getByRole("progressbar", { name: "Free eval iterations" }),
+      screen.getByRole("progressbar", { name: "Free Eval iterations" }),
     ).toHaveAttribute("aria-valuetext", "420 / 500 left");
     expect(screen.queryByText(/starter/i)).not.toBeInTheDocument();
   });
@@ -454,15 +457,15 @@ describe("SidebarCredits", () => {
     ).toBeInTheDocument();
   });
 
-  it("names a paid plan without pitching an upgrade", () => {
+  it("offers Explore plans on a paid plan too", () => {
     billingStatusState = { effectivePlan: "team" };
 
     renderCredits();
 
     expect(screen.getByText("Team plan")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Explore plans" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: "Explore plans" }),
+    ).toBeInTheDocument();
   });
 
   it("opens billing from the row and plans from Explore plans", async () => {
