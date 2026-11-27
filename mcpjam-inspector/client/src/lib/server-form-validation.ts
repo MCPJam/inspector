@@ -16,6 +16,17 @@ export function validateOAuthClientSecret(value: string): string | null {
     : null;
 }
 
+export function validateRequestTimeout(value: string): string | null {
+  if (!value.trim()) return null;
+  const timeout = Number(value);
+  return Number.isFinite(timeout) &&
+    timeout >= 1000 &&
+    timeout <= 600000 &&
+    timeout % 1000 === 0
+    ? null
+    : "Enter a timeout from 1000 to 600000 ms in steps of 1000, or leave it blank to use the default.";
+}
+
 export function getConfidentialCimdBlockReason(
   wantsConfidentialCimd: boolean,
   status: ConfidentialCimdCapabilityStatus,
@@ -84,4 +95,13 @@ export function validateServerFormData(
     return "MCPJam’s hosted web app requires an HTTPS server URL. To connect over HTTP, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.";
   }
   return null;
+}
+
+export type ServerFormValidationError = {
+  field: "name" | "connection" | "form";
+  message: string;
+};
+
+export function serverFormValidationError(data: ServerFormData, message: string): ServerFormValidationError {
+  return { field: !data.name.trim() ? "name" : validateServerFormData(data) ? "connection" : "form", message };
 }

@@ -15,6 +15,7 @@ import type { useServerForm } from "./hooks/use-server-form";
 import { headerNamesWithoutBearer } from "./server-auth";
 import { describeRevealFailure } from "./hooks/use-server-auth-reveal";
 import { HOSTED_MODE } from "@/lib/config";
+import type { ServerFormValidationError } from "@/lib/server-form-validation";
 import type { McpProtocolVersion } from "@/lib/client-config-v2";
 import {
   fetchServerSecretKeys,
@@ -26,6 +27,7 @@ import {
 } from "@/lib/credential-origin";
 
 interface EditServerFormContentProps {
+  validationError?: ServerFormValidationError | null;
   formState: ReturnType<typeof useServerForm>;
   isDuplicateServerName: boolean;
   projectId?: string | null;
@@ -55,6 +57,7 @@ interface EditServerFormContentProps {
 }
 
 export function EditServerFormContent({
+  validationError,
   formState,
   isDuplicateServerName,
   projectId = null,
@@ -162,12 +165,15 @@ export function EditServerFormContent({
 
   return (
     <div className="space-y-6">
+      {validationError?.field === "form" ? <p role="alert" className="text-xs text-destructive">{validationError.message}</p> : null}
       <div className="space-y-2">
         <label className="block text-sm font-medium text-foreground">
           Server Name
         </label>
         <Input
           value={formState.name}
+          aria-invalid={isDuplicateServerName || validationError?.field === "name"}
+          aria-describedby={validationError?.field === "name" ? "edit-server-name-error" : undefined}
           onChange={(e) => formState.setName(e.target.value)}
           placeholder="my-mcp-server"
           required
@@ -177,12 +183,14 @@ export function EditServerFormContent({
             A server with this name already exists in this project.
           </p>
         )}
+        {validationError?.field === "name" && !isDuplicateServerName ? <p id="edit-server-name-error" role="alert" className="text-xs text-destructive">{validationError.message}</p> : null}
       </div>
 
-      <div className="space-y-2">
+      <div className="space-y-2" role="group" aria-describedby={validationError?.field === "connection" ? "edit-server-connection-error" : undefined}>
         <label className="block text-sm font-medium text-foreground">
           Connection Type
         </label>
+        {validationError?.field === "connection" ? <p id="edit-server-connection-error" role="alert" className="text-xs text-destructive">{validationError.message}</p> : null}
         {HOSTED_MODE ? (
           formState.type === "stdio" ? (
             <HostedConnectionTypeControl transportType="stdio">

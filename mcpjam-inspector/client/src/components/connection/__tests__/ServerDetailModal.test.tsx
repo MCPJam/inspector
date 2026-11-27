@@ -1153,6 +1153,45 @@ describe("ServerDetailModal", () => {
     });
   });
 
+  it("shows the owner's refusal and retains the edit draft", async () => {
+    const reason = 'A server named "edited-server" already exists in this workspace. Choose a different name.';
+    const onSubmit = vi.fn().mockResolvedValue({ ok: false, serverName: "test-server", reason });
+    render(<ServerDetailModal {...defaultProps} onSubmit={onSubmit} />);
+    fireEvent.change(screen.getByDisplayValue("test-server"), { target: { value: "edited-server" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save & Connect" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(reason);
+    expect(screen.getByDisplayValue("edited-server")).toBeVisible();
+    expect(defaultProps.onClose).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("keeps the edit draft when saving is rejected or throws (%s)", async throws => {
+    const onSubmit = throws ? vi.fn().mockRejectedValue(new Error("backend")) : vi.fn().mockResolvedValue({ ok: false, serverName: "test-server" });
+    render(<ServerDetailModal {...defaultProps} onSubmit={onSubmit} />);
+    fireEvent.change(screen.getByDisplayValue("test-server"), { target: { value: "edited-server" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save & Connect" }));
+    expect(await screen.findByText("Couldn't save the server. Your draft is still here. Review the settings and try again.")).toBeVisible();
+    expect(screen.getByDisplayValue("edited-server")).toBeVisible();
+    expect(defaultProps.onClose).not.toHaveBeenCalled();
+  });
+
+  it.each(["0", "600001", "1500"])(
+    "keeps an invalid timeout inline (%s)",
+    async (value) => {
+      const onSubmit = vi.fn();
+      render(<ServerDetailModal {...defaultProps} onSubmit={onSubmit} />);
+      fireEvent.click(screen.getByRole("button", { name: "Connection overrides" }));
+      const timeout = screen.getByRole("spinbutton", { name: /Timeout/ });
+      fireEvent.change(timeout, { target: { value } });
+      fireEvent.click(screen.getByRole("button", { name: "Save & Connect" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Enter a timeout from 1000 to 600000 ms in steps of 1000, or leave it blank to use the default.",
+      );
+      expect(timeout).toHaveValue(Number(value));
+      expect(onSubmit).not.toHaveBeenCalled();
+      expect(defaultProps.onClose).not.toHaveBeenCalled();
+    },
+  );
+
   it("stops Enter from bubbling out of the modal", () => {
     const onKeyDown = vi.fn();
 

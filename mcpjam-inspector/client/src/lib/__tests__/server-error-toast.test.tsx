@@ -11,6 +11,10 @@ import { toast } from "sonner";
 import { toast as appToast } from "@/lib/toast";
 import { copyToClipboard } from "@/lib/clipboard";
 import { toastServerConnectionFailure } from "../server-error-toast";
+import { presentConnectionError, ReviewedConnectionError } from "../connection-error-presentation";
+import { formatErrorDetailsForCopy } from "../error-technical-details";
+import { WebApiError } from "../apis/web/base";
+import { PROJECT_NOT_PROVISIONED_ERROR_MESSAGE } from "../client-config";
 
 vi.mock("@/lib/clipboard", () => ({
   copyToClipboard: vi.fn(async () => true),
@@ -41,8 +45,27 @@ describe("toastServerConnectionFailure", () => {
 
     toastServerConnectionFailure("Excalidraw (App)", "Request failed (500)");
 
-    expect(await screen.findByText("Excalidraw (App)")).toBeInTheDocument();
-    expect(screen.getByText("Request failed (500)")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't connect to Excalidraw (App).")).toBeInTheDocument();
+    expect(screen.queryByText("Request failed (500)")).not.toBeInTheDocument();
+  });
+
+  it("offers copy details instead of unavailable settings for an unknown failure", async () => {
+    render(<Toaster />);
+    toastServerConnectionFailure("Asana", "unknown wire failure");
+    expect(await screen.findByText("Copy the details for support.")).toBeVisible();
+    expect(screen.queryByText(/Open the server settings/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy error message" })).toBeVisible();
+  });
+
+  it.each([
+    "Enter your server's URL.",
+    "MCPJam's hosted web app requires an HTTPS server URL. Use the desktop app for local servers.",
+    'A server named "Asana" already exists in this workspace. Choose a different name.',
+    PROJECT_NOT_PROVISIONED_ERROR_MESSAGE,
+  ])("preserves trusted owner wording: %s", async (reviewedMessage) => {
+    render(<Toaster />);
+    toastServerConnectionFailure("Asana", new ReviewedConnectionError(reviewedMessage));
+    expect(await screen.findByText(reviewedMessage)).toBeVisible();
   });
 
   it("keeps a message that already names the server on one line", async () => {
@@ -52,7 +75,8 @@ describe("toastServerConnectionFailure", () => {
 
     toastServerConnectionFailure("champions", message);
 
-    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't connect to champions.")).toBeInTheDocument();
+    expect(screen.queryByText(message)).not.toBeInTheDocument();
   });
 
   it("copies the description, not just the server name", async () => {
@@ -67,7 +91,10 @@ describe("toastServerConnectionFailure", () => {
 
     await waitFor(() =>
       expect(copyMock).toHaveBeenCalledWith(
-        "Excalidraw (App): Request failed (500)",
+        (() => {
+          const result = presentConnectionError("Request failed (500)", { serverName: "Excalidraw (App)" });
+          return formatErrorDetailsForCopy({ ...result.diagnostics, title: result.title, oneLine: result.explanation }, true);
+        })(),
       ),
     );
   });
@@ -84,6 +111,26 @@ describe("toastServerConnectionFailure", () => {
       await screen.findByRole("button", { name: "Change protocol version" }),
     );
     expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps diagnostic metadata copyable without showing wire text", async () => {
+    render(<Toaster />);
+    toastServerConnectionFailure("Asana", new WebApiError(401, "SIGN_IN_REQUIRED", "client_secret=supersecret", undefined, undefined, "request-123"));
+    expect(await screen.findByText("Sign in to MCPJam to continue.")).toBeVisible();
+    expect(screen.queryByText(/supersecret/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Copy error message" }));
+    await waitFor(() => expect(copyMock).toHaveBeenCalledOnce());
+    const copied = copyMock.mock.calls[0][0];
+    expect(copied).toContain("SIGN_IN_REQUIRED");
+    expect(copied).toContain("request-123");
+    expect(copied).toContain("internal/unknown");
+    expect(copied).not.toContain("supersecret");
+  });
+
+  it("keeps protocol-pin fallback recovery when the visible title is reviewed", async () => {
+    render(<Toaster />);
+    toastServerConnectionFailure("champions", 'MCP server "champions" doesn\'t support MCP protocol version 2026-07-28, which this client is pinned to.');
+    expect(await screen.findByRole("button", { name: "Change protocol version" })).toBeVisible();
   });
 });
 

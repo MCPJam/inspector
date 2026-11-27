@@ -38,6 +38,7 @@ import {
   getConfidentialCimdBlockReason,
   validateOAuthClientId,
   validateOAuthClientSecret,
+  validateRequestTimeout,
 } from "@/lib/server-form-validation";
 
 /**
@@ -228,6 +229,8 @@ export function useServerForm(
   const [showAuthSettings, setShowAuthSettings] = useState<boolean>(false);
 
   const initialValues = useRef<InitialFormValues | null>(null);
+  const [saveRevision, setSaveRevision] = useState(0);
+  const refreshAfterSave = useRef(false);
   const projectConnectionDefaults = getEffectiveProjectConnectionDefaults(
     options?.projectClientConfig,
   );
@@ -244,7 +247,9 @@ export function useServerForm(
 
   // Initialize form with server data (for edit mode)
   useEffect(() => {
-    if (server) {
+    // Connection status updates must not overwrite an edited draft.
+    if (server && (!initialValues.current || server.name !== initialValues.current.name || !hasChanges || refreshAfterSave.current)) {
+      refreshAfterSave.current = false;
       const config = server.config;
       const isHttpServer = "url" in config;
 
@@ -526,7 +531,7 @@ export function useServerForm(
         xaaEmail: server.xaaEmail ?? "",
       };
     }
-  }, [server]);
+  }, [server, saveRevision]);
 
   const effectiveXaaRegistrationMode =
     registrationMode === "cimd" || registrationMode === "dcr"
@@ -547,7 +552,7 @@ export function useServerForm(
 
   const validateForm = (): string | null => {
     if (!name || name.trim() === "") {
-      return "Server name is required";
+      return "Enter a server name.";
     }
     const pluginId = publishedPluginId.trim();
     if (pluginId && !isStandalonePublishedPluginId(pluginId)) {
@@ -578,6 +583,9 @@ export function useServerForm(
         return "HTTPS is required";
       }
     }
+
+    const timeoutError = validateRequestTimeout(requestTimeout);
+    if (timeoutError) return timeoutError;
 
     if (
       clientCapabilitiesOverrideEnabled &&
@@ -760,10 +768,11 @@ export function useServerForm(
      */
     revealedHeaders?: Record<string, string>;
   }): ServerFormData => {
-    const parsedTimeout = Number.parseInt(requestTimeout.trim(), 10);
-    const reqTimeout = Number.isFinite(parsedTimeout)
-      ? parsedTimeout
-      : undefined;
+    const parsedTimeout = Number(requestTimeout);
+    const reqTimeout =
+      requestTimeout.trim() && Number.isFinite(parsedTimeout)
+        ? parsedTimeout
+        : undefined;
     const clientCapabilities =
       clientCapabilitiesOverrideEnabled &&
       clientCapabilitiesOverrideError == null
@@ -1098,6 +1107,7 @@ export function useServerForm(
       : undefined;
 
   return {
+    markSaved: () => { refreshAfterSave.current = true; setSaveRevision(value => value + 1); },
     // Change detection
     hasChanges,
     preregisteredOauthBlocksSubmit,

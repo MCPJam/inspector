@@ -113,6 +113,7 @@ export function ServerConfigTabBody({
     <>
       <EditServerFormContent
         formState={form.state}
+        validationError={form.validationError}
         isDuplicateServerName={form.isDuplicateServerName}
         projectId={projectId}
         hostedServerId={hostedServerId}
@@ -126,6 +127,11 @@ export function ServerConfigTabBody({
           unlike the organization audit log. Renders nothing when
           there is no history. */}
       <ServerUrlChangeHistory serverId={hostedServerId} />
+      {form.saveError ? (
+        <p role="alert" className="mt-2 text-xs text-destructive">
+          {form.saveError}
+        </p>
+      ) : null}
     </>
   );
 }

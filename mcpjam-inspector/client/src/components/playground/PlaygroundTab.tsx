@@ -56,7 +56,6 @@ import { PlaygroundPreviewedClientSync } from "./PlaygroundPreviewedClientSync";
 import { PlaygroundLeftRail } from "./PlaygroundLeftRail";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { ProjectHostContextDraft } from "@/lib/client-config";
-import type { ServerFormData } from "@/shared/types.js";
 import type {
   EnsureServersReadyResult,
   ServerWithName,
@@ -94,7 +93,7 @@ interface PlaygroundTabProps {
   hasSeenFirstRunOnboarding?: boolean;
   autoConnectFirstRun?: boolean;
   isServerSyncing?: boolean;
-  onConnect?: (formData: ServerFormData) => void;
+  onConnect?: import("@/lib/server-connection-submission").ServerConnectionSubmit;
   onSaveHostContext?: (
     projectId: string,
     hostContext: ProjectHostContextDraft,
