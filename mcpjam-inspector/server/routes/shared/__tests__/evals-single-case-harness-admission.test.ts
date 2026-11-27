@@ -159,6 +159,17 @@ describe("prepareSingleCaseExecution — hosted harness admission", () => {
     });
   });
 
+  it("says why this machine couldn't run it before refusing its tool policy", async () => {
+    // npx again, and nothing to seal a tool policy with: the harness refusal
+    // is the one the member can act on, as on the suite path.
+    delete process.env.E2B_API_KEY;
+    delete process.env.COMPUTERS_TERMINAL_TOKEN_SECRET;
+    explainMock.mockResolvedValueOnce("Couldn't run Claude Code on this machine because it isn't set up for this project. Set it up in the Playground, then run the eval again.");
+    const error = await refusal({ ...request({}), toolPolicy: { mode: "readOnly" } } as Parameters<typeof prepareSingleCaseExecution>[1]);
+    expect(error.details).toMatchObject({ reason: "HARNESS_UNAVAILABLE" });
+    expect(error.message).toMatch(/^Couldn't run Claude Code on this machine/);
+  });
+
   it("refuses a declared browser: the single-case box is only a terminal", async () => {
     const error = await refusal(
       request({

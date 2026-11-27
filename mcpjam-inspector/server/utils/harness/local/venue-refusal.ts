@@ -68,23 +68,70 @@ export function localVenueRefusalText(
   }
 }
 
+/** What a member can do before a run about a client that can't run here. */
+export type LocalVenueFix = "set-up" | "retry" | "choose-another";
+
 /**
- * The text for a decision that kept a harness off this machine, or null when
- * there is nothing more specific to say: the harness has no local runtime, the
- * server is hosted, or no member identity could be established (signing in
- * again would not change that). A member refusal is narrowed here, after the
- * refusal, so a launch that runs locally never pays for the extra reads.
+ * The run sheet's text for a refusal, said before anything runs: what is
+ * missing, and the one fix the sheet offers beside it. The launch's own
+ * refusal (`localVenueRefusalText`) says the same in the past tense.
  */
+export function localVenueStatus(
+  refusal: ExplainedLocalVenueRefusal,
+  harnessId: SupportedLocalHarnessId,
+): { message: string; fix: LocalVenueFix } {
+  const name = harnessDisplayName(harnessId);
+  switch (refusal) {
+    case "not-set-up":
+      return { message: `${name} isn't set up for this project on this machine.`, fix: "set-up" };
+    case "not-rolled-out":
+      return { message: `${name} isn't available for your account yet.`, fix: "choose-another" };
+    case "rollout-unknown":
+      return { message: `Couldn't check whether ${name} can run on this machine. Check your connection, then retry.`, fix: "retry" };
+    case "flags-off":
+      return { message: `DO_NOT_TRACK is set, so this Inspector can't check whether ${name} can run on this machine.`, fix: "choose-another" };
+    case "unattended-unverified": {
+      const machines = unattendedMachines(harnessId);
+      return {
+        message: machines ? `Evals with ${name} run locally only on ${machines}.` : `Evals with ${name} can't run locally yet.`,
+        fix: "choose-another",
+      };
+    }
+    case "unsupported-platform":
+      return { message: `${name} doesn't support this machine's operating system or processor.`, fix: "choose-another" };
+    case "not-released":
+      return { message: `${name} isn't available to run locally yet.`, fix: "choose-another" };
+    case "turned-off":
+      return { message: "Running clients locally is turned off in this Inspector.", fix: "choose-another" };
+  }
+}
+
+/**
+ * Why a decision kept a harness off this machine, in the terms its text needs,
+ * or null when there is nothing more specific to say: the harness has no local
+ * runtime, the server is hosted, or no member identity could be established
+ * (signing in again would not change that). A member refusal is narrowed here,
+ * after the refusal, so a launch that runs locally never pays for the reads.
+ */
+export async function narrowLocalVenueRefusal(
+  decision: LocalVenueDecision,
+  args: { bearer?: string; projectId?: string },
+): Promise<ExplainedLocalVenueRefusal | null> {
+  if (decision.venue === "local" || decision.harnessId === null) return null;
+  const { refusal, harnessId } = decision;
+  if (refusal === "unsupported-harness" || refusal === "hosted-server") return null;
+  if (refusal !== "member") return refusal;
+  const member = await localHarnessMemberRefusal(args.bearer, args.projectId, harnessId);
+  return member === null || member === "actor-refused" ? null : member;
+}
+
+/** The launch's text for a decision that kept a harness off this machine, or null. */
 export async function describeLocalVenueRefusal(
   decision: LocalVenueDecision,
   args: { bearer?: string; projectId?: string },
 ): Promise<string | null> {
-  if (decision.venue === "local" || decision.harnessId === null) return null;
-  const { refusal, harnessId } = decision;
-  if (refusal === "unsupported-harness" || refusal === "hosted-server") return null;
-  if (refusal !== "member") return localVenueRefusalText(refusal, harnessId);
-  const member = await localHarnessMemberRefusal(args.bearer, args.projectId, harnessId);
-  return member === null || member === "actor-refused"
+  const refusal = await narrowLocalVenueRefusal(decision, args);
+  return refusal === null || decision.harnessId === null
     ? null
-    : localVenueRefusalText(member, harnessId);
+    : localVenueRefusalText(refusal, decision.harnessId);
 }
