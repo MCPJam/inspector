@@ -37,7 +37,6 @@ export function evaluatorStatus(
   checks: readonly { role: ScorerUiRole; status: VerdictStatus }[],
 ): VerdictStatus {
   const statuses = checks.map((c) => c.status);
-  if (statuses.includes("error")) return "error";
   // Only checks that measured something can decide. Required ones decide
   // when any applied; otherwise the evaluator is judged by the checks it has
   // left, so a Not applicable Required check never lends its pass to an
@@ -47,6 +46,7 @@ export function evaluatorStatus(
   );
   const required = applicable.filter((c) => c.role === "required");
   const deciding = required.length > 0 ? required : applicable;
+  if (deciding.some((c) => c.status === "error")) return "error";
   if (deciding.some((c) => c.status === "failed")) return "failed";
   if (statuses.includes("running")) return "running";
   if (deciding.some((c) => c.status === "passed" || c.status === "partial"))

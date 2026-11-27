@@ -5703,9 +5703,8 @@ const runLocalIteration = async ({
       // Per-turn streaming play-by-play (headless in batch).
       buildSinks: makeSinks,
     });
-    const stepState = createStepExecutionState(
-      collectToolDeclarations(mcpClientManager, selectedServers),
-    );
+    const toolDeclarations = collectToolDeclarations(mcpClientManager, selectedServers);
+    const stepState = createStepExecutionState(toolDeclarations);
     const stepOutcome = await executeSteps({
       steps,
       state: stepState,
@@ -5786,7 +5785,7 @@ const runLocalIteration = async ({
     );
     // Single verdict boundary — matcher + case predicates + ordering + all gates.
     const { evaluation, passed, predicateResults, platformGates } = buildEvalIterationVerdict({
-      ...collectToolDeclarations(mcpClientManager, selectedServers),
+      ...toolDeclarations,
       promptTurns,
       toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
       isNegativeTest: test.isNegativeTest,
@@ -7582,9 +7581,8 @@ const runHostedIterationWithBrowser = async (
         }
       : {}),
   });
-  const stepState = createStepExecutionState(
-    collectToolDeclarations(mcpClientManager, selectedServers),
-  );
+  const toolDeclarations = collectToolDeclarations(mcpClientManager, selectedServers);
+  const stepState = createStepExecutionState(toolDeclarations);
   let result: Awaited<ReturnType<typeof executeSteps>>;
   try {
     result = await executeSteps({
@@ -7704,7 +7702,7 @@ const runHostedIterationWithBrowser = async (
     selectedServers,
   );
   const { evaluation, passed, predicateResults, platformGates } = buildEvalIterationVerdict({
-    ...collectToolDeclarations(mcpClientManager, selectedServers),
+    ...toolDeclarations,
     promptTurns,
     toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
     isNegativeTest: test.isNegativeTest,

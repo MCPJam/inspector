@@ -98,6 +98,21 @@ describe("toolResultMatchesSchema with the declared schema", () => {
     expect(verdict.reason).toContain('"get_order"');
   });
 
+  test.each([
+    { $schema: "https://example.com/unknown-dialect", type: "object" },
+    42,
+  ])("keeps a concrete mismatch when another schema is unvalidated", (outputSchema) => {
+    const otherTool = { ...search, outputSchema };
+    const unvalidated = result("search", { structuredContent: {} });
+    expect(run(transcript([unvalidated], [getOrder, otherTool])).status).toBe("error");
+    const verdict = run(transcript([
+      unvalidated,
+      result("get_order", { structuredContent: { status: "confirmed" } }),
+    ], [getOrder, otherTool]));
+    expect(verdict).toMatchObject({ passed: false, reason: expect.stringContaining('"get_order"') });
+    expect(verdict.status).toBeUndefined();
+  });
+
   test("fails a tool with an output schema that returns no structuredContent", () => {
     const verdict = run(
       transcript([

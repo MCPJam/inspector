@@ -113,7 +113,7 @@ export type TrialRowResult =
     }
   | {
       state: "error";
-      source: "scoreRow" | "judgeCase" | "chainStage";
+      source: "scoreRow" | "judgeCase" | "chainStage" | "predicateResult";
       reason: string;
     }
   | {
@@ -123,7 +123,7 @@ export type TrialRowResult =
     }
   | {
       state: "notApplicable";
-      source: "scoreRow" | "chainStage";
+      source: "scoreRow" | "chainStage" | "predicateResult" | "stepResult";
       reason?: string;
     }
   | { state: "pending"; source: "live" }
@@ -226,10 +226,10 @@ export function resultFromPredicate(predicate: {
 }): TrialRowResult {
   const reason = predicate.reason ? { reason: predicate.reason } : {};
   if (predicate.status === "error") {
-    return { state: "error", source: "scoreRow", reason: predicate.reason };
+    return { state: "error", source: "predicateResult", reason: predicate.reason };
   }
   if (predicate.status === "not_applicable") {
-    return { state: "notApplicable", source: "scoreRow", ...reason };
+    return { state: "notApplicable", source: "predicateResult", ...reason };
   }
   return {
     state: predicate.passed ? "passed" : "failed",
@@ -299,6 +299,9 @@ function stepReplayResult(
       reason:
         row.reason ?? "An earlier step failed, so this one never ran.",
     };
+  }
+  if (row.status === "not_applicable") {
+    return { state: "notApplicable", source: "stepResult", reason: row.reason };
   }
   // `pending` on a finished trial means the runner never reached a verdict for
   // this step — an honest absence, not a hold.
@@ -770,6 +773,7 @@ function liveResult(status: EvalStepStatus): TrialRowResult {
   if (status === "ok") return { state: "passed", source: "live" };
   if (status === "fail") return { state: "failed", source: "live" };
   if (status === "skipped") return { state: "skipped", source: "stepResult" };
+  if (status === "not_applicable") return { state: "notApplicable", source: "stepResult" };
   return { state: "pending", source: "live" };
 }
 

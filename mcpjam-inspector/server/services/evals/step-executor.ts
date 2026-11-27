@@ -815,6 +815,10 @@ export async function executeSteps(args: {
       emitStatus(stepIndex, "running");
       await runAssertStep(step, stepIndex, browser, state);
       const last = state.assertionResults[state.assertionResults.length - 1];
+      if (last?.predicateResult?.status === "not_applicable") {
+        emitStatus(stepIndex, "not_applicable");
+        continue;
+      }
       const gatingFailed =
         last &&
         !last.passed &&

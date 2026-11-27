@@ -9,11 +9,19 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { createServer } from "node:http";
+import { once } from "node:events";
 import { jsonSchema } from "ai";
-import { evaluatePredicate } from "@mcpjam/sdk/predicates";
-import { buildIterationTranscript } from "@mcpjam/sdk/predicates";
+import { MockLanguageModelV4, convertArrayToReadableStream } from "ai/test";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from "@modelcontextprotocol/sdk/types.js";
+import { MCPClientManager } from "@mcpjam/sdk";
+import { buildIterationTranscript, evaluatePredicate } from "@mcpjam/sdk/predicates";
+import { consumeDirectChatTurnHeadless, runDirectChatTurn } from "../../../utils/direct-chat-turn.js";
 import {
   collectToolAnnotations,
+  collectToolDeclarations,
   extractTranscriptEvidence,
   toTranscriptToolInventory,
 } from "../transcript-evidence.js";
@@ -141,7 +149,7 @@ describe("annotations come from the manager, because the ToolSet drops them", ()
 });
 
 describe("a protocol-level tool failure", () => {
-  it("is marked as an error, so result checks skip it", () => {
+  it("is kept separate from a CallToolResult with isError", () => {
     const { toolResults } = extractTranscriptEvidence({
       messages: [
         {
@@ -157,6 +165,105 @@ describe("a protocol-level tool failure", () => {
         },
       ],
     });
-    expect(toolResults[0]?.isError).toBe(true);
+    expect(toolResults[0]).toMatchObject({ callFailure: "protocol" });
+    expect(toolResults[0]).not.toHaveProperty("isError");
   });
+});
+
+it("grades output-schema rejections through the MCP client and AI SDK", async () => {
+  const names = ["conforming", "wrong_type", "missing", "rpc_error", "domain_error"];
+  const mcp = new Server(
+    { name: "declared-output-fixture", version: "1" },
+    { capabilities: { tools: {} } },
+  );
+  mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: names.map((name) => ({
+      name,
+      inputSchema: { type: "object" },
+      outputSchema: SCHEMA,
+    })),
+  }));
+  mcp.setRequestHandler(CallToolRequestSchema, async ({ params: { name } }) => {
+    if (name === "rpc_error") {
+      throw new McpError(ErrorCode.InternalError, "request interrupted");
+    }
+    return {
+      content: [{ type: "text", text: "fixture result" }],
+      ...(name === "domain_error" ? { isError: true } : {}),
+      ...(name === "conforming" ? { structuredContent: { limit: 5 } } : {}),
+      ...(name === "wrong_type" ? { structuredContent: { limit: "five" } } : {}),
+    };
+  });
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => "declared-output-fixture",
+  });
+  await mcp.connect(transport);
+  const server = createServer((req, res) => transport.handleRequest(req, res));
+  const manager = new MCPClientManager();
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing fixture port");
+    await manager.connectToServer("fixture", {
+      url: `http://127.0.0.1:${address.port}/mcp`,
+      mcpProtocolVersion: "2025-11-25",
+    });
+    const tools = await manager.getToolsForAiSdk(["fixture"]);
+    const model = new MockLanguageModelV4({
+      doStream: async () => ({
+        stream: convertArrayToReadableStream([
+          ...names.map((name) => ({
+            type: "tool-call" as const,
+            toolCallId: name,
+            toolName: name,
+            input: "{}",
+          })),
+          {
+            type: "finish",
+            finishReason: { unified: "tool-calls", raw: undefined },
+            usage: {
+              inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+              outputTokens: { total: 1, text: 1, reasoning: 0 },
+            },
+          },
+        ]),
+      }),
+    });
+    const { messages } = await consumeDirectChatTurnHeadless(runDirectChatTurn({
+      llmModel: model,
+      modelId: "openai/gpt-5-mini",
+      systemPrompt: "Use the available tools.",
+      messageHistory: [{ role: "user", content: "Call the fixture tools." }],
+      tools,
+      maxSteps: 1,
+    }));
+    const evidence = extractTranscriptEvidence({ messages });
+    expect(evidence.toolResults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ toolName: "wrong_type", callFailure: "output_schema_mismatch" }),
+        expect.objectContaining({ toolName: "missing", callFailure: "missing_structured_content" }),
+        expect.objectContaining({ toolName: "rpc_error", callFailure: "protocol" }),
+        expect.objectContaining({ toolName: "domain_error", isError: true }),
+      ]),
+    );
+    const transcript = buildIterationTranscript({
+      ...evidence,
+      ...collectToolDeclarations(manager, ["fixture"]),
+      toolCalls: names.map((name) => ({ toolName: name, toolCallId: name, arguments: {} })),
+    });
+    const predicate = { type: "toolResultMatchesSchema", schema: "declared" } as const;
+    expect(evaluatePredicate(transcript, predicate)).toMatchObject({
+      passed: false,
+      reason: expect.stringContaining("2/3 result(s)"),
+    });
+    expect(evaluatePredicate(transcript, { ...predicate, toolName: "rpc_error" })).toMatchObject({
+      status: "error",
+    });
+  } finally {
+    await manager.disconnectAllServers();
+    await mcp.close();
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });

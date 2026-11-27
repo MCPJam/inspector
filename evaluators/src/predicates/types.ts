@@ -73,16 +73,9 @@ export type ArgMatcher = {
  * without a parallel field.
  */
 /**
- * `toolResultMatchesSchema.schema`: an authored JSON Schema (any JSON value
- * except a string), or "declared" for each tool's own output schema.
+ * The author-provided JSON Schema document for a result check.
  */
-export type AuthoredResultSchema =
-  | "declared"
-  | Record<string, unknown>
-  | unknown[]
-  | number
-  | boolean
-  | null;
+export type AuthoredResultSchema = Record<string, unknown> | boolean;
 
 export type Predicate = (
   | { type: "toolDescriptionsPresent"; minLength?: number }
@@ -204,7 +197,7 @@ export type Predicate = (
   | {
       type: "toolResultMatchesSchema";
       /** A JSON Schema document, or "declared" for each tool's own schema. */
-      schema: AuthoredResultSchema;
+      schema: AuthoredResultSchema | "declared";
       toolName?: string;
     }
   /**
@@ -755,10 +748,7 @@ export const predicateUnion = z.discriminatedUnion("type", [
       .union([
         z.literal("declared"),
         z.record(z.string(), z.unknown()),
-        z.array(z.unknown()),
-        z.number(),
         z.boolean(),
-        z.null(),
       ])
       .refine(
         (value) => canonicalSize(value) <= MAX_SCHEMA_BYTES,
@@ -1016,6 +1006,8 @@ export type TranscriptToolResult = {
   json?: unknown;
   /** MCP `isError` on the result. */
   isError?: boolean;
+  /** A failed call that produced no MCP `CallToolResult`. */
+  callFailure?: "output_schema_mismatch" | "missing_structured_content" | "protocol";
   size: TranscriptToolResultSize;
   /** Bytes of the raw `CallToolResult`, when the runner had it. */
   rawBytes?: number;

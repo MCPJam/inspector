@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import type { TestStep } from "@/shared/steps";
+import { parseStepStatusById } from "@/shared/eval-step-replay";
+import { DECLARED_OUTPUT_SCHEMA } from "@mcpjam/sdk/predicates";
+import { buildStepResultRecords } from "../step-verdict-adapters";
 import {
   createStepExecutionState,
   executeSteps,
@@ -125,10 +128,13 @@ describe("step-executor turnCountUnder assert", () => {
 });
 
 describe("step-executor declared-schema assert", () => {
-  it("reads the declarations the state was created with", async () => {
+  it.each([
+    { withSchema: true, status: "ok" },
+    { withSchema: false, status: "not_applicable" },
+  ])("preserves $status in live and recorded step replay", async ({ withSchema, status }) => {
     const state = createStepExecutionState({
       declarationsCaptured: "complete",
-      toolDeclarations: [
+      toolDeclarations: withSchema ? [
         {
           serverKey: "shop",
           name: "get_order",
@@ -139,17 +145,21 @@ describe("step-executor declared-schema assert", () => {
             required: ["status"],
           },
         },
-      ],
+      ] : [],
     });
+    const steps: TestStep[] = [
+      prompt("p0"),
+      {
+        id: "a",
+        kind: "assert",
+        assertion: { type: "toolResultMatchesSchema", schema: DECLARED_OUTPUT_SCHEMA },
+      },
+      prompt("p1"),
+    ];
+    const onStepStatus = vi.fn();
     await executeSteps({
-      steps: [
-        prompt("p0"),
-        {
-          id: "a",
-          kind: "assert",
-          assertion: { type: "toolResultMatchesSchema", schema: "declared" },
-        },
-      ],
+      steps,
+      onStepStatus,
       state,
       browser: makeBrowser(),
       handlers: {
@@ -176,7 +186,10 @@ describe("step-executor declared-schema assert", () => {
       },
     });
     const [result] = state.assertionResults;
-    expect(result!.reason).not.toContain("declarations were not captured");
-    expect(result!.passed).toBe(true);
+    expect(result?.passed).toBe(true);
+    expect(onStepStatus).toHaveBeenCalledWith(expect.objectContaining({ stepId: "a", status }));
+    expect(onStepStatus).toHaveBeenCalledWith(expect.objectContaining({ stepId: "p1", status: "ok" }));
+    const records = buildStepResultRecords(state, steps);
+    expect(parseStepStatusById({ stepResults: records }).get("a")).toBe(status);
   });
 });

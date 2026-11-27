@@ -18,7 +18,7 @@ import {
   isAuthorable,
   isInSuite,
   LIBRARY_EVALUATORS,
-  missingChecks,
+  taggedChecks,
   type LibraryEvaluator,
 } from "./library-catalog";
 
@@ -67,7 +67,7 @@ export function EvaluatorLibraryDialog({
   );
   const selected = available.find((e) => e.id === selectedId);
   const add = (evaluator: LibraryEvaluator) => {
-    onAdd(missingChecks(evaluator, predicates));
+    onAdd(taggedChecks(evaluator));
   };
   return (
     <Dialog

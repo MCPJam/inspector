@@ -6,6 +6,7 @@ import { clusterByEvaluator } from "../evaluator-stage-rows";
 import {
   LIBRARY_EVALUATORS,
   taggedChecks,
+  withLibraryChecks,
   withEvaluatorUpdated,
   withoutEvaluator,
 } from "../library-catalog";
@@ -48,16 +49,30 @@ function renderTable(predicates: Predicate[]) {
 describe("library groups in the suite table", () => {
   it("groups a library evaluator's checks and removes them together", () => {
     const { next } = renderTable(tagged);
-    const groups = screen.getAllByRole("region", { name: "No Wasted Calls" });
-    expect(groups.length).toBeGreaterThan(0);
-    expect(groups[0]).toHaveTextContent("v1");
-    const remove = within(groups[0]).getByRole("button", {
-      name: "Remove No Wasted Calls",
+    const groups = screen.getAllByRole("region", { name: /^No Wasted Calls in / });
+    expect(groups).toHaveLength(2);
+    const buttons = groups.map((group) => {
+      expect(group).toHaveTextContent("v1");
+      return within(group).getByRole("button", {
+        name: "Remove No Wasted Calls from all stages",
+      });
     });
     // Suite settings sits inside a form; a default button would submit it.
-    expect(remove).toHaveAttribute("type", "button");
-    fireEvent.click(remove);
+    expect(buttons[0]).toHaveAttribute("type", "button");
+    fireEvent.click(buttons[0]);
     expect(next()).toEqual([{ type: "noToolErrors" }]);
+  });
+
+  it("tags an existing required check when adding the evaluator", () => {
+    const evaluator = LIBRARY_EVALUATORS.find((e) => e.id === "actionable-tool-errors");
+    if (!evaluator) throw new Error("Expected Actionable Tool Errors");
+    expect(withLibraryChecks(
+      [{ type: "noToolErrors", role: "required" }],
+      taggedChecks(evaluator),
+    )).toEqual([
+      { type: "noToolErrors", role: "required", evaluator: { id: evaluator.id, version: 1 } },
+      { type: "toolErrorNamesInput", role: "advisory", evaluator: { id: evaluator.id, version: 1 } },
+    ]);
   });
 
   it("hides the library on a deployment that cannot save any of it", () => {
@@ -74,7 +89,7 @@ describe("library groups in the suite table", () => {
     flag.on = false;
     renderTable(tagged);
     expect(
-      screen.queryByRole("region", { name: "No Wasted Calls" }),
+      screen.queryByRole("region", { name: /^No Wasted Calls in / }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "From library" }),

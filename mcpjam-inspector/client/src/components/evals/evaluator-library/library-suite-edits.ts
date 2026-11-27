@@ -1,6 +1,10 @@
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import type { ScorerTableScope } from "../suite-scorer-table";
-import { withEvaluatorUpdated, withoutEvaluator } from "./library-catalog";
+import {
+  withEvaluatorUpdated,
+  withLibraryChecks,
+  withoutEvaluator,
+} from "./library-catalog";
 
 /**
  * Whole-evaluator edits for suite settings. Undefined where the rows on
@@ -12,7 +16,7 @@ export function librarySuiteEdits(scope: ScorerTableScope) {
     predicates: scope.predicates,
     add(checks: readonly Predicate[]) {
       if (checks.length) {
-        scope.onPredicatesChange((previous) => [...previous, ...checks]);
+        scope.onPredicatesChange((previous) => withLibraryChecks(previous, checks));
       }
     },
     remove(evaluatorId: string) {

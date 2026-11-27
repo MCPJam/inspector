@@ -24,10 +24,9 @@ export type DeclaredSchemaVerdict =
  * MCP requires a tool with an `outputSchema` to return `structuredContent`
  * that conforms to it, so only `structuredContent` is read; text that happens
  * to parse as JSON is not a structured result. A result stored without its
- * raw CallToolResult is reported as unmeasured, not as a failure. Error
- * results are skipped,
- * because the spec does not hold them to the schema. Tools that declare no
- * output schema have nothing to conform to and are skipped too.
+ * raw CallToolResult is unmeasured unless the client rejected the output for
+ * failing its schema. The spec exempts results with isError and tools without
+ * a declared output schema.
  */
 export function checkDeclaredSchemas(
   results: readonly TranscriptToolResult[],
@@ -58,16 +57,36 @@ export function checkDeclaredSchemas(
   }
   const failures: string[] = [];
   const unresolved = new Set<string>();
+  const unvalidated = new Set<string>();
   let uncaptured = 0;
   let checked = 0;
   for (const result of results) {
     if (result.isError === true) continue;
+    if (
+      schemaFor.has(result.toolName) &&
+      (result.callFailure === "output_schema_mismatch" ||
+        result.callFailure === "missing_structured_content")
+    ) {
+      checked += 1;
+      failures.push(
+        result.callFailure === "missing_structured_content"
+          ? `"${result.toolName}" declares an output schema but returned no structuredContent`
+          : `"${result.toolName}" returned structuredContent that the client rejected against its declared output schema`,
+      );
+      continue;
+    }
     if (ambiguous.has(result.toolName)) {
       unresolved.add(result.toolName);
       continue;
     }
     const schema = schemaFor.get(result.toolName);
     if (schema === undefined) continue;
+    if (result.callFailure === "protocol") {
+      unvalidated.add(
+        `"${result.toolName}" did not return a result the client could validate`,
+      );
+      continue;
+    }
     if (result.structuredContent === undefined) {
       // Only a stored raw CallToolResult can show the field was absent. A
       // result kept as model-visible output alone was not measured.
@@ -81,21 +100,21 @@ export function checkDeclaredSchemas(
       );
       continue;
     }
-    checked += 1;
     const validation = validateAgainstSchema(schema, result.structuredContent);
-    if (validation.outcome === "valid") continue;
     if (validation.outcome === "unsupported-dialect") {
-      return {
-        kind: "error",
-        reason: `"${result.toolName}" declares dialect "${validation.dialect}", which this validator does not carry; nothing was validated`,
-      };
+      unvalidated.add(
+        `"${result.toolName}" declares an unsupported output schema dialect "${validation.dialect}"`,
+      );
+      continue;
     }
     if (validation.outcome === "unusable-schema") {
-      return {
-        kind: "error",
-        reason: `"${result.toolName}" declares an unusable output schema: ${validation.message}`,
-      };
+      unvalidated.add(
+        `"${result.toolName}" declares an unusable output schema: ${validation.message}`,
+      );
+      continue;
     }
+    checked += 1;
+    if (validation.outcome === "valid") continue;
     const first = validation.violations[0];
     failures.push(
       `"${result.toolName}"${first?.at ? ` at ${first.at}` : ""}: ${
@@ -124,6 +143,9 @@ export function checkDeclaredSchemas(
       kind: "error",
       reason: `${uncaptured} result(s) were stored without the raw CallToolResult, so their structuredContent could not be checked`,
     };
+  }
+  if (unvalidated.size > 0) {
+    return { kind: "error", reason: [...unvalidated].slice(0, 3).join("; ") };
   }
   return checked === 0
     ? {

@@ -1,4 +1,5 @@
 import { listBaseServers } from "../../utils/mcp-connections.js";
+import { isCallToolResult } from "@mcpjam/sdk";
 /**
  * Pull the evidence the Response and Tool-call checks need out of what the
  * runner already captured.
@@ -81,15 +82,29 @@ function outputText(output: unknown): string | undefined {
   }
 }
 
-/**
- * True for an `error-text` / `error-json` output part: a call that failed at
- * the protocol level and returned no `CallToolResult` at all.
- */
-function isProtocolErrorOutput(output: unknown): boolean {
-  return (
-    isRecord(output) &&
-    (output.type === "error-text" || output.type === "error-json")
-  );
+function toolCallFailure(
+  output: unknown,
+  toolName: string,
+): TranscriptToolResult["callFailure"] {
+  if (!isRecord(output)) return undefined;
+  if (output.type === "error-text" && typeof output.value === "string") {
+    // The AI SDK persists only the message from Client.callTool's rejection.
+    // Match its two output validation diagnostics, only on an error envelope.
+    const message = output.value.replace(/^ProtocolError: /, "");
+    if (
+      message.startsWith("Structured content does not match the tool's output schema: ")
+    ) {
+      return "output_schema_mismatch";
+    }
+    if (
+      message === `Tool ${toolName} has an output schema but did not return structured content`
+    ) {
+      return "missing_structured_content";
+    }
+  }
+  return output.type === "error-text" || output.type === "error-json"
+    ? "protocol"
+    : undefined;
 }
 
 /** The JSON payload of a `{type: "json"}` output part. */
@@ -138,8 +153,15 @@ export function extractTranscriptEvidence(trace: unknown): ExtractedEvidence {
 
         const text = outputText(part.output);
         const json = outputJson(part.output);
-        const raw = isRecord(part.result) ? part.result : undefined;
+        // The direct AI SDK path can project the whole MCP result as JSON.
+        const raw = isRecord(part.result)
+          ? part.result
+          : isCallToolResult(json)
+            ? json
+            : undefined;
         const structuredContent = raw?.structuredContent;
+        const callFailure =
+          raw === undefined ? toolCallFailure(part.output, toolName) : undefined;
 
         // MEASURED ON THE OUTPUT PART, BEFORE any cap the transcript applies.
         // `complete: false` when the part will not serialize — a size check
@@ -157,9 +179,8 @@ export function extractTranscriptEvidence(trace: unknown): ExtractedEvidence {
           ...(json !== undefined ? { json } : {}),
           ...(raw !== undefined && typeof raw.isError === "boolean"
             ? { isError: raw.isError }
-            : isProtocolErrorOutput(part.output)
-              ? { isError: true }
-              : {}),
+            : {}),
+          ...(callFailure !== undefined ? { callFailure } : {}),
           size: {
             bytes: bytes ?? 0,
             basis: "model_visible_output",

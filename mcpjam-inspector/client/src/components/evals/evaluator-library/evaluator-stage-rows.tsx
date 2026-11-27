@@ -44,12 +44,14 @@ export function clusterByEvaluator<Row>(
  */
 export function EvaluatorStageRows<Row extends { id: string }>({
   rows,
+  stageLabel,
   predicateOf,
   renderRow,
   onRemoveEvaluator,
   onUpdateEvaluator,
 }: {
   rows: readonly Row[];
+  stageLabel: string;
   predicateOf: (row: Row) => Predicate | undefined;
   renderRow: (row: Row) => ReactNode;
   /** Omitted where the rows are inherited and cannot be edited here. */
@@ -72,7 +74,7 @@ export function EvaluatorStageRows<Row extends { id: string }>({
         return (
           <section
             key={cluster.evaluatorId}
-            aria-label={name}
+            aria-label={`${name} in ${stageLabel}`}
             data-evaluator-group={cluster.evaluatorId}
             className="rounded-lg border border-border bg-muted/20 p-3"
           >
@@ -90,6 +92,8 @@ export function EvaluatorStageRows<Row extends { id: string }>({
                     type="button"
                     size="sm"
                     variant="outline"
+                    aria-label={`Update ${name} to v${newer} across all stages`}
+                    title="Update across all stages"
                     onClick={() => onUpdateEvaluator(cluster.evaluatorId)}
                   >
                     Update to v{newer}
@@ -100,7 +104,8 @@ export function EvaluatorStageRows<Row extends { id: string }>({
                     type="button"
                     size="sm"
                     variant="ghost"
-                    aria-label={`Remove ${name}`}
+                    aria-label={`Remove ${name} from all stages`}
+                    title="Remove from all stages"
                     onClick={() => onRemoveEvaluator(cluster.evaluatorId)}
                   >
                     <Trash2 aria-hidden />
