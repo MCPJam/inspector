@@ -111,7 +111,11 @@ export function installConvexAuthRecovery(client: ConvexReactClient): void {
   };
   const block = () => {
     flushSync(() =>
-      state.setState({ confirmedSubject: null, authConfirmed: false, queriesPaused: true }),
+      state.setState({
+        confirmedSubject: null,
+        authConfirmed: false,
+        queriesPaused: true,
+      }),
     );
   };
   const fail = () => {

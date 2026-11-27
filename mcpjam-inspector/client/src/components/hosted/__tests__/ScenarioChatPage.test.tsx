@@ -606,7 +606,9 @@ describe("ScenarioChatPage", () => {
       expect(mockAuthFetch).not.toHaveBeenCalled();
       dbSetup.ready = true;
       view.rerender(<ScenarioChatPage pathToken="account-token" />);
-      await waitFor(() => expect(readScenarioSession()?.authenticatedUserId).toBe("user_123"));
+      await waitFor(() =>
+        expect(readScenarioSession()?.authenticatedUserId).toBe("user_123"),
+      );
     } finally {
       dbSetup.ready = true;
     }
@@ -614,12 +616,16 @@ describe("ScenarioChatPage", () => {
 
   it("keeps a tokenless reload in the loading state during account setup", async () => {
     const body = await (await mockAuthFetch()).json();
-    mockAuthFetch.mockResolvedValue(createFetchResponse({
-      ...body,
-      bootstrap: { ...body.bootstrap, requiresSignIn: true },
-    }));
+    mockAuthFetch.mockResolvedValue(
+      createFetchResponse({
+        ...body,
+        bootstrap: { ...body.bootstrap, requiresSignIn: true },
+      }),
+    );
     const initial = render(<ScenarioChatPage pathToken="account-token" />);
-    await waitFor(() => expect(readScenarioSession()?.payload.requiresSignIn).toBe(true));
+    await waitFor(() =>
+      expect(readScenarioSession()?.payload.requiresSignIn).toBe(true),
+    );
     initial.unmount();
     mockAuthFetch.mockClear();
     dbSetup.ready = false;
@@ -639,7 +645,9 @@ describe("ScenarioChatPage", () => {
     dbSetup.failed = true;
     try {
       render(<ScenarioChatPage pathToken="account-token" />);
-      expect(await screen.findByRole("button", { name: "Refresh" })).toBeVisible();
+      expect(
+        await screen.findByRole("button", { name: "Refresh" }),
+      ).toBeVisible();
       expect(mockAuthFetch).not.toHaveBeenCalled();
     } finally {
       dbSetup.ready = true;
@@ -649,19 +657,25 @@ describe("ScenarioChatPage", () => {
 
   it("keeps the active tester session through a database readiness pause", async () => {
     render(<ScenarioChatPage pathToken="account-token" />);
-    await waitFor(() => expect(readScenarioSession()?.authenticatedUserId).toBe("user_123"));
+    await waitFor(() =>
+      expect(readScenarioSession()?.authenticatedUserId).toBe("user_123"),
+    );
     const calls = mockAuthFetch.mock.calls.length;
     const { authConfirmed, queriesPaused } = useSessionRefreshStore.getState();
     try {
       await act(async () => useSessionRefreshStore.getState().pauseQueries());
       expect(useSessionRefreshStore.getState().queriesPaused).toBe(true);
-      await act(async () => useSessionRefreshStore.setState({ authConfirmed: true }));
+      await act(async () =>
+        useSessionRefreshStore.setState({ authConfirmed: true }),
+      );
       expect(useSessionRefreshStore.getState().queriesPaused).toBe(false);
       await act(async () => {});
       expect(mockAuthFetch).toHaveBeenCalledTimes(calls);
       expect(readScenarioSession()?.authenticatedUserId).toBe("user_123");
     } finally {
-      await act(async () => useSessionRefreshStore.setState({ authConfirmed, queriesPaused }));
+      await act(async () =>
+        useSessionRefreshStore.setState({ authConfirmed, queriesPaused }),
+      );
     }
   });
 

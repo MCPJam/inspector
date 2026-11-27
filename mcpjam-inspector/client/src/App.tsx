@@ -3171,7 +3171,8 @@ export default function App() {
   const locationContext = useContext(UNSAFE_LocationContext);
   const routeOrganizationId = currentOrgRoute?.orgId;
   const routeOrganizationSection = currentOrgRoute?.orgSection;
-  const { isEnsuringUser, isUserReady, setupFailed } = useDbUserBootstrapStatus();
+  const { isEnsuringUser, isUserReady, setupFailed } =
+    useDbUserBootstrapStatus();
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
   // The org list once it is authoritative. Its membership key resets the
