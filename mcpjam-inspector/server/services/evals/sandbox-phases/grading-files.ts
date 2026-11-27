@@ -98,6 +98,11 @@ export async function parseGradingArchive(
   archive: Uint8Array,
   roots: readonly string[],
 ): Promise<CollectedGradingFiles> {
+  // None of the declared paths existed: GNU tar writes only zero blocks,
+  // which the parser calls an unrecognized archive.
+  if (!archive.subarray(0, 512).some((byte) => byte !== 0)) {
+    return { ok: true, entries: [], bytes: 0 };
+  }
   const entries: GradingFileEntry[] = [];
   let bytes = 0;
   let problem: string | undefined;

@@ -120,6 +120,16 @@ describe("which archive entries are copied", () => {
     });
   });
 
+  it("reads an archive of zero blocks as no files: none of the paths existed", async () => {
+    for (const empty of [new Uint8Array(10_240), new Uint8Array(0)]) {
+      expect(await parseGradingArchive(empty, ROOTS)).toEqual({
+        ok: true,
+        entries: [],
+        bytes: 0,
+      });
+    }
+  });
+
   it("refuses more than 25 MB of content or too many entries", async () => {
     const big = await parseGradingArchive(
       archive(
