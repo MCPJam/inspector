@@ -1,5 +1,5 @@
-import { act, renderHook } from "@testing-library/react";
-import type { KeyboardEvent, MouseEvent } from "react";
+import { act, fireEvent, render, renderHook } from "@testing-library/react";
+import { createElement, type KeyboardEvent, type MouseEvent } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useStepRangeSelect } from "../use-step-range-select";
 
@@ -225,5 +225,56 @@ describe("useStepRangeSelect", () => {
     expect(result.current.isSelecting).toBe(false);
     expect(result.current.selectedCount).toBe(0);
     expect(result.current.available).toBe(false);
+  });
+  it("ignores a copy that finishes after leaving and re-entering select mode", async () => {
+    let finish!: (success: boolean) => void;
+    const { result } = setup({
+      copySteps: () =>
+        new Promise<boolean>((resolve) => {
+          finish = resolve;
+        }),
+    });
+    act(() => result.current.enter());
+    click(result, "a");
+    let copying!: Promise<void>;
+    act(() => {
+      copying = result.current.copySelected();
+    });
+    act(() => result.current.exit());
+    act(() => result.current.enter());
+    await act(async () => {
+      finish(true);
+      await copying;
+    });
+    expect(result.current.copyState).toBe("idle");
+  });
+
+  it("does not intercept Enter on a nested button", () => {
+    const { result } = setup();
+    act(() => result.current.enter());
+    const view = render(
+      createElement(
+        "div",
+        result.current.getStepHeaderProps("a", "A"),
+        createElement("button", null, "Copy step"),
+      ),
+    );
+    const event = new window.KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+    });
+    fireEvent(view.getByRole("button", { name: "Copy step" }), event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(result.current.selectedCount).toBe(0);
+  });
+
+  it("does not reselect a removed step when it returns", () => {
+    const { result, rerender, initialProps } = setup();
+    act(() => result.current.enter());
+    click(result, "d");
+    rerender({ ...initialProps, orderedSteps: ["a", "b", "c"] });
+    rerender(initialProps);
+    expect(result.current.isSelected("d")).toBe(false);
   });
 });

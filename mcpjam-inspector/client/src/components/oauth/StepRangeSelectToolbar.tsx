@@ -10,7 +10,7 @@ interface StepRangeSelectToolbarProps {
 }
 
 /**
- * The "Select step" toggle and, in select mode, the selected count with
+ * The "Select steps" toggle and, in select mode, the selected count with
  * Cancel and "Copy N steps". Shared by the OAuth and XAA debuggers.
  */
 export function StepRangeSelectToolbar({
@@ -30,7 +30,7 @@ export function StepRangeSelectToolbar({
             className="h-8"
             title="Select steps to copy. Shift-click selects a range."
           >
-            Select step
+            Select steps
           </Button>
         )}
         {children}

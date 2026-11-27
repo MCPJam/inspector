@@ -277,7 +277,7 @@ describe("XAAFlowLogger step range selection", () => {
     const user = userEvent.setup();
     renderRangeLogger();
 
-    await user.click(screen.getByRole("button", { name: "Select step" }));
+    await user.click(screen.getByRole("button", { name: "Select steps" }));
     expect(stepCheckboxes()).toHaveLength(4);
 
     // Click the third step, then shift-click back to the first.
@@ -311,7 +311,7 @@ describe("XAAFlowLogger step range selection", () => {
     const header = screen.getByRole("button", { name: new RegExp(title) });
     expect(header).toHaveAttribute("aria-expanded", "false");
 
-    await user.click(screen.getByRole("button", { name: "Select step" }));
+    await user.click(screen.getByRole("button", { name: "Select steps" }));
     await user.click(stepCheckboxes()[0]);
     await user.click(screen.getByRole("button", { name: "Cancel" }));
 

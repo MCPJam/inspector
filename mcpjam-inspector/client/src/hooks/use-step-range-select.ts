@@ -43,6 +43,7 @@ export function useStepRangeSelect<TStep>({
   const [anchor, setAnchor] = useState<TStep | null>(null);
   const [copyState, setCopyState] = useState<StepRangeCopyState>("idle");
   const copyTimerRef = useRef<number | null>(null);
+  const sessionRef = useRef(0);
 
   const resetCopyState = useCallback(() => {
     if (copyTimerRef.current !== null) {
@@ -53,11 +54,13 @@ export function useStepRangeSelect<TStep>({
   }, []);
 
   const enter = useCallback(() => {
+    sessionRef.current += 1;
     resetCopyState();
     setIsSelecting(true);
   }, [resetCopyState]);
 
   const exit = useCallback(() => {
+    sessionRef.current += 1;
     resetCopyState();
     setIsSelecting(false);
     setSelected(new Set());
@@ -70,12 +73,25 @@ export function useStepRangeSelect<TStep>({
 
   useEffect(
     () => () => {
+      sessionRef.current += 1;
       if (copyTimerRef.current !== null) {
         window.clearTimeout(copyTimerRef.current);
       }
     },
     [],
   );
+
+  useEffect(() => {
+    setSelected((previous) => {
+      const remaining = new Set(
+        orderedSteps.filter((step) => previous.has(step)),
+      );
+      return remaining.size === previous.size ? previous : remaining;
+    });
+    setAnchor((previous) =>
+      previous !== null && orderedSteps.includes(previous) ? previous : null,
+    );
+  }, [orderedSteps]);
 
   const toggle = (step: TStep, extendRange: boolean) => {
     const anchorIndex = anchor === null ? -1 : orderedSteps.indexOf(anchor);
@@ -104,7 +120,9 @@ export function useStepRangeSelect<TStep>({
   const copySelected = async () => {
     if (selectedSteps.length === 0) return;
     resetCopyState();
+    const session = ++sessionRef.current;
     const success = await copySteps(selectedSteps);
+    if (session !== sessionRef.current) return;
     setCopyState(success ? "success" : "error");
     copyTimerRef.current = window.setTimeout(() => {
       setCopyState("idle");
@@ -125,7 +143,11 @@ export function useStepRangeSelect<TStep>({
       "aria-expanded": undefined,
       "aria-label": `Select step ${label}`,
       onClick: (event: MouseEvent) => toggle(step, event.shiftKey),
+      onMouseDown: (event: MouseEvent) => {
+        if (event.shiftKey) event.preventDefault();
+      },
       onKeyDown: (event: KeyboardEvent) => {
+        if (event.target !== event.currentTarget) return;
         if (event.key !== "Enter" && event.key !== " ") return;
         event.preventDefault();
         toggle(step, event.shiftKey);

@@ -216,7 +216,7 @@ describe("OAuthFlowLogger step range selection", () => {
         id: step,
         step,
         label: `Log for ${step}`,
-        data: {},
+        data: { access_token: "range-test-secret" },
         timestamp: index,
         level: "info" as const,
       })),
@@ -231,7 +231,7 @@ describe("OAuthFlowLogger step range selection", () => {
     copyToClipboard.mockClear();
     renderRangeLogger();
 
-    await user.click(screen.getByRole("button", { name: "Select step" }));
+    await user.click(screen.getByRole("button", { name: "Select steps" }));
     expect(stepCheckboxes()).toHaveLength(4);
     expect(stepCheckboxes()[0]).toHaveAccessibleName(/^Select step 1\. /);
 
@@ -255,13 +255,15 @@ describe("OAuthFlowLogger step range selection", () => {
     expect(positions.every((position) => position >= 0)).toBe(true);
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
     expect(copied).not.toContain("Log for request_without_token");
+    expect(copied).toContain("[REDACTED]");
+    expect(copied).not.toContain("range-test-secret");
   });
 
   it("leaves select mode when switching to the Raw view", async () => {
     const user = userEvent.setup();
     renderRangeLogger();
 
-    await user.click(screen.getByRole("button", { name: "Select step" }));
+    await user.click(screen.getByRole("button", { name: "Select steps" }));
     await user.click(stepCheckboxes()[0]);
     await user.click(screen.getByRole("tab", { name: "Raw" }));
 
@@ -269,12 +271,12 @@ describe("OAuthFlowLogger step range selection", () => {
       screen.getByRole("button", { name: "Copy all" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Select step" }),
+      screen.queryByRole("button", { name: "Select steps" }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("1 selected")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "Guide" }));
-    await user.click(screen.getByRole("button", { name: "Select step" }));
+    await user.click(screen.getByRole("button", { name: "Select steps" }));
     expect(screen.getByText("0 selected")).toBeInTheDocument();
   });
 });
