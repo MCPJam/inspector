@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { compare, countErrors, globalErrors } from "../typecheck-server.mjs";
+import {
+  compare,
+  countErrors,
+  globalErrors,
+  tscFailure,
+} from "../typecheck-server.mjs";
 
 const OUTPUT = [
   "server/a.ts(1,1): error TS2322: Type 'string' is not assignable to type 'number'.",
@@ -40,4 +45,48 @@ test("project-level errors are reported, not read as zero file errors", () => {
     "error TS5058: The specified path does not exist: 'nope.json'.",
   ]);
   assert.deepEqual(globalErrors(OUTPUT), []);
+});
+
+test("a tsc that crashed or reported nothing fails instead of counting zero", () => {
+  // Running out of memory aborts tsc, with nothing on stdout.
+  const oom = tscFailure({
+    status: null,
+    signal: "SIGABRT",
+    stdout: "",
+    stderr:
+      "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\n",
+  });
+  assert.match(oom, /was killed by SIGABRT without reporting a diagnostic/);
+  assert.match(oom, /raise TSC_HEAP_MB/);
+  // Killed mid-run (or past maxBuffer): partial stdout is not a result.
+  assert.match(
+    tscFailure({ status: null, signal: "SIGTERM", stdout: OUTPUT, stderr: "" }),
+    /was killed by SIGTERM/,
+  );
+  // A tsc that throws exits 1 like one reporting errors, but prints none.
+  assert.match(
+    tscFailure({
+      status: 1,
+      signal: null,
+      stdout: "",
+      stderr: "TypeError: Cannot read properties of undefined (reading 'flags')\n",
+    }),
+    /status 1 without reporting a diagnostic.*stderr is above/,
+  );
+});
+
+test("a tsc that reported diagnostics is the result, project-level ones included", () => {
+  assert.equal(
+    tscFailure({ status: 2, signal: null, stdout: OUTPUT, stderr: "" }),
+    null,
+  );
+  assert.equal(
+    tscFailure({
+      status: 3,
+      signal: null,
+      stdout: "error TS5058: The specified path does not exist: 'nope.json'.\n",
+      stderr: "",
+    }),
+    null,
+  );
 });
