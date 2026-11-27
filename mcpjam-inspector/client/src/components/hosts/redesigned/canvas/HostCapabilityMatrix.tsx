@@ -1,31 +1,7 @@
 import { memo, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import type { HostThemeMode } from "@/lib/client-styles";
-import claudeLogo from "/claude_logo.png";
-import claudeDesktopLogo from "/claude-desktop-logo.png";
-import claudeCodeLogo from "/claude_code_logo.png";
-import openaiLogo from "/openai_logo.png";
-import chatgptDesktopLogo from "/chatgpt_desktop_logo.png";
-import mistralLogo from "/mistral_logo.png";
-import gooseLogoDark from "/goose_logo_dark.png";
-import gooseLogoLight from "/goose_logo_light.png";
-import cursorLogo from "/cursor_logo.png";
-import codexLogo from "/codex-logo.svg";
-import copilotLogo from "/copilot_logo.png";
-import githubCopilotLogoDark from "/github_copilot_logo_dark.png";
-import githubCopilotLogoLight from "/github_copilot_logo_light.png";
-import vscodeLogo from "/vscode_logo.svg";
-import bedrockLogo from "/bedrock_logo.svg";
-import n8nLogo from "/n8n_logo.svg";
-import perplexityLogo from "/perplexity_logo.svg";
-import clineLogoDark from "/cline_logo_dark.svg";
-import clineLogoLight from "/cline_logo_light.svg";
-import notionLogo from "/notion_logo.png";
-import slackLogo from "/slack_logo.png";
-import geminiLogo from "/google_logo.png";
-import grokbotLogo from "/grokbot_logo.png";
-import museLogo from "/muse_logo.png";
-import mcpjamLogo from "/mcp_jam_2row.png";
+import { resolveHostLogo } from "@/lib/host-logo";
 import {
   APPS_HUB_NODE_ID,
   HOST_GROUP_NODE_ID,
@@ -40,78 +16,11 @@ import {
   type SandboxConfigNodeData,
   type SandboxConfigSubKey,
 } from "../types";
-import { ClickableRegion, PAPER_STYLES } from "@/components/canvas-kit/paper-card";
+import {
+  ClickableRegion,
+  PAPER_STYLES,
+} from "@/components/canvas-kit/paper-card";
 import { SandboxProxyIframeCard } from "./sandbox-config-grid";
-
-function getClientLogo(
-  clientInfoName: string | undefined,
-  hostName: string | undefined,
-  themeMode: HostThemeMode,
-): string | null {
-  const haystack = `${clientInfoName ?? ""} ${hostName ?? ""}`.toLowerCase();
-  if (haystack.includes("mcpjam") || haystack.includes("mcp-jam"))
-    return mcpjamLogo;
-  // Claude Code's desktop and web variants carry their app's mark.
-  if (/claude[ -]?code[ -]?desktop/.test(haystack)) return claudeDesktopLogo;
-  if (/claude[ -]?code[ -]?web/.test(haystack)) return claudeLogo;
-  if (haystack.includes("claude-code") || haystack.includes("claude code"))
-    return claudeCodeLogo;
-  if (
-    haystack.includes("claude-desktop") ||
-    haystack.includes("claude desktop")
-  )
-    return claudeDesktopLogo;
-  if (haystack.includes("claude")) return claudeLogo;
-  if (haystack.includes("mistral") || haystack.includes("le chat"))
-    return mistralLogo;
-  // Goose's mark is a flat silhouette, so it needs to flip with the app
-  // theme to stay visible: white goose on dark, black goose on light.
-  if (haystack.includes("goose"))
-    return themeMode === "dark" ? gooseLogoDark : gooseLogoLight;
-  // Grokbot sends Cursor's clientInfo, so its own name is checked first.
-  if (haystack.includes("grok")) return grokbotLogo;
-  if (haystack.includes("cursor")) return cursorLogo;
-  // ChatGPT's work mode sends `openai-mcp (Codex)`; its name says ChatGPT.
-  // ChatGPT's desktop app, in either mode, has its own mark.
-  if (/chatgpt[ -]?(work[ -]?)?desktop/.test(haystack)) return chatgptDesktopLogo;
-  if (haystack.includes("chatgpt")) return openaiLogo;
-  if (haystack.includes("codex")) return codexLogo;
-  // GitHub Copilot CLI before the bare "copilot", which is Microsoft 365
-  // Copilot. Its flat mark flips with the theme, like Goose's.
-  if (haystack.includes("copilot cli") || haystack.includes("copilot-cli"))
-    return themeMode === "dark" ? githubCopilotLogoDark : githubCopilotLogoLight;
-  if (haystack.includes("copilot")) return copilotLogo;
-  // VS Code's clientInfo.name is "Visual Studio Code"; the host name is
-  // "VS Code". Match both spellings (the editor, not Cursor which forks it).
-  if (
-    haystack.includes("vscode") ||
-    haystack.includes("vs code") ||
-    haystack.includes("visual studio")
-  )
-    return vscodeLogo;
-  // AWS Bedrock AgentCore: clientInfo.name "bedrock-agentcore", host
-  // "AgentCore". Reuses the Bedrock mark (no dedicated AgentCore asset).
-  if (haystack.includes("agentcore") || haystack.includes("bedrock"))
-    return bedrockLogo;
-  if (haystack.includes("n8n")) return n8nLogo;
-  if (haystack.includes("perplexity")) return perplexityLogo;
-  if (haystack.includes("cline"))
-    return themeMode === "dark" ? clineLogoDark : clineLogoLight;
-  // Gemini's clientInfo.name is "google-adk" and its host name is "Gemini",
-  // so neither spelling alone covers both call sites.
-  if (haystack.includes("gemini") || haystack.includes("google-adk"))
-    return geminiLogo;
-  if (haystack.includes("notion")) return notionLogo;
-  if (haystack.includes("muse")) return museLogo;
-  if (haystack.includes("slack")) return slackLogo;
-  if (
-    haystack.includes("openai") ||
-    haystack.includes("chatgpt") ||
-    haystack.includes("gpt")
-  )
-    return openaiLogo;
-  return null;
-}
 
 /* ============================================================
    Host card. The card IS the architecture diagram — Host frame
@@ -203,29 +112,18 @@ export const HostMatrixCard = memo(function HostMatrixCard({
           onSelectNode={onSelectNode}
           className="hp-identity"
         >
-          {(() => {
-            // Pass the full value — `getClientLogo` already lowercases
-            // and substring-matches against the combined haystack, so any
-            // pre-tokenization here just hides keywords that don't sit at
-            // index 0 (e.g. "mcp-client-claude" → no logo with split[0]).
-            const clientLogo = getClientLogo(
-              clientInfoLeaf?.value,
-              hostName,
-              themeMode,
-            );
-            return (
-              <span
-                className={cn("hp-glyph", clientLogo && "hp-glyph--logo")}
-                aria-hidden
-              >
-                {clientLogo ? (
-                  <img src={clientLogo} alt="" className="hp-glyph-img" />
-                ) : (
-                  (agent?.modelProvider?.charAt(0) ?? "?").toUpperCase()
-                )}
-              </span>
-            );
-          })()}
+          {/* The host style's own logo, as in the client list, so a new
+              template needs no separate keyword map here. */}
+          <span className="hp-glyph" aria-hidden>
+            <img
+              src={resolveHostLogo(
+                { name: hostName, hostStyle: agent?.hostStyle },
+                themeMode,
+              )}
+              alt=""
+              className="hp-glyph-img"
+            />
+          </span>
           <span className="hp-identity-meta">
             <span className="hp-host-name" title={hostName}>
               {hostName}
