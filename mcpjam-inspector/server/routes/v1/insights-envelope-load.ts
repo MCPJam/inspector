@@ -23,9 +23,7 @@ import { classifyConvexReadError } from "./convex-read-errors.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 export type InsightsEnvelopeSource =
-  | "v1.evals"
-  | "v1.journeys"
-  | "v1.user-testing";
+  "v1.evals" | "v1.journeys" | "v1.studies" | "v1.user-testing";
 
 /**
  * Run an envelope read, returning `undefined` instead of throwing.

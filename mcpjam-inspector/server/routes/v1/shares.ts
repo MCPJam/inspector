@@ -23,6 +23,7 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
+import { routeParam } from "./route-param.js";
 
 const shares = new Hono();
 const BASE = "/projects/:projectId/shares/:resourceType/:resourceId";
@@ -173,12 +174,12 @@ async function scopedShare(c: Context): Promise<{
   // Reads the header AND appends `Vary` — the resource type is echoed on
   // every response here, so every response varies on it.
   const vocabulary = apiVocabularyOf(c);
-  const projectId = c.req.param("projectId");
+  const projectId = routeParam(c, "projectId");
   const resourceType = requireResourceType(
-    c.req.param("resourceType"),
+    routeParam(c, "resourceType"),
     vocabulary,
   );
-  const resourceId = c.req.param("resourceId");
+  const resourceId = routeParam(c, "resourceId");
   const client = createConvexClient(
     await getConvexBearerForRequest(c as never),
   );

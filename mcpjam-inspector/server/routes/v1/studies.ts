@@ -49,6 +49,7 @@ import { translateConvexReadError } from "./convex-read-errors.js";
 import { loadInsightsEnvelope } from "./insights-envelope-load.js";
 import { readCapped } from "./blob-read.js";
 import { markDeprecated } from "./deprecation.js";
+import { routeParam } from "./route-param.js";
 import {
   fetchConvexV1Read,
   proxyConvexV1Read,
@@ -292,7 +293,7 @@ async function parseBody<T>(
 
 /** Shared scaffolding: resolve the bearer, scope the scenario, hand both back. */
 async function scopedScenario(
-  c: { req: { param: (k: string) => string } },
+  c: Context,
   surface: Surface,
 ): Promise<{
   client: ConvexHttpClient;
@@ -300,13 +301,11 @@ async function scopedScenario(
   scenarioId: string;
   scenario: ScenarioRow;
 }> {
-  const projectId = c.req.param("projectId");
+  const projectId = routeParam(c, "projectId");
   // The id arrives under a different parameter name on each base; the value
   // and everything downstream of it are identical.
-  const scenarioId = c.req.param(studyIdParam(surface));
-  const client = createConvexClient(
-    await getConvexBearerForRequest(c as never),
-  );
+  const scenarioId = routeParam(c, studyIdParam(surface));
+  const client = createConvexClient(await getConvexBearerForRequest(c));
   const scenario = await requireScenarioInProject(
     client,
     projectId,
