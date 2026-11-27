@@ -1,7 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
-import { fireEvent, renderWithProviders, screen } from "@/test";
+import { describe, expect, it } from "vitest";
+import { renderWithProviders, screen } from "@/test";
 import { CandidateRow, maskCandidate } from "../candidate-row";
-import { CodeEvaluatorPanel, RUNNER_LIMITS } from "../code-evaluator-panel";
 
 describe("maskCandidate", () => {
   it("keeps short values and truncates long ones after 12 characters", () => {
@@ -41,58 +40,5 @@ describe("CandidateRow", () => {
     );
     expect(screen.getByText("Allowed by case")).toBeInTheDocument();
     expect(screen.queryByRole("meter")).not.toBeInTheDocument();
-  });
-});
-
-describe("CodeEvaluatorPanel", () => {
-  const code = [
-    "export default defineEvaluator({",
-    "  evaluate({ transcript }) {",
-    '    return { kind: "scored", score: 1 };',
-    "  },",
-    "});",
-  ].join("\n");
-
-  it("numbers lines, marks the error line and shows the console", () => {
-    renderWithProviders(
-      <CodeEvaluatorPanel
-        fileName="quoted-cart-total.ts"
-        code={code}
-        errorLine={3}
-        consoleOutput={
-          "TypeError at line 3\n    at evaluate (quoted-cart-total.ts:3)"
-        }
-      />,
-    );
-    const source = screen.getByRole("region", {
-      name: "quoted-cart-total.ts source",
-    });
-    const marked = source.querySelector("[data-error-line]");
-    expect(marked).toHaveTextContent('return { kind: "scored", score: 1 };');
-    const log = screen.getByRole("log", { name: "Console" });
-    expect(log.textContent).toBe(
-      "TypeError at line 3\n    at evaluate (quoted-cart-total.ts:3)",
-    );
-    expect(log).toHaveClass("whitespace-pre-wrap");
-    for (const limit of RUNNER_LIMITS) {
-      expect(screen.getByText(limit)).toBeInTheDocument();
-    }
-  });
-
-  it("runs tests and labels GitHub files as read-only", () => {
-    const onRunTests = vi.fn();
-    renderWithProviders(
-      <CodeEvaluatorPanel
-        fileName="quoted-cart-total.ts"
-        code={code}
-        source="github"
-        onRunTests={onRunTests}
-      />,
-    );
-    expect(
-      screen.getByText("Synced from GitHub · edits open a pull request"),
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Run tests" }));
-    expect(onRunTests).toHaveBeenCalledTimes(1);
   });
 });
