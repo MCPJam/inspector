@@ -379,7 +379,7 @@ export function CaniuseCapabilityPage({
                 {coverage.rows.length !== coverage.probed && (
                   <p className="mb-3 text-sm text-muted-foreground">
                     The map shows every client in the catalog. Coverage scores
-                    use probed clients.
+                    use only the clients we tested.
                   </p>
                 )}
                 <ClientMap coverage={coverage} />
