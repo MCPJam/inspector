@@ -7,7 +7,6 @@ describe("EvaluatorKindBadge", () => {
     ["assertions", "Assertions"],
     ["judge", "Judge prompt"],
     ["decision", "Decision questions"],
-    ["code", "Code"],
   ] as const)("labels the %s method", (method, label) => {
     renderWithProviders(<EvaluatorKindBadge method={method} />);
     expect(screen.getByText(label)).toBeInTheDocument();

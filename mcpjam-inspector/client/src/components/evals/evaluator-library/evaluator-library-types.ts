@@ -21,7 +21,7 @@ export type OwaspId =
   | "MCP10";
 
 /** How an evaluator decides. */
-export type EvaluatorMethod = "assertions" | "judge" | "decision" | "code";
+export type EvaluatorMethod = "assertions" | "judge" | "decision";
 
 /** Where an evaluator in a suite came from. */
 export type EvaluatorOrigin = "library" | "library-copy" | "github";
@@ -45,6 +45,6 @@ export type EvaluatorTone = "tools" | "answer" | "errors" | "security";
 
 /** One piece of what an evaluator is built from, e.g. "3 assertions". */
 export type BuiltFromPart = {
-  kind: "assertions" | "question" | "judge" | "code" | "pattern";
+  kind: "assertions" | "question" | "judge" | "pattern";
   label: string;
 };

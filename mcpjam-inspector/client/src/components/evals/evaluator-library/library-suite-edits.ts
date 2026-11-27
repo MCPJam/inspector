@@ -1,6 +1,5 @@
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import {
-  MAX_CUSTOM_JUDGES,
   MAX_RUBRIC_CHECK_QUESTIONS,
   type CustomJudge,
   type RubricCheckQuestion,
@@ -11,7 +10,7 @@ import type { EvalJudgeConfig } from "../types";
 import {
   findLibraryEvaluator,
   hasLibraryIdConflict,
-  LIBRARY_EVALUATORS,
+  LIBRARY_QUESTION_IDS,
   taggedJudges,
   taggedQuestions,
   withEvaluatorUpdated,
@@ -26,10 +25,7 @@ export function evaluatorIdForQuestionKey(
   key: string | undefined,
 ): string | undefined {
   if (!key?.startsWith("q:")) return undefined;
-  const id = key.slice(2);
-  return LIBRARY_EVALUATORS.find((e) =>
-    taggedQuestions(e).some((q) => q.id === id),
-  )?.id;
+  return LIBRARY_QUESTION_IDS.get(key.slice(2));
 }
 
 type ListEdit<T> = (current: T[]) => T[];
@@ -97,7 +93,7 @@ export function librarySuiteEdits(
       editLists({
         ...(questions.length
           ? {
-              enableQuestions: true,
+              enableQuestions: judgeConfig?.rubricChecks?.enabled !== false,
               questions: (current) => [
                 ...current,
                 ...questions.filter((q) => !current.some((c) => c.id === q.id)),

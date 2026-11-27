@@ -1,0 +1,273 @@
+import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
+import {
+  ArrowUpRight,
+  CircleAlert,
+  Library,
+  MessageSquare,
+  Search,
+  Server,
+  Shield,
+  Wrench,
+} from "lucide-react";
+import { useId } from "react";
+import { cn } from "@/lib/utils";
+import { EvaluatorCard } from "./evaluator-card";
+import { EVALUATOR_METHODS } from "./evaluator-methods";
+import type { EvaluatorMethod } from "./evaluator-library-types";
+import {
+  builtFrom,
+  isInSuite,
+  type LibraryEvaluator,
+  type LibrarySuiteParts,
+} from "./library-catalog";
+
+const CATEGORIES = [
+  { id: "tool-calls", label: "Calling tools", icon: Wrench },
+  { id: "final-answer", label: "Final answer", icon: MessageSquare },
+  { id: "tool-errors", label: "Tool errors", icon: CircleAlert },
+  { id: "server-output", label: "Server output", icon: Server },
+  { id: "security", label: "Security", icon: Shield },
+] as const;
+
+type Category = LibraryEvaluator["category"] | "all";
+export type LibraryFilters = { category: Category; search: string };
+export type MethodAvailability = Record<EvaluatorMethod, string | null>;
+
+export function EvaluatorLibraryBrowse({
+  evaluators,
+  suite,
+  filters,
+  onFiltersChange,
+  methods,
+  onMethod,
+  onOpen,
+  onAdd,
+  getAddDisabledReason,
+}: {
+  evaluators: LibraryEvaluator[];
+  suite: LibrarySuiteParts;
+  filters: LibraryFilters;
+  onFiltersChange: (filters: LibraryFilters) => void;
+  methods?: MethodAvailability;
+  onMethod: (method: EvaluatorMethod) => void;
+  onOpen: (id: string) => void;
+  onAdd: (evaluator: LibraryEvaluator) => void;
+  getAddDisabledReason: (evaluator: LibraryEvaluator) => string | undefined;
+}) {
+  const searchId = useId();
+  const { category, search } = filters;
+  const query = search.trim().toLowerCase();
+  const groups = CATEGORIES.map((group) => {
+    const entries = evaluators.filter((entry) => entry.category === group.id);
+    return {
+      ...group,
+      available: entries.length > 0,
+      matches: entries.filter((entry) =>
+        [
+          entry.name,
+          entry.question,
+          group.label,
+          ...builtFrom(entry).map((part) => part.label),
+        ].some((value) => value.toLowerCase().includes(query)),
+      ),
+    };
+  }).filter((group) => group.available);
+  const all = category === "all";
+  const activeGroup = groups.find((group) => group.id === category);
+  const visible = all
+    ? groups
+    : groups.filter((group) => group.id === category);
+  const total = groups.reduce((sum, group) => sum + group.matches.length, 0);
+  const nav = [
+    {
+      id: "all" as const,
+      label: "All evaluators",
+      icon: Library,
+      count: total,
+    },
+    ...groups.map((group) => ({ ...group, count: group.matches.length })),
+  ];
+  return (
+    <div className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] sm:grid-cols-[10.5rem_minmax(0,1fr)] sm:grid-rows-1">
+      <nav
+        aria-label="Evaluator categories"
+        className="flex gap-1 overflow-x-auto border-b border-border bg-muted/30 p-2 sm:flex-col sm:overflow-y-auto sm:border-r sm:border-b-0 sm:p-3"
+      >
+        {nav.map(({ id, label, icon: Icon, count }) => (
+          <Button
+            key={id}
+            type="button"
+            variant={category === id ? "secondary" : "ghost"}
+            aria-current={category === id ? "true" : undefined}
+            size="sm"
+            className="shrink-0 justify-start gap-2 px-2 sm:w-full"
+            onClick={() => onFiltersChange({ category: id, search })}
+          >
+            <Icon aria-hidden />
+            {label}
+            <span
+              aria-hidden
+              className="ml-auto text-xs tabular-nums text-muted-foreground"
+            >
+              {count}
+            </span>
+          </Button>
+        ))}
+      </nav>
+      <div className="flex min-h-0 min-w-0 flex-col">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3 sm:px-5">
+          <h2 className="text-sm font-semibold">
+            {activeGroup?.label ?? "All evaluators"}
+          </h2>
+          <div className="relative w-full sm:w-56">
+            <Search
+              aria-hidden
+              className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground"
+            />
+            <label htmlFor={searchId} className="sr-only">
+              Search presets
+            </label>
+            <Input
+              id={searchId}
+              type="search"
+              placeholder="Search presets…"
+              value={search}
+              onChange={(event) =>
+                onFiltersChange({ category, search: event.target.value })
+              }
+              className="pl-8"
+            />
+          </div>
+        </div>
+        <div
+          key={category}
+          className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5"
+        >
+          {all && !query && methods ? (
+            <MethodCards methods={methods} onMethod={onMethod} />
+          ) : null}
+          {visible.every((group) => !group.matches.length) ? (
+            <div className="rounded-lg border border-border px-4 py-6 text-center">
+              <p role="status" className="text-sm text-muted-foreground">
+                {query
+                  ? "No presets match your search."
+                  : "Choose a method above to create an evaluator."}
+              </p>
+              {query ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="mt-1"
+                  onClick={() => onFiltersChange({ category, search: "" })}
+                >
+                  Clear search
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+          {visible
+            .filter((group) => group.matches.length > 0)
+            .map((group) => (
+              <section
+                key={group.id}
+                aria-label={group.label}
+                className="space-y-2"
+              >
+                {all ? (
+                  <h3 className="text-sm font-medium text-muted-foreground">
+                    {group.label}
+                  </h3>
+                ) : null}
+                <div className="grid gap-2.5 md:grid-cols-2">
+                  {group.matches.map((evaluator) => (
+                    <EvaluatorCard
+                      key={evaluator.id}
+                      name={evaluator.name}
+                      question={evaluator.question}
+                      icon={evaluator.icon}
+                      tone={evaluator.tone}
+                      builtFrom={builtFrom(evaluator)}
+                      inSuite={isInSuite(evaluator, suite)}
+                      onOpen={() => onOpen(evaluator.id)}
+                      onAdd={() => onAdd(evaluator)}
+                      addDisabledReason={getAddDisabledReason(evaluator)}
+                      compact
+                    />
+                  ))}
+                </div>
+              </section>
+            ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MethodCards({
+  methods,
+  onMethod,
+}: {
+  methods: MethodAvailability;
+  onMethod: (method: EvaluatorMethod) => void;
+}) {
+  const id = useId();
+  return (
+    <section
+      aria-labelledby={id}
+      className="space-y-2.5 border-b border-border pb-5"
+    >
+      <h3 id={id} className="text-sm font-semibold">
+        Start from scratch
+      </h3>
+      <div className="grid gap-2.5 md:grid-cols-2">
+        {EVALUATOR_METHODS.map(
+          ({ value, title, icon: Icon, description, tone }) => {
+            const reason = methods[value];
+            const titleId = `${id}-${value}`;
+            const descriptionId = `${titleId}-description`;
+            return (
+              <button
+                key={value}
+                type="button"
+                aria-labelledby={titleId}
+                aria-describedby={descriptionId}
+                disabled={Boolean(reason)}
+                onClick={() => onMethod(value)}
+                className="flex items-start gap-3 rounded-lg border border-border bg-card p-3 text-left text-card-foreground hover:border-foreground/25 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-not-allowed disabled:hover:border-border disabled:hover:bg-card"
+              >
+                <span
+                  aria-hidden
+                  className={cn(
+                    "grid size-8 shrink-0 place-items-center rounded-md",
+                    reason ? "bg-muted text-muted-foreground" : tone,
+                  )}
+                >
+                  <Icon className="size-4" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span id={titleId} className="block text-sm font-semibold">
+                    {title}
+                  </span>
+                  <span
+                    id={descriptionId}
+                    className="block text-sm text-muted-foreground"
+                  >
+                    {reason ?? description}
+                  </span>
+                </span>
+                {reason ? null : (
+                  <ArrowUpRight
+                    aria-hidden
+                    className="size-4 shrink-0 text-muted-foreground"
+                  />
+                )}
+              </button>
+            );
+          },
+        )}
+      </div>
+    </section>
+  );
+}

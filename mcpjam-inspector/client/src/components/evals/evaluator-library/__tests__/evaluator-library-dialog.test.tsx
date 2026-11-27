@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, renderWithProviders, screen } from "@/test";
+import { fireEvent, renderWithProviders, screen, within } from "@/test";
 import { EvaluatorLibraryButton } from "../evaluator-library-dialog";
 import { predicateSchema } from "@mcpjam/sdk/predicates";
 import {
@@ -12,6 +12,8 @@ import {
   withEvaluatorUpdated,
 } from "../library-catalog";
 import { judgeProblem } from "../custom-judges-model";
+import { MAX_RUBRIC_CHECK_QUESTIONS } from "@/components/shared/session-quality/judge-config";
+import { blankRubricCheckQuestion } from "../../rubric-checks-model";
 
 const flag = vi.hoisted(() => ({ on: true as boolean | undefined }));
 vi.mock("posthog-js/react", () => ({
@@ -32,6 +34,95 @@ function open(onAdd = vi.fn(), predicates = []) {
 }
 
 describe("EvaluatorLibraryButton", () => {
+  it("reports a saved authored ID collision without treating the preset as installed", () => {
+    const onAdd = vi.fn();
+    renderWithProviders(
+      <EvaluatorLibraryButton
+        suite={{
+          predicates: [],
+          questions: [
+            {
+              ...blankRubricCheckQuestion("yesno", []),
+              id: "answer-grounded-in-results-grounded",
+              label: "My question",
+            },
+          ],
+        }}
+        support={{ canAskYesNo: true }}
+        onAdd={onAdd}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "From library" }));
+    expect(
+      screen.getByRole("button", {
+        name: "Add Answer Grounded in Results to suite",
+      }),
+    ).toBeDisabled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Answer Grounded in Results" }),
+    );
+    const addFromDetails = screen.getByRole("button", { name: "Add to suite" });
+    expect(addFromDetails).toBeDisabled();
+    expect(addFromDetails).toHaveAccessibleDescription(
+      /already uses this preset/,
+    );
+    expect(onAdd).not.toHaveBeenCalled();
+  });
+
+  it("disables adding decision presets at capacity from the card and details", () => {
+    const onAdd = vi.fn();
+    const questions = Array.from(
+      { length: MAX_RUBRIC_CHECK_QUESTIONS },
+      (_, i) => ({
+        ...blankRubricCheckQuestion("yesno", []),
+        id: `existing-${i}`,
+      }),
+    );
+    renderWithProviders(
+      <EvaluatorLibraryButton
+        suite={{ predicates: [], questions }}
+        support={{ canAskYesNo: true }}
+        onAdd={onAdd}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "From library" }));
+    const add = screen.getByRole("button", {
+      name: "Add Answer Grounded in Results to suite",
+    });
+    expect(add).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Add No Wasted Calls to suite" }),
+    ).toBeEnabled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Answer Grounded in Results" }),
+    );
+    const addFromDetails = screen.getByRole("button", { name: "Add to suite" });
+    expect(addFromDetails).toBeDisabled();
+    expect(
+      within(addFromDetails.parentElement!).getByText(
+        "Remove a decision question to add this preset.",
+      ),
+    ).toBeVisible();
+    expect(onAdd).not.toHaveBeenCalled();
+  });
+
+  it("filters within a category and retains it after inspecting a preset", () => {
+    open();
+    fireEvent.click(screen.getByRole("button", { name: "Final answer" }));
+    expect(screen.getByRole("button", { name: "Final answer" })).toHaveAttribute("aria-current", "true");
+    expect(screen.queryByRole("button", { name: "No Wasted Calls" })).not.toBeInTheDocument();
+    const search = screen.getByRole("searchbox", { name: "Search presets" });
+    fireEvent.change(search, { target: { value: "  expected outcome  " } });
+    fireEvent.click(screen.getByRole("button", { name: "Meets the Expected Outcome" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to library" }));
+    expect(search).toHaveValue("  expected outcome  ");
+    expect(screen.getByRole("button", { name: "Meets the Expected Outcome" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Answers the Question" })).not.toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "nothing matches this" } });
+    expect(screen.getByRole("status")).toHaveTextContent("No presets match");
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(screen.getByRole("button", { name: "Answers the Question" })).toBeVisible();
+  });
   it("renders nothing while the flag is off or loading", () => {
     flag.on = undefined;
     renderWithProviders(
@@ -82,7 +173,7 @@ describe("EvaluatorLibraryButton", () => {
       questions: [],
       judges: [],
     });
-    fireEvent.click(screen.getByRole("button", { name: "All evaluators" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to library" }));
     expect(screen.getByText("Evaluator library")).toBeInTheDocument();
   });
 

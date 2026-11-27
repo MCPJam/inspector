@@ -1,7 +1,6 @@
 import { Button } from "@mcpjam/design-system/button";
 import {
   Check,
-  Code2,
   ListChecks,
   Plus,
   Regex,
@@ -12,6 +11,7 @@ import {
 import { cn } from "@/lib/utils";
 import { CaseFieldDependency } from "./case-field-dependency";
 import { OwaspTag } from "./evaluator-kind-badge";
+import { EvaluatorPresetIcon } from "./evaluator-preset-icon";
 import type {
   BuiltFromPart,
   CaseField,
@@ -19,18 +19,10 @@ import type {
   OwaspId,
 } from "./evaluator-library-types";
 
-const TONE_CLASS: Record<EvaluatorTone, string> = {
-  tools: "bg-info/10 text-info",
-  answer: "bg-success/10 text-success",
-  errors: "bg-primary/10 text-primary",
-  security: "bg-destructive/10 text-destructive",
-};
-
 const PART_ICON: Record<BuiltFromPart["kind"], LucideIcon> = {
   assertions: ListChecks,
   question: Sparkles,
   judge: Scale,
-  code: Code2,
   pattern: Regex,
 };
 
@@ -47,9 +39,11 @@ export type EvaluatorCardProps = {
   dependency?: CaseField;
   inSuite?: boolean;
   selected?: boolean;
+  compact?: boolean;
   onOpen: () => void;
   /** Omit to hide the Add action, e.g. when the suite is read-only. */
   onAdd?: () => void;
+  addDisabledReason?: string;
 };
 
 /**
@@ -62,35 +56,30 @@ export type EvaluatorCardProps = {
 export function EvaluatorCard({
   name,
   question,
-  icon: Icon,
+  icon,
   tone,
   builtFrom,
   owasp,
   dependency,
   inSuite = false,
   selected = false,
+  compact = false,
   onOpen,
   onAdd,
+  addDisabledReason,
 }: EvaluatorCardProps) {
   return (
     <article
       aria-current={selected ? "true" : undefined}
       className={cn(
-        "group relative flex min-h-40 flex-col gap-2.5 rounded-lg border border-border bg-popover p-3.5 transition-[border-color,box-shadow]",
+        "group relative flex flex-col gap-2.5 rounded-lg border border-border bg-popover p-3.5 transition-[border-color,box-shadow]",
+        !compact && "min-h-40",
         "hover:border-foreground/25 focus-within:border-ring",
         selected && "border-primary ring-[3px] ring-primary/15",
       )}
     >
       <div className="flex items-start gap-2.5">
-        <span
-          aria-hidden
-          className={cn(
-            "grid size-8 shrink-0 place-items-center rounded-md",
-            TONE_CLASS[tone],
-          )}
-        >
-          <Icon className="size-4" />
-        </span>
+        <EvaluatorPresetIcon icon={icon} tone={tone} />
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-semibold text-card-foreground">
             <button
@@ -114,14 +103,22 @@ export function EvaluatorCard({
             size="sm"
             variant="outline"
             onClick={onAdd}
+            disabled={Boolean(addDisabledReason)}
             aria-label={`Add ${name} to suite`}
-            className="relative z-10 h-7 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 group-focus-within:opacity-100"
+            className={cn(
+              // Keep a disabled Add above the stretched details button.
+              "relative z-10 h-7 shrink-0 disabled:pointer-events-auto",
+              !compact && "opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 group-focus-within:opacity-100",
+            )}
           >
             <Plus aria-hidden />
             Add
           </Button>
         ) : null}
       </div>
+      {addDisabledReason && !inSuite ? (
+        <p className="text-xs text-muted-foreground">{addDisabledReason}</p>
+      ) : null}
       <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-border pt-2.5 text-xs text-muted-foreground">
         {builtFrom.map((part) => {
           const PartIcon = PART_ICON[part.kind];
@@ -133,16 +130,14 @@ export function EvaluatorCard({
           );
         })}
         {owasp ? <OwaspTag ids={owasp} /> : null}
-        <span className="ml-auto">
-          {dependency ? (
-            <CaseFieldDependency field={dependency} />
-          ) : (
-            <span className="inline-flex items-center gap-1.5">
-              <span aria-hidden className="size-2 rounded-full bg-success" />
-              Ready
-            </span>
-          )}
-        </span>
+        {dependency ? (
+          <span className="ml-auto"><CaseFieldDependency field={dependency} /></span>
+        ) : !compact ? (
+          <span className="ml-auto inline-flex items-center gap-1.5">
+            <span aria-hidden className="size-2 rounded-full bg-success" />
+            Ready
+          </span>
+        ) : null}
       </div>
     </article>
   );

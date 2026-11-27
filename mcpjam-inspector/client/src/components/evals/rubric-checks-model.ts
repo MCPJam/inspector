@@ -224,6 +224,7 @@ export function withQuestionLabel(
   question: RubricCheckQuestion,
   label: string,
   others: readonly RubricCheckQuestion[],
+  reservedIds: Iterable<string> = [],
 ): RubricCheckQuestion {
   const shouldMint =
     question.label.trim().length === 0 && label.trim().length > 0;
@@ -233,7 +234,7 @@ export function withQuestionLabel(
     label,
     id: uniqueCriterionId(
       slugifyCriterionId(label),
-      new Set(others.map((other) => other.id)),
+      new Set([...reservedIds, ...others.map((other) => other.id)]),
     ),
   };
 }

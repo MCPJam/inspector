@@ -1,8 +1,7 @@
 /**
  * Evaluators as one checklist, stage by stage, in user-value-chain order.
  *
- * Configuration only. There is no Last run or Trend — those are a later
- * slice that needs run data this page does not have.
+ * This table configures evaluators. Run results appear on the scorecard.
  *
  * ONE LIST, TWO PAGES. The suite settings page and a case's assertions page
  * render this same component. Each stage is a heading over rows of
@@ -13,15 +12,14 @@
  *
  *   - `suite`: every rule is the suite's. Off removes it; a preset row
  *     switched on appends the standard check's preset.
- *   - `case`: the suite's rules are listed first as inherited — read-only,
- *     and switchable off only as a whole standard-check family, which is
- *     the one suppression the backend stores. The case's own rules follow
- *     and edit like the suite's. A preset row switched on authors a case
- *     rule, moving an inheriting case to `extend`.
+ *   - `case`: inherited suite rules appear first and are read-only. The
+ *     backend stores overrides for whole standard-check families. Case rules
+ *     appear after inherited rules and use the same editor as suite rules.
+ *     Enabling a preset adds a case rule and moves an inheriting case to
+ *     `extend`.
  *
- * Every stage also lists the standard checks nothing authors yet, off, with
- * the preset's criterion and role — so "what could I turn on here" is read
- * in the same place as "what is on".
+ * Each stage lists available standard checks with their preset criterion
+ * and role so users can see what a check does before enabling it.
  */
 
 import { useMemo, useState } from "react";
@@ -37,19 +35,19 @@ import { Input } from "@mcpjam/design-system/input";
 import type { ModelDefinition } from "@/shared/types";
 import {
   hasRubricChecksCapability,
-  hasCustomJudgesCapability,
   hasYesNoRubricQuestionsCapability,
   type SuiteCapabilities,
 } from "@/hooks/use-suite-capabilities";
-import { DEFAULT_JUDGE_THRESHOLD, MAX_CUSTOM_JUDGES } from "@/components/shared/session-quality/judge-config";
+import { DEFAULT_JUDGE_THRESHOLD } from "@/components/shared/session-quality/judge-config";
 import { ValidatorsSection } from "./validators-section";
 import { CheckRow, blankPredicate } from "./checks-section";
 import { SuiteScorerLibraryMenu } from "./suite-scorer-library-menu";
-import { EvaluatorLibraryButton } from "./evaluator-library/evaluator-library-dialog";
-import { useEvaluatorLibraryEnabled } from "./evaluator-library/evaluator-library-flag";
+import { SuiteEvaluatorLibrary } from "./evaluator-library/suite-evaluator-library";
 import { EvaluatorStageRows } from "./evaluator-library/evaluator-stage-rows";
+import { useEvaluatorLibraryEnabled } from "./evaluator-library/evaluator-library-flag";
 import { ScorerRowBadges } from "./evaluator-library/scorer-row-badges";
 import { CustomJudgesSection } from "./evaluator-library/custom-judges-section";
+import { DecisionQuestionsSection } from "./evaluator-library/decision-questions-section";
 import {
   libraryModelRows,
   librarySuiteEdits,
@@ -262,6 +260,8 @@ export function SuiteScorerTable({
     }
   };
   const library = librarySuiteEdits(scope, judgeConfig, onJudgeConfigChange);
+  const libraryEnabled = useEvaluatorLibraryEnabled();
+  const stackedStages = libraryEnabled && scope.kind === "suite";
   const addPredicate = (predicate: Predicate) => {
     if (scope.kind === "suite") {
       scope.onPredicatesChange((previous) => [...previous, predicate]);
@@ -421,22 +421,13 @@ export function SuiteScorerTable({
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
             {headerActions}
             {library && scope.kind === "suite" ? (
-              <EvaluatorLibraryButton
-                suite={{
-                  predicates: scope.predicates,
-                  questions: judgeConfig?.rubricChecks?.questions,
-                  judges: judgeConfig?.customJudges?.judges,
-                }}
-                support={{
-                  authorableKinds,
-                  canAskYesNo: hasYesNoRubricQuestionsCapability(capabilities),
-                  canJudge: hasCustomJudgesCapability(capabilities),
-                }}
+              <SuiteEvaluatorLibrary
+                predicates={scope.predicates}
+                authorableKinds={authorableKinds}
+                judgeConfig={judgeConfig}
+                canEditJudgeConfig={Boolean(onJudgeConfigChange)}
+                capabilities={capabilities}
                 onAdd={library.add}
-                judgeLimit={Math.min(
-                  MAX_CUSTOM_JUDGES,
-                  capabilities?.judges?.custom?.maxJudges ?? MAX_CUSTOM_JUDGES,
-                )}
               />
             ) : null}
             <SuiteScorerLibraryMenu
@@ -464,10 +455,19 @@ export function SuiteScorerTable({
         ) : null}
 
         <div>
-          <div className="grid grid-cols-1 gap-x-6 border-b border-border pb-2 text-sm text-muted-foreground sm:grid-cols-[minmax(10rem,1fr)_2fr]">
+          <div
+            className={cn(
+              "border-b border-border pb-2 text-sm text-muted-foreground",
+              stackedStages
+                ? "flex flex-wrap items-center justify-between gap-3"
+                : "grid grid-cols-1 gap-x-6 sm:grid-cols-[minmax(10rem,1fr)_2fr]",
+            )}
+          >
             <span>Stage of user value chain</span>
             <div className="flex min-w-0 items-center justify-between gap-3">
-              <span className="hidden sm:block">Evaluators</span>
+              {stackedStages ? null : (
+                <span className="hidden sm:block">Evaluators</span>
+              )}
               {showEditEvaluators ? (
                 <Button
                   type="button"
@@ -486,7 +486,10 @@ export function SuiteScorerTable({
             <section
               key={group.stage}
               data-stage-group={group.stage}
-              className="grid grid-cols-1 gap-x-6 gap-y-3 border-b border-border py-5 sm:grid-cols-[minmax(10rem,1fr)_2fr]"
+              className={cn(
+                "grid grid-cols-1 gap-y-3 border-b border-border py-5",
+                !stackedStages && "gap-x-6 sm:grid-cols-[minmax(10rem,1fr)_2fr]",
+              )}
             >
               <div>
                 <h4 className="font-medium">{group.label}</h4>
@@ -569,6 +572,16 @@ export function SuiteScorerTable({
                     )}
                   />
                 )}
+                {library &&
+                group.stage === "userValue" &&
+                onJudgeConfigChange &&
+                rubricChecks ? (
+                  <DecisionQuestionsSection
+                    canAskYesNo={hasYesNoRubricQuestionsCapability(capabilities)}
+                    judgeConfig={judgeConfig}
+                    onChange={onJudgeConfigChange}
+                  />
+                ) : null}
                 {library && group.stage === "userValue" ? (
                   <CustomJudgesSection
                     judgeConfig={judgeConfig}
@@ -670,10 +683,9 @@ function hasOnControl(row: ScorerTableRow): boolean {
 }
 
 /**
- * A row Edit evaluators opens. Built-in runner checks and match rows stay
- * closed: their settings are either absent or live in the stage's own
- * disclosure. An off check still opens — the checkbox and Edit evaluators
- * reveal every check, selected or not. The title itself is not a control.
+ * Edit evaluators opens rows even when the check is off. Built-in runner
+ * checks and match rows have no row editor. Any settings for those rows
+ * are in the stage editor.
  */
 function rowOpensEditor(row: ScorerTableRow): boolean {
   return row.kind !== "observed" && row.kind !== "match";
@@ -910,8 +922,8 @@ function JudgeThresholdInput({
       aria-label="Judge threshold"
       className="h-7 w-20 text-xs"
       onChange={(event) => {
-        // `Number("")` is 0. An emptied field is someone retyping, not a
-        // threshold of zero — which on a gating judge would pass any score.
+        // Number("") is 0, which would make a gating judge pass every score
+        // while the user is clearing the field to enter a new threshold.
         const raw = event.target.value.trim();
         if (raw === "") return;
         const next = Number(raw);
@@ -974,20 +986,15 @@ function RoleCell({
       return <RoleChip role={row.role} />;
     }
     if (!checkPolicy) {
-      // Read-only, but honest: an SDK- or CLI-authored advisory check still
-      // reads Advisory here rather than being relabelled Required — and the
-      // chip says why it is not a control.
+      // Preserve the saved role for SDK and CLI checks when the backend
+      // does not support editing it.
       return <RoleChip role={row.role} note={BACKEND_SUPPORT_HINT} />;
     }
-    // Observations get one segment, the same way groundedness does: a
-    // heuristic must not decide a release, and offering a Required the schema
-    // is going to refuse is a control that lies.
+    // The schema accepts only Advisory for observations because these
+    // heuristics cannot determine whether an iteration passes.
     return (
       <RoleSegmentGroup
         value={row.role}
-        // An observation is a heuristic, so it is offered as Advisory only and
-        // never as Required — the same rule the Zod schema enforces at the
-        // save, surfaced as an absent segment rather than a refused save.
         roles={rolesForPredicateKind(predicate.type)}
         ariaLabel="Assertion role"
         onChange={(role) =>

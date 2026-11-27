@@ -3,6 +3,7 @@ import type { Predicate } from "@mcpjam/sdk/predicates";
 import { Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { EvaluatorKindBadge } from "./evaluator-kind-badge";
+import { EvaluatorPresetIcon } from "./evaluator-preset-icon";
 import { useEvaluatorLibraryEnabled } from "./evaluator-library-flag";
 import { findLibraryEvaluator } from "./library-catalog";
 
@@ -110,6 +111,13 @@ export function EvaluatorStageRows<Row extends { id: string }>({
             className="rounded-lg border border-border bg-muted/20 p-3"
           >
             <div className="mb-3 flex flex-wrap items-center gap-2">
+              {entry ? (
+                <EvaluatorPresetIcon
+                  icon={entry.icon}
+                  tone={entry.tone}
+                  className="size-7"
+                />
+              ) : null}
               <span className="text-sm font-medium text-foreground">
                 {name}
               </span>

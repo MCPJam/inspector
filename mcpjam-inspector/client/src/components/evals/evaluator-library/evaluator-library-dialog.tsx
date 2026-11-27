@@ -8,16 +8,21 @@ import {
   DialogTrigger,
 } from "@mcpjam/design-system/dialog";
 import { ArrowLeft, Library } from "lucide-react";
-import { useState } from "react";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { formatCriterion } from "@/shared/predicate-kinds";
 import {
   MAX_CUSTOM_JUDGES,
   MAX_RUBRIC_CHECK_QUESTIONS,
 } from "@/components/shared/session-quality/judge-config";
-import { formatCriterion } from "@/shared/predicate-kinds";
-import { EvaluatorCard } from "./evaluator-card";
-import { useEvaluatorLibraryEnabled } from "./evaluator-library-flag";
 import {
-  builtFrom,
+  EvaluatorLibraryBrowse,
+  type LibraryFilters,
+  type MethodAvailability,
+} from "./evaluator-library-browse";
+import type { EvaluatorMethod } from "./evaluator-library-types";
+import { useEvaluatorLibraryEnabled } from "./evaluator-library-flag";
+import { EVALUATOR_METHODS } from "./evaluator-methods";
+import {
   hasLibraryIdConflict,
   isAuthorable,
   isInSuite,
@@ -31,69 +36,109 @@ import {
   type LibrarySupport,
 } from "./library-catalog";
 
-export function EvaluatorLibraryButton({
-  suite,
-  support,
-  onAdd,
-  judgeLimit,
-}: {
+type LibraryAuthoring = {
+  methods: MethodAvailability;
+  render: (method: EvaluatorMethod, onBack: () => void) => ReactNode;
+};
+
+type LibraryProps = {
   suite: LibrarySuiteParts;
   support: LibrarySupport;
   onAdd: (addition: LibraryAddition) => void;
+  authoring?: LibraryAuthoring;
   judgeLimit?: number;
-}) {
+};
+
+type LibraryView =
+  | { type: "preset"; id: string }
+  | { type: "method"; method: EvaluatorMethod };
+
+const DEFAULT_FILTERS: LibraryFilters = { category: "all", search: "" };
+
+/**
+ * Opens the evaluator library from suite settings. Adding an evaluator hands
+ * what the suite does not have yet to `onAdd`, which saves it like "Add
+ * assertion" does. Renders nothing unless the evaluator-library flag is on
+ * and this deployment can add a preset or author an evaluator.
+ */
+export function EvaluatorLibraryButton(props: LibraryProps) {
   const enabled = useEvaluatorLibraryEnabled();
-  const anyAuthorable = LIBRARY_EVALUATORS.some((e) => isAuthorable(e, support));
+  const anyAuthorable =
+    LIBRARY_EVALUATORS.some((e) => isAuthorable(e, props.support)) ||
+    Object.values(props.authoring?.methods ?? {}).some((reason) => !reason);
   if (!enabled || !anyAuthorable) return null;
-  return (
-    <EvaluatorLibraryDialog
-      suite={suite}
-      support={support}
-      onAdd={onAdd}
-      judgeLimit={judgeLimit}
-    />
-  );
+  return <EvaluatorLibraryDialog {...props} />;
 }
 
 export function EvaluatorLibraryDialog({
   suite,
   support,
   onAdd,
+  authoring,
   judgeLimit = MAX_CUSTOM_JUDGES,
-}: {
-  suite: LibrarySuiteParts;
-  support: LibrarySupport;
-  onAdd: (addition: LibraryAddition) => void;
-  judgeLimit?: number;
-}) {
+}: LibraryProps) {
   const [open, setOpen] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const [view, setView] = useState<LibraryView | null>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const returnFocus = useRef<HTMLElement | null>(null);
   const available = LIBRARY_EVALUATORS.filter((e) => isAuthorable(e, support));
-  const selected = available.find((e) => e.id === selectedId);
-  const blockedReason = (evaluator: LibraryEvaluator) => {
+  const selected =
+    view?.type === "preset"
+      ? available.find((e) => e.id === view.id)
+      : undefined;
+  const method =
+    view?.type === "method"
+      ? EVALUATOR_METHODS.find((item) => item.value === view.method)
+      : undefined;
+  const browsing = !selected && !method;
+  const goBack = () => setView(null);
+  const show = (next: LibraryView) => {
+    const focused = document.activeElement;
+    returnFocus.current = focused instanceof HTMLElement ? focused : null;
+    setView(next);
+  };
+  useLayoutEffect(() => {
+    if (!open) return;
+    if (browsing) {
+      returnFocus.current?.focus({ preventScroll: true });
+      returnFocus.current = null;
+    } else {
+      headingRef.current?.focus();
+    }
+  }, [browsing, open]);
+  const getAddDisabledReason = (evaluator: LibraryEvaluator) => {
     if (hasLibraryIdConflict(evaluator, suite)) {
       return "A question or judge already uses this preset's ID. Remove it to add the preset.";
     }
-    const { judges, questions } = missingParts(evaluator, suite);
+    const addition = missingParts(evaluator, suite);
     if (
-      questions.length > 0 &&
-      (suite.questions?.length ?? 0) + questions.length > MAX_RUBRIC_CHECK_QUESTIONS
+      addition.questions.length &&
+      (suite.questions?.length ?? 0) + addition.questions.length >
+        MAX_RUBRIC_CHECK_QUESTIONS
     ) {
-      return `This suite already has ${MAX_RUBRIC_CHECK_QUESTIONS} rubric-check questions. Remove one to add this evaluator.`;
+      return "Remove a decision question to add this preset.";
     }
-    if (judges.length > 0 && (suite.judges?.length ?? 0) + judges.length > judgeLimit) {
-      return `Remove a judge to add this preset. Each suite can have ${judgeLimit} judges.`;
+    if (
+      addition.judges.length &&
+      (suite.judges?.length ?? 0) + addition.judges.length > judgeLimit
+    ) {
+      return "Remove a custom judge to add this preset.";
     }
   };
   const add = (evaluator: LibraryEvaluator) => {
-    if (!blockedReason(evaluator)) onAdd(missingParts(evaluator, suite));
+    if (!getAddDisabledReason(evaluator)) onAdd(missingParts(evaluator, suite));
   };
   return (
     <Dialog
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
-        if (!next) setSelectedId(null);
+        if (next) {
+          setView(null);
+          setFilters(DEFAULT_FILTERS);
+          returnFocus.current = null;
+        }
       }}
     >
       <DialogTrigger asChild>
@@ -102,40 +147,52 @@ export function EvaluatorLibraryDialog({
           From library
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
-        <DialogHeader>
-          <DialogTitle>
-            {selected ? selected.name : "Evaluator library"}
+      <DialogContent className="h-[min(48rem,calc(100dvh-2rem))] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden p-0 sm:max-w-[58rem]">
+        <DialogHeader className="gap-1 border-b border-border px-4 py-4 pr-12 text-left sm:px-5 sm:pr-12">
+          <DialogTitle ref={headingRef} tabIndex={-1} className="outline-none">
+            {selected?.name ?? method?.title ?? "Evaluator library"}
           </DialogTitle>
           <DialogDescription>
-            {selected
-              ? selected.question
-              : "Each evaluator adds assertions, questions or judges to this suite. You can change or remove them afterwards."}
+            {selected?.question ??
+              method?.description ??
+              "Choose what to check on each iteration."}
           </DialogDescription>
         </DialogHeader>
-        {selected ? (
-          <EvaluatorDetail
-            evaluator={selected}
-            inSuite={isInSuite(selected, suite)}
-            addDisabledReason={blockedReason(selected)}
-            onBack={() => setSelectedId(null)}
-            onAdd={() => add(selected)}
+        <div className={browsing ? "grid min-h-0" : "hidden"}>
+          <EvaluatorLibraryBrowse
+            evaluators={available}
+            suite={suite}
+            filters={filters}
+            onFiltersChange={setFilters}
+            methods={authoring?.methods}
+            onMethod={(method) => show({ type: "method", method })}
+            onOpen={(id) => show({ type: "preset", id })}
+            onAdd={add}
+            getAddDisabledReason={getAddDisabledReason}
           />
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {available.map((evaluator) => (
-              <EvaluatorCard
-                key={evaluator.id}
-                name={evaluator.name}
-                question={evaluator.question}
-                icon={evaluator.icon}
-                tone={evaluator.tone}
-                builtFrom={builtFrom(evaluator)}
-                inSuite={isInSuite(evaluator, suite)}
-                onOpen={() => setSelectedId(evaluator.id)}
-                onAdd={blockedReason(evaluator) ? undefined : () => add(evaluator)}
+        </div>
+        {browsing ? null : (
+          <div className="min-h-0 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">
+            <Button type="button" size="sm" variant="ghost" onClick={goBack}>
+              <ArrowLeft aria-hidden />
+              Back to library
+            </Button>
+            {selected ? (
+              <EvaluatorDetail
+                evaluator={selected}
+                inSuite={isInSuite(selected, suite)}
+                onAdd={() => add(selected)}
+                addDisabledReason={getAddDisabledReason(selected)}
               />
-            ))}
+            ) : method && authoring ? (
+              authoring.methods[method.value] ? (
+                <p role="status" className="text-sm text-muted-foreground">
+                  {authoring.methods[method.value]}
+                </p>
+              ) : (
+                authoring.render(method.value, goBack)
+              )
+            ) : null}
           </div>
         )}
       </DialogContent>
@@ -146,16 +203,16 @@ export function EvaluatorLibraryDialog({
 function EvaluatorDetail({
   evaluator,
   inSuite,
-  addDisabledReason,
-  onBack,
   onAdd,
+  addDisabledReason,
 }: {
   evaluator: LibraryEvaluator;
   inSuite: boolean;
-  addDisabledReason?: string;
-  onBack: () => void;
   onAdd: () => void;
+  addDisabledReason?: string;
 }) {
+  const reasonId = useId();
+  const showReason = addDisabledReason && !inSuite;
   return (
     <div className="flex flex-col gap-4">
       <ul
@@ -207,15 +264,18 @@ function EvaluatorDetail({
           </li>
         ))}
       </ul>
-      {!inSuite && addDisabledReason ? (
-        <p className="text-sm text-muted-foreground">{addDisabledReason}</p>
-      ) : null}
-      <div className="flex justify-between gap-2">
-        <Button type="button" variant="ghost" onClick={onBack}>
-          <ArrowLeft aria-hidden />
-          All evaluators
-        </Button>
-        <Button type="button" onClick={onAdd} disabled={inSuite || Boolean(addDisabledReason)}>
+      <div className="flex flex-wrap items-center justify-end gap-3">
+        {showReason ? (
+          <p id={reasonId} className="text-sm text-muted-foreground">
+            {addDisabledReason}
+          </p>
+        ) : null}
+        <Button
+          type="button"
+          onClick={onAdd}
+          aria-describedby={showReason ? reasonId : undefined}
+          disabled={inSuite || Boolean(addDisabledReason)}
+        >
           {inSuite ? "In this suite" : "Add to suite"}
         </Button>
       </div>

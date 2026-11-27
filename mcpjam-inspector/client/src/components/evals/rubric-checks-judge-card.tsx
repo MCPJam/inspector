@@ -242,7 +242,7 @@ export function RubricChecksJudgeCard({
   );
 }
 
-function QuestionEditor({
+export function QuestionEditor({
   index,
   question,
   error,
@@ -257,7 +257,7 @@ function QuestionEditor({
   disabled: boolean;
   onChange: (next: RubricCheckQuestion) => void;
   onLabelChange: (label: string) => void;
-  onRemove: () => void;
+  onRemove?: () => void;
 }) {
   const fieldId = useId();
   const n = index + 1;
@@ -278,7 +278,7 @@ function QuestionEditor({
           {kindLabel}
         </span>
         <input
-          className={`${INPUT_CLASS} flex-1`}
+          className={`${INPUT_CLASS} min-w-0 flex-1`}
           value={question.label}
           maxLength={MAX_RUBRIC_CHECK_LABEL_LENGTH}
           placeholder="Short name, shown on the scorecard"
@@ -287,7 +287,7 @@ function QuestionEditor({
           onChange={(event) => onLabelChange(event.target.value)}
         />
         <input
-          className={`${INPUT_CLASS} w-28 font-mono text-[11px]`}
+          className={`${INPUT_CLASS} w-20 min-w-0 font-mono text-[11px] sm:w-28`}
           value={question.id}
           placeholder="id"
           aria-label={`Question ${n} id`}
@@ -296,17 +296,19 @@ function QuestionEditor({
             onChange({ ...question, id: event.target.value })
           }
         />
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-          aria-label={`Remove question ${n}`}
-          disabled={disabled}
-          onClick={onRemove}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
+        {onRemove ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+            aria-label={`Remove question ${n}`}
+            disabled={disabled}
+            onClick={onRemove}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        ) : null}
       </div>
       <textarea
         className="w-full rounded-md border border-input bg-background px-2 py-1 text-[11px] text-foreground"

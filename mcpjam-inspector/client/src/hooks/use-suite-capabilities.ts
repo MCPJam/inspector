@@ -235,19 +235,27 @@ export function useSuiteCapabilities(
   refreshKey?: unknown,
 ): SuiteCapabilitiesState {
   const convex = useConvex();
-  // The answer is stored WITH the suite it was asked about — see the return.
+  // Scope the answer to the suite and the client that fetched it.
   const [answered, setAnswered] = useState<{
+    convex: typeof convex;
     suiteId: string | null;
     result: SuiteCapabilitiesState;
-  }>({ suiteId, result: LOADING });
+  }>({ convex, suiteId, result: LOADING });
 
   useEffect(() => {
     if (!suiteId) {
-      setAnswered({ suiteId, result: UNAVAILABLE });
+      setAnswered({ convex, suiteId, result: UNAVAILABLE });
       return;
     }
     let cancelled = false;
-    setAnswered({ suiteId, result: LOADING });
+    // Keep the same suite's editor mounted while a revision refreshes.
+    setAnswered((previous) =>
+      previous.convex === convex &&
+      previous.suiteId === suiteId &&
+      previous.result.state === "ready"
+        ? previous
+        : { convex, suiteId, result: LOADING },
+    );
     void (async () => {
       try {
         const result = await convex.query(
@@ -259,6 +267,7 @@ export function useSuiteCapabilities(
         // 404-never-403, so it cannot be used to discover which ids exist. It
         // is not an error, and it is not a set of capabilities either.
         setAnswered({
+          convex,
           suiteId,
           result: result
             ? {
@@ -272,7 +281,7 @@ export function useSuiteCapabilities(
         // deployment that predates this query, which is the two repos
         // releasing independently rather than a fault. Every caller falls back
         // to the behaviour it had before capabilities existed.
-        if (!cancelled) setAnswered({ suiteId, result: UNAVAILABLE });
+        if (!cancelled) setAnswered({ convex, suiteId, result: UNAVAILABLE });
       }
     })();
     return () => {
@@ -301,7 +310,9 @@ export function useSuiteCapabilities(
    * Derived on the way out rather than reset during render: there is then no
    * window at all, not merely a shorter one.
    */
-  return answered.suiteId === suiteId ? answered.result : LOADING;
+  return answered.convex === convex && answered.suiteId === suiteId
+    ? answered.result
+    : LOADING;
 }
 
 /**

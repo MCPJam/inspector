@@ -1,6 +1,5 @@
 import { Badge } from "@mcpjam/design-system/badge";
 import {
-  Code2,
   Copy,
   GitBranch,
   Library,
@@ -38,7 +37,6 @@ const METHOD: Record<EvaluatorMethod, KindPresentation> = {
     icon: ListTodo,
     className: "border-success/40 bg-success/5 text-success",
   },
-  code: { label: "Code", icon: Code2, className: "bg-muted text-foreground" },
 };
 
 const ORIGIN: Record<EvaluatorOrigin, KindPresentation> = {

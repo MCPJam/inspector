@@ -54,6 +54,9 @@ describe("library groups in the suite table", () => {
     const groups = screen.getAllByRole("region", { name: "No Wasted Calls" });
     expect(groups.length).toBeGreaterThan(0);
     expect(groups[0]).toHaveTextContent("v1");
+    expect(
+      groups[0].querySelector("[aria-hidden] > svg.lucide-route"),
+    ).toBeInTheDocument();
     const remove = within(groups[0]).getByRole("button", {
       name: "Remove No Wasted Calls",
     });
@@ -85,14 +88,13 @@ describe("library groups in the suite table", () => {
     expect(authored && within(authored).getByRole("checkbox")).toBeChecked();
   });
 
-  it("hides the library on a deployment that cannot save any of it", () => {
-    // No capabilities means a deployment that predates the kind list, which
-    // accepts only the legacy kinds. Every library evaluator needs a newer
-    // kind, so there is nothing to offer.
+  it("offers assertion authoring where the backend predates the presets", () => {
     renderTable([]);
-    expect(
-      screen.queryByRole("button", { name: "From library" }),
-    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "From library" }));
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByRole("button", { name: "Assertions" })).toBeEnabled();
+    expect(dialog.getByRole("button", { name: "Judge prompt" })).toBeDisabled();
+    expect(dialog.queryByRole("button", { name: "Calling tools" })).not.toBeInTheDocument();
   });
 
   it("shows no groups or library button with the flag off", () => {
@@ -110,6 +112,26 @@ describe("library groups in the suite table", () => {
 });
 
 describe("library catalog edits", () => {
+  it("preserves paused rubric checks when adding an authored decision question", () => {
+    const onJudgeConfigChange = vi.fn();
+    const question = {
+      id: "has-citation",
+      kind: "yesno",
+      label: "Has citation",
+      instructions: "Did the answer cite a tool result?",
+      pass: { answer: "yes" },
+    } as const;
+    const existing = { ...question, id: "existing" };
+    librarySuiteEdits(
+      { kind: "suite", predicates: [], onPredicatesChange: vi.fn() },
+      { rubricChecks: { enabled: false, questions: [existing] } },
+      onJudgeConfigChange,
+    )?.add({ checks: [], questions: [question], judges: [] });
+    expect(onJudgeConfigChange).toHaveBeenCalledWith({
+      rubricChecks: { enabled: false, questions: [existing, question] },
+    });
+  });
+
   it("clusters rows by evaluator in first-appearance order", () => {
     const { loose, clusters } = clusterByEvaluator(tagged, (p) => p);
     expect(loose).toEqual([{ type: "noToolErrors" }]);
@@ -257,10 +279,32 @@ describe("library catalog edits", () => {
     expect(judgeConfig?.rubricChecks?.questions).toBeUndefined();
   });
 
+  it("keeps a paused custom-judge group paused after adding a judge", () => {
+    const existing = {
+      id: "citations",
+      label: "Citations",
+      prompt: "Check the citations.",
+      output: { kind: "passfail" as const },
+    };
+    const added = { ...existing, id: "accuracy", label: "Accuracy" };
+    const onChange = vi.fn();
+    librarySuiteEdits(
+      { kind: "suite", predicates: [], onPredicatesChange: vi.fn() },
+      { customJudges: { enabled: false, judges: [existing] } },
+      onChange,
+    )?.add({ checks: [], questions: [], judges: [added] });
+    expect(onChange).toHaveBeenCalledWith({
+      customJudges: { enabled: false, judges: [existing, added] },
+    });
+  });
+
   it("maps a rubric-check row back to its library evaluator", () => {
     expect(
       evaluatorIdForQuestionKey("q:answer-grounded-in-results-grounded"),
     ).toBe("answer-grounded-in-results");
+    expect(
+      evaluatorIdForQuestionKey("q:answer-grounded-in-results-grounded-2"),
+    ).toBeUndefined();
     expect(evaluatorIdForQuestionKey("q:my-own-question")).toBeUndefined();
     expect(
       evaluatorIdForQuestionKey("q:reports-tool-errors-mine"),
