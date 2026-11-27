@@ -95,22 +95,19 @@ it("waits for a tool when Not set is picked on this check alone", async () => {
   );
 });
 
-it.each([
-  "tasks-wire-resolvable",
-  "tasks-declaration-hygiene",
-  "tasks-invalid-task-id-rejected",
-])("has no picker for %s", (checkId) => {
+it.each(["tasks-invalid-task-id-rejected"])("has no picker for %s", (checkId) => {
   render(<Editor checkId={checkId} />);
   expect(screen.queryByRole("checkbox")).toBeNull();
   expect(screen.queryByRole("combobox")).toBeNull();
 });
 
-it("clears validity when the check is deselected and shows answers only for update", async () => {
+it("clears answer validity when the custom check is deselected", async () => {
   const valid = vi.fn();
   const answers = "Answers to the task's questions (optional)";
   const view = render(
     <Editor checkId="tasks-update-ack-shape" valid={valid} />,
   );
+  await userEvent.click(screen.getByRole("checkbox", { name: "Use suite default" }));
   expect(screen.getByRole("textbox", { name: answers })).toBeDefined();
   view.rerender(
     <Editor checkId="tasks-update-ack-shape" picked={false} valid={valid} />,

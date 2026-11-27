@@ -47,7 +47,8 @@ export interface SessionFlowSankeyProps {
   selection: InsightsSelection | null;
   onSelectNode: (selection: InsightsSelection) => void;
   onSelectLink: (selection: InsightsSelection) => void;
-  onRebuild: () => void;
+  onRebuild?: () => void;
+  hideTitle?: boolean;
   rebuildBusy: boolean;
   /**
    * Analyze now: treat the scope's sessions as finished instead of waiting
@@ -77,14 +78,11 @@ export interface SessionFlowSankeyProps {
    */
   fillHeight?: boolean;
   /**
-   * Opt into the leftover-pane chrome: the diagram bleeds to its already-
-   * padded owning container (no card padding, no `border-b`) and fills that
-   * parent, scrolling columns under sticky titles. This is the swarm
-   * Insights opt-in and is NOT implied by `!fillHeight` — the plain
-   * embedded callers (BenchReport, the explanatory opt-in) keep the card
-   * chrome.
+   * Use the owning container's padding and scroll the chart horizontally.
+   * `true` also fills a parent with an independently constrained height.
+   * Use `"content"` in a report whose height grows with the chart.
    */
-  scrollLayout?: boolean;
+  scrollLayout?: boolean | "content";
   /**
    * localStorage slot for a dragged column permutation. Omit for an
    * ephemeral order that resets on remount (embedded / opt-in callers).
@@ -274,6 +272,7 @@ export function SessionFlowSankey({
   onSelectLink,
   onRebuild,
   rebuildBusy,
+  hideTitle,
   onAnalyzeNow,
   stageTitles,
   headerActions,
@@ -455,7 +454,7 @@ export function SessionFlowSankey({
       )}
       data-testid="scenario-insights-sankey"
       data-fill-height={fillHeight ? "true" : undefined}
-      data-fill-remaining={scrollLayout ? "true" : undefined}
+      data-fill-remaining={scrollLayout === true ? "true" : undefined}
     >
       {scan?.truncated ? (
         <div
@@ -506,11 +505,13 @@ export function SessionFlowSankey({
             fills in once analysis groups {goalNoun}s, behaviors, outcomes, and
             sentiment.
           </span>
-          <RebuildButton
-            onRebuild={onRebuild}
-            busy={rebuildBusy}
-            label="Analyze sessions"
-          />
+          {onRebuild && (
+            <RebuildButton
+              onRebuild={onRebuild}
+              busy={rebuildBusy}
+              label="Analyze sessions"
+            />
+          )}
         </div>
       ) : null}
 
@@ -522,7 +523,7 @@ export function SessionFlowSankey({
         toolbar={
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 pb-2">
             <div className="flex items-center gap-2">
-              <h3 className="text-sm font-medium">Session flow</h3>
+              {!hideTitle && <h3 className="text-sm font-medium">Session flow</h3>}
               <Tooltip delayDuration={200}>
                 <TooltipTrigger asChild>
                   <button
@@ -597,7 +598,8 @@ export function SessionFlowSankey({
         }
         ariaLabel="Session flow from goal through behavior and outcome to sentiment"
         fillHeight={fillHeight}
-        fillRemainingViewport={scrollLayout}
+        fillRemainingViewport={scrollLayout === true}
+        contentLayout={scrollLayout === "content"}
       />
     </div>
   );

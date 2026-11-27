@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { getFunctionName } from "convex/server";
+import { MCPClientManager } from "@mcpjam/sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -24,9 +26,13 @@ vi.mock("@mcpjam/sdk", async () => {
     await vi.importActual<typeof import("@mcpjam/sdk")>("@mcpjam/sdk");
   return {
     ...actual,
-    MCPClientManager: vi.fn(() => ({
-      disconnectAllServers: disconnectAllServersMock,
-    })),
+    // A constructor: a local replay builds its manager with `new`.
+    MCPClientManager: vi.fn(function (configs?: Record<string, unknown>) {
+      return {
+        disconnectAllServers: disconnectAllServersMock,
+        listServers: () => Object.keys(configs ?? {}),
+      };
+    }),
   };
 });
 
@@ -59,6 +65,7 @@ vi.mock("../../../services/evals-runner", () => ({
 }));
 
 import evalsRoutes from "../evals";
+import { buildReplayManager } from "../../../services/evals/route-helpers.js";
 
 function createApp() {
   const app = new Hono();
@@ -176,6 +183,264 @@ describe("mcp replay route", () => {
     );
     expect(runEvalSuiteWithAiSdkMock).toHaveBeenCalledTimes(1);
     expect(disconnectAllServersMock).toHaveBeenCalledTimes(1);
+  });
+
+  /** The backend's answers for a replay of a local run on project-1. */
+  function stubLocalProject(
+    authorizeRequests: Array<Record<string, unknown>>,
+    serverUrl = "https://mcp.excalidraw.com",
+  ) {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (!String(input).endsWith("/web/authorize-batch")) {
+          throw new Error(`Unexpected fetch ${String(input)}`);
+        }
+        authorizeRequests.push(JSON.parse(String(init?.body)));
+        return Response.json({
+          results: {
+            srv_excalidraw: {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              serverConfig: {
+                transportType: "http",
+                url: serverUrl,
+                useOAuth: true,
+              },
+              oauthAccessToken: "fresh-token",
+              oauthCredentialId: "acct_a",
+            },
+          },
+        });
+      }),
+    );
+    convexQueryMock.mockImplementation(
+      async (ref: string | Parameters<typeof getFunctionName>[0]) => {
+        switch (typeof ref === "string" ? ref : getFunctionName(ref)) {
+          case "testSuites:getRunReplayMetadata":
+            return {
+              suiteId: "suite-1",
+              projectId: "project-1",
+              hasServerReplayConfig: true,
+              environment: { servers: ["excalidraw"] },
+            };
+          case "servers:getProjectServers":
+            return [
+              { _id: "srv_excalidraw", name: "excalidraw", url: serverUrl },
+            ];
+          default:
+            return null;
+        }
+      },
+    );
+  }
+
+  function replayRun() {
+    return createApp().request("/api/mcp/evals/replay-run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        runId: "source-run",
+        convexAuthToken: "token-123",
+      }),
+    });
+  }
+
+  it("runs a run recorded under server names on the ids its servers are authorized under", async () => {
+    const authorizeRequests: Array<Record<string, unknown>> = [];
+    stubLocalProject(authorizeRequests);
+    // Recorded before servers were keyed by id: names, linked to names.
+    startSuiteRunWithRecorderMock.mockResolvedValue({
+      runId: "replay-run",
+      recorder: null,
+      config: {
+        tests: [],
+        environment: {
+          servers: ["excalidraw"],
+          serverBindings: [
+            { serverName: "excalidraw", projectServerId: "excalidraw" },
+          ],
+        },
+      },
+      hostConfig: {},
+    });
+    const { resolveConfiguredServerIds } = await vi.importActual<
+      typeof import("../../../services/evals-runner")
+    >("../../../services/evals-runner");
+
+    const response = await replayRun();
+
+    expect(response.status).toBe(200);
+    expect(startSuiteRunWithRecorderMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountsAtRun: [
+          { serverId: "srv_excalidraw", connectionIds: ["acct_a"] },
+        ],
+      }),
+    );
+    const [{ config, mcpClientManager }] =
+      runEvalSuiteWithAiSdkMock.mock.calls[0];
+    expect(
+      resolveConfiguredServerIds({
+        environment: config.environment,
+        mcpClientManager,
+      }),
+    ).toEqual(["srv_excalidraw"]);
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    ["only by a trailing slash", "https://mcp.excalidraw.com/", 200],
+    ["to another host", "https://draw.example.com", 409],
+  ])(
+    "treats a stored address that differs %s as the right status",
+    async (_label, storedUrl, status) => {
+      const authorizeRequests: Array<Record<string, unknown>> = [];
+      stubLocalProject(authorizeRequests);
+      fetchReplayConfigMock.mockResolvedValue({
+        runId: "source-run",
+        suiteId: "suite-1",
+        servers: [
+          {
+            serverId: "excalidraw",
+            url: storedUrl,
+            accessToken: "stored-token",
+          },
+        ],
+      });
+
+      const response = await replayRun();
+
+      expect(response.status).toBe(status);
+      if (status === 409) {
+        await expect(response.json()).resolves.toMatchObject({
+          error:
+            "excalidraw has moved to a different address since this run was recorded, so the run can't be replayed. Run the suite again to test the new address.",
+        });
+        // Never dialed with the stored token, and no run was started.
+        expect(buildReplayManager).not.toHaveBeenCalled();
+        expect(authorizeRequests).toHaveLength(0);
+        expect(startSuiteRunWithRecorderMock).not.toHaveBeenCalled();
+      } else {
+        expect(authorizeRequests).toEqual([
+          expect.objectContaining({ serverIds: ["srv_excalidraw"] }),
+        ]);
+      }
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+    },
+  );
+
+  it("authorizes the run's project servers again, with the suite's chosen account, instead of the stored token", async () => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
+    const authorizeRequests: Array<Record<string, unknown>> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (!String(input).endsWith("/web/authorize-batch")) {
+          throw new Error(`Unexpected fetch ${String(input)}`);
+        }
+        authorizeRequests.push(JSON.parse(String(init?.body)));
+        return Response.json({
+          results: {
+            srv_excalidraw: {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              serverConfig: {
+                transportType: "http",
+                url: "https://mcp.excalidraw.com",
+                useOAuth: true,
+              },
+              oauthAccountSet: "applied",
+              oauthAccessToken: "fresh-token",
+              oauthCredentialId: "acct_b",
+              oauthConnections: [
+                {
+                  connectionId: "acct_b",
+                  isDefault: false,
+                  accessToken: "fresh-token",
+                },
+              ],
+            },
+          },
+        });
+      }),
+    );
+    fetchReplayConfigMock.mockResolvedValue({
+      runId: "source-run",
+      suiteId: "suite-1",
+      servers: [
+        {
+          serverId: "excalidraw",
+          url: "https://mcp.excalidraw.com",
+          accessToken: "stored-token",
+        },
+      ],
+    });
+    convexQueryMock.mockImplementation(
+      async (ref: string | Parameters<typeof getFunctionName>[0]) => {
+        switch (typeof ref === "string" ? ref : getFunctionName(ref)) {
+          case "testSuites:getRunReplayMetadata":
+            return {
+              suiteId: "suite-1",
+              projectId: "project-1",
+              hasServerReplayConfig: true,
+              environment: { servers: ["excalidraw"] },
+            };
+          case "testSuiteAccountSelections:getPersonalSuiteAccountChoices":
+            return [{ serverId: "srv_excalidraw", connectionIds: ["acct_b"] }];
+          case "servers:getProjectServers":
+            return [
+              {
+                _id: "srv_excalidraw",
+                name: "excalidraw",
+                url: "https://mcp.excalidraw.com",
+              },
+            ];
+          default:
+            return null;
+        }
+      },
+    );
+
+    const response = await createApp().request("/api/mcp/evals/replay-run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        runId: "source-run",
+        convexAuthToken: "token-123",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(authorizeRequests).toEqual([
+      expect.objectContaining({
+        projectId: "project-1",
+        serverIds: ["srv_excalidraw"],
+        connectionIdSets: { srv_excalidraw: ["acct_b"] },
+      }),
+    ]);
+    expect(buildReplayManager).not.toHaveBeenCalled();
+    const [configs] = vi.mocked(MCPClientManager).mock.calls.at(-1)!;
+    expect(
+      new Headers(
+        (configs as Record<string, { requestInit?: { headers?: HeadersInit } }>)
+          .srv_excalidraw?.requestInit?.headers,
+      ).get("authorization"),
+    ).toBe("Bearer fresh-token");
+    expect(startSuiteRunWithRecorderMock).toHaveBeenCalledWith(
+      expect.objectContaining({ serverIds: ["srv_excalidraw"] }),
+    );
+    expect(runEvalSuiteWithAiSdkMock).toHaveBeenCalledTimes(1);
+    expect(disconnectAllServersMock).toHaveBeenCalledTimes(1);
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
   });
 
   // `passCriteria` here was a bare, unbounded `z.object({ minimumPassRate:

@@ -37,6 +37,13 @@ describe("settings destinations", () => {
       );
     }
   });
+  it("finds the sidebar setting under Appearance", () => {
+    for (const query of ["sidebar", "collapse", "Auto-collapse sidebar"]) {
+      expect(searchSettings(query, context)[0].destination.id).toBe(
+        "personal-appearance",
+      );
+    }
+  });
   it("opens Profile by default and keeps Appearance separately reachable", () => {
     expect(resolveSettingsDestination("/settings")?.id).toBe(
       "personal-profile",
@@ -46,6 +53,22 @@ describe("settings destinations", () => {
     expect(settingsPath("personal-appearance", context)).toBe(
       "/settings/appearance",
     );
+  });
+  it("finds the credential export switch under Security from the refusal's words", () => {
+    expect(
+      resolveSettingsDestination("/organizations/org-a/security")?.id,
+    ).toBe("org-security");
+    expect(settingsPath("org-security", context)).toBe(
+      "/organizations/org-a/security",
+    );
+    for (const query of [
+      "credential export policy",
+      "Allow credential export",
+    ]) {
+      expect(searchSettings(query, context)[0].destination.id).toBe(
+        "org-security",
+      );
+    }
   });
   it("consolidates organization members and sharing into one destination", () => {
     expect(resolveSettingsDestination("/organizations/org-a/sharing")?.id).toBe(

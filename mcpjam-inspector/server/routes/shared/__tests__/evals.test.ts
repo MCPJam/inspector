@@ -699,6 +699,31 @@ describe("filterAndRemapReplayConfigs", () => {
       },
     ]);
   });
+
+  it("never stores a connection whose credential the backend delivered", () => {
+    const configs = {
+      srv_asana: {
+        url: "https://asana.example/mcp",
+        credentialSource: "mcpjam-backend" as const,
+      },
+      srv_github: { url: "https://github.example/mcp" },
+    };
+    expect(
+      filterAndRemapReplayConfigs(
+        [
+          {
+            serverId: "srv_asana",
+            url: "https://asana.example/mcp",
+            accessToken: "tok_EFTW41_SECRET_replay",
+          },
+          { serverId: "srv_github", url: "https://github.example/mcp" },
+        ],
+        ["srv_asana", "srv_github"],
+        ["asana", "github"],
+        (serverId) => configs[serverId as keyof typeof configs],
+      ),
+    ).toEqual([{ serverId: "github", url: "https://github.example/mcp" }]);
+  });
 });
 
 describe("buildCapEntriesFromPersistedCases (bare suite reruns)", () => {

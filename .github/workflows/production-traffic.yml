@@ -1,0 +1,127 @@
+name: Production traffic
+
+# PT-1's production traffic ingestion, tested against a real ClickHouse: the
+# schema migration under its own identity, the runtime identity's limits,
+# deduplication across merges, outcome ordering and the review counts, then
+# the OTLP receiver over HTTP in the registered app, fed JSON by the tests and
+# gzip protobuf by the official OpenTelemetry Python exporter.
+#
+# Path-filtered because it starts a database container: it runs when this
+# code, the lockfile or this workflow changes, and on demand.
+on:
+  pull_request:
+    paths:
+      - "mcpjam-inspector/server/services/production-traffic/**"
+      - "mcpjam-inspector/server/routes/v1/production-traffic*.ts"
+      - "mcpjam-inspector/server/routes/v1/index.ts"
+      - "mcpjam-inspector/server/middleware/v1-body-limit.ts"
+      - "mcpjam-inspector/scripts/production-traffic/**"
+      - "mcpjam-inspector/package.json"
+      - "package-lock.json"
+      - ".github/workflows/production-traffic.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-traffic-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "24.22.1"
+  ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+  # The service container lives for this job only and is published on the
+  # runner's loopback. The migration and runtime users the tests create get
+  # passwords generated inside the job.
+  CLICKHOUSE_ADMIN_PASSWORD: ci-admin-${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  clickhouse:
+    name: Real ClickHouse ingestion
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    timeout-minutes: 20
+    services:
+      clickhouse:
+        # An exact LTS patch: the store's SQL is tested against this version.
+        image: clickhouse/clickhouse-server:26.8.41.14
+        env:
+          CLICKHOUSE_USER: ci_admin
+          CLICKHOUSE_PASSWORD: ci-admin-${{ github.run_id }}-${{ github.run_attempt }}
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # Same bare-runner node_modules cache as the e2e jobs in test.yml.
+      - name: Cache workspace node_modules
+        id: node-modules
+        uses: actions/cache@v6
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: nm-bare-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json', 'mcpjam-inspector/scripts/patch-harness-approvals.mjs') }}
+
+      - name: Install workspace dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci --legacy-peer-deps
+
+      # The HTTP suite boots the whole app, which imports the SDK's dist and
+      # the bundles the Inspector's pretest step generates.
+      - name: Build the SDK and test bundles
+        run: |
+          npm run build -w @mcpjam/sdk
+          npm run pretest -w @mcpjam/inspector
+
+      # The orders lab also needs the official MCP Python SDK.
+      - name: Install the OpenTelemetry Python exporter and the MCP SDK
+        run: |
+          python3 -m venv "$RUNNER_TEMP/otel"
+          "$RUNNER_TEMP/otel/bin/pip" install --quiet \
+            mcp==2.3.0 \
+            opentelemetry-sdk==1.45.2 \
+            opentelemetry-exporter-otlp-proto-http==1.45.2
+          echo "PRODUCTION_TRAFFIC_TEST_PYTHON=$RUNNER_TEMP/otel/bin/python" >> "$GITHUB_ENV"
+      - name: Run the packaged Helm migration twice
+        working-directory: mcpjam-inspector
+        env:
+          PRODUCTION_TRAFFIC_CLICKHOUSE_URL: http://localhost:8123
+          PRODUCTION_TRAFFIC_CLICKHOUSE_DATABASE: default
+          PRODUCTION_TRAFFIC_CLICKHOUSE_MIGRATION_USER: ci_admin
+          PRODUCTION_TRAFFIC_CLICKHOUSE_MIGRATION_PASSWORD: ${{ env.CLICKHOUSE_ADMIN_PASSWORD }}
+        run: |
+          npm run build:production-traffic-migration
+          node dist/production-traffic/migrate.mjs | jq -e '.applied == [1] and .version == 1'
+          node dist/production-traffic/migrate.mjs | jq -e '.applied == [] and .version == 1'
+
+      - name: ClickHouse version
+        run: curl -sS --fail -u "ci_admin:${CLICKHOUSE_ADMIN_PASSWORD}" http://localhost:8123/ --data-binary "SELECT version()"
+
+      - name: Store and receiver tests on real ClickHouse
+        working-directory: mcpjam-inspector
+        env:
+          PRODUCTION_TRAFFIC_TEST_CLICKHOUSE_URL: http://localhost:8123
+          PRODUCTION_TRAFFIC_TEST_CLICKHOUSE_ADMIN_USER: ci_admin
+          PRODUCTION_TRAFFIC_TEST_CLICKHOUSE_ADMIN_PASSWORD: ${{ env.CLICKHOUSE_ADMIN_PASSWORD }}
+          # Fail rather than skip if the database or the exporter goes missing.
+          PRODUCTION_TRAFFIC_REQUIRE_CLICKHOUSE: "1"
+          PRODUCTION_TRAFFIC_REQUIRE_PYTHON: "1"
+        run: npx vitest run --project server server/services/production-traffic

@@ -22,7 +22,6 @@ import {
   MCP_PROTOCOL_VERSIONS,
   MCP_SKILLS_EXTENSION_ID,
   protocolVersionLabel,
-  readEventsHostSetting,
   readTasksPolicy,
   readXaaEnterprisePolicy,
   setTasksPolicy,
@@ -53,7 +52,6 @@ import {
   ProtocolAuthChallengeSection,
   type AuthChallengeKnob,
 } from "./ProtocolAuthChallengeSection";
-import { EventsHostSupportSection } from "./EventsHostSupportSection";
 
 /**
  * "auto" is a stored selection policy, NOT a wire literal. The SDK negotiates
@@ -1024,16 +1022,6 @@ export function ProtocolTab({
   const policyState = readXaaEnterprisePolicy(draft.mcpProfile);
   const policyOn = policyState.kind === "on";
   const policyInvalid = policyState.kind === "invalid";
-  // Gated on the same `xaa` flag as the per-server XAA auth option
-  // (AuthenticationSection's `showXaaOption`) — without it a flag-off user
-  // could turn the policy on, make every Auto server fail closed, and have
-  // no UI left to add the XAA registration that fixes them. Same escape
-  // hatch as that gate: an already-on (or malformed) stored policy always
-  // renders, so a host is never stranded with an invisible active policy
-  // it can't turn off.
-  const xaaFlagEnabled = useFeatureFlagEnabled("xaa");
-  const showPolicyToggle =
-    xaaFlagEnabled === true || policyState.kind !== "off";
   const setPolicyOn = (next: boolean) => {
     onDraftChange((prev) => {
       const profile = prev.mcpProfile as Record<string, unknown> | undefined;
@@ -1060,11 +1048,6 @@ export function ProtocolTab({
   // is stranded with tasks disabled and no UI left to re-enable them.
   const tasksFlagEnabled = useFeatureFlagEnabled("mcp-tasks");
   const showTasksPolicy = tasksFlagEnabled === true || tasksPolicy !== "unset";
-  // Shown with Events, and always once a setting is saved, so a client is
-  // never left with a delivery setting nobody can see or change.
-  const eventsFlagEnabled = useFeatureFlagEnabled("mcp-events-enabled");
-  const showEventsDelivery =
-    eventsFlagEnabled === true || readEventsHostSetting(draft).kind !== "unset";
   const fTasksPolicy = hostConfigField("tasksPolicy");
   const setTasksPolicyChoice = (next: TasksPolicyChoice) => {
     onDraftChange((prev) =>
@@ -1395,34 +1378,32 @@ export function ProtocolTab({
           onChange={setConformanceKnob}
           readOnly={readOnly}
         />
-        {showPolicyToggle && (
-          <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
-            <div className="min-w-0">
-              <span className="text-[12px] font-medium">
-                Default all project servers to enterprise managed auth
-              </span>
-              <p className="text-[11px] leading-snug text-muted-foreground">
-                Route every HTTP server connection through your IdP (XAA) by
-                default. A server&apos;s explicit auth method overrides. Servers
-                without an XAA client registration fail to connect. Applies on
-                the next connect.
+        <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
+          <div className="min-w-0">
+            <span className="text-[12px] font-medium">
+              Default all project servers to enterprise managed auth
+            </span>
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              Route every HTTP server connection through your IdP (XAA) by
+              default. A server&apos;s explicit auth method overrides. Servers
+              without an XAA client registration fail to connect. Applies on the
+              next connect.
+            </p>
+            {policyInvalid ? (
+              <p className="text-[11px] leading-snug text-destructive">
+                This host&apos;s stored policy value is unsupported —
+                connections will fail until it is fixed. Toggling on repairs it;
+                toggling off removes it.
               </p>
-              {policyInvalid ? (
-                <p className="text-[11px] leading-snug text-destructive">
-                  This host&apos;s stored policy value is unsupported —
-                  connections will fail until it is fixed. Toggling on repairs
-                  it; toggling off removes it.
-                </p>
-              ) : null}
-            </div>
-            <Switch
-              checked={policyOn}
-              onCheckedChange={setPolicyOn}
-              disabled={readOnly}
-              aria-label="Default all project servers to enterprise managed auth"
-            />
+            ) : null}
           </div>
-        )}
+          <Switch
+            checked={policyOn}
+            onCheckedChange={setPolicyOn}
+            disabled={readOnly}
+            aria-label="Default all project servers to enterprise managed auth"
+          />
+        </div>
         {showTasksPolicy && (
           <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
             <div className="min-w-0">
@@ -1468,13 +1449,6 @@ export function ProtocolTab({
               </SelectContent>
             </Select>
           </div>
-        )}
-        {showEventsDelivery && (
-          <EventsHostSupportSection
-            draft={draft}
-            onDraftChange={onDraftChange}
-            readOnly={readOnly}
-          />
         )}
         <div className="mt-2.5 border-t border-border/50 pt-2.5">
           <div className="flex items-center justify-between gap-3">

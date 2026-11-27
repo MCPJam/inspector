@@ -117,7 +117,6 @@ function AuthorizationTab({
         <ConnectionAccountsList
           connections={connections}
           shared={shared}
-          canAddAccount
           isAdmin={isAdmin}
           sharingControl={
             isAdmin ? (

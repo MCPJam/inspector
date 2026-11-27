@@ -5,10 +5,7 @@
  * (`approval-park.ts`). Both run the same checks after their claim.
  */
 import { logger } from "../../logger.js";
-import {
-  revokeHarnessModelBroker,
-  startLoopbackModelBroker,
-} from "../harness-model-broker.js";
+import { startLoopbackModelBroker } from "../harness-model-broker.js";
 import type { KeptRuntimeOutcome } from "../harness-turn-event.js";
 import { localKeepAgentEnabled } from "../harness-flags.js";
 import {
@@ -36,8 +33,10 @@ import {
   type RuntimeInstallStatus,
 } from "./runtime-install.js";
 import { localRuntime } from "./runtimes/index.js";
+import type { LocalRuntimeCredential } from "./runtimes/types.js";
 import { revalidateRuntime } from "./runtime-identity.js";
 import type { SupportedLocalHarnessId } from "./targets.js";
+import { revokeLease } from "./turn-credential.js";
 import { takeTurnRuntimeStatus } from "./turn-runtime-status.js";
 
 /** A live local runtime, as a park holds it. */
@@ -49,6 +48,8 @@ export interface LiveLocalRuntime {
   workspaceGrantId: string;
   /** The pack it runs, as its turn selected it. */
   runtimeDigest: string;
+  /** What it runs on: a runtime login has no lease to renew. */
+  credentialKind: LocalRuntimeCredential["kind"];
   /** Bind a fresh lease to the SAME gateway (same port, same capability). */
   rebindLease: (next: { runId: string; lease: string; bearer: string; getCleanupAuthorization?: () => Promise<string> }) => void;
   revokeCurrentLease: () => Promise<void>;
@@ -282,7 +283,7 @@ async function adoptParkedRuntime(
         "the pending action will not run.",
     );
   }
-  const permissionMode = args.scope !== "unattended" || args.requireToolApproval
+  const permissionMode = args.scope !== "unattended" || args.requireToolApproval || args.holdNativeCommands
     ? ("allow-reads" as const)
     : plan.permissionMode;
   if (permissionMode !== live.prepared.permissionMode) {
@@ -302,6 +303,32 @@ async function adoptParkedRuntime(
       "consent-required",
       "This installation is no longer registered for local execution.",
     );
+  }
+  if (live.credentialKind === "runtime-login") {
+    // Nothing to renew. A lease is minted again below because the backend can
+    // refuse it; a login is already in the parked process, cannot be taken
+    // back, and runs out within the hour whatever is decided here.
+    if (parked.state !== "continuing" || !parked.isAlive()) {
+      return fail(
+        "process-died",
+        "approval-process-died",
+        "The local runtime holding this approval stopped while the decision " +
+          "was being delivered; the pending action will not run.",
+      );
+    }
+    logger.info("[local-harness] parked session re-adopted for an approval", {
+      sessionId: args.sessionId,
+      approvals: args.approvalContinuation?.approvalIds.length ?? 0,
+    });
+    return {
+      ok: true,
+      prepared: {
+        ...live.prepared,
+        plan,
+        sessionStateExists: true,
+        timings: { localRuntimeVerifyMs: Date.now() - verifyStartedAt, localGatewayReadyMs: 0 },
+      },
+    };
   }
   const gatewayStartedAt = Date.now();
   const broker = await startLoopbackModelBroker({
@@ -397,19 +424,4 @@ async function adoptParkedRuntime(
       ...(kept ? { keptRuntime: true } : {}),
     },
   };
-}
-
-/** Best-effort revoke of a lease by its run id. */
-export async function revokeLease(runId: string, authorization: string | (() => Promise<string>)): Promise<void> {
-  try {
-    const bearer = typeof authorization === "string" ? authorization : await authorization();
-    await revokeHarnessModelBroker({ runId, bearer });
-  } catch (error) {
-    // Best-effort, exactly as the cloud path's revoke is: the lease's own TTL
-    // and the backend's sweep are the backstop, and the gateway is already
-    // refusing everything by the time this runs.
-    logger.warn("[local-harness] lease revoke failed", {
-      message: error instanceof Error ? error.message : String(error),
-    });
-  }
 }

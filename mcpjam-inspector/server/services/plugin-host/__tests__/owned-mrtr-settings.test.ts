@@ -9,6 +9,7 @@ function fixture() {
     .fn()
     .mockResolvedValue({ content: [], structuredContent: { units: "mm" } });
   const service = createOwnedPluginMrtr({
+      identity: { actorId: "actor", projectId: "project", workspaceId: "workspace", subject: "subject" },
     c: {} as Context,
     bearer: "test-bearer",
     projectId: "project",

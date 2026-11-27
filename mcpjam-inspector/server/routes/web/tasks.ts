@@ -64,6 +64,7 @@ const withVerifiedTaskConnection: typeof withEphemeralConnection = (c, schema, f
     return fn(manager, body, ...rest);
   }, {
     ...options,
+    observeFeatures: true,
     beforeConnect: async (raw) => {
       await options?.beforeConnect?.(raw);
       authorized = await authorizeTaskSources(c, raw);

@@ -18,7 +18,10 @@
  */
 
 import type { MCPCheckId, MCPReadinessId } from "./mcp-conformance/types.js";
-import type { MCPAppsCheckId } from "./apps-conformance/types.js";
+import type {
+  MCPAppsCheckId,
+  MCPAppsReadinessId,
+} from "./apps-conformance/types.js";
 import type { MCPOAuthReadinessId } from "./oauth-conformance/types.js";
 import type {
   MCPTasksCheckId,
@@ -78,7 +81,7 @@ export const PROTOCOL_CHECK_CATALOG = {
   "protocol-invalid-method-error": {
     title: "Invalid Method Error",
     description:
-      "Server returns a valid JSON-RPC error for an unrecognized method name.",
+      "Server answers an unrecognized method name with the JSON-RPC Method not found error (-32601), and with HTTP 404 on 2026-07-28.",
   },
   "localhost-host-rebinding-rejected": {
     title: "Reject Evil Host Header",
@@ -93,10 +96,6 @@ export const PROTOCOL_CHECK_CATALOG = {
   "server-sse-polling-session": {
     title: "SSE Polling Session",
     description: "Server provides a streamable HTTP session id.",
-  },
-  "server-accepts-multiple-post-streams": {
-    title: "Multiple POST Streams",
-    description: "The server accepts multiple concurrent POST requests.",
   },
   "server-sse-streams-functional": {
     title: "Functional SSE Streams",
@@ -202,7 +201,7 @@ export const PROTOCOL_CHECK_CATALOG = {
   "modern-resource-not-found-invalid-params": {
     title: "Resource Not Found",
     description:
-      "Reading an unknown resource answers in-band JSON-RPC -32602 on HTTP 200.",
+      "Reading an unknown resource answers with JSON-RPC error -32602.",
   },
   "modern-resource-read-no-empty-contents": {
     title: "No Empty Contents For A Missing Resource",
@@ -282,16 +281,6 @@ export const APPS_CHECK_CATALOG = {
 
 /** Tasks suite. Keys follow `MCP_TASKS_CHECK_IDS` order. */
 export const TASKS_CHECK_CATALOG = {
-  "tasks-wire-resolvable": {
-    title: "Tasks Wire Resolvable",
-    description:
-      "The negotiated protocol version and advertised capabilities resolve to exactly one tasks wire.",
-  },
-  "tasks-declaration-hygiene": {
-    title: "Per-Version Declaration Hygiene",
-    description:
-      "Outgoing requests carry `params.task` only on the legacy wire and the tasks extension declaration only on the extension wire; a connection with no tasks wire sends neither.",
-  },
   "tasks-result-type-discipline": {
     title: "Result Type Discipline",
     description:
@@ -404,6 +393,15 @@ export const TASKS_READINESS_CATALOG = {
       "tasks/update and tasks/cancel reject an unknown task id with -32602 (Invalid params).",
   },
 } as const satisfies Record<MCPTasksReadinessId, ConformanceCheckInfo>;
+
+/** Apps suite advice. Keys follow `MCP_APPS_READINESS_IDS` order. */
+export const APPS_READINESS_CATALOG = {
+  "apps-readiness-deprecated-resource-uri": {
+    title: "Deprecated ui/resourceUri Field",
+    description:
+      'UI tools point at their resource with _meta.ui.resourceUri, not the deprecated flat _meta["ui/resourceUri"].',
+  },
+} as const satisfies Record<MCPAppsReadinessId, ConformanceCheckInfo>;
 
 /** OAuth suite advice. Keys follow `MCP_OAUTH_READINESS_IDS` order. */
 export const OAUTH_READINESS_CATALOG = {

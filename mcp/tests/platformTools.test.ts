@@ -279,6 +279,10 @@ const PLAIN_TOOLS = [
   "backtest_eval_run",
   "backtest_eval_run_judge",
   "request_eval_run_judge",
+  // The run page's Analyze button as three tools: receipts, no widget view.
+  "build_eval_run_findings",
+  "request_eval_run_insights",
+  "cancel_eval_run_insights",
   // The description-rewrite experiment: agent-oriented payloads (a diff and
   // two arm counts), no widget view.
   "propose_eval_description_rewrite",
@@ -593,6 +597,9 @@ describe("platform tool registration", () => {
       "backtest_eval_run",
       "backtest_eval_run_judge",
       "request_eval_run_judge",
+      "build_eval_run_findings",
+      "request_eval_run_insights",
+      "cancel_eval_run_insights",
       "list_project_environments",
       "get_project_environment",
       "resolve_project_environment",
@@ -789,8 +796,11 @@ describe("platform tool registration", () => {
       "connect_project_server",
       "install_registry_server",
       "request_eval_run_judge",
+      "request_eval_run_insights",
+      "build_eval_run_findings",
       "request_study_insights",
       "request_swarm_run_insights",
+      "cancel_eval_run_insights",
       "cancel_study_insights",
       "cancel_swarm_run_insights",
       "upsert_study_member",
@@ -1249,6 +1259,41 @@ describe("runPlatformOperation", () => {
     expect(
       (result.structuredContent?.error as { requestId?: string }).requestId
     ).toBe("req_0123456789abcdef");
+  });
+
+  it("reports a guest mint failure, which never reaches the Platform API", async () => {
+    const onGuestMintFailed = vi.fn();
+    const result = (await runPlatformOperation(
+      { ...fakeToolContext(), onGuestMintFailed },
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(onGuestMintFailed).toHaveBeenCalledTimes(1);
+  });
+
+  it("names the agent by its clientInfo on what it launches, over its user agent", async () => {
+    const seen: Headers[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: unknown, init?: RequestInit) => {
+        seen.push(new Headers(init?.headers));
+        return Response.json({ data: [] });
+      })
+    );
+    await runPlatformOperation(
+      {
+        ...fakeToolContext({ bearerToken: "user-jwt", callerUserAgent: "node" }),
+        callerClientName: "claude-code",
+      },
+      listProjectsOperation,
+      {}
+    );
+    expect(JSON.parse(seen[0]!.get("x-mcpjam-client") ?? "null")).toEqual({
+      kind: "mcp",
+      client: "claude-code",
+    });
   });
 
   it("tells the model when a usage-limit refusal lifts, in both channels", async () => {

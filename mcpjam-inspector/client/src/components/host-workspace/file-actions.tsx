@@ -295,67 +295,6 @@ export function FileLink({
   );
 }
 
-/** Reference metadata requests discovery; only the server may grant file access. */
-export function FileOpenWith({
-  reference,
-  fileActions,
-  autoOpenKey,
-  onAutoOpenStart,
-}: {
-  reference?: FileResourceReference | null;
-  fileActions?: WorkspaceFileActions | null;
-  autoOpenKey?: string;
-  onAutoOpenStart?: () => void;
-}) {
-  const contextualActions = useContext(FileActionsContext);
-  const actions = fileActions === undefined ? contextualActions : fileActions;
-  const file = useFileOpen(actions, reference);
-  const started = useRef<string | null>(null);
-  useEffect(() => {
-    if (!autoOpenKey || started.current === autoOpenKey ||
-        !usableActions(actions, reference)) return;
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (cancelled) return;
-      started.current = autoOpenKey;
-      onAutoOpenStart?.();
-      void file.activate();
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [autoOpenKey, actions, reference, file.activate, onAutoOpenStart]);
-  if (!usableActions(actions, reference)) return null;
-  return (
-    <span onClick={(event) => event.stopPropagation()}>
-      <DropdownMenu
-        open={file.menu.state === "ready" || file.menu.state === "error"}
-        onOpenChange={(open) => {
-          if (!open) file.setMenu({ state: "closed" });
-        }}
-      >
-        <DropdownMenuTrigger asChild {...holdMenu}>
-          <button
-            type="button"
-            onClick={() => void file.activate()}
-            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium hover:bg-accent"
-          >
-            Open
-            {file.menu.state === "loading" ? (
-              <Loader2 className="size-3 animate-spin" aria-hidden />
-            ) : null}
-          </button>
-        </DropdownMenuTrigger>
-        <ViewerMenuContent
-          menu={file.menu}
-          onOpen={(entry) => void file.open(entry)}
-        />
-      </DropdownMenu>
-      {file.failed && <span role="alert">Could not open viewer</span>}
-    </span>
-  );
-}
-
 /** Resource links keep their producing saved server; a URI never selects a server. */
 export function ToolResourceAttachments({
   result,

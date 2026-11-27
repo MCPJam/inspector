@@ -478,6 +478,48 @@ describe("useServerState CLI config import", () => {
     } as Response);
   });
 
+  it("deletes the row from the eager mapping when the snapshot doesn't list it yet", async () => {
+    vi.clearAllMocks();
+    mockUseDbUserReady.mockReset();
+    mockUseDbUserReady.mockReturnValue(true);
+    mockConvexQuery.mockResolvedValue([]);
+    vi.mocked(authFetch).mockReset();
+    vi.mocked(authFetch).mockResolvedValue({
+      json: async () => ({}),
+    } as Response);
+    mockDeleteServer.mockReset();
+    mockDeleteServer.mockResolvedValue(undefined);
+    tryResolveProjectServerMock.mockReturnValue({
+      projectId: "proj_cloud",
+      serverId: "srv_just_saved",
+    });
+    const appState = createCloudCliAppState();
+    const { result } = renderHook(() =>
+      useServerState({
+        appState,
+        dispatch: vi.fn(),
+        isLoading: false,
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        isAuthLoading: false,
+        isLoadingProjects: false,
+        useLocalFallback: false,
+        effectiveProjects: appState.projects,
+        effectiveActiveProjectId: "proj_cloud",
+        activeProjectServersFlat: [],
+        logger: createTestLogger(),
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleRemoveServer("acme");
+    });
+
+    expect(mockDeleteServer).toHaveBeenCalledWith({
+      serverId: "srv_just_saved",
+    });
+  });
+
   it("does not ask for sign-in when there is no CLI server payload", async () => {
     vi.mocked(authFetch).mockResolvedValueOnce({
       json: async () => ({ config: { servers: [] } }),
@@ -1010,7 +1052,8 @@ describe("useServerState CLI config import", () => {
     await waitFor(() => {
       expect(injectHostedServerMapping).toHaveBeenCalledWith(
         "cli-http",
-        "srv_own"
+        "srv_own",
+        "proj_cloud",
       );
     });
     expect(logger.warn).not.toHaveBeenCalledWith(
@@ -1160,7 +1203,8 @@ describe("useServerState CLI config import", () => {
     );
     expect(injectHostedServerMapping).toHaveBeenCalledWith(
       "cli-http",
-      "srv_new"
+      "srv_new",
+      "proj_cloud",
     );
   });
 });
@@ -3132,6 +3176,64 @@ describe("useServerState OAuth callback failures", () => {
     ).toBe(false);
   });
 
+  describe("removing a server while its save is in flight", () => {
+    const acme = { name: "Acme", type: "http", url: "https://mcp.acme.dev" };
+    const saves: Array<(serverId: string) => void> = [];
+    const render = () => {
+      saves.length = 0;
+      mockDeleteServer.mockReset();
+      mockDeleteServer.mockResolvedValue(undefined);
+      mockCreateServerIfMissing.mockImplementation(
+        () => new Promise<string>((resolve) => saves.push(resolve))
+      );
+      tryResolveProjectServerMock.mockReturnValue(null);
+      const appState = createCloudCliAppState();
+      return renderUseServerState(vi.fn(), appState, {
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        useLocalFallback: false,
+        effectiveProjects: appState.projects,
+        effectiveActiveProjectId: "proj_cloud",
+        activeProjectServersFlat: [],
+      }).result;
+    };
+    const connect = (result: ReturnType<typeof render>) => {
+      let pending!: Promise<void>;
+      act(() => {
+        pending = result.current.handleConnect(acme as any);
+      });
+      return pending;
+    };
+
+    it("deletes the row the save creates", async () => {
+      const result = render();
+      const first = connect(result);
+      await waitFor(() => expect(saves).toHaveLength(1));
+      await act(async () => result.current.handleRemoveServer("Acme"));
+      await act(async () => {
+        saves[0]("srv_acme");
+        await first;
+      });
+      expect(mockDeleteServer).toHaveBeenCalledWith({ serverId: "srv_acme" });
+    });
+
+    it("keeps the row when a same-name connect started after the removal", async () => {
+      const result = render();
+      const first = connect(result);
+      await waitFor(() => expect(saves).toHaveLength(1));
+      await act(async () => result.current.handleRemoveServer("Acme"));
+      connect(result);
+      await waitFor(() => expect(saves).toHaveLength(2));
+      await act(async () => {
+        saves[0]("srv_acme");
+        await first;
+      });
+      expect(mockDeleteServer).not.toHaveBeenCalledWith({
+        serverId: "srv_acme",
+      });
+    });
+  });
+
   it("applies project connection defaults on local reconnect", async () => {
     const { reconnectServer } = await import("@/state/mcp-api");
     const { ensureAuthorizedForReconnect } = await import(
@@ -4772,6 +4874,81 @@ describe("syncServerToConvex name-collision recovery", () => {
     url: "https://example.com/mcp",
   };
 
+  it.each([false, true])(
+    "saves a published plugin ID to the active project's row (save-only=%s)",
+    async (saveOnly) => {
+      const appState = createAppState();
+      appState.projects.default.sharedProjectId = "project_default";
+      const { result } = renderUseServerState(vi.fn(), appState, {
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        useLocalFallback: false,
+        activeProjectServersFlat: [
+          siblingRow,
+          { ...siblingRow, _id: "srv_demo", projectId: "project_default" },
+        ],
+      });
+
+      await act(async () => {
+        const outcome = await result.current.handleUpdate(
+          "demo-server",
+          {
+            name: "demo-server",
+            type: "http",
+            url: "https://example.com/mcp",
+            publishedPluginId: "plugin_parts",
+          },
+          saveOnly,
+        );
+        expect(outcome.ok).toBe(true);
+      });
+
+      expect(mockUpdateServer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          serverId: "srv_demo",
+          projectId: "project_default",
+          publishedPluginId: "plugin_parts",
+        }),
+      );
+      expect(mockUpdateServer).not.toHaveBeenCalledWith(
+        expect.objectContaining({ serverId: "srv_sibling" }),
+      );
+      expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+      if (!saveOnly) {
+        expect(injectHostedServerMapping).toHaveBeenCalledWith(
+          "demo-server",
+          "srv_demo",
+          "project_default",
+        );
+      }
+    },
+  );
+
+  it("refuses a published plugin ID edit when only a sibling project owns the name", async () => {
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const { result } = renderUseServerState(vi.fn(), appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      activeProjectServersFlat: [siblingRow],
+    });
+
+    await act(async () => {
+      const outcome = await result.current.handleUpdate("demo-server", {
+        name: "Renamed",
+        type: "http",
+        url: "https://example.com/mcp",
+        publishedPluginId: "plugin_parts",
+      });
+      expect(outcome).toEqual({ ok: false, serverName: "demo-server" });
+    });
+
+    expect(mockUpdateServer).not.toHaveBeenCalled();
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+    expect(mockDeleteServer).not.toHaveBeenCalled();
+  });
+
   it.each([true, false])("does not confirm or publish a rename when configuration saving rejects (save-only=%s)", async (saveOnly) => {
     mockHostedMode.mockReturnValue(true);
     const appState = createAppState();
@@ -5077,7 +5254,7 @@ describe("syncServerToConvex name-collision recovery", () => {
         hasSignedInUser: true,
         useLocalFallback: false,
         effectiveProjects: appState.projects,
-        activeProjectServersFlat: [savedRow],
+        activeProjectServersFlat: [siblingRow, savedRow],
       });
       return { dispatch, ...rendered };
     }
@@ -6691,3 +6868,4 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
     expect(mockCreateServerIfMissing).toHaveBeenCalledTimes(1);
   });
 });
+

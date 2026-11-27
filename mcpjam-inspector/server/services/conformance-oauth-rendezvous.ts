@@ -75,7 +75,7 @@ const createRef = makeFunctionReference<
 >("conformanceOAuthRendezvous:create");
 const submitCodeRef = makeFunctionReference<
   "mutation",
-  { sessionId: string; code: string; state?: string },
+  { sessionId: string; code: string; state?: string; iss?: string },
   { ok: boolean; reason?: string }
 >("conformanceOAuthRendezvous:submitCode");
 const cancelRef = makeFunctionReference<
@@ -202,7 +202,7 @@ export async function createRendezvous(
  */
 export async function submitRendezvousCode(
   bearer: string,
-  input: { sessionId: string; code: string; state?: string },
+  input: { sessionId: string; code: string; state?: string; iss?: string },
 ): Promise<"accepted" | "gone"> {
   const submit = () =>
     withDeadline((signal) =>
@@ -210,6 +210,7 @@ export async function submitRendezvousCode(
         sessionId: input.sessionId,
         code: input.code,
         ...(input.state !== undefined ? { state: input.state } : {}),
+        ...(input.iss !== undefined ? { iss: input.iss } : {}),
       }),
     );
   let result: { ok: boolean; reason?: string };
@@ -325,7 +326,12 @@ async function pollForCode(
     );
     if (signal.aborted) return;
 
-    let row: { status: RendezvousStatus; code?: string; state?: string } | null;
+    let row: {
+      status: RendezvousStatus;
+      code?: string;
+      state?: string;
+      iss?: string;
+    } | null;
     try {
       const polled = await serviceRoute<{
         ok: boolean;
@@ -355,6 +361,7 @@ async function pollForCode(
       session.controller.deliverCode({
         code: row.code,
         ...(row.state !== undefined ? { state: row.state } : {}),
+        ...(row.iss !== undefined ? { iss: row.iss } : {}),
       });
       // Only after the run has the code: a lost ack just leaves it for the
       // expiry cron to scrub.

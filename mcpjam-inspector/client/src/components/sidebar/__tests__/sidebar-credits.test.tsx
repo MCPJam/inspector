@@ -114,7 +114,7 @@ function renderCredits(
   return render(
     <SidebarCredits
       organizationId="org_a"
-      billingUiEnabled
+      onOpenBilling={vi.fn()}
       onExplorePlans={vi.fn()}
       {...overrides}
     />,
@@ -449,19 +449,22 @@ describe("SidebarCredits", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("opens billing from the row and from Explore plans", async () => {
+  it("opens billing from the row and plans from Explore plans", async () => {
     const { default: userEvent } = await import("@testing-library/user-event");
+    const onOpenBilling = vi.fn();
     const onExplorePlans = vi.fn();
-    renderCredits({ onExplorePlans });
+    renderCredits({ onOpenBilling, onExplorePlans });
 
     vi.useRealTimers();
     const user = userEvent.setup();
 
     await user.click(screen.getByTestId("sidebar-see-credits"));
-    expect(onExplorePlans).toHaveBeenCalledTimes(1);
+    expect(onOpenBilling).toHaveBeenCalledTimes(1);
+    expect(onExplorePlans).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "Explore plans" }));
-    expect(onExplorePlans).toHaveBeenCalledTimes(2);
+    expect(onExplorePlans).toHaveBeenCalledTimes(1);
+    expect(onOpenBilling).toHaveBeenCalledTimes(1);
   });
 
   it("shows a loading shell while the balance is in flight", () => {

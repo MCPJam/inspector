@@ -5,19 +5,25 @@ import type {
 } from "../types.js";
 import { CHECK_ERAS } from "../types.js";
 import {
+  couldNotRunResult,
   eraSkipMessage,
   failedResult,
   passedResult,
   notApplicableResult,
 } from "./helpers.js";
 import {
+  legacyInitialize,
+  type LegacyHandshakeStop,
+} from "../legacy-handshake.js";
+import {
   DEFAULT_LEGACY_PROTOCOL_VERSION,
   jsonRpcError,
   legacyHeaders,
-  legacyInitialize,
   modernHeaders,
   modernRequestBody,
   rawRequest,
+  resumePolledStream,
+  unreadPolledAnswerMessage,
   type RawHttpResult,
 } from "../raw-http.js";
 import { hasWireField } from "../raw-capture.js";
@@ -27,6 +33,26 @@ import { hasWireField } from "../raw-capture.js";
 // server pass this check with an unrelated error (e.g. -32602 Invalid params).
 const METHOD_NOT_FOUND = -32601;
 
+// 2026-07-28 ties the HTTP status to that error: "If the server does not
+// implement the requested RPC method, it MUST respond with `404 Not Found` and
+// a JSON-RPC error with code `-32601`" (streamable-http.mdx:271-273). The 2025
+// revisions name no status for it, so there the code alone is graded.
+const MODERN_METHOD_NOT_FOUND_STATUS = 404;
+
+/**
+ * What is wrong with the HTTP status of a `-32601` answer, or `undefined`
+ * when nothing is. Only the modern era has a rule about it.
+ */
+export function invalidMethodStatusProblem(
+  era: RawHttpCheckContext["config"]["era"],
+  status: number,
+): string | undefined {
+  if (era !== "modern" || status === MODERN_METHOD_NOT_FOUND_STATUS) {
+    return undefined;
+  }
+  return `Expected HTTP ${MODERN_METHOD_NOT_FOUND_STATUS} Not Found with the ${METHOD_NOT_FOUND} error for an unrecognized method (required on 2026-07-28), got HTTP ${status}`;
+}
+
 // Exported so `tests/conformance-catalog.test.ts` can assert the browser-safe
 // catalog still matches these canonical strings.
 export const PROTOCOL_CHECK_METADATA = {
@@ -35,7 +61,7 @@ export const PROTOCOL_CHECK_METADATA = {
     category: "protocol",
     title: "Invalid Method Error",
     description:
-      "Server returns a valid JSON-RPC error for an unrecognized method name.",
+      "Server answers an unrecognized method name with the JSON-RPC Method not found error (-32601), and with HTTP 404 on 2026-07-28.",
   },
 } as const satisfies Record<
   Extract<MCPCheckId, "protocol-invalid-method-error">,
@@ -59,7 +85,7 @@ const INVALID_METHOD = "nonexistent/method_that_does_not_exist";
  */
 async function sendInvalidMethodProbe(
   ctx: RawHttpCheckContext,
-): Promise<RawHttpResult> {
+): Promise<RawHttpResult | { stop: LegacyHandshakeStop }> {
   if (ctx.config.era === "modern") {
     const version =
       ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION;
@@ -76,15 +102,34 @@ async function sendInvalidMethodProbe(
     });
   }
 
-  const { sessionId } = await legacyInitialize(ctx);
-  return await rawRequest(ctx, {
-    headers: legacyHeaders({ sessionId }),
+  const { sessionId, negotiatedVersion, stop } = await legacyInitialize(ctx);
+  if (stop !== undefined) {
+    // The handshake did not end in a session on the version this run uses, so
+    // the probe is not sent: a refusal it drew would be MCPJam's doing.
+    return { stop };
+  }
+  const protocolVersion =
+    negotiatedVersion ??
+    ctx.config.protocolVersion ??
+    DEFAULT_LEGACY_PROTOCOL_VERSION;
+  const response = await rawRequest(ctx, {
+    // Only the method name is the test. 2025-06-18 and later require the
+    // version header on every request after initialize, so it is sent here
+    // like on any other request, with the version the server agreed to: a
+    // server that answered an older version may refuse the one we asked for.
+    headers: legacyHeaders({ protocolVersion, sessionId }),
     body: {
       jsonrpc: "2.0",
       id: 99,
       method: INVALID_METHOD,
       params: {},
     },
+  });
+  // A server may hand the error to polling; grading the empty stream it
+  // closed would fail it for an answer it did send.
+  return await resumePolledStream(ctx, response, {
+    sessionId,
+    protocolVersion,
   });
 }
 
@@ -118,9 +163,35 @@ export async function runProtocolChecks(
   const startedAt = Date.now();
   try {
     const response = await sendInvalidMethodProbe(ctx);
+    if ("stop" in response) {
+      results.push(
+        couldNotRunResult(
+          PROTOCOL_CHECK_METADATA["protocol-invalid-method-error"],
+          response.stop.message,
+          response.stop.details,
+        ),
+      );
+      return results;
+    }
     // `jsonRpcError` reads JSON and SSE bodies alike off the capture, so the
     // check never has to know how the server framed its answer.
     const rpcError = jsonRpcError(response);
+
+    // The server handed the answer to polling and asked for a longer wait
+    // than the check had: nothing was graded, so this is not a failure.
+    const unread = rpcError
+      ? undefined
+      : unreadPolledAnswerMessage(response.resumed);
+    if (unread !== undefined) {
+      results.push(
+        couldNotRunResult(
+          PROTOCOL_CHECK_METADATA["protocol-invalid-method-error"],
+          unread,
+          { status: response.status },
+        ),
+      );
+      return results;
+    }
 
     if (!rpcError) {
       // `jsonRpcError` only reports a WELL-FORMED error (numeric code + string
@@ -151,6 +222,27 @@ export async function runProtocolChecks(
           `Expected JSON-RPC error code ${METHOD_NOT_FOUND} (Method not found) for an unrecognized method, got ${String(rpcError.code)}`,
           {
             status: response.status,
+            error: rpcError,
+          },
+        ),
+      );
+      return results;
+    }
+
+    // The code is right. On 2026-07-28 the status it rides on is graded too.
+    const statusProblem = invalidMethodStatusProblem(
+      ctx.config.era,
+      response.status,
+    );
+    if (statusProblem !== undefined) {
+      results.push(
+        failedResult(
+          PROTOCOL_CHECK_METADATA["protocol-invalid-method-error"],
+          Date.now() - startedAt,
+          statusProblem,
+          {
+            status: response.status,
+            expectedStatus: MODERN_METHOD_NOT_FOUND_STATUS,
             error: rpcError,
           },
         ),

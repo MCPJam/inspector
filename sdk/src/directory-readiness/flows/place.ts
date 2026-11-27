@@ -41,6 +41,11 @@ export interface PlaceDirectoryResultsInput {
   findings?: readonly DirectoryReadinessFinding[];
   /** The stored answers as that run graded them, to tell what went stale. */
   gradedAnswers?: readonly DirectoryAnswer[];
+  /** Freshness of dependencies outside the answers, or after report expiry. */
+  findingFreshness?: (finding: DirectoryReadinessFinding) => {
+    staleBecause: readonly string[];
+    expiredWithoutInputs?: boolean;
+  };
   /** Which page's field issues to report: the step form's or the review page's. */
   on?: "form" | "review";
   /** Names of the project's secrets that hold a value (see `validateDirectoryAnswers`). */
@@ -119,13 +124,17 @@ export function placeDirectoryResults(
     const changedNow = placement?.readsConfirmation
       ? changedStanding
       : changedValues;
-    const staleBecause = (placement?.reads ?? []).filter((key) =>
-      changedNow.has(key)
-    );
+    const freshness = input.findingFreshness?.(finding);
+    const staleBecause = [...new Set([
+      ...(placement?.reads ?? []).filter((key) => changedNow.has(key)),
+      ...(freshness?.staleBecause ?? []),
+    ])];
     const current =
       evidenceStatus === "established" || evidenceStatus === "inconclusive";
     if (current && staleBecause.length > 0) {
       evidenceStatus = "stale";
+    } else if (current && freshness?.expiredWithoutInputs) {
+      evidenceStatus = "not-tested";
     }
     return {
       finding,

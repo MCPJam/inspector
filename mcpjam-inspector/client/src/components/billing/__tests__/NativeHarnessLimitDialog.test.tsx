@@ -245,7 +245,11 @@ describe("NativeHarnessLimitDialog", () => {
 
   it("offers a project admin the switch for the active project", async () => {
     switchState.switchCount = 3;
-    switchState.switchClients.mockResolvedValue(true);
+    switchState.switchClients.mockResolvedValue({
+      switched: 3,
+      skipped: 0,
+      switchedHostIds: ["client_a", "client_b", "client_c"],
+    });
     const afterSwitch = vi.fn();
     useNativeHarnessLimitDialogStore.setState({ afterSwitch });
     useNativeHarnessLimitDialogStore.getState().open({});
@@ -264,12 +268,15 @@ describe("NativeHarnessLimitDialog", () => {
       expect(useNativeHarnessLimitDialogStore.getState().notice).toBeNull(),
     );
     // The Playground's new chat with the refused message, when it asked.
-    expect(afterSwitch).toHaveBeenCalledTimes(1);
+    expect(afterSwitch).toHaveBeenCalledExactlyOnceWith({
+      projectId: "proj_active",
+      switchedHostIds: ["client_a", "client_b", "client_c"],
+    });
   });
 
-  it("leaves a newer notice open when an earlier switch finishes", async () => {
+  it("keeps the switch scoped to its original project after navigation", async () => {
     switchState.switchCount = 3;
-    let finishSwitch!: (moved: boolean) => void;
+    let finishSwitch!: (result: { switched: number; switchedHostIds: string[] }) => void;
     switchState.switchClients.mockReturnValue(
       new Promise((resolve) => {
         finishSwitch = resolve;
@@ -281,14 +288,32 @@ describe("NativeHarnessLimitDialog", () => {
       screen.getByRole("button", { name: "Switch 3 clients to MCPJam Harness" }),
     );
 
+    const projectB = createProject({
+      id: "local_b",
+      organizationId: "org_b",
+      sharedProjectId: "proj_b",
+    });
+    const afterSwitch = vi.fn();
     act(() => {
+      appState.value = {
+        activeProjectId: projectB.id,
+        projects: { [projectB.id]: projectB },
+      };
       useNativeHarnessLimitDialogStore.getState().close();
+      useNativeHarnessLimitDialogStore.getState().setAfterSwitch(afterSwitch);
       useNativeHarnessLimitDialogStore
         .getState()
         .open({ organizationId: "org_b" }, ["run:run_b"]);
     });
-    await act(async () => finishSwitch(true));
+    expect(switchProjectIds).toHaveBeenLastCalledWith("proj_b");
+    await act(async () =>
+      finishSwitch({ switched: 1, switchedHostIds: ["client_a"] }),
+    );
 
+    expect(afterSwitch).toHaveBeenCalledExactlyOnceWith({
+      projectId: "proj_active",
+      switchedHostIds: ["client_a"],
+    });
     expect(useNativeHarnessLimitDialogStore.getState().notice).toEqual({
       organizationId: "org_b",
     });
@@ -322,7 +347,7 @@ describe("NativeHarnessLimitDialog", () => {
   // client; either way the person is still out of turns.
   it("stays open, and starts no new chat, when no client moved", async () => {
     switchState.switchCount = 2;
-    switchState.switchClients.mockResolvedValue(false);
+    switchState.switchClients.mockResolvedValue(null);
     const afterSwitch = vi.fn();
     useNativeHarnessLimitDialogStore.setState({ afterSwitch });
     useNativeHarnessLimitDialogStore.getState().open({});
@@ -334,6 +359,21 @@ describe("NativeHarnessLimitDialog", () => {
 
     await waitFor(() => expect(switchState.switchClients).toHaveBeenCalled());
     expect(useNativeHarnessLimitDialogStore.getState().notice).not.toBeNull();
+    expect(afterSwitch).not.toHaveBeenCalled();
+  });
+
+  it("closes after an older backend switches clients without guessing which chat to reset", async () => {
+    switchState.switchCount = 1;
+    switchState.switchClients.mockResolvedValue({ switched: 1, skipped: 0 });
+    const afterSwitch = vi.fn();
+    useNativeHarnessLimitDialogStore.setState({ afterSwitch });
+    useNativeHarnessLimitDialogStore.getState().open({});
+    render(<NativeHarnessLimitDialog />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Switch 1 client to MCPJam Harness" }),
+    );
+    expect(useNativeHarnessLimitDialogStore.getState().notice).toBeNull();
     expect(afterSwitch).not.toHaveBeenCalled();
   });
 

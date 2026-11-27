@@ -350,6 +350,19 @@ test("conformance run runs every check of a suite no --check-id names", () => {
   assert.equal(input.tasks?.readinessIds, undefined);
 });
 
+test("conformance run routes a removed tasks id to the tasks suite, which drops it or refuses it alone", () => {
+  const input = runInput([
+    ...["--check-id", "tasks-declaration-hygiene"],
+    ...["--check-id", "tasks-ttl-shape"],
+  ]);
+  assert.deepEqual(input.tasks?.checkIds, ["tasks-ttl-shape"]);
+
+  assert.throws(
+    () => runInput(["--check-id", "tasks-wire-resolvable"]),
+    isUsageError("Tasks check tasks-wire-resolvable was removed"),
+  );
+});
+
 test("conformance run sends retired and renamed ids to their suite", () => {
   const [retired] = Object.keys(RETIRED_MCP_CHECK_IDS);
   const [renamed] = Object.entries(RENAMED_MCP_TASKS_CHECK_IDS);
@@ -359,6 +372,38 @@ test("conformance run sends retired and renamed ids to their suite", () => {
 
   assert.deepEqual(input.protocol?.checkIds, [retired]);
   assert.deepEqual(input.tasks?.checkIds, [renamed[1]]);
+});
+
+test("conformance run drops a removed id next to other protocol checks", () => {
+  const input = runInput([
+    ...["--suite", "protocol", "--suite", "apps"],
+    ...["--check-id", "ping"],
+    ...["--check-id", "server-accepts-multiple-post-streams"],
+    ...["--check-id", "ui-tools-present"],
+  ]);
+
+  // The SDK drops the removed id and runs ping; apps runs as asked.
+  assert.deepEqual(input.protocol?.checkIds, [
+    "ping",
+    "server-accepts-multiple-post-streams",
+  ]);
+  assert.deepEqual(input.apps?.checkIds, ["ui-tools-present"]);
+});
+
+test("conformance run refuses a protocol selection of removed ids only, before any suite runs", () => {
+  // Without this the apps check would run while the protocol suite reported a
+  // failure for a check that no longer exists.
+  assert.throws(
+    () =>
+      runInput([
+        ...["--suite", "protocol", "--suite", "apps"],
+        ...["--check-id", "server-accepts-multiple-post-streams"],
+        ...["--check-id", "ui-tools-present"],
+      ]),
+    isUsageError(
+      "Check server-accepts-multiple-post-streams was removed and nothing runs in its place.",
+    ),
+  );
 });
 
 test("conformance run rejects an unknown or blank id", () => {

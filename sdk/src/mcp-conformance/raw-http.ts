@@ -12,7 +12,9 @@ import { withAbortSignalFetch } from "../abort-signal.js";
  * The harness NEVER negotiates and NEVER repairs. It does not run an
  * `initialize` prelude, does not add a protocol-version header of its own, and
  * does not retry: a check that wants any of that asks for it explicitly (see
- * {@link modernEnvelope} / {@link modernHeaders}, which a check opts into). That
+ * {@link modernEnvelope} / {@link modernHeaders}, which a check opts into, and
+ * {@link resumePolledStream}, which calls back for an answer a 2025 server
+ * handed to polling). That
  * is what makes it usable for hostile framing — the whole point of the raw
  * track is to send exactly the bytes the check intends, including the wrong
  * ones.
@@ -28,12 +30,33 @@ import {
   LOG_LEVEL_META_KEY,
   PROTOCOL_VERSION_META_KEY,
 } from "@modelcontextprotocol/client";
+import {
+  buildMcpParamHeaders,
+  encodeMcpHeaderValue,
+  scanXMcpHeaderDeclarations,
+} from "../mcp-client-manager/mcp-header-mirror.js";
 import type { RawHttpCheckContext } from "./types.js";
 import {
   createCapturingFetch,
   type RawExchange,
   type RawSseEvent,
+  type DecodedBody,
 } from "./raw-capture.js";
+import {
+  pollingOutcome,
+  resumePolledStream,
+  streamAnswersRequest,
+  unreadPolledAnswerMessage,
+  type PolledStreamResume,
+} from "./raw-poll-resume.js";
+
+export {
+  pollingOutcome,
+  resumePolledStream,
+  streamAnswersRequest,
+  unreadPolledAnswerMessage,
+  type PolledStreamResume,
+};
 
 export {
   CLIENT_CAPABILITIES_META_KEY,
@@ -241,7 +264,14 @@ export interface RawHttpResult {
   sse?: RawSseEvent[];
   /** The full captured exchange (request side included). */
   exchange: RawExchange;
+  /**
+   * Set by {@link resumePolledStream} when it called the server back for this
+   * answer. `sse` then also holds the events the call-backs read; every other
+   * field is still the original request's.
+   */
+  resumed?: PolledStreamResume;
 }
+
 
 export interface JsonRpcErrorShape {
   code: number;
@@ -302,6 +332,11 @@ export function modernRequestBody(options: {
  * The SEP-2243 standard request headers for a modern call. `name` is the
  * `Mcp-Name` mirror, required whenever the body carries a `params.name` or
  * `params.uri` (tools/call, prompts/get, resources/read).
+ *
+ * `name` is the value as it stands in the body. It goes out encoded the way a
+ * conforming client sends it: plain ASCII as it is, and anything else, or
+ * anything that looks like the Base64 sentinel, wrapped as `=?base64?…?=`. A
+ * raw copy would be refused by the server before the check behind it could run.
  */
 export function modernHeaders(options: {
   protocolVersion: string;
@@ -313,8 +348,89 @@ export function modernHeaders(options: {
     Accept: "application/json, text/event-stream",
     "MCP-Protocol-Version": options.protocolVersion,
     "Mcp-Method": options.method,
-    ...(options.name === undefined ? {} : { "Mcp-Name": options.name }),
+    ...(options.name === undefined
+      ? {}
+      : { "Mcp-Name": encodeMcpHeaderValue(options.name) }),
   };
+}
+
+/** JSON-RPC code of a `HeaderMismatch` refusal, sent with HTTP 400. */
+const HEADER_MISMATCH_CODE = -32020;
+
+/**
+ * The `Mcp-Param-*` headers a conforming client sends with a `tools/call`:
+ * one for each argument the tool's `inputSchema` marks with `x-mcp-header`
+ * and the call carries a value for. "Conforming clients MUST mirror the
+ * designated parameter values into HTTP headers."
+ *
+ * None when the schema is unknown, declares nothing, or declares it in a way
+ * the spec does not allow (there is then no valid header to build).
+ */
+export function mcpParamHeaders(
+  inputSchema: unknown,
+  args: unknown
+): Record<string, string> {
+  if (inputSchema === undefined) return {};
+  const scan = scanXMcpHeaderDeclarations(inputSchema);
+  return scan.valid ? buildMcpParamHeaders(scan.declarations, args) : {};
+}
+
+/** Whether the server refused the request's headers: HTTP 400, `-32020`. */
+export function isHeaderMismatch(result: RawHttpResult): boolean {
+  return (
+    result.status === 400 &&
+    jsonRpcError(result)?.code === HEADER_MISMATCH_CODE
+  );
+}
+
+/**
+ * Send a normal `tools/call` the way a conforming client does: with the
+ * `Mcp-Param-*` headers the tool asks for, and one more try when the server
+ * still refuses them. "If the server rejects a request with a HeaderMismatch
+ * error ... the client SHOULD call `tools/list` to check for changes to the
+ * tool's `inputSchema`, then retry the original request with the appropriate
+ * headers."
+ *
+ * For the calls a check makes to get a result it can grade. A check that sends
+ * a bad header on purpose builds its own request and does not come through
+ * here.
+ */
+export async function mirroredToolCall(options: {
+  /** The arguments in the request body. */
+  args: unknown;
+  /** The tool's `inputSchema` as the run last saw it, if it saw it. */
+  inputSchema: () => Promise<unknown>;
+  /** Lists the tools again and returns the tool's `inputSchema` now. */
+  refreshInputSchema: () => Promise<unknown>;
+  /** Sends the call with these `Mcp-Param-*` headers. `attempt` is 0, then 1. */
+  send: (
+    paramHeaders: Record<string, string>,
+    attempt: 0 | 1
+  ) => Promise<RawHttpResult>;
+}): Promise<RawHttpResult> {
+  let known: unknown;
+  try {
+    known = await options.inputSchema();
+  } catch {
+    // The listing could not be read, so the schema is unknown. The call still
+    // goes out, with no `Mcp-Param-*` headers, as it would for an unlisted tool.
+    known = undefined;
+  }
+  const first = await options.send(mcpParamHeaders(known, options.args), 0);
+  if (!isHeaderMismatch(first)) {
+    return first;
+  }
+
+  let refreshed: unknown;
+  try {
+    refreshed = await options.refreshInputSchema();
+  } catch {
+    // The listing could not be read again, so there is nothing new to retry
+    // with. The refusal stands as the answer.
+    return first;
+  }
+  if (refreshed === undefined) return first;
+  return await options.send(mcpParamHeaders(refreshed, options.args), 1);
 }
 
 /**
@@ -334,33 +450,6 @@ export function legacyHeaders(options: {
       : {}),
     ...(options.sessionId ? { "mcp-session-id": options.sessionId } : {}),
   };
-}
-
-/**
- * The 2025-era `initialize` prelude a raw legacy probe needs before it can
- * address a stateful server. Returns the exchange verbatim plus the minted
- * session id (absent for a stateless legacy server — that is a legitimate
- * outcome, not an error).
- */
-export async function legacyInitialize(
-  ctx: RawHttpCheckContext
-): Promise<{ result: RawHttpResult; sessionId?: string }> {
-  const result = await rawRequest(ctx, {
-    headers: legacyHeaders({}),
-    body: {
-      jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      params: {
-        protocolVersion:
-          ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION,
-        capabilities: {},
-        clientInfo: { ...CONFORMANCE_CLIENT_INFO },
-      },
-    },
-  });
-
-  return { result, sessionId: result.headers["mcp-session-id"] };
 }
 
 /**
@@ -490,7 +579,7 @@ export async function rawHeadersProbe(
 }
 
 /** Every JSON-RPC message on the response, whether it arrived as JSON or SSE. */
-export function jsonRpcMessages(result: RawHttpResult): unknown[] {
+export function jsonRpcMessages(result: DecodedBody): unknown[] {
   if (result.sse) {
     return result.sse
       .map((event) => event.json)
@@ -512,7 +601,7 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
  * two independent facts.
  */
 export function jsonRpcError(
-  result: RawHttpResult
+  result: DecodedBody
 ): JsonRpcErrorShape | undefined {
   for (const message of jsonRpcMessages(result)) {
     const error = asRecord(asRecord(message)?.error);
@@ -533,7 +622,7 @@ export function jsonRpcError(
 
 /** The in-band JSON-RPC `result` payload, if the response carried one. */
 export function jsonRpcResult(
-  result: RawHttpResult
+  result: DecodedBody
 ): Record<string, unknown> | undefined {
   for (const message of jsonRpcMessages(result)) {
     const payload = asRecord(asRecord(message)?.result);

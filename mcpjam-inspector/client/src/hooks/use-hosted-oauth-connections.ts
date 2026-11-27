@@ -13,8 +13,12 @@ export function useHostedOAuthConnections(
     key: string;
     connections: OAuthConnection[];
     shared: boolean;
+    localDeliveryAllowed: boolean;
   }>();
   const [error, setError] = useState<string>();
+  // Counts lists that have landed, whether they succeeded or failed, so a
+  // caller can tell its own refetch finished even when the value is unchanged.
+  const [landed, setLanded] = useState(0);
   const [revision, setRevision] = useState(0);
   const refetch = useCallback(() => setRevision((n) => n + 1), []);
   useEffect(() => {
@@ -27,13 +31,16 @@ export function useHostedOAuthConnections(
     if (enabled && projectId && serverId)
       void listOAuthConnections(projectId, serverId)
         .then((rows) => {
-          if (!cancelled) setList({ key: `${projectId}/${serverId}`, ...rows });
+          if (cancelled) return;
+          setList({ key: `${projectId}/${serverId}`, ...rows });
+          setLanded((n) => n + 1);
         })
         .catch((e) => {
           if (cancelled) return;
           // The rows may be gone (sharing stopped, an account deleted), so
           // nothing should keep acting on them.
           setList(undefined);
+          setLanded((n) => n + 1);
           setError(e instanceof Error ? e.message : "Could not load accounts");
         });
     return () => {
@@ -50,7 +57,9 @@ export function useHostedOAuthConnections(
     // Until the list answers, a server counts as shared, which hides adding
     // an account that the server's mode may not allow.
     shared: current?.shared ?? true,
+    localDeliveryAllowed: current?.localDeliveryAllowed ?? false,
     loaded: current !== undefined,
+    landed,
     error,
     refetch,
   };

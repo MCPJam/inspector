@@ -94,6 +94,10 @@ vi.mock("posthog-js", () => ({
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => mocks.evaluateFlag.enabled,
 }));
+const stepsEditorFlag = vi.hoisted(() => ({ enabled: false }));
+vi.mock("@/hooks/use-test-case-steps-editor-enabled", () => ({
+  useTestCaseStepsEditorEnabled: () => stepsEditorFlag.enabled,
+}));
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: () => "light",
@@ -1028,6 +1032,31 @@ describe("EvaluateTab", () => {
     });
   });
 
+  it("opens the suite's test cases from a case's crumb behind eval-test-case-steps-editor", async () => {
+    stepsEditorFlag.enabled = true;
+    mocks.route.current = {
+      type: "test-edit",
+      suiteId: "suite-a",
+      testId: "tc-1",
+    };
+    mocks.useEvalQueries.mockImplementation(
+      ({ selectedSuiteId }: { selectedSuiteId: string | null }) =>
+        makeQueryState(selectedSuiteId),
+    );
+    try {
+      render(<EvaluateTab projectId="ws-1" />);
+      await userEvent
+        .setup()
+        .click(screen.getByRole("button", { name: "Suite suite-a" }));
+      expect(mocks.toSuiteOverview).toHaveBeenCalledWith(
+        "suite-a",
+        "test-cases",
+      );
+    } finally {
+      stepsEditorFlag.enabled = false;
+    }
+  });
+
   it("redirects invalid suite routes back to the eval list", async () => {
     mocks.route.current = { type: "suite-overview", suiteId: "missing-suite" };
 
@@ -1042,7 +1071,7 @@ describe("EvaluateTab", () => {
   });
 
   it("does not bounce a just-created suite the cached overview hasn't caught up to", () => {
-    // "Promote to test case" into a NEW suite runs as an action; its result
+    // "Save as test case" into a NEW suite runs as an action; its result
     // can arrive before the overview subscription's update, so the page
     // mounts on an overview that does not list the suite yet — while the
     // suite's own query is still in flight.
@@ -1273,7 +1302,7 @@ describe("EvaluateTab", () => {
       );
     });
 
-    it("runEvalSuite launches the count Setup Run would start at, not each case's saved runs", async () => {
+    it("runEvalSuite launches the count the Set up run sheet would start at, not each case's saved runs", async () => {
       localStorage.setItem("mcpjam:suite-run-iterations:suite-b", "1");
       try {
         render(<EvaluateTab projectId="ws-1" />);

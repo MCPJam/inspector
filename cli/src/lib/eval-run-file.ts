@@ -8,6 +8,10 @@
  * offline and still exits 1 for a contract-invalid file.
  */
 
+import {
+  declaredCodeGrading,
+  staleCodeGrading,
+} from "./eval-run-file-code-grading.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
   declareEvalSuiteFileValidity,
@@ -890,6 +894,7 @@ export function mapApprovalsToHostedCases(params: {
 }
 
 export type EvalRunFileKnobs = {
+  accounts?: RunEvalSuiteInput["accounts"];
   server?: string[];
   environment?: string[];
   host?: string[];
@@ -1091,6 +1096,7 @@ export async function executeEvalRunFromFile(
       projectId: project.id,
       body: {
         judge: authored.defaults.judge ?? null,
+        ...declaredCodeGrading(authored.defaults),
         declaredSuiteId: authored.suite.id,
         name: authored.suite.name,
         ...(authored.suite.description !== undefined
@@ -1136,6 +1142,14 @@ export async function executeEvalRunFromFile(
     },
     { signal: context.signal }
   );
+  // EFTW-90: clear what the file no longer declares (see the module).
+  const staleGrading = staleCodeGrading(authored.defaults, syncedOnWire.suite);
+  if (staleGrading) {
+    await negotiated.client.syncFileOwnedEvalSuite(
+      { projectId: project.id, body: { declaredSuiteId: authored.suite.id, name: authored.suite.name, sourceHash, ...staleGrading } },
+      { signal: context.signal }
+    );
+  }
   const synced = {
     ...syncedOnWire,
     suite: suiteDetailFromWire(negotiated.vocabulary, syncedOnWire.suite),
@@ -1222,6 +1236,7 @@ export async function executeEvalRunFromFile(
         sourceHash,
         idempotencyKey,
         ...(knobs.server ? { servers: knobs.server } : {}),
+        ...(knobs.accounts ? { accounts: knobs.accounts } : {}),
         ...(knobs.environment?.length === 1
           ? { environment: knobs.environment[0] }
           : knobs.environment?.length

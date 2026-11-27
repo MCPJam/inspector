@@ -20,7 +20,8 @@ import {
   formatProjectsHuman,
   formatShowServersHuman,
 } from "../lib/projects-render.js";
-import { writeResult } from "../lib/output.js";
+import { setProcessExitCode, writeResult } from "../lib/output.js";
+import { recordCommandOutcome } from "../lib/command-outcome.js";
 import {
   addOrgOption,
   addProjectOption,
@@ -498,7 +499,7 @@ export function registerProjectsCommands(program: Command): void {
             `  mcpjam cloud projects servers connect-status --request ${created.connectionRequestId}\n` +
             `  mcpjam cloud projects servers connect-cancel --request ${created.connectionRequestId}\n`
         );
-        process.exitCode = 1;
+        setProcessExitCode(1);
       }
     }
   );
@@ -662,6 +663,7 @@ async function pollConnection(
     | undefined;
   const onInterrupt = () => {
     interrupted = true;
+    recordCommandOutcome("interrupted");
     process.stderr.write(
       "\nStopped watching. The request continues in the cloud — open the link above to finish it.\n"
     );

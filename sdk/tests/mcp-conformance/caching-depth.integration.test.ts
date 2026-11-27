@@ -24,6 +24,8 @@ interface CacheFixtureOptions {
   templatePageScopes?: unknown[];
   /** Answer a read of an unknown resource with `{ contents: [] }`. */
   emptyContentsForMissing?: boolean;
+  missingResourceStatus?: number;
+  missingResourceCode?: number;
   /**
    * Answer these methods with a non-complete `resultType` and NO hints — the
    * shape the extension explicitly excuses from carrying them.
@@ -159,14 +161,17 @@ async function serveCacheFixture(options: CacheFixtureOptions) {
           if (options.emptyContentsForMissing) {
             return ok({ contents: [] });
           }
-          return send({
-            jsonrpc: "2.0",
-            id,
-            error: {
-              code: -32602,
-              message: "Resource not found",
+          return send(
+            {
+              jsonrpc: "2.0",
+              id,
+              error: {
+                code: options.missingResourceCode ?? -32602,
+                message: `Resource not found: ${uri}`,
+              },
             },
-          });
+            options.missingResourceStatus ?? 200,
+          );
         }
         default:
           return send(
@@ -449,5 +454,37 @@ describe("modern-resource-read-no-empty-contents", () => {
       ["modern-resource-not-found-invalid-params", "failed"],
       ["modern-resource-read-no-empty-contents", "failed"],
     ]);
+  });
+});
+
+describe("modern-resource-not-found-invalid-params", () => {
+  const ID: MCPCheckId = "modern-resource-not-found-invalid-params";
+
+  it.each([200, 400])("accepts -32602 on HTTP %i", async (status) => {
+    const check = byId(
+      (await run({ missingResourceStatus: status }, [ID])).checks,
+      ID,
+    );
+    expect(check.status).toBe("passed");
+    expect(check.details).toMatchObject({
+      httpStatus: status,
+      jsonRpcCode: -32602,
+    });
+  });
+
+  it.each([200, 400])("rejects a wrong error code on HTTP %i", async (status) => {
+    const check = byId(
+      (
+        await run(
+          { missingResourceStatus: status, missingResourceCode: -32002 },
+          [ID],
+        )
+      ).checks,
+      ID,
+    );
+    expect(check.status).toBe("failed");
+    expect(check.error?.message).toContain(
+      "expected in-band JSON-RPC code -32602",
+    );
   });
 });

@@ -48,9 +48,10 @@ pnpm-lock.yaml
 # `--frozen-lockfile` and the runtime pack fingerprints.
 !server/utils/harness/codex-appserver/bootstrap/pnpm-lock.yaml
 !server/utils/harness/copilot-cli/bridge/pnpm-lock.yaml
-# …and the Claude Code vendor pack graph's, which the pack build installs
-# frozen and which is that pack's recipe input.
+# …and the Claude Code and OpenCode vendor pack graphs', which the pack build
+# installs frozen and which are those packs' recipe inputs.
 !scripts/local-harness-pack-recipes/claude-code-vendor/pnpm-lock.yaml
+!scripts/local-harness-pack-recipes/opencode-vendor/pnpm-lock.yaml
 
 # debug
 build-archive.log

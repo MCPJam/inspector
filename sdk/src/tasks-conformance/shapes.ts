@@ -219,11 +219,16 @@ export function validateTaskStatusPayload(task: unknown): ShapeVerdict {
   return { violations, warnings };
 }
 
+/**
+ * A failed task without a message a human can read: absent, `null`, a
+ * non-string, or blank all leave nobody knowing why it failed.
+ */
 export function failedTaskLacksStatusMessage(task: unknown): boolean {
   return (
     isRecord(task) &&
     task.status === "failed" &&
-    task.statusMessage === undefined
+    (typeof task.statusMessage !== "string" ||
+      task.statusMessage.trim() === "")
   );
 }
 

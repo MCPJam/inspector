@@ -104,7 +104,7 @@ beta; they are listed [after the table](#held-tools).
 | `get_conformance_report` | Page through a conformance run's failing checks, 50 at a time, each with the suite and id to read it in full. | — |
 | `get_conformance_check` | Read one conformance check in full: its failure, duration, and stored details and output, each capped at 16 KB. | — |
 | `list_eval_suites` | List the eval suites saved in an MCPJam project, with latest-run summaries and pass-rate trends. | ✅ |
-| `list_eval_suite_runs` | List recent runs of an eval suite, newest first, with status, pass/fail result, and summary counts. | ✅ |
+| `list_eval_suite_runs` | List recent runs of an eval suite, newest first, with status, pass/fail result, and summary counts. Without a suite, lists the one holding the project's most recent run; when no listed run has finished, adds the newest one that has. | ✅ |
 | `run_eval_case` | Start an asynchronous run of ONE case in an existing eval suite — a persisted, fully-queryable run scoped to just that case (inspect it with get_eval_run / list_eval_run_iterations / get_eval_run_steps, same as a full run). | — |
 | `run_eval_suite` | Start an asynchronous rerun of an existing eval suite, against one target or several. Fan-out is explicit: a suite with several attached targets refuses with TARGET_REQUIRED unless you name targets or pass allAttached, and each target is one PAID run. | — |
 | `create_eval_suite` | Create a runnable eval suite from authored test cases. | — |
@@ -137,6 +137,9 @@ beta; they are listed [after the table](#held-tools).
 | `backtest_eval_run` | Preview draft assertions against stored evidence; reports missing capture and never changes saved results. | — |
 | `backtest_eval_run_judge` | Preview a draft judge rubric against recorded evidence. Spends model budget without changing saved verdicts; supports continuation. | — |
 | `request_eval_run_judge` | Run LLM-as-judge grading over a finished eval run: each case's final answer is scored against its expected output. SPENDS the organization's model budget; read the results from `get_eval_run`'s `judges.goalCompletion`. | — |
+| `build_eval_run_findings` | Build a settled eval run's findings from its recorded evidence: no model call, no quota. On a run never analyzed, a finished build starts the analysis. | — |
+| `request_eval_run_insights` | Start the findings analysis the app's run page runs. Included with MCPJam (no credits); counts against the daily insight quota. Read the result from `get_eval_run`'s `insights.findings`. | — |
+| `cancel_eval_run_insights` | Stop a running eval run analysis, the recovery path for a run stuck pending. | — |
 | `list_project_environments` | List the project environments in an MCPJam project. | — |
 | `get_project_environment` | Show one project environment: its host, optional standalone server group, pinned skill selection, pinned plugin versions, and its current `revision` (which you pass as `expectedRevision` when updating it). | — |
 | `resolve_project_environment` | Resolve a project environment to the exact execution inputs a run would use right now: the host's current config, the closed server set (including servers contributed by pinned plugin versions), and the resolved plugin versions. | — |
