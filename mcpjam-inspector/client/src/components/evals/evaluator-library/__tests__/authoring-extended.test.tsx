@@ -40,6 +40,7 @@ describe("PromptEditor", () => {
         value=""
         onChange={onChange}
         variables={variables}
+        maxLength={MAX_JUDGE_INSTRUCTIONS_LENGTH}
       />,
     );
     const box = screen.getByLabelText("Judge prompt");
@@ -49,6 +50,7 @@ describe("PromptEditor", () => {
         value="Use {{"
         onChange={onChange}
         variables={variables}
+        maxLength={MAX_JUDGE_INSTRUCTIONS_LENGTH}
       />,
     );
     fireEvent.click(screen.getByRole("option", { name: /tool_results/ }));
@@ -77,6 +79,7 @@ describe("PromptEditor", () => {
         value=""
         onChange={onChange}
         variables={variables}
+        maxLength={MAX_JUDGE_INSTRUCTIONS_LENGTH}
       />,
     );
     fireEvent.change(screen.getByLabelText("Judge prompt"), {
@@ -87,6 +90,7 @@ describe("PromptEditor", () => {
         value={full}
         onChange={onChange}
         variables={variables}
+        maxLength={MAX_JUDGE_INSTRUCTIONS_LENGTH}
       />,
     );
     onChange.mockClear();
@@ -137,6 +141,7 @@ describe("PromptEditor", () => {
           value={value}
           onChange={setValue}
           variables={variables}
+        maxLength={MAX_JUDGE_INSTRUCTIONS_LENGTH}
         />
       );
     }

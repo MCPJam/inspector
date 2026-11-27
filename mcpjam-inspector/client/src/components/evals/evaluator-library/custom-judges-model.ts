@@ -21,7 +21,7 @@ export const CUSTOM_JUDGE_COST_COPY =
  * deployment that cannot run them allows none.
  */
 export function customJudgeLimits(
-  capabilities: SuiteCapabilities | null | undefined,
+  capabilities: Pick<SuiteCapabilities, "judges"> | null | undefined,
 ): { maxJudges: number; maxPromptLength: number } {
   const custom = capabilities?.judges?.custom;
   return {

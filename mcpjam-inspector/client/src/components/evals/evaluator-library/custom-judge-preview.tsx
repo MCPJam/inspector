@@ -11,10 +11,8 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { useAction, useQuery } from "convex/react";
 import { makeFunctionReference } from "convex/server";
 import { useState } from "react";
-import {
-  convexErrorCode,
-  customJudgeFailureCopy,
-} from "./custom-judge-failure-copy";
+import { convexErrorCode } from "@/lib/convex-error";
+import { customJudgeFailureCopy } from "./custom-judge-failure-copy";
 import { VerdictPill, type VerdictStatus } from "./verdict-pill";
 
 type PreviewIteration = {
@@ -124,7 +122,7 @@ export function CustomJudgePreview({
           <SelectContent>
             {(iterations ?? []).map((t, index) => (
               <SelectItem key={t.iterationId} value={t.iterationId} title={t.iterationId}>
-                {`Iteration ${index + 1} · `}
+                {`Recent iteration ${index + 1} · `}
                 {t.runNumber !== null ? `Run #${t.runNumber} · ` : ""}
                 {t.title}
                 {t.result ? ` · ${t.result}` : ""}

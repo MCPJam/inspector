@@ -10,7 +10,9 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (name: string) => name === "evaluator-library",
 }));
 
-const capabilities = {
+const capabilities: Pick<SuiteCapabilities, "suiteId" | "judges"> = {
+  // No suite id, so the editor renders without the preview's queries.
+  suiteId: "",
   judges: {
     custom: {
       role: "advisory",
@@ -21,7 +23,7 @@ const capabilities = {
       execution: "wired",
     },
   },
-} as unknown as SuiteCapabilities;
+};
 
 const libraryJudge = {
   id: "answers-the-question-answers",
@@ -37,7 +39,7 @@ describe("CustomJudgesSection", () => {
       <CustomJudgesSection
         judgeConfig={undefined}
         onJudgeConfigChange={() => {}}
-        capabilities={{} as SuiteCapabilities}
+        capabilities={{ suiteId: "", judges: {} }}
       />,
     );
     expect(container).toBeEmptyDOMElement();
@@ -101,7 +103,7 @@ describe("CustomJudgesSection", () => {
   it("reads the judge limit and prompt length from the backend's capability", () => {
     const custom = capabilities.judges?.custom;
     if (!custom) throw new Error("Expected the custom judge capability");
-    const tight: SuiteCapabilities = {
+    const tight: Pick<SuiteCapabilities, "suiteId" | "judges"> = {
       ...capabilities,
       judges: {
         ...capabilities.judges,

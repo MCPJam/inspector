@@ -36,6 +36,8 @@ export type EvaluatorCardProps = {
   icon: LucideIcon;
   tone: EvaluatorTone;
   builtFrom: readonly BuiltFromPart[];
+  /** A short line under the question, such as a judge's cost. */
+  note?: string;
   /** The case field this evaluator compares the run against, if any. */
   dependency?: CaseField;
   inSuite?: boolean;
@@ -58,6 +60,7 @@ export function EvaluatorCard({
   icon: Icon,
   tone,
   builtFrom,
+  note,
   dependency,
   inSuite = false,
   selected = false,
@@ -94,6 +97,9 @@ export function EvaluatorCard({
             </button>
           </h3>
           <p className="text-sm text-muted-foreground">{question}</p>
+          {note ? (
+            <p className="text-xs text-muted-foreground">{note}</p>
+          ) : null}
         </div>
         {inSuite ? (
           <span className="relative inline-flex shrink-0 items-center gap-1 rounded-sm bg-success/15 px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-success">
