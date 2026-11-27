@@ -147,6 +147,13 @@ export interface MultiPageFixtureOptions {
    * tools — `getToolsForAiSdk`, for one, builds its set from `tools/list`.
    */
   listSlowTool?: boolean;
+  /**
+   * Never answer `tools/list`: each one stays open until the client gives up
+   * on it, so the client's own timeout is what ends it.
+   */
+  holdToolsList?: boolean;
+  /** Answer every `tools/list` with a JSON-RPC error carrying this code. */
+  toolsListErrorCode?: number;
 }
 
 /** The SEP-2243 `HeaderMismatch` JSON-RPC error code (2026-07-28). */
@@ -176,6 +183,17 @@ function paginatedPage<T>(
 function parsePageCursor(cursor: string): number {
   const match = /^page-(\d+)$/.exec(cursor);
   return match ? Number(match[1]) : 0;
+}
+
+/**
+ * Settles only when the client gives up on the request. No timer, so a hold
+ * whose abort never arrives cannot keep the test process alive.
+ */
+function untilAborted(signal: AbortSignal): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    if (signal.aborted) reject(signal.reason);
+    signal.addEventListener("abort", () => reject(signal.reason));
+  });
 }
 
 /** Build the fixture's fresh item lists (called once per server build). */
@@ -291,7 +309,11 @@ export function buildMultiPageFixtureServer(
         ),
       },
     }));
-    server.setRequestHandler("tools/list", (request: any) => {
+    server.setRequestHandler("tools/list", async (request: any, ctx) => {
+      if (options.toolsListErrorCode !== undefined) {
+        throw new ProtocolError(options.toolsListErrorCode, "Server error");
+      }
+      if (options.holdToolsList) await untilAborted(ctx.mcpReq.signal);
       const cursor = request?.params?.cursor;
       if (cursor === undefined) listings.walks += 1;
       const marked = listings.walks > (options.listingsWithoutTheMark ?? 0);
