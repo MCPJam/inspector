@@ -15,32 +15,44 @@
 /** The `_meta` key a 2026-07-28 result carries the server's identity under. */
 export const SERVER_INFO_META_KEY = "io.modelcontextprotocol/serverInfo";
 
+/** The raw identity stamp, including malformed values. */
+export function readServerIdentityStamp(
+  payload: Record<string, unknown>
+): unknown {
+  const meta = payload._meta;
+  if (
+    meta === null ||
+    typeof meta !== "object" ||
+    !(SERVER_INFO_META_KEY in meta)
+  ) {
+    return undefined;
+  }
+  return meta[SERVER_INFO_META_KEY];
+}
+
 /**
- * The identity a result carries, or `undefined` when it carries none.
- *
- * `DiscoverResult` has no `serverInfo` member: the identity is stamped into
- * `_meta` on every result (spec PR #3002). The top-level read is kept as a
- * lenient fallback: a server that also mirrors it there is not wrong.
+ * The discovery identity, with a top-level object as a fallback when the
+ * stamp is absent.
  */
 export function readServerIdentity(
   payload: Record<string, unknown>
-): Record<string, unknown> | undefined {
-  const meta = payload._meta as Record<string, unknown> | undefined;
-  const stamped = meta?.[SERVER_INFO_META_KEY];
-  if (stamped !== null && typeof stamped === "object") {
-    return stamped as Record<string, unknown>;
+): unknown {
+  const stamped = readServerIdentityStamp(payload);
+  if (stamped !== undefined) {
+    return stamped;
   }
   const topLevel = payload.serverInfo;
-  return topLevel !== null && typeof topLevel === "object"
-    ? (topLevel as Record<string, unknown>)
-    : undefined;
+  return topLevel !== null && typeof topLevel === "object" ? topLevel : undefined;
 }
 
 /** Whether an identity has the two members `Implementation` requires. */
-export function isWellFormedIdentity(
-  identity: Record<string, unknown>
-): boolean {
+export function isWellFormedIdentity(identity: unknown): boolean {
   return (
-    typeof identity.name === "string" && typeof identity.version === "string"
+    identity !== null &&
+    typeof identity === "object" &&
+    "name" in identity &&
+    typeof identity.name === "string" &&
+    "version" in identity &&
+    typeof identity.version === "string"
   );
 }

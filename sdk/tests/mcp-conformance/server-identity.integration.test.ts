@@ -184,8 +184,10 @@ describe("a 2026-07-28 server that names itself", () => {
 });
 
 describe("a 2026-07-28 server whose serverInfo is malformed", () => {
-  it("fails Server Discover, which grades the shape, and nothing else", async () => {
-    const result = await run(await serve({ name: 5 }), {
+  const malformedIdentities = [{ name: 5 }, null, "Hello MCP"];
+
+  it.each(malformedIdentities)("fails Server Discover for %j", async (identity) => {
+    const result = await run(await serve(identity), {
       checkIds: [HANDSHAKE, DISCOVER],
     });
 

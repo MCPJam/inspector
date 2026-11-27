@@ -33,7 +33,7 @@ import {
 import {
   SERVER_INFO_META_KEY,
   isWellFormedIdentity,
-  readServerIdentity,
+  readServerIdentityStamp,
 } from "./server-identity.js";
 import {
   DEFAULT_LEGACY_PROTOCOL_VERSION,
@@ -567,7 +567,7 @@ async function protocolVersionHeaderAdvice(
 export function serverIdentityOutcome(
   payload: Record<string, unknown>
 ): MCPReadinessOutcome | undefined {
-  const identity = readServerIdentity(payload);
+  const identity = readServerIdentityStamp(payload);
   if (identity === undefined) {
     return warning(
       "readiness-server-identity",

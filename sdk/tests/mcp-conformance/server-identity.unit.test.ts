@@ -64,11 +64,18 @@ describe("readServerIdentity", () => {
   it.each([
     ["no _meta at all", { capabilities: {} }],
     ["a _meta without the key", { _meta: {} }],
-    ["a key that is null", stamped(null)],
-    ["a key that is a string", stamped("Hello MCP")],
   ])("finds none in %s", (_label, payload) => {
     expect(readServerIdentity(payload as Record<string, unknown>)).toBeUndefined();
   });
+
+  it.each([null, "Hello MCP"])(
+    "keeps a malformed _meta value %j ahead of the fallback",
+    (identity) => {
+      expect(
+        readServerIdentity({ ...stamped(identity), serverInfo: IDENTITY }),
+      ).toBe(identity);
+    },
+  );
 });
 
 describe("isWellFormedIdentity", () => {
@@ -93,8 +100,11 @@ describe("the Server Identity advice", () => {
     expect(READINESS_CATALOG[ADVICE].title).toBe("Server Identity");
   });
 
-  it("warns, at SHOULD strength, when the result carries no identity", () => {
-    const outcome = serverIdentityOutcome({ capabilities: {} });
+  it.each([
+    ["no identity", { capabilities: {} }],
+    ["a top-level identity only", { serverInfo: IDENTITY }],
+  ] as const)("warns at SHOULD strength for %s", (_label, payload) => {
+    const outcome = serverIdentityOutcome(payload);
 
     expect(outcome).toMatchObject({
       id: ADVICE,
