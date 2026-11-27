@@ -14,7 +14,7 @@ export function eventAtTurnFromBody(input: unknown): EventAtTurn | undefined {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "eventAtTurn needs a name, a numeric receivedAt and an origin of server, simulation or replay.",
+      "eventAtTurn needs a name, a receivedAt in epoch milliseconds from 0 to 8.64e15 and an origin of server, simulation or replay.",
     );
   }
   return event;

@@ -120,6 +120,32 @@ describe("buildEventAtTurn", () => {
       buildEventAtTurn({ name: "x", receivedAt: Number.NaN, origin: "poll" }),
     ).toBeUndefined();
   });
+
+  // The bounds of the backend's `parseEventAtTurn`: from the epoch to the last
+  // time a `Date` holds.
+  const MAX_DATE_MS = 8.64e15;
+
+  it.each([0, 1.5, 1_700_000_000_000, MAX_DATE_MS])(
+    "keeps a receive time the backend stores (%s)",
+    (receivedAt) => {
+      expect(
+        buildEventAtTurn({ name: "x", receivedAt, origin: "poll" })?.receivedAt,
+      ).toBe(receivedAt);
+    },
+  );
+
+  it.each([
+    -1,
+    -MAX_DATE_MS,
+    MAX_DATE_MS + 1,
+    1e16,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+  ])("has nothing to name for a receive time the backend drops (%s)", (receivedAt) => {
+    expect(
+      buildEventAtTurn({ name: "x", receivedAt, origin: "poll" }),
+    ).toBeUndefined();
+  });
 });
 
 describe("eventAtTurnFromFeedEntry", () => {
@@ -187,6 +213,8 @@ describe("readEventAtTurn", () => {
     expect(readEventAtTurn({ ...valid, name: 7 })).toBeUndefined();
     expect(readEventAtTurn({ ...valid, name: "" })).toBeUndefined();
     expect(readEventAtTurn({ ...valid, receivedAt: "42" })).toBeUndefined();
+    expect(readEventAtTurn({ ...valid, receivedAt: -1 })).toBeUndefined();
+    expect(readEventAtTurn({ ...valid, receivedAt: 8.64e15 + 1 })).toBeUndefined();
     expect(readEventAtTurn({ ...valid, origin: "webhook" })).toBeUndefined();
     expect(readEventAtTurn({ ...valid, delivery: "sse" })).toBeUndefined();
     expect(readEventAtTurn({ ...valid, eventId: 7 })).toBeUndefined();

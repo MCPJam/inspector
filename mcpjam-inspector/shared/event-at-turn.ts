@@ -131,6 +131,15 @@ function optionalText(
   return clipped.length > 0 ? clipped : undefined;
 }
 
+/**
+ * Whether `receivedAt` is a time the backend stores: from the epoch up to the
+ * last moment a `Date` can hold (8.64e15 ms). Ingest drops an event outside
+ * it, so a turn that showed one live would lose it on reload.
+ */
+function isStorableReceivedAt(receivedAt: number): boolean {
+  return receivedAt >= 0 && !Number.isNaN(new Date(receivedAt).getTime());
+}
+
 /** What a writer knows about the event, before clipping. */
 export interface EventAtTurnSource {
   name: string;
@@ -147,13 +156,14 @@ export interface EventAtTurnSource {
 
 /**
  * The record for one event, every string clipped to its limit. `undefined`
- * when there is no event to name: an empty name, or no receive time.
+ * when there is no event to name: an empty name, or no receive time the
+ * backend stores ({@link isStorableReceivedAt}).
  */
 export function buildEventAtTurn(
   source: EventAtTurnSource,
 ): EventAtTurn | undefined {
   const name = optionalText(source.name, EVENT_AT_TURN_LIMITS.name);
-  if (!name || !Number.isFinite(source.receivedAt)) return undefined;
+  if (!name || !isStorableReceivedAt(source.receivedAt)) return undefined;
   const { origin, delivery } = eventOriginAtTurn(
     source.origin,
     source.subscriptionMode,
@@ -214,7 +224,7 @@ function isOptionalString(value: unknown): boolean {
 /**
  * A record read off a wire (a chat request body, a backend reader), as a fresh
  * object with only the fields above, every string clipped. `undefined` when
- * the value is not one: no name, no finite receive time, an origin or a
+ * the value is not one: no name, no storable receive time, an origin or a
  * delivery mode outside its set, or an optional field of the wrong type.
  * Unknown fields are left behind.
  */

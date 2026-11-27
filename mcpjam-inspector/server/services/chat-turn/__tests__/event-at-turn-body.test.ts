@@ -42,10 +42,18 @@ describe("eventAtTurnFromBody", () => {
     expect(event?.eventId).toBe("a".repeat(1023));
   });
 
+  it.each([0, 8.64e15])("accepts a receive time at the backend's bound (%s)", (receivedAt) => {
+    expect(
+      eventAtTurnFromBody({ name: "x", receivedAt, origin: "server" })?.receivedAt,
+    ).toBe(receivedAt);
+  });
+
   it.each([
     ["a string", "comment.created"],
     ["no name", { receivedAt: 1, origin: "server" }],
     ["a receive time that is not a number", { name: "x", receivedAt: "1", origin: "server" }],
+    ["a receive time before the epoch", { name: "x", receivedAt: -1, origin: "server" }],
+    ["a receive time past the last date", { name: "x", receivedAt: 1e16, origin: "server" }],
     ["a delivery mode as its origin", { name: "x", receivedAt: 1, origin: "webhook" }],
     ["an unknown delivery mode", { name: "x", receivedAt: 1, origin: "server", delivery: "sse" }],
   ])("refuses %s with a 400", (_label, body) => {
