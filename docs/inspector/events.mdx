@@ -99,6 +99,8 @@ A client must not send `events/*` requests to a server that has not declared it.
 - **A way to make an event happen.** Usually a tool on the same server, such as `add_comment` for `comment.created`. You need it to see an occurrence arrive.
 - **For webhook mode, a callback the server can reach.** The hosted app provides one. Locally, a server on your machine can call MCPJam directly. A remote server needs a public `https` URL, usually a tunnel, because conformant servers refuse plain `http` callbacks.
 - **For the hosted app, a project.** Hosted subscriptions belong to a project, and the server must be added to it.
+- **For push delivery, the local app.** The hosted app supports **Poll** and **Webhook** only. An event type that offers only push can be tested in the local app or with `mcpjam events watch --mode push`.
+- **For the CLI steps, the MCPJam CLI.** Install it with `npm i -g @mcpjam/cli`, or run any command without installing as `npx -y @mcpjam/cli@latest events …`.
 
 ## Test events in the Events tab
 
@@ -202,8 +204,6 @@ Without a receiver flag, the capability, list, poll and subscribe-refusal checks
 
 ## What to verify
 
-| Behavior the specification requires | Where to see it |
-| --- | --- |
 The ids in the right column are `mcpjam events conformance` checks. Run one with `--checks <id>`.
 
 | Behavior the specification requires | Where to see it |

@@ -8,6 +8,8 @@ The `events` commands exercise a server's MCP Events from the terminal: see what
 
 They follow the [Events Beta extension at `c77b843`](https://github.com/modelcontextprotocol/ext-events/blob/c77b84395eff0ae32f53b0516c2214fe276ed050/specification/beta/events/events.mdx) (`io.modelcontextprotocol/events`, SEP-3415), and still support the earlier working-group draft at [`28ec35e`](https://github.com/modelcontextprotocol/experimental-ext-triggers-events/blob/28ec35e905daa241f019981e2836b4a02f1c0368/docs/design-sketch-proposal.md) and ChatGPT's profile. For how the extension works and a step-by-step guide to testing it in the Inspector, see [MCP Events](/inspector/events).
 
+Install the CLI with `npm i -g @mcpjam/cli`, or prefix any command with `npx -y @mcpjam/cli@latest` instead of `mcpjam` to run it without installing.
+
 <Note>
   Every events command connects directly to the server you name, like `tools call`, and takes the same connection flags (`--url`, `--header`, `--access-token`, `--credentials-file`, `--command`, …).
 </Note>
@@ -158,11 +160,17 @@ mcpjam events conformance \
   --trigger-tool add_comment --trigger-args '{"document_id":"doc_1","text":"hi"}'
 ```
 
+<Warning>
+  `--event-args` takes a different form here. `poll`, `watch`, `subscribe` and `unsubscribe` take a plain JSON object, because they name one event type: `--event-args '{"document_id":"doc_1"}'`. `conformance` can cover several event types, so each value names its type first: `--event-args 'comment.created={"document_id":"doc_1"}'`.
+</Warning>
+
+The example serves the receiver over https with a certificate the server trusts. If the server can reach a tunnel instead, replace `--tls-cert` and `--tls-key` with `--public-url https://your-tunnel.example.com`.
+
 The result JSON goes to stdout, and a table goes to stderr:
 
 ```
 MCP Events conformance — profile beta@c77b843, protocol 2026-07-28
-  PASS  MUST    events-capability-declared               Server declares top-level capabilities.events
+  PASS  MUST    events-capability-declared               Server declares the selected Events capability
   PASS  MUST    events-subscribe-rejects-http-callback   Non-https callback URLs are rejected
   SKIP  MUST    events-delivery-signature                Deliveries are signed per Standard Webhooks — could-not-run: provide triggerEvent to cause a delivery
   …
@@ -197,5 +205,12 @@ Events error codes map to stable CLI codes (exit `1`). The Beta extension and th
 | ResourceExhausted | `-32025` | `-32013` | `EVENTS_RESOURCE_EXHAUSTED` |
 | Unsupported | `-32026` | `-32014` | `EVENTS_UNSUPPORTED` |
 | CallbackEndpointError | `-32027` | `-32015` | `EVENTS_CALLBACK_ENDPOINT_ERROR` |
+
+Two more CLI codes come from the CLI itself, before or instead of a server error. Both exit `2`:
+
+| CLI code | When |
+|---|---|
+| `EVENTS_NOT_DECLARED` | The server declared neither the Beta extension nor `capabilities.events`. No `events/*` request is sent unless you pass `--force`. |
+| `EVENTS_NO_COMPATIBLE_DELIVERY_MODE` | `watch` has no delivery mode that both the event type and the profile allow, for example a push-only event under the webhook-only `chatgpt` profile. |
 
 Anything that looks like a webhook secret is removed from error messages before they are printed, even when the server quotes one back.
