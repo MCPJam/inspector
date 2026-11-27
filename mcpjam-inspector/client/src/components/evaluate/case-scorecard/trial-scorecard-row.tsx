@@ -275,7 +275,9 @@ export function TrialScorecardRow({
               "value" in row.result &&
               typeof row.result.value === "number" &&
               (narrative || recorded.length > 0) ? (
-                <span className="mt-1 block">Score {row.result.value}</span>
+                <span className="mt-1 block">
+                  Score {row.result.value.toFixed(2)}
+                </span>
               ) : null}
               {floor ? (
                 <span

@@ -51,11 +51,12 @@ function errorReason(code: string | undefined, reason: string | undefined) {
 
 /**
  * A projected error row's `error` is the judge's code and reason joined as
- * `code: reason` (`custom-judge-rows.ts`); shown as the reason alone.
+ * `code: reason` (`custom-judge-rows.ts`); shown as the reason alone. With no
+ * code, the backend stores the error's name instead (`TimeoutError`).
  */
 function readableError(result: TrialRowResult): TrialRowResult {
   if (result.state !== "error") return result;
-  const match = /^([a-z0-9_]+)(?:: ([\s\S]*))?$/.exec(result.reason ?? "");
+  const match = /^([A-Za-z0-9_]+)(?:: ([\s\S]*))?$/.exec(result.reason ?? "");
   if (!match) return result;
   return { ...result, reason: errorReason(match[1], match[2]) };
 }
@@ -169,7 +170,6 @@ function customJudgeRow(
     roleLock: "judge",
     editable: false,
     customJudge: {
-      id,
       ...(evaluatorId ? { evaluatorId } : {}),
       ...(outputKind ? { outputKind } : {}),
     },
