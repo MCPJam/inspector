@@ -216,7 +216,7 @@ export function SidebarCredits({
             <div className="flex flex-col gap-4">
               {plan ? (
                 <div className="flex items-center justify-between gap-2">
-                  <Badge className="rounded-full border-transparent bg-primary/15 text-foreground">
+                  <Badge className="rounded-full border-primary/60 bg-primary/10 text-foreground">
                     {formatPlanName(plan)}
                   </Badge>
                   {showExplorePlansLink ? (
@@ -342,7 +342,7 @@ function UsageBar({
   return (
     <Progress
       value={filling ? 0 : percent}
-      pace="gradual"
+      pace="fill"
       aria-label={meter.label}
       aria-valuetext={`${meter.remaining.toLocaleString()} / ${meter.total.toLocaleString()} left`}
       className="h-1.5 bg-primary/15"
