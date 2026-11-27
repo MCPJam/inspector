@@ -766,6 +766,68 @@ describe("App hosted OAuth callback handling", () => {
     },
   );
 
+  describe("company step after the role question", () => {
+    const answers = (currentUser: unknown) =>
+      mockUseQuery.mockImplementation((ref: string) =>
+        ref === "users:getCurrentUser"
+          ? currentUser
+          : ref === "workOrganizations:getSignupCompanyStep"
+            ? {
+                step: "join",
+                organizationId: "org_acme",
+                name: "Acme",
+                domain: "acme.com",
+              }
+            : ref === "organizations:getMyOrganizations"
+              ? [
+                  {
+                    _id: "org_jo",
+                    name: "Jo's Org",
+                    kind: "personal",
+                    createdBy: "user-1",
+                    createdAt: 1,
+                    updatedAt: 1,
+                  },
+                ]
+              : undefined,
+      );
+    beforeEach(() => {
+      clearHostedOAuthPendingState();
+      clearScenarioSession();
+      window.history.replaceState({}, "", "/servers");
+      mockWorkOsAuthState.user = { id: "user-1" };
+    });
+
+    it("shows a new signup the step instead of the app", () => {
+      answers({
+        ...existingConvexUser,
+        createdAt: Date.parse("2026-11-01T00:00:00.000Z"),
+        occupation: "Platform Engineer",
+      });
+      render(<App />);
+      expect(
+        screen.getByRole("heading", { name: "Join Acme (Work) on MCPJam?" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "Your projects stay in Jo's Org (Personal) either way.",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("never asks about the step for an account from before the role question", () => {
+      answers(existingConvexUser);
+      render(<App />);
+      expect(mockUseQuery).not.toHaveBeenCalledWith(
+        "workOrganizations:getSignupCompanyStep",
+        expect.anything(),
+      );
+      expect(
+        screen.queryByRole("heading", { name: /on MCPJam\?$/ }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   describe("guest whose user row disappears", () => {
     let currentUser: unknown = null;
     const reload = vi.fn();

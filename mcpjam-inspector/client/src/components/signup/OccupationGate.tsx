@@ -18,14 +18,21 @@ const OCCUPATION_SUGGESTIONS = [
 interface OccupationGateProps {
   userId?: string | null;
   email?: string | null;
+  /** Keeps the form disabled and Continue spinning while the next step loads. */
+  busy?: boolean;
 }
 
-export function OccupationGate({ userId, email }: OccupationGateProps) {
+export function OccupationGate({
+  userId,
+  email,
+  busy = false,
+}: OccupationGateProps) {
   const posthog = usePostHog();
   const updateOccupation = useMutation("users:updateOccupation" as any);
   const [occupation, setOccupation] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const isSubmitting = isSaving || busy;
 
   const trimmedOccupation = occupation.trim();
   const canSubmit = trimmedOccupation.length > 0 && !isSubmitting;
@@ -37,7 +44,7 @@ export function OccupationGate({ userId, email }: OccupationGateProps) {
       return;
     }
 
-    setIsSubmitting(true);
+    setIsSaving(true);
     setError(null);
 
     try {
@@ -59,7 +66,7 @@ export function OccupationGate({ userId, email }: OccupationGateProps) {
       console.error("[signup] Failed to save occupation", err);
       setError("Could not save your occupation. Please try again.");
     } finally {
-      setIsSubmitting(false);
+      setIsSaving(false);
     }
   };
 

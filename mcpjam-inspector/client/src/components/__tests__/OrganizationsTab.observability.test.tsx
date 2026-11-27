@@ -34,6 +34,9 @@ vi.mock("@workos-inc/authkit-react", () => ({
 
 vi.mock("convex/react", () => ({
   useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
+  // Members & sharing reads and answers join requests.
+  useQuery: () => undefined,
+  useMutation: () => vi.fn(),
 }));
 
 vi.mock("@/hooks/useOrgSharePolicy", () => ({

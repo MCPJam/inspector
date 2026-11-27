@@ -10,12 +10,62 @@ export function requesterLabel(request: AccessRequest): string {
   return request.requester.name ?? request.requester.email;
 }
 
+/** What the request asks for: the project, or the organization to join. */
+export function requestTargetName(request: AccessRequest): string {
+  return request.project?.name ?? request.organizationName;
+}
+
+/** The outcome of answering a request to join an organization. */
+export function outcomeOfJoinDecision(
+  who: string,
+  organizationName: string,
+  result: DecisionResult,
+): Outcome {
+  if (result.status === "declined") {
+    // Declining a request does not remove a membership they hold already.
+    return {
+      billing: false,
+      title: "Request declined",
+      body:
+        result.access === "granted"
+          ? `You declined this request. ${who} is still a member of ${organizationName}.`
+          : "You declined this request.",
+    };
+  }
+  if (result.access === "pending" && result.seatPaymentIntentId) {
+    return {
+      billing: true,
+      title: "Approved, waiting on a seat payment",
+      body: `An organization owner has to finish the seat payment in organization billing. ${who} joins ${organizationName} after that.`,
+    };
+  }
+  if (result.access === "pending") {
+    // The backend does not say whether a seat payment or an invitation is
+    // still open (a repeat decision returns no payment id), so name both, as
+    // the project request copy does. Only an owner can pay; an admin may
+    // have approved.
+    return {
+      billing: true,
+      title: "Approved, not a member yet",
+      body: `${who} joins ${organizationName} after an organization owner finishes an open seat payment in organization billing, or after they accept the invitation.`,
+    };
+  }
+  return {
+    billing: false,
+    title: "Request approved",
+    body: `${who} is now a member of ${organizationName}.`,
+  };
+}
+
 /** The outcome of a decision this approver just made. */
 export function outcomeOfDecision(
   request: AccessRequest,
   result: DecisionResult,
 ): Outcome {
   const who = requesterLabel(request);
+  if (!request.project) {
+    return outcomeOfJoinDecision(who, request.organizationName, result);
+  }
   const project = request.project.name;
   if (result.status === "declined") {
     // Declining one request does not take away access from another approval.
@@ -61,6 +111,20 @@ export function outcomeOfEarlierDecision(request: AccessRequest): Outcome {
   const when = request.decidedAt
     ? ` on ${new Date(request.decidedAt).toLocaleDateString()}`
     : "";
+  if (!request.project) {
+    const organization = request.organizationName;
+    return request.status === "approved"
+      ? {
+          billing: false,
+          title: "Request already approved",
+          body: `${who} was approved to join ${organization}${when}.`,
+        }
+      : {
+          billing: false,
+          title: "Request already declined",
+          body: `${who}'s request to join ${organization} was declined${when}.`,
+        };
+  }
   return request.status === "approved"
     ? {
         billing: false,

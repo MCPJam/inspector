@@ -23,9 +23,16 @@ import { accessRequestPath } from "@/components/access-requests/access-request-a
 
 /** Notifications that ask the reader to act, and so open a page on click. */
 function actionPath(notification: Notification): string | null {
-  return notification.type === "project_access_requested"
+  return isAccessRequest(notification.type)
     ? accessRequestPath(notification.entityId)
     : null;
+}
+
+function isAccessRequest(type: NotificationType): boolean {
+  return (
+    type === "project_access_requested" ||
+    type === "organization_access_requested"
+  );
 }
 
 function formatTimeAgo(timestamp: number): string {
@@ -68,6 +75,8 @@ function getNotificationMessage(notification: Notification): string {
       return `${actor} added you to project "${entityName}"`;
     case "project_access_requested":
       return `${actor} asked for access to project "${entityName}"`;
+    case "organization_access_requested":
+      return `${actor} asked to join organization "${entityName}"`;
     case "project_removed":
       return `${actor} removed you from project "${entityName}"`;
     case "organization_added":
@@ -138,7 +147,7 @@ function NotificationItem({
         className={cn(
           "flex items-center justify-center h-8 w-8 rounded-full shrink-0",
           notification.type === "organization_seat_payment_required" ||
-            notification.type === "project_access_requested"
+            isAccessRequest(notification.type)
             ? "bg-primary/10 text-primary"
             : notification.type.includes("added")
               ? "bg-success/10 text-success"

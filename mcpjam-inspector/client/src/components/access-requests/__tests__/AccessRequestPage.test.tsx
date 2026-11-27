@@ -37,6 +37,7 @@ const REQUEST: AccessRequest = {
   decidedAt: null,
   project: { id: "proj_1", name: "Payments" },
   organizationId: "org_1",
+  organizationName: "Acme",
   requester: { name: "Ada Lovelace", email: "ada@example.com" },
   requesterInOrganization: false,
 };
@@ -209,6 +210,27 @@ describe("AccessRequestPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     expect(
       await screen.findByText("Another seat payment is open"),
+    ).toBeInTheDocument();
+  });
+
+  it("asks to approve a request to join the organization", async () => {
+    convex.request = {
+      ...REQUEST,
+      project: null,
+      requester: { name: "Jo Chen", email: "jo@acme.com" },
+    };
+    convex.decide.mockResolvedValue({ status: "approved", access: "granted" });
+    renderPage();
+    expect(
+      screen.getByRole("heading", { name: "Jo Chen asked to join Acme" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Approving adds Jo Chen to Acme as a member."),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(await screen.findByText("Request approved")).toBeInTheDocument();
+    expect(
+      screen.getByText("Jo Chen is now a member of Acme."),
     ).toBeInTheDocument();
   });
 

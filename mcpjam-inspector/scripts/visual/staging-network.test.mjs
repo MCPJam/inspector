@@ -112,6 +112,39 @@ test("the What's new stamp is answered as a failure and never permitted", () => 
   assert.equal(refuseWithheldWrite("malformed"), null);
 });
 
+test("the company step's two writes are withheld, and asking to join is not", () => {
+  const withheld = [
+    { udfPath: "workOrganizations:resolveSignupCompany", args: [{}] },
+    {
+      udfPath: "workOrganizations:completeCompanyStep",
+      args: [{ choice: "continue" }],
+    },
+  ];
+  for (const write of withheld) {
+    const frame = { type: "Mutation", requestId: 9, ...write };
+    assert.equal(permitsConvexFrame(JSON.stringify(frame)), false);
+    assert.equal(
+      JSON.parse(refuseWithheldWrite(JSON.stringify(frame))).success,
+      false,
+    );
+  }
+  for (const write of [
+    {
+      udfPath: "workOrganizations:completeCompanyStep",
+      args: [{ choice: "ask" }],
+    },
+    { udfPath: "workOrganizations:completeCompanyStep", args: [{}] },
+    {
+      udfPath: "workOrganizations:resolveSignupCompany",
+      args: [{ domain: "acme.com" }],
+    },
+  ]) {
+    const frame = JSON.stringify({ type: "Mutation", requestId: 9, ...write });
+    assert.equal(refuseWithheldWrite(frame), null);
+    assert.equal(permitsConvexFrame(frame), false);
+  }
+});
+
 test("the declined analytics consent names the app's PostHog project", () => {
   const source = readFileSync(
     new URL("../../client/src/lib/PosthogUtils.ts", import.meta.url),

@@ -49,6 +49,20 @@ test("staging synthetic user logs in and refreshes through the same-origin proxy
         .fill(SYNTHETIC_ROLE);
       await page.getByRole("button", { name: "Continue", exact: true }).click();
     }
+    phase = "pass the company step if shown";
+    // The guard withholds the step's writes, so it rarely shows. When it does,
+    // leave it without asking to join anyone.
+    const companyStep = page.getByRole("heading", {
+      name: /^(Join .+ on MCPJam\?|You’re now the owner of .+)$/,
+    });
+    await expect(companyStep.or(project).first()).toBeVisible();
+    if (await companyStep.isVisible()) {
+      await page
+        .getByRole("button", {
+          name: /^(Continue in Personal|Continue to .+)$/,
+        })
+        .click();
+    }
     phase = "verify synthetic project";
     await expect(
       page.getByText("Visual Pilot v1", { exact: true }).first(),

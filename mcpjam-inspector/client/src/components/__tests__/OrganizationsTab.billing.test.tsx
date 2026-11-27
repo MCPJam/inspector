@@ -317,6 +317,8 @@ vi.mock("@workos-inc/authkit-react", () => ({
 vi.mock("convex/react", () => ({
   useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
   useQuery: () => undefined,
+  // Members & sharing reads and answers join requests.
+  useMutation: () => vi.fn(),
   // Credit balance still reaches this hook through the rendered billing tree.
   useQueries: () => ({}),
 }));

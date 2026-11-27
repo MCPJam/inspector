@@ -15,6 +15,9 @@ export type NotificationType =
   // Approver-targeted: someone asked to join a project. `entityId` is the
   // access request, `entityName` the project, and the actor the requester.
   | "project_access_requested"
+  // Approver-targeted, the same as above for a request to join the
+  // organization: `entityName` is the organization.
+  | "organization_access_requested"
   | "scheduled_eval_failed"
   | "scheduled_eval_paused"
   // Org-wide, and addressed to the people who can act: the organization

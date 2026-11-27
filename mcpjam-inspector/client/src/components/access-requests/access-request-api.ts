@@ -9,8 +9,10 @@ export type AccessRequest = {
   status: AccessRequestStatus;
   requestedAt: number;
   decidedAt: number | null;
-  project: { id: string; name: string };
+  /** Null when the request asks to join the organization itself. */
+  project: { id: string; name: string } | null;
   organizationId: string;
+  organizationName: string;
   requester: { name: string | null; email: string };
   requesterInOrganization: boolean;
 };
