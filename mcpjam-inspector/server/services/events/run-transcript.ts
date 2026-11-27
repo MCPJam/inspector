@@ -108,6 +108,40 @@ function countUserMessages(messages: unknown[]): number {
   ).length;
 }
 
+/**
+ * The engine ran the turn as prompt 0 of a fresh conversation, so its spans
+ * and saved requests say prompt 0 and index the run's own messages. In the
+ * thread the turn is prompt `promptIndex`, after `messageOffset` earlier
+ * messages; without this every run of a trigger lands on the first prompt row.
+ */
+function alignTurnToThread(
+  trace: PersistedTurnTrace,
+  promptIndex: number,
+  messageOffset: number,
+): PersistedTurnTrace {
+  return {
+    ...trace,
+    spans: trace.spans.map((span) => ({
+      ...span,
+      promptIndex,
+      ...(typeof span.messageStartIndex === "number"
+        ? { messageStartIndex: span.messageStartIndex + messageOffset }
+        : {}),
+      ...(typeof span.messageEndIndex === "number"
+        ? { messageEndIndex: span.messageEndIndex + messageOffset }
+        : {}),
+    })),
+    ...(trace.requestPayloads
+      ? {
+          requestPayloads: trace.requestPayloads.map((entry) => ({
+            ...entry,
+            promptIndex,
+          })),
+        }
+      : {}),
+  };
+}
+
 export const defaultTranscriptPort: TranscriptPort = {
   load: loadFromBackend,
   persist: (options) => persistChatSessionToConvex(options),
@@ -149,6 +183,9 @@ export async function persistEventRunTranscript(args: {
       });
       return { chatSessionId, persisted: false };
     }
+    // This run's prompt is the next one in the THREAD, not prompt 0 of a
+    // fresh conversation (which is what the engine saw).
+    const promptIndex = countUserMessages(prior?.messages ?? []);
     const outcome = await port.persist({
       chatSessionId,
       modelId: args.modelId,
@@ -164,17 +201,21 @@ export async function persistEventRunTranscript(args: {
       lastActivityAt: Date.now(),
       ...(prior?.version !== undefined ? { expectedVersion: prior.version } : {}),
       turnTrace: {
-        ...(args.turnTrace ?? {
-          startedAt: args.startedAt,
-          endedAt: Date.now(),
-          spans: [],
-          modelId: args.modelId,
-        }),
+        ...(args.turnTrace
+          ? alignTurnToThread(
+              args.turnTrace,
+              promptIndex,
+              prior?.messages.length ?? 0,
+            )
+          : {
+              startedAt: args.startedAt,
+              endedAt: Date.now(),
+              spans: [],
+              modelId: args.modelId,
+            }),
         ...(args.turnRecord ?? {}),
         turnId,
-        // This run's prompt is the next one in the THREAD, not prompt 0 of a
-        // fresh conversation (which is what the engine saw).
-        promptIndex: countUserMessages(prior?.messages ?? []),
+        promptIndex,
       },
     });
     if (outcome.outcome === "conflict") continue;

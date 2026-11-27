@@ -948,6 +948,77 @@ describe("event run transcripts (one chat thread per trigger)", () => {
     ).toEqual(["event one", "did one", "event two", "did two"]);
   });
 
+  it("puts a later run's spans and saved requests on its own prompt in the thread", async () => {
+    const { port, persisted } = memoryTranscriptPort();
+    const base = {
+      port,
+      triggerId: "trg_1",
+      projectId: "proj_1",
+      bearer: "jwt",
+      modelId: "m",
+      modelSource: "mcpjam" as const,
+      systemPrompt: "sys",
+      startedAt: 1,
+    };
+    // What the engine reports for every run: prompt 0 of its own messages.
+    const engineTrace = (runId: string) => ({
+      turnId: `engine-${runId}`,
+      promptIndex: 0,
+      startedAt: 1,
+      endedAt: 2,
+      modelId: "m",
+      spans: [
+        {
+          id: "step-0",
+          name: "Step 1",
+          category: "step" as const,
+          startMs: 0,
+          endMs: 1,
+          promptIndex: 0,
+          messageStartIndex: 1,
+          messageEndIndex: 1,
+        },
+        { id: "conn", name: "Connect", category: "connection" as const, startMs: 0, endMs: 1 },
+      ],
+      requestPayloads: [
+        { turnId: `engine-${runId}`, promptIndex: 0, stepIndex: 0, payload: {} },
+      ],
+    });
+    const runMessages = (text: string) => [
+      { role: "user" as const, content: text },
+      { role: "assistant" as const, content: [{ type: "text" as const, text: "done" }] },
+    ];
+    await persistEventRunTranscript({
+      ...base,
+      runId: "run_1",
+      runMessages: runMessages("event one"),
+      turnTrace: engineTrace("run_1"),
+    });
+    await persistEventRunTranscript({
+      ...base,
+      runId: "run_2",
+      runMessages: runMessages("event two"),
+      turnTrace: engineTrace("run_2"),
+    });
+
+    expect(persisted[0]!.turnTrace!.spans[0]).toMatchObject({
+      promptIndex: 0,
+      messageStartIndex: 1,
+      messageEndIndex: 1,
+    });
+    const second = persisted[1]!.turnTrace!;
+    expect(second.promptIndex).toBe(1);
+    expect(second.spans[0]).toMatchObject({
+      promptIndex: 1,
+      // After the first run's two messages.
+      messageStartIndex: 3,
+      messageEndIndex: 3,
+    });
+    expect(second.spans[1]).toMatchObject({ promptIndex: 1 });
+    expect(second.spans[1]).not.toHaveProperty("messageStartIndex");
+    expect(second.requestPayloads?.[0]).toMatchObject({ promptIndex: 1 });
+  });
+
   it("never overwrites a thread it could not read", async () => {
     const { port } = memoryTranscriptPort();
     (port.load as any).mockRejectedValueOnce(new Error("blob unavailable"));
