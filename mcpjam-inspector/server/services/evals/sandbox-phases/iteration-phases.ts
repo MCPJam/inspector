@@ -186,10 +186,11 @@ export async function runIterationCleanup(
 ): Promise<IterationScriptResult | undefined> {
   const script = ctx.config.scripts.iterationCleanup;
   if (!script) return undefined;
-  // Its own clock: cleanup also runs after a cancel or a timeout, when the
-  // iteration's has already run out.
+  // Its own clock and no signal: cleanup also runs after a cancel or a
+  // timeout, when the iteration's clock has run out and its signal fired.
+  const { signal: _iterationSignal, ...rest } = ctx;
   const cleanupCtx = {
-    ...ctx,
+    ...rest,
     deadlineAt: Date.now() + PHASE_LIMITS_MS.capacity + PHASE_LIMITS_MS.cleanup,
   };
   const boxed = await withPhaseBox(

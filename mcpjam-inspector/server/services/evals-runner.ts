@@ -5562,6 +5562,7 @@ const runLocalIteration = async ({
     // is handed back so the stream route can resolve the terminal row.
     const localIsAborted = () => abortSignal?.aborted === true;
     const returnLocalCancelled = async () => {
+      await finishLocalIterationPhases(phases, { notRun: "Not run: the iteration was stopped.", releaseAgentBox: releaseLocalEvalBox }, iterationMetadataBase);
       await markIterationStopped({ convexClient, iterationId, abortSignal });
       return {
         // Aborted mid-iteration — never score as passed (a pinned-only case would
@@ -5826,6 +5827,7 @@ const runLocalIteration = async ({
     // from here — re-reading the signal is a second source of truth for a fact
     // the outcome already carries.
     if (isIterationBudgetAbort(undefined, abortSignal)) {
+      await finishLocalIterationPhases(phases, { notRun: "Not run: the iteration timed out.", releaseAgentBox: releaseLocalEvalBox }, iterationMetadataBase);
       throw abortSignal?.reason;
     }
     if (acc.timeout) iterationMetadataBase.timeout = acc.timeout;
@@ -6133,6 +6135,9 @@ const runLocalIteration = async ({
     // Rethrown, not swallowed: this iteration ran out of its own budget, and
     // `runIterationUnderBudget` is what records that. See
     // `isIterationBudgetAbort`.
+    if (isIterationBudgetAbort(error, abortSignal) || abortSignal?.aborted === true) {
+      await finishLocalIterationPhases(phases, { notRun: "Not run: the iteration didn't finish.", releaseAgentBox: releaseLocalEvalBox }, iterationMetadataBase);
+    }
     if (isIterationBudgetAbort(error, abortSignal)) throw error;
     // A stop can surface as a throw rather than a cooperative return: the
     // consumer rethrows the signal's reason, which is whatever the canceller
@@ -7393,6 +7398,7 @@ const runHostedIterationWithBrowser = async (
   // iteration AND after every per-turn call (success or catch).
   const isAborted = () => abortSignal?.aborted === true;
   const returnCancelled = async () => {
+    await runIterationCleanupInto(phases, iterationMetadataBase);
     await markIterationStopped({ convexClient, iterationId, abortSignal });
     return {
       // Aborted mid-iteration — never score as passed (a pinned-only case would
@@ -7729,6 +7735,7 @@ const runHostedIterationWithBrowser = async (
   // looking exactly like a cancel. Throwing hands it back to
   // `runIterationUnderBudget`, which marks the iteration timed out.
   if (isIterationBudgetAbort(undefined, abortSignal)) {
+    await runIterationCleanupInto(phases, iterationMetadataBase);
     throw abortSignal?.reason;
   }
   // The executor's own report first — see the local runner for why.

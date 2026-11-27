@@ -41,11 +41,22 @@ function anyBox(log: string[], name: string): PhaseSandbox {
       }),
     },
     commands: {
-      run: vi.fn(async (cmd: string, opts?: { background?: boolean }) => {
-        log.push(`${name}: ${cmd.split("\n")[0].slice(0, 40)}`);
-        if (!opts?.background) return { exitCode: 0 };
-        return { kill: async () => true, wait: async () => ({ exitCode: 0 }) };
-      }),
+      run: vi.fn(
+        async (
+          cmd: string,
+          opts?: { background?: boolean; signal?: AbortSignal },
+        ) => {
+          // As E2B does: a fired signal refuses the request.
+          if (opts?.signal?.aborted)
+            throw new Error("This operation was aborted");
+          log.push(`${name}: ${cmd.split("\n")[0].slice(0, 40)}`);
+          if (!opts?.background) return { exitCode: 0 };
+          return {
+            kill: async () => true,
+            wait: async () => ({ exitCode: 0 }),
+          };
+        },
+      ),
     },
   } as unknown as PhaseSandbox;
 }
@@ -167,6 +178,24 @@ describe("the own-key runner's end of an iteration", () => {
     expect(log.filter((l) => l.startsWith("provision"))).toEqual([
       "provision iteration_cleanup",
     ]);
+  });
+
+  it("cleans up after a cancel: its own clock, not the fired signal", async () => {
+    const log: string[] = [];
+    const stopped = new AbortController();
+    stopped.abort();
+    const ctx = {
+      ...setup(log),
+      signal: stopped.signal,
+      // The iteration's clock has run out too.
+      deadlineAt: Date.now() - 1,
+    };
+    const metadata: Record<string, unknown> = {};
+    await runIterationCleanupInto(ctx, metadata);
+    expect(log).toContain("provision iteration_cleanup");
+    expect(metadata.iterationScripts).toMatchObject({
+      cleanup: { status: "passed" },
+    });
   });
 
   it("tells a failed setup script from a passed one", () => {
