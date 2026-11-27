@@ -67,7 +67,14 @@ export type ArgMatcher = {
 /** The author-provided JSON Schema document for a result check. */
 export type AuthoredResultSchema = Record<string, unknown> | boolean;
 
-/** Deterministic checks on an iteration transcript, with shared check policy. */
+/**
+ * The deterministic predicate library.
+ *
+ * Discriminated on `type`. Each variant is evaluated by a pure function over
+ * the {@link IterationTranscript}. Intersected with {@link CheckPolicy} so
+ * any kind can be marked advisory (`role: "advisory"`, `severity: "warn"`)
+ * without a parallel field.
+ */
 export type Predicate = (
   | { type: "toolDescriptionsPresent"; minLength?: number }
   | {
@@ -818,7 +825,12 @@ export const predicateUnion = z.discriminatedUnion("type", [
   }),
 ]);
 
-/** Reads persisted predicates, including legacy result schema roots. */
+/**
+ * Zod schema for {@link Predicate}. The discriminated union is refined so
+ * `severity` requires `role: "advisory"`. Kind lists must read
+ * {@link predicateUnion}.options, not this wrapper. It reads persisted
+ * predicates, legacy result schema roots included.
+ */
 export const storedPredicateSchema = predicateUnion.superRefine((value, ctx) => {
   if (
     value.type === "responseCloseTo" &&

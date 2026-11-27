@@ -26,6 +26,7 @@ import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { SecretScrubber } from "./secrets/secret-scrubber";
 import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import type { ChatOrigin } from "./chat-origin.js";
+import type { EventAtTurn } from "@/shared/event-at-turn";
 
 const DEFAULT_INGEST_TIMEOUT_MS = 5_000;
 /**
@@ -331,6 +332,12 @@ export interface PersistedTurnTrace {
    * the backend drops a receipt it cannot parse and keeps the trace.
    */
   harnessMcpAtTurn?: HarnessMcpAtTurn;
+  /**
+   * The MCP event that started this turn. Inside the turn trace like
+   * `skillsAtTurn`, so it reaches the wire with no change to the body builder;
+   * the backend drops a record it cannot parse and keeps the trace.
+   */
+  eventAtTurn?: EventAtTurn;
 }
 
 // Its own import-free module so `log-events.ts`, which the client typecheck

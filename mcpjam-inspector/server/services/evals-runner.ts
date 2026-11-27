@@ -645,6 +645,7 @@ export type RunEvalSuiteOptions = {
   convexHttpUrl: string;
   convexAuthToken: RunBearer;
   mcpClientManager: MCPClientManager;
+  accountManagerForCase?: (caseId: string | undefined) => MCPClientManager;
   recorder?: SuiteRunRecorder | null;
   testCaseId?: string; // For quick runs, associate iterations with a specific test case
   compareRunId?: string; // For quick compare runs, group related iterations in metadata
@@ -4089,6 +4090,7 @@ export const runEvalSuiteWithAiSdk = async ({
   convexHttpUrl,
   convexAuthToken,
   mcpClientManager,
+  accountManagerForCase,
   recorder: providedRecorder,
   testCaseId,
   compareRunId,
@@ -4200,8 +4202,6 @@ export const runEvalSuiteWithAiSdk = async ({
       serverLabel: getServerLabelForEvalError(serverId, config.environment),
     }),
   });
-  let resolvedToolPolicyWarnings: string[] | undefined;
-
   try {
     // Inside the setup `try`: reading a job token whose renewal was refused
     // throws, and the catch below is what marks the precreated rows failed.
@@ -4220,106 +4220,137 @@ export const runEvalSuiteWithAiSdk = async ({
       harnessOfHostConfig(suiteHostConfig),
     );
 
-    // When a host policy is present we need the full tool set (including
-    // app-only) so `applyVisibilityPolicyAndCountSignals` can:
-    //   1. Count `toolsTotalBefore` honestly, and
-    //   2. Keep app-only tools when the host opted out of visibility filtering.
-    // Without this, getToolsForAiSdk pre-strips app-only tools and the policy
-    // sees a partial set — drops are reported as 0 even when tools were hidden.
-    const tools = await getEvalToolsForAiSdkOrThrow({
-      mcpClientManager,
-      serverIds,
-      includeAppOnly: Boolean(hostExecutionPolicy),
-      modelVisibleMcpToolResults:
-        hostExecutionPolicy?.modelVisibleMcpToolResults,
-      // Host-only, and deliberately NOT read through `pickField`: an eval's
-      // per-case `advancedConfig` runs at `override-wins`, and a case must not
-      // be able to switch tasks on for a suite whose host said off.
-      ...(evalTasksSeam ? { tasks: evalTasksSeam } : {}),
-      environment: config.environment,
-      setupObserver,
-      ...(descriptionOverrides
-        ? { toolDescriptionOverrides: descriptionOverrides }
-        : {}),
-    });
-    const toolAnnotations: ToolAnnotationsLookup = new Map();
-    if (toolPolicy) {
-      const uncachedServerIds = serverIds.filter(
-        (serverId) => !mcpClientManager.hasCachedToolAnnotations(serverId),
-      );
-      if (uncachedServerIds.length > 0) {
-        throw new WebRouteError(
-          400,
-          ErrorCode.VALIDATION_ERROR,
-          `TOOL_POLICY_ANNOTATIONS_UNAVAILABLE: tool policy requires a populated annotation cache for every selected server; missing ${uncachedServerIds.join(
-            ", ",
-          )}.`,
-          {
-            reason: "TOOL_POLICY_ANNOTATIONS_UNAVAILABLE",
-            serverIds: uncachedServerIds,
-          },
+    const prepareManager = async (
+      manager: MCPClientManager,
+      observer: RunSetupObserver,
+    ) => {
+      let resolvedToolPolicyWarnings: string[] | undefined;
+      // When a host policy is present we need the full tool set (including
+      // app-only) so `applyVisibilityPolicyAndCountSignals` can:
+      //   1. Count `toolsTotalBefore` honestly, and
+      //   2. Keep app-only tools when the host opted out of visibility filtering.
+      // Without this, getToolsForAiSdk pre-strips app-only tools and the policy
+      // sees a partial set — drops are reported as 0 even when tools were hidden.
+      const tools = await getEvalToolsForAiSdkOrThrow({
+        mcpClientManager: manager,
+        serverIds,
+        includeAppOnly: Boolean(hostExecutionPolicy),
+        modelVisibleMcpToolResults:
+          hostExecutionPolicy?.modelVisibleMcpToolResults,
+        // Host-only, and deliberately NOT read through `pickField`: an eval's
+        // per-case `advancedConfig` runs at `override-wins`, and a case must not
+        // be able to switch tasks on for a suite whose host said off.
+        ...(evalTasksSeam ? { tasks: evalTasksSeam } : {}),
+        environment: config.environment,
+        setupObserver: observer,
+        ...(descriptionOverrides
+          ? { toolDescriptionOverrides: descriptionOverrides }
+          : {}),
+      });
+      const toolAnnotations: ToolAnnotationsLookup = new Map();
+      if (toolPolicy) {
+        const uncachedServerIds = serverIds.filter(
+          (serverId) => !manager.hasCachedToolAnnotations(serverId),
         );
-      }
-      try {
-        const availableToolNames = new Set([
-          ...Object.keys(tools),
-          "computer",
-          "finish_widget",
-          EVAL_BASH_TOOL_NAME,
-          "widget_tools", "widget_call_tool",
-        ]);
-        resolvedToolPolicyWarnings = validateToolPolicyNames({
-          policy: toolPolicy,
-          availableToolNames,
-          // Bare names must still match at launch; only view: names are deferred.
-          deferredToolNames: [...SKILL_TOOL_NAMES, ...META_TOOL_NAMES, ...deferredViewToolPolicyNames(toolPolicy)],
-        });
-      } catch (error) {
-        if (error instanceof UnmatchedToolPolicyNameError) {
+        if (uncachedServerIds.length > 0) {
           throw new WebRouteError(
             400,
             ErrorCode.VALIDATION_ERROR,
-            error.message,
-            { reason: "TOOL_POLICY_INVALID" },
+            `TOOL_POLICY_ANNOTATIONS_UNAVAILABLE: tool policy requires a populated annotation cache for every selected server; missing ${uncachedServerIds.join(
+              ", ",
+            )}.`,
+            {
+              reason: "TOOL_POLICY_ANNOTATIONS_UNAVAILABLE",
+              serverIds: uncachedServerIds,
+            },
           );
         }
-        throw error;
-      }
-      for (const serverId of serverIds) {
-        for (const [toolName, annotations] of Object.entries(
-          mcpClientManager.getAllToolAnnotations(serverId),
-        )) {
-          toolAnnotations.set(
-            toolAnnotationsKey(serverId, toolName),
-            annotations,
-          );
+        try {
+          const availableToolNames = new Set([
+            ...Object.keys(tools),
+            "computer",
+            "finish_widget",
+            EVAL_BASH_TOOL_NAME,
+            "widget_tools", "widget_call_tool",
+          ]);
+          resolvedToolPolicyWarnings = validateToolPolicyNames({
+            policy: toolPolicy,
+            availableToolNames,
+            // Bare names must still match at launch; only view: names are deferred.
+            deferredToolNames: [...SKILL_TOOL_NAMES, ...META_TOOL_NAMES, ...deferredViewToolPolicyNames(toolPolicy)],
+          });
+        } catch (error) {
+          if (error instanceof UnmatchedToolPolicyNameError) {
+            throw new WebRouteError(
+              400,
+              ErrorCode.VALIDATION_ERROR,
+              error.message,
+              { reason: "TOOL_POLICY_INVALID" },
+            );
+          }
+          throw error;
+        }
+        for (const serverId of serverIds) {
+          for (const [toolName, annotations] of Object.entries(
+            manager.getAllToolAnnotations(serverId),
+          )) {
+            toolAnnotations.set(
+              toolAnnotationsKey(serverId, toolName),
+              annotations,
+            );
+          }
         }
       }
-    }
 
-    // Apply visibility filtering when a host policy is present. The filter
-    // mutates `tools` in place (same as prepareChatV2) so downstream iteration
-    // runners see the post-filter set.
-    const resolvedToolSignals = hostExecutionPolicy
-      ? applyVisibilityPolicyAndCountSignals(
-          tools as Record<string, unknown>,
-          mcpClientManager,
-          hostExecutionPolicy,
-        )
-      : undefined;
-    if (descriptionOverrides) {
-      const overridden = applyDescriptionOverridesToToolSet(
-        tools,
-        descriptionOverrides,
-      );
-      if (resolvedToolSignals && overridden > 0) {
-        resolvedToolSignals.toolsDescriptionOverridden = overridden;
+      // Apply visibility filtering when a host policy is present. The filter
+      // mutates `tools` in place (same as prepareChatV2) so downstream iteration
+      // runners see the post-filter set.
+      const resolvedToolSignals = hostExecutionPolicy
+        ? applyVisibilityPolicyAndCountSignals(
+            tools as Record<string, unknown>,
+            manager,
+            hostExecutionPolicy,
+          )
+        : undefined;
+      if (descriptionOverrides) {
+        const overridden = applyDescriptionOverridesToToolSet(
+          tools,
+          descriptionOverrides,
+        );
+        if (resolvedToolSignals && overridden > 0) {
+          resolvedToolSignals.toolsDescriptionOverridden = overridden;
+        }
       }
+      const resolvedSetupSignals = observer.buildSignals();
+      const resolvedSetupSpans =
+        observer.buildSyntheticSpans(runSetupStartedAt);
+      const resolvedSetupAudit = observer.buildAuditMetadata();
+
+      return {
+        tools,
+        toolAnnotations,
+        resolvedToolPolicyWarnings,
+        resolvedToolSignals,
+        resolvedSetupSignals,
+        resolvedSetupSpans,
+        resolvedSetupAudit,
+      };
+    };
+    const managers = new Map(tests.map((test) => [
+      test,
+      accountManagerForCase ? accountManagerForCase(test.testCaseId ?? testCaseId) : mcpClientManager,
+    ]));
+    const managerSetups = new Map<MCPClientManager, Awaited<ReturnType<typeof prepareManager>>>();
+    for (const manager of new Set(managers.values())) {
+      const observer = manager === mcpClientManager ? setupObserver : createRunSetupObserver({
+        expectedServerIds: serverIds,
+        convexHttpUrl,
+        context: (serverId) => ({
+          serverLabel: getServerLabelForEvalError(serverId, config.environment),
+        }),
+      });
+      managerSetups.set(manager, await prepareManager(manager, observer));
     }
-    const resolvedSetupSignals = setupObserver.buildSignals();
-    const resolvedSetupSpans =
-      setupObserver.buildSyntheticSpans(runSetupStartedAt);
-    const resolvedSetupAudit = setupObserver.buildAuditMetadata();
 
     // Note: Iterations are now pre-created in startSuiteRunWithRecorder
     // This code is no longer needed as precreateIterationsForRun is called there
@@ -4393,13 +4424,25 @@ export const runEvalSuiteWithAiSdk = async ({
       });
     }
     const creditStop: RunStop = { exhausted: false };
-    const runOne = (test: (typeof tests)[number]) =>
-      runTestCase({
+    const runOne = (test: (typeof tests)[number]) => {
+      const manager = managers.get(test);
+      const setup = manager && managerSetups.get(manager);
+      if (!manager || !setup) throw new Error("The eval case has no prepared connection.");
+      const {
+        tools,
+        toolAnnotations,
+        resolvedToolPolicyWarnings,
+        resolvedToolSignals,
+        resolvedSetupSignals,
+        resolvedSetupSpans,
+        resolvedSetupAudit,
+      } = setup;
+      return runTestCase({
         test,
         budgets,
         tools,
         selectedServers: serverIds,
-        mcpClientManager,
+        mcpClientManager: manager,
         recorder,
         modelApiKeys,
         orgModelConfig,
@@ -4453,6 +4496,7 @@ export const runEvalSuiteWithAiSdk = async ({
         ...(evalTasksSeam ? { tasks: evalTasksSeam } : {}),
         ...(extraHeaders ? { extraHeaders } : {}),
       });
+    };
     // A web client's account runs one turn per server at a time (a second
     // is refused as turn_running), so its cases take turns. Otherwise cases
     // that boot boxes wait for one of the run's box slots before their first
@@ -5704,10 +5748,7 @@ const runLocalIteration = async ({
       buildSinks: makeSinks,
     });
     const toolDeclarations = collectToolDeclarations(mcpClientManager, selectedServers);
-    const stepState = createStepExecutionState({
-      ...toolDeclarations,
-      accountRouting,
-    });
+    const stepState = createStepExecutionState({ ...toolDeclarations, accountRouting });
     const stepOutcome = await executeSteps({
       steps,
       state: stepState,
@@ -5790,6 +5831,7 @@ const runLocalIteration = async ({
     const { evaluation, passed, predicateResults, platformGates } = buildEvalIterationVerdict({
       ...toolDeclarations,
       accountRouting,
+      pinnedCalls: stepState.pinnedCalls,
       promptTurns,
       toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
       isNegativeTest: test.isNegativeTest,
@@ -7586,10 +7628,7 @@ const runHostedIterationWithBrowser = async (
       : {}),
   });
   const toolDeclarations = collectToolDeclarations(mcpClientManager, selectedServers);
-  const stepState = createStepExecutionState({
-    ...toolDeclarations,
-    accountRouting,
-  });
+  const stepState = createStepExecutionState({ ...toolDeclarations, accountRouting });
   let result: Awaited<ReturnType<typeof executeSteps>>;
   try {
     result = await executeSteps({
@@ -7711,6 +7750,7 @@ const runHostedIterationWithBrowser = async (
   const { evaluation, passed, predicateResults, platformGates } = buildEvalIterationVerdict({
     ...toolDeclarations,
     accountRouting,
+    pinnedCalls: stepState.pinnedCalls,
     promptTurns,
     toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
     isNegativeTest: test.isNegativeTest,

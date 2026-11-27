@@ -576,6 +576,27 @@ describe("predicateScorer", () => {
       )
     ).rejects.toThrow(/declarations/);
   });
+
+  it("still scores an authored schema check it could not measure as 0", async () => {
+    const scorer = predicateScorer({
+      type: "toolResultMatchesSchema",
+      schema: { type: "object" },
+    });
+    // One call and no captured result: an evidence error, scored as before.
+    const outcome = await scorer.score({
+      version: 1,
+      scenario: { title: "authored schema" },
+      trace: { messages: [] },
+      transcript: buildIterationTranscript({
+        toolCalls: [{ toolName: "get_order", arguments: {} }],
+      }),
+    });
+    expect(outcome).toMatchObject({
+      kind: "scored",
+      value: 0,
+      rationale: expect.stringContaining("no tool results captured"),
+    });
+  });
 });
 
 describe("judgeScorer", () => {
