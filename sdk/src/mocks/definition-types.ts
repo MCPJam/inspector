@@ -156,7 +156,7 @@ export type MockAnswer = MockRealAnswer | MockSavedAnswer;
 
 /** Whether the mock answers this tool's calls itself, without calling a real tool. */
 export function answersItself(entry: MockTool | undefined): boolean {
-  return entry?.answer?.from === "saved";
+  return entry?.answer?.from === "saved" || entry?.state !== undefined;
 }
 
 /** The real tool an entry points at: `answer.tool`, else its own key. */
@@ -176,6 +176,47 @@ export function realAnswerOf(
 
 /** The most saved cases one tool may carry. */
 export const MAX_SAVED_CASES = 200;
+
+/** The five operations a tool can declare on the mock's records. */
+export const MOCK_STATE_OPS = [
+  "get",
+  "list",
+  "create",
+  "patch",
+  "delete",
+] as const;
+
+export type MockStateOp = (typeof MOCK_STATE_OPS)[number];
+
+/** The most records one `list` returns, and the count it returns when `limit` is left out. */
+export const MAX_LIST_LIMIT = 200;
+export const DEFAULT_LIST_LIMIT = 50;
+
+/**
+ * A tool the mock answers from its records. Values in `key`, `where`, `value`,
+ * `set`, `limit` and `cursor` are literals or `{{input.<path>}}` references;
+ * `result` is a template over `record` (`records` for `list`) and `input`.
+ * Without `result` the tool returns the record itself.
+ */
+export interface MockToolState {
+  op: MockStateOp;
+  collection: string;
+  key?: string;
+  /** `list`: records whose fields all equal these values. */
+  where?: JsonObject;
+  /** `list`: 1 to 200, default 50. A number, or a reference to one. */
+  limit?: number | string;
+  /** `list`: where to continue, from an earlier `nextCursor`. */
+  cursor?: string;
+  /** `create`: the new record. */
+  value?: JsonObject;
+  /** `patch`: the fields to change. */
+  set?: JsonObject;
+  result?: JsonObject;
+}
+
+/** Collection name, then record key, to the records a definition starts from. */
+export type MockSeed = Record<string, Record<string, JsonObject>>;
 
 export interface MockToolAnnotations {
   title?: string;
@@ -201,6 +242,8 @@ export interface MockTool {
   _meta?: JsonObject;
   params?: Record<string, MockToolParam>;
   answer?: MockAnswer;
+  /** The tool reads or changes the mock's records. Cannot accompany a saved answer. */
+  state?: MockToolState;
 }
 
 export interface MockPromptArgument {
@@ -309,6 +352,8 @@ export interface MockDefinition {
    */
   pageSize?: number;
   tools?: Record<string, MockTool>;
+  /** The records each state context starts from. */
+  seed?: MockSeed;
   /** Keyed by the prompt name a client sees. */
   prompts?: Record<string, MockPrompt>;
   /** Keyed by resource URI. A `skill://` entry is a skill file and a `ui://` entry an MCP App. */

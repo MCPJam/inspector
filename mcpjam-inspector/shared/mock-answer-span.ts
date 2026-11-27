@@ -8,7 +8,7 @@ import type { EvalTraceSpan } from "./eval-trace";
 export const MOCK_ANSWER_SPAN_PREFIX = "Answered by the mock: ";
 
 /** Where a mock's answer to one call came from. */
-export type MockCallSource = "saved" | "forwarded" | "blocked" | "unmatched";
+export type MockCallSource = "saved" | "state" | "forwarded" | "blocked" | "unmatched";
 
 /** What the trace records about one call a mock handled. */
 export interface MockCallMark {
@@ -47,11 +47,13 @@ export function describeMockCall(mark: MockCallMark): string {
   const what =
     mark.source === "saved"
       ? savedAnswerText(mark)
-      : mark.source === "forwarded"
-        ? `forwarded to ${real}`
-        : mark.source === "blocked"
-          ? `a forward to ${real} was refused${mark.refusal ? ` (${mark.refusal})` : ""}`
-          : "no saved answer matched";
+      : mark.source === "state"
+        ? "its records"
+        : mark.source === "forwarded"
+          ? `forwarded to ${real}`
+          : mark.source === "blocked"
+            ? `a forward to ${real} was refused${mark.refusal ? ` (${mark.refusal})` : ""}`
+            : "no saved answer matched";
   return `${what} (mock ${mark.mockId}, version ${mark.version})`;
 }
 
