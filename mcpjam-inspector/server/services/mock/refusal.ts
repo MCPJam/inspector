@@ -32,6 +32,15 @@ function forbiddenMessage(authMethod: string | undefined): string | undefined {
   return undefined;
 }
 
+/**
+ * What the two sign-in refusals say to a person using MCPJam itself, where
+ * "send your API key" is not something they can do.
+ */
+export const IN_APP_REFUSAL_MESSAGES: Partial<Record<MockRefusalKind, string>> = {
+  unauthorized: "MCPJam could not confirm your sign-in. Sign in again, then reconnect this mock server.",
+  guest: "Mock servers are not available to guest sessions. Sign in, then reconnect this mock server.",
+};
+
 /** A refusal raised inside the route and turned into a response at its edge. */
 export class MockRefusal extends Error {
   constructor(readonly kind: MockRefusalKind) {

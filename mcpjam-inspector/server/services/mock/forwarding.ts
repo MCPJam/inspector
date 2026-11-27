@@ -44,6 +44,13 @@ export interface ForwardingReal {
  */
 function unreachable(error: unknown): Error {
   const { status, code } = (error ?? {}) as { status?: unknown; code?: unknown };
+  // A stdio base asks this device before it runs, as for a direct connection;
+  // a mock cannot ask, so it says where the person can.
+  if (code === ErrorCode.STDIO_COMMAND_APPROVAL_REQUIRED) {
+    return new Error(
+      "this mock's real server runs a command this device has not approved. Connect the real server from Servers to review and approve it",
+    );
+  }
   return new Error(
     [status, code].some((n) => n === 401 || n === 403)
       ? "the real server did not accept your sign-in"
