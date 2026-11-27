@@ -90,6 +90,32 @@ describe("CaniuseComparePage", () => {
     );
   });
 
+  it("stacks the selected clients and preserves Events adoption links on mobile", () => {
+    const width = vi.spyOn(window, "innerWidth", "get").mockReturnValue(320);
+    try {
+      render(
+        <MemoryRouter initialEntries={["/compare?capability=event-delivery"]}>
+          <CaniuseComparePage />
+        </MemoryRouter>,
+      );
+      const matrix = within(screen.getByTestId("compare-matrix"));
+      const events = within(matrix.getByRole("article", { name: "MCP Events" }));
+      expect(matrix.queryByRole("table")).not.toBeInTheDocument();
+      const rows = events.getAllByRole("listitem");
+      expect(rows).toHaveLength(3);
+      for (const [index, client] of ["Claude", "ChatGPT", "Cursor"].entries()) {
+        expect(rows[index]).toHaveTextContent(client);
+        expect(rows[index].querySelector("[data-support-level]")).toBeInTheDocument();
+      }
+      expect(events.getByRole("link", { name: /^\d+%, \d+ of \d+ probed clients/ }))
+        .toHaveAttribute("href", "/capabilities/event-delivery");
+      expect(events.getByRole("link", { name: /^webhook:/i }))
+        .toHaveAttribute("href", "/capabilities/event-delivery?slice=webhook");
+    } finally {
+      width.mockRestore();
+    }
+  });
+
   it("shows the share URL when direct clipboard access is blocked", async () => {
     const user = userEvent.setup();
     const writeText = vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(

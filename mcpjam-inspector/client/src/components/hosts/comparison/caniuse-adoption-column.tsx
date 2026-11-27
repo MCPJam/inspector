@@ -50,22 +50,22 @@ export function caniuseAdoptionColumn(
       const version = versionScores.get(field.id);
       const path = fieldDestination(field);
       if (!path) return null;
-      const summary = summaries.get(field.id);
-      const coverage = version?.coverage ?? summary?.overall;
-      return coverage && (
-        <div className="flex flex-col gap-1 tabular-nums">
-          <AdoptionLink path={path} coverage={coverage} />
-          {field.id !== protocol?.id &&
-            summary?.slices.map(({ slice, coverage }) => (
-              <AdoptionLink
-                key={slice}
-                path={`${path}?slice=${encodeURIComponent(slice)}`}
-                coverage={coverage}
-                label={sliceLabel(slice)}
-              />
-            ))}
-        </div>
-      );
+      const coverage = version?.coverage ?? summaries.get(field.id)?.overall;
+      return coverage && <AdoptionLink path={path} coverage={coverage} />;
+    },
+    renderSlices: (field: HostConfigFieldDef) => {
+      if (field.id === protocol?.id) return null;
+      const slices = summaries.get(field.id)?.slices;
+      if (!slices?.length) return null;
+      const path = fieldDestination(field);
+      return path && slices.map(({ slice, coverage }) => (
+        <AdoptionLink
+          key={slice}
+          path={`${path}?slice=${encodeURIComponent(slice)}`}
+          coverage={coverage}
+          label={sliceLabel(slice)}
+        />
+      ));
     },
   };
 }

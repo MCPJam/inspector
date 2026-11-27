@@ -15,6 +15,13 @@ describe("vanityDomainLandingMiddleware", () => {
       "/?q=MCP%20Events&slice=poll",
       "/compare?q=MCP%20Events&slice=poll",
     ],
+    ["caniuse.dev", "/embed/host-compare", "/compare"],
+    ["caniuse.dev", "/embed/host-compare/", "/compare"],
+    [
+      "www.caniuse.dev",
+      "/embed/host-compare?hosts=preset%3Aclaude%2Cpreset%3Acursor&capability=elicitation",
+      "/compare?hosts=preset%3Aclaude%2Cpreset%3Acursor&capability=elicitation",
+    ],
     ["caniuse.dev", "/capabilities", "/capabilities/event-delivery"],
     [
       "WWW.CANIUSE.DEV:443",
@@ -42,12 +49,13 @@ describe("vanityDomainLandingMiddleware", () => {
 
   it.each([
     ["caniuse.dev", "/capabilities/event-delivery?slice=poll"],
-    ["caniuse.dev", "/embed/host-compare?capability=elicitation"],
     ["caniuse.dev", "/compare?q=Events"],
+    ["caniuse.dev", "/embed/host-compare/other"],
     ["caniuse.dev", "/events/other"],
     ["score.mcpjam.com", "/results/tok_abc"],
     ["score.mcpjam.com", "/events"],
     ["app.mcpjam.com", "/?slice=poll"],
+    ["app.mcpjam.com", "/embed/host-compare?capability=elicitation"],
     ["app.mcpjam.com", "/events?slice=poll"],
     ["app.mcpjam.com", "/tasks"],
     ["app.mcpjam.com", "/skills"],

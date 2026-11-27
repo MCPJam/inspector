@@ -19,21 +19,23 @@ export function revealFocusedCell({ currentTarget: scrollBox, target }: FocusEve
   else if (bounds.right > right) scrollBox.scrollLeft += Math.ceil(bounds.right - right);
 }
 
-type MatrixCell = (props: {
+export type CompactMatrixCell = (props: {
   field: HostConfigFieldDef;
   subject: HostComparisonSubject;
   mobileOptimized: boolean;
   compact: boolean;
+  stacked?: boolean;
 }) => ReactNode;
 
 export type MatrixSummaryColumn = {
   label: string;
   render: (field: HostConfigFieldDef) => ReactNode;
+  renderSlices?: (field: HostConfigFieldDef) => ReactNode;
   renderFieldLabel?: (field: HostConfigFieldDef) => ReactNode;
 };
 
 interface CompactRowProps {
-  renderCell: MatrixCell;
+  renderCell: CompactMatrixCell;
   subjects: readonly HostComparisonSubject[];
   summaryColumn: MatrixSummaryColumn;
   showDescriptions: boolean;
@@ -93,7 +95,10 @@ function CompactFieldRow({
           mobileOptimized && "[&_a]:scroll-ml-[var(--matrix-field-width)]",
         )}
       >
-        {summaryColumn.render(field)}
+        <div className="flex flex-col gap-1 tabular-nums">
+          {summaryColumn.render(field)}
+          {summaryColumn.renderSlices?.(field)}
+        </div>
       </td>
       {subjects.map((s) => (
         <td

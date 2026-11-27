@@ -1,9 +1,11 @@
 import type { MiddlewareHandler } from "hono";
 import { CANIUSE_LANDING_HOSTS, SCORE_LANDING_HOSTS } from "../config.js";
 
-// Exact vanity paths only. Canonical capability links and embeds reach the SPA.
+// Exact vanity paths only. Canonical capability links reach the SPA.
 const CANIUSE_REDIRECTS = new Map([
   ["/", "/compare"],
+  ["/embed/host-compare", "/compare"],
+  ["/embed/host-compare/", "/compare"],
   ["/capabilities", "/capabilities/event-delivery"],
   ["/events", "/capabilities/event-delivery"],
   ["/apps", "/capabilities/ui-extension"],

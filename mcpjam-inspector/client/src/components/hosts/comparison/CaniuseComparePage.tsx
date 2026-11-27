@@ -4,6 +4,7 @@ import type { HostComparisonSubject, HostConfigFieldDef } from "@/lib/host-confi
 import { Switch } from "@mcpjam/design-system/switch";
 import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { FLAG_GATED_HOST_IDS } from "@/lib/host-compat/feature-visibility";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { buildHostCompareSnapshot } from "@/lib/webmcp/review-surface-snapshots";
@@ -158,6 +159,7 @@ function CaniuseMatrixPanel({
   summaryColumn: ReturnType<typeof caniuseAdoptionColumn>;
 }) {
   const [showDescriptions, setShowDescriptions] = useState(false);
+  const stacked = useIsMobile();
   return (
     <section aria-labelledby="caniuse-matrix-heading" className="min-w-0 rounded-xl border border-border bg-card">
       <div className="relative z-40 flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-3 sm:px-5">
@@ -193,6 +195,7 @@ function CaniuseMatrixPanel({
             showDescriptions={showDescriptions}
             themeMode="dark"
             mobileOptimized
+            stacked={stacked}
             verifyBaseUrl="https://app.mcpjam.com"
             disabledVerifyTemplateIds={FLAG_GATED_HOST_IDS}
             summaryColumn={summaryColumn}
