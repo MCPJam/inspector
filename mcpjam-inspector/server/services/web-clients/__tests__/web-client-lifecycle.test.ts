@@ -34,6 +34,7 @@ describe.each(HOSTS)("$harness in the existing lifecycle", ({ harness, modelId, 
       ok: false,
       harness,
       reason: expect.stringContaining("so it can't take a system prompt. Clear this client's system prompt"),
+      kind: "setting-unsupported",
     };
     expect(checkEvalHarnessStaticAdmission({ hostConfig, serverIds: ["orders"] })).toEqual(refused);
     expect(
