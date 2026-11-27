@@ -28,6 +28,7 @@ import {
   type TraceWidgetSnapshot,
 } from "@/components/evals/trace-viewer-adapter";
 import { TraceViewer } from "@/components/evals/trace-viewer";
+import { turnEventsFromTurnTraces } from "@/components/evals/trace-turn-event";
 import { BrowserArtifactsView } from "@/components/evals/browser-artifacts-view";
 import { hasReplayArtifacts } from "@/components/evals/browser-step-replay";
 import {
@@ -523,6 +524,7 @@ export function ShareUsageThreadDetail({
   // artifacts ride the envelope so the Raw view includes them.
   const traceEnvelope: TraceEnvelope | null = useMemo(() => {
     if (!messages) return null;
+    const turnEvents = turnEventsFromTurnTraces(turnTraces);
     return {
       ...(thread?.recordedContext
         ? { recordedContext: thread.recordedContext }
@@ -538,9 +540,11 @@ export function ShareUsageThreadDetail({
         ? { browserInteractionSteps: interactionSteps }
         : {}),
       ...(replayUrl ? { videoUrl: replayUrl } : {}),
+      ...(turnEvents.length > 0 ? { turnEvents } : {}),
     };
   }, [
     messages,
+    turnTraces,
     thread?.recordedContext,
     widgetSnapshots,
     hydratedSpans,

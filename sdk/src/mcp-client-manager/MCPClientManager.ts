@@ -344,6 +344,18 @@ function isAbortError(error: unknown): boolean {
   );
 }
 
+/**
+ * A request that ran out of time on our side: the upstream client's
+ * `REQUEST_TIMEOUT`, or a `TimeoutError`. Not a cancel, and not a closed
+ * connection. A numeric `-32001` does not count: here that code only arrives
+ * as the server's own JSON-RPC error, so the server did answer.
+ */
+function isRequestTimeout(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const { code, name } = error as { code?: unknown; name?: unknown };
+  return code === "REQUEST_TIMEOUT" || name === "TimeoutError";
+}
+
 /** The server's `-32020` (HeaderMismatch): it refused the request's headers. */
 function isHeaderMismatchError(error: unknown): boolean {
   return (
@@ -2026,6 +2038,14 @@ export class MCPClientManager {
    * there; its result is discarded and the ping contract's `EmptyResult`
    * returned, so callers stay era-agnostic. Legacy connections keep the
    * wire-identical `ping`.
+   *
+   * A `ping` that gets no answer in time ends the connection. Every 2025
+   * revision says of a ping: "Timeouts SHOULD be treated as connection
+   * failures" (basic/utilities/ping.mdx, Error Handling). The timeout is still
+   * thrown; a retry, or the next call on this server, opens a new connection.
+   * A caller's own abort is not a timeout and leaves the connection as it is,
+   * and so does the modern `server/discover` probe, which that rule does not
+   * cover.
    */
   async pingServer(
     serverId: string,
@@ -2036,7 +2056,23 @@ export class MCPClientManager {
         await client.discover(options);
         return {} as Awaited<ReturnType<Client["ping"]>>;
       }
-      return client.ping(options);
+      try {
+        return await client.ping(options);
+      } catch (error) {
+        // Close here, before any retry, so a retry cannot reuse the connection
+        // that timed out. Only close the connection that sent this ping: by
+        // now another call may have opened a new one for the same server.
+        if (
+          !options?.signal?.aborted &&
+          isRequestTimeout(error) &&
+          this.liveClientStates.get(serverId)?.client === client
+        ) {
+          await this.destroyLiveState(serverId, {
+            abortRetryOperations: false,
+          });
+        }
+        throw error;
+      }
     });
   }
 

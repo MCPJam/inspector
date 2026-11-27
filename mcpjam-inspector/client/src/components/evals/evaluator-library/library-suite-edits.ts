@@ -1,38 +1,67 @@
 import type { Predicate } from "@mcpjam/sdk/predicates";
-import {
-  MAX_CUSTOM_JUDGES,
-  MAX_RUBRIC_CHECK_QUESTIONS,
-  type CustomJudge,
-  type RubricCheckQuestion,
+import type {
+  CustomJudge,
+  RubricCheckQuestion,
 } from "@/components/shared/session-quality/judge-config";
 import { withRubricChecks } from "../rubric-checks-model";
 import type { ScorerTableScope } from "../suite-scorer-table";
 import type { EvalJudgeConfig } from "../types";
 import {
   findLibraryEvaluator,
-  hasLibraryIdConflict,
-  LIBRARY_EVALUATORS,
-  taggedJudges,
-  taggedQuestions,
+  judgesWithAdded,
+  judgesWithEvaluatorUpdated,
+  questionsWithAdded,
+  questionsWithEvaluatorUpdated,
   withEvaluatorUpdated,
+  withLibraryChecks,
   withoutEvaluator,
   type LibraryAddition,
+  type LibraryEvaluator,
 } from "./library-catalog";
 import type { LibraryModelRow } from "./evaluator-stage-rows";
 import { customizedCopy, withJudges } from "./custom-judges-model";
 
-/** The evaluator a rubric-check row came from, by its `q:<id>` key. */
-export function evaluatorIdForQuestionKey(
-  key: string | undefined,
-): string | undefined {
-  if (!key?.startsWith("q:")) return undefined;
-  const id = key.slice(2);
-  return LIBRARY_EVALUATORS.find((e) =>
-    taggedQuestions(e).some((q) => q.id === id),
-  )?.id;
+/**
+ * The judge config with these rubric-check questions. Adding turns rubric
+ * checks back on if the author had turned them off, because adding asks for
+ * questions to run; a switch that was never set already means on, so it
+ * stays unset. A slot or config this empties is dropped, so adding an
+ * evaluator and removing it again leaves the config as it was.
+ */
+function withQuestions(
+  judgeConfig: EvalJudgeConfig | undefined,
+  questions: RubricCheckQuestion[],
+  turnOn: boolean,
+): EvalJudgeConfig | undefined {
+  const next = withRubricChecks(judgeConfig, {
+    ...(turnOn && judgeConfig?.rubricChecks?.enabled === false
+      ? { enabled: true }
+      : {}),
+    questions,
+  });
+  if (next.rubricChecks && Object.keys(next.rubricChecks).length > 0) {
+    return next;
+  }
+  const rest = { ...next };
+  delete rest.rubricChecks;
+  return Object.keys(rest).length > 0 ? rest : undefined;
 }
 
-type ListEdit<T> = (current: T[]) => T[];
+/** The two lists one library edit writes. Absent means unchanged. */
+type ListsEdit = {
+  questions?: { list: RubricCheckQuestion[]; turnOn: boolean };
+  judges?: CustomJudge[];
+};
+
+/** An evaluator's lists at its current version, or why they cannot be. */
+type UpdatedLists =
+  | { refused: string }
+  | {
+      refused?: undefined;
+      entry: LibraryEvaluator;
+      questions: RubricCheckQuestion[];
+      judges: CustomJudge[];
+    };
 
 /**
  * One judge-config change for both lists. Questions and judges live in the
@@ -41,120 +70,113 @@ type ListEdit<T> = (current: T[]) => T[];
  */
 function withLibraryLists(
   judgeConfig: EvalJudgeConfig | undefined,
-  edits: {
-    questions?: ListEdit<RubricCheckQuestion>;
-    enableQuestions?: boolean;
-    judges?: ListEdit<CustomJudge>;
-  },
+  edit: ListsEdit,
 ): EvalJudgeConfig | undefined {
   let next = judgeConfig;
-  if (edits.questions) {
-    next = withRubricChecks(next, {
-      ...(edits.enableQuestions ? { enabled: true } : {}),
-      questions: edits.questions(next?.rubricChecks?.questions ?? []),
-    });
+  if (edit.questions) {
+    next = withQuestions(next, edit.questions.list, edit.questions.turnOn);
   }
-  if (edits.judges) {
-    next = withJudges(next, edits.judges(next?.customJudges?.judges ?? []));
-  }
+  if (edit.judges) next = withJudges(next, edit.judges);
   return next;
 }
 
-const notFrom =
-  (evaluatorId: string) =>
-  <T extends { evaluator?: { id: string } }>(item: T) =>
-    item.evaluator?.id !== evaluatorId;
-
-/** Inherited evaluators are edited at the suite level. */
+/**
+ * Whole-evaluator edits for suite settings: checks go to the suite's
+ * predicates, questions to its rubric checks and judges to its custom judges.
+ * Undefined where the rows on screen are inherited, or the judge config is
+ * not editable here. `add` and `update` return why they could not apply and
+ * then change nothing, and `updateRefusal` gives that reason up front so the
+ * group can show it instead of Update. `judgeLimit` is the backend's
+ * `judges.custom.maxJudges`.
+ */
 export function librarySuiteEdits(
   scope: ScorerTableScope,
   judgeConfig: EvalJudgeConfig | undefined,
   onJudgeConfigChange:
     ((next: EvalJudgeConfig | undefined) => void) | undefined,
+  judgeLimit: number,
 ) {
-  if (scope.kind !== "suite") return undefined;
-  const currentQuestions = judgeConfig?.rubricChecks?.questions ?? [];
-  const currentJudges = judgeConfig?.customJudges?.judges ?? [];
-  const editLists = (edits: Parameters<typeof withLibraryLists>[1]) => {
-    if (!edits.questions && !edits.judges) return;
-    onJudgeConfigChange?.(withLibraryLists(judgeConfig, edits));
+  if (scope.kind !== "suite" || !onJudgeConfigChange) return undefined;
+  const questions = judgeConfig?.rubricChecks?.questions ?? [];
+  const judges = judgeConfig?.customJudges?.judges ?? [];
+  const fromEvaluator = (evaluatorId: string) =>
+    (item: { evaluator?: { id: string } }) => item.evaluator?.id === evaluatorId;
+  const updated = (evaluatorId: string): UpdatedLists => {
+    const entry = findLibraryEvaluator(evaluatorId);
+    if (!entry) {
+      return {
+        refused:
+          "This Inspector's library has no such evaluator. Remove it, or update it from a newer Inspector.",
+      };
+    }
+    const questionEdit = questionsWithEvaluatorUpdated(entry, questions);
+    if (questionEdit.refused !== undefined) return questionEdit;
+    const judgeEdit = judgesWithEvaluatorUpdated(entry, judges, judgeLimit);
+    if (judgeEdit.refused !== undefined) return judgeEdit;
+    return { entry, questions: questionEdit.questions, judges: judgeEdit.judges };
+  };
+  const write = (edit: ListsEdit) => {
+    if (edit.questions || edit.judges) {
+      onJudgeConfigChange(withLibraryLists(judgeConfig, edit));
+    }
   };
   return {
-    add({ checks, questions, judges }: LibraryAddition) {
-      if (
-        (judges.length > 0 && currentJudges.length + judges.length > MAX_CUSTOM_JUDGES) ||
-        (questions.length > 0 &&
-          currentQuestions.length + questions.length > MAX_RUBRIC_CHECK_QUESTIONS)
-      ) {
-        return;
+    add(addition: LibraryAddition): string | undefined {
+      const questionEdit = questionsWithAdded(questions, addition.questions);
+      if (questionEdit.refused !== undefined) return questionEdit.refused;
+      const judgeEdit = judgesWithAdded(judges, addition.judges, judgeLimit);
+      if (judgeEdit.refused !== undefined) return judgeEdit.refused;
+      if (addition.checks.length) {
+        scope.onPredicatesChange((previous: Predicate[]) =>
+          withLibraryChecks(previous, addition.checks),
+        );
       }
-      if (checks.length) {
-        scope.onPredicatesChange((previous: Predicate[]) => [
-          ...previous,
-          ...checks,
-        ]);
-      }
-      editLists({
-        ...(questions.length
-          ? {
-              enableQuestions: true,
-              questions: (current) => [
-                ...current,
-                ...questions.filter((q) => !current.some((c) => c.id === q.id)),
-              ],
-            }
+      write({
+        ...(addition.questions.length
+          ? { questions: { list: questionEdit.questions, turnOn: true } }
           : {}),
-        ...(judges.length
-          ? {
-              judges: (current) => [
-                ...current,
-                ...judges.filter((j) => !current.some((c) => c.id === j.id)),
-              ],
-            }
-          : {}),
+        ...(addition.judges.length ? { judges: judgeEdit.judges } : {}),
       });
+      return undefined;
     },
     remove(evaluatorId: string) {
       scope.onPredicatesChange((previous) =>
         withoutEvaluator(previous, evaluatorId),
       );
-      const keep = notFrom(evaluatorId);
-      editLists({
-        ...(judgeConfig?.rubricChecks?.questions?.some((q) => !keep(q))
-          ? { questions: (current) => current.filter(keep) }
+      const from = fromEvaluator(evaluatorId);
+      write({
+        ...(questions.some(from)
+          ? {
+              questions: {
+                list: questions.filter((q) => !from(q)),
+                turnOn: false,
+              },
+            }
           : {}),
-        ...(judgeConfig?.customJudges?.judges?.some((j) => !keep(j))
-          ? { judges: (current) => current.filter(keep) }
-          : {}),
+        ...(judges.some(from) ? { judges: judges.filter((j) => !from(j)) } : {}),
       });
     },
-    update(evaluatorId: string) {
-      const entry = findLibraryEvaluator(evaluatorId);
-      if (
-        !entry ||
-        hasLibraryIdConflict(entry, {
-          questions: currentQuestions,
-          judges: currentJudges,
-        })
-      ) return;
-      const keep = notFrom(evaluatorId);
-      const questions = taggedQuestions(entry);
-      const judges = taggedJudges(entry);
-      if (
-        currentQuestions.filter(keep).length + questions.length > MAX_RUBRIC_CHECK_QUESTIONS ||
-        currentJudges.filter(keep).length + judges.length > MAX_CUSTOM_JUDGES
-      ) return;
+    update(evaluatorId: string): string | undefined {
+      const edit = updated(evaluatorId);
+      if (edit.refused !== undefined) return edit.refused;
       scope.onPredicatesChange((previous) =>
         withEvaluatorUpdated(previous, evaluatorId),
       );
-      editLists({
-        ...(questions.length || currentQuestions.some((q) => !keep(q))
-          ? { questions: (current) => [...current.filter(keep), ...questions] }
+      // A new version with fewer or no questions or judges still clears the
+      // old ones, or the group would keep offering Update.
+      const from = fromEvaluator(evaluatorId);
+      write({
+        ...(edit.entry.questions?.length || questions.some(from)
+          ? { questions: { list: edit.questions, turnOn: false } }
           : {}),
-        ...(judges.length || currentJudges.some((j) => !keep(j))
-          ? { judges: (current) => [...current.filter(keep), ...judges] }
+        ...(edit.entry.judges?.length || judges.some(from)
+          ? { judges: edit.judges }
           : {}),
       });
+      return undefined;
+    },
+    updateRefusal(evaluatorId: string): string | undefined {
+      return updated(evaluatorId).refused;
     },
   };
 }

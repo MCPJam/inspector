@@ -179,14 +179,12 @@ describe("case scope", () => {
     const inherited = row(container, "predicate:0");
     expect(inherited).toHaveAttribute("data-scorer-source", "suite");
     expect(within(inherited).queryByText("From suite")).toBeNull();
-    expect(within(inherited).getByText("Default")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Edit evaluators" }));
     expect(within(inherited).queryByRole("spinbutton")).toBeNull();
     expect(within(inherited).getByText(latency.label)).toBeInTheDocument();
     const own = row(container, "predicate:1");
     expect(own).toHaveAttribute("data-scorer-source", "case");
     expect(within(own).getByText("This case")).toBeInTheDocument();
-    expect(within(own).queryByText("Default")).not.toBeInTheDocument();
     expect(
       within(own).getByRole("spinbutton", {
         name: "User turns (strictly under)",
@@ -309,18 +307,6 @@ describe("case scope", () => {
     expect(container.querySelector('[data-scorer-source="suite"]')).toBeNull();
     // The family is unauthored here, so it is offered as a preset again.
     expect(row(container, `preset:${latency.id}`)).not.toBeNull();
-  });
-
-  it("labels a replacement rule as This case without a Default badge", () => {
-    const { container } = renderCase([latency.preset], {
-      predicates: {
-        mode: "replace",
-        list: [{ type: "turnCountUnder", turns: 3 }],
-      },
-    });
-    const replacement = within(row(container, "predicate:0"));
-    expect(replacement.getByText("This case")).toBeInTheDocument();
-    expect(replacement.queryByText("Default")).not.toBeInTheDocument();
   });
 
   it("reads the judge as the case's skip flag, and cannot revive a judge the suite turned off", async () => {

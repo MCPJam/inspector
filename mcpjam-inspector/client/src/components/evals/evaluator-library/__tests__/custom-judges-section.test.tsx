@@ -3,7 +3,7 @@ import { fireEvent, renderWithProviders, screen } from "@/test";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import type { EvalJudgeConfig } from "../../types";
 import { CustomJudgesSection } from "../custom-judges-section";
-import { customizedCopy, judgeIdFor, judgeProblem } from "../custom-judges-model";
+import { blankJudge, customizedCopy, judgeProblem } from "../custom-judges-model";
 import { libraryModelRows } from "../library-suite-edits";
 
 vi.mock("posthog-js/react", () => ({
@@ -14,7 +14,7 @@ const capabilities = {
   judges: {
     custom: {
       role: "advisory",
-      templateVersion: 1,
+      templateVersion: 2,
       maxJudges: 5,
       maxPromptLength: 4000,
       variables: ["final_answer", "expected_output"],
@@ -52,6 +52,11 @@ describe("CustomJudgesSection", () => {
         capabilities={capabilities}
       />,
     );
+    expect(
+      screen.getByRole("region", { name: "Judges you write" }),
+    ).toHaveTextContent(
+      "Each judge adds a charged model call per graded iteration.",
+    );
     fireEvent.click(screen.getByRole("button", { name: "Write a judge" }));
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "Cites the order number" },
@@ -59,7 +64,7 @@ describe("CustomJudgesSection", () => {
     fireEvent.change(screen.getByLabelText("Judge prompt"), {
       target: { value: "Is {{order_note}} in {{final_answer}}?" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save judge" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add judge" }));
     expect(screen.getByRole("alert")).toHaveTextContent(
       "{{order_note}} isn't an available variable.",
     );
@@ -67,7 +72,7 @@ describe("CustomJudgesSection", () => {
     fireEvent.change(screen.getByLabelText("Judge prompt"), {
       target: { value: "Does {{final_answer}} match {{expected_output}}?" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save judge" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add judge" }));
     const next = onChange.mock.calls[0][0] as EvalJudgeConfig;
     expect(next.customJudges?.judges).toEqual([
       {
@@ -92,6 +97,36 @@ describe("CustomJudgesSection", () => {
     expect(section).toHaveTextContent("Based on Answers the Question v1");
     expect(section.querySelectorAll("li")).toHaveLength(1);
   });
+
+  it("reads the judge limit and prompt length from the backend's capability", () => {
+    const custom = capabilities.judges?.custom;
+    if (!custom) throw new Error("Expected the custom judge capability");
+    const tight: SuiteCapabilities = {
+      ...capabilities,
+      judges: {
+        ...capabilities.judges,
+        custom: { ...custom, maxJudges: 1, maxPromptLength: 30 },
+      },
+    };
+    const { unmount } = renderWithProviders(
+      <CustomJudgesSection
+        judgeConfig={{ customJudges: { judges: [libraryJudge] } }}
+        onJudgeConfigChange={() => {}}
+        capabilities={tight}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Write a judge" })).toBeDisabled();
+    unmount();
+    renderWithProviders(
+      <CustomJudgesSection
+        judgeConfig={undefined}
+        onJudgeConfigChange={() => {}}
+        capabilities={tight}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Write a judge" }));
+    expect(screen.getByText("0/30")).toBeInTheDocument();
+  });
 });
 
 describe("Customize", () => {
@@ -113,15 +148,17 @@ describe("Customize", () => {
 
 describe("custom judge model", () => {
   it("makes unique ids the backend accepts", () => {
-    expect(judgeIdFor("Cites the Order #", [])).toBe("cites-the-order");
-    expect(judgeIdFor("Judge", ["judge", "judge-2"])).toBe("judge-3");
+    expect(
+      customizedCopy({ ...libraryJudge, label: "Cites the Order #" }, []).id,
+    ).toBe("custom-cites-the-order");
+    expect(blankJudge(["judge", "judge-2"]).id).toBe("judge-3");
   });
 
   it("asks for a variable and a passing score in range", () => {
     const base = { id: "j", label: "J", output: { kind: "passfail" as const } };
-    expect(judgeProblem({ ...base, prompt: "Is it good?" }, [], [])).toContain(
-      "at least one variable",
-    );
+    expect(
+      judgeProblem({ ...base, prompt: "Is it good?" }, [], [], 4000),
+    ).toContain("at least one variable");
     expect(
       judgeProblem(
         {
@@ -131,21 +168,33 @@ describe("custom judge model", () => {
         },
         [],
         ["final_answer"],
+        4000,
       ),
     ).toContain("passing score");
   });
 
-  it("keeps a saved prompt editable when the backend advertises an alias", () => {
+  it("holds the prompt to the backend's length", () => {
+    const judge = {
+      id: "j",
+      label: "J",
+      prompt: "Judge {{final_answer}} carefully",
+      output: { kind: "passfail" as const },
+    };
+    expect(judgeProblem(judge, [], ["final_answer"], 20)).toBe(
+      "Keep the prompt under 20 characters.",
+    );
+    expect(judgeProblem(judge, [], ["final_answer"], 4000)).toBeUndefined();
+  });
+
+  it("refuses {{expected_outcome}}, as the backend does", () => {
     const judge = {
       id: "j",
       label: "J",
       prompt: "Compare with {{expected_outcome}}",
       output: { kind: "passfail" as const },
     };
-    expect(
-      judgeProblem(judge, [], ["expected_output"], {
-        expected_outcome: "expected_output",
-      }),
-    ).toBeUndefined();
+    expect(judgeProblem(judge, [], ["expected_output"], 4000)).toBe(
+      "{{expected_outcome}} isn't an available variable.",
+    );
   });
 });

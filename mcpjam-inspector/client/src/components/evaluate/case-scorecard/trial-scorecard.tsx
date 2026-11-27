@@ -63,11 +63,11 @@ import type { CaseScorecardInput } from "./case-scorecard-model";
 import { buildCaseScorecard, withRunnerChecks } from "./case-scorecard-model";
 import {
   joinTrialResults,
-  customJudgeTrialRows,
   rubricCheckTrialRows,
   type JoinedScorecardGroup,
   type JoinedScorecardRow,
 } from "./trial-results";
+import { customJudgeIterationRows } from "./custom-judge-iteration-rows";
 import { ScorecardGroupSection } from "./scorecard-group";
 import { StageRail, buildStageRailCells } from "./stage-rail";
 import {
@@ -275,7 +275,7 @@ export function TrialScorecard({
       ),
       [
         ...rubricCheckTrialRows(iteration),
-        ...(evaluatorLibraryEnabled ? customJudgeTrialRows(iteration) : []),
+        ...(evaluatorLibraryEnabled ? customJudgeIterationRows(iteration) : []),
       ],
     );
     // Keyed on the FIELDS, not the input object: callers build that object in
@@ -322,7 +322,7 @@ export function TrialScorecard({
       groups.some((group) =>
         group.rows.some(
           (row) =>
-            (row.provenance === "judge" || row.provenance === "rubricCheck") &&
+            (row.provenance === "judge" || row.provenance === "customJudge") &&
             row.result.state !== "notMeasured",
         ),
       ));
@@ -402,9 +402,11 @@ export function TrialScorecard({
     if (floor) return { text: floor.actual, source: "recorded" };
     // Advisory rubric checks describe the trial; they never explain why a
     // stage failed, so they must not displace the chain's own sentence.
+    // Custom judges are advisory in the same way.
     const explained = rows.some(
       (row) =>
         row.provenance !== "rubricCheck" &&
+        row.provenance !== "customJudge" &&
         (row.result.state === "failed" || row.result.state === "error"),
     );
     if (explained) return null;
@@ -538,6 +540,7 @@ export function TrialScorecard({
     <div className="flex flex-col gap-6 p-4" data-testid="trial-scorecard">
       {chainNotice}
       <EvaluatorScorecardSummary
+        questions={authored.suiteJudgeConfig?.rubricChecks?.questions}
         rows={sections.flatMap((section) =>
           judgeHidden
             ? section.rows.filter((row) => !isJudgeOutput(row))

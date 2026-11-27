@@ -138,32 +138,31 @@ describe("rubric-check rows", () => {
     expect(fallback.evaluationConfig.hash).toBe(jev.evaluationConfig.hash);
   });
 
-  test("a library yes/no question becomes a q: row the library card can find", () => {
-    // The verdict the backend stamped on a real dev run (template v2).
+  test("a yes/no question that passes on No keeps the backend's P(pass)", () => {
+    // The backend scores it as 1 - P(yes); the row must not flip it back.
     const { scores } = contract({
       ...verdict,
-      templateVersion: 2,
       questions: [
         {
-          key: "q:answer-grounded-in-results-grounded",
+          key: "q:invented-result",
           kind: "boolean",
-          label: "Every claim is backed by a tool result",
-          contentDigest: "d-grounded",
+          label: "Presents a result no tool returned",
+          contentDigest: "d-invented",
           passThreshold: 0.5,
           status: "scored",
-          value: 0.97,
+          value: 0.9,
           passed: true,
-          probability: 0.97,
-          rationale: "Yes · P(yes) 0.97",
+          probability: 0.1,
+          rationale: "No · P(yes) 0.10",
           evidence: ["decided by Jev"],
         },
       ],
     });
     expect(scores).toEqual([
       expect.objectContaining({
-        scorerId: "judge:rubricChecks:q:answer-grounded-in-results-grounded",
+        scorerId: "judge:rubricChecks:q:invented-result",
         status: "scored",
-        value: 0.97,
+        value: 0.9,
         passed: true,
       }),
     ]);

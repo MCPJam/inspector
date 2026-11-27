@@ -1,11 +1,7 @@
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { RadioGroup, RadioGroupItem } from "@mcpjam/design-system/radio-group";
-import {
-  MAX_CUSTOM_JUDGE_PROMPT_LENGTH,
-  MAX_CUSTOM_JUDGES,
-  type CustomJudge,
-} from "@/components/shared/session-quality/judge-config";
+import type { CustomJudge } from "@/components/shared/session-quality/judge-config";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useId, useState } from "react";
 import {
@@ -16,6 +12,8 @@ import { judgeMode } from "../suite-grading-model";
 import type { EvalJudgeConfig } from "../types";
 import {
   blankJudge,
+  CUSTOM_JUDGE_COST_COPY,
+  customJudgeLimits,
   judgePromptVariables,
   judgeProblem,
   withJudges,
@@ -58,7 +56,8 @@ export function CustomJudgesSection({
         all.filter((j) => j.id !== id),
       ),
     );
-  const atMax = all.length >= MAX_CUSTOM_JUDGES;
+  const { maxJudges, maxPromptLength } = customJudgeLimits(capabilities);
+  const atMax = all.length >= maxJudges;
   if (!enabled || !onJudgeConfigChange) return null;
   if (!hasCustomJudgesCapability(capabilities)) return null;
   const variables = capabilities?.judges?.custom?.variables ?? [];
@@ -73,7 +72,7 @@ export function CustomJudgesSection({
             Judges you write
           </h4>
           <p className="text-xs text-muted-foreground">
-            Each judge adds one model call per graded trial. Results are advisory.
+            {CUSTOM_JUDGE_COST_COPY} Results are advisory.
             {goalJudgeOff ? " Paused while the goal-completion judge is off." : ""}
           </p>
         </div>
@@ -83,7 +82,7 @@ export function CustomJudgesSection({
             size="sm"
             variant="outline"
             disabled={atMax}
-            title={atMax ? `A suite can have ${MAX_CUSTOM_JUDGES} judges.` : undefined}
+            title={atMax ? `A suite can have ${maxJudges} judges.` : undefined}
             onClick={() => {
               setIsNew(true);
               setEditing(blankJudge(all.map((j) => j.id)));
@@ -117,7 +116,8 @@ export function CustomJudgesSection({
           suiteId={capabilities?.suiteId}
           judge={editing}
           variables={variables}
-          variableAliases={capabilities?.judges?.custom?.variableAliases}
+          maxPromptLength={maxPromptLength}
+          isNew={isNew}
           others={all.filter((j) => isNew || j.id !== editing.id)}
           onCancel={() => setEditing(null)}
           onSave={save}
@@ -182,7 +182,8 @@ function JudgeEditor({
   suiteId,
   judge,
   variables,
-  variableAliases,
+  maxPromptLength,
+  isNew,
   others,
   onCancel,
   onSave,
@@ -190,7 +191,9 @@ function JudgeEditor({
   suiteId?: string;
   judge: CustomJudge;
   variables: readonly string[];
-  variableAliases?: Readonly<Record<string, string>>;
+  /** The backend's `judges.custom.maxPromptLength`. */
+  maxPromptLength: number;
+  isNew: boolean;
   others: readonly CustomJudge[];
   onCancel: () => void;
   onSave: (judge: CustomJudge) => void;
@@ -198,7 +201,7 @@ function JudgeEditor({
   const id = useId();
   const [draft, setDraft] = useState(judge);
   const [tried, setTried] = useState(false);
-  const problem = judgeProblem(draft, others, variables, variableAliases);
+  const problem = judgeProblem(draft, others, variables, maxPromptLength);
   const variableMappings = judgePromptVariables(variables);
   const threshold = draft.output.kind === "score" ? draft.output.threshold : 0.7;
   return (
@@ -219,8 +222,7 @@ function JudgeEditor({
         value={draft.prompt}
         onChange={(prompt) => setDraft({ ...draft, prompt })}
         variables={variableMappings}
-        scope="iteration"
-        maxLength={MAX_CUSTOM_JUDGE_PROMPT_LENGTH}
+        maxLength={maxPromptLength}
       />
       <details className="text-xs">
         <summary className="mb-2 cursor-pointer text-muted-foreground">
@@ -292,7 +294,7 @@ function JudgeEditor({
             if (!problem) onSave({ ...draft, label: draft.label.trim() });
           }}
         >
-          Save judge
+          {isNew ? "Add judge" : "Save judge"}
         </Button>
       </div>
     </div>

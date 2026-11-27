@@ -1,8 +1,5 @@
-import {
-  MAX_CUSTOM_JUDGE_PROMPT_LENGTH,
-  MAX_CUSTOM_JUDGES,
-  type CustomJudge,
-} from "@/components/shared/session-quality/judge-config";
+import type { CustomJudge } from "@/components/shared/session-quality/judge-config";
+import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import type { EvalJudgeConfig } from "../types";
 import { usedVariables } from "./prompt-editor";
 import type { PromptVariable } from "./variable-mapping-table";
@@ -15,10 +12,28 @@ const VARIABLE_DESCRIPTIONS = new Map([
   ["expected_output", "The case's expected output"],
 ]);
 
+/** What every judge creation path says about cost. Never a price. */
+export const CUSTOM_JUDGE_COST_COPY =
+  "Each judge adds a charged model call per graded iteration.";
+
+/**
+ * The backend's limits for author-written judges, from `judges.custom`. A
+ * deployment that cannot run them allows none.
+ */
+export function customJudgeLimits(
+  capabilities: SuiteCapabilities | null | undefined,
+): { maxJudges: number; maxPromptLength: number } {
+  const custom = capabilities?.judges?.custom;
+  return {
+    maxJudges: custom?.maxJudges ?? 0,
+    maxPromptLength: custom?.maxPromptLength ?? 0,
+  };
+}
+
 export function judgePromptVariables(names: readonly string[]): PromptVariable[] {
   return names.map((name) => ({
     name,
-    path: VARIABLE_DESCRIPTIONS.get(name) ?? "Trial data",
+    description: VARIABLE_DESCRIPTIONS.get(name) ?? "Iteration data",
   }));
 }
 
@@ -26,21 +41,15 @@ export function judgeProblem(
   judge: CustomJudge,
   others: readonly CustomJudge[],
   availableVariables: readonly string[],
-  variableAliases?: Readonly<Record<string, string>>,
+  maxPromptLength: number,
 ): string | undefined {
   if (!judge.label.trim()) return "Give the judge a name.";
   if (!judge.prompt.trim()) return "Write the judge prompt.";
-  if (judge.prompt.length > MAX_CUSTOM_JUDGE_PROMPT_LENGTH) {
-    return `Keep the prompt under ${MAX_CUSTOM_JUDGE_PROMPT_LENGTH} characters.`;
+  if (judge.prompt.length > maxPromptLength) {
+    return `Keep the prompt under ${maxPromptLength} characters.`;
   }
   const used = usedVariables(judge.prompt);
-  const unknown = used.filter(
-    (name) =>
-      !availableVariables.includes(name) &&
-      !(variableAliases &&
-        Object.hasOwn(variableAliases, name) &&
-        availableVariables.includes(variableAliases[name])),
-  );
+  const unknown = used.filter((name) => !availableVariables.includes(name));
   if (unknown.length) {
     return `${unknown.map((n) => `{{${n}}}`).join(", ")} ${unknown.length === 1 ? "isn't an available variable" : "aren't available variables"}.`;
   }
@@ -58,7 +67,7 @@ export function judgeProblem(
   return undefined;
 }
 
-export function judgeIdFor(label: string, taken: readonly string[]): string {
+function judgeIdFor(label: string, taken: readonly string[]): string {
   const base =
     label
       .toLowerCase()
@@ -94,6 +103,10 @@ export function customizedCopy(
   };
 }
 
+/**
+ * The config with these judges. The stored on/off switch is kept, and
+ * callers check the backend's judge limit first, so nothing is dropped here.
+ */
 export function withJudges(
   judgeConfig: EvalJudgeConfig | undefined,
   judges: readonly CustomJudge[],
@@ -102,7 +115,7 @@ export function withJudges(
     ...(judgeConfig ?? {}),
     customJudges: {
       enabled: judgeConfig?.customJudges?.enabled ?? true,
-      judges: judges.slice(0, MAX_CUSTOM_JUDGES),
+      judges: [...judges],
     },
   };
 }

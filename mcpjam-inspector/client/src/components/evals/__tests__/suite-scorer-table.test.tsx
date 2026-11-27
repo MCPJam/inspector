@@ -77,7 +77,10 @@ function renderTable(
 
 describe("SuiteScorerTable rubric checks", () => {
   /** A deployment that grades rubric checks, with this goal-judge policy. */
-  function withRubricChecks(goalEnabled: boolean, version = 1): SuiteCapabilities {
+  function withRubricChecks(
+    goalEnabled: boolean,
+    yesNo = false,
+  ): SuiteCapabilities {
     return {
       judge: judgeCapabilities(),
       judges: {
@@ -100,7 +103,8 @@ describe("SuiteScorerTable rubric checks", () => {
         },
         rubricChecks: {
           role: "advisory",
-          template: { version, hash: "r" },
+          template: { version: 1, hash: "r" },
+          ...(yesNo ? { questionKinds: ["choice", "score", "yesno"] } : {}),
           execution: "wired",
           calibration: "unavailable",
         },
@@ -143,10 +147,10 @@ describe("SuiteScorerTable rubric checks", () => {
     );
   });
 
-  it("offers yes/no authoring under User value on template v2", async () => {
+  it("offers yes/no authoring under User value where the deployment accepts it", async () => {
     const user = userEvent.setup();
     const { onJudgeConfigChange } = renderTable({
-      capabilities: withRubricChecks(true, 2),
+      capabilities: withRubricChecks(true, true),
     });
     const card = screen.getByTestId("suite-judge-card-rubricChecks");
     await user.click(within(card).getByRole("button", { name: "Yes/no" }));
@@ -159,7 +163,7 @@ describe("SuiteScorerTable rubric checks", () => {
     });
   });
 
-  it("offers choice and score authoring on template v1", () => {
+  it("offers only choice and score authoring where yes/no is not listed", () => {
     renderTable({ capabilities: withRubricChecks(true) });
     const card = within(screen.getByTestId("suite-judge-card-rubricChecks"));
     expect(card.queryByRole("button", { name: "Yes/no" })).toBeNull();
