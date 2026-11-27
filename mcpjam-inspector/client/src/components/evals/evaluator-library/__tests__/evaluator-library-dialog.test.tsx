@@ -179,6 +179,14 @@ describe("EvaluatorLibraryButton", () => {
     expect(
       categories.getByRole("button", { name: "Final answer" }),
     ).toHaveAttribute("aria-pressed", "true");
+    // One h2 (the dialog title), the view's h3, then preset h4s.
+    expect(screen.getAllByRole("heading", { level: 2 })).toHaveLength(1);
+    expect(
+      screen.getByRole("heading", { level: 3, name: "Final answer" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 4, name: "Answers the Question" }),
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "No Wasted Calls" }),
     ).not.toBeInTheDocument();
@@ -375,6 +383,16 @@ describe("yes/no capability", () => {
 describe("judge evaluators", () => {
   it("adds a tagged judge and says each judge is charged separately", () => {
     const onAdd = open();
+    expect(
+      screen
+        .getByRole("heading", { name: "Answers the Question" })
+        .closest("article"),
+    ).toHaveTextContent(
+      "Each judge adds a charged model call per graded iteration.",
+    );
+    expect(
+      screen.getByRole("heading", { name: "No Wasted Calls" }).closest("article"),
+    ).not.toHaveTextContent("charged model call");
     fireEvent.click(screen.getByRole("button", { name: "Answers the Question" }));
     const adds = screen.getByRole("list", { name: "What this evaluator adds" });
     expect(adds).toHaveTextContent("Judge prompt, pass or fail.");

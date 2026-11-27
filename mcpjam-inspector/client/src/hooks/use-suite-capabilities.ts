@@ -333,7 +333,7 @@ export function hasJudgeSeverityCapability(
 
 /** The backend runs author-written judges (evaluator library slice 3). */
 export function hasCustomJudgesCapability(
-  capabilities: SuiteCapabilities | null | undefined,
+  capabilities: Pick<SuiteCapabilities, "judges"> | null | undefined,
 ): boolean {
   return capabilities?.judges?.custom?.execution === "wired";
 }

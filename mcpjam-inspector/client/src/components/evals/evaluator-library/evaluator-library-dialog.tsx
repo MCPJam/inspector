@@ -77,7 +77,7 @@ function EvaluatorLibraryDialog({
       type="button"
       size="sm"
       variant="ghost"
-      className="col-span-full -ml-2 w-fit"
+      className="-ml-2 w-fit"
       onClick={goBack}
     >
       <ArrowLeft aria-hidden />

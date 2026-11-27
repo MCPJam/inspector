@@ -332,11 +332,10 @@ export type ScorecardRow = {
   /** Rubric-check rows only: the question's key, and whether it is a criterion. */
   rubricCheck?: { key: string; criterion: boolean };
   /**
-   * Custom-judge rows: the judge's id, the library evaluator it was added
-   * from, and its output format, all read from the saved verdict.
+   * Custom-judge rows: the library evaluator the judge was added from, and
+   * its output format, both read from the saved verdict.
    */
   customJudge?: {
-    id: string;
     evaluatorId?: string;
     outputKind?: "score" | "passfail";
   };
