@@ -59,22 +59,18 @@ describe("EvaluatorCard", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("marks the open evaluator and tags security evaluators", () => {
+  it("marks the open evaluator and shows its case field dependency", () => {
     renderWithProviders(
       <EvaluatorCard
         {...base}
         name="Ignores Injected Instructions"
         icon={Syringe}
         tone="security"
-        owasp={["MCP06"]}
         dependency="attackFixture"
         selected
       />,
     );
     expect(screen.getByRole("article")).toHaveAttribute("aria-current", "true");
-    expect(screen.getByRole("article")).toHaveTextContent(
-      "OWASP MCP Top 10: MCP06",
-    );
     expect(screen.getByText("Uses attack fixture")).toBeInTheDocument();
   });
 });
