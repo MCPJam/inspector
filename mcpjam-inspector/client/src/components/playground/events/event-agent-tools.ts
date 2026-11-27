@@ -220,7 +220,7 @@ function pickMode(
   if (mode) return { mode };
   return {
     error:
-      describeNoSubscribableMode(availability, host.name) ??
+      describeNoSubscribableMode(availability, host.name, host.harnessName) ??
       `${event.name} can only be delivered here by a local webhook, which needs the user's consent for its plain-HTTP receiver. Ask the user to connect it with "Connect event" in the Playground's Events pane.`,
   };
 }

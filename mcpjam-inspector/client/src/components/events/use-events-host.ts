@@ -8,6 +8,8 @@ import {
 } from "@mcpjam/sdk/browser";
 import { useHostList, type HostListItem } from "@/hooks/useClients";
 import { clientDisplayName } from "@/lib/client-display-name";
+import { harnessDisplayName } from "@/shared/client-events";
+import { effectiveHarnessId } from "@/shared/harness-descriptors";
 
 /** How MCPJam's own client is named when no saved client is chosen. */
 export const BUILT_IN_EVENTS_HOST_NAME = "MCPJam (built-in)";
@@ -21,6 +23,15 @@ export interface EventsHostChoice {
   modes: EventDeliveryMode[];
   /** The chosen client no longer exists, so nothing can subscribe as it. */
   missing: boolean;
+  /** The vendor harness that runs it, which receives no MCP Events. */
+  harnessName?: string;
+}
+
+function harnessOf(
+  config: { agentLoop?: string | null; harness?: string | null } | null,
+): { harnessName: string } | Record<string, never> {
+  const id = effectiveHarnessId(config);
+  return id ? { harnessName: harnessDisplayName(id) } : {};
 }
 
 /**
@@ -50,6 +61,7 @@ export function resolveEventsHostChoice(args: {
       name: listed ? clientDisplayName(listed) : "Active client",
       modes: resolveHostEventDeliveryModes(args.activeHost),
       missing: false,
+      ...harnessOf(args.activeHost),
     };
   }
   if (!args.hosts) return undefined;
@@ -66,6 +78,7 @@ export function resolveEventsHostChoice(args: {
     name: clientDisplayName(listed),
     modes: listed.eventDeliveryModes ?? [],
     missing: false,
+    ...harnessOf(listed),
   };
 }
 

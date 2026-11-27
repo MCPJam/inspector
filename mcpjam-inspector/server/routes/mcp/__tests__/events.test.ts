@@ -284,7 +284,7 @@ describe("local events routes", () => {
     expect(refused.body).toMatchObject({
       code: "EVENTS_MODE_UNSUPPORTED",
       message:
-        "ChatGPT doesn't receive events by poll. Turn it on in its Protocol settings, or pick another client.",
+        "ChatGPT doesn't receive events by poll. Turn it on in the client's Events tab, or pick another client.",
     });
     const none = await call("POST", "/subscriptions", {
       serverId: SERVER_ID,
@@ -295,7 +295,7 @@ describe("local events routes", () => {
     });
     expect(none.status).toBe(400);
     expect(none.body.message).toBe(
-      "Claude doesn't receive events. Turn on a delivery mode in its Protocol settings, or pick another client.",
+      "Claude doesn't receive events. Turn on a delivery mode in the client's Events tab, or pick another client.",
     );
   });
 

@@ -410,7 +410,7 @@ describe("EventsTab (local)", () => {
     const delivery = screen.getByTestId("subscribe-delivery");
     expect(
       within(delivery).getByText(
-        "ChatGPT doesn't receive events by poll. Turn it on in its Protocol settings, or pick another client.",
+        "ChatGPT doesn't receive events by poll. Turn it on in the client's Events tab, or pick another client.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /Webhook/ })).toBeChecked();
@@ -463,7 +463,7 @@ describe("EventsTab (local)", () => {
     await openEventType("issue.created");
     const blocked = await screen.findByTestId("subscribe-blocked");
     expect(blocked).toHaveTextContent(
-      "doesn't receive events. Turn on a delivery mode in its Protocol settings, or pick another client.",
+      "doesn't receive events. Turn on a delivery mode in the client's Events tab, or pick another client.",
     );
     // Client policy is fixed in Clients, not with a picker here.
     expect(

@@ -44,7 +44,8 @@ export interface ClientEventsView {
     | { available: false; reason: ClientEventsAgentToolsReason };
 }
 
-function harnessName(id: string): string {
+/** The display name of a vendor harness, or its id when it isn't known. */
+export function harnessDisplayName(id: string): string {
   return Object.hasOwn(HARNESS_DESCRIPTORS, id)
     ? HARNESS_DESCRIPTORS[id as keyof typeof HARNESS_DESCRIPTORS].displayName
     : id;
@@ -62,7 +63,7 @@ export function describeClientEvents(
   const modes = resolveHostEventDeliveryModes(config);
   const harnessId = effectiveHarnessId(config);
   const harness = harnessId
-    ? { id: harnessId, name: harnessName(harnessId) }
+    ? { id: harnessId, name: harnessDisplayName(harnessId) }
     : undefined;
   const setting = config ? readEventsHostSetting(config).kind : "valid";
   const usableModes = EVENT_DELIVERY_MODES.filter(
