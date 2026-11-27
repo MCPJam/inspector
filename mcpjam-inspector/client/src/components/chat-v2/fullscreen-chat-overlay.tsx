@@ -606,7 +606,10 @@ function Composer({
               activeSubmitButtonClassName,
             )}
             disabled={!onCancelSubmit}
-            onClick={() => {
+            onClick={(event) => {
+              // Send renders in this button's place before the click's default
+              // action runs, which would then submit the cancelled message.
+              event.preventDefault();
               onCancelSubmit?.();
               textareaRef.current?.focus();
             }}

@@ -1,7 +1,8 @@
 import type { HarnessStartupPhase } from "@/shared/harness-startup";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import type { ReactElement } from "react";
+import { useState, type ReactElement } from "react";
+import { flushSync } from "react-dom";
 import type { UIMessage } from "@ai-sdk/react";
 
 import {
@@ -808,6 +809,33 @@ describe("FullscreenChatOverlay", () => {
 
       expect(onCancelSubmit).toHaveBeenCalledTimes(1);
       expect(screen.getByPlaceholderText("Message…")).toHaveFocus();
+    });
+
+    it("does not send when Send takes the place of the clicked Cancel sending", () => {
+      const onSend = vi.fn();
+      // A browser renders the cancel before the click's default action runs;
+      // flushSync does the same here.
+      function Overlay() {
+        const [isSubmitting, setIsSubmitting] = useState(true);
+        return (
+          <FullscreenChatOverlay
+            {...defaultProps}
+            input="Follow up"
+            canSend={true}
+            isSubmitting={isSubmitting}
+            onSend={onSend}
+            onCancelSubmit={() => flushSync(() => setIsSubmitting(false))}
+          />
+        );
+      }
+      renderWithProviders(<Overlay />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Cancel sending" }));
+
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeEnabled();
+      expect(onSend).not.toHaveBeenCalled();
     });
 
     it("sends on Enter again once the preparation is over", () => {
