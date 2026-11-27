@@ -1,8 +1,9 @@
 /**
  * Reads the questions off a stored `metadata.rubricChecksVerdict`.
  *
- * The server projects score rows from these questions. The scorecard uses
- * the verdict to order projected rows and identify boolean questions.
+ * The server projects score rows from these questions. The trial scorecard
+ * reads the same verdict only to tell which projected rows are yes/no answers
+ * and what P(yes) each got, so both sides parse it with this one function.
  */
 
 export type RubricCheckVerdictQuestion = {

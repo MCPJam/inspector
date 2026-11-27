@@ -4,7 +4,7 @@ import type { PlatformEvalIterationReport } from "@mcpjam/sdk/platform";
  *
  * THE RULE THIS FILE EXISTS TO ENFORCE: a row shows a SERVER FACT or it says
  * "not measured". It never computes a verdict, never re-evaluates a predicate,
- * and never lets an absent fact read as a pass. These sources carry those
+ * and never lets an absent fact read as a pass. Four sources carry those
  * facts, and they are consulted in a fixed precedence per row kind:
  *
  *   `metadata.stepResults`   — the per-step verdict, with its reason. The only
@@ -13,8 +13,8 @@ import type { PlatformEvalIterationReport } from "@mcpjam/sdk/platform";
  *                              Present on runs that predate score rows.
  *   `metadata.scores`        — the score contract, joined to its definition by
  *                              RECOMPUTED `definitionHash` (never `scorerId`).
- *   saved model verdicts    — the grading job's recorded results when a
- *                              corresponding projected score is absent.
+ *                              The only source that can say "error" or
+ *                              "skipped" rather than just pass/fail.
  *   the trial chain          — the analyzer's projection, for the route row on
  *                              a run that has no score rows, and the only
  *                              source a built-in runner check reads: it
@@ -49,7 +49,6 @@ import type {
 } from "@mcpjam/sdk/contract";
 import {
   hostedCriterionId,
-  hostedRubricCheckScorerId,
   HOSTED_RUBRIC_CHECKS_SCORER_PREFIX,
 } from "@/shared/hosted-criterion-id";
 import {
@@ -80,7 +79,6 @@ export type TrialRowResultSource =
   | "stepResult"
   | "predicateResult"
   | "scoreRow"
-  | "modelVerdict"
   | "chainSelection"
   | "chainStage"
   | "judgeCase"
@@ -109,7 +107,7 @@ export type TrialRowResult =
    */
   | {
       state: "uncertain";
-      source: "scoreRow" | "modelVerdict";
+      source: "scoreRow";
       reason?: string;
       value: number;
       threshold?: number;
@@ -121,7 +119,7 @@ export type TrialRowResult =
     }
   | {
       state: "skipped";
-      source: "stepResult" | "scoreRow" | "modelVerdict" | "chainStage";
+      source: "stepResult" | "scoreRow" | "chainStage";
       reason?: string;
     }
   | {
@@ -614,7 +612,19 @@ export const RUBRIC_CHECK_UNCERTAIN_BAND = { from: 0.4, below: 0.6 } as const;
 
 const RUBRIC_CHECK_LABEL_PREFIX = "rubric check: ";
 
-/** The trial's recorded rubric results, never the suite's live criteria. */
+/**
+ * The rubric-check rows this trial was ACTUALLY graded with.
+ *
+ * Built from the trial's stored score rows, joined to their definitions the
+ * same way every other row is (recomputed `definitionHash`), rather than from
+ * the suite's current criteria: a criterion edited or removed since the run
+ * would otherwise show a row this trial was never asked, and a deployment
+ * that does not grade rubric checks would show rows that never fill in.
+ * Returned in the order the backend asked them, criteria first.
+ *
+ * The stored verdict is read only to tell which rows are yes/no answers and
+ * what P(yes) each got; a question with no score row gets no row here.
+ */
 export function rubricCheckTrialRows(
   iteration: EvalIteration | null,
 ): JoinedScorecardRow[] {
@@ -624,86 +634,83 @@ export function rubricCheckTrialRows(
     parseIterationScores(metadata),
     parseEvaluationConfig(metadata),
   );
-  const questions = new Map(
-    rubricCheckVerdictQuestions(metadata.rubricChecksVerdict).map(
-      (question) => [question.key, question],
-    ),
+  const booleanAnswers = new Map(
+    rubricCheckVerdictQuestions(metadata.rubricChecksVerdict)
+      .filter((question) => question.kind === "boolean")
+      .map((question) => [question.key, question]),
   );
-  const rows = new Map<string, JoinedScorecardRow>();
+  const rows: JoinedScorecardRow[] = [];
   for (const [scorerId, { score, definition }] of scores.byScorerId) {
     if (!scorerId.startsWith(HOSTED_RUBRIC_CHECKS_SCORER_PREFIX)) continue;
     const key = scorerId.slice(HOSTED_RUBRIC_CHECKS_SCORER_PREFIX.length);
+    const criterion = key.startsWith("c:");
     const stored = definition?.label ?? "";
     const label = stored.startsWith(RUBRIC_CHECK_LABEL_PREFIX)
       ? stored.slice(RUBRIC_CHECK_LABEL_PREFIX.length)
       : stored || key.slice(2);
-    const question = questions.get(key);
-    const result = resultFromScore(score, definition);
-    const criterion = key.startsWith("c:");
-    const booleanResult = criterion || question?.kind === "boolean";
-    const row = rubricCheckRow(
-      key,
+    const row: ScorecardRow = {
+      key: scorerId,
+      stage: "userValue",
+      provenance: "rubricCheck",
       label,
-      booleanResult
-        ? uncertainIfUndecided(result, criterion ? undefined : question?.probability)
-        : result,
-    );
+      kindLabel: "Rubric check",
+      role: "advisory",
+      roleLock: "judge",
+      editable: false,
+      rubricCheck: { key, criterion },
+      tooltip: criterion
+        ? "A suite criterion, asked on its own as a yes or no question. Advisory."
+        : "A question the suite added to its rubric checks. Advisory.",
+      join: { kind: "judge", slot: "rubricChecks", scorerId },
+    };
+    const result = resultFromScore(score, definition);
     const evidence = scoreEvidence(score, definition, row);
-    rows.set(scorerId, { ...row, ...(evidence ? { evidence } : {}) });
+    // Every criterion is a yes/no answer; an authored question is one only
+    // when the verdict says so; a choice or score value is never P(yes).
+    const answer = booleanAnswers.get(key);
+    rows.push({
+      ...row,
+      result:
+        criterion || answer
+          ? uncertainIfUndecided(result, answer?.probability)
+          : result,
+      ...(evidence ? { evidence } : {}),
+    });
   }
-  // The verdict orders the projected rows by when the questions were asked.
-  const ordered: JoinedScorecardRow[] = [];
-  for (const key of questions.keys()) {
-    const scorerId = hostedRubricCheckScorerId(key);
-    const projected = rows.get(scorerId);
-    if (!projected) continue;
-    ordered.push(projected);
-    rows.delete(scorerId);
-  }
-  return [...ordered, ...rows.values()];
+  return rows;
 }
 
-function rubricCheckRow(
-  key: string,
-  label: string,
-  result: TrialRowResult,
-): JoinedScorecardRow {
-  const scorerId = hostedRubricCheckScorerId(key);
-  const criterion = key.startsWith("c:");
-  return {
-    key: scorerId,
-    stage: "userValue",
-    provenance: "rubricCheck",
-    label,
-    kindLabel: "Rubric check",
-    role: "advisory",
-    roleLock: "judge",
-    editable: false,
-    rubricCheck: { key, criterion },
-    tooltip: criterion
-      ? "A suite criterion, asked on its own as a yes or no question. Advisory."
-      : "A question the suite added to its rubric checks. Advisory.",
-    join: { kind: "judge", slot: "rubricChecks", scorerId },
-    result,
-  };
-}
-
+/**
+ * Uncertain when P(yes) is inside the band. The row's value is P(pass), which
+ * for a question that passes on No is 1 - P(yes), so the band reads the
+ * verdict's own P(yes) when the grader gave one. Without one the answer came
+ * from a model that gives no probability, and the value is 0 or 1.
+ */
 function uncertainIfUndecided(
   result: TrialRowResult,
-  probability: number | undefined,
+  pYes: number | undefined,
 ): TrialRowResult {
   if (
     (result.state !== "passed" && result.state !== "failed") ||
-    result.source !== "scoreRow"
+    result.source !== "scoreRow" ||
+    typeof result.value !== "number"
   ) {
     return result;
   }
-  const pYes = probability ?? result.value;
-  return typeof pYes === "number" &&
-    pYes >= RUBRIC_CHECK_UNCERTAIN_BAND.from &&
-    pYes < RUBRIC_CHECK_UNCERTAIN_BAND.below
-    ? { ...result, state: "uncertain" }
-    : result;
+  const p = pYes ?? result.value;
+  if (
+    p < RUBRIC_CHECK_UNCERTAIN_BAND.from ||
+    p >= RUBRIC_CHECK_UNCERTAIN_BAND.below
+  ) {
+    return result;
+  }
+  return {
+    state: "uncertain",
+    source: "scoreRow",
+    value: result.value,
+    ...(result.reason ? { reason: result.reason } : {}),
+    ...(result.threshold !== undefined ? { threshold: result.threshold } : {}),
+  };
 }
 
 /** "Failed because the server reported a tool error." — the chain's own words. */

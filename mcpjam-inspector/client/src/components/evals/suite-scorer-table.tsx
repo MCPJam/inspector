@@ -501,6 +501,7 @@ export function SuiteScorerTable({
                     }
                     onRemoveEvaluator={library?.remove}
                     onUpdateEvaluator={library?.update}
+                    updateRefusal={library?.updateRefusal}
                     renderRow={(row) => (
                       <ScorerRow
                         key={row.id}

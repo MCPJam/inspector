@@ -530,6 +530,7 @@ export function TrialScorecard({
     <div className="flex flex-col gap-6 p-4" data-testid="trial-scorecard">
       {chainNotice}
       <EvaluatorScorecardSummary
+        questions={authored.suiteJudgeConfig?.rubricChecks?.questions}
         rows={sections.flatMap((section) =>
           section.rows.map((row) =>
             judgeHidden && isJudgeOutput(row)

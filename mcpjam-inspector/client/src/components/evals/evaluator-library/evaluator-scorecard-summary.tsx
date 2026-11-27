@@ -1,10 +1,10 @@
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import { Library } from "lucide-react";
 import type { TrialRowResult } from "@/components/evaluate/case-scorecard/trial-results";
+import type { RubricCheckQuestion } from "@/components/shared/session-quality/judge-config";
 import type { ScorerUiRole } from "../suite-scorer-table-model";
 import { useEvaluatorLibraryEnabled } from "./evaluator-library-flag";
 import { findLibraryEvaluator } from "./library-catalog";
-import { evaluatorIdForQuestionKey } from "./library-suite-edits";
 import { ScorecardEvaluatorCard } from "./scorecard-evaluator-card";
 import type { VerdictStatus } from "./verdict-pill";
 
@@ -29,6 +29,22 @@ const STATUS: Record<TrialRowResult["state"], VerdictStatus> = {
   pending: "running",
   notMeasured: "skipped",
 };
+
+/**
+ * The library evaluator a rubric-check row came from. A stored row keeps only
+ * its `q:<id>` key, so the evaluator is read off the tag of the question with
+ * that id in the trial's question list; an untagged question is the author's
+ * own, even when its id matches a library question's.
+ */
+export function evaluatorIdForQuestionKey(
+  key: string | undefined,
+  questions: readonly RubricCheckQuestion[],
+): string | undefined {
+  if (!key?.startsWith("q:")) return undefined;
+  const id = key.slice(2);
+  const tag = questions.find((q) => q.id === id)?.evaluator?.id;
+  return tag && findLibraryEvaluator(tag) ? tag : undefined;
+}
 
 /** Required checks decide when applicable. Advisory checks are the fallback. */
 export function evaluatorStatus(
@@ -56,8 +72,11 @@ export function evaluatorStatus(
  */
 export function EvaluatorScorecardSummary({
   rows,
+  questions = [],
 }: {
   rows: readonly SummaryRow[];
+  /** The rubric-check questions the trial was asked, with their tags. */
+  questions?: readonly RubricCheckQuestion[];
 }) {
   const enabled = useEvaluatorLibraryEnabled();
   if (!enabled) return null;
@@ -65,7 +84,7 @@ export function EvaluatorScorecardSummary({
   for (const row of rows) {
     const id =
       row.predicate?.evaluator?.id ??
-      evaluatorIdForQuestionKey(row.rubricCheck?.key);
+      evaluatorIdForQuestionKey(row.rubricCheck?.key, questions);
     if (!id) continue;
     byEvaluator.set(id, [...(byEvaluator.get(id) ?? []), row]);
   }
