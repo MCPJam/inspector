@@ -122,7 +122,7 @@ export const SOURCE_TYPE_OPTIONS = [
     id: "event" as const,
     label: "Background triggers",
     description:
-      "Runs a background trigger starts when an MCP server sends an event. Until they are sent as their own source, Playground (shared) sends them.",
+      "Agent runs that start when an MCP server sends an event. Until these runs have their own source, they are sent with Playground (shared).",
   },
   {
     id: "swarm" as const,
