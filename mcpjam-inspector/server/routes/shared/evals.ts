@@ -2,6 +2,7 @@ import { localHarnessIdOf, shouldUseLocalHarness } from "../../utils/harness/loc
 import { freezeEvalRunWebAccounts } from "../../services/web-clients/web-client-run.js";
 import { localHarnessCapabilities } from "../../services/evals/runner-capabilities.js";
 import { casesAssertingWidgetRender, failRunBeforeExecution } from "../../services/evals/harness-admission.js";
+import { explainEvalHarnessRefusal } from "../../services/evals/explain-harness-refusal.js";
 import { singleCaseHarnessBoxRefusal } from "../../services/evals/needs-ephemeral-sandbox.js";
 import { hostedBrowserAdvertisable } from "../../utils/computers/runtime-config.js";
 import { listBaseServers, managerAccountsAtRun } from "../../utils/mcp-connections.js";
@@ -3006,13 +3007,15 @@ export async function prepareEvalRun(
     // always provisioning, not by demanding an image.
   });
   if (!harnessAdmission.ok) {
-    await failRunBeforeExecution(convexClient, recorder, runId, {
-      reason: harnessAdmission.reason,
+    // On a local Inspector, why this machine couldn't run it, and the fix.
+    const reason = await explainEvalHarnessRefusal({
+      admission: harnessAdmission, bearer: bearerNow(convexAuthToken), projectId: venueProjectId,
     });
+    await failRunBeforeExecution(convexClient, recorder, runId, { reason });
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      harnessAdmission.reason,
+      reason,
       { reason: "HARNESS_UNAVAILABLE", harness: harnessAdmission.harness },
     );
   }

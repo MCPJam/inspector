@@ -23,7 +23,8 @@ import { registerLocalInstance } from "../harness-model-broker.js";
 import { noteTurnRuntimeStatus } from "./turn-runtime-status.js";
 import { invalidateLocalTurnParks } from "./approval-park.js";
 
-import { evaluateLocalHarnessRollout } from "../../analytics.js";
+import { evaluateLocalHarnessRollout, localHarnessRolloutAnswer } from "../../analytics.js";
+import { resolveFeatureFlagSource } from "../../feature-flag-source.js";
 import { localHarnessRolloutFlag } from "../../../../shared/harness-descriptors.js";
 import { harnessDisplayName } from "../../../../shared/harness-model-support.js";
 import { DEFAULT_LOCAL_HARNESS_ID } from "./runtimes/index.js";
@@ -219,23 +220,75 @@ export async function ensureLocalHarnessTarget(args: {
     target };
 }
 
-/** Account eligibility is checked with backend-verified properties, never renderer flags. */
-export async function localHarnessAccountEnabled(bearer: string | undefined, projectId?: string, harnessId: SupportedLocalHarnessId = DEFAULT_LOCAL_HARNESS_ID): Promise<boolean> {
-  if (!bearer || HOSTED_MODE || !LOCAL_HARNESS_ENABLED) return false;
+/**
+ * The signed-in member behind `bearer` and their durable authorization of
+ * `harnessId` for `projectId` on this machine. Null when no member can be
+ * established from the bearer: a guest, an API key, or no AuthKit here.
+ */
+async function readLocalHarnessMember(bearer: string, projectId: string | undefined, harnessId: SupportedLocalHarnessId) {
   const actor = await resolveLocalHarnessActor({ authorizationHeader: `Bearer ${bearer.replace(/^Bearer\s+/i, "")}`, contextCredential: null });
-  if (!actor.ok) return false;
+  if (!actor.ok) return null;
   const authorized = projectId
     ? await readLocalHarnessAuthorization(actor.actor.userId, await getLocalMachineId(), projectId, harnessId)
     : null;
-  if (projectId && !authorized) return false;
+  return { actor: actor.actor, authorized };
+}
+
+async function memberEmail(bearer: string): Promise<string | undefined> {
+  const user = await localHarnessBackend(bearer).query("users:getCurrentUser" as never, {}) as { email?: string } | null;
+  return user?.email;
+}
+
+/** Account eligibility is checked with backend-verified properties, never renderer flags. */
+export async function localHarnessAccountEnabled(bearer: string | undefined, projectId?: string, harnessId: SupportedLocalHarnessId = DEFAULT_LOCAL_HARNESS_ID): Promise<boolean> {
+  if (!bearer || HOSTED_MODE || !LOCAL_HARNESS_ENABLED) return false;
+  const member = await readLocalHarnessMember(bearer, projectId, harnessId);
+  if (!member || (projectId && !member.authorized)) return false;
+  const { actor, authorized } = member;
   try {
-    const client = localHarnessBackend(bearer);
-    const user = await client.query("users:getCurrentUser" as never, {}) as { email?: string } | null;
-    const enabled = await localHarnessRolloutEnabled(actor.actor.subject, user?.email, harnessId);
+    const enabled = await localHarnessRolloutEnabled(actor.subject, await memberEmail(bearer), harnessId);
     if (authorized && !enabled) throw new Error(`Local ${harnessDisplayName(harnessId)} authorization could not be verified. Retry when access is available.`);
     return enabled;
   } catch (error) {
     if (authorized) throw error;
     return false;
   }
+}
+
+/**
+ * Why the account check refused, in the terms a refusal's text needs:
+ * - `actor-refused`: no member identity here (signing in again won't help);
+ * - `flags-off`: the flag source is off (`DO_NOT_TRACK`, no flag file);
+ * - `rollout-unknown`: the rollout request failed;
+ * - `not-rolled-out`: this member's account isn't in the harness's rollout;
+ * - `not-set-up`: in the rollout, without this project's authorization here.
+ */
+export type LocalHarnessMemberRefusal = "actor-refused" | "flags-off" | "rollout-unknown" | "not-rolled-out" | "not-set-up";
+
+/**
+ * Asked only after a refusal, never on a launch's own path. The rollout is
+ * read as its own answer so a failed request or a switched-off flag source is
+ * never mistaken for "outside the rollout", and only a member the Playground
+ * would offer setup to is told to set it up. Null when nothing refuses.
+ */
+export async function localHarnessMemberRefusal(
+  bearer: string | undefined,
+  projectId: string | undefined,
+  harnessId: SupportedLocalHarnessId,
+): Promise<LocalHarnessMemberRefusal | null> {
+  const member = bearer ? await readLocalHarnessMember(bearer, projectId, harnessId) : null;
+  if (!bearer || !member) return "actor-refused";
+  if (resolveFeatureFlagSource().kind === "off") return "flags-off";
+  let rollout: boolean | undefined;
+  try {
+    rollout = await localHarnessRolloutAnswer(member.actor.subject, await memberEmail(bearer), localHarnessRolloutFlag(harnessId));
+  } catch (error) {
+    logger.warn("[local-harness] could not read the rollout for a refusal", {
+      harnessId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+  if (rollout === undefined) return "rollout-unknown";
+  if (!rollout) return "not-rolled-out";
+  return projectId && !member.authorized ? "not-set-up" : null;
 }
