@@ -28,3 +28,41 @@ export function useHistoryTarget<P>(
     [],
   );
 }
+
+/**
+ * Ties a send to the thread open when it started. `leave()` marks the user
+ * leaving the chat on purpose (another thread, New chat, Clear chat, a URL
+ * restore), before any discard dialog; the other ways the open thread changes
+ * move `selection` or the history target. `left` is the leaving alone, and
+ * `refuse()` runs `restore` unless the user left: a prompt dropped while the
+ * user stayed, such as by the send's own detach, goes back in the composer.
+ */
+export function useThreadSend<P>(
+  chatSessionId: string,
+  projectId: P,
+  selection: { readonly current: number },
+) {
+  const isCurrentTarget = useHistoryTarget(chatSessionId, projectId);
+  const epoch = useRef(0);
+  const begin = useCallback(
+    (restore?: () => void) => {
+      const started = epoch.current;
+      const selected = selection.current;
+      const target = { chatSessionId, projectId };
+      const left = () => epoch.current !== started;
+      return {
+        left,
+        isCurrent: () =>
+          !left() && selection.current === selected && isCurrentTarget(target),
+        refuse: () => {
+          if (!left()) restore?.();
+        },
+      };
+    },
+    [chatSessionId, projectId, selection, isCurrentTarget],
+  );
+  const leave = useCallback(() => {
+    epoch.current += 1;
+  }, []);
+  return { isCurrentTarget, begin, leave };
+}
