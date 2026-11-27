@@ -107,6 +107,11 @@ describe("CaniuseComparePage", () => {
       for (const [index, client] of ["Claude", "ChatGPT", "Cursor"].entries()) {
         expect(rows[index]).toHaveTextContent(client);
         expect(rows[index].querySelector("[data-support-level]")).toBeInTheDocument();
+        const date = rows[index].querySelector("time");
+        expect(date).toHaveAttribute("datetime", expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/));
+        expect(date?.querySelector(".whitespace-nowrap")).toHaveTextContent(
+          /^\d{4}-\d{2}-\d{2}$/,
+        );
       }
       expect(events.getByRole("link", { name: /^\d+%, \d+ of \d+ probed clients/ }))
         .toHaveAttribute("href", "/capabilities/event-delivery");

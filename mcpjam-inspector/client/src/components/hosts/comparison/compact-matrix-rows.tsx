@@ -153,7 +153,9 @@ export function CompactVerifiedDate({ subject, className }: { subject: HostCompa
       className={cn("mt-1.5 inline-flex items-center gap-1 text-[10px] leading-tight font-normal text-muted-foreground", className)}
     >
       {stale && <TriangleAlert className="size-3 shrink-0" aria-hidden />}
-      <span>Verified on {date}</span>
+      <span>
+        Verified on <span className="whitespace-nowrap">{date}</span>
+      </span>
     </time>
   );
 }

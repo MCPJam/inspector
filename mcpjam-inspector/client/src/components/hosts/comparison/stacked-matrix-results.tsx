@@ -75,13 +75,13 @@ export function StackedMatrixResults({
                       {clients.map(({ subject, href, logo }) => (
                         <li
                           key={subject.hostId}
-                          className="grid grid-cols-[minmax(0,1fr)_fit-content(44%)] items-center gap-3 border-t border-border px-3 py-2.5"
+                          className="grid grid-cols-[minmax(0,1fr)_40%] items-center gap-3 border-t border-border px-3 py-2.5"
                         >
                           <div className="flex min-w-0 items-center gap-2">
                             <img src={logo} alt="" className="size-5 shrink-0 object-contain" />
                             <div className="min-w-0 [overflow-wrap:anywhere]">
                               <CompactClientName subject={subject} href={href} className="block text-sm font-semibold leading-tight" />
-                              <CompactVerifiedDate subject={subject} className="mt-0.5 text-xs" />
+                              <CompactVerifiedDate subject={subject} className="mt-0.5 max-w-full text-xs" />
                             </div>
                           </div>
                           <div className="min-w-0 text-left leading-tight [overflow-wrap:anywhere] [&>*]:max-w-full [&>.inline-flex]:justify-start [&_[data-support-level]]:text-xs [&_[data-support-level]]:whitespace-normal">
