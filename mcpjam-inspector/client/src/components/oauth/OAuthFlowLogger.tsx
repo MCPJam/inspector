@@ -33,6 +33,11 @@ import {
 } from "lucide-react";
 import { generateGuideText, generateRawText } from "@/lib/oauth/log-formatters";
 import { copyToClipboard } from "@/lib/clipboard";
+import { useStepRangeSelect } from "@/hooks/use-step-range-select";
+import {
+  StepRangeSelectToolbar,
+  StepSelectIndicator,
+} from "@/components/oauth/StepRangeSelectToolbar";
 import { getOAuthReceivedStepForRequest } from "@/lib/oauth/step-pairing";
 import {
   splitHttpEntriesForDisplay,
@@ -394,6 +399,14 @@ export function OAuthFlowLogger({
     };
   }, []);
 
+  const guideSteps = useMemo(() => groups.map((group) => group.step), [groups]);
+  const rangeSelect = useStepRangeSelect({
+    orderedSteps: guideSteps,
+    available: activeTab === "guide" && groups.length > 0,
+    copySteps: (steps) =>
+      copyToClipboard(generateGuideText(oauthFlowState, groups, { steps })),
+  });
+
   return (
     <div className="h-full min-w-0 md:border-l border-border flex flex-col">
       <div className="bg-muted/30 border-b border-border px-4 py-3 space-y-3">
@@ -541,14 +554,16 @@ export function OAuthFlowLogger({
             <TabsTrigger value="guide">Guide</TabsTrigger>
             <TabsTrigger value="raw">Raw</TabsTrigger>
           </TabsList>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleCopyLogs}
-            className="h-8"
-          >
-            {copySuccess ? "Copied!" : "Copy"}
-          </Button>
+          <StepRangeSelectToolbar controls={rangeSelect}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCopyLogs}
+              className="h-8"
+            >
+              {copySuccess ? "Copied!" : "Copy all"}
+            </Button>
+          </StepRangeSelectToolbar>
         </div>
 
         <TabsContent value="guide" className="flex-1 overflow-hidden">
@@ -716,7 +731,16 @@ export function OAuthFlowLogger({
                             }
                           }}
                           className="w-full px-4 py-3 grid grid-cols-[auto_minmax(0,1fr)] md:flex items-start gap-3 hover:bg-muted/30 transition-colors rounded-t-lg cursor-pointer"
+                          {...rangeSelect.getStepHeaderProps(
+                            group.step,
+                            `${stepNumber}. ${info.title}`,
+                          )}
                         >
+                          {rangeSelect.isSelecting && (
+                            <StepSelectIndicator
+                              checked={rangeSelect.isSelected(group.step)}
+                            />
+                          )}
                           {/* Status icon */}
                           <div className="flex-shrink-0 mt-0.5">
                             {hasError ? (

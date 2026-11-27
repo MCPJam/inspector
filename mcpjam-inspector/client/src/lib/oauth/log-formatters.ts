@@ -28,7 +28,17 @@ interface StepGroup {
 
 interface StepCopyOptions {
   step?: OAuthFlowStep;
+  /** Copy several steps at once; takes precedence over `step`. */
+  steps?: readonly OAuthFlowStep[];
 }
+
+const getSelectedSteps = (
+  options?: StepCopyOptions,
+): ReadonlySet<OAuthFlowStep> | undefined => {
+  if (options?.steps) return new Set(options.steps);
+  if (options?.step) return new Set([options.step]);
+  return undefined;
+};
 
 const formatTimestamp = (timestamp: number) =>
   new Date(timestamp).toLocaleTimeString();
@@ -231,7 +241,11 @@ export function generateGuideText(
     text += `ERROR: ${stringifyCopyValue(oauthFlowState.error)}\n\n`;
   }
 
-  if (groups.length === 0) {
+  const selectedSteps = getSelectedSteps(options);
+  if (
+    groups.length === 0 ||
+    (selectedSteps && !groups.some((group) => selectedSteps.has(group.step)))
+  ) {
     text += "No activity yet.\n";
     return text;
   }
@@ -239,7 +253,7 @@ export function generateGuideText(
   const currentStepIndex = getStepIndex(oauthFlowState.currentStep);
 
   groups.forEach((group, groupIndex) => {
-    if (options?.step && group.step !== options.step) return;
+    if (selectedSteps && !selectedSteps.has(group.step)) return;
 
     const info = getStepInfo(group.step);
     const stepNumber = groupIndex + 1;
@@ -392,11 +406,14 @@ export function generateRawText(
 ): string {
   let text = "=== OAuth Debugger - Raw Logs ===\n\n";
 
-  const entriesToCopy = options?.step
+  const selectedSteps = getSelectedSteps(options);
+  const entriesToCopy = selectedSteps
     ? timelineEntries.filter((entry) =>
-        entry.type === "info"
-          ? entry.log.step === options.step
-          : (entry.step ?? entry.entry.step) === options.step
+        selectedSteps.has(
+          entry.type === "info"
+            ? entry.log.step
+            : (entry.step ?? entry.entry.step),
+        ),
       )
     : timelineEntries;
 

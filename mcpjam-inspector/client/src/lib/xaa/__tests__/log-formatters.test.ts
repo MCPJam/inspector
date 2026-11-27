@@ -342,4 +342,61 @@ describe("generateXAAFlowText", () => {
     expect(copied).toContain("[REDACTED]");
     expect(copied).toContain('"method": "POST"');
   });
+
+  it("copies several selected steps in flow order", () => {
+    const steps = [
+      "discover_resource_metadata",
+      "received_resource_metadata",
+      "discover_authz_metadata",
+    ] as const;
+    const state = createInitialXAAFlowState({
+      currentStep: "discover_authz_metadata",
+      infoLogs: steps.map((step, index) => ({
+        id: step,
+        step,
+        label: `Log for ${step}`,
+        timestamp: index,
+        level: "info" as const,
+      })),
+    });
+
+    const copied = generateXAAFlowText(
+      state,
+      {},
+      {
+        steps: ["discover_authz_metadata", "discover_resource_metadata"],
+      },
+    );
+
+    const first = copied.indexOf("[discover_resource_metadata]");
+    const last = copied.indexOf("[discover_authz_metadata]");
+    expect(first).toBeGreaterThan(-1);
+    expect(last).toBeGreaterThan(first);
+    expect(copied).toContain("Log for discover_resource_metadata");
+    expect(copied).toContain("Log for discover_authz_metadata");
+    expect(copied).not.toContain("[received_resource_metadata]");
+    expect(copied).not.toContain("Log for received_resource_metadata");
+  });
+
+  it("reports no activity for an empty selection", () => {
+    const copied = generateXAAFlowText(
+      createInitialXAAFlowState({
+        currentStep: "received_resource_metadata",
+        infoLogs: [
+          {
+            id: "resource-metadata",
+            step: "received_resource_metadata",
+            label: "Resource metadata received",
+            timestamp: 1,
+            level: "info",
+          },
+        ],
+      }),
+      {},
+      { steps: [] },
+    );
+
+    expect(copied).toContain("No activity yet.");
+    expect(copied).not.toContain("Resource metadata received");
+  });
 });
