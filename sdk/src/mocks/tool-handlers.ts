@@ -30,7 +30,7 @@ export interface ToolHandlerContext {
 }
 
 /** The host's answer, or a refusal when the host could not give one. */
-async function decideForward(
+export async function decideForward(
   c: ToolHandlerContext,
   request: Parameters<MockRealServer["authorizeForward"]>[0],
   signal: AbortSignal

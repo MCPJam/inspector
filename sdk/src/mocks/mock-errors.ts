@@ -20,8 +20,12 @@ export const MOCK_ERROR_CODES = {
   toolNotFound: ProtocolErrorCode.InvalidParams,
   /** `prompts/get` for a prompt the mock does not list (JSON-RPC invalid params). */
   promptNotFound: ProtocolErrorCode.InvalidParams,
-  /** `resources/read` for a resource the mock does not serve (MCP's own code). */
-  resourceNotFound: -32002,
+  /**
+   * `resources/read` for a resource the mock does not serve. 2026-07-28 moved
+   * this from -32002 to invalid params (SEP-2164); the server SDK maps a thrown
+   * -32002 to -32602 on every revision, so the mock states the new code.
+   */
+  resourceNotFound: ProtocolErrorCode.InvalidParams,
 } as const;
 
 export interface MissingEditedTool {
@@ -134,4 +138,35 @@ export function forwardBlockedError(
     method,
     reason,
   });
+}
+
+export type MockItemKind = "prompt" | "resource" | "resource template";
+
+/** A list: the definition edits something the real server no longer lists. */
+export function editedItemMissingError(
+  kind: MockItemKind,
+  keys: string[]
+): ProtocolError {
+  const names = keys.map((key) => `"${key}"`).join(", ");
+  return new ProtocolError(
+    MOCK_ERROR_CODES.editedToolMissing,
+    `The mock edits the ${kind}${keys.length === 1 ? "" : "s"} ${names}, which the real server no longer lists. Update the mock to drop ${keys.length === 1 ? "that edit" : "those edits"}.`,
+    { mockCode: "mock_edited_item_missing", kind, items: keys }
+  );
+}
+
+export function promptNotFoundError(name: string): ProtocolError {
+  return new ProtocolError(
+    MOCK_ERROR_CODES.promptNotFound,
+    `Prompt ${name} not found`,
+    { mockCode: "mock_prompt_not_found", prompt: name }
+  );
+}
+
+export function resourceNotFoundError(uri: string): ProtocolError {
+  return new ProtocolError(
+    MOCK_ERROR_CODES.resourceNotFound,
+    `Resource ${uri} not found`,
+    { mockCode: "mock_resource_not_found", uri }
+  );
 }

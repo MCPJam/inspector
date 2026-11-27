@@ -18,6 +18,9 @@ import type {
   MockRealServer,
   MockRealServerInfo,
 } from "./real-server.js";
+import { answerSkillsMethod, registerItemHandlers } from "./item-handlers.js";
+import { definitionServesSkills, skillsCapability } from "./mock-skills.js";
+import { ownsItems } from "./resolve-items.js";
 import { assertRequestForward, registerToolHandlers } from "./tool-handlers.js";
 
 /** Which capability each family of methods needs; other methods pass to the real server as they are. */
@@ -34,8 +37,9 @@ const METHOD_FAMILIES: Array<
 
 /**
  * The real server's capabilities with the definition's laid over them; `null`
- * removes one. Tools are declared only when the real server has them or the
- * definition adds one, so a mock of a resource-only server stays tool-less.
+ * removes one. A family is declared only when the real server has it or the
+ * definition adds to it, so a mock of a resource-only server stays tool-less
+ * and a mock with no prompts advertises none.
  */
 function effectiveCapabilities(
   real: ServerCapabilities,
@@ -48,6 +52,13 @@ function effectiveCapabilities(
     else merged[key] = value;
   }
   if (Object.keys(definition.tools ?? {}).length > 0) merged.tools ??= {};
+  // What the definition adds, the mock declares, unless the definition says otherwise.
+  const own = ownsItems(definition);
+  if (own.prompts && !("prompts" in stated)) merged.prompts ??= {};
+  if (own.resources && !("resources" in stated)) merged.resources ??= {};
+  if (definitionServesSkills(definition) && !("extensions" in stated)) {
+    merged.extensions = { ...skillsCapability(), ...(real.extensions ?? {}) };
+  }
   return merged as ServerCapabilities;
 }
 
@@ -116,10 +127,23 @@ async function buildServer(
   );
   const context = { definition, real, observer: options.observer };
   if (mockCapabilities.tools) registerToolHandlers(server, context);
+  const itemContext = {
+    definition,
+    real,
+    realCapabilities: info.capabilities,
+    mockCapabilities,
+  };
+  registerItemHandlers(server, itemContext);
 
   // Every other method goes to the real server when both sides have it, and is
   // refused by name when only one does. The host decides each forward first.
   server.fallbackRequestHandler = async (request, ctx) => {
+    const skills = await answerSkillsMethod(
+      request,
+      itemContext,
+      ctx.mcpReq.signal
+    );
+    if (skills) return skills;
     const family = METHOD_FAMILIES.find(([prefix]) =>
       request.method.startsWith(prefix)
     );

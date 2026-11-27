@@ -2,6 +2,7 @@ import { readDefinition } from "./definition-caps.js";
 import type { MockCapIssueCode } from "./definition-caps.js";
 import { MAX_SAVED_CASES, MOCK_CAPABILITY_KEYS } from "./definition-types.js";
 import type { MockDefinition } from "./definition-types.js";
+import { checkItems } from "./validate-items.js";
 
 export type MockIssueCode =
   | MockCapIssueCode
@@ -10,7 +11,7 @@ export type MockIssueCode =
   | "unknown_field"
   | "param_conflict"
   | "uncallable_input"
-  /** A field the stored shape has room for, whose validation and runtime come in a later stage. */
+  /** A field the stored shape has room for, whose runtime comes in a later stage (steps and tasks) or is out of scope (model answers). */
   | "unsupported";
 
 export interface MockIssue {
@@ -23,8 +24,6 @@ export type MockValidationResult =
   | { ok: true; definition: MockDefinition }
   | { ok: false; issues: MockIssue[] };
 
-/** Families the shape reserves; a definition that uses one is refused until its stage lands. */
-const LATER_FAMILIES = ["prompts", "resources", "resourceTemplates"] as const;
 const TOP_FIELDS = [
   "serverInfo",
   "instructions",
@@ -538,7 +537,7 @@ export function validateMockDefinition(raw: unknown): MockValidationResult {
       c.add(
         "invalid_value",
         "pageSize",
-        `pageSize must be a whole number from 1 to ${MAX_PAGE_SIZE}. Remove it to list everything in one page.`
+        `pageSize must be a whole number from 1 to ${MAX_PAGE_SIZE}. Remove it to list as the real server pages (one page for a mock made from nothing).`
       );
     }
     if ("capabilities" in input)
@@ -547,15 +546,7 @@ export function validateMockDefinition(raw: unknown): MockValidationResult {
       for (const [name, tool] of Object.entries(input.tools))
         c.tool(name, tool, at("tools", name));
     }
-    for (const family of LATER_FAMILIES) {
-      if (family in input) {
-        c.add(
-          "unsupported",
-          family,
-          `${family} is not supported yet: this version of mocks changes tools, instructions and server info. Remove ${family}.`
-        );
-      }
-    }
+    checkItems(input, (issue) => c.add(issue.code, issue.path, issue.message));
   }
   if (c.issues.length > 0) return { ok: false, issues: c.issues };
   // The checks above establish every field's type, so this is the one place the
