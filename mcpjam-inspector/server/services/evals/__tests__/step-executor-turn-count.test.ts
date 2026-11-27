@@ -134,18 +134,24 @@ describe("step-executor declared-schema assert", () => {
   ])("preserves $status in live and recorded step replay", async ({ withSchema, status }) => {
     const state = createStepExecutionState({
       declarationsCaptured: "complete",
-      toolDeclarations: withSchema ? [
+      // Without a schema, the tool is still declared: a result with no
+      // matching declaration is unvalidated, not Not applicable.
+      toolDeclarations: [
         {
           serverKey: "shop",
           name: "get_order",
           inputSchema: { type: "object" },
-          outputSchema: {
-            type: "object",
-            properties: { status: { type: "string" } },
-            required: ["status"],
-          },
+          ...(withSchema
+            ? {
+                outputSchema: {
+                  type: "object",
+                  properties: { status: { type: "string" } },
+                  required: ["status"],
+                },
+              }
+            : {}),
         },
-      ] : [],
+      ],
     });
     const steps: TestStep[] = [
       prompt("p0"),
