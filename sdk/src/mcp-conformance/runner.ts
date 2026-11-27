@@ -80,6 +80,7 @@ import type { RawHttpResult } from "./raw-http.js";
 import { createCapturingFetch } from "./raw-capture.js";
 import {
   createNegotiationProbeHold,
+  pinnedDiscoveryFailure,
   type NegotiationProbeHold,
 } from "./negotiation-probes.js";
 import {
@@ -577,7 +578,10 @@ async function runClientChecks(
       selectedClientChecks,
       categoryOf: (id) => CHECK_CATEGORY_BY_ID.get(id) ?? "protocol",
     });
-    if (refused) {
+    const discovery =
+      refused && config.era === "modern" ? negotiationProbes.discovery : undefined;
+    const discoveryFailure = pinnedDiscoveryFailure(discovery);
+    if (refused && !discoveryFailure) {
       return { checks: refused, config, readiness: [], versionRefused: true };
     }
 
@@ -644,7 +648,7 @@ async function runClientChecks(
             ? failedResult(
                 check,
                 connectDurationMs,
-                errorMessage(error),
+                discoveryFailure ?? errorMessage(error),
                 undefined,
                 error,
               )
@@ -653,6 +657,7 @@ async function runClientChecks(
         ),
         config,
         readiness: [],
+        discover: discoveryFailure ? discovery : undefined,
         connectFailedCheck: { id: anchor.id, title: anchor.title },
       };
     }
@@ -672,7 +677,7 @@ async function runClientChecks(
           failedResult(
             check,
             connectDurationMs,
-            errorMessage(error),
+            discoveryFailure ?? errorMessage(error),
             undefined,
             error,
           ),
@@ -686,6 +691,7 @@ async function runClientChecks(
       checks,
       config,
       readiness: [],
+      discover: discoveryFailure ? discovery : undefined,
       connectFailedCheck: {
         id: firstApplicableCheck.id,
         title: firstApplicableCheck.title,

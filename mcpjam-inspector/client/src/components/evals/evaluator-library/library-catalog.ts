@@ -547,7 +547,7 @@ export function judgesWithAdded(
   const taken = takenId(adding, judges);
   if (taken) {
     return {
-      refused: `A judge already uses the ID "${taken}". Rename or remove it to add this evaluator.`,
+      refused: `A judge already uses the ID "${taken}". Remove that judge to add this one.`,
     };
   }
   const ids = new Set(judges.map((j) => j.id));
@@ -569,7 +569,7 @@ export function judgesWithEvaluatorUpdated(
   const taken = takenId(fresh, judges);
   if (taken) {
     return {
-      refused: `A judge already uses the ID "${taken}". Rename or remove it to update this evaluator.`,
+      refused: `A judge already uses the ID "${taken}". Remove that judge to update this one.`,
     };
   }
   return overJudgeLimit(
