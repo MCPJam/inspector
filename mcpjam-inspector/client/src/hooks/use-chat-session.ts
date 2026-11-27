@@ -4014,7 +4014,8 @@ export function useChatSession(
   const pendingWidgetModelContextRef = useRef<
     WidgetModelContextEntry[] | undefined
   >(undefined);
-  // The event the last admitted send in a session started from. Unlike widget
+  // The event the last admitted send in a session started from, or that a
+  // restored session's latest turn records (`loadChatSession`). Unlike widget
   // context it is not drained: a continuation of that turn carries it too.
   const turnEventAtTurnRef = useRef<{ chatSessionId: string; event: EventAtTurn } | null>(null);
   // Convex server ids resolved by the hosted preflight (`hostedEnsureServerIds`)
@@ -6690,6 +6691,15 @@ export function useChatSession(
 
       restoredApprovalSelectionRef.current = Array.isArray(session.resumeConfig?.selectedServers)
         ? { sessionId: session.chatSessionId, serverNames: [...session.resumeConfig.selectedServers] }
+        : null;
+      // A continuation of the restored latest turn (after a tool approval, say)
+      // carries that turn's event, never one this tab sent before the restore.
+      const latestTurn = hydratedTurnTraces?.reduce<HydratedTurnTrace | undefined>(
+        (latest, trace) => (!latest || trace.promptIndex >= latest.promptIndex ? trace : latest),
+        undefined,
+      );
+      turnEventAtTurnRef.current = latestTurn?.eventAtTurn
+        ? { chatSessionId: session.chatSessionId, event: latestTurn.eventAtTurn }
         : null;
       skipNextForkDetectionRef.current = true;
       rewindRef.current = null;

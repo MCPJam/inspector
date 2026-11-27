@@ -763,6 +763,73 @@ describe("useChatSession minimal mode parity", () => {
     expect(getTransportRequests().at(-1)).not.toHaveProperty("eventAtTurn");
   });
 
+  it("gives a restored session's continuations its latest turn's event, or none", async () => {
+    const event = {
+      name: "issue.opened",
+      eventId: "evt_9",
+      receivedAt: 2_000,
+      delivery: "push" as const,
+      origin: "server" as const,
+      triggerId: "trg_1",
+    };
+    const trace = (promptIndex: number, eventAtTurn?: typeof event) => ({
+      turnId: `turn-${promptIndex}`,
+      promptIndex,
+      startedAt: promptIndex * 1_000,
+      endedAt: promptIndex * 1_000 + 100,
+      ...(eventAtTurn ? { eventAtTurn } : {}),
+    });
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+        executionConfig: { systemPrompt: "Prompt" },
+      })
+    );
+    await waitFor(() => {
+      expect(mockTransportInstances.length).toBeGreaterThan(0);
+    });
+    const restore = async (turnTraces: ReturnType<typeof trace>[]) => {
+      let restored = false;
+      act(() => {
+        void result.current
+          .loadChatSession({
+            chatSessionId: "event-trigger-trg_1",
+            messagesBlobUrl: null,
+            version: turnTraces.length,
+            turnTraces,
+          })
+          .then(() => {
+            restored = true;
+          });
+      });
+      await waitFor(() => {
+        expect(restored).toBe(true);
+      });
+      expect(result.current.chatSessionId).toBe("event-trigger-trg_1");
+    };
+    // A continuation (a tool approval, say) with no new send in this tab.
+    const continueTurn = async () => {
+      await act(async () => {
+        await mockTransportInstances.at(-1)!.sendMessages({
+          chatId: "event-trigger-trg_1",
+          messages: [],
+          abortSignal: new AbortController().signal,
+          trigger: "submit-message",
+        });
+      });
+      return getTransportRequests().at(-1);
+    };
+
+    // A trigger's thread whose latest turn an event started.
+    await restore([trace(0), trace(1, event)]);
+    expect(await continueTurn()).toMatchObject({ eventAtTurn: event });
+
+    // Reopened after a typed turn followed it: that event no longer applies.
+    await restore([trace(0), trace(1, event), trace(2)]);
+    expect(await continueTurn()).not.toHaveProperty("eventAtTurn");
+  });
+
   it("opens the mcpjam-limit dialog for non-hosted chat-v2 limit responses", async () => {
     mockWindowFetch.mockResolvedValueOnce(
       new Response(
