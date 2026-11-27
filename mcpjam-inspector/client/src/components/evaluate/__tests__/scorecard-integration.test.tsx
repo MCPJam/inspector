@@ -63,6 +63,8 @@ describe("scorecard integration regressions", () => {
           questions: [
             {
               key: "q:grounded",
+              kind: "boolean",
+              contentDigest: "grounded",
               label: "Answer Grounded in Results",
               status: "scored",
               passed: false,
@@ -276,8 +278,9 @@ describe("scorecard integration regressions", () => {
       judgeCase: judgeCase as JudgeCase,
     };
     const view = render(<TrialScorecard {...props} judgeHidden />);
-    const summary = screen.getByRole("region", { name: "Library evaluators" });
-    expect(summary).not.toHaveTextContent(/failed/i);
+    expect(
+      screen.queryByRole("region", { name: "Library evaluators" }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText(/Invented a refund amount/)).toBeNull();
     view.rerender(<TrialScorecard {...props} judgeHidden={false} />);
     expect(

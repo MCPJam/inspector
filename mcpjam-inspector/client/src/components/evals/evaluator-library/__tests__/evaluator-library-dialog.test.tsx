@@ -131,17 +131,19 @@ describe("EvaluatorLibraryButton", () => {
     const onAdd = vi.fn();
     renderWithProviders(
       <EvaluatorLibraryButton
-        predicates={[]}
-        questions={[
-          {
-            id: "answer-grounded-in-results-grounded",
-            kind: "yesno",
-            label: "My question",
-            instructions: "Grade my custom criterion.",
-            pass: { answer: "yes" },
-          },
-        ]}
-        canAskYesNo
+        suite={{
+          predicates: [],
+          questions: [
+            {
+              id: "answer-grounded-in-results-grounded",
+              kind: "yesno",
+              label: "My question",
+              instructions: "Grade my custom criterion.",
+              pass: { answer: "yes" },
+            },
+          ],
+        }}
+        support={{ canAskYesNo: true }}
         onAdd={onAdd}
       />,
     );
