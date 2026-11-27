@@ -40,14 +40,14 @@ function agentLine(view: ClientEventsView): string {
     return `The agent can subscribe from chat, by ${listModes(tools.modes, "or")}.`;
   switch (tools.reason) {
     case "harness":
-      return "The agent can't subscribe from chat.";
+      return "The agent can't subscribe from chat in this client. Pick another client in the Playground.";
     case "invalid":
     case "no-modes":
       return "The agent can't subscribe from chat until this client receives events.";
     case "runtime":
       return "The agent can't subscribe from chat here, because hosted MCPJam can't deliver push yet. Turn on Poll or Webhook, or use MCPJam locally.";
     case "local-webhook":
-      return "The agent can't subscribe from chat here, because a local webhook needs your consent each time. Connect the event from the Playground's Events pane, or turn on Poll or Push.";
+      return "The agent can't subscribe from chat by Webhook here, because a local webhook needs your consent each time. Turn on Poll or Push, or connect the event from the Playground's Events pane.";
   }
 }
 

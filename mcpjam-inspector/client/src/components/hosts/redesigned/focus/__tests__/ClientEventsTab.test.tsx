@@ -48,7 +48,8 @@ function renderTab(
 }
 
 const ALL = { poll: true, push: true, webhook: true };
-const switchFor = (label: string) => screen.getByRole("switch", { name: label });
+const switchFor = (label: string) =>
+  screen.getByRole("switch", { name: label });
 
 describe("ClientEventsTab", () => {
   it("names each mode the way the spec does, with its method", () => {
@@ -94,7 +95,7 @@ describe("ClientEventsTab", () => {
     hosted.unmount();
     renderTab(work);
     expect(screen.getByTestId("client-events-status").textContent).toContain(
-      "Connect the event from the Playground's Events pane",
+      "The agent can't subscribe from chat by Webhook here, because a local webhook needs your consent each time. Turn on Poll or Push",
     );
   });
 
@@ -102,6 +103,9 @@ describe("ClientEventsTab", () => {
     renderTab(draft(ALL, { harness: "codex" }), { hosted: true });
     expect(screen.getByTestId("client-events-harness").textContent).toContain(
       "Codex runs this client's agent loop",
+    );
+    expect(screen.getByTestId("client-events-status").textContent).toContain(
+      "Pick another client in the Playground.",
     );
     for (const name of [
       "Poll (events/poll)",
