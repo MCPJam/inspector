@@ -122,7 +122,7 @@ describe("CustomJudgePreview", () => {
       screen.getByRole("button", { name: "Test on a past iteration" }),
     );
     expect(await screen.findByRole("status")).toHaveTextContent(
-      "The judge returned no answer, usually because its reasoning used up its output tokens.",
+      "The judge returned no answer. Lower its reasoning effort or shorten the question, then grade the run again.",
     );
   });
 
