@@ -521,6 +521,35 @@ describe("SEP-2243 mirroring disabled (mirrorToolParamHeaders: false)", () => {
     ).toHaveLength(0);
     expect(headers["mcp-name"]).toBe("tool-1");
   });
+
+  it("does not send the tools/call when the schema lookup times out", async () => {
+    // The real client raises its own timeout with the string code
+    // REQUEST_TIMEOUT. Falling back to the minimal definition here would send
+    // the very call the timeout was meant to stop.
+    const { manager } = await connect({ holdToolsList: true });
+    await expect(
+      manager.executeTool(
+        "fixture",
+        "tool-0",
+        { message: "hi" },
+        { timeout: 200 }
+      )
+    ).rejects.toMatchObject({ name: "SdkError", code: "REQUEST_TIMEOUT" });
+    expect(toolCalls()).toHaveLength(0);
+  });
+
+  it.each([-32001, -32000])(
+    "still sends the tools/call when the server answers the lookup with %i",
+    async (code) => {
+      // The server's own JSON-RPC error: it answered, so this is a lookup
+      // miss and the call goes out with the minimal definition.
+      const { manager } = await connect({ toolsListErrorCode: code });
+      await expect(
+        manager.executeTool("fixture", "tool-0", { message: "hi" })
+      ).resolves.toBeTruthy();
+      expect(toolCalls()).toHaveLength(1);
+    }
+  );
 });
 
 /**

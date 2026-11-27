@@ -19,8 +19,8 @@ import {
 } from "@/lib/app-navigation";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { toast } from "@/lib/toast";
+import { convexErrorCode } from "@/lib/convex-error";
 import {
-  convexErrorCode,
   decideProjectAccessRequestRef,
   getProjectAccessRequestRef,
   type AccessDecision,

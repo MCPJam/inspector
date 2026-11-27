@@ -268,6 +268,24 @@ export function convexErrMessage(error: unknown, fallback: string): string {
 }
 
 /**
+ * The `code` a backend `ConvexError` carries, when it carries one. Read off
+ * `data` by shape rather than `instanceof`, for the reason
+ * `describeConvexFailure` gives.
+ */
+export function convexErrorCode(error: unknown): string | null {
+  if (typeof error !== "object" || error === null || !("data" in error)) {
+    return null;
+  }
+  const { data } = error;
+  return typeof data === "object" &&
+    data !== null &&
+    "code" in data &&
+    typeof data.code === "string"
+    ? data.code
+    : null;
+}
+
+/**
  * Whether a `useQuery` throw means the deployment does not serve the function
  * at all — a dark ship, or a browser outliving a rollback — rather than the
  * function failing. Only the DEV shapes are nameable: production redacts

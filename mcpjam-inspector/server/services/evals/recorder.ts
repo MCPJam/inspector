@@ -1,4 +1,8 @@
 import type { EvalAccountPlan, EvalAccountSelection } from "./suite-account-choices.js";
+import {
+  readFrozenCodeGrading,
+  type FrozenCodeGrading,
+} from "./sandbox-phases/frozen-config.js";
 import { asCapacityRouteError } from "../../utils/capacity-route-error.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
@@ -104,6 +108,8 @@ type SuiteRunEnvironmentSnapshot = {
 export type SuiteRunRecorder = {
   runId: string;
   suiteId: string;
+  /** EFTW-90: the run's frozen code evaluators and scripts, from the start response. */
+  codeGrading?: FrozenCodeGrading;
   beginExecutionAttempt?(args: {
     caseCount: number;
     repetitionCount: number;
@@ -956,6 +962,7 @@ export const startSuiteRunWithRecorder = async ({
     suiteId,
     runId,
   });
+  recorder.codeGrading = readFrozenCodeGrading(response?.configSnapshot);
 
   // Pre-create all iterations
   try {

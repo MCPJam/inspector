@@ -314,34 +314,24 @@ import { http1Fetch } from "../http1-fetch.js";
  * adapter's own surface instead of pinning a second name to the same type.
  */
 /**
- * Whether an error means the caller's cancellation or DEADLINE fired, rather
- * than the lookup merely failing.
+ * Whether the request ended on our side: the caller cancelled, a deadline
+ * fired, or the connection closed. Anything else is the lookup merely failing.
  *
  * Used by the best-effort schema lookups, which degrade on a miss but must not
- * swallow either: a cancelled call has to stay cancelled, and a call that blew
- * its timeout during the lookup must not then go on to issue the `tools/call`
- * the timeout was supposed to prevent.
+ * swallow these: a cancelled call has to stay cancelled, and a call whose
+ * lookup timed out or lost its connection must not then go on to issue the
+ * `tools/call` the timeout was supposed to prevent.
  *
- * Covers all three shapes the deadline can arrive in — a DOM `AbortError` /
- * `TimeoutError`, a plain `Error` carrying those names, and the SDK's own
- * in-band `RequestTimeout` (-32001), which is what `ClientRequestOptions.timeout`
- * actually raises and is therefore the one most likely to be hit.
+ * The upstream client raises its own timeout as an `SdkError` with the string
+ * code `REQUEST_TIMEOUT`, and wraps a caller's abort in the same code. A
+ * connection that closes under the request is `CONNECTION_CLOSED`. A numeric
+ * code, `-32000` and `-32001` included, is the server's own JSON-RPC error,
+ * so the server did answer. `AbortError` is a signal's own reason.
  */
 function isAbortError(error: unknown): boolean {
-  if (typeof DOMException !== "undefined" && error instanceof DOMException) {
-    return error.name === "AbortError" || error.name === "TimeoutError";
-  }
-  const code = (error as { code?: unknown } | null)?.code;
-  if (
-    code === MCP_ERROR_CODES.RequestTimeout ||
-    code === MCP_ERROR_CODES.ConnectionClosed
-  ) {
-    return true;
-  }
-  return (
-    error instanceof Error &&
-    (error.name === "AbortError" || error.name === "TimeoutError")
-  );
+  if (isRequestTimeout(error)) return true;
+  const { code, name } = (error ?? {}) as { code?: unknown; name?: unknown };
+  return code === "CONNECTION_CLOSED" || name === "AbortError";
 }
 
 /**

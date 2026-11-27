@@ -212,7 +212,7 @@ describe("conformanceSuiteConfigs", () => {
           protocol: [
             "server-initialize",
             "tools-list",
-            "modern-tool-output-schema-conformant",
+            "modern-logs-require-log-level",
           ],
         },
         probes,
@@ -222,6 +222,41 @@ describe("conformanceSuiteConfigs", () => {
     expect(protocol).toEqual({
       checkIds: inCatalogOrder(["server-initialize", "tools-list"]),
     });
+  });
+
+  // The output schema rule is in 2025-06-18 and 2025-11-25 too, so the check
+  // runs there and its tool is called.
+  it.each(["2025-06-18", "2025-11-25"] as const)(
+    "keeps the output schema check on %s and sends its tool",
+    (pin) => {
+      const picked: MCPCheckId[] = [
+        "tools-list",
+        "modern-tool-output-schema-conformant",
+      ];
+      const { protocol } = conformanceSuiteConfigs(
+        { selection: { protocol: picked, protocolAdvice: [] }, probes },
+        pin,
+      );
+      expect(protocol).toEqual({
+        checkIds: inCatalogOrder(picked),
+        readinessIds: [],
+        fixtures: { toolCalls: [echo] },
+      });
+    },
+  );
+
+  it("drops the output schema check on 2025-03-26, which has no outputSchema", () => {
+    const { protocol } = conformanceSuiteConfigs(
+      {
+        selection: {
+          protocol: ["tools-list", "modern-tool-output-schema-conformant"],
+          protocolAdvice: [],
+        },
+        probes,
+      },
+      "2025-03-26",
+    );
+    expect(protocol).toEqual({ checkIds: ["tools-list"], readinessIds: [] });
   });
 
   it("runs every check but the update check, and calls no tool, for a server with no saved settings", () => {

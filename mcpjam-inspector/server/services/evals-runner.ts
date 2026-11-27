@@ -1,4 +1,21 @@
 import { credentialFailureMessage } from "../routes/web/errors.js";
+import {
+  collectDeclaredGradingFiles,
+  finishIterationPhases,
+  finishLocalIterationPhases,
+  iterationPhaseContext,
+  iterationSetupFailed,
+  runIterationCleanupInto,
+  runIterationSetupOrThrow,
+} from "./evals/sandbox-phases/iteration-hooks.js";
+import { buildGradingInput } from "./evals/sandbox-phases/grading-input.js";
+import { localRunUnsupportedCodeGrading } from "./evals/sandbox-phases/frozen-config.js";
+import {
+  runPhaseContext,
+  runRunCleanupOnce,
+  runRunSetupOrThrow,
+  type RunPhaseContext,
+} from "./evals/sandbox-phases/run-phases.js";
 import { assertNativeDiscovery } from "../utils/harness/native-discovery.js";
 import { mergeViewToolEvidence } from "./evals/view-tool-evidence.js";
 import { evalWidgetServerCall } from "./evals/view-tool-policy.js";
@@ -523,6 +540,8 @@ export type EvalTestCase = {
    */
   hostConfigOverride?: Record<string, unknown>;
   testCaseId?: string;
+  /** EFTW-90: a quick run's code evaluators, declared Not run. */
+  codeGradingNotRun?: import("./evals/sandbox-phases/code-score-family.js").CodeGradingResult;
   /**
    * Case kind. Absent ⇒ prompt case. `widget_probe` carries `probeConfig`
    * and skips the LLM path entirely (`runTestCase` forks before any model
@@ -1037,7 +1056,8 @@ type IterationMetadataValue =
   | number
   | boolean
   | DescriptionExperimentIterationStamp
-  | TimeoutMetadata;
+  | TimeoutMetadata
+  | Record<string, unknown>;
 
 type IterationMetadataBase = Record<string, IterationMetadataValue>;
 
@@ -4194,6 +4214,8 @@ export const runEvalSuiteWithAiSdk = async ({
   });
 
   const runSetupStartedAt = Date.now();
+  // EFTW-90: run setup and cleanup; set once the cases are about to start.
+  let runPhases: RunPhaseContext | undefined;
   const setupObserver = createRunSetupObserver({
     expectedServerIds: serverIds,
     convexHttpUrl,
@@ -4513,6 +4535,14 @@ export const runEvalSuiteWithAiSdk = async ({
       : sandboxSlots
         ? createConcurrencyLimiter(sandboxSlots)
         : undefined;
+    runPhases = runPhaseContext({
+      config: recorder?.codeGrading,
+      runId,
+      convexClient,
+      bearer: () => bearerNow(convexAuthToken),
+      signal: abortController.signal,
+    });
+    await runRunSetupOrThrow(runPhases);
     const testPromises = tests.map((test) =>
       // Cap concurrent headless browsers for every model-free render check
       // (legacy widget_probe OR a unified case whose turns are all pinned),
@@ -4689,6 +4719,8 @@ export const runEvalSuiteWithAiSdk = async ({
       }
       throw error;
     } finally {
+      // Before the heartbeat stops: the run stays alive while it cleans up.
+      await runRunCleanupOnce(runPhases, testPromises);
       stopControls = true;
       if (runTimeoutId) {
         clearTimeout(runTimeoutId);
@@ -4811,6 +4843,7 @@ export const runEvalSuiteWithAiSdk = async ({
     }
     return undefined;
   } catch (error) {
+    await runRunCleanupOnce(runPhases);
     const passRate = summary.total > 0 ? summary.passed / summary.total : 0;
     const errorMessage = error instanceof Error ? error.message : String(error);
 
@@ -5275,6 +5308,17 @@ const runLocalIteration = async ({
   // here so the finally always sees it.
   let evalSandbox: Awaited<ReturnType<typeof provisionEvalSandbox>> | null =
     null;
+  const releaseLocalEvalBox = async () => {
+    const box = evalSandbox;
+    evalSandbox = null;
+    if (!box?.ok) return;
+    // FORGET, not collect: see the finally below.
+    forgetHostedRecording(box.value.sandboxRowId);
+    await releaseEvalSandbox({ sandboxRowId: box.value.sandboxRowId }).catch(() => {});
+  };
+  // EFTW-90: the run's frozen iteration setup, grading and cleanup.
+  const phases = iterationPhaseContext({ config: recorder?.codeGrading, runId, iterationId, caseId: test.testCaseId ?? testCaseId, bearer: () => bearerNow(convexAuthToken), deadlineAt: iterationDeadlineAt, ...(abortSignal ? { signal: abortSignal } : {}) });
+  const localAgentSandboxId = () => (evalSandbox?.ok ? evalSandbox.value.sandboxId : undefined);
   // D7: `prepared` (and its `allTools`) is declared inside the try below, so
   // it is out of scope in the catch's own `buildIterationFinishParams` call.
   // Captured here, set once `prepared` is assigned, so BOTH the success and
@@ -5510,12 +5554,15 @@ const runLocalIteration = async ({
       }
     }
 
+    // Last before the first turn, so the agent's box holds what setup created.
+    await runIterationSetupOrThrow(phases, localAgentSandboxId(), iterationMetadataBase);
     // PR 5a abort helpers — mirror the non-stream runner's pattern. The
     // iteration row is persisted as `cancelled` before returning, so a stopped
     // trial reads as stopped rather than sitting `running` forever, and the id
     // is handed back so the stream route can resolve the terminal row.
     const localIsAborted = () => abortSignal?.aborted === true;
     const returnLocalCancelled = async () => {
+      await finishLocalIterationPhases(phases, { notRun: "Not run: the iteration was stopped.", releaseAgentBox: releaseLocalEvalBox }, iterationMetadataBase);
       await markIterationStopped({ convexClient, iterationId, abortSignal });
       return {
         // Aborted mid-iteration — never score as passed (a pinned-only case would
@@ -5780,6 +5827,7 @@ const runLocalIteration = async ({
     // from here — re-reading the signal is a second source of truth for a fact
     // the outcome already carries.
     if (isIterationBudgetAbort(undefined, abortSignal)) {
+      await finishLocalIterationPhases(phases, { notRun: "Not run: the iteration timed out.", releaseAgentBox: releaseLocalEvalBox }, iterationMetadataBase);
       throw abortSignal?.reason;
     }
     if (acc.timeout) iterationMetadataBase.timeout = acc.timeout;
@@ -5932,8 +5980,15 @@ const runLocalIteration = async ({
           // it reached a first-party hosted provider.
           byokEndpointOwnership(modelDefinition.provider),
         );
+    const codeGrading = (await finishLocalIterationPhases(phases, {
+      ...(acc.pinnedSetupFailure || localInfraError ? { notRun: "Not run: the iteration didn't finish." } : {}),
+      input: () => buildGradingInput({ scenario: { title: test.title, isNegativeTest: test.isNegativeTest }, messages: acc.conversationMessages as Array<{ role: string; content: unknown }>, toolCalls: evaluation.toolsCalled, usage: hasReportedUsage(usageFinal) ? usageFinal : undefined, ...(test.expectedOutput ? { expectedOutput: test.expectedOutput } : {}), expectedToolCalls: test.expectedToolCalls }),
+      agentSandboxId: localAgentSandboxId(),
+      releaseAgentBox: releaseLocalEvalBox,
+    }, iterationMetadataBase)) ?? test.codeGradingNotRun;
     const finishParams = buildIterationFinishParams({
       iterationId,
+      ...(codeGrading ? { codeGrading } : {}),
       platformGates,
       // The layer that failed, when this driver could tell — the local twin of
       // the hosted path's `stepError`. Without it a local-BYOK trial that died
@@ -6080,6 +6135,9 @@ const runLocalIteration = async ({
     // Rethrown, not swallowed: this iteration ran out of its own budget, and
     // `runIterationUnderBudget` is what records that. See
     // `isIterationBudgetAbort`.
+    if (isIterationBudgetAbort(error, abortSignal) || abortSignal?.aborted === true) {
+      await finishLocalIterationPhases(phases, { notRun: "Not run: the iteration didn't finish.", releaseAgentBox: releaseLocalEvalBox }, iterationMetadataBase);
+    }
     if (isIterationBudgetAbort(error, abortSignal)) throw error;
     // A stop can surface as a throw rather than a cooperative return: the
     // consumer rethrows the signal's reason, which is whatever the canceller
@@ -6233,9 +6291,11 @@ const runLocalIteration = async ({
       iterationMetadataBase.timeout &&
       typeof iterationMetadataBase.timeout === "object" &&
       "clock" in iterationMetadataBase.timeout &&
-      iterationMetadataBase.timeout.clock === "sandboxCapacity"
+      iterationMetadataBase.timeout.clock === "sandboxCapacity" ||
+      iterationSetupFailed(iterationMetadataBase)
         ? ("setup_failed" as const)
         : ("failed" as const);
+    const failGrading = (await finishLocalIterationPhases(phases, { notRun: failStatus === "setup_failed" ? "Not run: setup failed." : "Not run: the iteration didn't finish.", releaseAgentBox: releaseLocalEvalBox }, iterationMetadataBase)) ?? test.codeGradingNotRun;
     // The throw already records `failed`; a typed provider failure also
     // carries `infraError`, which is what excludes and refunds it.
     const failInfraError =
@@ -6254,6 +6314,7 @@ const runLocalIteration = async ({
     // success path.
     const failParams = buildIterationFinishParams({
       iterationId,
+      ...(failGrading ? { codeGrading: failGrading } : {}),
       // The same platform rows a finished iteration declares, so this case's
       // evaluation config does not change between iterations of one run.
       platformGates: {
@@ -6388,22 +6449,17 @@ const runLocalIteration = async ({
     };
   } finally {
     // Tear down the per-iteration eval sandbox (idempotent; GC reaps any miss).
-    if (evalSandbox?.ok) {
-      // FORGET, not collect — and the difference is deliberate. This runner is
-      // the local-BYOK path: its box is TERMINAL ONLY (see the provisioning
-      // comment above), so a hosted browser can never be advertised here and
-      // there is never a recording to take off it. And the finalize on the
-      // success path has ALREADY run by the time this `finally` fires, so a
-      // video collected here would have nowhere to go — it would be read off
-      // the box at some cost and then dropped, silently. Dropping the registry
-      // entry instead keeps a stray take from outliving its box; if this
-      // runner ever does bind a hosted browser, the collect belongs before the
-      // finalize, the way the hosted runner does it.
-      forgetHostedRecording(evalSandbox.value.sandboxRowId);
-      await releaseEvalSandbox({
-        sandboxRowId: evalSandbox.value.sandboxRowId,
-      }).catch(() => {});
-    }
+    // FORGET, not collect — and the difference is deliberate. This runner is
+    // the local-BYOK path: its box is TERMINAL ONLY (see the provisioning
+    // comment above), so a hosted browser can never be advertised here and
+    // there is never a recording to take off it. And the finalize on the
+    // success path has ALREADY run by the time this `finally` fires, so a
+    // video collected here would have nowhere to go — it would be read off
+    // the box at some cost and then dropped, silently. Dropping the registry
+    // entry instead keeps a stray take from outliving its box; if this
+    // runner ever does bind a hosted browser, the collect belongs before the
+    // finalize, the way the hosted runner does it.
+    await releaseLocalEvalBox();
     // PR 9: tear down the harness (and its headless Chromium, if launched) on
     // success, failure, OR mid-stream abort. No-op when never constructed.
     await browser.dispose();
@@ -6671,6 +6727,17 @@ const runHostedIterationWithBrowser = async (
             : {}),
         });
   if (iterationId) onIterationStarted?.(iterationId);
+  let gradingFiles: Awaited<ReturnType<typeof collectDeclaredGradingFiles>>;
+  // EFTW-90: the run's frozen iteration setup, grading and cleanup.
+  const phases = iterationPhaseContext({
+    config: recorder?.codeGrading,
+    runId,
+    iterationId,
+    caseId: test.testCaseId ?? testCaseId,
+    bearer: () => bearerNow(convexAuthToken),
+    deadlineAt: iterationDeadlineAt,
+    ...(abortSignal ? { signal: abortSignal } : {}),
+  });
 
   // Adopt the chat-side tool/system/temperature pipeline. Same change as the
   // local-AI-SDK runner: pulls in skill tools, progressive-discovery meta-
@@ -6933,6 +7000,7 @@ const runHostedIterationWithBrowser = async (
     });
     if (harnessExecutionTarget) {
       assertLocalHarnessCapabilities({ builtInToolIds: resolvedExecution.builtInToolIds, computerEnvironmentId: pinnedEnvironmentId, browserToolPolicy: resolvedExecution.browserToolPolicy, harnessId: resolvedExecution.harness });
+      assertLocalHarnessCapabilities({ codeGradingFeatures: localRunUnsupportedCodeGrading(recorder?.codeGrading), harnessId: resolvedExecution.harness });
       if (runId) {
         const attachments = await resolveEvalRunAttachments({ bearer: bearerNow(convexAuthToken), runId: String(runId), signal: abortSignal });
         if (!attachments.ok) throw new Error("Could not verify this run's attachment requirements");
@@ -7226,9 +7294,12 @@ const runHostedIterationWithBrowser = async (
       token: `Bearer ${bearerNow(convexAuthToken)}`,
       ...(turnAuthorization ? { turnAuthorization } : {}),
     };
+    // Last, so the agent's box (when it has one) holds what setup created.
+    await runIterationSetupOrThrow(phases, evalBox?.binding.sandboxId, iterationMetadataBase);
   } catch (error) {
     // Release any sandbox provisioned before a later line in the try threw.
     await releaseEvalSandboxIfAny();
+    await runIterationCleanupInto(phases, iterationMetadataBase);
     if (isIterationBudgetAbort(error, abortSignal)) {
       throw abortSignal?.reason ?? error;
     }
@@ -7327,6 +7398,7 @@ const runHostedIterationWithBrowser = async (
   // iteration AND after every per-turn call (success or catch).
   const isAborted = () => abortSignal?.aborted === true;
   const returnCancelled = async () => {
+    await runIterationCleanupInto(phases, iterationMetadataBase);
     await markIterationStopped({ convexClient, iterationId, abortSignal });
     return {
       // Aborted mid-iteration — never score as passed (a pinned-only case would
@@ -7651,6 +7723,8 @@ const runHostedIterationWithBrowser = async (
         : {}),
     });
   } finally {
+    // EFTW-90: the declared files come off the agent's box before it goes.
+    gradingFiles = await collectDeclaredGradingFiles(phases, evalBox?.binding.sandboxId);
     // The eval sandbox is only used during the agent run; release as soon as it
     // finishes or throws — the verdict/finalize below don't need it, and the
     // backend GC reaps anything this misses.
@@ -7661,6 +7735,7 @@ const runHostedIterationWithBrowser = async (
   // looking exactly like a cancel. Throwing hands it back to
   // `runIterationUnderBudget`, which marks the iteration timed out.
   if (isIterationBudgetAbort(undefined, abortSignal)) {
+    await runIterationCleanupInto(phases, iterationMetadataBase);
     throw abortSignal?.reason;
   }
   // The executor's own report first — see the local runner for why.
@@ -7822,9 +7897,29 @@ const runHostedIterationWithBrowser = async (
   // above still applies the prefix to LIVE SSE `trace_snapshot` events
   // for the test-runner UI (different consumer than the stored
   // transcript).
+  const codeGrading = await finishIterationPhases(
+    phases,
+    {
+      ...(pinnedSetupFailure || infraError
+        ? { notRun: "Not run: the iteration didn't finish." }
+        : {}),
+      ...(gradingFiles ? { files: gradingFiles } : {}),
+      input: () =>
+        buildGradingInput({
+          scenario: { title: test.title, isNegativeTest: test.isNegativeTest },
+          messages: (harnessEvidenceDecision?.captureEnabled ? traceMessageHistory : messageHistory) as Array<{ role: string; content: unknown }>,
+          toolCalls: evaluation.toolsCalled,
+          usage: hasReportedUsage(accumulatedUsage) ? accumulatedUsage : undefined,
+          ...(expectedOutput ? { expectedOutput } : {}),
+          expectedToolCalls,
+        }),
+    },
+    iterationMetadataBase,
+  ) ?? test.codeGradingNotRun;
   const finishParams = buildIterationFinishParams({
     iterationId,
     platformGates,
+    ...(codeGrading ? { codeGrading } : {}),
     ...(runId !== null ? { runId: String(runId) } : {}),
     ...(gradingMode ? { gradingMode } : {}),
     scoreMatchOptions: scoreMatchOptionsFor(test),
