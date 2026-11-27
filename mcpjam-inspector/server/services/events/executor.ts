@@ -36,7 +36,9 @@
  *      loop; the claim mutation's budgets decide when the next run may start.
  *   6. The run's turn is appended to its trigger's ONE chat thread
  *      (`event-trigger-<triggerId>`, `origin: "event"`) so event runs appear
- *      in the Playground, and that id is reported with `runs/finish`.
+ *      in the Playground, and that id is reported with `runs/finish`. The
+ *      turn records the event that started it, its environment and its
+ *      (empty) skill list (`run-turn-record.ts`).
  *
  * Starts when the hosted backend is configured. The inbox's dispatch rings
  * `kickEventsExecutor()` (via `/api/internal/events/enqueue`) so a scheduled
@@ -75,6 +77,7 @@ import { HostResolutionError } from "./host-connection.js";
 import { isOwnerAuthorizationRefusal, pinnedConnectionIds } from "./owner-connection.js";
 import { createRunCheckpointer } from "./run-checkpointer.js";
 import { eventTriggerChatSessionId, persistEventRunTranscript } from "./run-transcript.js";
+import { eventRunTurnRecord } from "./run-turn-record.js";
 import {
   buildEventRunMessages,
   isSpendRefusal,
@@ -428,9 +431,10 @@ export async function executeClaimedEventRun(
     let persistedChatSessionId: string | undefined;
     const produced = Array.isArray(result?.newMessages) && result.newMessages.length > 0;
     if (deps.transcript !== false && produced) {
+      const triggerId = String(claim.run.triggerId ?? input.trigger.id);
       const persisted = await persistEventRunTranscript({
         ...(deps.transcript ? { port: deps.transcript } : {}),
-        triggerId: String(claim.run.triggerId ?? input.trigger.id),
+        triggerId,
         runId,
         projectId,
         bearer,
@@ -439,6 +443,11 @@ export async function executeClaimedEventRun(
         systemPrompt: prepared.enhancedSystemPrompt,
         runMessages: finalMessages,
         ...(result?.turnTrace ? { turnTrace: result.turnTrace } : {}),
+        turnRecord: eventRunTurnRecord({
+          input,
+          triggerId,
+          ...(servers.environmentRef ? { environmentRef: servers.environmentRef } : {}),
+        }),
         startedAt: runStartedAt,
       }).catch((error: unknown) => {
         logger.warn("[events-executor] transcript persist failed", {

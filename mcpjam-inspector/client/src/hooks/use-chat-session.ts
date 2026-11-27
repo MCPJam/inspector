@@ -279,6 +279,7 @@ import {
 import { parseToolResultAuthChallenge } from "@mcpjam/sdk/browser";
 import {
   getTraceSpansDurationMs,
+  liveChatTraceTurnEvents,
   mergeLiveChatTraceUsage,
   rebaseTraceSpans,
   type LiveChatTraceEnvelope,
@@ -287,6 +288,7 @@ import {
   type LiveChatTraceToolCall,
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
+import { readEventAtTurn, type EventAtTurn } from "@/shared/event-at-turn";
 import {
   applyPreviewSpansUserMessageIndices,
   buildLiveChatPreviewSpans,
@@ -821,6 +823,11 @@ export interface UseChatSessionReturn {
     extraParts?: UIMessage["parts"];
     widgetModelContext?: WidgetModelContextEntry[];
     /**
+     * The MCP event that started this turn. Sent with every request of the
+     * turn, its continuations included, until the next send in this session.
+     */
+    eventAtTurn?: EventAtTurn;
+    /**
      * Resolves `true` once the message was actually dispatched, `false` on
      * every fail-closed preflight path (server-id resolution failed, or the
      * target/session changed while it was being prepared). Those paths surface
@@ -880,7 +887,11 @@ export interface UseChatSessionReturn {
     > &
       Pick<
         Parameters<UseChatSessionReturn["sendMessage"]>[0],
-        "pluginMentions" | "extraParts" | "widgetModelContext" | "isCurrent"
+        | "pluginMentions"
+        | "extraParts"
+        | "widgetModelContext"
+        | "eventAtTurn"
+        | "isCurrent"
       > & {
         /** Attached prompt and skill messages, copied in after the transcript. */
         prependMessages?: UIMessage[];
@@ -1070,6 +1081,7 @@ export interface UseChatSessionReturn {
         requestPayloadsBlobUrl?: string | null;
         modelId?: string;
         pageToolsAtTurn?: MintedPageToolRecord[];
+        eventAtTurn?: EventAtTurn;
       }>;
     },
     options?: {
@@ -1203,6 +1215,8 @@ interface LiveTraceTurnState {
   finishReason?: string;
   /** Persisted model id (rehydration only). */
   modelId?: string;
+  /** The MCP event that started this turn: from `turn_start` live, or the persisted trace. */
+  event?: EventAtTurn;
 }
 
 interface LiveTraceAccumulatorState {
@@ -1278,6 +1292,8 @@ export interface HydratedTurnTrace {
    * array, which means "this turn advertised none".
    */
   pageToolsAtTurn?: MintedPageToolRecord[];
+  /** The MCP event that started this turn, as the backend reader returned it. */
+  eventAtTurn?: EventAtTurn;
 }
 
 interface PersistedWidgetSnapshot {
@@ -1308,6 +1324,7 @@ async function resolveHydratedTurnTraces(
         requestPayloadsBlobUrl?: string | null;
         modelId?: string;
         pageToolsAtTurn?: MintedPageToolRecord[];
+        eventAtTurn?: EventAtTurn;
       }>
     | undefined,
 ): Promise<HydratedTurnTrace[] | undefined> {
@@ -1366,6 +1383,7 @@ async function resolveHydratedTurnTraces(
           );
         }
       }
+      const eventAtTurn = readEventAtTurn(trace.eventAtTurn);
       return {
         turnId: trace.turnId,
         promptIndex: trace.promptIndex,
@@ -1379,6 +1397,7 @@ async function resolveHydratedTurnTraces(
         ...(trace.pageToolsAtTurn !== undefined
           ? { pageToolsAtTurn: trace.pageToolsAtTurn }
           : {}),
+        ...(eventAtTurn ? { eventAtTurn } : {}),
       };
     }),
   );
@@ -1449,6 +1468,7 @@ function buildLiveTraceStateFromTurnTraces(
       ...(trace.pageToolsAtTurn !== undefined
         ? { pageToolsAtTurn: trace.pageToolsAtTurn }
         : {}),
+      ...(trace.eventAtTurn ? { event: trace.eventAtTurn } : {}),
     };
   }
 
@@ -1777,6 +1797,7 @@ function applyLiveTraceEvent(
             actualToolCalls: prev?.actualToolCalls ?? [],
             usage: prev?.usage,
             startedAtMs: event.startedAtMs,
+            ...(event.event ? { event: event.event } : {}),
           },
         },
         activeTurnId: event.turnId,
@@ -1888,6 +1909,7 @@ function buildLiveTraceEnvelope(
   const turns: LiveChatTraceEnvelope["turns"] = [];
   let usage: LiveChatTraceUsage | undefined;
   const actualToolCalls: LiveChatTraceToolCall[] = [];
+  const turnEvents = liveChatTraceTurnEvents(state.turnOrder.map((id) => state.turns[id]));
   let nextOffsetMs = 0;
   let traceStartedAtMs: number | undefined;
 
@@ -1942,6 +1964,7 @@ function buildLiveTraceEnvelope(
     actualToolCalls: dedupeTraceToolCalls(actualToolCalls),
     events: state.events,
     turns,
+    ...(turnEvents.length > 0 ? { turnEvents } : {}),
     requestPayloads:
       state.requestPayloadHistory.length > 0
         ? state.requestPayloadHistory
@@ -3991,6 +4014,10 @@ export function useChatSession(
   const pendingWidgetModelContextRef = useRef<
     WidgetModelContextEntry[] | undefined
   >(undefined);
+  // The event the last admitted send in a session started from, or that a
+  // restored session's latest turn records (`loadChatSession`). Unlike widget
+  // context it is not drained: a continuation of that turn carries it too.
+  const turnEventAtTurnRef = useRef<{ chatSessionId: string; event: EventAtTurn } | null>(null);
   // Convex server ids resolved by the hosted preflight (`hostedEnsureServerIds`)
   // in `sendMessage`, consumed once by the (synchronous) transport body so the
   // hosted send carries real ids for ad-hoc/App servers, not display names.
@@ -4450,6 +4477,10 @@ export function useChatSession(
             ? { pageTools: snapshotPageToolsForTurn() }
             : {}),
           ...(eventTools ? { eventTools } : {}),
+          ...(turnEventAtTurnRef.current?.chatSessionId ===
+          chatSessionIdRef.current
+            ? { eventAtTurn: turnEventAtTurnRef.current.event }
+            : {}),
           // MCPJam UI tools are agent-surface-only; the only uiTools sender
           // is agent-chat-instances.ts (/api/web/mcpjam-agent).
           ...(widgetModelContext && widgetModelContext.length > 0
@@ -5683,6 +5714,7 @@ export function useChatSession(
       pluginMentions?: PluginMentionSelection[];
       extraParts?: UIMessage["parts"];
       widgetModelContext?: WidgetModelContextEntry[];
+      eventAtTurn?: EventAtTurn;
     }) => {
       if (harnessStopBlockedRef.current) throw new Error("Confirm Stop before continuing this conversation.");
       const {
@@ -5695,6 +5727,7 @@ export function useChatSession(
         prependMessages,
         pluginMentions,
         extraParts,
+        eventAtTurn,
       } = options;
 
       // SEP-2350 turn boundary: a new user turn spins up a fresh per-turn MCP
@@ -5901,6 +5934,9 @@ export function useChatSession(
           if (preparedServers)
             resolvedHostedServersRef.current = preparedServers;
           appMessageTurnRef.current = pluginMessage !== undefined;
+          turnEventAtTurnRef.current = eventAtTurn
+            ? { chatSessionId: sessionAtSend, event: eventAtTurn }
+            : null;
           activeSendSessions.current.add(sessionAtSend);
           admitted = true;
           let sent: Promise<void>;
@@ -6312,6 +6348,7 @@ export function useChatSession(
           pluginMentions: options.pluginMentions,
           extraParts: options.extraParts,
           widgetModelContext: options.widgetModelContext,
+          eventAtTurn: options.eventAtTurn,
           isCurrent: options.isCurrent,
         });
       } catch {
@@ -6650,6 +6687,15 @@ export function useChatSession(
 
       restoredApprovalSelectionRef.current = Array.isArray(session.resumeConfig?.selectedServers)
         ? { sessionId: session.chatSessionId, serverNames: [...session.resumeConfig.selectedServers] }
+        : null;
+      // A continuation of the restored latest turn (after a tool approval, say)
+      // carries that turn's event, never one this tab sent before the restore.
+      const latestTurn = hydratedTurnTraces?.reduce<HydratedTurnTrace | undefined>(
+        (latest, trace) => (!latest || trace.promptIndex >= latest.promptIndex ? trace : latest),
+        undefined,
+      );
+      turnEventAtTurnRef.current = latestTurn?.eventAtTurn
+        ? { chatSessionId: session.chatSessionId, event: latestTurn.eventAtTurn }
         : null;
       skipNextForkDetectionRef.current = true;
       rewindRef.current = null;

@@ -67,7 +67,112 @@ function iteration(): EvalIteration {
   } as unknown as EvalIteration;
 }
 
+/**
+ * A trial graded on yes/no questions: each projected row's value is P(pass),
+ * the way the backend scores it, and the verdict carries the kind and P(yes).
+ */
+function yesNoTrial(
+  answers: Array<{
+    key: string;
+    pYes?: number;
+    passOn: "yes" | "no";
+    kind?: "boolean" | "score";
+  }>,
+): EvalIteration {
+  const definitions = answers.map((a) => definition(a.key, a.key, 0.5));
+  const value = (a: (typeof answers)[number]) =>
+    a.kind === "score"
+      ? 0.5
+      : a.passOn === "no"
+        ? 1 - (a.pYes ?? 0)
+        : (a.pYes ?? 1);
+  return {
+    _id: "it-yes-no",
+    status: "completed",
+    result: "passed",
+    metadata: {
+      evaluationConfig: buildEvaluationConfigSnapshot(definitions),
+      scores: answers.map((a, i) =>
+        finalizeScoreResult(resolveScoreDefinition(definitions[i]!), {
+          kind: "scored",
+          value: value(a),
+          rationale: `P(yes) ${a.pYes}`,
+        }),
+      ),
+      rubricChecksVerdict: {
+        questions: answers.map((a) => ({
+          key: a.key,
+          kind: a.kind ?? "boolean",
+          label: a.key,
+          contentDigest: `d-${a.key}`,
+          passThreshold: 0.5,
+          status: "scored",
+          value: value(a),
+          ...(a.pYes !== undefined ? { probability: a.pYes } : {}),
+        })),
+      },
+    },
+  } as unknown as EvalIteration;
+}
+
 describe("rubricCheckTrialRows", () => {
+  it("shows nothing for a saved verdict the server never projected", () => {
+    // Below dual_write, or when the goal half fails, the backend stores a
+    // verdict and projects no rows; the scorecard must not invent them.
+    const trial = yesNoTrial([{ key: "q:warned", pYes: 0.9, passOn: "yes" }]);
+    expect(
+      rubricCheckTrialRows({
+        ...trial,
+        metadata: { rubricChecksVerdict: trial.metadata?.rubricChecksVerdict },
+      }),
+    ).toEqual([]);
+  });
+
+  it("reads a yes/no question near even odds as Uncertain, whichever answer passes", () => {
+    const rows = rubricCheckTrialRows(
+      yesNoTrial([
+        { key: "q:warned", pYes: 0.51, passOn: "yes" },
+        { key: "q:invented", pYes: 0.45, passOn: "no" },
+        { key: "q:clean", pYes: 0.1, passOn: "no" },
+        { key: "q:caught", pYes: 0.8, passOn: "no" },
+        { key: "q:levels", passOn: "yes", kind: "score" },
+      ]),
+    );
+    expect(rows.map((row) => [row.rubricCheck?.key, row.result.state])).toEqual(
+      [
+        ["q:warned", "uncertain"],
+        ["q:invented", "uncertain"],
+        ["q:clean", "passed"],
+        ["q:caught", "failed"],
+        // A score at its middle level is a level, not a coin flip.
+        ["q:levels", "passed"],
+      ],
+    );
+    expect(rows[1]!.result).toMatchObject({ value: 0.55, threshold: 0.5 });
+    expect(resultGlyph(rows[1]!.result, "advisory").label).toBe("Uncertain");
+    expect(rows[2]!.result).toMatchObject({ value: 0.9 });
+  });
+
+  it("bands on P(yes), not on a pass-on-No row's P(no)", () => {
+    const [atLowEdge, atHighEdge] = rubricCheckTrialRows(
+      yesNoTrial([
+        // P(yes) 0.40 is inside the band, though its row value is 0.60.
+        { key: "q:low", pYes: 0.4, passOn: "no" },
+        // P(yes) 0.60 is outside it, though its row value is 0.40.
+        { key: "q:high", pYes: 0.6, passOn: "no" },
+      ]),
+    );
+    expect(atLowEdge!.result.state).toBe("uncertain");
+    expect(atHighEdge!.result.state).toBe("failed");
+  });
+
+  it("keeps a fallback model's yes or no, which has no probability", () => {
+    const [answered] = rubricCheckTrialRows(
+      yesNoTrial([{ key: "q:warned", passOn: "yes" }]),
+    );
+    expect(answered!.result).toMatchObject({ state: "passed", value: 1 });
+  });
+
   it("lists what the trial was asked, in the backend's order", () => {
     const rows = rubricCheckTrialRows(iteration());
     expect(rows.map((row) => row.label)).toEqual([

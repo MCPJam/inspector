@@ -66,23 +66,12 @@ export function mergeTasksConformanceResults(
         durationMs: 0,
         error: { message: "The selected check produced no result." },
       };
-    const chosen =
+    return (
       observations.find((c) => c.status === "failed") ??
       observations.find((c) => c.skipReason === "could-not-run") ??
       observations.find((c) => c.status === "passed") ??
-      observations[0]!;
-    if (id !== "tasks-declaration-hygiene") return chosen;
-    return {
-      ...chosen,
-      durationMs: observations.reduce((sum, c) => sum + c.durationMs, 0),
-      details: {
-        ...chosen.details,
-        inspectedRequests: observations.reduce(
-          (sum, c) => sum + Number(c.details?.inspectedRequests ?? 0),
-          0
-        ),
-      },
-    };
+      observations[0]!
+    );
   });
   const profile = conformanceProfile("mcp-tasks");
   const { scored, pending } = partitionByProfile(checks, profile);

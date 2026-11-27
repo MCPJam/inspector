@@ -90,6 +90,8 @@ const PAIRS: Readonly<Record<string, string>> = {
   ChatTurn: "PlatformChatTurn",
   ChatSessionDetail: "PlatformChatSessionDetail",
   ChatSessionTrace: "PlatformChatSessionTrace",
+  ChatSessionTraceTurn: "PlatformChatSessionTraceTurn",
+  ChatSessionTraceEvent: "PlatformChatSessionTraceEvent",
   EvalRun: "PlatformEvalRun",
   EvalRunEnvironment: "PlatformEvalRunEnvironment",
   EvalRunAccount: "PlatformEvalRunAccount",

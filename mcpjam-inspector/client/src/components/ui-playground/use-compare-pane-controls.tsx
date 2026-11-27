@@ -49,7 +49,7 @@ import {
 } from "@/stores/compare-pane-display-store";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { extractHostTheme } from "@/lib/client-config";
+import { resolveComparePaneTheme } from "@/lib/compare-pane-theme";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import { getScenarioHostLogo } from "@/lib/scenario-client-style";
 import { ComparePaneDisplay, paneDeviceLabel } from "./compare-pane-display";
@@ -532,10 +532,12 @@ export function useComparePaneControls({
       );
       const display = paneDisplays[pane.paneId];
       const device = display?.deviceType ?? sharedDevice;
-      const theme =
-        display?.theme ??
-        (hostConfig ? extractHostTheme(hostConfig.hostContext) : undefined) ??
-        sharedTheme;
+      const theme = resolveComparePaneTheme(
+        sharedTheme,
+        display?.theme,
+        hostConfig?.hostContext,
+        (column ?? blocked)?.preferAppThemeInCompare,
+      );
       return (lane) => ({
         actions: (
           <ComparePaneSettings
@@ -579,7 +581,8 @@ export function useComparePaneControls({
             <ComparePaneDisplay
               label={label}
               device={device}
-              theme={theme}
+              theme={theme.choice}
+              hasClientTheme={theme.clientTheme !== undefined}
               onDeviceChange={(deviceType) =>
                 setPaneDisplay(pane.paneId, { deviceType })
               }

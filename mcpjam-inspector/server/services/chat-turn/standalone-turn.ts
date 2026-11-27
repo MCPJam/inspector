@@ -24,6 +24,7 @@ import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { getSpendClientIp } from "../../utils/client-ip.js";
 import { streamChatTurn } from "../../utils/web-chat-turn.js";
 import { eventToolsFromBody } from "./event-tools-body.js";
+import { eventAtTurnFromBody } from "./event-at-turn-body.js";
 import {
   parseScopeStepUpResumeRequest,
   parseScopeStepUpCancelRequest,
@@ -138,6 +139,7 @@ export async function runStandaloneTurn(
     "chat",
     execution.requireToolApproval,
   );
+  const eventAtTurn = eventAtTurnFromBody(body.eventAtTurn);
   const localSkills = await listLocalRuntimeSkills().catch((error) => {
     logger.warn("[chat-v2] local skill scan failed", {
       error: error instanceof Error ? error.message : String(error),
@@ -240,6 +242,7 @@ export async function runStandaloneTurn(
         rewind: body.rewind,
         multiModel: body.multiModel,
         runtimeSecrets: [],
+        ...(eventAtTurn ? { eventAtTurn } : {}),
       },
       runtime: {
         c,

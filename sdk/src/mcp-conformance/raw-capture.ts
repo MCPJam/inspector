@@ -156,6 +156,49 @@ export function parseSseEvents(body: string): RawSseEvent[] {
   return events;
 }
 
+/**
+ * Complete SSE frames sitting in `buffer`, plus the unconsumed remainder. For
+ * a reader that consumes a stream as it arrives: a frame only counts once its
+ * blank-line delimiter has arrived.
+ */
+export function drainFrames(buffer: string): {
+  frames: RawSseEvent[];
+  rest: string;
+} {
+  const normalized = buffer.replace(/\r\n/g, "\n");
+  const lastDelimiter = normalized.lastIndexOf("\n\n");
+  if (lastDelimiter === -1) {
+    return { frames: [], rest: normalized };
+  }
+  const complete = normalized.slice(0, lastDelimiter + 2);
+  return {
+    frames: parseSseEvents(complete),
+    rest: normalized.slice(lastDelimiter + 2),
+  };
+}
+
+/**
+ * The reconnection time a stream asked for with the SSE `retry:` field, in
+ * milliseconds: the last valid one, or undefined when there is none. The SSE
+ * standard ignores a value that is not all ASCII digits.
+ *
+ * Read off the raw text rather than added to {@link parseSseEvents}: a frame
+ * that holds only `retry:` dispatches no event, and keeping the parser as it
+ * is keeps every check's frame count as it is. A line counts only once its
+ * line break has arrived, as in the SSE parser: the last piece of a stream
+ * that broke mid-line is not a field yet.
+ */
+export function sseRetryMs(bodyText: string): number | undefined {
+  let retry: number | undefined;
+  const lines = bodyText.replace(/\r\n?/g, "\n").split("\n");
+  for (const line of lines.slice(0, -1)) {
+    if (!line.startsWith("retry:")) continue;
+    const value = line.slice("retry:".length).replace(/^ /, "");
+    if (/^\d+$/.test(value)) retry = Number(value);
+  }
+  return retry;
+}
+
 async function captureRequest(
   input: RequestInfo | URL,
   init?: RequestInit
@@ -200,6 +243,39 @@ async function captureRequest(
   return request;
 }
 
+/** A response body as the raw checks read it: one JSON document, or SSE frames. */
+export interface DecodedBody {
+  /** Parsed body when it is a single JSON document. */
+  json?: unknown;
+  /** Parsed SSE frames when the content type is `text/event-stream`. */
+  sse?: RawSseEvent[];
+}
+
+/**
+ * Whether a `Content-Type` names an event stream. Media types are compared
+ * without regard to case, so `Text/Event-Stream` is one too.
+ */
+export function isEventStream(contentType: string): boolean {
+  return contentType.toLowerCase().includes("text/event-stream");
+}
+
+/**
+ * Decode a response body from its content type and text. The ONE place that
+ * decides "SSE frames or a JSON document", so a check that reads a body it
+ * fetched some other way (the host-header probes use `node:http`) reads it
+ * exactly as the capture does.
+ */
+export function decodeResponseBody(
+  contentType: string,
+  bodyText: string
+): DecodedBody {
+  if (isEventStream(contentType)) {
+    return { sse: parseSseEvents(bodyText) };
+  }
+  const parsed = bodyText ? tryJson(bodyText) : undefined;
+  return parsed === undefined ? {} : { json: parsed };
+}
+
 async function captureResponse(
   response: Response,
   options: { skipStreamBodies?: boolean } = {}
@@ -210,7 +286,7 @@ async function captureResponse(
   // `clone.text()` resolves only when the stream ENDS, and a server is entitled
   // to hold one open for the life of the connection. Record the head and let
   // the real consumer have the stream.
-  if (options.skipStreamBodies && contentType.includes("text/event-stream")) {
+  if (options.skipStreamBodies && isEventStream(contentType)) {
     return {
       status: response.status,
       statusText: response.statusText,
@@ -239,12 +315,9 @@ async function captureResponse(
     bodyText,
   };
   if (bodyError !== undefined) raw.bodyError = bodyError;
-  if (contentType.includes("text/event-stream")) {
-    raw.sse = parseSseEvents(bodyText);
-  } else if (bodyText) {
-    const parsed = tryJson(bodyText);
-    if (parsed !== undefined) raw.json = parsed;
-  }
+  const decoded = decodeResponseBody(contentType, bodyText);
+  if (decoded.sse !== undefined) raw.sse = decoded.sse;
+  if (decoded.json !== undefined) raw.json = decoded.json;
   return raw;
 }
 

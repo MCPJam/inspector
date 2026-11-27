@@ -29,6 +29,8 @@ import {
 import { ExtensionWorkspaceProvider } from "@/components/host-workspace/ExtensionWorkspaceProvider";
 import { useChatAppDisplayBehavior } from "@/contexts/chat-app-display-behavior-context";
 import { useScenarioHostTheme } from "@/contexts/scenario-client-style-context";
+import { saveComparePanes } from "@/lib/compare-panes";
+import { useComparePaneDisplayStore } from "@/stores/compare-pane-display-store";
 
 vi.mock("framer-motion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("framer-motion")>();
@@ -107,7 +109,10 @@ vi.mock("@/hooks/use-playground-environment", async (importOriginal) => {
   };
 });
 
-const mockHostQueryState = vi.hoisted(() => ({ result: null as unknown }));
+const mockHostQueryState = vi.hoisted(() => ({
+  result: null as unknown,
+  byId: new Map<string, unknown>(),
+}));
 const mockDefaultHostConfig = vi.hoisted(() => ({ result: null as unknown }));
 // Non-null `harnessId` means the chat executes inside a harness runtime
 // (Claude Code, Codex). Default null = an ordinary model host.
@@ -323,7 +328,10 @@ vi.mock("convex/react", () => ({
   // null is enough — the consumer treats it as "no host resolved yet".
   useQuery: (name: string, args: unknown) => {
     if (args === "skip") return undefined;
-    if (name === "hosts:getHost") return mockHostQueryState.result;
+    if (name === "hosts:getHost") {
+      const hostId = (args as { hostId: string }).hostId;
+      return mockHostQueryState.byId.get(hostId) ?? mockHostQueryState.result;
+    }
     if (name === "hostConfigsV2:getProjectDefault") {
       return mockDefaultHostConfig.result;
     }
@@ -956,6 +964,8 @@ describe("PlaygroundMain", () => {
     localStorage.clear();
     mockConvexAuthState.isAuthenticated = false;
     mockHostQueryState.result = null;
+    mockHostQueryState.byId.clear();
+    useComparePaneDisplayStore.setState({ byPane: {} });
     mockDefaultHostConfig.result = null;
     mockReactiveHistoryState.session = undefined;
     mockReactiveHistoryState.widgetSnapshots = undefined;
@@ -3903,6 +3913,66 @@ describe("PlaygroundMain", () => {
 
   describe("thread theme from host context", () => {
     it.each([
+      { appTheme: "dark", savedTheme: "light" },
+      { appTheme: "light", savedTheme: "dark" },
+    ] as const)(
+      "opens starter panes in $appTheme and keeps a custom theme $savedTheme",
+      ({ appTheme, savedTheme }) => {
+        const projectId = "project-1";
+        const clients = [
+          { hostId: "hclaude00000000000000001", hostStyle: "claude", starter: true },
+          { hostId: "hchatgpt0000000000000001", hostStyle: "chatgpt", starter: true },
+          { hostId: "hedited00000000000000001", hostStyle: "claude", starter: false },
+        ];
+        const model = { id: "gpt-4", name: "GPT-4", provider: "openai" };
+        mockConvexAuthState.isAuthenticated = true;
+        mockUseChatSession.availableModels = [model];
+        mockPreferencesState.themeMode = appTheme;
+        for (const { hostId, hostStyle, starter } of clients) {
+          mockHostQueryState.byId.set(hostId, {
+            hostId,
+            name: hostId,
+            preferAppThemeInCompare: starter,
+            config: {
+              id: hostId,
+              hostStyle,
+              modelId: model.id,
+              hostContext: { theme: savedTheme },
+            },
+          });
+        }
+        saveComparePanes(
+          projectId,
+          clients.map(({ hostId }) => ({
+            paneId: hostId,
+            target: { kind: "host", hostId },
+          })),
+        );
+
+        render(<PlaygroundMain {...defaultProps} activeProjectId={projectId} />);
+
+        const callsFor = (hostId: string) =>
+          mockMultiModelPlaygroundCard.mock.calls
+            .map(([props]) => props)
+            .filter((props) => props.compareKind === "host" && props.compareId === hostId);
+        for (const { hostId, hostStyle, starter } of clients) {
+          expect(callsFor(hostId)[0]).toMatchObject({
+            hostStyle,
+            effectiveThreadTheme: starter ? appTheme : savedTheme,
+          });
+        }
+        const [first, second] = clients;
+        act(() =>
+          useComparePaneDisplayStore
+            .getState()
+            .setPaneDisplay(first.hostId, { theme: savedTheme }),
+        );
+        expect(callsFor(first.hostId).at(-1)?.effectiveThreadTheme).toBe(savedTheme);
+        expect(callsFor(second.hostId).at(-1)?.effectiveThreadTheme).toBe(appTheme);
+      },
+    );
+
+    it.each([
       { appTheme: "light", clientTheme: "dark" },
       { appTheme: "dark", clientTheme: "light" },
     ] as const)(
@@ -4626,7 +4696,9 @@ describe("PlaygroundMain", () => {
 
     it("keeps a send that branches the column current past the branch's own detach, until New chat", async () => {
       await openColumnAlone();
-      let branched: { isCurrent?: () => boolean } | undefined;
+      let branched:
+        | { isCurrent?: () => boolean; onDispatchRefused?: () => void }
+        | undefined;
       // What `forkAndSend` does before it sends: the real detach, then a new
       // chat.
       vi.mocked(mockUseChatSession.branchFromThread).mockImplementation(
@@ -4643,6 +4715,11 @@ describe("PlaygroundMain", () => {
         session: { ...column, chatSessionId: "chat-session-1" },
       });
       try {
+        act(() => {
+          mockThread.mock.calls.at(-1)?.[0].onModelContextUpdate?.("call_1", {
+            structuredContent: { rows: 3 },
+          });
+        });
         fireEvent.change(screen.getByTestId("chat-input-field"), {
           target: { value: "next message" },
         });
@@ -4671,6 +4748,21 @@ describe("PlaygroundMain", () => {
           void bridge?.onNewChat();
         });
         expect(branched?.isCurrent?.()).toBe(false);
+
+        // The refusal leaves the old chat's App context out of New chat.
+        act(() => branched?.onDispatchRefused?.());
+        mockUseChatSession.sendMessage.mockClear();
+        fireEvent.change(screen.getByTestId("chat-input-field"), {
+          target: { value: "fresh" },
+        });
+        await act(async () => {
+          fireEvent.submit(screen.getByTestId("chat-input"));
+        });
+        await waitFor(() => {
+          expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ text: "fresh", widgetModelContext: [] }),
+          );
+        });
       } finally {
         mockUseChatSession.chatSessionId = "chat-session-1";
       }

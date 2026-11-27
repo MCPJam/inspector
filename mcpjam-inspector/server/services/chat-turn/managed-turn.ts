@@ -19,6 +19,7 @@ import { type Context } from "hono";
 import { HOSTED_MODE } from "../../config.js";
 import { advertisedPageToolsOnly } from "../../utils/chat-v2-orchestration.js";
 import { eventToolsFromBody } from "./event-tools-body.js";
+import { eventAtTurnFromBody } from "./event-at-turn-body.js";
 import { buildDirectHostConfig } from "../../utils/chat-ingestion.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
 import { captureServerEvent } from "../../utils/analytics.js";
@@ -270,6 +271,8 @@ export async function handleManagedChatTurn(
       // own route (mcpjam-agent.ts) and never lands here.
       const origin = turnMode === "recorded" ? "scenario" : "playground";
       const isDirectChat = turnMode === "interactive";
+      // The Playground's own conversation only, like `eventTools`.
+      const eventAtTurn = isDirectChat ? eventAtTurnFromBody(body.eventAtTurn) : undefined;
       // The turn's servers minus the ones a plugin contributed, for the
       // trace's host config (see where it is built below).
       const pluginServerIdSet = new Set(
@@ -570,6 +573,7 @@ export async function handleManagedChatTurn(
           ...(turnSkills.turnProvenance
             ? { turnProvenance: turnSkills.turnProvenance }
             : {}),
+          ...(eventAtTurn ? { eventAtTurn } : {}),
           ...(environmentSpec ? { setupEnvironment: environmentSpec } : {}),
           // A study whose Library could not be read ran with unknown skills.
           setupSkillProvenanceIncomplete:

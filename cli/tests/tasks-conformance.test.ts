@@ -42,13 +42,61 @@ test("buildTasksConformanceConfig runs a renamed check id under its current name
 test("buildTasksConformanceConfig expands categories into check ids", () => {
   const config = buildTasksConformanceConfig({
     url: "https://example.com/mcp",
-    category: ["dispatch"],
+    category: ["creation"],
   });
 
   assert.deepEqual(config.checkIds, [
-    "tasks-wire-resolvable",
-    "tasks-declaration-hygiene",
+    "tasks-result-type-discipline",
+    "tasks-undeclared-creation-refused",
   ]);
+});
+
+test("buildTasksConformanceConfig drops the removed dispatch category, and refuses it alone", () => {
+  // `dispatch` held only the two checks that graded MCPJam's own client.
+  const mixed = buildTasksConformanceConfig({
+    url: "https://example.com/mcp",
+    category: ["dispatch", "creation"],
+  });
+  assert.deepEqual(mixed.checkIds, [
+    "tasks-result-type-discipline",
+    "tasks-undeclared-creation-refused",
+  ]);
+
+  // Alone it would leave no category, which means "run every check".
+  assert.throws(
+    () =>
+      buildTasksConformanceConfig({
+        url: "https://example.com/mcp",
+        category: ["dispatch"],
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.exitCode === 2 &&
+      error.message.includes("Tasks category dispatch was removed")
+  );
+});
+
+test("buildTasksConformanceConfig drops the two removed client checks, and refuses them alone", () => {
+  for (const removed of ["tasks-wire-resolvable", "tasks-declaration-hygiene"]) {
+    const mixed = buildTasksConformanceConfig({
+      url: "https://example.com/mcp",
+      checkId: [removed, "tasks-ttl-shape"],
+    });
+    assert.deepEqual(mixed.checkIds, ["tasks-ttl-shape"]);
+
+    assert.throws(
+      () =>
+        buildTasksConformanceConfig({
+          url: "https://example.com/mcp",
+          checkId: [removed],
+        }),
+      (error) =>
+        error instanceof CliError &&
+        error.exitCode === 2 &&
+        error.message.includes(`Tasks check ${removed} was removed`) &&
+        error.message.includes("MCPJam's own client")
+    );
+  }
 });
 
 test("buildTasksConformanceConfig maps the undeclared-capability checks to their categories", () => {
@@ -277,7 +325,7 @@ test("buildTasksConformanceConfig omits checkOverrides when the flag is absent o
 test("buildTasksConformanceConfig rejects a bad --check-overrides as a usage error", () => {
   for (const [checkOverrides, pattern] of [
     ["not json", /--check-overrides/],
-    ['{"tasks-wire-resolvable":{"toolName":"long_job"}}', /does not accept a tool override/],
+    ['{"tasks-invalid-task-id-rejected":{"toolName":"long_job"}}', /does not accept a tool override/],
     ['{"tasks-ttl-shape":{"toolName":"long_job","arguments":{}}}', /Unknown tool override field/],
     ['{"tasks-ttl-shape":{"toolName":"  "}}', /A tool name is required/],
   ] as const) {

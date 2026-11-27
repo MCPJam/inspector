@@ -61,7 +61,6 @@ const LEGACY_ONLY: MCPCheckId[] = [
   "ping",
   "logging-set-level",
   "server-sse-polling-session",
-  "server-accepts-multiple-post-streams",
   "server-sse-streams-functional",
   "localhost-host-rebinding-rejected",
   "localhost-host-valid-accepted",

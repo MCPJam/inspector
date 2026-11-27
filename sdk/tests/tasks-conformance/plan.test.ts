@@ -138,28 +138,20 @@ describe("Tasks execution plans", () => {
         toolName: "job",
         inputResponses: { a: 1 },
         checkOverrides: { "tasks-inline-result": { toolName: "unused" } },
-        checkIds: ["tasks-wire-resolvable", "tasks-invalid-task-id-rejected"],
+        checkIds: ["tasks-invalid-task-id-rejected"],
       })
     ).toEqual([
       {
-        checkIds: ["tasks-wire-resolvable", "tasks-invalid-task-id-rejected"],
+        checkIds: ["tasks-invalid-task-id-rejected"],
         readinessIds: undefined,
       },
     ]);
-  });
-  it("does not split a planned request again just to check declaration hygiene", () => {
-    const groups = planTasksConformance({
-      toolName: "job",
-      checkIds: ["tasks-inline-result", "tasks-declaration-hygiene"],
-    });
-    expect(groups).toHaveLength(1);
-    expect(planTasksConformance(groups[0]!)).toEqual(groups);
   });
   it.each([
     null,
     [],
     { unknown: { toolName: "job" } },
-    { "tasks-wire-resolvable": { toolName: "job" } },
+    { "tasks-invalid-task-id-rejected": { toolName: "job" } },
     { "tasks-inline-result": { toolName: " " } },
     { "tasks-inline-result": { toolName: "job", toolArguments: [] } },
   ])("rejects invalid override settings %j", (value) => {
@@ -218,7 +210,7 @@ describe("group report aggregation", () => {
   });
   it("preserves completed results when another group times out and grades each check once", () => {
     const first = taskGroupFailure(
-      ["tasks-ttl-shape", "tasks-declaration-hygiene"],
+      ["tasks-ttl-shape", "tasks-invalid-task-id-rejected"],
       "unused",
       "test"
     );
@@ -229,13 +221,13 @@ describe("group report aggregation", () => {
       error: undefined,
     }));
     const second = taskGroupFailure(
-      ["tasks-inline-result", "tasks-declaration-hygiene"],
+      ["tasks-inline-result", "tasks-invalid-task-id-rejected"],
       "Request timed out",
       "test"
     );
     const result = mergeTasksConformanceResults(
       [first, second],
-      ["tasks-ttl-shape", "tasks-inline-result", "tasks-declaration-hygiene"]
+      ["tasks-ttl-shape", "tasks-inline-result", "tasks-invalid-task-id-rejected"]
     );
     expect(result.outcome).toBe("incomplete");
     expect(result.checks).toHaveLength(3);

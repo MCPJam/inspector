@@ -27,11 +27,7 @@ import { withAbortSignalFetch } from "../abort-signal.js";
 
 import { SUBSCRIPTION_ID_META_KEY } from "../mcp-client-manager/subscription-coordinator.js";
 import type { RawHttpCheckContext } from "./types.js";
-import {
-  getWireField,
-  parseSseEvents,
-  type RawSseEvent,
-} from "./raw-capture.js";
+import { drainFrames, getWireField, type RawSseEvent } from "./raw-capture.js";
 import { baseHeaders, modernHeaders, modernRequestBody } from "./raw-http.js";
 
 /** The `subscriptions/listen` method name, spelled once. */
@@ -171,20 +167,62 @@ export function filterRequests(
   return Boolean(filter[SUBSCRIPTION_NOTIFICATION_FILTER_KEYS[method]]);
 }
 
-/** Complete SSE frames sitting in `buffer`, plus the unconsumed remainder. */
-function drainFrames(buffer: string): {
-  frames: RawSseEvent[];
-  rest: string;
-} {
-  const normalized = buffer.replace(/\r\n/g, "\n");
-  const lastDelimiter = normalized.lastIndexOf("\n\n");
-  if (lastDelimiter === -1) {
-    return { frames: [], rest: normalized };
+/** What comparing the acknowledged filter with the requested one found. */
+export interface AcknowledgedFilterComparison {
+  /** The filter the server confirmed, as it sent it. */
+  acknowledgedFilter: Record<string, unknown>;
+  /** Requested but left out of the acknowledgement: the server will not send these. */
+  notAcknowledged: Record<string, unknown>;
+  /** Acknowledged but never requested. */
+  acknowledgedNotRequested: Record<string, unknown>;
+}
+
+/**
+ * The members of `filter` that `other` does not have: a flag that is `true`
+ * only in `filter`, and the entries of a list that are missing from `other`'s.
+ */
+function filterDifference(
+  filter: Record<string, unknown>,
+  other: Record<string, unknown>
+): Record<string, unknown> {
+  const difference: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(filter)) {
+    if (value === true && other[key] !== true) {
+      difference[key] = true;
+    } else if (Array.isArray(value)) {
+      const others = Array.isArray(other[key]) ? other[key] : [];
+      const missing = value.filter((entry) => !others.includes(entry));
+      if (missing.length > 0) difference[key] = missing;
+    }
   }
-  const complete = normalized.slice(0, lastDelimiter + 2);
+  return difference;
+}
+
+/**
+ * Compare the filter the server acknowledged with the one the probe asked
+ * for. A client SHOULD do this (2026-07-28 subscriptions.mdx, Acknowledgment):
+ * the acknowledgement holds the subset the server agreed to honor, so a type
+ * missing from it will never arrive on the stream.
+ *
+ * Returns `undefined` when the stream carried no acknowledgement.
+ */
+export function compareAcknowledgedFilter(
+  observation: Pick<ListenObservation, "messages" | "requestedFilter">
+): AcknowledgedFilterComparison | undefined {
+  const ack = observation.messages.find(
+    (message) => message.method === SUBSCRIPTION_ACK_METHOD
+  );
+  if (!ack) return undefined;
+  const acknowledgedFilter =
+    asRecord(getWireField(ack, ["params", "notifications"])) ?? {};
+  const requestedFilter = { ...observation.requestedFilter };
   return {
-    frames: parseSseEvents(complete),
-    rest: normalized.slice(lastDelimiter + 2),
+    acknowledgedFilter,
+    notAcknowledged: filterDifference(requestedFilter, acknowledgedFilter),
+    acknowledgedNotRequested: filterDifference(
+      acknowledgedFilter,
+      requestedFilter
+    ),
   };
 }
 

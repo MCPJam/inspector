@@ -49,6 +49,7 @@ vi.mock("../../routes/shared/evals.js", () => ({
   shouldSkipExecution: () => false,
 }));
 vi.mock("../evals/suite-account-choices.js", () => ({
+  loadEvalRunAccountPlan: async () => null,
   loadSuiteConnectionIdSets: async () => undefined,
 }));
 vi.mock("../evals/compat-runtime.js", () => ({

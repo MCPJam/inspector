@@ -570,13 +570,9 @@ export function SuiteIterationsView({
   aggregate: SuiteAggregate | null;
   onRerun: (
     suite: EvalSuite,
-    opts?: {
+    opts?: CaseRunLaunchOptions & {
       matchOptionsOverride?: EvalMatchOptions;
-      iterationOverride?: number;
       caseIds?: string[];
-      skipJudge?: boolean;
-      ephemeralEnvironment?: boolean;
-      throwOnFailure?: boolean;
     },
   ) => void | Promise<unknown>;
   onReplayRun?: (suite: EvalSuite, run: EvalSuiteRunListItem) => void;
@@ -3266,11 +3262,16 @@ export function SuiteIterationsView({
                 </SuiteSettingsRow>
               ) : null}
             </fieldset>
-            {/* Each person's own choice, not suite configuration, so the CI
-                lock stops here: a CI-owned suite keeps its Run controls, and a
-                run started from it uses the starter's accounts. */}
             <div hidden={settingsTabs.hiddenUnless("settings")}>
-              <SuiteAccountsRow suite={suite} projectId={projectId} />
+              <SuiteAccountsRow
+                suite={suite}
+                projectId={projectId}
+                sharedDefaults={{
+                  value: draft.current.accounts,
+                  onChange: (accounts) => dispatchDraft({ type: "edit", key: "accounts", value: accounts }),
+                  disabled: editingDisabled,
+                }}
+              />
             </div>
             <fieldset
               hidden={settingsTabs.hiddenUnless("settings")}

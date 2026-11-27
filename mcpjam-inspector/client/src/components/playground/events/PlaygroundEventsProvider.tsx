@@ -31,18 +31,22 @@ import type {
 import { useEventsFeed } from "@/components/events/use-events-feed";
 import { useEventsHost } from "@/components/events/use-events-host";
 import type { SubscribeFormValue } from "@/components/events/use-subscribe-form";
-import { logicalIdOf } from "@/components/events/event-utils";
+import { errorMessage, logicalIdOf } from "@/components/events/event-utils";
 import { createEventDispatcher, type EventBinding } from "./event-dispatch";
 import { useEventAgentBridge } from "./event-agent-bridge";
 import {
   createEventAgentToolExecutor,
   type EventAgentToolExecutor,
 } from "./event-agent-tools";
+import { withArrival, withOutcome, type RecentEvent } from "./recent-events";
 
 export interface PlaygroundEventBinding extends EventBinding {
   event: EventDescriptorView;
   subscription?: EventsSubscriptionView;
-  lastResult?: string;
+  /** The latest occurrences that reached this binding, newest first. */
+  recentEvents?: RecentEvent[];
+  /** Why the connection stopped, when no occurrence explains it. */
+  notice?: string;
   ownerScope: string;
   /** A short name the agent gave it (`mcpjam_subscribe_to_event`). */
   title?: string;
@@ -74,11 +78,14 @@ function useRuntime(
 ) {
   const state = usePlaygroundStateContext();
   const hosted = isHostedMode();
+  // A chat's subscriptions, from the pane or the agent, are made as the
+  // chat's client, so the backend checks the modes that client receives.
   const host = useEventsHost({
     hosted,
     projectId,
     activeHostId,
     activeHost,
+    subscribeAsActiveClient: true,
   }).choice;
   const scope = `${projectId}:${activeHostId}:${enabled}`;
   const [storedBindings, setBindings] = useState<PlaygroundEventBinding[]>([]);
@@ -99,7 +106,7 @@ function useRuntime(
           ? {
               ...binding,
               enabled: false,
-              lastResult:
+              notice:
                 "Agent or conversation changed. Resume to connect this event here.",
             }
           : binding,
@@ -130,10 +137,31 @@ function useRuntime(
       connected: (binding) =>
         current.current.servers[binding.serverName]?.connectionStatus ===
         "connected",
-      result: (id, lastResult) =>
+      received: (id, entry) =>
         setBindings((previous) =>
           previous.map((binding) =>
-            binding.id === id ? { ...binding, lastResult } : binding,
+            binding.id === id
+              ? {
+                  ...binding,
+                  recentEvents: withArrival(binding.recentEvents, entry),
+                  notice: undefined,
+                }
+              : binding,
+          ),
+        ),
+      result: (id, entry, outcome) =>
+        setBindings((previous) =>
+          previous.map((binding) =>
+            binding.id === id
+              ? {
+                  ...binding,
+                  recentEvents: withOutcome(
+                    binding.recentEvents,
+                    entry,
+                    outcome,
+                  ),
+                }
+              : binding,
           ),
         ),
     });
@@ -201,7 +229,7 @@ function useRuntime(
         previous.map((binding) => ({
           ...binding,
           enabled: false,
-          lastResult: "Page restored. Resume to listen for new events.",
+          notice: "Page restored. Resume to listen for new events.",
         })),
       );
     };
@@ -342,6 +370,9 @@ function useRuntime(
         throw new Error(
           "The client changed. Connect the event again for the selected client.",
         );
+      // The pane and the agent's tools show `error.message`; a backend
+      // refusal (such as this event already subscribed under another client)
+      // keeps its sentence elsewhere, so pass that sentence on.
       const row = await createHosted({
         projectId,
         serverId,
@@ -352,6 +383,13 @@ function useRuntime(
         locality: "hosted",
         protocolVersion: server.catalog?.protocolVersion,
         descriptor,
+      }).catch((error: unknown) => {
+        throw new Error(
+          errorMessage(
+            error,
+            `Couldn't subscribe to ${event.name}. Try again.`,
+          ),
+        );
       });
       subscription = hostedSubscriptionRowToView(row);
     } else {
@@ -559,6 +597,7 @@ function useRuntime(
               ...(afterSeq !== undefined
                 ? {
                     afterSeq,
+                    notice: undefined,
                     agentScope:
                       useEventAgentBridge.getState().agent?.scope ??
                       binding.agentScope,

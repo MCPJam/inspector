@@ -212,14 +212,16 @@ export async function runSwarmChecks(
     // Positional correlation — sound because both arrays come from the same
     // `claim.criteria` in the same call, and `evaluatePredicates` preserves
     // order by contract. Everything downstream is keyed by `criterionId`.
-    criterionResults = claim.criteria.map((entry, index) => ({
-      criterionId: entry.id,
-      passed: results[index]?.passed ?? false,
-      // Older evaluators omit status on scored rows; only a missing result
-      // or an explicit evaluator error is unmeasured.
-      status: results[index] ? (results[index].status ?? "scored") : "error",
-      reason: results[index]?.reason ?? "evaluator returned no verdict",
-    }));
+    criterionResults = claim.criteria.map((entry, index) => {
+      const result = results[index];
+      const measured = result && result.status !== "error" && result.status !== "not_applicable";
+      return {
+        criterionId: entry.id,
+        passed: measured ? result.passed : false,
+        status: measured ? "scored" : "error",
+        reason: result?.reason ?? "evaluator returned no verdict",
+      };
+    });
   } catch (error) {
     return reportFailure(
       error instanceof Error ? error.message : String(error),

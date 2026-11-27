@@ -1,5 +1,6 @@
 import { namesTasksExtension, errorCode } from "./metadata.js";
 import { isTasksToolCheck, taskCheckUsesInput } from "./types.js";
+import { canDeclareTasksExtension } from "../mcp-client-manager/task-input-driver.js";
 
 import type { RpcLogEvent } from "../mcp-client-manager/index.js";
 
@@ -48,7 +49,6 @@ import {
   decideOutcome,
   toolTaskSupport,
   resolveProbeTool,
-  findDeclarationViolations,
   type ProbeToolResolution,
 } from "./metadata.js";
 import { validateCreateTaskShape } from "./shapes.js";
@@ -61,6 +61,12 @@ import {
   InputRequiredLeg,
 } from "./evidence.js";
 import { TaskOperations } from "./task-operations.js";
+import {
+  InputRequiredResultLeg,
+  answersNeedPin,
+  serverConfigForAnswers,
+  taskInputAnswersFor,
+} from "./input-required-result.js";
 import { runReadChecks } from "./read-checks.js";
 import { runMutationChecks } from "./mutation-checks.js";
 export class TaskGroupRunner extends TaskOperations {
@@ -93,35 +99,47 @@ export class TaskGroupRunner extends TaskOperations {
     // exists for: a reader comparing two runs must be able to tell whether they
     // asked the same questions, and "failed to connect" is still a run.
     const profile = conformanceProfile("mcp-tasks");
-
+    // 2025-11-25: the answers to the questions a server sends over
+    // `tasks/result`. Decided here because a client that answers has to say
+    // so in `initialize`. Only tasks-inline-result reads what the call brings,
+    // so a group without it does not answer: answering would drive a second
+    // real task to its side effect for a check that cannot use it. Every
+    // group still makes the call itself when the task asks for input, as a
+    // requestor SHOULD (tasks.mdx:449).
+    const legacyAnswersUsed = selected.has("tasks-inline-result");
+    const inputAnswers = legacyAnswersUsed
+      ? taskInputAnswersFor(this.config)
+      : undefined;
+    const resultLeg = new InputRequiredResultLeg(
+      inputAnswers,
+      legacyAnswersUsed && answersNeedPin(this.config)
+    );
+    const serverConfig = serverConfigForAnswers(
+      this.config.serverConfig,
+      inputAnswers
+    );
     try {
       return await withTasksClient(
-        this.config.serverConfig,
+        serverConfig,
         async (manager, serverId) => {
           this.config.signal?.throwIfAborted();
           const support = manager.getTasksSupport(serverId);
           const wire = support.wire;
+          // A run with answers makes the call, as it always did: it is how
+          // those answers reach the server. A run without them makes it only
+          // when the server cannot ask for something nobody here answers.
+          // That is judged on what `initialize` advertised (an exact set
+          // loses `elicitation` with no handler), because a server may only
+          // ask for that (2025-11-25 `basic/lifecycle.mdx`). Asked and
+          // refused, a server may end the task.
+          const refusesQuestions = () =>
+            !inputAnswers &&
+            !canDeclareTasksExtension(
+              manager.getAdvertisedClientCapabilities(serverId),
+              {}
+            ).ok;
           const protocolVersion =
             manager.getNegotiatedProtocolVersion(serverId);
-
-          if (selected.has("tasks-wire-resolvable")) {
-            const stepStartedAt = Date.now();
-            // Listing the extension on 2025-11-25 is not judged: nothing
-            // forbids it, and SEP-2663 only forbids USING it there.
-            checks.push(
-              protocolVersion
-                ? passed("tasks-wire-resolvable", Date.now() - stepStartedAt, {
-                    protocolVersion,
-                    wire,
-                    support,
-                  })
-                : failed(
-                    "tasks-wire-resolvable",
-                    Date.now() - stepStartedAt,
-                    'server did not expose a negotiated protocol version; tasks dispatch fails closed to "none"'
-                  )
-            );
-          }
 
           const needsTool = [...selected].some(isTasksToolCheck);
           const tools = needsTool
@@ -524,9 +542,22 @@ export class TaskGroupRunner extends TaskOperations {
                   createdTaskId,
                   {
                     stopOnInputRequired: true,
-                    continueAfterInput: async (task) => {
+                    continueAfterInput: async (task, remainingMs) => {
                       inputRequiredTask ??= task;
-                      if (wire !== "extension") return false;
+                      // 2025-11-25 answers over `tasks/result`, not `tasks/update`.
+                      if (wire !== "extension") {
+                        if (wire !== "legacy" || refusesQuestions()) return false;
+                        const next = await resultLeg.run(
+                          manager,
+                          serverId,
+                          createdTaskId,
+                          remainingMs
+                        );
+                        // Polling goes on past this frame: keep it, so the
+                        // checks that grade every frame still see it.
+                        if (next) inputSnapshots.push(task);
+                        return next;
+                      }
                       const leg = await this.runInputRequiredLeg(
                         manager,
                         serverId,
@@ -646,6 +677,8 @@ export class TaskGroupRunner extends TaskOperations {
             serverId,
             inputRequiredTask,
             inputLeg,
+            resultLeg,
+            pollError: polled.error,
             received,
             sent,
             rawCreation,
@@ -658,24 +691,6 @@ export class TaskGroupRunner extends TaskOperations {
           this.config.signal?.throwIfAborted();
           await runMutationChecks(context);
           this.config.signal?.throwIfAborted();
-          if (selected.has("tasks-declaration-hygiene")) {
-            const stepStartedAt = Date.now();
-            const violations = findDeclarationViolations(wire, sent);
-            checks.push(
-              violations.length === 0
-                ? passed(
-                    "tasks-declaration-hygiene",
-                    Date.now() - stepStartedAt,
-                    { inspectedRequests: sent.length, wire }
-                  )
-                : failed(
-                    "tasks-declaration-hygiene",
-                    Date.now() - stepStartedAt,
-                    `${violations.length} declaration hygiene violation(s)`,
-                    { violations }
-                  )
-            );
-          }
 
           // Which of these the `mcp-tasks` profile scores. A check outside the
           // frozen manifest still ran and still shows its verdict in `checks`,
@@ -762,6 +777,12 @@ export class TaskGroupRunner extends TaskOperations {
           rpcLogger: captureRpc,
           signal: this.config.signal,
           onRequest: this.requestHeaders.observe,
+          ...(inputAnswers
+            ? {
+                beforeConnect: (manager, serverId) =>
+                  manager.setElicitationHandler(serverId, inputAnswers.handler),
+              }
+            : {}),
         }
       );
     } catch (error) {

@@ -236,7 +236,7 @@ describe("conformanceSuiteConfigs", () => {
 
   it("reports a suite the settings leave out", () => {
     const { selection, apps } = conformanceSuiteConfigs(
-      { selection: { apps: [], tasks: ["tasks-wire-resolvable"] }, probes },
+      { selection: { apps: [], tasks: ["tasks-invalid-task-id-rejected"] }, probes },
       "2026-07-28",
     );
     expect(isSelected(selection?.apps)).toBe(false);
@@ -247,10 +247,10 @@ describe("conformanceSuiteConfigs", () => {
   it("gives the Tasks suite its tool only when a picked check calls it", () => {
     expect(
       conformanceSuiteConfigs(
-        { selection: { tasks: ["tasks-wire-resolvable"] }, probes },
+        { selection: { tasks: ["tasks-invalid-task-id-rejected"] }, probes },
         "2026-07-28",
       ).tasks,
-    ).toEqual({ checkIds: ["tasks-wire-resolvable"] });
+    ).toEqual({ checkIds: ["tasks-invalid-task-id-rejected"] });
     expect(
       conformanceSuiteConfigs(
         { selection: { tasks: ["tasks-ttl-shape"] }, probes },
