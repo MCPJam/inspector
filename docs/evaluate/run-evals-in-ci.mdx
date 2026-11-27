@@ -34,6 +34,7 @@ All three authenticate with an MCPJam API key (`sk_…`) stored as a CI secret n
 
     permissions:
       contents: read
+      pull-requests: write
 
     jobs:
       evals:
@@ -48,6 +49,7 @@ All three authenticate with an MCPJam API key (`sk_…`) stored as a CI secret n
               api-key: ${{ secrets.MCPJAM_API_KEY }}
               project: 'My project'
               suite: 'My eval suite'
+              comment: true
 
               # Optional: let the gate decide pass or fail.
               # gate: true
@@ -55,7 +57,7 @@ All three authenticate with an MCPJam API key (`sk_…`) stored as a CI secret n
               # baseline-sha: '<commit with an existing eval run>'
     ```
 
-    Create the `MCPJAM_API_KEY` repository secret under Settings → Secrets and variables → Actions in GitHub.
+    Create the `MCPJAM_API_KEY` repository secret under Settings → Secrets and variables → Actions in GitHub. `comment: true` enables the PR results comment, and `pull-requests: write` permits it. If the token cannot write, the action warns and keeps results in the job summary and artifacts without changing the eval verdict. Set `comment: false` to opt out.
 
     Without `gate: true`, the run's own verdict must pass. With it, each gate must pass or be waived. Failed launches, incomplete runs, missing reports and upload failures still fail the job. The action supports GitHub.com with Ubuntu runners; the [action README](https://github.com/MCPJam/inspector/blob/main/actions/evals/README.md) lists its inputs and outputs.
   </Tab>
@@ -212,6 +214,33 @@ All three authenticate with an MCPJam API key (`sk_…`) stored as a CI secret n
     `command` replaces `project` and `suite`. The action finds the uploaded runs through a receipt that `@mcpjam/sdk` 8.8.0 and newer writes. [Save results to MCPJam](/sdk/concepts/saving-results) covers CI metadata and artifact upload.
   </Tab>
 </Tabs>
+
+## Make a failing eval block merging
+
+A red check only blocks a merge when GitHub requires it. After the workflow has
+run once, open your repository's **Settings → Rules → Rulesets**, create or edit
+an active branch ruleset targeting your default branch, and enable **Require
+status checks to pass**. Add the eval job's check as it appears on the PR Checks
+tab (`evals` in the examples). With classic branch protection, the same option
+lives under **Settings → Branches**. MCPJam cannot enable this repository setting
+for you; `pull-requests: write` only allows the results comment.
+
+Keep the job name stable and unique, and keep `continue-on-error` off for the
+eval step and job. Verify the setup with a deliberately failing eval on a test PR:
+the required check should fail and merging should be blocked for reviewers
+without bypass permission. With classic branch protection, admins and roles with
+bypass permission are exempt by default: enable **Do not allow bypassing the above
+settings** if they must also be blocked, or test as a collaborator without bypass
+permission. Rulesets have their own bypass list; check it when testing. See
+GitHub's [branch-protection settings](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#do-not-allow-bypassing-the-above-settings)
+and [required-check guidance](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks).
+
+The examples skip fork PRs because GitHub normally withholds repository secrets
+and gives their tokens read-only permissions. A skipped job can satisfy a required
+check, so these examples do **not** enforce evals on fork PRs. Teams accepting
+external contributions need a trusted maintainer process that runs evals before
+merging. Do not switch to `pull_request_target` and execute untrusted PR code with
+secrets just to get comments. See GitHub's [fork workflow settings](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository).
 
 ## Gate the merge
 

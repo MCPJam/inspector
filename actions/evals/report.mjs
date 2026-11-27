@@ -288,6 +288,22 @@ function buildCaseRows(bundle) {
   }));
 }
 
+// A test is one case under one client/model, not each repeated iteration.
+export function failedTestCount(bundles) {
+  const cases = bundles.flatMap((bundle) =>
+    buildCaseRows(bundle).map((row) => ({
+      ...row,
+      client: bundle.run.client?.id ?? clientOf(bundle) ?? null,
+    })),
+  );
+  const failed = cases.filter((row) => row.verdict === "failed").length;
+  if (!failed) return "";
+  const variants = new Set(
+    cases.map((row) => JSON.stringify([row.client, row.provider, row.model])),
+  );
+  return `${failed} of ${cases.length} ${cases.length === 1 ? "test" : "tests"} failed${variants.size > 1 ? " across client/model combinations" : ""}.`;
+}
+
 export function truncateMarkdown(text, limit, note) {
   const bytes = (value) => Buffer.byteLength(value, "utf8");
   if (bytes(text) <= limit) return text;
@@ -432,18 +448,20 @@ function renderGroup(bundles, full, outcome) {
   // exits non-zero fails a passed one — so reporting the run result as the
   // outcome contradicts the check the reader is looking at.
   const headline = outcome?.result ?? result;
+  const failures = failedTestCount(bundles);
   const lines = [
     `## ${statusIcon(headline)} MCPJam Evals — ${resultLabel(headline)}`,
     "",
     ...(outcome?.message ? [`${escapeCell(outcome.message)}  `] : []),
     `**${escapeCell(first.receipt.suiteName)} · ${runNumber}**  `,
     `Run result: ${statusIcon(result)} ${resultLabel(result)}  `,
+    ...(failures ? [`${failures}  `] : []),
     `${caseCount} cases · ${passed}/${total} eligible iterations passed · ${variants.length} client/model combination${variants.length === 1 ? "" : "s"}  `,
     ...(Number.isFinite(threshold)
       ? [`**Requirement:** Each case must pass ≥${Math.round(threshold * 100)}% of its eligible iterations.`, ""]
       : [""]),
     table(
-      ["Client / Model", "Result", "Cases passed", "Iteration pass rate", "P50 / P95"],
+      ["Client / Model", "Result", "Cases passed", "Iterations passed", "P50 / P95"],
       variantRows,
     ),
     "",
@@ -451,7 +469,7 @@ function renderGroup(bundles, full, outcome) {
     "",
     ...(failedRows.length
       ? [
-          "Each cell shows the recorded pass rate over eligible iterations.",
+          "Each cell shows iterations passed out of eligible iterations.",
           "",
           table(
             ["Case", ...variants.map((variant) => variantLabel(variant.client, variant.model))],
@@ -605,9 +623,10 @@ export async function publishPullRequestComment(body, env, fetchImpl = fetch) {
   }
   const old = existing?.body?.match(/ run=(\d+) attempt=(\d+) /);
   if (old && (Number(old[1]) > run || (Number(old[1]) === run && Number(old[2]) > attempt))) return "stale";
+  const signature = "\n\n_Results by MCPJam_";
   const content = truncateMarkdown(
     `${marker}\n${body}`,
-    COMMENT_LIMIT,
+    COMMENT_LIMIT - Buffer.byteLength(signature, "utf8"),
     "\n\n_Comment truncated. View the complete checks summary and MCPJam run._",
   );
   const url = existing
@@ -617,7 +636,7 @@ export async function publishPullRequestComment(body, env, fetchImpl = fetch) {
     method: existing ? "PATCH" : "POST",
     signal: AbortSignal.timeout(REPORT_REQUEST_TIMEOUT_MS),
     headers: { ...headers, "content-type": "application/json" },
-    body: JSON.stringify({ body: content }),
+    body: JSON.stringify({ body: content + signature }),
   });
   if (!response.ok) throw new Error(`GitHub returned ${response.status} while writing the comment.`);
   return existing ? "updated" : "created";

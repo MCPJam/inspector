@@ -1,8 +1,7 @@
 # MCPJam evals action
 
 Run an existing hosted eval suite or an SDK eval command, publish a detailed job
-summary, and save reports as a GitHub Actions artifact. On pull requests it can
-also post the client/model and failed-case tables as one updated comment.
+summary, and save reports as a GitHub Actions artifact. On pull requests it posts the client/model and failed-case tables as one updated comment.
 
 This action supports GitHub.com and Ubuntu runners. Hosted mode tests a suite's
 saved server. Self-hosted Ubuntu runners need Actions Runner v2.327.1 or later
@@ -21,12 +20,18 @@ The workflow references the secret; never paste the key into YAML. No checkout o
 Node setup step is required when using the published action.
 
 ```yaml
+permissions:
+  contents: read
+  pull-requests: write
+
+steps:
 - uses: MCPJam/inspector/actions/evals@evals-v1
   with:
     # Add the real API key to GitHub Actions secrets, not this file.
     api-key: ${{ secrets.MCPJAM_API_KEY }}
     project: "My project"
     suite: "My eval suite"
+    comment: true
 ```
 
 ### SDK eval command and PR comment
@@ -57,8 +62,11 @@ steps:
 The checks summary contains the complete report. The PR comment contains only
 the client/model result table, the failed-case matrix, and MCPJam run links.
 Failure reasons are copied from stored results in the full summary; the action
-does not infer them. A missing comment permission warns without changing the eval
-verdict.
+does not infer them. Comments are enabled by default; set `comment: false` to opt out. A missing
+comment permission or read-only fork token warns without changing the eval
+verdict. Results remain in the job summary and artifacts. Fork PRs normally lack
+`MCPJAM_API_KEY`, so the complete workflow skips them; do not run untrusted PR code
+with secrets using `pull_request_target` to work around this.
 
 **Behind an identity proxy:** a deployment fronted by Cloudflare Access needs a
 service token to answer the API at all. Set `CF_ACCESS_CLIENT_ID` and
@@ -76,14 +84,34 @@ While that prints nothing the action has never been released, so the examples
 above cannot resolve. Test with a checkout and `uses: ./actions/evals`, as the
 live smoke workflow does.
 
+## Require the eval check before merging
+
+After the workflow runs once, require the `evals` job check in an active ruleset
+for your default branch (Settings → Rules → Rulesets → Require status checks to
+pass), or in classic branch protection (Settings → Branches). Select the exact
+job check shown on the PR; the action step name is not a separate check. Keep
+`continue-on-error` off and test with a deliberately failing eval. MCPJam cannot
+enable required checks for you, and comment permission does not block merges.
+
+The example skips fork PRs because they lack repository secrets. GitHub can treat
+a skipped job as a successful required check: use a trusted maintainer process
+for external contributions before merging. See the [CI setup guide](https://docs.mcpjam.com/evaluate/run-evals-in-ci#make-a-failing-eval-block-merging)
+and [GitHub required-check guidance](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks).
+
 ## Optional gates
 
 ```yaml
+permissions:
+  contents: read
+  pull-requests: write
+
+steps:
 - uses: MCPJam/inspector/actions/evals@evals-v1
   with:
     api-key: ${{ secrets.MCPJAM_API_KEY }}
     project: "My project"
     suite: "My eval suite"
+    comment: true
     gate: true
     min-pass-rate-percent: 95
     # Optional: a commit SHA already stored on a completed baseline run.
@@ -101,6 +129,14 @@ expired waiver or an unresolved baseline remains blocking according to the CLI's
 gate result. The action delegates these rules to the CLI rather than calculating
 its own thresholds or deciding whether a waiver is active.
 
+The next `evals-v1.0.x` release enables PR comments by default. Workflows using
+`@evals-v1` receive this automatically, without changing their inputs. Repositories
+with a read-only GitHub token will see a comment-permission warning on every PR
+run until they grant `pull-requests: write` or set `comment: false`. Matrix jobs
+post one updated comment per matrix leg. For an older immutable tag or pinned
+commit, set `comment: true` explicitly as in the examples; permission is required
+either way.
+
 ## Inputs
 
 | Input                   | Default     | Meaning                                                                      |
@@ -109,7 +145,7 @@ its own thresholds or deciding whether a waiver is active.
 | `project`               | Hosted mode | Existing project name or ID.                                                 |
 | `suite`                 | Hosted mode | Existing hosted suite name or ID.                                            |
 | `command`               | None        | SDK eval command; replaces `project` and `suite`.                             |
-| `comment`               | `false`     | Create or update the PR result comment.                                      |
+| `comment`               | `true`     | Create or update the PR result comment.                                      |
 | `github-token`          | Workflow token | Optional token override for PR comments.                                  |
 | `gate`                  | `false`     | Let `eval gate` decide the result.                                           |
 | `min-pass-rate-percent` | CLI default | Gate threshold, 0–100; requires `gate: true`.                                |

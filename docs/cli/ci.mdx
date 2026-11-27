@@ -381,6 +381,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   evals:
@@ -395,6 +396,7 @@ jobs:
           api-key: ${{ secrets.MCPJAM_API_KEY }}
           project: 'My project'
           suite: 'My eval suite'
+          comment: true
 
           # Optional: let the gate decide pass or fail.
           # gate: true
@@ -422,6 +424,13 @@ before reporting failure. See the
 [action README](https://github.com/MCPJam/inspector/blob/main/actions/evals/README.md)
 for all inputs, outputs, retry details, and release status. GitHub.com with Ubuntu
 runners is supported in this first version.
+
+### Require the eval check before merging
+
+After the workflow runs once, mark its `evals` job check as required in an active
+GitHub branch ruleset or branch protection rule. A failed eval job alone does not
+block merging. See [Make a failing eval block merging](/evaluate/run-evals-in-ci#make-a-failing-eval-block-merging)
+for setup, verification, bypasses and fork-PR limitations.
 
 ### Trigger a hosted eval suite with the CLI
 

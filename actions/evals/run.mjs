@@ -17,6 +17,7 @@ import {
   publishPullRequestComment,
   readActionReceipts,
   renderReports,
+  failedTestCount,
   truncateMarkdown,
 } from "./report.mjs";
 
@@ -39,7 +40,7 @@ export function parseInputs(env) {
     cliVersion: get("CLI_VERSION") || "5.7.1",
     idempotencyKey: get("IDEMPOTENCY_KEY"),
     command: get("COMMAND"),
-    comment: get("COMMENT") || "false",
+    comment: get("COMMENT") || "true",
   };
   for (const key of ["apiKey"]) {
     if (!inputs[key])
@@ -351,7 +352,7 @@ async function publishDetailedReports({
       log(`MCPJam PR comment ${published}.`);
     } catch {
       log(
-        "::warning::Could not publish the MCPJam PR comment. Check pull-requests: write permission.",
+        "::warning::Could not publish the MCPJam PR comment. Grant pull-requests: write in the workflow; fork PR tokens may be read-only. Results remain in the job summary and artifacts.",
       );
     }
   }
@@ -373,6 +374,7 @@ export async function runAction(
     message: "Evaluation did not complete.",
   };
   let renderedSummary = "";
+  let annotationFailures = "";
   const key = (env.MCPJAM_API_KEY ?? "").trim();
   if (key) log(`::add-mask::${escapeCommand(key)}`);
   const githubToken = (env.MCPJAM_ACTION_GITHUB_TOKEN ?? "").trim();
@@ -446,6 +448,7 @@ export async function runAction(
                 ? `Not every eval run passed: ${unresolved.map((bundle) => `${bundle.receipt.runId} is ${bundle.run.result}`).join(", ")}.`
                 : `Could not load every uploaded eval run: ${missing.join(", ")}.`,
       };
+      annotationFailures = failedTestCount(bundles);
       renderedSummary = await publishDetailedReports({
         bundles,
         directory,
@@ -562,7 +565,8 @@ export async function runAction(
             log,
             env,
           );
-          if (bundles.length > 0)
+          if (bundles.length > 0) {
+            annotationFailures = failedTestCount(bundles);
             renderedSummary = await publishDetailedReports({
               bundles,
               directory,
@@ -573,6 +577,7 @@ export async function runAction(
               fetchImpl,
               outcome: state,
             });
+          }
         } catch {
           log("::warning::Could not load detailed MCPJam results for the summary.");
         }
@@ -639,8 +644,10 @@ export async function runAction(
     },
     key,
   );
-  if (state.result !== "passed")
-    log(`::error::${escapeCommand(state.message)}`);
+  if (state.result !== "passed") {
+    const message = [annotationFailures, state.message].filter(Boolean).join(" ");
+    log(`::error::${escapeCommand(message)}`);
+  }
   return state;
 }
 
