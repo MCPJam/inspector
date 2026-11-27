@@ -31,7 +31,6 @@ import type { PredicateResult, ToolErrorRecord } from "@/shared/eval-matching";
 import {
   buildIterationTranscript,
   checkRole,
-  evaluatePredicates,
   extractFinalAssistantMessage,
   summarizeRenderObservations,
   widgetCallToToolCall,
@@ -59,6 +58,7 @@ import type { BrowserSessionContext } from "../browser-session-context";
 import { MAX_WIDGET_FOLLOWUP_TURNS } from "./drive-hosted-eval-turn.js";
 import {
   assertionScope,
+  evaluateWithPinnedResults,
   recordPinnedCall,
   type AssertionScope,
   type PinnedCallRecord,
@@ -348,12 +348,11 @@ function applyOutcome(
 
 /**
  * Snapshot the state as an `IterationTranscript` for point-in-time predicate
- * eval. `scope` replaces the channels one assertion reads differently, and
- * its `pinnedResults` join the snapshot's own results.
+ * eval. `scope` replaces the channels one assertion reads differently.
  */
 function snapshotTranscript(
   state: StepExecutionState,
-  { pinnedResults = [], ...scope }: AssertionScope = {},
+  scope: AssertionScope = {},
 ) {
   const finalAssistantMessage = extractFinalAssistantMessage(state.messages);
   // Tool results and per-call timings, read from the messages and spans the
@@ -367,7 +366,7 @@ function snapshotTranscript(
   );
   return buildIterationTranscript({
     toolCalls: state.toolCalls,
-    toolResults: [...evidence.toolResults, ...pinnedResults],
+    toolResults: evidence.toolResults,
     resultsCaptured: evidence.resultsCaptured,
     toolCallTimings: evidence.toolCallTimings,
     timingsCaptured: evidence.timingsCaptured,
@@ -518,9 +517,10 @@ async function runAssertStep(
   }
   // Transcript-level predicate: evaluate against the state snapshot at this
   // exact position (point-in-time).
-  const [result] = evaluatePredicates(
+  const [result] = evaluateWithPinnedResults(
     snapshotTranscript(state, assertionScope(state, step.assertion)),
     [step.assertion],
+    state.pinnedCalls,
   );
   state.assertionResults.push({
     stepId: step.id,

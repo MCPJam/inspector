@@ -7,35 +7,26 @@
  * (`StepExecutionState.pinnedCalls`) instead. Three kinds of assertion read it:
  *
  *   - A result-content assertion (`toolResultContains`, `toolResultMatches`,
- *     `toolResultMatchesSchema` with an authored schema) that names a tool the
- *     case pinned before it grades the result of the most recent pinned call
- *     of that tool, and only that result. An earlier pinned read cannot
- *     rescue it, nor can the agent's own call of the tool, and a pinned call
- *     with nothing to grade (an error, no result, a blocked call) is missing
- *     evidence, never a pass.
+ *     `toolResultMatchesSchema`) that names a tool the case pinned before it
+ *     grades the result of the most recent pinned call of that tool, and only
+ *     that result. An earlier pinned read cannot rescue it, nor can the
+ *     agent's own call of the tool, and a pinned call with nothing to grade
+ *     (an error, no result, a blocked call) is missing evidence, never a pass.
  *   - `toolCalledAtLeastOnce` and `firstToolWas` describe the agent's path, so
  *     they read every call except the pinned ones.
- *   - A declared output-schema check reads every pinned call's result beside
- *     the transcript's own, as the case-level check does after the run (see
- *     `gradesPinnedResults`).
+ *   - A declared output-schema check instead reads every pinned call's result
+ *     beside the transcript's own, after the run as well as in a step.
  *
  * Every other assertion reads the transcript exactly as before, pinned calls
  * included. `toolResultSizeUnder` stays there too: it budgets what a model
  * was handed, and a pinned call hands a model nothing.
  */
-import type {
-  BuildTranscriptInput,
-  Predicate,
-  TranscriptToolResult,
-} from "@mcpjam/sdk/predicates";
+import { DECLARED_OUTPUT_SCHEMA, evaluatePredicates } from "@mcpjam/sdk/predicates";
+import type { BuildTranscriptInput, IterationTranscript, Predicate } from "@mcpjam/sdk/predicates";
 import type { ToolCallStep } from "@/shared/steps";
 import type { PinnedCallEvidence } from "./pinned-turn";
 import type { StepEngineOutcome, StepExecutionState } from "./step-executor";
-import {
-  callToolResultRow,
-  gradesPinnedResults,
-  pinnedResultRows,
-} from "./transcript-evidence";
+import { callToolResultRow, toolCallFailure } from "./transcript-evidence";
 
 /** One `toolCall` step that ran, with what its call returned. */
 export interface PinnedCallRecord extends PinnedCallEvidence {
@@ -49,10 +40,7 @@ export interface PinnedCallRecord extends PinnedCallEvidence {
 /** Transcript channels one assertion reads in place of the snapshot's own. */
 export type AssertionScope = Partial<
   Pick<BuildTranscriptInput, "toolCalls" | "toolResults" | "resultsCaptured">
-> & {
-  /** Rows graded beside the snapshot's own results, not instead of them. */
-  pinnedResults?: TranscriptToolResult[];
-};
+>;
 
 type GradingState = Pick<StepExecutionState, "toolCalls" | "pinnedCalls">;
 
@@ -100,12 +88,9 @@ export function assertionScope(
   if (
     assertion.type !== "toolResultContains" &&
     assertion.type !== "toolResultMatches" &&
-    assertion.type !== "toolResultMatchesSchema"
+    (assertion.type !== "toolResultMatchesSchema" || gradesPinnedResults(assertion))
   ) {
     return {};
-  }
-  if (gradesPinnedResults(assertion)) {
-    return { pinnedResults: pinnedResultRows(state.pinnedCalls) };
   }
   const graded = latestPinnedCall(state.pinnedCalls, assertion.toolName);
   if (!graded) return {};
@@ -117,6 +102,33 @@ export function assertionScope(
   return row
     ? { toolResults: [row], resultsCaptured: true }
     : { toolResults: undefined, resultsCaptured: false };
+}
+
+/** Stored predicates are loosely typed; `evaluatePredicates` reports a malformed one. */
+function gradesPinnedResults(predicate: Predicate): boolean {
+  return !!predicate && typeof predicate === "object" &&
+    predicate.type === "toolResultMatchesSchema" && predicate.schema === DECLARED_OUTPUT_SCHEMA;
+}
+
+/**
+ * Evaluates `predicates`, where a declared output-schema check also reads each
+ * pinned call's result. Without those rows it counts a pinned call as a call
+ * that returned nothing, and a fixture call's result must match too.
+ */
+export function evaluateWithPinnedResults(
+  transcript: IterationTranscript,
+  predicates: readonly Predicate[],
+  calls: readonly PinnedCallRecord[] = [],
+) {
+  const rows = calls.flatMap((call) => {
+    const row = callToolResultRow(call.toolName, call.result, call.toolCallId, call.declaredServerKey);
+    const callFailure = call.failureMessage === undefined ? undefined
+      : toolCallFailure({ type: "error-text", value: call.failureMessage }, call.toolName);
+    return row ? [{ ...row, ...(callFailure ? { callFailure } : {}) }] : [];
+  });
+  const withPinned = { ...transcript, toolResults: [...(transcript.toolResults ?? []), ...rows] };
+  return predicates.flatMap((predicate) =>
+    evaluatePredicates(gradesPinnedResults(predicate) ? withPinned : transcript, [predicate]));
 }
 
 /** The most recent pinned call of `toolName`; none when no tool is named. */

@@ -172,10 +172,7 @@ export function withEvaluatorUpdated(
 ): Predicate[] {
   const entry = findLibraryEvaluator(evaluatorId);
   if (!entry) return [...predicates];
-  return withLibraryChecks(
-    withoutEvaluator(predicates, evaluatorId),
-    taggedChecks(entry),
-  );
+  return withLibraryChecks(withoutEvaluator(predicates, evaluatorId), taggedChecks(entry));
 }
 
 /** "2 assertions", for the card footer. */
