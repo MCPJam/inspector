@@ -1424,6 +1424,7 @@ export {
   summarizeBearerChallenge,
   bodyKindFromContentType,
   CONTEXT_LENGTH_EXCEEDED_MESSAGE,
+  contextLengthCounts,
 } from "./error-describer/index.js";
 export type {
   BearerChallengeSummary,

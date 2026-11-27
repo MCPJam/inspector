@@ -343,7 +343,7 @@ describe("describeSwarmAttemptFailure provider_not_allowlisted", () => {
 
 describe("describeSwarmAttemptFailure context_length_exceeded", () => {
   const sentence =
-    "This chat is too long for the model's context window. Start a new chat, have the tool return less, or pick a model with a larger context window.";
+    "This chat is too long for the model's context window. Reset the chat, have the tool return less, or choose a model with a larger context window.";
 
   it.each([
     ["its stored code", "context_length_exceeded"],

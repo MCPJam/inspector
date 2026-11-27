@@ -12,13 +12,17 @@ import {
   describeError,
   ERROR_CATALOG,
 } from "../../src/error-describer/index.js";
-import { CONTEXT_LENGTH_EXCEEDED_MESSAGE } from "../../src/error-describer/context-length.js";
+import {
+  CONTEXT_LENGTH_EXCEEDED_MESSAGE,
+  contextLengthCounts,
+} from "../../src/error-describer/context-length.js";
 
 type Row = {
   label: string;
   statusCode: number | null;
   message: string;
   responseBody: string | null;
+  jsonRpcCode?: number;
 };
 
 /** The error the AI SDK raises for a row: `APICallError`'s shape, or a bare Error. */
@@ -30,10 +34,41 @@ function errorFor(row: Row): Error {
   if (row.responseBody !== null) {
     Object.assign(error, { responseBody: row.responseBody });
   }
+  if (row.jsonRpcCode !== undefined) {
+    Object.assign(error, { code: row.jsonRpcCode });
+  }
   return error;
 }
 
 const SLUG = "provider/context_length_exceeded";
+
+describe("contextLengthCounts", () => {
+  it.each(fixtures.match.map((row) => [row.label, row] as const))(
+    "reads the counts the provider stated: %s",
+    (_label, row) => {
+      // The banner gets the provider body as `details`; the counts come from
+      // there, or from the message when there is no body.
+      expect(contextLengthCounts(row.responseBody ?? row.message)).toEqual(
+        row.counts
+      );
+    }
+  );
+
+  it("reads the current error, not previous_errors", () => {
+    const body = JSON.stringify({
+      error: {
+        message:
+          "This model's maximum context length is 128000 tokens. However, your messages resulted in 300000 tokens.",
+        metadata: {
+          previous_errors: [
+            { raw: "prompt is too long: 596303 tokens > 200000 maximum" },
+          ],
+        },
+      },
+    });
+    expect(contextLengthCounts(body)).toEqual({ used: 300000, limit: 128000 });
+  });
+});
 
 describe("describeError: a chat too long for the model", () => {
   it.each(fixtures.match.map((row) => [row.label, row] as const))(
@@ -51,7 +86,9 @@ describe("describeError: a chat too long for the model", () => {
   );
 
   it("ignores history in a plain record and keeps a numeric 500", () => {
-    const history = fixtures.noMatch[fixtures.noMatch.length - 1];
+    const history = fixtures.noMatch.find((row) =>
+      row.label.startsWith("An unrelated 400 whose earlier attempt")
+    )!;
     expect(
       describeError({
         message: history.message,

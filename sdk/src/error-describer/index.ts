@@ -20,5 +20,8 @@ export {
 } from "./challenge.js";
 
 export { mcpjamLimitSlugForMessage } from "./describe.js";
-export { CONTEXT_LENGTH_EXCEEDED_MESSAGE } from "./context-length.js";
+export {
+  CONTEXT_LENGTH_EXCEEDED_MESSAGE,
+  contextLengthCounts,
+} from "./context-length.js";
 export { orgPolicySlugForCode } from "./org-policy.js";

@@ -267,7 +267,7 @@ describe("provider_not_allowlisted", () => {
 
 describe("context_length_exceeded", () => {
   const sentence =
-    "This chat is too long for the model's context window. Start a new chat, have the tool return less, or pick a model with a larger context window.";
+    "This chat is too long for the model's context window. Reset the chat, have the tool return less, or choose a model with a larger context window.";
 
   // A hosted refusal reaches the Inspector as a stream error chunk; the JSON
   // path only sees errors thrown before streaming starts.

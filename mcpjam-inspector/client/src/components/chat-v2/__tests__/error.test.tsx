@@ -187,7 +187,7 @@ describe("ErrorBox provider_not_allowlisted", () => {
 
 describe("ErrorBox context_length_exceeded", () => {
   const message =
-    "This chat is too long for the model's context window. Start a new chat, have the tool return less, or pick a model with a larger context window.";
+    "This chat is too long for the model's context window. Reset the chat, have the tool return less, or choose a model with a larger context window.";
   const details = JSON.stringify({
     error: {
       message: "Provider returned error",

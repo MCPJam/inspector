@@ -10,6 +10,7 @@ type Row = {
   statusCode: number | null;
   message: string;
   responseBody: string | null;
+  jsonRpcCode?: number;
 };
 
 // Read from disk: the corpus lives in the SDK package and is shared with the
@@ -32,6 +33,9 @@ function errorFor(row: Row): Error {
   }
   if (row.responseBody !== null) {
     Object.assign(error, { responseBody: row.responseBody });
+  }
+  if (row.jsonRpcCode !== undefined) {
+    Object.assign(error, { code: row.jsonRpcCode });
   }
   return error;
 }

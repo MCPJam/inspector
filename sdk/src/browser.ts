@@ -429,6 +429,7 @@ export {
   RETRYABLE_NODE_ERROR_CODES,
   summarizeBearerChallenge,
   bodyKindFromContentType,
+  contextLengthCounts,
 } from "./error-describer/index.js";
 export type {
   BearerChallengeSummary,

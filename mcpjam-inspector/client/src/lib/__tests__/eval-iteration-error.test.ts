@@ -9,7 +9,7 @@ describe("describeEvalIterationError", () => {
       status: "failed",
       result: "failed",
       error:
-        "This chat is too long for the model's context window. Start a new chat, have the tool return less, or pick a model with a larger context window.",
+        "This chat is too long for the model's context window. Reset the chat, have the tool return less, or choose a model with a larger context window.",
     })!;
 
     expect(error).toMatchObject({

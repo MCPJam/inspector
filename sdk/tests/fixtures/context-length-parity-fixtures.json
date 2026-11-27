@@ -1,5 +1,5 @@
 {
-  "__readme": "Shared fixtures for a provider refusing a request that does not fit the model's context window (PLB-300). ONE FILE, byte-identical in both repos: mcpjam-backend at tests/convex/fixtures/context-length-parity-fixtures.json (read by convex/lib/contextLengthError.ts tests) and the Inspector at sdk/tests/fixtures/context-length-parity-fixtures.json (read by the SDK error describer and the chat banner's count parser). Pinned by `context-length-parity-fixtures` in convex/lib/mirrors.json. Every `match` row must be recognized on both sides, every `noMatch` row on neither. `statusCode` null means the error carried no status; `responseBody` null means it carried no body. OpenRouter's `metadata.previous_errors` lists earlier attempts and is never read: only the current error decides. `counts` is what the Inspector's banner shows, or null when the sentence has no numbers. When a provider's wording is added, edit BOTH detectors and this file in the same PR.",
+  "__readme": "Shared fixtures for a provider refusing a request that does not fit the model's context window (PLB-300). ONE FILE, byte-identical in both repos: mcpjam-backend at tests/convex/fixtures/context-length-parity-fixtures.json (read by convex/lib/contextLengthError.ts tests) and the Inspector at sdk/tests/fixtures/context-length-parity-fixtures.json (read by the SDK error describer and the chat banner's count parser). Pinned by `context-length-parity-fixtures` in convex/lib/mirrors.json. Every `match` row must be recognized on both sides, every `noMatch` row on neither. `statusCode` null means the error carried no status; `responseBody` null means it carried no body; `jsonRpcCode`, when present, is the error's numeric JSON-RPC code. A provider's wording counts only on a provider-shaped error: a stated 400 or a response body. MCP servers say \"prompt is too long\" about their own limits, so a bare error with that wording is never this refusal. OpenRouter's `metadata.previous_errors` lists earlier attempts and is never read: only the current error decides. `counts` is what the Inspector's banner shows, or null when the sentence has no numbers. When a provider's wording is added, edit BOTH detectors and this file in the same PR.",
   "match": [
     {
       "label": "OpenRouter rail, Anthropic through Google Vertex with a failed Amazon Bedrock attempt (observed 2026-11-24)",
@@ -101,16 +101,6 @@
       "message": "Bad request",
       "responseBody": "{\"error\":{\"message\":\"Request too large for model\",\"code\":\"context_length_exceeded\"}}",
       "counts": null
-    },
-    {
-      "label": "No status: an error raised mid-stream",
-      "statusCode": null,
-      "message": "prompt is too long: 250000 tokens > 200000 maximum",
-      "responseBody": null,
-      "counts": {
-        "used": 250000,
-        "limit": 200000
-      }
     }
   ],
   "noMatch": [
@@ -155,6 +145,25 @@
       "statusCode": 400,
       "message": "Provider returned error",
       "responseBody": "{\"error\":{\"message\":\"Provider returned error\",\"code\":400,\"metadata\":{\"raw\":\"{\\\"type\\\":\\\"error\\\",\\\"error\\\":{\\\"type\\\":\\\"invalid_request_error\\\",\\\"message\\\":\\\"messages.1.content.0.tool_use.input: Field required\\\"}}\",\"provider_name\":\"Google\",\"previous_errors\":[{\"code\":400,\"message\":\"Provider returned error\",\"provider_name\":\"Amazon Bedrock\",\"raw\":\"{\\\"message\\\":\\\"prompt is too long: 596303 tokens > 200000 maximum\\\"}\"}]}}}"
+    },
+    {
+      "label": "An MCP server's JSON-RPC error that says prompt is too long",
+      "statusCode": null,
+      "message": "MCP error -32099: Prompt is too long (max 2000 characters)",
+      "responseBody": null,
+      "jsonRpcCode": -32099
+    },
+    {
+      "label": "A tool's own error that says prompt is too long (no provider shape)",
+      "statusCode": null,
+      "message": "Summarizer failed: prompt is too long",
+      "responseBody": null
+    },
+    {
+      "label": "A tool's own error that says it exceeds the context window (no provider shape)",
+      "statusCode": null,
+      "message": "Document exceeds the context window of the summarizer",
+      "responseBody": null
     }
   ]
 }
