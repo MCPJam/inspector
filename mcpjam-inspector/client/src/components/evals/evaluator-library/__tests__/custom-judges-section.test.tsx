@@ -1,9 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, renderWithProviders, screen } from "@/test";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
+import type { CustomJudge } from "@/components/shared/session-quality/judge-config";
 import type { EvalJudgeConfig } from "../../types";
-import { CustomJudgesSection } from "../custom-judges-section";
-import { blankJudge, customizedCopy, judgeProblem } from "../custom-judges-model";
+import { CustomJudgesSection, JudgeEditor } from "../custom-judges-section";
+import {
+  blankJudge,
+  customizedCopy,
+  judgeProblem,
+  withFreeId,
+} from "../custom-judges-model";
 import { libraryModelRows } from "../library-suite-edits";
 
 vi.mock("posthog-js/react", () => ({
@@ -215,7 +221,54 @@ describe("Customize", () => {
   });
 });
 
+describe("JudgeEditor", () => {
+  it("gives a new judge a free ID when one added meanwhile took it", () => {
+    const onSave = vi.fn(() => undefined);
+    const editor = (others: CustomJudge[]) => (
+      <JudgeEditor
+        judge={blankJudge([])}
+        variables={["final_answer"]}
+        maxPromptLength={4000}
+        isNew
+        others={others}
+        onCancel={() => {}}
+        onSave={onSave}
+      />
+    );
+    const { rerender } = renderWithProviders(editor([]));
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Cites the order number" },
+    });
+    fireEvent.change(screen.getByLabelText("Judge prompt"), {
+      target: { value: "Does {{final_answer}} cite the order?" },
+    });
+    rerender(
+      editor([
+        {
+          id: "judge",
+          label: "Added meanwhile",
+          prompt: "Is {{final_answer}} right?",
+          output: { kind: "passfail" },
+        },
+      ]),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Add judge" }));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "judge-2",
+        label: "Cites the order number",
+      }),
+    );
+  });
+});
+
 describe("custom judge model", () => {
+  it("keeps a new judge's ID unless another judge took it", () => {
+    const judge = blankJudge([]);
+    expect(withFreeId(judge, ["other"])).toBe(judge);
+    expect(withFreeId(judge, [judge.id]).id).toBe(`${judge.id}-2`);
+  });
+
   it("makes unique ids the backend accepts", () => {
     expect(
       customizedCopy({ ...libraryJudge, label: "Cites the Order #" }, []).id,
