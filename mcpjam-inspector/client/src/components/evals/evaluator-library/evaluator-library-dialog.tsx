@@ -31,12 +31,6 @@ import {
   type LibrarySupport,
 } from "./library-catalog";
 
-/**
- * Opens the evaluator library from suite settings. Adding an evaluator hands
- * what the suite does not have yet to `onAdd`, which saves it like "Add
- * assertion" does. Renders nothing unless the evaluator-library flag is on
- * and this deployment can save at least one library evaluator.
- */
 export function EvaluatorLibraryButton({
   suite,
   support,

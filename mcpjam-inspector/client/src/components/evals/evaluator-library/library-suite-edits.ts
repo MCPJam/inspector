@@ -65,11 +65,7 @@ const notFrom =
   <T extends { evaluator?: { id: string } }>(item: T) =>
     item.evaluator?.id !== evaluatorId;
 
-/**
- * Whole-evaluator edits for suite settings: checks go to the suite's
- * predicates; questions and judges to its judge config. Undefined where the
- * rows on screen are inherited and cannot be edited here.
- */
+/** Inherited evaluators are edited at the suite level. */
 export function librarySuiteEdits(
   scope: ScorerTableScope,
   judgeConfig: EvalJudgeConfig | undefined,
@@ -163,7 +159,6 @@ export function librarySuiteEdits(
   };
 }
 
-/** The suite's library questions and judges, for their evaluator groups. */
 export function libraryModelRows(
   judgeConfig: EvalJudgeConfig | undefined,
   onJudgeConfigChange?: (next: EvalJudgeConfig | undefined) => void,
