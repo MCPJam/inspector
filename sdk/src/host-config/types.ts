@@ -53,6 +53,10 @@ export type HostConfigStyle = string;
  * host styles via the client's `lib/host-styles` registry without an SDK or
  * backend deploy). Don't "tighten" this to `'mcpjam' | 'claude' | 'chatgpt'`;
  * it would break BYO hosts.
+ *
+ * The MCP Apps rendering style. A client's protocol behavior and capabilities
+ * live in `mcpProfile`; read them through their feature's resolver, not by
+ * comparing styles.
  */
 export type HostStyleId = HostConfigStyle;
 

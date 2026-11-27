@@ -175,9 +175,10 @@ Check ids:
 - `tools-list`
 - `tools-input-schemas-valid`
 - `tools-x-mcp-header-declarations-valid` (2026-07-28 only)
+- `modern-tool-output-schema-conformant` (2025-06-18, 2025-11-25 and 2026-07-28): calls only the tools named in `fixtures.toolCalls` and checks each result against the tool's `outputSchema`
 - `prompts-list`
 - `resources-list`
-- `protocol-invalid-method-error`
+- `protocol-invalid-method-error`: requires the JSON-RPC error `-32601`; on `2026-07-28` it also requires HTTP 404, and `-32601` on any other status fails
 - `localhost-host-rebinding-rejected`: requires HTTP 403 when the run explicitly pins `protocolVersion` to `2025-11-25` or later; accepts any 4xx on earlier pins or when no version is pinned
 - `localhost-host-valid-accepted`
 - `server-sse-polling-session`
@@ -214,7 +215,7 @@ Each `MCPCheckResult` includes a `skipReason` field whenever `status` is `"skipp
 |----------|------|-------------|
 | `name` | `string` | Suite name |
 | `serverUrl` | `string` | Shared server URL |
-| `passed` | `boolean` | `true` iff every run passed |
+| `passed` | `boolean` | `true` only when every run passes |
 | `results` | `Array<MCPConformanceResult & { label: string }>` | Per-run results |
 | `summary` | `string` | Human-readable suite summary |
 | `durationMs` | `number` | Total suite duration |

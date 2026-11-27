@@ -89,6 +89,11 @@ import {
 } from "./eval-case-batch.js";
 import { logger } from "../../utils/logger";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import {
+  loadSuiteCodeGrading,
+  quickRunCodeGrading,
+  quickRunCodeGradingRefusal,
+} from "../../services/evals/sandbox-phases/quick-run.js";
 import { convexReadFetch } from "../v1/convex-read-errors.js";
 import {
   resolveOrgModelConfig,
@@ -1859,6 +1864,30 @@ async function composableEnvironmentTargets(args: {
 }
 
 /**
+ * Whether a run launch may write the suite it runs. It may on every launch
+ * that is not a rerun (it upserts the suite's cases and, outside an
+ * environment launch, rewrites its server snapshot), and on `refreshSnapshot`
+ * outside an environment launch. `authorEvalSuite` writes only on these
+ * launches and the v1 CI-owned pre-check (PLB-238) refuses them, so both read
+ * it from here.
+ *
+ * "May": an environment launch that is not a rerun, sends no name or
+ * description and carries the tests already stored writes nothing, yet is
+ * refused. Telling it apart would mean diffing the stored cases before the
+ * pre-check.
+ */
+export function evalLaunchWritesSuite(args: {
+  suiteRerun: boolean | undefined;
+  refreshSnapshot: boolean | undefined;
+  environmentLaunch?: boolean;
+}): boolean {
+  return (
+    !args.suiteRerun ||
+    (args.refreshSnapshot === true && !args.environmentLaunch)
+  );
+}
+
+/**
  * Author phase of a suite run: persist the suite + its test cases (create or
  * upsert), WITHOUT creating a run record or executing anything. Extracted from
  * `prepareEvalRun` so the author-only public surface
@@ -2004,7 +2033,7 @@ export async function authorEvalSuite(args: {
     // frozen execution snapshot. Only update when explicitly refreshing or
     // on first-run (non-rerun) writes.
     const shouldUpdateSnapshot =
-      !args.environmentLaunch && (!suiteRerun || refreshSnapshot === true);
+      !args.environmentLaunch && evalLaunchWritesSuite(args);
     // …and when there is nothing to update, DON'T CALL AT ALL.
     //
     // A plain rerun carries no snapshot (above) and no name or description of
@@ -3400,6 +3429,7 @@ function buildSingleCaseRuntimeTest(args: {
   >;
   matchOptionsOverride: RunTestCaseRequest["matchOptionsOverride"];
   hostConfigOverride: Record<string, unknown> | undefined;
+  codeGradingNotRun?: ReturnType<typeof quickRunCodeGrading>;
 }) {
   const { testCase, testCaseOverrides } = args;
   const caseModelSelection = storedSelectionForCaseModel(
@@ -3476,6 +3506,9 @@ function buildSingleCaseRuntimeTest(args: {
     }),
     hostConfigOverride: args.hostConfigOverride,
     testCaseId: testCase._id,
+    ...(args.codeGradingNotRun
+      ? { codeGradingNotRun: args.codeGradingNotRun }
+      : {}),
   };
 }
 
@@ -3709,6 +3742,20 @@ export async function prepareSingleCaseExecution(
       { reason: "EVAL_EXECUTION_UNAVAILABLE" },
     );
   }
+  // EFTW-90: no suite run, so no box for iteration scripts or grading.
+  const codeGrading = await loadSuiteCodeGrading(
+    convexClient,
+    testCase.evalTestSuiteId,
+  );
+  const codeGradingRefusal = quickRunCodeGradingRefusal(codeGrading);
+  if (codeGradingRefusal) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      codeGradingRefusal,
+      { reason: "EVAL_CODE_EVALUATORS_UNAVAILABLE" },
+    );
+  }
 
   const runtimeEnvironment = environmentLaunch
     ? environmentRuntimeEnvironment(resolvedServerIds, environmentLaunch)
@@ -3733,6 +3780,7 @@ export async function prepareSingleCaseExecution(
     suiteDefaultPredicates,
     matchOptionsOverride,
     hostConfigOverride: legacyHostConfigOverride,
+    codeGradingNotRun: quickRunCodeGrading(codeGrading),
   });
 
   // A HOSTED harness single-case run boots its own disposable box now, so it

@@ -59,6 +59,8 @@ import {
   type PredicateScope,
 } from "@mcpjam/sdk/predicates";
 import { hostedPlatformGateDefinitions } from "./platform-gate-rows.js";
+import { codeEvaluatorScoreDefinition } from "./sandbox-phases/code-score-family.js";
+import type { FrozenCodeEvaluator } from "./sandbox-phases/frozen-config.js";
 
 /**
  * Scorer identity lives in `shared/` so the client can mint the same ids it
@@ -384,6 +386,8 @@ export type HostedScoreDefinitionInputs = {
    * report their definitions as differences.
    */
   platformGates?: { failOnToolError: boolean };
+  /** EFTW-90: the run's frozen code evaluators, one `code:<id>` each. */
+  codeEvaluators?: readonly FrozenCodeEvaluator[];
 };
 
 /**
@@ -425,6 +429,9 @@ export function buildHostedScoreDefinitions(
   }
   if (inputs.platformGates) {
     definitions.push(...hostedPlatformGateDefinitions(inputs.platformGates));
+  }
+  for (const evaluator of inputs.codeEvaluators ?? []) {
+    definitions.push(codeEvaluatorScoreDefinition(evaluator));
   }
   const byId = new Map<string, ResolvedScoreDefinition>();
   for (const definition of definitions) {

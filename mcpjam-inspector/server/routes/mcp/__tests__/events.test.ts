@@ -284,7 +284,7 @@ describe("local events routes", () => {
     expect(refused.body).toMatchObject({
       code: "EVENTS_MODE_UNSUPPORTED",
       message:
-        "ChatGPT doesn't receive events by poll. Turn it on in its Protocol settings, or pick another client.",
+        "ChatGPT doesn't receive events by poll. Turn it on in the client's Events tab, or pick another client.",
     });
     const none = await call("POST", "/subscriptions", {
       serverId: SERVER_ID,
@@ -295,7 +295,7 @@ describe("local events routes", () => {
     });
     expect(none.status).toBe(400);
     expect(none.body.message).toBe(
-      "Claude doesn't receive events. Turn on a delivery mode in its Protocol settings, or pick another client.",
+      "Claude doesn't receive events. Turn on a delivery mode in the client's Events tab, or pick another client.",
     );
   });
 
@@ -327,6 +327,10 @@ describe("local events routes", () => {
     });
     expect(again.status).toBe(409);
     expect(again.body.code).toBe("EVENTS_CONFLICT");
+    // Named, so the user can find the subscription that holds the event.
+    expect(again.body.message).toBe(
+      "build.failed is already subscribed under Team MCPJam with the same arguments. Remove that subscription in the Events tab, then subscribe again.",
+    );
   });
 
   it("simulates into the simulation namespace", async () => {

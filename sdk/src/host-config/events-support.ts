@@ -9,8 +9,13 @@
  *
  *  - A mode counts only when `true`; `{}` is "receives no events".
  *  - A malformed value is "no modes": it never widens what a host accepts.
- *  - Absent: the host style's default, so older hosts need no migration.
+ *  - Absent is "no modes" too. Templates save the setting, and saved clients
+ *    made before it existed were backfilled.
+ *  - A vendor harness (`agentLoop` or `harness`) is "no modes": the vendor's
+ *    own client decides, and none of them receives MCP Events.
  *  - No host at all is MCPJam (built-in), which accepts every mode.
+ *
+ * The client's MCP Apps style plays no part in any of this.
  */
 
 export const MCPJAM_EVENTS_EXTENSION_ID = "com.mcpjam/events" as const;
@@ -21,14 +26,6 @@ export const EVENT_DELIVERY_MODES: readonly EventDeliveryMode[] = [
   "push",
   "webhook",
 ];
-
-/** Host styles whose real client receives events, and how. */
-export const HOST_STYLE_EVENT_DELIVERY_MODES: Readonly<
-  Record<string, readonly EventDeliveryMode[]>
-> = {
-  chatgpt: ["webhook"],
-  mcpjam: EVENT_DELIVERY_MODES,
-};
 
 /** Where a subscription is kept refreshed and its events received. */
 export type EventsRuntime = "hosted" | "local";
@@ -43,8 +40,10 @@ export const RUNTIME_EVENT_DELIVERY_MODES: Readonly<
 
 /** The parts of a host config this module reads and writes. */
 export interface EventsSupportHost {
-  hostStyle?: string | null;
   mcpProfile?: unknown;
+  /** A vendor harness that runs the client's agent loop (see `effectiveHarnessId`). */
+  harness?: string | null;
+  agentLoop?: string | null;
 }
 
 export type EventsHostSetting =
@@ -67,7 +66,7 @@ export function isEventDeliveryMode(
   return (EVENT_DELIVERY_MODES as readonly unknown[]).includes(value);
 }
 
-/** The saved setting, without applying the style default. */
+/** The saved setting as stored, before the harness rule. */
 export function readEventsHostSetting(
   host: EventsSupportHost | null | undefined
 ): EventsHostSetting {
@@ -97,40 +96,21 @@ export function readEventsHostSetting(
   };
 }
 
-/** The style default for a host with no saved setting. */
-export function hostStyleEventDeliveryModes(
-  hostStyle: string | null | undefined
-): EventDeliveryMode[] {
-  // Own entries only: a style such as `constructor` must not reach an
-  // inherited Object member.
-  return typeof hostStyle === "string" &&
-    Object.prototype.hasOwnProperty.call(
-      HOST_STYLE_EVENT_DELIVERY_MODES,
-      hostStyle
-    )
-    ? [...HOST_STYLE_EVENT_DELIVERY_MODES[hostStyle]]
-    : [];
-}
-
 /**
  * The delivery modes a host receives events by. `null` / `undefined` is
- * MCPJam (built-in): every mode.
+ * MCPJam (built-in): every mode. A vendor harness, an absent setting and an
+ * unreadable one all receive none.
  */
 export function resolveHostEventDeliveryModes(
   host: EventsSupportHost | null | undefined
 ): EventDeliveryMode[] {
   if (!host) return [...EVENT_DELIVERY_MODES];
+  if (host.agentLoop ?? host.harness) return [];
   const setting = readEventsHostSetting(host);
-  if (setting.kind === "valid") return setting.modes;
-  if (setting.kind === "invalid") return [];
-  return hostStyleEventDeliveryModes(host.hostStyle);
+  return setting.kind === "valid" ? setting.modes : [];
 }
 
-/**
- * A host with `modes` saved explicitly. `[]` saves `{}` — "receives no
- * events" — which differs from {@link clearEventsHostSetting} (back to the
- * style default).
- */
+/** A host with `modes` saved explicitly. `[]` saves `{}`: "receives no events". */
 export function setEventsHostSetting<T extends EventsSupportHost>(
   host: T,
   modes: readonly EventDeliveryMode[]
@@ -151,39 +131,6 @@ export function setEventsHostSetting<T extends EventsSupportHost>(
       extensions: { ...extensions, [MCPJAM_EVENTS_EXTENSION_ID]: entry },
     },
   };
-}
-
-/**
- * A host with the setting removed, back to the style default. Leaves no
- * empty containers behind: host configs are content-addressed, so residue
- * would mint a new config row for an unchanged host.
- */
-export function clearEventsHostSetting<T extends EventsSupportHost>(
-  host: T
-): T {
-  const profile = host.mcpProfile;
-  if (!isRecord(profile) || !isRecord(profile.extensions)) return host;
-  if (
-    !Object.prototype.hasOwnProperty.call(
-      profile.extensions,
-      MCPJAM_EVENTS_EXTENSION_ID
-    )
-  )
-    return host;
-  const { [MCPJAM_EVENTS_EXTENSION_ID]: _removed, ...extensions } =
-    profile.extensions;
-  const { extensions: _dropped, ...profileRest } = profile;
-  const nextProfile =
-    Object.keys(extensions).length > 0
-      ? { ...profileRest, extensions }
-      : profileRest;
-  // `{ profileVersion: 1 }` alone hashes differently from no profile.
-  const { profileVersion: _version, ...content } = nextProfile;
-  if (Object.keys(content).length > 0) {
-    return { ...host, mcpProfile: nextProfile };
-  }
-  const { mcpProfile: _removedProfile, ...rest } = host;
-  return rest as T;
 }
 
 /** Which side ruled a mode out. */
@@ -232,14 +179,23 @@ export function subscribableModes(args: {
   return { modes, refused, hostModes };
 }
 
+/** Why a host receives no events at all, naming the harness that runs it. */
+function describeNoHostModes(hostName: string, harnessName?: string): string {
+  return harnessName
+    ? `${hostName} runs on ${harnessName}, which doesn't receive MCP Events. Pick another client.`
+    : `${hostName} doesn't receive events. Turn on a delivery mode in the client's Events tab, or pick another client.`;
+}
+
 /**
  * Why a single mode can't be used, in words a user can act on, or null when
- * it can. `hostName` names the host in the message.
+ * it can. `hostName` names the host in the message, and `harnessName` the
+ * vendor harness that runs it, when one does.
  */
 export function describeModeRefusal(
   mode: EventDeliveryMode,
   result: SubscribableModes,
-  hostName: string
+  hostName: string,
+  harnessName?: string
 ): string | null {
   switch (result.refused[mode]) {
     case undefined:
@@ -250,8 +206,8 @@ export function describeModeRefusal(
       return `The server doesn't offer ${mode} delivery for this event.`;
     case "host":
       return result.hostModes.length === 0
-        ? `${hostName} doesn't receive events. Turn on a delivery mode in its Protocol settings, or pick another client.`
-        : `${hostName} doesn't receive events by ${mode}. Turn it on in its Protocol settings, or pick another client.`;
+        ? describeNoHostModes(hostName, harnessName)
+        : `${hostName} doesn't receive events by ${mode}. Turn it on in the client's Events tab, or pick another client.`;
   }
 }
 
@@ -262,11 +218,12 @@ export function describeModeRefusal(
  */
 export function describeNoSubscribableMode(
   result: SubscribableModes,
-  hostName: string
+  hostName: string,
+  harnessName?: string
 ): string | null {
   if (result.modes.length > 0) return null;
   if (result.hostModes.length === 0) {
-    return `${hostName} doesn't receive events. Turn on a delivery mode in its Protocol settings, or pick another client.`;
+    return describeNoHostModes(hostName, harnessName);
   }
   const accepted = result.hostModes.join(" or ");
   if (result.hostModes.every((mode) => result.refused[mode] === "runtime")) {

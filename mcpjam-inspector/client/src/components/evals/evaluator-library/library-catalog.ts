@@ -303,13 +303,18 @@ export function missingParts(
   const judgeIds = new Set(
     suite.judges?.filter((j) => j.evaluator?.id === evaluator.id).map((j) => j.id),
   );
+  // Customize swaps the tagged judge for a copy carrying `basedOn`; offering
+  // the judge again would grade and charge each iteration twice.
+  const customized = suite.judges?.some((j) => j.basedOn?.id === evaluator.id);
   return {
     checks: missingChecks(
       evaluator,
       suite.predicates.filter((p) => p.evaluator?.id === evaluator.id),
     ),
     questions: taggedQuestions(evaluator).filter((q) => !questionIds.has(q.id)),
-    judges: taggedJudges(evaluator).filter((j) => !judgeIds.has(j.id)),
+    judges: customized
+      ? []
+      : taggedJudges(evaluator).filter((j) => !judgeIds.has(j.id)),
   };
 }
 

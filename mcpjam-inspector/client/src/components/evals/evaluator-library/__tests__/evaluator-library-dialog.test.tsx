@@ -12,6 +12,8 @@ import {
   withEvaluatorUpdated,
 } from "../library-catalog";
 import { judgeProblem } from "../custom-judges-model";
+import { libraryModelRows } from "../library-suite-edits";
+import type { EvalJudgeConfig } from "../../types";
 
 const flag = vi.hoisted(() => ({ on: true as boolean | undefined }));
 vi.mock("posthog-js/react", () => ({
@@ -442,6 +444,47 @@ describe("judge evaluators", () => {
         }),
       ],
     });
+  });
+
+  it("keeps a customized judge in the suite instead of offering it again", () => {
+    let judgeConfig: EvalJudgeConfig | undefined;
+    const library = (config: EvalJudgeConfig | undefined) => (
+      <EvaluatorLibraryButton
+        suite={{ predicates: [], judges: config?.customJudges?.judges ?? [] }}
+        support={{ canJudge: true }}
+        onAdd={(addition) => {
+          judgeConfig = { customJudges: { judges: addition.judges } };
+          return undefined;
+        }}
+        judgeLimit={5}
+      />
+    );
+    const { rerender } = renderWithProviders(library(judgeConfig));
+    fireEvent.click(screen.getByRole("button", { name: "From library" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add Answers the Question to suite" }),
+    );
+    libraryModelRows(judgeConfig, (next) => {
+      judgeConfig = next;
+    })[0].onCustomize?.();
+    expect(judgeConfig?.customJudges?.judges?.[0].evaluator).toBeUndefined();
+    rerender(library(judgeConfig));
+    expect(
+      screen.queryByRole("button", {
+        name: "Add Answers the Question to suite",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen
+        .getByRole("heading", { name: "Answers the Question" })
+        .closest("article"),
+    ).toHaveTextContent("In suite");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Answers the Question" }),
+    );
+    expect(
+      screen.getByRole("button", { name: "In this suite" }),
+    ).toBeDisabled();
   });
 
   it("hides judge evaluators where the backend cannot run them", () => {

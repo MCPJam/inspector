@@ -86,8 +86,15 @@ const MODERN_ONLY_UNPREFIXED: MCPCheckId[] = [
   "tools-x-mcp-header-declarations-valid",
 ];
 
+/**
+ * Named `modern-` but not modern-only: "Servers MUST provide structured
+ * results that conform to this schema" is in 2025-06-18 and 2025-11-25 too.
+ */
+const OUTPUT_SCHEMA_CHECK: MCPCheckId = "modern-tool-output-schema-conformant";
+
 const isModernOnly = (id: MCPCheckId) =>
-  id.startsWith("modern-") || MODERN_ONLY_UNPREFIXED.includes(id);
+  id !== OUTPUT_SCHEMA_CHECK &&
+  (id.startsWith("modern-") || MODERN_ONLY_UNPREFIXED.includes(id));
 
 // Phase 7 §15.3 modern MUST checks the conforming beta.4 fixture satisfies.
 //
@@ -351,7 +358,14 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
 
     // Only the modern-only checks may be era-skipped on a legacy pin; every
     // pre-Phase-7 check keeps its original status.
+    // The output-schema check now asks its question here: this fixture's
+    // tools declare no outputSchema, which it found out by listing them.
+    const outputSchema = byId(pinned.checks, OUTPUT_SCHEMA_CHECK);
+    expect(outputSchema.skipReason).toBe("not-applicable");
+    expect(outputSchema.error?.message).toMatch(/No tool declares an outputSchema/);
+
     for (const check of pinned.checks) {
+      if (check.id === OUTPUT_SCHEMA_CHECK) continue;
       if (isModernOnly(check.id)) {
         expect(check.status).toBe("skipped");
         expect(check.error?.message).toMatch(
