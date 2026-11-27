@@ -1,4 +1,11 @@
 import { credentialFailureMessage } from "../routes/web/errors.js";
+import {
+  finishIterationPhases,
+  iterationPhaseContext,
+  runIterationCleanupInto,
+  runIterationSetupOrThrow,
+} from "./evals/sandbox-phases/iteration-hooks.js";
+import { buildGradingInput } from "./evals/sandbox-phases/grading-input.js";
 import { assertNativeDiscovery } from "../utils/harness/native-discovery.js";
 import { mergeViewToolEvidence } from "./evals/view-tool-evidence.js";
 import { evalWidgetServerCall } from "./evals/view-tool-policy.js";
@@ -1037,7 +1044,8 @@ type IterationMetadataValue =
   | number
   | boolean
   | DescriptionExperimentIterationStamp
-  | TimeoutMetadata;
+  | TimeoutMetadata
+  | Record<string, unknown>;
 
 type IterationMetadataBase = Record<string, IterationMetadataValue>;
 
@@ -6671,6 +6679,16 @@ const runHostedIterationWithBrowser = async (
             : {}),
         });
   if (iterationId) onIterationStarted?.(iterationId);
+  // EFTW-90: the run's frozen iteration setup, grading and cleanup.
+  const phases = iterationPhaseContext({
+    config: recorder?.codeGrading,
+    runId,
+    iterationId,
+    caseId: test.testCaseId ?? testCaseId,
+    bearer: () => bearerNow(convexAuthToken),
+    deadlineAt: iterationDeadlineAt,
+    ...(abortSignal ? { signal: abortSignal } : {}),
+  });
 
   // Adopt the chat-side tool/system/temperature pipeline. Same change as the
   // local-AI-SDK runner: pulls in skill tools, progressive-discovery meta-
@@ -7226,9 +7244,12 @@ const runHostedIterationWithBrowser = async (
       token: `Bearer ${bearerNow(convexAuthToken)}`,
       ...(turnAuthorization ? { turnAuthorization } : {}),
     };
+    // Last, so the agent's box (when it has one) holds what setup created.
+    await runIterationSetupOrThrow(phases, evalBox?.binding.sandboxId, iterationMetadataBase);
   } catch (error) {
     // Release any sandbox provisioned before a later line in the try threw.
     await releaseEvalSandboxIfAny();
+    await runIterationCleanupInto(phases, iterationMetadataBase);
     if (isIterationBudgetAbort(error, abortSignal)) {
       throw abortSignal?.reason ?? error;
     }
@@ -7822,9 +7843,28 @@ const runHostedIterationWithBrowser = async (
   // above still applies the prefix to LIVE SSE `trace_snapshot` events
   // for the test-runner UI (different consumer than the stored
   // transcript).
+  const codeGrading = await finishIterationPhases(
+    phases,
+    {
+      ...(pinnedSetupFailure || infraError
+        ? { notRun: "Not run: the iteration didn't finish." }
+        : {}),
+      input: () =>
+        buildGradingInput({
+          scenario: { title: test.title, isNegativeTest: test.isNegativeTest },
+          messages: (harnessEvidenceDecision?.captureEnabled ? traceMessageHistory : messageHistory) as Array<{ role: string; content: unknown }>,
+          toolCalls: evaluation.toolsCalled,
+          usage: hasReportedUsage(accumulatedUsage) ? accumulatedUsage : undefined,
+          ...(expectedOutput ? { expectedOutput } : {}),
+          expectedToolCalls,
+        }),
+    },
+    iterationMetadataBase,
+  );
   const finishParams = buildIterationFinishParams({
     iterationId,
     platformGates,
+    ...(codeGrading ? { codeGrading } : {}),
     ...(runId !== null ? { runId: String(runId) } : {}),
     ...(gradingMode ? { gradingMode } : {}),
     scoreMatchOptions: scoreMatchOptionsFor(test),

@@ -44,6 +44,10 @@ import {
   hostedRubricCheckScorerId,
   type HostedScoreDefinitionInputs,
 } from "./score-definitions.js";
+import {
+  codeEvaluatorRows,
+  type CodeGradingResult,
+} from "./sandbox-phases/code-score-family.js";
 import { authoredRequiredRole } from "@mcpjam/sdk/contract";
 import { isRequiredRole } from "@mcpjam/sdk/predicates";
 
@@ -150,6 +154,7 @@ export type HostedScoreRowInputs = {
   rubricChecksVerdict?: HostedRubricChecksVerdictLike;
   /** First pass only: what the platform rows are graded from. */
   platformGates?: PlatformGateEvidence;
+  codeGrading?: CodeGradingResult;
 };
 
 function isFiniteNumber(value: unknown): value is number {
@@ -341,6 +346,9 @@ export function hostedScoreDefinitionInputs(
             }),
           ),
         }
+      : {}),
+    ...(inputs.codeGrading?.evaluators.length
+      ? { codeEvaluators: inputs.codeGrading.evaluators }
       : {}),
   };
 }
@@ -551,6 +559,7 @@ export function buildHostedScoreRows(
     );
   }
 
+  rows.push(...codeEvaluatorRows(inputs.codeGrading, byId));
   return rows;
 }
 
