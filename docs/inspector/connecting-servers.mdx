@@ -9,7 +9,7 @@ You can connect to MCP servers over **STDIO** or **Streamable HTTP**, with OAuth
 
 ## Manage connections
 
-You can connect to multiple MCP servers simultaneously. To manage connections, go to the **Servers** tab in the MCPJam sidebar.
+You can connect to multiple MCP servers simultaneously. To manage connections, open **Connect** in the MCPJam sidebar and choose **Servers**. Signed out, the sidebar item is **Servers**.
 
 <Frame>
   <img
@@ -139,9 +139,10 @@ Expand **Custom Headers** to add arbitrary request headers (for example, proxy a
 
 MCPJam is compliant with the MCP authorization spec and supports Dynamic Client Registration (DCR), client pre-registration, and Client ID Metadata Documents (CIMD). You can:
 
-1. Choose **No Authentication**
-2. Choose **Bearer Token**: use this if you already have an API token and don't need to register an OAuth client.
-3. Choose **OAuth**: follow [MCP Authorization](https://modelcontextprotocol.io/specification/draft/basic/authorization) to obtain a bearer token. You can optionally set scopes or a custom client ID and secret. For step-by-step debugging, see the [OAuth Debugger](/inspector/guided-oauth).
+1. Leave **Auto** (the default): MCPJam connects without credentials first, then switches to OAuth if the server asks for it.
+2. Choose **No Authentication**
+3. Choose **Bearer Token**: use this if you already have an API token and don't need to register an OAuth client.
+4. Choose **OAuth**: follow [MCP Authorization](https://modelcontextprotocol.io/specification/draft/basic/authorization) to obtain a bearer token. You can optionally set scopes or a custom client ID and secret. For step-by-step debugging, see the [OAuth Debugger](/inspector/guided-oauth).
 
 ### Request timeout
 

@@ -47,6 +47,12 @@ mcpjam tools call --url https://your-server.com/mcp \
 mcpjam tools list --url https://your-server.com/mcp --access-token $TOKEN
 ```
 
+For a STDIO server, pass the command and its arguments instead of `--url`:
+
+```bash
+mcpjam tools list --command node --args /absolute/path/to/build/index.js
+```
+
 Returns every tool the server exposes, including names, descriptions, and input schemas.
 
 ### Call a tool

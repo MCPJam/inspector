@@ -21,7 +21,7 @@ All three authenticate with an MCPJam API key (`sk_…`) stored as a CI secret n
 
 <Tabs>
   <Tab title="GitHub Action">
-    The evals action runs a hosted suite, waits for its result and uploads reports to GitHub. It tests the suite's saved server, not your PR's code.
+    The evals action runs a hosted suite, waits for its result and uploads reports to GitHub. It tests the server saved in your MCPJam project, not the code in your PR. To test the server your PR builds, use the **SDK upload** tab.
 
     Save this as `.github/workflows/mcpjam.yml`, then replace the project and suite:
 
@@ -211,6 +211,8 @@ All three authenticate with an MCPJam API key (`sk_…`) stored as a CI secret n
 </Tabs>
 
 ## Gate the merge
+
+A failed job blocks the merge only when GitHub requires it. Under **Settings → Branches**, add a branch protection rule (or ruleset) for your default branch and mark the eval job as a required status check.
 
 `eval run --wait` already fails the job on a failed verdict. Add `eval gate` for a policy on top: a different pass-rate bar, a baseline comparison, or a cost limit. The gate also applies the suite's stored [quality gate](/evaluate/configure-grading#quality-gate).
 

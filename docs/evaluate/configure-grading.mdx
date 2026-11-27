@@ -19,7 +19,7 @@ Edits are drafts until you click **Save settings**; **Discard** drops them. A sa
   <Tab title="Inspector">
     <Steps>
       <Step title="Open the suite">
-        In the Evaluate tab, open **Suites** and pick a suite.
+        In the Evaluate tab, switch the view from **Overview** to **Suites** and pick a suite.
       </Step>
       <Step title="Open its settings">
         Click **Suite settings**.
@@ -40,6 +40,7 @@ Edits are drafts until you click **Save settings**; **Discard** drops them. A sa
 
     # Goal completion judge and argument matching
     mcpjam cloud eval update --suite "My eval suite" --judge-model openai/gpt-5.4-mini --judge-threshold 0.7
+    mcpjam cloud eval update --suite "My eval suite" --judge off
     mcpjam cloud eval update --suite "My eval suite" --arguments exact
     ```
     See [`cloud eval update`](/cli/reference#cloud-eval-update) for every flag.
@@ -130,6 +131,8 @@ A suite is decided by exactly one of two criteria, and the row shows which. Swit
 | --- | --- |
 | **Suite accuracy** | Does one rate across the whole run reach this percentage? Cases have no threshold of their own. |
 | **Per-case pass rate** | Does each case pass at least this share of its own iterations? A case that falls short fails, whatever the rest of the suite did. |
+
+Neither criterion counts passing cases. **Suite accuracy** pools every iteration in the run. With **Per-case pass rate**, every case must reach the threshold, so one failing case fails the suite.
 
 Both take a percentage on screen. Under **Per-case pass rate**, the line under the field shows the arithmetic for the current iteration count, for example "A case with 5 iterations needs 4 passes." A suite with no suite accuracy set is judged at 70%.
 
