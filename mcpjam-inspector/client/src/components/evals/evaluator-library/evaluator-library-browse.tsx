@@ -65,21 +65,23 @@ export function EvaluatorLibraryBrowse({
   const searchId = useId();
   const { category, search } = filters;
   const query = search.trim().toLowerCase();
-  const groups = Object.values(CATEGORIES).map((group) => {
-    const entries = evaluators.filter((entry) => entry.category === group.id);
-    return {
-      ...group,
-      available: entries.length > 0,
-      matches: entries.filter((entry) =>
-        [
-          entry.name,
-          entry.question,
-          group.label,
-          ...builtFrom(entry).map((part) => part.label),
-        ].some((value) => value.toLowerCase().includes(query)),
-      ),
-    };
-  }).filter((group) => group.available);
+  const groups = Object.values(CATEGORIES)
+    .map((group) => {
+      const entries = evaluators.filter((entry) => entry.category === group.id);
+      return {
+        ...group,
+        available: entries.length > 0,
+        matches: entries.filter((entry) =>
+          [
+            entry.name,
+            entry.question,
+            group.label,
+            ...builtFrom(entry).map((part) => part.label),
+          ].some((value) => value.toLowerCase().includes(query)),
+        ),
+      };
+    })
+    .filter((group) => group.available);
   const all = category === "all";
   const activeGroup = groups.find((group) => group.id === category);
   const visible = all

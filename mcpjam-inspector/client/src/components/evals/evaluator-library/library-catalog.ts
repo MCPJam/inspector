@@ -26,7 +26,12 @@ import type { BuiltFromPart, EvaluatorTone } from "./evaluator-library-types";
  */
 export type LibraryEvaluator = {
   id: string;
-  category: "tool-calls" | "final-answer" | "tool-errors" | "server-output" | "security";
+  category:
+    | "tool-calls"
+    | "final-answer"
+    | "tool-errors"
+    | "server-output"
+    | "security";
   version: number;
   name: string;
   /** About this run, never about the server in general. */

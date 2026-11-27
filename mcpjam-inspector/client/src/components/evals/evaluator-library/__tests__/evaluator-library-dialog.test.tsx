@@ -210,6 +210,36 @@ describe("EvaluatorLibraryButton", () => {
       screen.getByRole("button", { name: "Answers the Question" }),
     ).toBeVisible();
   });
+
+  it("steps back from preset details on Escape before closing", () => {
+    open();
+    const categories = within(
+      screen.getByRole("group", { name: "Evaluator categories" }),
+    );
+    fireEvent.click(categories.getByRole("button", { name: "Final answer" }));
+    const search = screen.getByRole("searchbox", { name: "Search presets" });
+    fireEvent.change(search, { target: { value: "expected outcome" } });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Meets the Expected Outcome" }),
+    );
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Evaluator library" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Back to library" }),
+    ).not.toBeInTheDocument();
+    expect(search).toHaveValue("expected outcome");
+    expect(
+      categories.getByRole("button", { name: "Final answer" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(
+      screen.getByRole("button", { name: "Meets the Expected Outcome" }),
+    ).toBeVisible();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
 });
 
 describe("library catalog", () => {
