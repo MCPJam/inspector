@@ -12,8 +12,9 @@
  * exist only before the bundle scripts run, and the count must not depend on
  * whether they have.
  */
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -30,12 +31,29 @@ const TEST_FILE =
 const GENERATED_MODULE =
   /Cannot find module '[^']*\.(?:bundled|generated)(?:\.js)?'/;
 
-export function countErrors(output) {
-  const counts = {};
-  for (const line of output.split("\n")) {
+/**
+ * tsc ends lines with CRLF on Windows, which the `$` in ERROR_LINE would never
+ * match, and the baseline keys use `/` whatever the platform.
+ */
+function outputLines(output) {
+  return output.split(/\r?\n/);
+}
+
+/** Every located diagnostic tsc printed, in any file. */
+function diagnostics(output) {
+  const found = [];
+  for (const line of outputLines(output)) {
     const match = ERROR_LINE.exec(line);
     if (!match) continue;
     const [, file, code, message] = match;
+    found.push({ file: file.replaceAll("\\", "/"), code, message });
+  }
+  return found;
+}
+
+export function countErrors(output) {
+  const counts = {};
+  for (const { file, code, message } of diagnostics(output)) {
     if (!SERVER_SOURCE.test(file) || TEST_FILE.test(file)) continue;
     if (code === "TS2307" && GENERATED_MODULE.test(message)) continue;
     counts[file] = (counts[file] ?? 0) + 1;
@@ -67,11 +85,15 @@ export function compare(baseline, current) {
  * stale makes a local run count the same thing CI does.
  */
 function ensureSdkBuilt() {
-  execFileSync("node", [join(INSPECTOR, "scripts", "build-sdk-if-stale.mjs")], {
-    cwd: INSPECTOR,
-    // Quiet unless it fails; execFileSync then throws with the build's stderr.
-    stdio: "pipe",
-  });
+  execFileSync(
+    process.execPath,
+    [join(INSPECTOR, "scripts", "build-sdk-if-stale.mjs")],
+    {
+      cwd: INSPECTOR,
+      // Quiet unless it fails; execFileSync then throws with the build's stderr.
+      stdio: "pipe",
+    },
+  );
 }
 
 /**
@@ -81,30 +103,72 @@ function ensureSdkBuilt() {
  * `ensureSdkBuilt` rebuild.
  */
 function writeTelemetryCatalogs() {
-  execFileSync(process.execPath, [join(INSPECTOR, "..", "scripts", "generate-telemetry-catalogs.mjs")], {
-    cwd: INSPECTOR,
-    stdio: "pipe",
-  });
+  execFileSync(
+    process.execPath,
+    [join(INSPECTOR, "..", "scripts", "generate-telemetry-catalogs.mjs")],
+    {
+      cwd: INSPECTOR,
+      stdio: "pipe",
+    },
+  );
 }
 
+/**
+ * Runs tsc's JS entry with this Node rather than through `npx`: on Windows
+ * `npx` is a `.cmd` shim that cannot be spawned without a shell. Resolved from
+ * the inspector package, as `npx tsc` would.
+ */
 function runTsc() {
-  try {
-    execFileSync(
-      "npx",
-      ["tsc", "--noEmit", "--pretty", "false", "-p", "server/tsconfig.json"],
-      { cwd: INSPECTOR, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 },
-    );
-    return "";
-  } catch (error) {
-    // tsc exits non-zero whenever it reports errors; the output is the result.
-    if (typeof error.stdout !== "string") throw error;
-    return error.stdout;
-  }
+  const tsc = createRequire(join(INSPECTOR, "package.json")).resolve(
+    "typescript/bin/tsc",
+  );
+  const result = spawnSync(
+    process.execPath,
+    [tsc, "--noEmit", "--pretty", "false", "-p", "server/tsconfig.json"],
+    { cwd: INSPECTOR, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 },
+  );
+  if (result.error) throw result.error;
+  // tsc exits non-zero whenever it reports errors; the output is the result.
+  return {
+    output: result.stdout,
+    status: result.status,
+    signal: result.signal,
+    stderr: result.stderr,
+  };
 }
 
 /** Project-level errors that would otherwise read as "no file has errors". */
 export function globalErrors(output) {
-  return output.split("\n").filter((line) => GLOBAL_ERROR.test(line));
+  return outputLines(output).filter((line) => GLOBAL_ERROR.test(line));
+}
+
+/**
+ * tsc's `ExitStatus` values for a run that checked the whole program:
+ * Success, DiagnosticsPresent_OutputsSkipped, DiagnosticsPresent_OutputsGenerated.
+ */
+const COMPLETED_STATUSES = new Set([0, 1, 2]);
+
+/**
+ * Why tsc's result cannot be counted, or null when it can. A killed or crashed
+ * tsc may have printed only some of its diagnostics, so any other status is
+ * fatal whatever the output. A completed failing run with nothing this script
+ * can read (an output format the parser does not match) is fatal too.
+ * Counting either would pass the check and shrink the baseline on `--update`.
+ */
+export function unusableResult({ status, signal, output }) {
+  if (!COMPLETED_STATUSES.has(status)) {
+    return signal
+      ? `tsc was terminated by ${signal} before it finished:`
+      : `tsc exited with unexpected status ${status}:`;
+  }
+  if (
+    status !== 0 &&
+    diagnostics(output).length === 0 &&
+    globalErrors(output).length === 0
+  ) {
+    return `tsc exited with status ${status} but printed no diagnostics this script can parse:`;
+  }
+  return null;
 }
 
 function total(counts) {
@@ -116,7 +180,13 @@ function total(counts) {
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   writeTelemetryCatalogs();
   ensureSdkBuilt();
-  const output = runTsc();
+  const { output, status, signal, stderr } = runTsc();
+  const unusable = unusableResult({ status, signal, output });
+  if (unusable) {
+    console.error(unusable);
+    console.error(`${output}${stderr}`.trim() || "  (no output)");
+    process.exit(1);
+  }
   const fatal = globalErrors(output);
   if (fatal.length) {
     console.error("tsc failed before checking any file:");
