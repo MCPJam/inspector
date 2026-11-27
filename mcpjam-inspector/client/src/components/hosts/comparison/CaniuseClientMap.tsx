@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { cn } from "@mcpjam/design-system/cn";
 import {
   Tooltip,
   TooltipContent,
@@ -81,7 +82,10 @@ export function ClientMap({ coverage }: { coverage: CapabilityCoverage }) {
           <section
             key={status}
             aria-label={title}
-            className={`caniuse-map-group grid items-start gap-2.5 rounded-lg border border-border/75 p-3 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-4 ${tint}`}
+            className={cn(
+              "caniuse-map-group grid items-start gap-2.5 rounded-lg border border-border/75 p-3 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-4",
+              tint,
+            )}
           >
             <h3 className="grid gap-1 text-xs font-semibold">
               <span className="text-2xl font-bold leading-none tabular-nums">
