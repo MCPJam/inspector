@@ -1494,7 +1494,7 @@ export function evaluatePredicate(
           return notApplicable(predicate, verdict.reason);
         }
         if (verdict.kind === "fail") return fail(predicate, verdict.reason);
-        // A pass is a claim about every result, so it needs all of them.
+        // A pass or empty scope requires complete evidence.
         if (scope.length === 0) {
           const empty = emptyScopeIsScored(
             transcript,
@@ -1507,7 +1507,7 @@ export function evaluatePredicate(
               `${empty.reason}; cannot validate against the declared schemas`
             );
           }
-          return pass(predicate, verdict.reason);
+          return notApplicable(predicate, verdict.reason);
         }
         // Declared mode reads `structuredContent`, which is stored whole; a
         // capped `text` field does not touch what was validated.
@@ -1520,12 +1520,12 @@ export function evaluatePredicate(
         if (gap) {
           return evidenceError(
             predicate,
-            `${scope.length} result(s) from ${scopeLabel(
-              predicate.toolName
-            )} matched their declared schemas, but ${gap}`
+            `${verdict.reason}; ${gap}`
           );
         }
-        return pass(predicate, verdict.reason);
+        return verdict.kind === "empty_scope"
+          ? notApplicable(predicate, verdict.reason)
+          : pass(predicate, verdict.reason);
       }
       if (scope.length === 0) {
         const empty = emptyScopeIsScored(
