@@ -951,8 +951,9 @@ export async function runJudgeSecondPass(
         ...(rubricChecksVerdict ? { rubricChecksVerdict } : {}),
         ...(customJudgesVerdict ? { customJudgesVerdict } : {}),
       });
-      if (Object.keys(stage).length > 0) {
-        const fields = stageFields(stage);
+      const hasStage = Object.keys(stage).length > 0;
+      if (hasStage || scores) {
+        const fields = hasStage ? stageFields(stage) : {};
         try {
           const result = await ports.applyDerivation(iteration.iterationId, {
             goalCompletionJobId,
