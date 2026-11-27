@@ -19,6 +19,7 @@
  */
 
 import type { UIMessageChunk } from "ai";
+import type { EventAtTurn } from "@/shared/event-at-turn";
 import type { DirectChatTurnTraceEvents } from "./direct-chat-turn.js";
 import {
   emitRequestPayload,
@@ -38,6 +39,8 @@ export type DirectChatSseWriter = {
  */
 export function buildDirectChatTraceCallbacks(
   writer: DirectChatSseWriter,
+  /** The MCP event that started this turn, echoed on `turn_start`. */
+  eventAtTurn?: EventAtTurn,
 ): DirectChatTurnTraceEvents {
   return {
     onTurnStart: (event) => {
@@ -46,6 +49,7 @@ export function buildDirectChatTraceCallbacks(
         turnId: event.turnId,
         promptIndex: event.promptIndex,
         startedAtMs: event.startedAtMs,
+        ...(eventAtTurn ? { event: eventAtTurn } : {}),
       });
     },
     onRequestPayload: (event) => {

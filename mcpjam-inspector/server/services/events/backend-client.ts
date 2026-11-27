@@ -211,6 +211,12 @@ export interface EventRunInput {
     eventName?: string;
     profile?: string;
     /**
+     * The subscription's own delivery mode, whatever `event.origin` says (a
+     * test event's origin is `simulation`). Absent on runs scheduled before
+     * the backend recorded it.
+     */
+    mode?: "poll" | "push" | "webhook";
+    /**
      * The host the run acts as; null is MCPJam (built-in). Absent on runs
      * scheduled before the backend recorded it, which act as built-in.
      */

@@ -14,6 +14,7 @@ import {
   type EventsConformanceResult,
 } from "../src/events-conformance/index.js";
 import {
+  BETA_PROFILE_ID,
   CHATGPT_2026_09_30_PROFILE_ID,
   CHATGPT_PROFILE_ID,
   DRAFT_PROFILE_ID,
@@ -40,15 +41,24 @@ afterEach(async () => {
 async function run(options: {
   fixture?: Parameters<typeof startEventsFixture>[0];
   profile?:
+    | typeof BETA_PROFILE_ID
     | typeof DRAFT_PROFILE_ID
     | typeof CHATGPT_PROFILE_ID
     | typeof CHATGPT_2026_09_30_PROFILE_ID;
   insecureReceiver?: boolean;
   protocolVersion?: "2025-11-25" | "2026-07-28";
+  baseFetch?: typeof fetch;
 }): Promise<{ result: EventsConformanceResult; fixture: EventsFixtureHandle }> {
   const certificate = mintTestCertificate();
+  const deliver = trustingFetch(certificate);
   const fixture = await startEventsFixture({
-    deliveryFetch: trustingFetch(certificate),
+    deliveryFetch: async (input, init) => {
+      if (input === "http://callback.invalid/hooks" && typeof init?.body === "string") {
+        const { challenge } = JSON.parse(init.body);
+        return Response.json({ challenge });
+      }
+      return deliver(input, init);
+    },
     heartbeatMs: 50,
     ...options.fixture,
   });
@@ -62,6 +72,7 @@ async function run(options: {
   await manager.connectToServer(SERVER_ID, {
     url: fixture.url,
     timeout: 10_000,
+    baseFetch: options.baseFetch,
     ...(options.protocolVersion ? { mcpProtocolVersion: options.protocolVersion as never } : {}),
   });
   const result = await runEventsConformance({
@@ -81,6 +92,36 @@ const status = (result: EventsConformanceResult, id: string) =>
   result.checks.find((check) => check.id === id)?.status;
 
 describe("events conformance", () => {
+  it("passes Events Beta using the Beta message ID and error checks", async () => {
+    const { result, fixture } = await run({ fixture: { beta: true }, profile: BETA_PROFILE_ID });
+    expect(result.outcome).toBe("passed");
+    expect(result.profile).toBe(BETA_PROFILE_ID);
+    expect(status(result, "events-capability-declared")).toBe("passed");
+    expect(status(result, "events-webhook-message-id")).toBe("passed");
+    expect(status(result, "events-webhook-id-equals-event-id")).toBeUndefined();
+    expect(status(result, "events-consent-failure-blocks-delivery")).toBe("passed");
+    expect(status(result, "events-unsubscribe-twice")).toBe("passed");
+    expect(fixture.subscriptions()).toHaveLength(0);
+  });
+
+  it("reports a missing Beta result discriminator as a list violation", async () => {
+    const { result } = await run({
+      fixture: { beta: true },
+      profile: BETA_PROFILE_ID,
+      baseFetch: (input, init) => {
+        const request = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+        return request?.method === "events/list"
+          ? Promise.resolve(Response.json({ jsonrpc: "2.0", id: request.id, result: { events: [] } }))
+          : fetch(input, init);
+      },
+    });
+    expect(result.outcome).toBe("failed");
+    expect(result.checks.find((check) => check.id === "events-list-shape")).toMatchObject({
+      status: "failed",
+      message: expect.stringContaining("resultType"),
+    });
+  });
+
   it("passes the conformant fixture on the draft profile", async () => {
     const { result } = await run({});
     const notPassed = result.checks.filter((c) => c.status !== "passed");

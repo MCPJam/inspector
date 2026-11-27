@@ -160,6 +160,34 @@ describe("chat-history routes", () => {
     });
   });
 
+  describe("GET /chat-history/group", () => {
+    it("proxies the group read with its project", async () => {
+      fetchMock.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ ok: true, groupId: "g1", sessions: [] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+      const res = await app.request("/chat-history/group?groupId=g1&projectId=p1", {
+        headers: { Authorization: "Bearer test-token" },
+      });
+      expect(res.status).toBe(200);
+      expect((await res.json()).groupId).toBe("g1");
+      const [fetchUrl] = fetchMock.mock.calls[0];
+      expect(fetchUrl).toContain("/direct-chat/group");
+      expect(fetchUrl).toContain("groupId=g1");
+      expect(fetchUrl).toContain("projectId=p1");
+    });
+
+    it("returns 400 without a groupId", async () => {
+      const res = await app.request("/chat-history/group", {
+        headers: { Authorization: "Bearer test-token" },
+      });
+      expect(res.status).toBe(400);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
   describe("GET /chat-history/detail", () => {
     it("proxies detail request to Convex backend", async () => {
       fetchMock.mockResolvedValueOnce(

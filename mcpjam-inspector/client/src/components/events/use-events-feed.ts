@@ -17,6 +17,7 @@ import {
   parseGap,
 } from "@/lib/apis/mcp-events-api";
 import { errorMessage } from "./event-utils";
+import { observeLocalWebhookSubscription } from "./local-webhook-telemetry";
 
 /** Entries kept in memory for the feed view (newest win). */
 export const MAX_FEED_ENTRIES = 500;
@@ -39,11 +40,12 @@ export interface EventsFeedGap {
 
 export interface UseEventsFeedOptions {
   hosted: boolean;
+  /** Hosted: the Convex project. Local: the project the local feed is scoped to. */
   projectId: string | null;
   enabled: boolean;
   /** Called once per entry the first time it is seen. */
   onNewEntries?: (entries: EventsFeedEntryView[]) => void;
-  /** Local stream: the full subscription list (all servers) on (re)connect. */
+  /** Local stream: the project's subscription list (all servers) on (re)connect. */
   onSubscriptionsSnapshot?: (subscriptions: EventsSubscriptionView[]) => void;
   /** Local stream: one subscription changed. */
   onSubscription?: (subscription: EventsSubscriptionView) => void;
@@ -76,8 +78,9 @@ function parseData(data: unknown): unknown {
  * The events feed: journal entries as they arrive, plus rejected deliveries
  * and gaps.
  *
- * LOCAL: one EventSource on `/api/mcp/events/stream`, whose frames are
- * `EventsStreamFrame`s (snapshot / entry / subscription / rejection).
+ * LOCAL: one EventSource on `/api/mcp/events/stream` for the project, whose
+ * frames are `EventsStreamFrame`s (snapshot / entry / subscription /
+ * rejection).
  *
  * HOSTED: the public inbox, read with a viewer token of at most 10 minutes
  * (contract C7). Unnamed messages are one entry each; named events carry
@@ -159,10 +162,10 @@ export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
     );
   }, []);
 
-  // A different feed (mode or project) starts from scratch.
-  // The local runtime has one inbox; hosted has one per project.
+  // A different feed (mode or project) starts from scratch. Both the local
+  // runtime and the hosted inbox serve one project's feed at a time.
   const projectKey = projectId ?? "";
-  const feedKey = hosted ? `hosted:${projectKey}` : "local";
+  const feedKey = `${hosted ? "hosted" : "local"}:${projectKey}`;
   if (feedKeyRef.current !== feedKey) {
     feedKeyRef.current = feedKey;
     seenRef.current = new Set();
@@ -188,6 +191,7 @@ export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
       switch (frame.type) {
         case "snapshot":
           if (Array.isArray(frame.subscriptions)) {
+            frame.subscriptions.forEach(observeLocalWebhookSubscription);
             callbacksRef.current.onSubscriptionsSnapshot?.(frame.subscriptions);
           }
           return;
@@ -198,6 +202,7 @@ export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
         }
         case "subscription":
           if (isRecord(frame.subscription)) {
+            observeLocalWebhookSubscription(frame.subscription);
             callbacksRef.current.onSubscription?.(frame.subscription);
           }
           return;
@@ -222,7 +227,7 @@ export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const tick = async () => {
         try {
-          const page = await fetchLocalEventsFeed(afterRef.current);
+          const page = await fetchLocalEventsFeed(afterRef.current, projectId);
           if (disposed) return;
           ingestEntries(page.entries);
           afterRef.current = Math.max(afterRef.current, page.nextAfter);
@@ -240,7 +245,9 @@ export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
     }
 
     setStatus("connecting");
-    const source = new EventSource(localEventsStreamUrl(afterRef.current));
+    const source = new EventSource(
+      localEventsStreamUrl(afterRef.current, projectId),
+    );
     source.onopen = () => {
       setStatus("live");
       setError(null);
@@ -258,7 +265,7 @@ export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
       disposed = true;
       source.close();
     };
-  }, [enabled, hosted, ingestEntries]);
+  }, [enabled, hosted, projectId, ingestEntries]);
 
   // ── hosted: the public inbox, viewer-token authenticated ─────────────────
   useEffect(() => {

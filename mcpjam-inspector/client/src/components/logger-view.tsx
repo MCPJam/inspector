@@ -297,11 +297,12 @@ function DirectionLabel({
   }
 
   if (source === "webhook") {
-    // An MCP Events delivery: always inbound, from the server's webhook (or a
-    // simulation) into MCPJam's inbox.
+    // An MCP Events feed entry: always inbound, into MCPJam's inbox. The
+    // method names its delivery mode (push, poll, webhook or simulation) and
+    // the event type.
     return (
       <span className="font-mono text-[10px] leading-none flex-shrink-0 text-info">
-        ← webhook
+        ← event
       </span>
     );
   }
@@ -686,7 +687,7 @@ export function LoggerView({
                       WebMCP
                     </DropdownMenuRadioItem>
                     <DropdownMenuRadioItem value="webhook" className="text-xs">
-                      Webhooks
+                      Events
                     </DropdownMenuRadioItem>
                   </DropdownMenuRadioGroup>
                 </DropdownMenuContent>

@@ -201,6 +201,29 @@ describe("eval suite JSON Schema — agrees with zod on the structural half", ()
   const validatorFor = (row: SuiteFileFixtureRow): ValidateFunction =>
     validators.get(dialectOf(row).version)!;
 
+  it.each([{ schema: null }, { schema: [] }, { schema: 7 }])(
+    "rejects the unsupported result schema root $schema when authoring and preserves it on read",
+    ({ schema }) => {
+      const candidate = structuredClone(stripAnnotations(data.accept[0]!)) as {
+        cases: Array<Record<string, unknown>>;
+      };
+      const check = { type: "toolResultMatchesSchema", schema };
+      candidate.cases[0]!.assertions = [check];
+      expect(validatorFor(data.accept[0]!)(candidate)).toBe(false);
+      candidate.cases[0]!.steps = [
+        ...(candidate.cases[0]!.steps as unknown[]),
+        { id: "legacy-schema", kind: "assert", assertion: check },
+      ];
+      const legacy = evalSuiteFileSchema.parse(candidate).cases[0]!;
+      expect(legacy.assertions).toEqual([check]);
+      expect(legacy.steps.at(-1)).toMatchObject({ assertion: check });
+      const valid = { ...check, schema: "declared" };
+      candidate.cases[0]!.assertions = [valid];
+      (candidate.cases[0]!.steps as unknown[]).pop();
+      expect(validatorFor(data.accept[0]!)(candidate)).toBe(true);
+    }
+  );
+
   it("rejects a padded intent label at the JSON Schema boundary", () => {
     const candidate = structuredClone(stripAnnotations(data.accept[0]!)) as {
       cases: Array<Record<string, unknown>>;

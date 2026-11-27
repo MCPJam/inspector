@@ -1,3 +1,7 @@
+import { originalMcpInputSchema } from "./original-mcp-input-schema.js";
+import { discoveryRunMetadata } from "./sdk-version.js";
+import { redactUnavailableToolError, validateDeferredToolInputs } from "./progressive-discovery/step.js";
+import { collectRejectedToolCalls, markRejectedCalls } from "./progressive-discovery/rejected-calls.js";
 /**
  * HostRunner - Runs LLM prompts with tool calling for evals
  */
@@ -24,6 +28,7 @@ import type {
 import type { CallToolResult } from "@modelcontextprotocol/client";
 import { resolveToolUiResourceUri } from "./widget-runtime/tool-ui-resource.js";
 import { createModelFromString, parseLLMString } from "./model-factory.js";
+import { withUniqueToolCallIds } from "./tool-call-ids.js";
 import { withProviderSafeToolNames } from "./provider-tool-names.js";
 import {
   readDiscoveryMode,
@@ -72,6 +77,10 @@ import {
   isAppOnlyTool,
 } from "./mcp-client-manager/tool-converters.js";
 import { mcpCallToolResultToModelOutput } from "./mcp-client-manager/model-output.js";
+import {
+  projectToolResultByRule,
+  structuredContentRuleOf,
+} from "./mcp-client-manager/tool-result-rule.js";
 import { assertCallToolResult } from "./mcp-client-manager/result-guards.js";
 import { buildMcpAppWidgetSnapshot } from "./widget-snapshots.js";
 import { injectOpenAICompat } from "./widget-helpers.js";
@@ -241,15 +250,23 @@ function convertToToolSet(
         const result = await tool.execute(args as Record<string, unknown>);
         return assertCallToolResult(result, `Tool "${tool.name}" result`);
       },
-      toModelOutput: ({ output }) =>
-        (mcpCallToolResultToModelOutput(output as CallToolResult, {
+      toModelOutput: ({ output }) => {
+        const rule = structuredContentRuleOf(options.modelVisibleMcpToolResults);
+        if (rule) {
+          return projectToolResultByRule(output as CallToolResult, rule, {
+            modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
+          });
+        }
+        return (mcpCallToolResultToModelOutput(output as CallToolResult, {
           modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
         }) ?? {
           type: "json" as const,
           value: output as any,
-        }) as any,
+        }) as any;
+      },
     });
 
+    Object.assign(converted, { [originalMcpInputSchema]: tool.inputSchema });
     // Preserve _serverId like getToolsForAiSdk() does
     if (tool._meta?._serverId) {
       (converted as any)._serverId = tool._meta._serverId;
@@ -865,6 +882,7 @@ export class HostRunner implements HostExecutor {
     };
     const toolDefinitions = Object.entries(this.tools).map(describeTool);
     const recordedContext = {
+      ...discoveryRunMetadata(this.hostSnapshot?.runUnloadedToolCalls),
       toolDefinitions,
       systemPrompt: this.systemPrompt,
       model: this.model,
@@ -882,6 +900,8 @@ export class HostRunner implements HostExecutor {
     const pendingStepToolCalls: StartedToolCall[] = [];
     // Every completed step's response messages, in order. AI SDK 7's
     // `step.response.messages` holds only that step's, so they accumulate here.
+    const rejected = new Set<string>();
+    const malformedToolCalls: { toolName: string; input: string }[] = [];
     const completedStepMessages: ModelMessage[] = [];
     let partialInputTokens = 0;
     let partialOutputTokens = 0;
@@ -928,11 +948,9 @@ export class HostRunner implements HostExecutor {
         baseUrls: this.baseUrls,
         customProviders: this.customProviders,
       };
-      const model = withProviderSafeToolNames(
-        (this.createLanguageModel ?? createModelFromString)(
+      const model = (this.createLanguageModel ?? createModelFromString)(
           this.model,
           modelOptions
-        )
       );
       const stopAfterToolCallNames = this.normalizeStopAfterToolCall(
         options?.stopAfterToolCall
@@ -960,6 +978,7 @@ export class HostRunner implements HostExecutor {
           this.progressiveToolDiscoveryWhenUnset
         ),
         priorMessages: contextMessages,
+        runUnloadedToolCalls: this.hostSnapshot?.runUnloadedToolCalls,
         onCallStarted: (call) =>
           pendingStepToolCalls.push({ ...call, shortCircuited: false }),
       });
@@ -970,9 +989,13 @@ export class HostRunner implements HostExecutor {
       }
 
       const generateTextOptions: any = {
-        model: model as any,
-        tools: { ...instrumentedTools, ...discovery?.metaTools },
+        model: withUniqueToolCallIds(
+          withProviderSafeToolNames(model, () => discovery?.currentStep()?.shown),
+          contextMessages,
+        ),
+        tools: discovery ? { ...validateDeferredToolInputs(instrumentedTools, discovery.currentStep), ...discovery.metaTools } : instrumentedTools,
         ...(discovery && {
+          repairToolCall: redactUnavailableToolError,
           prepareStep: ({ stepNumber }: { stepNumber: number }) =>
             discovery.prepareStep(stepNumber),
         }),
@@ -1025,15 +1048,20 @@ export class HostRunner implements HostExecutor {
           partialInputTokens += stepResult.usage?.inputTokens ?? 0;
           partialOutputTokens += stepResult.usage?.outputTokens ?? 0;
           lastCompletedStepText = stepResult.text ?? "";
-          completedStepMessages.push(...(stepResult.response?.messages ?? []));
+          collectRejectedToolCalls(rejected, stepResult.toolCalls);
+          for (const call of stepResult.toolCalls) {
+            if (rejected.has(call.toolCallId) && typeof call.input === "string") {
+              malformedToolCalls.push({ toolName: call.toolName, input: call.input });
+            }
+          }
+          completedStepMessages.push(...markRejectedCalls(stepResult.response?.messages ?? [], rejected));
           const blocked = this.policyBlockedToolCallIds?.();
-          discovery?.noteStep(stepResult.toolCalls);
           completedToolCalls.push(
             ...stepResult.toolCalls
               .filter(
                 (toolCall) =>
                   !blocked?.has(toolCall.toolCallId) &&
-                  !discovery?.refusedCallIds.has(toolCall.toolCallId)
+                  !rejected.has(toolCall.toolCallId)
               )
               .map((toolCall) => ({
                 toolName: toolCall.toolName,
@@ -1051,7 +1079,7 @@ export class HostRunner implements HostExecutor {
       // had not loaded. Neither reached a server.
       const blockedToolCallIds = new Set([
         ...(this.policyBlockedToolCallIds?.() ?? []),
-        ...(discovery?.refusedCallIds ?? []),
+        ...rejected,
       ]);
       const toolCalls = extractToolCalls(
         result,
@@ -1069,7 +1097,7 @@ export class HostRunner implements HostExecutor {
       // Add response messages (assistant + tool messages from agentic loop).
       // `responseMessages` spans every step; in AI SDK 7 `response` is only
       // the final step's.
-      messages.push(...(result.responseMessages ?? []));
+      messages.push(...markRejectedCalls(result.responseMessages ?? [], rejected));
 
       const recordedSpans = spanIntegration.getSpans();
       patchEvalSpansMessageRangesFromSteps(
@@ -1086,6 +1114,7 @@ export class HostRunner implements HostExecutor {
         messages,
         text: result.text,
         toolCalls,
+        malformedToolCalls,
         usage: {
           inputTokens,
           outputTokens,
@@ -1123,7 +1152,7 @@ export class HostRunner implements HostExecutor {
       const partialToolCalls = [
         ...completedToolCalls,
         ...pendingStepToolCalls
-          .filter((toolCall) => !blockedAtFailure?.has(toolCall.toolCallId))
+          .filter((toolCall) => !blockedAtFailure?.has(toolCall.toolCallId) && !rejected.has(toolCall.toolCallId))
           .map((toolCall) => ({
             toolName: toolCall.toolName,
             arguments: toolCall.arguments,
@@ -1137,6 +1166,7 @@ export class HostRunner implements HostExecutor {
         messages: partialMessages,
         text: lastCompletedStepText,
         toolCalls: partialToolCalls,
+        malformedToolCalls,
         usage: {
           inputTokens: partialInputTokens,
           outputTokens: partialOutputTokens,

@@ -7,6 +7,7 @@
  */
 import { useMutation } from "convex/react";
 import { collectUniqueModelsFromTestCases } from "@/lib/evals/collect-unique-suite-models";
+import type { SharedEvalAccountSelection } from "@/lib/evals/eval-accounts";
 import type { CasePredicates, EvalMatchOptions } from "@/shared/eval-matching";
 import {
   deriveExpectedToolCalls,
@@ -20,6 +21,7 @@ import type { EvalCase, EvalJudgeConfigOverride } from "./types";
 
 export interface CaseSaveForm {
   title: string;
+  accounts?: SharedEvalAccountSelection[];
   runs: number;
   scenario?: string;
   steps: TestStep[];
@@ -36,6 +38,21 @@ export interface CaseSaveForm {
    */
   judgeConfigOverride?: EvalJudgeConfigOverride;
   kind?: "capability" | "regression";
+}
+
+export function caseAccountsChanged(
+  form: CaseSaveForm | null,
+  saved: EvalCase | null,
+) {
+  const chosen = form?.accounts;
+  if (!chosen) return false;
+  const stored = new Map(
+    saved?.accounts?.map(({ serverId, connectionId }) => [serverId, connectionId]),
+  );
+  return (
+    chosen.length !== stored.size ||
+    chosen.some(({ serverId, connectionId }) => connectionId !== stored.get(serverId))
+  );
 }
 
 export function normalizeAdvancedConfig(
