@@ -27,6 +27,24 @@ test("blocks on unresolved Major and Critical CodeRabbit threads", () => {
   );
 });
 
+// The current format: an HTML marker and a blank line come before the grade.
+const graded = (icon, grade, headline) =>
+  `<!-- coderabbit-ai-generated:v1 -->\n\n**<picture><img src="https://storage.googleapis.com/coderabbit_public_assets/review-comment-icons-v1/${icon}-16.svg" width="16" height="16" align="absmiddle" alt=""></picture> ${grade}** · **Functional Correctness** · **Quick win**\n\n**${headline}**\n\nDetails.`;
+const MARKED_MAJOR = graded("major", "Major", "Keep checks.");
+const MARKED_CRITICAL = graded("critical", "Critical", "Escape input.");
+const MARKED_MINOR = graded("amber", "Minor", "Log it.");
+
+test("reads the grade after the HTML marker in the current format", () => {
+  assert.equal(blockingSeverity(MARKED_MAJOR), "Major");
+  assert.equal(blockingSeverity(MARKED_CRITICAL), "Critical");
+  assert.equal(blockingSeverity(MARKED_MINOR), null);
+  const findings = blockingFindings([thread(MARKED_MAJOR), thread(MARKED_CRITICAL), thread(MARKED_MINOR)]);
+  assert.deepEqual(
+    findings.map((f) => [f.severity, f.title]),
+    [["Major", "**Keep checks.**"], ["Critical", "**Escape input.**"]],
+  );
+});
+
 test("ignores resolved threads, other authors and empty threads", () => {
   const findings = blockingFindings([
     thread(MAJOR, { isResolved: true }),

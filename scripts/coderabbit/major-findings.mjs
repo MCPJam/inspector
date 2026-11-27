@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // Fails when a pull request has an unresolved CodeRabbit thread graded Major
 // or Critical. CodeRabbit has no setting that turns finding severity into a
-// failing check, so this reads the grade from the first line of each finding,
-// e.g. "**🎯 Functional Correctness** | **🟠 Major** | **🏗️ Heavy lift**".
+// failing check, so this reads the grade line of each finding, e.g.
+// "**<picture>…</picture> Major** · **Functional Correctness** · **Quick win**".
+// Comments open with an HTML marker and a blank line, so the grade line is the
+// first line that is neither.
 // Resolving the thread is how a finding stops blocking.
 
 import { pathToFileURL } from "node:url";
@@ -10,10 +12,18 @@ import { pathToFileURL } from "node:url";
 const CODERABBIT_LOGINS = new Set(["coderabbitai", "coderabbitai[bot]"]);
 const BLOCKING_SEVERITY = /\*\*[^*\n]*\b(Critical|Major)\*\*/;
 
+function gradeLineIndex(lines) {
+  return lines.findIndex((line) => {
+    const trimmed = line.trim();
+    return trimmed !== "" && !/^<!--.*-->$/.test(trimmed);
+  });
+}
+
 /** Returns "Critical", "Major" or null for a CodeRabbit comment body. */
 export function blockingSeverity(body) {
-  const firstLine = body.split("\n", 1)[0];
-  return firstLine.match(BLOCKING_SEVERITY)?.[1] ?? null;
+  const lines = body.split("\n");
+  const gradeLine = lines[gradeLineIndex(lines)] ?? "";
+  return gradeLine.match(BLOCKING_SEVERITY)?.[1] ?? null;
 }
 
 /** Picks the unresolved threads whose opening CodeRabbit finding blocks. */
@@ -25,7 +35,8 @@ export function blockingFindings(threads) {
     const severity = blockingSeverity(first.body);
     if (!severity) return [];
     // The bold line under the grade is the finding's headline, when there is one.
-    const title = first.body.split("\n").slice(1).find((line) => /^\*\*.+\*\*$/.test(line.trim()));
+    const lines = first.body.split("\n");
+    const title = lines.slice(gradeLineIndex(lines) + 1).find((line) => /^\*\*.+\*\*$/.test(line.trim()));
     return [{ severity, path: first.path, url: first.url, title: title?.trim() ?? "" }];
   });
 }
