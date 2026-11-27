@@ -13,7 +13,7 @@ import {
   MODEL_MAX_FINDINGS,
   MODEL_MAX_SESSION_IDS_PER_FINDING,
   MODEL_PHRASE_CAP,
-} from "../src/tools/platformTools.js";
+} from "@mcpjam/sdk/internal/mcp-surface";
 
 // The backend owns and re-syncs the fixture, so only its envelope is reused.
 // Every row these tests reason about is written here.
