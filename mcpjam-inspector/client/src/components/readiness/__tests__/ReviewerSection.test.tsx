@@ -300,10 +300,15 @@ describe("ReviewerSection", () => {
     expect(screen.getByRole("button", { name: "Finish reviewer sign-in" })).toBeVisible();
     expect(
       screen.getByText(
-        "A teammate or an agent can resume this attempt with its id.",
+        "Share the submission with your teammate. Whoever finishes sign-in resumes the checks here or with this command.",
       ),
     ).toBeVisible();
     expect(screen.getByText("att_1")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Copy submission link" }));
+    const link = new URL(clipboard.copyToClipboard.mock.calls.at(-1)?.[0]);
+    expect(link.search).toBe("?submission=sub_1");
+    expect(link.pathname).toMatch(/readiness$/);
+
 
     await userEvent.click(
       screen.getByRole("button", { name: "Copy resume command" }),
