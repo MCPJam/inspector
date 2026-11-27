@@ -562,7 +562,8 @@ export function McpjamAgentThread({
                     orgKeysRefusalSentence(session.error.message) ??
                     describeMCPJamLimitMessage(session.error.message) ??
                     // Any other route error: its own `message`, never the
-                    // envelope with its RPC logs. Plain text passes through.
+                    // envelope with its RPC logs. Plain text over 400
+                    // characters is cut, as in the Playground.
                     formatErrorMessage(session.error)?.message ??
                     "Something went wrong.")}
                 {tooLarge && (
