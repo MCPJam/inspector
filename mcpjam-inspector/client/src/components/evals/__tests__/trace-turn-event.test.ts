@@ -119,6 +119,36 @@ describe("parseEventTimestamp", () => {
     expect(parseEventTimestamp("1764237600")).toBeUndefined();
     expect(parseEventTimestamp("2026-13-45T99:99:99Z")).toBeUndefined();
   });
+
+  it("refuses a day the month does not have, which Date.parse would roll over", () => {
+    expect(Number.isFinite(Date.parse("2026-02-30T10:00:00Z"))).toBe(true);
+    expect(parseEventTimestamp("2026-02-30T10:00:00Z")).toBeUndefined();
+    expect(parseEventTimestamp("2026-04-31 10:00")).toBeUndefined();
+    expect(parseEventTimestamp("2025-02-29T10:00:00Z")).toBeUndefined();
+  });
+
+  it("reads a leap day and an offset that moves the instant into the next month", () => {
+    expect(parseEventTimestamp("2024-02-29T10:00:00Z")).toBe(
+      Date.UTC(2024, 1, 29, 10),
+    );
+    expect(parseEventTimestamp("2026-02-28T23:30:00-05:00")).toBe(
+      Date.UTC(2026, 2, 1, 4, 30),
+    );
+  });
+
+  it("shows an impossible date as sent", () => {
+    const view = eventTimingView(
+      { ...event, timestamp: "2026-02-30T10:00:00Z" },
+      TURN_STARTED,
+      asMs,
+    );
+    expect(view.stops[0]).toEqual({
+      key: "occurred",
+      label: "Occurred",
+      value: "2026-02-30T10:00:00Z",
+      asSent: true,
+    });
+  });
 });
 
 describe("the prompt row and identifiers", () => {

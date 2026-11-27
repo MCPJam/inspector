@@ -195,12 +195,32 @@ export function eventIdentifierRows(event: EventAtTurn): EventIdentifierRow[] {
 /**
  * The server's `timestamp` in epoch ms, or `undefined` when it is not a date
  * and time `Date.parse` can read. A bare date or a bare time is not read as
- * one: either would place the event at a moment the server never said.
+ * one: either would place the event at a moment the server never said. Nor is
+ * a day the month does not have, which `Date.parse` rolls over (February 30
+ * would read as March 2).
  */
 export function parseEventTimestamp(timestamp: string): number | undefined {
-  if (!/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(timestamp)) return undefined;
+  const date = /(\d{4})-(\d{2})-(\d{2})[T ]\d{2}:\d{2}/.exec(timestamp);
+  if (!date || !isCalendarDate(Number(date[1]), Number(date[2]), Number(date[3]))) {
+    return undefined;
+  }
   const ms = Date.parse(timestamp);
   return Number.isFinite(ms) ? ms : undefined;
+}
+
+/**
+ * Whether the date as written exists. Checked on the written fields, not on
+ * the parsed instant, which an offset can move into another day.
+ */
+function isCalendarDate(year: number, month: number, day: number): boolean {
+  const date = new Date(0);
+  // `setUTCFullYear`, not `Date.UTC`, which reads years 0 to 99 as 1900s.
+  date.setUTCFullYear(year, month - 1, day);
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
 }
 
 function formatClockTime(ms: number): string {
