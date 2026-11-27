@@ -31,7 +31,6 @@ import type { PredicateResult, ToolErrorRecord } from "@/shared/eval-matching";
 import {
   buildIterationTranscript,
   checkRole,
-  evaluatePredicates,
   extractFinalAssistantMessage,
   summarizeRenderObservations,
   widgetCallToToolCall,
@@ -59,6 +58,7 @@ import type { BrowserSessionContext } from "../browser-session-context";
 import { MAX_WIDGET_FOLLOWUP_TURNS } from "./drive-hosted-eval-turn.js";
 import {
   assertionScope,
+  evaluateWithPinnedResults,
   recordPinnedCall,
   type AssertionScope,
   type PinnedCallRecord,
@@ -164,11 +164,9 @@ export interface SkippedStep {
   reason: string;
 }
 
+type DeclarationField = "toolDeclarations" | "declarationsCaptured" | "accountRouting" | "connectionKeys";
 export function createStepExecutionState(
-  declarations: Pick<
-    StepExecutionState,
-    "toolDeclarations" | "declarationsCaptured" | "accountRouting" | "connectionKeys"
-  > = {},
+  declarations: Pick<StepExecutionState, DeclarationField> = {},
 ): StepExecutionState {
   return {
     ...declarations,
@@ -517,9 +515,10 @@ async function runAssertStep(
   }
   // Transcript-level predicate: evaluate against the state snapshot at this
   // exact position (point-in-time).
-  const [result] = evaluatePredicates(
+  const [result] = evaluateWithPinnedResults(
     snapshotTranscript(state, assertionScope(state, step.assertion)),
     [step.assertion],
+    state.pinnedCalls,
   );
   state.assertionResults.push({
     stepId: step.id,
