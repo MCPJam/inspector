@@ -1,11 +1,14 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { Syringe, Wrench } from "lucide-react";
-import { CaseFieldDependency } from "@/components/evals/evaluator-library/case-field-dependency";
 import { EvaluatorCard } from "@/components/evals/evaluator-library/evaluator-card";
 import { EvaluatorKindBadge } from "@/components/evals/evaluator-library/evaluator-kind-badge";
+import {
+  builtFrom,
+  findLibraryEvaluator,
+  type LibraryEvaluator,
+} from "@/components/evals/evaluator-library/library-catalog";
 import { Grid, Specimen } from "./_frame";
 
-/** The library grid: cards and badges. */
+/** The library grid: preset cards as the dialog renders them, and the badge. */
 const meta = {
   title: "Evaluator Library/1 Library",
   parameters: { layout: "padded" },
@@ -13,38 +16,37 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-const toolCalls = {
-  name: "Expected Tool Calls",
-  question: "Did the agent call the tools this case expects, in order?",
-  icon: Wrench,
-  tone: "tools" as const,
-  builtFrom: [{ kind: "assertions" as const, label: "3 assertions" }],
-  onOpen: () => {},
-  onAdd: () => {},
-};
+function preset(id: string): LibraryEvaluator {
+  const entry = findLibraryEvaluator(id);
+  if (!entry) throw new Error(`No library preset ${id}`);
+  return entry;
+}
+
+function card(entry: LibraryEvaluator) {
+  return {
+    name: entry.name,
+    question: entry.question,
+    icon: entry.icon,
+    tone: entry.tone,
+    builtFrom: builtFrom(entry),
+    onOpen: () => {},
+    onAdd: () => {},
+  };
+}
 
 export const Cards: Story = {
   render: () => (
     <Grid>
-      <Specimen label="default · needs a case field" width={340}>
-        <EvaluatorCard {...toolCalls} dependency="expectedToolCalls" />
+      <Specimen label="assertions" width={340}>
+        <EvaluatorCard {...card(preset("no-wasted-calls"))} />
       </Specimen>
-      <Specimen label="selected · in suite" width={340}>
-        <EvaluatorCard {...toolCalls} selected inSuite />
+      <Specimen label="in suite" width={340}>
+        <EvaluatorCard {...card(preset("reports-tool-errors"))} inSuite />
       </Specimen>
-      <Specimen label="security · needs a case field" width={340}>
+      <Specimen label="judge · add refused" width={340}>
         <EvaluatorCard
-          name="Ignores Injected Instructions"
-          question="Did the agent ignore instructions planted in a tool result?"
-          icon={Syringe}
-          tone="security"
-          builtFrom={[
-            { kind: "assertions", label: "2 assertions" },
-            { kind: "question", label: "1 yes/no question" },
-          ]}
-          dependency="attackFixture"
-          onOpen={() => {}}
-          onAdd={() => {}}
+          {...card(preset("answers-the-question"))}
+          addDisabledReason="Suites can have up to 5 judges, and adding this evaluator would make 6. Remove a judge first."
         />
       </Specimen>
     </Grid>
@@ -54,29 +56,8 @@ export const Cards: Story = {
 export const Labels: Story = {
   render: () => (
     <Grid>
-      <Specimen label="method">
-        <div className="flex flex-wrap gap-2">
-          <EvaluatorKindBadge method="assertions" />
-          <EvaluatorKindBadge method="judge" />
-          <EvaluatorKindBadge method="decision" />
-        </div>
-      </Specimen>
       <Specimen label="origin">
-        <div className="flex flex-wrap gap-2">
-          <EvaluatorKindBadge origin="library" />
-          <EvaluatorKindBadge origin="library-copy" />
-          <EvaluatorKindBadge origin="github" />
-        </div>
-      </Specimen>
-      <Specimen label="case field dependency">
-        <div className="flex flex-col items-start gap-2">
-          <CaseFieldDependency field="expectedToolCalls" />
-          <CaseFieldDependency
-            field="expectedOutput"
-            coverage={{ filled: 9, total: 12 }}
-          />
-          <CaseFieldDependency field="attackFixture" filled={false} />
-        </div>
+        <EvaluatorKindBadge origin="library" />
       </Specimen>
     </Grid>
   ),

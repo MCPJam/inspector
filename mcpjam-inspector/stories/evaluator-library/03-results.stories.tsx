@@ -120,7 +120,6 @@ export const Scorecard: Story = {
         <ScorecardEvaluatorCard
           name="Quoted Cart Total"
           icon={Wrench}
-          origin="github"
           status="error"
           checks={[
             {

@@ -144,6 +144,15 @@ export type SuiteCapabilities = {
       execution: "wired";
       calibration: "unavailable";
     };
+    /** Author-written judges; absent on a backend that cannot run them. */
+    custom?: {
+      role: "advisory";
+      templateVersion: number;
+      maxJudges: number;
+      maxPromptLength: number;
+      variables: string[];
+      execution: "wired";
+    };
   };
   /**
    * Scorer-authoring capabilities. Absent on a backend that predates A1 —
@@ -320,4 +329,11 @@ export function hasJudgeSeverityCapability(
   capabilities: SuiteCapabilities | null | undefined,
 ): boolean {
   return capabilities?.judges?.goalCompletion != null;
+}
+
+/** The backend runs author-written judges (evaluator library slice 3). */
+export function hasCustomJudgesCapability(
+  capabilities: Pick<SuiteCapabilities, "judges"> | null | undefined,
+): boolean {
+  return capabilities?.judges?.custom?.execution === "wired";
 }

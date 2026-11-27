@@ -36,6 +36,7 @@ export const JudgePrompt: Story = {
             value={prompt}
             onChange={setPrompt}
             variables={variables}
+            maxLength={4000}
           />
         </Specimen>
         <Specimen label="variable mapping" width={680}>

@@ -16,6 +16,7 @@ export type SummaryRow = {
   predicate?: Predicate;
   /** Rubric-check rows: the `q:<id>` key, which names a library question. */
   rubricCheck?: { key: string };
+  customJudge?: { evaluatorId?: string };
   result: TrialRowResult;
 };
 
@@ -84,7 +85,8 @@ export function EvaluatorScorecardSummary({
   for (const row of rows) {
     const id =
       row.predicate?.evaluator?.id ??
-      evaluatorIdForQuestionKey(row.rubricCheck?.key, questions);
+      evaluatorIdForQuestionKey(row.rubricCheck?.key, questions) ??
+      row.customJudge?.evaluatorId;
     if (!id) continue;
     byEvaluator.set(id, [...(byEvaluator.get(id) ?? []), row]);
   }

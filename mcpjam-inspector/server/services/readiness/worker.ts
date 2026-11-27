@@ -58,6 +58,7 @@ import {
 } from "./backend-client.js";
 import type {
   ReviewerAttemptView,
+  ReviewerAttemptWrite,
   ReviewerSignInOutcome,
 } from "./reviewer-sign-in.js";
 import {
@@ -358,7 +359,7 @@ async function reviewerFor(
 export function attemptEnding(
   signIn: Extract<ReviewerSignInOutcome, { kind: "connected" }>,
   identity: DirectoryReviewerIdentityEvidence | undefined,
-): { outcome: "passed" | "failed"; detail: string } {
+): ReviewerAttemptWrite {
   const who =
     signIn.signedInBy === "person"
       ? "A person signed in as the reviewer through the handoff link"
@@ -376,6 +377,16 @@ export function attemptEnding(
     };
   }
   if (identity?.outcome !== "verified" && !identity?.notAsked) {
+    if (signIn.signedInBy === "person") {
+      const reason = `The reviewer signed in, but the identity check could not run${why ? `: ${why}` : ""}.`;
+      return {
+        stage: { stage: "identity", status: "blocked", detail: reason },
+        waitingFor: {
+          reason,
+          action: "Check the server and the identity tool settings, then resume to retry verification with the connected reviewer account.",
+        },
+      };
+    }
     return {
       outcome: "failed",
       detail: `${who}, but MCPJam could not confirm who it signed in as${why ? `: ${why}` : ""}. Fix the identity tool settings under Reviewer check, then start a new attempt.`,
@@ -400,7 +411,7 @@ export function attemptEnding(
 async function endAttempt(
   lease: ReadinessLease,
   attemptId: string,
-  ending: { outcome: "passed" | "failed"; detail: string },
+  ending: ReviewerAttemptWrite,
 ) {
   try {
     await recordReviewerAttempt(lease, attemptId, ending);

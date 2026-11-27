@@ -59,6 +59,8 @@ import {
   type PredicateScope,
 } from "@mcpjam/sdk/predicates";
 import { hostedPlatformGateDefinitions } from "./platform-gate-rows.js";
+import { codeEvaluatorScoreDefinition } from "./sandbox-phases/code-score-family.js";
+import type { FrozenCodeEvaluator } from "./sandbox-phases/frozen-config.js";
 
 /**
  * Scorer identity lives in `shared/` so the client can mint the same ids it
@@ -86,6 +88,10 @@ export {
 } from "@/shared/hosted-criterion-id";
 import { authoredRequiredRole } from "@mcpjam/sdk/contract";
 import { isRequiredRole } from "@mcpjam/sdk/predicates";
+import {
+  hostedCustomJudgeScoreDefinition,
+  type HostedCustomJudgeDefinitionInput,
+} from "./custom-judge-rows.js";
 
 /**
  * Version of the hosted predicate projection — the "predicate evaluator
@@ -372,12 +378,16 @@ export type HostedScoreDefinitionInputs = {
   agentActivityFired?: boolean;
   /** One per question the rubric-check pass asked (second pass only). */
   rubricChecks?: ReadonlyArray<HostedRubricCheckDefinitionInput>;
+  /** One per custom judge the job ran (second pass only). */
+  customJudges?: ReadonlyArray<HostedCustomJudgeDefinitionInput>;
   /**
    * Declares the platform checks (tool errors, iteration error, widget
    * checks). Opt-in, so the assertion backtest, which never ran them, does not
    * report their definitions as differences.
    */
   platformGates?: { failOnToolError: boolean };
+  /** EFTW-90: the run's frozen code evaluators, one `code:<id>` each. */
+  codeEvaluators?: readonly FrozenCodeEvaluator[];
 };
 
 /**
@@ -414,8 +424,14 @@ export function buildHostedScoreDefinitions(
   for (const question of inputs.rubricChecks ?? []) {
     definitions.push(hostedRubricCheckScoreDefinition(question));
   }
+  for (const judge of inputs.customJudges ?? []) {
+    definitions.push(hostedCustomJudgeScoreDefinition(judge));
+  }
   if (inputs.platformGates) {
     definitions.push(...hostedPlatformGateDefinitions(inputs.platformGates));
+  }
+  for (const evaluator of inputs.codeEvaluators ?? []) {
+    definitions.push(codeEvaluatorScoreDefinition(evaluator));
   }
   const byId = new Map<string, ResolvedScoreDefinition>();
   for (const definition of definitions) {

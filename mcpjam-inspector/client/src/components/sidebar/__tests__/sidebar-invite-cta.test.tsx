@@ -94,7 +94,7 @@ vi.mock("@/components/sidebar/nav-main", () => ({
 
 vi.mock("@/components/sidebar/sidebar-credits", () => ({
   SidebarCredits: () => (
-    <button data-testid="sidebar-see-credits">See credits</button>
+    <button data-testid="sidebar-see-credits">Credits</button>
   ),
 }));
 
@@ -309,7 +309,7 @@ describe("sidebar invite CTA", () => {
     );
   });
 
-  it("orders the signed-in footer See credits, invite CTA, then the profile menu", () => {
+  it("orders the signed-in footer Credits, invite CTA, then the profile menu", () => {
     renderSidebar();
 
     const inviteButton = screen.getByRole("button", {
@@ -328,7 +328,7 @@ describe("sidebar invite CTA", () => {
     ).toBeTruthy();
   });
 
-  it("hides See credits from guests, who have no organization to bill", () => {
+  it("hides Credits from guests, who have no organization to bill", () => {
     mockUseConvexAuth.mockReturnValue({
       isAuthenticated: false,
       isLoading: false,

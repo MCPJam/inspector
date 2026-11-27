@@ -42,6 +42,11 @@ import type {
   SwarmReport,
 } from "../contract/index.js";
 import type { CaseJudgeSettings } from "../contract/judge-settings.js";
+import type {
+  CodeEvaluatorInput,
+  SuiteGradingInput,
+  SuiteScriptsInput,
+} from "../contract/code-evaluators.js";
 import type { PlatformGoalJudge } from "./goal-judge.js";
 export type {
   PlatformGoalJudge,
@@ -1531,9 +1536,12 @@ export type PlatformEvalLlmTouchpointId =
   | "goalCompletion"
   | "groundedness"
   | "rubricChecks"
+  | "customJudges"
   | "serverQuality"
   | "runInsights"
   | "runGroupQuality"
+  | "metadataAttribution"
+  | "suspectedCondition"
   | "evalFindingsPipeline";
 
 export type PlatformDisclosureFires =
@@ -2023,6 +2031,12 @@ export interface PlatformEvalSuiteSettingsBase {
      */
     groundedness?: PlatformEvalSuiteGroundednessJudge;
   };
+  /** Code evaluators as stored (EFTW-90). Absent from older deployments. */
+  codeEvaluators?: CodeEvaluatorInput[];
+  /** Setup and cleanup scripts, `null` when the suite has none. */
+  scripts?: SuiteScriptsInput | null;
+  /** Grading box settings, `null` when unset. */
+  grading?: SuiteGradingInput | null;
   /**
    * The stored spelling of which criterion decides this suite's runs.
    *

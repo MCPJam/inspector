@@ -49,6 +49,7 @@
  * so a duplicate doorbell produces the same rows and the same reports.
  */
 
+import { CODE_SCORER_PREFIX } from "./sandbox-phases/code-score-family.js";
 import type {
   ResolvedScoreDefinition,
   StageEvidence,
@@ -84,6 +85,7 @@ import {
   buildHostedScoreContract,
   type HostedRubricChecksVerdictLike,
 } from "./score-rows.js";
+import type { HostedCustomJudgesVerdictLike } from "./custom-judge-rows.js";
 import {
   HOSTED_TOOL_ARGUMENTS_SCORER_ID,
   HOSTED_TOOL_MATCH_SCORER_ID,
@@ -308,10 +310,23 @@ function readJudgeVerdict(
 export function readRubricChecksVerdict(
   metadata: Record<string, unknown> | undefined,
 ): HostedRubricChecksVerdictLike | undefined {
-  const verdict = metadata?.rubricChecksVerdict;
-  return typeof verdict === "object" && verdict !== null
-    ? (verdict as HostedRubricChecksVerdictLike)
-    : undefined;
+  return readStoredVerdict(metadata, "rubricChecksVerdict");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * A server-written verdict object off iteration metadata, by key. Every
+ * field stays `unknown`; the row builders validate what they read.
+ */
+function readStoredVerdict(
+  metadata: Record<string, unknown> | undefined,
+  key: string,
+): Record<string, unknown> | undefined {
+  const verdict = metadata?.[key];
+  return isRecord(verdict) ? verdict : undefined;
 }
 
 /**
@@ -514,6 +529,8 @@ export function deriveIterationPayload(args: {
   attributionVerdict: MetadataAttributionVerdictMetadata | undefined;
   /** Goal-completion channel only: its advisory rows ride this job's write. */
   rubricChecksVerdict?: HostedRubricChecksVerdictLike;
+  /** Same channel and rule as `rubricChecksVerdict`. */
+  customJudgesVerdict?: HostedCustomJudgesVerdictLike;
 }): { stage: Record<string, unknown>; scores?: unknown[]; config?: unknown } {
   const { iteration, judgeVerdict, attributionVerdict } = args;
   const metadata = iteration.metadata ?? {};
@@ -682,8 +699,21 @@ export function deriveIterationPayload(args: {
     ...(args.rubricChecksVerdict
       ? { rubricChecksVerdict: args.rubricChecksVerdict }
       : {}),
+    ...(args.customJudgesVerdict
+      ? { customJudgesVerdict: args.customJudgesVerdict }
+      : {}),
   });
-  const carried = [...(storedTools ?? []), ...storedPlatformGates];
+  // EFTW-90: code evaluators ran once, in the first pass's grading box. Their
+  // rows stay as stored, so their definitions are carried the same way.
+  const storedCode =
+    storedScorerDefinitions(metadata.evaluationConfig, (id) =>
+      id.startsWith(CODE_SCORER_PREFIX),
+    ) ?? [];
+  const carried = [
+    ...(storedTools ?? []),
+    ...storedPlatformGates,
+    ...storedCode,
+  ];
   const evaluationConfig = carried.length
     ? buildEvaluationConfigSnapshot([...builtConfig.definitions, ...carried])
     : builtConfig;
@@ -707,14 +737,16 @@ const TOOL_SCORER_IDS: ReadonlySet<string> = new Set([
  */
 function storedScorerDefinitions(
   evaluationConfig: unknown,
-  scorerIds: ReadonlySet<string>,
+  scorerIds: ReadonlySet<string> | ((scorerId: string) => boolean),
 ): ResolvedScoreDefinition[] | undefined {
+  const wanted =
+    typeof scorerIds === "function" ? scorerIds : (id: string) => scorerIds.has(id);
   const definitions = asRecord(evaluationConfig)?.definitions;
   if (!Array.isArray(definitions)) return undefined;
   const found: ResolvedScoreDefinition[] = [];
   for (const value of definitions) {
     const scorerId = asRecord(value)?.scorerId;
-    if (typeof scorerId !== "string" || !scorerIds.has(scorerId)) {
+    if (typeof scorerId !== "string" || !wanted(scorerId)) {
       continue;
     }
     const parsed = resolvedScoreDefinitionSchema.safeParse(value);
@@ -925,15 +957,21 @@ export async function runJudgeSecondPass(
       !goalCompletionFailed
     ) {
       const rubricChecksVerdict = readRubricChecksVerdict(iteration.metadata);
+      const customJudgesVerdict = readStoredVerdict(
+        iteration.metadata,
+        "customJudgesVerdict",
+      );
       const { stage, scores, config } = deriveIterationPayload({
         iteration,
         mode,
         judgeVerdict,
         attributionVerdict: undefined,
         ...(rubricChecksVerdict ? { rubricChecksVerdict } : {}),
+        ...(customJudgesVerdict ? { customJudgesVerdict } : {}),
       });
-      if (Object.keys(stage).length > 0) {
-        const fields = stageFields(stage);
+      const hasStage = Object.keys(stage).length > 0;
+      if (hasStage || scores) {
+        const fields = hasStage ? stageFields(stage) : {};
         try {
           const result = await ports.applyDerivation(iteration.iterationId, {
             goalCompletionJobId,

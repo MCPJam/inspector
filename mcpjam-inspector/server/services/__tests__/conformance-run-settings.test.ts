@@ -199,7 +199,12 @@ describe("suiteConfigsForRun", () => {
       new AbortController().signal,
     );
     expect(configs.protocolVersion).toBeUndefined();
-    // Unpinned, the 2026-07-28 output-schema check never calls its tool.
-    expect(configs.protocol).not.toHaveProperty("fixtures");
+    // Unpinned, the run negotiates a 2025 revision. The output-schema check
+    // runs there too, so its tool is still sent.
+    expect(configs.protocol).toMatchObject({
+      fixtures: {
+        toolCalls: [{ toolName: "echo", arguments: { message: "hi" } }],
+      },
+    });
   });
 });

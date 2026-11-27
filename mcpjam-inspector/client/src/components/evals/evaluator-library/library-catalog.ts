@@ -1,10 +1,14 @@
 import { DECLARED_OUTPUT_SCHEMA, type Predicate } from "@mcpjam/sdk/predicates";
 import {
   MAX_RUBRIC_CHECK_QUESTIONS,
+  type CustomJudge,
   type RubricCheckQuestion,
 } from "@/components/shared/session-quality/judge-config";
 import {
+  AlignLeft,
   Braces,
+  MessageSquareText,
+  Target,
   CircleCheck,
   MessageCircleWarning,
   FileWarning,
@@ -22,6 +26,12 @@ import type { BuiltFromPart, EvaluatorTone } from "./evaluator-library-types";
  */
 export type LibraryEvaluator = {
   id: string;
+  category:
+    | "tool-calls"
+    | "final-answer"
+    | "tool-errors"
+    | "server-output"
+    | "security";
   version: number;
   name: string;
   /** About this run, never about the server in general. */
@@ -34,6 +44,37 @@ export type LibraryEvaluator = {
    * the goal-completion judge. Advisory, like every rubric check.
    */
   questions?: readonly LibraryQuestion[];
+  /** Judge prompts, each its own model call per iteration. Advisory. */
+  judges?: readonly LibraryJudge[];
+};
+
+/** A library judge before it is given its id and tag. */
+type LibraryJudge = {
+  slug: string;
+  label: string;
+  prompt: string;
+  output: CustomJudge["output"];
+};
+
+/** What a suite already has, for "In this suite" and for what to add. */
+export type LibrarySuiteParts = {
+  predicates: readonly Predicate[];
+  questions?: readonly RubricCheckQuestion[];
+  judges?: readonly CustomJudge[];
+};
+
+/** What one library evaluator adds that the suite does not have yet. */
+export type LibraryAddition = {
+  checks: Predicate[];
+  questions: RubricCheckQuestion[];
+  judges: CustomJudge[];
+};
+
+/** What this deployment can save. */
+export type LibrarySupport = {
+  authorableKinds?: readonly Predicate["type"][];
+  canAskYesNo?: boolean;
+  canJudge?: boolean;
 };
 
 /** A library question before it is given its id and tag. */
@@ -47,6 +88,7 @@ export type LibraryQuestion = {
 export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
   {
     id: "no-wasted-calls",
+    category: "tool-calls",
     version: 1,
     name: "No Wasted Calls",
     question:
@@ -62,6 +104,7 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
   },
   {
     id: "valid-tool-arguments",
+    category: "tool-calls",
     version: 1,
     name: "Valid Tool Arguments",
     question: "Did every call send arguments that match the tool's schema?",
@@ -71,6 +114,7 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
   },
   {
     id: "results-match-output-schema",
+    category: "server-output",
     version: 1,
     name: "Results Match Output Schema",
     question:
@@ -81,6 +125,7 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
   },
   {
     id: "delivers-final-answer",
+    category: "final-answer",
     version: 1,
     name: "Delivers a Final Answer",
     question:
@@ -94,6 +139,7 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
   },
   {
     id: "actionable-tool-errors",
+    category: "tool-errors",
     version: 1,
     name: "Actionable Tool Errors",
     question:
@@ -107,6 +153,7 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
   },
   {
     id: "reports-tool-errors",
+    category: "tool-errors",
     version: 1,
     name: "Reports Tool Errors",
     question:
@@ -128,7 +175,65 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
     ],
   },
   {
+    id: "answers-the-question",
+    category: "final-answer",
+    version: 1,
+    name: "Answers the Question",
+    question: "Did the final answer address what the user asked?",
+    icon: MessageSquareText,
+    tone: "answer",
+    checks: [],
+    judges: [
+      {
+        slug: "answers",
+        label: "Answers what the user asked",
+        prompt:
+          "Judge only the content of the final answer: does it give the user what they asked for? Pass if the user would not need to ask again or rephrase. Do not judge how the agent got there, such as which tools it called; other checks cover that.\n\nUser's request:\n{{user_prompt}}\n\nFinal answer:\n{{final_answer}}",
+        output: { kind: "passfail" },
+      },
+    ],
+  },
+  {
+    id: "meets-expected-outcome",
+    category: "final-answer",
+    version: 1,
+    name: "Meets the Expected Outcome",
+    question: "Did the run reach the outcome this case expects?",
+    icon: Target,
+    tone: "answer",
+    checks: [],
+    judges: [
+      {
+        slug: "meets",
+        label: "Reaches the expected outcome",
+        prompt:
+          "Compare the run with the expected output. Pass only if the tool results and the final answer show the outcome was reached, not just described.\n\nExpected output:\n{{expected_output}}\n\nTool results:\n{{tool_results}}\n\nFinal answer:\n{{final_answer}}",
+        output: { kind: "passfail" },
+      },
+    ],
+  },
+  {
+    id: "clear-concise-answer",
+    category: "final-answer",
+    version: 1,
+    name: "Clear, Concise Answer",
+    question: "How clear and to the point was the final answer?",
+    icon: AlignLeft,
+    tone: "answer",
+    checks: [],
+    judges: [
+      {
+        slug: "clarity",
+        label: "Clear and concise",
+        prompt:
+          "Rate how clear and concise the final answer is for this request, from 0 (confusing, padded or off topic) to 1 (clear and to the point).\n\nRequest:\n{{user_prompt}}\n\nFinal answer:\n{{final_answer}}",
+        output: { kind: "score", threshold: 0.7 },
+      },
+    ],
+  },
+  {
     id: "avoids-risky-tools",
+    category: "security",
     version: 1,
     name: "Avoids Risky Tools",
     question:
@@ -174,6 +279,43 @@ export function taggedQuestions(
     pass: { answer: q.passOn },
     evaluator: { id: evaluator.id, version: evaluator.version },
   }));
+}
+
+/** The evaluator's judges, each with a stable id and its tag. */
+export function taggedJudges(evaluator: LibraryEvaluator): CustomJudge[] {
+  return (evaluator.judges ?? []).map((j) => ({
+    id: `${evaluator.id}-${j.slug}`,
+    label: j.label,
+    prompt: j.prompt,
+    output: j.output,
+    evaluator: { id: evaluator.id, version: evaluator.version },
+  }));
+}
+
+/** Everything the evaluator adds that the suite does not have yet. */
+export function missingParts(
+  evaluator: LibraryEvaluator,
+  suite: LibrarySuiteParts,
+): LibraryAddition {
+  const questionIds = new Set(
+    suite.questions?.filter((q) => q.evaluator?.id === evaluator.id).map((q) => q.id),
+  );
+  const judgeIds = new Set(
+    suite.judges?.filter((j) => j.evaluator?.id === evaluator.id).map((j) => j.id),
+  );
+  // Customize swaps the tagged judge for a copy carrying `basedOn`; offering
+  // the judge again would grade and charge each iteration twice.
+  const customized = suite.judges?.some((j) => j.basedOn?.id === evaluator.id);
+  return {
+    checks: missingChecks(
+      evaluator,
+      suite.predicates.filter((p) => p.evaluator?.id === evaluator.id),
+    ),
+    questions: taggedQuestions(evaluator).filter((q) => !questionIds.has(q.id)),
+    judges: customized
+      ? []
+      : taggedJudges(evaluator).filter((j) => !judgeIds.has(j.id)),
+  };
 }
 
 /**
@@ -246,23 +388,23 @@ export function builtFrom(evaluator: LibraryEvaluator): BuiltFromPart[] {
       label: `${q} yes/no ${q === 1 ? "question" : "questions"}`,
     });
   }
+  const j = evaluator.judges?.length ?? 0;
+  if (j) {
+    parts.push({ kind: "judge", label: `${j} ${j === 1 ? "judge" : "judges"}` });
+  }
   return parts;
 }
 
-/** True when the suite already has every check this evaluator adds. */
+/** True when the suite already has everything this evaluator adds. */
 export function isInSuite(
   evaluator: LibraryEvaluator,
-  predicates: readonly Predicate[],
-  questions: readonly RubricCheckQuestion[] = [],
+  suite: LibrarySuiteParts,
 ): boolean {
-  const tagged = predicates.filter((p) => p.evaluator?.id === evaluator.id);
+  const missing = missingParts(evaluator, suite);
   return (
-    missingChecks(evaluator, tagged).length === 0 &&
-    taggedQuestions(evaluator).every((expected) =>
-      questions.some(
-        (q) => q.id === expected.id && q.evaluator?.id === evaluator.id,
-      ),
-    )
+    missing.checks.length === 0 &&
+    missing.questions.length === 0 &&
+    missing.judges.length === 0
   );
 }
 
@@ -271,17 +413,19 @@ export function isInSuite(
  * refusal is shown where the action would be, so nothing is dropped or
  * skipped silently.
  */
-export type QuestionsEdit =
+type QuestionsEdit =
   | { questions: RubricCheckQuestion[]; refused?: undefined }
   | { refused: string };
 
-/** An id these questions need that a question from elsewhere already holds. */
+type Tagged = { id: string; evaluator?: { id: string } };
+
+/** An id these items need that an item from elsewhere already holds. */
 function takenId(
-  incoming: readonly RubricCheckQuestion[],
-  questions: readonly RubricCheckQuestion[],
+  incoming: readonly Tagged[],
+  current: readonly Tagged[],
 ): string | undefined {
   return incoming.find((wanted) =>
-    questions.some(
+    current.some(
       (q) => q.id === wanted.id && q.evaluator?.id !== wanted.evaluator?.id,
     ),
   )?.id;
@@ -339,32 +483,104 @@ export function questionsWithEvaluatorUpdated(
       refused: `A question already uses the ID "${taken}". Rename or remove it to update this evaluator.`,
     };
   }
-  const current = new Map(fresh.map((q) => [q.id, q]));
-  const next: RubricCheckQuestion[] = [];
-  for (const q of questions) {
-    if (q.evaluator?.id !== evaluator.id) next.push(q);
-    else {
-      const replacement = current.get(q.id);
-      if (replacement) next.push(replacement);
-      current.delete(q.id);
-    }
-  }
   return overCap(
-    [...next, ...current.values()],
+    replacedFromEvaluator(questions, evaluator.id, fresh),
     questions.length,
     "updating this evaluator",
   );
 }
 
-/** True when this deployment accepts every check kind the evaluator adds. */
+/**
+ * `items` with the evaluator's replaced by `fresh`. Each keeps its place; one
+ * `fresh` drops goes, and one it adds goes last.
+ */
+function replacedFromEvaluator<T extends Tagged>(
+  items: readonly T[],
+  evaluatorId: string,
+  fresh: readonly T[],
+): T[] {
+  const current = new Map(fresh.map((item) => [item.id, item]));
+  const next: T[] = [];
+  for (const item of items) {
+    if (item.evaluator?.id !== evaluatorId) next.push(item);
+    else {
+      const replacement = current.get(item.id);
+      if (replacement) next.push(replacement);
+      current.delete(item.id);
+    }
+  }
+  return [...next, ...current.values()];
+}
+
+/** The suite's judges after an edit, or why the edit cannot be made. */
+type JudgesEdit =
+  | { judges: CustomJudge[]; refused?: undefined }
+  | { refused: string };
+
+/** Refuses an edit that grows the list past the backend's judge limit. */
+function overJudgeLimit(
+  judges: CustomJudge[],
+  before: number,
+  limit: number,
+  action: string,
+): JudgesEdit {
+  const over = judges.length - limit;
+  if (over <= 0 || judges.length <= before) return { judges };
+  return {
+    refused: `Suites can have up to ${limit} ${limit === 1 ? "judge" : "judges"}, and ${action} would make ${judges.length}. Remove ${over === 1 ? "a judge" : `${over} judges`} first.`,
+  };
+}
+
+/** The suite's judges with an evaluator's judges appended, as for questions. */
+export function judgesWithAdded(
+  judges: readonly CustomJudge[],
+  adding: readonly CustomJudge[],
+  limit: number,
+): JudgesEdit {
+  const taken = takenId(adding, judges);
+  if (taken) {
+    return {
+      refused: `A judge already uses the ID "${taken}". Remove that judge to add this one.`,
+    };
+  }
+  const ids = new Set(judges.map((j) => j.id));
+  return overJudgeLimit(
+    [...judges, ...adding.filter((j) => !ids.has(j.id))],
+    judges.length,
+    limit,
+    "adding this evaluator",
+  );
+}
+
+/** The suite's judges with this evaluator's at its current version. */
+export function judgesWithEvaluatorUpdated(
+  evaluator: LibraryEvaluator,
+  judges: readonly CustomJudge[],
+  limit: number,
+): JudgesEdit {
+  const fresh = taggedJudges(evaluator);
+  const taken = takenId(fresh, judges);
+  if (taken) {
+    return {
+      refused: `A judge already uses the ID "${taken}". Remove that judge to update this one.`,
+    };
+  }
+  return overJudgeLimit(
+    replacedFromEvaluator(judges, evaluator.id, fresh),
+    judges.length,
+    limit,
+    "updating this evaluator",
+  );
+}
+
+/** True when this deployment can save everything the evaluator adds. */
 export function isAuthorable(
   evaluator: LibraryEvaluator,
-  authorableKinds: readonly Predicate["type"][] | undefined,
-  canAskYesNo = false,
+  support: LibrarySupport = {},
 ): boolean {
-  if (evaluator.questions?.length && !canAskYesNo) return false;
-  if (!authorableKinds) return true;
-  return evaluator.checks.every((check) =>
-    authorableKinds.includes(check.type),
-  );
+  if (evaluator.questions?.length && !support.canAskYesNo) return false;
+  if (evaluator.judges?.length && !support.canJudge) return false;
+  const kinds = support.authorableKinds;
+  if (!kinds) return true;
+  return evaluator.checks.every((check) => kinds.includes(check.type));
 }

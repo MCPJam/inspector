@@ -1196,6 +1196,7 @@ export * from "./standard-check-ids.js";
 export * from "./standard-checks.js";
 export * from "./goal-completion.js";
 export * from "./judge-settings.js";
+export * from "./code-evaluators.js";
 export * from "./swarm-session-verdict.js";
 export {
   ITERATION_ERROR_SCORER_ID,

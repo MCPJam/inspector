@@ -81,7 +81,7 @@ export const PROTOCOL_CHECK_CATALOG = {
   "protocol-invalid-method-error": {
     title: "Invalid Method Error",
     description:
-      "Server returns a valid JSON-RPC error for an unrecognized method name.",
+      "Server answers an unrecognized method name with the JSON-RPC Method not found error (-32601), and with HTTP 404 on 2026-07-28.",
   },
   "localhost-host-rebinding-rejected": {
     title: "Reject Evil Host Header",
@@ -124,7 +124,7 @@ export const PROTOCOL_CHECK_CATALOG = {
   "modern-client-handshake": {
     title: "Modern Client Handshake",
     description:
-      "The official client negotiates the modern revision and receives the server identity and capabilities.",
+      "The official client negotiates the modern revision and receives the server's capabilities.",
   },
   "modern-server-discover": {
     title: "Modern Server Discovery",
@@ -367,6 +367,11 @@ export const READINESS_CATALOG = {
   "readiness-protocol-version-header-required": {
     title: "Protocol Version Header Required",
     description: "A POST without the MCP-Protocol-Version header is rejected.",
+  },
+  "readiness-server-identity": {
+    title: "Server Identity",
+    description:
+      "Results carry the server's name and version, so a client can show which server answered.",
   },
   "readiness-tool-name-conventions": {
     title: "Tool Name Conventions",

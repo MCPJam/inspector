@@ -198,6 +198,19 @@ describe("HostConfigComparisonMatrix", () => {
 
     expect(screen.getByText("Verified at")).toBeInTheDocument();
     expect(screen.getByText("2026-07-08")).toBeInTheDocument();
+
+    rerender(
+      <HostConfigComparisonMatrix
+        subjects={[subject]}
+        verifyBaseUrl="https://app.mcpjam.com"
+        summaryColumn={{ label: "Client adoption", render: () => null }}
+      />,
+    );
+
+    expect(screen.queryByText("Verified at")).not.toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /Claude/ })).toHaveTextContent(
+      "Verified on 2026-07-08",
+    );
   });
 
   it("flags caniuse hosts checked over 30 days ago", () => {

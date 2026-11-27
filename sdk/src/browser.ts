@@ -888,6 +888,8 @@ export type {
 // narrow the protocol list to the era a pinned version actually exercises.
 export {
   CHECK_ERAS,
+  CHECK_FIRST_PROTOCOL_VERSION,
+  checkRunsOnVersion,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
   MCP_LOG_LEVELS,

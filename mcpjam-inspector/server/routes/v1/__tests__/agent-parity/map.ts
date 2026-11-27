@@ -92,6 +92,10 @@ export const NOT_EXPOSED: Readonly<Record<string, string>> = {
     "A suite's Claude web and ChatGPT web account choices, behind the web-clients-enabled flag; their v1 routes follow with the web account API",
   "webClientReconnect:*":
     "Runs waiting for a Claude web or ChatGPT web sign-in, behind the web-clients-enabled flag; their v1 routes follow with the web account API",
+  "customJudgePreviewAuth:listCustomJudgePreviewIterations":
+    "Past iterations to try a custom judge draft on, behind the evaluator-library flag; a v1 route follows with custom judge authoring",
+  "customJudgePreview:previewCustomJudge":
+    "Tries an unsaved custom judge draft on a past iteration, behind the evaluator-library flag; a v1 route follows with custom judge authoring",
 };
 
 /**
