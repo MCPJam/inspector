@@ -74,7 +74,6 @@ afterEach(() => {
 
 describe.each([
   { name: "Events", Route: EventsRoute, tab: "events-tab" },
-  { name: "Triggers", Route: EventTriggersRoute, tab: "triggers-tab" },
 ])("$name rollout", ({ Route, tab }) => {
   it("waits on direct navigation and opens when the flag resolves true", () => {
     const { rerender } = render(<MemoryRouter><Route /></MemoryRouter>);
@@ -103,5 +102,18 @@ describe.each([
     rerender(<MemoryRouter><Route /></MemoryRouter>);
     expect(screen.queryByTestId(tab)).not.toBeInTheDocument();
     expect(screen.getByTestId("navigate")).toBeInTheDocument();
+  });
+});
+
+
+describe("legacy Triggers navigation", () => {
+  it("redirects into Playground Events and preserves the selected rule", () => {
+    state.flag = true;
+    render(<MemoryRouter initialEntries={["/triggers?triggerId=saved-rule"]}><EventTriggersRoute /></MemoryRouter>);
+    expect(screen.getByTestId("navigate")).toHaveAttribute("data-to", "/playground?panel=events&background=1&triggerId=saved-rule");
+  });
+  it("waits for rollout hydration before redirecting", () => {
+    render(<MemoryRouter><EventTriggersRoute /></MemoryRouter>);
+    expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
   });
 });

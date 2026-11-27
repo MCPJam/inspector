@@ -244,9 +244,10 @@ describe("the observation view", () => {
     expect(screen.queryByText(/Open the exemplar sessions/)).toBeNull();
     const lead = screen.getByTestId("problem-lead");
     expect(within(lead).getByText("Experiment to try:")).toBeVisible();
-    expect(
-      within(lead).getByText("Success check:"),
-    ).toBeVisible();
+    expect(within(lead).getByText("Success check:")).toBeVisible();
+    expect(within(lead).getByText("Why:").closest("li")).toHaveTextContent(
+      "It is the surface both iterations misread.",
+    );
     expect(
       within(lead).getByText(
         "Evidence reviewed for 2 of 3 iterations. 1 iteration has no checked cause or analysis option.",
@@ -345,6 +346,22 @@ describe("the observation view", () => {
     ).not.toHaveTextContent("Analyze again");
   });
 
+  it("keeps returned explanations visible while a rerun is pending", () => {
+    renderPanel({
+      analyze: { available: true, pending: true, error: null, onRun: vi.fn() },
+      problemsView: view({
+        status: "pending",
+        unlinkedExplanations: [
+          { id: "m", title: "Old cause", rootCause: null },
+        ],
+      }),
+    });
+    expect(screen.getByText("Old cause")).toBeVisible();
+    expect(
+      screen.getByTestId("unified-findings-historical"),
+    ).not.toHaveTextContent("Analyze again");
+  });
+
   it("names the skill version the recommendations follow", () => {
     renderPanel();
     expect(
@@ -383,9 +400,9 @@ describe("problem details", () => {
         /2 of 3 affected iterations · server capability · lookup_customer/,
       ),
     ).toBeVisible();
-    expect(
-      screen.getByText("Effort:").closest("li"),
-    ).toHaveTextContent("Effort: large. Compatibility risk: unknown.");
+    expect(screen.getByText("Effort:").closest("li")).toHaveTextContent(
+      "Effort: large. Compatibility risk: unknown.",
+    );
     await user.click(screen.getByTestId("problem-copy-prompt"));
     await waitFor(() =>
       expect(clipboard.text).toContain("Add a tool that resolves"),
@@ -393,11 +410,117 @@ describe("problem details", () => {
     // The alternative's prompt never carries the recommendation's change.
     expect(clipboard.text).not.toContain("takes the id returned by");
     expect(clipboard.text).toContain("## Weakens it if");
-    expect(clipboard.text).toContain("## Reviewed explanation");
+    // No mechanism link: overlapping explanations are context, never the cause.
+    expect(clipboard.text).not.toContain("## Reviewed explanation");
+    expect(clipboard.text).toContain(
+      "## Other explanations for these iterations",
+    );
     expect(clipboard.text).not.toContain("## Checked cause");
     expect(
       screen.getByText(/You decide the next action and start any rerun/),
     ).toBeVisible();
+  });
+
+  it("marks which iterations belong to the selected option", async () => {
+    const user = userEvent.setup();
+    const row = (iterationId: string, caseTitle: string) => ({
+      iterationId,
+      caseTitle,
+      iterationNumber: null,
+      client: null,
+      model: null,
+      result: "failed" as const,
+      canOpen: false,
+    });
+    render(
+      <ProblemDetailsContent
+        problem={problem({
+          options: [
+            option({ iterationIds: ["it_1"] }),
+            { ...alternative, iterationIds: ["it_2"] },
+          ],
+        })}
+        iterationRows={{
+          it_1: row("it_1", "Case one"),
+          it_2: row("it_2", "Case two"),
+        }}
+      />,
+    );
+    const rowText = (title: string) =>
+      screen.getByText(title).closest("li")?.textContent ?? "";
+    expect(rowText("Case one")).toContain("In selected option");
+    expect(rowText("Case two")).toContain("Not in selected option");
+    await user.click(
+      screen.getByRole("combobox", { name: "Choose an option" }),
+    );
+    await user.click(screen.getByRole("option", { name: /Alternative/ }));
+    expect(rowText("Case one")).toContain("Not in selected option");
+    expect(rowText("Case two")).toContain("In selected option");
+  });
+
+  it("keeps an in-scope iteration's unresolved status", () => {
+    render(
+      <ProblemDetailsContent
+        problem={problem({
+          options: [option({ iterationIds: ["it_1", "it_2", "it_3"] })],
+        })}
+      />,
+    );
+    const rows = screen.getAllByText(/In selected option/);
+    expect(rows.map((row) => row.textContent)).toContain(
+      "In selected option · Unresolved",
+    );
+  });
+
+  it("shows the sampling caveat beside the observed failure", () => {
+    render(
+      <ProblemDetailsContent
+        problem={problem()}
+        caveat="Tool identity came from inspected exemplars only."
+      />,
+    );
+    expect(screen.getByTestId("problem-sampling-caveat")).toHaveTextContent(
+      "inspected exemplars only",
+    );
+  });
+
+  it("names each explanation's supporting iterations and citations", () => {
+    render(<ProblemDetailsContent problem={problem()} />);
+    expect(
+      screen.getByText(/2 iterations: it_1, it_2; cited it_1\/tc:0/),
+    ).toBeInTheDocument();
+  });
+
+  it("lists the selected option's trace citations", () => {
+    render(<ProblemDetailsContent problem={problem({ evidence: [] })} />);
+    expect(screen.getByTestId("problem-option-citations")).toHaveTextContent(
+      "it_1/tc:0",
+    );
+  });
+
+  it("labels a passing comparison apart from the affected excerpts", () => {
+    render(
+      <ProblemDetailsContent
+        problem={problem({
+          options: [],
+          evidence: [
+            { iterationId: "it_1", kind: "tool_error", excerpt: "failed" },
+            { iterationId: "it_7", kind: "contrast", excerpt: "passed call" },
+          ],
+        })}
+      />,
+    );
+    expect(
+      screen.getByText("Passing comparison, iteration it_7"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("passed call")).toBeInTheDocument();
+  });
+
+  it("shows the recorded excerpt under Evidence", () => {
+    render(<ProblemDetailsContent problem={problem({ options: [] })} />);
+    const excerpts = screen.getAllByTestId("problem-evidence-excerpt");
+    expect(excerpts[0]).toHaveTextContent("customer not found");
+    expect(screen.getByText(/tool error, iteration it_1/)).toBeInTheDocument();
   });
 
   it("shows the prompt to select when the clipboard refuses", async () => {
@@ -501,6 +624,56 @@ describe("buildOptionPrompt", () => {
     expect(prompt).toContain("You re-ran this eval suite and checked both");
   });
 
+  it("keeps another mechanism's explanation out of the selected fix's cause", () => {
+    const linked = problem({
+      explanations: [
+        ...problem().explanations,
+        {
+          id: "obs_lookup:mechanism:2",
+          title: "Second mechanism",
+          rootCause: "The search returned a stale id.",
+          attribution: "server_contract",
+          iterationIds: ["it_1"],
+          citations: [],
+        },
+      ],
+    });
+    const prompt = buildOptionPrompt(
+      linked,
+      option({ mechanismId: "obs_lookup:mechanism:1" }),
+    );
+    const cause = prompt.split("## Reviewed explanation")[1].split("## ")[0];
+    expect(cause).toContain("passed the customer name");
+    expect(cause).not.toContain("stale id");
+    expect(prompt).toContain("## Other explanations for these iterations");
+    expect(
+      prompt.split("## Other explanations for these iterations")[1],
+    ).toContain("stale id");
+    // Context sits outside every PROPOSAL block, so it never reads as work.
+    for (const block of prompt.split("<<<PROPOSAL").slice(1)) {
+      expect(block.split("<<<END PROPOSAL>>>")[0]).not.toContain("stale id");
+    }
+  });
+
+  it("keeps every context explanation when several are long", () => {
+    const other = (n: number) => ({
+      id: `obs_lookup:mechanism:${n}`,
+      title: `Mechanism ${n}`,
+      rootCause: `${"x".repeat(400)} cause ${n} end.`,
+      attribution: "server_contract" as const,
+      iterationIds: ["it_1"],
+      citations: [],
+    });
+    const prompt = buildOptionPrompt(
+      problem({
+        explanations: [...problem().explanations, other(2), other(3)],
+      }),
+      option({ mechanismId: "obs_lookup:mechanism:1" }),
+    );
+    expect(prompt).toContain("cause 2 end.");
+    expect(prompt).toContain("cause 3 end.");
+  });
+
   it("names unresolved iterations instead of folding them into the cause", () => {
     const prompt = buildOptionPrompt(
       problem(),
@@ -511,8 +684,40 @@ describe("buildOptionPrompt", () => {
       }),
     );
     expect(prompt).toContain(
-      "No checked cause or analysis option covers 1 of these iterations",
+      "No checked cause or analysis option covers 1 iteration here; treat it as open: it_3.",
     );
+    expect(prompt).not.toContain("## Reviewed explanation");
+    expect(
+      prompt.split("## Other explanations for these iterations")[1],
+    ).toContain("Supported by iterations: it_1.");
+  });
+
+  it("keeps the supporting iteration ids outside a long clipped explanation", () => {
+    const long = "x".repeat(700);
+    const prompt = buildOptionPrompt(
+      problem({
+        explanations: [
+          {
+            id: "obs_lookup:mechanism:1",
+            title: "Long",
+            rootCause: long,
+            attribution: "server_contract",
+            iterationIds: ["it_1", "it_2"],
+            citations: [],
+          },
+        ],
+      }),
+      option({ kind: "investigation", iterationIds: ["it_1", "it_2", "it_3"] }),
+    );
+    expect(prompt).toContain("Supported by iterations: it_1, it_2.");
+  });
+
+  it("carries the option's trace citations even with no sampled excerpt", () => {
+    const prompt = buildOptionPrompt(
+      problem({ evidence: [] }),
+      option({ citations: ["it_1/tc:0"] }),
+    );
+    expect(prompt.split("## Trace citations")[1]).toContain("- it_1/tc:0");
   });
 
   it("fences analysis text so a quoted server message cannot add a heading or an instruction", () => {

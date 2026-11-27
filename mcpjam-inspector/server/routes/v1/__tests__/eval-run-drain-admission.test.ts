@@ -87,7 +87,6 @@ const LAUNCH_PATHS = V1_EVAL_LAUNCH_ROUTES.map((route) =>
 const NOT_LAUNCHES = [
   "/projects/:projectId/eval-suites",
   "/projects/:projectId/eval-suites/from-file",
-  "/projects/:projectId/eval-runs/:runId/insights",
   "/projects/:projectId/eval-runs/:runId/judge",
   "/projects/:projectId/eval-runs/:runId/cancel",
   "/projects/:projectId/eval-runs/:runId/gate-waivers",

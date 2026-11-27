@@ -116,6 +116,57 @@ describe("server analytics network boundary", () => {
       expect(fetch).toHaveBeenCalledTimes(1);
     },
   );
+  // posthog-node 5.73.0 moved remote evaluation from `/flags/?v=2` to
+  // `/flags/?v=4`. posthog-node is external to the server bundle, so an npx
+  // install resolves the newest 5.x while hosted keeps the lockfile's version.
+  it.each(["2", "4"])(
+    "forwards flag evaluation on posthog-node's v%s flags endpoint",
+    async (version) => {
+      const fetch = vi.fn().mockResolvedValue(new Response("{}"));
+      vi.stubGlobal("fetch", fetch);
+      const send = analyticsTransport(host, "public-token", () => true);
+      const url = `${host}/flags/?v=${version}`;
+      await send(url, {
+        method: "POST",
+        headers: {},
+        body: JSON.stringify({
+          distinct_id: actor,
+          person_properties: {
+            email: "account@example.test",
+            deployment: "self_hosted",
+          },
+          evaluation_runtime: "server",
+        }),
+      });
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(fetch.mock.calls[0][0]).toBe(url);
+      expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+        token: "public-token",
+        distinct_id: actor,
+        groups: {},
+        group_properties: {},
+        person_properties: {
+          email: "account@example.test",
+          deployment: "self_hosted",
+        },
+      });
+    },
+  );
+  it.each([
+    `${host}/flags/?v=4&config=true`,
+    `${host}/flags/`,
+    `${host}.example.test/flags/?v=4`,
+  ])("drops a flags request to %s", async (url) => {
+    const fetch = vi.fn().mockResolvedValue(new Response("{}"));
+    vi.stubGlobal("fetch", fetch);
+    const send = analyticsTransport(host, "public-token", () => true);
+    await send(url, {
+      method: "POST",
+      headers: {},
+      body: JSON.stringify({ distinct_id: actor }),
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("rejects unregistered events, malformed identities and invalid scalars", () => {
     expect(rebuildServerAnalytics("attacker", actor, {})).toBeNull();
     expect(

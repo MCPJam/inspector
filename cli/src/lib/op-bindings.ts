@@ -208,6 +208,9 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   backtest_eval_run: { command: "cloud eval backtest" },
   backtest_eval_run_judge: { command: "cloud eval judge-backtest" },
   request_eval_run_judge: { command: "cloud eval judge" },
+  request_eval_run_insights: { command: "cloud eval request-insights" },
+  cancel_eval_run_insights: { command: "cloud eval cancel-insights" },
+  build_eval_run_findings: { command: "cloud eval build-findings" },
   list_eval_github_repos: { command: "cloud eval github list" },
   connect_eval_github_repo: { command: "cloud eval github connect" },
   // The pre-rename spellings, still advertised and still bound — to the
@@ -434,6 +437,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   create_reviewer_attempt: { command: "readiness reviewer start" },
   list_reviewer_attempts: { command: "readiness reviewer status" },
   get_reviewer_attempt: { command: "readiness reviewer status" },
+  create_reviewer_handoff: { command: "readiness reviewer handoff" },
   resume_reviewer_attempt: { command: "readiness reviewer resume" },
   cancel_reviewer_attempt: { command: "readiness reviewer cancel" },
   // Resuming a submission from its id, and recording what happened in the

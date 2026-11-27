@@ -4,6 +4,9 @@ import { z } from "zod";
 import type { StreamFailureReporter } from "../utils/stream-failure-reporter.js";
 import { resolveBridgeToolCallTarget } from "./mcp-tool-call-target.js";
 import { bridgeRequestMetadata, bridgeRequestParams } from "./bridge-request-metadata.js";
+import { bridgeInitializeResult } from "./bridge-initialize.js";
+import { awaitBridgeConnect } from "./bridge-await-connect.js";
+import { encodeModernResult, isModernRequest } from "./bridge-modern-result.js";
 
 // Unify JSON-RPC handling used by adapter-http and manager-http routes
 // while preserving their minor response-shape differences.
@@ -13,6 +16,15 @@ export type BridgeMode = "adapter" | "manager";
 export type JsonRpcBridgeOptions = {
   signal?: AbortSignal;
   downstreamProtocolVersion?: string;
+  /**
+   * The manager was built for this request, so its connect may still be
+   * running. `initialize` and the passthrough read the live connection
+   * directly; with this set they wait for the connect first. Otherwise a
+   * fresh manager answers `server/discover` with method-not-found and
+   * `initialize` with a stand-in, and a 2026-07-28 client drops to the 2025
+   * handshake. The hosted harness proxy sets it.
+   */
+  awaitConnect?: boolean;
   /**
    * Observation-only hook for a failed `tools/call`. Failures in the hook are
    * isolated so they can never change the JSON-RPC response.
@@ -284,35 +296,6 @@ export async function parseAndValidateJsonRpc(
   return { ok: true, body: body as JsonRpcBody };
 }
 
-export function buildInitializeResult(serverId: string, mode: BridgeMode) {
-  if (mode === "adapter") {
-    return {
-      protocolVersion: "2025-06-18",
-      capabilities: {
-        tools: { listChanged: true },
-        prompts: {},
-        resources: { listChanged: true, subscribe: true },
-        logging: {},
-        roots: { listChanged: true },
-      },
-      serverInfo: { name: serverId, version: "stdio-adapter" },
-    };
-  }
-  // manager mode (SSE transport facade)
-  return {
-    protocolVersion: "2025-06-18",
-    capabilities: {
-      tools: true,
-      prompts: true,
-      resources: true,
-      logging: false,
-      elicitation: {},
-      roots: { listChanged: true },
-    },
-    serverInfo: { name: serverId, version: "mcpjam-proxy" },
-  };
-}
-
 function toJsonSchemaMaybe(schema: any): any {
   try {
     if (schema && typeof schema === "object") {
@@ -344,7 +327,19 @@ export async function handleJsonRpc(
     return null;
   }
 
-  const respond = (payload: any) => ({ jsonrpc: "2.0", id, ...payload });
+  const modernClient = isModernRequest(params, options.downstreamProtocolVersion);
+  const respond = (payload: any) => ({
+    jsonrpc: "2.0",
+    id,
+    ...payload,
+    ...(modernClient && "result" in payload
+      ? { result: encodeModernResult(method, payload.result) }
+      : {}),
+  });
+  const settleConnect = () =>
+    options.awaitConnect
+      ? awaitBridgeConnect(clientManager, serverId, method, options.signal)
+      : Promise.resolve();
 
   /**
    * Whether a `-32020 HeaderMismatch` from this connection is MCPJam's bug.
@@ -434,32 +429,17 @@ export async function handleJsonRpc(
     switch (method) {
       case "ping":
         return respond({ result: {} });
-      case "initialize": {
-        // Mirror the real upstream handshake (capabilities, serverInfo,
-        // instructions) so remote clients negotiate against what the
-        // connected server actually supports. The fabricated result is
-        // only a fallback for servers that haven't connected yet.
-        const info = clientManager.getInitializationInfo(serverId);
-        if (info) {
-          const result: any = {
-            protocolVersion:
-              options.downstreamProtocolVersion ??
-              info.protocolVersion ??
-              (typeof params?.protocolVersion === "string"
-                ? params.protocolVersion
-                : "2025-06-18"),
-            capabilities: info.serverCapabilities ?? {},
-            serverInfo:
-              info.serverVersion ??
-              ({ name: serverId, version: "unknown" } as any),
-          };
-          if (info.instructions !== undefined) {
-            result.instructions = info.instructions;
-          }
-          return respond({ result });
-        }
-        return respond({ result: buildInitializeResult(serverId, mode) });
-      }
+      case "initialize":
+        await settleConnect();
+        return respond({
+          result: bridgeInitializeResult({
+            serverId,
+            mode,
+            manager: clientManager,
+            params,
+            downstreamProtocolVersion: options.downstreamProtocolVersion,
+          }),
+        });
       case "tools/list": {
         const list = await clientManager.listTools(serverId, bridgeRequestParams(params), {
           signal: options.signal,
@@ -552,6 +532,11 @@ export async function handleJsonRpc(
               ...(metadata === undefined ? {} : { metadata }), },
           );
 
+          // Both modes answer with the call-tool result as it came back
+          // (adapter mode for compatibility). Built before the evidence so the
+          // record is what the harness receives, fields a 2026-07-28 client
+          // gets included.
+          const response = respond({ result: exec });
           if (evidence) {
             // Awaited BEFORE the result goes back, so a turn that ends
             // normally cannot have settlement still in flight. Failure here
@@ -561,15 +546,10 @@ export async function handleJsonRpc(
             await settleToolCallEvidence(evidence, {
               serverId: targetServerId,
               toolName,
-              outcome: { kind: "result", result: exec },
+              outcome: { kind: "result", result: response.result },
             });
           }
-
-          if (mode === "manager") {
-            return respond({ result: exec });
-          }
-          // adapter mode returns raw call-tool result for compatibility
-          return respond({ result: exec });
+          return response;
         } catch (e: any) {
           try {
             await options.onToolCallError?.({
@@ -611,6 +591,7 @@ export async function handleJsonRpc(
               ],
               isError: true,
             };
+            const response = respond({ result });
             if (evidence && evidenceStarted) {
               // What the harness sees in manager mode IS a CallToolResult
               // with `isError: true`, so that is what the evidence records —
@@ -618,10 +599,10 @@ export async function handleJsonRpc(
               await settleToolCallEvidence(evidence, {
                 serverId: targetServerId,
                 toolName: observedToolName ?? "",
-                outcome: { kind: "result", result },
+                outcome: { kind: "result", result: response.result },
               });
             }
-            return respond({ result });
+            return response;
           }
           const errorEnvelope = {
             code: -32000,
@@ -756,6 +737,7 @@ export async function handleJsonRpc(
         // shaping above is forwarded verbatim to the connected server
         // (resources/templates/list, resources/subscribe,
         // completion/complete, tasks/*, future spec methods, ...).
+        await settleConnect();
         const managed = clientManager.getManagedClient(serverId);
         if (managed) {
           try {

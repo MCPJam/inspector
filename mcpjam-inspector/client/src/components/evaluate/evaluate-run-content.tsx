@@ -399,6 +399,7 @@ export function SingleRunContent({
             suiteRunId={String(run._id)}
             iterations={iterations}
             chains={chains.chains}
+            diagnostics={detail.diagnostics}
             clientLabel={view.pairings?.[0]?.client ?? null}
             fallback={<HeroExplanation view={view} />}
             generation={{

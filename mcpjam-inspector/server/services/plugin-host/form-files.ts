@@ -70,8 +70,8 @@ function assertUploadToggles(
       "Upload refused: File resources is turned off for this client",
     );
 }
-function fileAuthority(options: PluginFormServiceOptions) {
-  const service = createPluginFormAuthority(options);
+async function fileAuthority(options: PluginFormServiceOptions) {
+  const service = await createPluginFormAuthority(options);
   let scope: ExecutionScope | undefined;
   const authorize = async () => {
     const current = await service.authorize();
@@ -92,7 +92,7 @@ function fileAuthority(options: PluginFormServiceOptions) {
 export async function describePluginFormFiles(
   options: PluginFormServiceOptions & { includeOperation?: true },
 ) {
-  const service = createPluginFormAuthority(options);
+  const service = await createPluginFormAuthority(options);
   try {
     const current = await service.authorize();
     const available = uploadsAvailable(
@@ -141,7 +141,7 @@ export async function uploadPluginFormFiles(
     files: PluginFormUploadFile[];
   },
 ) {
-  const service = fileAuthority(options);
+  const service = await fileAuthority(options);
   try {
     formUploadInput(service.source, options.field);
     // On the project's Computer the bytes go to the VM through this

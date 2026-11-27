@@ -21,12 +21,17 @@ import type { BorrowedGenerationController } from "@/components/shared/actionabl
 import type { FindingEvidenceLocator } from "@/components/shared/actionable-insights/finding-evidence";
 import type { EvalIteration } from "../evals/types";
 import { affectedRowsById } from "./affected-iteration-rows";
-import type { EvalRunDecisionChain } from "@mcpjam/sdk/contract";
+import type {
+  EvalRunDecisionChain,
+  EvalRunDecisionDiagnostic,
+} from "@mcpjam/sdk/contract";
 
 export type UnifiedFindingsSectionProps = {
   suiteRunId: string;
   iterations?: readonly EvalIteration[];
   chains?: ReadonlyMap<string, EvalRunDecisionChain>;
+  /** The run's diagnostics; their chains take precedence over `chains`. */
+  diagnostics?: readonly EvalRunDecisionDiagnostic[];
   scopeControl?: React.ReactNode;
   /** The page's existing serverQuality controller. */
   generation: BorrowedGenerationController;
@@ -42,6 +47,7 @@ function UnifiedFindingsBody({
   suiteRunId,
   iterations = [],
   chains,
+  diagnostics,
   generation,
   scopeControl,
   onOpenIteration,
@@ -79,7 +85,12 @@ function UnifiedFindingsBody({
           analysisFailure={state.analysisFailure}
           build={state.build}
           scopeControl={scopeControl}
-          iterationRows={affectedRowsById(iterations, clientLabel, chains)}
+          iterationRows={affectedRowsById(
+            iterations,
+            clientLabel,
+            chains,
+            diagnostics,
+          )}
           {...(fallback !== undefined ? { fallback } : {})}
           backendUnavailableNote={state.backendUnavailableNote}
           problemsView={

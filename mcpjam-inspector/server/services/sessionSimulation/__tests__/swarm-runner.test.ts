@@ -73,6 +73,12 @@ import { __clearPinnedSkillCacheForTest } from "../pinned-skill-cache.js";
 import type { SyntheticHostSessionAdapter } from "../runner.js";
 import { SwarmAgentError } from "../../swarm-agent.js";
 import { logger } from "../../../utils/logger.js";
+import { buildLegacyLogRow } from "../../../../shared/strict-log.js";
+import {
+  SdkErrorCode,
+  SdkHttpError,
+  UnauthorizedError,
+} from "@modelcontextprotocol/client";
 
 const HOST = {
   hostId: "host-1",
@@ -1004,6 +1010,36 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
         errorMessage: "Spend limit reached for this team.",
       });
       expect(stoppedRun()).toBe(true);
+    });
+  });
+
+  it("stops the whole run on a native turn refused for the used-up trial", async () => {
+    // The message the runner composes for a harness turn's lease refusal.
+    runSyntheticHostSessionMock.mockImplementation(
+      async (adapter: SyntheticHostSessionAdapter) =>
+        adapter.persist.hostId === "host-1"
+          ? {
+              outcome: "failed",
+              errorMessage:
+                "This organization has used its 20 free native harness turns. Upgrade your plan to keep using them, or switch to MCPJam Harness. (native_harness_trial_exhausted, HTTP 403)",
+            }
+          : { outcome: "succeeded" },
+    );
+
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 }),
+    );
+
+    expect(finalizePendingAttemptsMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ errorCode: "spend_cap_exceeded" }),
+    );
+    const refused = reportAttemptMock.mock.calls
+      .map((c) => c[2] as Record<string, unknown>)
+      .find((a) => a.hostId === "host-1" && a.status !== "running");
+    expect(refused).toMatchObject({
+      errorCode: "native_harness_trial_exhausted",
     });
   });
 
@@ -2407,6 +2443,132 @@ describe("target setup before claims", () => {
       }),
     ]);
   });
+  // INSPECTOR-HONO-6F: a self-hosted swarm whose MCP server refused the
+  // connection paged as an MCPJam error. The target still fails; it just
+  // stops reaching Sentry when the cause is the user's own server or config.
+  const TARGET_WORKER_FAILED =
+    "[swarm.runner] target worker failed; finalizing its attempts";
+  const refusedConnection = () =>
+    Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3001"), {
+      code: "ECONNREFUSED",
+    });
+  async function runFailedSetup(cause: unknown, fromTargetServer: boolean) {
+    const { SwarmSetupError } = await import("../swarm-setup-turn");
+    setupTurnMock.mockImplementation(async () => {
+      throw new SwarmSetupError(
+        {
+          ...record,
+          status: "failed",
+          readiness: "unavailable",
+          reason: "transport_failed",
+        },
+        undefined,
+        cause,
+        fromTargetServer,
+      );
+    });
+    const errorLog = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const warnLog = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      await startJourneyRun(
+        baseOpts({
+          hosts: [{ ...HOST, targetId: "t" }],
+          setupWrites: true,
+          sessionsPerTarget: 1,
+        }),
+      );
+      return {
+        errors: errorLog.mock.calls.filter(([m]) => m === TARGET_WORKER_FAILED),
+        warnings: warnLog.mock.calls.filter(
+          ([m]) => m === TARGET_WORKER_FAILED,
+        ),
+      };
+    } finally {
+      errorLog.mockRestore();
+      warnLog.mockRestore();
+    }
+  }
+
+  it.each([
+    [
+      "refused the connection",
+      new Error(
+        'Failed to connect to MCP server "local" using HTTP transports.',
+        { cause: refusedConnection() },
+      ),
+      "transport/econnrefused",
+    ],
+    [
+      "answered 404",
+      new SdkHttpError(
+        SdkErrorCode.ClientHttpNotImplemented,
+        "Error POSTing to endpoint: Not Found",
+        { status: 404, statusText: "Not Found" },
+      ),
+      "server/http_error",
+    ],
+    ["answered 401", new UnauthorizedError(), "auth/http_401"],
+  ])(
+    "warns instead of capturing when the target's server %s during setup",
+    async (_label, cause, slug) => {
+      const { errors, warnings } = await runFailedSetup(cause, true);
+
+      expect(errors).toEqual([]);
+      // The slug is what keeps a wrong downgrade findable in Axiom.
+      expect(warnings).toEqual([
+        [
+          TARGET_WORKER_FAILED,
+          expect.objectContaining({
+            runId: "run-1",
+            setupReason: "transport_failed",
+            slug,
+          }),
+        ],
+      ]);
+      expect(
+        buildLegacyLogRow(TARGET_WORKER_FAILED, {
+          ...(warnings[0]![1] as Record<string, unknown>),
+          level: "warn",
+        }),
+      ).toMatchObject({ level: "warn", slug });
+    },
+  );
+
+  it.each([
+    [
+      "a Convex lookup before the target connection refused it",
+      new TypeError("fetch failed", { cause: refusedConnection() }),
+    ],
+    [
+      "the model call on a credential MCPJam pays for answered 401",
+      new UnauthorizedError(),
+    ],
+  ])(
+    "still captures a setup failure from outside the target's servers: %s",
+    async (_label, cause) => {
+      const { errors, warnings } = await runFailedSetup(cause, false);
+
+      expect(warnings).toEqual([]);
+      expect(errors).toEqual([
+        [
+          TARGET_WORKER_FAILED,
+          expect.anything(),
+          expect.objectContaining({ runId: "run-1" }),
+        ],
+      ]);
+    },
+  );
+
+  it("still captures a target-server failure whose cause is not the user's", async () => {
+    const { errors, warnings } = await runFailedSetup(
+      new TypeError("Cannot read properties of undefined (reading 'tools')"),
+      true,
+    );
+
+    expect(warnings).toEqual([]);
+    expect(errors).toHaveLength(1);
+  });
+
   it("stores a setup that could not sign in to the server as that sign-in failure, and does not retry it", async () => {
     const { SwarmSetupError } = await import("../swarm-setup-turn");
     const message =

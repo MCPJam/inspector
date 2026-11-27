@@ -11,6 +11,7 @@ export function DescribeCaseWorkspace({
   title,
   onTitleChange,
   caseForm,
+  stepsForm,
   onAsk,
   onSave,
   saveDisabled,
@@ -18,6 +19,8 @@ export function DescribeCaseWorkspace({
   title: string;
   onTitleChange: (title: string) => void;
   caseForm: ReactNode;
+  /** The steps editor, drawn in place of the case form card when present. */
+  stepsForm?: ReactNode;
   onAsk: () => void;
   onSave: () => void;
   saveDisabled: boolean;
@@ -50,18 +53,31 @@ export function DescribeCaseWorkspace({
             />
           ) : (
             <>
-              <div className="rounded-xl border border-card-foreground/50 bg-card text-card-foreground">
-                <div className="flex items-center gap-3 px-5 pt-4 pb-2">
+              {stepsForm ? (
+                <div className="flex flex-col gap-5">
                   <input
                     value={title}
                     onChange={(event) => onTitleChange(event.target.value)}
                     aria-label="Draft case title"
-                    className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-foreground outline-none placeholder:text-muted-foreground"
+                    className="min-w-0 bg-transparent px-1 text-lg font-semibold text-foreground outline-none placeholder:text-muted-foreground"
                     placeholder="Untitled test case"
                   />
+                  {stepsForm}
                 </div>
-                <div className="px-5 py-5 sm:px-6">{caseForm}</div>
-              </div>
+              ) : (
+                <div className="rounded-xl border border-card-foreground/50 bg-card text-card-foreground">
+                  <div className="flex items-center gap-3 px-5 pt-4 pb-2">
+                    <input
+                      value={title}
+                      onChange={(event) => onTitleChange(event.target.value)}
+                      aria-label="Draft case title"
+                      className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-foreground outline-none placeholder:text-muted-foreground"
+                      placeholder="Untitled test case"
+                    />
+                  </div>
+                  <div className="px-5 py-5 sm:px-6">{caseForm}</div>
+                </div>
+              )}
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <Button

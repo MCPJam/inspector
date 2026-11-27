@@ -10,6 +10,11 @@ import {
   canShowSubscriptionNotices,
   formatPlanName,
 } from "@/lib/billing-entitlements";
+import {
+  formatStaffPlanEndLine,
+  getDisplayedCurrentPlan,
+  isStaffSetPlan,
+} from "@/lib/billing-staff-plan";
 import { canCheckoutPlanEntry, isLegacyTeamEntry } from "@/lib/pricing-catalog";
 
 function formatCurrency(
@@ -263,6 +268,8 @@ export function OrganizationCurrentPlanPanel({
   const currentPlan = billingStatus.plan ?? "free";
   const isTrial = billingStatus.source === "trial";
   const isSimulation = billingStatus.source === "simulation";
+  // A staff plan has no Stripe subscription: the card names its tier and end.
+  const isStaffPlan = isStaffSetPlan(billingStatus);
   const showSubscriptionNotices = canShowSubscriptionNotices(billingStatus);
   const currentEntry = planCatalog?.plans[currentPlan];
   const isLegacyTeam =
@@ -280,7 +287,7 @@ export function OrganizationCurrentPlanPanel({
     ? (billingStatus.trialPlan ?? billingStatus.effectivePlan)
     : isSimulation
       ? billingStatus.effectivePlan
-      : currentPlan;
+      : getDisplayedCurrentPlan(billingStatus);
   const billingConfigured = billingStatus.billingConfigured ?? false;
   const canManageBilling = (billingStatus.canManageBilling ?? false) && billingStatus.hasCustomer === true;
   const formattedPeriodEnd = formatBillingDate(
@@ -297,11 +304,13 @@ export function OrganizationCurrentPlanPanel({
   const effectiveBillingInterval = billingStatus.billingInterval ?? "monthly";
   const targetBillingInterval: BillingInterval =
     effectiveBillingInterval === "annual" ? "monthly" : "annual";
-  const billingDetailLine = (billingStatus.unlimitedCreditsUntil ?? 0) > Date.now()
-    ? `Contract through ${formatBillingDate(billingStatus.unlimitedCreditsUntil ?? null)}`
-    : planCatalog
-    ? formatCurrentPlanBillingDetailLine(billingStatus, planCatalog)
-    : null;
+  const billingDetailLine = isStaffPlan
+    ? formatStaffPlanEndLine(billingStatus.staffPlan?.expiresAt ?? null)
+    : (billingStatus.unlimitedCreditsUntil ?? 0) > Date.now()
+      ? `Contract through ${formatBillingDate(billingStatus.unlimitedCreditsUntil ?? null)}`
+      : planCatalog
+        ? formatCurrentPlanBillingDetailLine(billingStatus, planCatalog)
+        : null;
   const scheduledCancellationDetailLine = getScheduledCancellationDetailLine(
     billingStatus,
     scheduledCancellationDate,

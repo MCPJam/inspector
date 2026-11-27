@@ -2,11 +2,14 @@
  * The prompt a reader copies for ONE option of one recorded problem.
  *
  * Same containment rules as `finding-prompts.ts`: recorded excerpts go inside
- * UNTRUSTED fences, and analysis-written fields go inside PROPOSAL blocks,
- * since analysis text can quote the server under test, identifiers are flattened before they are interpolated, and the
- * heading names the kind of work so an experiment never reads as a proven
- * repair. A prompt carries only the selected option's scope and steps;
- * copying an alternative never copies the recommendation's instructions.
+ * UNTRUSTED fences, and the selected option's analysis-written fields go
+ * inside PROPOSAL blocks, since analysis text can quote the server under test.
+ * Explanations the option does not act on are context, so they go in UNTRUSTED
+ * fences rather than PROPOSAL blocks. Identifiers are
+ * flattened before they are interpolated, and the heading names the kind of
+ * work so an experiment never reads as a proven repair. A prompt carries only
+ * the selected option's scope and steps; copying an alternative never copies
+ * the recommendation's instructions.
  */
 import type {
   FindingOption,
@@ -87,9 +90,16 @@ export function buildOptionPrompt(
       row.kind !== "contrast" &&
       (row.iterationId === undefined || scope.has(row.iterationId)),
   );
-  const causes = problem.explanations.filter((row) =>
+  const overlapping = problem.explanations.filter((row) =>
     row.iterationIds.some((id) => scope.has(id)),
   );
+  // Only an explicit mechanism link makes an explanation this option's cause;
+  // any other explanation touching these iterations is context, named with the
+  // iterations it covers.
+  const causes = overlapping.filter((row) => row.id === option.mechanismId);
+  const others = overlapping.filter((row) => row.id !== option.mechanismId);
+  const ids = (list: readonly string[]) =>
+    list.map((id) => sanitizeIdentifier(id, 60)).join(", ");
   const unresolved = problem.coverage.unresolvedIterationIds.filter((id) =>
     scope.has(id),
   );
@@ -99,7 +109,7 @@ export function buildOptionPrompt(
     "",
     "## Observed",
     fence("Recorded observation", problem.observed),
-    `This applies to ${option.iterationIds.length} of the ${plural(problem.coverage.observed, "affected iteration")}: ${option.iterationIds.map((id) => sanitizeIdentifier(id, 60)).join(", ")}.`,
+    `This applies to ${option.iterationIds.length} of the ${plural(problem.coverage.observed, "affected iteration")}: ${ids(option.iterationIds)}.`,
     ...(causes.length
       ? [
           "",
@@ -107,10 +117,29 @@ export function buildOptionPrompt(
           proposal(...causes.map((row) => `- ${row.rootCause ?? row.title}`)),
         ]
       : ["", "## Cause", "Not established for these iterations."]),
+    ...(others.length
+      ? [
+          "",
+          "## Other explanations for these iterations",
+          "Context only: this option does not act on these. Do not carry them out.",
+          // One fence per explanation: a fence clips its body, so a shared one
+          // would silently drop the later explanations.
+          ...others.map((row) =>
+            // The ids sit outside the fence so its length cap never clips them.
+            [
+              fence(
+                "Other explanation (context, not this option's work)",
+                row.rootCause ?? row.title,
+              ),
+              `Supported by iterations: ${ids(row.iterationIds.filter((id) => scope.has(id)))}.`,
+            ].join("\n"),
+          ),
+        ]
+      : []),
     ...(unresolved.length
       ? [
           "",
-          `No checked cause or analysis option covers ${unresolved.length} of these iterations; treat them as open.`,
+          `No checked cause or analysis option covers ${plural(unresolved.length, "iteration")} here; treat ${unresolved.length === 1 ? "it" : "them"} as open: ${ids(unresolved)}.`,
         ]
       : []),
     ...(evidence.length
@@ -118,6 +147,13 @@ export function buildOptionPrompt(
           "",
           "## Evidence",
           ...evidence.map((row) => fence(evidenceLabel(row), row.excerpt)),
+        ]
+      : []),
+    ...(option.citations.length
+      ? [
+          "",
+          "## Trace citations",
+          ...option.citations.map((ref) => `- ${sanitizeIdentifier(ref, 120)}`),
         ]
       : []),
     "",

@@ -1,4 +1,5 @@
 import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
+import { NATIVE_HARNESS_TRIAL_EXHAUSTED_CODE } from "@/shared/native-harness-trial";
 import { useEffect, useMemo, useRef } from "react";
 import { usePaginatedQuery, useQuery } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
@@ -130,13 +131,34 @@ export function useEvalQueries({
       ? ({ suiteId: selectedSuiteId } as any)
       : "skip",
   ) as EvalCase[] | undefined;
-  const suiteDetails = useMemo<SuiteDetailsQueryResponse | undefined>(() => {
+  const liveSuiteDetails = useMemo<SuiteDetailsQueryResponse | undefined>(() => {
     if (!perRunMetrics) return wholeSuiteDetails;
     // No suite-wide iterations in this mode, by design — see `perRunMetrics`.
     return suiteCases
       ? { testCases: suiteCases, iterations: NO_ITERATIONS }
       : undefined;
   }, [perRunMetrics, wholeSuiteDetails, suiteCases]);
+  // A delete pauses the details query; if it fails, the query starts again
+  // with no answer. Reading that gap as "loading" swaps the page for the
+  // spinner, which unmounts the suite view and drops an unsaved settings
+  // draft. So the last answer for the SAME suite stands in until the new one
+  // arrives. Written during render on purpose: an effect would land a render
+  // late, after the spinner has already unmounted the view.
+  const lastSuiteDetails = useRef<{
+    suiteId: string;
+    details: SuiteDetailsQueryResponse;
+  } | null>(null);
+  if (liveSuiteDetails !== undefined && selectedSuiteId) {
+    lastSuiteDetails.current = {
+      suiteId: selectedSuiteId,
+      details: liveSuiteDetails,
+    };
+  }
+  const suiteDetails =
+    liveSuiteDetails ??
+    (lastSuiteDetails.current?.suiteId === selectedSuiteId
+      ? lastSuiteDetails.current.details
+      : undefined);
 
   const runHistory = usePaginatedQuery(
     "testSuites:listTestSuiteRunSummaries" as any,
@@ -185,6 +207,12 @@ export function useEvalQueries({
         message: iteration.error,
         details: iteration.errorDetails,
         organizationId: organizationId ?? undefined,
+        // A harness turn keeps the backend's sentence as its error and the
+        // trial's code only in its classification. Only that code is passed:
+        // the others have always been read from the error itself.
+        ...(iteration.infraError?.code === NATIVE_HARNESS_TRIAL_EXHAUSTED_CODE
+          ? { code: NATIVE_HARNESS_TRIAL_EXHAUSTED_CODE }
+          : {}),
       });
     }
   }, [suiteRuns, limitErrorIterations, organizationId]);

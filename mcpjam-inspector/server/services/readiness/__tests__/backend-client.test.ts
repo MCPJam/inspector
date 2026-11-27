@@ -198,12 +198,16 @@ describe("joinReviewerAttempt", () => {
     expect(await joinReviewerAttempt(LEASE, "att_1")).toEqual({ joined: false, reason });
   });
 
-  it("hands back the secret names and username the sign-in needs, and nothing else", async () => {
+  it("hands back what the sign-in and a resume need, and nothing else", async () => {
     const attempt = {
       id: "att_1",
       projectId: "proj_1",
       passwordSecretName: "MCPJAM_REVIEWER_ACME_PASSWORD",
       usernameSecretName: "MCPJAM_REVIEWER_ACME_EMAIL",
+      reviewerAccountId: "acct_1",
+      humanSignInCompletedAt: 1_700_000_000_000,
+      loginUrl: "https://auth.example.com/login",
+      tenant: "Acme",
       state: "running",
       stages: [],
     };
@@ -217,6 +221,11 @@ describe("joinReviewerAttempt", () => {
         projectId: "proj_1",
         passwordSecretName: "MCPJAM_REVIEWER_ACME_PASSWORD",
         usernameSecretName: "MCPJAM_REVIEWER_ACME_EMAIL",
+        // A person's finished sign-in: without these a resume signs in again.
+        reviewerAccountId: "acct_1",
+        humanSignInCompletedAt: 1_700_000_000_000,
+        loginUrl: "https://auth.example.com/login",
+        tenant: "Acme",
       },
     });
   });

@@ -19,8 +19,10 @@ describe("harness descriptors", () => {
       "claude-code": "harness",
       codex: "mcpjam",
       cursor: "harness",
-      "copilot-cli": "mcpjam",
+      "copilot-cli": "harness",
       opencode: "mcpjam",
+      "claude-web": "harness",
+      "chatgpt-web": "harness",
     });
     expect(HARNESS_PINNED_VERSIONS).toEqual({
       "claude-code": "2.1.290",
@@ -28,10 +30,12 @@ describe("harness descriptors", () => {
       cursor: "2026.11.05-86047df",
       "copilot-cli": "1.0.92",
       opencode: "1.18.34",
+      "claude-web": "page-2026-11-20",
+      "chatgpt-web": "page-2026-11-20",
     });
     expect(HARNESS_DESCRIPTORS.cursor.orgKeys).toBe(false);
     expect(HARNESS_DESCRIPTORS.opencode.orgKeys).toBe(true);
-    expect(LOCAL_HARNESS_IDS).toEqual(["claude-code", "codex", "copilot-cli"]);
+    expect(LOCAL_HARNESS_IDS).toEqual(["claude-code", "codex", "cursor", "copilot-cli", "opencode"]);
   });
   it("grants MCPJam extensions by client ownership", () => {
     expect(usesMcpjamClient({})).toBe(true);
@@ -65,14 +69,23 @@ describe("harness surface support", () => {
       ),
     ).sort();
     expect(declared).toEqual([
-      "cursor api",
-      "cursor events",
+      "chatgpt-web guests",
+      "chatgpt-web local",
+      "chatgpt-web user-testing",
+      "claude-web guests",
+      "claude-web local",
+      "claude-web user-testing",
       "cursor guests",
-      "cursor local",
       "cursor user-testing",
-      "opencode guests",
-      "opencode local",
     ]);
+  });
+  it("lets signed-in guests run every runtime but Cursor CLI and the web clients", () => {
+    // The backend derives its guest list from these same exceptions
+    // (`GUEST_ALLOWED_HARNESSES`, pinned by the mirror check); Cursor stays
+    // off because its tokens would sit in a box the guest controls.
+    expect(
+      HARNESS_IDS.filter((id) => !harnessSurfaceRefusal(id, "guests")).sort(),
+    ).toEqual(["claude-code", "codex", "copilot-cli", "opencode"]);
   });
   it("names the surface each turn source runs on", () => {
     expect(

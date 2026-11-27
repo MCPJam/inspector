@@ -12,6 +12,7 @@
  */
 import { Hono, type Context } from "hono";
 import { z } from "zod";
+import { makeFunctionReference } from "convex/server";
 import type { ConvexHttpClient } from "convex/browser";
 import type {
   PlatformDirectorySubmission as Submission,
@@ -31,6 +32,7 @@ import {
   ATTEMPT_NOT_FOUND,
   readReviewerAttempt,
   reviewerAccountForRun,
+  reviewerAuthorizerFor,
   reviewerAttemptFunctions as fn,
 } from "../shared/reviewer-attempts.js";
 import { readinessAnalyticsActor } from "./readiness.js";
@@ -184,6 +186,7 @@ async function startAttemptRun(
       reviewerAttemptId: attempt.id,
       authorized,
       reviewer,
+      authorizeReviewer: await reviewerAuthorizerFor(c, token, row.projectId, savedServerOf(row)),
       analyticsActor: readinessAnalyticsActor(c, row.projectId),
       translateError: (error) => translateConvexWriteError(error, { resource: "Readiness run" }),
     });
@@ -276,6 +279,23 @@ reviewerAttempts.post(`${ONE}/resume`, async (c) => {
   const runKey = `reviewer-attempt:${attempt.id}:${attempt.resumedAt ?? attempt.updatedAt}`;
   const run = await startAttemptRun(c, convex, row, attempt, authorized, runKey, token);
   return v1Resource(c, { attempt, run }, 202);
+});
+
+reviewerAttempts.post(`${ONE}/handoff`, async (c) => {
+  const { scope, attemptId } = attemptScope(c);
+  parseWithSchema(emptySchema, await readJsonObjectBody(c));
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
+  await readReviewerAttempt(convex, scope, attemptId, translateRead);
+  try {
+    const handoff = await convex.action(
+      makeFunctionReference<"action">("directoryReviewerHandoff:createReviewerHandoff"),
+      { attemptId },
+    );
+    c.header("Cache-Control", "no-store");
+    return v1Resource(c, handoff);
+  } catch (error) {
+    throw attemptWriteError(error);
+  }
 });
 
 reviewerAttempts.post(`${ONE}/cancel`, async (c) => {

@@ -107,3 +107,20 @@ it("lists mixed stages in chain order without implying one common failure", () =
   );
   expect(screen.queryByText("Expected:")).toBeNull();
 });
+
+it("uses the singular for one affected iteration", () => {
+  render(
+    <ul>
+      <ProblemRubric
+        problem={{
+          ...problem,
+          affected: { ...problem.affected, count: 1 },
+        }}
+        iterationRows={{ a: row("a", failed("response")) }}
+      />
+    </ul>,
+  );
+  expect(screen.getByText(/Response failed first/)).toHaveTextContent(
+    "Response failed first in 1 of 1 affected iteration",
+  );
+});

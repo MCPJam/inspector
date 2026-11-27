@@ -123,16 +123,10 @@ const harnessIdParameters = Object.entries(spec.paths).flatMap(
 );
 
 describe("openapi.json harnessId path parameters ↔ HARNESS_IDS", () => {
-  it("finds a harnessId path parameter to check", () => {
-    // Guard the guard: both assertions below iterate this list, so a
-    // derivation that quietly matched nothing would pass them by doing
-    // nothing at all.
-    expect(
-      harnessIdParameters.length,
-      "no harnessId path parameter found in openapi.json — either the routes " +
-        "are gone or this derivation stopped seeing them",
-    ).toBeGreaterThan(0);
-  });
+  // No "finds at least one" guard while `/harness/{harnessId}/builtin-tools`
+  // is off the public spec (KNOWN_UNDOCUMENTED in openapi-drift.test.ts), so
+  // these checks find nothing today. They pick up the route again as soon as
+  // it is documented. Restore the guard then.
 
   it("lists exactly the harness ids the routes accept", () => {
     // These routes resolve the segment through `getHarnessAdapter`, which

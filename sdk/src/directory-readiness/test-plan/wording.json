@@ -37,6 +37,8 @@
     "cleanup.existing": "{fixture} was in the reviewer's account before the sweep, so cleanup must not remove it. Remove the step.",
     "cleanup.tool": "Cleanup calls {tool}, which the plan does not run. Use a tool the plan includes.",
     "cleanup.readOnly": "Cleanup calls {tool}, which only reads data. Use a tool that can remove {fixture}.",
+    "cleanup.target": "Cleanup must reference {fixture}. Use that fixture in the arguments.",
+    "writeScope.target": "{tool} needs a target fixture. Use a permitted fixture in the arguments, or exclude this case.",
     "cleanup.writes": "Cleanup removes {fixture} with {tool}, which may not write it. Add {fixture} to the tool's permitted writes."
   },
   "cases": {

@@ -19,5 +19,8 @@ export default defineConfig({
   clean: false, // Don't clean - other builds output here too
   splitting: false,
   target: "node18",
+  // The SDK is ESM-only; bundling its internal engine keeps the CommonJS
+  // build loadable with `require()` on every supported Node version.
+  noExternal: [/^@mcpjam\/sdk\/internal\/inspector$/],
   shims: true,
 });

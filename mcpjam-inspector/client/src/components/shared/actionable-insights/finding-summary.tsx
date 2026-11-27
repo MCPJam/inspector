@@ -26,6 +26,7 @@ import { type FindingEvidenceLocator } from "./finding-evidence";
 import {
   AffectedIterationsList,
   type AffectedIterationRow,
+  unloadedRow,
 } from "./affected-iterations-list";
 import { FindingText } from "./finding-text";
 import {
@@ -141,16 +142,7 @@ export function FindingDetailsContent({
     ),
   ];
   const affectedRows: AffectedIterationRow[] = affectedIds.map(
-    (id) =>
-      iterationRows[id] ?? {
-        iterationId: id,
-        caseTitle: "Iteration not loaded on this page",
-        iterationNumber: null,
-        client: null,
-        model: null,
-        result: "unknown",
-        canOpen: false,
-      },
+    (id) => iterationRows[id] ?? unloadedRow(id),
   );
   const judgeCoverage = judgeCoverageLine(provenance);
   const caveat = mechanismCaveat(provenance);

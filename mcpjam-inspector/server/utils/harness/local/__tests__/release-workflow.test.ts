@@ -35,7 +35,7 @@ describe("release critical path", () => {
     expect(publish.needs).toContain("local-harness-contract");
     const gate = String(publish.if).replace(/\s+/g, " ");
     expect(gate).toContain(
-      "( needs.preflight.outputs.publish_inspector != 'true' || needs.local-harness-contract.result == 'success' )",
+      "( needs.preflight.outputs.publish_inspector != 'true' || (needs.local-harness-contract.result == 'success' && needs.harness-consistency.result == 'success') )",
     );
     expect(gate).not.toContain("build-mac");
   });
@@ -43,13 +43,15 @@ describe("release critical path", () => {
   it("creates the immutable GitHub release only once every desktop asset exists, desktop-only included", () => {
     const { jobs } = workflow("release");
     const finalize = jobs.finalize;
-    expect(finalize.needs).toEqual(expect.arrayContaining(["build-mac", "build-windows", "local-harness-contract"]));
+    expect(finalize.needs).toEqual(
+      expect.arrayContaining(["build-mac", "build-windows", "local-harness-contract", "harness-consistency"]),
+    );
     const gate = String(finalize.if).replace(/\s+/g, " ");
     expect(gate).toContain(
       "( needs.publish-packages.result == 'success' || needs.preflight.outputs.desktop_only == 'true' )",
     );
     expect(gate).toContain(
-      "( needs.preflight.outputs.build_inspector_artifacts != 'true' || ( needs.build-mac.result == 'success' && needs.build-windows.result == 'success' && needs.local-harness-contract.result == 'success' ) )",
+      "( needs.preflight.outputs.build_inspector_artifacts != 'true' || ( needs.build-mac.result == 'success' && needs.build-windows.result == 'success' && needs.local-harness-contract.result == 'success' && needs.harness-consistency.result == 'success' ) )",
     );
     // The plan comes from the tested script, and desktop-only is an output.
     const preflight = jobs.preflight;
@@ -57,10 +59,28 @@ describe("release critical path", () => {
     const plan = preflight.steps.find((step: any) => step.id === "plan");
     expect(plan.run).toContain("node .github/scripts/release-plan.mjs");
     // A desktop-only run still proves the local runtime its desktop app offers.
-    for (const job of ["local-harness-evidence", "local-harness-evidence-permitted", "local-harness-contract"]) {
+    for (const job of ["local-harness-evidence", "local-harness-evidence-permitted", "local-harness-contract", "harness-consistency"]) {
       expect(String(jobs[job].if), job).toContain("build_inspector_artifacts");
       expect(String(jobs[job].if), job).not.toContain("publish_inspector");
     }
+  });
+
+  it("fails the run when the versions it set out to ship did not reach npm", () => {
+    const { jobs } = workflow("release");
+    const shipped = jobs.shipped;
+    expect(shipped.needs).toEqual(expect.arrayContaining(["preflight", "publish-packages", "finalize"]));
+    expect(String(shipped.if)).toContain("!cancelled()");
+    const run = shipped.steps[0].run as string;
+    expect(run).toMatch(/"\$PUBLISH_ANY" = "true" \] && \[ "\$PUBLISHED" != "success"/);
+    expect(run).toMatch(/exit 1/);
+  });
+
+  it("keeps the pack provenance check off the build path", () => {
+    const { jobs } = workflow("release");
+    const preflightRuns = jobs.preflight.steps.map((step: any) => step.run ?? "").join("\n");
+    expect(preflightRuns).not.toMatch(/check-local-harness-release/);
+    expect(jobs["harness-consistency"].needs).toBe("preflight");
+    expect(jobs["publish-packages"].needs).toContain("harness-consistency");
   });
 
   it("points production's hosted computers at the released commit's template only after the webapp deploys", () => {
@@ -119,35 +139,32 @@ describe("release critical path", () => {
   });
 });
 
-describe("packs are part of starting a release", () => {
-  it("brings every harness's pack up to date before the version PR opens", () => {
+describe("starting a release", () => {
+  it("pushes only a checked version commit, then starts Release on it", () => {
     const { jobs } = workflow("prepare-release");
-    expect(jobs.packs.uses).toBe("./.github/workflows/local-harness-pack-pipeline.yml");
-    expect(jobs.packs.strategy.matrix.harness).toBe("${{ fromJSON(needs.harnesses.outputs.list) }}");
-    expect(jobs.packs.strategy["fail-fast"]).toBe(false);
-    expect(jobs.packs.with.harness).toBe("${{ matrix.harness }}");
-    // A failed pipeline means no version PR: the release cannot say what it pins.
-    expect(jobs["version-pr"].needs).toBe("packs");
-    expect(jobs["version-pr"].if).toBeUndefined();
-
-    // Pins are written onto the version branch, then the gate checks exactly
-    // what the PR pins, then the PR opens.
-    const steps: any[] = jobs["version-pr"].steps;
-    const at = (test: (step: any) => boolean) => steps.findIndex(test);
-    const collect = at((step) => step.with?.pattern === "local-harness-pin-*");
-    const apply = at((step) => /local-harness-publication\.mjs apply-pins/.test(step.run ?? ""));
-    const gate = at((step) => /check-local-harness-release\.mjs/.test(step.run ?? ""));
-    const open = at((step) => step.name === "Open or refresh the version PR");
-    expect(collect).toBeGreaterThan(-1);
-    expect(collect).toBeLessThan(apply);
-    expect(apply).toBeLessThan(gate);
-    expect(gate).toBeLessThan(open);
-    // The PR says what it pins, and commits a new equivalence record too.
-    expect(steps[open].run).toMatch(/packs\.md/);
-    expect(steps[open].run).toMatch(/git add mcpjam-inspector\/scripts\/local-harness-pack-equivalence/);
+    expect(Object.keys(workflow("prepare-release").on)).toEqual(["workflow_dispatch"]);
+    const steps: any[] = jobs.version.steps;
+    const run = steps.find((step) => step.name === "Version, check and push to main").run as string;
+    const at = (needle: string) => run.indexOf(needle);
+    // Versioned and checked before the push, which only fast-forwards. The
+    // pack gate is not repeated here: the pin PR and Release both run it.
+    expect(at("changeset version")).toBeGreaterThan(-1);
+    expect(at("changeset version")).toBeLessThan(at("release-commit.mjs check HEAD^ HEAD"));
+    expect(run).not.toMatch(/check-local-harness-release/);
+    expect(at("release-commit.mjs check HEAD^ HEAD")).toBeLessThan(at("git push origin HEAD:refs/heads/main"));
+    expect(run).not.toMatch(/--force/);
+    // Pushed with the release App's token, the only bypass actor on main.
+    const token = steps.find((step) => step.uses?.startsWith("actions/create-github-app-token"));
+    expect(token).toBeDefined();
+    const checkout = steps.find((step) => step.uses?.startsWith("actions/checkout"));
+    expect(checkout.with.token).toBe("${{ steps.app.outputs.token }}");
+    // Then Release, on exactly the commit it pushed.
+    const start = steps.find((step) => step.name === "Start Release");
+    expect(start.with.script).toMatch(/workflow_id: "release\.yml"/);
+    expect(start.env.SHA).toBe("${{ steps.push.outputs.sha }}");
   });
 
-  it("runs the pack pipeline from a release and from the background prebuild only, one per harness at a time", () => {
+  it("builds and pins packs outside the release, so the release commit carries versions only", () => {
     const callers = readdirSync(workflowsDir)
       .filter((name) => /\.ya?ml$/.test(name))
       .filter((name) =>
@@ -156,30 +173,74 @@ describe("packs are part of starting a release", () => {
         ),
       )
       .sort();
-    expect(callers).toEqual(["local-harness-pack-prebuild.yml", "prepare-release.yml"]);
-    expect(Object.keys(workflow("prepare-release").on)).toEqual(["workflow_dispatch"]);
-    // One concurrency group per harness across both callers, never cancelled:
-    // the two never build the same pack at once.
-    const group = { group: "local-harness-pack-${{ matrix.harness }}", "cancel-in-progress": false };
-    expect(workflow("prepare-release").jobs.packs.concurrency).toEqual(group);
-    expect(workflow("local-harness-pack-prebuild").jobs.prebuild.concurrency).toEqual(group);
+    expect(callers).toEqual(["local-harness-pack-prebuild.yml"]);
+    expect(JSON.stringify(workflow("prepare-release"))).not.toContain("apply-pins");
   });
 
-  it("prebuilds in the background without ever reaching main or users", () => {
+  it("checks every commit that reaches main without a pull request", () => {
+    const guard = workflow("main-push-guard");
+    expect(guard.on.push.branches).toEqual(["main"]);
+    const script = guard.jobs.check.steps.find((step: any) => step.id === "check").with.script as string;
+    expect(script).toMatch(/listPullRequestsAssociatedWithCommit/);
+    expect(script).toMatch(/checkVersionCommitBetween/);
+  });
+});
+
+describe("pack prebuild", () => {
+  it("prebuilds in the background and proposes the pins as one reviewed PR once every harness finishes", () => {
     const prebuild = workflow("local-harness-pack-prebuild");
     expect(prebuild.on.push.branches).toEqual(["main"]);
-    // It pins nothing: no pin artifacts collected, no PR, no push token.
-    const text = JSON.stringify(prebuild);
-    expect(text).not.toContain("local-harness-pin-");
-    expect(text).not.toContain("RELEASE_PUSH_TOKEN");
-    expect(text).not.toContain("apply-pins");
-    // It stands down while a release is being prepared, and while signing
-    // needs a person (a build waiting for approval would hold the harness's
-    // group, and the next release would queue behind it).
-    expect(prebuild.jobs.prebuild.if).toBe("needs.harnesses.outputs.release_in_progress == 'false'");
+    // It stands down while signing needs a person (a build waiting for
+    // approval would hold the harness's group, and the next run would queue
+    // behind it), and never waits on another workflow's runs.
+    expect(prebuild.jobs.prebuild.if).toBe("needs.harnesses.outputs.stand_down == 'false'");
     const guard = JSON.stringify(prebuild.jobs.harnesses);
-    expect(guard).toContain("prepare-release.yml");
     expect(guard).toContain("required_reviewers");
+    expect(guard).not.toContain("prepare-release.yml");
+
+    // All harnesses or none: no `if`, so a failed pipeline means no pin PR.
+    const pinPr = prebuild.jobs["pin-pr"];
+    expect(pinPr.needs).toBe("prebuild");
+    expect(pinPr.if).toBeUndefined();
+    expect(pinPr.concurrency).toEqual({ group: "local-harness-pack-pins", "cancel-in-progress": false });
+    expect(pinPr.permissions).toEqual({ contents: "read", attestations: "read" });
+
+    // Collect every pin, apply them in a clean install, gate exactly what the
+    // PR pins, then open it through the shared bot script.
+    const steps: any[] = pinPr.steps;
+    const at = (test: (step: any) => boolean) => steps.findIndex(test);
+    const checkout = at((step) => String(step.uses).startsWith("actions/checkout@"));
+    const install = at((step) => /npm ci/.test(step.run ?? ""));
+    const collect = at((step) => step.with?.pattern === "local-harness-pin-*");
+    const apply = at((step) => /local-harness-publication\.mjs apply-pins/.test(step.run ?? ""));
+    const gate = at((step) => /check-local-harness-release\.mjs --assets --verify-attestations/.test(step.run ?? ""));
+    const newer = at((step) => step.id === "newer");
+    const open = at((step) => step.name === "Open or refresh the pin PR");
+    expect(steps[checkout].with["persist-credentials"]).toBe(false);
+    expect(checkout).toBeLessThan(install);
+    expect(install).toBeLessThan(apply);
+    expect(collect).toBeGreaterThan(-1);
+    expect(collect).toBeLessThan(apply);
+    expect(apply).toBeLessThan(gate);
+    expect(gate).toBeLessThan(newer);
+    expect(newer).toBeLessThan(open);
+
+    // A run from an older commit never replaces a newer commit's pins.
+    expect(steps[newer].run).toMatch(/compare\/\$base\.\.\.\$GITHUB_SHA/);
+    expect(steps[open].if).toBe("steps.newer.outputs.stand_down == 'false'");
+
+    // Only the pin step holds the push token, and it stages only what
+    // `apply-pins` writes, a new equivalence record included.
+    expect(steps[open].env.GH_TOKEN).toBe("${{ secrets.RELEASE_PUSH_TOKEN }}");
+    expect(steps.filter((step) => JSON.stringify(step).includes("RELEASE_PUSH_TOKEN"))).toHaveLength(1);
+    const run: string = steps[open].run;
+    expect(run).toMatch(/runtime-compat\.generated\.json/);
+    expect(run).toMatch(/pack-inputs\.generated\.json/);
+    expect(run).toMatch(/local-harness-pack-equivalence/);
+    expect(run).not.toMatch(/git add (-u|-A|\.)/);
+    expect(run).toMatch(/packs\.md/);
+    expect(run).toContain('branch: "bot/local-harness-pack-pins"');
+    expect(run).toMatch(/bash \.github\/scripts\/local-harness-bot-pr\.sh/);
   });
 
   it("prebuilds on a push that changes ANY declared pack input", async () => {
@@ -208,18 +269,6 @@ describe("packs are part of starting a release", () => {
       "add these to the push paths of local-harness-pack-prebuild.yml",
     ).toEqual([]);
   });
-
-  it("never lets an approval of an older version PR cover new pins", () => {
-    // The rulesets keep approvals across pushes, and this PR pins what users
-    // download: a regenerated PR with different contents dismisses them first.
-    const steps: any[] = workflow("prepare-release").jobs["version-pr"].steps;
-    const run: string = steps.find((step) => step.name === "Open or refresh the version PR").run;
-    const dismiss = run.indexOf("/dismissals");
-    const push = run.indexOf("git push --force");
-    expect(dismiss).toBeGreaterThan(-1);
-    expect(dismiss).toBeLessThan(push);
-    expect(run).toMatch(/HEAD\^\{tree\}/);
-  });
 });
 
 describe("pack release boundaries", () => {
@@ -228,14 +277,14 @@ describe("pack release boundaries", () => {
       .flatMap((job: any) => job.steps ?? [])
       .some((step: any) => /check-local-harness-release\.mjs[^\n]*--assets/.test(step.run ?? ""));
 
-  it("checks the published manifest before versioning a release and before publishing it", () => {
-    for (const name of ["prepare-release", "release"]) {
+  it("checks the published manifest before pinning a pack and before publishing a release", () => {
+    for (const name of ["local-harness-pack-prebuild", "release"]) {
       expect(runsAssetCheck(name), name).toBe(true);
     }
   });
 
   it("verifies the pinned packs' build provenance wherever it checks their assets", () => {
-    for (const name of ["prepare-release", "release"]) {
+    for (const name of ["local-harness-pack-prebuild", "release"]) {
       const steps = Object.values(workflow(name).jobs).flatMap((job: any) => job.steps ?? []);
       const gate = steps.find((step: any) => /check-local-harness-release\.mjs[^\n]*--assets/.test(step.run ?? ""));
       expect(gate.run, name).toMatch(/--verify-attestations/);
@@ -337,15 +386,20 @@ describe("pack release boundaries", () => {
     const { jobs } = workflow("release");
     const lookup = jobs["local-harness-evidence-lookup"];
     expect(lookup.needs).toBe("preflight");
-    expect(lookup.permissions).toEqual({ contents: "read", actions: "read" });
+    // `actions: write` only to cancel this commit's evidence run when it has
+    // not started, so the release runs the gate instead of waiting on it.
+    expect(lookup.permissions).toEqual({ contents: "read", actions: "write" });
     const find = lookup.steps.find((step: any) => step.id === "find");
     expect(find.with.script).toContain("findReleaseEvidence");
     expect(find.with.script).toContain("computeConformanceInputsDigest");
+    expect(find.with.script).toContain("cancelWorkflowRun");
     for (const name of ["local-harness-evidence", "local-harness-evidence-permitted"]) {
       expect(jobs[name].needs, name).toContain("local-harness-evidence-lookup");
       expect(String(jobs[name].if), name).toContain("needs.local-harness-evidence-lookup.outputs.run_id == ''");
       expect(String(jobs[name].if), name).toContain("!cancelled()");
       expect(jobs[name].with.certified_only, name).toBe(true);
+      // Off GitHub's five-job macOS cap, with a variable to go back.
+      expect(jobs[name].with.macos_runner, name).toBe("${{ vars.RELEASE_MACOS_RUNNER || 'blacksmith-6vcpu-macos-latest' }}");
     }
     // Either way the same gate checks the records, and evidence made here is
     // marked for the next release to find.
@@ -362,6 +416,8 @@ describe("pack release boundaries", () => {
   it("produces the release's evidence when a releasable commit lands, against the packs a release selects", () => {
     const evidence = workflow("local-harness-release-evidence");
     expect(evidence.on.push.branches).toEqual(["main"]);
+    // A newer push must not cancel the run still going, or none ever finishes.
+    expect(evidence.concurrency).toEqual({ group: "local-harness-release-evidence", "cancel-in-progress": false });
     const { jobs } = evidence;
     const plan = jobs.plan.steps.map((step: any) => `${step.run ?? ""}${step.with?.script ?? ""}`).join("\n");
     expect(plan).toContain("release-plan.mjs");

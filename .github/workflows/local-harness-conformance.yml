@@ -74,6 +74,13 @@ on:
         required: false
         type: boolean
         default: false
+      macos_runner:
+        description: >-
+          Runner label for every macOS leg (default `macos-latest`). A release
+          passes an Apple Silicon label outside GitHub's five-job macOS cap.
+        required: false
+        type: string
+        default: ""
     outputs:
       conformance_version:
         description: The identifier to stamp into `lifecycleConformanceVersion`.
@@ -95,6 +102,11 @@ on:
         default: ""
       runtime_pack_versions:
         description: Other runtimes' pinned published packs, `<harnessId>=<version>` pairs (empty builds source).
+        required: false
+        type: string
+        default: ""
+      macos_runner:
+        description: Runner label for every macOS leg (empty means macos-latest).
         required: false
         type: string
         default: ""
@@ -176,6 +188,7 @@ jobs:
           RUNTIME_INPUT: ${{ inputs.runtime_pack_versions }}
           HARNESSES: ${{ inputs.harnesses }}
           CERTIFIED_ONLY: ${{ inputs.certified_only }}
+          MACOS_RUNNER: ${{ inputs.macos_runner }}
         run: node mcpjam-inspector/scripts/plan-local-harness-conformance.mjs >> "$GITHUB_OUTPUT"
 
   unit:
@@ -302,7 +315,7 @@ jobs:
 
       # Under Rosetta `npm ci` is the slowest step of the slowest leg, five to
       # eight minutes, so the x64 legs restore node_modules instead. The key
-      # is the lockfile's installed tree, which a version PR leaves alone.
+      # is the lockfile's installed tree, which a version commit leaves alone.
       # Pull requests never run these legs, and the evidence run, the push run
       # and releases save it on main themselves: it is not one of the `nm-*`
       # caches pull requests restore and only warm-node-modules.yml saves.
@@ -1035,10 +1048,11 @@ jobs:
           if-no-files-found: error
 
   # Every other local runtime, with the same steps for each: its pack, this
-  # checkout's layer, and `run-gateway-turn.ts`, which asserts what any local
-  # runtime owes the member (a turn through the gateway with no key in any
-  # supervised process, a host tool, detach and resume, loopback only, nothing
-  # left after Stop). The legs are the targets its definition advertises, so a
+  # checkout's layer, and `run-runtime-conformance.ts`, which asserts what any
+  # local runtime owes the member. A gateway runtime runs a turn through the
+  # gateway with no key in any supervised process, a host tool, detach and
+  # resume; a runtime on its vendor's login runs the lifecycle around a turn.
+  # Both check loopback only and nothing left after Stop. The legs are the targets its definition advertises, so a
   # target that cannot pass comes out of the definition, not this matrix.
   runtime-scenarios:
     name: ${{ matrix.harness }} ${{ matrix.platform_key }}
@@ -1187,7 +1201,7 @@ jobs:
       - name: Unpack the adapter build
         run: tar -xzf - < "$RUNNER_TEMP/adapter-build/adapter-build.tgz"
 
-      - name: Gateway turn
+      - name: Runtime conformance
         working-directory: mcpjam-inspector
         env:
           HOME: ${{ runner.temp }}/conformance/home
@@ -1195,7 +1209,7 @@ jobs:
           MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION: ${{ github.sha }}
         run: |
           mkdir -p "$HOME"
-          npx tsx server/utils/harness/local/conformance/run-gateway-turn.ts "$HARNESS"
+          npx tsx server/utils/harness/local/conformance/run-runtime-conformance.ts "$HARNESS"
 
       - name: No supervised process survived the run
         if: always() && runner.os != 'Windows'

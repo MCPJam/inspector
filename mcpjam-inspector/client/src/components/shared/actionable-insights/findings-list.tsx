@@ -88,8 +88,11 @@ export function ProblemsList({
   context,
   onOpenEvidence,
   iterationRows,
+  caveats,
 }: {
   problems: readonly FindingProblem[];
+  /** The sampling caveat for each problem, keyed by problem id. */
+  caveats?: ReadonlyMap<string, string>;
   context?: FindingPromptContext;
   onOpenEvidence?: (locator: FindingEvidenceLocator) => void;
   iterationRows?: Record<string, AffectedIterationRow>;
@@ -104,6 +107,7 @@ export function ProblemsList({
             context={context}
             onOpenEvidence={onOpenEvidence}
             iterationRows={iterationRows}
+            caveat={caveats?.get(problem.id) ?? null}
           />
         </li>
       ))}

@@ -5,12 +5,12 @@ icon: "book"
 ---
 
 <Note>
-The upcoming SDK 10, CLI 6, and Vitest 0.3 releases require an MCPJam login or `sk_` API key for every eval, including BYOK runs with uploads disabled. These versions must ship after the backend run-start endpoint is deployed. Earlier versions keep their existing behavior.
+SDK 10, CLI 6, Vitest 0.3, and later versions require an MCPJam login or `sk_` API key for every eval, including BYOK runs with uploads disabled. Earlier versions do not.
 </Note>
 
 `runSuiteFile(sourceText, options)` runs an MCPJam suite file locally and decides it with the v2 verdict policy. It is the engine behind [`mcpjam test`](/cli/local-evals), exposed for code that wants the same run without the CLI.
 
-It takes **explicit** configuration: server bindings, provider keys, and an optional callback that returns an MCPJam connection. Every run resolves MCPJam identity; when the callback is absent, it uses the SDK credential resolver. It does not discover suite files, print, write artifacts or exit the process. It never uploads results and sends no usage telemetry — that belongs to the caller.
+It takes **explicit** configuration: server bindings, provider keys, and an optional callback that returns an MCPJam connection. Every run resolves MCPJam identity; when the callback is absent, it uses the SDK credential resolver. It does not discover suite files, print, write artifacts or exit the process. It never uploads results and sends no usage telemetry; that belongs to the caller.
 
 ```typescript
 import { readFile } from "node:fs/promises";
@@ -44,18 +44,18 @@ try {
 |---|---|---|
 | `servers` | required | Target server bindings by **name**: `{ config: MCPServerConfig, source?: string }`. `source` is a non-secret label shown in reports. The runner creates and owns its own `MCPClientManager`. |
 | `caseIds` | every enabled case | Exact authored case ids. Unknown, duplicate and disabled ids are refused. |
-| `inference.mode` | `"auto"` | `"auto"`, `"byok"` or `"mcpjam"` — see [Inference](/cli/local-evals#inference). |
+| `inference.mode` | `"auto"` | `"auto"`, `"byok"` or `"mcpjam"`; see [Inference](/cli/local-evals#inference). |
 | `inference.providerKeys` | `{}` | BYOK keys by provider id (`anthropic`, `openai`, `google`, `deepseek`, `mistral`, `openrouter`, `xai`). |
-| `inference.baseUrls` | — | Non-secret provider base URLs (`anthropic`, `openai`, `ollama`, …). |
-| `inference.resolveMcpjam` | — | `() => Promise<{ baseUrl, projectId, getAuth, headers? }>`, called once before every run, including BYOK. `baseUrl` is the app origin (not `/api/v1`), `projectId` a concrete id, `getAuth` returns the current bearer and is re-read for every mint, retry and revoke. `headers` go to MCPJam's API only. |
-| `hostTemplateId` | — | One host template to emulate (`claude-code`, `chatgpt`, …). |
-| `importApprovals` | — | `{ caseId, reason }[]` approving `approximated` imported cases for this run. |
+| `inference.baseUrls` | None | Non-secret provider base URLs (`anthropic`, `openai`, `ollama`, …). |
+| `inference.resolveMcpjam` | None | `() => Promise<{ baseUrl, projectId, getAuth, headers? }>`, called once before every run, including BYOK. `baseUrl` is the app origin (not `/api/v1`), `projectId` a concrete id, `getAuth` returns the current bearer and is re-read for every mint, retry and revoke. `headers` go to MCPJam's API only. |
+| `hostTemplateId` | None | One host template to emulate (`claude-code`, `chatgpt`, …). |
+| `importApprovals` | None | `{ caseId, reason }[]` approving `approximated` imported cases for this run. |
 | `concurrency` | `1` | Iterations of one case in flight at once. Cases run sequentially. |
 | `iterationTimeoutMs` | `120000` | Bounds each iteration's executor run (not grading, not setup). |
 | `maxSteps` | `10` | Model steps per prompt. |
-| `setupTimeoutMs` | `30000` | Bounds each setup operation — a connection, the tool catalog, a lease mint. |
-| `signal` | — | Cooperative cancellation. After execution begins, an abort returns partial evidence instead of throwing. |
-| `onProgress` | — | Observer for setup, case and iteration progress. A throwing observer is recorded as a warning. |
+| `setupTimeoutMs` | `30000` | Bounds each setup operation: a connection, the tool catalog, a lease mint. |
+| `signal` | None | Cooperative cancellation. After execution begins, an abort returns partial evidence instead of throwing. |
+| `onProgress` | None | Observer for setup, case and iteration progress. A throwing observer is recorded as a warning. |
 
 ## Result
 
@@ -65,19 +65,19 @@ try {
 | `passed` | `verdict === "passed"`. |
 | `termination` | `"completed"`, `"aborted"` (the signal) or `"stopped"` (a credential, billing, or organization AI-key policy refusal stopped scheduling). |
 | `complete` | Whether every planned iteration reached a terminal state. |
-| `decision` | The validated v2 `EvalVerdictDecision` over the planned population. For an interrupted run it is partial evidence, never a completed gate — read `verdict`. |
+| `decision` | The validated v2 `EvalVerdictDecision` over the planned population. For an interrupted run it is partial evidence, never a completed gate; read `verdict`. |
 | `cases` | Per case: effective model and rail, configured iterations and threshold, the evaluator-config hash, judge state, import evidence, per-iteration evidence (lifecycle status, task verdict, evaluator error, attributed refusal, tool calls, policy blocks, scores, stage chain) and the case's row of the decision. |
 | `toolPolicy` | The declared policy, the launch snapshot and every block. |
 | `warnings`, `issues` | Warnings, and run-affecting problems (credentials, billing, integrity, cleanup) by phase and category. |
-| `report` | The validated `eval-local-run` structured report — pass it to `renderStructuredRunJson`, `renderStructuredRunJUnitXml`, `renderStructuredRunHtml`, or `formatLocalEvalRunSummary`. |
+| `report` | The validated `eval-local-run` structured report; pass it to `renderStructuredRunJson`, `renderStructuredRunJUnitXml`, `renderStructuredRunHtml`, or `formatLocalEvalRunSummary`. The JSON, HTML and JUnit renderings carry every case's per-iteration tool calls, tokens, scorer results and duration (HTML in a collapsed section per case, JUnit in each test case's `<system-out>`, both with long values cut); `formatLocalEvalRunSummary` does not. |
 
-Nothing in the result carries a provider key, a platform token, a lease, server headers or environment objects. Every credential the run was handed — provider keys, platform tokens, server credentials, and any header, environment or URL value whose name or shape marks it as one (`Authorization`, `GITHUB_TOKEN`, `?sig=`, a `ghp_…` token) — is replaced with `[REDACTED]` wherever observed text repeats it: execution errors, tool-call arguments, evaluator and predicate reasons, issues and warnings. Ordinary configuration such as `NODE_ENV=production` is not treated as a secret. Identifiers (case ids, server and tool names) and fixed vocabularies such as statuses are never rewritten.
+Nothing in the result carries a provider key, a platform token, a lease, server headers or environment objects. Every credential the run was handed (provider keys, platform tokens, server credentials, and any header, environment or URL value whose name or shape marks it as one (`Authorization`, `GITHUB_TOKEN`, `?sig=`, a `ghp_…` token)) is replaced with `[REDACTED]` wherever observed text repeats it: execution errors, tool-call arguments, evaluator and predicate reasons, issues and warnings. Ordinary configuration such as `NODE_ENV=production` is not treated as a secret. Identifiers (case ids, server and tool names) and fixed vocabularies such as statuses are never rewritten.
 
 ## Errors
 
 Input that cannot run and environments that cannot be set up throw `SuiteFileRunError` with a stable `code`, a `phase` (`validation`, `setup`, `execution`, `reporting`) and a `category`. Validation and setup refusals are thrown **before any model or tool call**. A refusal that found concrete problems also lists every one found at that stage in `details.problems`; other errors carry only their message, so treat `problems` as optional.
 
-One error comes after execution: `REPORT_INVALID` (phase `reporting`, category `integrity`) means the cases ran — model calls were made and may have been billed — but the run's own report failed validation, so no result is returned. Retrying repeats that inference.
+One error comes after execution: `REPORT_INVALID` (phase `reporting`, category `integrity`) means the cases ran, model calls were made and may have been billed, but the run's own report failed validation, so no result is returned. Retrying repeats that inference.
 
 | `category` | Examples |
 |---|---|
@@ -95,4 +95,4 @@ An iteration that failed its assertions is evidence, not an error: it comes back
 
 ## Eval authentication
 
-For the upcoming releases, see [eval identity and local data](/cli/local-evals#eval-identity-and-local-data) for credential precedence, CI setup, failure behavior, and the exact fields sent before an eval.
+See [eval identity and local data](/cli/local-evals#eval-identity-and-local-data) for credential precedence, CI setup, failure behavior, and the exact fields sent before an eval.

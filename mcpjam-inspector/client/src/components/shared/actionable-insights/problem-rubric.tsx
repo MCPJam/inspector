@@ -1,3 +1,4 @@
+import { plural } from "./problem-prompts";
 import {
   USER_VALUE_STAGES,
   USER_VALUE_STAGE_LABELS,
@@ -30,7 +31,7 @@ export function ProblemRubric({
           ? stages
               .map(
                 ({ stage, count }) =>
-                  `${USER_VALUE_STAGE_LABELS[stage]} failed first in ${count} of ${problem.affected.count} affected iterations`,
+                  `${USER_VALUE_STAGE_LABELS[stage]} failed first in ${count} of ${plural(problem.affected.count, "affected iteration")}`,
               )
               .join("; ")
           : "Failure stage not established."}

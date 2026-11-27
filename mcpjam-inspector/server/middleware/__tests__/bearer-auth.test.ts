@@ -435,6 +435,43 @@ describe("bearerAuthMiddleware — per-key rate limit", () => {
     expect(lastThrottledStatus).toBe(429);
   });
 
+  it("names the key's owner for usage analytics on the 429 and the orphaned-key 401", async () => {
+    // The request-log middleware reads `analyticsUserId` after the response;
+    // these refusals return before `workosUserId` is set.
+    validateApiKeyMock.mockResolvedValue({
+      apiKey: { id: "api_key_counted", owner: { id: "user_counted" } },
+    });
+    resolveUserByExternalIdMock.mockResolvedValue({ _id: "mcpjam_user_counted" });
+    const seen: Array<[number, unknown, unknown]> = [];
+    const app = new Hono();
+    app.use("*", async (c, next) => {
+      await next();
+      seen.push([c.res.status, c.get("analyticsUserId"), c.get("workosUserId")]);
+    });
+    app.use("*", bearerAuthMiddleware);
+    app.get("/test", (c) => c.json({ ok: true }));
+
+    for (let i = 0; i < 12; i++) {
+      await app.request("/test", {
+        headers: { authorization: "Bearer sk_counted" },
+      });
+    }
+    lookupWorkosKeyBindingMock.mockResolvedValue(null);
+    resetWorkOSRateLimitForTests();
+    await app.request("/test", {
+      headers: { authorization: "Bearer sk_counted" },
+    });
+
+    const refused = seen.filter(([status]) => status !== 200);
+    expect(refused.map(([status]) => status)).toContain(429);
+    expect(refused.at(-1)![0]).toBe(401);
+    for (const [, analyticsUserId, workosUserId] of refused) {
+      expect(analyticsUserId).toBe("user_counted");
+      // Attribution only: the refused request is still unauthenticated.
+      expect(workosUserId).toBeUndefined();
+    }
+  });
+
   it("isolates rate-limit buckets per WorkOS key id", async () => {
     // Bucket A — drain it
     validateApiKeyMock.mockImplementation(async ({ value }) => ({

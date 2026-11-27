@@ -18,11 +18,12 @@ import type {
   FindingOption,
   FindingProblem,
 } from "@/lib/insights-envelope-api";
-import type { FindingPromptContext } from "./finding-prompts";
+import { evidenceLabel, type FindingPromptContext } from "./finding-prompts";
 import type { FindingEvidenceLocator } from "./finding-evidence";
 import {
   AffectedIterationsList,
   type AffectedIterationRow,
+  unloadedRow,
 } from "./affected-iterations-list";
 import { FindingText } from "./finding-text";
 import { ProblemRubric } from "./problem-rubric";
@@ -151,27 +152,19 @@ function rowsFor(
   problem: FindingProblem,
   iterationRows: Record<string, AffectedIterationRow>,
 ): AffectedIterationRow[] {
-  return problem.iterationIds.map(
-    (id) =>
-      iterationRows[id] ?? {
-        iterationId: id,
-        caseTitle: "Iteration not loaded on this page",
-        iterationNumber: null,
-        client: null,
-        model: null,
-        result: "unknown",
-        canOpen: false,
-      },
-  );
+  return problem.iterationIds.map((id) => iterationRows[id] ?? unloadedRow(id));
 }
 
 export function ProblemDetailsContent({
   problem,
   context,
   iterationRows = {},
+  caveat = null,
   onOpenEvidence,
 }: {
   problem: FindingProblem;
+  /** How the observation was sampled, when it was not measured run-wide. */
+  caveat?: string | null;
   context?: FindingPromptContext;
   iterationRows?: Record<string, AffectedIterationRow>;
   onOpenEvidence?: (locator: FindingEvidenceLocator) => void;
@@ -186,6 +179,15 @@ export function ProblemDetailsContent({
   );
   const unresolved = new Set(problem.coverage.unresolvedIterationIds);
   const target = option ? optionTargetLabel(option) : null;
+  // A passing comparison stays visible but is labelled apart, since it is
+  // not one of the affected iterations.
+  const excerpts = problem.evidence.filter((row) => row.excerpt);
+  const status = (id: string) =>
+    explained.has(id)
+      ? "Evidence reviewed"
+      : unresolved.has(id)
+        ? "Unresolved"
+        : "Covered by another option";
   return (
     <div className="space-y-6 px-6 pb-8 text-sm leading-relaxed">
       <section>
@@ -199,6 +201,30 @@ export function ProblemDetailsContent({
               <p className="mt-2 break-words">
                 <FindingText text={problem.observed} />
               </p>
+              {caveat ? (
+                <p
+                  className="mt-1 text-xs text-muted-foreground"
+                  data-testid="problem-sampling-caveat"
+                >
+                  <FindingText text={caveat} />
+                </p>
+              ) : null}
+              {excerpts.map((row, index) => (
+                <figure key={index} className="mt-2 min-w-0">
+                  <figcaption className="text-xs text-muted-foreground">
+                    {row.kind === "contrast"
+                      ? `Passing comparison${row.iterationId ? `, iteration ${row.iterationId}` : ""}`
+                      : evidenceLabel(row)}
+                  </figcaption>
+                  <pre
+                    tabIndex={0}
+                    className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded bg-[var(--code-bg)] p-2 font-code text-xs text-[var(--code-text)]"
+                    data-testid="problem-evidence-excerpt"
+                  >
+                    {row.excerpt}
+                  </pre>
+                </figure>
+              ))}
             </details>
           </li>
         </ul>
@@ -289,12 +315,20 @@ export function ProblemDetailsContent({
           {recommended && problem.recommendationReason ? (
             <details>
               <summary className="cursor-pointer font-semibold">
-                Evidence limits
+                More reasoning
               </summary>
               <p className="mt-2">
                 <FindingText text={option.rationale} />
               </p>
             </details>
+          ) : null}
+          {option.citations.length > 0 ? (
+            <p
+              className="break-words text-xs text-muted-foreground"
+              data-testid="problem-option-citations"
+            >
+              Cited trace locations: {option.citations.join(", ")}
+            </p>
           ) : null}
           <CopyOptionPrompt
             key={option.id}
@@ -313,8 +347,13 @@ export function ProblemDetailsContent({
             {problem.explanations.map((row) => (
               <li key={row.id}>
                 <FindingText text={row.rootCause ?? row.title} />{" "}
-                <span className="text-muted-foreground">
-                  ({plural(row.iterationIds.length, "iteration")})
+                <span className="break-words text-muted-foreground">
+                  ({plural(row.iterationIds.length, "iteration")}:{" "}
+                  {row.iterationIds.join(", ")}
+                  {row.citations.length
+                    ? `; cited ${row.citations.join(", ")}`
+                    : ""}
+                  )
                 </span>
               </li>
             ))}
@@ -331,13 +370,20 @@ export function ProblemDetailsContent({
           total={problem.affected.count}
           ariaLabel="Affected iterations"
           detail={(row) =>
-            explained.has(row.iterationId)
-              ? "Evidence reviewed"
-              : unresolved.has(row.iterationId)
-                ? "Unresolved"
-                : scope.has(row.iterationId)
-                  ? "Addressed by this option"
-                  : "Covered by another option"
+            !option
+              ? status(row.iterationId)
+              : scope.has(row.iterationId)
+                ? [
+                    "In selected option",
+                    explained.has(row.iterationId)
+                      ? "Evidence reviewed"
+                      : unresolved.has(row.iterationId)
+                        ? "Unresolved"
+                        : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")
+                : `Not in selected option · ${status(row.iterationId)}`
           }
           {...(onOpenEvidence
             ? {

@@ -60,13 +60,11 @@ const movedCloudGroupPattern = MOVED_CLOUD_GROUPS.join("|");
 const EXTRA_DOC_PATHS = [
   "cli/README.md",
   "docs/reference/openapi.json",
-  "docs/inspector/evals.mdx",
   "docs/inspector/projects.mdx",
-  "docs/getting-started.mdx",
-  "docs/contributing/evals-architecture.mdx",
+  "internal-docs/contributing/evals-architecture.mdx",
   "docs/hosted/overview.mdx",
-  "docs/sandbox-images-ui-cli.md",
-  "docs/code-first-evals-environments-design.md",
+  "internal-docs/sandbox-images-ui-cli.md",
+  "internal-docs/code-first-evals-environments-design.md",
   "vitest/README.md",
 ] as const;
 

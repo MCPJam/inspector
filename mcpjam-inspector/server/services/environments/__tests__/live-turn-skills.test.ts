@@ -19,7 +19,7 @@ import {
   studyLibraryTurnSkills,
   turnSkillProvenance,
 } from "../live-turn-skills";
-import { resolveTurnSkills } from "../turn-skills";
+import { resolveTurnSkills, type TurnRuntime } from "../turn-skills";
 
 const AGENT = { kind: "agent" } as const;
 const harness = (harnessId: string) =>
@@ -110,23 +110,28 @@ describe("environmentTurnSkills", () => {
     expect(JSON.stringify(turn.turnProvenance)).not.toContain("SECRET");
   });
 
-  it("records only what a harness's box gets: a live turn leaves captures off it", () => {
+  it("records what a harness gets on its box and through MCPJam's skill tools", () => {
     const turn = environmentTurnSkills({
       spec: environment(),
       attribution: null,
       runtime: harness("claude-code"),
     });
-    expect(turn.turnProvenance?.skillsAtTurn).toEqual([AUTHORED_ROW]);
-    expect(turn.skills.excluded).toEqual([
-      expect.objectContaining({ reason: "server-skill-unsupported" }),
+    // Claude Code takes a captured server skill through the tools, so the plan
+    // hands it over and the record names it beside the authored skill.
+    expect(turn.turnProvenance?.skillsAtTurn).toEqual([
+      AUTHORED_ROW,
+      SERVER_ROW,
     ]);
+    expect(turn.skills.excluded).toEqual([]);
   });
 
   it("records nothing delivered on a harness with no skill channel", () => {
+    // An id no adapter claims has none, whichever runtimes gain one: Cursor
+    // took this seat until it got a skills folder.
     const turn = environmentTurnSkills({
       spec: environment(),
       attribution: null,
-      runtime: harness("cursor"),
+      runtime: harness("no-skill-channel"),
     });
     expect(turn.turnProvenance).toEqual({
       environmentAtTurn: ENVIRONMENT_REF,
@@ -147,37 +152,42 @@ describe("environmentTurnSkills", () => {
     expect(turn.turnProvenance?.skillsAtTurn).toEqual([SERVER_ROW]);
   });
 
-  it("hands a harness the environment's skills and the set that carries their files", () => {
+  it("hands a harness the environment's skills and the files that go with them", () => {
     const turn = environmentTurnSkills({
       spec: environment(),
       attribution: null,
       runtime: harness("claude-code"),
     });
-    expect(turn.box?.skills.map((skill) => skill.name)).toEqual([
+    expect(turn.skills.harness?.skills?.map((skill) => skill.name)).toEqual([
       "pdf-processing",
     ]);
-    expect(turn.box?.set?.standaloneSkills[0]?.files).toEqual([
+    expect(turn.skills.harness?.files).toEqual([
+      {
+        skillId: "sk_1",
+        path: "ref.md",
+        size: 3,
+        url: "https://signed/ref",
+      },
+    ]);
+    expect(turn.capabilities?.standaloneSkills[0]?.files).toEqual([
       { path: "ref.md", size: 3, url: "https://signed/ref" },
     ]);
+    expect(turn.environmentSkillCount).toBe(1);
   });
 
-  it("plans a client's turn as live and a named environment's as captured", () => {
-    const client = environmentTurnSkills({
-      spec: environment(),
-      attribution: null,
-      liveExtras: {},
-      runtime: AGENT,
-    });
-    const named = environmentTurnSkills({
-      spec: environment(),
-      attribution: null,
-      runtime: AGENT,
-    });
-    expect(client.skills.agent).toEqual({ kind: "live" });
-    expect(named.skills.agent).toEqual({ kind: "environment" });
-    // The same answer reaches a harness, as `liveTurn`.
-    expect(client.live).toBe(true);
-    expect(named.live).toBe(false);
+  it("plans a client's turn as live and a named environment's as captured, for either engine", () => {
+    const planned = (runtime: TurnRuntime, live: boolean) =>
+      environmentTurnSkills({
+        spec: environment(),
+        attribution: null,
+        ...(live ? { liveExtras: {} } : {}),
+        runtime,
+      }).skills;
+    expect(planned(AGENT, true).agent).toEqual({ kind: "live" });
+    expect(planned(AGENT, false).agent).toEqual({ kind: "environment" });
+    // The same answer reaches a harness, in the plan it carries out.
+    expect(planned(harness("claude-code"), true).harness?.live).toBe(true);
+    expect(planned(harness("claude-code"), false).harness?.live).toBe(false);
   });
 });
 
@@ -251,7 +261,7 @@ describe("studyLibraryTurnSkills", () => {
     expect(turn.skills.delivered.map((ref) => ref.ref)).toEqual(["onboarding"]);
     // The study's servers are connected now, so their own skills join.
     expect(turn.skills.agent).toEqual({ kind: "live" });
-    expect(turn.live).toBe(true);
+    expect(turn.environmentSkillCount).toBe(1);
     expect(turn.skills.set.standaloneSkills[0]?.files).toEqual([
       { path: "guide.md", size: 5, url: "https://f/g" },
     ]);
@@ -267,8 +277,15 @@ describe("studyLibraryTurnSkills", () => {
       runtime: harness("claude-code"),
     });
     expect(turn.skills.delivered).toEqual([]);
-    expect(turn.box).toBeUndefined();
-    expect(turn.live).toBe(true);
+    expect(turn.skillsUnread).toBe(true);
+    // Its skills are unknown, never empty: the box stays as it is, and the
+    // turn is live, so its servers' own skills are still offered.
+    expect(turn.skills.harness).toEqual({
+      mode: "none",
+      skills: null,
+      files: null,
+      live: true,
+    });
   });
 
   it("writes each skill's SKILL.md and keeps its other files when their list can't be read", async () => {
@@ -278,8 +295,12 @@ describe("studyLibraryTurnSkills", () => {
       projectId: "p_1",
       runtime: harness("claude-code"),
     });
-    expect(turn.box).toEqual({
+    expect(turn.skills.harness).toMatchObject({
+      mode: "environment",
       skills: [{ ...SHARED }],
+      files: null,
+      live: true,
     });
+    expect(turn.capabilities).toBeUndefined();
   });
 });

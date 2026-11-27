@@ -12,16 +12,13 @@ delivery question; features that only show static state do not ship here.
 
 ## What it shows
 
-| Feature | Decision it serves |
+| Part | Question it answers |
 |---|---|
-| Deploy-diff | Should we cut a release today? |
-| Release readiness | Where is the release, and what is it waiting on? |
-| Release dry-run | What will Start release put in the version PR? |
-| Release progress stepper | Is the running release done yet / stuck? |
-| Drift & freshness alerts | Is anything rotting I need to address? |
+| Release card | Which version is next, where does it stand, what is live? One button: **Start release**, or **Retry release** after a failure. |
+| Steps | Is the running release done yet, or stuck? |
+| Services | What is live where? MCP promotes to production from its own tile. |
 
-The scaffold (this commit) only ships a protected hello-world page. Each
-feature lands in a follow-up commit.
+Detail sits behind a click (what's in a release, the run, the last release).
 
 ## Running locally
 
@@ -56,33 +53,41 @@ deploy after it, whereas Soundcheck talks only to `api.github.com` and has no
 such contract. Being in the release also made it deploy twice — once as the
 job, then again from the release's own version commit, which touches root
 `package-lock.json` and trips the `paths` filter above. That push trigger is
-now the single path: a release redeploys Soundcheck when its version PR
-merges.
+now the single path: a release redeploys Soundcheck when its version commit
+lands.
 
 Soundcheck is never *published* — it is not part of the customer release
 surface, and nothing customers receive depends on it.
 
 Note for anyone editing `release.yml`: `src/components/release-progress.tsx`
-hardcodes the job list, and `release-readiness.tsx` / `release-verdict.tsx`
-mirror preflight's gates. `src/lib/release-state.ts` mirrors the version PR
-branch and run naming in `.github/scripts/release-pr.mjs` and
-`release-trigger.mjs`. All of these are hand-synced and will silently drift.
+hardcodes the job list. `src/lib/release-status.ts` and `release-state.ts`
+mirror the run naming and unpublished-version logic in
+`.github/scripts/release-trigger.mjs` and `unpublished-versions.mjs`. All of these are hand-synced and will silently drift.
 
 ## How a release runs
 
 1. **Start release** dispatches `prepare-release.yml`. It runs
-   `changeset version` on `main` and opens the version PR
-   (`release/version-packages`), with the deploy flags as checkboxes.
-2. Someone approves and merges the version PR. That is the release.
-3. `release-trigger.yml` watches Tests, Build and Test and Deploy Staging
-   finish on `main` and dispatches `release.yml` at the first commit that is
-   green on all three and still carries versions npm does not have.
-4. `release.yml` publishes those versions, deploys what the PR ticked, tags
-   the commit and publishes the GitHub release. It never writes to `main`.
+   `changeset version` on `main`, and the release GitHub App pushes the
+   result to `main` as one version commit: versions, changelogs, lockfile
+   version entries and the consumed changesets, nothing else
+   (`.github/scripts/release-commit.mjs`). It then dispatches `release.yml`
+   on that commit with the deploy flags.
+2. `release.yml` runs the full test suite and build, and waits for Deploy
+   Staging to pass on the commit or a later `main` commit containing it,
+   while it builds. Then it publishes the
+   versions, deploys what Start release asked for, tags the commit and
+   publishes the GitHub release.
+3. If `main` moved before that run started, the run stands down without
+   shipping and
+   `release-trigger.yml` dispatches it again at the first commit that passes
+   staging.
 
-**Run release now** (action `publish`) dispatches `release.yml` by hand. It is
-the retry path: the trigger does not retry an automatic run that failed or was
-cancelled.
+`main-push-guard.yml` checks every commit that reaches `main` without a pull
+request, and alerts #prs if one changes more than versions.
+
+**Retry release** (action `publish`) dispatches `release.yml` by hand. The
+card offers it when versions on `main` are not on npm and no release is
+running: the trigger does not retry a run that failed or was cancelled.
 
 ## Secrets & rotation
 
@@ -98,7 +103,7 @@ Read by the Soundcheck app at request time to populate tiles.
 | `RAILWAY_API_TOKEN` | Read Railway envs + deployments for dashboard tiles | 90 days |
 | `CONVEX_DEPLOY_KEY_STAGING` | Read backend-staging state | 90 days |
 | `CONVEX_DEPLOY_KEY_PROD` | Read backend-prod state | 90 days |
-| `GITHUB_PAT` | GitHub REST + Compare + Actions, plus `workflow_dispatch` for `prepare-release.yml` / `release.yml` / `deploy-mcp-prod.yml` (fine-grained, scoped to both repos, `actions:read/write` + `contents:read` + `deployments:read` + `metadata:read` + `pull_requests:read` for the version PR) | 90 days |
+| `GITHUB_PAT` | GitHub REST + Compare + Actions, plus `workflow_dispatch` for `prepare-release.yml` / `release.yml` / `deploy-mcp-prod.yml` (fine-grained, scoped to both repos, `actions:read/write` + `contents:read` + `deployments:read` + `metadata:read`) | 90 days |
 | `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_COOKIE_PASSWORD` | Auth | per existing WorkOS policy |
 | `MCPJAM_NONPROD_LOCKDOWN=true` | Employee gate on | n/a |
 | `MCPJAM_EMPLOYEE_EMAIL_DOMAINS=mcpjam.com` | Allowed email domains | n/a |

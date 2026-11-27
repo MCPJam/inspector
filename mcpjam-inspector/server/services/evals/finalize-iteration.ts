@@ -1,3 +1,4 @@
+import { inspectorDiscoveryRunMetadata } from "../../utils/discovery-run-metadata";
 import { capRequestPayloadsForPersist } from "../../utils/live-chat-trace-stream";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
@@ -80,6 +81,7 @@ import {
   type SelectionCatalogToolLike,
 } from "./selection-tool-catalog.js";
 import type { AgentActivityAssessment } from "./agent-activity.js";
+import type { PlatformGateEvidence } from "./platform-gate-rows.js";
 
 /**
  * The canonical lifecycle vocabulary, imported rather than re-spelled: this
@@ -412,6 +414,7 @@ function narrowEvaluation(
 function buildScoreMetadata(args: {
   mode: GradingEngineMode;
   agentActivity?: AgentActivityAssessment;
+  platformGates?: PlatformGateEvidence;
   predicateResults?: unknown[];
   evaluation: Record<string, unknown>;
   matchOptions?: Record<string, unknown>;
@@ -437,6 +440,7 @@ function buildScoreMetadata(args: {
     ...(args.matchOptions ? { matchOptions: args.matchOptions } : {}),
     ...(args.isNegativeTest ? { isNegativeTest: true } : {}),
     ...(args.agentActivity ? { agentActivity: args.agentActivity } : {}),
+    ...(args.platformGates ? { platformGates: args.platformGates } : {}),
     // The judge has not run yet on this pass; its row arrives in the second.
   });
   if (scores.length === 0) {
@@ -631,6 +635,8 @@ export function buildIterationFinishParams(args: {
   passed: boolean;
   /** @see assessAgentActivity */
   agentActivity?: AgentActivityAssessment;
+  /** The verdict's gate inputs, for the platform score rows. */
+  platformGates?: PlatformGateEvidence;
   /** `evaluation` drives both `toolsCalled` and `buildIterationMetadata`. */
   evaluation: { toolsCalled: ToolCallRecord[] } & Record<string, unknown>;
   usage: UsageTotals;
@@ -722,6 +728,7 @@ export function buildIterationFinishParams(args: {
   // Metadata includes structured timeout and experiment attribution.
   iterationMetadataBase: Record<string, unknown>;
   hostPolicy?: HostExecutionPolicy;
+  nativeHarness?: boolean;
   toolSignals?: ToolExposureSignals;
   /**
    * Folded run-level connect / tools-list evidence. Threaded into the
@@ -861,6 +868,7 @@ export function buildIterationFinishParams(args: {
     passed,
     stageMetadata,
     ...(args.agentActivity ? { agentActivity: args.agentActivity } : {}),
+    ...(args.platformGates ? { platformGates: args.platformGates } : {}),
     ...(args.runId ? { runId: args.runId } : {}),
     ...(iterationId ? { iterationId } : {}),
     ...(scoreMatchOptions ? { matchOptions: scoreMatchOptions } : {}),
@@ -1040,6 +1048,7 @@ export function buildIterationFinishParams(args: {
             injectOpenAiCompat === true,
           )
         : {}),
+      ...inspectorDiscoveryRunMetadata(hostPolicy?.runUnloadedToolCalls, args.nativeHarness),
     },
   };
 }
@@ -1339,6 +1348,14 @@ export async function finalizeEvalIteration(
 
   const fanout = await persistEvalTraceFanout({
     convexClient,
+    ...(typeof metadata?.engineVersion === "string" ? {
+      discoveryAtTurn: {
+        engineVersion: metadata.engineVersion,
+        ...(typeof metadata.runUnloadedToolCalls === "boolean"
+          ? { runUnloadedToolCalls: metadata.runUnloadedToolCalls }
+          : {}),
+      },
+    } : {}),
     iterationId,
     iterationStartedAt: startedAt,
     messages,

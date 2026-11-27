@@ -3,10 +3,24 @@
 // they can be unit-tested without a live authorization server; the route layer
 // in routes/mcp/xaa.ts wires them to the SSRF-guarded fetcher.
 
+import {
+  authorizationServerMetadataUrls,
+  protectedResourceMetadataUrls,
+  type AuthorizationServerMetadataForm,
+} from "@mcpjam/sdk";
+
 export const JWT_BEARER_GRANT = "urn:ietf:params:oauth:grant-type:jwt-bearer";
 
 const OIDC_SUFFIX = "/.well-known/openid-configuration";
 const OAUTH_AS_SUFFIX = "/.well-known/oauth-authorization-server";
+
+/** OIDC path insertion first, then RFC 8414, then appending, then the root. */
+const XAA_DISCOVERY_FORMS: readonly AuthorizationServerMetadataForm[] = [
+  "oidc-insert",
+  "oauth-insert",
+  "oidc-append",
+  "oidc-root",
+];
 
 function stripTrailingSlash(path: string): string {
   return path.endsWith("/") ? path.slice(0, -1) : path;
@@ -30,27 +44,10 @@ export function buildDiscoveryCandidates(input: string): string[] {
     return [url.toString()];
   }
 
-  const origin = url.origin;
-  const candidates: string[] = [];
-
-  if (path && path !== "") {
-    // Path-insertion forms (well-known segment inserted before the issuer path)
-    candidates.push(`${origin}${OIDC_SUFFIX}${path}`);
-    candidates.push(`${origin}${OAUTH_AS_SUFFIX}${path}`);
-    // Root-append form (well-known segment appended after the issuer path)
-    candidates.push(`${origin}${path}${OIDC_SUFFIX}`);
-  } else {
-    candidates.push(`${origin}${OIDC_SUFFIX}`);
-    candidates.push(`${origin}${OAUTH_AS_SUFFIX}`);
-  }
-
-  // Pure-root fallback regardless of path.
-  candidates.push(`${origin}${OIDC_SUFFIX}`);
-
-  return Array.from(new Set(candidates));
+  return authorizationServerMetadataUrls(url, XAA_DISCOVERY_FORMS).map(
+    (candidate) => candidate.url
+  );
 }
-
-const PRM_SUFFIX = "/.well-known/oauth-protected-resource";
 
 /**
  * Build the ordered list of RFC 9728 protected-resource-metadata (PRM) URLs to
@@ -63,16 +60,7 @@ const PRM_SUFFIX = "/.well-known/oauth-protected-resource";
  * the path-less root form is the fallback some servers serve at the origin.
  */
 export function buildResourceMetadataCandidates(input: string): string[] {
-  const url = new URL(input);
-  const origin = url.origin;
-  const root = `${origin}${PRM_SUFFIX}`;
-
-  const path = stripTrailingSlash(url.pathname);
-  if (path && path !== "") {
-    return Array.from(new Set([`${origin}${PRM_SUFFIX}${path}`, root]));
-  }
-
-  return [root];
+  return Array.from(new Set(protectedResourceMetadataUrls(input)));
 }
 
 function isParseableUrl(value: string): boolean {
