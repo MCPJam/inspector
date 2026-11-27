@@ -27,6 +27,11 @@
       "import": "./dist/internal/network-proxy.js",
       "default": "./dist/internal/network-proxy.js"
     },
+    "./internal/mcp-surface": {
+      "types": "./dist/internal/mcp-surface.d.ts",
+      "import": "./dist/internal/mcp-surface.js",
+      "default": "./dist/internal/mcp-surface.js"
+    },
     "./internal/inspector": {
       "types": "./dist/internal/inspector.d.ts",
       "import": "./dist/internal/inspector.js",

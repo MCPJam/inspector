@@ -50,6 +50,9 @@ export default defineConfig({
     "src/internal/telemetry.ts",
     "src/internal/deployment.ts",
     "src/internal/network-proxy.ts",
+    // How platform operations appear as MCP tools, shared by the hosted MCP
+    // server and `mcpjam mcp`.
+    "src/internal/mcp-surface.ts",
     // Node-only start-or-attach engine for a local Inspector (CLI + launcher).
     "src/internal/inspector.ts",
     // Node-only SSRF-hardened OAuth networking (classifier + DNS-pinned
