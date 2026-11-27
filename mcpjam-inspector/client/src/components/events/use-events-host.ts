@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
 import { useConvexAuth } from "convex/react";
 import {
   EVENT_DELIVERY_MODES,
@@ -72,10 +72,10 @@ export function resolveEventsHostChoice(args: {
 }
 
 /**
- * The Events tab's client. Hosted: a choice, defaulting to the active client
- * (or built-in when none is active) and never changed behind the user's
- * back. Local: the active client, because the local runtime reuses the
- * connection that client opened.
+ * The client the Events tab subscribes as. Hosted: MCPJam (built-in), so a
+ * project-wide subscription never borrows a saved client's identity. Local:
+ * the active client, because the local runtime reuses the connection that
+ * client opened. Neither is a choice: client policy lives in Clients.
  */
 export function useEventsHost(args: {
   hosted: boolean;
@@ -89,14 +89,7 @@ export function useEventsHost(args: {
     projectId: args.projectId,
   });
   const activeHostId = args.activeHostId ?? null;
-  const [chosenHostId, setChosenHostId] = useState<string | null>(activeHostId);
-  // The active client may hydrate after the tab mounts. Adopt it until the
-  // user picks one; after that their choice stands.
-  const touched = useRef(false);
-  useEffect(() => {
-    if (!touched.current) setChosenHostId(activeHostId);
-  }, [activeHostId]);
-  const hostId = args.hosted ? chosenHostId : activeHostId;
+  const hostId = args.hosted ? null : activeHostId;
 
   const choice = useMemo(
     () =>
@@ -109,13 +102,5 @@ export function useEventsHost(args: {
     [hostId, hosts, isLoading, activeHostId, args.activeHost],
   );
 
-  return {
-    choice,
-    hosts,
-    hostId,
-    setHostId: (next: string | null) => {
-      touched.current = true;
-      setChosenHostId(next);
-    },
-  };
+  return { choice, hosts, hostId };
 }

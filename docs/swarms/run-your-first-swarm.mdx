@@ -1,0 +1,38 @@
+---
+title: "Run your first swarm"
+description: "Describe your users, review the goals and targets, and watch simulated sessions run against your MCP server."
+icon: "play"
+---
+
+You'll run a swarm against a task-board MCP server and check whether a project lead can find blocked work. Use the same steps with a goal that fits your server.
+
+Sign in to [MCPJam](https://app.mcpjam.com) and [connect a server](/inspector/connecting-servers) to your project. The hosted app needs a server it can reach over HTTPS.
+
+<Warning>
+Use a development or staging server with test data. Swarm sessions call your tools and can write or delete data.
+</Warning>
+
+<Steps>
+  <Step title="Describe your users">
+    Open **Swarms** and click **Create new swarm**. In **Describe**, explain who uses your server, what they want to accomplish, and what makes the task tricky. For example:
+
+    > Project leads review blocked work before standup. They ask which tasks on the Launch board are blocked and who owns each one. If an item has no assignee, they want to know it's unassigned.
+
+    Choose your staging server and the client and model you want to test. Add another client or model if you want to compare. Click **Continue** to generate personas and goals.
+  </Step>
+  <Step title="Review the personas and goals">
+    In **Confirm details**, read the generated personas and goals and edit them to match your server. For the task board, check that the goal names the Launch board and asks for blocked tasks and their owners. Seed the board with a few blocked tasks, including an unassigned one, so you can check the result against known data.
+
+    Check the targets and **Iterations** before starting. Each extra target or iteration adds sessions to the run.
+  </Step>
+  <Step title="Start the swarm">
+    Click **Start swarm**. The **Run** tab shows sessions by persona and target as they progress. Open a session to follow the conversation and trace.
+
+    If you can't start, check that you've selected a client and model and that the target can reach the server. If MCPJam reports a credit limit, see [Out of MCPJam credits](/troubleshooting/error-codes#out-of-mcpjam-credits).
+  </Step>
+  <Step title="Check the goal result">
+    Open **Findings** after the run settles. If a session missed the goal, open its report from **Sessions** and compare the assistant's answer with the data your server returned. A reply that lists all blocked tasks but invents an owner for an unassigned item needs a closer look.
+  </Step>
+</Steps>
+
+See [Read swarm results](/swarms/read-results) to trace a failure and follow up with an eval.

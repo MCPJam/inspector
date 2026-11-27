@@ -125,6 +125,22 @@ describe("useChatHistory archiveAllActive", () => {
     expect(chatHistoryApi.listChatHistory).toHaveBeenCalledTimes(2);
   });
 
+  it("asks the list route for multi-model siblings", async () => {
+    vi.mocked(chatHistoryApi.listChatHistory).mockResolvedValue({
+      personal: [],
+      project: [],
+    });
+    renderHook(() =>
+      useChatHistory({ enabled: true, includeMultiModelSiblings: true }),
+    );
+    await waitFor(() =>
+      expect(chatHistoryApi.listChatHistory).toHaveBeenCalledWith(
+        expect.objectContaining({ includeMultiModelSiblings: true }),
+        expect.anything(),
+      ),
+    );
+  });
+
   it("no-ops when there are no sessions", async () => {
     vi.mocked(chatHistoryApi.listChatHistory).mockResolvedValue({
       ok: true,
@@ -307,6 +323,43 @@ describe("useChatHistory reactive mode", () => {
         projectId: "ws-1",
         status: "active",
       }),
+    );
+  });
+
+  it("asks the live list for multi-model siblings and hands them back", async () => {
+    useQueryMock.mockReturnValue({
+      personal: [sessionStub("p1")],
+      project: [],
+      multiModelSiblings: [sessionStub("s1")],
+    });
+    const { result } = renderHook(() =>
+      useChatHistory({
+        enabled: true,
+        projectId: "ws-1",
+        includeMultiModelSiblings: true,
+      }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(useQueryMock).toHaveBeenCalledWith(
+      "directChatHistory:listCurrentHistory",
+      expect.objectContaining({ includeMultiModelSiblings: true }),
+    );
+    expect(result.current.multiModelSiblings.map((s) => s._id)).toEqual([
+      "s1",
+    ]);
+  });
+
+  it("keeps one empty siblings list across renders when none come back", async () => {
+    const { result, rerender } = renderHook(() =>
+      useChatHistory({ enabled: true, projectId: "ws-1" }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const first = result.current.multiModelSiblings;
+    rerender();
+    expect(result.current.multiModelSiblings).toBe(first);
+    expect(useQueryMock).toHaveBeenCalledWith(
+      "directChatHistory:listCurrentHistory",
+      expect.not.objectContaining({ includeMultiModelSiblings: true }),
     );
   });
 

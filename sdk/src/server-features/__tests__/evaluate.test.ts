@@ -88,6 +88,53 @@ describe("evaluateServerFeatures", () => {
     expect(result.assessments["test.detected"].evidence[0].count).toBe(2);
   });
 
+  it("labels a probe that only read a listing as declared", () => {
+    const listed = feature("test.listed", {
+      assessment: {
+        primary: "probed",
+        probed: () => ({ kind: "present", via: "advertised" }),
+      },
+    });
+    const result = evaluateServerFeatures([listed], connected({ probes: {} }));
+    expect(result.assessments["test.listed"]).toMatchObject({
+      state: "supported",
+      sources: ["declared"],
+    });
+    // How it was fetched is still recorded.
+    expect(result.assessments["test.listed"].evidence[0]).toMatchObject({
+      provenance: "wire",
+      intrusiveness: "read-only",
+    });
+  });
+
+  it("puts what MCPJam saw ahead of what the server declared", () => {
+    const both = feature("test.both", {
+      assessment: {
+        primary: "observed",
+        observable: true,
+        declared: () => ({ kind: "present", via: "advertised" }),
+      },
+    });
+    const result = evaluateServerFeatures(
+      [both],
+      connected({
+        observations: [
+          {
+            featureId: "test.both",
+            count: 1,
+            firstSeenAt: 1,
+            lastSeenAt: 2,
+            lastSource: "rpc",
+          },
+        ],
+      })
+    );
+    expect(result.assessments["test.both"].sources).toEqual([
+      "observed",
+      "declared",
+    ]);
+  });
+
   it("offers Could add only when the basis was captured completely", () => {
     const complete = evaluateServerFeatures([tools], connected());
     expect(complete.assessments["test.tools"].state).toBe("could-add");
@@ -369,7 +416,7 @@ describe("evaluateServerFeatures", () => {
       setupOffered: ["client-credentials"],
     });
     expect(connectedSetUp.assessments["test.setup"].reason).toBe(
-      "The probe could not finish. Set up in MCPJam. Reconnect the account from the Auth tab to record the result.",
+      "The probe could not finish. Set up in MCPJam. Reconnect the account from the Auth tab to record the result."
     );
   });
 
@@ -490,6 +537,75 @@ describe("evaluateServerFeatures", () => {
     expect(card?.leafCount).toBe(2);
     const family = result.families.find((entry) => entry.id === "tools-discovery");
     expect(family?.counts.supported).toBe(1);
+  });
+
+  it("offers the Playground only where traffic can show the feature", () => {
+    const legacyOnly = feature("test.legacy-only", {
+      assessment: {
+        primary: "observed",
+        observable: true,
+        observableEra: "legacy",
+      },
+    });
+    const modern = makeSurface({ protocolVersion: "2026-07-28" });
+    const onModern = evaluateServerFeatures(
+      [legacyOnly],
+      connected({}, modern)
+    );
+    expect(onModern.assessments["test.legacy-only"]).toMatchObject({
+      state: "not-checked",
+      reason: "MCPJam cannot check this yet.",
+    });
+    expect(onModern.assessments["test.legacy-only"].nextAction).toBeUndefined();
+
+    const onLegacy = evaluateServerFeatures([legacyOnly], connected());
+    expect(onLegacy.assessments["test.legacy-only"].nextAction).toBe(
+      "use-in-playground"
+    );
+  });
+
+  it("gives a rolled-up parent the chip of its supported children", () => {
+    const parent = feature("test.parent");
+    const declaredChild = feature("test.parent.a", {
+      parent: "test.parent",
+      assessment: { primary: "declared", declared: capability("a") },
+    });
+    const observedChild = feature("test.parent.b", {
+      parent: "test.parent",
+      assessment: { primary: "observed", observable: true },
+    });
+    const surface = makeSurface({ capabilities: { a: {} } });
+
+    const declaredOnly = evaluateServerFeatures(
+      [parent, declaredChild, observedChild],
+      connected({}, surface)
+    );
+    expect(declaredOnly.assessments["test.parent"]).toMatchObject({
+      state: "supported",
+      sources: ["declared"],
+    });
+
+    const seen = evaluateServerFeatures(
+      [parent, declaredChild, observedChild],
+      connected(
+        {
+          observations: [
+            {
+              featureId: "test.parent.b",
+              count: 1,
+              firstSeenAt: 1,
+              lastSeenAt: 2,
+              lastSource: "rpc",
+            },
+          ],
+        },
+        surface
+      )
+    );
+    expect(seen.assessments["test.parent"]).toMatchObject({
+      state: "supported",
+      sources: ["observed", "declared"],
+    });
   });
 
   it("hashes the capture context into the evaluation", () => {

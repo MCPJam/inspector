@@ -165,7 +165,7 @@ describe("humanizeSwarmAttemptError", () => {
       "provider_empty_response",
     );
     expect(info.message).toBe(
-      "The model called `execute`, but your server has no tool by that name.",
+      "The model called `execute`, which was unavailable in this step.",
     );
     expect(info.code).toBe("provider_empty_response");
   });
@@ -175,7 +175,7 @@ describe("humanizeSwarmAttemptError", () => {
       "Backend step returned no content — Model tried to call unavailable tool 'computer'. Available tools: a, b (provider_empty_response)",
     );
     expect(info.message).toBe(
-      "The model called `computer`, but your server has no tool by that name.",
+      "The model called `computer`, which was unavailable in this step.",
     );
     expect(info.code).toBe("provider_empty_response");
   });
@@ -185,7 +185,7 @@ describe("humanizeSwarmAttemptError", () => {
       "Backend stream error: 502 Model tried to call unavailable tool 'execute'. Available tools: a",
     );
     expect(info.message).toBe(
-      "The model called `execute`, but your server has no tool by that name.",
+      "The model called `execute`, which was unavailable in this step.",
     );
     expect(info.httpStatus).toBe(502);
   });
@@ -195,7 +195,7 @@ describe("humanizeSwarmAttemptError", () => {
       "Model tried to call unavailable tool 'https://evil.example/x'.",
     );
     expect(info.message).toBe(
-      "The model called `a tool`, but your server has no tool by that name.",
+      "The model called `a tool`, which was unavailable in this step.",
     );
   });
 });

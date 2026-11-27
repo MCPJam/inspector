@@ -6,7 +6,10 @@ import type {
   MCPReadResourceResult,
   MCPServerConfig,
 } from "../mcp-client-manager/index.js";
-import type { MCPReadinessWarning } from "../mcp-conformance/types.js";
+import type {
+  MCPPassedAdvice,
+  MCPReadinessWarning,
+} from "../mcp-conformance/types.js";
 
 export const MCP_APPS_CHECK_CATEGORIES = ["tools", "resources"] as const;
 
@@ -42,6 +45,11 @@ export interface MCPAppsReadinessWarning extends Omit<
   id: MCPAppsReadinessId;
   /** The check that produced this advice. */
   checkId: MCPAppsCheckId;
+}
+
+/** Advice the run checked and the server already meets. */
+export interface MCPAppsPassedAdvice extends Omit<MCPPassedAdvice, "id"> {
+  id: MCPAppsReadinessId;
 }
 
 export type MCPAppsCheckStatus = "passed" | "failed" | "skipped";
@@ -129,6 +137,8 @@ export interface MCPAppsConformanceResult {
   checks: MCPAppsCheckResult[];
   /** SHOULD/MAY advice, beside the verdict. Absent when there is none. */
   readiness?: MCPAppsReadinessWarning[];
+  /** Advice the run checked and found nothing to change. Absent when none. */
+  passedAdvice?: MCPAppsPassedAdvice[];
   summary: string;
   durationMs: number;
   categorySummary: Record<

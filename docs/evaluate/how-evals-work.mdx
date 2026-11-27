@@ -1,0 +1,270 @@
+---
+title: "How evals work"
+description: "One request followed from the user through the client environment to your server and back, the eval case that tests it, and how a run records and grades it."
+icon: "workflow"
+---
+
+An eval replays a real user's request inside a client environment, records everything that happened, and grades the recording. This page follows one request from the user to your server and back, then shows the eval case that tests it.
+
+## One request, end to end
+
+A user of the notes server asks Claude Desktop "What does note 7 say?". Here is what they see, and what happened to produce it:
+
+<Frame caption="The user sees two chat bubbles. Between them, the client, its harness and the model made a round trip to your server.">
+  <img className="block dark:hidden" src="/images/evaluate/e2e-request-light.svg" alt="Left: a chat window with the prompt What does note 7 say and the reply Note 7 says Buy oat milk. Right: a client environment with a client, a harness and a model, and your MCP server outside it, joined by arrows numbered 1 to 8" width="760" />
+  <img className="hidden dark:block" src="/images/evaluate/e2e-request-dark.svg" alt="Left: a chat window with the prompt What does note 7 say and the reply Note 7 says Buy oat milk. Right: a client environment with a client, a harness and a model, and your MCP server outside it, joined by arrows numbered 1 to 8" width="760" />
+</Frame>
+
+- **Into the client environment (1–3)**
+  - **1.** The user sends the prompt in the client.
+  - **2.** The client hands it to its harness, along with its system prompt and the tools it discovered from your server.
+  - **3.** The harness sends the prompt and the tool list to the model.
+- **The tool call (4–6)**
+  - **4.** The model asks to call `read_note` with `{ "id": 7 }`.
+  - **5.** The harness sends that call to your server.
+  - **6.** Your server returns the note's text.
+- **Back to the user (7–8)**
+  - **7.** The harness gives the result back to the model, which writes its final reply, and the harness returns that reply to the client.
+  - **8.** The client shows the reply: Note 7 says "Buy oat milk."
+
+The user only sees steps 1 and 8. Everything that could go wrong for your server happens in between: the model might pick the wrong tool, pass the wrong arguments, or misread the result. An eval makes that middle visible.
+
+## The eval case for this request
+
+A case stands in for the user. Its prompt is what the user sends at step 1, and its expected outcome describes the reply at step 8. During the run, MCPJam plays the client and its harness, so every arrow is recorded in the iteration's trace.
+
+| Part of the case | Where it is in the request | What grades it |
+|---|---|---|
+| **User prompt** "What does note 7 say?" | Arrow 1 | Nothing; it's the input |
+| **Expected outcome** "The reply tells the user what note 7 says, using the note's actual text." | The reply at arrow 8 | The goal completion judge, reading the trace |
+| **Tool was never called** `delete_note` | Arrow 5, on every call | An assertion over the trace |
+
+The expected outcome is the test. It doesn't say which tool the model must call, so a model that searches first and then reads the note still passes. The assertion pins the one thing that must never happen. [Write a case](/evaluate/write-a-case) explains why cases start from the outcome.
+
+In a suite file and in the SDK, that case looks like this. Each example runs 1 case × 3 iterations × 1 model, so 3 iterations:
+
+<CodeGroup>
+```yaml .mcpjam/evals/notes.yaml
+schemaVersion: "2"
+mode: agentWorkflow
+reportingMode: standard
+suite:                                  # the suite
+  id: s_notes_example
+  name: Notes server
+target:
+  servers:
+    - name: notes
+defaults:                               # settings every case shares
+  judge:
+    enabled: true
+    role: required                      # a missed outcome fails the iteration
+  model: anthropic/claude-haiku-4.5     # one model
+  iterations: 3                         # iterations per case
+  passThreshold: 1
+  validity: {}
+cases:
+  - id: c_reads_a_note                  # one case
+    title: tells the user what note 7 says
+    steps:
+      - id: s1
+        kind: prompt                    # the user prompt
+        prompt: What does note 7 say?
+      - id: s2
+        kind: assert                    # a hard constraint on the trace
+        assertion:
+          type: toolNeverCalled
+          toolName: delete_note
+    expectedOutput: >-                  # the outcome the judge grades
+      The reply tells the user what note 7 says, using the note's actual text.
+```
+
+```ts evals/notes.mts
+import { EvalSuite, EvalTest, HostRunner, MCPClientManager, judge } from "@mcpjam/sdk";
+
+const manager = new MCPClientManager({
+  notes: { command: "node", args: ["./notes-server.js"] },
+});
+await manager.connectToServer("notes");
+
+const agent = new HostRunner({
+  tools: await manager.getTools(),
+  model: "anthropic/claude-haiku-4.5",          // one model
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  mcpClientManager: manager,
+});
+
+const suite = new EvalSuite({ name: "Notes server" }); // the suite
+
+suite.add(new EvalTest({                       // one case
+  id: "c_reads_a_note",
+  name: "tells the user what note 7 says",
+  predicates: [{ type: "toolNeverCalled", toolName: "delete_note" }], // a hard constraint on the trace
+  execute: async (a) => {
+    await a.run("What does note 7 say?");      // the user prompt
+  },
+  evaluators: {
+    mode: "extend",
+    list: [
+      judge({                                  // the outcome the judge grades
+        id: "answers-with-the-note",
+        model: "anthropic/claude-sonnet-5",
+        apiKey: process.env.ANTHROPIC_API_KEY!,
+        rubric: ["The reply tells the user what note 7 says, using the note's actual text."],
+        role: "required",
+      }),
+    ],
+  },
+}));
+
+await suite.run(agent, { iterations: 3 });     // iterations per case
+await manager.disconnectServer("notes");
+```
+</CodeGroup>
+
+## Where a case runs: the client environment
+
+Your server is never tested on its own. Each iteration runs inside one client environment, which gives the model what a real host would:
+
+<Frame caption="One client environment: the client's settings shape what the harness sends; the harness, MCPJam's or the client's native one, loops between the model and your servers.">
+  <img className="block dark:hidden" src="/images/evaluate/client-environment-light.svg" alt="Inside a dashed client environment: a client card with model, system prompt, protocol versions, capabilities, tool visibility and MCP App sandbox; a harness that sends the prompt and tools to the model and runs tool calls; a model; and a server group with two servers" width="760" />
+  <img className="hidden dark:block" src="/images/evaluate/client-environment-dark.svg" alt="Inside a dashed client environment: a client card with model, system prompt, protocol versions, capabilities, tool visibility and MCP App sandbox; a harness that sends the prompt and tools to the model and runs tool calls; a model; and a server group with two servers" width="760" />
+</Frame>
+
+- **Client**
+  - The saved configuration of a host: its default model, system prompt and temperature.
+  - What it tells your server when it connects: protocol versions, `clientInfo` and client capabilities such as elicitation.
+  - What reaches the model: whether app-only tools are hidden, and whether tools load progressively.
+  - How MCP Apps render: host capabilities, sandbox and CSP.
+  - See [Clients](/inspector/clients) for every setting.
+- **Harness**
+  - The agent loop that runs the conversation. It sends the prompt and the tools to the model, runs each tool call the model asks for on the right server, and loops until the model gives its final reply or the suite's timeout ends it.
+  - The client's **Harness** section picks **MCPJam Harness** or the client's native runtime: Claude Agent SDK for Claude Code, Codex App Server for Codex, or the GitHub Copilot CLI, Cursor CLI or OpenCode runtime. A client with no native runtime always uses MCPJam Harness.
+  - A native runtime is the vendor's own agent loop, so the run uses that agent's way of loading tools and prompting the model. Claude Agent SDK, GitHub Copilot CLI and Cursor CLI also connect to your servers themselves, as the real agent would.
+  - Native runtimes are in limited rollout, so they may not appear in your workspace yet.
+  - A native runtime runs only models it supports. Cursor CLI needs a Cursor key in AI providers, and native harness turns can be limited by your plan.
+- **Model**
+  - The model for this pair. It can differ from the client's default, so one client can run several models.
+- **Servers**
+  - The client's server group: one or more MCP servers, connected with the auth saved on each.
+  - Tools from every server in the group go to the model together, so a case can test servers side by side.
+  - Header overrides set on a client are not applied to eval runs, and hosted runs can't start STDIO servers. See [What a run can access](/evaluate/what-a-run-can-access).
+
+**Where it runs**, in the suite settings and the run sheet, picks the client and model pairs. Each pair is its own client environment, and every case runs in each one.
+
+The environment is why the same server can pass in one pair and fail in another. Two clients can show the model different tool lists, advertise different capabilities, or wrap your tools in different system prompts. Comparing pairs shows which of those your server depends on.
+
+## The objects
+
+| Object | What it is |
+|---|---|
+| Project | Holds your servers, clients and suites. See [Projects](/inspector/projects). |
+| Client | A saved MCP client configuration that stands in for a host such as Claude Desktop or ChatGPT. See [Clients](/inspector/clients). |
+| Suite | A set of cases plus the settings they share: servers, clients and models, evaluators, and the pass criterion. |
+| Case | A user prompt, or several turns, plus the evaluators that decide whether the expected outcome happened. |
+| Run | One execution of a suite against the clients and models chosen when it started. |
+| Iteration | One execution of one case on one client and model pair. |
+| Trace | The recorded evidence of an iteration: messages, tool calls, results, tokens and timing. |
+
+<Frame caption="A suite and its cases live in a project. Each run makes iterations, and each iteration leaves a trace.">
+  <img className="block dark:hidden" src="/images/evaluate/eval-objects-light.svg" alt="A project holding servers, clients and a suite with settings and cases; a run holding iterations, each with a trace" width="760" />
+  <img className="hidden dark:block" src="/images/evaluate/eval-objects-dark.svg" alt="A project holding servers, clients and a suite with settings and cases; a run holding iterations, each with a trace" width="760" />
+</Frame>
+
+A model doesn't answer the same prompt the same way every time, so a case usually runs more than once. A run's iteration count is:
+
+```
+cases × iterations per case × client/model pairs
+```
+
+For example, 8 cases at 3 iterations per case on 2 client/model pairs is 48 iterations. In the app, set **Iterations per case** on the run sheet; its footer shows the product as cases × repetitions × client:model combos. The CLI's `--iterations <n>` sets the same count for one run.
+
+<Frame caption="8 cases × 3 iterations per case × 2 client/model pairs = 48 iterations, and each one calls the model.">
+  <img className="block dark:hidden" src="/images/evaluate/iteration-count-light.svg" alt="Grid of 8 cases by 2 client and model pairs by 3 iterations, 48 circles" width="760" />
+  <img className="hidden dark:block" src="/images/evaluate/iteration-count-dark.svg" alt="Grid of 8 cases by 2 client and model pairs by 3 iterations, 48 circles" width="760" />
+</Frame>
+
+## What happens in a run
+
+<Steps>
+  <Step title="Servers connect">
+    Each client connects to the suite's servers and lists their tools. These are the Connection and Discovery stages of the [user-value chain](/sdk/concepts/user-value-chain).
+  </Step>
+  <Step title="Prompts go out">
+    For every iteration, the case's prompt goes to the model along with the tools the client discovered.
+  </Step>
+  <Step title="The model calls tools">
+    The model picks tools and arguments, your server answers, and the exchange continues until the model gives its final reply or a timeout from the suite settings ends it. Multi-turn cases repeat this for each user turn.
+  </Step>
+  <Step title="The trace is recorded">
+    Every message, tool call, argument, result, token count and latency is saved as the iteration's trace.
+  </Step>
+  <Step title="Evaluators grade the iteration">
+    Assertions check the trace, and judges score it. While finished iterations are being scored, the run shows **Grading**.
+  </Step>
+  <Step title="The verdict is decided">
+    Each iteration passes or fails on its Required evaluators. The suite's pass criterion turns those results into the run's verdict: passed, failed or inconclusive.
+  </Step>
+</Steps>
+
+A suite has one pass criterion, set under **Pass criteria** in **Suite settings**:
+
+- **Suite accuracy**
+  - The share of all iterations in the run that passed must reach a percentage, 70% when unset.
+- **Per-case pass rate**
+  - Each case must pass at least a set share of its own iterations.
+  - One case falling short fails the run.
+
+Under a per-case pass rate, a run that did not record enough gradeable iterations ends **Inconclusive** instead of passed or failed. [Configure grading](/evaluate/configure-grading) covers both criteria and their evidence requirements.
+
+## Evaluators: assertions and judges
+
+An evaluator grades an iteration. It is either an assertion or a judge.
+
+| | Assertion | Judge |
+|---|---|---|
+| How it grades | A deterministic rule over the trace, such as "this tool was called with these arguments" or "this tool was never called" | A model reads the trace and scores it against the case's expected outcome or the user's request |
+| Replaying the same trace | Always gives the same result | Can give a different score |
+| Role by default | Required | Advisory |
+
+The role says what a miss does:
+
+- **Required**: if this evaluator fails, the iteration fails.
+- **Advisory**: shown on the result, never fails the iteration.
+
+A suite's judges are the **Goal completion judge**, which scores whether the request was satisfied, the **Groundedness judge** and **Rubric checks**. The last two are always advisory. The goal completion judge passes when its score reaches its threshold, 0.7 by default. [Assertions reference](/evaluate/reference/assertions) lists every assertion type.
+
+## Comparing against a baseline
+
+Once a suite has an earlier completed run, the run page compares each new run against a baseline, the previous completed run. A line under the summary reads like "vs run #4: 2 regressed · 1 fixed · 5 passing", and each case row is marked Regressed, Fixed, Still failing, Unchanged, New or Reconfigured. [Read results](/evaluate/read-results) defines each label.
+
+To compare against a different run, click **Compare runs** on the run page and pick it.
+
+## What drives cost
+
+- **Number of iterations**
+  - Cost scales with cases × iterations per case × client/model pairs.
+- **Model work per iteration**
+  - Each round of tool calls is another model call, and every tool result goes back to the model as input.
+  - Multi-turn cases and long tool results cost more.
+- **Judges**
+  - Each judge adds a model call for every iteration it grades.
+
+Each column header in the results grid shows that client and model's cost.
+
+<Note>
+  A dash means no cost was observed, never that the run was free; [Read results](/evaluate/read-results) explains dashes and " · partial".
+</Note>
+
+## Next steps
+
+<CardGroup cols={3}>
+  <Card title="Write a case" icon="pencil" href="/evaluate/write-a-case">
+    A user prompt, its expected outcome, and the assertions that check it.
+  </Card>
+  <Card title="Configure grading" icon="scale" href="/evaluate/configure-grading">
+    Pass criteria, iterations, judges and evaluator roles.
+  </Card>
+  <Card title="Read results" icon="chart-column" href="/evaluate/read-results">
+    The run page, comparisons and the scorecard.
+  </Card>
+</CardGroup>

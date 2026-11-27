@@ -10,8 +10,11 @@
 
 import type { Tool } from "@modelcontextprotocol/client";
 import {
+  collectClientAdvice,
   collectClientReadiness,
+  collectRawAdvice,
   collectRawReadiness,
+  splitReadinessOutcomes,
 } from "../../src/mcp-conformance/readiness.js";
 import type {
   MCPClientCheckContext,
@@ -105,6 +108,11 @@ afterEach(() => {
   vi.resetAllMocks();
 });
 
+/** The tool-order SHOULD exists only from 2026-07-28 on. */
+function modernContext(): MCPClientCheckContext {
+  return clientContext({ protocolVersion: "2026-07-28" });
+}
+
 describe("client readiness advice", () => {
   it("warns when tools/list is not deterministically ordered", async () => {
     mockedOperations.listTools.mockResolvedValue({
@@ -112,7 +120,7 @@ describe("client readiness advice", () => {
       nextCursor: undefined,
     } as never);
 
-    const warnings = await collectClientReadiness(clientContext(), surface());
+    const warnings = await collectClientReadiness(modernContext(), surface());
     const order = warnings.find(
       (item) => item.id === "readiness-tool-order-deterministic"
     );
@@ -132,9 +140,74 @@ describe("client readiness advice", () => {
       nextCursor: undefined,
     } as never);
 
-    const warnings = await collectClientReadiness(clientContext(), surface());
+    const warnings = await collectClientReadiness(modernContext(), surface());
     expect(warnings).toEqual([]);
   });
+
+  // The 2025 tools pages say nothing about order, so a run on one of them
+  // neither lists the tools again nor reports on the order, met or not.
+  for (const protocolVersion of [
+    undefined,
+    "2025-11-25",
+    "2025-06-18",
+    "2025-03-26",
+  ] as const) {
+    it(`gives no order advice on ${protocolVersion ?? "an unpinned"} run`, async () => {
+      mockedOperations.listTools.mockResolvedValue({
+        tools: [tool("beta"), tool("alpha")],
+        nextCursor: undefined,
+      } as never);
+
+      const advice = await collectClientAdvice(
+        clientContext({ protocolVersion }),
+        surface()
+      );
+
+      expect(
+        advice.find((item) => item.id === "readiness-tool-order-deterministic")
+      ).toBeUndefined();
+      expect(mockedOperations.listTools).not.toHaveBeenCalled();
+    });
+  }
+
+  it("asks the server for the repeat listing instead of the cached one", async () => {
+    // A cached repeat listing is the first listing again, and a list compared
+    // with itself never differs: the advice could not warn at all.
+    mockedOperations.listTools.mockResolvedValue({
+      tools: [tool("alpha"), tool("beta")],
+      nextCursor: undefined,
+    } as never);
+
+    await collectClientReadiness(modernContext(), surface());
+
+    expect(mockedOperations.listTools).toHaveBeenCalledTimes(1);
+    expect(mockedOperations.listTools).toHaveBeenCalledWith(
+      expect.anything(),
+      { serverId: "server-1", signal: undefined, cacheMode: "bypass" }
+    );
+  });
+
+  // The spec asks for the same order only "when the underlying set of tools
+  // has not changed". The first listing here is always `alpha, beta`.
+  for (const [change, secondListing] of [
+    ["a tool was replaced", ["beta", "gamma"]],
+    ["a tool was added", ["alpha", "beta", "gamma"]],
+    ["a tool was added and the rest moved", ["beta", "alpha", "gamma"]],
+    ["a tool was removed", ["beta"]],
+  ] as const) {
+    it(`gives no order advice when ${change} between the listings`, async () => {
+      mockedOperations.listTools.mockResolvedValue({
+        tools: secondListing.map((name) => tool(name)),
+        nextCursor: undefined,
+      } as never);
+
+      const warnings = await collectClientReadiness(modernContext(), surface());
+
+      expect(
+        warnings.find((item) => item.id === "readiness-tool-order-deterministic")
+      ).toBeUndefined();
+    });
+  }
 
   it("warns when a modern server still advertises superseded functionality", async () => {
     mockedOperations.listTools.mockResolvedValue({
@@ -425,6 +498,189 @@ describe("raw readiness advice", () => {
     expect(
       await collectRawReadiness(rawContext(fetchFn, "2026-07-28"))
     ).toEqual([]);
+  });
+
+  it("reports a legacy DELETE answered 405 as advice the server meets", async () => {
+    const outcomes = await collectRawAdvice(
+      rawContext(legacyDeleteAnswering(405))
+    );
+    expect(outcomes).toContainEqual({
+      id: "readiness-session-termination",
+      title: "Explicit Session Termination",
+      specStrength: "SHOULD",
+    });
+  });
+
+  // A modern server answering one probe 405 while the other never completes.
+  const modernHalfAnswered = (answered: "GET" | "DELETE", status: number) =>
+    (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes(".well-known")) {
+        return new Response("{}", { status: 404 });
+      }
+      if (init?.method === "GET" || init?.method === "DELETE") {
+        if (init.method !== answered) throw new Error("probe timed out");
+        return new Response(null, { status });
+      }
+      return new Response("Bad Request", { status: 400 });
+    }) as unknown as typeof fetch;
+
+  it.each(["GET", "DELETE"] as const)(
+    "claims no session-termination pass when only %s was answered 405",
+    async (answered) => {
+      const outcomes = await collectRawAdvice(
+        rawContext(modernHalfAnswered(answered, 405), "2026-07-28")
+      );
+      expect(
+        outcomes.find((item) => item.id === "readiness-session-termination")
+      ).toBeUndefined();
+    }
+  );
+
+  it.each(["GET", "DELETE"] as const)(
+    "still advises when only %s was answered, with the wrong status",
+    async (answered) => {
+      const outcomes = await collectRawAdvice(
+        rawContext(modernHalfAnswered(answered, 200), "2026-07-28")
+      );
+      const termination = outcomes.find(
+        (item) => item.id === "readiness-session-termination"
+      );
+      expect(termination).toMatchObject({
+        message: expect.stringContaining(`${answered} got HTTP 200`),
+      });
+    }
+  );
+
+  // The missing-header probe: a POST with no MCP-Protocol-Version.
+  const headerProbeAnswering = (status: number, body = "") =>
+    (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes(".well-known")) {
+        return new Response("{}", { status: 404 });
+      }
+      const headers = new Headers(init?.headers);
+      if (init?.method === "POST" && !headers.has("mcp-protocol-version")) {
+        return new Response(body, { status });
+      }
+      return new Response(null, { status: 405 });
+    }) as unknown as typeof fetch;
+
+  it("reports the missing-header advice as met on 400 Bad Request", async () => {
+    const outcomes = await collectRawAdvice(
+      rawContext(headerProbeAnswering(400), "2026-07-28")
+    );
+    expect(outcomes).toContainEqual({
+      id: "readiness-protocol-version-header-required",
+      title: "Protocol Version Header Required",
+      specStrength: "SHOULD",
+    });
+  });
+
+  it.each([401, 404, 503])(
+    "leaves the missing-header advice unjudged on an unrelated HTTP %i",
+    async (status) => {
+      const outcomes = await collectRawAdvice(
+        rawContext(headerProbeAnswering(status), "2026-07-28")
+      );
+      expect(
+        outcomes.find(
+          (item) => item.id === "readiness-protocol-version-header-required"
+        )
+      ).toBeUndefined();
+    }
+  );
+
+  it("claims no pass for a probe that never got an answer", async () => {
+    const fetchFn = (async () => {
+      throw new Error("network down");
+    }) as unknown as typeof fetch;
+
+    expect(await collectRawAdvice(rawContext(fetchFn, "2026-07-28"))).toEqual(
+      []
+    );
+  });
+});
+
+describe("advice the server meets", () => {
+  it("lists every client advice that applied and found nothing to change", async () => {
+    mockedOperations.listTools.mockResolvedValue({
+      tools: [tool("alpha"), tool("beta")],
+      nextCursor: undefined,
+    } as never);
+
+    const outcomes = await collectClientAdvice(modernContext(), surface());
+
+    expect(outcomes).toEqual([
+      {
+        id: "readiness-tool-order-deterministic",
+        title: "Deterministic Tool Order",
+        specStrength: "SHOULD",
+      },
+      {
+        id: "readiness-tool-name-conventions",
+        title: expect.any(String),
+        specStrength: "SHOULD",
+      },
+      {
+        id: "readiness-deprecated-feature-use",
+        title: expect.any(String),
+        specStrength: "Deprecation Notice",
+      },
+    ]);
+    expect(await collectClientReadiness(modernContext(), surface())).toEqual(
+      []
+    );
+  });
+
+  it("lists the tools again live, past any cached first listing", async () => {
+    mockedOperations.listTools.mockResolvedValue({
+      tools: [tool("alpha"), tool("beta")],
+      nextCursor: undefined,
+    } as never);
+
+    await collectClientAdvice(modernContext(), surface());
+
+    expect(mockedOperations.listTools).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ cacheMode: "bypass" })
+    );
+  });
+
+  it("claims no tool advice for a server with no tools", async () => {
+    mockedOperations.listTools.mockResolvedValue({
+      tools: [],
+      nextCursor: undefined,
+    } as never);
+
+    const outcomes = await collectClientAdvice(
+      modernContext(),
+      surface({ tools: [] })
+    );
+
+    expect(outcomes.map((outcome) => outcome.id)).toEqual([
+      "readiness-deprecated-feature-use",
+    ]);
+  });
+
+  it("splits warnings from passes for the result", () => {
+    const passedAdvice = {
+      id: "readiness-tool-order-deterministic" as const,
+      title: "Deterministic Tool Order",
+      specStrength: "SHOULD" as const,
+    };
+    const warning = {
+      ...passedAdvice,
+      id: "readiness-session-termination" as const,
+      severity: "warning" as const,
+      message: "DELETE got HTTP 500",
+    };
+
+    expect(splitReadinessOutcomes([warning, passedAdvice])).toEqual({
+      readiness: [warning],
+      passedAdvice: [passedAdvice],
+    });
+    expect(splitReadinessOutcomes([warning])).toEqual({
+      readiness: [warning],
+    });
   });
 });
 

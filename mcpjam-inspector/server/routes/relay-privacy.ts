@@ -1,4 +1,5 @@
 import { rebuildStrictPostHogEvent } from "../../shared/strict-posthog.js";
+import { isLocalWebhookTelemetryEvent } from "../../shared/local-webhook-telemetry.js";
 import { relayEventMetadata } from "./relay-event-metadata.js";
 import {
   captureContextKey,
@@ -284,13 +285,11 @@ export function applyEventPolicy(
   declared: TelemetryRecording | null,
   actorId?: string,
 ): unknown {
-  if (policy.content === "strict") {
-    const rebuilt = rebuildStrictPostHogEvent(event, actorId);
-    return rebuilt && isRecord(event)
-      ? { ...rebuilt, ...relayEventMetadata(event) }
-      : null;
-  }
   if (!isRecord(event)) return null;
+  if (policy.content === "strict" || isLocalWebhookTelemetryEvent(event.event)) {
+    const rebuilt = rebuildStrictPostHogEvent(event, actorId);
+    return rebuilt ? { ...rebuilt, ...relayEventMetadata(event) } : null;
+  }
   if (event.event === "$snapshot" && !replayAllowed(policy, declared)) {
     return null;
   }
