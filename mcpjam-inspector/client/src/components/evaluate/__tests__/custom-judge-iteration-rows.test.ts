@@ -87,7 +87,6 @@ describe("custom judge rows on an iteration", () => {
         join: { kind: "judge", slot: "customJudges" },
         label: "Answers what the user asked",
         customJudge: {
-          id: answersId,
           evaluatorId: "answers-the-question",
           outputKind: "score",
         },
@@ -144,6 +143,24 @@ describe("custom judge rows on an iteration", () => {
       state: "error",
       source: "scoreRow",
       reason: "This run reached its spending limit for custom judges.",
+    });
+  });
+
+  it("shows the reason after an error name the backend stored without a code", () => {
+    const rows = customJudgeIterationRows(
+      iteration({
+        evaluationConfig: buildEvaluationConfigSnapshot([answersDefinition]),
+        scores: [
+          errorScoreResult(
+            resolveScoreDefinition(answersDefinition),
+            "TimeoutError: The judge took too long to answer.",
+          ),
+        ],
+      }),
+    );
+    expect(rows[0]?.result).toMatchObject({
+      state: "error",
+      reason: "The judge took too long to answer.",
     });
   });
 
