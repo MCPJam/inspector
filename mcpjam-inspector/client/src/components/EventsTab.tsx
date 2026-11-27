@@ -385,7 +385,11 @@ export function EventsTab({
     : hostChoice.missing
       ? "This client no longer exists. Make another client active to subscribe."
       : selectedAvailability
-        ? describeNoSubscribableMode(selectedAvailability, hostChoice.name)
+        ? describeNoSubscribableMode(
+            selectedAvailability,
+            hostChoice.name,
+            hostChoice.harnessName,
+          )
         : null;
 
   const handleSubscribe = async (value: SubscribeFormValue) => {

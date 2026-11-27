@@ -94,6 +94,23 @@ describe("useEventsHost", () => {
 });
 
 describe("resolveEventsHostChoice", () => {
+  it("names the vendor harness that runs a client, for its refusals", () => {
+    expect(
+      resolveEventsHostChoice({
+        hostId: "host_codex",
+        hosts: [],
+        activeHostId: "host_codex",
+        activeHost: { ...work, harness: "codex" },
+      }),
+    ).toMatchObject({ modes: [], harnessName: "Codex" });
+    expect(
+      resolveEventsHostChoice({
+        hostId: "host_cc",
+        hosts: [listed({ hostId: "host_cc", agentLoop: "claude-code" })],
+      })?.harnessName,
+    ).toBe("Claude Code");
+  });
+
   it("gives a listed client with no modes from the backend none, not a style default", () => {
     expect(
       resolveEventsHostChoice({

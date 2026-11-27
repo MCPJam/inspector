@@ -179,14 +179,23 @@ export function subscribableModes(args: {
   return { modes, refused, hostModes };
 }
 
+/** Why a host receives no events at all, naming the harness that runs it. */
+function describeNoHostModes(hostName: string, harnessName?: string): string {
+  return harnessName
+    ? `${hostName} runs on ${harnessName}, which doesn't receive MCP Events. Pick another client.`
+    : `${hostName} doesn't receive events. Turn on a delivery mode in the client's Events tab, or pick another client.`;
+}
+
 /**
  * Why a single mode can't be used, in words a user can act on, or null when
- * it can. `hostName` names the host in the message.
+ * it can. `hostName` names the host in the message, and `harnessName` the
+ * vendor harness that runs it, when one does.
  */
 export function describeModeRefusal(
   mode: EventDeliveryMode,
   result: SubscribableModes,
-  hostName: string
+  hostName: string,
+  harnessName?: string
 ): string | null {
   switch (result.refused[mode]) {
     case undefined:
@@ -197,8 +206,8 @@ export function describeModeRefusal(
       return `The server doesn't offer ${mode} delivery for this event.`;
     case "host":
       return result.hostModes.length === 0
-        ? `${hostName} doesn't receive events. Turn on a delivery mode in its Protocol settings, or pick another client.`
-        : `${hostName} doesn't receive events by ${mode}. Turn it on in its Protocol settings, or pick another client.`;
+        ? describeNoHostModes(hostName, harnessName)
+        : `${hostName} doesn't receive events by ${mode}. Turn it on in the client's Events tab, or pick another client.`;
   }
 }
 
@@ -209,11 +218,12 @@ export function describeModeRefusal(
  */
 export function describeNoSubscribableMode(
   result: SubscribableModes,
-  hostName: string
+  hostName: string,
+  harnessName?: string
 ): string | null {
   if (result.modes.length > 0) return null;
   if (result.hostModes.length === 0) {
-    return `${hostName} doesn't receive events. Turn on a delivery mode in its Protocol settings, or pick another client.`;
+    return describeNoHostModes(hostName, harnessName);
   }
   const accepted = result.hostModes.join(" or ");
   if (result.hostModes.every((mode) => result.refused[mode] === "runtime")) {

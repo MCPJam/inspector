@@ -143,7 +143,7 @@ describe("subscribableModes", () => {
     });
     expect(chatgpt.modes).toEqual(["webhook"]);
     expect(describeModeRefusal("poll", chatgpt, "ChatGPT")).toBe(
-      "ChatGPT doesn't receive events by poll. Turn it on in its Protocol settings, or pick another client."
+      "ChatGPT doesn't receive events by poll. Turn it on in the client's Events tab, or pick another client."
     );
     expect(describeModeRefusal("push", chatgpt, "ChatGPT")).toBe(
       "Hosted subscriptions can't use push yet. Use webhook or poll, or subscribe from the local app."
@@ -159,7 +159,10 @@ describe("subscribableModes", () => {
       runtime: "hosted",
     });
     expect(describeNoSubscribableMode(claude, "Claude")).toBe(
-      "Claude doesn't receive events. Turn on a delivery mode in its Protocol settings, or pick another client."
+      "Claude doesn't receive events. Turn on a delivery mode in the client's Events tab, or pick another client."
+    );
+    expect(describeNoSubscribableMode(claude, "My Codex client", "Codex")).toBe(
+      "My Codex client runs on Codex, which doesn't receive MCP Events. Pick another client."
     );
     const pollOnly = subscribableModes({
       host: saved({ webhook: true }, "chatgpt-work"),
