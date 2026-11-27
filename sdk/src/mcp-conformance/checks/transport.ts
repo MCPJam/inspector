@@ -245,7 +245,7 @@ async function modernPostResponseContentTypeCheck(
   }
 }
 
-async function terminateSession(
+export async function terminateSession(
   ctx: RawHttpCheckContext,
   sessionId: string | undefined,
   negotiatedVersion: string | undefined,
