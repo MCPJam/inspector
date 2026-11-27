@@ -1,5 +1,6 @@
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import {
+  MAX_CUSTOM_JUDGES,
   MAX_RUBRIC_CHECK_QUESTIONS,
   type CustomJudge,
   type RubricCheckQuestion,

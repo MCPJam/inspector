@@ -178,7 +178,7 @@ function JudgeRow({
   );
 }
 
-function JudgeEditor({
+export function JudgeEditor({
   suiteId,
   judge,
   variables,

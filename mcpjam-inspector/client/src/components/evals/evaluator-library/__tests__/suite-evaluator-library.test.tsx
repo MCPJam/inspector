@@ -69,7 +69,7 @@ const capabilities = {
     },
     custom: {
       role: "advisory",
-      variables: [],
+      variables: ["final_answer", "expected_output"],
       templateVersion: 1,
       maxJudges: 5,
       maxPromptLength: 10_000,
@@ -231,12 +231,12 @@ describe("starting an evaluator from scratch", () => {
       screen.getByRole("region", { name: "Start from scratch" }),
     ).toBeVisible();
   });
-  it("renders four described actions and saves an untagged assertion", async () => {
+  it("renders three described actions and saves an untagged assertion", async () => {
     const { onAdd } = open();
     const methods = within(
       screen.getByRole("region", { name: "Start from scratch" }),
     );
-    expect(methods.getAllByRole("button")).toHaveLength(4);
+    expect(methods.getAllByRole("button")).toHaveLength(3);
     expect(
       methods.getByRole("button", { name: "Assertions" }),
     ).toHaveAccessibleDescription("Combine built-in checks.");

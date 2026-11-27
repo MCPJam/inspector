@@ -118,6 +118,8 @@ export function SuiteEvaluatorLibrary({
                   <JudgeEditor
                     suiteId={capabilities?.suiteId}
                     judge={blankJudge(judges.map((judge) => judge.id))}
+                    variables={capabilities?.judges?.custom?.variables ?? []}
+                    variableAliases={capabilities?.judges?.custom?.variableAliases}
                     others={judges}
                     onCancel={onBack}
                     onSave={(judge) => add({ judges: [judge] })}

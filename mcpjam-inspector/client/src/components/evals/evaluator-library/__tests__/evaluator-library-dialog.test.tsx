@@ -240,8 +240,9 @@ describe("EvaluatorLibraryButton", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "From library" }));
     fireEvent.click(screen.getByRole("button", { name: "Answer Grounded in Results" }));
-    expect(screen.getByRole("button", { name: "Add to suite" })).toBeDisabled();
-    expect(screen.getByText(/already uses this preset/)).toBeInTheDocument();
+    const add = screen.getByRole("button", { name: "Add to suite" });
+    expect(add).toBeDisabled();
+    expect(add).toHaveAccessibleDescription(/already uses this preset/);
     expect(onAdd).not.toHaveBeenCalled();
   });
 });
@@ -438,7 +439,7 @@ describe("judge evaluators", () => {
 });
 
 describe("question cap", () => {
-  it("offers no Add for a question evaluator when the suite is full", () => {
+  it("disables Add for a question evaluator when the suite is full", () => {
     const full = Array.from({ length: 10 }, (_, i) => ({
       id: `mine-${i}`,
       kind: "yesno" as const,
@@ -456,20 +457,21 @@ describe("question cap", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "From library" }));
     expect(
-      screen.queryByRole("button", {
+      screen.getByRole("button", {
         name: "Add Answer Grounded in Results to suite",
       }),
-    ).not.toBeInTheDocument();
+    ).toBeDisabled();
     expect(
       screen.getByRole("button", { name: "Add No Wasted Calls to suite" }),
     ).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: "Answer Grounded in Results" }),
     );
-    expect(screen.getByRole("button", { name: "Add to suite" })).toBeDisabled();
-    expect(
-      screen.getByText(/already has 10 rubric-check questions/),
-    ).toBeInTheDocument();
+    const add = screen.getByRole("button", { name: "Add to suite" });
+    expect(add).toBeDisabled();
+    expect(add).toHaveAccessibleDescription(
+      "Remove a decision question to add this preset.",
+    );
     expect(onAdd).not.toHaveBeenCalled();
   });
 });
