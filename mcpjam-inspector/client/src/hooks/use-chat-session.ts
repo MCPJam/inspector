@@ -287,6 +287,7 @@ import {
   type LiveChatTraceToolCall,
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
+import type { EventAtTurn } from "@/shared/event-at-turn";
 import {
   applyPreviewSpansUserMessageIndices,
   buildLiveChatPreviewSpans,
@@ -821,6 +822,11 @@ export interface UseChatSessionReturn {
     extraParts?: UIMessage["parts"];
     widgetModelContext?: WidgetModelContextEntry[];
     /**
+     * The MCP event that started this turn. Sent with every request of the
+     * turn, its continuations included, until the next send in this session.
+     */
+    eventAtTurn?: EventAtTurn;
+    /**
      * Resolves `true` once the message was actually dispatched, `false` on
      * every fail-closed preflight path (server-id resolution failed, or the
      * target/session changed while it was being prepared). Those paths surface
@@ -880,7 +886,11 @@ export interface UseChatSessionReturn {
     > &
       Pick<
         Parameters<UseChatSessionReturn["sendMessage"]>[0],
-        "pluginMentions" | "extraParts" | "widgetModelContext" | "isCurrent"
+        | "pluginMentions"
+        | "extraParts"
+        | "widgetModelContext"
+        | "eventAtTurn"
+        | "isCurrent"
       > & {
         /** Attached prompt and skill messages, copied in after the transcript. */
         prependMessages?: UIMessage[];
@@ -3991,6 +4001,12 @@ export function useChatSession(
   const pendingWidgetModelContextRef = useRef<
     WidgetModelContextEntry[] | undefined
   >(undefined);
+  // The event the last admitted send in a session started from. Unlike widget
+  // context it is not drained: a continuation of that turn carries it too.
+  const turnEventAtTurnRef = useRef<{
+    chatSessionId: string;
+    event: EventAtTurn;
+  } | null>(null);
   // Convex server ids resolved by the hosted preflight (`hostedEnsureServerIds`)
   // in `sendMessage`, consumed once by the (synchronous) transport body so the
   // hosted send carries real ids for ad-hoc/App servers, not display names.
@@ -4450,6 +4466,10 @@ export function useChatSession(
             ? { pageTools: snapshotPageToolsForTurn() }
             : {}),
           ...(eventTools ? { eventTools } : {}),
+          ...(turnEventAtTurnRef.current?.chatSessionId ===
+          chatSessionIdRef.current
+            ? { eventAtTurn: turnEventAtTurnRef.current.event }
+            : {}),
           // MCPJam UI tools are agent-surface-only; the only uiTools sender
           // is agent-chat-instances.ts (/api/web/mcpjam-agent).
           ...(widgetModelContext && widgetModelContext.length > 0
@@ -5683,6 +5703,7 @@ export function useChatSession(
       pluginMentions?: PluginMentionSelection[];
       extraParts?: UIMessage["parts"];
       widgetModelContext?: WidgetModelContextEntry[];
+      eventAtTurn?: EventAtTurn;
     }) => {
       if (harnessStopBlockedRef.current) throw new Error("Confirm Stop before continuing this conversation.");
       const {
@@ -5695,6 +5716,7 @@ export function useChatSession(
         prependMessages,
         pluginMentions,
         extraParts,
+        eventAtTurn,
       } = options;
 
       // SEP-2350 turn boundary: a new user turn spins up a fresh per-turn MCP
@@ -5905,6 +5927,9 @@ export function useChatSession(
             ? { body: { scopeStepUpCancel: cancelSignIn } }
             : undefined;
           appMessageTurnRef.current = pluginMessage !== undefined;
+          turnEventAtTurnRef.current = eventAtTurn
+            ? { chatSessionId: sessionAtSend, event: eventAtTurn }
+            : null;
           activeSendSessions.current.add(sessionAtSend);
           admitted = true;
           let sent: Promise<void>;
@@ -6316,6 +6341,7 @@ export function useChatSession(
           pluginMentions: options.pluginMentions,
           extraParts: options.extraParts,
           widgetModelContext: options.widgetModelContext,
+          eventAtTurn: options.eventAtTurn,
           isCurrent: options.isCurrent,
         });
       } catch {

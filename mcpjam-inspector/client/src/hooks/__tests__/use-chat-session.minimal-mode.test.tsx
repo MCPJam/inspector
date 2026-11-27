@@ -716,6 +716,53 @@ describe("useChatSession minimal mode parity", () => {
     );
   });
 
+  it("carries the event that started a turn on its continuations, until the next send", async () => {
+    const eventAtTurn = {
+      name: "comment.created",
+      eventId: "evt_1",
+      receivedAt: 1_700_000_000_000,
+      delivery: "poll" as const,
+      origin: "server" as const,
+      subscriptionId: "esub_1",
+    };
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+        executionConfig: { systemPrompt: "Prompt" },
+      })
+    );
+
+    act(() => {
+      result.current.sendMessage({ text: "event turn", eventAtTurn });
+    });
+    await waitFor(() => {
+      expect(getTransportRequests()).toHaveLength(1);
+    });
+    expect(getTransportRequests().at(-1)).toMatchObject({ eventAtTurn });
+
+    // A continuation of the same turn (a tool result or an approval) is
+    // another request through the same transport, with no new send.
+    await act(async () => {
+      await getUsedTransport().sendMessages({
+        chatId: getTransportRequests().at(-1).id,
+        messages: [],
+        abortSignal: new AbortController().signal,
+        trigger: "submit-message",
+      });
+    });
+    expect(getTransportRequests()).toHaveLength(2);
+    expect(getTransportRequests().at(-1)).toMatchObject({ eventAtTurn });
+
+    act(() => {
+      result.current.sendMessage({ text: "typed turn" });
+    });
+    await waitFor(() => {
+      expect(getTransportRequests()).toHaveLength(3);
+    });
+    expect(getTransportRequests().at(-1)).not.toHaveProperty("eventAtTurn");
+  });
+
   it("opens the mcpjam-limit dialog for non-hosted chat-v2 limit responses", async () => {
     mockWindowFetch.mockResolvedValueOnce(
       new Response(
