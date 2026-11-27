@@ -678,6 +678,72 @@ describe("useChatSession hosted mode", () => {
     });
   });
 
+  it("gives a send its widget context and servers only once it is admitted", async () => {
+    // Two sends meet in hosted preparation when the first was cancelled
+    // (PLB-472): the cancelled one's refusal must not touch the next one's.
+    const releases: Array<() => void> = [];
+    const ensureServerIds = vi.fn(
+      (names: string[]) =>
+        new Promise<Array<{ serverName: string; serverId: string }>>(
+          (resolve) => {
+            releases.push(() =>
+              resolve(
+                names.map((name) => ({
+                  serverName: name,
+                  serverId: `${name}-id`,
+                })),
+              ),
+            );
+          },
+        ),
+    );
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+          ensureServerIds,
+        },
+      }),
+    );
+    const context = (toolCallId: string) => [
+      { toolCallId, context: { structuredContent: { from: toolCallId } } },
+    ];
+    let cancelled = false;
+    let first!: Promise<boolean>;
+    let second!: Promise<boolean>;
+    act(() => {
+      first = result.current.sendMessage({
+        text: "first",
+        widgetModelContext: context("call-first"),
+        isCurrent: () => !cancelled,
+      });
+    });
+    cancelled = true;
+    act(() => {
+      second = result.current.sendMessage({
+        text: "second",
+        widgetModelContext: context("call-second"),
+      });
+    });
+
+    await act(async () => {
+      releases[0]();
+      expect(await first).toBe(false);
+    });
+    await act(async () => {
+      releases[1]();
+      expect(await second).toBe(true);
+    });
+
+    await waitFor(() => expect(mockState.authFetch).toHaveBeenCalledOnce());
+    const body = JSON.parse(mockState.authFetch.mock.calls[0][1].body);
+    expect(body.widgetModelContext).toEqual(context("call-second"));
+    expect(body.selectedServerIds).toEqual(["server-1-id"]);
+    unmount();
+  });
+
   it("includes chatSessionId in the hosted transport body", async () => {
     const { result, unmount } = renderHook(() =>
       useChatSession({

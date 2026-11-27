@@ -1,7 +1,8 @@
 import type { HarnessStartupPhase } from "@/shared/harness-startup";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import type { ReactElement } from "react";
+import { useState, type ReactElement } from "react";
+import { flushSync } from "react-dom";
 import type { UIMessage } from "@ai-sdk/react";
 
 import {
@@ -779,13 +780,61 @@ describe("FullscreenChatOverlay", () => {
         />,
       );
 
-      const sending = screen.getByRole("button", { name: "Sending message" });
+      const sending = screen.getByRole("button", { name: "Cancel sending" });
       expect(sending).toBeDisabled();
       expect(sending.querySelector("svg.animate-spin")).not.toBeNull();
       fireEvent.keyDown(screen.getByPlaceholderText("Message…"), {
         key: "Enter",
       });
       fireEvent.submit(screen.getByTestId("fullscreen-composer"));
+      expect(onSend).not.toHaveBeenCalled();
+    });
+
+    it("cancels the send and focuses the text box when the spinner is clicked", () => {
+      const onCancelSubmit = vi.fn();
+      renderWithProviders(
+        <FullscreenChatOverlay
+          {...defaultProps}
+          input="Follow up"
+          canSend={true}
+          isSubmitting={true}
+          onCancelSubmit={onCancelSubmit}
+        />,
+      );
+
+      // A click focuses the button it lands on.
+      const cancel = screen.getByRole("button", { name: "Cancel sending" });
+      cancel.focus();
+      fireEvent.click(cancel);
+
+      expect(onCancelSubmit).toHaveBeenCalledTimes(1);
+      expect(screen.getByPlaceholderText("Message…")).toHaveFocus();
+    });
+
+    it("does not send when Send takes the place of the clicked Cancel sending", () => {
+      const onSend = vi.fn();
+      // A browser renders the cancel before the click's default action runs;
+      // flushSync does the same here.
+      function Overlay() {
+        const [isSubmitting, setIsSubmitting] = useState(true);
+        return (
+          <FullscreenChatOverlay
+            {...defaultProps}
+            input="Follow up"
+            canSend={true}
+            isSubmitting={isSubmitting}
+            onSend={onSend}
+            onCancelSubmit={() => flushSync(() => setIsSubmitting(false))}
+          />
+        );
+      }
+      renderWithProviders(<Overlay />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Cancel sending" }));
+
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeEnabled();
       expect(onSend).not.toHaveBeenCalled();
     });
 

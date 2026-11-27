@@ -4,6 +4,7 @@ import {
   useComposerForms,
 } from "@/components/elicitation/composer-form-store";
 import { ComposerFormStatus } from "./chat-input/form-status";
+import { CancelSendingIcon } from "./cancel-sending-icon";
 import { pluginMentionToken } from "@/shared/plugin-mentions";
 import {
   scopedMentionToken,
@@ -323,6 +324,8 @@ interface ChatInputProps {
   isLoading?: boolean;
   /** A send is being prepared: Enter is refused and Send shows a spinner. */
   isSubmitting?: boolean;
+  /** Cancels the send being prepared; without it the spinner is disabled. */
+  onCancelSubmit?: () => void;
   canStop?: boolean;
   placeholder?: string;
   className?: string;
@@ -509,6 +512,7 @@ export function ChatInput({
   submitDisabledReason,
   isLoading = false,
   isSubmitting = false,
+  onCancelSubmit,
   canStop = false,
   placeholder = "Type your message...",
   className,
@@ -2457,18 +2461,27 @@ export function ChatInput({
                     <TooltipContent>Stop generating</TooltipContent>
                   </Tooltip>
                 ) : isSubmitting ? (
-                  <Button
-                    type="button"
-                    size="icon"
-                    className={cn(
-                      "size-[34px] rounded-full transition-colors shadow-none",
-                      activeSubmitButtonClasses,
-                    )}
-                    aria-label="Sending message"
-                    disabled
-                  >
-                    <Loader2 size={16} className="animate-spin" />
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        size="icon"
+                        className={cn(
+                          "size-[34px] rounded-full transition-colors shadow-none",
+                          activeSubmitButtonClasses,
+                        )}
+                        aria-label="Cancel sending"
+                        disabled={!onCancelSubmit}
+                        onClick={() => {
+                          onCancelSubmit?.();
+                          textareaRef.current?.focus();
+                        }}
+                      >
+                        <CancelSendingIcon />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Cancel sending</TooltipContent>
+                  </Tooltip>
                 ) : (
                   <DisabledReasonTooltip
                     reason={submitDisabledReason}

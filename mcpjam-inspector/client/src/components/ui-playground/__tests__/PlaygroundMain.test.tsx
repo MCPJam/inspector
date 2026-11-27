@@ -55,6 +55,38 @@ const mockChatHistoryAction = vi.hoisted(() => vi.fn());
 // exercise both sides of that gate. Defaults to signed out, which is what every
 // other test in this file has always run as.
 const mockConvexAuthState = vi.hoisted(() => ({ isAuthenticated: false }));
+// The real App draft hook, with a count of the holds a send has not released.
+const appDraftHolds = vi.hoisted(() => ({ active: 0 }));
+vi.mock(
+  "@/components/host-workspace/use-app-message-draft",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("@/components/host-workspace/use-app-message-draft")
+      >();
+    const { useCallback } = await import("react");
+    return {
+      ...actual,
+      useAppMessageDraft: (
+        ...args: Parameters<typeof actual.useAppMessageDraft>
+      ) => {
+        const draft = actual.useAppMessageDraft(...args);
+        const realHold = draft.hold;
+        const hold = useCallback(() => {
+          const release = realHold();
+          let held = true;
+          appDraftHolds.active += 1;
+          return () => {
+            if (held) appDraftHolds.active -= 1;
+            held = false;
+            release();
+          };
+        }, [realHold]);
+        return { ...draft, hold };
+      },
+    };
+  },
+);
 const mockReactiveHistoryState = vi.hoisted(() => ({
   session: undefined as any,
   widgetSnapshots: undefined as any,
@@ -2650,6 +2682,134 @@ describe("PlaygroundMain", () => {
       );
     });
 
+    describe("Cancel sending", () => {
+      const cancelProps = () =>
+        mockChatInputProps.mock.calls.at(-1)?.[0] as {
+          isSubmitting?: boolean;
+          onCancelSubmit?: () => void;
+        };
+      const failWith = (error: Error) => {
+        let reject!: () => void;
+        mockGetChatHistoryState.mockReturnValue(
+          new Promise((_, fail) => {
+            reject = () => fail(error);
+          }),
+        );
+        return reject;
+      };
+
+      it("cancels from the fullscreen App chat and sends nothing", async () => {
+        const deviceType = mockUIPlaygroundStore.deviceType;
+        mockUIPlaygroundStore.deviceType = "fill";
+        useHostContextStore.setState({
+          draftHostContext: { displayMode: "fullscreen" },
+        });
+        try {
+          const { rerender } = await openSavedThread();
+          await act(async () => {
+            rerender(<PlaygroundMain {...defaultProps} />);
+          });
+          await act(async () => {
+            mockThread.mock.calls.at(-1)?.[0].onFullscreenChange(true);
+          });
+          const overlay = () =>
+            mockFullscreenChatOverlay.mock.calls.at(-1)?.[0] as {
+              onSend: () => void;
+              onCancelSubmit?: () => void;
+              isSubmitting?: boolean;
+            };
+          const releaseSync = holdPreSendSync();
+          fireEvent.change(screen.getByTestId("fullscreen-overlay-input"), {
+            target: { value: "from fullscreen" },
+          });
+          await act(async () => overlay().onSend());
+          expect(overlay().isSubmitting).toBe(true);
+
+          await act(async () => overlay().onCancelSubmit?.());
+
+          expect(overlay().isSubmitting).toBe(false);
+          await act(async () => releaseSync());
+          await act(async () => {});
+          expect(sendMessage).not.toHaveBeenCalled();
+        } finally {
+          mockUIPlaygroundStore.deviceType = deviceType;
+        }
+      });
+
+      it("resends nothing when Retry is cancelled during the pre-send sync, and Retry works again", async () => {
+        mockUseChatSession.error = Object.assign(
+          new Error("The organization's AI provider is unavailable."),
+          { formatted: { code: "provider_unavailable" } },
+        );
+        await openSavedThread();
+        const releaseSync = holdPreSendSync();
+        await act(async () => {
+          fireEvent.click(screen.getByTestId("error-box-retry"));
+        });
+        expect(cancelProps().isSubmitting).toBe(true);
+
+        await act(async () => cancelProps().onCancelSubmit?.());
+        expect(cancelProps().isSubmitting).toBe(false);
+        await act(async () => releaseSync());
+        await act(async () => {});
+        expect(sendMessage).not.toHaveBeenCalled();
+
+        await act(async () => {
+          fireEvent.click(screen.getByTestId("error-box-retry"));
+        });
+        await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+        expect(sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ text: "Hello" }),
+        );
+      });
+
+      it("does not put Retry's text back when its send is refused after a cancel", async () => {
+        mockUseChatSession.error = Object.assign(
+          new Error("The organization's AI provider is unavailable."),
+          { formatted: { code: "provider_unavailable" } },
+        );
+        let dispatch!: () => void;
+        sendMessage.mockImplementation(
+          ({ isCurrent }: { isCurrent?: () => boolean }) =>
+            new Promise<boolean>((resolve) => {
+              dispatch = () => resolve(isCurrent?.() ?? true);
+            }),
+        );
+        await openSavedThread();
+        const releaseSync = holdPreSendSync();
+        await act(async () => {
+          fireEvent.click(screen.getByTestId("error-box-retry"));
+        });
+        await act(async () => releaseSync());
+        await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+
+        await act(async () => cancelProps().onCancelSubmit?.());
+        await act(async () => dispatch());
+
+        expect(screen.getByTestId("chat-input-field")).toHaveValue("");
+      });
+
+      it("hides the read's error when Retry was cancelled while the thread was read", async () => {
+        const toastError = vi.spyOn(toast, "error");
+        mockUseChatSession.error = Object.assign(
+          new Error("The organization's AI provider is unavailable."),
+          { formatted: { code: "provider_unavailable" } },
+        );
+        await openSavedThread();
+        const failRead = failWith(new WebApiError(503, null, "down"));
+        await act(async () => {
+          fireEvent.click(screen.getByTestId("error-box-retry"));
+        });
+
+        await act(async () => cancelProps().onCancelSubmit?.());
+        await act(async () => failRead());
+        await act(async () => {});
+
+        expect(toastError).not.toHaveBeenCalled();
+        expect(sendMessage).not.toHaveBeenCalled();
+      });
+    });
+
     it("resends once when the error banner's Retry is clicked twice during the pre-send sync", async () => {
       mockUseChatSession.error = Object.assign(
         new Error("The organization's AI provider is unavailable."),
@@ -3016,6 +3176,211 @@ describe("PlaygroundMain", () => {
       await settle();
 
       expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    });
+
+    describe("Cancel sending", () => {
+      const composer = () =>
+        mockChatInputProps.mock.calls.at(-1)?.[0] as {
+          value: string;
+          disabled?: boolean;
+          isSubmitting?: boolean;
+          onCancelSubmit?: () => void;
+        };
+
+      it("frees Send at once when a send held at the server wait is cancelled, and sends nothing", async () => {
+        const toastError = vi.spyOn(toast, "error");
+        const readiness = holdServerReadiness();
+        await renderWithThreadA({
+          ensureServersReady: readiness.ensureServersReady,
+        });
+        await typeAndSend("draft for A");
+        expect(composer().isSubmitting).toBe(true);
+
+        await act(async () => composer().onCancelSubmit?.());
+
+        expect(composer().isSubmitting).toBe(false);
+        expect(composer().value).toBe("draft for A");
+        // The connect attempt still owns the box until it ends.
+        expect(composer().disabled).toBe(true);
+        await act(async () => readiness.release());
+        await settle();
+        expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+        expect(toastError).not.toHaveBeenCalled();
+        expect(composer().disabled).toBe(false);
+
+        // The next send goes out once.
+        mockSharedAppState.servers["test-server"] = {
+          connectionStatus: "connected",
+        };
+        await act(async () => {
+          fireEvent.submit(screen.getByTestId("chat-input"));
+        });
+        await settle();
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ text: "draft for A" }),
+        );
+      });
+
+      it("drops a starter chip cancelled during the server wait; the chip stays and the box stays empty", async () => {
+        const readiness = holdServerReadiness();
+        mockUseChatSession.messages = [] as never;
+        render(
+          <PlaygroundMain
+            {...defaultProps}
+            ensureServersReady={readiness.ensureServersReady}
+          />,
+        );
+        await act(async () => {
+          fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+        });
+        expect(composer().isSubmitting).toBe(true);
+
+        await act(async () => composer().onCancelSubmit?.());
+
+        expect(composer().isSubmitting).toBe(false);
+        await act(async () => readiness.release());
+        await settle();
+        expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+        expect(composer().value).toBe("");
+        expect(
+          screen.getByRole("button", { name: "Starter chip" }),
+        ).toBeInTheDocument();
+      });
+
+      it("releases the App draft hold at once, while the cancelled send still waits", async () => {
+        const readiness = holdServerReadiness();
+        await renderWithThreadA({
+          ensureServersReady: readiness.ensureServersReady,
+        });
+        const before = appDraftHolds.active;
+        await typeAndSend("draft for A");
+        expect(appDraftHolds.active).toBe(before + 1);
+
+        await act(async () => composer().onCancelSubmit?.());
+
+        expect(appDraftHolds.active).toBe(before);
+        await act(async () => readiness.release());
+        await settle();
+        expect(appDraftHolds.active).toBe(before);
+      });
+
+      it("queues nothing to the comparison when a composer send is cancelled", async () => {
+        mockUseChatSession.availableModels = [
+          { id: "openai/gpt-5-mini", name: "Mini", provider: "openai" },
+          {
+            id: "anthropic/claude-sonnet-4.5",
+            name: "Sonnet",
+            provider: "anthropic",
+          },
+        ] as never;
+        mockUseChatSession.multiModelEnabled = true;
+        try {
+          const readiness = holdServerReadiness();
+          render(
+            <PlaygroundMain
+              {...defaultProps}
+              enableMultiModelChat
+              ensureServersReady={readiness.ensureServersReady}
+            />,
+          );
+          await waitFor(() => expect(bridge()).not.toBe(null));
+          const broadcast = () =>
+            mockMultiModelPlaygroundCard.mock.calls.at(-1)?.[0]
+              .broadcastRequest;
+          const before = broadcast();
+          const submit = () =>
+            mockChatInputProps.mock.calls.at(-1)?.[0] as {
+              onChange: (text: string) => void;
+              onSubmit: (e: { preventDefault: () => void }) => Promise<void>;
+            };
+          await act(async () => submit().onChange("draft for the panes"));
+          await act(async () => {
+            void submit().onSubmit({ preventDefault: () => {} });
+          });
+          expect(composer().isSubmitting).toBe(true);
+
+          await act(async () => composer().onCancelSubmit?.());
+          await act(async () => readiness.release());
+          await settle();
+
+          expect(broadcast()).toBe(before);
+          expect(composer().value).toBe("draft for the panes");
+        } finally {
+          mockUseChatSession.availableModels = [];
+          mockUseChatSession.multiModelEnabled = false;
+        }
+      });
+
+      it("hides the read's error when the send was cancelled while the thread was read", async () => {
+        const toastError = vi.spyOn(toast, "error");
+        await openThreadA();
+        let failRead!: () => void;
+        mockReadHistory.mockImplementation(
+          () =>
+            new Promise((_, reject) => {
+              failRead = () => reject(new WebApiError(503, null, "down"));
+            }),
+        );
+        await typeAndSend("draft for A");
+        await settle();
+        expect(composer().isSubmitting).toBe(true);
+
+        await act(async () => composer().onCancelSubmit?.());
+        await act(async () => failRead());
+        await settle();
+
+        expect(toastError).not.toHaveBeenCalled();
+        expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+        expect(composer().value).toBe("draft for A");
+      });
+
+      it.each([
+        {
+          change: "another thread",
+          leave: async () => {
+            await act(async () => {
+              void bridge()?.onSelectThread(sessionB);
+            });
+          },
+        },
+        {
+          change: "New chat",
+          leave: async () => {
+            await act(async () => {
+              void bridge()?.onNewChat();
+            });
+          },
+        },
+        {
+          change: "Clear chat",
+          leave: async () => {
+            fireEvent.click(screen.getByRole("button", { name: "Clear chat" }));
+            fireEvent.click(
+              within(screen.getByTestId("confirm-dialog")).getByRole("button", {
+                name: "Confirm",
+              }),
+            );
+          },
+        },
+      ])(
+        "frees Send at once when the user opens $change during the wait",
+        async ({ leave }) => {
+          const readiness = holdServerReadiness();
+          await renderWithThreadA({
+            ensureServersReady: readiness.ensureServersReady,
+          });
+          await typeAndSend("draft for A");
+          expect(composer().isSubmitting).toBe(true);
+
+          await leave();
+
+          expect(composer().isSubmitting).toBe(false);
+          await act(async () => readiness.release());
+          await settle();
+          expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+        },
+      );
     });
 
     it("stops at the wait it was in: the old thread's state read is not taken after a switch", async () => {
@@ -6998,6 +7363,49 @@ describe("multi-model columns", () => {
           url: expect.stringMatching(/^data:text\/csv;base64,/),
         }),
       ]);
+    });
+
+    it("sends nothing when the send is cancelled during the computer upload", async () => {
+      previewComputerHost({});
+      let finishUpload!: () => void;
+      mockUploadAttachments.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finishUpload = () =>
+              resolve([{ name: "report.csv", path: UPLOADED_PATH }]);
+          }),
+      );
+      render(<PlaygroundMain {...defaultProps} activeProjectId="project-1" />);
+      const composer = () =>
+        mockChatInputProps.mock.calls.at(-1)?.[0] as {
+          onChangeFileAttachments: (next: unknown[]) => void;
+          onCancelSubmit?: () => void;
+          isSubmitting?: boolean;
+        };
+      await act(async () => {
+        composer().onChangeFileAttachments([
+          { id: "attachment-1", file: new File(["a,b\n"], "report.csv") },
+        ]);
+      });
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "how many rows?" },
+      });
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+      await waitFor(() =>
+        expect(mockUploadAttachments).toHaveBeenCalledTimes(1),
+      );
+
+      await act(async () => composer().onCancelSubmit?.());
+      expect(composer().isSubmitting).toBe(false);
+      await act(async () => finishUpload());
+      await act(async () => {});
+
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+      expect(screen.getByTestId("chat-input-field")).toHaveValue(
+        "how many rows?",
+      );
     });
 
     it("a non-harness computer host still uploads and notes the path, as before", async () => {

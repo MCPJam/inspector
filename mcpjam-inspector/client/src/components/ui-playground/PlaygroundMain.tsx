@@ -3479,6 +3479,7 @@ export function PlaygroundMain({
     appMessageDraft.clear();
   }, [composer, fileAttachments, appMessageDraft.clear]);
 
+  const composerSend = useSingleFlight();
   const {
     isCurrentTarget: isCurrentHistoryTarget,
     begin: beginThreadSend,
@@ -3487,6 +3488,7 @@ export function PlaygroundMain({
     chatSessionId,
     convexProjectId,
     historySelectionRequestIdRef,
+    composerSend.cancel,
   );
   // A chat change the user did not choose (`stay`) keeps a dropped prompt.
   const cancelPendingHistorySelection = useCallback(
@@ -4104,7 +4106,7 @@ export function PlaygroundMain({
    * told, and a blind send could clobber another writer), or the thread is gone
    * and the surface has detached from it.
    */
-  const ensureThreadReadyForSend = useCallback(async () => {
+  const ensureThreadReadyForSend = useCallback(async (live?: () => boolean) => {
     if (!activeHistorySessionId) return true;
     if (
       presendStateIsCurrent({
@@ -4119,7 +4121,7 @@ export function PlaygroundMain({
     }
 
     // Every sender but plugin messages checked its thread just before this.
-    const { isCurrent } = beginThreadSend();
+    const isCurrent = live ?? beginThreadSend().isCurrent;
     let detail: Awaited<ReturnType<typeof refreshCurrentHistorySession>> = null;
     try {
       detail = await withPresendSyncTimeout(
@@ -5213,7 +5215,7 @@ export function PlaygroundMain({
         // would otherwise send with a stale `expectedVersion`, and now that the
         // hosted route honors it, the turn runs in full and only THEN takes a
         // 409 and a conflict detach. A no-op when no history thread is open.
-        if (!(await ensureThreadReadyForSend()) || !isCurrent()) {
+        if (!(await ensureThreadReadyForSend(isCurrent)) || !isCurrent()) {
           return false;
         }
         // The local-execution gate runs at EVERY send entry point, exactly as
@@ -5249,7 +5251,7 @@ export function PlaygroundMain({
         });
         // A refused send runs no turn: keep the text, and the queue as it is.
         if (!sent) {
-          if (!left()) composer.setInput(text);
+          if (!left() && isCallerCurrent()) composer.setInput(text);
           return false;
         }
         // A success drops only the objects this request carried: a widget can
@@ -5848,8 +5850,8 @@ export function PlaygroundMain({
   // Submit handler — the docked composer and the fullscreen overlays reach it
   // through `performComposerSubmit`, one submit at a time.
 
-  const submitComposer = useCallback(async (): Promise<boolean> => {
-    const { isCurrent } = beginThreadSend();
+  const submitComposer = useCallback(async (signal?: AbortSignal) => {
+    const { isCurrent } = beginThreadSend(undefined, signal);
     if (isCompareMode && !ensureCompareReady()) return false;
     if (!composerHasContent || sendBlocked) {
       return false;
@@ -5872,7 +5874,7 @@ export function PlaygroundMain({
     if (!(await ensureSelectedServerReadyForChat()) || !isCurrent()) {
       return false;
     }
-    if (!(await ensureThreadReadyForSend()) || !isCurrent()) {
+    if (!(await ensureThreadReadyForSend(isCurrent)) || !isCurrent()) {
       return false;
     }
     // AFTER the other gates and before anything is consumed: a dialog that
@@ -6029,13 +6031,13 @@ export function PlaygroundMain({
   // network with the draft still in the box, where a second Enter would send
   // it again. The lock is released after the draft is cleared; until that
   // render lands, the committed `isSubmitting` keeps Enter and Send refused.
-  const composerSend = useSingleFlight();
   const performComposerSubmit = useCallback(
     async (): Promise<boolean> =>
-      (await composerSend.run(async () => {
+      (await composerSend.run(async (signal) => {
         const release = appMessageDraft.hold();
+        signal.addEventListener("abort", release, { once: true });
         try {
-          return await submitComposer();
+          return await submitComposer(signal);
         } finally {
           release();
         }
@@ -6273,9 +6275,9 @@ export function PlaygroundMain({
       return;
     }
     // A resend of the same text: one at a time, like the composer.
-    void composerSend.run(async () => {
+    void composerSend.run(async (signal) => {
       trackSendMessage({ single_model_send: true });
-      await handleSendFollowUp(lastUserMessageText);
+      await handleSendFollowUp(lastUserMessageText, () => !signal.aborted);
     });
   }, [
     lastUserMessageText,
@@ -6325,15 +6327,16 @@ export function PlaygroundMain({
       // Shares the composer's lock: the chip clears the composer, so one
       // clicked while a submit is being prepared would wipe that submit's
       // attachments and the submit would still send its draft.
-      void composerSend.run(async () => {
-        const { isCurrent, refuse } = beginThreadSend(() =>
-          composer.setInput(prompt),
+      void composerSend.run(async (signal) => {
+        const { isCurrent, refuse } = beginThreadSend(
+          () => composer.setInput(prompt),
+          signal,
         );
         if (!(await ensureSelectedServerReadyForChat()) || !isCurrent()) {
           refuse();
           return;
         }
-        if (!(await ensureThreadReadyForSend()) || !isCurrent()) {
+        if (!(await ensureThreadReadyForSend(isCurrent)) || !isCurrent()) {
           refuse();
           return;
         }
@@ -6708,6 +6711,7 @@ export function PlaygroundMain({
     disabled: composerDisabled,
     isLoading: isStreamingActive,
     isSubmitting: composerSend.pending,
+    onCancelSubmit: composerSend.cancel,
     canStop: !isCompareMode && canStopApproval,
     placeholder,
     currentModel: selectedModel,
@@ -7370,6 +7374,7 @@ export function PlaygroundMain({
               }
               isThinking={isStreamingActive}
               isSubmitting={composerSend.pending}
+              onCancelSubmit={composerSend.cancel}
               onStop={stopActiveChat}
               // Same submit path as the docked composer. Its own copy dropped
               // attached prompts/skills (it sent raw text and then cleared the
@@ -7513,6 +7518,7 @@ export function PlaygroundMain({
             }
             isThinking={isStreamingActive}
             isSubmitting={composerSend.pending}
+            onCancelSubmit={composerSend.cancel}
             onStop={stopActiveChat}
             onSend={() => {
               setIsTakeoverChatOpen(true);

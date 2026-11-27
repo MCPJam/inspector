@@ -5,7 +5,8 @@ import type { CSSProperties } from "react";
 
 import type { UIMessage } from "@ai-sdk/react";
 import type { DynamicToolUIPart, ToolUIPart, UITools } from "ai";
-import { ArrowUp, ChevronDown, ChevronUp, Loader2, Square } from "lucide-react";
+import { ArrowUp, ChevronDown, ChevronUp, Square } from "lucide-react";
+import { CancelSendingIcon } from "./cancel-sending-icon";
 
 import {
   useScenarioHostStyle,
@@ -506,6 +507,7 @@ function Composer({
   canSend,
   isThinking,
   isSubmitting,
+  onCancelSubmit,
   onSubmit,
   onStop,
   composerClassName,
@@ -521,6 +523,7 @@ function Composer({
   canSend: boolean;
   isThinking: boolean;
   isSubmitting: boolean;
+  onCancelSubmit?: () => void;
   onSubmit: () => void;
   onStop?: () => void;
   composerClassName: string;
@@ -528,6 +531,7 @@ function Composer({
   activeSubmitButtonClassName: string;
   inactiveSubmitButtonClassName: string;
 }) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (isThinking || isSubmitting || !canSend) return;
@@ -560,6 +564,7 @@ function Composer({
       )}
       <div className="flex items-center gap-2 px-6 py-3">
         <TextareaAutosize
+          ref={textareaRef}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={handleKeyDown}
@@ -595,14 +600,21 @@ function Composer({
           <Button
             type="button"
             size="icon"
-            aria-label="Sending message"
+            aria-label="Cancel sending"
             className={cn(
               "size-8 rounded-full shrink-0 transition-all",
               activeSubmitButtonClassName,
             )}
-            disabled
+            disabled={!onCancelSubmit}
+            onClick={(event) => {
+              // Send renders in this button's place before the click's default
+              // action runs, which would then submit the cancelled message.
+              event.preventDefault();
+              onCancelSubmit?.();
+              textareaRef.current?.focus();
+            }}
           >
-            <Loader2 className="h-4 w-4 animate-spin" />
+            <CancelSendingIcon />
           </Button>
         ) : (
           <Button
@@ -641,6 +653,8 @@ type FullscreenChatOverlayProps = {
   isThinking: boolean;
   /** A send is being prepared: Enter is refused and Send shows a spinner. */
   isSubmitting?: boolean;
+  /** Cancels the send being prepared; without it the spinner is disabled. */
+  onCancelSubmit?: () => void;
   onStop?: () => void;
   onSend: () => void;
   /**
@@ -677,6 +691,7 @@ export function FullscreenChatOverlay({
   canSend,
   isThinking,
   isSubmitting = false,
+  onCancelSubmit,
   onStop,
   onSend,
   notice,
@@ -738,6 +753,7 @@ export function FullscreenChatOverlay({
             canSend={canSend}
             isThinking={isThinking}
             isSubmitting={isSubmitting}
+            onCancelSubmit={onCancelSubmit}
             composerClassName={appearance.composerClassName}
             composerStyle={surfaceStyle}
             activeSubmitButtonClassName={appearance.activeSubmitButtonClassName}

@@ -703,7 +703,7 @@ describe("ChatInput", () => {
     it("shows a disabled spinner in place of Send while the message is being prepared", () => {
       render(<ChatInput {...defaultProps} value="Draft" isSubmitting />);
 
-      const sending = screen.getByRole("button", { name: "Sending message" });
+      const sending = screen.getByRole("button", { name: "Cancel sending" });
       expect(sending).toBeDisabled();
       expect(sending.querySelector("svg.animate-spin")).not.toBeNull();
       expect(
@@ -713,6 +713,26 @@ describe("ChatInput", () => {
       expect(
         screen.getByPlaceholderText("Type your message..."),
       ).not.toBeDisabled();
+    });
+
+    it("cancels the send and focuses the text box when the spinner is clicked", () => {
+      const onCancelSubmit = vi.fn();
+      render(
+        <ChatInput
+          {...defaultProps}
+          value="Draft"
+          isSubmitting
+          onCancelSubmit={onCancelSubmit}
+        />,
+      );
+
+      // A click focuses the button it lands on.
+      const cancel = screen.getByRole("button", { name: "Cancel sending" });
+      cancel.focus();
+      fireEvent.click(cancel);
+
+      expect(onCancelSubmit).toHaveBeenCalledTimes(1);
+      expect(screen.getByPlaceholderText("Type your message...")).toHaveFocus();
     });
 
     it("does not request form submit on Enter while the message is being prepared", () => {

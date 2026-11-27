@@ -7,24 +7,35 @@ import { useCallback, useRef, useState } from "react";
  * `pending` mirrors it for the UI. Callers run inside a discrete event, so
  * `pending: true` is committed before the task resumes; after `finally` frees
  * the ref, that committed value still refuses input until the cleared state
- * renders.
+ * renders. `cancel` aborts the task's signal and frees the lock at once; the
+ * task keeps running, and its `finally` frees only a lock it still holds.
  */
 export function useSingleFlight() {
-  const running = useRef(false);
+  const running = useRef<AbortController | null>(null);
   const [pending, setPending] = useState(false);
   const run = useCallback(
-    async <T>(task: () => Promise<T>): Promise<T | undefined> => {
+    async <T>(
+      task: (signal: AbortSignal) => Promise<T>,
+    ): Promise<T | undefined> => {
       if (running.current) return undefined;
-      running.current = true;
+      const controller = new AbortController();
+      running.current = controller;
       setPending(true);
       try {
-        return await task();
+        return await task(controller.signal);
       } finally {
-        running.current = false;
-        setPending(false);
+        if (running.current === controller) {
+          running.current = null;
+          setPending(false);
+        }
       }
     },
     [],
   );
-  return { pending, run };
+  const cancel = useCallback(() => {
+    running.current?.abort();
+    running.current = null;
+    setPending(false);
+  }, []);
+  return { pending, run, cancel };
 }
