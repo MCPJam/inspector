@@ -1,5 +1,6 @@
 import { reportToolProgress } from "./services/chat-turn/tool-notifications.js";
 import { startPluginFormFileJanitor } from "./services/plugin-host/form-file-grants.js";
+import { flushMockOutcomes } from "./services/mock/call-outcomes.js";
 import { writeInspectorRuntime } from "./services/inspector-runtime.js";
 import { localServerCheckQueue } from "./utils/local-server-check-queue.js";
 import { registerBrowserController } from "./services/browserd/local/security-policy.js";
@@ -1160,7 +1161,7 @@ async function shutdown() {
     // is the backstop). Billing/funnel events must not die in the queue.
     // Hosted observed server features still inside their flush interval go
     // out alongside, bounded the same way.
-    await Promise.all([shutdownAnalytics(), flushPendingHostedObservations()]);
+    await Promise.all([shutdownAnalytics(), flushPendingHostedObservations(), flushMockOutcomes()]);
     await appLogger.flush();
     clearTimeout(forceExitTimer);
     process.exit(0);
