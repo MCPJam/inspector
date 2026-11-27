@@ -22,6 +22,7 @@ const ALL_ON: HostFeatureVisibility = {
   cursorCli: true,
   copilotCli: true,
   openCode: true,
+  webClients: true,
 };
 const ALL_OFF: HostFeatureVisibility = {
   claudeCode: false,
@@ -29,6 +30,7 @@ const ALL_OFF: HostFeatureVisibility = {
   cursorCli: false,
   copilotCli: false,
   openCode: false,
+  webClients: false,
 };
 
 describe("which hosts are gated at all", () => {
@@ -48,6 +50,27 @@ describe("which hosts are gated at all", () => {
     ).toBe(false);
     const { openCode: _unpassed, ...withoutOpenCode } = ALL_ON;
     expect(isHostVisibleByFeatureFlags("opencode", withoutOpenCode)).toBe(false);
+  });
+
+  it("gates Claude web and ChatGPT web behind one flag, hidden where it isn't passed", () => {
+    const { webClients: _unpassed, ...withoutWebClients } = ALL_ON;
+    for (const hostId of ["web-claude", "web-chatgpt"]) {
+      expect(FLAG_GATED_HOST_IDS.has(hostId)).toBe(true);
+      expect(isHostVisibleByFeatureFlags(hostId, withoutWebClients)).toBe(false);
+      expect(
+        isHostVisibleByFeatureFlags(hostId, { ...ALL_ON, webClients: false }),
+      ).toBe(false);
+      expect(
+        isHostVisibleByFeatureFlags(hostId, { ...ALL_OFF, webClients: true }),
+      ).toBe(true);
+      expect(
+        hostFeatureFlagState(hostId, { ...ALL_ON, webClients: undefined }),
+      ).toBeUndefined();
+    }
+    // The Claude Code and Codex clients keep their own flags.
+    expect(
+      isHostVisibleByFeatureFlags("claude-code", { ...ALL_OFF, webClients: true }),
+    ).toBe(false);
   });
 
   it("gates Codex CLI behind the Codex flag, since it runs on the Codex harness", () => {
@@ -174,10 +197,11 @@ describe("every surface reads the same map", () => {
       ALL_OFF,
       { ...ALL_ON, cursorCli: false },
       { ...ALL_OFF, cursorCli: true },
+      { ...ALL_OFF, webClients: true },
     ]) {
       const excluded = excludedFlagGatedHostIds(visibility);
       const shown = new Set(
-        filterHostsByFeatureFlags([...hosts, { id: "copilot-cli" }, { id: "codex-cli" }, { id: "opencode" }], visibility).map((h) => h.id),
+        filterHostsByFeatureFlags([...hosts, { id: "copilot-cli" }, { id: "codex-cli" }, { id: "opencode" }, { id: "web-claude" }, { id: "web-chatgpt" }], visibility).map((h) => h.id),
       );
       for (const id of FLAG_GATED_HOST_IDS) {
         expect(excluded.has(id), `${id} in ${JSON.stringify(visibility)}`).toBe(

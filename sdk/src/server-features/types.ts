@@ -179,6 +179,11 @@ export interface FeatureAssessmentRules {
   oauthFlow?: (summary: OAuthFlowSummary) => FeatureRuleOutcome;
   /** True when the observation classifier can emit this feature's id. */
   observable?: boolean;
+  /**
+   * Set when the classifier emits this id only on connections of one era,
+   * so the Playground is no step on the other.
+   */
+  observableEra?: "legacy" | "modern";
   /** Set up in MCPJam before it can be assessed. */
   setup?: FeatureSetupKind;
   /**

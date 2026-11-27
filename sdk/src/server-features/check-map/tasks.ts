@@ -6,10 +6,6 @@ import type { TasksCheckFeatureMap } from "./types.js";
  * the revision its run negotiated, and lifecycle hides the other form.
  */
 export const TASKS_CHECK_FEATURES = {
-  "tasks-wire-resolvable": ["tasks.core.capability", "tasks.ext.declaration"],
-  // Grades the requests MCPJam sends (params.task and the extension
-  // declaration), not anything the server does.
-  "tasks-declaration-hygiene": "excluded",
   "tasks-result-type-discipline": [
     "tasks.core.augmented-call",
     "tasks.ext.create-task-result",

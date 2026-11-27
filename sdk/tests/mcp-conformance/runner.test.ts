@@ -46,7 +46,7 @@ describe("MCPConformanceTest", () => {
       expect(result.categorySummary.prompts.passed).toBe(1);
       expect(result.categorySummary.resources.passed).toBe(1);
       expect(result.categorySummary.security.passed).toBe(2);
-      expect(result.categorySummary.transport.passed).toBe(7);
+      expect(result.categorySummary.transport.passed).toBe(6);
 
       // The run stamps WHICH questions it asked. Every check in today's pool is
       // scored by the frozen profile, so nothing is pending and the score is
@@ -151,7 +151,6 @@ describe("MCPConformanceTest", () => {
         checkTimeout: 10_000,
         checkIds: [
           "server-sse-polling-session",
-          "server-accepts-multiple-post-streams",
           "server-sse-streams-functional",
         ],
       });
@@ -164,7 +163,6 @@ describe("MCPConformanceTest", () => {
       expect(result.passed).toBe(true);
       expect(statuses).toEqual({
         "server-sse-polling-session": "skipped",
-        "server-accepts-multiple-post-streams": "passed",
         "server-sse-streams-functional": "passed",
       });
     } finally {

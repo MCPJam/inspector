@@ -123,6 +123,11 @@ describe("MCPJam-provided model classification", () => {
     }
   });
 
+  it("lists each SUPPORTED_MODELS id once", () => {
+    const ids = SUPPORTED_MODELS.map((model) => String(model.id));
+    expect(ids.filter((id, i) => ids.indexOf(id) !== i)).toEqual([]);
+  });
+
   it("offers the current Anthropic models to BYOK keys, and no retired ones", () => {
     // The BYOK Anthropic rows are hand-maintained, so they drift behind
     // Anthropic's releases: a user with a valid key could not select Sonnet 5
@@ -233,6 +238,15 @@ describe("modelSupportsTemperature", () => {
     expect(modelSupportsTemperature("gpt-5.6-luna")).toBe(false);
     expect(modelSupportsTemperature("gpt-5.6-sol")).toBe(false);
     expect(modelSupportsTemperature("gpt-5.6-terra")).toBe(false);
+  });
+
+  it("strips temperature for own-key GPT-6 rows, not their hosted twins", () => {
+    // Own-key ids reach OpenAI through the AI SDK, which drops temperature at
+    // the default effort. Hosted rows answer from their catalog instead.
+    for (const id of ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-6-astra"]) {
+      expect(modelSupportsTemperature(id)).toBe(false);
+      expect(modelSupportsTemperature(`openai/${id}`)).toBe(true);
+    }
   });
 
   it("strips temperature for a hosted GPT-5 too", () => {

@@ -23401,13 +23401,17 @@
             "type": ["boolean", "null"],
             "description": "Send `null` to clear this field back to absent."
           },
+          "runUnloadedToolCalls": {
+            "type": ["boolean", "null"],
+            "description": "Allow eligible MCP tools to run before loading when their arguments validate. Send null to use the default."
+          },
           "progressiveToolDiscovery": {
             "type": ["boolean", "null"],
             "description": "Send `null` to clear this field back to absent."
           },
           "harness": {
             "type": ["string", "null"],
-            "enum": ["claude-code", "codex", "copilot-cli", "cursor", "opencode", null],
+            "enum": ["claude-code", "codex", "copilot-cli", "cursor", "opencode", "claude-web", "chatgpt-web", null],
             "description": "Execution runtime selector. Send `null` to clear this field back to absent. Setting one requires access to that runtime; clearing never does."
           },
           "computer": {

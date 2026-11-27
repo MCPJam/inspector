@@ -3,10 +3,10 @@ import type { MCPClientManager } from "@mcpjam/sdk";
 import { startLocalHarnessMcpPlane } from "../mcp-plane.js";
 let plane: Awaited<ReturnType<typeof startLocalHarnessMcpPlane>> | undefined;
 afterEach(async () => { await plane?.close(); plane = undefined; });
-async function fixture(options: Partial<Parameters<typeof startLocalHarnessMcpPlane>[0]> = {}) {
+async function fixture(options: Partial<Parameters<typeof startLocalHarnessMcpPlane>[0]> = {}, discover?: () => Promise<unknown>) {
   const listTools = vi.fn(async () => ({ tools: [{ name: "echo", inputSchema: { type: "object" } }] }));
   const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "hello" }] }));
-  const manager = { hasServer: (id: string) => ["selected", "private"].includes(id), listTools, executeTool: callTool } as unknown as MCPClientManager;
+  const manager = { hasServer: (id: string) => ["selected", "private"].includes(id), listTools, executeTool: callTool, getManagedClient: () => ({ request: discover }) } as unknown as MCPClientManager;
   plane = await startLocalHarnessMcpPlane({ manager, serverIds: ["selected"], turnId: "turn", ...options });
   const request = (serverId: string, token: string | null = plane!.strategy.token, origin?: string) => fetch(`${plane!.strategy.baseUrl}/${serverId}`, { method: "POST", headers: { "content-type": "application/json", ...(token === null ? {} : { "x-mcpjam-proxy-token": token }), ...(origin ? { origin } : {}) }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
   return { request, listTools, callTool };
@@ -46,6 +46,35 @@ describe("local MCP plane", () => {
     expect(listTools).toHaveBeenCalledOnce();
     await plane!.close();
     await expect(request("selected")).rejects.toThrow();
+  });
+
+  it("advertises tools without tool-list change notifications in modern discovery", async () => {
+    const upstream = {
+      supportedVersions: ["2026-07-28"],
+      capabilities: { tools: { listChanged: true }, prompts: {} },
+    };
+    await fixture({}, async () => upstream);
+
+    const response = await fetch(`${plane!.strategy.baseUrl}/selected`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "mcp-protocol-version": "2026-07-28",
+        "x-mcpjam-proxy-token": plane!.strategy.token,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "server/discover",
+        params: { _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28" } },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const { result } = await response.json();
+    expect(result).toMatchObject({ resultType: "complete", supportedVersions: ["2026-07-28"] });
+    expect(result.capabilities).toEqual({ tools: {}, prompts: {} });
+    expect(upstream.capabilities.tools.listChanged).toBe(true);
   });
 });
 

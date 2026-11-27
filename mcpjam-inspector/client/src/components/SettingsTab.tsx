@@ -9,6 +9,7 @@ import { AboutSettings } from "./settings/AboutSettings";
 import { EmptyState } from "./ui/empty-state";
 
 import { Button } from "@mcpjam/design-system/button";
+import { Switch } from "@mcpjam/design-system/switch";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 import { track } from "@/lib/analytics";
@@ -30,6 +31,12 @@ export function SettingsTab({
   const about = useCurrentPathname() === "/settings/about";
   const themePreference = usePreferencesStore((s) => s.themePreference);
   const setThemePreference = usePreferencesStore((s) => s.setThemePreference);
+  const autoCollapseSidebar = usePreferencesStore(
+    (s) => s.autoCollapseSidebarEnabled,
+  );
+  const setAutoCollapseSidebar = usePreferencesStore(
+    (s) => s.setAutoCollapseSidebarEnabled,
+  );
   const byokAllowed = useByokAllowed();
   const { signIn } = useInspectorAuth();
 
@@ -108,6 +115,29 @@ export function SettingsTab({
                   </label>
                 ))}
               </div>
+            </fieldset>
+            <fieldset className="space-y-4">
+              <legend className="text-base font-semibold">Sidebar</legend>
+              <label className="flex cursor-pointer items-start justify-between gap-4">
+                <span className="space-y-1">
+                  <span className="block text-sm font-medium">
+                    Auto-collapse sidebar
+                  </span>
+                  <span
+                    id="auto-collapse-sidebar-description"
+                    className="block text-sm text-muted-foreground text-pretty"
+                  >
+                    Collapse the sidebar on pages that need more room for
+                    detail, like Playground and Evaluate.
+                  </span>
+                </span>
+                <Switch
+                  checked={autoCollapseSidebar}
+                  onCheckedChange={setAutoCollapseSidebar}
+                  aria-label="Auto-collapse sidebar"
+                  aria-describedby="auto-collapse-sidebar-description"
+                />
+              </label>
             </fieldset>
           </div>
 

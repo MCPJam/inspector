@@ -311,6 +311,49 @@
   }
 }
 
+/*
+ * Conformance picker: the "needs input" tag shakes when a suite's select-all
+ * cannot go further until those inputs are set. Reduced motion gets a pulse of
+ * the same tag instead of the movement.
+ */
+@keyframes needs-input-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+
+  20%,
+  60% {
+    transform: translateX(-4px);
+  }
+
+  40%,
+  80% {
+    transform: translateX(4px);
+  }
+}
+
+@keyframes needs-input-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.animate-needs-input-shake {
+  animation: needs-input-shake 0.4s ease-in-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-needs-input-shake {
+    animation: needs-input-pulse 0.6s ease-in-out;
+  }
+}
+
 /* Swarm persona pixel golems — idle bob on the wrapper span. */
 @keyframes persona-pixel-bob {
   0%,
