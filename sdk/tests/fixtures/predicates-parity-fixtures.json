@@ -985,6 +985,30 @@
         "role": "advisory",
         "severity": "warn"
       }
+    },
+    {
+      "label": "toolResultMatchesSchema — each tool's declared output schema",
+      "value": {
+        "type": "toolResultMatchesSchema",
+        "schema": "declared"
+      }
+    },
+    {
+      "label": "toolResultMatchesSchema — a boolean schema",
+      "value": {
+        "type": "toolResultMatchesSchema",
+        "schema": false
+      }
+    },
+    {
+      "label": "noToolErrors — added from a library evaluator",
+      "value": {
+        "type": "noToolErrors",
+        "evaluator": {
+          "id": "actionable-tool-errors",
+          "version": 1
+        }
+      }
     }
   ],
   "reject": [
@@ -2176,6 +2200,94 @@
         "path": "/a~2"
       },
       "why": "every \"~\" in path must be followed by 0 or 1"
+    },
+    {
+      "label": "toolResultMatchesSchema — a string schema other than declared",
+      "value": {
+        "type": "toolResultMatchesSchema",
+        "schema": "object"
+      },
+      "why": "the only string a schema may be is \"declared\""
+    },
+    {
+      "label": "toolResultMatchesSchema — an array schema",
+      "value": { "type": "toolResultMatchesSchema", "schema": [] },
+      "why": "a JSON Schema root cannot be an array"
+    },
+    {
+      "label": "toolResultMatchesSchema — a null schema",
+      "value": { "type": "toolResultMatchesSchema", "schema": null },
+      "why": "a JSON Schema root cannot be null"
+    },
+    {
+      "label": "toolResultMatchesSchema — a numeric schema",
+      "value": { "type": "toolResultMatchesSchema", "schema": 42 },
+      "why": "a JSON Schema root cannot be a number"
+    },
+    {
+      "label": "noToolErrors — evaluator tag with an empty id",
+      "value": {
+        "type": "noToolErrors",
+        "evaluator": {
+          "id": "",
+          "version": 1
+        }
+      },
+      "why": "evaluator.id must be 1 to 64 characters"
+    },
+    {
+      "label": "noToolErrors — evaluator tag with version 0",
+      "value": {
+        "type": "noToolErrors",
+        "evaluator": {
+          "id": "actionable-tool-errors",
+          "version": 0
+        }
+      },
+      "why": "evaluator.version must be a positive whole number"
+    },
+    {
+      "label": "noToolErrors — evaluator tag missing its version",
+      "value": {
+        "type": "noToolErrors",
+        "evaluator": {
+          "id": "actionable-tool-errors"
+        }
+      },
+      "why": "evaluator needs both id and version"
+    },
+    {
+      "label": "noToolErrors — evaluator tag with a 65-character id",
+      "value": {
+        "type": "noToolErrors",
+        "evaluator": {
+          "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "version": 1
+        }
+      },
+      "why": "evaluator.id must be 1 to 64 characters"
+    },
+    {
+      "label": "noToolErrors — evaluator tag with a fractional version",
+      "value": {
+        "type": "noToolErrors",
+        "evaluator": {
+          "id": "actionable-tool-errors",
+          "version": 1.5
+        }
+      },
+      "why": "evaluator.version must be a positive whole number"
+    },
+    {
+      "label": "noToolErrors — evaluator tag with a version past the safe integer range",
+      "value": {
+        "type": "noToolErrors",
+        "evaluator": {
+          "id": "actionable-tool-errors",
+          "version": 1152921504606846976
+        }
+      },
+      "why": "evaluator.version must be a safe integer, as Zod's .int() requires"
     }
   ]
 }

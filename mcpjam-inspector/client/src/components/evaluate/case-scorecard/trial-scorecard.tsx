@@ -73,6 +73,7 @@ import {
   defaultSelectedTrialStage,
   judgeDecidedStage,
 } from "../stage-trial-model";
+import { EvaluatorScorecardSummary } from "@/components/evals/evaluator-library/evaluator-scorecard-summary";
 import { TrialScorecardRow } from "./trial-scorecard-row";
 import type { TrialChainDisplay } from "./trial-chain-state";
 import { stageFloor, type StageFloorTrace } from "./stage-floor";
@@ -528,6 +529,9 @@ export function TrialScorecard({
   return (
     <div className="flex flex-col gap-6 p-4" data-testid="trial-scorecard">
       {chainNotice}
+      <EvaluatorScorecardSummary
+        rows={sections.flatMap((section) => section.rows)}
+      />
       <section className="space-y-6" aria-label="User value chain">
         {railed ? (
           <div className="grid gap-6 sm:grid-cols-[170px_minmax(0,1fr)]">

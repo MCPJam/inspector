@@ -1,0 +1,139 @@
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import type { Predicate } from "@mcpjam/sdk/predicates";
+import { SuiteScorerTable } from "../../suite-scorer-table";
+import { clusterByEvaluator } from "../evaluator-stage-rows";
+import {
+  LIBRARY_EVALUATORS,
+  taggedChecks,
+  withLibraryChecks,
+  withEvaluatorUpdated,
+  withoutEvaluator,
+} from "../library-catalog";
+
+const flag = vi.hoisted(() => ({ on: true }));
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: (name: string) =>
+    name === "evaluator-library" ? flag.on : true,
+}));
+vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
+  ProviderLogo: () => <span aria-hidden="true" />,
+}));
+
+const wasted = { id: "no-wasted-calls", version: 1 };
+const tagged: Predicate[] = [
+  { type: "noToolErrors" },
+  { type: "toolCallCountUnder", count: 10, evaluator: wasted },
+  { type: "noRepeatedIdenticalCall", role: "advisory", evaluator: wasted },
+];
+
+function renderTable(predicates: Predicate[]) {
+  const onPredicatesChange = vi.fn();
+  render(
+    <SuiteScorerTable
+      matchOptions={undefined}
+      scope={{ kind: "suite", predicates, onPredicatesChange }}
+      judgeConfig={undefined}
+      availableModels={[]}
+      passOrFailHint=""
+      judgeHint=""
+    />,
+  );
+  const next = () => {
+    const arg = onPredicatesChange.mock.calls.at(-1)?.[0];
+    return typeof arg === "function" ? arg(predicates) : arg;
+  };
+  return { next };
+}
+
+describe("library groups in the suite table", () => {
+  it("groups a library evaluator's checks and removes them together", () => {
+    const { next } = renderTable(tagged);
+    const groups = screen.getAllByRole("region", { name: /^No Wasted Calls in / });
+    expect(groups).toHaveLength(2);
+    const buttons = groups.map((group) => {
+      expect(group).toHaveTextContent("v1");
+      return within(group).getByRole("button", {
+        name: "Remove No Wasted Calls from all stages",
+      });
+    });
+    // Suite settings sits inside a form; a default button would submit it.
+    expect(buttons[0]).toHaveAttribute("type", "button");
+    fireEvent.click(buttons[0]);
+    expect(next()).toEqual([{ type: "noToolErrors" }]);
+  });
+
+  it("tags an existing required check when adding the evaluator", () => {
+    const evaluator = LIBRARY_EVALUATORS.find((e) => e.id === "actionable-tool-errors");
+    if (!evaluator) throw new Error("Expected Actionable Tool Errors");
+    expect(withLibraryChecks(
+      [{ type: "noToolErrors", role: "required" }],
+      taggedChecks(evaluator),
+    )).toEqual([
+      { type: "noToolErrors", role: "required", evaluator: { id: evaluator.id, version: 1 } },
+      { type: "toolErrorNamesInput", role: "advisory", evaluator: { id: evaluator.id, version: 1 } },
+    ]);
+  });
+
+  it("hides the library on a deployment that cannot save any of it", () => {
+    // No capabilities means a deployment that predates the kind list, which
+    // accepts only the legacy kinds. Every library evaluator needs a newer
+    // kind, so there is nothing to offer.
+    renderTable([]);
+    expect(
+      screen.queryByRole("button", { name: "From library" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows no groups or library button with the flag off", () => {
+    flag.on = false;
+    renderTable(tagged);
+    expect(
+      screen.queryByRole("region", { name: /^No Wasted Calls in / }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "From library" }),
+    ).not.toBeInTheDocument();
+    flag.on = true;
+  });
+});
+
+describe("library catalog edits", () => {
+  it("clusters rows by evaluator in first-appearance order", () => {
+    const { loose, clusters } = clusterByEvaluator(tagged, (p) => p);
+    expect(loose).toEqual([{ type: "noToolErrors" }]);
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0].rows).toHaveLength(2);
+  });
+
+  it("keeps different versions of the same evaluator in separate groups", () => {
+    const first: Predicate = { type: "noToolErrors", evaluator: wasted };
+    const second: Predicate = {
+      ...first,
+      evaluator: { ...wasted, version: wasted.version + 1 },
+    };
+    const { clusters } = clusterByEvaluator([first, second], (row) => row);
+    expect(clusters.map(({ version, rows }) => ({ version, rows }))).toEqual([
+      { version: wasted.version, rows: [first] },
+      { version: wasted.version + 1, rows: [second] },
+    ]);
+  });
+
+  it("removes and replaces only one evaluator's checks", () => {
+    expect(withoutEvaluator(tagged, "no-wasted-calls")).toEqual([
+      { type: "noToolErrors" },
+    ]);
+    const edited: Predicate[] = [
+      { type: "noToolErrors" },
+      { type: "toolCallCountUnder", count: 4, evaluator: wasted },
+    ];
+    const entry = LIBRARY_EVALUATORS.find((e) => e.id === "no-wasted-calls");
+    expect(entry).toBeDefined();
+    if (!entry) return;
+    expect(withEvaluatorUpdated(edited, "no-wasted-calls")).toEqual([
+      { type: "noToolErrors" },
+      ...taggedChecks(entry),
+    ]);
+    expect(withEvaluatorUpdated(edited, "unknown")).toEqual(edited);
+  });
+});

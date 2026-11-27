@@ -37,24 +37,37 @@ export type CheckRole = "gating" | "advisory";
 export type AuthoredCheckRole = CheckRole | "required";
 export type CheckSeverity = "warn";
 
+/**
+ * The library evaluator a check was added from, at the version it was added.
+ * The check is a copy, so a newer library version changes nothing until
+ * someone replaces the checks with it.
+ */
+export type CheckEvaluatorOrigin = {
+  id: string;
+  version: number;
+};
+
 export type CheckPolicy = {
   role?: AuthoredCheckRole;
   severity?: CheckSeverity;
+  evaluator?: CheckEvaluatorOrigin;
 };
 
 /**
- * Drop `role` / `severity` so hashing and criterion identity see the
- * underlying assertion only.
+ * Drop `role`, `severity` and `evaluator` so hashing and criterion identity
+ * see the underlying assertion only. Adding a check from the library must
+ * join the same score history as writing it by hand.
  */
 export function stripCheckPolicy<T extends object>(
   predicate: T,
-): Omit<T, "role" | "severity"> {
+): Omit<T, "role" | "severity" | "evaluator"> {
   const {
     role: _role,
     severity: _severity,
+    evaluator: _evaluator,
     ...rest
   } = predicate as T & CheckPolicy;
-  return rest as Omit<T, "role" | "severity">;
+  return rest as Omit<T, "role" | "severity" | "evaluator">;
 }
 
 /**

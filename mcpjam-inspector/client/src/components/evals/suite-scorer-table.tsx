@@ -44,6 +44,9 @@ import { DEFAULT_JUDGE_THRESHOLD } from "@/components/shared/session-quality/jud
 import { ValidatorsSection } from "./validators-section";
 import { CheckRow, blankPredicate } from "./checks-section";
 import { SuiteScorerLibraryMenu } from "./suite-scorer-library-menu";
+import { EvaluatorLibraryButton } from "./evaluator-library/evaluator-library-dialog";
+import { EvaluatorStageRows } from "./evaluator-library/evaluator-stage-rows";
+import { librarySuiteEdits } from "./evaluator-library/library-suite-edits";
 import type { GroundednessRunEvidence } from "./suite-judge-card";
 import { JudgeModelControl } from "./judges-section";
 import {
@@ -249,6 +252,7 @@ export function SuiteScorerTable({
       scope.onDraftChange(removeCaseRule(scope.draft, rule.index));
     }
   };
+  const library = librarySuiteEdits(scope);
   const addPredicate = (predicate: Predicate) => {
     if (scope.kind === "suite") {
       scope.onPredicatesChange((previous) => [...previous, predicate]);
@@ -407,6 +411,13 @@ export function SuiteScorerTable({
             ))}
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
             {headerActions}
+            {library ? (
+              <EvaluatorLibraryButton
+                predicates={library.predicates}
+                authorableKinds={authorableKinds}
+                onAdd={library.add}
+              />
+            ) : null}
             <SuiteScorerLibraryMenu
               primary
               authorableKinds={authorableKinds}
@@ -468,8 +479,17 @@ export function SuiteScorerTable({
                     No evaluator
                   </p>
                 ) : (
-                  <ul className="space-y-3">
-                    {group.rows.map((row) => (
+                  <EvaluatorStageRows
+                    rows={group.rows}
+                    stageLabel={group.label}
+                    predicateOf={(row) =>
+                      row.predicateIndex !== undefined
+                        ? rules[row.predicateIndex]?.predicate
+                        : undefined
+                    }
+                    onRemoveEvaluator={library?.remove}
+                    onUpdateEvaluator={library?.update}
+                    renderRow={(row) => (
                       <ScorerRow
                         key={row.id}
                         row={row}
@@ -517,8 +537,8 @@ export function SuiteScorerTable({
                             : undefined
                         }
                       />
-                    ))}
-                  </ul>
+                    )}
+                  />
                 )}
                 {scope.kind === "suite" &&
                 onMatchOptionsChange &&
