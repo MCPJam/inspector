@@ -44,8 +44,8 @@ import {
 
 // =============================================================================
 // The second pass is the only component that WRITES because of a judge, so the
-// cases below are mostly about what it refuses to write: nothing at `off`,
-// nothing at `shadow`, nothing for an iteration with no verdict, nothing for a
+// cases below are mostly about what it refuses to write: no scores at `off`
+// or `shadow`, nothing for an iteration with no verdict, nothing for a
 // terminal iteration, and never a lifecycle field.
 // =============================================================================
 
@@ -165,60 +165,56 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("no-op modes settle fanout without grading", () => {
-  test("env off: reads job ids and settles without deriving", async () => {
+describe("stage evidence is independent of score rollout", () => {
+  test.each([
+    ["off", "dual_write"],
+    [undefined, "dual_write"],
+    ["dual_write", "shadow"],
+    ["dual_write", "off"],
+    ["dual_write", undefined],
+  ] as const)("env %s, frozen mode %s writes only stages", async (env, mode) => {
+    if (env === undefined) delete process.env[ENV_KEY];
+    else process.env[ENV_KEY] = env;
+    const { value, applied } = ports({
+      fetchRun: vi.fn(async () => runRow({
+        configSnapshot: mode ? { gradingEngine: { mode } } : {},
+      })),
+    });
+    expect(await runJudgeSecondPass("run1", value)).toMatchObject({
+      noop: false,
+      graded: 1,
+      mode: mode === "shadow" ? "shadow" : "off",
+    });
+    expect(applied[0]?.body.stageResults).toContainEqual(expect.objectContaining({
+      stage: "userValue", state: "failed", reason: "judgeFailed",
+    }));
+    for (const field of ["scores", "evaluationConfig", "result", "status", "passed"]) {
+      expect(applied[0]?.body).not.toHaveProperty(field);
+    }
+    expect(value.markFanout).toHaveBeenCalledWith({
+      runId: "run1",
+      goalCompletionJobId: "job1",
+      outcomes: [{ iterationId: "iter1", outcome: "applied" }],
+    });
+  });
+});
+
+describe("judge outcomes with score grading off", () => {
+  test.each([
+    ["pass", "scored", "passed", "judgeObserved"],
+    ["fail", "scored", "failed", "judgeFailed"],
+    ["partial", "scored", "failed", "judgePartial"],
+    [undefined, "error", "notMeasured", "evaluatorError"],
+  ])("%s/%s keeps the evidence verdict", async (verdict, status, state, reason) => {
     process.env[ENV_KEY] = "off";
-    const { value } = ports();
-    const result = await runJudgeSecondPass("run1", value);
-    expect(result).toMatchObject({ noop: true, reason: "mode_off", graded: 0 });
-    expect(value.fetchRun).toHaveBeenCalledWith("run1");
-    expect(value.applyDerivation).not.toHaveBeenCalled();
-    expect(value.markFanout).toHaveBeenCalledWith({
-      runId: "run1",
-      goalCompletionJobId: "job1",
-      outcomes: [],
-      noop: true,
-    });
-  });
-
-  test("an absent env var behaves as off", async () => {
-    delete process.env[ENV_KEY];
-    const { value } = ports();
-    expect(await runJudgeSecondPass("run1", value)).toMatchObject({
-      noop: true,
-      reason: "mode_off",
-    });
-    expect(value.fetchRun).toHaveBeenCalledWith("run1");
-  });
-
-  test("the run's snapshot says shadow: settle without derivation", async () => {
-    const { value } = ports({
-      fetchRun: vi.fn(async () =>
-        runRow({ configSnapshot: { gradingEngine: { mode: "shadow" } } }),
-      ),
-    });
-    const result = await runJudgeSecondPass("run1", value);
-    expect(result).toMatchObject({ noop: true, reason: "mode_shadow" });
-    expect(value.applyDerivation).not.toHaveBeenCalled();
-    expect(value.markFanout).toHaveBeenCalledWith({
-      runId: "run1",
-      goalCompletionJobId: "job1",
-      outcomes: [],
-      noop: true,
-    });
-  });
-
-  test("the run's snapshot wins over env: env dual_write, suite off", async () => {
-    const { value } = ports({
-      fetchRun: vi.fn(async () =>
-        runRow({ configSnapshot: { gradingEngine: { mode: "off" } } }),
-      ),
-    });
-    expect(await runJudgeSecondPass("run1", value)).toMatchObject({
-      noop: true,
-      reason: "mode_off",
-    });
-    expect(value.applyDerivation).not.toHaveBeenCalled();
+    const run = runRow({ configSnapshot: {} });
+    run.iterations[0]!.metadata = { judgeVerdict: { status, verdict } };
+    const { value, applied } = ports({ fetchRun: vi.fn(async () => run) });
+    await runJudgeSecondPass("run1", value);
+    expect(applied[0]?.body.stageResults).toContainEqual(expect.objectContaining({
+      stage: "userValue", state, reason,
+    }));
+    expect(applied[0]?.body).not.toHaveProperty("scores");
   });
 });
 
@@ -1168,9 +1164,9 @@ describe("the second pass keeps its contract with the run and the first pass", (
 
     const result = await runJudgeSecondPass("run1", value);
 
-    expect(result.reason).toBe("mode_off");
+    expect(result).toMatchObject({ mode: "off", noop: false, graded: 1 });
     expect(result.metadataAttributionOutcomes).toEqual([]);
-    expect(result.outcomes).toEqual([]);
+    expect(result.outcomes).toEqual([{ iterationId: "iter1", outcome: "applied" }]);
   });
 
   test("a stampless legacy row still derives, through stageCase", async () => {

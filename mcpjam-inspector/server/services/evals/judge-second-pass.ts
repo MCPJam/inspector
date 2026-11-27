@@ -133,8 +133,6 @@ export type JudgeSecondPassResult = {
   /** D7's own outcomes. Empty when this run's `metadataAttributionJobId` is unset. */
   metadataAttributionOutcomes: JudgeSecondPassOutcomeEntry[];
   reason?:
-    | "mode_off"
-    | "mode_shadow"
     | "run_not_found"
     | "no_job_id"
     | "no_judge_verdicts"
@@ -801,14 +799,12 @@ function stageFields(stage: Record<string, unknown>) {
 }
 
 /**
- * Grade one run's iterations, if this run's mode says to.
+ * Refresh stage evidence after a judge finishes, in every grading mode.
  *
- * THE MODE CHECK IS NOT THE ROUTE'S ALONE. Both judges' save mutations ring
- * the doorbell on every save without consulting the grading mode, so this
- * function re-resolves the mode from the run's own snapshot and stops when it
- * is not `dual_write`. `shadow` deliberately writes NOTHING here: a shadow row
- * is produced in-process by the first pass, and a second-pass write is by
- * definition a real write.
+ * The first pass writes stages even when score grading is off. Leaving those
+ * rows untouched would report missing evidence after a judge measured it.
+ * `deriveIterationPayload` separately gates score/config writes on the frozen
+ * grading mode; refreshing stages never enables scoring or changes a verdict.
  */
 export async function runJudgeSecondPass(
   runId: string,
@@ -885,11 +881,6 @@ export async function runJudgeSecondPass(
       });
     }
   };
-  if (!isDualWrite(mode)) {
-    await settleNoop();
-    return emptyResult(mode, mode === "off" ? "mode_off" : "mode_shadow");
-  }
-
   const derivedAt = Date.now();
   const goalCompletionOutcomes: JudgeSecondPassOutcomeEntry[] = [];
   const metadataAttributionOutcomes: JudgeSecondPassOutcomeEntry[] = [];
