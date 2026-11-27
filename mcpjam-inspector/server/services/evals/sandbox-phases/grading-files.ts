@@ -14,6 +14,7 @@
  *   box user, never root, as 0644, or 0755 when executable: no setuid,
  *   setgid or sticky bit and no owner survives the copy.
  */
+import { randomUUID } from "node:crypto";
 import { Parser, type ReadEntry } from "tar";
 import { shellQuote } from "../../../utils/harness/shell-quote.js";
 import type { PhaseSandbox } from "./exec.js";
@@ -26,9 +27,8 @@ export const MAX_GRADING_FILE_ENTRIES = 10_000;
 const MAX_ARCHIVE_BYTES =
   MAX_GRADING_FILES_BYTES + MAX_GRADING_FILE_ENTRIES * 1024 + 10_240;
 
+/** The grading box's scratch directory (a fresh box the agent never touched). */
 const WORK_DIR = "/tmp/mcpjam";
-const ARCHIVE_PATH = `${WORK_DIR}/grading-files.tar`;
-const LIST_PATH = `${WORK_DIR}/grading-files.list`;
 /** Files per E2B write request. */
 const WRITE_BATCH = 200;
 
@@ -168,19 +168,31 @@ export async function collectGradingFiles(
 ): Promise<CollectedGradingFiles> {
   const roots = declared.map(relative).filter(Boolean);
   if (roots.length === 0) return { ok: true, entries: [], bytes: 0 };
+  // A directory with an unguessable name that `mkdir` (no `-p`) creates
+  // fresh, so the agent can't have planted the archive path as a link (to
+  // `/dev/stdout`, say). Output is never retained either: a `tar` the agent
+  // replaced could print without end.
+  const work = `/tmp/mcpjam-files-${randomUUID()}`;
+  const archivePath = `${work}/files.tar`;
+  const listPath = `${work}/files.list`;
   // GNU tar recurses into directories and stores links as links (no `-h`);
   // exit 1 means a file changed while it was read, which is still an archive.
   const pack = [
-    `mkdir -p ${WORK_DIR} && cd / && : > ${LIST_PATH}`,
+    `umask 077 && mkdir ${work} && cd / && : > ${listPath}`,
     `for p in ${roots.map(shellQuote).join(" ")}; do`,
-    `  if [ -e "$p" ] || [ -L "$p" ]; then printf '%s\\0' "$p" >> ${LIST_PATH}; fi`,
+    `  if [ -e "$p" ] || [ -L "$p" ]; then printf '%s\\0' "$p" >> ${listPath}; fi`,
     "done",
-    `tar --create --file=${ARCHIVE_PATH} --null --files-from=${LIST_PATH} --ignore-failed-read; s=$?`,
+    `tar --create --file=${archivePath} --null --files-from=${listPath} --ignore-failed-read; s=$?`,
     'if [ "$s" -gt 1 ]; then exit "$s"; fi',
   ].join("\n");
   try {
-    await agentBox.commands.run(pack, { timeoutMs: opts.timeoutMs });
-    const stream = await agentBox.files.read(ARCHIVE_PATH, {
+    await agentBox.commands.run(pack, {
+      timeoutMs: opts.timeoutMs,
+      retainOutput: false,
+      onStdout: () => {},
+      onStderr: () => {},
+    });
+    const stream = await agentBox.files.read(archivePath, {
       format: "stream",
       ...(opts.signal ? { signal: opts.signal } : {}),
     });
