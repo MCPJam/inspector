@@ -477,6 +477,60 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     }
   });
 
+  // The same captured code path, for a gateway throttle: retryable, so the
+  // remaining trials still run.
+  it("runs every hosted trial past a gateway throttle's rate-limit code", async () => {
+    const assistantTurnModule = await import("../../../utils/assistant-turn");
+    const runAssistantTurnSpy = vi
+      .spyOn(assistantTurnModule, "runAssistantTurn")
+      .mockImplementation(async (opts) => {
+        opts.onEngineError?.({
+          message: "The model gateway is busy. Retry shortly.",
+          code: "mcpjam_rate_limit",
+          httpStatus: 429,
+          rawText: '{"error":"The model gateway is busy. Retry shortly."}',
+          promptIndex: 0,
+          stepIndex: 0,
+        });
+        const turn: RunAssistantTurnResult = {
+          messages: [{ role: "user", content: "Hello" }],
+          assistantMessages: [],
+          toolCalls: [],
+          toolResults: [],
+        };
+        return turn;
+      });
+    try {
+      const config = buildQuickRunConfig();
+      config.config.tests[0].model = "claude-haiku-4.5";
+      config.config.tests[0].provider = "anthropic";
+      config.config.tests[0].runs = 3;
+      let nextId = 0;
+      convexClient.action.mockImplementation(async (name) =>
+        name === "testSuites:startQuickRunIteration"
+          ? { iterationId: `iteration-${++nextId}` }
+          : { iterationId: "iteration" },
+      );
+      const result = await runEvalSuiteWithAiSdk({
+        ...config,
+        modelApiKeys: {},
+      });
+
+      expect(result?.quickRunIterationOutcomes).toHaveLength(3);
+      expect(
+        result?.quickRunIterationOutcomes?.some((o) => o.creditsExhausted),
+      ).toBe(false);
+      const skipped = convexClient.action.mock.calls.filter(
+        ([name, args]) =>
+          name === "testSuites:updateTestIteration" &&
+          args.status === "skipped",
+      );
+      expect(skipped).toEqual([]);
+    } finally {
+      runAssistantTurnSpy.mockRestore();
+    }
+  });
+
   it("redacts a key the provider's error message echoes before storing it", async () => {
     const keyTail = "x".repeat(32);
     streamTextMock.mockImplementationOnce(() => {

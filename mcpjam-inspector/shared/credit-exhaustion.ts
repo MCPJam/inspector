@@ -241,6 +241,14 @@ const SPEND_LIMIT_RECOVERY: Readonly<
 };
 
 /**
+ * Does this code name a spend budget or a locked wallet? Both are terminal for
+ * a run; a rate-limit code such as `mcpjam_rate_limit` can be a gateway's
+ * transient throttle and is not.
+ */
+export const isSpendLimitCode = (code: string): boolean =>
+  SPEND_LIMIT_CODE.test(code);
+
+/**
  * Which spend limit a refusal names, if any. A structured `refusalReason`
  * decides alone; without one, MCPJam's code anywhere in the refusal does. A
  * provider's own error (a `provider_` code) is never MCPJam's limit.
