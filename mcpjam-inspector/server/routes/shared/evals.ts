@@ -3806,7 +3806,11 @@ export async function prepareSingleCaseExecution(
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        harnessAdmission.reason,
+        await explainEvalHarnessRefusal({
+          admission: harnessAdmission,
+          bearer: convexAuthToken,
+          projectId: testCase.projectId ?? projectId ?? null,
+        }),
         { reason: "HARNESS_UNAVAILABLE", harness: harnessAdmission.harness },
       );
     }

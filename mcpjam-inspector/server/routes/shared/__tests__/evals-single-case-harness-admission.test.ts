@@ -9,6 +9,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const queryMock = vi.hoisted(() => vi.fn());
 const actionMock = vi.hoisted(() => vi.fn());
+const explainMock = vi.hoisted(() =>
+  vi.fn(async ({ admission }: { admission: { reason: string } }) => admission.reason),
+);
+
+vi.mock("../../../services/evals/explain-harness-refusal.js", () => ({
+  explainEvalHarnessRefusal: explainMock,
+}));
 
 vi.mock("convex/browser", () => ({
   ConvexHttpClient: class MockConvexHttpClient {
@@ -131,6 +138,25 @@ describe("prepareSingleCaseExecution — hosted harness admission", () => {
     const error = await refusal(request({}, "anthropic/claude-fable-5"));
     expect(error.details).toMatchObject({ reason: "HARNESS_UNAVAILABLE" });
     expect(error.message).toMatch(/has not been verified for the Claude Code client/);
+  });
+
+  it("says why this machine couldn't run it when there is no cloud computer", async () => {
+    // A local Inspector, the way npx starts it: no cloud execution.
+    delete process.env.E2B_API_KEY;
+    const explained =
+      "Couldn't run Claude Code on this machine because it isn't set up for this project. Set it up in the Playground, then run the eval again.";
+    explainMock.mockResolvedValueOnce(explained);
+    const error = await refusal(request({}));
+    expect(error.message).toBe(explained);
+    expect(error.details).toMatchObject({
+      reason: "HARNESS_UNAVAILABLE",
+      harness: "claude-code",
+    });
+    expect(explainMock).toHaveBeenCalledWith({
+      admission: expect.objectContaining({ kind: "computers-unconfigured" }),
+      bearer: "token",
+      projectId: "project-1",
+    });
   });
 
   it("refuses a declared browser: the single-case box is only a terminal", async () => {

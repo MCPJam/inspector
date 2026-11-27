@@ -1,6 +1,7 @@
 import { checkEvalExecutionAdmission, checkEvalHarnessAdmission, casesAssertingWidgetRender, failRunBeforeExecution } from "./harness-admission.js";
 import { harnessToolPolicyLaunchRefusal } from "../../utils/harness/harness-proxy-policy-enforcement.js";
 import { harnessOfHostConfig } from "./harness-admission.js";
+import { explainEvalHarnessRefusal } from "./explain-harness-refusal.js";
 import { localHarnessIdOf, shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import type { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager } from "@mcpjam/sdk";
@@ -247,8 +248,10 @@ export async function prepareSuiteReplayFromRun(
       widgetAssertingCaseTitles: casesAssertingWidgetRender(config.tests),
       projectId: replayMetadata.projectId ?? null,
     });
-    const refusal = !executionAdmission.ok ? executionAdmission.reason : !harnessAdmission.ok ? harnessAdmission.reason :
-      harnessToolPolicyLaunchRefusal({ hasToolPolicy: Boolean(replayToolPolicy), harness: harnessAdmission.harness,
+    const refusal = !executionAdmission.ok ? executionAdmission.reason
+      : !harnessAdmission.ok ? await explainEvalHarnessRefusal({
+        admission: harnessAdmission, bearer: convexAuthToken, projectId: replayMetadata.projectId ?? null })
+      : harnessToolPolicyLaunchRefusal({ hasToolPolicy: Boolean(replayToolPolicy), harness: harnessAdmission.harness,
         localExecution });
     if (refusal) {
       await failRunBeforeExecution(convexClient, recorder, runId, { reason: refusal });
