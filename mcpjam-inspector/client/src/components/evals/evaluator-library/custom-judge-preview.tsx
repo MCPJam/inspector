@@ -11,7 +11,10 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { useAction, useQuery } from "convex/react";
 import { makeFunctionReference } from "convex/server";
 import { useState } from "react";
-import { customJudgeFailureCopy } from "./custom-judge-failure-copy";
+import {
+  convexErrorCode,
+  customJudgeFailureCopy,
+} from "./custom-judge-failure-copy";
 import { VerdictPill, type VerdictStatus } from "./verdict-pill";
 
 type PreviewIteration = {
@@ -98,11 +101,13 @@ export function CustomJudgePreview({
     } catch (caught) {
       setCompleted({
         input,
-        failure: getBillingErrorMessage(
-          caught,
-          "Couldn't test the judge. Check the suite's judge model and try again.",
-          false,
-        ),
+        failure:
+          customJudgeFailureCopy(convexErrorCode(caught)) ??
+          getBillingErrorMessage(
+            caught,
+            "Couldn't test the judge. Check the suite's judge model and try again.",
+            false,
+          ),
       });
     } finally {
       setRunning(false);
@@ -139,7 +144,7 @@ export function CustomJudgePreview({
           {running ? "Testing…" : "Test on a past iteration"}
         </Button>
         <span className="text-xs text-muted-foreground">
-          Uses one charged judge call. Saves nothing.
+          Graded by the judge this run used, as one charged call. Saves nothing.
         </span>
       </div>
       {failure ? (

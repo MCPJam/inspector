@@ -18,6 +18,10 @@ const COPY_BY_CODE: Readonly<Record<string, string>> = {
   spend_budget_reached: SPEND_BUDGET_REACHED_MESSAGE,
   lease_lost:
     "Grading restarted before this judge ran. It runs again when grading resumes.",
+  judge_output_invalid:
+    "The judge's answer was not in the requested format, so this iteration has no grade. Rerun the suite to grade it again.",
+  evidence_unavailable:
+    "This iteration's data could not be loaded, so the judge did not run. Rerun the suite to try again.",
   missing_api_key:
     "The suite's judge model has no provider key, so the judge did not run. Add a key for its provider, then try again.",
   no_billing_subject:
@@ -25,7 +29,23 @@ const COPY_BY_CODE: Readonly<Record<string, string>> = {
   sign_in_required: "Sign in to run a custom judge.",
   judge_reasoning_effort_unsupported:
     "The suite's judge reasoning effort is not supported by its model. Choose a supported effort or clear it, then try again.",
+  EVAL_CUSTOM_JUDGE_PREVIEW_COOLDOWN:
+    "You just tested this judge on this iteration. Wait a few seconds, then try again.",
 };
+
+/** The `code` a backend `ConvexError` carries, if any. */
+export function convexErrorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("data" in error)) {
+    return undefined;
+  }
+  const { data } = error;
+  return typeof data === "object" &&
+    data !== null &&
+    "code" in data &&
+    typeof data.code === "string"
+    ? data.code
+    : undefined;
+}
 
 /** Readable copy for a failure code, or undefined for one the backend never sends. */
 export function customJudgeFailureCopy(

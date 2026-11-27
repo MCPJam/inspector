@@ -322,8 +322,7 @@ export function TrialScorecard({
       groups.some((group) =>
         group.rows.some(
           (row) =>
-            (row.provenance === "judge" || row.provenance === "customJudge") &&
-            row.result.state !== "notMeasured",
+            row.provenance === "judge" && row.result.state !== "notMeasured",
         ),
       ));
 
