@@ -1,5 +1,6 @@
 import { usePublishEventAgent } from "@/components/playground/events/event-agent-bridge";
 import { usePlaygroundEventAgentTools } from "@/components/playground/events/PlaygroundEventsProvider";
+import { chatOffersEventAgentTools } from "@/components/playground/events/agent-tools-gate";
 import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 import {
   hasComparisonAuthRecoveryRequest,
@@ -1420,16 +1421,17 @@ export function PlaygroundMain({
     [hostStyle, previewedHost?.config?.agentLoop, previewedHost?.config?.harness, previewedHost?.config?.mcpProfile],
   );
   const pluginExtensionsEnabled = pluginExtensions.enabled;
-  // The MCPJam client lets its agent subscribe to MCP Events from the
-  // conversation (ChatGPT's behaviour). Other client styles keep their own
-  // tool surface, and a harness or a study has no Events pane to run them.
+  // The agent subscribes to MCP Events from the conversation when the chat's
+  // client receives events by a mode it can use here (ChatGPT's behaviour).
   const eventAgentToolExecutor = usePlaygroundEventAgentTools();
-  const eventAgentTools =
-    hostStyle === "mcpjam" &&
-    !tester &&
-    !(previewedHost?.config?.agentLoop ?? previewedHost?.config?.harness)
-      ? (eventAgentToolExecutor ?? undefined)
-      : undefined;
+  const eventAgentTools = chatOffersEventAgentTools({
+    config: previewedHost?.config ?? null,
+    configUnresolved: previewedHostConfigUnresolved,
+    study: !!tester,
+    hosted: HOSTED_MODE,
+  })
+    ? (eventAgentToolExecutor ?? undefined)
+    : undefined;
   // ChatGPT's or Claude's rules for this client's Apps: how they choose a
   // display mode, and where an entry App that can't go fullscreen opens.
   const pluginExtensionHost = {

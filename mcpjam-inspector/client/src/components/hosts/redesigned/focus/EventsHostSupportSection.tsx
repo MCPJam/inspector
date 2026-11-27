@@ -1,8 +1,6 @@
-import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import {
   EVENT_DELIVERY_MODES,
-  clearEventsHostSetting,
   readEventsHostSetting,
   resolveHostEventDeliveryModes,
   setEventsHostSetting,
@@ -23,9 +21,8 @@ const MODE_LABELS: Record<EventDeliveryMode, string> = {
  * sees it. Subscriptions made as this client, and the trigger runs that act
  * as it, may use only these modes; the backend refuses the rest.
  *
- * Unsaved, the client style decides, so the boxes show the effective modes
- * and the first change saves them explicitly. "Use client default" removes
- * the setting without leaving residue in the content-addressed config.
+ * Nothing saved means no events: the boxes show what the client receives,
+ * and every change saves the modes explicitly.
  */
 export function EventsHostSupportSection({
   draft,
@@ -44,8 +41,6 @@ export function EventsHostSupportSection({
 
   const toggle = (mode: EventDeliveryMode, on: boolean) => {
     onDraftChange((prev) => {
-      // Start from what the client receives now, default included, so the
-      // first change keeps the modes the style already granted.
       const current = resolveHostEventDeliveryModes(prev);
       const next = on
         ? [...current, mode]
@@ -73,24 +68,6 @@ export function EventsHostSupportSection({
             </p>
           ) : null}
         </div>
-        {setting.kind !== "unset" ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 shrink-0 px-2 text-xs"
-            onClick={() =>
-              onDraftChange((prev) => clearEventsHostSetting(prev))
-            }
-            disabled={readOnly}
-          >
-            Use client default
-          </Button>
-        ) : (
-          <span className="shrink-0 text-[11px] text-muted-foreground">
-            Client default
-          </span>
-        )}
       </div>
       <div className="mt-2 flex flex-wrap gap-4 pl-1">
         {EVENT_DELIVERY_MODES.map((mode) => {

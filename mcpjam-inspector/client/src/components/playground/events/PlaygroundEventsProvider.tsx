@@ -31,7 +31,7 @@ import type {
 import { useEventsFeed } from "@/components/events/use-events-feed";
 import { useEventsHost } from "@/components/events/use-events-host";
 import type { SubscribeFormValue } from "@/components/events/use-subscribe-form";
-import { logicalIdOf } from "@/components/events/event-utils";
+import { errorMessage, logicalIdOf } from "@/components/events/event-utils";
 import { createEventDispatcher, type EventBinding } from "./event-dispatch";
 import { useEventAgentBridge } from "./event-agent-bridge";
 import {
@@ -78,11 +78,14 @@ function useRuntime(
 ) {
   const state = usePlaygroundStateContext();
   const hosted = isHostedMode();
+  // A chat's subscriptions, from the pane or the agent, are made as the
+  // chat's client, so the backend checks the modes that client receives.
   const host = useEventsHost({
     hosted,
     projectId,
     activeHostId,
     activeHost,
+    subscribeAsActiveClient: true,
   }).choice;
   const scope = `${projectId}:${activeHostId}:${enabled}`;
   const [storedBindings, setBindings] = useState<PlaygroundEventBinding[]>([]);
@@ -367,6 +370,9 @@ function useRuntime(
         throw new Error(
           "The client changed. Connect the event again for the selected client.",
         );
+      // The pane and the agent's tools show `error.message`; a backend
+      // refusal (such as this event already subscribed under another client)
+      // keeps its sentence elsewhere, so pass that sentence on.
       const row = await createHosted({
         projectId,
         serverId,
@@ -377,6 +383,8 @@ function useRuntime(
         locality: "hosted",
         protocolVersion: server.catalog?.protocolVersion,
         descriptor,
+      }).catch((error: unknown) => {
+        throw new Error(errorMessage(error, "Could not subscribe. Try again."));
       });
       subscription = hostedSubscriptionRowToView(row);
     } else {

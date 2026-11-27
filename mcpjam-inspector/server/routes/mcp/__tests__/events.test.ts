@@ -327,6 +327,10 @@ describe("local events routes", () => {
     });
     expect(again.status).toBe(409);
     expect(again.body.code).toBe("EVENTS_CONFLICT");
+    // Named, so the user can find the subscription that holds the event.
+    expect(again.body.message).toBe(
+      "build.failed is already subscribed under Team MCPJam with the same arguments. Remove that subscription in the Events tab, then subscribe again.",
+    );
   });
 
   it("simulates into the simulation namespace", async () => {
