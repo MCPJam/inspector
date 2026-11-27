@@ -57,7 +57,10 @@ import {
 } from "./harness-evidence-merge.js";
 import type { FrictionResultEntry } from "@mcpjam/sdk/contract";
 import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
-import type { RunAssistantTurnOptions } from "../../utils/assistant-turn.js";
+import type {
+  RunAssistantTurnAuthContext,
+  RunAssistantTurnOptions,
+} from "../../utils/assistant-turn.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import { EVAL_WIDGET_MODEL_CONTEXT } from "../../config.js";
 import { HOSTED_STEP_MAX_OUTPUT_TOKENS } from "../hosted-step-limits.js";
@@ -78,6 +81,7 @@ import type { ToolPolicyGate } from "./tool-policy-gate";
 import type { UsageTotals } from "./types";
 import type { InfraFailureEvidence } from "../../utils/infra-failure-evidence.js";
 import { harnessFailureEvidenceOf } from "../../utils/harness/harness-provider-error.js";
+import { WebClientRunError, webClientFailureEvidenceOf } from "../web-clients/web-client-harness-turn.js";
 
 type ToolCall = {
   toolName: string;
@@ -261,6 +265,8 @@ export interface DriveHostedEvalTurnParams {
   evalIterationId?: RunAssistantTurnOptions["evalIterationId"];
   /** Reports what the run FROZE about evidence, as the mint saw it. */
   onHarnessEvidenceDecision?: RunAssistantTurnOptions["onHarnessEvidenceDecision"];
+  /** A web client's run: its owner to act as and the accounts it froze. */
+  webClientRun?: RunAssistantTurnOptions["webClientRun"];
   onHarnessPolicyBlocks?: RunAssistantTurnOptions["onHarnessPolicyBlocks"];
   onBoxSkillsWritten?: RunAssistantTurnOptions["onBoxSkillsWritten"];
   /**
@@ -329,7 +335,7 @@ export interface DriveHostedEvalTurnParams {
    *  re-derived per turn. */
   tasks?: RunAssistantTurnOptions["tasks"];
   mcpClientManager: MCPClientManager;
-  evalAuthContext: { kind: "user_bearer"; token: string };
+  evalAuthContext: RunAssistantTurnAuthContext;
   endpointPath: string;
   extraBodyFields: Record<string, unknown> | undefined;
   /**
@@ -497,6 +503,43 @@ export function failedLayerForEngineError(
   event: { phase?: "setup" | "stream" } | undefined,
 ): "model" | "setup" {
   return event?.phase === "setup" ? "setup" : "model";
+}
+
+/**
+ * Whether a failed turn's log line must capture. `logger.error` with no error
+ * object always captures, untagged, so it is skipped only when the engine's
+ * reporter already recorded this failure:
+ * - it sent it to Sentry (`reportedCaptured`);
+ * - it classified it (`reportedOrigin` set, not `ambiguous`) and declined it
+ *   as not ours (INSPECTOR-HONO-70), or found it already handled;
+ * - an empty step: the emitter decided ownership itself
+ *   (`isMcpjamOwnedEmptyStep`) and reports the provider-owned ones as
+ *   `ambiguous` on purpose.
+ * Anything else — `ambiguous`, no verdict, no engine error — has no other
+ * Sentry record. The harness reports `reportedCaptured` only: it classifies
+ * from the message alone, so a decline there is not a verdict.
+ */
+export function failedTurnNeedsCapture(
+  event:
+    | Pick<
+        MCPJamEngineErrorEvent,
+        "code" | "reportedCaptured" | "reportedOrigin"
+      >
+    | undefined,
+): boolean {
+  if (event?.reportedCaptured) return false;
+  if (event?.code === "provider_empty_response") return false;
+  return (
+    event?.reportedOrigin === undefined || event.reportedOrigin === "ambiguous"
+  );
+}
+
+/** A renewing bearer is read on each evidence request, as the engine reads it on each step. */
+function evidenceReadAuthorization(
+  auth: RunAssistantTurnAuthContext,
+): string | (() => Promise<string>) {
+  const renewing = auth.turnAuthorization;
+  return renewing ? () => renewing.getAuthorization() : auth.token;
 }
 
 export async function driveHostedEvalTurn(
@@ -673,6 +716,9 @@ export async function driveHostedEvalTurn(
     }
 
     acc.capturedSpans.push(...traceCtx.recordedSpans);
+    // A web client run that stopped on its page still names the calls that
+    // reached the server first.
+    if (error instanceof WebClientRunError) acc.capturedSpans.push(...(error.turnTrace?.spans ?? []));
     let iterationError: string;
     let iterationErrorDetails: string | undefined;
     if (error instanceof Error) {
@@ -696,7 +742,8 @@ export async function driveHostedEvalTurn(
     // Structured evidence ONLY from a typed thrower (a harness setup step, a
     // bridge's typed provider error) — an arbitrary object with a status
     // could be the customer's server talking.
-    const errorInfra = harnessFailureEvidenceOf(error);
+    const errorInfra =
+      harnessFailureEvidenceOf(error) ?? webClientFailureEvidenceOf(error);
     // `failedStage` already names the layer; "pre-turn setup" is the one call
     // site that never reached the model.
     return {
@@ -864,6 +911,7 @@ export async function driveHostedEvalTurn(
             ...(params.evalIterationId
               ? { evalIterationId: params.evalIterationId }
               : {}),
+            ...(params.webClientRun ? { webClientRun: params.webClientRun } : {}),
             ...(params.harnessToolPolicy
               ? { harnessToolPolicy: params.harnessToolPolicy }
               : {}),
@@ -1000,7 +1048,7 @@ export async function driveHostedEvalTurn(
   // disagree if the engine ever mutated the array between them.
   const { newMessages } = turnResult;
   const evidence = await reconcileTurnEvidence({
-    ...(params.harnessExecutionTarget ? { transport: createConvexEvidenceReadTransport(params.evalAuthContext.token) } : {}),
+    ...(params.harnessExecutionTarget ? { transport: createConvexEvidenceReadTransport(evidenceReadAuthorization(params.evalAuthContext)) } : {}),
     ...(params.evalIterationId ? { iterationId: params.evalIterationId } : {}),
     ...(harnessEvidence?.turnId ? { turnId: harnessEvidence.turnId } : {}),
     captureEnabled: harnessEvidence?.captureEnabled === true,
@@ -1102,14 +1150,10 @@ export async function driveHostedEvalTurn(
           iterationErrorDetails: lastEngineError.rawText,
         }
       : { iterationError: fallbackError };
-    // `logger.error` with no error object always captures. An empty step was
-    // already reported once by the engine, which decided whether it is ours
-    // (`isMcpjamOwnedEmptyStep`); capturing it again here, untagged, would
-    // page on the provider-owned ones that verdict declines.
-    if (lastEngineError?.code === "provider_empty_response") {
-      logger.warn(logLine);
-    } else {
+    if (failedTurnNeedsCapture(lastEngineError)) {
       logger.error(logLine);
+    } else {
+      logger.warn(logLine);
     }
     sinks.onTurnFailure?.(failure);
     // WHICH LAYER, from the engine's own report rather than from this call

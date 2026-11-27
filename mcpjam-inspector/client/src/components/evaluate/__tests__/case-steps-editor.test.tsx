@@ -1,6 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { PredicateKind } from "@mcpjam/sdk/contract";
 import type { Predicate } from "@/shared/eval-matching";
@@ -67,13 +73,19 @@ function Harness({
   onChange,
   judgeConfig = judge,
   authorableKinds,
+  reload,
 }: {
   initial: CaseStepsDraft;
   onChange?: (draft: CaseStepsDraft) => void;
   judgeConfig?: EvalJudgeConfig;
   authorableKinds?: PredicateKind[];
+  /** A draft replaced from outside, like a generated draft's reload. */
+  reload?: CaseStepsDraft;
 }) {
   const [draft, setDraft] = useState(initial);
+  useEffect(() => {
+    if (reload) setDraft(reload);
+  }, [reload]);
   const [openKey, setOpenKey] = useState<string | null>(null);
   const card = useMemo(
     () =>
@@ -292,6 +304,33 @@ describe("CaseStepsEditor editing", () => {
     expect(onChange.mock.lastCall![0].steps.map((s: TestStep) => s.id)).toEqual(
       ["p2"],
     );
+  });
+
+  it("a reload under the remove dialog closes it without removing anything", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const p2: TestStep = { id: "p2", kind: "prompt", prompt: "And?" };
+    const initial = base({ steps: [p2, ...sketch] });
+    const { rerender } = render(
+      <Harness initial={initial} onChange={onChange} />,
+    );
+    await user.click(screen.getByLabelText("Options for step 2"));
+    await user.click(await screen.findByRole("menuitem", { name: "Remove" }));
+    expect(await screen.findByRole("alertdialog")).toBeTruthy();
+    const added: TestStep = {
+      id: "a3",
+      kind: "assert",
+      assertion: { type: "toolCalledWith", toolName: "export", args: {} },
+    } as TestStep;
+    rerender(
+      <Harness
+        initial={initial}
+        onChange={onChange}
+        reload={base({ steps: [p2, ...sketch, added] })}
+      />,
+    );
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it("Move down swaps whole blocks", async () => {

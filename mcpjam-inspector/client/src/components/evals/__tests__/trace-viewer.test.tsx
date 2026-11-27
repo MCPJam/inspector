@@ -708,6 +708,111 @@ describe("TraceViewer", () => {
     expect(screen.getAllByText("read_me").length).toBeGreaterThan(0);
   });
 
+  describe("refused calls in the Tools tab", () => {
+    const reason = "Invalid input for tool get_order: expected number";
+    const mark = { providerOptions: { mcpjam: { rejectedToolCall: true } } };
+    const refusalThenRetry = (marked: boolean) => ({
+      messages: [
+        { role: "user", content: "Look up order 12345" },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "refused",
+              toolName: "get_order",
+              input: { order_id: "12345" },
+              ...(marked ? mark : {}),
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "refused",
+              toolName: "get_order",
+              output: { type: "error-text", value: reason },
+              ...(marked ? mark : {}),
+            },
+          ],
+        },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "retry",
+              toolName: "get_order",
+              input: { order_id: 12345 },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "retry",
+              toolName: "get_order",
+              output: { type: "json", value: { status: "shipped" } },
+            },
+          ],
+        },
+      ],
+    });
+    const getOrder = { toolName: "get_order", arguments: { order_id: 12345 } };
+
+    it("shows the refusal and its reason beside a matched retry", () => {
+      render(
+        <TraceViewer
+          trace={refusalThenRetry(true)}
+          estimatedDurationMs={100}
+          expectedToolCalls={[getOrder]}
+          actualToolCalls={[{ ...getOrder, toolCallId: "retry" }]}
+          forcedViewMode="tools"
+        />,
+      );
+
+      expect(
+        screen.getByText("All 1 expected tool call matched."),
+      ).toBeInTheDocument();
+      expect(screen.getAllByText("match")).toHaveLength(1);
+      const refused = screen.getByTestId("refused-tool-call");
+      expect(
+        within(refused).getByText("Refused by client"),
+      ).toBeInTheDocument();
+      fireEvent.click(within(refused).getByRole("button"));
+      expect(within(refused).getByText(reason)).toBeInTheDocument();
+
+      // The JSON layout keeps the graded lists as they were and lists the
+      // refusal beneath them.
+      fireEvent.click(screen.getByTestId("trace-viewer-tools-layout-json"));
+      expect(screen.getAllByTestId("json-editor")).toHaveLength(2);
+      expect(screen.getByTestId("refused-tool-calls")).toBeInTheDocument();
+    });
+
+    it("renders a legacy trace without the mark as before", () => {
+      render(
+        <TraceViewer
+          trace={refusalThenRetry(false)}
+          estimatedDurationMs={100}
+          expectedToolCalls={[getOrder]}
+          actualToolCalls={[{ ...getOrder, toolCallId: "retry" }]}
+          forcedViewMode="tools"
+        />,
+      );
+
+      expect(
+        screen.getByText("All 1 expected tool call matched."),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("refused-tool-calls"),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   it("hides Tools tab when there are no expected or actual tool calls", async () => {
     render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={100} />);
     openTraceTab();

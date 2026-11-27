@@ -78,6 +78,10 @@ export function resolveEnvironmentPaneColumn({
         : `${hosts.find((item) => item.hostId === hostId)?.name ?? "This environment's client"} is unavailable. Choose another client or environment in pane settings.`,
     };
   const config = host.config;
+  const client = {
+    hostConfig: config,
+    preferAppThemeInCompare: host.preferAppThemeInCompare,
+  };
   const harnessId = effectiveHarnessId(config);
   const modelRows = harnessPickerModels([...models], harnessId ? { harnessId } : null, {
         requireOrgKeys: orgRequiresOwnKeys(orgConfig),
@@ -101,7 +105,7 @@ export function resolveEnvironmentPaneColumn({
       reason:
         "This pane's model is unavailable. Choose another in pane settings.",
       ...(model ? { model } : {}),
-      hostConfig: config,
+      ...client,
       modelRows,
     };
   return {
@@ -128,7 +132,7 @@ export function resolveEnvironmentPaneColumn({
         requireToolApproval: config.requireToolApproval,
       },
       hostSnapshot: snapshotFromHostConfig(config),
-      hostConfig: config,
+      ...client,
     },
   };
 }

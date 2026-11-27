@@ -3057,15 +3057,18 @@ describe("server live operations", () => {
     );
   });
 
-  it("rejects stdio servers deterministically before any live call", async () => {
+  it("diagnoses a stdio server as unreachable before any live call", async () => {
     const { client, fetchMock } = makeClient();
 
-    await expect(
-      diagnoseServerOperation.execute(
-        { project: "new", server: "Docs" },
-        { client }
-      )
-    ).rejects.toThrow(/stdio servers are not supported/);
+    const result = await diagnoseServerOperation.execute(
+      { project: "new", server: "Docs" },
+      { client }
+    );
+
+    expect(result.report.status).toBe("error");
+    expect(result.report.error).toMatchObject({
+      details: { refusalReason: "hosted_stdio_unsupported" },
+    });
     expect(callsTo(fetchMock, "/doctor")).toHaveLength(0);
   });
 

@@ -184,6 +184,34 @@ describe("describeHostedConnectFailure", () => {
       "The MCP server doesn't support MCP protocol version 2026-07-28, which this client is pinned to. It offers 2025-06-18.",
     );
   });
+
+  it("reports an unpinned connect the server refused for its version", () => {
+    // The -32022 that caused it sits on `cause`, as the client manager
+    // throws it. Without its own branch this was the generic "could not
+    // establish a connection" sentence.
+    const failure = describeHostedConnectFailure(
+      named("ModernProtocolVersionRefused", {
+        supportedVersions: ["2099-01-01", "<b>UNEXPECTED_MARKER_VERSION</b>"],
+        cause: named("ProtocolError", { code: -32022 }),
+      }),
+      answeredLogs,
+    );
+    expect(failure).toEqual({
+      message:
+        "The MCP server doesn't support an MCP protocol version this client speaks. It offers 2099-01-01.",
+      blockedTarget: false,
+    });
+  });
+
+  it("reports that refusal without an offer when the server named none", () => {
+    const failure = describeHostedConnectFailure(
+      named("ModernProtocolVersionRefused", { supportedVersions: [] }),
+      answeredLogs,
+    );
+    expect(failure.message).toBe(
+      "The MCP server doesn't support an MCP protocol version this client speaks.",
+    );
+  });
 });
 
 describe("hasUpstreamFailureEvidence", () => {
@@ -203,6 +231,7 @@ describe("hasUpstreamFailureEvidence", () => {
     ["a transport error class", new StreamableHTTPError(405)],
     ["an error with an HTTP status", named("Error", { status: 502 })],
     ["an auth failure", named("UnauthorizedError")],
+    ["a refused protocol version", named("ModernProtocolVersionRefused")],
     [
       "a failed fetch",
       new TypeError("fetch failed", {

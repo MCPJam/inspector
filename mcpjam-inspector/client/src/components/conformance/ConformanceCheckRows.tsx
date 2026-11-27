@@ -48,6 +48,8 @@ export interface CatalogEntry {
 function formatDetailLabel(label: string) {
   if (label === "probes") return "Requests tested";
   if (label === "taskId") return "Task ID";
+  if (label === "toolCountIncludingInvalid")
+    return "Tool count (incl. invalid x-mcp-header tools)";
   return label
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/[_-]+/g, " ")

@@ -212,4 +212,19 @@ describe("useCaseStepsDraft", () => {
     expect(result.current.draft?.title).toBe("Renamed elsewhere");
     expect(result.current.dirty).toBe(true);
   });
+
+  it("a New case reseeds when the suite changes", async () => {
+    const { result, rerender } = renderHook(
+      ({ suiteId }) => useCaseStepsDraft({ suiteId, testCaseId: null }),
+      { initialProps: { suiteId: "suite-1" } },
+    );
+    await waitFor(() => expect(result.current.draft).not.toBeNull());
+    act(() =>
+      result.current.setDraft((draft) => ({ ...draft, title: "Suite 1 case" })),
+    );
+    rerender({ suiteId: "suite-2" });
+    await waitFor(() =>
+      expect(result.current.draft?.title).not.toBe("Suite 1 case"),
+    );
+  });
 });

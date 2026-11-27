@@ -1,3 +1,5 @@
+import { UnloadedToolCallsField } from "./UnloadedToolCallsField";
+import { ToolResultStructuredContentField } from "./ToolResultStructuredContentField";
 import { effectiveHarnessId } from "@/shared/harness-descriptors";
 import { useMemo, useState, type ReactNode } from "react";
 import { Info } from "lucide-react";
@@ -48,7 +50,11 @@ import { useAvailableModels } from "@/hooks/use-available-models";
 import { isRuntimeAccountModel } from "@/shared/model-provider";
 import { harnessPickerModels } from "@/lib/harness-model-locks";
 import { orgKeysSavableRows } from "@/lib/org-keys-model-target";
-import { FieldRow, FocusBlock } from "./primitives";
+import {
+  FieldRow,
+  FocusBlock,
+  TRI_SELECTOR_ACTIVE_CLASSES,
+} from "./primitives";
 import { fieldsWithIssues } from "./useHostDraftValidation";
 import type { HostAttentionIssue } from "../types";
 import { findModelForStoredChoice } from "@/components/chat-v2/shared/model-selection";
@@ -71,8 +77,6 @@ import {
 // states; "Auto" preserves `undefined` so the backend dedupe hash
 // stays distinct from an explicit on/off override.
 type ProgressiveTriState = "auto" | "on" | "off";
-const TRI_SELECTOR_ACTIVE_CLASSES =
-  "data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:hover:bg-primary data-[state=on]:hover:text-primary-foreground";
 
 function progressiveValueToTri(
   value: boolean | undefined,
@@ -620,6 +624,24 @@ export function BehaviorTab({
             </ToggleGroup>
           }
         />
+
+        {progressiveState.enforced && (
+          <UnloadedToolCallsField
+            value={draft.runUnloadedToolCalls ?? true}
+            disabled={readOnly || progressiveTriValue === "off"}
+            discoveryOff={progressiveTriValue === "off"}
+            onChange={(value) => update({ runUnloadedToolCalls: value })}
+          />
+        )}
+
+        {/* Harness runs drop this rule and let the real CLI apply its own. */}
+        {selectedHarness ? null : (
+          <ToolResultStructuredContentField
+            policy={draft.modelVisibleMcpToolResults}
+            disabled={readOnly}
+            onChange={(next) => update({ modelVisibleMcpToolResults: next })}
+          />
+        )}
 
         <div className="space-y-2.5 border-t border-border/60 pt-2.5">
           <div className="min-w-0">

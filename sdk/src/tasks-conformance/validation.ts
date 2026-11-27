@@ -3,6 +3,7 @@ import type { MCPServerConfig } from "../mcp-client-manager/index.js";
 import {
   MCP_TASKS_CHECK_IDS,
   MCP_TASKS_READINESS_IDS,
+  REMOVED_MCP_TASKS_CHECK_IDS,
   RENAMED_MCP_TASKS_CHECK_IDS,
   type MCPTasksCheckId,
   type MCPTasksConformanceConfig,
@@ -17,10 +18,23 @@ function normalizeCheckIds(
     return undefined;
   }
 
+  // A removed id runs nothing. A list of ONLY removed ids has nothing left to
+  // run, and an emptied list would run every check instead, so it is refused
+  // with the reason the check went away.
+  const kept = checkIds.filter(
+    (id) => !Object.hasOwn(REMOVED_MCP_TASKS_CHECK_IDS, id)
+  );
+  if (kept.length === 0) {
+    const id = checkIds[0] as keyof typeof REMOVED_MCP_TASKS_CHECK_IDS;
+    throw new Error(
+      `MCP Tasks conformance check ${id} was removed and nothing runs in its place. ${REMOVED_MCP_TASKS_CHECK_IDS[id]} Pick another check, or leave checkIds out to run every check.`
+    );
+  }
+
   // A renamed id runs under its current name.
   const normalized = Array.from(
     new Set(
-      checkIds.map((id) =>
+      kept.map((id) =>
         Object.hasOwn(RENAMED_MCP_TASKS_CHECK_IDS, id)
           ? RENAMED_MCP_TASKS_CHECK_IDS[
               id as keyof typeof RENAMED_MCP_TASKS_CHECK_IDS
