@@ -162,6 +162,10 @@ test("--source rejects an unknown value and de-duplicates the rest", () => {
   assert.throws(() => resolveSourceTypes(["evals"]), /--source expects/);
 });
 
+test("--source accepts event, the background trigger runs", () => {
+  assert.deepEqual(resolveSourceTypes(["direct", "event"]), ["direct", "event"]);
+});
+
 test("a malformed --header never quotes the argument back", () => {
   // The right-hand side IS the credential, and a forgotten colon is the
   // likeliest typo on this flag. Echoing the argument put the token in stderr,

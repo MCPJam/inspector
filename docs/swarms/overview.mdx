@@ -1,0 +1,38 @@
+---
+title: "Overview"
+description: "Run simulated users through your MCP server across clients and models to find where they get stuck."
+icon: "users-round"
+---
+
+Swarms sends AI-simulated users through your MCP server. You describe who your users are and what they want to accomplish. Each simulated user pursues a goal in a conversation with the client, and MCPJam records what happened and grades whether the user reached the goal.
+
+## How a swarm works
+
+| Term | What it means | Example |
+| --- | --- | --- |
+| **Persona** | A kind of user, with a role and context that shape how they ask and follow up. | A project lead who manages several boards. |
+| **Goal** | The outcome the persona is trying to achieve. | Find what's blocked on the Launch board and who owns each item. |
+| **Target** | The client, model, and server setup the conversation runs against. | A ChatGPT client and a Claude client configured to reach the same staging server are two targets. |
+| **Session** | One conversation between a simulated user and the target assistant. | The project lead clarifies which board to search and asks about a missing owner. |
+| **Run** | The group of sessions launched together. | Run that goal on two targets and compare the transcripts. |
+
+An **iteration** repeats a goal on a target in a fresh session. Use multiple iterations to see whether a failure recurs when the conversation takes a different path.
+
+## When to use Swarms
+
+- Explore how different users approach the same task, including the follow-up questions they ask.
+- Compare how clients or models handle a goal with the same server and test data.
+- Find a failure worth turning into an [eval case](/evaluate/write-a-case) so you can check it after a fix.
+
+Use [User Testing](/user-testing/overview) when you want real people to try the workflow and tell you what was confusing. Use [Evaluate](/evaluate/overview) for repeatable checks with a specific prompt and expected outcome.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Run your first swarm" icon="play" href="/swarms/run-your-first-swarm">
+    Generate personas and goals from your description and start a run.
+  </Card>
+  <Card title="Read swarm results" icon="chart-column" href="/swarms/read-results">
+    Use findings and session traces to diagnose a failed goal.
+  </Card>
+</CardGroup>

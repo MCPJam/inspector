@@ -10,11 +10,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type {
-  EvaluatorMethod,
-  EvaluatorOrigin,
-  OwaspId,
-} from "./evaluator-library-types";
+import type { EvaluatorMethod, EvaluatorOrigin } from "./evaluator-library-types";
 
 type KindPresentation = { label: string; icon: LucideIcon; className: string };
 
@@ -70,17 +66,6 @@ export function EvaluatorKindBadge(props: EvaluatorKindBadgeProps) {
     <Badge variant="outline" className={cn("font-medium", kind.className)}>
       <Icon aria-hidden />
       {kind.label}
-    </Badge>
-  );
-}
-
-/** Only security evaluators carry OWASP tags. */
-export function OwaspTag({ ids }: { ids: readonly OwaspId[] }) {
-  if (ids.length === 0) return null;
-  return (
-    <Badge variant="outline" className="font-mono text-muted-foreground">
-      <span className="sr-only">OWASP MCP Top 10: </span>
-      {ids.join(" · ")}
     </Badge>
   );
 }

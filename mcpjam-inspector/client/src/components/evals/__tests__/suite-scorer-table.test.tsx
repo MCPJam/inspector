@@ -77,7 +77,10 @@ function renderTable(
 
 describe("SuiteScorerTable rubric checks", () => {
   /** A deployment that grades rubric checks, with this goal-judge policy. */
-  function withRubricChecks(goalEnabled: boolean): SuiteCapabilities {
+  function withRubricChecks(
+    goalEnabled: boolean,
+    yesNo = false,
+  ): SuiteCapabilities {
     return {
       judge: judgeCapabilities(),
       judges: {
@@ -101,6 +104,7 @@ describe("SuiteScorerTable rubric checks", () => {
         rubricChecks: {
           role: "advisory",
           template: { version: 1, hash: "r" },
+          ...(yesNo ? { questionKinds: ["choice", "score", "yesno"] } : {}),
           execution: "wired",
           calibration: "unavailable",
         },
@@ -141,6 +145,30 @@ describe("SuiteScorerTable rubric checks", () => {
       "disabled",
       false,
     );
+  });
+
+  it("offers yes/no authoring under User value where the deployment accepts it", async () => {
+    const user = userEvent.setup();
+    const { onJudgeConfigChange } = renderTable({
+      capabilities: withRubricChecks(true, true),
+    });
+    const card = screen.getByTestId("suite-judge-card-rubricChecks");
+    await user.click(within(card).getByRole("button", { name: "Yes/no" }));
+    expect(onJudgeConfigChange).toHaveBeenCalledWith({
+      rubricChecks: {
+        questions: [
+          expect.objectContaining({ kind: "yesno", pass: { answer: "yes" } }),
+        ],
+      },
+    });
+  });
+
+  it("offers only choice and score authoring where yes/no is not listed", () => {
+    renderTable({ capabilities: withRubricChecks(true) });
+    const card = within(screen.getByTestId("suite-judge-card-rubricChecks"));
+    expect(card.queryByRole("button", { name: "Yes/no" })).toBeNull();
+    expect(card.getByRole("button", { name: "Choice" })).toBeEnabled();
+    expect(card.getByRole("button", { name: "Score" })).toBeEnabled();
   });
 });
 

@@ -37,6 +37,8 @@ import {
   type SelectionToolLike,
 } from "./transcript-evidence";
 import type { AgentActivityAssessment } from "./agent-activity";
+import type { AccountRouting } from "./account-routing";
+import { evaluateWithPinnedResults, type PinnedCallRecord } from "./pinned-call-grading";
 
 type EvalArgs = Parameters<typeof evaluateMultiTurnResults>;
 type TranscriptArgs = Parameters<typeof buildIterationTranscript>[0];
@@ -90,6 +92,9 @@ export interface EvalIterationVerdictInput {
   selectionToolAnnotations?: Record<string, Record<string, unknown>>;
   toolDeclarations?: import("@mcpjam/sdk/predicates").TranscriptToolDeclaration[];
   declarationsCaptured?: "complete" | "partial" | "absent";
+  accountRouting?: AccountRouting;
+  connectionKeys?: ReadonlyMap<string, string>;
+  pinnedCalls?: readonly PinnedCallRecord[];
 
   // ── gates ──
   iterationError: string | undefined;
@@ -103,6 +108,19 @@ export interface EvalIterationVerdictInput {
   agentActivity?: AgentActivityAssessment;
 }
 
+/**
+ * The gate inputs the verdict read, handed out for the platform score rows.
+ * Declared here, not beside the rows, so this module still never sees the
+ * score contract: the rows are built FROM this, never read back by it.
+ */
+export type PlatformGateEvidence = {
+  failOnToolError: boolean;
+  trace: FinalizeTrace;
+  pinnedToolErrors: readonly ToolErrorRecord[];
+  iterationError: string | undefined;
+  scriptedCheckFailures: ReadonlyArray<{ toolName: string; reason: string }>;
+};
+
 export interface EvalIterationVerdict {
   /**
    * The matcher result. `passed` is the MATCHER verdict (un-gated) — mirroring
@@ -115,6 +133,11 @@ export interface EvalIterationVerdict {
   passed: boolean;
   /** `[…case-level, …per-turn]` — the persisted `metadata.predicates` ordering. */
   predicateResults: PredicateResult[];
+  /**
+   * The gate inputs the checks above read, for the platform score rows. Rows
+   * built from the same evidence cannot disagree with this verdict.
+   */
+  platformGates: PlatformGateEvidence;
 }
 
 export function buildEvalIterationVerdict(
@@ -136,9 +159,9 @@ export function buildEvalIterationVerdict(
   // Extracted once, outside the `effectivePredicates` guard's branch, so the
   // capture states describe THIS iteration rather than whether anybody
   // happened to author a check over it.
-  const evidence = extractTranscriptEvidence(input.trace);
+  const evidence = extractTranscriptEvidence(input.trace, input.accountRouting, input.connectionKeys);
   const casePredicateResults = input.effectivePredicates?.length
-    ? evaluatePredicates(
+    ? evaluateWithPinnedResults(
         buildIterationTranscript({
           trace: input.trace as TranscriptArgs["trace"],
           // `evaluation.toolsCalled` already includes widget calls (merged into
@@ -166,6 +189,7 @@ export function buildEvalIterationVerdict(
             : {}),
         }),
         input.effectivePredicates,
+        input.pinnedCalls,
       )
     : [];
 
@@ -212,5 +236,16 @@ export function buildEvalIterationVerdict(
     passed = false;
   }
 
-  return { evaluation, passed, predicateResults };
+  return {
+    evaluation,
+    passed,
+    predicateResults,
+    platformGates: {
+      failOnToolError: input.failOnToolError,
+      trace: input.trace,
+      pinnedToolErrors: input.pinnedToolErrors,
+      iterationError: input.iterationError,
+      scriptedCheckFailures: input.scriptedCheckFailures,
+    },
+  };
 }

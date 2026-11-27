@@ -84,7 +84,7 @@ const KEPT: ReservationView[] = [
   },
 ];
 
-function renderPath(attempt: ReviewerAttempt | null, steps: PlacedStep[] = []) {
+function renderPath(attempt: ReviewerAttempt | null, steps: PlacedStep[] = [], resultsRunId = "run_1") {
   api.getLatestReviewerAttempt.mockResolvedValue(attempt);
   return render(
     <ReviewerSection
@@ -93,6 +93,7 @@ function renderPath(attempt: ReviewerAttempt | null, steps: PlacedStep[] = []) {
       values={{}}
       onAnswer={vi.fn()}
       steps={steps}
+      resultsRunId={resultsRunId}
     />,
   );
 }
@@ -176,6 +177,11 @@ describe("the reviewer path's stages", () => {
     expect(video.currentTime).toBe(14.8);
   });
 
+  it("withholds an older run's successful identity when a new attempt is being checked", async () => {
+    renderPath(WAITING, VERIFIED, "earlier-run");
+    expect((await rowNamed("Identity and tenant")).queryByText(/answers as/)).toBeNull();
+  });
+
   it("an earlier rehearsal's approximated consent: its words, with no prefix or label", async () => {
     const detail = 'MCPJam approved access on the consent page ("Authorize").';
     renderPath(
@@ -193,7 +199,7 @@ describe("the reviewer path's stages", () => {
     expect(within(region()).queryByText(/Approximated/)).toBeNull();
   });
 
-  it("opens a requester-only sign-in link for the paused attempt", async () => {
+  it("opens a personal single-use sign-in link for the paused attempt", async () => {
     const url = "https://app.example.com/connect/server/one-use";
     api.createReviewerHandoff.mockResolvedValue({ handoffUrl: url, expiresAt: 100 });
     renderPath(WAITING);
@@ -206,6 +212,7 @@ describe("the reviewer path's stages", () => {
     renderPath({ ...WAITING, reviewerAccountId: "reviewer_1", humanSignInCompletedAt: 100 });
     expect(await screen.findByText("Reviewer sign-in completed. Resume this attempt to run the checks.")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Finish reviewer sign-in" })).toBeNull();
+    expect((await rowNamed("Reviewer connection")).getByText("A project member connected the reviewer account in their browser.")).toBeVisible();
   });
 
   it("a verification stop: the step waits for a person, and the handover says what, who and what works", async () => {
@@ -224,7 +231,7 @@ describe("the reviewer path's stages", () => {
     ).toHaveTextContent(ASKED);
     const who = handover.getByText("Who can finish it");
     expect(who.nextElementSibling).toHaveTextContent(
-      "The person who started this sign-in.",
+      "A project member with access to the reviewer account. Open this submission in your own Inspector session.",
     );
     expect(who.nextElementSibling?.nextElementSibling).toHaveTextContent(
       "Open Finish reviewer sign-in, complete the verification, then resume this attempt.",
@@ -234,7 +241,7 @@ describe("the reviewer path's stages", () => {
     expect(screen.queryByText(ACTION)).toBeNull();
     expect(
       handover.getByText(
-        "A teammate or an agent can resume this attempt with its id.",
+        "Share the submission with your teammate. Whoever finishes sign-in resumes the checks here or with this command.",
       ),
     ).toBeVisible();
     expect(handover.getByText("att_1")).toBeVisible();

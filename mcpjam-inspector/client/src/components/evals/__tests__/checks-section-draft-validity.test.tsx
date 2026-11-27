@@ -267,10 +267,7 @@ describe("ChecksSection raw-JSON draft validity", () => {
     expect(onDraftValidityChange).toHaveBeenLastCalledWith(false);
   });
 
-  it("keeps a null schema in the box and writes null through", () => {
-    // Any JSON root is legal here, null included. The draft must stay in
-    // step with what was written: a box that snaps back to {} over a stored
-    // null shows one value and saves another, with no error under it.
+  it.each(["null", "[]", "42"])("rejects an unsupported %s schema draft", (draft) => {
     const onDraftValidityChange = vi.fn();
     const onValue = vi.fn();
     render(
@@ -281,26 +278,18 @@ describe("ChecksSection raw-JSON draft validity", () => {
       />,
     );
     const textarea = screen.getByLabelText(/JSON Schema the result must match/);
-    fireEvent.change(textarea, { target: { value: "null" } });
+    fireEvent.change(textarea, { target: { value: draft } });
 
-    expect(textarea).toHaveValue("null");
-    expect(onValue).toHaveBeenLastCalledWith([
-      expect.objectContaining({
-        type: "toolResultMatchesSchema",
-        schema: null,
-      }),
-    ]);
-    expect(onDraftValidityChange).toHaveBeenLastCalledWith(false);
-    expect(screen.queryByText(/Not valid JSON/)).toBeNull();
+    expect(textarea).toHaveValue(draft);
+    expect(onValue).not.toHaveBeenCalled();
+    expect(onDraftValidityChange).toHaveBeenLastCalledWith(true);
+    expect(screen.getByText(/Use a JSON object, true, or false/)).toBeInTheDocument();
   });
 
-  // The LOADING path, not the typing one: a saved schema must render as
-  // itself. null is legal to write through and passes areAllChecksValid, so a
-  // row reopened with schema: null that shows {} disagrees with the store
-  // silently. undefined is the one value the formatter must special-case —
-  // JSON.stringify(undefined) is not a string.
+  // An older stored schema must still render as saved so it can be corrected.
   it.each([
     ["null", null, "null"],
+    ["false", false, "false"],
     ["{}", {}, "{}"],
     ["undefined", undefined, "{}"],
   ])("renders a loaded schema of %s as itself", (_label, schema, expected) => {

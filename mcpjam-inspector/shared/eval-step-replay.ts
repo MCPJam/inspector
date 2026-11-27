@@ -27,7 +27,7 @@ import type { TestStep } from "./steps";
 import type { EvalStepStatus } from "./eval-stream-events";
 import type { EvalTraceVideoMeta } from "./eval-trace";
 
-export type EvalStepResultStatus = "ok" | "fail" | "skipped" | "pending";
+export type EvalStepResultStatus = Exclude<EvalStepStatus, "running"> | "pending";
 
 /**
  * One verdict row per authored step. Persisted at `testIteration.metadata.stepResults`
@@ -107,6 +107,7 @@ const STEP_STATUSES: ReadonlySet<EvalStepResultStatus> = new Set([
   "fail",
   "skipped",
   "pending",
+  "not_applicable",
 ]);
 /** Narrow an open-shaped persisted status to a known enum value, else undefined. */
 function safeStatus(v: unknown): EvalStepResultStatus | undefined {
@@ -224,7 +225,7 @@ export function parseStepStatusById(
     const stepId = str(r.stepId);
     const status = str(r.status);
     if (!stepId) continue;
-    if (status === "ok" || status === "fail" || status === "skipped") {
+    if (status === "ok" || status === "fail" || status === "skipped" || status === "not_applicable") {
       map.set(stepId, status);
     }
   }

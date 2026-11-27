@@ -15,6 +15,7 @@ export type HostFocusTabId =
   | "computer"
   | "protocol"
   | "apps"
+  | "events"
   | "servers"
   | "appearance";
 

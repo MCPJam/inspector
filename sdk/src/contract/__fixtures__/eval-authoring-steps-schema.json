@@ -18,7 +18,11 @@
             "type": "string"
           }
         },
-        "required": ["id", "kind", "prompt"],
+        "required": [
+          "id",
+          "kind",
+          "prompt"
+        ],
         "additionalProperties": false
       },
       {
@@ -56,7 +60,13 @@
             "maximum": 120000
           }
         },
-        "required": ["id", "kind", "serverName", "toolName", "arguments"],
+        "required": [
+          "id",
+          "kind",
+          "serverName",
+          "toolName",
+          "arguments"
+        ],
         "additionalProperties": false
       },
       {
@@ -99,7 +109,9 @@
                             "type": "boolean"
                           }
                         },
-                        "required": ["role"],
+                        "required": [
+                          "role"
+                        ],
                         "additionalProperties": false
                       },
                       "text": {
@@ -124,10 +136,17 @@
                   },
                   "clickType": {
                     "type": "string",
-                    "enum": ["left", "double", "right"]
+                    "enum": [
+                      "left",
+                      "double",
+                      "right"
+                    ]
                   }
                 },
-                "required": ["kind", "target"],
+                "required": [
+                  "kind",
+                  "target"
+                ],
                 "additionalProperties": false
               },
               {
@@ -154,7 +173,9 @@
                             "type": "boolean"
                           }
                         },
-                        "required": ["role"],
+                        "required": [
+                          "role"
+                        ],
                         "additionalProperties": false
                       },
                       "text": {
@@ -182,7 +203,11 @@
                     "maxLength": 5000
                   }
                 },
-                "required": ["kind", "target", "text"],
+                "required": [
+                  "kind",
+                  "target",
+                  "text"
+                ],
                 "additionalProperties": false
               },
               {
@@ -197,7 +222,10 @@
                     "minLength": 1
                   }
                 },
-                "required": ["kind", "key"],
+                "required": [
+                  "kind",
+                  "key"
+                ],
                 "additionalProperties": false
               },
               {
@@ -209,7 +237,10 @@
                   },
                   "direction": {
                     "type": "string",
-                    "enum": ["up", "down"]
+                    "enum": [
+                      "up",
+                      "down"
+                    ]
                   },
                   "amount": {
                     "type": "integer",
@@ -217,7 +248,10 @@
                     "maximum": 9007199254740991
                   }
                 },
-                "required": ["kind", "direction"],
+                "required": [
+                  "kind",
+                  "direction"
+                ],
                 "additionalProperties": false
               },
               {
@@ -233,13 +267,21 @@
                     "maximum": 30000
                   }
                 },
-                "required": ["kind", "ms"],
+                "required": [
+                  "kind",
+                  "ms"
+                ],
                 "additionalProperties": false
               }
             ]
           }
         },
-        "required": ["id", "kind", "toolName", "action"],
+        "required": [
+          "id",
+          "kind",
+          "toolName",
+          "action"
+        ],
         "additionalProperties": false
       },
       {
@@ -273,7 +315,11 @@
                         "maxLength": 5000
                       }
                     },
-                    "required": ["kind", "toolName", "text"],
+                    "required": [
+                      "kind",
+                      "toolName",
+                      "text"
+                    ],
                     "additionalProperties": false
                   },
                   {
@@ -304,7 +350,9 @@
                                 "type": "boolean"
                               }
                             },
-                            "required": ["role"],
+                            "required": [
+                              "role"
+                            ],
                             "additionalProperties": false
                           },
                           "text": {
@@ -328,7 +376,11 @@
                         "additionalProperties": false
                       }
                     },
-                    "required": ["kind", "toolName", "target"],
+                    "required": [
+                      "kind",
+                      "toolName",
+                      "target"
+                    ],
                     "additionalProperties": false
                   },
                   {
@@ -359,7 +411,9 @@
                                 "type": "boolean"
                               }
                             },
-                            "required": ["role"],
+                            "required": [
+                              "role"
+                            ],
                             "additionalProperties": false
                           },
                           "text": {
@@ -383,7 +437,11 @@
                         "additionalProperties": false
                       }
                     },
-                    "required": ["kind", "toolName", "target"],
+                    "required": [
+                      "kind",
+                      "toolName",
+                      "target"
+                    ],
                     "additionalProperties": false
                   },
                   {
@@ -414,7 +472,9 @@
                                 "type": "boolean"
                               }
                             },
-                            "required": ["role"],
+                            "required": [
+                              "role"
+                            ],
                             "additionalProperties": false
                           },
                           "text": {
@@ -442,7 +502,12 @@
                         "maxLength": 5000
                       }
                     },
-                    "required": ["kind", "toolName", "target", "equals"],
+                    "required": [
+                      "kind",
+                      "toolName",
+                      "target",
+                      "equals"
+                    ],
                     "additionalProperties": false
                   },
                   {
@@ -461,7 +526,11 @@
                         "minLength": 1
                       }
                     },
-                    "required": ["kind", "toolName", "calledToolName"],
+                    "required": [
+                      "kind",
+                      "toolName",
+                      "calledToolName"
+                    ],
                     "additionalProperties": false
                   }
                 ]
@@ -485,14 +554,40 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type"]
+                    "required": [
+                      "type"
+                    ]
                   },
                   {
                     "type": "object",
@@ -509,19 +604,48 @@
                         "type": "array",
                         "items": {
                           "type": "string",
-                          "enum": ["readOnlyHint", "destructiveHint"]
+                          "enum": [
+                            "readOnlyHint",
+                            "destructiveHint"
+                          ]
                         }
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type"]
+                    "required": [
+                      "type"
+                    ]
                   },
                   {
                     "type": "object",
@@ -535,14 +659,40 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type"]
+                    "required": [
+                      "type"
+                    ]
                   },
                   {
                     "type": "object",
@@ -556,14 +706,40 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type"]
+                    "required": [
+                      "type"
+                    ]
                   },
                   {
                     "type": "object",
@@ -577,14 +753,40 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type"]
+                    "required": [
+                      "type"
+                    ]
                   },
                   {
                     "type": "object",
@@ -598,14 +800,40 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type"]
+                    "required": [
+                      "type"
+                    ]
                   },
                   {
                     "type": "object",
@@ -633,10 +861,16 @@
                           },
                           "argumentMatching": {
                             "type": "string",
-                            "enum": ["exact", "partial", "ignore"]
+                            "enum": [
+                              "exact",
+                              "partial",
+                              "ignore"
+                            ]
                           }
                         },
-                        "required": ["args"],
+                        "required": [
+                          "args"
+                        ],
                         "additionalProperties": false
                       },
                       "minCount": {
@@ -646,14 +880,42 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type", "toolName", "args"]
+                    "required": [
+                      "type",
+                      "toolName",
+                      "args"
+                    ]
                   },
                   {
                     "type": "object",
@@ -671,14 +933,41 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type", "toolName"]
+                    "required": [
+                      "type",
+                      "toolName"
+                    ]
                   },
                   {
                     "type": "object",
@@ -696,14 +985,41 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type", "toolName"]
+                    "required": [
+                      "type",
+                      "toolName"
+                    ]
                   },
                   {
                     "type": "object",
@@ -724,14 +1040,41 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type", "toolNames"]
+                    "required": [
+                      "type",
+                      "toolNames"
+                    ]
                   },
                   {
                     "type": "object",
@@ -749,14 +1092,41 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type", "toolName"]
+                    "required": [
+                      "type",
+                      "toolName"
+                    ]
                   },
                   {
                     "type": "object",
@@ -786,14 +1156,42 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type", "reference", "maxDistance"]
+                    "required": [
+                      "type",
+                      "reference",
+                      "maxDistance"
+                    ]
                   },
                   {
                     "type": "object",
@@ -814,14 +1212,41 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type", "needle"]
+                    "required": [
+                      "type",
+                      "needle"
+                    ]
                   },
                   {
                     "type": "object",
@@ -839,14 +1264,41 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type", "pattern"]
+                    "required": [
+                      "type",
+                      "pattern"
+                    ]
                   },
                   {
                     "type": "object",
@@ -860,14 +1312,40 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type"]
+                    "required": [
+                      "type"
+                    ]
                   },
                   {
                     "type": "object",
@@ -881,14 +1359,40 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type"]
+                    "required": [
+                      "type"
+                    ]
                   },
                   {
                     "type": "object",
@@ -907,14 +1411,41 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type", "tokens"]
+                    "required": [
+                      "type",
+                      "tokens"
+                    ]
                   },
                   {
                     "type": "object",
@@ -932,14 +1463,40 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type"]
+                    "required": [
+                      "type"
+                    ]
                   },
                   {
                     "type": "object",
@@ -962,14 +1519,41 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type", "ms"]
+                    "required": [
+                      "type",
+                      "ms"
+                    ]
                   },
                   {
                     "type": "object",
@@ -987,14 +1571,40 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type"]
+                    "required": [
+                      "type"
+                    ]
                   },
                   {
                     "type": "object",
@@ -1013,14 +1623,41 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type", "turns"]
+                    "required": [
+                      "type",
+                      "turns"
+                    ]
                   },
                   {
                     "type": "object",
@@ -1034,14 +1671,40 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type"]
+                    "required": [
+                      "type"
+                    ]
                   },
                   {
                     "type": "object",
@@ -1064,14 +1727,41 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type", "ms"]
+                    "required": [
+                      "type",
+                      "ms"
+                    ]
                   },
                   {
                     "type": "object",
@@ -1097,14 +1787,41 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type", "needle"]
+                    "required": [
+                      "type",
+                      "needle"
+                    ]
                   },
                   {
                     "type": "object",
@@ -1116,21 +1833,75 @@
                         "type": "string",
                         "const": "toolResultMatchesSchema"
                       },
-                      "schema": {},
+                      "schema": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "const": "declared"
+                          },
+                          {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {}
+                          },
+                          {
+                            "type": "array",
+                            "items": {}
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "toolName": {
                         "type": "string",
                         "minLength": 1
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type", "schema"]
+                    "required": [
+                      "type",
+                      "schema"
+                    ]
                   },
                   {
                     "type": "object",
@@ -1153,14 +1924,41 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type", "maxBytes"]
+                    "required": [
+                      "type",
+                      "maxBytes"
+                    ]
                   },
                   {
                     "type": "object",
@@ -1178,14 +1976,40 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type"]
+                    "required": [
+                      "type"
+                    ]
                   },
                   {
                     "type": "object",
@@ -1213,7 +2037,15 @@
                       },
                       "flags": {
                         "type": "string",
-                        "enum": ["i", "m", "s", "im", "is", "ms", "ims"]
+                        "enum": [
+                          "i",
+                          "m",
+                          "s",
+                          "im",
+                          "is",
+                          "ms",
+                          "ims"
+                        ]
                       },
                       "path": {
                         "type": "string",
@@ -1233,14 +2065,42 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type", "toolName", "patterns"]
+                    "required": [
+                      "type",
+                      "toolName",
+                      "patterns"
+                    ]
                   },
                   {
                     "type": "object",
@@ -1268,7 +2128,15 @@
                       },
                       "flags": {
                         "type": "string",
-                        "enum": ["i", "m", "s", "im", "is", "ms", "ims"]
+                        "enum": [
+                          "i",
+                          "m",
+                          "s",
+                          "im",
+                          "is",
+                          "ms",
+                          "ims"
+                        ]
                       },
                       "path": {
                         "type": "string",
@@ -1288,14 +2156,41 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type", "patterns"]
+                    "required": [
+                      "type",
+                      "patterns"
+                    ]
                   },
                   {
                     "type": "object",
@@ -1313,14 +2208,40 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type"]
+                    "required": [
+                      "type"
+                    ]
                   },
                   {
                     "type": "object",
@@ -1343,14 +2264,41 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type", "count"]
+                    "required": [
+                      "type",
+                      "count"
+                    ]
                   },
                   {
                     "type": "object",
@@ -1372,14 +2320,42 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type", "toolName", "beforeToolName"]
+                    "required": [
+                      "type",
+                      "toolName",
+                      "beforeToolName"
+                    ]
                   },
                   {
                     "type": "object",
@@ -1393,14 +2369,40 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type"]
+                    "required": [
+                      "type"
+                    ]
                   },
                   {
                     "type": "object",
@@ -1414,14 +2416,40 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type"]
+                    "required": [
+                      "type"
+                    ]
                   },
                   {
                     "type": "object",
@@ -1439,14 +2467,40 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type"]
+                    "required": [
+                      "type"
+                    ]
                   },
                   {
                     "type": "object",
@@ -1464,21 +2518,51 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["gating", "advisory", "required"]
+                        "enum": [
+                          "gating",
+                          "advisory",
+                          "required"
+                        ]
                       },
                       "severity": {
                         "type": "string",
                         "const": "warn"
+                      },
+                      "evaluator": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["type"]
+                    "required": [
+                      "type"
+                    ]
                   }
                 ]
               }
             ]
           }
         },
-        "required": ["id", "kind", "assertion"],
+        "required": [
+          "id",
+          "kind",
+          "assertion"
+        ],
         "additionalProperties": false
       }
     ]

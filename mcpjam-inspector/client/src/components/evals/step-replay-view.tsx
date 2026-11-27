@@ -85,7 +85,7 @@ const KIND_META: Record<
   },
 };
 
-type StatusTone = "ok" | "fail" | "running" | "skipped" | "unknown";
+type StatusTone = EvalStepStatus | "unknown";
 
 const STATUS_META: Record<
   StatusTone,
@@ -111,15 +111,16 @@ const STATUS_META: Record<
     Icon: MinusCircle,
     cls: "text-muted-foreground",
   },
+  not_applicable: {
+    label: "Not applicable",
+    Icon: MinusCircle,
+    cls: "text-muted-foreground",
+  },
   unknown: { label: "", Icon: CircleDashed, cls: "text-muted-foreground/50" },
 };
 
 function statusTone(status: EvalStepStatus | undefined): StatusTone {
-  if (status === "ok") return "ok";
-  if (status === "fail") return "fail";
-  if (status === "running") return "running";
-  if (status === "skipped") return "skipped";
-  return "unknown";
+  return status ?? "unknown";
 }
 
 /** How this mount names its assertions. See `describeAssert`. */

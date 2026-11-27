@@ -76,7 +76,8 @@ export const PROTOCOL_CHECK_SOURCES = {
   "resources-list": bothEras("/server/resources#listing-resources"),
   "protocol-invalid-method-error": {
     legacy: `${LEGACY_SPEC}/basic/index#error-responses`,
-    modern: `${MODERN_SPEC}/basic/index#error-codes`,
+    // Where 2026-07-28 states both halves of the rule: 404 and -32601.
+    modern: `${MODERN_STREAMABLE_HTTP}#protocol-version-header`,
   },
   "localhost-host-rebinding-rejected": {
     legacy: `${LEGACY_TRANSPORTS}#security-warning`,
@@ -86,9 +87,6 @@ export const PROTOCOL_CHECK_SOURCES = {
   },
   "server-sse-polling-session": {
     legacy: `${LEGACY_TRANSPORTS}#session-management`,
-  },
-  "server-accepts-multiple-post-streams": {
-    legacy: `${LEGACY_TRANSPORTS}#multiple-connections`,
   },
   "server-sse-streams-functional": {
     legacy: `${LEGACY_TRANSPORTS}#listening-for-messages-from-the-server`,
@@ -158,9 +156,8 @@ export const PROTOCOL_CHECK_SOURCES = {
   "modern-resource-read-no-empty-contents": {
     modern: `${MODERN_SPEC}/server/resources#error-handling`,
   },
-  "modern-tool-output-schema-conformant": {
-    modern: `${MODERN_SPEC}/server/tools#output-schema`,
-  },
+  // The same sentence in 2025-06-18, 2025-11-25 and 2026-07-28.
+  "modern-tool-output-schema-conformant": bothEras("/server/tools#output-schema"),
   "modern-logs-require-log-level": {
     modern: `${MODERN_SPEC}/server/utilities/logging#per-request-log-level`,
   },
@@ -193,14 +190,6 @@ export const APPS_CHECK_SOURCES = {
  * exist on the extension wire name only that.
  */
 export const TASKS_CHECK_SOURCES = {
-  "tasks-wire-resolvable": {
-    legacy: `${LEGACY_TASKS_SPEC}#capabilities`,
-    modern: `${TASKS_EXTENSION_SPEC}#capability-negotiation`,
-  },
-  "tasks-declaration-hygiene": {
-    legacy: `${LEGACY_TASKS_SPEC}#tool-level-negotiation`,
-    modern: `${TASKS_EXTENSION_SPEC}#capability-negotiation`,
-  },
   "tasks-result-type-discipline": {
     legacy: `${LEGACY_TASKS_SPEC}#creating-tasks`,
     modern: `${TASKS_EXTENSION_SPEC}#polymorphic-results`,

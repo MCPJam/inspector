@@ -75,6 +75,17 @@ function seedManager(options: {
       calls.push(JSON.parse(JSON.stringify({ method: "tools/call", params })));
       return options.callToolResult ?? { content: [] };
     },
+    // A legacy task call first checks the tool's `taskSupport` (2025-11-25
+    // tasks.mdx:115). Not recorded in `calls`.
+    listTools: async () => ({
+      tools: [
+        {
+          name: "slow_tool",
+          inputSchema: {},
+          execution: { taskSupport: "optional" },
+        },
+      ],
+    }),
   } as unknown as ManagedMcpClient;
 
   (manager as any).registeredServers.set(serverId, {

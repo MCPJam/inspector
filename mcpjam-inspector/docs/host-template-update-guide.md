@@ -68,6 +68,8 @@ A host entry's capability matrix is inline in the catalog at `hostsById[<id>].mc
 
 The SDK's `capabilities.ts` presets are the human-readable source those inline matrices were written from. If you change a host's capability, check whether the matching `MCP_APPS_*` preset in `capabilities.ts` (and its resolved copy in backend `templates.ts`) should change too — the playground emulates from the preset, verdicts read the catalog, and the whole point of sharing them is that they never disagree.
 
+Protocol behavior that isn't an Apps capability, such as which MCP Events delivery modes a client receives, lives in `mcpProfile.extensions` and is read through one resolver per feature (for Events, `resolveHostEventDeliveryModes`). A template saves its own value there. `hostStyle` selects the MCP Apps rendering only, so code shouldn't infer a client's protocol behavior from it.
+
 ---
 
 ## 2. Walkthrough A — change an existing host's capability value

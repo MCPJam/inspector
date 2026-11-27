@@ -11,10 +11,17 @@ describe("HandDrawnSendHint", () => {
     expect(path?.getAttribute("fill")).toBe("currentColor");
   });
 
-  it("renders the hint label", () => {
-    render(<HandDrawnSendHint theme="light" />);
+  it("names Excalidraw only when the chat's server is the Excalidraw demo", () => {
+    render(<HandDrawnSendHint theme="light" serverName="Excalidraw (App)" />);
     expect(screen.getByTestId("playground-send-nux-hint")).toHaveTextContent(
       "Try this prompt with Excalidraw and compare across clients",
     );
+  });
+
+  it("does not name Excalidraw for any other server", () => {
+    render(<HandDrawnSendHint theme="light" serverName="Flights" />);
+    const hint = screen.getByTestId("playground-send-nux-hint");
+    expect(hint).toHaveTextContent("Try this prompt and compare across clients");
+    expect(hint).not.toHaveTextContent("Excalidraw");
   });
 });

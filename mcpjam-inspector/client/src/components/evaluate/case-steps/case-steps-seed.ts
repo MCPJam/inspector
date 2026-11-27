@@ -5,7 +5,10 @@
  * opt-out and the negative flag the draft would save.
  */
 import { stableStringifyJson } from "@mcpjam/sdk/widget-runtime";
-import { normalizeAdvancedConfig } from "@/components/evals/case-save-payload";
+import {
+  caseAccountsChanged,
+  normalizeAdvancedConfig,
+} from "@/components/evals/case-save-payload";
 import { DEFAULTS } from "@/components/evals/constants";
 import { loadCaseSteps } from "@/components/evals/load-case-steps";
 import type { EvalCase } from "@/components/evals/types";
@@ -101,5 +104,8 @@ export function isCaseStepsDirty(
     [draft.judgeConfigOverride, testCase.judgeConfigOverride],
     [draft.toolsChoice === "noTool", testCase.isNegativeTest ?? false],
   ];
-  return pairs.some(([a, b]) => stable(a) !== stable(b));
+  return (
+    caseAccountsChanged(draft, testCase) ||
+    pairs.some(([a, b]) => stable(a) !== stable(b))
+  );
 }

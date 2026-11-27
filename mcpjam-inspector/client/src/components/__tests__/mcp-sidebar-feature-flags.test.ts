@@ -541,7 +541,7 @@ describe("Events rollout navigation", () => {
     { sections: navigationSections },
     { sections: getHostedNavigationSections(navigationSections) },
   ])(
-    "shows Events and Triggers only with mcp-events-enabled",
+    "shows Inspect Events only with mcp-events-enabled",
     ({ sections }) => {
       const eventUrls = (flags: Record<string, boolean>) =>
         filterByFeatureFlags(sections, flags)
@@ -551,7 +551,7 @@ describe("Events rollout navigation", () => {
 
       expect(eventUrls({})).toEqual([]);
       expect(eventUrls({ "mcp-events-enabled": false })).toEqual([]);
-      expect(eventUrls({ "mcp-events-enabled": true })).toEqual(["/triggers", "/events"]);
+      expect(eventUrls({ "mcp-events-enabled": true })).toEqual(["/events"]);
     },
   );
 });

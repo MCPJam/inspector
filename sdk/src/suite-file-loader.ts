@@ -2,6 +2,11 @@ import type {
   SuiteJudgeSettings,
   CaseJudgeSettings,
 } from "./contract/judge-settings.js";
+import type {
+  CodeEvaluatorInput,
+  SuiteGradingInput,
+  SuiteScriptsInput,
+} from "./contract/code-evaluators.js";
 /**
  * Read and write eval **suite files** — the loader the contract module says is
  * a separate concern (`./contract/suite-file.ts:7-9`).
@@ -265,6 +270,9 @@ export type ResolvedEvalSuiteFile = {
   target: EvalSuiteFileTarget;
   defaults: {
     judge?: SuiteJudgeSettings;
+    codeEvaluators?: CodeEvaluatorInput[];
+    scripts?: SuiteScriptsInput;
+    grading?: SuiteGradingInput;
     model: string;
     provider?: string;
     systemPrompt?: string;
@@ -611,6 +619,11 @@ export function resolveEvalSuiteFile(
     target: authored.target,
     defaults: {
       ...(defaults.judge === undefined ? {} : { judge: defaults.judge }),
+      ...(defaults.codeEvaluators === undefined
+        ? {}
+        : { codeEvaluators: defaults.codeEvaluators }),
+      ...(defaults.scripts === undefined ? {} : { scripts: defaults.scripts }),
+      ...(defaults.grading === undefined ? {} : { grading: defaults.grading }),
       model: defaults.model,
       ...(defaults.provider === undefined
         ? {}
@@ -723,6 +736,9 @@ const SERVER_KEY_ORDER = ["name", "id"] as const;
  */
 const DEFAULTS_KEY_ORDER = [
   "judge",
+  "codeEvaluators",
+  "scripts",
+  "grading",
   "model",
   "provider",
   "repetitions",
@@ -733,6 +749,9 @@ const DEFAULTS_KEY_ORDER = [
 ] as const;
 const DEFAULTS_KEY_ORDER_V2 = [
   "judge",
+  "codeEvaluators",
+  "scripts",
+  "grading",
   "model",
   "provider",
   "iterations",

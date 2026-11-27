@@ -6,8 +6,7 @@
  * the identical shape from a raw SKILL.md — the backend re-validates and
  * size-caps whatever is forwarded.
  */
-import matter from "gray-matter";
-import { parseSkillFile } from "./skill-parser.js";
+import { parseSkillFileWithFrontmatter } from "./skill-parser.js";
 import type { SkillExtraFrontmatterInput } from "./computers/convex-skills-client.js";
 
 /** Extract the preserved optional spec frontmatter (best-effort, lenient). */
@@ -66,15 +65,10 @@ export function parseSkillMdWithExtras(
   raw: string,
   sourceLabel: string
 ): ParsedSkillMdWithExtras | null {
-  const skill = parseSkillFile(raw, sourceLabel);
-  if (!skill) return null;
-  let data: Record<string, unknown>;
-  try {
-    data = matter(raw).data as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-  const extraFrontmatter = extractExtraFrontmatter(data);
+  const parsed = parseSkillFileWithFrontmatter(raw, sourceLabel);
+  if (!parsed) return null;
+  const { skill, frontmatter } = parsed;
+  const extraFrontmatter = extractExtraFrontmatter(frontmatter);
   return {
     name: skill.name,
     description: skill.description,

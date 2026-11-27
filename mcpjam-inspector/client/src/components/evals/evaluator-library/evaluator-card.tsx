@@ -11,13 +11,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CaseFieldDependency } from "./case-field-dependency";
-import { OwaspTag } from "./evaluator-kind-badge";
-import type {
-  BuiltFromPart,
-  CaseField,
-  EvaluatorTone,
-  OwaspId,
-} from "./evaluator-library-types";
+import type { BuiltFromPart, CaseField, EvaluatorTone } from "./evaluator-library-types";
 
 const TONE_CLASS: Record<EvaluatorTone, string> = {
   tools: "bg-info/10 text-info",
@@ -42,7 +36,6 @@ export type EvaluatorCardProps = {
   icon: LucideIcon;
   tone: EvaluatorTone;
   builtFrom: readonly BuiltFromPart[];
-  owasp?: readonly OwaspId[];
   /** The case field this evaluator compares the run against, if any. */
   dependency?: CaseField;
   inSuite?: boolean;
@@ -65,7 +58,6 @@ export function EvaluatorCard({
   icon: Icon,
   tone,
   builtFrom,
-  owasp,
   dependency,
   inSuite = false,
   selected = false,
@@ -132,7 +124,6 @@ export function EvaluatorCard({
             </span>
           );
         })}
-        {owasp ? <OwaspTag ids={owasp} /> : null}
         <span className="ml-auto">
           {dependency ? (
             <CaseFieldDependency field={dependency} />

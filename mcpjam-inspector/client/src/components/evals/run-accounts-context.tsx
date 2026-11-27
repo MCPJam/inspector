@@ -28,14 +28,24 @@ const RunAccountsContext = createContext<readonly EvalRunAccount[] | undefined>(
 /** Names each tool call's account in the traces below, while the rollout flag is on. */
 export function RunAccountsProvider({
   accounts,
+  testCaseId,
   children,
 }: {
   accounts: readonly EvalRunAccount[] | undefined;
+  testCaseId?: string;
   children: ReactNode;
 }) {
   const enabled = useEvalAccountSelectionEnabled();
+  const caseAccounts = useMemo(
+    () => enabled
+      ? accounts?.filter((account) =>
+          !account.cases || account.cases.some((test) => test.testCaseId === testCaseId),
+        )
+      : undefined,
+    [accounts, enabled, testCaseId],
+  );
   return (
-    <RunAccountsContext.Provider value={enabled ? accounts : undefined}>
+    <RunAccountsContext.Provider value={caseAccounts}>
       {children}
     </RunAccountsContext.Provider>
   );
