@@ -18,3 +18,33 @@ export function requireCompleteDiscovery(
     throw new DiscoveryResultError(result.resultType, protocolVersion);
   }
 }
+
+export function discoveryFieldProblems(
+  result: Record<string, unknown>,
+): string[] {
+  const problems: string[] = [];
+  const { supportedVersions, capabilities } = result;
+  if (
+    !Array.isArray(supportedVersions) ||
+    supportedVersions.length === 0 ||
+    supportedVersions.some((version) => typeof version !== "string")
+  ) {
+    problems.push("supportedVersions must be a non-empty array of strings");
+  }
+  if (
+    capabilities === null ||
+    typeof capabilities !== "object" ||
+    Array.isArray(capabilities)
+  ) {
+    problems.push("capabilities must be an object");
+  }
+  return problems;
+}
+
+export function discoveryErrorMessage(
+  status: number,
+  rpcError?: { code: number; message: string },
+): string {
+  const message = `server/discover did not return a result (HTTP ${status})`;
+  return rpcError ? `${message}: ${rpcError.code} ${rpcError.message}` : message;
+}

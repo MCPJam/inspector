@@ -28,7 +28,12 @@
  * -32602 without specifying an HTTP status.
  */
 
-import { DiscoveryResultError, requireCompleteDiscovery } from "../../discovery-result.js";
+import {
+  DiscoveryResultError,
+  discoveryErrorMessage,
+  discoveryFieldProblems,
+  requireCompleteDiscovery,
+} from "../../discovery-result.js";
 import type {
   MCPCheckSkipReason,
   MCPCheckId,
@@ -729,13 +734,14 @@ async function runServerDiscoverCheck(
   const payload = jsonRpcResult(result);
 
   if (result.status !== 200 || !payload) {
+    const rpcError = jsonRpcError(result);
     return failedResult(
       meta,
       Date.now() - startedAt,
-      `server/discover did not return a result (HTTP ${result.status})`,
+      discoveryErrorMessage(result.status, rpcError),
       {
         httpStatus: result.status,
-        jsonRpcCode: jsonRpcError(result)?.code,
+        jsonRpcCode: rpcError?.code,
       }
     );
   }
@@ -743,21 +749,7 @@ async function runServerDiscoverCheck(
   requireCompleteDiscovery(payload);
   const supportedVersions = payload.supportedVersions;
   const serverInfo = readServerIdentity(payload);
-  const problems: string[] = [];
-
-  if (
-    !Array.isArray(supportedVersions) ||
-    supportedVersions.length === 0 ||
-    supportedVersions.some((version) => typeof version !== "string")
-  ) {
-    problems.push("supportedVersions must be a non-empty array of strings");
-  }
-  if (
-    payload.capabilities === null ||
-    typeof payload.capabilities !== "object"
-  ) {
-    problems.push("capabilities must be an object");
-  }
+  const problems = discoveryFieldProblems(payload);
   // Identity is a SHOULD (spec PR #3002), not a member of the result: a
   // present-but-malformed stamp is a real defect, an absent one is not.
   if (serverInfo !== undefined && !isWellFormedIdentity(serverInfo)) {

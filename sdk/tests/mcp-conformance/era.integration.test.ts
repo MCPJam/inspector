@@ -408,6 +408,88 @@ describe.each([undefined, "2026-07-28"] as const)("handshake selection %s", (pro
   });
 });
 
+it.each([
+  {
+    label: "an internal error",
+    status: 200,
+    reply: { error: { code: -32603, message: "Discovery failed in the fixture" } },
+    verdict: "failed",
+    reason: /-32603.*Discovery failed in the fixture/,
+  },
+  {
+    label: "missing supportedVersions",
+    status: 200,
+    reply: { result: { resultType: "complete", capabilities: {} } },
+    verdict: "failed",
+    reason: /supportedVersions must be a non-empty array of strings/,
+  },
+  {
+    label: "missing capabilities",
+    status: 200,
+    reply: { result: { resultType: "complete", supportedVersions: ["2026-07-28"] } },
+    verdict: "failed",
+    reason: /capabilities must be an object/,
+  },
+  {
+    label: "array capabilities",
+    status: 200,
+    reply: {
+      result: {
+        resultType: "complete",
+        supportedVersions: ["2026-07-28"],
+        capabilities: [],
+      },
+    },
+    verdict: "failed",
+    reason: /capabilities must be an object/,
+  },
+  {
+    label: "an explicit version refusal",
+    status: 400,
+    reply: {
+      error: {
+        code: -32022,
+        message: "Unsupported protocol version",
+        data: { requested: "2026-07-28", supported: ["2099-01-01"] },
+      },
+    },
+    verdict: "skipped",
+    reason: /It offers only 2099-01-01/,
+  },
+  {
+    label: "a legacy method-not-found error",
+    status: 200,
+    reply: { error: { code: -32601, message: "Method not found" } },
+    verdict: "skipped",
+    reason: /does not support protocol version 2026-07-28/,
+  },
+])("grades $label from a pinned discovery probe", async ({ status, reply, verdict, reason }) => {
+  const checkIds = ["modern-client-handshake", "modern-server-discover"] as const;
+  const methods: string[] = [];
+  const result = await new MCPConformanceTest({
+    serverUrl: "http://localhost/mcp",
+    protocolVersion: "2026-07-28",
+    checkIds: [...checkIds],
+    readinessIds: [],
+    fetchFn: async (input, init) => {
+      const request = new Request(input, init);
+      const method = request.headers.get("Mcp-Method") ?? request.method;
+      methods.push(method);
+      const { id }: { id: string | number } = await request.json();
+      return Response.json({ jsonrpc: "2.0", id, ...reply }, { status });
+    },
+  }).run();
+
+  for (const id of checkIds) {
+    const check = byId(result.checks, id);
+    expect(check.status, `${id}: ${check.error?.message}`).toBe(verdict);
+    expect(check.error?.message).toMatch(reason);
+    if (verdict === "skipped") expect(check.skipReason).toBe("could-not-run");
+  }
+  expect(result.outcome).toBe(verdict === "failed" ? "failed" : "incomplete");
+  expect(methods).toEqual(["server/discover"]);
+});
+
 describe.each(["raw", "mixed"] as const)("invalid discovery in a %s run", mode => {
   it.each(["partial", "input_required", null])("grades only usable evidence for %s", async resultType => {
     const handler = createFixtureHandler();
