@@ -9,10 +9,12 @@ import {
   findLibraryEvaluator,
   LIBRARY_EVALUATORS,
   taggedChecks,
+  taggedJudges,
   taggedQuestions,
   withLibraryChecks,
   withEvaluatorUpdated,
   withoutEvaluator,
+  type LibraryEvaluator,
 } from "../library-catalog";
 import { librarySuiteEdits } from "../library-suite-edits";
 
@@ -57,6 +59,9 @@ describe("library groups in the suite table", () => {
     const { next } = renderTable(tagged);
     const groups = screen.getAllByRole("region", { name: /^No Wasted Calls in / });
     expect(groups).toHaveLength(2);
+    expect(
+      groups[0].querySelector("[aria-hidden] > svg.lucide-route"),
+    ).toBeInTheDocument();
     const buttons = groups.map((group) => {
       expect(group).toHaveTextContent("v1");
       return within(group).getByRole("button", {
@@ -67,6 +72,44 @@ describe("library groups in the suite table", () => {
     expect(buttons[0]).toHaveAttribute("type", "button");
     fireEvent.click(buttons[0]);
     expect(next()).toEqual([{ type: "noToolErrors" }]);
+  });
+
+  it("puts each check that did not come from the library in its own card", () => {
+    const { next } = renderTable(tagged);
+    const rows = Array.from(
+      document.querySelectorAll<HTMLElement>("li[data-scorer-row]"),
+    );
+    const grouped = rows.filter((li) => li.closest("[data-evaluator-group]"));
+    const loose = rows.filter((li) => !li.closest("[data-evaluator-group]"));
+    expect(grouped.length).toBe(2);
+    expect(loose.length).toBeGreaterThan(0);
+    for (const li of loose) {
+      expect(li.parentElement).toHaveClass("rounded-lg", "border");
+      expect(li.parentElement?.children).toHaveLength(1);
+    }
+    for (const li of grouped) {
+      expect(li.parentElement).not.toHaveClass("border");
+    }
+    // No badge marks a card as default; only the library group says Library.
+    expect(screen.queryByText("Default")).not.toBeInTheDocument();
+    // Each card keeps its on/off box in its header, and the box still
+    // switches the check: on for a standard check, off for an authored one.
+    const offBox = loose
+      .filter((li) => li.dataset.scorerRow === "preset")
+      .map((li) => within(li).getByRole("checkbox"))
+      .find((checkbox) => !checkbox.hasAttribute("disabled"));
+    if (!offBox) throw new Error("Expected a standard check that can be turned on");
+    expect(offBox).not.toBeChecked();
+    fireEvent.click(offBox);
+    expect(next()).toHaveLength(tagged.length + 1);
+    const authored = loose.find((li) => li.dataset.scorerRow === "predicate");
+    if (!authored) throw new Error("Expected the authored check's card");
+    const box = within(authored).getAllByRole("checkbox")[0];
+    expect(box).toBeChecked();
+    fireEvent.click(box);
+    expect(next()).toEqual(
+      tagged.filter((predicate) => predicate.type !== "noToolErrors"),
+    );
   });
 
   it("tags an existing required check when adding the evaluator", () => {
@@ -100,6 +143,9 @@ describe("library groups in the suite table", () => {
     expect(
       screen.queryByRole("button", { name: "From library" }),
     ).not.toBeInTheDocument();
+    for (const li of document.querySelectorAll("li[data-scorer-row]")) {
+      expect(li.parentElement).not.toHaveClass("border");
+    }
     flag.on = true;
   });
 });
@@ -158,10 +204,16 @@ function own(id: string): RubricCheckQuestion {
   };
 }
 
+/** What adding this evaluator to an empty suite would write. */
+function questionsOf(entry: LibraryEvaluator) {
+  return { checks: [], questions: taggedQuestions(entry), judges: [] };
+}
+
 /** Library edits over a draft that applies each change, as the page does. */
 function draft(
   judgeConfig: EvalJudgeConfig | undefined,
   predicates: Predicate[] = [],
+  judgeLimit = 5,
 ) {
   const state = { judgeConfig, predicates, judgeWrites: 0 };
   const edits = () => {
@@ -179,6 +231,7 @@ function draft(
         state.judgeConfig = change;
         state.judgeWrites += 1;
       },
+      judgeLimit,
     );
     if (!next) throw new Error("Expected suite edits");
     return next;
@@ -186,10 +239,29 @@ function draft(
   return { state, edits };
 }
 
+/**
+ * What the backend stores for a settings save (`mergeOmittedJudgeSlots`): a
+ * reserved judge slot the write leaves out keeps its stored value. Undefined
+ * is sent as null, which clears the whole config.
+ */
+function savedJudgeConfig(
+  stored: EvalJudgeConfig,
+  written: EvalJudgeConfig | undefined,
+): EvalJudgeConfig | undefined {
+  if (written === undefined) return undefined;
+  const saved = { ...written };
+  for (const slot of ["groundedness", "rubricChecks"] as const) {
+    if (!(slot in written) && stored[slot] !== undefined) {
+      Object.assign(saved, { [slot]: stored[slot] });
+    }
+  }
+  return saved;
+}
+
 describe("library question edits", () => {
   it("adds and removes an evaluator's question, leaving the config as it was", () => {
     const { state, edits } = draft(undefined, [{ type: "noToolErrors" }]);
-    expect(edits().add([], taggedQuestions(reports))).toBeUndefined();
+    expect(edits().add(questionsOf(reports))).toBeUndefined();
     expect(state.judgeConfig).toEqual({
       rubricChecks: { questions: [reportsQuestion] },
     });
@@ -198,17 +270,38 @@ describe("library question edits", () => {
     expect(state.predicates).toEqual([{ type: "noToolErrors" }]);
   });
 
-  it("keeps the rest of the judge config when the last question goes", () => {
+  it("keeps the rest of the judge config, and an empty slot, when the last question goes", () => {
     const goal = { goalCompletion: { enabled: true } };
     const { state, edits } = draft(goal);
-    edits().add([], taggedQuestions(reports));
+    edits().add(questionsOf(reports));
     edits().remove("reports-tool-errors");
-    expect(state.judgeConfig).toEqual(goal);
+    expect(state.judgeConfig).toEqual({ ...goal, rubricChecks: {} });
+  });
+
+  it("removes the last stored question in a way the backend will not restore", () => {
+    const stored = {
+      goalCompletion: { enabled: true },
+      rubricChecks: { questions: [reportsQuestion] },
+    };
+    const { state, edits } = draft(stored);
+    edits().remove("reports-tool-errors");
+    expect(state.judgeConfig).toEqual({
+      goalCompletion: { enabled: true },
+      rubricChecks: {},
+    });
+    expect(savedJudgeConfig(stored, state.judgeConfig)).toEqual({
+      goalCompletion: { enabled: true },
+      rubricChecks: {},
+    });
+    // Leaving the slot out, as before, brings the questions back.
+    expect(
+      savedJudgeConfig(stored, { goalCompletion: { enabled: true } }),
+    ).toEqual(stored);
   });
 
   it("turns rubric checks back on only when adding to a suite that turned them off", () => {
     const { state, edits } = draft({ rubricChecks: { enabled: false } });
-    edits().add([], taggedQuestions(reports));
+    edits().add(questionsOf(reports));
     expect(state.judgeConfig?.rubricChecks?.enabled).toBe(true);
     edits().remove("reports-tool-errors");
     // Removing keeps the author's switch where adding left it.
@@ -264,6 +357,26 @@ describe("library question edits", () => {
     expect(state.judgeConfig).toBeUndefined();
   });
 
+  it("clears the stored slot when an update empties it beside other config", () => {
+    const stored = {
+      goalCompletion: { threshold: 0.8 },
+      rubricChecks: {
+        questions: [
+          {
+            ...own("no-wasted-calls-old"),
+            evaluator: { id: "no-wasted-calls", version: 0 },
+          },
+        ],
+      },
+    };
+    const { state, edits } = draft(stored);
+    edits().update("no-wasted-calls");
+    expect(savedJudgeConfig(stored, state.judgeConfig)).toEqual({
+      goalCompletion: { threshold: 0.8 },
+      rubricChecks: {},
+    });
+  });
+
   it("writes no judge config when a check-only evaluator is updated", () => {
     const { state, edits } = draft(undefined, tagged);
     edits().update("no-wasted-calls");
@@ -273,7 +386,7 @@ describe("library question edits", () => {
   it("refuses an add past the cap instead of dropping questions", () => {
     const full = Array.from({ length: 10 }, (_, i) => own(`mine-${i}`));
     const { state, edits } = draft({ rubricChecks: { questions: full } });
-    expect(edits().add([], taggedQuestions(reports))).toBe(
+    expect(edits().add(questionsOf(reports))).toBe(
       "Suites can ask up to 10 rubric-check questions, and adding this evaluator would make 11. Remove a question first.",
     );
     expect(state.judgeWrites).toBe(0);
@@ -328,5 +441,59 @@ describe("library question edits", () => {
     expect(group).toHaveTextContent(
       'v1 available. A question already uses the ID "reports-tool-errors-reports-failures".',
     );
+  });
+});
+
+describe("library judge edits", () => {
+  const answers = findLibraryEvaluator("answers-the-question");
+  if (!answers) throw new Error("Expected Answers the Question");
+  const [answersJudge] = taggedJudges(answers);
+  const mine = {
+    id: "mine",
+    label: "Mine",
+    prompt: "Judge {{final_answer}}",
+    output: { kind: "passfail" as const },
+  };
+
+  it("keeps a question and a judge added in one click, and removes the judge", () => {
+    const { state, edits } = draft(undefined);
+    expect(
+      edits().add({
+        checks: [],
+        questions: taggedQuestions(reports),
+        judges: [answersJudge],
+      }),
+    ).toBeUndefined();
+    expect(state.judgeWrites).toBe(1);
+    expect(state.judgeConfig?.rubricChecks?.questions).toEqual([reportsQuestion]);
+    expect(state.judgeConfig?.customJudges?.judges).toEqual([answersJudge]);
+    edits().remove("answers-the-question");
+    expect(state.judgeConfig?.customJudges?.judges).toEqual([]);
+    expect(state.judgeConfig?.rubricChecks?.questions).toEqual([reportsQuestion]);
+  });
+
+  it("keeps a paused judge group paused when a library judge is added", () => {
+    const { state, edits } = draft({
+      customJudges: { enabled: false, judges: [mine] },
+    });
+    edits().add({ checks: [], questions: [], judges: [answersJudge] });
+    expect(state.judgeConfig?.customJudges).toEqual({
+      enabled: false,
+      judges: [mine, answersJudge],
+    });
+  });
+
+  it("refuses a judge past the backend's limit instead of dropping it", () => {
+    const { state, edits } = draft(
+      { customJudges: { judges: [mine] } },
+      [],
+      1,
+    );
+    expect(
+      edits().add({ checks: [], questions: [], judges: [answersJudge] }),
+    ).toBe(
+      "Suites can have up to 1 judge, and adding this evaluator would make 2. Remove a judge first.",
+    );
+    expect(state.judgeWrites).toBe(0);
   });
 });

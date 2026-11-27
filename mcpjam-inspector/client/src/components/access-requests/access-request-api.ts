@@ -1,4 +1,3 @@
-import { ConvexError } from "convex/values";
 import { makeFunctionReference } from "convex/server";
 
 export type AccessRequestStatus = "pending" | "approved" | "declined";
@@ -42,12 +41,4 @@ export const decideProjectAccessRequestRef = makeFunctionReference<
 
 export function accessRequestPath(requestId: string): string {
   return `/access-requests/${encodeURIComponent(requestId)}`;
-}
-
-/** The `code` a backend `ConvexError` carries, when it carries one. */
-export function convexErrorCode(error: unknown): string | null {
-  if (!(error instanceof ConvexError)) return null;
-  const data: unknown = error.data;
-  if (!data || typeof data !== "object" || !("code" in data)) return null;
-  return typeof data.code === "string" ? data.code : null;
 }

@@ -129,6 +129,39 @@ describe("EvaluatorScorecardSummary", () => {
     expect(card).toHaveTextContent("Passed");
   });
 
+  it("groups a judge only when its recorded origin is the library evaluator", () => {
+    const judge = {
+      key: "judge:custom:answers-the-question-answers",
+      label: "Answers what the user asked",
+      role: "advisory",
+      result: { state: "failed", source: "scoreRow", reason: "Off topic." },
+    } as const;
+    const { rerender } = renderWithProviders(
+      <EvaluatorScorecardSummary
+        rows={[
+          {
+            ...judge,
+            customJudge: {},
+          },
+        ]}
+      />,
+    );
+    expect(screen.queryByRole("region", { name: "Answers the Question" }))
+      .not.toBeInTheDocument();
+    rerender(
+      <EvaluatorScorecardSummary
+        rows={[
+          {
+            ...judge,
+            customJudge: { evaluatorId: "answers-the-question" },
+          },
+        ]}
+      />,
+    );
+    const card = screen.getByRole("region", { name: "Answers the Question" });
+    expect(card).toHaveTextContent("Failed");
+  });
+
   it("leaves out an untagged question whose id matches a library question", () => {
     const { container } = renderWithProviders(
       <EvaluatorScorecardSummary rows={[questionRow]} questions={[question]} />,

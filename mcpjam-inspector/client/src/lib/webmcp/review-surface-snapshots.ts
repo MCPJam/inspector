@@ -148,6 +148,7 @@ export interface CaniuseSupportRowView {
 export interface CaniuseCapabilitySnapshotInput {
   capabilitySlug: string | null | undefined;
   capabilityLabel: string | null;
+  slice: string | null;
   rows: ReadonlyArray<CaniuseSupportRowView>;
 }
 
@@ -164,6 +165,7 @@ export function buildCaniuseCapabilitySnapshot(
     view: "capability-permalink",
     capabilitySlug: input.capabilitySlug ?? null,
     capability: input.capabilityLabel,
+    slice: input.slice,
     hostCount: input.rows.length,
     hosts: input.rows.slice(0, REVIEW_SNAPSHOT_MAX_ITEMS).map((row) => ({
       host: row.hostName,

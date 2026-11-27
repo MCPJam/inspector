@@ -25,14 +25,18 @@ import { runTransportChecks } from "../../src/mcp-conformance/checks/transport.j
 
 const SERVER_URL = "http://127.0.0.1:9/mcp";
 
-function jsonRpcErrorResponse(): Response {
+/**
+ * `-32601` for the unknown method. 200 is what a 2025 server sends; a
+ * 2026-07-28 server MUST send it on 404.
+ */
+function jsonRpcErrorResponse(status = 200): Response {
   return new Response(
     JSON.stringify({
       jsonrpc: "2.0",
       id: 99,
       error: { code: -32601, message: "Method not found" },
     }),
-    { status: 200, headers: { "content-type": "application/json" } }
+    { status, headers: { "content-type": "application/json" } }
   );
 }
 
@@ -122,6 +126,8 @@ describe("CHECK_ERAS map", () => {
       // Every revision publishes its own JSON Schema, so the requirement reads
       // the same on either wire and only the document changes.
       "wire-schema-valid",
+      // Named `modern-`, but its MUST is in 2025-06-18 and 2025-11-25 too.
+      "modern-tool-output-schema-conformant",
     ];
     // Modern-only ids are USUALLY prefixed `modern-`; the SEP-2243 declaration
     // check is not, because it belongs to the tools family and reads as one of
@@ -131,7 +137,9 @@ describe("CHECK_ERAS map", () => {
       "tools-x-mcp-header-declarations-valid",
     ];
     const modernOnly = [
-      ...MCP_CHECK_IDS.filter((id) => id.startsWith("modern-")),
+      ...MCP_CHECK_IDS.filter(
+        (id) => id.startsWith("modern-") && !bothEras.includes(id)
+      ),
       ...modernOnlyExplicit,
     ];
 
@@ -179,9 +187,12 @@ describe("modern checks on a legacy run", () => {
     }) as unknown as typeof fetch;
 
     const config = normalize({ fetchFn });
+    // The output-schema check is left out: it runs on the 2025 revisions.
     const modernIds = MCP_CHECK_IDS.filter(
       (id): id is MCPCheckId =>
-        id.startsWith("modern-") && id !== "modern-client-handshake"
+        id.startsWith("modern-") &&
+        id !== "modern-client-handshake" &&
+        CHECK_ERAS[id].length === 1
     );
     const results = await runModernChecks(
       { config, serverUrl: SERVER_URL, fetchFn: config.fetchFn },
@@ -297,7 +308,7 @@ describe("runProtocolChecks — era-aware invalid-method probe", () => {
     const calls: Array<RequestInit | undefined> = [];
     const fetchFn = (async (_url: unknown, init?: RequestInit) => {
       calls.push(init);
-      return jsonRpcErrorResponse();
+      return jsonRpcErrorResponse(404);
     }) as unknown as typeof fetch;
 
     const config = normalize({ fetchFn, protocolVersion: "2026-07-28" });

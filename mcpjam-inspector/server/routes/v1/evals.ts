@@ -18,6 +18,9 @@ import {
   suiteJudgeSettingsSchema,
   caseJudgeSettingsSchema,
   judgeRubricSchema,
+  codeEvaluatorsSchema,
+  suiteGradingSchema,
+  suiteScriptsSchema,
   suppressedSuiteStandardCheckIdsSchema,
 } from "@mcpjam/sdk/contract";
 /**
@@ -52,6 +55,7 @@ import {
   toSuspectedConditionProjection,
 } from "./eval-friction-projection.js";
 import { toExecutionProjection } from "./eval-execution-projection.js";
+import { toCodeGradingProjection } from "./eval-code-grading-projection.js";
 import {
   accountSelectionsForRead,
   accountSelectionsForStorage,
@@ -859,6 +863,10 @@ const syncFileOwnedSuiteSchema = z
       .safeExtend({ model: judgeModelIdSchema.optional() })
       .nullable()
       .optional(),
+    // EFTW-90: `null` clears, as for `judge`.
+    codeEvaluators: codeEvaluatorsSchema.nullable().optional(),
+    scripts: suiteScriptsSchema.nullable().optional(),
+    grading: suiteGradingSchema.nullable().optional(),
     declaredSuiteId: opaqueIdSchema,
     name: z.string().trim().min(1).max(200),
     description: z.string().optional(),
@@ -2141,6 +2149,7 @@ function toIterationDto(
     // the contract crosses this boundary. OMITTED on rows written before the
     // record existed (and on a malformed one) — "not recorded", never a guess.
     ...toExecutionProjection(iteration.execution),
+    ...toCodeGradingProjection(iteration.metadata),
   };
 }
 
@@ -2659,6 +2668,10 @@ function toSuiteDetailDto(
       // Live quality-gate policy. `null` when the suite has none — that is
       // `not_configured` at evaluate time, not an absent feature.
       qualityGate: toQualityGateDto(suite.gatePolicy),
+      // EFTW-90, as stored (the platform normalized them on write).
+      codeEvaluators: suite.codeEvaluators ?? [],
+      scripts: suite.scripts ?? null,
+      grading: suite.grading ?? null,
     },
     schedule: {
       enabled: suite.schedule?.enabled === true,
@@ -3398,6 +3411,10 @@ const suiteSettingsShape = {
   // capability advertises it. See the top-level refine for the required
   // revision precondition and reason.
   qualityGate: z.union([suiteGatePolicySchema, z.null()]).optional(),
+  // EFTW-90. `null` clears; an omitted field is left alone.
+  codeEvaluators: codeEvaluatorsSchema.nullable().optional(),
+  scripts: suiteScriptsSchema.nullable().optional(),
+  grading: suiteGradingSchema.nullable().optional(),
 } as const;
 
 /**
@@ -5524,6 +5541,11 @@ evals.post("/projects/:projectId/eval-suites/from-file", async (c) => {
       {
         projectId,
         ...(body.judge !== undefined ? { judge: body.judge } : {}),
+        ...(body.codeEvaluators !== undefined
+          ? { codeEvaluators: body.codeEvaluators }
+          : {}),
+        ...(body.scripts !== undefined ? { scripts: body.scripts } : {}),
+        ...(body.grading !== undefined ? { grading: body.grading } : {}),
         declaredSuiteId: body.declaredSuiteId,
         name: body.name,
         ...(body.description !== undefined
@@ -8907,6 +8929,9 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       updateArgs,
       countFieldNames(vocabularyOf(c)),
     );
+    for (const key of ["codeEvaluators", "scripts", "grading"] as const) {
+      if (s[key] !== undefined) updateArgs[key] = s[key];
+    }
   }
 
   // ONE revision group for the whole request.

@@ -341,6 +341,50 @@ describe("what it declines to grade", () => {
 });
 
 describe("the write it does make", () => {
+  test("projects stored custom grades when the trace is incomplete", async () => {
+    const run = runRow();
+    const iteration = run.iterations[0]!;
+    iteration.traceComplete = false;
+    iteration.metadata = {
+      ...iteration.metadata,
+      customJudgesVerdict: {
+        templateVersion: 1,
+        model: "gpt-x",
+        judges: [{
+          id: "helpful",
+          label: "Helpful",
+          contentDigest: "d-helpful",
+          output: { kind: "score", threshold: 0.7 },
+          status: "scored",
+          value: 0.4,
+          passed: false,
+        }],
+      },
+    };
+    const { value, applied } = ports({ fetchRun: vi.fn(async () => run) });
+
+    expect(await runJudgeSecondPass("run1", value)).toMatchObject({
+      noop: false,
+      outcomes: [{ iterationId: "iter1", outcome: "applied" }],
+    });
+    expect(applied[0]?.body).toMatchObject({
+      goalCompletionJobId: "job1",
+      scores: expect.arrayContaining([
+        expect.objectContaining({ scorerId: "judge:custom:helpful", value: 0.4 }),
+      ]),
+      evaluationConfig: {
+        definitions: expect.arrayContaining([
+          expect.objectContaining({
+            scorerId: "judge:custom:helpful",
+            role: "advisory",
+          }),
+        ]),
+      },
+    });
+    expect(applied[0]?.body).not.toHaveProperty("stageResults");
+    expect(applied[0]?.body).not.toHaveProperty("stageAnalyzerVersion");
+  });
+
   test("posts only allowlisted derivation keys, never status or result", async () => {
     const { value, applied } = ports();
     const result = await runJudgeSecondPass("run1", value);
@@ -1789,6 +1833,34 @@ describe("the second pass declares the tool-call scorers the first pass stored",
       "platform:toolExecution",
       "platform:widgetCheck",
     ]);
+    expect(result.orphans).toEqual([]);
+    expect(result.rowless).toEqual([]);
+  });
+
+  test("keeps the first pass's code evaluator rows joinable (EFTW-90)", async () => {
+    const first = buildHostedScoreContract({
+      codeGrading: {
+        evaluators: [
+          { id: "totals", fileName: "check.py", script: "x", role: "required" },
+          { id: "report", fileName: "report.sh", script: "y", role: "advisory" },
+        ],
+        outcomes: {
+          totals: { kind: "scored", score: 1, output: "", durationMs: 1, exitCode: 0 },
+        },
+      },
+    });
+
+    const result = await judge({
+      evaluationConfig: first.evaluationConfig,
+      scores: first.scores,
+    });
+
+    expect(
+      result.config.definitions
+        .filter((d) => d.scorerId.startsWith("code:"))
+        .map((d) => d.scorerId)
+        .sort(),
+    ).toEqual(["code:report", "code:totals"]);
     expect(result.orphans).toEqual([]);
     expect(result.rowless).toEqual([]);
   });

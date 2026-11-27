@@ -254,13 +254,44 @@ export const CHECK_ERAS: Record<MCPCheckId, MCPCheckEras> = {
   "modern-removed-methods-not-found": ["modern"],
   "modern-resource-not-found-invalid-params": ["modern"],
   "modern-resource-read-no-empty-contents": ["modern"],
-  "modern-tool-output-schema-conformant": ["modern"],
+  // The output schema MUST is in 2025-06-18, 2025-11-25 and 2026-07-28.
+  // 2025-03-26 has no `outputSchema`: see CHECK_FIRST_PROTOCOL_VERSION.
+  "modern-tool-output-schema-conformant": ["legacy", "modern"],
   "modern-logs-require-log-level": ["modern"],
   "modern-subscription-ack-precedes-notifications": ["modern"],
   "modern-subscription-filter-and-tagging": ["modern"],
   "modern-subscription-graceful-close": ["modern"],
   "wire-schema-valid": ["legacy", "modern"],
 } as const satisfies Record<MCPCheckId, MCPCheckEras>;
+
+/**
+ * A check whose rule starts at a later revision than its era does. Eras are
+ * coarse: "legacy" is every 2025 revision, and a rule can be younger than
+ * that. Tools gained `outputSchema` in 2025-06-18, so on 2025-03-26 the
+ * output schema check has nothing to grade.
+ */
+export const CHECK_FIRST_PROTOCOL_VERSION: Partial<
+  Record<MCPCheckId, McpProtocolVersion>
+> = {
+  "modern-tool-output-schema-conformant": "2025-06-18",
+};
+
+/**
+ * Whether `id` has anything to grade on a run pinned to `protocolVersion`:
+ * the version's era is one of the check's, and the version is not older than
+ * the check's rule. Revisions are dates, so they order as strings.
+ */
+export function checkRunsOnVersion(
+  id: MCPCheckId,
+  protocolVersion: McpProtocolVersion
+): boolean {
+  const eras: readonly MCPCheckEra[] = CHECK_ERAS[id];
+  const first = CHECK_FIRST_PROTOCOL_VERSION[id];
+  return (
+    eras.includes(PROTOCOL_VERSION_ERAS[protocolVersion]) &&
+    (first === undefined || protocolVersion >= first)
+  );
+}
 
 export interface MCPCheckResult {
   id: MCPCheckId;
@@ -491,6 +522,10 @@ export const MCP_READINESS_IDS = [
   // the header as protocol version 2025-03-26". Tolerating the omission is
   // therefore spec-legal, so it can only be advice.
   "readiness-protocol-version-header-required",
+  // 2026-07-28: "Servers SHOULD include [io.modelcontextprotocol/serverInfo]
+  // in every result's `_meta`, unless specifically configured not to do so".
+  // The field is optional, so a server without it can only be advised.
+  "readiness-server-identity",
   // The core "Tool Names" rules (1–128 characters, a fixed character set,
   // unique within a server) are SHOULDs from 2025-11-25 on. Informational
   // until advice has a grading rubric.
@@ -547,6 +582,9 @@ export const READINESS_ERAS: Record<MCPReadinessId, MCPCheckEras> = {
   "readiness-deprecated-feature-use": ["legacy", "modern"],
   "readiness-session-termination": ["legacy", "modern"],
   "readiness-protocol-version-header-required": ["modern"],
+  // The 2025 revisions carry `serverInfo` in `InitializeResult`, as a
+  // required member: there it is a check's business, not advice.
+  "readiness-server-identity": ["modern"],
   // Legacy: only when the server negotiates 2025-11-25.
   "readiness-tool-name-conventions": ["legacy", "modern"],
   "readiness-log-level-filtering": ["modern"],
