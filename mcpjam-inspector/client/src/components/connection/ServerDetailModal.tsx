@@ -1,4 +1,3 @@
-import { useSettingsLaunchObservation } from "@/lib/use-extension-launch-health";
 import type { ExtensionLaunchProfile } from "@/lib/extension-launch-health";
 import { SettingsDialogPresentationProvider, useSettingsDialogPresentation } from "../host-workspace/settings-dialog-presentation";
 import { ServerSettingsPanel } from "../host-workspace/ServerSettingsPanel";
@@ -102,12 +101,6 @@ function PluginServerDetailModal({
     isOpen ? extensionSettingsScope : null,
     plugin.serverId
   );
-  const settingsLaunch = useSettingsLaunchObservation(
-    JSON.stringify([extensionSettingsScope, plugin.serverId]),
-    extensionLaunchProfile ?? "chatgpt",
-    isOpen && !!extensionSettingsScope,
-    settings.failed,
-  );
   return (
     <Dialog
       open={isOpen}
@@ -199,7 +192,6 @@ function PluginServerDetailModal({
                     serverId={plugin.serverId}
                     serverName={plugin.serverName}
                     launchProfile={extensionLaunchProfile}
-                    launchObservation={settingsLaunch}
                   />
                 )}
               </div>

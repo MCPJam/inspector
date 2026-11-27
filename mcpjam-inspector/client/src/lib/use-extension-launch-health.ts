@@ -21,21 +21,3 @@ export function useExtensionLaunchHealth(owner: string | null) {
   }, [lifetime]);
   return lifetime.health;
 }
-
-/** Observe discovery only when the person actually opens the settings entry. */
-export function useSettingsLaunchObservation(
-  owner: string,
-  profile: import("./extension-launch-health").ExtensionLaunchProfile,
-  active: boolean,
-  discoveryFailed: boolean,
-) {
-  const health = useExtensionLaunchHealth(owner);
-  const launch = useMemo(
-    () => health.begin("settings", "settings", profile),
-    [health, profile],
-  );
-  useEffect(() => {
-    if (active && discoveryFailed) launch.fail("execution");
-  }, [active, discoveryFailed, launch]);
-  return launch;
-}

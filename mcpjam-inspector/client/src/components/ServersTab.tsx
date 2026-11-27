@@ -49,6 +49,7 @@ import {
   resolvePermalinkTarget,
 } from "@/lib/permalink-target";
 import { usePluginsEnabled } from "@/hooks/usePluginsEnabled";
+import { usePluginExtensionsAccess } from "@/hooks/usePluginExtensionsAccess";
 import { ServerFormData } from "@/shared/types.js";
 import {
   createInspectorCommandClientError,
@@ -623,7 +624,8 @@ export function ServersTab({
     HostsConnectAddServerSlotContext
   );
   const viewPhase = useHostsConnectViewPhase();
-  const extensionSettingsEnabled = useFeatureFlagEnabled("plugin-extensions-enabled") === true;
+  const extensionsFlag =
+    useFeatureFlagEnabled("plugin-extensions-enabled") === true;
   const serverCanvasEnabled = useServerCanvasEnabled();
   const { isAuthenticated } = useConvexAuth();
   const { user: signedInUser } = useAuth();
@@ -1092,6 +1094,13 @@ export function ServersTab({
   // what every other project-scoped Convex consumer expects for local mode,
   // and matches `sharedProjectIdForHostScope` on the Add Server modal.
   const hostedProjectId = sharedProjectId ?? null;
+  // The Playground's gate: the flag alone also reaches guests, whom the
+  // backend refuses, so their Settings check could only fail.
+  const extensionSettingsEnabled = usePluginExtensionsAccess({
+    flag: extensionsFlag,
+    isAuthenticated,
+    projectId: hostedProjectId,
+  }).enabled;
   const {
     serversRecord: sharedProjectServersRecord,
     // The RAW array, which is `undefined` until the query settles. The record

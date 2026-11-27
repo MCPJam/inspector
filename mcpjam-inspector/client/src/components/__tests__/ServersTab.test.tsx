@@ -20,6 +20,7 @@ import {
   writeOpenServerDetailModalState,
 } from "@/lib/server-detail-modal-resume";
 import { writePendingQuickConnect } from "@/lib/quick-connect-pending";
+import { savePreviewedHostId } from "@/lib/previewed-client-storage";
 import type { EnrichedRegistryCatalogCard } from "@/hooks/useRegistryServers";
 import { getRegistryServerName } from "@/hooks/useRegistryServers";
 import { useClientConfigStore } from "@/stores/client-config-store";
@@ -185,6 +186,16 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (flag: string) => mockEnabledFlags.has(flag),
 }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
+const mockPluginExtensionsAccess = vi.fn(
+  (_input: unknown): { enabled: boolean; status: string } => ({
+    enabled: false,
+    status: "skipped",
+  }),
+);
+vi.mock("@/hooks/usePluginExtensionsAccess", () => ({
+  usePluginExtensionsAccess: (input: unknown) =>
+    mockPluginExtensionsAccess(input),
+}));
 
 const mockUseAppReady = vi.fn(() => ({
   status: "ready",
@@ -380,11 +391,13 @@ vi.mock("../connection/ServerDetailModal", () => ({
     defaultTab,
     onSubmit,
     onClose,
+    extensionSettingsScope,
   }: {
     isOpen: boolean;
     server: ServerWithName;
     plugin?: { pluginId: string; serverName: string };
     defaultTab: string;
+    extensionSettingsScope?: unknown;
     onSubmit: (
       formData: ServerFormData,
       originalServerName: string
@@ -403,6 +416,9 @@ vi.mock("../connection/ServerDetailModal", () => ({
           {server.connectionStatus}
         </div>
         <div data-testid="modal-default-tab">{defaultTab}</div>
+        <div data-testid="modal-settings-scope">
+          {extensionSettingsScope ? "settings" : "none"}
+        </div>
         <button
           onClick={() =>
             void onSubmit(
@@ -2178,4 +2194,79 @@ describe("ServersTab server canvas route", () => {
     fireEvent.click(screen.getByText("Back to servers"));
     expect(window.location.pathname).toBe("/servers");
   });
+});
+
+describe("ServersTab plugin Settings access", () => {
+  const server = createServer();
+  const projectServers = { [server.name]: server };
+  const props = {
+    projectServers,
+    onConnect: vi.fn(),
+    onDisconnect: vi.fn(),
+    onReconnect: vi.fn().mockResolvedValue(undefined),
+    onUpdate: vi.fn(),
+    onRemove: vi.fn(),
+    onSaveServerConfig: vi.fn().mockResolvedValue(true),
+    projects: {
+      "project-1": {
+        ...createProject(projectServers),
+        sharedProjectId: "convex-project-1",
+      },
+    },
+    activeProjectId: "project-1",
+    organizationId: "org-1",
+    isBillingContextPending: false,
+    isLoadingProjects: false,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    window.history.replaceState({}, "", "/servers");
+    mockEnabledFlags.clear();
+    mockEnabledFlags.add("plugin-extensions-enabled");
+    mockIsAuthenticated = true;
+    mockViewProjectServers = [{ _id: "srv_1", name: "test-server" }];
+    mockUseQuery.mockImplementation(() => undefined);
+    mockUseProjectBillingGate.mockImplementation(() => ({
+      decision: null,
+      isLoading: false,
+      isDenied: false,
+      denialMessage: null,
+    }));
+    savePreviewedHostId("convex-project-1", "host_1");
+  });
+
+  afterAll(() => {
+    mockEnabledFlags.clear();
+    mockViewProjectServers = undefined;
+    mockPluginExtensionsAccess.mockImplementation(() => ({
+      enabled: false,
+      status: "skipped",
+    }));
+  });
+
+  it.each([
+    ["the backend refuses the person (a guest)", false, "ready", "none"],
+    ["the backend's answer is still loading", false, "loading", "none"],
+    ["the backend admits the project", true, "ready", "settings"],
+  ])(
+    "gives a server's details Settings only when %s",
+    (_case, enabled, status, expected) => {
+      mockPluginExtensionsAccess.mockImplementation(() => ({
+        enabled,
+        status,
+      }));
+      render(<ServersTab {...props} />);
+      fireEvent.click(screen.getByText("Open test-server"));
+      expect(screen.getByTestId("modal-settings-scope")).toHaveTextContent(
+        expected,
+      );
+      expect(mockPluginExtensionsAccess).toHaveBeenCalledWith({
+        flag: true,
+        isAuthenticated: true,
+        projectId: "convex-project-1",
+      });
+    },
+  );
 });

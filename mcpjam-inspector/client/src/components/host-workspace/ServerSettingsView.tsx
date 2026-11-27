@@ -1,4 +1,4 @@
-import type { ExtensionLaunchProfile, ExtensionLaunchObservation } from "@/lib/extension-launch-health";
+import type { ExtensionLaunchProfile } from "@/lib/extension-launch-health";
 import { useExtensionLaunchHealth } from "@/lib/use-extension-launch-health";
 import { useEffect, useLayoutEffect, useState, useRef } from "react";
 import { Button } from "@mcpjam/design-system/button";
@@ -26,7 +26,6 @@ export function ServerSettingsView({
   approve,
   host,
   launchProfile = "chatgpt",
-  launchObservation,
   onAppActiveChange,
 }: {
   scope: ThreadAppScope;
@@ -35,7 +34,6 @@ export function ServerSettingsView({
   approve: ApproveAppTool;
   host?: WidgetHost;
   launchProfile?: ExtensionLaunchProfile;
-  launchObservation?: ExtensionLaunchObservation;
   onAppActiveChange?: (active: boolean) => void;
 }) {
   const launchOwner = JSON.stringify([
@@ -45,9 +43,7 @@ export function ServerSettingsView({
     serverId,
   ]);
   const launchHealth = useExtensionLaunchHealth(launchOwner);
-  const launch =
-    launchObservation ??
-    launchHealth.begin("settings", "settings", launchProfile);
+  const launch = launchHealth.begin("settings", "settings", launchProfile);
   const approveRef = useRef(approve);
   approveRef.current = approve;
   const [app, setApp] = useState<{

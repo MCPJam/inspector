@@ -20,7 +20,11 @@ import {
   type ServerDetailControllerOptions,
 } from "../use-server-detail-controller";
 
-const settingsFixture = vi.hoisted(() => ({ available: false }));
+const settingsFixture = vi.hoisted(() => ({
+  available: false,
+  failed: false,
+  errorCode: undefined as string | undefined,
+}));
 const mockToastConnectionFailure = vi.hoisted(() => vi.fn());
 const mockToastError = vi.hoisted(() => vi.fn());
 const mockReportCaught = vi.hoisted(() => vi.fn());
@@ -29,7 +33,8 @@ const mockFetchServerSecrets = vi.hoisted(() => vi.fn());
 vi.mock("../../../host-workspace/use-server-settings", () => ({
   useServerSettingsAvailability: (scope: unknown) => ({
     available: !!scope && settingsFixture.available,
-    failed: false,
+    failed: !!scope && settingsFixture.failed,
+    errorCode: scope ? settingsFixture.errorCode : undefined,
     retry: vi.fn(),
   }),
 }));
@@ -117,6 +122,43 @@ describe("useServerDetailController", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     settingsFixture.available = false;
+    settingsFixture.failed = false;
+    settingsFixture.errorCode = undefined;
+  });
+
+  it.each([
+    ["the backend refused it", "SETTINGS_UNAVAILABLE"],
+    ["the request never got an answer", undefined],
+  ])(
+    "shows no Settings tab when the check failed because %s",
+    (_case, errorCode) => {
+      settingsFixture.failed = true;
+      settingsFixture.errorCode = errorCode;
+      const { controller } = renderController({
+        activeTab: "settings",
+        hostedServerId: "server_1",
+        extensionSettingsScope: SETTINGS_SCOPE,
+      });
+      expect(controller().tabs.showSettings).toBe(false);
+      expect(controller().tabs.visible.map((tab) => tab.id)).not.toContain(
+        "settings",
+      );
+      expect(controller().settings.showBody).toBe(false);
+    },
+  );
+
+  it("keeps the Settings tab when the server declares its settings wrong", () => {
+    settingsFixture.failed = true;
+    settingsFixture.errorCode = "PLUGIN_SETTINGS_OUTPUT_SCHEMA_REQUIRED";
+    const { controller } = renderController({
+      activeTab: "settings",
+      hostedServerId: "server_1",
+      extensionSettingsScope: SETTINGS_SCOPE,
+    });
+    expect(controller().tabs.visible.map((tab) => tab.id)).toContain(
+      "settings",
+    );
+    expect(controller().settings.showBody).toBe(true);
   });
 
   it("opens on Config and mounts Settings only once that tab is chosen", () => {

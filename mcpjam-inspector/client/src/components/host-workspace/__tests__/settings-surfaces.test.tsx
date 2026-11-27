@@ -36,6 +36,7 @@ vi.mock("../../elicitation/HostedMrtrHost", () => ({
 import { ServerSettingsPanel } from "../ServerSettingsPanel";
 import { useServerSettingsAvailability } from "../use-server-settings";
 import { useWorkspaceSettings } from "../use-workspace-settings";
+import { useTrafficLogStore } from "@/stores/traffic-log-store";
 const scope = {
   projectId: "project",
   hostId: "host",
@@ -93,6 +94,7 @@ describe("shared settings surfaces", () => {
     expect(f.discover.mock.calls[0][1].aborted).toBe(true);
   });
   it("retains the discovery error description for the settings surface", async () => {
+    useTrafficLogStore.getState().clear();
     const { PluginSettingsRequestError } = await import("@/shared/plugin-settings");
     f.discover.mockRejectedValueOnce(
       new PluginSettingsRequestError("PLUGIN_SETTINGS_OUTPUT_SCHEMA_REQUIRED", false),
@@ -100,6 +102,18 @@ describe("shared settings surfaces", () => {
     const view = renderHook(() => useServerSettingsAvailability(scope, "server"));
     await waitFor(() => expect(view.result.current.failed).toBe(true));
     expect(view.result.current.errorMessage).toContain("settings tools need an outputSchema");
+    expect(view.result.current.errorCode).toBe(
+      "PLUGIN_SETTINGS_OUTPUT_SCHEMA_REQUIRED",
+    );
+    expect(
+      useTrafficLogStore
+        .getState()
+        .mcpServerItems.filter(
+          (item) =>
+            item.method ===
+            "plugin-extensions/PLUGIN_SETTINGS_OUTPUT_SCHEMA_REQUIRED",
+        ),
+    ).toHaveLength(1);
     act(() => view.result.current.retry());
     await waitFor(() => expect(view.result.current.available).toBe(true));
     expect(view.result.current.errorMessage).toBeUndefined();
