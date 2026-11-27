@@ -37,6 +37,11 @@ import type {
 } from "../types.js";
 import { CHECK_ERAS } from "../types.js";
 import {
+  SERVER_INFO_META_KEY,
+  isWellFormedIdentity,
+  readServerIdentity,
+} from "../server-identity.js";
+import {
   blockedResult,
   errorMessage,
   eraSkipMessage,
@@ -714,32 +719,6 @@ function cacheableListMethods(capabilities: Record<string, unknown>): string[] {
   return methods;
 }
 
-/**
- * Where a 2026 server states its identity.
- *
- * `DiscoverResult` has no `serverInfo` member — the 2026 encode seam stamps
- * identity into `_meta` on EVERY result instead (spec PR #3002), so demanding
- * a top-level `serverInfo` here failed every spec-correct server, including
- * ones built on the official server SDK. The top-level read is kept as a
- * lenient fallback: a server that also mirrors it there is not wrong, and a
- * conformance check should not punish the more informative answer.
- */
-const SERVER_INFO_META_KEY = "io.modelcontextprotocol/serverInfo";
-
-function readServerIdentity(
-  payload: Record<string, unknown>
-): Record<string, unknown> | undefined {
-  const meta = payload._meta as Record<string, unknown> | undefined;
-  const stamped = meta?.[SERVER_INFO_META_KEY];
-  if (stamped !== null && typeof stamped === "object") {
-    return stamped as Record<string, unknown>;
-  }
-  const topLevel = payload.serverInfo;
-  return topLevel !== null && typeof topLevel === "object"
-    ? (topLevel as Record<string, unknown>)
-    : undefined;
-}
-
 async function runServerDiscoverCheck(
   ctx: RawHttpCheckContext,
   state: ModernRunState
@@ -781,11 +760,7 @@ async function runServerDiscoverCheck(
   }
   // Identity is a SHOULD (spec PR #3002), not a member of the result: a
   // present-but-malformed stamp is a real defect, an absent one is not.
-  if (
-    serverInfo !== undefined &&
-    (typeof serverInfo.name !== "string" ||
-      typeof serverInfo.version !== "string")
-  ) {
+  if (serverInfo !== undefined && !isWellFormedIdentity(serverInfo)) {
     problems.push(
       `${SERVER_INFO_META_KEY} must carry a string name and a string version`
     );

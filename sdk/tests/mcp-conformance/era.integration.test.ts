@@ -379,7 +379,9 @@ describe.each([undefined, "2026-07-28"] as const)("handshake selection %s", (pro
     ["input_required", true, "failed"],
     ["complete", true, "passed"],
     [undefined, true, "passed"],
-    ["complete", false, "failed"],
+    // No identity: `io.modelcontextprotocol/serverInfo` is a SHOULD and an
+    // optional field on 2026-07-28, so the handshake is still complete.
+    ["complete", false, "passed"],
   ] as const)("checks discovery type %s with identity %s", async (resultType, identity, status) => {
     const handler = createFixtureHandler();
     let discoveries = 0;

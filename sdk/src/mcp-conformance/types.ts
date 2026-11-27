@@ -491,6 +491,10 @@ export const MCP_READINESS_IDS = [
   // the header as protocol version 2025-03-26". Tolerating the omission is
   // therefore spec-legal, so it can only be advice.
   "readiness-protocol-version-header-required",
+  // 2026-07-28: "Servers SHOULD include [io.modelcontextprotocol/serverInfo]
+  // in every result's `_meta`, unless specifically configured not to do so".
+  // The field is optional, so a server without it can only be advised.
+  "readiness-server-identity",
   // The core "Tool Names" rules (1–128 characters, a fixed character set,
   // unique within a server) are SHOULDs from 2025-11-25 on. Informational
   // until advice has a grading rubric.
@@ -547,6 +551,9 @@ export const READINESS_ERAS: Record<MCPReadinessId, MCPCheckEras> = {
   "readiness-deprecated-feature-use": ["legacy", "modern"],
   "readiness-session-termination": ["legacy", "modern"],
   "readiness-protocol-version-header-required": ["modern"],
+  // The 2025 revisions carry `serverInfo` in `InitializeResult`, as a
+  // required member: there it is a check's business, not advice.
+  "readiness-server-identity": ["modern"],
   // Legacy: only when the server negotiates 2025-11-25.
   "readiness-tool-name-conventions": ["legacy", "modern"],
   "readiness-log-level-filtering": ["modern"],
