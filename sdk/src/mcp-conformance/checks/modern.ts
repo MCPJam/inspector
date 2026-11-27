@@ -43,6 +43,7 @@ import type {
 import { CHECK_ERAS } from "../types.js";
 import { gradeToolOutputSchemas } from "./tool-output-schema.js";
 import { runLegacyToolOutputSchemaCheck } from "./legacy-tool-output-schema.js";
+import { readUnsupportedVersionData } from "./unsupported-version-data.js";
 import {
   SERVER_INFO_META_KEY,
   isWellFormedIdentity,
@@ -258,7 +259,7 @@ const MODERN_CHECK_METADATA = {
     category: "protocol",
     title: "Unsupported Envelope Version",
     description:
-      "An unsupported envelope protocol version is rejected with JSON-RPC -32022 naming the supported versions.",
+      "An unsupported envelope protocol version is rejected with HTTP 400 and JSON-RPC -32022, whose data names the supported versions and the requested one.",
   },
   "modern-undeclared-capability-error": {
     id: "modern-undeclared-capability-error",
@@ -1494,21 +1495,15 @@ async function runUnsupportedVersionCheck(
     code: UNSUPPORTED_PROTOCOL_VERSION,
   });
 
-  const data = error?.data as Record<string, unknown> | undefined;
-  const supported = data?.supported ?? data?.supportedVersions;
-  if (
-    !Array.isArray(supported) ||
-    supported.length === 0 ||
-    supported.some((version) => typeof version !== "string")
-  ) {
-    problems.push(
-      "error data must name the supported protocol versions as a non-empty array of strings"
-    );
-  }
+  // The schema requires both `data.supported` and `data.requested`. Without
+  // an error object there is no data to read, and that is already a problem.
+  const data = error ? readUnsupportedVersionData(error.data) : undefined;
+  problems.push(...(data?.problems ?? []));
 
   const details = {
     ...rejectionDetails(result, error),
-    supportedVersions: supported,
+    supportedVersions: data?.supported,
+    requestedVersion: data?.requested,
   };
 
   return problems.length > 0
