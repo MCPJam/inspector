@@ -7,6 +7,7 @@ import {
 import { waitForPluginOperation } from "@/shared/plugin-operation";
 import type { ThreadAppScope } from "./thread-app-api";
 import { probePluginMention, searchPluginMentions } from "./mention-search";
+import { withoutSent } from "../chat-v2/composer-sent";
 import { createThreadAppApi } from "./thread-app-api";
 import type {
   MentionComposer,
@@ -65,7 +66,16 @@ export function useComposerMentions(
       ),
     [key],
   );
-  const clear = useCallback(() => setDraft({ key, selections: [] }), [key]);
+  // After a send: mentions picked while it prepared stay for the next one.
+  const discard = useCallback(
+    (sent: readonly PluginMentionSelection[]) =>
+      setDraft((old) =>
+        old.key === key
+          ? { key, selections: withoutSent(old.selections, sent) }
+          : old,
+      ),
+    [key],
+  );
   const mentions: MentionComposer | undefined = useMemo(() => {
     if (!scope) return undefined;
     const workspaceId = scope.pluginWorkspace.workspaceId;
@@ -229,5 +239,5 @@ export function useComposerMentions(
       };
     },
   );
-  return { mentions, contextAttachments, selections, clear };
+  return { mentions, contextAttachments, selections, discard };
 }

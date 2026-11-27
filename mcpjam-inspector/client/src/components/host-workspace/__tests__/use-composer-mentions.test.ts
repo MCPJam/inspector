@@ -1,4 +1,4 @@
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock("@/lib/session-token", () => ({ authFetch: state.fetch }));
@@ -165,6 +165,34 @@ describe("composer mentions", () => {
       },
       // A plain MCP server has no plugin icons.
       { serverId: "plain", name: "Plain Server" },
+    ]);
+  });
+
+  it("discards only the mentions a send carried", () => {
+    const { result } = renderHook(() =>
+      useComposerMentions(
+        scope,
+        servers,
+        vi.fn(async () => true),
+      ),
+    );
+    const pick = (title: string) => ({
+      serverId: "bits",
+      toolName: "find_parts",
+      item: {
+        type: "resource" as const,
+        resourceUri: `fixture://${title}`,
+        title,
+      },
+    });
+    act(() => result.current.mentions!.select(pick("sent")));
+    const sent = result.current.selections;
+    act(() => result.current.mentions!.select(pick("added")));
+
+    act(() => result.current.discard(sent));
+
+    expect(result.current.selections.map((s) => s.item.title)).toEqual([
+      "added",
     ]);
   });
 

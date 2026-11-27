@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, type Dispatch, type SetStateAction } from "react";
 import { useMrtrElicitationStore } from "@/stores/mrtr-elicitation-store";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -2391,10 +2391,19 @@ describe("PlaygroundMain", () => {
       );
     });
 
+    type Items = { id: string }[];
     const composerProps = () =>
       mockChatInputProps.mock.calls.at(-1)?.[0] as {
         value: string;
         isSubmitting?: boolean;
+        onChange: (text: string) => void;
+        onSubmit: (e: { preventDefault: () => void }) => Promise<void>;
+        fileAttachments: Items;
+        mcpPromptResults: Items;
+        skillResults: Items;
+        onChangeFileAttachments: Dispatch<SetStateAction<unknown[]>>;
+        onChangeMcpPromptResults: Dispatch<SetStateAction<unknown[]>>;
+        onChangeSkillResults: Dispatch<SetStateAction<unknown[]>>;
       };
 
     async function openSavedThread() {
@@ -2456,6 +2465,282 @@ describe("PlaygroundMain", () => {
         rendersBeforeRelease,
       )) {
         expect(props.isSubmitting === false && props.value !== "").toBe(false);
+      }
+    });
+
+    it.each([
+      ["text added after the sent text", "first plus more", "plus more"],
+      ["an edited draft", "frist", "frist"],
+      ["a continued last word", "firstly", "firstly"],
+      ["nothing when the box was left alone", "first", ""],
+    ])(
+      "leaves %s in the box once the send goes out",
+      async (_case, typed, left) => {
+        await openSavedThread();
+        const releaseSync = holdPreSendSync();
+        fireEvent.change(screen.getByTestId("chat-input-field"), {
+          target: { value: "first" },
+        });
+        await act(async () => {
+          fireEvent.submit(screen.getByTestId("chat-input"));
+        });
+        fireEvent.change(screen.getByTestId("chat-input-field"), {
+          target: { value: typed },
+        });
+
+        await act(async () => releaseSync());
+
+        await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+        expect(sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ text: "first" }),
+        );
+        await waitFor(() => expect(composerProps().isSubmitting).toBe(false));
+        expect(composerProps().value).toBe(left);
+      },
+    );
+
+    const typeAndSubmit = async (text: string) => {
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: text },
+      });
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+    };
+
+    it("keeps files, prompts and skills added while the send prepares", async () => {
+      const revoke = vi
+        .spyOn(URL, "revokeObjectURL")
+        .mockImplementation(() => {});
+      const add = (id: string) =>
+        act(() => {
+          composerProps().onChangeFileAttachments((c) => [
+            ...c,
+            {
+              id,
+              file: new File(["x"], `${id}.png`, { type: "image/png" }),
+              previewUrl: `blob:${id}`,
+            },
+          ]);
+          composerProps().onChangeMcpPromptResults((c) => [
+            ...c,
+            {
+              id,
+              name: id,
+              namespacedName: `s/${id}`,
+              serverId: "s",
+              result: {},
+            },
+          ]);
+          composerProps().onChangeSkillResults((c) => [
+            ...c,
+            { id, skillId: id, name: id, content: "body" },
+          ]);
+        });
+      const ids = (
+        key: "fileAttachments" | "mcpPromptResults" | "skillResults",
+      ) => composerProps()[key].map((item) => item.id);
+      try {
+        await openSavedThread();
+        const releaseSync = holdPreSendSync();
+        add("sent");
+        await typeAndSubmit("first");
+        add("added");
+
+        await act(async () => releaseSync());
+
+        await waitFor(() => expect(composerProps().isSubmitting).toBe(false));
+        expect(sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            files: [expect.objectContaining({ filename: "sent.png" })],
+          }),
+        );
+        expect(ids("fileAttachments")).toEqual(["added"]);
+        expect(ids("mcpPromptResults")).toEqual(["added"]);
+        expect(ids("skillResults")).toEqual(["added"]);
+        expect(revoke).toHaveBeenCalledWith("blob:sent");
+        expect(revoke).not.toHaveBeenCalledWith("blob:added");
+
+        // The kept image is released once it is sent.
+        await typeAndSubmit("second");
+        await waitFor(() => expect(revoke).toHaveBeenCalledWith("blob:added"));
+      } finally {
+        revoke.mockRestore();
+      }
+    });
+
+    it("keeps text typed in the fullscreen composer while its send prepares", async () => {
+      const deviceType = mockUIPlaygroundStore.deviceType;
+      mockUIPlaygroundStore.deviceType = "fill";
+      useHostContextStore.setState({
+        draftHostContext: { displayMode: "fullscreen" },
+      });
+      try {
+        const { rerender } = await openSavedThread();
+        await act(async () => {
+          rerender(<PlaygroundMain {...defaultProps} />);
+        });
+        await act(async () => {
+          mockThread.mock.calls.at(-1)?.[0].onFullscreenChange(true);
+        });
+        const overlay = () =>
+          mockFullscreenChatOverlay.mock.calls.at(-1)?.[0] as {
+            onSend: () => void;
+            input?: string;
+            isSubmitting?: boolean;
+          };
+        const type = (value: string) =>
+          fireEvent.change(screen.getByTestId("fullscreen-overlay-input"), {
+            target: { value },
+          });
+        const releaseSync = holdPreSendSync();
+        type("first");
+        await act(async () => overlay().onSend());
+        type("first plus more");
+
+        await act(async () => releaseSync());
+
+        await waitFor(() => expect(overlay().isSubmitting).toBe(false));
+        expect(sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ text: "first" }),
+        );
+        expect(overlay().input).toBe("plus more");
+      } finally {
+        mockUIPlaygroundStore.deviceType = deviceType;
+      }
+    });
+
+    it("keeps text typed while a compare send converts its attachment", async () => {
+      mockUseChatSession.messages = [];
+      mockUseChatSession.availableModels = [
+        { id: "openai/gpt-5-mini", name: "Mini", provider: "openai" },
+        {
+          id: "anthropic/claude-sonnet-4.5",
+          name: "Sonnet",
+          provider: "anthropic",
+        },
+      ];
+      mockUseChatSession.multiModelEnabled = true;
+      const read = FileReader.prototype.readAsDataURL;
+      const held: Array<() => void> = [];
+      const hold = vi
+        .spyOn(FileReader.prototype, "readAsDataURL")
+        .mockImplementation(function (this: FileReader, blob: Blob) {
+          held.push(() => read.call(this, blob));
+        });
+      try {
+        render(<PlaygroundMain {...defaultProps} enableMultiModelChat />);
+        await act(async () => {
+          composerProps().onChangeFileAttachments([
+            { id: "f1", file: new File(["x"], "a.png", { type: "image/png" }) },
+          ]);
+          composerProps().onChange("first");
+        });
+        let submitted!: Promise<void>;
+        await act(async () => {
+          submitted = composerProps().onSubmit({ preventDefault() {} });
+        });
+        await waitFor(() => expect(held).toHaveLength(1));
+        await act(async () => composerProps().onChange("first plus more"));
+
+        await act(async () => {
+          held.forEach((release) => release());
+          await submitted;
+        });
+
+        await waitFor(() =>
+          expect(
+            mockMultiModelPlaygroundCard.mock.calls.at(-1)?.[0].broadcastRequest
+              ?.text,
+          ).toBe("first"),
+        );
+        expect(composerProps().value).toBe("plus more");
+      } finally {
+        hold.mockRestore();
+        mockUseChatSession.availableModels = [];
+        mockUseChatSession.multiModelEnabled = false;
+      }
+    });
+
+    it("keeps text typed while a starter prompt's send prepares", async () => {
+      mockUseChatSession.messages = [];
+      let dispatch!: (sent: boolean) => void;
+      sendMessage.mockImplementation(
+        () => new Promise<boolean>((done) => (dispatch = done)),
+      );
+      render(<PlaygroundMain {...defaultProps} />);
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+      });
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "typed meanwhile" },
+      });
+
+      await act(async () => dispatch(true));
+
+      expect(sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "Starter chip prompt" }),
+      );
+      expect(composerProps().value).toBe("typed meanwhile");
+    });
+
+    const thread = () =>
+      mockThread.mock.calls.at(-1)?.[0] as {
+        onModelContextUpdate: (
+          toolCallId: string,
+          context: { structuredContent: Record<string, unknown> },
+        ) => void;
+      };
+    const addContext = (toolCallId: string) =>
+      act(() =>
+        thread().onModelContextUpdate(toolCallId, {
+          structuredContent: { toolCallId },
+        }),
+      );
+    const sentContexts = () =>
+      sendMessage.mock.calls.map(([options]) =>
+        options.widgetModelContext.map(
+          (entry: { toolCallId: string }) => entry.toolCallId,
+        ),
+      );
+
+    it("keeps App context added while the send prepares", async () => {
+      await openSavedThread();
+      addContext("call_sent");
+      const releaseSync = holdPreSendSync();
+      await typeAndSubmit("first");
+      addContext("call_added");
+
+      await act(async () => releaseSync());
+      await waitFor(() => expect(composerProps().isSubmitting).toBe(false));
+      await typeAndSubmit("second");
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
+      expect(sentContexts()).toEqual([["call_sent"], ["call_added"]]);
+    });
+
+    it("keeps App context added while an 'Ask agent to run' send prepares", async () => {
+      await openSavedThread();
+      mockGetChatHistoryState.mockResolvedValue(detail);
+      let dispatch!: (sent: boolean) => void;
+      sendMessage.mockImplementationOnce(
+        () => new Promise<boolean>((done) => (dispatch = done)),
+      );
+      addContext("call_sent");
+      try {
+        await act(async () => {
+          useAgentToolPromptBridge.getState().requestRun("Run read_file");
+        });
+        await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+        addContext("call_added");
+        await act(async () => dispatch(true));
+        await typeAndSubmit("next");
+
+        await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
+        expect(sentContexts()).toEqual([["call_sent"], ["call_added"]]);
+      } finally {
+        useAgentToolPromptBridge.setState({ pending: null });
       }
     });
 

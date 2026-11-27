@@ -118,8 +118,14 @@ vi.mock("../chat-input/prompts/mcp-prompt-result-card", () => ({
   ),
 }));
 
+const skillCards = vi.hoisted(() => ({
+  props: {} as Record<string, Record<string, any>>,
+}));
 vi.mock("../chat-input/skills/skill-result-card", () => ({
-  SkillResultCard: () => <div data-testid="skill-result-card">Skill Card</div>,
+  SkillResultCard: (props: Record<string, any>) => {
+    skillCards.props[props.skillResult.name] = props;
+    return <div data-testid="skill-result-card">Skill Card</div>;
+  },
 }));
 
 vi.mock("../chat-input/attachments/file-attachment-card", () => ({
@@ -2170,6 +2176,181 @@ describe("ChatInput", () => {
         screen.getByRole("button", { name: "Remove all Parts context" })
       );
       expect(removeAll).toHaveBeenCalledTimes(1);
+    });
+  });
+  describe("a pick that resolves after a send", () => {
+    // The popover and the skill card call back after their fetch, with the
+    // callback from the render where it started. A send can clear the
+    // composer in between.
+    const item = (name: string) => ({ name });
+    const renderLate = (overrides: Record<string, unknown>, caret?: number) => {
+      const onChange = vi.fn();
+      const props = { ...defaultProps, onChange, ...overrides };
+      const view = render(<ChatInput {...props} />);
+      // The picker opened at the "/" the user just typed.
+      const field = screen.getByPlaceholderText(
+        "Type your message...",
+      ) as HTMLTextAreaElement;
+      const at = caret ?? props.value.length;
+      field.setSelectionRange(at, at);
+      fireEvent.keyUp(field);
+      return {
+        onChange,
+        rerender: (next: Record<string, unknown>) =>
+          view.rerender(<ChatInput {...props} {...next} />),
+      };
+    };
+
+    it.each([
+      [
+        "prompt",
+        "onPromptSelected",
+        "mcpPromptResults",
+        "onChangeMcpPromptResults",
+      ],
+      ["skill", "onSkillSelected", "skillResults", "onChangeSkillResults"],
+    ])(
+      "adds a %s to what the composer holds when its fetch finishes",
+      (_kind, pick, list, onList) => {
+        const setList = vi.fn();
+        const { onChange, rerender } = renderLate({
+          value: "first /",
+          [list]: [item("sent")],
+          [onList]: setList,
+        });
+        const pickLater = promptsPopover.props![pick];
+
+        rerender({ value: "/", [list]: [item("added")] });
+        act(() => pickLater(item("picked")));
+
+        const update = setList.mock.calls.at(-1)![0];
+        expect(update([item("added")])).toEqual([
+          item("added"),
+          item("picked"),
+        ]);
+        expect(onChange).toHaveBeenLastCalledWith("");
+      },
+    );
+
+    it("removes the slash from the middle of a draft a send shortened", () => {
+      const { onChange, rerender } = renderLate({ value: "first / tail" }, 8);
+      const pickLater = promptsPopover.props!.onSkillSelected;
+
+      rerender({ value: "/ tail" });
+      act(() => pickLater(item("picked")));
+
+      expect(onChange).toHaveBeenLastCalledWith("tail");
+    });
+
+    it("leaves a slash the user typed after clearing the draft", () => {
+      const { onChange, rerender } = renderLate({ value: "first /" });
+      const pickLater = promptsPopover.props!.onSkillSelected;
+      const field = screen.getByPlaceholderText("Type your message...");
+
+      fireEvent.change(field, { target: { value: "/" } });
+      rerender({ value: "/" });
+      onChange.mockClear();
+      act(() => pickLater(item("picked")));
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("leaves a slash recalled from history alone when the pick lands", () => {
+      const { onChange, rerender } = renderLate({
+        value: "first /",
+        inputHistory: ["/"],
+      });
+      const pickLater = promptsPopover.props!.onSkillSelected;
+      const field = screen.getByPlaceholderText(
+        "Type your message...",
+      ) as HTMLTextAreaElement;
+
+      field.setSelectionRange(0, 0);
+      fireEvent.keyDown(field, { key: "ArrowUp" });
+      expect(onChange).toHaveBeenLastCalledWith("/");
+      rerender({ value: "/" });
+      onChange.mockClear();
+      act(() => pickLater(item("picked")));
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("removes the slash of a pick that starts after a send shortened the typed draft", () => {
+      const { onChange, rerender } = renderLate({ value: "first" });
+      const field = screen.getByPlaceholderText(
+        "Type your message...",
+      ) as HTMLTextAreaElement;
+
+      // Typed while the send of "first" prepares; the send then trims it.
+      fireEvent.change(field, { target: { value: "first /" } });
+      rerender({ value: "first /" });
+      rerender({ value: "/" });
+      field.setSelectionRange(1, 1);
+      fireEvent.keyUp(field);
+      const pickLater = promptsPopover.props!.onSkillSelected;
+      onChange.mockClear();
+      act(() => pickLater(item("picked")));
+
+      expect(onChange).toHaveBeenLastCalledWith("");
+    });
+
+    it("leaves the box alone when the user wrote during the pick and a send trimmed it back", () => {
+      const { onChange, rerender } = renderLate({ value: "first /" });
+      const pickLater = promptsPopover.props!.onSkillSelected;
+      const field = screen.getByPlaceholderText("Type your message...");
+
+      fireEvent.change(field, { target: { value: "first first /" } });
+      rerender({ value: "first first /" });
+      rerender({ value: "first /" });
+      onChange.mockClear();
+      act(() => pickLater(item("picked")));
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("leaves a slash the user deleted and typed again", () => {
+      const { onChange, rerender } = renderLate({ value: "first /" });
+      const pickLater = promptsPopover.props!.onSkillSelected;
+      const field = screen.getByPlaceholderText("Type your message...");
+
+      fireEvent.change(field, { target: { value: "" } });
+      rerender({ value: "" });
+      fireEvent.change(field, { target: { value: "first /" } });
+      rerender({ value: "first /" });
+      onChange.mockClear();
+      act(() => pickLater(item("picked")));
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["a different draft", "https://example.com/path/"],
+      ["a box the send emptied with its slash", ""],
+    ])("leaves %s alone when the pick lands", (_case, draft) => {
+      const { onChange, rerender } = renderLate({ value: "first /" });
+      const pickLater = promptsPopover.props!.onSkillSelected;
+
+      rerender({ value: draft });
+      act(() => pickLater(item("picked")));
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("updates a skill whose files load after other skills were added", () => {
+      const setList = vi.fn();
+      const sent = item("sent");
+      const { rerender } = renderLate({
+        skillResults: [sent],
+        onChangeSkillResults: setList,
+      });
+      const updateLater = skillCards.props.sent!.onUpdate;
+      const added = item("added");
+
+      rerender({ skillResults: [sent, added] });
+      act(() => updateLater(item("sent with files")));
+
+      const update = setList.mock.calls.at(-1)![0];
+      expect(update([sent, added])).toEqual([item("sent with files"), added]);
     });
   });
 });

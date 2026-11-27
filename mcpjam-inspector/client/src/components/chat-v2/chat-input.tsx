@@ -29,10 +29,12 @@ import type { SkillsSource } from "@/lib/apis/mcp-skills-api";
 import type {
   ChangeEvent,
   ClipboardEvent,
+  Dispatch,
   DragEvent,
   FormEvent,
   KeyboardEvent,
   ReactNode,
+  SetStateAction,
 } from "react";
 import { cn } from "@/lib/chat-utils";
 import { track } from "@/lib/analytics";
@@ -387,9 +389,9 @@ interface ChatInputProps {
   systemPromptTokenCount?: number | null;
   systemPromptTokenCountLoading?: boolean;
   mcpPromptResults: MCPPromptResult[];
-  onChangeMcpPromptResults: (mcpPromptResults: MCPPromptResult[]) => void;
+  onChangeMcpPromptResults: Dispatch<SetStateAction<MCPPromptResult[]>>;
   skillResults: SkillResult[];
-  onChangeSkillResults: (skillResults: SkillResult[]) => void;
+  onChangeSkillResults: Dispatch<SetStateAction<SkillResult[]>>;
   /** File attachments for the message */
   fileAttachments?: FileAttachment[];
   /** Callback when file attachments change */
@@ -658,6 +660,18 @@ export function ChatInput({
   const transcriptionAbortRef = useRef<TranscriptionAbortState | null>(null);
   const mountedRef = useRef(true);
   const valueRef = useRef(value);
+  // The user's writes to the draft; a send's own trim is not one. A pick
+  // compares the count from its render with the latest.
+  const [writes, setWrites] = useState(0);
+  const writesRef = useRef(0);
+  const change = useCallback(
+    (next: string) => {
+      writesRef.current += 1;
+      setWrites(writesRef.current);
+      onChange(next);
+    },
+    [onChange],
+  );
   const [caretIndex, setCaretIndex] = useState(0);
   // Extension forms for this chat take the composer's place. The draft and
   // every composer control stay mounted (hidden) underneath and come back
@@ -719,7 +733,7 @@ export function ChatInput({
   const pickMentionPlugin = (plugin: MentionPlugin, token: MentionToken) => {
     if (!mentions) return;
     // The typed "@query" collapses to the plugin's "@" anchor.
-    onChange(value.slice(0, token.start) + "@" + value.slice(token.end));
+    change(value.slice(0, token.start) + "@" + value.slice(token.end));
     const caret = token.start + 1;
     setCaretIndex(caret);
     setMentionScope({ plugin, anchor: token.start, composer: mentions.scope });
@@ -865,19 +879,25 @@ export function ChatInput({
     setCaretIndex(end);
   }, [moveCaretToEndTrigger]);
 
+  // Remove the "/" that opened the picker. A pick lands after its fetch: a
+  // send may have cleared the text before it, so the box ends with the
+  // click's text. A user edit or any other change leaves the box as it is.
+  const removeSlashTrigger = useCallback(() => {
+    const current = valueRef.current;
+    const trigger = value.slice(0, caretIndex).match(/\/\s*$/);
+    const end = current.length - (value.length - caretIndex);
+    const start = end - (trigger?.[0].length ?? 0);
+    const edited = writesRef.current !== writes;
+    if (!trigger || edited || !value.endsWith(current) || start < 0) return;
+    onChange(current.slice(0, start) + current.slice(end));
+  }, [value, caretIndex, writes, onChange]);
+
   const onMCPPromptSelected = useCallback(
     (mcpPromptResult: MCPPromptResult) => {
-      // Add the prompt result to the mcpPromptResults state
-      onChangeMcpPromptResults([...mcpPromptResults, mcpPromptResult]);
-
-      // Remove the "/" that triggered the popover
-      const textBeforeCaret = value.slice(0, caretIndex);
-      const textAfterCaret = value.slice(caretIndex);
-      const cleanedBefore = textBeforeCaret.replace(/\/\s*$/, "");
-      const newValue = cleanedBefore + textAfterCaret;
-      onChange(newValue);
+      onChangeMcpPromptResults((current) => [...current, mcpPromptResult]);
+      removeSlashTrigger();
     },
-    [value, caretIndex, onChange, mcpPromptResults, onChangeMcpPromptResults],
+    [onChangeMcpPromptResults, removeSlashTrigger],
   );
 
   const removeMCPPromptResult = (index: number) => {
@@ -1037,7 +1057,7 @@ export function ChatInput({
       const nextValue = mergeTranscriptIntoDraft(valueRef.current, transcript);
       if (nextValue === valueRef.current) return;
 
-      onChange(nextValue);
+      change(nextValue);
       valueRef.current = nextValue;
 
       requestAnimationFrame(() => {
@@ -1049,7 +1069,7 @@ export function ChatInput({
         setCaretIndex(end);
       });
     },
-    [onChange],
+    [change],
   );
 
   const transcribeAudio = useCallback(
@@ -1435,17 +1455,10 @@ export function ChatInput({
 
   const onSkillSelected = useCallback(
     (skillResult: SkillResult) => {
-      // Add the skill result to the skillResults state
-      onChangeSkillResults([...skillResults, skillResult]);
-
-      // Remove the "/" that triggered the popover
-      const textBeforeCaret = value.slice(0, caretIndex);
-      const textAfterCaret = value.slice(caretIndex);
-      const cleanedBefore = textBeforeCaret.replace(/\/\s*$/, "");
-      const newValue = cleanedBefore + textAfterCaret;
-      onChange(newValue);
+      onChangeSkillResults((current) => [...current, skillResult]);
+      removeSlashTrigger();
     },
-    [value, caretIndex, onChange, skillResults, onChangeSkillResults],
+    [onChangeSkillResults, removeSlashTrigger],
   );
 
   const removeSkillResult = (index: number) => {
@@ -1517,7 +1530,7 @@ export function ChatInput({
           event.preventDefault();
           historyNavigationRef.current = next.navigation;
           if (next.value !== value) {
-            onChange(next.value);
+            change(next.value);
             // Land the caret at the end of the recalled text, where a terminal
             // leaves it — the next thing anyone does is keep typing. After the
             // controlled re-render, hence the frame.
@@ -1606,11 +1619,13 @@ export function ChatInput({
               skillResult={skillResult}
               skillsSource={skillsSource}
               onRemove={() => removeSkillResult(index)}
-              onUpdate={(updatedSkill) => {
-                const newSkillResults = [...skillResults];
-                newSkillResults[index] = updatedSkill;
-                onChangeSkillResults(newSkillResults);
-              }}
+              onUpdate={(updatedSkill) =>
+                onChangeSkillResults((current) =>
+                  current.map((skill) =>
+                    skill === skillResult ? updatedSkill : skill,
+                  ),
+                )
+              }
             />
           ))}
         </div>
@@ -1745,7 +1760,7 @@ export function ChatInput({
                       select: (selection, range) => {
                         mentions.select(selection, range);
                         setMentionScope(null);
-                        onChange(
+                        change(
                           value.slice(0, range.start) + value.slice(range.end),
                         );
                         setCaretIndex(range.start);
@@ -1882,7 +1897,7 @@ export function ChatInput({
             value={textareaDisplayValue}
             onChange={(e) => {
               if (voiceInputState !== "idle") return;
-              onChange(e.target.value);
+              change(e.target.value);
               setCaretIndex(e.target.selectionStart);
             }}
             onPaste={handlePaste}
