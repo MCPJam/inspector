@@ -17,9 +17,9 @@ export function libraryPauseMessages(
   if (goalOff) {
     return {
       questions:
-        "Decision questions run on the iterations the goal-completion judge grades, so they are paused while that judge is off.",
+        "Decision questions are paused while the goal-completion judge is off. Turn it on to run them.",
       judges:
-        "Custom judges run on the iterations the goal-completion judge grades, so they are paused while that judge is off.",
+        "Custom judges are paused while the goal-completion judge is off. Turn it on to run them.",
     };
   }
   return {

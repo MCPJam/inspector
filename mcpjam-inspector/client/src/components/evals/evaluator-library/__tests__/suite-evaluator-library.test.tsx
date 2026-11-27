@@ -379,7 +379,9 @@ describe("starting an evaluator from scratch", () => {
     open({ goalCompletion: { enabled: false } });
     click("Decision questions");
     expect(
-      screen.getByText(/Decision questions run on the iterations the goal-completion judge grades/),
+      screen.getByText(
+        "Decision questions are paused while the goal-completion judge is off. Turn it on to run them.",
+      ),
     ).toBeVisible();
     expect(screen.queryByText(/trials/)).not.toBeInTheDocument();
   });
