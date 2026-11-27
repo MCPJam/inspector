@@ -40,6 +40,7 @@ import swarmGenerate from "./swarm-generate.js";
 import { harnessForwardingApprovals } from "./harness-forwarding.js";
 import { harnessWidgets } from "./harness-widget.js";
 import { harnessMcp } from "./harness-mcp.js";
+import { createClaudeLiveSpikeRouter } from "./claude-live-spike.js";
 import apps from "./apps.js";
 import evals from "./evals.js";
 import environments from "./environments.js";
@@ -337,6 +338,8 @@ web.use("/harness-forwarding/*", bearerAuthMiddleware, denyGuests("Forwarding ap
 web.route("/harness-forwarding", harnessWidgets);
 web.route("/harness-forwarding", harnessForwardingApprovals);
 web.route("/harness-mcp", harnessMcp);
+// PLB-580 spike: answers 404 unless its environment is set. Never merged.
+web.route("/claude-live-spike", createClaudeLiveSpikeRouter());
 web.route("/mcpjam-agent", mcpjamAgent);
 web.route("/plugin-forms", pluginFormAnswers);
 web.route("/apps/plugin-instances", pluginInstances);

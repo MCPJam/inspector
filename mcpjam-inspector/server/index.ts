@@ -67,6 +67,7 @@ import {
   withScriptNonce,
 } from "./middleware/security-headers";
 import { indexingHeadersMiddleware } from "./middleware/indexing-headers";
+import { claudeLiveSpikeResponseCleanup } from "./routes/web/claude-live-spike";
 import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog";
 import {
   startRevokedSessionCache,
@@ -493,6 +494,9 @@ mountLocalSandboxViewHost(app);
 // stops after `initialize` when the app's own headers ride along, so this
 // answers before the global middleware too.
 mountInspectorWebConnectors(app);
+
+// PLB-580 spike: first registered, so it runs last on the way out.
+app.use("/api/web/claude-live-spike/*", claudeLiveSpikeResponseCleanup);
 
 // Middleware to inject client manager into context
 app.use("*", async (c, next) => {
