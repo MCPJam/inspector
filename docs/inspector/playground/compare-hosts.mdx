@@ -16,7 +16,7 @@ This tutorial picks up where [Chat and inspect tool calls](/inspector/playground
     Look at what the widget rendered in each pane and note any difference. In the example run¹, **Claude** and **Cursor** drew a filled light-blue rectangle, and **ChatGPT** drew an outline with small text. Your run may look the same in every pane, or differ in other ways.
   </Step>
   <Step title="Compare the tool arguments" id="compare-the-arguments">
-    If a pane shows only text, select **Trace** in that pane and check which tool the model called, if any. If the pane shows **No servers**, connect **Excalidraw (App)** and send the prompt again. If the server is connected but the model chose a different tool, note that difference; it is already a result. Compare widget inputs only in panes that called `create_view`.
+    If a pane shows only text, select **Trace** in that pane and check which tool the model called, if any. If the pane shows **No servers**, connect **Excalidraw (App)**. If it still shows **No servers**, open that pane's **Pane settings**, select **Excalidraw (App)** under **Servers for this chat**, and send the prompt again. If the server is connected but the model chose a different tool, note that difference; it is already a result. Compare widget inputs only in panes that called `create_view`.
 
     In each pane you want to compare, select **Edit input & output** and read **INPUT**. Each pane's model writes its own `create_view` call, so the inputs don't have to match.
 

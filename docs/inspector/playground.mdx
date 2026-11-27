@@ -17,7 +17,7 @@ Each prompt uses MCPJam credits, because MCPJam provides the models. If a guest 
   <Step title="Open the Playground" id="open-the-playground">
     In the sidebar, select **Playground**.
 
-    You see three panes side by side, one per client: **Claude**, **ChatGPT**, and **Cursor**. Each pane names its model and its number of servers. On the left, the **Tools** tab lists the server's five tools.
+    You see one pane per client, side by side. Signed out, the panes are **Claude**, **ChatGPT**, and **Cursor**; your project may start with other clients, and the steps work the same. Each pane names its model and its number of servers. On the left, the **Tools** tab lists the server's five tools.
 
     If the panes say **No servers**, the demo server isn't connected in this chat. In the left rail, select **Connect a server**, then select **Excalidraw (App)** in the list to connect it.
   </Step>
@@ -67,7 +67,7 @@ Each prompt uses MCPJam credits, because MCPJam provides the models. If a guest 
 
     The result appears in the chat as **Invoked read_me**, followed by the Excalidraw element reference the tool returns. `read_me` takes no input. **Input Schema** shows what a tool expects.
 
-    To run a tool that takes input, select it and open **Parameters**. There is one field per input. Required fields are marked **required**. To include an optional field, select its checkbox first. Objects and arrays take JSON. Fill in the fields, then select **Run**.
+    To run a tool that takes input, select it and open **Parameters**. There is one field per input. Required fields are marked **required**. Optional fields start with **skip** selected; clear **skip** to include one. Objects and arrays take JSON. Fill in the fields, then select **Run**.
   </Step>
   <Step title="Watch the JSON-RPC log" id="watch-the-json-rpc-log">
     The right rail shows the JSON-RPC log: every message between the Playground, your servers, and the widgets, newest first. Find the `tools/call` request for `read_me` and its result, then select an entry to see its payload.
