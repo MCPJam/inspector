@@ -15,8 +15,9 @@
  * append this run, write it back with `expectedVersion`. Runs of one trigger
  * are FIFO-serialized by the backend's claim, so a version conflict is rare;
  * it is retried once from a fresh read. The turn id is derived from the run
- * id, so a retried run that already landed is recognized as a duplicate
- * rather than appended twice.
+ * id, so a run that already landed (re-claimed after a lost lease) is found
+ * among the thread's turn traces and written nothing, rather than appended
+ * twice or moved onto the next run's prompt.
  *
  * Best effort by construction: a transcript that cannot be read is NOT
  * overwritten with a partial one, and nothing here can fail the run.
@@ -51,6 +52,8 @@ export interface PriorTranscript {
   messages: unknown[];
   version?: number;
   startedAt?: number;
+  /** The turn ids of the thread's turn traces: the runs already in it. */
+  turnIds?: string[];
 }
 
 export interface TranscriptPort {
@@ -83,6 +86,7 @@ async function loadFromBackend(args: {
   }
   const body = (await response.json()) as {
     session?: { messagesBlobUrl?: string | null; version?: number; startedAt?: number };
+    turnTraces?: Array<{ turnId?: unknown }>;
   };
   const parsed = await fetchJsonBlob(body.session?.messagesBlobUrl, {
     timeoutMs: BLOB_TIMEOUT_MS,
@@ -94,10 +98,14 @@ async function loadFromBackend(args: {
   if (!Array.isArray(messages)) {
     throw new Error("event run transcript blob could not be read");
   }
+  const turnIds = (Array.isArray(body.turnTraces) ? body.turnTraces : [])
+    .map((trace) => trace?.turnId)
+    .filter((turnId): turnId is string => typeof turnId === "string");
   return {
     messages,
     ...(typeof body.session?.version === "number" ? { version: body.session.version } : {}),
     ...(typeof body.session?.startedAt === "number" ? { startedAt: body.session.startedAt } : {}),
+    turnIds,
   };
 }
 
@@ -182,6 +190,15 @@ export async function persistEventRunTranscript(args: {
         error: error instanceof Error ? error.message : String(error),
       });
       return { chatSessionId, persisted: false };
+    }
+    // Already in the thread. Ingest would skip the transcript as a duplicate
+    // turn but still rewrite the trace row, with this run moved to the next
+    // prompt and its spans past its own messages, so write nothing.
+    if (prior?.turnIds?.includes(turnId)) {
+      logger.info("[events-executor] run already in its thread; transcript not rewritten", {
+        runId: args.runId,
+      });
+      return { chatSessionId, persisted: true };
     }
     // This run's prompt is the next one in the THREAD, not prompt 0 of a
     // fresh conversation (which is what the engine saw).
