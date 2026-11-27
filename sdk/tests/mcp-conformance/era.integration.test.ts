@@ -7,6 +7,7 @@ import {
   type MCPCheckId,
   type MCPCheckResult,
 } from "../../src/mcp-conformance/index.js";
+import { parseSseEvents } from "../../src/mcp-conformance/raw-capture.js";
 import {
   createFixtureHandler,
   type BuildFixtureServerOptions,
@@ -418,8 +419,14 @@ describe("Tool Input Schemas Valid", () => {
         const response = await handler.fetch(request);
         if (method !== "tools/list" || !inputSchema) return response;
 
-        const body = await response.json();
+        const isSse = response.headers.get("content-type")?.includes("text/event-stream");
+        const body = isSse
+          ? JSON.parse(parseSseEvents(await response.text()).find(({ data }) => data)?.data ?? "")
+          : await response.json();
         body.result.tools[0].inputSchema = inputSchema;
+        if (isSse) {
+          return new Response(`event: message\ndata: ${JSON.stringify(body)}\n\n`, response);
+        }
         return Response.json(body, { headers: response.headers });
       },
     }).run();
