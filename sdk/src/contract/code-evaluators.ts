@@ -14,6 +14,11 @@ import { z } from "zod";
 export const MAX_CODE_EVALUATORS = 10;
 /** Per script, in UTF-8 bytes. */
 export const MAX_CODE_SCRIPT_BYTES = 64 * 1024;
+/**
+ * Every evaluator and script body on a suite together. A write that sends
+ * only some of them is checked against the stored rest by the platform.
+ */
+export const MAX_CODE_SCRIPTS_TOTAL_BYTES = 256 * 1024;
 /** Paths a suite may copy into the grading box. */
 export const MAX_GRADING_FILES = 20;
 /** Declared files must live under the box user's home. */
@@ -103,6 +108,16 @@ export const codeEvaluatorsSchema = z
   .array(codeEvaluatorSchema)
   .max(MAX_CODE_EVALUATORS)
   .superRefine((evaluators, ctx) => {
+    const total = evaluators.reduce(
+      (sum, evaluator) => sum + utf8Bytes(evaluator.script),
+      0
+    );
+    if (total > MAX_CODE_SCRIPTS_TOTAL_BYTES) {
+      ctx.addIssue({
+        code: "custom",
+        message: `Code evaluators and scripts can total at most ${MAX_CODE_SCRIPTS_TOTAL_BYTES.toLocaleString("en-US")} bytes. These evaluators total ${total.toLocaleString("en-US")}.`,
+      });
+    }
     const ids = new Set<string>();
     evaluators.forEach((evaluator, index) => {
       if (ids.has(evaluator.id)) {
