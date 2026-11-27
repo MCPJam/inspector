@@ -327,21 +327,6 @@ import { http1Fetch } from "../http1-fetch.js";
  * in-band `RequestTimeout` (-32001), which is what `ClientRequestOptions.timeout`
  * actually raises and is therefore the one most likely to be hit.
  */
-/**
- * A request that ran out of time: the upstream client's `REQUEST_TIMEOUT`, the
- * in-band `RequestTimeout` (-32001), or a `TimeoutError`. Not a cancel, and
- * not a closed connection.
- */
-function isRequestTimeout(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  const { code, name } = error as { code?: unknown; name?: unknown };
-  return (
-    code === "REQUEST_TIMEOUT" ||
-    code === MCP_ERROR_CODES.RequestTimeout ||
-    name === "TimeoutError"
-  );
-}
-
 function isAbortError(error: unknown): boolean {
   if (typeof DOMException !== "undefined" && error instanceof DOMException) {
     return error.name === "AbortError" || error.name === "TimeoutError";
@@ -357,6 +342,18 @@ function isAbortError(error: unknown): boolean {
     error instanceof Error &&
     (error.name === "AbortError" || error.name === "TimeoutError")
   );
+}
+
+/**
+ * A request that ran out of time on our side: the upstream client's
+ * `REQUEST_TIMEOUT`, or a `TimeoutError`. Not a cancel, and not a closed
+ * connection. A numeric `-32001` does not count: here that code only arrives
+ * as the server's own JSON-RPC error, so the server did answer.
+ */
+function isRequestTimeout(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const { code, name } = error as { code?: unknown; name?: unknown };
+  return code === "REQUEST_TIMEOUT" || name === "TimeoutError";
 }
 
 /** The server's `-32020` (HeaderMismatch): it refused the request's headers. */
