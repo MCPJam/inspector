@@ -31,6 +31,7 @@ import {
   isProviderNotAllowlistedCode,
 } from "@/lib/provider-not-allowlisted";
 import { getProviderDisplayName } from "@/lib/provider-registry";
+import { isContextLengthExceededCode } from "@/lib/context-length-exceeded";
 import {
   describeOrgKeysRefusal,
   isRetryableOrgKeysRefusal,
@@ -283,6 +284,18 @@ export function describeSwarmAttemptFailure(
   // sign-in's own instead and keeps its own sentence.
   const xaaSignInFailure = isXaaConnectFailureReason(code);
   const described = describeError(info.message);
+  // A chat too long for the model, by its code or its sentence. The catalog's
+  // title and steps say what to do; "Session failed" would not.
+  if (
+    isContextLengthExceededCode(code) ||
+    described.slug === "provider/context_length_exceeded"
+  ) {
+    return {
+      ...describeAsSlug("provider/context_length_exceeded"),
+      rawMessage: rawMessage ?? info.message,
+      rawCode: code,
+    };
+  }
   const base =
     xaaSignInFailure && described.slug === "provider/quota"
       ? {

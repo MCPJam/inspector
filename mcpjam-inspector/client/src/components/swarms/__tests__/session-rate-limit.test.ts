@@ -341,6 +341,24 @@ describe("describeSwarmAttemptFailure provider_not_allowlisted", () => {
   });
 });
 
+describe("describeSwarmAttemptFailure context_length_exceeded", () => {
+  const sentence =
+    "This chat is too long for the model's context window. Reset the chat, have the tool return less, or choose a model with a larger context window.";
+
+  it.each([
+    ["its stored code", "context_length_exceeded"],
+    ["its sentence alone", null],
+  ] as const)("cards a chat too long for the model from %s", (_how, code) => {
+    const result = describeSwarmAttemptFailure(sentence, code, "Anthropic");
+
+    expect(result.slug).toBe("provider/context_length_exceeded");
+    expect(result.title).toBe("Chat too long for this model");
+    expect(result.nextSteps).toContain(
+      "Choose a model with a larger context window.",
+    );
+  });
+});
+
 describe("describeSwarmAttemptFailure organization AI-key refusals", () => {
   it("cards org_keys_required as configuration, never a credential or credit failure", () => {
     const error = describeSwarmAttemptFailure(

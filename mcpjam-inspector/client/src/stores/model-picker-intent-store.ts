@@ -10,6 +10,14 @@ interface ModelPickerIntentState {
   openProvidersTabNonce: number;
   requestOpenProvidersTab: () => void;
   /**
+   * Bumped to ask the chat model picker to open where it is, e.g. from the
+   * "Choose another model" action on a chat too long for its model. Answered
+   * by the same pickers as the providers-tab intent, so
+   * `providersTabResponderCount` also says whether one can open.
+   */
+  openModelPickerNonce: number;
+  requestOpenModelPicker: () => void;
+  /**
    * How many mounted pickers will actually ACT on `openProvidersTabNonce` —
    * i.e. `ModelSelector` instances passed `respondToProviderTabIntent`. This
    * is the out-of-credits dialog's fallback test: at zero, nothing on screen
@@ -27,6 +35,11 @@ export const useModelPickerIntentStore = create<ModelPickerIntentState>(
     requestOpenProvidersTab: () =>
       set((state) => ({
         openProvidersTabNonce: state.openProvidersTabNonce + 1,
+      })),
+    openModelPickerNonce: 0,
+    requestOpenModelPicker: () =>
+      set((state) => ({
+        openModelPickerNonce: state.openModelPickerNonce + 1,
       })),
     providersTabResponderCount: 0,
     registerProvidersTabResponder: () => {

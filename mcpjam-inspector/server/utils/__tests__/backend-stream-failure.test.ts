@@ -265,6 +265,27 @@ describe("provider_not_allowlisted", () => {
   });
 });
 
+describe("context_length_exceeded", () => {
+  const sentence =
+    "This chat is too long for the model's context window. Reset the chat, have the tool return less, or choose a model with a larger context window.";
+
+  // A hosted refusal reaches the Inspector as a stream error chunk; the JSON
+  // path only sees errors thrown before streaming starts.
+  it.each([
+    ["an error chunk", describeStreamErrorChunkFailure],
+    ["a non-OK response", describeBackendStreamFailure],
+  ] as const)(
+    "reads it from %s as its own slug, never paging",
+    (_path, describe) => {
+      const normalized = describe(400, sentence, "context_length_exceeded");
+
+      expect(normalized.slug).toBe("provider/context_length_exceeded");
+      expect(normalized.title).toBe("Chat too long for this model");
+      expect(originOf(normalized)).toBe("user_config");
+    },
+  );
+});
+
 describe("describeStreamErrorChunkFailure", () => {
   it("reads a mid-stream fallback_prohibited chunk as the refused fallback", () => {
     const normalized = describeStreamErrorChunkFailure(

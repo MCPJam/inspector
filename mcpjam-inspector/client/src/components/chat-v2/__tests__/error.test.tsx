@@ -185,6 +185,107 @@ describe("ErrorBox provider_not_allowlisted", () => {
   });
 });
 
+describe("ErrorBox context_length_exceeded", () => {
+  const message =
+    "This chat is too long for the model's context window. Reset the chat, have the tool return less, or choose a model with a larger context window.";
+  const details = JSON.stringify({
+    error: {
+      message: "Provider returned error",
+      metadata: {
+        raw: '{"error":{"message":"prompt is too long: 596303 tokens > 200000 maximum"}}',
+      },
+    },
+  });
+
+  it("says the chat is too long, by how much, and what to do", () => {
+    render(
+      <ErrorBox
+        message={message}
+        errorDetails={details}
+        code="context_length_exceeded"
+        statusCode={400}
+        isRetryable={false}
+        onRetry={vi.fn()}
+        onResetChat={vi.fn()}
+      />,
+    );
+
+    const banner = screen.getByTestId("chat-error-context-length-exceeded");
+    expect(banner).toHaveTextContent("Chat too long for this model");
+    expect(banner).toHaveTextContent(
+      "This chat has 596,303 tokens, and the model accepts up to 200,000.",
+    );
+    expect(banner).toHaveTextContent("Reset the chat and ask again.");
+    expect(banner).toHaveTextContent(
+      "Have the tool return less, or a link instead of file contents.",
+    );
+    expect(banner).toHaveTextContent(
+      "Choose a model with a larger context window.",
+    );
+    expect(banner).not.toHaveTextContent(/an error occurred/i);
+    expect(
+      screen.queryByRole("button", { name: /retry/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("resets the chat", () => {
+    const onResetChat = vi.fn();
+    render(
+      <ErrorBox
+        message={message}
+        code="context_length_exceeded"
+        onResetChat={onResetChat}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset chat" }));
+
+    expect(onResetChat).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the chat's model picker to choose another model", () => {
+    const release = useModelPickerIntentStore
+      .getState()
+      .registerProvidersTabResponder();
+    const before = useModelPickerIntentStore.getState().openModelPickerNonce;
+    render(<ErrorBox message={message} code="context_length_exceeded" />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Choose another model" }),
+    );
+
+    expect(useModelPickerIntentStore.getState().openModelPickerNonce).toBe(
+      before + 1,
+    );
+    release();
+  });
+
+  it("offers no model button when no model picker can open", () => {
+    useModelPickerIntentStore.setState({ providersTabResponderCount: 0 });
+    render(<ErrorBox message={message} code="context_length_exceeded" />);
+
+    expect(
+      screen.queryByRole("button", { name: "Choose another model" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the provider's body under More details", () => {
+    render(
+      <ErrorBox
+        message={message}
+        errorDetails={details}
+        code="context_length_exceeded"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /more details/i }));
+
+    expect(
+      screen.getByTestId("chat-error-context-length-exceeded"),
+    ).toHaveTextContent("Provider returned error");
+  });
+});
+
 describe("ErrorBox organization AI-key refusals", () => {
   beforeEach(() => {
     useModelPickerIntentStore.setState({ providersTabResponderCount: 0 });

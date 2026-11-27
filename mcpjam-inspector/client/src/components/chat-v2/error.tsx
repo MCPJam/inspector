@@ -1,19 +1,15 @@
 import {
   CircleAlert,
-  ChevronDown,
-  ChevronRight,
   RefreshCw,
   ShieldAlert,
   SlidersHorizontal,
 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { useState } from "react";
+import { ErrorDetailsPanel } from "./error-details-panel";
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@mcpjam/design-system/collapsible";
-import { JsonEditor } from "@/components/ui/json-editor";
+  describeContextLengthExceeded,
+  isContextLengthExceededCode,
+} from "@/lib/context-length-exceeded";
 import {
   AUTO_TOPUP_DECLINED_CODE,
   AUTO_TOPUP_DECLINED_MESSAGE,
@@ -108,7 +104,6 @@ export function ErrorBox({
   onChangeProtocolVersion,
   onManageOrgProviders,
 }: ErrorBoxProps) {
-  const [isErrorDetailsOpen, setIsErrorDetailsOpen] = useState(false);
   // Only a mounted `ModelSelector` acts on the providers-tab nonce. Hosted
   // study chats run in minimal mode without one, so there the button would
   // do nothing.
@@ -302,6 +297,59 @@ export function ErrorBox({
     );
   }
 
+  if (isContextLengthExceededCode(refusalCode)) {
+    // The chat no longer fits the model's context window. Retrying sends the
+    // same chat into the same refusal, so the banner offers only the fixes.
+    const described = describeContextLengthExceeded(errorDetails);
+    return (
+      <div
+        role="alert"
+        data-testid="chat-error-context-length-exceeded"
+        className="flex flex-col gap-3 rounded border border-warning bg-warning/20 p-4 text-warning-foreground"
+      >
+        <div className="flex items-start gap-3">
+          <CircleAlert className="h-6 w-6 flex-shrink-0 text-warning" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium leading-6">{described.title}</p>
+            <p className="text-sm leading-6 opacity-90">{described.oneLine}</p>
+            <ul className="mt-1 list-disc pl-5 text-xs leading-5 opacity-90">
+              {described.nextSteps.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ul>
+          </div>
+          <div className="ml-auto flex flex-shrink-0 flex-wrap items-center gap-2">
+            {/* The pickers that answer the providers-tab intent answer this
+                one too, so their count says whether one can open. */}
+            {canOpenProvidersTab ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() =>
+                  useModelPickerIntentStore.getState().requestOpenModelPicker()
+                }
+              >
+                Choose another model
+              </Button>
+            ) : null}
+            {onResetChat ? (
+              <Button type="button" variant="outline" onClick={onResetChat}>
+                Reset chat
+              </Button>
+            ) : null}
+          </div>
+        </div>
+        {errorDetails ? (
+          <ErrorDetailsPanel
+            details={errorDetails}
+            detailsJson={errorDetailsJson}
+            tone="warning"
+          />
+        ) : null}
+      </div>
+    );
+  }
+
   // Three priority states for the rate-limit-adjacent variants. Order
   // matters: walletLocked is the highest-priority terminal state (no
   // self-serve recovery), then the concurrency throttle (transient,
@@ -345,18 +393,6 @@ export function ErrorBox({
     : "border-destructive bg-destructive/20 text-destructive";
 
   const iconClasses = isPlatformError ? "text-warning" : "text-destructive";
-
-  const triggerClasses = isPlatformError
-    ? "text-warning hover:text-warning/80"
-    : "text-destructive hover:text-destructive/80";
-
-  const borderClasses = isPlatformError
-    ? "border-warning/30"
-    : "border-destructive/30";
-
-  const preClasses = isPlatformError
-    ? "text-warning-foreground"
-    : "text-destructive";
 
   const isAuthError = code === "auth_error";
 
@@ -552,54 +588,11 @@ export function ErrorBox({
         </div>
       </div>
       {errorDetails && (
-        <Collapsible
-          open={isErrorDetailsOpen}
-          onOpenChange={setIsErrorDetailsOpen}
-        >
-          <CollapsibleTrigger
-            className={cn(
-              "flex items-center gap-1.5 text-xs transition-colors",
-              triggerClasses
-            )}
-          >
-            <span>More details</span>
-            {isErrorDetailsOpen ? (
-              <ChevronDown className="h-3 w-3" />
-            ) : (
-              <ChevronRight className="h-3 w-3" />
-            )}
-          </CollapsibleTrigger>
-          <CollapsibleContent className="mt-2">
-            <div
-              className={cn(
-                "rounded border bg-background/50 p-2",
-                borderClasses
-              )}
-            >
-              {errorDetailsJson ? (
-                <JsonEditor
-                  height="100%"
-                  value={errorDetailsJson}
-                  readOnly
-                  showToolbar={false}
-                />
-              ) : (
-                <pre
-                  className={cn(
-                    // Bounded: `errorDetails` carries raw upstream payloads
-                    // (a gateway's HTML error page, for one), and an
-                    // unbounded `<pre>` grows the card until it owns the
-                    // viewport.
-                    "text-xs font-mono whitespace-pre-wrap overflow-x-auto max-h-64 overflow-y-auto",
-                    preClasses
-                  )}
-                >
-                  {errorDetails}
-                </pre>
-              )}
-            </div>
-          </CollapsibleContent>
-        </Collapsible>
+        <ErrorDetailsPanel
+          details={errorDetails}
+          detailsJson={errorDetailsJson}
+          tone={isPlatformError ? "warning" : "destructive"}
+        />
       )}
     </div>
   );

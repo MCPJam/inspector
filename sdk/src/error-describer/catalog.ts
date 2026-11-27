@@ -139,6 +139,9 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // MCPJam retired the model the request names. Nothing failed: the backend
   // refused before any provider work, and choosing a current model is the fix.
   "provider/model_retired": "user_config",
+  // The chat does not fit the model's context window. Its size is the user's
+  // to change, so it never pages.
+  "provider/context_length_exceeded": "user_config",
   // The provider failed and the saved selection forbids a fallback. Whose
   // failure it was is not settled by the refusal itself — MCPJam's Gateway,
   // the upstream model provider, or a transient network fault — so it never
@@ -878,6 +881,23 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     ["Choose a newer model, then run again."],
     "model-retired",
     "warning",
+  ),
+  // The backend's `context_length_exceeded` code, and the same refusal read
+  // from a provider's sentence (direct engine, eval and swarm cards).
+  "provider/context_length_exceeded": entry(
+    "provider/context_length_exceeded",
+    "Chat too long for this model",
+    "This chat is longer than the model's context window.",
+    [
+      "The messages, tool results and tool definitions in this chat add up to more than the model accepts.",
+    ],
+    [
+      "Reset the chat and ask again.",
+      "Have the tool return less, or a link instead of file contents.",
+      "Choose a model with a larger context window.",
+    ],
+    "provider-errors",
+    "warning"
   ),
   // The backend refuses on one of two allowances and says which in its own
   // copy, so these are two slugs rather than one that lists both and makes the

@@ -484,6 +484,14 @@ export function ModelSelector({
   const providersTabNonce = useModelPickerIntentStore((state) =>
     respondToProviderTabIntent ? state.openProvidersTabNonce : 0,
   );
+  const modelPickerNonce = useModelPickerIntentStore((state) =>
+    respondToProviderTabIntent ? state.openModelPickerNonce : 0,
+  );
+  // Starts at the current nonce so a picker mounted later never opens for a
+  // request made before it existed.
+  const handledModelPickerNonceRef = useRef(
+    useModelPickerIntentStore.getState().openModelPickerNonce,
+  );
 
   useEffect(() => {
     onOpenChangeRef.current = onOpenChange;
@@ -804,6 +812,15 @@ export function ModelSelector({
     providersTabNonce,
     respondToProviderTabIntent,
   ]);
+
+  // "Choose another model" (a chat too long for its model): open in place and
+  // leave the pick to the user.
+  useEffect(() => {
+    if (modelPickerNonce === 0) return;
+    if (modelPickerNonce === handledModelPickerNonceRef.current) return;
+    handledModelPickerNonceRef.current = modelPickerNonce;
+    setIsOpen(true);
+  }, [modelPickerNonce]);
 
   const requestSelectionChange = (nextChange: PendingSelectionChange) => {
     // A disallowed current row shares its id with the org row that replaces

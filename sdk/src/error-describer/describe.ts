@@ -30,6 +30,7 @@ import {
 import { extractNodeErrno } from "./node-errno.js";
 import { isTlsTrustFailure } from "../oauth-proxy-error.js";
 import { orgPolicyRefusal } from "./org-policy.js";
+import { isContextLengthExceeded } from "./context-length.js";
 import {
   summarizeBearerChallenge,
   type BearerChallengeSummary,
@@ -650,6 +651,12 @@ function resolveSlug(error: unknown): {
   // and this message comes off the wire. Real copy puts one space here.
   const limitSlug = mcpjamLimitSlugForMessage(message);
   if (limitSlug) return { slug: limitSlug };
+
+  // A chat too long for the model. Ahead of the status branches, which read
+  // the provider's 400 as nothing in particular.
+  if (isContextLengthExceeded(error, message, httpStatusOf(error))) {
+    return { slug: "provider/context_length_exceeded" };
+  }
 
   // (e) HTTP status field (`statusCode` / `status`), read through the cause
   // chain: an auto-activation probe against an OAuth-gated server surfaces as

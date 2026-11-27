@@ -726,6 +726,12 @@ const FALLBACK_PROHIBITED_CODE = "fallback_prohibited";
 const MODEL_RETIRED_CODE = "model_retired";
 
 /**
+ * Backend refusal code (convex `lib/contextLengthError.ts`): the provider
+ * refused a chat too long for the model's context window. Arrives as 400.
+ */
+const CONTEXT_LENGTH_EXCEEDED_CODE = "context_length_exceeded";
+
+/**
  * Backend refusal code (convex `stream/orgRoutes.ts`): the organization's own
  * provider connection does not serve this model (OpenRouter's selected models,
  * Azure's deployments). Arrives as HTTP 400.
@@ -776,6 +782,8 @@ export function describeBackendStreamFailure(
     return describeAsSlug("provider/not_allowlisted", detail);
   if (code === FALLBACK_PROHIBITED_CODE)
     return describeAsSlug("provider/fallback_prohibited", detail);
+  if (code === CONTEXT_LENGTH_EXCEEDED_CODE)
+    return describeAsSlug("provider/context_length_exceeded", detail);
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }
@@ -855,6 +863,8 @@ export function describeStreamErrorChunkFailure(
     return describeAsSlug("provider/not_allowlisted", detail);
   if (code === FALLBACK_PROHIBITED_CODE)
     return describeAsSlug("provider/fallback_prohibited", detail);
+  if (code === CONTEXT_LENGTH_EXCEEDED_CODE)
+    return describeAsSlug("provider/context_length_exceeded", detail);
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }

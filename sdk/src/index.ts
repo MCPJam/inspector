@@ -1423,6 +1423,8 @@ export {
   RETRYABLE_NODE_ERROR_CODES,
   summarizeBearerChallenge,
   bodyKindFromContentType,
+  CONTEXT_LENGTH_EXCEEDED_MESSAGE,
+  contextLengthCounts,
 } from "./error-describer/index.js";
 export type {
   BearerChallengeSummary,

@@ -1,0 +1,169 @@
+{
+  "__readme": "Shared fixtures for a provider refusing a request that does not fit the model's context window (PLB-300). ONE FILE, byte-identical in both repos: mcpjam-backend at tests/convex/fixtures/context-length-parity-fixtures.json (read by convex/lib/contextLengthError.ts tests) and the Inspector at sdk/tests/fixtures/context-length-parity-fixtures.json (read by the SDK error describer and the chat banner's count parser). Pinned by `context-length-parity-fixtures` in convex/lib/mirrors.json. Every `match` row must be recognized on both sides, every `noMatch` row on neither. `statusCode` null means the error carried no status; `responseBody` null means it carried no body; `jsonRpcCode`, when present, is the error's numeric JSON-RPC code. A provider's wording counts only on a provider-shaped error: a stated 400 or a response body. MCP servers say \"prompt is too long\" about their own limits, so a bare error with that wording is never this refusal. OpenRouter's `metadata.previous_errors` lists earlier attempts and is never read: only the current error decides. `counts` is what the Inspector's banner shows, or null when the sentence has no numbers. When a provider's wording is added, edit BOTH detectors and this file in the same PR.",
+  "match": [
+    {
+      "label": "OpenRouter rail, Anthropic through Google Vertex with a failed Amazon Bedrock attempt (observed 2026-11-24)",
+      "statusCode": 400,
+      "message": "[Google] prompt is too long: 596303 tokens > 200000 maximum",
+      "responseBody": "{\"error\":{\"message\":\"Provider returned error\",\"code\":400,\"metadata\":{\"raw\":\"{\\\"type\\\":\\\"error\\\",\\\"error\\\":{\\\"type\\\":\\\"invalid_request_error\\\",\\\"message\\\":\\\"prompt is too long: 596303 tokens > 200000 maximum\\\"},\\\"request_id\\\":\\\"req_vrtx_sample\\\"}\",\"provider_name\":\"Google\",\"is_byok\":false,\"previous_errors\":[{\"code\":400,\"message\":\"Provider returned error\",\"provider_name\":\"Amazon Bedrock\",\"raw\":\"{\\\"message\\\":\\\"prompt is too long: 596303 tokens > 200000 maximum\\\"}\"}]}}}",
+      "counts": {
+        "used": 596303,
+        "limit": 200000
+      }
+    },
+    {
+      "label": "Same body with OpenRouter's generic message: the sentence is only in the body",
+      "statusCode": 400,
+      "message": "Provider returned error",
+      "responseBody": "{\"error\":{\"message\":\"Provider returned error\",\"code\":400,\"metadata\":{\"raw\":\"{\\\"type\\\":\\\"error\\\",\\\"error\\\":{\\\"type\\\":\\\"invalid_request_error\\\",\\\"message\\\":\\\"prompt is too long: 596303 tokens > 200000 maximum\\\"},\\\"request_id\\\":\\\"req_vrtx_sample\\\"}\",\"provider_name\":\"Google\",\"is_byok\":false,\"previous_errors\":[{\"code\":400,\"message\":\"Provider returned error\",\"provider_name\":\"Amazon Bedrock\",\"raw\":\"{\\\"message\\\":\\\"prompt is too long: 596303 tokens > 200000 maximum\\\"}\"}]}}}",
+      "counts": {
+        "used": 596303,
+        "limit": 200000
+      }
+    },
+    {
+      "label": "Anthropic direct, the production report's sentence (no \"maximum\")",
+      "statusCode": 400,
+      "message": "prompt is too long: 562095 tokens > 200000",
+      "responseBody": "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"prompt is too long: 562095 tokens > 200000\"}}",
+      "counts": {
+        "used": 562095,
+        "limit": 200000
+      }
+    },
+    {
+      "label": "Anthropic direct with \"maximum\"",
+      "statusCode": 400,
+      "message": "prompt is too long: 205000 tokens > 200000 maximum",
+      "responseBody": "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"prompt is too long: 205000 tokens > 200000 maximum\"}}",
+      "counts": {
+        "used": 205000,
+        "limit": 200000
+      }
+    },
+    {
+      "label": "An overloaded earlier attempt in previous_errors does not hide the refusal",
+      "statusCode": 400,
+      "message": "[Google] prompt is too long: 596303 tokens > 200000 maximum",
+      "responseBody": "{\"error\":{\"message\":\"Provider returned error\",\"code\":400,\"metadata\":{\"raw\":\"{\\\"type\\\":\\\"error\\\",\\\"error\\\":{\\\"type\\\":\\\"invalid_request_error\\\",\\\"message\\\":\\\"prompt is too long: 596303 tokens > 200000 maximum\\\"}}\",\"provider_name\":\"Google\",\"previous_errors\":[{\"code\":529,\"message\":\"Provider returned error\",\"provider_name\":\"Anthropic\",\"raw\":\"{\\\"type\\\":\\\"error\\\",\\\"error\\\":{\\\"type\\\":\\\"overloaded_error\\\",\\\"message\\\":\\\"Overloaded\\\"}}\"}]}}}",
+      "counts": {
+        "used": 596303,
+        "limit": 200000
+      }
+    },
+    {
+      "label": "Amazon Bedrock wording (user reports)",
+      "statusCode": 400,
+      "message": "Input is too long for requested model.",
+      "responseBody": "{\"message\":\"Input is too long for requested model.\"}",
+      "counts": null
+    },
+    {
+      "label": "OpenAI Chat Completions (user reports)",
+      "statusCode": 400,
+      "message": "This model's maximum context length is 128000 tokens. However, your messages resulted in 150000 tokens. Please reduce the length of the messages.",
+      "responseBody": "{\"error\":{\"message\":\"This model's maximum context length is 128000 tokens. However, your messages resulted in 150000 tokens. Please reduce the length of the messages.\",\"type\":\"invalid_request_error\",\"param\":\"messages\",\"code\":\"context_length_exceeded\"}}",
+      "counts": {
+        "used": 150000,
+        "limit": 128000
+      }
+    },
+    {
+      "label": "OpenAI Responses (Codex source fixture)",
+      "statusCode": 400,
+      "message": "Your input exceeds the context window of this model. Please adjust your input and try again.",
+      "responseBody": "{\"error\":{\"message\":\"Your input exceeds the context window of this model. Please adjust your input and try again.\",\"type\":\"invalid_request_error\",\"param\":\"input\",\"code\":\"context_length_exceeded\"}}",
+      "counts": null
+    },
+    {
+      "label": "Google Gemini (user reports)",
+      "statusCode": 400,
+      "message": "The input token count (1200000) exceeds the maximum number of tokens allowed (1048576).",
+      "responseBody": "{\"error\":{\"code\":400,\"message\":\"The input token count (1200000) exceeds the maximum number of tokens allowed (1048576).\",\"status\":\"INVALID_ARGUMENT\"}}",
+      "counts": {
+        "used": 1200000,
+        "limit": 1048576
+      }
+    },
+    {
+      "label": "OpenRouter's own context check (documented wording)",
+      "statusCode": 400,
+      "message": "This endpoint's maximum context length is 200000 tokens. However, you requested about 596303 tokens (596303 of text input). Please reduce the length of either one, or use the \"middle-out\" transform to compress your prompt automatically.",
+      "responseBody": "{\"error\":{\"message\":\"This endpoint's maximum context length is 200000 tokens. However, you requested about 596303 tokens (596303 of text input). Please reduce the length of either one, or use the \\\"middle-out\\\" transform to compress your prompt automatically.\",\"code\":400}}",
+      "counts": {
+        "used": 596303,
+        "limit": 200000
+      }
+    },
+    {
+      "label": "Structured code only",
+      "statusCode": 400,
+      "message": "Bad request",
+      "responseBody": "{\"error\":{\"message\":\"Request too large for model\",\"code\":\"context_length_exceeded\"}}",
+      "counts": null
+    }
+  ],
+  "noMatch": [
+    {
+      "label": "Anthropic 413 request_too_large (bytes, not tokens)",
+      "statusCode": 413,
+      "message": "Request exceeds the maximum allowed number of bytes.",
+      "responseBody": "{\"type\":\"error\",\"error\":{\"type\":\"request_too_large\",\"message\":\"Request exceeds the maximum allowed number of bytes.\"}}"
+    },
+    {
+      "label": "Anthropic 429 per-minute input token limit",
+      "statusCode": 429,
+      "message": "This request would exceed the rate limit for your organization of 400,000 input tokens per minute.",
+      "responseBody": "{\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"This request would exceed the rate limit for your organization of 400,000 input tokens per minute.\"}}"
+    },
+    {
+      "label": "An unrelated 400",
+      "statusCode": 400,
+      "message": "messages.0.content: Input should be a valid list",
+      "responseBody": "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"messages.0.content: Input should be a valid list\"}}"
+    },
+    {
+      "label": "Overloaded",
+      "statusCode": 529,
+      "message": "Overloaded",
+      "responseBody": "{\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}"
+    },
+    {
+      "label": "The sentence under a non-400 status",
+      "statusCode": 500,
+      "message": "prompt is too long: 596303 tokens > 200000 maximum",
+      "responseBody": null
+    },
+    {
+      "label": "Broad wording that is not a context refusal",
+      "statusCode": 400,
+      "message": "Tool name is too long: 70 > 64 characters",
+      "responseBody": null
+    },
+    {
+      "label": "An unrelated 400 whose earlier attempt in previous_errors was too long",
+      "statusCode": 400,
+      "message": "Provider returned error",
+      "responseBody": "{\"error\":{\"message\":\"Provider returned error\",\"code\":400,\"metadata\":{\"raw\":\"{\\\"type\\\":\\\"error\\\",\\\"error\\\":{\\\"type\\\":\\\"invalid_request_error\\\",\\\"message\\\":\\\"messages.1.content.0.tool_use.input: Field required\\\"}}\",\"provider_name\":\"Google\",\"previous_errors\":[{\"code\":400,\"message\":\"Provider returned error\",\"provider_name\":\"Amazon Bedrock\",\"raw\":\"{\\\"message\\\":\\\"prompt is too long: 596303 tokens > 200000 maximum\\\"}\"}]}}}"
+    },
+    {
+      "label": "An MCP server's JSON-RPC error that says prompt is too long",
+      "statusCode": null,
+      "message": "MCP error -32099: Prompt is too long (max 2000 characters)",
+      "responseBody": null,
+      "jsonRpcCode": -32099
+    },
+    {
+      "label": "A tool's own error that says prompt is too long (no provider shape)",
+      "statusCode": null,
+      "message": "Summarizer failed: prompt is too long",
+      "responseBody": null
+    },
+    {
+      "label": "A tool's own error that says it exceeds the context window (no provider shape)",
+      "statusCode": null,
+      "message": "Document exceeds the context window of the summarizer",
+      "responseBody": null
+    }
+  ]
+}
