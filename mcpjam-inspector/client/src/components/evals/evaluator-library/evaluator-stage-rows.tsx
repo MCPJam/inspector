@@ -8,6 +8,9 @@ import { findLibraryEvaluator } from "./library-catalog";
 
 type Cluster<Row> = { evaluatorId: string; version: number; rows: Row[] };
 
+/** A library evaluator's card; each check that did not come from one gets the same. */
+const EVALUATOR_CARD_CLASS = "rounded-lg border border-border bg-muted/20 p-3";
+
 /** A library question or judge, shown under its evaluator; graded by a model. */
 export type LibraryModelRow = {
   key: string;
@@ -49,7 +52,12 @@ export function clusterByEvaluator<Row>(
   return { loose, clusters };
 }
 
-/** Reuses the suite table's check rows so editing stays available in a group. */
+/**
+ * Reuses the suite table's check rows so editing stays available in a group.
+ * With the evaluator library on, every check that did not come from the
+ * library gets a card of its own, so the stage reads as a list of evaluators
+ * whichever way each one was added.
+ */
 export function EvaluatorStageRows<Row extends { id: string }>({
   rows,
   stageLabel,
@@ -88,9 +96,11 @@ export function EvaluatorStageRows<Row extends { id: string }>({
   }
   return (
     <div className="space-y-3">
-      {loose.length ? (
-        <ul className="space-y-3">{loose.map(renderRow)}</ul>
-      ) : null}
+      {loose.map((row) => (
+        <ul key={row.id} className={EVALUATOR_CARD_CLASS}>
+          {renderRow(row)}
+        </ul>
+      ))}
       {clusters.map((cluster) => {
         const entry = findLibraryEvaluator(cluster.evaluatorId);
         const name = entry?.name ?? cluster.evaluatorId;
@@ -105,7 +115,7 @@ export function EvaluatorStageRows<Row extends { id: string }>({
             key={`${cluster.evaluatorId}:${cluster.version}`}
             aria-label={`${name} in ${stageLabel}, version ${cluster.version}`}
             data-evaluator-group={cluster.evaluatorId}
-            className="rounded-lg border border-border bg-muted/20 p-3"
+            className={EVALUATOR_CARD_CLASS}
           >
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <span className="text-sm font-medium text-foreground">

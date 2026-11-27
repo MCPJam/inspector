@@ -33,7 +33,6 @@ import { STAGE_CHIP_TONE_CLASS } from "@/components/evaluate/stage-chain-model";
 import { cn } from "@/lib/utils";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
-import { Badge } from "@mcpjam/design-system/badge";
 import { Input } from "@mcpjam/design-system/input";
 import type { ModelDefinition } from "@/shared/types";
 import {
@@ -67,7 +66,7 @@ import {
   type ScorerUiRole,
 } from "./suite-scorer-table-model";
 import { RoleChip, RoleSegmentGroup } from "./scorer-role-control";
-import { BUILT_IN_BADGE } from "./runner-checks";
+import { ScorerRowBadge } from "./scorer-row-badge";
 import { groupGradersByStage, judgeMode } from "./suite-grading-model";
 import { rolesForPredicateKind } from "@/shared/predicate-kinds";
 import type { EvalJudgeConfig, EvalJudgeRubric } from "./types";
@@ -811,13 +810,7 @@ function ScorerRow({
                 </span>
               ) : null}
             </div>
-            {row.kind === "observed" ? (
-              // A runner check decides nothing, so it wears no role: it is on
-              // for every iteration and reports the stage analysis.
-              <Badge variant="outline">{BUILT_IN_BADGE}</Badge>
-            ) : row.kind === "match" ? (
-              <Badge variant="outline">Required</Badge>
-            ) : null}
+            <ScorerRowBadge kind={row.kind} />
           </div>
           {sourceLine ? (
             <span className="block text-xs text-muted-foreground">

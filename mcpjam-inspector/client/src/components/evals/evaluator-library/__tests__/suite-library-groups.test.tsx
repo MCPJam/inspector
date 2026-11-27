@@ -71,6 +71,44 @@ describe("library groups in the suite table", () => {
     expect(next()).toEqual([{ type: "noToolErrors" }]);
   });
 
+  it("puts each check that did not come from the library in its own card", () => {
+    const { next } = renderTable(tagged);
+    const rows = Array.from(
+      document.querySelectorAll<HTMLElement>("li[data-scorer-row]"),
+    );
+    const grouped = rows.filter((li) => li.closest("[data-evaluator-group]"));
+    const loose = rows.filter((li) => !li.closest("[data-evaluator-group]"));
+    expect(grouped.length).toBe(2);
+    expect(loose.length).toBeGreaterThan(0);
+    for (const li of loose) {
+      expect(li.parentElement).toHaveClass("rounded-lg", "border");
+      expect(li.parentElement?.children).toHaveLength(1);
+    }
+    for (const li of grouped) {
+      expect(li.parentElement).not.toHaveClass("border");
+    }
+    // No badge marks a card as default; only the library group says Library.
+    expect(screen.queryByText("Default")).not.toBeInTheDocument();
+    // Each card keeps its on/off box in its header, and the box still
+    // switches the check: on for a standard check, off for an authored one.
+    const offBox = loose
+      .filter((li) => li.dataset.scorerRow === "preset")
+      .map((li) => within(li).getByRole("checkbox"))
+      .find((checkbox) => !checkbox.hasAttribute("disabled"));
+    if (!offBox) throw new Error("Expected a standard check that can be turned on");
+    expect(offBox).not.toBeChecked();
+    fireEvent.click(offBox);
+    expect(next()).toHaveLength(tagged.length + 1);
+    const authored = loose.find((li) => li.dataset.scorerRow === "predicate");
+    if (!authored) throw new Error("Expected the authored check's card");
+    const box = within(authored).getAllByRole("checkbox")[0];
+    expect(box).toBeChecked();
+    fireEvent.click(box);
+    expect(next()).toEqual(
+      tagged.filter((predicate) => predicate.type !== "noToolErrors"),
+    );
+  });
+
   it("tags an existing required check when adding the evaluator", () => {
     const evaluator = LIBRARY_EVALUATORS.find((e) => e.id === "actionable-tool-errors");
     if (!evaluator) throw new Error("Expected Actionable Tool Errors");
@@ -102,6 +140,9 @@ describe("library groups in the suite table", () => {
     expect(
       screen.queryByRole("button", { name: "From library" }),
     ).not.toBeInTheDocument();
+    for (const li of document.querySelectorAll("li[data-scorer-row]")) {
+      expect(li.parentElement).not.toHaveClass("border");
+    }
     flag.on = true;
   });
 });
