@@ -11,6 +11,12 @@
  */
 import { describe, expect, test } from "vitest";
 import {
+  extractToolErrors,
+  finalizePassedForEval,
+} from "@mcpjam/evaluators/internal/eval-tool-execution";
+import { evaluateToolCalls } from "../eval-matching";
+import {
+  extractRefusedToolCalls,
   extractToolCallsExcludingPolicyBlocks,
   extractToolCallsFromConversation,
   mergeToolCalls,
@@ -198,5 +204,149 @@ describe("identity", () => {
     expect(
       toolCallIdentity({ toolName: "a", arguments: {}, toolCallId: "x" }),
     ).not.toBe(toolCallIdentity({ toolName: "a", arguments: {} }));
+  });
+});
+
+describe("pre-dispatch refusals in persisted eval traces", () => {
+  const call = (toolCallId: string, rejected = false) => ({
+    role: "assistant", content: [{type: "tool-call", toolName: "echo", toolCallId, input: {},
+      ...(rejected ? {providerOptions: {mcpjam: {rejectedToolCall: true}}} : {})}]
+  });
+  const result = (toolCallId: string, failed: boolean) => ({
+    role: "tool", content: [{type: "tool-result", toolName: "echo", toolCallId,
+      output: failed ? {type: "error-text", value: "failed"} : {type: "text", value: "ok"}}]
+  });
+  test.each([
+    {label: "refusal only", retry: false, fails: false, executed: [], errors: []},
+    {label: "successful retry", retry: true, fails: false, executed: ["retry"], errors: []},
+    {label: "server error on retry", retry: true, fails: true, executed: ["retry"], errors: ["retry"]},
+  ])("$label", async ({retry, fails, executed, errors}) => {
+    const {extractToolErrors} = await import("@mcpjam/evaluators/internal/eval-tool-execution");
+    const messages = [call("refusal", true), result("refusal", true),
+      ...(retry ? [call("retry"), result("retry", fails)] : [])];
+    expect(extractToolCallsFromConversation({messages}).map(call => call.toolCallId)).toEqual(executed);
+    expect(extractToolErrors({messages}).map(error => error.toolCallId)).toEqual(errors);
+  });
+});
+
+describe("refused calls are listed for the reader, not graded", () => {
+  const REASON =
+    "Invalid input for tool get_order: Type validation failed: expected number, received string at order_id";
+  const mark = { providerOptions: { mcpjam: { rejectedToolCall: true } } };
+  // A string id the schema refuses, then the integer retry that ran.
+  const trace = (
+    marks: { call: boolean; result: boolean },
+    input: unknown = { order_id: "12345" },
+  ) => [
+    { role: "user", content: "Look up order 12345" },
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolName: "get_order",
+          toolCallId: "refused",
+          input,
+          ...(marks.call ? mark : {}),
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolName: "get_order",
+          toolCallId: "refused",
+          output: { type: "error-text", value: REASON },
+          ...(marks.result ? mark : {}),
+        },
+      ],
+    },
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolName: "get_order",
+          toolCallId: "retry",
+          input: { order_id: 12345 },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolName: "get_order",
+          toolCallId: "retry",
+          output: {
+            type: "json",
+            value: { content: [{ type: "text", text: "shipped" }] },
+          },
+        },
+      ],
+    },
+  ];
+  const marked = { call: true, result: true };
+
+  test("a refusal then a successful retry: the refusal is listed with its reason, the verdict is unchanged", () => {
+    const messages = trace(marked);
+    expect(extractRefusedToolCalls(messages)).toEqual([
+      {
+        toolCallId: "refused",
+        toolName: "get_order",
+        arguments: { order_id: "12345" },
+        reason: REASON,
+      },
+    ]);
+
+    const executed = extractToolCallsFromConversation({ messages });
+    expect(executed).toEqual([
+      {
+        toolName: "get_order",
+        arguments: { order_id: 12345 },
+        toolCallId: "retry",
+      },
+    ]);
+    expect(extractToolErrors({ messages })).toEqual([]);
+    const match = evaluateToolCalls(
+      [{ toolName: "get_order", arguments: { order_id: 12345 } }],
+      executed.map(({ toolName, arguments: args }) => ({
+        toolName,
+        arguments: args as Record<string, unknown>,
+      })),
+    );
+    expect(match.passed).toBe(true);
+    expect(
+      finalizePassedForEval({
+        matchPassed: match.passed,
+        trace: { messages },
+        failOnToolError: true,
+      }),
+    ).toBe(true);
+  });
+
+  test("the mark on the call alone is enough to find its reason", () => {
+    const messages = trace({ call: true, result: false });
+    expect(
+      extractRefusedToolCalls(messages).map((call) => call.reason),
+    ).toEqual([REASON]);
+  });
+
+  test("arguments the model sent as unparseable text stay as that text", () => {
+    const [call] = extractRefusedToolCalls(trace(marked, '{"order_id": 12345'));
+    expect(call?.arguments).toBe('{"order_id": 12345');
+  });
+
+  test("a legacy trace without the mark lists nothing and projects as before", () => {
+    const messages = trace({ call: false, result: false });
+    expect(extractRefusedToolCalls(messages)).toEqual([]);
+    expect(
+      extractToolCallsFromConversation({ messages }).map(
+        (call) => call.toolCallId,
+      ),
+    ).toEqual(["refused", "retry"]);
   });
 });

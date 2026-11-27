@@ -1,28 +1,31 @@
 /**
- * A saved test case on today's address, behind `eval-test-case-steps-editor`:
- * the steps editor at full width under its title row, with no past-results
- * pane. Test Case Evaluators, suite settings, runs and delete go through the
- * suite view's own routes and handlers.
+ * A test case on today's address, behind `eval-test-case-steps-editor`: the
+ * steps editor at full width under its title row, with no past-results pane.
+ * Test Case Evaluators, suite settings, runs and delete go through the suite
+ * view's own routes and handlers. A New case (Add manually) opens here too;
+ * Save case creates it and opens its page.
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import type { RemoteServer } from "@/hooks/useProjects";
-import { isDraftTestCaseId } from "@/components/evals/draft-test-case";
-import { getEffectiveSuiteServers } from "@/components/evals/helpers";
-import { stripTimestampSuffix } from "@/components/evals/suite-overview-presentation";
-import { authorablePredicateKinds } from "@/components/evals/suite-scorer-table-model";
+import { parseDraftTestCaseId } from "@/components/evals/draft-test-case";
+import { CaseServerAccounts } from "@/components/evals/suite-accounts-row";
 import { getStepsBlockReason } from "@/components/evals/test-template-editor";
 import type {
   CaseRunLaunchOptions,
   EvalCase,
   EvalSuite,
 } from "@/components/evals/types";
-import type { Predicate } from "@/shared/eval-matching";
 import { SuiteRunReview, type SuiteRunReviewProps } from "../suite-run-review";
 import { CaseStepsEditor } from "./case-steps-editor";
-import { CaseHeader, DeleteCaseDialog } from "./case-steps-header";
+import {
+  CaseHeader,
+  DeleteCaseDialog,
+  NewCaseHeader,
+} from "./case-steps-header";
+import { caseStepsSuiteFacts } from "./case-steps-suite";
 import { useCaseStepsDraft } from "./use-case-steps-draft";
 import { useCaseTools } from "./use-case-tools";
 
@@ -32,7 +35,7 @@ export type CaseStepsPageNavigation = {
   toTestEdit: (
     suiteId: string,
     testId: string,
-    options?: { checks?: boolean },
+    options?: { checks?: boolean; replace?: boolean },
   ) => void;
   toSuiteEdit: (
     suiteId: string,
@@ -42,7 +45,8 @@ export type CaseStepsPageNavigation = {
 };
 
 /**
- * Whether a suite route opens in this page: a saved case's own page. A new
+ * Whether a suite route opens in this page: a saved case's own page, or a New
+ * case from Add manually. Describe and Record drafts, a connected server's
  * draft, the evaluators page and links into past results keep today's editor.
  */
 export function opensInStepsEditor(route: {
@@ -51,13 +55,16 @@ export function opensInStepsEditor(route: {
   checks?: boolean;
   openCompare?: boolean;
   iteration?: string;
+  fromEvalServer?: string;
 }): boolean {
+  const draftKind = parseDraftTestCaseId(route.testId);
   return (
     route.type === "test-edit" &&
     !route.checks &&
     !route.openCompare &&
     !route.iteration &&
-    !isDraftTestCaseId(route.testId)
+    !route.fromEvalServer &&
+    (draftKind === null || draftKind === "prompt")
   );
 }
 
@@ -123,18 +130,30 @@ export function CaseStepsPage({
   onDeleteTestCasesBatch,
   navigation,
 }: CaseStepsPageProps) {
-  const data = useCaseStepsDraft({ suiteId, testCaseId });
+  const isNew = parseDraftTestCaseId(testCaseId) === "prompt";
+  const data = useCaseStepsDraft({
+    suiteId,
+    testCaseId: isNew ? null : testCaseId,
+  });
   const tools = useCaseTools(projectId, data.suite);
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [runOpen, setRunOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // Where this page is now, so a create that ends after the user moved on stays put.
+  const here = useRef<string | null>(null);
+  useEffect(() => {
+    here.current = `${suiteId}/${testCaseId}`;
+    return () => {
+      here.current = null;
+    };
+  }, [suiteId, testCaseId]);
 
   const openTestCases = () => navigation.toSuiteOverview(suiteId, "test-cases");
   if (data.status === "missing")
     return <MissingCase suiteGone={!data.suite} onOpen={openTestCases} />;
   const { draft, card, suite, testCase } = data;
-  if (!draft || !card || !suite || !testCase) {
+  if (!draft || !card || !suite || (!isNew && !testCase)) {
     return (
       <div
         className="flex min-h-0 flex-1 items-center justify-center"
@@ -149,6 +168,61 @@ export function CaseStepsPage({
   }
   // Nothing saves while locked: Save, Evaluators and Run's save step all stop.
   const locked = readOnly || data.readOnly;
+  const editor = (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto flex max-w-4xl flex-col gap-5 px-4 py-6 sm:px-6">
+        <CaseStepsEditor
+          draft={draft}
+          onDraftChange={data.setDraft}
+          card={card}
+          suite={caseStepsSuiteFacts(suite, data.capabilities)}
+          availableTools={tools}
+          projectServers={projectServers}
+          // Edits wait for a running save, so what it saves is what follows.
+          readOnly={locked || data.saving}
+          openKey={openKey}
+          onOpenKeyChange={setOpenKey}
+          onOpenSuiteSettings={() =>
+            navigation.toSuiteEdit(suiteId, undefined, "evaluators")
+          }
+          onDraftValidityChange={data.setInvalidField}
+        />
+      </div>
+    </div>
+  );
+  const setTitle = (title: string) =>
+    data.setDraft((current) => ({ ...current, title }));
+
+  if (isNew || !testCase) {
+    const create = async () => {
+      const startedOn = `${suiteId}/${testCaseId}`;
+      const result = await data.save();
+      if (result.ok && result.testCaseId && here.current === startedOn)
+        navigation.toTestEdit(suiteId, result.testCaseId, { replace: true });
+    };
+    return (
+      <div
+        className="flex min-h-0 flex-1 flex-col"
+        data-testid="case-steps-page"
+      >
+        <NewCaseHeader
+          title={draft.title}
+          saving={data.saving}
+          lockedReason={
+            data.readOnly
+              ? "This suite is managed by CI, so cases can't be added here."
+              : readOnly
+                ? "This suite is read-only, so cases can't be added here."
+                : null
+          }
+          onTitleChange={setTitle}
+          onSave={() => void create()}
+        />
+        {editor}
+      </div>
+    );
+  }
+
   const unsaved = !locked && data.dirty;
   const runDisabledReason =
     launchReview.disabledReason ??
@@ -195,9 +269,7 @@ export function CaseStepsPage({
       <CaseHeader
         title={draft.title}
         savedTitle={testCase.title}
-        onTitleChange={(title) =>
-          data.setDraft((current) => ({ ...current, title }))
-        }
+        onTitleChange={setTitle}
         dirty={data.dirty}
         saving={data.saving}
         readOnly={locked}
@@ -209,41 +281,19 @@ export function CaseStepsPage({
         onOpenEvaluators={locked ? undefined : () => void openEvaluators()}
         onRun={onRunCase ? () => setRunOpen(true) : undefined}
       />
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex max-w-4xl flex-col gap-5 px-4 py-6 sm:px-6">
-          <CaseStepsEditor
-            draft={draft}
-            onDraftChange={data.setDraft}
-            card={card}
-            suite={{
-              name: stripTimestampSuffix(suite.name),
-              judgeConfig: suite.judgeConfig,
-              defaultPredicates: (suite.defaultPredicates ?? []) as Predicate[],
-              servers: getEffectiveSuiteServers(suite),
-              defaultMatchOptions: suite.defaultMatchOptions,
-              checkPolicy: data.capabilities?.scorers?.checkPolicy === true,
-              authorableKinds: authorablePredicateKinds(
-                data.capabilities?.scorers?.predicateKinds,
-              ),
-            }}
-            availableTools={tools}
-            projectServers={projectServers}
-            // Edits wait for a running save, so what it saves is what follows.
-            readOnly={locked || data.saving}
-            openKey={openKey}
-            onOpenKeyChange={setOpenKey}
-            onOpenSuiteSettings={() =>
-              navigation.toSuiteEdit(suiteId, undefined, "evaluators")
-            }
-            onDraftValidityChange={data.setInvalidField}
-          />
-        </div>
-      </div>
+      <CaseServerAccounts
+        suite={suite}
+        projectId={projectId}
+        selections={draft.accounts ?? testCase.accounts}
+        disabled={locked || data.saving}
+        onChange={(accounts) => data.setDraft((current) => ({ ...current, accounts }))}
+      />
+      {editor}
       {runOpen && onRunCase ? (
         <SuiteRunReview
           {...launchReview}
           disabledReason={runDisabledReason}
-          cases={[testCase]}
+          cases={[draft.accounts === undefined ? testCase : { ...testCase, accounts: draft.accounts }]}
           caseTitle={draft.title || testCase.title}
           initialIterations={draft.runs}
           onClose={() => setRunOpen(false)}

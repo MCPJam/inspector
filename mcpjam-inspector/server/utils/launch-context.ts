@@ -233,3 +233,19 @@ export function readLaunchContext(c: Context): LaunchContext | undefined {
     ...(ciMetadata ? { ciMetadata } : {}),
   };
 }
+
+/**
+ * `x-mcpjam-client`: which client sent this request, on EVERY request rather
+ * than only launches. Same shape and caps as the launcher header.
+ *
+ * A separate header because the launcher is stored: a run's badge, a directory
+ * answer's `actorLabel`, a feedback report's client. Stamping it on every call
+ * would put a stored claim on requests that create nothing to claim. This one
+ * is read for usage analytics only (`utils/v1-usage-event.ts`) and is never
+ * stored on a record or used to decide anything.
+ */
+export const CLIENT_DECLARATION_HEADER = "x-mcpjam-client";
+
+export function readClientDeclaration(c: Context): RunLauncher | undefined {
+  return parseLauncherHeader(c.req.header(CLIENT_DECLARATION_HEADER));
+}

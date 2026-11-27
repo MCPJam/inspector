@@ -1,3 +1,4 @@
+import { extractToolErrors, finalizePassedForEval, traceIndicatesToolExecutionFailure } from "../src/eval-tool-execution";
 import {
   assertion,
   normalizeMessages,
@@ -138,4 +139,19 @@ it("rejects malformed and oversized evidence without exposing raw content", () =
       },
     ]).status,
   ).toBe("invalid");
+});
+
+it.each([{}, "legacy trace", null])("accepts non-array stored messages (%j)", (messages) => {
+  const trace = { messages } as Parameters<typeof extractToolErrors>[0];
+  expect(extractToolErrors(trace)).toEqual([]);
+  expect(traceIndicatesToolExecutionFailure(trace)).toBe(false);
+});
+
+it("judges a non-discovery refusal by outcome and keeps required executions mandatory", () => {
+  const trace = { messages: [
+    { role: "assistant", content: [{ type: "tool-call", toolName: "invented", toolCallId: "attempt", providerOptions: { mcpjam: { rejectedToolCall: true } } }] },
+    { role: "tool", content: [{ type: "tool-result", toolName: "invented", toolCallId: "attempt", output: { type: "error-text", value: "Unavailable" } }] },
+  ] };
+  expect(finalizePassedForEval({ matchPassed: true, trace, failOnToolError: true })).toBe(true);
+  expect(finalizePassedForEval({ matchPassed: false, trace, failOnToolError: true })).toBe(false);
 });

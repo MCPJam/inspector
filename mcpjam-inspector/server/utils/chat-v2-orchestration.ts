@@ -11,7 +11,7 @@ import { getManagerConnections } from "./mcp-connections.js";
  *
  * Encapsulates the identical prep logic used by both mcp/chat-v2 and web/chat-v2:
  *   1. getToolsForAiSdk + the turn's skill source + needsApproval merge
- *   2. Anthropic tool name validation, harness turns only (throws on invalid)
+ *   2. Harness tool-name collision check (throws when a runtime would merge two tools)
  *   3. System prompt + skills prompt concatenation
  *   4. Temperature resolution (GPT-5 check)
  *   5. scrubMessages lambda construction
@@ -45,12 +45,9 @@ import {
   type ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config/internal";
 import {
-  isAnthropicCompatibleModel,
-  getInvalidAnthropicToolNames,
   scrubUnavailableToolHistoryForBackend,
   scrubMcpAppsToolResultsForBackend,
   scrubChatGPTAppsToolResultsForBackend,
-  type CustomProviderConfig,
 } from "./chat-helpers.js";
 import { getEffectiveSkillToolsAndPrompt } from "./computers/effective-skill-tools.js";
 import { listLiveServerSkills } from "./computers/live-server-skills.js";
@@ -72,6 +69,11 @@ import {
   type UiToolAnnotations,
 } from "@/shared/client-fulfilled-tools";
 import { needsApprovalFor } from "@/shared/tool-approval";
+import {
+  buildEventAgentToolDefinitions,
+  eventToolCallNeedsApproval,
+  type EventToolsSnapshot,
+} from "@/shared/event-agent-tools";
 import {
   WIDGET_MODEL_CONTEXT_MAX_CONTENT_BLOCKS,
   WIDGET_MODEL_CONTEXT_MAX_ENTRIES,
@@ -95,6 +97,10 @@ import {
   type ToolDiscoveryState,
 } from "@mcpjam/sdk";
 import { createProgressiveMetaTools } from "@mcpjam/sdk";
+import {
+  findHarnessToolNameCollisions,
+  HarnessToolNameCollisionError,
+} from "./harness/harness-tool-names.js";
 
 // `filterAppOnlyTools` now lives in `@mcpjam/sdk/host-config/internal` so the
 // eval runtime can apply it without reaching into this file. Re-exported here
@@ -738,6 +744,7 @@ export interface PrepareChatV2Options {
    * Cursor template to mirror hosts that don't yet implement visibility.
    */
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   /**
    * MCP tool names this surface refuses to advertise, whichever server offers
    * them. Applied right after the visibility filter, so it only ever removes
@@ -758,7 +765,6 @@ export interface PrepareChatV2Options {
   excludeMcpToolNames?: readonly string[];
   /** Host/client policy for eligible MCP tool-result content/resources. */
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
-  customProviders?: CustomProviderConfig[];
   /** Progressive discovery overrides (e.g. tighter thresholds for tests). */
   progressiveToolDiscovery?: ProgressiveDiscoveryOptions;
   /**
@@ -792,6 +798,11 @@ export interface PrepareChatV2Options {
    * two above, these run code on a third-party site.
    */
   pageTools?: PageToolEntry[];
+  /**
+   * MCP Events agent tools (`mcpjam_subscribe_to_event`, …), client-fulfilled:
+   * the Playground runs each call through its "Connect event" path.
+   */
+  eventTools?: EventToolsSnapshot;
   /** Server-side built-in tools (e.g. web_search) with their own execute. */
   builtInTools?: ToolSet;
   /**
@@ -1265,7 +1276,8 @@ function describeUnconnectedServers(
 /**
  * Prepare tools, system prompt, temperature, and message scrubber for chat-v2.
  *
- * Throws if Anthropic tool name validation fails.
+ * Throws `HarnessToolNameCollisionError` when a harness runtime would merge two
+ * of a server's tools under one name.
  */
 export async function prepareChatV2(
   options: PrepareChatV2Options,
@@ -1281,10 +1293,10 @@ export async function prepareChatV2(
     respectToolVisibility,
     excludeMcpToolNames,
     modelVisibleMcpToolResults,
-    customProviders,
     appTools,
     uiTools,
     pageTools,
+    eventTools,
     builtInTools,
     pageToolsMayGrow,
     skills,
@@ -1432,7 +1444,7 @@ export async function prepareChatV2(
   // approval (`effective-skill-tools.ts`).
   // The two skill-delivery channels are deliberately DISJOINT, and this is the
   // single point both funnel through. A harness turn materializes SKILL.md on
-  // the box from `pinnedHarnessSkills` (see `utils/harness/skill-delivery.ts`);
+  // the box from its plan (`TurnSkills.harness`, read by `skill-delivery.ts`);
   // MCPJam's agent gets in-memory `loadSkill` tools. A plan for one engine on
   // the other would hand the model the same skill twice, by two mechanisms, or
   // claim skills the model never gets. Callers guard this themselves and a
@@ -1547,6 +1559,29 @@ export async function prepareChatV2(
     pageTools,
     requireToolApproval === true,
   );
+  // MCP Events agent tools — client-fulfilled under fixed MCPJam names. No
+  // approval floor (ChatGPT shows no approval card), but the tools that change a
+  // watch follow the user's Require tool approval switch. A harness turn
+  // has no browser to fulfil them. On an exact collision the server's own
+  // tool wins, as for `ui_*`.
+  const eventToolEntries: ToolSet = {};
+  for (const definition of eventTools && !harness
+    ? buildEventAgentToolDefinitions(eventTools)
+    : []) {
+    if (Object.prototype.hasOwnProperty.call(mcpTools, definition.name)) {
+      logger.warn(
+        `[chat-v2] MCP server tool '${definition.name}' collides with the MCPJam Events tool of the same name; keeping the server tool`,
+      );
+      continue;
+    }
+    eventToolEntries[definition.name] = toNoExecuteAiSdkTool({
+      ...definition,
+      needsApproval: eventToolCallNeedsApproval(
+        definition.name,
+        requireToolApproval === true,
+      ),
+    });
+  }
   // COPIED, because the page-tool policy below removes entries from it and the
   // caller's object is the resolver's own return value.
   const builtInToolEntries: ToolSet = { ...(builtInTools ?? {}) };
@@ -1592,6 +1627,7 @@ export async function prepareChatV2(
     Object.prototype.hasOwnProperty.call(appToolEntries, name) ||
     Object.prototype.hasOwnProperty.call(uiToolEntries, name) ||
     Object.prototype.hasOwnProperty.call(pageToolEntries, name) ||
+    Object.prototype.hasOwnProperty.call(eventToolEntries, name) ||
     Object.prototype.hasOwnProperty.call(finalSkillTools, name);
   const advertisedPageToolNames: string[] = [];
   for (const name of Object.keys(builtInToolEntries)) {
@@ -1629,6 +1665,7 @@ export async function prepareChatV2(
       Object.prototype.hasOwnProperty.call(appToolEntries, name) ||
       Object.prototype.hasOwnProperty.call(uiToolEntries, name) ||
       Object.prototype.hasOwnProperty.call(pageToolEntries, name) ||
+      Object.prototype.hasOwnProperty.call(eventToolEntries, name) ||
       Object.prototype.hasOwnProperty.call(finalSkillTools, name)
     ) {
       throw new Error(
@@ -1664,6 +1701,7 @@ export async function prepareChatV2(
     ...appToolEntries,
     ...uiToolEntries,
     ...pageToolEntries,
+    ...eventToolEntries,
     ...finalSkillTools,
     ...builtInToolEntries,
   } as ToolSet);
@@ -1692,9 +1730,12 @@ export async function prepareChatV2(
   // the model has already left — and a model told to SEARCH for the tools of
   // the page it is looking at has been given a puzzle instead of a capability.
   const catalogSource: ToolSet = { ...realTools };
+  // The Events agent tools are exempt for the `ui_*` reason: a small
+  // first-party control surface the model must see to subscribe at all.
   for (const name of [
     ...Object.keys(uiToolEntries),
     ...Object.keys(pageToolEntries),
+    ...Object.keys(eventToolEntries),
     ...advertisedPageToolNames,
   ]) {
     delete catalogSource[name];
@@ -1722,7 +1763,7 @@ export async function prepareChatV2(
     modelContextLength: modelDefinition.contextLength,
     options: harness
       ? { ...(options.progressiveToolDiscovery ?? {}), enabled: false }
-      : options.progressiveToolDiscovery,
+      : { ...options.progressiveToolDiscovery, runUnloadedToolCalls: options.runUnloadedToolCalls },
     envOverride,
   });
 
@@ -1737,25 +1778,33 @@ export async function prepareChatV2(
   const allTools = { ...realTools, ...metaTools } as ToolSet;
   const availableToolNames = Object.keys(allTools);
 
-  // 3. Anthropic tool name validation — meta-tool names are conforming and
-  // checked alongside real tools. Bedrock's Converse API enforces the same
-  // ^[a-zA-Z0-9_-]{1,64}$ tool-name shape as Anthropic, so it shares the gate.
-  // Only harness turns are checked: a direct or hosted turn aliases such names
-  // on the wire (`withProviderSafeToolNames`, the hosted stream request), while
-  // a harness runtime builds its own tool names from the server's.
-  if (
-    harness &&
-    (isAnthropicCompatibleModel(modelDefinition, customProviders) ||
-      modelDefinition.provider === "bedrock")
-  ) {
-    const invalidNames = getInvalidAnthropicToolNames(Object.keys(allTools));
-    if (invalidNames.length > 0) {
-      const nameList = invalidNames.map((name) => `'${name}'`).join(", ");
-      const providerLabel =
-        modelDefinition.provider === "bedrock" ? "Amazon Bedrock" : "Anthropic";
-      throw new Error(
-        `Invalid tool name(s) for ${providerLabel}: ${nameList}. Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters).`,
-      );
+  // 3. Tool names a harness runtime would merge. Claude Code shows `a.b` and
+  // `a_b` both as `a_b`, so a call to either could not be attributed; refuse
+  // the turn before the runtime starts. Every other name is made valid by the
+  // runtime or by MCPJam's host-executed naming (`harness/harness-tool-names.ts`);
+  // direct and hosted turns alias names on the wire.
+  // Each server's own list: the merged tool map keeps one tool per name, so a
+  // name two servers share would hide which server a collision is on. A server
+  // the turn runs without keeps its last list in the cache, so it is skipped.
+  if (harness) {
+    const skippedKeys = new Set(
+      [...lister.unavailable().keys()].flatMap(
+        (id) => selectedGroups?.[id]?.map((c) => c.key) ?? [id],
+      ),
+    );
+    const collisions = findHarnessToolNameCollisions(
+      harness,
+      new Map(
+        (knownSelectedServers ?? mcpClientManager.listServers())
+          .filter((id) => !skippedKeys.has(id))
+          .map((id) => [
+            id,
+            Object.keys(mcpClientManager.getAllToolAnnotations(id)),
+          ]),
+      ),
+    );
+    if (collisions.length > 0) {
+      throw new HarnessToolNameCollisionError(collisions);
     }
   }
   // Guard: meta-tool name must never collide with a real tool. If it does,

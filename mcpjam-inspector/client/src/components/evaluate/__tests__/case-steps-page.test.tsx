@@ -12,15 +12,24 @@ const state = vi.hoisted(() => ({
   suite: undefined as unknown,
   cases: undefined as unknown,
   update: vi.fn(),
+  create: vi.fn(),
   ciOwned: false,
 }));
 const toast = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
 
 vi.mock("convex/react", () => ({
-  useQuery: (name: string) =>
-    name === "testSuites:getTestSuite" ? state.suite : state.cases,
+  useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
+  useQueries: () => ({}),
+  useQuery: (name: string, args?: unknown) => {
+    if (args === "skip") return undefined;
+    return name === "testSuites:getTestSuite" ? state.suite : state.cases;
+  },
   useMutation: (name: string) =>
-    name === "testSuites:updateTestCase" ? state.update : vi.fn(),
+    name === "testSuites:updateTestCase"
+      ? state.update
+      : name === "testSuites:createTestCase"
+        ? state.create
+        : vi.fn(),
 }));
 vi.mock("@/hooks/use-actor-can-query", () => ({
   useActorCanQuery: () => true,
@@ -98,6 +107,7 @@ beforeEach(() => {
   state.suite = suite;
   state.cases = [storedCase];
   state.update = vi.fn().mockResolvedValue(null);
+  state.create = vi.fn().mockResolvedValue("case-new");
   state.ciOwned = false;
   toast.error.mockClear();
   toast.success.mockClear();
@@ -319,13 +329,163 @@ describe("CaseStepsPage", () => {
   });
 });
 
+describe("CaseStepsPage for a New case", () => {
+  it("starts blank, with a title to name and Save case", async () => {
+    renderPage({ testCaseId: "draft:prompt" });
+    expect(
+      await screen.findByRole("textbox", { name: "What does the user ask?" }),
+    ).toHaveValue("");
+    expect(
+      screen.getByRole("textbox", { name: "Test case title" }),
+    ).toHaveValue("Untitled test case");
+    expect(
+      screen.getByRole("button", { name: "Save case" }),
+    ).toBeInTheDocument();
+    for (const name of ["Delete test case", "Test Case Evaluators", "Run"]) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
+    expect(screen.queryByText(/test case averages/i)).toBeNull();
+  });
+
+  it("asks the tool question before creating a case that asserts nothing", async () => {
+    renderPage({ testCaseId: "draft:prompt" });
+    const user = userEvent.setup();
+    await user.type(
+      await screen.findByRole("textbox", { name: "What does the user ask?" }),
+      "List my workspaces",
+    );
+    await user.click(screen.getByRole("button", { name: "Save case" }));
+    expect(state.create).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      "Choose which tool should handle it, or that no tool should be called.",
+    );
+  });
+
+  it("creates the case and opens its page in place", async () => {
+    const props = renderPage({ testCaseId: "draft:prompt" });
+    const user = userEvent.setup();
+    const title = screen.getByRole("textbox", { name: "Test case title" });
+    await user.clear(title);
+    await user.type(title, "Workspaces");
+    await user.type(
+      screen.getByRole("textbox", { name: "What does the user ask?" }),
+      "List my workspaces",
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Expected outcome" }),
+      "Lists them",
+    );
+    await user.click(screen.getByRole("button", { name: "Save case" }));
+    await waitFor(() =>
+      expect(props.navigation.toTestEdit).toHaveBeenCalledWith(
+        "suite-1",
+        "case-new",
+        { replace: true },
+      ),
+    );
+    expect(state.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        suiteId: "suite-1",
+        title: "Workspaces",
+        query: "List my workspaces",
+        expectedOutput: "Lists them",
+        caseId: expect.any(String),
+        models: [{ model: "gpt-5-nano", provider: "openai" }],
+      }),
+    );
+  });
+
+  it("creates one case from a double click, with Save case off while saving", async () => {
+    let finish = (_id: string) => {};
+    state.create = vi.fn(
+      () => new Promise<string>((resolve) => (finish = resolve)),
+    );
+    renderPage({ testCaseId: "draft:prompt" });
+    const user = userEvent.setup();
+    await user.type(
+      await screen.findByRole("textbox", { name: "What does the user ask?" }),
+      "List my workspaces",
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Expected outcome" }),
+      "Lists them",
+    );
+    const save = screen.getByRole("button", { name: "Save case" });
+    const title = screen.getByRole("textbox", { name: "Test case title" });
+    await user.dblClick(save);
+    expect(state.create).toHaveBeenCalledOnce();
+    expect(save).toBeDisabled();
+    expect(title).toHaveAttribute("readonly");
+    finish("case-new");
+    await waitFor(() => expect(save).toBeEnabled());
+    expect(title).not.toHaveAttribute("readonly");
+  });
+
+  it("stays where the user went when the create finishes after they left", async () => {
+    let finish = (_id: string) => {};
+    state.create = vi.fn(
+      () => new Promise<string>((resolve) => (finish = resolve)),
+    );
+    const props = {
+      suiteId: "suite-1",
+      testCaseId: "draft:prompt",
+      projectId: "project-1",
+      readOnly: false,
+      launchReview: { suite, hostNamesById: new Map() },
+      navigation: {
+        toSuiteOverview: vi.fn(),
+        toTestEdit: vi.fn(),
+        toSuiteEdit: vi.fn(),
+      },
+    };
+    const { rerender } = renderWithProviders(<CaseStepsPage {...props} />);
+    const user = userEvent.setup();
+    await user.type(
+      await screen.findByRole("textbox", { name: "What does the user ask?" }),
+      "List my workspaces",
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Expected outcome" }),
+      "Lists them",
+    );
+    await user.click(screen.getByRole("button", { name: "Save case" }));
+    expect(state.create).toHaveBeenCalledOnce();
+    rerender(<CaseStepsPage {...props} testCaseId="case-1" />);
+    finish("case-new");
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "List workspaces" })),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(props.navigation.toTestEdit).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["CI-owned", {}],
+    ["locked by the suite view", { readOnly: true }],
+  ])("turns Save case off on a suite that is %s", async (_, over) => {
+    state.ciOwned = !("readOnly" in over);
+    renderPage({ testCaseId: "draft:prompt", ...over });
+    await screen.findByTestId("case-steps-editor");
+    expect(screen.getByRole("button", { name: "Save case" })).toBeDisabled();
+    expect(
+      screen.getByRole("textbox", { name: "Test case title" }),
+    ).toHaveAttribute("readonly");
+  });
+});
+
 describe("opensInStepsEditor", () => {
   it.each([
     [{ type: "test-edit", testId: "case-1" }, true],
     [{ type: "test-edit", testId: "case-1", checks: true }, false],
     [{ type: "test-edit", testId: "case-1", openCompare: true }, false],
     [{ type: "test-edit", testId: "case-1", iteration: "it-1" }, false],
-    [{ type: "test-edit", testId: "draft:prompt" }, false],
+    [{ type: "test-edit", testId: "draft:prompt" }, true],
+    [{ type: "test-edit", testId: "draft:describe" }, false],
+    [{ type: "test-edit", testId: "draft:record" }, false],
+    [
+      { type: "test-edit", testId: "draft:prompt", fromEvalServer: "srv" },
+      false,
+    ],
     [{ type: "test-detail", testId: "case-1" }, false],
   ])("%j opens in the steps editor: %s", (route, opens) => {
     expect(opensInStepsEditor(route)).toBe(opens);

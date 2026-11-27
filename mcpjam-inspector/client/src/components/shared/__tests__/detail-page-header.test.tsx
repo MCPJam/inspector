@@ -3,6 +3,36 @@ import { describe, expect, it, vi } from "vitest";
 import { DetailPageHeader } from "../detail-page-header";
 
 describe("DetailPageHeader", () => {
+  it("places tabs below the title and actions in the wrapping Swarm layout", () => {
+    render(
+      <DetailPageHeader
+        backLabel="Swarms"
+        onBack={() => {}}
+        title={<h1>Weather Tools</h1>}
+        actions={<button type="button">Share</button>}
+        tabs={{
+          value: "findings",
+          options: [{ value: "findings", label: "Findings" }],
+          onChange: vi.fn(),
+          ariaLabel: "Swarm run view",
+          indicatorId: "test-tabs-below",
+        }}
+        tabsBelow
+      />,
+    );
+
+    const tabs = screen.getByRole("navigation", { name: "Swarm run view" });
+    const title = screen.getByRole("heading", { name: "Weather Tools" });
+    const actions = screen.getByRole("button", { name: "Share" }).parentElement
+      ?.parentElement;
+    // Pin the responsive grid and flex rules. Browser QA checks the rendered wrap.
+    expect(tabs.parentElement).toHaveClass("grid", "@lg/detail-header:flex-wrap");
+    expect(tabs).toHaveClass("col-span-2", "basis-full");
+    expect(title.parentElement).toHaveClass("col-span-2", "min-w-0");
+    expect(actions).toHaveClass("col-start-2", "row-start-1", "ml-auto");
+    expect(tabs.previousElementSibling).toBe(actions);
+  });
+
   it("keeps view tabs on the same row as the title", () => {
     const onChange = vi.fn();
     render(

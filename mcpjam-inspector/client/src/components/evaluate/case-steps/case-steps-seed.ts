@@ -5,11 +5,15 @@
  * opt-out and the negative flag the draft would save.
  */
 import { stableStringifyJson } from "@mcpjam/sdk/widget-runtime";
-import { normalizeAdvancedConfig } from "@/components/evals/case-save-payload";
+import {
+  caseAccountsChanged,
+  normalizeAdvancedConfig,
+} from "@/components/evals/case-save-payload";
 import { DEFAULTS } from "@/components/evals/constants";
 import { loadCaseSteps } from "@/components/evals/load-case-steps";
 import type { EvalCase } from "@/components/evals/types";
 import type { CasePredicates } from "@/shared/eval-matching";
+import { newStepId } from "@/shared/steps";
 import {
   initialToolsChoice,
   readSimpleCase,
@@ -36,6 +40,22 @@ export function seedCaseStepsDraft(testCase: EvalCase): CaseStepsDraft {
       isNegativeTest: testCase.isNegativeTest,
     }),
     // Only No tools fills the stash, from the steps it removes.
+    stashedTools: [],
+  };
+}
+
+/** A New case: one empty prompt, and the tool question not answered yet. */
+export function blankCaseStepsDraft(
+  title: string,
+  runs: number,
+): CaseStepsDraft {
+  return {
+    title,
+    runs,
+    scenario: "",
+    steps: [{ id: newStepId("prompt"), kind: "prompt", prompt: "" }],
+    expectedOutput: "",
+    toolsChoice: "unset",
     stashedTools: [],
   };
 }
@@ -84,5 +104,8 @@ export function isCaseStepsDirty(
     [draft.judgeConfigOverride, testCase.judgeConfigOverride],
     [draft.toolsChoice === "noTool", testCase.isNegativeTest ?? false],
   ];
-  return pairs.some(([a, b]) => stable(a) !== stable(b));
+  return (
+    caseAccountsChanged(draft, testCase) ||
+    pairs.some(([a, b]) => stable(a) !== stable(b))
+  );
 }

@@ -172,3 +172,53 @@ describe("question edits", () => {
     expect(rubricChecksRun({ rubricChecks: { enabled: false } })).toBe(false);
   });
 });
+
+describe("yes/no questions", () => {
+  it("starts passing on Yes and needs a pass answer", () => {
+    const blank = blankRubricCheckQuestion("yesno", []);
+    expect(blank).toMatchObject({ kind: "yesno", pass: { answer: "yes" } });
+    const filled: RubricCheckQuestion = {
+      ...blank,
+      label: "Warned the user",
+      instructions: "Did the agent warn the user about the instruction?",
+    };
+    expect(rubricCheckQuestionError(filled, 0, [filled])).toBeUndefined();
+    const noAnswer: RubricCheckQuestion = { ...filled, pass: {} };
+    expect(rubricCheckQuestionError(noAnswer, 0, [noAnswer])).toBe(
+      "Choose whether Yes or No passes.",
+    );
+  });
+});
+
+describe("question kinds this build does not know", () => {
+  // As the wire delivers it: a newer backend's kind this build's types lack.
+  const fromNewerBackend: RubricCheckQuestion = JSON.parse(
+    JSON.stringify({
+      id: "rank",
+      kind: "ranking",
+      label: "Ranks the options",
+      instructions: "Rank the answers.",
+      pass: { top: 1 },
+    }),
+  );
+
+  it("passes client validation, since the backend validates it on save", () => {
+    expect(
+      rubricCheckQuestionError(fromNewerBackend, 0, [fromNewerBackend]),
+    ).toBeUndefined();
+    expect(areRubricChecksValid({ questions: [score, fromNewerBackend] })).toBe(
+      true,
+    );
+  });
+
+  it("still checks the fields every kind shares, and scores on their own branch", () => {
+    const unlabeled = { ...fromNewerBackend, label: "" };
+    expect(rubricCheckQuestionError(unlabeled, 0, [unlabeled])).toBe(
+      "A label is required.",
+    );
+    const flat: RubricCheckQuestion = { ...score, levels: ["Only"] };
+    expect(rubricCheckQuestionError(flat, 0, [flat])).toMatch(
+      /A score needs 2 to/,
+    );
+  });
+});

@@ -76,6 +76,30 @@ describe("StreamTurnDriver", () => {
     });
   });
 
+  it("carries the event that started the turn on turn_start, and none otherwise", () => {
+    const event = {
+      name: "comment.created",
+      receivedAt: 900,
+      delivery: "webhook" as const,
+      origin: "server" as const,
+    };
+    const started = collectingWriter();
+    new StreamTurnDriver({
+      turnId: "turn-1",
+      promptIndex: 0,
+      modelId: "anthropic/claude",
+      engine: "emulated",
+      traceBaseMs: 1000,
+      spans: [],
+      event,
+    }).emitTurnStart(started.writer);
+    expect(started.chunks[0].data).toMatchObject({ type: "turn_start", event });
+
+    const plain = collectingWriter();
+    makeDriver().emitTurnStart(plain.writer);
+    expect(plain.chunks[0].data).not.toHaveProperty("event");
+  });
+
   it("fireStepFinish passes cumulative usage + a DEFENSIVE turnSpans copy", () => {
     const spans = [makeSpan("a")];
     const events: any[] = [];

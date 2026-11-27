@@ -888,6 +888,8 @@ export type {
 // narrow the protocol list to the era a pinned version actually exercises.
 export {
   CHECK_ERAS,
+  CHECK_FIRST_PROTOCOL_VERSION,
+  checkRunsOnVersion,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
   MCP_LOG_LEVELS,
@@ -996,6 +998,7 @@ export {
 // strings on the check implementations by `tests/conformance-catalog.test.ts`.
 export {
   APPS_CHECK_CATALOG,
+  APPS_READINESS_CATALOG,
   PROTOCOL_CHECK_CATALOG,
   OAUTH_READINESS_CATALOG,
   READINESS_CATALOG,
@@ -1300,14 +1303,11 @@ export type {
 export {
   MCPJAM_EVENTS_EXTENSION_ID,
   EVENT_DELIVERY_MODES,
-  HOST_STYLE_EVENT_DELIVERY_MODES,
   RUNTIME_EVENT_DELIVERY_MODES,
   isEventDeliveryMode,
   readEventsHostSetting,
-  hostStyleEventDeliveryModes,
   resolveHostEventDeliveryModes,
   setEventsHostSetting,
-  clearEventsHostSetting,
   subscribableModes,
   describeModeRefusal,
   describeNoSubscribableMode,
@@ -1320,6 +1320,16 @@ export type {
   EventModeRefusal,
   SubscribableModes,
 } from "./host-config/events-support.js";
+
+// Which Events error an `events/*` JSON-RPC error is (draft and Beta codes),
+// so the Events tab names a termination the same way the runtime does.
+// Browser-safe: pure predicates over the error object.
+export * from "./events/receiver.js";
+export { classifyEventsRpcError } from "./mcp-client-manager/events-ext-guards.js";
+export type {
+  ClassifiedEventsError,
+  EventsErrorKind,
+} from "./mcp-client-manager/events-ext-guards.js";
 
 // Skills over MCP (SEP-2640) — the browser-safe halves only. The dispatch
 // gate is pure predicates over capability objects, and the integrity helpers
@@ -1375,7 +1385,10 @@ export { aiRequestHeaders } from "./ai-request-headers.js";
 /** Use the same validation before rendering embedded Task or MRTR input. */
 export { validateEmbeddedClientRequest } from "./mcp-client-manager/task-input-driver.js";
 export {
+  REMOVED_MCP_TASKS_CHECK_CATEGORIES,
+  REMOVED_MCP_TASKS_CHECK_IDS,
   RENAMED_MCP_TASKS_CHECK_IDS,
+  taskCheckUsesInput,
   MCP_TASKS_TOOL_CHECK_IDS,
   isTasksToolCheck,
 } from "./tasks-conformance/types.js";

@@ -130,6 +130,7 @@ import {
   createSecretScrubber,
   MIN_SCRUBBABLE_LENGTH,
 } from "../../../shared/secret-scrubber";
+import { authHeaderNow, type AuthHeaderSource } from "../run-bearer.js";
 
 // Re-exported so the server's existing importers keep their one import site;
 // the value itself now lives in `shared/client-fulfilled-tools.ts` beside the
@@ -240,7 +241,7 @@ export interface BrowserToolsOptions {
     holder?: { kind: "human" | "script" };
   }) => void;
   /** Bearer authorization forwarded to the control plane. */
-  authHeader: string;
+  authHeader: AuthHeaderSource;
   /** Local guest sessions have no member-owned cloud metadata or profiles. */
   localGuest?: boolean;
   /** Project whose computer this turn drives. */
@@ -843,7 +844,7 @@ class BrowserTurnState {
   async handle(signal?: AbortSignal): Promise<BrowserSessionHandle> {
     await this.verifyConsent();
     this.session ??= this.ensure({
-      bearer: this.opts.authHeader,
+      bearer: authHeaderNow(this.opts.authHeader),
       projectId: this.opts.projectId,
       contextMode: this.contextMode,
       ...(this.ownerKey ? { ownerKey: this.ownerKey } : {}),
@@ -2911,6 +2912,12 @@ export async function ensureHostedConversationSession(args: {
   ownerKind: BrowserSessionOwnerKind;
   hostId?: string;
   browserProfileId?: string;
+  /**
+   * The profile a fresh boot runs on, whatever the session was opened with:
+   * this archive, or a blank profile without one. A web account's browser
+   * passes it, so it never boots on the person's own default profile.
+   */
+  ownProfile?: { archive?: Uint8Array };
   target?: {
     kind: "sandbox";
     sandboxRowId: string;
@@ -2939,15 +2946,24 @@ export async function ensureHostedConversationSession(args: {
       "This conversation already uses a browser on another engine.",
     );
   const logicalSessionId = logical.sessionId;
-  const profileArchive =
-    logical.profileId && !logical.lastBootId
-      ? await new BrowserSessionService().downloadProfile({
-          projectId: args.projectId,
-          profileId: logical.profileId,
-          bearer: args.bearer,
-          ...(args.signal ? { signal: args.signal } : {}),
-        })
-      : null;
+  // A caller's own profile comes before the one the session was opened with,
+  // which for a conversation is the person's default browser profile.
+  // Its fresh boot also starts from an empty profile directory: an archive
+  // import only adds files, and a blank profile must carry nothing an earlier
+  // boot on this box left there.
+  const freshProfile = !logical.lastBootId && args.ownProfile !== undefined;
+  const profileArchive = logical.lastBootId
+    ? null
+    : args.ownProfile
+      ? (args.ownProfile.archive ?? null)
+      : logical.profileId
+        ? await new BrowserSessionService().downloadProfile({
+            projectId: args.projectId,
+            profileId: logical.profileId,
+            bearer: args.bearer,
+            ...(args.signal ? { signal: args.signal } : {}),
+          })
+        : null;
   let sandboxRowId: string | undefined = args.target?.sandboxRowId;
   let sandboxId: string | undefined = args.target?.sandboxId;
   const watched = args.ownerKind === "conversation";
@@ -3023,6 +3039,7 @@ export async function ensureHostedConversationSession(args: {
       ...(watched ? { watched: true as const } : {}),
     },
     ...(profileArchive ? { profileArchive } : {}),
+    ...(freshProfile ? { freshProfile: true } : {}),
     ...(args.signal ? { signal: args.signal } : {}),
   });
 }

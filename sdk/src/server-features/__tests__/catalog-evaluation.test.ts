@@ -9,7 +9,7 @@ import { SERVER_FEATURE_CATALOG } from "../catalog/index.js";
 import { evaluateServerFeatures } from "../evaluate.js";
 import { toDeclaredSurface } from "../declared-surface.js";
 import type { ServerFeatureEvaluation, ServerFeatureEvidenceInput } from "../types.js";
-import { fullCoverage, makeSurface } from "./fixtures.js";
+import { fullCoverage, makeProbe, makeSurface } from "./fixtures.js";
 
 const leafIds = SERVER_FEATURE_CATALOG.filter(
   (feature) => !SERVER_FEATURE_CATALOG.some((other) => other.parent === feature.id),
@@ -105,6 +105,85 @@ describe("full catalog evaluation", () => {
     });
     expect(result.totals["could-add"]).toBe(0);
     expect(brokenRules(result)).toEqual([]);
+  });
+
+  it("labels rows that only read a listing or metadata as declared", () => {
+    const surface = makeSurface({ capabilities: { tools: {}, events: {} } });
+    const result = evaluateServerFeatures(SERVER_FEATURE_CATALOG, {
+      connected: true,
+      context: {
+        transport: "streamable-http",
+        protocolVersion: surface.protocolVersion,
+        clientExtensions: ["io.modelcontextprotocol/ui"],
+      },
+      declared: { surface, capturedAt: 1 },
+      probes: {
+        "events-list": makeProbe("events-list", {
+          listed: true,
+          eventCount: 1,
+          deliveryModes: ["poll"],
+        }),
+        authorization: makeProbe("authorization", {
+          oauthRequired: true,
+          asMetadataFound: true,
+          codeChallengeMethods: ["S256"],
+        }),
+        "apps-ui-resources": makeProbe("apps-ui-resources", {
+          uiResourceCount: 1,
+          readCount: 1,
+          cspDeclared: true,
+        }),
+      },
+    });
+    expect(brokenRules(result)).toEqual([]);
+    // events/list naming poll and S256 in the metadata are declarations; a
+    // policy field in the read UI content is a hint. None was seen working.
+    expect(result.assessments["events.poll"].sources).toEqual(["declared"]);
+    expect(result.assessments["auth.pkce"].sources).toEqual(["declared"]);
+    expect(result.assessments["apps.csp"].sources).toEqual(["detected"]);
+    // A 401 that asks for OAuth is behaviour MCPJam saw.
+    expect(result.assessments["auth.oauth"].sources[0]).toBe("probed");
+    // A parent with no rule of its own carries its child's chip.
+    expect(result.assessments["apps.resource-content"]).toMatchObject({
+      state: "supported",
+      sources: ["detected"],
+    });
+  });
+
+  it("credits cancellation only where a server may send one", () => {
+    const cancelled = {
+      featureId: "request-control.cancellation",
+      count: 1,
+      firstSeenAt: 1,
+      lastSeenAt: 2,
+      lastSource: "rpc" as const,
+    };
+    const legacy = makeSurface({ protocolVersion: "2025-11-25" });
+    const seen = evaluateServerFeatures(SERVER_FEATURE_CATALOG, {
+      connected: true,
+      context: { transport: "stdio", protocolVersion: "2025-11-25" },
+      declared: { surface: legacy, capturedAt: 1 },
+      observations: [cancelled],
+    });
+    expect(seen.assessments["request-control.cancellation"]).toMatchObject({
+      state: "supported",
+      sources: ["observed"],
+    });
+
+    // On 2026-07-28 traffic cannot show it, so no Playground step.
+    const modern = makeSurface({ protocolVersion: "2026-07-28" });
+    const result = evaluateServerFeatures(SERVER_FEATURE_CATALOG, {
+      connected: true,
+      context: { transport: "stdio", protocolVersion: "2026-07-28" },
+      declared: { surface: modern, capturedAt: 1 },
+    });
+    expect(result.assessments["request-control.cancellation"]).toMatchObject({
+      state: "not-checked",
+      reason: "MCPJam cannot check this yet.",
+    });
+    expect(
+      result.assessments["request-control.cancellation"].nextAction
+    ).toBeUndefined();
   });
 
   it("reads a stored 2026 snapshot with an MCP Apps tool end to end", () => {

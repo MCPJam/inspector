@@ -26,9 +26,18 @@ import {
   type ScoreResult,
 } from "@mcpjam/sdk/contract";
 import type { Predicate, PredicateScope } from "@mcpjam/sdk/predicates";
-import { evaluateToolCalls } from "@mcpjam/sdk/matchers";
 import { resolveExtrasCap } from "@/shared/eval-matching";
+import { rubricCheckVerdictQuestions } from "@/shared/rubric-check-verdict";
 import type { AgentActivityAssessment } from "./agent-activity.js";
+import {
+  customJudgeDefinitionInputs,
+  customJudgeScoreRows,
+  type HostedCustomJudgesVerdictLike,
+} from "./custom-judge-rows.js";
+import {
+  hostedPlatformGateRows,
+  type PlatformGateEvidence,
+} from "./platform-gate-rows.js";
 import {
   HOSTED_AGENT_ACTIVITY_SCORER_ID,
   HOSTED_JUDGE_SCORER_ID,
@@ -37,9 +46,19 @@ import {
   buildHostedEvaluationConfig,
   hostedCriterionId,
   hostedRubricCheckScorerId,
-  type HostedRubricCheckDefinitionInput,
   type HostedScoreDefinitionInputs,
 } from "./score-definitions.js";
+import {
+  describeToolArguments,
+  describeToolSelection,
+  negativeSelection,
+  toolArgumentsOutcome,
+  toolSelectionOutcome,
+} from "./tool-call-outcomes.js";
+import {
+  codeEvaluatorRows,
+  type CodeGradingResult,
+} from "./sandbox-phases/code-score-family.js";
 import { authoredRequiredRole } from "@mcpjam/sdk/contract";
 import { isRequiredRole } from "@mcpjam/sdk/predicates";
 
@@ -50,14 +69,15 @@ export type HostedPredicateResultLike = {
   reason?: string;
   scope?: PredicateScope;
   /**
-   * `"error"` ⇒ the check could not be scored. Absent ⇒ `"scored"`.
+   * `"error"` ⇒ the check could not be scored. `"not_applicable"` ⇒ nothing
+   * to judge; it carries `passed: true`. Absent ⇒ `"scored"`.
    *
    * The row still carries `passed: false` (the field is required on the wire),
    * so a reader that ignores this projects an unmeasured check as a 0 — a
    * defect on the dashboard nobody observed, and a failed trial if the check
    * gates.
    */
-  status?: "scored" | "error";
+  status?: "scored" | "error" | "not_applicable";
 };
 
 /** One turn of the tool-call matcher's verdict. */
@@ -141,85 +161,13 @@ export type HostedScoreRowInputs = {
   toolMatchAuthored?: boolean;
   /** @see assessAgentActivity */
   agentActivity?: AgentActivityAssessment;
-  /** Absent on the first pass; present on the judge second pass. */
+  /** Both absent on the first pass; present on the judge second pass. */
   rubricChecksVerdict?: HostedRubricChecksVerdictLike;
+  customJudgesVerdict?: HostedCustomJudgesVerdictLike;
+  /** First pass only: what the platform rows are graded from. */
+  platformGates?: PlatformGateEvidence;
+  codeGrading?: CodeGradingResult;
 };
-
-const RUBRIC_CHECK_KINDS = new Set(["boolean", "choice", "score"]);
-
-/** One question off a stored verdict, or `undefined` when it is malformed. */
-type StoredRubricCheckQuestion = HostedRubricCheckDefinitionInput & {
-  status: "scored" | "error" | "skipped";
-  value?: number;
-  error?: string;
-  rationale?: string;
-  evidence?: string[];
-};
-
-/**
- * The questions a stored verdict can be projected from.
- *
- * A question missing its key, kind, digest or pass line is DROPPED, not
- * guessed at: without those there is no definition to resolve a row against,
- * and inventing one would put a scorer in the snapshot that nobody asked. An
- * unknown status is kept as an error row, so it cannot vanish silently.
- */
-export function rubricCheckQuestionsFrom(
-  verdict: HostedRubricChecksVerdictLike | undefined,
-): StoredRubricCheckQuestion[] {
-  if (!verdict || !Array.isArray(verdict.questions)) return [];
-  const templateVersion = isFiniteNumber(verdict.templateVersion)
-    ? verdict.templateVersion
-    : undefined;
-  const templateHash =
-    typeof verdict.templateHash === "string" ? verdict.templateHash : undefined;
-  const seen = new Set<string>();
-  const out: StoredRubricCheckQuestion[] = [];
-  for (const raw of verdict.questions) {
-    if (typeof raw !== "object" || raw === null) continue;
-    const q = raw as Record<string, unknown>;
-    if (
-      typeof q.key !== "string" ||
-      !/^[cq]:[A-Za-z0-9_-]{1,64}$/.test(q.key) ||
-      seen.has(q.key) ||
-      typeof q.kind !== "string" ||
-      !RUBRIC_CHECK_KINDS.has(q.kind) ||
-      typeof q.contentDigest !== "string" ||
-      q.contentDigest.length === 0 ||
-      !isFiniteNumber(q.passThreshold)
-    ) {
-      continue;
-    }
-    seen.add(q.key);
-    const status =
-      q.status === "scored" || q.status === "skipped" ? q.status : "error";
-    out.push({
-      key: q.key,
-      kind: q.kind as StoredRubricCheckQuestion["kind"],
-      label: typeof q.label === "string" ? q.label : q.key,
-      contentDigest: q.contentDigest,
-      passThreshold: q.passThreshold,
-      ...(templateVersion !== undefined ? { templateVersion } : {}),
-      ...(templateHash !== undefined ? { templateHash } : {}),
-      status,
-      ...(isFiniteNumber(q.value) ? { value: q.value } : {}),
-      ...(typeof q.error === "string"
-        ? { error: q.error }
-        : q.status !== status
-          ? { error: `unknown status ${JSON.stringify(q.status)}` }
-          : {}),
-      ...(typeof q.rationale === "string" ? { rationale: q.rationale } : {}),
-      ...(Array.isArray(q.evidence)
-        ? {
-            evidence: q.evidence.filter(
-              (entry): entry is string => typeof entry === "string",
-            ),
-          }
-        : {}),
-    });
-  }
-  return out;
-}
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
@@ -257,9 +205,38 @@ function judgeAbsenceStatus(
     : undefined;
 }
 
-function toolMatchDeclared(inputs: HostedScoreRowInputs): boolean {
+/** The case lists calls that should happen. */
+function toolExpectationsDeclared(inputs: HostedScoreRowInputs): boolean {
   return Boolean(
     inputs.evaluation?.expectedToolCalls?.length || inputs.toolMatchAuthored,
+  );
+}
+
+/**
+ * A case that lists no expected call still says which calls may happen when it
+ * is negative (none) or caps extra calls (at most N). The matcher fails it on
+ * that claim, so it needs a `toolCalls:match` row to say why it failed.
+ */
+export function claimsToolSelectionWithoutExpectations(
+  isNegativeTest: boolean | undefined,
+  matchOptions: Record<string, unknown> | undefined,
+): boolean {
+  return isNegativeTest === true || resolveExtrasCap(matchOptions) !== null;
+}
+
+function toolMatchDeclared(inputs: HostedScoreRowInputs): boolean {
+  if (toolExpectationsDeclared(inputs)) return true;
+  // Only a caller that knows the case: the first pass has the matcher's
+  // output, and the second pass states `toolMatchAuthored`. A second pass that
+  // carries the stored definitions passes neither and declares nothing here.
+  const knowsCase =
+    inputs.evaluation !== undefined || inputs.toolMatchAuthored !== undefined;
+  return (
+    knowsCase &&
+    claimsToolSelectionWithoutExpectations(
+      inputs.isNegativeTest,
+      inputs.matchOptions,
+    )
   );
 }
 
@@ -278,8 +255,10 @@ export function hostedScoreDefinitionInputs(
   inputs: HostedScoreRowInputs
 ): HostedScoreDefinitionInputs {
   const judge = inputs.judgeVerdict;
-  const rubricChecks = rubricCheckQuestionsFrom(inputs.rubricChecksVerdict);
+  const rubricChecks = rubricCheckVerdictQuestions(inputs.rubricChecksVerdict);
+  const customJudges = customJudgeDefinitionInputs(inputs.customJudgesVerdict);
   return {
+    ...(customJudges.length > 0 ? { customJudges } : {}),
     ...(inputs.predicateResults?.length
       ? {
           predicates: inputs.predicateResults.map((result) => ({
@@ -288,9 +267,9 @@ export function hostedScoreDefinitionInputs(
           })),
         }
       : {}),
-    // A case that authored no expectations has no tool-match scorer at all,
-    // rather than a vacuously passing one. `toolMatchAuthored` says the same
-    // thing for a caller holding the authored case but not the matcher's
+    // A case that makes no claim about its calls has no tool-match scorer at
+    // all, rather than a vacuously passing one. `toolMatchAuthored` says the
+    // same thing for a caller holding the authored case but not the matcher's
     // output — see the field's note.
     ...(toolMatchDeclared(inputs)
       ? {
@@ -300,9 +279,10 @@ export function hostedScoreDefinitionInputs(
           },
         }
       : {}),
-    // Its arguments half, on the same precondition, and only where arguments
-    // are compared at all. A negative case expects no call to compare.
-    ...(toolMatchDeclared(inputs) &&
+    // Its arguments half, only for a case that lists expected calls, and only
+    // where arguments are compared at all. With no expected call there is no
+    // argument to compare.
+    ...(toolExpectationsDeclared(inputs) &&
     !inputs.isNegativeTest &&
     comparesArguments(inputs.matchOptions)
       ? {
@@ -355,6 +335,13 @@ export function hostedScoreDefinitionInputs(
     ...(inputs.agentActivity?.status === "no_agent_activity"
       ? { agentActivityFired: true }
       : {}),
+    ...(inputs.platformGates
+      ? {
+          platformGates: {
+            failOnToolError: inputs.platformGates.failOnToolError,
+          },
+        }
+      : {}),
     ...(rubricChecks.length > 0
       ? {
           rubricChecks: rubricChecks.map(
@@ -373,6 +360,9 @@ export function hostedScoreDefinitionInputs(
             }),
           ),
         }
+      : {}),
+    ...(inputs.codeGrading?.evaluators.length
+      ? { codeEvaluators: inputs.codeGrading.evaluators }
       : {}),
   };
 }
@@ -411,6 +401,14 @@ export function buildHostedScoreRows(
       );
       continue;
     }
+    if (result.status === "not_applicable") {
+      rows.push(
+        notApplicableScoreResult(definition, result.reason, {
+          ...(result.scope ? { scope: result.scope } : {}),
+        })
+      );
+      continue;
+    }
     rows.push(
       fromCriterionResult(definition, {
         criterionId,
@@ -430,7 +428,8 @@ export function buildHostedScoreRows(
     //
     // A NEGATIVE case is the exception, and only in name: "no tool should be
     // called" is a selection claim through and through, and it has no
-    // arguments half, so the matcher's own verdict is the selection verdict.
+    // arguments half. Read off the calls rather than `passed`, which the
+    // failure path forces false before any call was made.
     const selection = toolSelectionOutcome(
       inputs.evaluation,
       inputs.matchOptions,
@@ -439,15 +438,7 @@ export function buildHostedScoreRows(
       fromCriterionResult(toolMatchDefinition, {
         criterionId: HOSTED_TOOL_MATCH_SCORER_ID,
         ...(inputs.isNegativeTest
-          ? {
-              passed: inputs.evaluation.passed === true,
-              reason:
-                inputs.evaluation.passed === true
-                  ? "no tool was called, as the case expects"
-                  : `${
-                      inputs.evaluation.unexpected?.length ?? 0
-                    } tool call(s) made where the case expects none`,
-            }
+          ? negativeSelection(inputs.evaluation)
           : {
               passed: selection.passed,
               reason: describeToolSelection(selection),
@@ -489,6 +480,10 @@ export function buildHostedScoreRows(
         `no_agent_activity: ${inputs.agentActivity.detail}`,
       ),
     );
+  }
+
+  if (inputs.platformGates) {
+    rows.push(...hostedPlatformGateRows(byId, inputs.platformGates));
   }
 
   const judgeDefinition = byId.get(HOSTED_JUDGE_SCORER_ID);
@@ -541,7 +536,7 @@ export function buildHostedScoreRows(
     typeof rubricVerdict?.model === "string" && rubricVerdict.model.length > 0
       ? rubricVerdict.model
       : undefined;
-  for (const question of rubricCheckQuestionsFrom(rubricVerdict)) {
+  for (const question of rubricCheckVerdictQuestions(rubricVerdict)) {
     const definition = byId.get(hostedRubricCheckScorerId(question.key));
     if (!definition) continue;
     if (question.status === "skipped") {
@@ -578,179 +573,12 @@ export function buildHostedScoreRows(
     );
   }
 
+  rows.push(...customJudgeScoreRows(inputs.customJudgesVerdict, byId));
+  rows.push(...codeEvaluatorRows(inputs.codeGrading, byId));
   return rows;
 }
 
 /** The turns the matcher graded; the evaluation itself when it has none. */
-function matcherTurns(
-  evaluation: HostedEvaluationLike,
-): readonly HostedMatcherTurnLike[] {
-  return evaluation.promptSummaries?.length
-    ? evaluation.promptSummaries
-    : [evaluation];
-}
-
-export type ToolSelectionOutcome = {
-  passed: boolean;
-  missing: number;
-  /** Extra calls in the turns that went past the cap. */
-  extrasOverCap: number;
-  cap: number | null;
-};
-
-/**
- * `toolCalls:match` (v3): per turn, no expected call missing and no more
- * extra calls than `maxExtraToolCalls` allows.
- *
- * Read off the matcher's OWN lists, never re-matched: a same-name call with
- * the wrong arguments is paired by the matcher and reported as an argument
- * mismatch, not as missing, so it lands on `toolCalls:arguments` and leaves
- * this verdict alone. Order folds in through the same lists — a strict or
- * superset miss leaves the expected call unpaired.
- */
-export function toolSelectionOutcome(
-  evaluation: HostedEvaluationLike,
-  matchOptions: Record<string, unknown> | undefined,
-): ToolSelectionOutcome {
-  const cap = resolveExtrasCap(matchOptions);
-  let missing = 0;
-  let extrasOverCap = 0;
-  for (const turn of matcherTurns(evaluation)) {
-    missing += turn.missing?.length ?? 0;
-    const extras = turn.unexpected?.length ?? 0;
-    if (cap !== null && extras > cap) extrasOverCap += extras;
-  }
-  return {
-    passed: missing === 0 && extrasOverCap === 0,
-    missing,
-    extrasOverCap,
-    cap,
-  };
-}
-
-/** Bounded, content-free summary of the selection verdict. Counts only. */
-function describeToolSelection(outcome: ToolSelectionOutcome): string {
-  if (outcome.passed) return "every expected tool was called";
-  const parts: string[] = [];
-  if (outcome.missing > 0) parts.push(`${outcome.missing} missing`);
-  if (outcome.extrasOverCap > 0) {
-    parts.push(
-      `${outcome.extrasOverCap} unexpected (at most ${outcome.cap} allowed per turn)`,
-    );
-  }
-  return `tool selection unmet: ${parts.join(", ")}`;
-}
-
-type ArgumentMismatchLike = {
-  toolName?: unknown;
-  expectedArgs?: unknown;
-  actualArgs?: unknown;
-};
-
-export type ToolArgumentsOutcome = {
-  /** Expected calls the matcher paired with a call, rightly or wrongly. */
-  compared: number;
-  mismatches: Array<{ turn?: number; toolName: string; keys: string[] }>;
-};
-
-/**
- * `toolCalls:arguments`: every expected call the matcher paired with an actual
- * one was made with the expected arguments.
- *
- * The verdict is the matcher's own `argumentMismatches`. The argument NAMES
- * each mismatch reports are recovered only for the reason line, and through
- * the same matcher, one expected key at a time, so a placeholder like
- * `"string"` means here what it meant there.
- */
-export function toolArgumentsOutcome(
-  evaluation: HostedEvaluationLike,
-  matchOptions: Record<string, unknown> | undefined,
-): ToolArgumentsOutcome {
-  const turns = matcherTurns(evaluation);
-  const numbered = turns.length > 1;
-  let compared = 0;
-  const mismatches: ToolArgumentsOutcome["mismatches"] = [];
-  for (const turn of turns) {
-    compared += Math.max(
-      0,
-      (turn.expectedToolCalls?.length ?? 0) - (turn.missing?.length ?? 0),
-    );
-    for (const raw of turn.argumentMismatches ?? []) {
-      const mismatch = (raw ?? {}) as ArgumentMismatchLike;
-      const toolName =
-        typeof mismatch.toolName === "string" ? mismatch.toolName : "a tool";
-      mismatches.push({
-        ...(numbered && typeof turn.promptIndex === "number"
-          ? { turn: turn.promptIndex + 1 }
-          : {}),
-        toolName,
-        keys: mismatchedKeys(mismatch, matchOptions),
-      });
-    }
-  }
-  // A mismatch is itself a compared call; count it even when the turn did
-  // not report its expectations.
-  return { compared: Math.max(compared, mismatches.length), mismatches };
-}
-
-function recordOf(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-/** The argument names that differ, by the matcher's own rules. Names only. */
-function mismatchedKeys(
-  mismatch: ArgumentMismatchLike,
-  matchOptions: Record<string, unknown> | undefined,
-): string[] {
-  const expected = recordOf(mismatch.expectedArgs);
-  const actual = recordOf(mismatch.actualArgs);
-  const exact = matchOptions?.argumentMatching === "exact";
-  const keys = exact
-    ? [...new Set([...Object.keys(expected), ...Object.keys(actual)])]
-    : Object.keys(expected);
-  return keys
-    .filter((key) => {
-      const one = (args: Record<string, unknown>) =>
-        key in args ? { [key]: args[key] } : {};
-      return (
-        evaluateToolCalls(
-          [{ toolName: "t", arguments: one(expected) }],
-          [{ toolName: "t", arguments: one(actual) }],
-          { argumentMatching: exact ? "exact" : "partial" },
-        ).argumentMismatches.length > 0
-      );
-    })
-    .sort();
-}
-
-const MAX_NAMED_MISMATCHES = 3;
-
-/** Names the tool and the argument, never a value: values can be anything. */
-function describeToolArguments(outcome: ToolArgumentsOutcome): string {
-  if (outcome.mismatches.length === 0) {
-    return outcome.compared === 0
-      ? "no expected call was matched, so there were no arguments to compare"
-      : "every expected tool was called with the expected arguments";
-  }
-  const named = outcome.mismatches
-    .slice(0, MAX_NAMED_MISMATCHES)
-    .map(({ turn, toolName, keys }) => {
-      const where = turn !== undefined ? `turn ${turn}: ` : "";
-      const names = keys.map((key) => `\`${key}\``).join(", ");
-      const what =
-        keys.length === 0
-          ? "different arguments"
-          : keys.length === 1
-            ? `a different ${names}`
-            : `different ${names}`;
-      return `${where}\`${toolName}\` was called with ${what} than expected`;
-    });
-  const rest = outcome.mismatches.length - named.length;
-  return rest > 0 ? `${named.join("; ")}; and ${rest} more` : named.join("; ");
-}
-
 /**
  * What the score rows alone would say about this iteration, for SHADOW
  * COMPARISON ONLY.

@@ -128,6 +128,14 @@ export {
   type McpModelOutputWithLinkedResourcesOptions,
   type McpModelVisibleToolResultPolicy,
   type McpLinkedResourceReader,
+  mapMcpContentBlocksForModel,
+  EMPTY_TOOL_RESULT_TEXT,
+  hasNoContentBlocks,
+  projectToolResultByRule,
+  structuredContentRuleOf,
+  withoutStructuredContentRule,
+  type McpModelOutputText,
+  type ToolResultRuleOptions,
 } from "./mcp-client-manager/index.js";
 export {
   applyRuntimeClientCapabilities,
@@ -150,6 +158,7 @@ export {
   isInvalidEventsPayloadError,
   classifyEventsRpcError,
   EVENTS_ERROR_CODES,
+  type EventsWireProfile,
 } from "./mcp-client-manager/events-ext-guards.js";
 export type {
   EventsSupport,
@@ -729,6 +738,7 @@ export {
 export type {
   ConformanceReport,
   ConformanceReportAdvisory,
+  ConformanceReportPassedAdvisory,
   ConformanceReportCase,
   ConformanceReportCaseStatus,
   ConformanceReportGroup,
@@ -1303,6 +1313,7 @@ export {
   withProviderSafeToolNames,
 } from "./provider-tool-names.js";
 export type { ToolNameAliases } from "./provider-tool-names.js";
+export { withUniqueToolCallIds } from "./tool-call-ids.js";
 
 // Progressive MCP tool discovery: the `search_mcp_tools` / `load_mcp_tools`
 // meta-tools, the tool catalog, the On / Auto / Off plan and the per-step
@@ -1329,6 +1340,10 @@ export type {
   ToolCatalogEntry,
   ToolDiscoveryState,
 } from "./progressive-discovery/discovery.js";
+export { discoveryRunMetadata } from "./sdk-version.js";
+export { planDiscoveryStep, validateDeferredToolInputs, redactUnavailableToolError, earlyToolInputError } from "./progressive-discovery/step.js";
+export type { DiscoveryStep } from "./progressive-discovery/step.js";
+export { collectRejectedToolCalls, markRejectedCalls } from "./progressive-discovery/rejected-calls.js";
 export { createProgressiveMetaTools } from "./progressive-discovery/meta-tools.js";
 export type {
   LoadMcpToolsResult,
@@ -1481,10 +1496,13 @@ export type {
   MCPReadinessId,
   MCPReadinessSpecStrength,
   MCPReadinessWarning,
+  MCPPassedAdvice,
   MCPServerSurfaceSnapshot,
 } from "./mcp-conformance/index.js";
 export {
   CHECK_ERAS,
+  CHECK_FIRST_PROTOCOL_VERSION,
+  checkRunsOnVersion,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
   MCP_LOG_LEVELS,
@@ -1492,6 +1510,7 @@ export {
   MCP_READINESS_IDS,
   PROTOCOL_VERSION_ERAS,
   READINESS_ERAS,
+  REMOVED_MCP_CHECK_IDS,
   RETIRED_MCP_CHECK_IDS,
   canRunConformance,
   isHttpServerConfig,
@@ -1571,6 +1590,8 @@ export {
   MCP_TASKS_CHECK_CATEGORIES,
   MCP_TASKS_CHECK_IDS,
   MCP_TASKS_READINESS_IDS,
+  REMOVED_MCP_TASKS_CHECK_CATEGORIES,
+  REMOVED_MCP_TASKS_CHECK_IDS,
   RENAMED_MCP_TASKS_CHECK_IDS,
   resolveProbeTool,
 } from "./tasks-conformance/index.js";
@@ -1976,6 +1997,7 @@ export type {
   McpToolResultImageRenderingPolicy,
   McpToolResultImageRenderPlacement,
   ModelVisibleMcpToolResults,
+  ModelVisibleStructuredContent,
   ServerId,
   CspDomainSet,
   OpenAiAppsCapabilities,
@@ -2093,14 +2115,11 @@ export type {
 export {
   MCPJAM_EVENTS_EXTENSION_ID,
   EVENT_DELIVERY_MODES,
-  HOST_STYLE_EVENT_DELIVERY_MODES,
   RUNTIME_EVENT_DELIVERY_MODES,
   isEventDeliveryMode,
   readEventsHostSetting,
-  hostStyleEventDeliveryModes,
   resolveHostEventDeliveryModes,
   setEventsHostSetting,
-  clearEventsHostSetting,
   subscribableModes,
   describeModeRefusal,
   describeNoSubscribableMode,
@@ -2309,6 +2328,11 @@ export type {
 } from "./mcp-client-manager/multi-connection-tools.js";
 
 export { aiRequestHeaders } from "./ai-request-headers.js";
+export {
+  getDefaultUserAgent,
+  mcpjamUserAgent,
+  setDefaultUserAgent,
+} from "./user-agent.js";
 
 export { EvalRunStartError } from "./eval-run-start.js";
 export type { EvalIdentityOptions } from "./eval-run-start.js";

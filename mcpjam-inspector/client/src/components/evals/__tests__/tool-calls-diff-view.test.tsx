@@ -96,6 +96,49 @@ describe("ToolCallsDiffView", () => {
     expect(screen.getAllByText("match")).toHaveLength(2);
   });
 
+  it("lists a refused call beside the comparison, outside the actual calls", () => {
+    const getOrder = { toolName: "get_order", arguments: { order_id: 12345 } };
+    render(
+      <ToolCallsDiffView
+        expected={[getOrder]}
+        actual={[getOrder]}
+        refused={[
+          {
+            toolCallId: "refused",
+            toolName: "get_order",
+            arguments: { order_id: "12345" },
+            reason: "Invalid input for tool get_order: expected number",
+          },
+        ]}
+      />,
+    );
+
+    // The comparison grades only the call that ran.
+    expect(
+      screen.getByText("All 1 expected tool call matched."),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("match")).toHaveLength(1);
+    expect(screen.queryByText("unexpected")).not.toBeInTheDocument();
+
+    const refused = screen.getByTestId("refused-tool-call");
+    expect(within(refused).getByText("Refused by client")).toBeInTheDocument();
+    fireEvent.click(within(refused).getByRole("button"));
+    expect(
+      within(refused).getByText(/"order_id": "12345"/),
+    ).toBeInTheDocument();
+    expect(
+      within(refused).getByText(
+        "Invalid input for tool get_order: expected number",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("adds nothing when no call was refused", () => {
+    const getOrder = { toolName: "get_order", arguments: { order_id: 12345 } };
+    render(<ToolCallsDiffView expected={[getOrder]} actual={[getOrder]} />);
+    expect(screen.queryByTestId("refused-tool-calls")).not.toBeInTheDocument();
+  });
+
   it("still flags a second successful identical call as unexpected", () => {
     const exportScene = { toolName: "export_scene", arguments: { id: "s1" } };
     render(

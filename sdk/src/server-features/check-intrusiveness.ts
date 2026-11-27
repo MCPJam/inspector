@@ -83,12 +83,12 @@ export const PROTOCOL_CHECK_INTRUSIVENESS = {
   "protocol-invalid-method-error": "side-effecting",
   // Sends initialize with a forged Host and Origin.
   "localhost-host-rebinding-rejected": "side-effecting",
-  // Sends its own initialize, which opens a session it never closes.
+  // Sends its own initialize, finishes the handshake and ends the session
+  // with DELETE.
   "localhost-host-valid-accepted": "side-effecting",
   // The raw transport family opens its own sessions and concurrent streams
   // and ends them with DELETE.
   "server-sse-polling-session": "side-effecting",
-  "server-accepts-multiple-post-streams": "side-effecting",
   "server-sse-streams-functional": "side-effecting",
   "notification-post-accepted": "side-effecting",
   "get-stream-or-405": "side-effecting",
@@ -142,8 +142,6 @@ export const APPS_CHECK_INTRUSIVENESS = {
 
 /** Tasks suite. Every check that calls a tool or creates a task is side-effecting by type. */
 export const TASKS_CHECK_INTRUSIVENESS = {
-  "tasks-wire-resolvable": "passive",
-  "tasks-declaration-hygiene": "passive",
   "tasks-result-type-discipline": "side-effecting",
   "tasks-undeclared-creation-refused": "side-effecting",
   "tasks-undeclared-capability-rejected": "side-effecting",
@@ -178,6 +176,7 @@ export const EVENTS_CHECK_INTRUSIVENESS = {
   "events-private-callback-rejected": "side-effecting",
   "events-delivery-signature": "side-effecting",
   "events-webhook-id-equals-event-id": "side-effecting",
+  "events-webhook-message-id": "side-effecting",
   "events-subscription-id-header": "side-effecting",
   "events-delivery-content-type": "side-effecting",
   "events-delivery-body-size": "side-effecting",

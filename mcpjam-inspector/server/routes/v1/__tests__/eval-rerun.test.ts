@@ -11,6 +11,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { getFunctionName } from "convex/server";
+import { setManagerAuthorizedCredentials } from "../../../utils/mcp-connections.js";
 
 const {
   validateGuestTokenMock,
@@ -113,7 +115,8 @@ function request(
 }
 
 function mockConvex(handlers: Record<string, (args: any) => unknown> = {}) {
-  convexQueryMock.mockImplementation(async (fn: string, args: any) => {
+  convexQueryMock.mockImplementation(async (ref: string | Parameters<typeof getFunctionName>[0], args: any) => {
+    const fn = typeof ref === "string" ? ref : getFunctionName(ref);
     if (Object.prototype.hasOwnProperty.call(handlers, fn)) {
       return handlers[fn]!(args);
     }
@@ -171,6 +174,28 @@ describe("eval rerun routes", () => {
       if (value) process.env[key] = value;
       else delete process.env[key];
     }
+  });
+
+  it("opens the recorded accounts only for the failed-case selection", async () => {
+    mockHappyLaunch();
+    const plan = PREVIEW.selectedCaseIds.map((testCaseId) => ({
+      testCaseId, serverId: "s_alpha", connectionId: "original", source: "default",
+    }));
+    const readPlan = vi.fn(() => plan);
+    mockConvex({
+      "testSuites:getTestSuiteRun": () => ({ ...SOURCE_RUN, accountsAtRun: [{ cases: plan }] }),
+      "testSuiteAccountSelections:getEvalRunAccountPlan": readPlan,
+    });
+    const manager = { listServers: () => ["s_alpha"], disconnectAllServers: vi.fn(async () => {}) };
+    setManagerAuthorizedCredentials(manager as never, { s_alpha: "original" });
+    createAuthorizedManagerMock.mockResolvedValue({ manager });
+
+    const res = await request("POST", `/projects/${PROJECT_ID}/eval-runs/${RUN_ID}/rerun`, { scope: "failed_cases" });
+    expect(res.status).toBe(202);
+    expect(readPlan).toHaveBeenCalledWith(expect.objectContaining({ sourceRunId: RUN_ID, caseIds: PREVIEW.selectedCaseIds }));
+    expect(createAuthorizedManagerMock.mock.calls[0]?.[7]).toMatchObject({ connectionIdSets: { s_alpha: ["original"] } });
+    expect(prepareEvalRunMock.mock.calls[0]?.[1]).toMatchObject({ rerunOfRunId: RUN_ID, evalAccounts: { plan } });
+    expect(prepareEvalRunMock.mock.calls[0]?.[1]).not.toHaveProperty("caseIds");
   });
 
   describe("GET …/eval-runs/:runId/rerun-preview", () => {

@@ -1,31 +1,20 @@
-import { useEffect, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import { cn } from "@mcpjam/design-system/cn";
-import { AlertTriangle, BellPlus, Loader2 } from "lucide-react";
 import {
-  buildParametersFromFields,
-  generateFormFieldsFromSchema,
-  type FormField,
-} from "@/lib/tool-form";
+  describeModeRefusal,
+  isEventDeliveryMode,
+  type SubscribableModes,
+} from "@mcpjam/sdk/browser";
 import { ParametersForm } from "@/components/ui-playground/ParametersForm";
-import type {
-  EventDescriptorView,
-  EventsDeliveryModeView,
-} from "@/shared/events-api";
+import type { EventsDeliveryModeView } from "@/shared/events-api";
+import { CallbackField } from "./CallbackField";
+import type { SubscribeForm } from "./use-subscribe-form";
 
-export interface SubscribeFormValue {
-  arguments: Record<string, unknown>;
-  mode: EventsDeliveryModeView;
-  maxAgeMs?: number;
-  /** `null` asks for no expiry; absent leaves it to the server. */
-  ttlMs?: number | null;
-  /** Local webhook only: the user acknowledged the development receiver. */
-  insecureLocalReceiver?: boolean;
-}
+export type { SubscribeFormValue } from "./use-subscribe-form";
 
 const MODE_LABELS: Record<EventsDeliveryModeView, string> = {
   poll: "Poll",
@@ -35,287 +24,208 @@ const MODE_LABELS: Record<EventsDeliveryModeView, string> = {
 
 const MODE_HINTS: Record<EventsDeliveryModeView, string> = {
   poll: "MCPJam checks for new events at the server's suggested interval.",
-  push: "MCPJam keeps a connection open and the server pushes events.",
+  push: "MCPJam keeps an events/stream request open and the server pushes events on it.",
   webhook: "The server sends each event to a callback URL MCPJam registers.",
 };
 
-function parseOptionalMs(
-  raw: string,
-  label: string,
-): { value?: number; error?: string } {
-  const trimmed = raw.trim();
-  if (!trimmed) return {};
-  const value = Number(trimmed);
-  if (!Number.isFinite(value) || value < 0 || !Number.isInteger(value)) {
-    return { error: `${label} must be a whole number of milliseconds.` };
-  }
-  return { value };
+/** The request fields MCPJam fills in itself, by mode. */
+const MANAGED_FIELDS: Record<EventsDeliveryModeView, string[]> = {
+  poll: ["cursor", "maxEvents"],
+  push: ["cursor", "heartbeatMs"],
+  webhook: ["cursor", "delivery.url", "delivery.secret"],
+};
+
+/** Subscription arguments: the generated form, or raw JSON. */
+export function SubscribeParameters({ form }: { form: SubscribeForm }) {
+  return (
+    <div className="space-y-2" data-testid="subscribe-parameters">
+      <div className="flex justify-end">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-6 px-2 text-[11px]"
+          onClick={form.toggleRawMode}
+        >
+          {form.rawMode ? "Use form" : "Use JSON"}
+        </Button>
+      </div>
+      {form.rawMode ? (
+        <Textarea
+          aria-label="Arguments JSON"
+          value={form.rawJson}
+          onChange={(e) => form.setRawJson(e.target.value)}
+          spellCheck={false}
+          rows={5}
+          className="font-mono text-xs"
+        />
+      ) : (
+        <ParametersForm
+          fields={form.fields}
+          onFieldChange={form.onFieldChange}
+          onToggleField={form.onToggleField}
+          onExecute={form.submit}
+        />
+      )}
+    </div>
+  );
 }
 
 /**
- * Subscribe to one event type. Arguments come from the event's
- * `inputSchema` as a generated form (raw JSON when the schema has no
- * describable properties); the delivery mode is limited to `modes`, where
- * the client, the event and the runtime all agree. With none, the form stays
- * readable but Subscribe is disabled and `blockedReason` says why.
+ * Every delivery mode the event type advertises. Modes the client, the event
+ * type or this runtime refuse stay listed, disabled, with the reason; a mode
+ * outside the spec's three is shown but can never be picked.
  */
-export function SubscribeForm({
-  event,
-  modes,
-  blockedReason,
+export function SubscribeDelivery({
+  form,
+  eventName,
+  delivery,
+  availability,
+  hostName,
   hosted,
-  busy,
-  onSubscribe,
+  replayUnsupported,
+  localCallbackBase,
 }: {
-  event: EventDescriptorView;
-  modes: EventsDeliveryModeView[];
-  blockedReason: string | null;
+  form: SubscribeForm;
+  eventName: string;
+  delivery: string[];
+  availability: SubscribableModes | undefined;
+  hostName: string;
   hosted: boolean;
-  busy: boolean;
-  onSubscribe: (value: SubscribeFormValue) => void | Promise<void>;
+  localCallbackBase?: string;
+  /** A subscription to this event type got `cursor: null` back. */
+  replayUnsupported: boolean;
 }) {
-  const [fields, setFields] = useState<FormField[]>([]);
-  const [rawMode, setRawMode] = useState(false);
-  const [rawJson, setRawJson] = useState("{}");
-  const [mode, setMode] = useState<EventsDeliveryModeView | null>(null);
-  const [acknowledged, setAcknowledged] = useState(false);
-  const [maxAgeMs, setMaxAgeMs] = useState("");
-  const [ttlMs, setTtlMs] = useState("");
-  const [noExpiry, setNoExpiry] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
-
-  // Keyed on the event's identity alone, so a catalog refresh does not wipe
-  // what the user typed: the schema is read through a ref.
-  const inputSchemaRef = useRef(event.inputSchema);
-  inputSchemaRef.current = event.inputSchema;
-  useEffect(() => {
-    const next = generateFormFieldsFromSchema(inputSchemaRef.current);
-    setFields(next);
-    setRawMode(next.length === 0);
-    setRawJson("{}");
-    setAcknowledged(false);
-    setMaxAgeMs("");
-    setTtlMs("");
-    setNoExpiry(false);
-    setFormError(null);
-  }, [event.name]);
-
-  useEffect(() => {
-    if (mode === null || !modes.includes(mode)) setMode(modes[0] ?? null);
-  }, [modes, mode]);
-
-  const needsAcknowledgement = !hosted && mode === "webhook";
-  const canSubmit =
-    mode !== null &&
-    modes.includes(mode) &&
-    blockedReason === null &&
-    !busy &&
-    (!needsAcknowledgement || acknowledged);
-
-  const onFieldChange = (name: string, value: unknown) => {
-    setFields((previous) =>
-      previous.map((field) =>
-        field.name === name ? { ...field, value, isSet: true } : field,
-      ),
-    );
-  };
-  const onToggleField = (name: string, isSet: boolean) => {
-    setFields((previous) =>
-      previous.map((field) =>
-        field.name === name ? { ...field, isSet } : field,
-      ),
-    );
-  };
-
-  const submit = () => {
-    if (!canSubmit || mode === null) return;
-    let args: Record<string, unknown>;
-    if (rawMode) {
-      try {
-        const parsed = JSON.parse(rawJson || "{}");
-        if (
-          typeof parsed !== "object" ||
-          parsed === null ||
-          Array.isArray(parsed)
-        ) {
-          setFormError("Arguments must be a JSON object.");
-          return;
-        }
-        args = parsed as Record<string, unknown>;
-      } catch (error) {
-        setFormError(
-          error instanceof Error
-            ? error.message
-            : "The arguments are not valid JSON. Check them and try again.",
-        );
-        return;
-      }
-    } else {
-      args = buildParametersFromFields(fields);
-    }
-    const maxAge = parseOptionalMs(maxAgeMs, "maxAgeMs");
-    if (maxAge.error) {
-      setFormError(maxAge.error);
-      return;
-    }
-    const ttl = noExpiry ? { value: null } : parseOptionalMs(ttlMs, "ttlMs");
-    if ("error" in ttl && ttl.error) {
-      setFormError(ttl.error);
-      return;
-    }
-    setFormError(null);
-    void onSubscribe({
-      arguments: args,
-      mode,
-      ...(maxAge.value !== undefined ? { maxAgeMs: maxAge.value } : {}),
-      ...(ttl.value !== undefined ? { ttlMs: ttl.value } : {}),
-      ...(needsAcknowledgement ? { insecureLocalReceiver: true } : {}),
-    });
-  };
-
-  const idPrefix = `subscribe-${event.name}`;
-
+  const usable = availability?.modes ?? [];
   return (
-    <div className="space-y-4" data-testid="subscribe-form">
+    <fieldset className="space-y-2" data-testid="subscribe-delivery">
+      <legend className="sr-only">Delivery mode</legend>
       <div className="space-y-1.5">
-        <div className="flex items-center justify-between">
-          <h4 className="text-xs font-semibold text-foreground">Arguments</h4>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2 text-xs"
-            onClick={() => setRawMode((value) => !value)}
-          >
-            {rawMode ? "Use form" : "Use JSON"}
-          </Button>
-        </div>
-        {rawMode ? (
-          <Textarea
-            aria-label="Arguments JSON"
-            value={rawJson}
-            onChange={(e) => setRawJson(e.target.value)}
-            spellCheck={false}
-            rows={5}
-            className="font-mono text-xs"
-          />
-        ) : (
-          <div className="rounded-md border border-border">
-            <ParametersForm
-              fields={fields}
-              onFieldChange={onFieldChange}
-              onToggleField={onToggleField}
-            />
-          </div>
-        )}
-      </div>
-
-      <fieldset className="space-y-2">
-        <legend className="text-xs font-semibold text-foreground">
-          Delivery mode
-        </legend>
-        {modes.length === 0 ? (
-          <p
-            className="text-xs text-muted-foreground"
-            data-testid="subscribe-blocked"
-          >
-            {blockedReason ??
-              "No delivery mode is available for this event. Pick another client."}
-          </p>
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {modes.map((option) => (
+        {delivery.map((option) => {
+          const known = isEventDeliveryMode(option);
+          const enabled = known && usable.includes(option);
+          const reason = !known
+            ? "Not a delivery mode the spec defines (poll, push, webhook)."
+            : availability
+              ? describeModeRefusal(option, availability, hostName)
+              : null;
+          return (
+            <div key={option} className="space-y-0.5">
               <label
-                key={option}
                 className={cn(
-                  "flex cursor-pointer items-center gap-2 rounded-md border px-3 py-1.5 text-xs",
-                  mode === option
-                    ? "border-primary bg-primary/10 text-foreground"
-                    : "border-border text-muted-foreground hover:bg-accent",
+                  "flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs",
+                  !enabled
+                    ? "cursor-not-allowed border-border text-muted-foreground"
+                    : form.mode === option
+                      ? "cursor-pointer border-primary bg-primary/10 text-foreground"
+                      : "cursor-pointer border-border text-muted-foreground hover:bg-accent",
                 )}
-                title={MODE_HINTS[option]}
               >
                 <input
                   type="radio"
-                  name={`${idPrefix}-mode`}
+                  name={`subscribe-${eventName}-mode`}
                   value={option}
-                  checked={mode === option}
-                  onChange={() => setMode(option)}
+                  checked={enabled && form.mode === option}
+                  disabled={!enabled}
+                  onChange={() => {
+                    if (known) form.setMode(option);
+                  }}
                   className="accent-primary"
                 />
-                {MODE_LABELS[option]}
+                {known ? MODE_LABELS[option] : option}
               </label>
-            ))}
-          </div>
-        )}
-        {mode ? (
-          <p className="text-[11px] text-muted-foreground">
-            {MODE_HINTS[mode]}
-          </p>
-        ) : null}
-        {mode === "webhook" && hosted ? (
-          <p className="text-[11px] text-muted-foreground">
-            Deliveries go to MCPJam's public inbox, which checks each
-            signature.
-          </p>
-        ) : null}
-        {needsAcknowledgement ? (
-          <div className="space-y-2 rounded-md border border-warning/40 bg-warning/10 p-3">
-            <div className="flex items-start gap-2 text-xs text-foreground">
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-warning" />
-              <p>
-                Allow the server to reach this machine over plain http. Runs
-                that use a local receiver do not count as passing.
-              </p>
+              {!enabled && reason ? (
+                <p className="pl-3 text-[11px] text-muted-foreground">
+                  {reason}
+                </p>
+              ) : null}
             </div>
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id={`${idPrefix}-ack`}
-                checked={acknowledged}
-                onCheckedChange={(checked) => setAcknowledged(checked === true)}
-              />
-              <Label htmlFor={`${idPrefix}-ack`} className="text-xs">
-                Use local development receiver (non-conformant, plain http)
-              </Label>
-            </div>
-          </div>
-        ) : null}
-      </fieldset>
+          );
+        })}
+      </div>
+      {form.mode ? (
+        <p className="text-[11px] text-muted-foreground">
+          {MODE_HINTS[form.mode]}
+        </p>
+      ) : null}
+      {form.mode === "webhook" && hosted ? (
+        <p className="text-[11px] text-muted-foreground">
+          Deliveries go to MCPJam's public inbox, which checks each signature.
+        </p>
+      ) : null}
+      {replayUnsupported ? (
+        <p
+          className="text-[11px] text-muted-foreground"
+          data-testid="replay-unsupported"
+        >
+          This event type can't replay events missed while a subscription is
+          down.
+        </p>
+      ) : null}
+      {form.mode === "webhook" && !hosted ? (
+        <CallbackField form={form} localCallbackBase={localCallbackBase} />
+      ) : null}
+    </fieldset>
+  );
+}
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+/**
+ * The request fields a user may set, under their spec names, for the chosen
+ * mode only. The ones MCPJam fills in itself are named, not editable.
+ */
+export function SubscribeAdvanced({
+  form,
+  eventName,
+  hosted,
+}: {
+  form: SubscribeForm;
+  eventName: string;
+  hosted: boolean;
+}) {
+  const idPrefix = `subscribe-${eventName}`;
+  return (
+    <div className="space-y-3" data-testid="subscribe-advanced">
+      <div className="space-y-1">
+        <Label htmlFor={`${idPrefix}-max-age`} className="font-mono text-xs">
+          maxAgeMs
+        </Label>
+        <Input
+          id={`${idPrefix}-max-age`}
+          type="number"
+          min={0}
+          value={form.maxAgeMs}
+          onChange={(e) => form.setMaxAgeMs(e.target.value)}
+          placeholder="Server default"
+          className="h-8 text-xs"
+        />
+        <p className="text-[11px] text-muted-foreground">
+          Don't replay events older than this many milliseconds.
+        </p>
+      </div>
+      {form.mode === "webhook" ? (
         <div className="space-y-1">
-          <Label htmlFor={`${idPrefix}-max-age`} className="text-xs">
-            Maximum event age in ms (optional)
-          </Label>
-          <Input
-            id={`${idPrefix}-max-age`}
-            type="number"
-            min={0}
-            value={maxAgeMs}
-            onChange={(e) => setMaxAgeMs(e.target.value)}
-            placeholder="Server default"
-            className="h-8 text-xs"
-          />
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor={`${idPrefix}-ttl`} className="text-xs">
-            Expires after, in ms (optional)
+          <Label htmlFor={`${idPrefix}-ttl`} className="font-mono text-xs">
+            ttlMs
           </Label>
           <Input
             id={`${idPrefix}-ttl`}
             type="number"
             min={0}
-            value={noExpiry ? "" : ttlMs}
-            disabled={noExpiry}
-            onChange={(e) => setTtlMs(e.target.value)}
-            placeholder={noExpiry ? "No expiry" : "Server default"}
+            value={form.noExpiry ? "" : form.ttlMs}
+            disabled={form.noExpiry}
+            onChange={(e) => form.setTtlMs(e.target.value)}
+            placeholder={form.noExpiry ? "No expiry" : hosted ? "Server default" : "10 minutes"}
             className="h-8 text-xs"
           />
+          <p className="text-[11px] text-muted-foreground">
+            Suggested lifetime. The server decides when the subscription
+            expires, and MCPJam refreshes it before then.
+          </p>
           <div className="flex items-center gap-2 pt-1">
             <Checkbox
               id={`${idPrefix}-no-expiry`}
-              checked={noExpiry}
-              onCheckedChange={(checked) => setNoExpiry(checked === true)}
+              checked={form.noExpiry}
+              onCheckedChange={(checked) => form.setNoExpiry(checked === true)}
             />
             <Label
               htmlFor={`${idPrefix}-no-expiry`}
@@ -324,23 +234,29 @@ export function SubscribeForm({
               No expiry
             </Label>
           </div>
+          {!hosted && form.noExpiry ? (
+            <p className="text-[11px] text-warning">
+              The server can keep sending events after MCPJam closes.
+            </p>
+          ) : null}
         </div>
-      </div>
-
-      {formError ? (
-        <p role="alert" className="text-xs text-destructive">
-          {formError}
+      ) : null}
+      {form.mode ? (
+        <p className="text-[11px] text-muted-foreground">
+          MCPJam sets{" "}
+          {MANAGED_FIELDS[form.mode].map((field, index, all) => (
+            <span key={field}>
+              <code className="font-mono">{field}</code>
+              {index < all.length - 2
+                ? ", "
+                : index === all.length - 2
+                  ? " and "
+                  : ""}
+            </span>
+          ))}{" "}
+          for you.
         </p>
       ) : null}
-
-      <Button type="button" size="sm" onClick={submit} disabled={!canSubmit}>
-        {busy ? (
-          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-        ) : (
-          <BellPlus className="mr-1.5 h-3.5 w-3.5" />
-        )}
-        Subscribe
-      </Button>
     </div>
   );
 }

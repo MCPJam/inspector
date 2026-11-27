@@ -4,6 +4,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ClientSelector } from "../chat-input/client-selector";
 import type { HostListItem } from "@/hooks/useClients";
+import { pickableHosts } from "@/lib/web-accounts/clients";
 import type { ClientSelectorData } from "../chat-input/client-selector";
 
 const navigateMock = vi.hoisted(() => vi.fn());
@@ -12,6 +13,18 @@ vi.mock("@/lib/app-navigation", () => ({
   routePaths: { hosts: "/clients" },
 }));
 const mockResolveHostLogo = vi.hoisted(() => vi.fn());
+const flags = vi.hoisted(() => ({ webClients: false }));
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: (flag: string) =>
+    flag === "web-clients-enabled" ? flags.webClients : undefined,
+}));
+// The picker lists clients through the shared rule, spied on so a test can
+// tell it isn't keeping a copy of its own.
+vi.mock("@/lib/web-accounts/clients", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/web-accounts/clients")>();
+  return { ...actual, pickableHosts: vi.fn(actual.pickableHosts) };
+});
 
 vi.mock("@/components/hosts/CreateHostDialog", () => ({
   CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
@@ -670,4 +683,104 @@ it("opens closed after unmounting closed", async () => {
   expect(
     screen.queryByPlaceholderText("Search clients"),
   ).not.toBeInTheDocument();
+});
+
+describe("ClientSelector web clients", () => {
+  const withWebClient: HostListItem[] = [
+    ...hosts.slice(0, 2),
+    {
+      ...hosts[1],
+      hostId: "host-web",
+      name: "Claude web",
+      runtime: "claude-web",
+    },
+  ];
+  const open = async ({
+    currentHostId = "host-0",
+    selectedHostIds = ["host-0"],
+    onHostChange = vi.fn(),
+    onSelectedHostIdsChange = vi.fn(),
+  }: {
+    currentHostId?: string;
+    selectedHostIds?: string[];
+    onHostChange?: (hostId: string) => void;
+    onSelectedHostIdsChange?: (ids: string[]) => void;
+  } = {}) => {
+    render(
+      <ClientSelector
+        hosts={withWebClient}
+        projectId="project-1"
+        currentHostId={currentHostId}
+        selectedHostIds={selectedHostIds}
+        onHostChange={onHostChange}
+        onSelectedHostIdsChange={onSelectedHostIdsChange}
+        onMultiHostEnabledChange={vi.fn()}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />,
+    );
+    await userEvent.click(screen.getByTestId("client-selector-trigger"));
+  };
+
+  beforeEach(() => {
+    mockResolveHostLogo.mockReturnValue("/mcp.svg");
+    vi.mocked(pickableHosts).mockClear();
+  });
+
+  it("lists Claude web while its flag is on", async () => {
+    flags.webClients = true;
+    await open();
+    expect(screen.getByTestId("client-row-host-web")).toHaveTextContent(
+      "Claude web",
+    );
+  });
+
+  it("leaves Claude web out while its flag is off", async () => {
+    flags.webClients = false;
+    await open();
+    expect(screen.queryByTestId("client-row-host-web")).toBeNull();
+    expect(screen.getByTestId("client-row-host-1")).toBeInTheDocument();
+  });
+
+  it("lists its clients through the shared pickableHosts rule", async () => {
+    flags.webClients = false;
+    await open();
+    expect(pickableHosts).toHaveBeenCalledWith(
+      withWebClient,
+      false,
+      expect.anything(),
+    );
+  });
+
+  it("keeps the Claude web client a chat runs, by name, while its flag is off", async () => {
+    flags.webClients = false;
+    const onHostChange = vi.fn();
+    await open({
+      currentHostId: "host-web",
+      selectedHostIds: [],
+      onHostChange,
+    });
+    expect(screen.getByTestId("client-selector-trigger")).toHaveAccessibleName(
+      "Client: Claude web",
+    );
+    expect(screen.getByTestId("client-row-host-web")).toHaveTextContent(
+      "Claude web",
+    );
+    await userEvent.click(screen.getByTestId("client-row-host-1"));
+    expect(onHostChange).toHaveBeenCalledWith("host-1");
+  });
+
+  it("lets a compared Claude web client be dropped while its flag is off", async () => {
+    flags.webClients = false;
+    const onSelectedHostIdsChange = vi.fn();
+    await open({
+      currentHostId: "host-0",
+      selectedHostIds: ["host-0", "host-web"],
+      onSelectedHostIdsChange,
+    });
+    const toggle = screen.getByTestId("client-row-compare-host-web");
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(toggle);
+    expect(onSelectedHostIdsChange).toHaveBeenCalledWith(["host-0"]);
+  });
 });

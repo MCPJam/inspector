@@ -34,6 +34,7 @@ import {
   OAuthProxyError,
 } from "@mcpjam/sdk/oauth/node";
 import { HOSTED_MODE } from "../config.js";
+import { withDefaultUserAgent } from "./outbound-user-agent.js";
 import {
   BlockedEgressTargetError,
   EgressResolutionError,
@@ -530,12 +531,13 @@ export function createStreamingPinnedFetch(
     maxRedirects?: number;
     /** Names the target in refusal messages, e.g. `"MCP server"`. */
     targetLabel?: string;
+    /** What a local (not hosted) run dials through. Defaults to the global `fetch`. */
+    localFetch?: typeof fetch;
   } = {}
 ): typeof fetch {
   const hosted = options.hosted ?? HOSTED_MODE;
   if (!hosted) {
-    return ((...args: Parameters<typeof fetch>) =>
-      fetch(...args)) as typeof fetch;
+    return withDefaultUserAgent(options.localFetch);
   }
 
   const streamingFetch = createPinnedStreamingFetch({
