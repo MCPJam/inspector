@@ -6,6 +6,12 @@ import {
   runIterationSetupOrThrow,
 } from "./evals/sandbox-phases/iteration-hooks.js";
 import { buildGradingInput } from "./evals/sandbox-phases/grading-input.js";
+import {
+  runPhaseContext,
+  runRunCleanupOnce,
+  runRunSetupOrThrow,
+  type RunPhaseContext,
+} from "./evals/sandbox-phases/run-phases.js";
 import { assertNativeDiscovery } from "../utils/harness/native-discovery.js";
 import { mergeViewToolEvidence } from "./evals/view-tool-evidence.js";
 import { evalWidgetServerCall } from "./evals/view-tool-policy.js";
@@ -4202,6 +4208,8 @@ export const runEvalSuiteWithAiSdk = async ({
   });
 
   const runSetupStartedAt = Date.now();
+  // EFTW-90: run setup and cleanup; set once the cases are about to start.
+  let runPhases: RunPhaseContext | undefined;
   const setupObserver = createRunSetupObserver({
     expectedServerIds: serverIds,
     convexHttpUrl,
@@ -4521,6 +4529,14 @@ export const runEvalSuiteWithAiSdk = async ({
       : sandboxSlots
         ? createConcurrencyLimiter(sandboxSlots)
         : undefined;
+    runPhases = runPhaseContext({
+      config: recorder?.codeGrading,
+      runId,
+      convexClient,
+      bearer: () => bearerNow(convexAuthToken),
+      signal: abortController.signal,
+    });
+    await runRunSetupOrThrow(runPhases);
     const testPromises = tests.map((test) =>
       // Cap concurrent headless browsers for every model-free render check
       // (legacy widget_probe OR a unified case whose turns are all pinned),
@@ -4697,6 +4713,8 @@ export const runEvalSuiteWithAiSdk = async ({
       }
       throw error;
     } finally {
+      // Before the heartbeat stops: the run stays alive while it cleans up.
+      await runRunCleanupOnce(runPhases, testPromises);
       stopControls = true;
       if (runTimeoutId) {
         clearTimeout(runTimeoutId);
@@ -4819,6 +4837,7 @@ export const runEvalSuiteWithAiSdk = async ({
     }
     return undefined;
   } catch (error) {
+    await runRunCleanupOnce(runPhases);
     const passRate = summary.total > 0 ? summary.passed / summary.total : 0;
     const errorMessage = error instanceof Error ? error.message : String(error);
 
