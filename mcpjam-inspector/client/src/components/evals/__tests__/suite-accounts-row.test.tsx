@@ -147,8 +147,29 @@ describe("SuiteAccountsRow", () => {
     const row = document.querySelector('[data-setting-key="accounts"]');
     expect(row).toHaveTextContent("Accounts");
     expect(row).toHaveTextContent(
-      "Each run uses the accounts of the person who starts it.",
+      "Choose the accounts your runs use.",
     );
+  });
+
+  it("drafts a shared server default through suite settings", async () => {
+    state.view = view({ servers: [{
+      serverId: "srv-asana",
+      mode: "shared",
+      managed: true,
+      accounts: [live, dummy],
+      chosen: [dummy.connectionId],
+    }] });
+    const edit = vi.fn();
+    render(<SuiteAccountsRow suite={suite} projectId="project-1" sharedDefaults={{
+      value: [{ serverId: "srv-asana", connectionId: live.connectionId }],
+      onChange: edit,
+      disabled: false,
+    }} />);
+    const select = screen.getByRole("combobox", { name: "Asana account" });
+    expect(select).toHaveValue(live.connectionId);
+    await userEvent.selectOptions(select, dummy.connectionId);
+    expect(edit).toHaveBeenCalledWith([{ serverId: "srv-asana", connectionId: dummy.connectionId }]);
+    expect(state.save).not.toHaveBeenCalled();
   });
 
   it("preselects the default account and keeps it chosen while it is the only one", () => {

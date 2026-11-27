@@ -49,6 +49,7 @@ export function SupportChip({
     >
       <span
         aria-hidden
+        data-support-dot=""
         className={cn("size-1.5 rounded-full", LEVEL_DOT[level])}
       />
       {truncateLabel ? (

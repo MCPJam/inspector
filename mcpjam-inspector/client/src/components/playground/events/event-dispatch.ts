@@ -3,6 +3,10 @@ import type {
   EventsSubscriptionView,
 } from "@/shared/events-api";
 import { renderPlaygroundEventTurn } from "@/shared/event-turn-parts";
+import {
+  eventAtTurnFromFeedEntry,
+  type EventAtTurn,
+} from "@/shared/event-at-turn";
 import { renderUserContextText } from "@/shared/user-context-message";
 
 export interface EventBinding {
@@ -15,7 +19,9 @@ export interface EventBinding {
   enabled: boolean;
   afterSeq: number;
   agentScope: string;
-  subscription?: Pick<EventsSubscriptionView, "desiredState" | "observedState">;
+  /** `mode` gives a test event the subscription's delivery mode. */
+  subscription?: Pick<EventsSubscriptionView, "desiredState" | "observedState"> &
+    Partial<Pick<EventsSubscriptionView, "mode">>;
 }
 
 function acceptsEvents(binding: EventBinding): boolean {
@@ -32,7 +38,12 @@ function acceptsEvents(binding: EventBinding): boolean {
 export interface EventAgent {
   scope: string;
   blockedReason: string | null;
-  send: (text: string, isCurrent: () => boolean) => Promise<boolean>;
+  /** `event` is what the turn records about the occurrence that started it. */
+  send: (
+    text: string,
+    isCurrent: () => boolean,
+    event?: EventAtTurn,
+  ) => Promise<boolean>;
 }
 
 /** What became of one occurrence. A skipped one never reached the agent. */
@@ -159,7 +170,11 @@ export function createEventDispatcher(options: {
       };
       inFlight = true;
       try {
-        const sent = await agent.send(eventTurn(binding, entry), isCurrent);
+        const sent = await agent.send(
+          eventTurn(binding, entry),
+          isCurrent,
+          eventAtTurnFromFeedEntry(entry, binding.subscription?.mode),
+        );
         if (!disposed)
           options.result(
             id,

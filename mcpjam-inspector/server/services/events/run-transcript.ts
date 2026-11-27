@@ -15,8 +15,9 @@
  * append this run, write it back with `expectedVersion`. Runs of one trigger
  * are FIFO-serialized by the backend's claim, so a version conflict is rare;
  * it is retried once from a fresh read. The turn id is derived from the run
- * id, so a retried run that already landed is recognized as a duplicate
- * rather than appended twice.
+ * id, so a run that already landed (re-claimed after a lost lease) is found
+ * among the thread's turn traces and written nothing, rather than appended
+ * twice or moved onto the next run's prompt.
  *
  * Best effort by construction: a transcript that cannot be read is NOT
  * overwritten with a partial one, and nothing here can fail the run.
@@ -31,6 +32,7 @@ import {
 import type { SyntheticModelSource } from "../../utils/org-model-config.js";
 import { logger } from "../../utils/logger.js";
 import { fetchJsonBlob } from "../../routes/v1/blob-read.js";
+import type { EventRunTurnRecord } from "./run-turn-record.js";
 
 const DETAIL_TIMEOUT_MS = 10_000;
 const BLOB_TIMEOUT_MS = 10_000;
@@ -50,6 +52,8 @@ export interface PriorTranscript {
   messages: unknown[];
   version?: number;
   startedAt?: number;
+  /** The turn ids of the thread's turn traces: the runs already in it. */
+  turnIds?: string[];
 }
 
 export interface TranscriptPort {
@@ -82,6 +86,7 @@ async function loadFromBackend(args: {
   }
   const body = (await response.json()) as {
     session?: { messagesBlobUrl?: string | null; version?: number; startedAt?: number };
+    turnTraces?: Array<{ turnId?: unknown }>;
   };
   const parsed = await fetchJsonBlob(body.session?.messagesBlobUrl, {
     timeoutMs: BLOB_TIMEOUT_MS,
@@ -93,10 +98,14 @@ async function loadFromBackend(args: {
   if (!Array.isArray(messages)) {
     throw new Error("event run transcript blob could not be read");
   }
+  const turnIds = (Array.isArray(body.turnTraces) ? body.turnTraces : [])
+    .map((trace) => trace?.turnId)
+    .filter((turnId): turnId is string => typeof turnId === "string");
   return {
     messages,
     ...(typeof body.session?.version === "number" ? { version: body.session.version } : {}),
     ...(typeof body.session?.startedAt === "number" ? { startedAt: body.session.startedAt } : {}),
+    turnIds,
   };
 }
 
@@ -105,6 +114,40 @@ function countUserMessages(messages: unknown[]): number {
     (message) =>
       !!message && typeof message === "object" && (message as { role?: unknown }).role === "user",
   ).length;
+}
+
+/**
+ * The engine ran the turn as prompt 0 of a fresh conversation, so its spans
+ * and saved requests say prompt 0 and index the run's own messages. In the
+ * thread the turn is prompt `promptIndex`, after `messageOffset` earlier
+ * messages; without this every run of a trigger lands on the first prompt row.
+ */
+function alignTurnToThread(
+  trace: PersistedTurnTrace,
+  promptIndex: number,
+  messageOffset: number,
+): PersistedTurnTrace {
+  return {
+    ...trace,
+    spans: trace.spans.map((span) => ({
+      ...span,
+      promptIndex,
+      ...(typeof span.messageStartIndex === "number"
+        ? { messageStartIndex: span.messageStartIndex + messageOffset }
+        : {}),
+      ...(typeof span.messageEndIndex === "number"
+        ? { messageEndIndex: span.messageEndIndex + messageOffset }
+        : {}),
+    })),
+    ...(trace.requestPayloads
+      ? {
+          requestPayloads: trace.requestPayloads.map((entry) => ({
+            ...entry,
+            promptIndex,
+          })),
+        }
+      : {}),
+  };
 }
 
 export const defaultTranscriptPort: TranscriptPort = {
@@ -124,6 +167,8 @@ export async function persistEventRunTranscript(args: {
   /** This run's whole history, starting with the rendered event message. */
   runMessages: ModelMessage[];
   turnTrace?: PersistedTurnTrace;
+  /** The event, environment and skills the turn records (`eventRunTurnRecord`). */
+  turnRecord?: EventRunTurnRecord;
   startedAt: number;
 }): Promise<{ chatSessionId: string; persisted: boolean }> {
   const port = args.port ?? defaultTranscriptPort;
@@ -146,6 +191,18 @@ export async function persistEventRunTranscript(args: {
       });
       return { chatSessionId, persisted: false };
     }
+    // Already in the thread. Ingest would skip the transcript as a duplicate
+    // turn but still rewrite the trace row, with this run moved to the next
+    // prompt and its spans past its own messages, so write nothing.
+    if (prior?.turnIds?.includes(turnId)) {
+      logger.info("[events-executor] run already in its thread; transcript not rewritten", {
+        runId: args.runId,
+      });
+      return { chatSessionId, persisted: true };
+    }
+    // This run's prompt is the next one in the THREAD, not prompt 0 of a
+    // fresh conversation (which is what the engine saw).
+    const promptIndex = countUserMessages(prior?.messages ?? []);
     const outcome = await port.persist({
       chatSessionId,
       modelId: args.modelId,
@@ -161,16 +218,21 @@ export async function persistEventRunTranscript(args: {
       lastActivityAt: Date.now(),
       ...(prior?.version !== undefined ? { expectedVersion: prior.version } : {}),
       turnTrace: {
-        ...(args.turnTrace ?? {
-          startedAt: args.startedAt,
-          endedAt: Date.now(),
-          spans: [],
-          modelId: args.modelId,
-        }),
+        ...(args.turnTrace
+          ? alignTurnToThread(
+              args.turnTrace,
+              promptIndex,
+              prior?.messages.length ?? 0,
+            )
+          : {
+              startedAt: args.startedAt,
+              endedAt: Date.now(),
+              spans: [],
+              modelId: args.modelId,
+            }),
+        ...(args.turnRecord ?? {}),
         turnId,
-        // This run's prompt is the next one in the THREAD, not prompt 0 of a
-        // fresh conversation (which is what the engine saw).
-        promptIndex: countUserMessages(prior?.messages ?? []),
+        promptIndex,
       },
     });
     if (outcome.outcome === "conflict") continue;

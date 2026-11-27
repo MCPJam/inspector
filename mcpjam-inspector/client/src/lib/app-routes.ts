@@ -200,6 +200,7 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     note: "Chrome-less vanity surface (caniuse.dev): no sidebar, no NUX.",
     scope: "public",
   },
+  { path: "compare", kind: "special", scope: "public", note: "Public comparison matrix." },
   {
     path: "embed/score",
     kind: "special",

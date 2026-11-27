@@ -35,6 +35,8 @@ import type { CaseLaunchTarget } from "./case-workspace/pending-case-launches";
 import { reasoningEffortLabel } from "@/components/effort/effort-control";
 import { RunsAsLine } from "./suite-runs-as";
 import { scopeAccountPreflight } from "./suite-run-account-preflight";
+import { AccountGroup, SharedServerAccountRows } from "../evals/suite-accounts-row";
+import type { SharedEvalAccountSelection } from "@/lib/evals/eval-accounts";
 
 type ReviewEnvironment = Pick<
   ProjectEnvironmentView,
@@ -202,6 +204,7 @@ export function SuiteRunReviewContent({
     ),
   );
   const [starting, setStarting] = useState(false);
+  const [runAccounts, setRunAccounts] = useState<SharedEvalAccountSelection[]>([]);
   const [error, setError] = useState<string | null>(null);
   // The backend's launch refusal under the org's AI key policy lists every
   // dependency that can't run on the organization's providers.
@@ -212,7 +215,7 @@ export function SuiteRunReviewContent({
   useEffect(() => {
     setError(null);
     setLaunchProblems([]);
-  }, [iterations, selected, matrix?.signature]);
+  }, [iterations, selected, runAccounts, matrix?.signature]);
   const lock = useRef(false);
   const count = Number(iterations);
   const validCount = Number.isInteger(count) && count >= 1 && count <= 10;
@@ -235,10 +238,16 @@ export function SuiteRunReviewContent({
           suite,
           selectedIds,
         );
+  const sharedServers = scopedPreflight?.sharedServers;
+  const sharedServerName = scopedPreflight?.sharedServerName;
+  const unavailableRunAccounts = runAccounts.filter((account) =>
+    !sharedServers?.some((server) => server.serverId === account.serverId),
+  );
   // The notices say which server; this only has to stop the launch.
   const disabledReason =
     blockedReason ??
     scopedPreflight?.outOfCreditsReason ??
+    (unavailableRunAccounts.length ? "Review your MCP server account choices." : null) ??
     (hasBlockingPreflight(scopedPreflight)
       ? "Fix the setup problem above before running."
       : null);
@@ -280,6 +289,7 @@ export function SuiteRunReviewContent({
               hostNamesById,
             }),
           count,
+          runAccounts,
         );
       } catch (failure) {
         setError(
@@ -302,7 +312,11 @@ export function SuiteRunReviewContent({
               activeTargets.map((target) => target.id),
             ),
         // Failures come back here to show inline, not as a toast behind it.
-        { iterationOverride: count, throwOnFailure: true },
+        {
+          iterationOverride: count,
+          throwOnFailure: true,
+          ...(runAccounts.length ? { runAccounts } : {}),
+        },
       );
       if (!isCaseRun) rememberIterations(suite._id, count);
       onClose();
@@ -414,6 +428,30 @@ export function SuiteRunReviewContent({
             </section>
           )}
           <RunsAsLine entries={scopedPreflight?.runsAs} />
+          {sharedServers?.length && sharedServerName ? (
+            <AccountGroup testId="run-accounts-shared" title="Shared MCP servers">
+              <SharedServerAccountRows
+                servers={sharedServers}
+                serverName={sharedServerName}
+                selections={runAccounts}
+                onChange={setRunAccounts}
+                disabled={starting}
+                inheritLabel="Use saved settings"
+                suiteDefaults={suite.accounts}
+                cases={cases}
+              />
+            </AccountGroup>
+          ) : null}
+          {unavailableRunAccounts.length ? (
+            <div className="text-sm" role="alert">
+              Some selected accounts are outside the current setup.
+              <Button type="button" variant="link" onClick={() => setRunAccounts((accounts) =>
+                accounts.filter((account) => !unavailableRunAccounts.includes(account)),
+              )}>
+                Clear those choices
+              </Button>
+            </div>
+          ) : null}
           {scopedPreflight && (
             <RunPreflightNotices
               preflight={scopedPreflight}

@@ -5,6 +5,7 @@ import type {
   EventsObservedStateView,
   EventsSubscriptionView,
 } from "@/shared/events-api";
+import { describeConvexFailure } from "@/lib/convex-error";
 
 /**
  * Tone for a subscription's observed state. Status tokens only (DESIGN.md:
@@ -64,7 +65,14 @@ export function formatCountdown(
 }
 
 /** A thrown error's message, or `fallback` when it carries none. */
+/**
+ * What a user reads for a failed Events call. A backend refusal (a
+ * `ConvexError`) carries its sentence on `data`; its `message` is only
+ * Convex's "[CONVEX M(…)] Server Error" wrapper, so read the sentence.
+ */
 export function errorMessage(error: unknown, fallback: string): string {
+  const failure = describeConvexFailure(error, fallback);
+  if (failure.refusal) return failure.message;
   return error instanceof Error && error.message ? error.message : fallback;
 }
 

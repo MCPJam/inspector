@@ -2516,6 +2516,7 @@ export function TasksRoute() {
 }
 
 export function EventsRoute() {
+  const fallback = useCurrentSearchParam("fallback");
   const {
     selectedMCPConfig,
     appState,
@@ -2526,7 +2527,14 @@ export function EventsRoute() {
   } = useAppRouteContext();
   const eventsEnabled = useEventsEnabledState();
   if (eventsEnabled === false) {
-    return <ScopedNavigate to={routePaths.servers} replace />;
+    return (
+      <ScopedNavigate
+        to={
+          fallback === "playground" ? routePaths.playground : routePaths.servers
+        }
+        replace
+      />
+    );
   }
   if (eventsEnabled === undefined) return null;
   return (
@@ -3164,7 +3172,12 @@ export default function App() {
   const isConformanceSharedRoute =
     barePathname === routePaths.conformanceShared ||
     barePathname.startsWith(`${routePaths.conformanceShared}/`);
+  const isCaniuseSite =
+    barePathname === routePaths.caniuseCompare ||
+    barePathname === routePaths.capabilities ||
+    barePathname.startsWith(`${routePaths.capabilities}/`);
   const isBareCaniuseRoute =
+    isCaniuseSite ||
     barePathname === routePaths.embedHostCompare ||
     barePathname === routePaths.embedScore ||
     barePathname === routePaths.embedBench ||
@@ -3175,8 +3188,7 @@ export default function App() {
     barePathname.startsWith(`${routePaths.benchResults}/`) ||
     barePathname.startsWith(`${routePaths.scoreResults}/`) ||
     isConformanceSharedRoute ||
-    barePathname.startsWith(`${routePaths.evalsShared}/`) ||
-    barePathname.startsWith(`${routePaths.capabilities}/`);
+    barePathname.startsWith(`${routePaths.evalsShared}/`);
   // The WorkOS Initiate Login URL, where an IdP-initiated login (the Okta app
   // tile) is parked for the instant it takes `LoginInitiationRoute` to start a
   // fresh sign-in. `/login` is not a known tab segment, so it resolves to the
@@ -6635,6 +6647,7 @@ export default function App() {
     "billing",
   ].includes(activeTab);
   const announcementsEnabled =
+    !isBareCaniuseRoute &&
     !isWorkOsLoading &&
     !isAuthLoading &&
     effectiveHostedShellGateState === "ready" &&
@@ -7005,7 +7018,7 @@ export default function App() {
   );
 
   return (
-    <AnnouncementQueueProvider enabled={announcementsEnabled}>
+    <AnnouncementQueueProvider enabled={isCaniuseSite || announcementsEnabled}>
       {shell}
     </AnnouncementQueueProvider>
   );

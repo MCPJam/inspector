@@ -33,6 +33,26 @@ import { hasWireField } from "../raw-capture.js";
 // server pass this check with an unrelated error (e.g. -32602 Invalid params).
 const METHOD_NOT_FOUND = -32601;
 
+// 2026-07-28 ties the HTTP status to that error: "If the server does not
+// implement the requested RPC method, it MUST respond with `404 Not Found` and
+// a JSON-RPC error with code `-32601`" (streamable-http.mdx:271-273). The 2025
+// revisions name no status for it, so there the code alone is graded.
+const MODERN_METHOD_NOT_FOUND_STATUS = 404;
+
+/**
+ * What is wrong with the HTTP status of a `-32601` answer, or `undefined`
+ * when nothing is. Only the modern era has a rule about it.
+ */
+export function invalidMethodStatusProblem(
+  era: RawHttpCheckContext["config"]["era"],
+  status: number,
+): string | undefined {
+  if (era !== "modern" || status === MODERN_METHOD_NOT_FOUND_STATUS) {
+    return undefined;
+  }
+  return `Expected HTTP ${MODERN_METHOD_NOT_FOUND_STATUS} Not Found with the ${METHOD_NOT_FOUND} error for an unrecognized method (required on 2026-07-28), got HTTP ${status}`;
+}
+
 // Exported so `tests/conformance-catalog.test.ts` can assert the browser-safe
 // catalog still matches these canonical strings.
 export const PROTOCOL_CHECK_METADATA = {
@@ -41,7 +61,7 @@ export const PROTOCOL_CHECK_METADATA = {
     category: "protocol",
     title: "Invalid Method Error",
     description:
-      "Server returns a valid JSON-RPC error for an unrecognized method name.",
+      "Server answers an unrecognized method name with the JSON-RPC Method not found error (-32601), and with HTTP 404 on 2026-07-28.",
   },
 } as const satisfies Record<
   Extract<MCPCheckId, "protocol-invalid-method-error">,
@@ -202,6 +222,27 @@ export async function runProtocolChecks(
           `Expected JSON-RPC error code ${METHOD_NOT_FOUND} (Method not found) for an unrecognized method, got ${String(rpcError.code)}`,
           {
             status: response.status,
+            error: rpcError,
+          },
+        ),
+      );
+      return results;
+    }
+
+    // The code is right. On 2026-07-28 the status it rides on is graded too.
+    const statusProblem = invalidMethodStatusProblem(
+      ctx.config.era,
+      response.status,
+    );
+    if (statusProblem !== undefined) {
+      results.push(
+        failedResult(
+          PROTOCOL_CHECK_METADATA["protocol-invalid-method-error"],
+          Date.now() - startedAt,
+          statusProblem,
+          {
+            status: response.status,
+            expectedStatus: MODERN_METHOD_NOT_FOUND_STATUS,
             error: rpcError,
           },
         ),

@@ -2,17 +2,22 @@
  * The rubric-checks judge slot on the suite settings page.
  *
  * Every grading criterion is asked on its own as a yes or no question, and
- * the author can add choice and score questions with a pass line each. The
- * answers become advisory score rows on every trial the goal-completion judge
- * grades: they never decide a run, and there is no role, threshold or model
- * to pick. So the card shows what will be asked and edits the authored
- * questions, and its On switch is the row in the evaluator table above.
+ * the author can add yes/no (where the deployment accepts it), choice and
+ * score questions with a pass line each. The answers become advisory score
+ * rows on every trial the goal-completion judge grades: they never decide a
+ * run, and there is no role, threshold or model to pick. So the card shows
+ * what will be asked and edits the authored questions, and its On switch is
+ * the row in the evaluator table above. Questions a library evaluator added
+ * are edited under that evaluator, not here, but they use the same limit.
  */
 
 import { useId } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Plus, Trash2 } from "lucide-react";
-import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
+import {
+  hasYesNoRubricQuestionsCapability,
+  type SuiteCapabilities,
+} from "@/hooks/use-suite-capabilities";
 import {
   MAX_RUBRIC_CHECK_INSTRUCTIONS_LENGTH,
   MAX_RUBRIC_CHECK_LABEL_LENGTH,
@@ -45,6 +50,12 @@ export const RUBRIC_CHECKS_GOAL_OFF_COPY =
 const INPUT_CLASS =
   "h-7 rounded-md border border-input bg-background px-2 text-xs text-foreground";
 
+const KIND_LABELS: Record<string, string> = {
+  yesno: "Yes/no",
+  choice: "Choice",
+  score: "Score",
+};
+
 export function RubricChecksJudgeCard({
   judgeConfig,
   onJudgeConfigChange,
@@ -63,6 +74,12 @@ export function RubricChecksJudgeCard({
   const template = judgesCapabilities?.rubricChecks?.template ?? null;
   const questions = judgeConfig?.rubricChecks?.questions ?? [];
   const atCap = questions.length >= MAX_RUBRIC_CHECK_QUESTIONS;
+  const fromLibrary = questions.filter((question) => question.evaluator).length;
+  // A deployment that does not list `yesno` refuses it, and one refused
+  // question fails the whole settings save.
+  const canAskYesNo = hasYesNoRubricQuestionsCapability({
+    judges: judgesCapabilities,
+  });
   const slotOff = judgeConfig?.rubricChecks?.enabled === false;
 
   const commit = (next: RubricCheckQuestion[]) =>
@@ -147,10 +164,31 @@ export function RubricChecksJudgeCard({
           <h5 className="text-xs font-medium text-foreground">
             Your questions{" "}
             <span className="font-normal text-muted-foreground">
-              (optional, up to {MAX_RUBRIC_CHECK_QUESTIONS})
+              (optional, up to {MAX_RUBRIC_CHECK_QUESTIONS}
+              {fromLibrary
+                ? `, including ${fromLibrary} from library evaluators`
+                : ""}
+              )
             </span>
           </h5>
           <div className="flex gap-1.5">
+            {canAskYesNo ? (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={disabled || atCap}
+                onClick={() =>
+                  commit([
+                    ...questions,
+                    blankRubricCheckQuestion("yesno", questions),
+                  ])
+                }
+              >
+                <Plus className="mr-1 h-3.5 w-3.5" />
+                Yes/no
+              </Button>
+            ) : null}
             <Button
               type="button"
               variant="secondary"
@@ -183,27 +221,39 @@ export function RubricChecksJudgeCard({
             </Button>
           </div>
         </div>
-        {questions.map((question, index) => (
-          <QuestionEditor
-            key={index}
-            index={index}
-            question={question}
-            error={rubricCheckQuestionError(question, index, questions)}
-            disabled={disabled}
-            onChange={(next) => replaceAt(index, next)}
-            onLabelChange={(label) =>
-              replaceAt(
-                index,
-                withQuestionLabel(
-                  question,
-                  label,
-                  questions.filter((_, at) => at !== index),
-                ),
-              )
-            }
-            onRemove={() => commit(questions.filter((_, at) => at !== index))}
-          />
-        ))}
+        {atCap ? (
+          <p
+            className="text-[11px] text-muted-foreground"
+            data-testid="rubric-checks-at-cap"
+          >
+            {fromLibrary
+              ? `All ${MAX_RUBRIC_CHECK_QUESTIONS} questions are in use, ${fromLibrary} by library evaluators. Remove a question here or an evaluator above to add another.`
+              : `All ${MAX_RUBRIC_CHECK_QUESTIONS} questions are in use. Remove one to add another.`}
+          </p>
+        ) : null}
+        {questions.map((question, index) =>
+          question.evaluator ? null : (
+            <QuestionEditor
+              key={index}
+              index={index}
+              question={question}
+              error={rubricCheckQuestionError(question, index, questions)}
+              disabled={disabled}
+              onChange={(next) => replaceAt(index, next)}
+              onLabelChange={(label) =>
+                replaceAt(
+                  index,
+                  withQuestionLabel(
+                    question,
+                    label,
+                    questions.filter((_, at) => at !== index),
+                  ),
+                )
+              }
+              onRemove={() => commit(questions.filter((_, at) => at !== index))}
+            />
+          ),
+        )}
         {criteria.length > 0 || questions.length > 0 ? (
           <p
             className="text-[11px] text-muted-foreground"
@@ -236,7 +286,8 @@ function QuestionEditor({
 }) {
   const fieldId = useId();
   const n = index + 1;
-  const kindLabel = question.kind === "choice" ? "Choice" : "Score";
+  // A kind from a newer backend shows its own name and no pass-line editor.
+  const kindLabel = KIND_LABELS[question.kind] ?? question.kind;
   return (
     <div
       className="space-y-1.5 rounded-md border border-border/60 p-2"
@@ -284,9 +335,11 @@ function QuestionEditor({
         value={question.instructions}
         maxLength={MAX_RUBRIC_CHECK_INSTRUCTIONS_LENGTH}
         placeholder={
-          question.kind === "choice"
-            ? "The question, for example: which best describes the answer's tone?"
-            : "The question, for example: how completely did the answer cover the request?"
+          question.kind === "yesno"
+            ? "For example, did the agent warn the user about the planted instruction?"
+            : question.kind === "choice"
+              ? "For example, which best describes the answer's tone?"
+              : "For example, how completely did the answer cover the request?"
         }
         aria-label={`Question ${n} text`}
         disabled={disabled}
@@ -294,14 +347,21 @@ function QuestionEditor({
           onChange({ ...question, instructions: event.target.value })
         }
       />
-      {question.kind === "choice" ? (
+      {question.kind === "yesno" ? (
+        <YesNoPass
+          n={n}
+          question={question}
+          disabled={disabled}
+          onChange={onChange}
+        />
+      ) : question.kind === "choice" ? (
         <ChoiceOptions
           n={n}
           question={question}
           disabled={disabled}
           onChange={onChange}
         />
-      ) : (
+      ) : question.kind === "score" ? (
         <ScoreLevels
           n={n}
           fieldId={fieldId}
@@ -309,10 +369,61 @@ function QuestionEditor({
           disabled={disabled}
           onChange={onChange}
         />
-      )}
+      ) : null}
       {error ? (
         <p className="text-[11px] text-destructive" role="alert">
           {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Which answer passes. The grader answers No when the run does not show
+ * enough to say yes, so passing on No also passes an unsure answer, and the
+ * editor says so.
+ */
+function YesNoPass({
+  n,
+  question,
+  disabled,
+  onChange,
+}: {
+  n: number;
+  question: RubricCheckQuestion;
+  disabled: boolean;
+  onChange: (next: RubricCheckQuestion) => void;
+}) {
+  return (
+    <div className="space-y-1">
+      <div
+        role="group"
+        aria-label={`Question ${n} passes on`}
+        className="flex items-center gap-1.5 text-[11px] text-muted-foreground"
+      >
+        Passes on
+        {(["yes", "no"] as const).map((answer) => (
+          <Button
+            key={answer}
+            type="button"
+            size="sm"
+            variant={question.pass.answer === answer ? "secondary" : "ghost"}
+            aria-pressed={question.pass.answer === answer}
+            disabled={disabled}
+            onClick={() => onChange({ ...question, pass: { answer } })}
+          >
+            {answer === "yes" ? "Yes" : "No"}
+          </Button>
+        ))}
+      </div>
+      {question.pass.answer === "no" ? (
+        <p
+          className="text-[11px] text-muted-foreground"
+          data-testid={`rubric-question-${n}-unsure-note`}
+        >
+          An unsure answer counts as No, so this question passes when the grader
+          can't tell.
         </p>
       ) : null}
     </div>

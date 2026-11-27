@@ -10,6 +10,7 @@ import { AdmissionWaitBudget } from "../services/sessionSimulation/admission-ret
 import { withModelStepAdmissionRetry } from "./model-step-admission.js";
 import { streamSelectionFields } from "./selection-rail.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
+import type { EventAtTurn } from "@/shared/event-at-turn";
 import { unwrapToolOutputEnvelope } from "@/shared/tool-output-envelope";
 /**
  * MCPJam Stream Handler
@@ -1363,6 +1364,8 @@ export interface MCPJamHandlerOptions {
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
+  /** The MCP event that started this turn, echoed on `turn_start` by both engines. */
+  eventAtTurn?: EventAtTurn;
   onLiveTextDelta?: (delta: string) => void;
   /**
    * Engine consolidation PR 5b-pre — fires from the chunk-processing
@@ -5468,6 +5471,7 @@ export async function runChatEngineLoop(
     traceBaseMs: traceTurn.turnStartedAt,
     spans: traceTurn.turnSpans,
     onStepFinish,
+    ...(options.eventAtTurn ? { event: options.eventAtTurn } : {}),
   });
   const promptStepBaseIndex = getPromptAssistantStepBaseIndex(
     messageHistory,

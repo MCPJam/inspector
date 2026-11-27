@@ -65,7 +65,7 @@ vi.mock("../../../utils/org-model-config.js", async (importOriginal) => ({
 }));
 
 import { prepareSuiteReplayFromRun, executeSuiteReplayFromRun } from "../replay-suite-run.js";
-import { buildReplayManager, storeReplayConfig } from "../route-helpers.js";
+import { buildReplayManager, fetchReplayConfig, storeReplayConfig } from "../route-helpers.js";
 import { namePin } from "../../../test/support/skill-delivery.js";
 import type { RunPinnedSkill } from "../run-plugin-snapshot.js";
 
@@ -90,6 +90,27 @@ beforeEach(() => {
 });
 
 afterEach(() => vi.unstubAllEnvs());
+
+it("replays recorded case accounts without reading an archived credential bundle", async () => {
+  const plan = [{ testCaseId: "case-1", serverId: "srv", connectionId: "original", source: "default" }];
+  const client = { query: vi.fn().mockResolvedValueOnce({
+    hasPerCaseAccounts: true, hasServerReplayConfig: true, suiteId: "suite-1", projectId: "project-1",
+    environment: { servers: ["srv"], serverBindings: [{ serverName: "srv", projectServerId: "srv" }] },
+  }).mockResolvedValueOnce(plan) };
+  const manager = { listServers: () => [], disconnectAllServers: vi.fn(async () => {}) };
+  const managerForCase = vi.fn().mockReturnValue(manager);
+  const close = vi.fn(async () => {});
+  const openReplayServers = vi.fn().mockResolvedValue({ manager, managerForCase, close, serverIds: ["srv"], serverBindings: [] });
+  vi.mocked(fetchReplayConfig).mockClear();
+  const prepared = await prepareSuiteReplayFromRun({ convexClient: client as never, convexAuthToken: "token", sourceRunId: "source-run-1", openReplayServers });
+  expect(fetchReplayConfig).not.toHaveBeenCalled();
+  expect(openReplayServers).toHaveBeenCalledWith(expect.objectContaining({ plan }));
+  expect(startSuiteRunWithRecorderMock).toHaveBeenLastCalledWith(expect.objectContaining({ evalAccountPlan: plan }));
+  await prepared.execute();
+  expect(runEvalSuiteWithAiSdkMock).toHaveBeenLastCalledWith(expect.objectContaining({ accountManagerForCase: managerForCase }));
+  await prepared.cleanup();
+  expect(close).toHaveBeenCalledOnce();
+});
 
 it.each(["running", "completed"])("adopts a snapshot replay in %s without setup or execution", async (status) => {
   const original = startSuiteRunWithRecorderMock.getMockImplementation()!;

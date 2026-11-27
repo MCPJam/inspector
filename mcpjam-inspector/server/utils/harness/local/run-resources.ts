@@ -193,7 +193,13 @@ export async function withLocalHarnessSlot<T>(run: () => Promise<T>, signal?: Ab
   finally { release(); }
 }
 
-export function assertLocalHarnessCapabilities(args: { builtInToolIds?: readonly string[]; computerEnvironmentId?: string; hasAttachments?: boolean; browserToolPolicy?: unknown; harnessId?: string }) {
+export function assertLocalHarnessCapabilities(args: { builtInToolIds?: readonly string[]; computerEnvironmentId?: string; hasAttachments?: boolean; browserToolPolicy?: unknown; harnessId?: string; codeGradingFeatures?: readonly string[] }) {
+  if (args.codeGradingFeatures?.length) {
+    const name = harnessDisplayName(args.harnessId ?? DEFAULT_LOCAL_HARNESS_ID);
+    const features = args.codeGradingFeatures;
+    const list = features.length > 1 ? `${features.slice(0, -1).join(", ")} and ${features[features.length - 1]}` : features[0];
+    throw new Error(`This suite's ${list} need a cloud sandbox for the agent. Local ${name} runs on your machine, so run this suite with a cloud client.`);
+  }
   const unsupported = args.builtInToolIds?.filter(id => ["bash", "browser", "computer", "desktop", "video"].includes(id)) ?? [];
   if (args.computerEnvironmentId || args.hasAttachments || args.browserToolPolicy || unsupported.length) {
     const name = harnessDisplayName(args.harnessId ?? DEFAULT_LOCAL_HARNESS_ID);

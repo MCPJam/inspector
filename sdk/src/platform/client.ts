@@ -4986,7 +4986,9 @@ export class PlatformApiClient extends DirectoryReviewerAttemptClient {
       endpointUrl: string;
       headers?: Record<string, string>;
       resourceAttributes?: Record<string, string>;
-      sourceTypes?: Array<"eval" | "scenario" | "study" | "swarm" | "direct">;
+      sourceTypes?: Array<
+        "eval" | "scenario" | "study" | "swarm" | "direct" | "event"
+      >;
       includeContent?: boolean;
       projectIds?: string[];
       compression?: "gzip" | "none";
@@ -5025,7 +5027,9 @@ export class PlatformApiClient extends DirectoryReviewerAttemptClient {
       endpointUrl?: string;
       headers?: Record<string, string>;
       resourceAttributes?: Record<string, string>;
-      sourceTypes?: Array<"eval" | "scenario" | "study" | "swarm" | "direct">;
+      sourceTypes?: Array<
+        "eval" | "scenario" | "study" | "swarm" | "direct" | "event"
+      >;
       includeContent?: boolean;
       projectIds?: string[];
       allProjects?: boolean;

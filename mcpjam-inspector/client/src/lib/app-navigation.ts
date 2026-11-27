@@ -102,6 +102,7 @@ export const routePaths = {
   hostCompare: "/host-compare",
   /** Chrome-less host-compare for vanity domains (caniuse.dev) — no sidebar/nav, bypasses NUX. */
   embedHostCompare: "/embed/host-compare",
+  caniuseCompare: "/compare",
   /** Chrome-less conformance-score runner for score.mcpjam.com. */
   embedScore: "/embed/score",
   /** Chrome-less Connector Bench runner. `/<runId>` resumes an in-flight run. */

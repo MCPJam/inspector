@@ -1,3 +1,4 @@
+import { assertLocalCodeGradingSupported } from "./code-grading-gate.js";
 import {
   startEvalRun,
   EvalRunStartError,
@@ -277,6 +278,7 @@ async function executeSuiteFile(
 
   // Steps 1–3. Throws before anything starts.
   const plan = preflightSuiteFile(sourceText, options);
+  assertLocalCodeGradingSupported(plan.loaded.resolved);
 
   // Every secret value this run was handed, scrubbed from everything it
   // returns or throws — see `./secrets.ts`.

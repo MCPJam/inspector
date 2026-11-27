@@ -4,6 +4,7 @@ const prepareEvalRun = vi.fn();
 const loadSuiteHostConfig = vi.fn();
 const resolveEnvironmentForLaunch = vi.fn();
 const loadSuiteConnectionIdSets = vi.fn();
+const loadEvalRunAccountPlan = vi.fn().mockResolvedValue(null);
 
 vi.mock("../evals/compat-runtime.js", () => ({
   loadSuiteHostConfig: (...args: unknown[]) => loadSuiteHostConfig(...args),
@@ -25,6 +26,7 @@ vi.mock("../evals/route-helpers.js", () => ({
   },
 }));
 vi.mock("../evals/suite-account-choices.js", () => ({
+  loadEvalRunAccountPlan: (...args: unknown[]) => loadEvalRunAccountPlan(...args),
   loadSuiteConnectionIdSets: (...args: unknown[]) =>
     loadSuiteConnectionIdSets(...args),
 }));
@@ -302,13 +304,13 @@ describe("executeClaimedRun connection", () => {
     expect(connectOptions()).toMatchObject({ pluginComputerRuntime: false });
   });
 
-  it("runs on the schedule owner's saved accounts, read with the owner's bearer", async () => {
+  it("reads personal account preferences with the schedule owner's bearer", async () => {
     loadSuiteConnectionIdSets.mockResolvedValueOnce({ asana: ["dummy"] });
     await executeClaimedRun(CLAIM);
 
     expect(loadSuiteConnectionIdSets).toHaveBeenCalledWith(
       { bearer: "bearer" },
-      { suiteId: CLAIM.suiteId },
+      { suiteId: CLAIM.suiteId, serverIds: [] },
     );
     expect(connectOptions()).toMatchObject({
       connectionIdSets: { asana: ["dummy"] },
@@ -348,6 +350,11 @@ describe("executeClaimedRun connection", () => {
     loadSuiteHostConfig.mockResolvedValue(ENTERPRISE_POLICY_HOST);
 
     await executeClaimedRun({ ...CLAIM, environmentId: "env-1" });
+
+    expect(loadEvalRunAccountPlan).toHaveBeenCalledWith(
+      { bearer: "bearer" },
+      { suiteId: CLAIM.suiteId, serverIds: ["srv-1"] },
+    );
 
     expect(loadSuiteHostConfig).toHaveBeenCalledWith(
       { bearer: "bearer" },
