@@ -13,30 +13,48 @@
  * that caller's own connection to the real server (`forwarding.ts`), so
  * nothing of one caller's credentials reaches another.
  */
-import { buildMock, NO_REAL_SERVER, type MockCallEvent, type MockRealServer } from "@mcpjam/sdk/mocks";
+import {
+  buildMock,
+  NO_REAL_SERVER,
+  type MockCallEvent,
+  type MockRealServer,
+  type MockTaskStore,
+} from "@mcpjam/sdk/mocks";
 import type { ManagerCallerContext } from "../../routes/web/auth.js";
 import { logger } from "../../utils/logger.js";
 import type { MockCallMark } from "../../../shared/mock-answer-span.js";
 import { MOCK_CALLS_HEADER, formatMockCalls } from "./answer-marks.js";
 import { actorDigest, resolveMock, type ResolvedMock } from "./backend.js";
 import { openAuthorizedReal, type OpenReal } from "./connection.js";
+import { acquireSharedBus, createEventBus, withFeed } from "./event-bus.js";
 import { checkForwardWithBackend, type ForwardVerdict } from "./forward-policy.js";
 import { takeMockForward } from "./forward-fan-out.js";
 import { forwardingRealServer, type ForwardingReal } from "./forwarding.js";
 import { IN_APP_REFUSAL_MESSAGES, MockRefusal, mockRefusalResponse } from "./refusal.js";
 import type { MockDialProfile, MockDoorContext } from "./registry.js";
+import { readRequestFacts } from "./request-facts.js";
+import { backendTaskStore } from "./task-store.js";
 
 export const MOCK_VERSION_HEADER = "x-mcpjam-mock-version";
 export const DEFAULT_MOCK_PROFILE: MockDialProfile = { timeoutMs: 30_000 };
 
 /** Who is calling and how they proved it, whichever door they came through. */
 export type MockDoor =
-  | { kind: "http"; bearerToken: string; caller: ManagerCallerContext; profile: MockDialProfile }
+  | {
+      kind: "http";
+      bearerToken: string;
+      caller: ManagerCallerContext;
+      profile: MockDialProfile;
+      /** A bearer the backend's functions accept for this caller, when the request's own is not one (an API key). */
+      convexBearer?: () => Promise<string>;
+    }
   | ({ kind: "in-process" } & MockDoorContext);
 
 export interface MockRouteDeps {
   resolve?: typeof resolveMock;
   open?: OpenReal;
+  /** Where tasks live (default: the backend's, through the caller's own bearer). */
+  taskStore?: (input: { mockId: string; door: MockDoor }) => MockTaskStore;
   /** The forwarding policy and access check (default: the backend's). */
   check?: (input: {
     resolved: ResolvedMock;
@@ -97,6 +115,12 @@ function finish(response: Response, added: Record<string, string>, release: () =
   );
 }
 
+const taskStoreFor = ({ mockId, door }: { mockId: string; door: MockDoor }) =>
+  backendTaskStore(
+    async () => (door.kind === "http" && door.convexBearer ? door.convexBearer() : door.bearerToken),
+    mockId,
+  );
+
 export async function serveMock(
   request: Request,
   mockId: string,
@@ -134,6 +158,7 @@ export async function serveMock(
           grant,
           signal,
         });
+  const facts = await readRequestFacts(request);
   let forwarding: ForwardingReal | undefined;
   let real: MockRealServer = NO_REAL_SERVER;
   if (resolved.baseServerId) {
@@ -145,6 +170,7 @@ export async function serveMock(
       signal: request.signal,
       open: deps.open ?? openAuthorizedReal,
       check,
+      ...(facts.taskCall && { taskCall: facts.taskCall }),
       // Only MCPJam's own dialers fan out this way; the HTTP door has its own limits.
       ...(door.kind === "in-process" && {
         takeForward: () => takeMockForward(caller.workosUserId ?? actorDigest(caller, bearerToken)),
@@ -152,6 +178,26 @@ export async function serveMock(
     });
     real = forwarding.real;
   }
+  // One bus per caller and mock version, so a stream on one request hears a
+  // change a saved case raised on another; a stream also hears, privately, what
+  // the real server sends while it is open.
+  const onBusError = (error: unknown) =>
+    logger.warn("[mock-route] a change listener failed", {
+      error: error instanceof Error ? error.name : typeof error,
+    });
+  const sharedBus = acquireSharedBus(
+    `${actorDigest(caller, bearerToken)}|${mockId}|${resolved.version}`,
+    onBusError,
+  );
+  const feedBus = facts.listen && forwarding ? createEventBus(onBusError) : undefined;
+  const stopFeed = feedBus && forwarding && facts.listen
+    ? await forwarding.feedChanges(facts.listen, feedBus.publish)
+    : undefined;
+  const release = async () => {
+    await stopFeed?.();
+    sharedBus.release();
+    await forwarding?.close();
+  };
   const marks: MockCallMark[] = [];
   const observer = (event: MockCallEvent) => {
     if (event.cause !== undefined) {
@@ -178,7 +224,19 @@ export async function serveMock(
     if (door.kind === "in-process") door.onCall?.(mark);
   };
   try {
-    const response = await buildMock(resolved.definition, real, { observer }).fetch(request, {
+    const response = await buildMock(resolved.definition, real, {
+      observer,
+      bus: feedBus ? withFeed(sharedBus.bus, feedBus) : sharedBus.bus,
+      tasks: {
+        store: (deps.taskStore ?? taskStoreFor)({ mockId, door }),
+        owner: caller.workosUserId ?? actorDigest(caller, bearerToken),
+        onError: (error) =>
+          logger.warn("[mock-route] a mock task could not be stored", {
+            mockId,
+            error: error instanceof Error ? error.name : typeof error,
+          }),
+      },
+    }).fetch(request, {
       // Names the caller by a digest; carries no credential.
       authInfo: {
         token: "",
@@ -193,10 +251,10 @@ export async function serveMock(
         [MOCK_VERSION_HEADER]: String(resolved.version),
         ...(door.kind === "http" && marks.length > 0 && { [MOCK_CALLS_HEADER]: formatMockCalls(marks) }),
       },
-      async () => void (await forwarding?.close()),
+      release,
     );
   } catch (error) {
-    await forwarding?.close();
+    await release();
     if (request.signal.aborted) throw error;
     logger.error("[mock-route] a mock failed while serving", error, { mockId });
     return mockRefusalResponse("unavailable");

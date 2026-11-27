@@ -21,6 +21,7 @@ import { mockRefusalResponse, type MockRefusalKind } from "../../services/mock/r
 import { DEFAULT_MOCK_PROFILE, serveMock } from "../../services/mock/route.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { HOSTED_MODE } from "../../config.js";
+import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { callerContextFromHono } from "./auth.js";
 
 /** The credential kinds that are a signed-in person acting. */
@@ -104,6 +105,8 @@ mockMcp.all("/:mockId", (c) =>
     kind: "http",
     bearerToken: bearerOf(c) as string,
     caller: callerContextFromHono(c),
+    // An API key is no Convex token; the task store's functions need one minted for the person behind it.
+    convexBearer: () => getConvexBearerForRequest(c),
     profile: { ...DEFAULT_MOCK_PROFILE, xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE) },
   }),
 );

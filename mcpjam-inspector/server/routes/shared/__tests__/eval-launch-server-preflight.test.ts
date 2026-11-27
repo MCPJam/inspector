@@ -4,6 +4,7 @@
  * the runner would only fail the same server at setup afterwards.
  */
 
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -227,6 +228,28 @@ describe("eval launch server preflight", () => {
     });
     expect(mocks.mutation).not.toHaveBeenCalled();
     expect(mocks.action).not.toHaveBeenCalled();
+  });
+
+  it("names what a server said when it refused to list its tools", async () => {
+    const refusal = new ProtocolError(
+      ProtocolErrorCode.InvalidParams,
+      'The mock edits "search", which the real server no longer lists. Update the mock to drop that edit.',
+    );
+    const failure = await launch(
+      manager({
+        listTools: async () => {
+          throw refusal;
+        },
+        status: "connected",
+      }),
+    ).catch((error) => error);
+
+    expect(failure).toMatchObject({
+      status: 502,
+      code: "SERVER_UNREACHABLE",
+      message:
+        'Could not start eval because "Linear" failed to list tools: The mock edits "search", which the real server no longer lists. Update the mock to drop that edit.',
+    });
   });
 
   it("still launches a benchmark cell against a disconnected target", async () => {

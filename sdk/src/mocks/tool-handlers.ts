@@ -28,6 +28,7 @@ import {
 import type { MockObserver } from "./mock-observer.js";
 import { pageOf } from "./paging.js";
 import { callerLogLevel, relayDuringCall } from "./relay.js";
+import { MODERN_REVISION } from "./revision.js";
 import { planToolCall, resolveMockTools } from "./resolve-tools.js";
 import type { MockRecords } from "./record-store.js";
 import { answerItself, toolErrorResult } from "./self-answer.js";
@@ -107,7 +108,13 @@ async function forwardCall(
       name: plan.realName,
       arguments: plan.arguments,
       signal: ctx.mcpReq.signal,
-      logLevel: callerLogLevel(ctx),
+      // A 2025 caller sends no level with the request, and a server it talks to
+      // directly logs everything unless it was told a level; ask for all, and
+      // the mock's own session level (if the caller set one) filters what
+      // goes on to the caller.
+      logLevel:
+        callerLogLevel(ctx) ??
+        (c.revision === MODERN_REVISION ? undefined : "debug"),
       onProgress: relay.onProgress,
       onLog: relay.onLog,
       inputResponses: ctx.mcpReq.inputResponses,

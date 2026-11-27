@@ -1,3 +1,4 @@
+import { serverRefusalText } from "../utils/listing-refusal.js";
 import { credentialFailureMessage } from "../routes/web/errors.js";
 import {
   collectDeclaredGradingFiles,
@@ -1316,12 +1317,16 @@ function throwSetupPhaseError(args: {
   const cause =
     args.detail?.line ??
     (args.error instanceof Error ? args.error.message : String(args.error));
+  // A server's own answer (a mock names the tool it edits that the real server lost).
+  const refusal = args.detail ? undefined : serverRefusalText(args.error);
   const listError = new EvalSetupPhaseError({
     status: 502,
     code: ErrorCode.SERVER_UNREACHABLE,
     message: args.detail
       ? `Could not start eval because "${serverLabel}" failed to list tools: ${args.detail.line}`
-      : `Could not start eval because "${serverLabel}" failed to list tools. Reconnect the server and try again.`,
+      : refusal
+        ? `Could not start eval because "${serverLabel}" failed to list tools: ${refusal}`
+        : `Could not start eval because "${serverLabel}" failed to list tools. Reconnect the server and try again.`,
     serverId: args.serverId,
     phase: args.phase,
     details: {

@@ -34,6 +34,7 @@ import { markUserServerHop } from "./route-error-report.js";
 import { createTurnToolLister } from "./plugin-server-isolation.js";
 import { withinToolListingBudget } from "./within-budget.js";
 import { mcpToolOptionsFor } from "./mcp-tool-options.js";
+import { forwardToolLogs } from "../services/chat-turn/tool-notifications.js";
 import {
   MCPClientManager,
   describeError,
@@ -1330,6 +1331,8 @@ export async function prepareChatV2(
   const knownSelectedServers = selectedServers
     ?.flatMap((id) => selectedGroups?.[id]?.map((c) => c.key) ?? [id])
     .filter((id) => mcpClientManager.hasServer(id));
+  // What a server sends while its tool runs reaches the call's card.
+  if (knownSelectedServers) forwardToolLogs(mcpClientManager, knownSelectedServers);
 
   // `undefined` for every default turn, which is what keeps those turns on the
   // pre-existing no-options overload. See `mcpToolOptionsFor`.

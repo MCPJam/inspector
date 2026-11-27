@@ -17,6 +17,9 @@ function mockManager(tools: Record<string, unknown>) {
     getAllToolsMetadata: vi.fn().mockReturnValue({}),
     listServers: vi.fn().mockReturnValue([]),
     hasServer: vi.fn().mockReturnValue(true),
+    // The turn forwards each server's log messages to the run; the fake has none.
+    setPerRequestLogLevel: vi.fn(),
+    onLogMessage: vi.fn(),
   } as any;
 }
 

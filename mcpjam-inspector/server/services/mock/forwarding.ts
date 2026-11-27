@@ -10,15 +10,18 @@
  *   and `listTools` answer from the listing pinned when the version was
  *   saved, with no network read of the base.
  */
-import type { MCPClientManager } from "@mcpjam/sdk";
+import type { MCPClientManager, SubscriptionFilterShape } from "@mcpjam/sdk";
 import { isRealUnreachable, realUnreachableError, type MockRealServer } from "@mcpjam/sdk/mocks";
 import { ErrorCode } from "../../routes/web/errors.js";
 import { logger } from "../../utils/logger.js";
 import type { PinnedDiscovery, ResolvedMock } from "./backend.js";
 import type { OpenReal } from "./connection.js";
+import type { MockChangeEvent } from "./event-bus.js";
 import { forwardFanOutMessage } from "./forward-fan-out.js";
 import { FORWARD_REFUSAL_MESSAGES, type ForwardVerdict } from "./forward-policy.js";
+import { feedFromReal } from "./real-changes.js";
 import { realServerOn, type LiveRealServer } from "./real-server.js";
+import { realRunsToolTasks } from "./request-facts.js";
 import type { MockDialProfile } from "./registry.js";
 import type { ManagerCallerContext } from "../../routes/web/auth.js";
 
@@ -36,10 +39,26 @@ export interface ForwardingInput {
    * wait. Set by the in-process door; a limited forward is never dispatched.
    */
   takeForward?: () => { retryAfterSeconds: number } | null;
+  /**
+   * Set when the request is a 2025-11-25 `tools/call` that asks to run as a
+   * task. The real server must take tasks for the call to go on; the choice is
+   * logged either way.
+   */
+  taskCall?: { tool: string };
 }
 
 export interface ForwardingReal {
   real: MockRealServer;
+  /**
+   * Starts sending the real server's change notifications to `publish`, for a
+   * 2026-07-28 listen stream. Nothing starts (and the base is not contacted)
+   * unless forwarding is allowed right now. Resolves to the stop function, or
+   * undefined when nothing was started. Never rejects.
+   */
+  feedChanges(
+    filter: SubscriptionFilterShape,
+    publish: (event: MockChangeEvent) => void,
+  ): Promise<(() => Promise<void>) | undefined>;
   /** Closes the connection if one was opened. Never throws. */
   close(): Promise<void>;
 }
@@ -142,6 +161,36 @@ export function forwardingRealServer(input: ForwardingInput): ForwardingReal {
     }
   };
 
+  /**
+   * A caller asked to run the tool as a task. The mock forwards the call when
+   * the real server runs tool calls as tasks, and refuses otherwise, saying
+   * why; both are logged so the choice can be read back.
+   */
+  const refuseTaskCall = async (tool: string) => {
+    if (!input.taskCall) return undefined;
+    let opened: Awaited<ReturnType<typeof connect>>;
+    try {
+      opened = await connect();
+    } catch {
+      return undefined; // an unreachable base is reported by the call itself, with its own wording
+    }
+    const takes = realRunsToolTasks(opened.manager.getInitializationInfo(id)?.serverCapabilities);
+    logger.info("[mock-route] a task-augmented tool call reached a forward", {
+      mockId: resolved.mockId,
+      decision: takes ? "forwarded" : "refused",
+    });
+    if (takes) return undefined;
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text" as const,
+          text: `The real server of this mock does not run tool calls as tasks, so "${tool}" cannot be forwarded as one. Call it again without a task.`,
+        },
+      ],
+    };
+  };
+
   const real: MockRealServer = {
     describe: async (options) =>
       (await mayReadBase(options?.signal))
@@ -160,6 +209,8 @@ export function forwardingRealServer(input: ForwardingInput): ForwardingReal {
         : { allowed: false, reason: verdict.reason, message: FORWARD_REFUSAL_MESSAGES[verdict.reason] };
     },
     callTool: async (call) => {
+      const refused = await refuseTaskCall(call.name);
+      if (refused) return refused;
       const limited = input.takeForward?.();
       if (limited) {
         // A tool error, so the agent reads it and waits, rather than a failure of the mock.
@@ -178,6 +229,19 @@ export function forwardingRealServer(input: ForwardingInput): ForwardingReal {
 
   return {
     real,
+    feedChanges: async (filter, publish) => {
+      if (!(await mayReadBase())) return undefined;
+      try {
+        const { manager } = await connect();
+        return await feedFromReal({ manager, serverId: id, filter, publish });
+      } catch (error) {
+        logger.warn("[mock-route] could not start a mock's change feed", {
+          mockId: resolved.mockId,
+          error: error instanceof Error ? error.name : typeof error,
+        });
+        return undefined;
+      }
+    },
     close: async () => {
       let connection: Awaited<NonNullable<typeof opened>> | undefined;
       try {

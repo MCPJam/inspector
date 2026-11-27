@@ -63,6 +63,9 @@ function mockManager(
     getAllToolsMetadata: vi.fn().mockReturnValue({}),
     listServers: vi.fn().mockReturnValue([]),
     hasServer: vi.fn().mockReturnValue(true),
+    // The turn asks each server for its log records, so a running tool call can show them.
+    setPerRequestLogLevel: vi.fn(),
+    onLogMessage: vi.fn(),
   } as any;
 }
 
