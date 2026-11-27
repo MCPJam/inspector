@@ -30,7 +30,6 @@ let evalQuotaState:
       windowKind: "day" | "month";
     }
   | undefined;
-let allowanceState: { remaining: number; granted: number } | null = null;
 let billingStatusState:
   | {
       effectivePlan: "free" | "team" | "enterprise";
@@ -53,10 +52,6 @@ vi.mock("@/hooks/use-eval-iteration-quota", () => ({
     isLoading: false,
     isAtLimit: false,
   }),
-}));
-
-vi.mock("@/hooks/use-swarm-sponsorship-allowance", () => ({
-  useSwarmSponsorshipAllowance: () => allowanceState,
 }));
 
 vi.mock("@/hooks/useOrganizationBilling", () => ({
@@ -125,7 +120,6 @@ describe("SidebarCredits", () => {
     };
     isLoadingState = false;
     evalQuotaState = undefined;
-    allowanceState = null;
     billingStatusState = { effectivePlan: "free" };
   });
 
@@ -250,22 +244,9 @@ describe("SidebarCredits", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows the remaining free swarm conversations when the user has an allowance", () => {
-    allowanceState = { remaining: 412, granted: 500 };
-    renderCredits();
-
-    const row = screen.getByTestId("sidebar-usage-swarm-sponsored");
-    expect(row).toHaveTextContent("Free Swarm conversations");
-    expect(row).toHaveTextContent("412 / 500");
-    expect(
-      screen.getByRole("button", { name: "About Free Swarm conversations" }),
-    ).toBeInTheDocument();
-  });
-
-  it("hides free grants once they are used up", () => {
-    allowanceState = { remaining: 0, granted: 500 };
+  it("shows no free grant rows, even while a grant remains", () => {
     evalQuotaState = {
-      starterRemaining: 0,
+      starterRemaining: 420,
       used: 0,
       allowed: null,
       resetsAt: 0,
@@ -273,18 +254,9 @@ describe("SidebarCredits", () => {
     };
     renderCredits();
     expect(
-      screen.queryByTestId("sidebar-usage-swarm-sponsored"),
-    ).not.toBeInTheDocument();
-    expect(
       screen.queryByTestId("sidebar-usage-eval-free"),
     ).not.toBeInTheDocument();
-  });
-
-  it("shows no sponsored row when sponsorship does not apply here", () => {
-    renderCredits();
-    expect(
-      screen.queryByTestId("sidebar-usage-swarm-sponsored"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Free Swarm/)).not.toBeInTheDocument();
   });
 
   it("names the plan in the card, not the sidebar row", () => {
@@ -421,7 +393,7 @@ describe("SidebarCredits", () => {
     expect(evalRow).toHaveTextContent("38 / 50");
   });
 
-  it("shows the one-time eval grant as a free meter while hiding recurring eval allowances", () => {
+  it("hides eval allowances on v2 plans", () => {
     billingStatusState = { effectivePlan: "team", pricingVersion: "v2" };
     balanceState = {
       ...balanceState!,
@@ -444,13 +416,9 @@ describe("SidebarCredits", () => {
     expect(screen.getByTestId("sidebar-usage-monthly")).toHaveTextContent(
       "30,000 / 50,000",
     );
-    expect(screen.getByTestId("sidebar-usage-eval-free")).toHaveTextContent(
-      "Free Eval iterations",
-    );
     expect(
-      screen.getByRole("progressbar", { name: "Free Eval iterations" }),
-    ).toHaveAttribute("aria-valuetext", "420 / 500 left");
-    expect(screen.queryByText(/starter/i)).not.toBeInTheDocument();
+      screen.queryByTestId("sidebar-usage-eval-free"),
+    ).not.toBeInTheDocument();
   });
 
   it("offers Explore plans on the free plan", () => {

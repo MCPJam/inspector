@@ -1,4 +1,3 @@
-import { Info } from "lucide-react";
 import {
   HoverCard,
   HoverCardContent,
@@ -9,11 +8,6 @@ import { Button } from "@mcpjam/design-system/button";
 import { Progress } from "@mcpjam/design-system/progress";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@mcpjam/design-system/tooltip";
-import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -21,7 +15,6 @@ import {
 import { CoinStackIcon } from "@/components/ui/coin-stack-icon";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
-import { useSwarmSponsorshipAllowance } from "@/hooks/use-swarm-sponsorship-allowance";
 import {
   isPaidPlan,
   useOrganizationBillingStatus,
@@ -71,7 +64,6 @@ export function SidebarCredits({
     balance?.billingModel === "monthly_flat";
   const { quota: evalIterationQuota, isLoading: isEvalIterationQuotaLoading } =
     useEvalIterationQuota({ organizationId });
-  const sponsoredAllowance = useSwarmSponsorshipAllowance();
 
   // Settled with nothing to show. Rendering the row anyway leaves a permanent
   // "Credits" whose card is a blank number over an empty bar, which reads
@@ -146,29 +138,6 @@ export function SidebarCredits({
       testId: "sidebar-usage-eval-iterations",
     });
   }
-  const freeEvalIterations = evalIterationQuota?.starterRemaining;
-  // Free grants are one-time, so a used-up grant leaves nothing to show.
-  if (freeEvalIterations != null && freeEvalIterations > 0) {
-    meters.push({
-      label: "Free Eval iterations",
-      remaining: freeEvalIterations,
-      total: FREE_EVAL_ITERATION_GRANT,
-      tooltip:
-        "A one-time set of eval iterations MCPJam pays for before your organization's credits are used. It does not renew.",
-      testId: "sidebar-usage-eval-free",
-    });
-  }
-  if (sponsoredAllowance && sponsoredAllowance.remaining > 0) {
-    meters.push({
-      label: "Free Swarm conversations",
-      remaining: sponsoredAllowance.remaining,
-      total: sponsoredAllowance.granted,
-      tooltip:
-        "Swarm conversations MCPJam pays for before your organization's credits are used. Which ones qualify depends on the model and environment.",
-      testId: "sidebar-usage-swarm-sponsored",
-    });
-  }
-
   const creditMeter = meters[0];
   // Same combined balance as Settings' "Top-up credits"; hidden at zero.
   const topUpRemaining = balance?.paidCreditsRemaining ?? 0;
@@ -278,45 +247,12 @@ interface UsageMeter {
   testId: string;
   helperText?: string | null;
   isLoading?: boolean;
-  /** Optional explainer surfaced via an info icon next to the label. */
-  tooltip?: string;
 }
 
 const LOW_CREDIT_PERCENT = 10;
-// Size of the one-time eval grant (`STARTER_ALLOTMENT` in the backend).
-const FREE_EVAL_ITERATION_GRANT = 500;
 
 function remainingPercent({ remaining, total }: UsageMeter): number {
   return total > 0 ? Math.min(100, Math.max(0, (remaining / total) * 100)) : 0;
-}
-
-function UsageLabel({ meter }: { meter: UsageMeter }) {
-  return (
-    <span className="inline-flex min-w-0 items-center gap-1 text-pretty">
-      {meter.label}
-      {meter.tooltip ? (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              aria-label={`About ${meter.label}`}
-              // Stop bubbling so the surrounding clickable row (which
-              // navigates to billing) doesn't fire when the user is just
-              // trying to see the tooltip.
-              onClick={(event) => event.stopPropagation()}
-              onKeyDown={(event) => event.stopPropagation()}
-              className="inline-flex shrink-0 items-center text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"
-            >
-              <Info aria-hidden="true" className="size-3" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent sideOffset={6} className="max-w-60 text-pretty">
-            {meter.tooltip}
-          </TooltipContent>
-        </Tooltip>
-      ) : null}
-    </span>
-  );
 }
 
 function UsageBar({
@@ -390,7 +326,7 @@ function UsageRow({
     <div className="flex flex-col gap-1.5" data-testid={meter.testId}>
       <div className="flex items-baseline justify-between gap-3">
         <span className="min-w-0 text-xs font-medium text-foreground">
-          <UsageLabel meter={meter} />
+          {meter.label}
         </span>
         <UsageValue meter={meter} />
       </div>
