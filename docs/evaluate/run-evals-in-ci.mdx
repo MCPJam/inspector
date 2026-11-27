@@ -228,7 +228,12 @@ for you; `pull-requests: write` only allows the results comment.
 Keep the job name stable and unique, and keep `continue-on-error` off for the
 eval step and job. Verify the setup with a deliberately failing eval on a test PR:
 the required check should fail and merging should be blocked for reviewers
-without a configured bypass. See GitHub's [required-check guidance](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks).
+without bypass permission. With classic branch protection, admins and roles with
+bypass permission are exempt by default: enable **Do not allow bypassing the above
+settings** if they must also be blocked, or test as a collaborator without bypass
+permission. Rulesets have their own bypass list; check it when testing. See
+GitHub's [branch-protection settings](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#do-not-allow-bypassing-the-above-settings)
+and [required-check guidance](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks).
 
 The examples skip fork PRs because GitHub normally withholds repository secrets
 and gives their tokens read-only permissions. A skipped job can satisfy a required

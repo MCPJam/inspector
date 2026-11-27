@@ -129,9 +129,13 @@ expired waiver or an unresolved baseline remains blocking according to the CLI's
 gate result. The action delegates these rules to the CLI rather than calculating
 its own thresholds or deciding whether a waiver is active.
 
-The default-comment change ships with the next action release containing EFTW-59.
-For an older published tag or pinned commit, set `comment: true` explicitly as in
-the examples; the permission is required either way.
+The next `evals-v1.0.x` release enables PR comments by default. Workflows using
+`@evals-v1` receive this automatically, without changing their inputs. Repositories
+with a read-only GitHub token will see a comment-permission warning on every PR
+run until they grant `pull-requests: write` or set `comment: false`. Matrix jobs
+post one updated comment per matrix leg. For an older immutable tag or pinned
+commit, set `comment: true` explicitly as in the examples; permission is required
+either way.
 
 ## Inputs
 

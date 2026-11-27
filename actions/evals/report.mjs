@@ -288,12 +288,20 @@ function buildCaseRows(bundle) {
   }));
 }
 
-// A test is one case under one client/model, not each repeated trial.
+// A test is one case under one client/model, not each repeated iteration.
 export function failedTestCount(bundles) {
-  const cases = bundles.flatMap(buildCaseRows);
+  const cases = bundles.flatMap((bundle) =>
+    buildCaseRows(bundle).map((row) => ({
+      ...row,
+      client: bundle.run.client?.id ?? clientOf(bundle) ?? null,
+    })),
+  );
   const failed = cases.filter((row) => row.verdict === "failed").length;
   if (!failed) return "";
-  return `${failed} of ${cases.length} ${cases.length === 1 ? "test" : "tests"} failed${bundles.length > 1 ? " across client/model combinations" : ""}.`;
+  const variants = new Set(
+    cases.map((row) => JSON.stringify([row.client, row.provider, row.model])),
+  );
+  return `${failed} of ${cases.length} ${cases.length === 1 ? "test" : "tests"} failed${variants.size > 1 ? " across client/model combinations" : ""}.`;
 }
 
 export function truncateMarkdown(text, limit, note) {
@@ -447,13 +455,13 @@ function renderGroup(bundles, full, outcome) {
     ...(outcome?.message ? [`${escapeCell(outcome.message)}  `] : []),
     `**${escapeCell(first.receipt.suiteName)} · ${runNumber}**  `,
     `Run result: ${statusIcon(result)} ${resultLabel(result)}  `,
-    ...(failures && !outcome?.message?.includes(failures) ? [`${failures}  `] : []),
-    `${caseCount} cases · ${passed}/${total} eligible runs passed · ${variants.length} client/model combination${variants.length === 1 ? "" : "s"}  `,
+    ...(failures ? [`${failures}  `] : []),
+    `${caseCount} cases · ${passed}/${total} eligible iterations passed · ${variants.length} client/model combination${variants.length === 1 ? "" : "s"}  `,
     ...(Number.isFinite(threshold)
-      ? [`**Requirement:** Each case must pass ≥${Math.round(threshold * 100)}% of its eligible runs.`, ""]
+      ? [`**Requirement:** Each case must pass ≥${Math.round(threshold * 100)}% of its eligible iterations.`, ""]
       : [""]),
     table(
-      ["Client / Model", "Result", "Cases passed", "Runs passed", "P50 / P95"],
+      ["Client / Model", "Result", "Cases passed", "Iterations passed", "P50 / P95"],
       variantRows,
     ),
     "",
@@ -461,7 +469,7 @@ function renderGroup(bundles, full, outcome) {
     "",
     ...(failedRows.length
       ? [
-          "Each cell shows runs passed out of eligible runs.",
+          "Each cell shows iterations passed out of eligible iterations.",
           "",
           table(
             ["Case", ...variants.map((variant) => variantLabel(variant.client, variant.model))],

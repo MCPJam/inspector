@@ -336,9 +336,6 @@ async function publishDetailedReports({
   fetchImpl,
   outcome,
 }) {
-  const failures = failedTestCount(bundles);
-  if (outcome.result === "failed" && failures)
-    outcome.message = `${failures} ${outcome.message}`;
   const reports = renderReports(bundles, outcome);
   await writeFile(join(directory, "eval-report.md"), `${reports.summary}\n`);
   await writeFile(
@@ -377,6 +374,7 @@ export async function runAction(
     message: "Evaluation did not complete.",
   };
   let renderedSummary = "";
+  let annotationFailures = "";
   const key = (env.MCPJAM_API_KEY ?? "").trim();
   if (key) log(`::add-mask::${escapeCommand(key)}`);
   const githubToken = (env.MCPJAM_ACTION_GITHUB_TOKEN ?? "").trim();
@@ -450,6 +448,7 @@ export async function runAction(
                 ? `Not every eval run passed: ${unresolved.map((bundle) => `${bundle.receipt.runId} is ${bundle.run.result}`).join(", ")}.`
                 : `Could not load every uploaded eval run: ${missing.join(", ")}.`,
       };
+      annotationFailures = failedTestCount(bundles);
       renderedSummary = await publishDetailedReports({
         bundles,
         directory,
@@ -566,7 +565,8 @@ export async function runAction(
             log,
             env,
           );
-          if (bundles.length > 0)
+          if (bundles.length > 0) {
+            annotationFailures = failedTestCount(bundles);
             renderedSummary = await publishDetailedReports({
               bundles,
               directory,
@@ -577,6 +577,7 @@ export async function runAction(
               fetchImpl,
               outcome: state,
             });
+          }
         } catch {
           log("::warning::Could not load detailed MCPJam results for the summary.");
         }
@@ -643,8 +644,10 @@ export async function runAction(
     },
     key,
   );
-  if (state.result !== "passed")
-    log(`::error::${escapeCommand(state.message)}`);
+  if (state.result !== "passed") {
+    const message = [annotationFailures, state.message].filter(Boolean).join(" ");
+    log(`::error::${escapeCommand(message)}`);
+  }
   return state;
 }
 
