@@ -5,6 +5,7 @@ import {
   platformRefusalHint,
   RUN_LAUNCH_HEADERS,
   type PlatformApiError,
+  type PlatformRunLauncherOption,
 } from "@mcpjam/sdk/platform";
 import { detectCiMetadata } from "@mcpjam/sdk";
 import {
@@ -34,6 +35,8 @@ export interface PlatformClientOptions {
   /** Repeatable `Name: value` headers for an edge authenticator in front. */
   apiHeader?: string[];
   timeoutMs?: number;
+  /** Who launches runs through this client; every command but `mcpjam mcp` is the CLI. */
+  launcher?: PlatformRunLauncherOption;
 }
 
 function readGithubEvent(env: NodeJS.ProcessEnv): string | undefined {
@@ -208,7 +211,7 @@ export function buildPlatformClient(
     // Declared, not proven, and the platform treats it that way: it is a
     // display label beside the stamp, never an authorization input. A secret
     // that could prove it cannot live in a public npm package.
-    launcher: {
+    launcher: options.launcher ?? {
       kind: "cli",
       client: "mcpjam-cli",
       version: packageJson.version,
