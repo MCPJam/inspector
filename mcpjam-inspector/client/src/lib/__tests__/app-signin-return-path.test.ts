@@ -22,6 +22,31 @@ describe("generic app sign-in return path", () => {
     expect(consumeAppSignInReturnPath(NOW)).toBe("/redeem?campaign=talk-123");
     expect(readAppSignInReturnPath(NOW)).toBeNull();
   });
+  it("restores an access request page with the email's decision", () => {
+    writeAppSignInReturnPath("/access-requests/req_1?decision=decline", NOW);
+    expect(consumeAppSignInReturnPath(NOW)).toBe(
+      "/access-requests/req_1?decision=decline",
+    );
+  });
+  it("keeps only a valid decision on an access request page", () => {
+    writeAppSignInReturnPath(
+      "/access-requests/req_1?decision=approve&x=1",
+      NOW,
+    );
+    expect(consumeAppSignInReturnPath(NOW)).toBe(
+      "/access-requests/req_1?decision=approve",
+    );
+    writeAppSignInReturnPath("/access-requests/req_1?decision=delete", NOW);
+    expect(consumeAppSignInReturnPath(NOW)).toBe("/access-requests/req_1");
+    writeAppSignInReturnPath("/access-requests/req_1/extra", NOW);
+    expect(consumeAppSignInReturnPath(NOW)).toBeNull();
+  });
+  it("restores an access request page opened with a trailing slash", () => {
+    writeAppSignInReturnPath("/access-requests/req_1/?decision=approve", NOW);
+    expect(consumeAppSignInReturnPath(NOW)).toBe(
+      "/access-requests/req_1?decision=approve",
+    );
+  });
   it("keeps manual entry when sign-in state is missing", () => {
     writeAppSignInReturnPath("/redeem?manual=1&campaign=talk-123", NOW);
     expect(consumeAppSignInReturnPath(NOW)).toBe(

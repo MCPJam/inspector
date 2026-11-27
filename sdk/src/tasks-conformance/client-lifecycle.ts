@@ -7,6 +7,7 @@ import {
   type WithEphemeralClientOptions,
 } from "../operations.js";
 import { withAbortSignalFetch } from "../abort-signal.js";
+import { http1Fetch } from "../http1-fetch.js";
 
 /** Cancellation closes the connection and drains the interrupted checks. */
 export async function withTasksClient<T>(
@@ -25,7 +26,7 @@ export async function withTasksClient<T>(
   let work: Promise<T> | undefined;
   const pending = new Set<Promise<Response>>();
   const abortableFetch = withAbortSignalFetch(
-    config.baseFetch ?? ((input, init) => globalThis.fetch(input, init)),
+    config.baseFetch ?? http1Fetch,
     signal
   );
   const trackedFetch: typeof fetch = (input, init) => {

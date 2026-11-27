@@ -21,6 +21,7 @@ import type {
 // beta.4 moved the stdio transport params to the `/stdio` subpath.
 import type { StdioServerParameters } from "@modelcontextprotocol/client/stdio";
 import type { RetryPolicy } from "../retry.js";
+import type { EventsWireProfile } from "./events-ext-guards.js";
 import type {
   RefreshTokenOAuthProvider,
   RefreshTokensRotatedHandler,
@@ -232,6 +233,8 @@ export type ClientCapabilityOptions = NonNullable<
  * Base configuration shared by all server types
  */
 export type BaseServerConfig = {
+  /** Select an Events wire contract explicitly. Defaults to the server's Beta declaration, then legacy. */
+  eventsWireProfile?: EventsWireProfile;
   /** Legacy merge-style client capabilities to advertise to this server */
   capabilities?: ClientCapabilityOptions;
   /**

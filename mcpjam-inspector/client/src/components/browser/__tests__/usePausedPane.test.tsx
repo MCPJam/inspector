@@ -258,8 +258,9 @@ describe("PausablePane", () => {
     const { onResume, onInput, onPaneKey } = renderPane("awake");
     fireEvent.keyDown(screen.getByTestId("pane"), { key: "a" });
     fireEvent.pointerDown(screen.getByTestId("pane"));
+    fireEvent.wheel(screen.getByTestId("pane"), { deltaY: 120 });
     expect(onPaneKey).toHaveBeenCalledOnce();
-    expect(onInput).toHaveBeenCalledTimes(2);
+    expect(onInput).toHaveBeenCalledTimes(3);
     expect(onResume).not.toHaveBeenCalled();
     expect(screen.queryByText("Browser paused")).toBeNull();
   });

@@ -39,6 +39,7 @@ import {
 import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 import type { ServerClientSecretResult } from "../utils/server-secrets.js";
 import { logger } from "../utils/logger.js";
+import { bearerNow, type RunBearer } from "../utils/run-bearer.js";
 
 const XAA_MINT_ERROR_REPORTED = Symbol("xaaMintErrorReported");
 
@@ -339,7 +340,7 @@ export async function resolveServerTarget(deps: {
   httpsOnly: boolean;
   serverId: string;
   projectId?: string;
-  bearerToken: string;
+  bearerToken: RunBearer;
   clientIp?: string | null;
   /** Forwarded to the reveal as the declared target (see ResolveServerSecretFn). */
   targetUrl?: string;
@@ -362,7 +363,7 @@ export async function resolveServerTarget(deps: {
   const resolved = await deps.resolveServerSecret({
     serverId: deps.serverId,
     projectId: deps.projectId,
-    bearerToken: deps.bearerToken,
+    bearerToken: bearerNow(deps.bearerToken),
     clientIp: deps.clientIp,
     ...(deps.targetUrl ? { targetUrl: deps.targetUrl } : {}),
   });
@@ -608,7 +609,7 @@ export function buildXaaMintArgs(args: {
   serverConfig: XaaMintServerConfig;
   serverId: string;
   projectId: string;
-  bearerToken: string;
+  bearerToken: RunBearer;
   resolveServerSecret?: ResolveServerSecretFn;
   ensureDcrRegistration?: EnsureXaaDcrRegistrationFn;
   resolveDcrTarget?: FetchXaaDcrAuthorizedTargetFn;
@@ -660,7 +661,7 @@ export async function mintXaaAccessToken(args: {
   issuer: string;
   serverId: string;
   projectId: string;
-  bearerToken: string;
+  bearerToken: RunBearer;
   /** The protected resource (the MCP server URL). */
   resource?: string;
   explicitIssuer?: string;
@@ -691,7 +692,7 @@ export async function mintXaaAccessToken(args: {
       );
     }
     const storedTarget = await args.resolveDcrTarget({
-      bearerToken: args.bearerToken,
+      bearerToken: bearerNow(args.bearerToken),
       projectId: args.projectId,
       serverId: args.serverId,
     });
@@ -707,7 +708,7 @@ export async function mintXaaAccessToken(args: {
     // registration endpoint is independently validated inside ensureDcr.
     await validateUrl(discovered.tokenEndpoint, args.httpsOnly);
     const registration: XaaDcrRegistration = await args.ensureDcrRegistration({
-      bearerToken: args.bearerToken,
+      bearerToken: bearerNow(args.bearerToken),
       projectId: args.projectId,
       serverId: args.serverId,
       resource: storedTarget.serverUrl,

@@ -57,6 +57,13 @@ import {
 } from "@/shared/steps";
 import type { BrowserSessionContext } from "../browser-session-context";
 import { MAX_WIDGET_FOLLOWUP_TURNS } from "./drive-hosted-eval-turn.js";
+import {
+  assertionScope,
+  recordPinnedCall,
+  type AssertionScope,
+  type PinnedCallRecord,
+} from "./pinned-call-grading";
+import type { PinnedCallEvidence } from "./pinned-turn";
 import { extractTranscriptEvidence } from "./transcript-evidence";
 import { logger } from "../../utils/logger.js";
 
@@ -111,6 +118,12 @@ export interface StepExecutionState {
   /** Tool failures observed outside any trace (pinned calls, etc.). */
   toolErrors: ToolErrorRecord[];
   /**
+   * Each `toolCall` step that ran, with its call's own result, which
+   * `messages` leaves out: what a result assertion about it grades, and which
+   * calls are not the agent's (see `pinned-call-grading.ts`).
+   */
+  pinnedCalls: PinnedCallRecord[];
+  /**
    * Trace spans the engine recorded for the steps run so far. With `messages`
    * they are the evidence result and timing checks read — the same two
    * channels the case-level verdict extracts from the finished trace.
@@ -160,6 +173,7 @@ export function createStepExecutionState(
     toolCalls: [],
     toolCallsByTurn: [],
     toolErrors: [],
+    pinnedCalls: [],
     spans: [],
     widgetRenderObservations: [],
     assertionResults: [],
@@ -177,6 +191,8 @@ export interface StepEngineOutcome {
   toolCalls?: ToolCall[];
   /** Tool failures observed during this step (folded into the transcript). */
   toolErrors?: ToolErrorRecord[];
+  /** A `toolCall` step's own result: its `messages` are text-only. */
+  pinnedCall?: PinnedCallEvidence;
   /** Trace spans recorded during this step (tool timings for step checks). */
   spans?: EvalTraceSpan[];
   /** Usage delta for this step (`prompt` only; `toolCall` issues none). */
@@ -327,8 +343,14 @@ function applyOutcome(
   }
 }
 
-/** Snapshot the state as an `IterationTranscript` for point-in-time predicate eval. */
-function snapshotTranscript(state: StepExecutionState) {
+/**
+ * Snapshot the state as an `IterationTranscript` for point-in-time predicate
+ * eval. `scope` replaces the channels one assertion reads differently.
+ */
+function snapshotTranscript(
+  state: StepExecutionState,
+  scope: AssertionScope = {},
+) {
   const finalAssistantMessage = extractFinalAssistantMessage(state.messages);
   // Tool results and per-call timings, read from the messages and spans the
   // steps so far produced — exactly how the case-level verdict reads them from
@@ -360,6 +382,7 @@ function snapshotTranscript(state: StepExecutionState) {
     // Counted here rather than passed as a `trace`: a trace would also feed
     // its tool errors in, double-counting `state.toolErrors`.
     turnCount: state.messages.filter((m) => m.role === "user").length,
+    ...scope,
   });
 }
 
@@ -490,9 +513,10 @@ async function runAssertStep(
   }
   // Transcript-level predicate: evaluate against the state snapshot at this
   // exact position (point-in-time).
-  const [result] = evaluatePredicates(snapshotTranscript(state), [
-    step.assertion,
-  ]);
+  const [result] = evaluatePredicates(
+    snapshotTranscript(state, assertionScope(state, step.assertion)),
+    [step.assertion],
+  );
   state.assertionResults.push({
     stepId: step.id,
     stepIndex,
@@ -716,7 +740,9 @@ export async function executeSteps(args: {
         stepIndex,
         turnOrdinal,
       });
+      const callsBefore = state.toolCalls.length;
       applyOutcome(state, outcome, turnOrdinal);
+      recordPinnedCall(state, { step, stepIndex, outcome, callsBefore });
       if (outcome.cancelled)
         return { state, cancelled: true, setupFailure: false };
       if (outcome.iterationError) {

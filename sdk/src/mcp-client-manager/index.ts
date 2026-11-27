@@ -127,6 +127,7 @@ export {
   mcpCallToolResultToModelOutput,
   readModelOutputImage,
   mcpCallToolResultToModelOutputWithLinkedResources,
+  mapMcpContentBlocksForModel,
   type McpModelOutputContent,
   type McpModelOutputContentPart,
   type McpModelOutputImagePart,
@@ -135,6 +136,15 @@ export {
   type McpModelVisibleToolResultPolicy,
   type McpLinkedResourceReader,
 } from "./model-output.js";
+export {
+  EMPTY_TOOL_RESULT_TEXT,
+  hasNoContentBlocks,
+  projectToolResultByRule,
+  structuredContentRuleOf,
+  withoutStructuredContentRule,
+  type McpModelOutputText,
+  type ToolResultRuleOptions,
+} from "./tool-result-rule.js";
 
 // Utility functions (useful for testing and advanced use cases)
 export { buildRequestInit } from "./transport-utils.js";
@@ -456,6 +466,7 @@ export {
   NotYetSupportedInStateless,
   StatelessRequiresHttpTransport,
   PaginatedToolHeaderDiscoveryUnsupported,
+  ModernProtocolVersionRefused,
   ProtocolVersionPinUnsupported,
 } from "./managed-mcp-client.js";
 export { OfficialSdkClientAdapter } from "./official-sdk-client-adapter.js";

@@ -49,6 +49,7 @@ import {
 } from "./harness/harness-availability.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { logger } from "./logger.js";
+import type { TurnAuthorization } from "../services/turn-authorization.js";
 
 /**
  * Authentication context for `runAssistantTurn`.
@@ -61,6 +62,8 @@ export type RunAssistantTurnAuthContext = {
   kind: "user_bearer";
   /** Full `authorization` header value, e.g. `"Bearer …"`. */
   token: string;
+  /** Read on every model step instead of `token`, for a bearer that renews. */
+  turnAuthorization?: TurnAuthorization;
   /** Originating client IP for the per-IP guest spend cap. */
   clientIp?: string | null;
 };
@@ -287,6 +290,8 @@ export interface RunAssistantTurnOptions
    * personal path unchanged.
    */
   harnessSandboxBinding?: MCPJamHandlerOptions["harnessSandboxBinding"];
+  /** Web clients: the eval run's owner and frozen accounts. */
+  webClientRun?: MCPJamHandlerOptions["webClientRun"];
 
   /**
    * MCPJam's SERVER-EXECUTED built-ins (`web_search`, …) for the harness path.
@@ -495,6 +500,9 @@ function buildHandlerOptions(
     mcpClientManager: opts.mcpClientManager,
     unavailableServerIds: opts.unavailableServerIds,
     authHeader: opts.authContext.token,
+    ...(opts.authContext.turnAuthorization
+      ? { turnAuthorization: opts.authContext.turnAuthorization }
+      : {}),
     ...(opts.temperature !== undefined
       ? { temperature: opts.temperature }
       : {}),
@@ -536,6 +544,7 @@ function buildHandlerOptions(
     ...(opts.journeyRunId ? { journeyRunId: opts.journeyRunId } : {}),
     ...(opts.hostId ? { hostId: opts.hostId } : {}),
     ...harnessSkillOptions(opts),
+    ...(opts.webClientRun ? { webClientRun: opts.webClientRun } : {}),
     // The attempt's own disposable box. Absent ⇒ the harness reserves the
     // personal computer, exactly as before.
     ...(opts.harnessSandboxBinding

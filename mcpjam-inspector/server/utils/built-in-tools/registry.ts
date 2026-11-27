@@ -98,6 +98,7 @@ import type {
   DeclaredToolProvider,
   MintedDeclaredTool,
 } from "@/shared/declared-tools";
+import type { AuthHeaderSource } from "../run-bearer.js";
 
 /**
  * A binding to an EPHEMERAL sandbox the caller has ALREADY PROVISIONED.
@@ -149,8 +150,11 @@ export interface TrustedSandboxBinding {
 }
 
 export interface BuiltInToolContext {
-  /** Bearer authorization forwarded to Convex. "Bearer " prefix optional. */
-  authHeader: string;
+  /**
+   * Bearer authorization forwarded to Convex. "Bearer " prefix optional. A
+   * function for a bearer that renews: each tool call reads it when sent.
+   */
+  authHeader: AuthHeaderSource;
   /** Project the built-in tool's usage bills against / executes in. */
   projectId: string;
   /**
@@ -496,7 +500,11 @@ export function resolveHostTools(
     );
   }
 
-  const authHeader = normalizeAuthHeader(ctx.authHeader);
+  const rawAuthHeader = ctx.authHeader;
+  const authHeader: AuthHeaderSource =
+    typeof rawAuthHeader === "function"
+      ? () => normalizeAuthHeader(rawAuthHeader())
+      : normalizeAuthHeader(rawAuthHeader);
   const computer = narrowHostComputer(config.computer);
   const out: ToolSet = {};
 

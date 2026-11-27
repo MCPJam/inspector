@@ -1261,6 +1261,41 @@ describe("runPlatformOperation", () => {
     ).toBe("req_0123456789abcdef");
   });
 
+  it("reports a guest mint failure, which never reaches the Platform API", async () => {
+    const onGuestMintFailed = vi.fn();
+    const result = (await runPlatformOperation(
+      { ...fakeToolContext(), onGuestMintFailed },
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(onGuestMintFailed).toHaveBeenCalledTimes(1);
+  });
+
+  it("names the agent by its clientInfo on what it launches, over its user agent", async () => {
+    const seen: Headers[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: unknown, init?: RequestInit) => {
+        seen.push(new Headers(init?.headers));
+        return Response.json({ data: [] });
+      })
+    );
+    await runPlatformOperation(
+      {
+        ...fakeToolContext({ bearerToken: "user-jwt", callerUserAgent: "node" }),
+        callerClientName: "claude-code",
+      },
+      listProjectsOperation,
+      {}
+    );
+    expect(JSON.parse(seen[0]!.get("x-mcpjam-client") ?? "null")).toEqual({
+      kind: "mcp",
+      client: "claude-code",
+    });
+  });
+
   it("tells the model when a usage-limit refusal lifts, in both channels", async () => {
     vi.stubGlobal(
       "fetch",

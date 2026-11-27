@@ -139,12 +139,36 @@ describe("buildEvalIterationVerdict output is unchanged", () => {
     scriptedCheckFailures: [],
   } as unknown as Parameters<typeof buildEvalIterationVerdict>[0];
 
+  // The verdict as it was before `platformGates` joined the output. That field
+  // only hands the gate inputs on to the score rows; it decides nothing, so the
+  // pinned verdict stays byte for byte and the hand-off is pinned below.
+  const verdictOnly = ({
+    evaluation,
+    passed,
+    predicateResults,
+  }: ReturnType<typeof buildEvalIterationVerdict>) => ({
+    evaluation,
+    passed,
+    predicateResults,
+  });
+
   test("a passing tool-match iteration still passes, byte for byte", () => {
     const first = buildEvalIterationVerdict(input);
     const second = buildEvalIterationVerdict(input);
     expect(first.passed).toBe(true);
     expect(JSON.stringify(first)).toBe(JSON.stringify(second));
-    expect(JSON.stringify(first)).toMatchSnapshot();
+    expect(JSON.stringify(verdictOnly(first))).toMatchSnapshot();
+  });
+
+  test("hands the gate inputs on to the platform rows unchanged", () => {
+    const { platformGates } = buildEvalIterationVerdict(input);
+    expect(platformGates).toEqual({
+      failOnToolError: false,
+      trace: undefined,
+      pinnedToolErrors: undefined,
+      iterationError: undefined,
+      scriptedCheckFailures: [],
+    });
   });
 
   test("a missing expected tool still fails, byte for byte", () => {
@@ -153,7 +177,7 @@ describe("buildEvalIterationVerdict output is unchanged", () => {
       toolsCalledByPrompt: [[]],
     } as unknown as Parameters<typeof buildEvalIterationVerdict>[0]);
     expect(failing.passed).toBe(false);
-    expect(JSON.stringify(failing)).toMatchSnapshot();
+    expect(JSON.stringify(verdictOnly(failing))).toMatchSnapshot();
   });
 });
 
