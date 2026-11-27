@@ -167,6 +167,68 @@ describe("describeSwarmAttemptFailure credit recovery", () => {
     expect(steps).not.toMatch(/Wait|BYOK|own key|try again/i);
   });
 
+  it("cards a spend budget with the owner's raise-budget step", () => {
+    const budgetUrl = "https://app.mcpjam.com/organizations/org_paid/budget";
+    const step = `Only an organization owner or admin can raise the spend budget. Send them this link: ${budgetUrl}`;
+    const envelope = `swarm-agent https://x.convex.site/turn failed (429): ${JSON.stringify(
+      {
+        ok: false,
+        code: "spend_budget_reached",
+        limitKind: "total",
+        error: `This organization's spend budget is reached. ${step}`,
+        isRetryable: false,
+        retryAfter: 0,
+        details: "Runs using your own API keys are unaffected.",
+        canTopUp: true,
+        walletLocked: false,
+        budgetReached: true,
+        refusalReason: "budget_reached",
+        recovery: {
+          version: 1,
+          reason: "budget_reached",
+          action: "raise_budget",
+          actor: "owner_or_admin",
+          url: budgetUrl,
+        },
+      },
+    )}`;
+    const result = describeSwarmAttemptFailure(
+      envelope,
+      "spend_budget_reached",
+      "Anthropic",
+    );
+    expect(result.title).toBe("Spend budget reached");
+    expect(result.nextSteps).toEqual([step]);
+    expect(result.nextSteps.join(" ")).not.toMatch(/issue|buy credits/i);
+  });
+
+  it("cards a locked wallet with the support step", () => {
+    const envelope = `swarm-agent https://x.convex.site/turn failed (402): ${JSON.stringify(
+      {
+        ok: false,
+        code: "wallet_locked",
+        error: "This organization's MCPJam wallet is locked.",
+        walletLocked: true,
+        refusalReason: "wallet_locked",
+        recovery: {
+          version: 1,
+          reason: "wallet_locked",
+          action: "contact_support",
+          actor: "support",
+        },
+      },
+    )}`;
+    const result = describeSwarmAttemptFailure(
+      envelope,
+      "wallet_locked",
+      "Anthropic",
+    );
+    expect(result.title).toBe("MCPJam wallet locked");
+    expect(result.nextSteps).toEqual([
+      "Contact MCPJam support to arrange more credits.",
+    ]);
+  });
+
   it("tells a paid account to buy credits, link included", () => {
     expect(
       describeSwarmAttemptFailure(
