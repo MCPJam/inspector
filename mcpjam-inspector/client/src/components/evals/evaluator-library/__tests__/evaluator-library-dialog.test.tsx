@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, renderWithProviders, screen } from "@/test";
+import { fireEvent, renderWithProviders, screen, within } from "@/test";
 import { EvaluatorLibraryButton } from "../evaluator-library-dialog";
 import { predicateSchema } from "@mcpjam/sdk/predicates";
 import {
@@ -86,7 +86,7 @@ describe("EvaluatorLibraryButton", () => {
       questions: [],
       judges: [],
     });
-    fireEvent.click(screen.getByRole("button", { name: "All evaluators" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to library" }));
     expect(screen.getByText("Evaluator library")).toBeInTheDocument();
   });
 
@@ -159,16 +159,107 @@ describe("EvaluatorLibraryButton", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "From library" }));
+    expect(
+      screen.getByRole("button", { name: "Add Reports Tool Errors to suite" }),
+    ).toBeDisabled();
     fireEvent.click(
       screen.getByRole("button", { name: "Reports Tool Errors" }),
     );
-    expect(screen.getByRole("button", { name: "Add to suite" })).toBeDisabled();
-    expect(
-      screen.getByText(
-        'A question already uses the ID "reports-tool-errors-reports-failures". Rename or remove it to add this evaluator.',
-      ),
-    ).toBeInTheDocument();
+    const add = screen.getByRole("button", { name: "Add to suite" });
+    expect(add).toBeDisabled();
+    expect(add).toHaveAccessibleDescription(
+      'A question already uses the ID "reports-tool-errors-reports-failures". Rename or remove it to add this evaluator.',
+    );
     expect(onAdd).not.toHaveBeenCalled();
+  });
+  it("filters within a category and keeps it after inspecting a preset", () => {
+    open();
+    const categories = within(
+      screen.getByRole("group", { name: "Evaluator categories" }),
+    );
+    fireEvent.click(categories.getByRole("button", { name: "Final answer" }));
+    expect(
+      categories.getByRole("button", { name: "Final answer" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    // One h2 (the dialog title), the view's h3, then preset h4s.
+    expect(screen.getAllByRole("heading", { level: 2 })).toHaveLength(1);
+    expect(
+      screen.getByRole("heading", { level: 3, name: "Final answer" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 4, name: "Answers the Question" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "No Wasted Calls" }),
+    ).not.toBeInTheDocument();
+    const search = screen.getByRole("searchbox", { name: "Search presets" });
+    fireEvent.change(search, { target: { value: "  expected outcome  " } });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Meets the Expected Outcome" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Back to library" }));
+    expect(search).toHaveValue("  expected outcome  ");
+    expect(
+      screen.getByRole("button", { name: "Meets the Expected Outcome" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Answers the Question" }),
+    ).not.toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "nothing matches this" } });
+    expect(screen.getByRole("status")).toHaveTextContent("No presets match");
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(
+      screen.getByRole("button", { name: "Answers the Question" }),
+    ).toBeVisible();
+    // The focused button is gone, so focus goes where the next query is typed.
+    expect(search).toHaveFocus();
+  });
+
+  it("shows a new search from the top and keeps the place after details", () => {
+    open();
+    const pane = screen.getByRole("region", {
+      name: "Calling tools",
+    }).parentElement;
+    if (!pane) throw new Error("The results pane is missing.");
+    Object.defineProperty(pane, "scrollTop", { value: 300, writable: true });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Valid Tool Arguments" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Back to library" }));
+    expect(pane.scrollTop).toBe(300);
+    const search = screen.getByRole("searchbox", { name: "Search presets" });
+    fireEvent.change(search, { target: { value: "tool" } });
+    expect(pane.scrollTop).toBe(0);
+  });
+
+  it("steps back from preset details on Escape before closing", () => {
+    open();
+    const categories = within(
+      screen.getByRole("group", { name: "Evaluator categories" }),
+    );
+    fireEvent.click(categories.getByRole("button", { name: "Final answer" }));
+    const search = screen.getByRole("searchbox", { name: "Search presets" });
+    fireEvent.change(search, { target: { value: "expected outcome" } });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Meets the Expected Outcome" }),
+    );
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Evaluator library" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Back to library" }),
+    ).not.toBeInTheDocument();
+    expect(search).toHaveValue("expected outcome");
+    expect(
+      categories.getByRole("button", { name: "Final answer" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(
+      screen.getByRole("button", { name: "Meets the Expected Outcome" }),
+    ).toBeVisible();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });
 
@@ -450,12 +541,11 @@ describe("judge evaluators", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "From library" }));
     fireEvent.click(screen.getByRole("button", { name: "Answers the Question" }));
-    expect(screen.getByRole("button", { name: "Add to suite" })).toBeDisabled();
-    expect(
-      screen.getByText(
-        "Suites can have up to 1 judge, and adding this evaluator would make 2. Remove a judge first.",
-      ),
-    ).toBeInTheDocument();
+    const addFromDetails = screen.getByRole("button", { name: "Add to suite" });
+    expect(addFromDetails).toBeDisabled();
+    expect(addFromDetails).toHaveAccessibleDescription(
+      "Suites can have up to 1 judge, and adding this evaluator would make 2. Remove a judge first.",
+    );
     expect(onAdd).not.toHaveBeenCalled();
   });
 
@@ -502,22 +592,19 @@ describe("question cap", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "From library" }));
     expect(
-      screen.queryByRole("button", {
-        name: "Add Reports Tool Errors to suite",
-      }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: "Add Reports Tool Errors to suite" }),
+    ).toBeDisabled();
     expect(
       screen.getByRole("button", { name: "Add No Wasted Calls to suite" }),
     ).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: "Reports Tool Errors" }),
     );
-    expect(screen.getByRole("button", { name: "Add to suite" })).toBeDisabled();
-    expect(
-      screen.getByText(
-        "Suites can ask up to 10 rubric-check questions, and adding this evaluator would make 11. Remove a question first.",
-      ),
-    ).toBeInTheDocument();
+    const addFromDetails = screen.getByRole("button", { name: "Add to suite" });
+    expect(addFromDetails).toBeDisabled();
+    expect(addFromDetails).toHaveAccessibleDescription(
+      "Suites can ask up to 10 rubric-check questions, and adding this evaluator would make 11. Remove a question first.",
+    );
     expect(onAdd).not.toHaveBeenCalled();
   });
 });

@@ -26,6 +26,12 @@ import type { BuiltFromPart, EvaluatorTone } from "./evaluator-library-types";
  */
 export type LibraryEvaluator = {
   id: string;
+  category:
+    | "tool-calls"
+    | "final-answer"
+    | "tool-errors"
+    | "server-output"
+    | "security";
   version: number;
   name: string;
   /** About this run, never about the server in general. */
@@ -82,6 +88,7 @@ export type LibraryQuestion = {
 export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
   {
     id: "no-wasted-calls",
+    category: "tool-calls",
     version: 1,
     name: "No Wasted Calls",
     question:
@@ -97,6 +104,7 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
   },
   {
     id: "valid-tool-arguments",
+    category: "tool-calls",
     version: 1,
     name: "Valid Tool Arguments",
     question: "Did every call send arguments that match the tool's schema?",
@@ -106,6 +114,7 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
   },
   {
     id: "results-match-output-schema",
+    category: "server-output",
     version: 1,
     name: "Results Match Output Schema",
     question:
@@ -116,6 +125,7 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
   },
   {
     id: "delivers-final-answer",
+    category: "final-answer",
     version: 1,
     name: "Delivers a Final Answer",
     question:
@@ -129,6 +139,7 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
   },
   {
     id: "actionable-tool-errors",
+    category: "tool-errors",
     version: 1,
     name: "Actionable Tool Errors",
     question:
@@ -142,6 +153,7 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
   },
   {
     id: "reports-tool-errors",
+    category: "tool-errors",
     version: 1,
     name: "Reports Tool Errors",
     question:
@@ -164,6 +176,7 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
   },
   {
     id: "answers-the-question",
+    category: "final-answer",
     version: 1,
     name: "Answers the Question",
     question: "Did the final answer address what the user asked?",
@@ -182,6 +195,7 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
   },
   {
     id: "meets-expected-outcome",
+    category: "final-answer",
     version: 1,
     name: "Meets the Expected Outcome",
     question: "Did the run reach the outcome this case expects?",
@@ -200,6 +214,7 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
   },
   {
     id: "clear-concise-answer",
+    category: "final-answer",
     version: 1,
     name: "Clear, Concise Answer",
     question: "How clear and to the point was the final answer?",
@@ -218,6 +233,7 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
   },
   {
     id: "avoids-risky-tools",
+    category: "security",
     version: 1,
     name: "Avoids Risky Tools",
     question:

@@ -59,6 +59,9 @@ describe("library groups in the suite table", () => {
     const { next } = renderTable(tagged);
     const groups = screen.getAllByRole("region", { name: /^No Wasted Calls in / });
     expect(groups).toHaveLength(2);
+    expect(
+      groups[0].querySelector("[aria-hidden] > svg.lucide-route"),
+    ).toBeInTheDocument();
     const buttons = groups.map((group) => {
       expect(group).toHaveTextContent("v1");
       return within(group).getByRole("button", {
