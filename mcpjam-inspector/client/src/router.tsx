@@ -4,8 +4,10 @@ import { LegacyEvalRedirect } from "./components/routing/legacy-eval-redirect";
 import { LegacyEvalCaseRedirect } from "./components/routing/legacy-eval-case-redirect";
 import { ByokCreditsPage } from "./components/billing/ByokCreditsPage";
 import { CreditUsagePage } from "./components/billing/CreditUsagePage";
-import { createBrowserRouter, RouterProvider, redirect } from "react-router";
+import { createBrowserRouter, redirect } from "react-router";
+import { RouterProvider } from "react-router/dom";
 import { RouteErrorScreen } from "./components/RouteErrorScreen";
+import { CaniuseComparePage } from "./components/hosts/comparison/CaniuseComparePage";
 import App, {
   ApiKeysSettingsRoute,
   BenchResultsRoute,
@@ -160,6 +162,7 @@ const ROUTE_ELEMENTS: Record<
   // first-run onboarding redirect. `bare` forces the no-sub-nav render
   // even for signed-in users.
   "embed/host-compare": { element: <HostCompareRoute bare /> },
+  compare: { element: <CaniuseComparePage /> },
   // score.mcpjam.com: paste a server URL, run the four conformance suites,
   // get one 0-100 number on a private shareable link. Chrome-less like the
   // caniuse surface above, and reachable by guests with no sign-in.

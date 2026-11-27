@@ -15,6 +15,11 @@ import {
   judgeRubricSchema,
 } from "../contract/judge-settings.js";
 import {
+  codeEvaluatorsSchema,
+  suiteGradingSchema,
+  suiteScriptsSchema,
+} from "../contract/code-evaluators.js";
+import {
   judgeBacktestRequestSchema,
   type JudgeBacktestReport,
 } from "../contract/judge-backtest.js";
@@ -5928,6 +5933,24 @@ const updateEvalSuiteInput = z
           .optional()
           .describe(
             "Live quality-gate policy. null CLEARS it. Comparative conditions require a baseline; previous_completed is reserved. Requires expectedRevisionNumber and revisionNote."
+          ),
+        codeEvaluators: codeEvaluatorsSchema
+          .nullable()
+          .optional()
+          .describe(
+            "Up to 10 scripts that grade every iteration in a grading box (score rows code:<id>). Replaces the list; null or [] clears it. A Required one needs grading set to Enforce."
+          ),
+        scripts: suiteScriptsSchema
+          .nullable()
+          .optional()
+          .describe(
+            "Bash scripts run before and after the run and each iteration (runSetup, iterationSetup, iterationCleanup, runCleanup). Replaces all four; null clears them."
+          ),
+        grading: suiteGradingSchema
+          .nullable()
+          .optional()
+          .describe(
+            "Files to copy from the agent's box into the grading box, and its network (none by default). null clears it."
           ),
       })
       .optional(),

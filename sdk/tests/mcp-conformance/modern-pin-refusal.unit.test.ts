@@ -160,9 +160,10 @@ describe("a raw-only 2026 pin the server refuses", () => {
 describe("a raw-only 2026 pin the server does not refuse", () => {
   it("runs the checks when the error is not a version refusal", async () => {
     const log: string[] = [];
+    // 404 with -32601: what a 2026-07-28 server MUST answer an unknown method.
     const result = await run(
       refusingFetch(
-        200,
+        404,
         { code: -32601, message: "Method not found" },
         log
       ),
@@ -201,7 +202,7 @@ describe("a raw-only 2026 pin the server does not refuse", () => {
     const flaky = (async (input: RequestInfo | URL, init?: RequestInit) => {
       calls += 1;
       if (calls === 1) throw new TypeError("fetch failed");
-      return refusingFetch(200, { code: -32601, message: "Method not found" }, [])(
+      return refusingFetch(404, { code: -32601, message: "Method not found" }, [])(
         input,
         init
       );

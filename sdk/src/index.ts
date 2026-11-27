@@ -1501,6 +1501,8 @@ export type {
 } from "./mcp-conformance/index.js";
 export {
   CHECK_ERAS,
+  CHECK_FIRST_PROTOCOL_VERSION,
+  checkRunsOnVersion,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
   MCP_LOG_LEVELS,
@@ -2113,14 +2115,11 @@ export type {
 export {
   MCPJAM_EVENTS_EXTENSION_ID,
   EVENT_DELIVERY_MODES,
-  HOST_STYLE_EVENT_DELIVERY_MODES,
   RUNTIME_EVENT_DELIVERY_MODES,
   isEventDeliveryMode,
   readEventsHostSetting,
-  hostStyleEventDeliveryModes,
   resolveHostEventDeliveryModes,
   setEventsHostSetting,
-  clearEventsHostSetting,
   subscribableModes,
   describeModeRefusal,
   describeNoSubscribableMode,
