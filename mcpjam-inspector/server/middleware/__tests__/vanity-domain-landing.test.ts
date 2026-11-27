@@ -15,6 +15,23 @@ describe("vanityDomainLandingMiddleware", () => {
       "/?q=MCP%20Events&slice=poll",
       "/compare?q=MCP%20Events&slice=poll",
     ],
+    ["caniuse.dev", "/capabilities", "/capabilities/event-delivery"],
+    [
+      "WWW.CANIUSE.DEV:443",
+      "/events?slice=poll&tag=MCP%20Events",
+      "/capabilities/event-delivery?slice=poll&tag=MCP%20Events",
+    ],
+    ["caniuse.dev", "/apps", "/capabilities/ui-extension"],
+    ["caniuse.dev", "/tasks", "/capabilities/mcp-tasks"],
+    ["caniuse.dev", "/skills", "/capabilities/skills-extension"],
+    [
+      "caniuse.dev",
+      "/protocol-versions?slice=2025-11-25",
+      "/capabilities/supported-protocol-versions?slice=2025-11-25",
+    ],
+    ["caniuse.dev", "/elicitation", "/capabilities/elicitation"],
+    ["caniuse.dev", "/sampling", "/capabilities/sampling"],
+    ["caniuse.dev", "/roots", "/capabilities/roots"],
     ["score.mcpjam.com", "/", "/embed/score"],
   ])("redirects %s%s to %s", async (host, path, location) => {
     const response = await app.request(path, { headers: { Host: host } });
@@ -26,8 +43,15 @@ describe("vanityDomainLandingMiddleware", () => {
   it.each([
     ["caniuse.dev", "/capabilities/event-delivery?slice=poll"],
     ["caniuse.dev", "/embed/host-compare?capability=elicitation"],
+    ["caniuse.dev", "/compare?q=Events"],
+    ["caniuse.dev", "/events/other"],
     ["score.mcpjam.com", "/results/tok_abc"],
+    ["score.mcpjam.com", "/events"],
     ["app.mcpjam.com", "/?slice=poll"],
+    ["app.mcpjam.com", "/events?slice=poll"],
+    ["app.mcpjam.com", "/tasks"],
+    ["app.mcpjam.com", "/skills"],
+    ["app.mcpjam.com", "/p/test-project/events"],
   ])("passes %s%s through to the SPA", async (host, path) => {
     const response = await app.request(path, { headers: { Host: host } });
 
