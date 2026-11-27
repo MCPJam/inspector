@@ -20,6 +20,8 @@ const COPY_BY_CODE: Readonly<Record<string, string>> = {
     "Grading restarted before this judge ran. It runs again when grading resumes.",
   judge_output_invalid:
     "The judge's answer was not in the requested format, so this iteration has no grade. Rerun the suite to grade it again.",
+  judge_no_output:
+    "The judge returned no answer, usually because its reasoning used up its output tokens. Lower its reasoning effort or shorten the question, then grade the run again.",
   evidence_unavailable:
     "This iteration's data could not be loaded, so the judge did not run. Rerun the suite to try again.",
   missing_api_key:
