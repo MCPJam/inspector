@@ -500,7 +500,7 @@ export function JsonEditorEdit({
       ref={containerRef}
       data-ph-no-capture
       className={cn(
-        "group relative flex w-full overflow-hidden bg-muted/30",
+        "ph-no-capture group relative flex w-full overflow-hidden bg-muted/30",
         !isValid && "border-destructive",
         className,
       )}

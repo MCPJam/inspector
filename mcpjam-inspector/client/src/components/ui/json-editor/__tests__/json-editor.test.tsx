@@ -393,10 +393,10 @@ describe("JsonEditor", () => {
     const { container, rerender } = render(
       <JsonEditor {...props} mode="edit" />,
     );
-    expect(container.querySelector("[data-ph-no-capture]")).not.toBeNull();
+    expect(container.querySelector(".ph-no-capture[data-ph-no-capture]")).not.toBeNull();
     rerender(<JsonEditor {...props} mode="view" />);
-    expect(container.querySelector("[data-ph-no-capture]")).not.toBeNull();
+    expect(container.querySelector(".ph-no-capture[data-ph-no-capture]")).not.toBeNull();
     rerender(<JsonEditor {...props} mode="view" collapsible />);
-    expect(container.querySelector("[data-ph-no-capture]")).not.toBeNull();
+    expect(container.querySelector(".ph-no-capture[data-ph-no-capture]")).not.toBeNull();
   });
 });

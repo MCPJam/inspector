@@ -50,6 +50,10 @@ describe("full replay of the OAuth debugger's secret views", () => {
       </div>,
     );
 
+    // Autocapture skips only the class, so every annotation carries both.
+    for (const surface of document.querySelectorAll("[data-ph-no-capture]")) {
+      expect(surface.classList.contains("ph-no-capture")).toBe(true);
+    }
     const snapshot = recordedSnapshot();
     expect(snapshot).toContain("Authorization flow steps");
     for (const secret of [ACCESS_TOKEN, REFRESH_TOKEN, CLIENT_SECRET]) {

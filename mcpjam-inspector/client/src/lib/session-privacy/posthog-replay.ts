@@ -26,9 +26,10 @@ export type PostHogProfile = "full" | "masked";
 /**
  * Marks a surface that shows a secret as TEXT: revealed server tokens, the
  * one-time API key reveal, every JSON view and editor, the OAuth and XAA
- * HTTP history. Those surfaces carry `ph-no-capture rr-block` alongside it
- * for autocapture, and Sentry Replay blocks the attribute. PostHog replay
- * masks text under it at `full`, and every text node at `masked`.
+ * HTTP history. Those surfaces carry the `ph-no-capture` class alongside it
+ * so autocapture skips their text, and Sentry Replay blocks the attribute.
+ * PostHog replay masks text under it at `full`, and every text node at
+ * `masked`.
  */
 export const SECRET_SURFACE_ATTRIBUTE = "data-ph-no-capture";
 
@@ -42,7 +43,6 @@ const SECRET_TEXT_SELECTOR = [
   "code",
   "textarea",
   ".font-mono",
-
   '[contenteditable]:not([contenteditable="false"])',
 ].join(", ");
 
