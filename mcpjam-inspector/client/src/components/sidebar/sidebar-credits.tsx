@@ -1,4 +1,5 @@
 import { Info } from "lucide-react";
+import { Fragment } from "react";
 import {
   HoverCard,
   HoverCardContent,
@@ -170,6 +171,11 @@ export function SidebarCredits({
   }
 
   const creditMeter = meters[0];
+  // Top-ups have no total to draw a bar against, so they appear only once
+  // they are what's being spent.
+  const topUpRemaining = balance?.paidCreditsRemaining ?? 0;
+  const showTopUps =
+    !creditMeter.isLoading && creditMeter.remaining <= 0 && topUpRemaining > 0;
   const isLowOnCredits =
     !creditMeter.isLoading &&
     creditMeter.total > 0 &&
@@ -198,11 +204,6 @@ export function SidebarCredits({
               <span className="group-data-[collapsible=icon]:hidden">
                 Credits
               </span>
-              {plan && (
-                <span className="ml-auto rounded-full border border-border px-2 py-0.5 text-xs group-data-[collapsible=icon]:hidden">
-                  {formatPlanName(plan)}
-                </span>
-              )}
             </SidebarMenuButton>
           </HoverCardTrigger>
           <HoverCardContent
@@ -216,7 +217,7 @@ export function SidebarCredits({
               {plan ? (
                 <div className="flex items-center justify-between gap-2">
                   <Badge className="rounded-full border-transparent bg-primary/15 text-foreground">
-                    {formatPlanName(plan)} plan
+                    {formatPlanName(plan)}
                   </Badge>
                   {showExplorePlansLink ? (
                     <button
@@ -230,12 +231,16 @@ export function SidebarCredits({
                 </div>
               ) : null}
 
-              {meters.map((meter) => (
-                <UsageRow
-                  key={meter.testId}
-                  meter={meter}
-                  storageKey={`mcpjam:credits-last-seen:${organizationId}:${meter.testId}`}
-                />
+              {meters.map((meter, index) => (
+                <Fragment key={meter.testId}>
+                  <UsageRow
+                    meter={meter}
+                    storageKey={`mcpjam:credits-last-seen:${organizationId}:${meter.testId}`}
+                  />
+                  {index === 0 && showTopUps ? (
+                    <TopUpCallout remaining={topUpRemaining} />
+                  ) : null}
+                </Fragment>
               ))}
 
               {showUpsell ? (
@@ -357,6 +362,26 @@ function UsageValue({ meter }: { meter: UsageMeter }) {
         / {meter.total.toLocaleString()} left
       </span>
     </span>
+  );
+}
+
+function TopUpCallout({ remaining }: { remaining: number }) {
+  return (
+    <div
+      className="-mt-1 flex items-center justify-between gap-2 rounded-md bg-primary/10 px-2.5 py-2"
+      data-testid="sidebar-usage-topup"
+    >
+      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground">
+        <CoinStackIcon aria-hidden="true" className="size-3.5 text-primary" />
+        Using top-up credits
+      </span>
+      <span className="shrink-0 whitespace-nowrap tabular-nums">
+        <span className="text-sm font-semibold text-foreground">
+          {remaining.toLocaleString()}
+        </span>
+        <span className="text-xs text-muted-foreground"> left</span>
+      </span>
+    </div>
   );
 }
 

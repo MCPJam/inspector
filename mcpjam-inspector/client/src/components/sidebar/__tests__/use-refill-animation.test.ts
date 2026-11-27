@@ -1,6 +1,9 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useRefillAnimation } from "@/components/sidebar/use-refill-animation";
+import {
+  REFILL_HOLD_MS,
+  useRefillAnimation,
+} from "@/components/sidebar/use-refill-animation";
 
 const KEY = "mcpjam:credits-last-seen:org_a:sidebar-usage-daily";
 
@@ -12,21 +15,20 @@ describe("useRefillAnimation", () => {
   });
 
   it("starts empty once after a refill, then fills", () => {
-    vi.useFakeTimers({ toFake: ["requestAnimationFrame"] });
+    vi.useFakeTimers();
     localStorage.setItem(KEY, "12");
     const { result } = renderHook(() => useRefillAnimation(KEY, 300));
 
     expect(result.current).toBe(true);
-    act(() => {
-      vi.advanceTimersToNextFrame();
-      vi.advanceTimersToNextFrame();
-    });
+    act(() => vi.advanceTimersByTime(REFILL_HOLD_MS - 1));
+    expect(result.current).toBe(true);
+    act(() => vi.advanceTimersByTime(1));
     expect(result.current).toBe(false);
     expect(localStorage.getItem(KEY)).toBe("300");
   });
 
   it("still animates when the card opens before the meter loads", () => {
-    vi.useFakeTimers({ toFake: ["requestAnimationFrame"] });
+    vi.useFakeTimers();
     localStorage.setItem(KEY, "12");
     const { result, rerender } = renderHook(
       ({ key, remaining }) => useRefillAnimation(key, remaining),

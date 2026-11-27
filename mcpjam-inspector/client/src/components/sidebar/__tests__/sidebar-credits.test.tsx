@@ -287,9 +287,12 @@ describe("SidebarCredits", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("keeps the current plan visible in the collapsed hover trigger", () => {
+  it("names the plan in the card, not the sidebar row", () => {
     renderCredits();
-    expect(screen.getByTestId("sidebar-see-credits")).toHaveTextContent("Free");
+    expect(screen.getByTestId("sidebar-see-credits")).toHaveTextContent(
+      /^Credits$/,
+    );
+    expect(screen.getByText("Free")).toBeInTheDocument();
   });
 
   it("renders the footer row and the daily credit bar with reset timing", () => {
@@ -375,15 +378,17 @@ describe("SidebarCredits", () => {
     expect(screen.queryByTestId("sidebar-usage-daily")).not.toBeInTheDocument();
   });
 
-  it("leaves paid top-up credits to the Billing page", () => {
+  it("shows top-up credits only once regular credits run out", () => {
     balanceState = { ...balanceState!, paidCreditsRemaining: 988 };
+    const { unmount } = renderCredits();
+    expect(screen.queryByTestId("sidebar-usage-topup")).not.toBeInTheDocument();
+    unmount();
 
+    balanceState = { ...balanceState!, freeDailyCreditsRemaining: 0 };
     renderCredits();
-
-    expect(screen.queryByTestId("sidebar-usage-paid")).not.toBeInTheDocument();
-    expect(screen.getByTestId("sidebar-credits-card")).not.toHaveTextContent(
-      "988",
-    );
+    const topUps = screen.getByTestId("sidebar-usage-topup");
+    expect(topUps).toHaveTextContent("Using top-up credits");
+    expect(topUps).toHaveTextContent("988 left");
   });
 
   it("hides the eval iteration bar for an organization with no cap", () => {
@@ -451,7 +456,7 @@ describe("SidebarCredits", () => {
   it("offers Explore plans on the free plan", () => {
     renderCredits();
 
-    expect(screen.getByText("Free plan")).toBeInTheDocument();
+    expect(screen.getByText("Free")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Explore plans" }),
     ).toBeInTheDocument();
@@ -462,7 +467,7 @@ describe("SidebarCredits", () => {
 
     renderCredits();
 
-    expect(screen.getByText("Team plan")).toBeInTheDocument();
+    expect(screen.getByText("Team")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Explore plans" }),
     ).toBeInTheDocument();

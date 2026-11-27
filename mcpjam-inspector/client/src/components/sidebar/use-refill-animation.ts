@@ -27,43 +27,47 @@ function prefersReducedMotion(): boolean {
   );
 }
 
+function shouldRefill(storageKey: string, remaining: number): boolean {
+  const lastSeen = readLastSeen(storageKey);
+  return !prefersReducedMotion() && lastSeen !== null && remaining > lastSeen;
+}
+
+export const REFILL_HOLD_MS = 250;
+
 /**
- * True for the first frames after a meter opens with more left than the user
+ * True for the first moments after a meter opens with more left than the user
  * last saw, so the bar can start empty and fill in from the left.
  */
 export function useRefillAnimation(
   storageKey: string | null,
   remaining: number | null,
 ): boolean {
-  const [filling, setFilling] = useState(false);
   // Compare once per key, on the first loaded value, so a card opened while
   // its meter is still loading still gets the refill.
   const comparedKey = useRef<string | null>(null);
+  // Decide on the first render: a bar that mounts full and is then emptied
+  // visibly drains before it refills.
+  const [filling, setFilling] = useState(() => {
+    if (!storageKey || remaining === null) return false;
+    comparedKey.current = storageKey;
+    return shouldRefill(storageKey, remaining);
+  });
 
   // Layout effect: the bar must be empty before the first paint, or it flashes full.
   useLayoutEffect(() => {
     if (!storageKey || remaining === null) return;
     if (comparedKey.current !== storageKey) {
       comparedKey.current = storageKey;
-      const lastSeen = readLastSeen(storageKey);
-      if (!prefersReducedMotion() && lastSeen !== null && remaining > lastSeen) {
-        setFilling(true);
-      }
+      if (shouldRefill(storageKey, remaining)) setFilling(true);
     }
     writeLastSeen(storageKey, remaining);
   }, [storageKey, remaining]);
 
   useEffect(() => {
     if (!filling) return;
-    // Two frames: the empty bar has to paint once for the fill to transition.
-    let second = 0;
-    const first = requestAnimationFrame(() => {
-      second = requestAnimationFrame(() => setFilling(false));
-    });
-    return () => {
-      cancelAnimationFrame(first);
-      cancelAnimationFrame(second);
-    };
+    // Hold the empty bar until the card has faded in, or the fill plays unseen.
+    const timer = setTimeout(() => setFilling(false), REFILL_HOLD_MS);
+    return () => clearTimeout(timer);
   }, [filling]);
 
   return filling;
