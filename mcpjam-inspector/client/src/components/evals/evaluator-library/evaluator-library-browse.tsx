@@ -1,6 +1,7 @@
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import {
+  ArrowUpRight,
   CircleAlert,
   Library,
   MessageSquare,
@@ -11,7 +12,10 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useId } from "react";
+import { cn } from "@/lib/utils";
 import { EvaluatorCard } from "./evaluator-card";
+import { EVALUATOR_METHODS } from "./evaluator-methods";
+import type { EvaluatorMethod } from "./evaluator-library-types";
 import {
   builtFrom,
   isInSuite,
@@ -33,12 +37,16 @@ const CATEGORIES = [
 
 type Category = LibraryEvaluator["category"] | "all";
 export type LibraryFilters = { category: Category; search: string };
+export type MethodAvailability = Record<EvaluatorMethod, string | null>;
 
 export function EvaluatorLibraryBrowse({
   evaluators,
   suite,
   filters,
   onFiltersChange,
+  methods,
+  status,
+  onMethod,
   onOpen,
   onAdd,
   getAddDisabledReason,
@@ -47,6 +55,10 @@ export function EvaluatorLibraryBrowse({
   suite: LibrarySuiteParts;
   filters: LibraryFilters;
   onFiltersChange: (filters: LibraryFilters) => void;
+  methods: MethodAvailability;
+  /** A confirmation after a Method card saved into the suite draft. */
+  status: string | null;
+  onMethod: (method: EvaluatorMethod) => void;
   onOpen: (id: string) => void;
   onAdd: (evaluator: LibraryEvaluator) => void;
   getAddDisabledReason: (evaluator: LibraryEvaluator) => string | undefined;
@@ -141,12 +153,18 @@ export function EvaluatorLibraryBrowse({
           key={category}
           className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5"
         >
+          <p aria-live="polite" className="text-sm text-muted-foreground empty:hidden">
+            {status}
+          </p>
+          {all && !query ? (
+            <MethodCards methods={methods} onMethod={onMethod} />
+          ) : null}
           {visible.every((group) => !group.matches.length) ? (
             <div className="rounded-lg border border-border px-4 py-6 text-center">
               <p role="status" className="text-sm text-muted-foreground">
                 {query
                   ? "No presets match your search."
-                  : "This deployment cannot add any preset yet."}
+                  : "Choose a method above to create an evaluator."}
               </p>
               {query ? (
                 <Button
@@ -195,5 +213,72 @@ export function EvaluatorLibraryBrowse({
         </div>
       </div>
     </div>
+  );
+}
+
+function MethodCards({
+  methods,
+  onMethod,
+}: {
+  methods: MethodAvailability;
+  onMethod: (method: EvaluatorMethod) => void;
+}) {
+  const id = useId();
+  return (
+    <section
+      aria-labelledby={id}
+      className="space-y-2.5 border-b border-border pb-5"
+    >
+      <h4 id={id} className="text-sm font-semibold">
+        Start from scratch
+      </h4>
+      <div className="grid gap-2.5 md:grid-cols-2">
+        {EVALUATOR_METHODS.map(
+          ({ value, title, icon: Icon, description, tone }) => {
+            const reason = methods[value];
+            const titleId = `${id}-${value}`;
+            const descriptionId = `${titleId}-description`;
+            return (
+              <button
+                key={value}
+                type="button"
+                aria-labelledby={titleId}
+                aria-describedby={descriptionId}
+                disabled={Boolean(reason)}
+                onClick={() => onMethod(value)}
+                className="flex items-start gap-3 rounded-lg border border-border bg-card p-3 text-left text-card-foreground hover:border-foreground/25 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-not-allowed disabled:hover:border-border disabled:hover:bg-card"
+              >
+                <span
+                  aria-hidden
+                  className={cn(
+                    "grid size-8 shrink-0 place-items-center rounded-md",
+                    reason ? "bg-muted text-muted-foreground" : tone,
+                  )}
+                >
+                  <Icon className="size-4" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span id={titleId} className="block text-sm font-semibold">
+                    {title}
+                  </span>
+                  <span
+                    id={descriptionId}
+                    className="block text-sm text-muted-foreground"
+                  >
+                    {reason ?? description}
+                  </span>
+                </span>
+                {reason ? null : (
+                  <ArrowUpRight
+                    aria-hidden
+                    className="size-4 shrink-0 text-muted-foreground"
+                  />
+                )}
+              </button>
+            );
+          },
+        )}
+      </div>
+    </section>
   );
 }

@@ -276,6 +276,13 @@ export function taggedQuestions(
   }));
 }
 
+// Score rows keep only the question ID, so authored questions must use other IDs.
+export const LIBRARY_QUESTION_IDS: ReadonlyMap<string, string> = new Map(
+  LIBRARY_EVALUATORS.flatMap((evaluator) =>
+    taggedQuestions(evaluator).map((question) => [question.id, evaluator.id]),
+  ),
+);
+
 /** The evaluator's judges, each with a stable id and its tag. */
 export function taggedJudges(evaluator: LibraryEvaluator): CustomJudge[] {
   return (evaluator.judges ?? []).map((j) => ({

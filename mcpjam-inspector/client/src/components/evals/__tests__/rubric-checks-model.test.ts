@@ -3,6 +3,7 @@ import type { RubricCheckQuestion } from "@/components/shared/session-quality/ju
 import {
   areRubricChecksValid,
   blankRubricCheckQuestion,
+  libraryQuestionIdError,
   rubricCheckQuestionError,
   rubricChecksRun,
   withAddedOption,
@@ -220,5 +221,43 @@ describe("question kinds this build does not know", () => {
     expect(rubricCheckQuestionError(flat, 0, [flat])).toMatch(
       /A score needs 2 to/,
     );
+  });
+});
+
+describe("library question IDs", () => {
+  const reserved = "reports-tool-errors-reports-failures";
+  const authored: RubricCheckQuestion = {
+    id: reserved,
+    kind: "yesno",
+    label: "Mine",
+    instructions: "Did it report every failure?",
+    pass: { answer: "yes" },
+  };
+
+  it("refuses a library preset's ID on a question written here", () => {
+    expect(libraryQuestionIdError(authored)).toBe(
+      "This ID belongs to a library preset. Enter a different ID.",
+    );
+  });
+
+  it("accepts the ID on the preset's own tagged question", () => {
+    const fromPreset = {
+      ...authored,
+      evaluator: { id: "reports-tool-errors", version: 1 },
+    };
+    expect(libraryQuestionIdError(fromPreset)).toBeUndefined();
+  });
+
+  it("never blocks saving a stored question that already holds one", () => {
+    expect(libraryQuestionIdError(authored, reserved)).toBeUndefined();
+    expect(rubricCheckQuestionError(authored, 0, [authored])).toBeUndefined();
+    expect(areRubricChecksValid({ questions: [authored] })).toBe(true);
+  });
+
+  it("never names a question with a library preset's ID", () => {
+    const blank = blankRubricCheckQuestion("yesno", []);
+    expect(
+      withQuestionLabel(blank, "Reports tool errors reports failures", []).id,
+    ).toBe(`${reserved}-2`);
   });
 });
