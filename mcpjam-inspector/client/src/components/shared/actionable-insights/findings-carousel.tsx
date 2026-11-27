@@ -249,8 +249,8 @@ export function FindingsAllSheet({
                           finding.severity === "high"
                             ? "bg-destructive"
                             : finding.severity === "medium"
-                              ? "bg-warning"
-                              : "bg-muted-foreground"
+                            ? "bg-warning"
+                            : "bg-muted-foreground"
                         }`}
                       />
                       <span className="text-[13px] font-medium tabular-nums text-card-foreground">
