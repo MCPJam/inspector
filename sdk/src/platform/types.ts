@@ -4799,8 +4799,10 @@ export interface PlatformTraceDestination {
   /**
    * Which traces this destination subscribes to. `direct` is Playground, and
    * only sessions SHARED to the workspace are ever sent — a private Playground
-   * session is excluded server-side and cannot be opted in. `event` is
-   * background trigger runs; a Playground event turn is still `direct`.
+   * session is excluded server-side and cannot be opted in. `event` selects
+   * background trigger runs; until they export under their own source type (a
+   * server-side rollout), they still match `direct`, as a Playground event
+   * turn always does.
    */
   sourceTypes: Array<
     "eval" | "scenario" | "study" | "swarm" | "direct" | "event"

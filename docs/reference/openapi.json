@@ -7057,7 +7057,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Comma-separated source types to export: `direct` (Playground), `scenario`, `eval`, `event` (background trigger runs) and `swarm`. Without it the export holds `direct`, `scenario`, `eval` and `event`; `swarm` is exported only when named, since one swarm run is many sessions. Background trigger runs are `event`, so `sourceTypes=direct` returns Playground sessions only. Under `x-mcpjam-api-vocabulary: 2`, `scenario` may also be named `study`. An unknown value is refused with a 400."
+            "description": "Comma-separated source types to export: `direct` (Playground), `scenario`, `eval`, `event` (background trigger runs) and `swarm`. Without it the export holds `direct`, `scenario`, `eval` and `event`; `swarm` is exported only when named, since one swarm run is many sessions. Until background trigger runs export under their own source type, a server-side rollout, they still match `direct` and not `event`. Under `x-mcpjam-api-vocabulary: 2`, `scenario` may also be named `study`. An unknown value is refused with a 400."
           },
           {
             "name": "includeContent",

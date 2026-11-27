@@ -359,7 +359,7 @@ export function registerTraceDestinationsCommands(program: Command): void {
     )
     .option(
       "--source <type>",
-      "Repeatable: eval, scenario, swarm, direct or event. `direct` is Playground, and only sessions SHARED to the workspace are ever sent. `event` is background trigger runs. Defaults to the server's default set.",
+      "Repeatable: eval, scenario, swarm, direct or event. `direct` is Playground, and only sessions SHARED to the workspace are ever sent. `event` selects background trigger runs; until they export under their own source type (a server-side rollout), they still match `direct`. Defaults to the server's default set.",
       collect
     )
     .option(
