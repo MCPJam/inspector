@@ -48,6 +48,9 @@ export interface RemoteServer {
   timeout?: number;
   clientCapabilities?: Record<string, unknown>;
   publishedPluginId?: string;
+  /** "mock" for a whole-server mock; absent on rows saved before mocks. */
+  lifecycleScope?: "standalone" | "plugin_component" | "mock";
+  mock?: { baseServerId: string | null; headVersion: number };
   // OAuth fields
   useOAuth?: boolean;
   oauthScopes?: string[];

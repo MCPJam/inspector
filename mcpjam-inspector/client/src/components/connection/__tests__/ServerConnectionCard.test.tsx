@@ -695,6 +695,49 @@ describe("ServerConnectionCard", () => {
       });
     });
 
+    it.each([
+      ["the hosted app", "https://app.mcpjam.test"],
+      ["a local Inspector", "http://127.0.0.1:6274"],
+    ])(
+      "shows and copies a mock's dial address on %s, not its placeholder",
+      async (_name, origin) => {
+        const original = window.location;
+        Object.defineProperty(window, "location", {
+          configurable: true,
+          value: { ...original, origin },
+        });
+        try {
+          const server = createServer({
+            config: { url: "https://mock.mcpjam.invalid/mock123" },
+          });
+          render(<ServerConnectionCard server={server} {...defaultProps} />);
+
+          const expected = `${origin}/api/web/mock-mcp/mock123`;
+          expect(screen.getByText(expected)).toBeInTheDocument();
+          expect(screen.queryByText(/mock\.mcpjam\.invalid/)).toBeNull();
+          fireEvent.click(
+            screen.getByRole("button", { name: "Copy server command" })
+          );
+          await waitFor(() => {
+            expect(mockClipboard.writeText).toHaveBeenCalledWith(expected);
+          });
+        } finally {
+          Object.defineProperty(window, "location", {
+            configurable: true,
+            value: original,
+          });
+        }
+      }
+    );
+
+    it("leaves an ordinary server's address as it is", () => {
+      const server = createServer({
+        config: { url: "https://example.com/mcp" },
+      });
+      render(<ServerConnectionCard server={server} {...defaultProps} />);
+      expect(screen.getByText("https://example.com/mcp")).toBeInTheDocument();
+    });
+
     it("does not open the actions menu when right-clicking the copy button", () => {
       render(
         <ServerConnectionCard server={createServer()} {...defaultProps} />
