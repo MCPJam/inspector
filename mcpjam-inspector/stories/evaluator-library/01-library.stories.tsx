@@ -1,15 +1,14 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { ListChecks, Server, Syringe, Wrench } from "lucide-react";
+import { Syringe, Wrench } from "lucide-react";
 import { CaseFieldDependency } from "@/components/evals/evaluator-library/case-field-dependency";
 import { EvaluatorCard } from "@/components/evals/evaluator-library/evaluator-card";
 import {
   EvaluatorKindBadge,
   OwaspTag,
 } from "@/components/evals/evaluator-library/evaluator-kind-badge";
-import { NotInLibraryCard } from "@/components/evals/evaluator-library/not-in-library-card";
 import { Grid, Specimen } from "./_frame";
 
-/** The library grid: cards, badges and the "not in the library" card. */
+/** The library grid: cards and badges. */
 const meta = {
   title: "Evaluator Library/1 Library",
   parameters: { layout: "padded" },
@@ -83,33 +82,6 @@ export const Labels: Story = {
           />
           <CaseFieldDependency field="attackFixture" filled={false} />
         </div>
-      </Specimen>
-    </Grid>
-  ),
-};
-
-export const NotInLibrary: Story = {
-  render: () => (
-    <Grid>
-      <Specimen label="server checks" width={420}>
-        <NotInLibraryCard
-          icon={Server}
-          title="Server checks"
-          description="Grade the server. Run once per deploy."
-          items={["Tool catalog review", "Security probes"]}
-          actionLabel="Open server checks"
-          onAction={() => {}}
-        />
-      </Specimen>
-      <Specimen label="run settings" width={420}>
-        <NotInLibraryCard
-          icon={ListChecks}
-          title="Run settings"
-          description="Change how a suite runs."
-          items={["Client matrix", "Trials per case"]}
-          actionLabel="Open run settings"
-          onAction={() => {}}
-        />
       </Specimen>
     </Grid>
   ),
