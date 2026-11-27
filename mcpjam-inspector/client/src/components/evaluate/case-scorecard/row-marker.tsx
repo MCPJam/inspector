@@ -64,7 +64,9 @@ export function RowMarker({ row }: { row: ScorecardRow }) {
     );
   }
   const judged =
-    row.provenance === "judge" || row.provenance === "rubricCheck";
+    row.provenance === "judge" ||
+    row.provenance === "rubricCheck" ||
+    row.provenance === "customJudge";
   const Icon =
     row.provenance === "route"
       ? RouteIcon

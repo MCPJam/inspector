@@ -341,6 +341,50 @@ describe("what it declines to grade", () => {
 });
 
 describe("the write it does make", () => {
+  test("projects stored custom grades when the trace is incomplete", async () => {
+    const run = runRow();
+    const iteration = run.iterations[0]!;
+    iteration.traceComplete = false;
+    iteration.metadata = {
+      ...iteration.metadata,
+      customJudgesVerdict: {
+        templateVersion: 1,
+        model: "gpt-x",
+        judges: [{
+          id: "helpful",
+          label: "Helpful",
+          contentDigest: "d-helpful",
+          output: { kind: "score", threshold: 0.7 },
+          status: "scored",
+          value: 0.4,
+          passed: false,
+        }],
+      },
+    };
+    const { value, applied } = ports({ fetchRun: vi.fn(async () => run) });
+
+    expect(await runJudgeSecondPass("run1", value)).toMatchObject({
+      noop: false,
+      outcomes: [{ iterationId: "iter1", outcome: "applied" }],
+    });
+    expect(applied[0]?.body).toMatchObject({
+      goalCompletionJobId: "job1",
+      scores: expect.arrayContaining([
+        expect.objectContaining({ scorerId: "judge:custom:helpful", value: 0.4 }),
+      ]),
+      evaluationConfig: {
+        definitions: expect.arrayContaining([
+          expect.objectContaining({
+            scorerId: "judge:custom:helpful",
+            role: "advisory",
+          }),
+        ]),
+      },
+    });
+    expect(applied[0]?.body).not.toHaveProperty("stageResults");
+    expect(applied[0]?.body).not.toHaveProperty("stageAnalyzerVersion");
+  });
+
   test("posts only allowlisted derivation keys, never status or result", async () => {
     const { value, applied } = ports();
     const result = await runJudgeSecondPass("run1", value);
