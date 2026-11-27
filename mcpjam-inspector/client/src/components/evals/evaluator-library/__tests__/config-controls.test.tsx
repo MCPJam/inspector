@@ -1,7 +1,11 @@
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, renderWithProviders, screen } from "@/test";
+import { fireEvent, renderWithProviders, screen, userEvent } from "@/test";
 import { CombineFlow } from "../combine-flow";
-import { EvaluatorTypePicker } from "../evaluator-type-picker";
+import {
+  EvaluatorTypePicker,
+  type EvaluatorTypePickerProps,
+} from "../evaluator-type-picker";
 import { OutcomeTag } from "../outcome-tag";
 import { RUN_WHEN_OPTIONS, RunWhenSelect } from "../run-when-select";
 
@@ -83,5 +87,36 @@ describe("EvaluatorTypePicker", () => {
     expect(onChange).toHaveBeenLastCalledWith("decision");
     fireEvent.keyDown(judge, { key: "ArrowLeft" });
     expect(onChange).toHaveBeenLastCalledWith("assertions");
+  });
+
+  it("moves focus and selection together, wrapping at the ends", async () => {
+    function Harness() {
+      const [value, setValue] =
+        useState<EvaluatorTypePickerProps["value"]>("assertions");
+      return <EvaluatorTypePicker value={value} onChange={setValue} />;
+    }
+    const user = userEvent.setup();
+    renderWithProviders(<Harness />);
+    const expectSelected = (name: RegExp) => {
+      const radio = screen.getByRole("radio", { name });
+      expect(radio).toHaveFocus();
+      expect(radio).toHaveAttribute("aria-checked", "true");
+      expect(radio).toHaveAttribute("tabindex", "0");
+      for (const other of screen.getAllByRole("radio")) {
+        if (other === radio) continue;
+        expect(other).toHaveAttribute("aria-checked", "false");
+        expect(other).toHaveAttribute("tabindex", "-1");
+      }
+    };
+    await user.tab();
+    expect(screen.getByRole("radio", { name: /^assertions/i })).toHaveFocus();
+    await user.keyboard("{ArrowRight}");
+    expectSelected(/judge prompt/i);
+    await user.keyboard("{ArrowRight}");
+    expectSelected(/decision questions/i);
+    await user.keyboard("{ArrowRight}");
+    expectSelected(/^assertions/i);
+    await user.keyboard("{ArrowLeft}");
+    expectSelected(/decision questions/i);
   });
 });
