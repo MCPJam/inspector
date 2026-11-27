@@ -53,7 +53,7 @@ describe("CombineFlow", () => {
 });
 
 describe("EvaluatorTypePicker", () => {
-  it("offers four methods and no server checks", () => {
+  it("offers assertions, judge prompts, and decision questions", () => {
     renderWithProviders(
       <EvaluatorTypePicker value={null} onChange={() => {}} />,
     );
@@ -62,7 +62,6 @@ describe("EvaluatorTypePicker", () => {
       expect.stringContaining("Assertions"),
       expect.stringContaining("Judge prompt"),
       expect.stringContaining("Decision questions"),
-      expect.stringContaining("Code"),
     ]);
     expect(screen.queryByText(/server/i)).not.toBeInTheDocument();
   });
@@ -75,8 +74,11 @@ describe("EvaluatorTypePicker", () => {
     const judge = screen.getByRole("radio", { name: /judge prompt/i });
     expect(judge).toHaveAttribute("aria-checked", "true");
     expect(judge).toHaveAttribute("tabindex", "0");
-    fireEvent.click(screen.getByRole("radio", { name: /^code/i }));
-    expect(onChange).toHaveBeenLastCalledWith("code");
+    const assertions = screen.getByRole("radio", { name: /^assertions/i });
+    fireEvent.click(assertions);
+    expect(onChange).toHaveBeenLastCalledWith("assertions");
+    fireEvent.keyDown(assertions, { key: "ArrowLeft" });
+    expect(onChange).toHaveBeenLastCalledWith("decision");
     fireEvent.keyDown(judge, { key: "ArrowRight" });
     expect(onChange).toHaveBeenLastCalledWith("decision");
     fireEvent.keyDown(judge, { key: "ArrowLeft" });

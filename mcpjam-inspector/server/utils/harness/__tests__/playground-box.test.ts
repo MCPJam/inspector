@@ -66,6 +66,15 @@ describe("playgroundHarnessBoxReason", () => {
     ).toBe("credential");
   });
 
+  it("never gives a web client a box, though it is on an external account", () => {
+    for (const harnessId of ["claude-web", "chatgpt-web"]) {
+      expect(playgroundHarnessBoxReason(turn({ harnessId }))).toBeNull();
+      expect(
+        playgroundHarnessBoxReason(turn({ harnessId, comparePane: true })),
+      ).toBeNull();
+    }
+  });
+
   it("never applies to a turn with no harness, a local target, or a scenario", () => {
     for (const overrides of [
       { harnessId: undefined, comparePane: true },
@@ -357,6 +366,24 @@ describe("acquirePlaygroundHarnessBox", () => {
     expect(plain.ok).toBe(true);
     expect(plain).not.toHaveProperty("prepared");
     if (plain.ok) await plain.box.release();
+  });
+
+  it("marks only a box taken prepared as one no turn has used", async () => {
+    const box = { sandboxRowId: "row", sandboxId: "sbx", idleMs: 5 * 60_000 };
+    provisionMock.mockResolvedValueOnce({
+      ok: true,
+      value: { ...box, prepared: true },
+    });
+    const prepared = await acquirePlaygroundHarnessBox(args);
+    if (!prepared.ok) throw new Error("expected a box");
+    expect(prepared.box.binding.unused).toBe(true);
+    await prepared.box.release();
+
+    provisionMock.mockResolvedValueOnce({ ok: true, value: box });
+    const reused = await acquirePlaygroundHarnessBox(args);
+    if (!reused.ok) throw new Error("expected a box");
+    expect(reused.box.binding).not.toHaveProperty("unused");
+    await reused.box.release();
   });
 
   it("returns the control plane's refusal untouched", async () => {

@@ -264,6 +264,17 @@ describe("route rule edits", () => {
       assertion: { type: "toolCalledWith" },
     });
   });
+
+  it("exact order on a case with no steps adds no leading tool assert", () => {
+    const result = addAfterRun(
+      { kind: "route-check", routeKind: "exactOrder" },
+      undefined,
+      0,
+    );
+    const next = result!.edit(draft({ steps: [] }));
+    expect(next.steps).toEqual([]);
+    expect(next.kind).toBe("regression");
+  });
 });
 
 describe("envelope", () => {
@@ -278,6 +289,15 @@ describe("envelope", () => {
       expect(next.predicates).toEqual({ mode, list });
     },
   );
+
+  it("setEnvelopeMode from inherit doesn't switch on its inactive list", () => {
+    const stale: Predicate[] = [{ type: "noToolErrors" }];
+    const next = setEnvelopeMode(
+      draft({ predicates: { mode: "inherit", list: stale } }),
+      "replace",
+    );
+    expect(next.predicates).toEqual({ mode: "replace", list: [] });
+  });
 
   it("setEnvelopeMode on a case with no envelope starts an empty list", () => {
     expect(setEnvelopeMode(draft(), "replace").predicates).toEqual({

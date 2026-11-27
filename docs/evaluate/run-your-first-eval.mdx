@@ -1,0 +1,279 @@
+---
+title: "Run your first eval"
+description: "Generate cases from a connected server, run them against a model, and read why a case failed."
+icon: "play"
+---
+
+In about five minutes you create a suite from a connected server, generate cases from its tools, run them against one model, and open a failing iteration to see which stage broke.
+
+## Before you start
+
+- **Inspector**
+  - Sign in to MCPJam. As a guest, the **Generate test cases** dialog asks you to sign in; you can still add cases by hand.
+  - Connect at least one server to your project. See [Connecting servers](/inspector/connecting-servers).
+- **CLI or SDK**
+  - Have a model provider key, such as `ANTHROPIC_API_KEY`.
+  - Have an MCPJam login or `sk_` API key. See [eval identity](/cli/local-evals#eval-identity-and-local-data).
+
+<Warning>
+  A run calls real models. Each iteration spends MCPJam credits when MCPJam serves the model, or tokens on your provider account when you bring your own key. One model and one iteration per case keeps a first run small.
+</Warning>
+
+<Tabs>
+  <Tab title="Inspector">
+    <Steps>
+      <Step title="Open Evaluate and pick a server">
+        Open **Evaluate** in the sidebar. With no suites yet, the page reads "Automate the checks you'd run by hand" and shows a card for each server. Click **Eval my server** on the server you want to test. If the project already has suites, click **Create suite** instead and pick the server in the form.
+
+        {/* Screenshot: Evaluate empty state with server cards labelled "Eval my server" and the "Try sample suite" button */}
+
+        To start from a finished example, click **Try sample suite**. It creates an "Excalidraw quickstart" suite with cases written against the hosted Excalidraw demo server. Continue from step 5.
+
+        A short tour may start the first time you open an empty Evaluate tab. Skip it or step through it; it ends on the form in the next step.
+      </Step>
+      <Step title="Create the suite">
+        The "Create a new eval suite" form opens with the suite name and server filled in. Under "Where it runs", choose a client and one model, which keeps the first run small. Click **Continue**.
+      </Step>
+      <Step title="Generate cases">
+        The new suite opens with no cases. Click the **Generate** card. In **Generate test cases**, keep **Quick set** and **Read-only**, then click **Generate cases**. **Read-only** leaves out workflows that change data on your server.
+
+        {/* Screenshot: Generate test cases dialog with Quick set and Read-only selected */}
+      </Step>
+      <Step title="Review the generated cases">
+        Drafts appear under "Review generated cases" as they are written. A draft is not in your suite, and won't run, until you add it.
+
+        - **Keep realistic prompts**
+          - Keep cases whose prompt reads like something a real user would type.
+          - Remove the rest, or fix a prompt's wording under **Review case**.
+        - **Keep a no-tool case**
+          - Keep at least one case where the right answer uses no tool; the quick set includes some.
+          - Open one with **Review case** and check that it says **No tool should be called**.
+          - Without one, the suite can't catch a model calling tools it shouldn't.
+
+        Click **Add to suite** on each case you keep, or **Add all to suite**. When every draft is handled, the page reads "Every generated case has been reviewed." Click **Back to** followed by your suite's name to return to the suite.
+
+        {/* Screenshot: Review generated cases panel with one draft expanded via Review case */}
+      </Step>
+      <Step title="Start the run">
+        On the suite page, click **Run**. The "Set up run ·" sheet opens, titled with your suite's name.
+
+        1. Leave **Iterations per case** at 1 for a first run.
+        2. Under "Where it runs", confirm the client and model.
+        3. Check the total at the bottom: cases × repetitions × client:model combos, then the number of iterations the run will execute.
+        4. Click **Start run**.
+
+        {/* Screenshot: Set up run sheet showing Iterations per case, the client and model, and the iteration total above Start run */}
+      </Step>
+      <Step title="Read the run page">
+        You land on "Run #1 of" your suite. The header shows **Running**, then **Grading** while finished iterations are scored.
+
+        The results grid below has one row per case and one column per client and model. Each column header shows iterations passed, p95 latency and cost. Each cell reads **Pass** or **Fail** with the number of iterations that passed. Set the **Status** filter to **Failures** to see only failing cases.
+
+        {/* Screenshot: Run page results grid with one failing cell */}
+      </Step>
+      <Step title="Open a failing iteration">
+        Click a **Fail** cell. A side sheet lists the case's averages and its iterations. Click an iteration to open its report on the **Scorecard** tab.
+
+        The scorecard groups evaluators by stage, from Connection to User value. Each row pairs **Expected** (what the evaluator checks for) with **Actual** (what the run recorded). Read the row of the first stage that failed. **Chat**, **Tool Calls** and **Trace** show the conversation, the expected and actual tool calls, and every step of the run.
+
+        {/* Screenshot: Iteration report on the Scorecard tab with a failed Selection row showing Expected and Actual */}
+
+        <Tip>
+          If a case fails at Selection because the model called a different tool, compare that tool's description with the expected tool's. Two near-identical descriptions can produce a Selection failure whose cause is in Discovery, in how the tools are described.
+        </Tip>
+      </Step>
+    </Steps>
+  </Tab>
+  <Tab title="CLI">
+    `mcpjam cloud eval run --file` uploads a suite file to your MCPJam project and runs it there, with the judge that grades each case's expected outcome.
+
+    <Steps>
+      <Step title="Install the CLI and sign in">
+        ```bash
+        npm i -g @mcpjam/cli
+        mcpjam cloud login
+        ```
+
+        In CI, skip the login and set `MCPJAM_API_KEY` to an `sk_` key instead.
+      </Step>
+      <Step title="Write the suite">
+        Save this as `.mcpjam/evals/example.yaml`. Each case pairs a user prompt with the outcome the user should get. The second case also guards against deleting anything when the user only asked for a summary:
+
+        ```yaml .mcpjam/evals/example.yaml
+        schemaVersion: "2"
+        mode: agentWorkflow
+        reportingMode: standard
+        suite:
+          id: s_notes_example
+          name: Notes server
+        target:
+          servers:
+            - name: notes
+        defaults:
+          judge:
+            enabled: true
+            role: required
+          model: anthropic/claude-haiku-4.5
+          iterations: 1
+          passThreshold: 1
+          validity: {}
+        cases:
+          - id: c_reads_a_note
+            title: tells the user what note 7 says
+            steps:
+              - id: s1
+                kind: prompt
+                prompt: What does note 7 say?
+            expectedOutput: The reply tells the user what note 7 says, using the note's actual text.
+          - id: c_summarizes_without_deleting
+            title: summarizes note 7 without deleting it
+            steps:
+              - id: s1
+                kind: prompt
+                prompt: Summarize note 7.
+              - id: a1
+                kind: assert
+                assertion:
+                  type: toolNeverCalled
+                  toolName: delete_note
+            expectedOutput: A short, accurate summary of note 7.
+        ```
+
+        `role: required` lets the judge's verdict on each `expectedOutput` fail an iteration. Check the file offline, with no account:
+
+        ```bash
+        mcpjam cloud eval validate --file .mcpjam/evals/example.yaml
+        ```
+      </Step>
+      <Step title="Save the server in your project">
+        The judge runs hosted, so the run happens in your MCPJam project. The file's `notes` server must be saved there under that name, such as by connecting it in the Inspector.
+      </Step>
+      <Step title="Run the suite">
+        ```bash
+        mcpjam cloud eval run --file .mcpjam/evals/example.yaml --wait
+        ```
+
+        `--file` uploads the file as a suite and runs it. With `--wait`, the command exits `1` when the run's verdict is failed.
+      </Step>
+      <Step title="Rerun one case with a report">
+        After a fix, rerun just that case and keep a JUnit report:
+
+        ```bash
+        mcpjam cloud eval run --file .mcpjam/evals/example.yaml --case c_reads_a_note --wait --reporter junit-xml --out reports/eval.xml
+        ```
+
+        `--case` takes a case id or title and is repeatable.
+      </Step>
+    </Steps>
+
+    <Note>
+      `mcpjam test` runs a suite file on your machine, but it does not run judges, so it refuses this file. Locally it can check assertions only. See [Local evals](/cli/local-evals).
+    </Note>
+
+    See [`cloud eval run`](/cli/reference#cloud-eval-run) for every flag and exit code.
+  </Tab>
+  <Tab title="SDK">
+    Install the SDK and Vitest:
+
+    ```bash
+    npm install @mcpjam/sdk
+    npm install -D vitest
+    ```
+
+    Save this test file. It runs the same two cases as the CLI tab, three iterations each:
+
+    ```ts evals/notes.test.ts
+    import { afterAll, beforeAll, expect, test } from "vitest";
+    import { EvalSuite, EvalTest, HostRunner, MCPClientManager, judge } from "@mcpjam/sdk";
+
+    const manager = new MCPClientManager({
+      notes: { command: "node", args: ["./notes-server.js"] },
+    });
+    let agent: HostRunner;
+
+    beforeAll(async () => {
+      await manager.connectToServer("notes");
+      agent = new HostRunner({
+        tools: await manager.getTools(),
+        model: "anthropic/claude-haiku-4.5",
+        apiKey: process.env.ANTHROPIC_API_KEY,
+        mcpClientManager: manager,
+        temperature: 0.1,
+      });
+    }, 60_000);
+
+    afterAll(async () => {
+      await manager.disconnectServer("notes");
+    });
+
+    test("notes server evals", async () => {
+      const suite = new EvalSuite({ name: "Notes server" });
+
+      const outcome = (id: string, criterion: string) =>
+        judge({
+          id,
+          model: "anthropic/claude-sonnet-5",
+          apiKey: process.env.ANTHROPIC_API_KEY!,
+          rubric: [criterion],
+          role: "required",
+        });
+
+      suite.add(new EvalTest({
+        id: "c_reads_a_note",
+        name: "tells the user what note 7 says",
+        execute: async (a) => {
+          await a.run("What does note 7 say?");
+        },
+        evaluators: {
+          mode: "extend",
+          list: [outcome("answers-with-the-note", "The reply tells the user what note 7 says, using the note's actual text.")],
+        },
+      }));
+
+      suite.add(new EvalTest({
+        id: "c_summarizes_without_deleting",
+        name: "summarizes note 7 without deleting it",
+        predicates: [{ type: "toolNeverCalled", toolName: "delete_note" }],
+        execute: async (a) => {
+          await a.run("Summarize note 7.");
+        },
+        evaluators: {
+          mode: "extend",
+          list: [outcome("summarizes-the-note", "A short, accurate summary of note 7.")],
+        },
+      }));
+
+      await suite.run(agent, { iterations: 3, concurrency: 1 });
+
+      for (const t of suite.getAll()) {
+        console.log(`${t.getName()}: ${(t.accuracy() * 100).toFixed(0)}%`);
+      }
+      expect(suite.accuracy()).toBe(1);
+    }, 600_000);
+    ```
+
+    Run it:
+
+    ```bash
+    export ANTHROPIC_API_KEY=sk-ant-...
+    export MCPJAM_API_KEY=sk_...   # or sign in once with: mcpjam cloud login
+    npx vitest run evals/notes.test.ts
+    ```
+
+    With `MCPJAM_API_KEY` set, the suite's results are also saved to your project; see [Saving results](/sdk/concepts/saving-results). The [SDK quickstart](/sdk/quickstart) covers each step.
+  </Tab>
+</Tabs>
+
+## Next steps
+
+<CardGroup cols={3}>
+  <Card title="Read results" icon="chart-column" href="/evaluate/read-results">
+    The run page, findings and the scorecard in detail.
+  </Card>
+  <Card title="Generate cases" icon="sparkles" href="/evaluate/generate-cases">
+    Larger sets, read-and-write coverage, and retries.
+  </Card>
+  <Card title="How evals work" icon="workflow" href="/evaluate/how-evals-work">
+    What happens during a run and how the verdict is reached.
+  </Card>
+</CardGroup>

@@ -131,11 +131,12 @@ export const EVAL_EMPTY_POPULATION_RATE_LABELS = Object.freeze({
  * How many times each case runs, by rule.
  *
  * "Iterations per case" and "Minimum iterations per case" are one word apart
- * on purpose: the difference is a default that a case REPLACES versus a floor
- * that RAISES the case's own count, and the words a form uses have to survive
- * being read quickly. A case at 7 resolves to 7 under a floor of 3 and to 3
- * under a default of 3 — same number, opposite answers — so "minimum" is doing
- * real work and is never dropped for brevity.
+ * on purpose: the difference is a default that a case's own count OVERRIDES
+ * versus a floor that RAISES the case's own count, and the words a form uses
+ * have to survive being read quickly. A case at 2 resolves to 3 under a floor
+ * of 3 and to 2 under a default of 3 — same number, different answers — so
+ * "minimum" is doing real work and is never dropped for brevity. (A case at 7
+ * resolves to 7 under either rule.)
  */
 export const EVAL_ITERATION_RULE_LABELS = Object.freeze({
   defaultCount: "Iterations per case",

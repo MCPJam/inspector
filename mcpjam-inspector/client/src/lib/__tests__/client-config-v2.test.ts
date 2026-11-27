@@ -187,6 +187,28 @@ describe("hostConfigInputsEqual", () => {
     ).toBe(false);
   });
 
+  it("detects a tool-result structured content rule change", () => {
+    const flags = { directContent: { image: false } };
+    expect(
+      hostConfigInputsEqual(
+        makeInput({ modelVisibleMcpToolResults: flags }),
+        makeInput({
+          modelVisibleMcpToolResults: { ...flags, structuredContent: "both" },
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hostConfigInputsEqual(
+        makeInput({
+          modelVisibleMcpToolResults: { ...flags, structuredContent: "both" },
+        }),
+        makeInput({
+          modelVisibleMcpToolResults: { structuredContent: "both", ...flags },
+        }),
+      ),
+    ).toBe(true);
+  });
+
   it("detects MCP tool-result image rendering changes", () => {
     expect(
       hostConfigInputsEqual(
@@ -530,6 +552,21 @@ describe("hostConfigDtoToInput", () => {
       directContent: { image: false },
     });
     expect(input.hostContext).toEqual({ other: "keep" });
+  });
+
+  it("copies the tool-result structured content rule to input", () => {
+    const input = hostConfigDtoToInput(
+      makeDto({
+        modelVisibleMcpToolResults: {
+          directContent: { image: false },
+          structuredContent: "fallback",
+        },
+      }),
+    );
+    expect(input.modelVisibleMcpToolResults).toEqual({
+      directContent: { image: false },
+      structuredContent: "fallback",
+    });
   });
 });
 

@@ -36,6 +36,7 @@ import { PAGE_TEXT_FN } from "./page-text";
 import type { PendingDialog } from "./dialogs";
 import { NetworkRing } from "./network";
 import { WebMcpBridge, type CdpLike } from "./webmcp-bridge";
+import { elementNodeId, elementText, type AnyLocator } from "./engine-element";
 
 /**
  * Evaluated IN THE PAGE to decide whether this browser really supports
@@ -124,6 +125,12 @@ export type AnyPage = {
    */
   frames?(): AnyFrame[];
   mainFrame?(): AnyFrame;
+  /**
+   * Playwright's selector engine, for an observation scoped to one element
+   * (`engine-element.ts`). Optional for the reason `frames` is: a page
+   * without it reads no single element.
+   */
+  locator?(selector: string): AnyLocator;
 };
 
 /** The little of a Playwright `Frame` the WebMCP sweep needs. */
@@ -353,6 +360,7 @@ export function wrapPage(
   // bridge and the viewport both want one, and attaching twice to the same
   // page gives two sessions whose events interleave unpredictably.
   let cdpPromise: Promise<CdpLike | null> | null = null;
+  const locate = page.locator?.bind(page);
 
   // Named rather than returned inline so `webmcp()` can reach `cdp()` — one
   // attach, two consumers.
@@ -492,6 +500,15 @@ export function wrapPage(
         return "";
       }
     },
+    ...(locate
+      ? {
+          elementText: (selector: string) => elementText(locate, selector),
+          async elementNodeId(selector: string) {
+            const session = await adapted.cdp();
+            return session ? elementNodeId(locate, session, selector) : null;
+          },
+        }
+      : {}),
     networkEntries: () => network.entries(),
     dropNetworkSince: (since: number) => network.dropSince(since),
     networkCursor: () => network.count(),
@@ -1006,7 +1023,25 @@ export type AnyContext = {
   close(): Promise<void>;
   /** Present on a real Playwright context; absent in unit-test fakes. */
   newCDPSession?(page: AnyPage): Promise<CdpLike>;
+  /** Present on a real Playwright context; absent in unit-test fakes. */
+  clearCookies?(options?: { domain?: string | RegExp }): Promise<void>;
 };
+
+/**
+ * Every cookie domain a browser sends to `host`'s pages: the host itself and
+ * each parent domain, with or without the leading dot of a domain cookie.
+ */
+export function cookieDomainsFor(host: string): RegExp {
+  const name = host.toLowerCase();
+  const labels = name.split(".");
+  // An address or a single-label host has no parent domain to set cookies on.
+  const domains =
+    labels.length < 2 || /^[\d.]+$/.test(name) || name.includes(":")
+      ? [name]
+      : labels.slice(0, -1).map((_, start) => labels.slice(start).join("."));
+  const escaped = domains.map((domain) => domain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return new RegExp(`^\\.?(?:${escaped.join("|")})$`, "i");
+}
 
 /**
  * Adapt a persistent Playwright context to `DriverContext`. A persistent context
@@ -1080,6 +1115,33 @@ export function adaptContext(
     },
     isConnected() {
       return context.browser()?.isConnected() ?? true;
+    },
+    async clearOriginData(origins) {
+      if (origins.length === 0) return;
+      if (!context.newCDPSession || !context.clearCookies) {
+        throw new Error("This browser can't clear a site's data.");
+      }
+      // Every page stops first. One still running on a cleared site could
+      // write its cookies or storage again before the browser closes, and the
+      // archive would keep them. Only a blank page, for the CDP session, opens
+      // after; the caller closes the browser next. A page that won't close in
+      // time fails the export before anything is cleared or archived.
+      const closed = await Promise.race([
+        Promise.all(context.pages().map((open) => open.close())).then(() => true),
+        closeGrace().then(() => false),
+      ]);
+      if (!closed) throw new Error("profile_export_pages_did_not_close");
+      const page = await context.newPage();
+      const cdp = await context.newCDPSession(page);
+      for (const origin of origins) {
+        // Local and session storage, IndexedDB, Cache Storage, service
+        // workers: every store Chromium keeps for the origin, in its own
+        // formats, which an archive can't be filtered for afterwards.
+        await cdp.send("Storage.clearDataForOrigin", { origin, storageTypes: "all" });
+        // Cookies by domain as well: one set for a parent domain is sent to
+        // the origin too, and is not the origin's own storage.
+        await context.clearCookies({ domain: cookieDomainsFor(new URL(origin).hostname) });
+      }
     },
     async close() {
       // Ephemeral mode owns a Browser above the context, and closing only the

@@ -45,6 +45,12 @@ describe("gatewayWorksWith", () => {
     expect(list.at(-1)).toMatchObject({ ready: false, reason: expect.stringContaining("own account") });
   });
 
+  it("leaves out web clients, which never run on a model connection", () => {
+    const ids = gatewayWorksWith({ apis: ALL, runtimeLocation: "cloud", models: MAPPED, requireOrgKeys: false }).map((row) => row.id);
+    expect(ids).not.toContain("claude-web");
+    expect(ids).not.toContain("chatgpt-web");
+  });
+
   it("is ready for chat, evals, judges and every harness with an org path on a full gateway", () => {
     const all = rows(ALL);
     for (const id of ["chat", "evals", "judges", "claude-code", "codex", "copilot-cli", "opencode"]) {
