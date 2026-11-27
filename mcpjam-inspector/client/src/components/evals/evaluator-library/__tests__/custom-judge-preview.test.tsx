@@ -111,6 +111,21 @@ describe("CustomJudgePreview", () => {
     );
   });
 
+  it("says why a judge returned no answer when the result has no reason", async () => {
+    convex.preview.mockResolvedValue({
+      ok: true,
+      prompt: null,
+      result: { status: "error", error: "judge_no_output" },
+    });
+    renderWithProviders(<CustomJudgePreview suiteId="s1" judge={judge} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Test on a past iteration" }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "The judge returned no answer, usually because its reasoning used up its output tokens.",
+    );
+  });
+
   it("asks to wait after testing the same iteration twice in a row", async () => {
     convex.preview.mockRejectedValue(
       Object.assign(new Error("ConvexError"), {
