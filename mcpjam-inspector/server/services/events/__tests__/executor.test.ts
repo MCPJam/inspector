@@ -18,7 +18,12 @@ import {
   type EventRunClaim,
   type EventRunInput,
 } from "../backend-client.js";
-import { persistEventRunTranscript, type TranscriptPort } from "../run-transcript.js";
+import {
+  defaultTranscriptPort,
+  persistEventRunTranscript,
+  type TranscriptPort,
+} from "../run-transcript.js";
+import { defaultPrepareChat } from "../executor-deps.js";
 import { ErrorCode, WebRouteError } from "../../../routes/web/errors.js";
 import {
   EventRunHaltError,
@@ -462,6 +467,24 @@ describe("executeClaimedEventRun", () => {
     );
   });
 
+  it("runs no harness: every runtime it resolves names none", async () => {
+    // Events has no harness executor, and no runtime declares the surface
+    // off any more, so the only guarantee is that a run never selects one.
+    const { deps } = await liveDeps();
+    const scripted = deps.resolveRuntime!;
+    resolveTurnRuntimeMock.mockImplementation((args) => scripted(args));
+    const outcome = await executeClaimedEventRun(claim(), {
+      ...deps,
+      resolveRuntime: undefined,
+    });
+
+    expect(outcome.status).toBe("completed");
+    expect(resolveTurnRuntimeMock).toHaveBeenCalled();
+    for (const [args] of resolveTurnRuntimeMock.mock.calls) {
+      expect(args).not.toHaveProperty("harness");
+    }
+  });
+
   it("connects with the subscription's pinned OAuth connection", async () => {
     const { connect, deps } = await liveDeps();
     const pinned = claim();
@@ -572,6 +595,27 @@ describe("executeClaimedEventRun", () => {
     expect(backend.checkpointRun).toHaveBeenCalledWith(
       expect.objectContaining({ runId: "run_1", token: "run_lease_1", step: 3 }),
     );
+  });
+
+  it("builds tools without the host's approval switch, as the event row of the approval policy says", async () => {
+    const backend = fakeBackend();
+    const { deps } = await liveDeps(backend);
+    const prepareChat = vi.fn(defaultPrepareChat);
+    const runTurn = vi.fn(async (options: any) => ({
+      messages: options.messages, newMessages: [], toolCalls: [], toolResults: [], aborted: false,
+    }));
+    await executeClaimedEventRun(claim(), {
+      ...deps,
+      resolveServers: async () => ({
+        serverIds: [SERVER_ID],
+        hostConfig: { requireToolApproval: true },
+      }),
+      resolveRuntime: async () => ({ runtime: { kind: "hosted", endpointPath: "/stream" } }),
+      prepareChat,
+      runTurn,
+    });
+    expect(prepareChat.mock.calls[0]![0].requireToolApproval).toBe(false);
+    expect(runTurn.mock.calls[0]![0].approvalMode).toBe("auto-deny");
   });
 
   it("fails a claim with no frozen input", async () => {
@@ -833,18 +877,46 @@ describe("durable intent before tool effects", () => {
 });
 
 describe("event run transcripts (one chat thread per trigger)", () => {
-  /** An in-memory `/ingest-chat` + `/direct-chat/detail` pair. */
+  type PersistOptions = Parameters<TranscriptPort["persist"]>[0];
+  type TraceRow = NonNullable<PersistOptions["turnTrace"]>;
+
+  /**
+   * An in-memory `/ingest-chat` + `/direct-chat/detail` pair. Like the backend,
+   * a turn id it already applied skips the transcript write but still upserts
+   * that turn's trace row, keyed by turn id.
+   */
   function memoryTranscriptPort() {
-    const sessions = new Map<string, { messages: unknown[]; version: number; startedAt: number }>();
-    const persisted: Array<Parameters<TranscriptPort["persist"]>[0]> = [];
+    const sessions = new Map<
+      string,
+      { messages: unknown[]; version: number; startedAt: number; appliedTurnIds: string[] }
+    >();
+    const traceRows = new Map<string, Map<string, TraceRow>>();
+    const persisted: PersistOptions[] = [];
+    const upsertTrace = (chatSessionId: string, trace: TraceRow | undefined) => {
+      if (!trace) return;
+      const rows = traceRows.get(chatSessionId) ?? new Map<string, TraceRow>();
+      rows.set(trace.turnId, trace);
+      traceRows.set(chatSessionId, rows);
+    };
     const port: TranscriptPort = {
       load: vi.fn(async ({ chatSessionId }) => {
         const row = sessions.get(chatSessionId);
-        return row ? { ...row, messages: [...row.messages] } : null;
+        if (!row) return null;
+        const { appliedTurnIds: _applied, ...rest } = row;
+        return {
+          ...rest,
+          messages: [...row.messages],
+          turnIds: [...(traceRows.get(chatSessionId)?.keys() ?? [])],
+        };
       }),
       persist: vi.fn(async (options) => {
         persisted.push(options);
         const row = sessions.get(options.chatSessionId);
+        const turnId = options.turnTrace?.turnId;
+        if (row && turnId && row.appliedTurnIds.includes(turnId)) {
+          upsertTrace(options.chatSessionId, options.turnTrace);
+          return { outcome: "duplicate" as const, version: row.version };
+        }
         if (row && options.expectedVersion !== row.version) {
           return { outcome: "conflict" as const, currentVersion: row.version };
         }
@@ -853,11 +925,13 @@ describe("event run transcripts (one chat thread per trigger)", () => {
           messages: options.sessionMessages as unknown[],
           version,
           startedAt: options.startedAt,
+          appliedTurnIds: [...(row?.appliedTurnIds ?? []), ...(turnId ? [turnId] : [])],
         });
+        upsertTrace(options.chatSessionId, options.turnTrace);
         return { outcome: "saved" as const, version };
       }),
     };
-    return { port, sessions, persisted };
+    return { port, sessions, traceRows, persisted };
   }
 
   it("appends each run to the trigger's thread, in order, with origin event", async () => {
@@ -906,6 +980,190 @@ describe("event run transcripts (one chat thread per trigger)", () => {
         typeof m.content === "string" ? m.content : m.content[0].text,
       ),
     ).toEqual(["event one", "did one", "event two", "did two"]);
+  });
+
+  it("puts a later run's spans and saved requests on its own prompt in the thread", async () => {
+    const { port, persisted } = memoryTranscriptPort();
+    const base = {
+      port,
+      triggerId: "trg_1",
+      projectId: "proj_1",
+      bearer: "jwt",
+      modelId: "m",
+      modelSource: "mcpjam" as const,
+      systemPrompt: "sys",
+      startedAt: 1,
+    };
+    // What the engine reports for every run: prompt 0 of its own messages.
+    const engineTrace = (runId: string) => ({
+      turnId: `engine-${runId}`,
+      promptIndex: 0,
+      startedAt: 1,
+      endedAt: 2,
+      modelId: "m",
+      spans: [
+        {
+          id: "step-0",
+          name: "Step 1",
+          category: "step" as const,
+          startMs: 0,
+          endMs: 1,
+          promptIndex: 0,
+          messageStartIndex: 1,
+          messageEndIndex: 1,
+        },
+        { id: "conn", name: "Connect", category: "connection" as const, startMs: 0, endMs: 1 },
+      ],
+      requestPayloads: [
+        { turnId: `engine-${runId}`, promptIndex: 0, stepIndex: 0, payload: {} },
+      ],
+    });
+    const runMessages = (text: string) => [
+      { role: "user" as const, content: text },
+      { role: "assistant" as const, content: [{ type: "text" as const, text: "done" }] },
+    ];
+    await persistEventRunTranscript({
+      ...base,
+      runId: "run_1",
+      runMessages: runMessages("event one"),
+      turnTrace: engineTrace("run_1"),
+    });
+    await persistEventRunTranscript({
+      ...base,
+      runId: "run_2",
+      runMessages: runMessages("event two"),
+      turnTrace: engineTrace("run_2"),
+    });
+
+    expect(persisted[0]!.turnTrace!.spans[0]).toMatchObject({
+      promptIndex: 0,
+      messageStartIndex: 1,
+      messageEndIndex: 1,
+    });
+    const second = persisted[1]!.turnTrace!;
+    expect(second.promptIndex).toBe(1);
+    expect(second.spans[0]).toMatchObject({
+      promptIndex: 1,
+      // After the first run's two messages.
+      messageStartIndex: 3,
+      messageEndIndex: 3,
+    });
+    expect(second.spans[1]).toMatchObject({ promptIndex: 1 });
+    expect(second.spans[1]).not.toHaveProperty("messageStartIndex");
+    expect(second.requestPayloads?.[0]).toMatchObject({ promptIndex: 1 });
+  });
+
+  it("leaves a run that already landed on its own prompt when it is persisted again", async () => {
+    const { port, sessions, traceRows, persisted } = memoryTranscriptPort();
+    const base = {
+      port,
+      triggerId: "trg_1",
+      projectId: "proj_1",
+      bearer: "jwt",
+      modelId: "m",
+      modelSource: "mcpjam" as const,
+      systemPrompt: "sys",
+      startedAt: 1,
+    };
+    const run = (runId: string, texts: string[]) => ({
+      ...base,
+      runId,
+      runMessages: [
+        { role: "user" as const, content: `event ${runId}` },
+        ...texts.map((text) => ({
+          role: "assistant" as const,
+          content: [{ type: "text" as const, text }],
+        })),
+      ],
+      turnTrace: {
+        turnId: `engine-${runId}`,
+        promptIndex: 0,
+        startedAt: 1,
+        endedAt: 2,
+        modelId: "m",
+        spans: [
+          {
+            id: "step-0",
+            name: "Step 1",
+            category: "step" as const,
+            startMs: 0,
+            endMs: 1,
+            promptIndex: 0,
+            messageStartIndex: 1,
+            messageEndIndex: texts.length,
+          },
+        ],
+      },
+      turnRecord: {
+        eventAtTurn: { name: `${runId}.created`, receivedAt: 1, origin: "server" as const },
+      },
+    });
+
+    await persistEventRunTranscript(run("run_a", ["did a"]));
+    await persistEventRunTranscript(run("run_b", ["did b"]));
+    // run_b is re-claimed after a lost lease and resumes with one more message.
+    const again = await persistEventRunTranscript(run("run_b", ["did b", "and more"]));
+    await persistEventRunTranscript(run("run_c", ["did c"]));
+
+    expect(again).toEqual({ chatSessionId: "event-trigger-trg_1", persisted: true });
+    const rows = [...traceRows.get("event-trigger-trg_1")!.values()];
+    // One prompt row per run, each with its own event.
+    expect(
+      rows.map((row) => [row.turnId, row.promptIndex, row.eventAtTurn?.name]),
+    ).toEqual([
+      ["event-run-run_a", 0, "run_a.created"],
+      ["event-run-run_b", 1, "run_b.created"],
+      ["event-run-run_c", 2, "run_c.created"],
+    ]);
+    expect(rows[1]!.spans[0]).toMatchObject({
+      promptIndex: 1,
+      messageStartIndex: 3,
+      messageEndIndex: 3,
+    });
+    // The next run follows run_b's two stored messages, not the resumed three.
+    expect(rows[2]!.spans[0]).toMatchObject({
+      promptIndex: 2,
+      messageStartIndex: 5,
+      messageEndIndex: 5,
+    });
+    expect(sessions.get("event-trigger-trg_1")!.messages).toHaveLength(6);
+    // The repeat wrote nothing at all.
+    expect(persisted.map((options) => options.turnTrace?.turnId)).toEqual([
+      "event-run-run_a",
+      "event-run-run_b",
+      "event-run-run_c",
+    ]);
+  });
+
+  it("reads the runs already in the thread from its turn traces", async () => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
+    const fetchMock = vi.fn(async (url: string) =>
+      url.startsWith("https://convex.test/direct-chat/detail")
+        ? Response.json({
+            ok: true,
+            session: { messagesBlobUrl: "https://blob.test/m", version: 4, startedAt: 9 },
+            turnTraces: [{ turnId: "event-run-run_a", promptIndex: 0 }, { promptIndex: 1 }],
+          })
+        : Response.json([{ role: "user", content: "event run_a" }]),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await expect(
+        defaultTranscriptPort.load({
+          chatSessionId: "event-trigger-trg_1",
+          projectId: "proj_1",
+          bearer: "jwt",
+        }),
+      ).resolves.toEqual({
+        messages: [{ role: "user", content: "event run_a" }],
+        version: 4,
+        startedAt: 9,
+        turnIds: ["event-run-run_a"],
+      });
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
   });
 
   it("never overwrites a thread it could not read", async () => {

@@ -402,6 +402,8 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
  * throw: a drifted list should fail the build, not refuse to boot the server.
  */
 export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
+  create_reviewer_handoff:
+    "The requester opens the sign-in link from the Readiness page. A chat tool would put that single-use link in the conversation.",
   // A person in the app reports through the Send feedback form, which shows
   // them where the text goes. A model-authored post to the MCPJam team from
   // inside someone's chat is a different act, and this surface declines it.
@@ -486,9 +488,15 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   generate_goals:
     "Same as generate_personas: spends, and the drafts want the picker the tab already has.",
   request_swarm_run_insights:
-    "Spends against the organization's shared daily insights budget. The Swarms tab has the button, next to the swarm run it applies to.",
+    "Counts against the organization's shared daily insight quota. The Swarms tab has the button, next to the swarm run it applies to.",
   cancel_swarm_run_insights:
     "Paired with the request above; offering the cancel without the request is an odd half-surface.",
+  request_eval_run_insights:
+    "Counts against the organization's shared daily insight quota. The run page has the Analyze button, next to the run it applies to.",
+  cancel_eval_run_insights:
+    "Paired with the request above; offering the cancel without the request is an odd half-surface.",
+  build_eval_run_findings:
+    "The first half of the run page's Analyze button, which builds findings and then requests the analysis in one click.",
   // Launches a browser and executes the caller's tool. The Apps tab renders
   // the same widget interactively, with the console and network panes beside
   // it — a chat tool would hand back a verdict with none of that context.

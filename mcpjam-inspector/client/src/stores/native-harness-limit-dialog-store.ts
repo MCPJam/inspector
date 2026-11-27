@@ -13,6 +13,11 @@ export interface NativeHarnessLimitNotice {
   surface?: "scenario";
 }
 
+export type NativeHarnessSwitchHandoff = (switchResult: {
+  projectId: string;
+  switchedHostIds: readonly string[];
+}) => void;
+
 interface NativeHarnessLimitDialogState {
   notice: NativeHarnessLimitNotice | null;
   /** The dedupe keys the open notice was announced with. */
@@ -36,12 +41,11 @@ interface NativeHarnessLimitDialogState {
   closeNotice: (serial: number) => void;
   /**
    * What runs once the dialog has switched the project's clients, set by the
-   * Playground while its own last turn is the refusal: a new chat with the
-   * refused message in the composer, since a chat stays on the harness it
-   * started on.
+   * Playground while its own last turn is the refusal. Only clients that
+   * actually switched can open a new chat with the refused message.
    */
-  afterSwitch: (() => void) | null;
-  setAfterSwitch: (afterSwitch: (() => void) | null) => void;
+  afterSwitch: NativeHarnessSwitchHandoff | null;
+  setAfterSwitch: (afterSwitch: NativeHarnessSwitchHandoff | null) => void;
 }
 
 export const useNativeHarnessLimitDialogStore =

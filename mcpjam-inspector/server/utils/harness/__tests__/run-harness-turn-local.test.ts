@@ -1,10 +1,11 @@
+import { buildLiveEffectiveCapabilities } from "../../../services/environments/effective-capabilities";
 import type { UIMessageChunk } from "ai";
 import { generateKeyPair, SignJWT } from "jose";
 import { verifyAuthKitToken } from "../../../services/authkit-jwt.js";
 import { TurnAuthorizationRegistry } from "../../../services/turn-authorization.js";
 import { RevokedSessionCache, setRevokedSessionCacheForTests } from "../../../services/revoked-session-cache.js";
 import { completedTurnPersistence } from "../../../services/completed-turn-persistence.js";
-const localProjection = vi.hoisted(() => vi.fn(async () => ({ tools: {}, keyToServerId: {} })));
+const localProjection = vi.hoisted(() => vi.fn(async () => ({ tools: {}, keyToServerId: {}, toolRegistry: new Map() })));
 vi.mock("../host-executed-mcp-tools.js", () => ({ projectSelectedMcpServersAsHostTools: localProjection }));
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../local/pack-bootstrap.js", () => ({ withLocalRuntimeBootstrap: async (adapter: unknown) => adapter }));
@@ -263,6 +264,20 @@ import type {
   MCPJamHandlerOptions,
 } from "../../mcpjam-stream-handler";
 
+/** A turn's plan, as the runner carries it out: one skill for the box, with no
+ *  supporting files known. */
+function skillPlanOf(mode: "environment" | "pinned", skill: object) {
+  return {
+    runtime: { kind: "harness", harnessId: "claude-code" },
+    set: buildLiveEffectiveCapabilities({}),
+    delivered: [],
+    excluded: [],
+    serverSkillsVia: "none",
+    agent: null,
+    harness: { mode, skills: [skill], files: null, live: false },
+  };
+}
+
 function baseOptions(overrides: Record<string, unknown> = {}) {
   const messages: ModelMessage[] = [
     {
@@ -373,9 +388,7 @@ describe("runHarnessTurn local continuity", () => {
     harnessState.supportsSkills = true;
     const skill = { skillId: "skill-1", name: "test-skill", description: "test", content: "body", contentHash: "hash", aggregateHash: "hash" };
     const onBoxSkillsWritten = vi.fn();
-    await runHarnessTurn(baseOptions(mode === "pinned"
-      ? { pinnedHarnessSkills: [skill], onBoxSkillsWritten }
-      : { runtimeSkillsOverride: [skill], onBoxSkillsWritten }) as any, "none");
+    await runHarnessTurn(baseOptions({ skillPlan: skillPlanOf(mode as "environment" | "pinned", skill), onBoxSkillsWritten }) as any, "none");
     expect(onBoxSkillsWritten).toHaveBeenCalledOnce();
     expect(onBoxSkillsWritten).toHaveBeenCalledWith({
       delivered: [{ skillId: "skill-1", name: "test-skill" }],
@@ -417,7 +430,7 @@ describe("runHarnessTurn local continuity", () => {
       throw new Error("report failed");
     });
     const onEngineError = vi.fn();
-    await runHarnessTurn(baseOptions({ runtimeSkillsOverride: [skill], onEngineError, onBoxSkillsWritten }) as any, "none");
+    await runHarnessTurn(baseOptions({ skillPlan: skillPlanOf("environment", skill), onEngineError, onBoxSkillsWritten }) as any, "none");
     expect(onBoxSkillsWritten).toHaveBeenCalledOnce();
     expect(onEngineError).not.toHaveBeenCalled();
     expect(harnessState.streamStarted).toHaveBeenCalled();
@@ -434,7 +447,7 @@ describe("runHarnessTurn local continuity", () => {
     const onEngineError = vi.fn();
     const onBoxSkillsWritten = vi.fn();
     const skill = { skillId: "skill-1", name: "test-skill", description: "test", content: "body", contentHash: "hash", aggregateHash: "hash" };
-    await runHarnessTurn(baseOptions({ runtimeSkillsOverride: [skill], onEngineError, onBoxSkillsWritten }) as any, "none");
+    await runHarnessTurn(baseOptions({ skillPlan: skillPlanOf("environment", skill), onEngineError, onBoxSkillsWritten }) as any, "none");
     expect(onEngineError).toHaveBeenCalledWith(expect.objectContaining({ message: failure.message, phase: "setup" }));
     // The skills event still hears about the turn: every skill failed.
     expect(onBoxSkillsWritten).toHaveBeenCalledOnce();
@@ -554,17 +567,18 @@ describe("runHarnessTurn local continuity", () => {
     expect(stream).not.toContain("data-harness-reset");
   });
 
-  it("refuses an approval host on a turn nobody can answer", async () => {
+  it("runs an approval host on a turn nobody can answer, in the mode that asks", async () => {
+    // MCPJam answers each request with a denial (`turnApprovalPolicy`), so the
+    // turn runs rather than being refused for having nobody to ask.
     const onEngineError = vi.fn();
     await runHarnessTurn(baseOptions({
       requireToolApproval: true,
       approvalMode: "auto-deny",
       onEngineError,
-    }) as any, "none").catch((error: unknown) => onEngineError(error));
-    expect(onEngineError).toHaveBeenCalled();
-    expect(String(onEngineError.mock.calls[0]![0]?.message ?? onEngineError.mock.calls[0]![0]))
-      .toMatch(/cannot wait for tool approval in evals or swarms/);
-    expect(prepareLocalHarnessTurn).not.toHaveBeenCalled();
+    }) as any, "none");
+    expect(onEngineError).not.toHaveBeenCalled();
+    expect(prepareLocalHarnessTurn).toHaveBeenCalled();
+    expect(harnessState.agentOptions.permissionMode).toBe("allow-reads");
   });
 
   it("drains buffered results after an approval without duplicating tool calls", async () => {

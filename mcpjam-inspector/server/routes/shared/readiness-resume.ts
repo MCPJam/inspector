@@ -37,6 +37,7 @@ import {
   type ReadinessPublisher,
 } from "./readiness-runs.js";
 import {
+  authorizedReviewerAccount,
   reviewerAccountForRun,
   reviewerAttemptForRun,
 } from "./reviewer-attempts.js";
@@ -256,6 +257,15 @@ export async function resumeHostedReadinessRun(
           AUTHORIZE_TIMEOUT_MS,
         ),
     ));
+  // The account a resumed sign-in connects, on the resume's own authorize.
+  const authorizeReviewer = (accountId: string) =>
+    authorizedReviewerAccount(accountId, (connectionId) =>
+      authorizeWithin(
+        (signal) =>
+          input.authorize(resumed.projectId, serverId, signal, connectionId),
+        AUTHORIZE_TIMEOUT_MS,
+      ),
+    );
   executeHostedReadinessRunDetached(
     {
       lease,
@@ -270,6 +280,7 @@ export async function resumeHostedReadinessRun(
       ...(input.submissionId ? { submissionId: input.submissionId } : {}),
       ...(reviewerAttemptId ? { reviewerAttemptId } : {}),
       ...(reviewer ? { reviewer } : {}),
+      ...(reviewerAttemptId ? { authorizeReviewer } : {}),
       analyticsActor: input.analyticsActor,
     },
     authorized,

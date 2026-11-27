@@ -351,7 +351,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 // `sanitizeConvexReservedKeys` in convex/lib/serverToolSnapshot.ts. `_`-prefixed
 // nested keys stay (Convex only reserves `_` for top-level document fields, so
 // MCP's `_meta` survives).
-function stripConvexReservedKeys<T>(value: T): T {
+export function stripConvexReservedKeys<T>(value: T): T {
   if (Array.isArray(value)) {
     return value.map((entry) => stripConvexReservedKeys(entry)) as unknown as T;
   }
@@ -436,11 +436,13 @@ function readInitializeFromManager(
   manager: Manager,
   serverId: string,
 ): ServerToolSnapshotInitialize | undefined {
-  let info: unknown;
+  let info: ReturnType<Manager["getInitializationInfo"]>;
   try {
-    info = (manager as { getInitializationInfo?: (id: string) => unknown })
-      .getInitializationInfo?.(serverId);
+    // Optional call: test doubles of the manager often omit this method.
+    info = manager.getInitializationInfo?.(serverId);
   } catch {
+    // A server that disconnected mid-capture has no initialize result; the
+    // snapshot still records its tools.
     return undefined;
   }
   if (!isRecord(info)) {
@@ -457,25 +459,20 @@ function readInitializeFromManager(
     result.protocolVersion = protocolVersion;
   }
 
-  if (isRecord(info.serverInfo)) {
-    const name =
-      typeof info.serverInfo.name === "string"
-        ? info.serverInfo.name.trim()
-        : undefined;
-    const version =
-      typeof info.serverInfo.version === "string"
-        ? info.serverInfo.version.trim()
-        : undefined;
-    if (name || version) {
-      result.serverInfo = {
-        ...(name ? { name } : {}),
-        ...(version ? { version } : {}),
-      };
-    }
+  // The manager returns the initialize result's `serverInfo` as
+  // `serverVersion` and its `capabilities` as `serverCapabilities`; the
+  // snapshot keeps the wire names.
+  const name = normalizeTrimmedString(info.serverVersion?.name);
+  const version = normalizeTrimmedString(info.serverVersion?.version);
+  if (name || version) {
+    result.serverInfo = {
+      ...(name ? { name } : {}),
+      ...(version ? { version } : {}),
+    };
   }
 
-  if (isRecord(info.capabilities)) {
-    result.capabilities = stripConvexReservedKeys(info.capabilities);
+  if (isRecord(info.serverCapabilities)) {
+    result.capabilities = stripConvexReservedKeys(info.serverCapabilities);
   }
 
   if (typeof info.instructions === "string" && info.instructions.trim()) {

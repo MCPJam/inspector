@@ -1380,6 +1380,20 @@ describe("swarm runner — harness targets run on an ephemeral box (phase 6)", (
     expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
     expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
   });
+
+  it.each([
+    ["a pinned image", {}],
+    ["no pinned image", { builtInToolIds: [], computerEnvironment: undefined, computerUnavailableReason: undefined }],
+  ])("boots no box for a web client target with a computer and %s", async (_label, target) => {
+    // The vendor's app runs on the vendor's site, so nothing would run on it.
+    personaDrivesOneTurn();
+    await startJourneyRun(
+      baseOpts({ harness: "claude-web", modelId: "anthropic/claude-sonnet-4.5", ...target }),
+    );
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(turnOptions().harness).toBe("claude-web");
+    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
+  });
 });
 
 /**
@@ -1447,41 +1461,25 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
     );
   });
 
-  it("refuses requireToolApproval on a harness that cannot pause", async () => {
-    // Nobody can answer an approval in a swarm, so this is refused before a
-    // box is provisioned, whatever the runtime could pause on.
-    await startJourneyRun(
-      baseOpts({
-        harness: "codex",
-        requireToolApproval: true,
-        serverIds: ["server-1"],
-      })
-    );
-
-    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
-    expect(String(terminalReports()[0]!.errorMessage)).toMatch(/approval/i);
-  });
-
-  // Claude Code CAN pause, but a swarm has nobody to answer: admitted, the
-  // turn parked at its first gated call and the next persona turn dropped it.
-  // Refused up front instead, with or without (plugin) servers.
+  // A swarm keeps the target's switch, and nobody answers: the harness pauses
+  // on each gated call and MCPJam denies it with the engine's own result, so
+  // the session carries on. Launched on every runtime that can pause, with or
+  // without (plugin) servers.
   it.each([
-    ["with MCP servers", { serverIds: ["server-1"] }],
-    ["plugin-only", { serverIds: [], pluginServerIds: ["plugin-server-1"] }],
-    ["with no MCP servers", { serverIds: [], pluginServerIds: [] }],
-  ])("refuses requireToolApproval on Claude Code (%s)", async (_label, servers) => {
-    await startJourneyRun(
-      baseOpts({
-        harness: "claude-code",
-        requireToolApproval: true,
-        ...servers,
-      })
-    );
+    ["Codex with MCP servers", { harness: "codex", modelId: "gpt-5-nano", serverIds: ["server-1"] }],
+    ["Claude Code with MCP servers", { harness: "claude-code", serverIds: ["server-1"] }],
+    ["Claude Code plugin-only", { harness: "claude-code", serverIds: [], pluginServerIds: ["plugin-server-1"] }],
+    ["Claude Code with no MCP servers", { harness: "claude-code", serverIds: [], pluginServerIds: [] }],
+  ] as const)("runs an approval-on target, denying what it asks (%s)", async (_label, target) => {
+    personaDrivesOneTurn();
+    await startJourneyRun(baseOpts({ requireToolApproval: true, ...target }));
 
-    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
-    expect(String(terminalReports()[0]!.errorMessage)).toMatch(
-      /cannot wait for tool approval in evals or swarms/i
-    );
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+    expect(turnOptions()).toMatchObject({
+      requireToolApproval: true,
+      approvalMode: "auto-deny",
+    });
+    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
   });
 
   it("admits a BARE hosted model id (provider comes from the resolved definition)", async () => {

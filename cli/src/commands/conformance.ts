@@ -14,6 +14,7 @@ import {
   MCP_LOG_LEVELS,
   MCP_PROTOCOL_VERSIONS,
   MCP_READINESS_IDS,
+  REMOVED_MCP_CHECK_IDS,
   RETIRED_MCP_CHECK_IDS,
   type MCPConformanceConfig,
   type MCPLogLevel,
@@ -146,7 +147,7 @@ export function registerProtocolCommands(program: Command): void {
         ...config,
         __suppressTelemetry: true,
       });
-      captureConformanceRunEvent();
+      captureConformanceRunEvent("protocol", "single");
       const result = await test.run();
 
       writeConformanceOutput(renderConformanceForCli(result, reporter, format));
@@ -190,7 +191,7 @@ export function registerProtocolCommands(program: Command): void {
         ...config,
         __suppressTelemetry: true,
       });
-      captureConformanceRunEvent();
+      captureConformanceRunEvent("protocol", "suite");
       const result = await suite.run();
 
       writeConformanceOutput(renderConformanceForCli(result, reporter, format));
@@ -521,6 +522,7 @@ export function buildProtocolRunConfig(
   const invalidCheckIds = collectInvalidEntries(checkIds, [
     ...MCP_CHECK_IDS,
     ...Object.keys(RETIRED_MCP_CHECK_IDS),
+    ...Object.keys(REMOVED_MCP_CHECK_IDS),
   ]);
   if (invalidCheckIds.length > 0) {
     throw usageError(
@@ -532,6 +534,29 @@ export function buildProtocolRunConfig(
     if (Object.hasOwn(RETIRED_MCP_CHECK_IDS, id)) {
       process.stderr.write(
         `Note: check ${id} is now the ${RETIRED_MCP_CHECK_IDS[id as keyof typeof RETIRED_MCP_CHECK_IDS]} advice. Running that instead.\n`,
+      );
+    }
+  }
+
+  // Only removed ids: dropping them would leave no check, which means "run
+  // every check". Refuse here, before any suite starts, so a mixed-suite run
+  // does not report the protocol suite as failed while the others carry on.
+  const removedOnly =
+    checkIds !== undefined &&
+    checkIds.length > 0 &&
+    checkIds.every((id) => Object.hasOwn(REMOVED_MCP_CHECK_IDS, id));
+  if (removedOnly) {
+    const [id] = checkIds as (keyof typeof REMOVED_MCP_CHECK_IDS)[];
+    throw usageError(
+      `Check ${id} was removed and nothing runs in its place. ${REMOVED_MCP_CHECK_IDS[id!]} Pick another check, or leave --check-id out to run every check.`,
+    );
+  }
+
+  // A removed id runs nothing (the SDK drops it); say why it went away.
+  for (const id of checkIds ?? []) {
+    if (Object.hasOwn(REMOVED_MCP_CHECK_IDS, id)) {
+      process.stderr.write(
+        `Note: check ${id} was removed. ${REMOVED_MCP_CHECK_IDS[id as keyof typeof REMOVED_MCP_CHECK_IDS]} Skipping it.\n`,
       );
     }
   }

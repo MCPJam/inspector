@@ -62,12 +62,12 @@ function NativeHarnessUpgradeDialog({
   const trial = useNativeHarnessTrial(organizationId);
   // The switch is for the project in front of the person, and only when it
   // belongs to the organization that ran out.
-  const harnessSwitch = useNativeHarnessSwitch(
+  const switchProjectId =
     activeProject?.sharedProjectId &&
       activeProject.organizationId === organizationId
       ? activeProject.sharedProjectId
-      : null,
-  );
+      : null;
+  const harnessSwitch = useNativeHarnessSwitch(switchProjectId);
   // Nothing renders until billing says who this is: the hook reads as a
   // member until then, which would flash a request at someone who can upgrade.
   // A member's request also waits for the owners, as the credits dialog's
@@ -120,12 +120,19 @@ function NativeHarnessUpgradeDialog({
       useNativeHarnessLimitDialogStore.getState().closeNotice(noticeSerial);
   };
   const switchClients = async () => {
+    if (!switchProjectId) return;
     // As with checkout, a notice that replaced this one stays open.
     const { noticeSerial } = useNativeHarnessLimitDialogStore.getState();
-    if (!(await harnessSwitch.switchClients())) return;
+    const result = await harnessSwitch.switchClients();
+    if (!result) return;
     const store = useNativeHarnessLimitDialogStore.getState();
     store.closeNotice(noticeSerial);
-    store.afterSwitch?.();
+    if (result.switchedHostIds?.length) {
+      store.afterSwitch?.({
+        projectId: switchProjectId,
+        switchedHostIds: result.switchedHostIds,
+      });
+    }
   };
 
   return (

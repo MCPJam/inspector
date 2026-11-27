@@ -26,6 +26,7 @@ const mockState = vi.hoisted(() => ({
   stop: vi.fn(),
   addToolApprovalResponse: vi.fn(),
   authFetch: vi.fn(),
+  user: null as { id: string } | null,
   // A member (WorkOS) bearer by default → authIsMemberRef true. Individual
   // tests flip it to null to model a signed-out guest.
   getAccessToken: vi.fn(async () => "workos-jwt"),
@@ -113,7 +114,10 @@ vi.mock("@/lib/session-token", () => ({
   getAuthHeaders: vi.fn(() => ({})),
 }));
 vi.mock("@workos-inc/authkit-react", () => ({
-  useAuth: () => ({ getAccessToken: mockState.getAccessToken }),
+  useAuth: () => ({
+    getAccessToken: mockState.getAccessToken,
+    user: mockState.user,
+  }),
 }));
 // Soft reads (billing, credits, quota, notifications) go through useQueries;
 // withUseQueries answers them from this mock's useQuery.
@@ -174,6 +178,7 @@ describe("useChatSession — request-time chat Authorization", () => {
     mockState.chatStatus = "ready";
     mockState.idCounter = 0;
     mockState.messages = [];
+    mockState.user = null;
     mockState.getAccessToken.mockResolvedValue("workos-jwt");
     mockState.authFetch.mockResolvedValue(new Response("", { status: 200 }));
   });
@@ -250,5 +255,40 @@ describe("useChatSession — request-time chat Authorization", () => {
     await waitFor(() =>
       expect(mockState.getToolsMetadata).toHaveBeenCalledTimes(2),
     );
+  });
+
+  it("stays bootstrapped when the same member's user object is rebuilt", async () => {
+    mockState.user = { id: "user_1" };
+    const { result, rerender } = renderHook(() =>
+      useChatSession({ selectedServers: ["server-1"] } as never)
+    );
+    await waitFor(() =>
+      expect(result.current.isSessionBootstrapComplete).toBe(true)
+    );
+    const tokenReads = mockState.getAccessToken.mock.calls.length;
+
+    // AuthKit hands back a new object for the same member on refresh.
+    mockState.user = { id: "user_1" };
+    rerender();
+
+    expect(result.current.isSessionBootstrapComplete).toBe(true);
+    expect(mockState.getAccessToken).toHaveBeenCalledTimes(tokenReads);
+  });
+
+  it("stays bootstrapped when opening a conversation swaps the chat", async () => {
+    const { result, rerender } = renderHook(() =>
+      useChatSession({ selectedServers: ["server-1"] } as never)
+    );
+    await waitFor(() =>
+      expect(result.current.isSessionBootstrapComplete).toBe(true)
+    );
+    const tokenReads = mockState.getAccessToken.mock.calls.length;
+
+    // A new Chat comes with its own setMessages.
+    mockState.setMessages = vi.fn();
+    rerender();
+
+    expect(result.current.isSessionBootstrapComplete).toBe(true);
+    expect(mockState.getAccessToken).toHaveBeenCalledTimes(tokenReads);
   });
 });

@@ -1,13 +1,15 @@
 /**
- * `mcpjam events watch`: stream one event as NDJSON through the SDK's
+ * `mcpjam events watch`: watch one event type as NDJSON through the SDK's
  * coordinator, push runtime and in-memory inbox, with an optional local
- * webhook receiver, then unsubscribe.
+ * webhook receiver, then stop delivery using the selected mode's cleanup.
  */
 
 import { randomBytes } from "node:crypto";
 import { Command } from "commander";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import {
+  BETA_PROFILE_ID,
+  DEFAULT_LOCAL_WEBHOOK_TTL_MS,
   computeBindingKey,
   createManagerPushPort,
   EventsCoordinator,
@@ -21,7 +23,7 @@ import {
 } from "@mcpjam/sdk/events";
 import {
   assertEventsDeclaredOrForced,
-  checkCallbackUrl,
+  requireCallbackUrl,
   describeDeliveryMismatch,
   insecureModeWarning,
   listAllServerEvents,
@@ -34,6 +36,8 @@ import {
 import { startEventsReceiver, type EventsReceiverHandle } from "../lib/events-receiver.js";
 import { EventsWatchSession, type EventsWatchResult } from "../lib/events-watch.js";
 import { cliError, usageError } from "../lib/output.js";
+import { recordCommandOutcome } from "../lib/command-outcome.js";
+import { exitInterrupted } from "../lib/telemetry.js";
 import { parseNonNegativeInteger } from "../lib/server-config.js";
 import {
   addEventArgsOption,
@@ -48,6 +52,8 @@ import {
 export interface EventsWatchOptions extends EventsCommandOptions {
   mode?: string;
   duration?: number;
+  ttl?: number;
+  expiry?: boolean;
   listen?: string;
   publicUrl?: string;
   insecureLocalReceiver?: boolean;
@@ -74,6 +80,9 @@ function planWatchReceiver(options: EventsWatchOptions): {
     options.publicUrl !== undefined ||
     options.insecureLocalReceiver === true ||
     options.listen !== undefined;
+  if (options.ttl !== undefined && options.expiry === false) {
+    throw usageError("Pass --ttl or --no-expiry, not both.");
+  }
   if (mode !== undefined && mode !== "webhook" && receiverFlags) {
     throw usageError(
       "--public-url, --listen and --insecure-local-receiver apply only to --mode webhook.",
@@ -81,6 +90,9 @@ function planWatchReceiver(options: EventsWatchOptions): {
   }
   const wantsWebhook = mode === "webhook" || receiverFlags;
   if (!wantsWebhook) {
+    if (options.ttl !== undefined || options.expiry === false) {
+      throw usageError("--ttl and --no-expiry apply only to --mode webhook.");
+    }
     return mode ? { forcedMode: mode as DeliveryMode } : {};
   }
   if (options.publicUrl === undefined && options.insecureLocalReceiver !== true) {
@@ -92,14 +104,11 @@ function planWatchReceiver(options: EventsWatchOptions): {
   let publicUrl: URL | undefined;
   let insecure = options.insecureLocalReceiver === true && options.publicUrl === undefined;
   if (options.publicUrl !== undefined) {
-    const checked = checkCallbackUrl(options.publicUrl, {
+    const checked = requireCallbackUrl(options.publicUrl, {
       flag: "--public-url",
       insecureFlag: "--insecure-local-receiver",
       allowInsecure: options.insecureLocalReceiver === true,
     });
-    if (checked.url.search || checked.url.hash) {
-      throw usageError("--public-url must not carry a query string or fragment.");
-    }
     publicUrl = checked.url;
     insecure = checked.insecure;
   }
@@ -146,11 +155,12 @@ export function registerWatch(events: Command): void {
       events
         .command("watch")
         .description(
-          "Stream an event as NDJSON on stdout until Ctrl-C, --duration or --max-events, then unsubscribe. " +
+          "Watch occurrences and control messages for an event type as MCPJam NDJSON until Ctrl-C, --duration or --max-events. " +
+            "On exit, stop polling, close the push stream, or unsubscribe the webhook. " +
             "Modes: push (events/stream), poll (events/poll loop) or webhook (a local receiver behind --public-url). " +
             "Default: webhook when a receiver flag (--public-url, --listen, --insecure-local-receiver) is given, else push when the event offers it, else poll.",
         )
-        .argument("<name>", "Event name, from `events list`")
+        .argument("<name>", "Event type name, from `events list`")
         .option("--mode <mode>", "Delivery mode: poll, push or webhook")
         .option(
           "--duration <seconds>",
@@ -162,6 +172,8 @@ export function registerWatch(events: Command): void {
           "Stop after this many delivered events",
           positiveInteger("Max events"),
         )
+        .option("--ttl <seconds>", "Webhook subscription lifetime (default 600 seconds)", parseDurationSeconds)
+        .option("--no-expiry", "Webhook subscription with no expiry")
         .option("--cursor <cursor>", "Start from this cursor (default: null, start from now)")
         .option("--max-age-ms <ms>", "maxAgeMs sent with poll/stream/subscribe", (value: string) =>
           parseNonNegativeInteger(value, "Max age"),
@@ -186,6 +198,7 @@ export function registerWatch(events: Command): void {
 
     const result = await withEventsConnection(options, ctx, async (manager, serverId) => {
       assertEventsDeclaredOrForced(manager, serverId, {
+        profile: ctx.profile,
         force: options.force,
         serverLabel: ctx.target,
         warn: ctx.warn,
@@ -245,7 +258,7 @@ export function registerWatch(events: Command): void {
           }
         }
 
-        const inbox = new MemoryEventInbox({ publicOrigin });
+        const inbox = new MemoryEventInbox({ publicOrigin, independentWebhookIds: ctx.profile.id === BETA_PROFILE_ID });
         receiver?.attach(inbox);
         const record: SubscriptionRecord = {
           id: `esub_cli_${randomBytes(8).toString("hex")}`,
@@ -268,6 +281,9 @@ export function registerWatch(events: Command): void {
           lastCursor: options.cursor ?? null,
           consecutiveFailures: 0,
           ...(options.maxAgeMs !== undefined ? { maxAgeMs: options.maxAgeMs } : {}),
+          ...(mode === "webhook"
+            ? { ttlMs: options.expiry === false ? null : options.ttl ?? DEFAULT_LOCAL_WEBHOOK_TTL_MS }
+            : {}),
         };
         const coordinator = new EventsCoordinator({
           rpc: async () => buildRpcPort(manager, serverId, options.force),
@@ -306,6 +322,7 @@ export function registerWatch(events: Command): void {
         const onSignal = () => {
           signals += 1;
           if (signals === 1) {
+            recordCommandOutcome("interrupted");
             ctx.status("Stopping...");
             session.stop("signal");
             return;
@@ -313,7 +330,7 @@ export function registerWatch(events: Command): void {
           ctx.warn(
             "Forced exit: the server subscription (if any) remains until its TTL expires.",
           );
-          process.exit(130);
+          void exitInterrupted();
         };
         process.on("SIGINT", onSignal);
         process.on("SIGTERM", onSignal);

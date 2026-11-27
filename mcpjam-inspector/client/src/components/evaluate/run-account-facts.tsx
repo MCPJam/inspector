@@ -6,8 +6,10 @@ import { useProjectServers } from "@/hooks/useProjects";
 import { serverNameFrom } from "@/hooks/use-suite-accounts";
 import {
   ranAsRole,
+  runAccountName,
   runAccountsByServer,
 } from "@/lib/evals/eval-run-accounts";
+import { runAccountCredentialFacts } from "@/lib/evals/run-account-credentials";
 import type { EvalRunAccount, EvalSuiteRunListItem } from "../evals/types";
 import { Fact } from "./run-launch-context";
 
@@ -71,14 +73,49 @@ function RoleTag({ role }: { role: string | null }) {
   );
 }
 
+/**
+ * "Linear · test-automation-1 · Uploaded Nov 17, 10:27 AM by Ana Ruiz ·
+ * Expires Nov 17, 11:27 AM": one line per account whose token's facts the
+ * run recorded. Empty for runs recorded before them.
+ */
+function credentialLines(
+  accounts: readonly EvalRunAccount[],
+  serverName: (serverId: string) => string,
+): string[] {
+  return accounts.flatMap((account) => {
+    const facts = runAccountCredentialFacts(account);
+    return facts.length
+      ? [
+          [serverName(account.serverId), runAccountName(account), ...facts].join(
+            " · ",
+          ),
+        ]
+      : [];
+  });
+}
+
 /** "Asana Dummy, Live · Linear Work": each server, then the accounts it ran with. */
 function AccountList({
   accounts,
   serverName,
+  credentials = false,
 }: {
   accounts: readonly EvalRunAccount[];
   serverName: (serverId: string) => string;
+  /** One line per account with its token's facts, instead of names alone. */
+  credentials?: boolean;
 }) {
+  if (credentials) {
+    return (
+      <>
+        {credentialLines(accounts, serverName).map((line, index) => (
+          <span key={index} className="block truncate" title={line}>
+            {line}
+          </span>
+        ))}
+      </>
+    );
+  }
   return (
     <>
       {runAccountsByServer(accounts).map((group, index) => (
@@ -109,13 +146,15 @@ export function RunAccountFacts({
 
 function LoadedRunAccountFacts({ launch }: { launch: LaunchAccounts }) {
   const serverName = useServerName(launch.projectId);
+  const hasCredentials =
+    credentialLines(launch.accounts, serverName).length > 0;
   return (
     <dl
       className="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1"
       data-testid="evaluate-run-account-facts"
     >
       {launch.ranAsName ? (
-        <Fact label="Ran as">
+        <Fact label={launch.accounts.some((account) => account.cases?.length) ? "Started by" : "Ran as"}>
           {launch.ranAsName}
           <RoleTag role={launch.role} />
         </Fact>
@@ -123,6 +162,17 @@ function LoadedRunAccountFacts({ launch }: { launch: LaunchAccounts }) {
       <Fact label="Accounts">
         <AccountList accounts={launch.accounts} serverName={serverName} />
       </Fact>
+      {hasCredentials ? (
+        <Fact label="Credentials">
+          <div data-testid="evaluate-run-account-credentials">
+            <AccountList
+              accounts={launch.accounts}
+              serverName={serverName}
+              credentials
+            />
+          </div>
+        </Fact>
+      ) : null}
     </dl>
   );
 }
@@ -162,7 +212,11 @@ function LoadedRunAccountCells({ launch }: { launch: LaunchAccounts }) {
           <span className="text-muted-foreground">—</span>
         )}
       </TableCell>
-      <TableCell className="max-w-64" data-testid="run-history-accounts">
+      <TableCell
+        className="max-w-64"
+        data-testid="run-history-accounts"
+        title={credentialLines(launch.accounts, serverName).join("\n") || undefined}
+      >
         <AccountList accounts={launch.accounts} serverName={serverName} />
       </TableCell>
     </>

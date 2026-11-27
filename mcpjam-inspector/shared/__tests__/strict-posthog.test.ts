@@ -31,6 +31,53 @@ const product = {
 };
 
 describe("strict PostHog reconstruction", () => {
+  it.each([CONSERVATIVE_TELEMETRY_POLICY, FULL_TELEMETRY_POLICY])(
+    "forwards only the allowed webhook receiver fields under $content policy",
+    (policy) => {
+      const event = {
+        ...product,
+        event: "local_webhook_receiver_failed",
+        properties: {
+          ...product.properties,
+          receiver_kind: "custom",
+          failure_category: "callback_tls_error",
+          callback_url: secret,
+          server_id: secret,
+        },
+      };
+      const result = applyEventPolicy(event, policy, null);
+      expect(result).toEqual({
+        event: "local_webhook_receiver_failed",
+        timestamp: expect.any(String),
+        uuid: expect.any(String),
+        properties: {
+          token: expect.stringMatching(/^phc_/),
+          app_version: expect.any(String),
+          distinct_id: "strict",
+          $process_person_profile: false,
+          $geoip_disable: true,
+          receiver_kind: "custom",
+          failure_category: "callback_tls_error",
+        },
+      });
+      expect(
+        applyEventPolicy({
+          ...event,
+          properties: { ...event.properties, failure_category: secret },
+        }, policy, null),
+      ).toBeNull();
+      expect(
+        applyEventPolicy({
+          ...event,
+          event: "local_webhook_receiver_selected",
+        }, policy, null),
+      ).toMatchObject({
+        event: "local_webhook_receiver_selected",
+        properties: { receiver_kind: "custom" },
+      });
+    },
+  );
+
   it.each(["hosted", "self_hosted"])("retains closed launch-health outcomes through the strict relay for %s", (deployment) => {
     const event = {
       ...product,
@@ -197,6 +244,58 @@ describe("strict PostHog reconstruction", () => {
         "full",
       ),
     ).toBeNull();
+  });
+});
+
+describe("strict startup events", () => {
+  it("counts a startup that has no actor yet, with closed fields only", () => {
+    const result = rebuildStrictPostHogEvent({
+      event: "app_startup_blocked",
+      properties: {
+        location: "app",
+        platform: "win",
+        deployment: "self_hosted",
+        stage: "app_load/session_refresh_failed",
+        trigger: "failure",
+        elapsed_ms: 21_400,
+        user_agent: secret,
+      },
+    });
+    expect(result).toEqual({
+      event: "app_startup_blocked",
+      properties: expect.objectContaining({
+        distinct_id: "strict",
+        $process_person_profile: false,
+        location: "app",
+        platform: "win",
+        deployment: "self_hosted",
+        stage: "app_load/session_refresh_failed",
+        trigger: "failure",
+        elapsed_ms: 21_400,
+      }),
+    });
+    expect(JSON.stringify(result)).not.toContain("SENTINEL");
+  });
+
+  it("drops a stage or trigger outside the catalog", () => {
+    const result = rebuildStrictPostHogEvent({
+      event: "app_startup_blocked",
+      properties: { stage: secret, trigger: secret, elapsed_ms: -1 },
+    });
+    expect(result?.properties).not.toHaveProperty("stage");
+    expect(result?.properties).not.toHaveProperty("trigger");
+    expect(result?.properties).not.toHaveProperty("elapsed_ms");
+  });
+
+  it("forwards app_startup_started", () => {
+    const result = rebuildStrictPostHogEvent({
+      event: "app_startup_started",
+      properties: { location: "app", platform: "web", deployment: "hosted" },
+    });
+    expect(result?.properties).toMatchObject({
+      platform: "web",
+      deployment: "hosted",
+    });
   });
 });
 

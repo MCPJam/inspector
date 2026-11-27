@@ -5,6 +5,7 @@ import {
   strictLogFieldRule,
 } from "../strict-log";
 import catalog from "../telemetry-catalog.generated.json";
+import { expectTelemetryFields } from "./explain-telemetry";
 
 describe("strict log boundary", () => {
   it.each(["timeout", "transport_failed", "model_reported_missing"])(
@@ -23,6 +24,16 @@ describe("strict log boundary", () => {
       { setupReason: "PRIVATE_SENTINEL" },
     );
     expect(row).not.toHaveProperty("setupReason");
+  });
+  it("retains a catalogued error slug and drops any other text", () => {
+    const failed =
+      "[swarm.runner] target worker failed; finalizing its attempts";
+    expect(
+      buildLegacyLogRow(failed, { slug: "transport/econnrefused" }).slug,
+    ).toBe("transport/econnrefused");
+    expect(
+      buildLegacyLogRow(failed, { slug: "PRIVATE_SENTINEL" }),
+    ).not.toHaveProperty("slug");
   });
 
   it.each(["fetch_failed", "invalid_catalog"])(
@@ -88,6 +99,31 @@ describe("strict log boundary", () => {
     expect(injected).not.toHaveProperty("message");
   });
 
+  it.each(["chat.session.persist.failed", "chat.session.persist.skipped"])(
+    "keeps the chat surface on %s",
+    (log) => {
+      // Under `origin` these values were dropped: that name is the ErrorOrigin
+      // enum. Also fails if `chatOrigin` goes back to the `ChatOrigin` alias,
+      // which the catalog generator cannot read.
+      expectTelemetryFields(
+        { log, payload: { sourceType: "direct", chatOrigin: "playground" } },
+        ["sourceType", "chatOrigin"],
+      );
+    },
+  );
+  it("keeps the ingest's status on a failed chat save", () => {
+    // A streamed turn's context already holds the route's 200, and context
+    // wins over the payload, so the ingest's status needs its own name.
+    const sample = {
+      log: "chat.session.persist.failed",
+      context: { statusCode: 200 },
+      payload: { failureKind: "http_error", ingestStatusCode: 503 },
+    };
+    expect(expectTelemetryFields(sample, ["ingestStatusCode"])).toMatchObject({
+      statusCode: 200,
+      ingestStatusCode: 503,
+    });
+  });
   it("retains the typed unattested-IP containment signal", () => {
     expect(buildStrictLogRow("llm_spend_unattested_ip_pooled", { environment: "prod" }))
       .toMatchObject({ event: "llm_spend_unattested_ip_pooled", environment: "prod" });

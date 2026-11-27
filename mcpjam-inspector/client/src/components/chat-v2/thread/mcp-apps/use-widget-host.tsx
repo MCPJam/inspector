@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { toast } from "sonner";
 import { ClientCspToastGroup } from "@/lib/client-csp-toast";
+import { withoutThemeBoundColors } from "@/lib/host-context-colors";
 import {
   HOSTED_MODE,
   SANDBOX_ORIGIN,
@@ -41,6 +42,7 @@ import { useSavedClient, useEffectiveHostContext } from "@/contexts/saved-client
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { usePaneDisplay } from "@/contexts/pane-display-context";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
+import { useAppsBridgeObservations } from "@/lib/server-canvas/use-apps-bridge-observations";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import type { CspViolation } from "@/stores/widget-debug-store";
 import { compareCspPolicies } from "../csp-workbench/csp-header";
@@ -256,7 +258,20 @@ export function useWidgetHost(): WidgetHostImpl {
   // against the live profile; the renderer recomputes via `environment.profileKey`.
   const activeMcpProfileRef = useRef(activeMcpProfile);
   activeMcpProfileRef.current = activeMcpProfile;
-  const draftHostContext = useEffectiveHostContext();
+  const effectiveHostContext = useEffectiveHostContext();
+  const paneTheme = paneDisplay?.theme;
+  const draftHostContext = useMemo(() => {
+    if (!paneTheme) return effectiveHostContext;
+    const next: Record<string, unknown> = {
+      ...effectiveHostContext,
+      theme: paneTheme,
+    };
+    const configuredTheme = extractHostTheme(effectiveHostContext);
+    if (configuredTheme && configuredTheme !== paneTheme) {
+      return withoutThemeBoundColors(next);
+    }
+    return next;
+  }, [effectiveHostContext, paneTheme]);
   const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
   const playgroundTimeZone = useUIPlaygroundStore((s) => s.globals.timeZone);
@@ -361,7 +376,10 @@ export function useWidgetHost(): WidgetHostImpl {
   const setWidgetHtml = useWidgetDebugStore((s) => s.setWidgetHtml);
   const setSandboxApplied = useWidgetDebugStore((s) => s.setSandboxApplied);
   const appendLifecycle = useWidgetDebugStore((s) => s.appendLifecycle);
-  const addTrafficLog = useTrafficLogStore((s) => s.addLog);
+  // Logged bridge traffic also feeds the server canvas's observed features.
+  const addTrafficLog = useAppsBridgeObservations(
+    useTrafficLogStore((s) => s.addLog),
+  );
   const cspTelemetryLimiterRef = useRef(new CspViolationTelemetryLimiter());
   const cspToastGroupRef = useRef(
     new ClientCspToastGroup(

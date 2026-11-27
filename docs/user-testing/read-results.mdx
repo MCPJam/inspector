@@ -1,0 +1,33 @@
+---
+title: "Read study results"
+description: "Find where testers struggled, inspect their conversations and ratings, and use the evidence to improve your MCP server."
+icon: "chart-column"
+---
+
+Open **User Testing** and select your study. **Sessions** gives you the individual conversations as they arrive. **Findings** and **Insights** fill in as MCPJam analyzes the sessions.
+
+| Tab | What to look for |
+| --- | --- |
+| **Findings** | Groups of sessions by observed sentiment and goal. Start with a goal where testers appeared frustrated or gave up, then open the sessions behind it. |
+| **Insights** | Patterns across the study. Use **Session flow** to see how goals, behavior, outcomes, and sentiment relate. |
+| **Sessions** | What each tester asked, how the assistant replied, which tools ran, and any per-turn ratings and comments. |
+
+## Investigate a problem
+
+<Steps>
+  <Step title="Pick a pattern to investigate">
+    In **Findings**, expand a goal that people struggled with. If you enabled ratings, you can also start in **Sessions** and filter for low star ratings or thumbs down. Read any comments alongside the rated reply.
+  </Step>
+  <Step title="Read the session in context">
+    Follow the conversation from the tester's first request. In the Launch board example, check whether the tester had to repeat the board name, whether the assistant returned blocked tasks, and whether the tester understood what to do next.
+  </Step>
+  <Step title="Check where the problem started">
+    Inspect the tool input and output in the session. If the server returned the wrong board, check the call arguments. If the server returned the right data and the tester still asked again, check how the assistant presented it. Look at other sessions with the same goal to see whether the problem recurs.
+  </Step>
+</Steps>
+
+Sentiment in **Findings** reflects what MCPJam inferred from the conversation. Ratings and comments in **Sessions** come from testers directly. Use both alongside the transcript when deciding what to change.
+
+## Check a fix
+
+Ask another tester to try the same task after the change. To catch a reproducible failure in CI, [write an eval case](/evaluate/write-a-case) using a representative prompt and the expected outcome.

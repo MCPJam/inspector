@@ -45,7 +45,7 @@ import type {
 } from "../evals/types";
 import { EvaluateRunCompare } from "./evaluate-run-compare";
 import { trackRunViewed } from "./run-result-pages/run-view-events";
-import { resolveHostLogoByName } from "@/lib/host-logo";
+import { resolveHostLogo } from "@/lib/host-logo";
 import { modelsFromRun } from "./run-launch-context";
 import { RunAccountFacts } from "./run-account-facts";
 import { useEvalAccountSelectionEnabled } from "@/hooks/useEvalAccountSelectionEnabled";
@@ -393,6 +393,7 @@ type PairingMark = {
   key: string;
   label: string;
   client: string;
+  hostStyle?: string;
 };
 
 function pairingModel(
@@ -429,6 +430,7 @@ function groupPairingsByDecision(
       key: target._id,
       label: `${client} · ${model}`,
       client,
+      hostStyle: runClientIdentity(target).hostStyle,
     };
     const bucket = buckets.get(decision.tone);
     if (!bucket) {
@@ -525,7 +527,10 @@ function RunPairingDecisions({
                     className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-background"
                   >
                     <img
-                      src={resolveHostLogoByName(mark.client, theme)}
+                      src={resolveHostLogo(
+                        { name: mark.client, hostStyle: mark.hostStyle },
+                        theme,
+                      )}
                       alt=""
                       className="size-3.5 object-contain"
                     />

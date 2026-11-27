@@ -14,7 +14,6 @@ import {
 
 const state = vi.hoisted(() => ({
   hosted: false,
-  enabled: true,
   available: true,
   resolved: true,
   environment: false,
@@ -31,9 +30,6 @@ vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 vi.mock("@/lib/session-token", () => ({ authFetch: state.request }));
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({ user: state.guest ? null : { id: "member" } }),
-}));
-vi.mock("@/hooks/useComputersEnabled", () => ({
-  useLocalBrowserEnabled: () => state.enabled,
 }));
 vi.mock("@/hooks/useBrowserEngine", async () => {
   const { useLocalBrowserConsent } = await import(
@@ -54,7 +50,6 @@ beforeEach(() => {
   localStorage.clear();
   Object.assign(state, {
     hosted: false,
-    enabled: true,
     available: true,
     resolved: true,
     environment: false,
@@ -173,7 +168,6 @@ it("offers existing authorized users setup once, without silently changing setti
 
 it.each([
   "hosted",
-  "disabled",
   "unavailable",
   "loading",
   "environment",
@@ -181,7 +175,6 @@ it.each([
   "auth",
 ])("does not prompt when %s", (condition) => {
   if (condition === "hosted") state.hosted = true;
-  if (condition === "disabled") state.enabled = false;
   if (condition === "unavailable") state.available = false;
   if (condition === "loading") state.resolved = false;
   if (condition === "environment") state.environment = true;

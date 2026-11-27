@@ -29,6 +29,10 @@ import { argMatch } from "./argMatcher.js";
 import { checkRole } from "./policy.js";
 import { isTurnScopablePredicateKind } from "./types.js";
 import { validateAgainstSchema } from "./schema-validation.js";
+import {
+  checkDeclaredSchemas,
+  DECLARED_OUTPUT_SCHEMA,
+} from "./declared-schema.js";
 import { canonicalJson } from "../contract/canonical.js";
 import type {
   IterationTranscript,
@@ -330,6 +334,16 @@ function evidenceError(predicate: Predicate, reason: string): PredicateResult {
     predicate: sanitizePredicate(predicate),
     passed: false,
     status: "error",
+    reason: truncate(reason, MAX_REASON_CHARS),
+  };
+}
+
+/** `passed: true` preserves behavior for readers without status support. */
+function notApplicable(predicate: Predicate, reason: string): PredicateResult {
+  return {
+    predicate: sanitizePredicate(predicate),
+    passed: true,
+    status: "not_applicable",
     reason: truncate(reason, MAX_REASON_CHARS),
   };
 }
@@ -1459,6 +1473,36 @@ export function evaluatePredicate(
     }
 
     case "toolResultMatchesSchema": {
+      if (predicate.schema === DECLARED_OUTPUT_SCHEMA) {
+        const scope = (transcript.toolResults ?? []).filter(
+          (result) =>
+            predicate.toolName === undefined ||
+            (result.declaredToolName ?? result.toolName) === predicate.toolName,
+        );
+        if (
+          transcript.capture?.toolDeclarations !== "complete" ||
+          !transcript.toolDeclarations
+        ) {
+          return evidenceError(
+            predicate,
+            "complete raw tool declarations were not captured, so the declared output schemas are unknown"
+          );
+        }
+        const verdict = checkDeclaredSchemas(scope, transcript.toolDeclarations);
+        if (verdict.kind === "error") return evidenceError(predicate, verdict.reason);
+        if (verdict.kind === "fail") return fail(predicate, verdict.reason);
+        // Declared mode reads whole structuredContent even if text was capped.
+        const empty = scope.length === 0
+          ? emptyScopeIsScored(transcript, "toolResults", predicate.toolName)
+          : undefined;
+        const gap = empty
+          ? (empty.scored ? undefined : empty.reason)
+          : incompleteScopeReason(transcript, "toolResults", scope.length, 0);
+        if (gap) return evidenceError(predicate, gap);
+        return verdict.kind === "empty_scope"
+          ? notApplicable(predicate, verdict.reason)
+          : pass(predicate, verdict.reason);
+      }
       const scope = resultScope(transcript, predicate.toolName);
       if (scope.length === 0) {
         const empty = emptyScopeIsScored(
