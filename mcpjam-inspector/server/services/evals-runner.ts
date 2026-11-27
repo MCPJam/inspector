@@ -1,5 +1,6 @@
 import { credentialFailureMessage } from "../routes/web/errors.js";
 import {
+  collectDeclaredGradingFiles,
   finishIterationPhases,
   iterationPhaseContext,
   runIterationCleanupInto,
@@ -6701,6 +6702,7 @@ const runHostedIterationWithBrowser = async (
             : {}),
         });
   if (iterationId) onIterationStarted?.(iterationId);
+  let gradingFiles: Awaited<ReturnType<typeof collectDeclaredGradingFiles>>;
   // EFTW-90: the run's frozen iteration setup, grading and cleanup.
   const phases = iterationPhaseContext({
     config: recorder?.codeGrading,
@@ -7695,6 +7697,8 @@ const runHostedIterationWithBrowser = async (
         : {}),
     });
   } finally {
+    // EFTW-90: the declared files come off the agent's box before it goes.
+    gradingFiles = await collectDeclaredGradingFiles(phases, evalBox?.binding.sandboxId);
     // The eval sandbox is only used during the agent run; release as soon as it
     // finishes or throws — the verdict/finalize below don't need it, and the
     // backend GC reaps anything this misses.
@@ -7872,6 +7876,7 @@ const runHostedIterationWithBrowser = async (
       ...(pinnedSetupFailure || infraError
         ? { notRun: "Not run: the iteration didn't finish." }
         : {}),
+      ...(gradingFiles ? { files: gradingFiles } : {}),
       input: () =>
         buildGradingInput({
           scenario: { title: test.title, isNegativeTest: test.isNegativeTest },
