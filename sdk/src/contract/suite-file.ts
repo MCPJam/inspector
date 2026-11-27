@@ -2,6 +2,11 @@ import {
   suiteJudgeSettingsSchema,
   caseJudgeSettingsSchema,
 } from "./judge-settings.js";
+import {
+  codeEvaluatorsSchema,
+  suiteGradingSchema,
+  suiteScriptsSchema,
+} from "./code-evaluators.js";
 import { suppressedSuiteStandardCheckIdsSchema } from "./standard-checks.js";
 /**
  * The versioned eval **suite file** — one declarative document describing a
@@ -360,6 +365,12 @@ function defaultsShape(version: EvalSuiteSchemaVersion) {
     },
     tail: {
       judge: suiteJudgeSettingsSchema.optional(),
+      /** Scripts that grade each iteration in a box of their own. */
+      codeEvaluators: codeEvaluatorsSchema.optional(),
+      /** Bash scripts around the run and around each iteration. */
+      scripts: suiteScriptsSchema.optional(),
+      /** The grading box: files copied from the agent's box, and its network. */
+      grading: suiteGradingSchema.optional(),
       /** Fraction of iterations a case must pass to pass. Never a percent. */
       passThreshold: unitIntervalSchema,
       validity: evalSuiteFileValiditySchema,

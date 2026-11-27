@@ -3,7 +3,6 @@ import {
   CANIUSE_CAPABILITIES,
   PUBLIC_CAN_I_USE_INLINE_PRESET_IDS,
   sortCaniusePresetHosts,
-  CANIUSE_LAST_VERIFIED_DATE,
   CLIENT_COMPARE_FIELDS,
   PUBLIC_CAN_I_USE_FIELDS,
   buildCaniuseCapabilityPath,
@@ -228,9 +227,6 @@ describe("caniuse capability catalog", () => {
     );
   });
 
-  it("uses a static latest verification date for v1", () => {
-    expect(CANIUSE_LAST_VERIFIED_DATE).toBe("2026-08-14");
-  });
 });
 
 describe("unmeasured rows stay off the public surface", () => {

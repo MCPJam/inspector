@@ -286,8 +286,10 @@ export function McpjamAgentThread({
   const contentColumnClassName = isSidebar
     ? "min-w-0 w-full px-4 pt-6 pb-8 space-y-6"
     : "min-w-0 w-full max-w-4xl mx-auto px-4 pt-6 pb-8 space-y-6";
+  // The composer applies these to its bordered box, so the sidebar gets a
+  // margin (matching the empty chat's composer), not a full-width box.
   const composerColumnClassName = isSidebar
-    ? "w-full mb-4 px-3"
+    ? "mx-4 mb-4 w-auto px-3"
     : "mx-auto w-full max-w-4xl mb-6 px-4";
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const shellStyle = getScenarioShellStyle("mcpjam", themeMode);

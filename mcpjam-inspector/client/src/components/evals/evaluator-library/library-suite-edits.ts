@@ -24,21 +24,22 @@ import { customizedCopy, withJudges } from "./custom-judges-model";
 /**
  * The judge config with these rubric-check questions. The author's on/off
  * switch is kept: adding to a suite that turned rubric checks off leaves them
- * off, and the settings say the questions will not run. A slot or config this
- * empties is dropped, so adding an evaluator and removing it again leaves the
- * config as it was.
+ * off, and the settings say the questions will not run.
+ *
+ * An emptied slot is kept as `rubricChecks: {}` while other judge config
+ * remains: the backend copies any reserved slot a write leaves out from the
+ * stored config, so dropping the key would bring the removed questions back.
+ * Only a config with nothing else left becomes undefined, which the settings
+ * save sends as null to clear it.
  */
 function withQuestions(
   judgeConfig: EvalJudgeConfig | undefined,
   questions: RubricCheckQuestion[],
 ): EvalJudgeConfig | undefined {
   const next = withRubricChecks(judgeConfig, { questions });
-  if (next.rubricChecks && Object.keys(next.rubricChecks).length > 0) {
-    return next;
-  }
-  const rest = { ...next };
-  delete rest.rubricChecks;
-  return Object.keys(rest).length > 0 ? rest : undefined;
+  const { rubricChecks, ...rest } = next;
+  const empty = !rubricChecks || Object.keys(rubricChecks).length === 0;
+  return empty && Object.keys(rest).length === 0 ? undefined : next;
 }
 
 /** The two lists one library edit writes. Absent means unchanged. */

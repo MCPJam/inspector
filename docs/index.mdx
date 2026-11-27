@@ -99,19 +99,20 @@ Find what you want to test, then follow the guide for the tool you use. The MCP 
 | What to test | Inspector | CLI | MCP |
 | --- | --- | --- | --- |
 | **Connection and capabilities**<br />The server starts, completes the handshake and declares what it supports | [Connect servers](/inspector/connecting-servers) | [`server probe`, `server doctor`](/cli/server-inspection) | [connect_server, server_info, server_doctor](/cli/mcp-server#tools) |
-| **Tools**<br />Tools list, accept valid arguments and return usable results | [Tools](/inspector/tools-prompts-resources#tools) | [Tools](/cli/tools-resources-prompts#tools) | [list_tools, call_tool](/cli/mcp-server#exercising-the-target) |
-| **Resources and templates**<br />Resources list and read; templates resolve | [MCP Inspector](/inspector/tools-prompts-resources) | [Resources](/cli/tools-resources-prompts#resources) | [list_resources, read_resource](/cli/mcp-server#exercising-the-target) |
-| **Prompts**<br />Prompts list and render with their arguments | [MCP Inspector](/inspector/tools-prompts-resources) | [Prompts](/cli/tools-resources-prompts#prompts) | [list_prompts, get_prompt](/cli/mcp-server#exercising-the-target) |
-| **Elicitation and multi-round input**<br />The server asks the user for input mid-call and resumes with the answer | [Elicitation requests](/inspector/tools-prompts-resources#elicitation-requests) | [Tools, Resources & Prompts](/cli/tools-resources-prompts) | — |
+| **Tools**<br />Tools list, accept valid arguments and return usable results | [Tools](/inspector/tools) | [Tools](/cli/tools-resources-prompts#tools) | [list_tools, call_tool](/cli/mcp-server#exercising-the-target) |
+| **Resources and templates**<br />Resources list and read; templates resolve | [Resources](/inspector/resources) | [Resources](/cli/tools-resources-prompts#resources) | [list_resources, read_resource](/cli/mcp-server#exercising-the-target) |
+| **Prompts**<br />Prompts list and render with their arguments | [Prompts](/inspector/prompts) | [Prompts](/cli/tools-resources-prompts#prompts) | [list_prompts, get_prompt](/cli/mcp-server#exercising-the-target) |
+| **Elicitation and multi-round input**<br />The server asks the user for input mid-call and resumes with the answer | [Elicitation requests](/inspector/tools#elicitation-requests) | [Tools, Resources & Prompts](/cli/tools-resources-prompts) | — |
 | **Notifications and logs**<br />`list_changed`, log messages and resource updates arrive in a live session | [Tracing & debugging](/inspector/debugging) | [MCPJam as an MCP server](/cli/mcp-server) | [get_notifications](/cli/mcp-server#exercising-the-target) |
 | **MCP Events**<br />The server declares events and delivers them by push, poll or webhook | [Events tab](/inspector/events) | [MCP Events](/cli/events) | — |
-| **MCP Tasks**<br />Long-running calls create, report and finish tasks | [Tasks tab](/inspector/mcp-support#extensions) | [MCP Tasks](/cli/tasks), [Tasks conformance](/cli/tasks-conformance) | — |
+| **MCP Tasks**<br />Long-running calls create, report and finish tasks | [Tasks](/inspector/tasks) | [MCP Tasks](/cli/tasks), [Tasks conformance](/cli/tasks-conformance) | — |
 | **Skills over MCP**<br />The server serves skills a client can list and load | [Skills over MCP](/inspector/skills#skills-over-mcp-server-provided-skills) | [Skills from the CLI](/inspector/skills#inspecting-a-server%E2%80%99s-skills-from-the-cli) | [list_skills, get_skill](/cli/mcp-server#skills-over-mcp) |
 | **OAuth**<br />Each step of the authorization flow, across protocol versions | [OAuth Debugger](/inspector/guided-oauth) | [OAuth conformance](/cli/oauth-conformance), [OAuth login](/cli/oauth-login) | [probe_server](/cli/mcp-server#stateless-diagnostics) (auth discovery) |
 | **Enterprise sign-in (XAA)**<br />Cross-app access token exchange | [XAA Debugger](/inspector/xaa-debugger) | [XAA Debugger (CLI)](/cli/xaa) | — |
 | **MCP Apps and ChatGPT Apps**<br />Widgets render and talk to the host | [First MCP App](/guides/first-mcp-app) | [MCP Apps conformance](/cli/apps-conformance) | — |
 | **Client compatibility**<br />Your server works in each client's configuration | [Host compatibility](/inspector/host-compat) | [`compat`](/cli/reference#compat-command) | — |
 | **Protocol versions**<br />Behavior on each MCP protocol version | [MCP protocol versions](/inspector/protocol-versions) | [Server inspection](/cli/server-inspection) | [server_info](/cli/mcp-server#tools) (negotiated version) |
+| **Conformance**<br />Your server meets the rules for the selected MCP protocol revision | [Conformance](/conformance/overview) | [`conformance run`](/cli/reference#conformance-run) | — |
 | **User value end to end**<br />Real prompts get users the outcome they asked for, across clients and models | [Evaluate](/evaluate/overview) | [Evals in CI](/cli/ci#evals-in-ci) | — |
 
 ## Get help

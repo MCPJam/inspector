@@ -2071,9 +2071,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       mcpProfile: {
         profileVersion: 1,
         extensions: {
-          "com.mcpjam/events": {
-            webhook: true,
-          },
+          "com.mcpjam/events": {},
         },
         mcpProtocolVersion: "auto",
         paginationTraversal: "full",
@@ -2421,9 +2419,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       mcpProfile: {
         profileVersion: 1,
         extensions: {
-          "com.mcpjam/events": {
-            webhook: true,
-          },
+          "com.mcpjam/events": {},
         },
         mcpProtocolVersion: "auto",
         toolResultAuthChallenge: "prompt",

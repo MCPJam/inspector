@@ -11,7 +11,7 @@ import {
   Wrench,
   type LucideIcon,
 } from "lucide-react";
-import { useId } from "react";
+import { useId, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { CUSTOM_JUDGE_COST_COPY } from "./custom-judges-model";
 import { EvaluatorCard } from "./evaluator-card";
@@ -72,23 +72,33 @@ export function EvaluatorLibraryBrowse({
   getAddDisabledReason: (evaluator: LibraryEvaluator) => string | undefined;
 }) {
   const searchId = useId();
+  const searchRef = useRef<HTMLInputElement>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
   const { category, search } = filters;
+  // A new query shows its results from the top. Returning from preset details
+  // changes no query, so the place in the list is kept.
+  const setSearch = (next: string) => {
+    if (resultsRef.current) resultsRef.current.scrollTop = 0;
+    onFiltersChange({ category, search: next });
+  };
   const query = search.trim().toLowerCase();
-  const groups = Object.values(CATEGORIES).map((group) => {
-    const entries = evaluators.filter((entry) => entry.category === group.id);
-    return {
-      ...group,
-      available: entries.length > 0,
-      matches: entries.filter((entry) =>
-        [
-          entry.name,
-          entry.question,
-          group.label,
-          ...builtFrom(entry).map((part) => part.label),
-        ].some((value) => value.toLowerCase().includes(query)),
-      ),
-    };
-  }).filter((group) => group.available);
+  const groups = Object.values(CATEGORIES)
+    .map((group) => {
+      const entries = evaluators.filter((entry) => entry.category === group.id);
+      return {
+        ...group,
+        available: entries.length > 0,
+        matches: entries.filter((entry) =>
+          [
+            entry.name,
+            entry.question,
+            group.label,
+            ...builtFrom(entry).map((part) => part.label),
+          ].some((value) => value.toLowerCase().includes(query)),
+        ),
+      };
+    })
+    .filter((group) => group.available);
   const all = category === "all";
   const activeGroup = groups.find((group) => group.id === category);
   const visible = all
@@ -146,18 +156,18 @@ export function EvaluatorLibraryBrowse({
               Search presets
             </label>
             <Input
+              ref={searchRef}
               id={searchId}
               type="search"
               placeholder="Search presets…"
               value={search}
-              onChange={(event) =>
-                onFiltersChange({ category, search: event.target.value })
-              }
+              onChange={(event) => setSearch(event.target.value)}
               className="pl-8"
             />
           </div>
         </div>
         <div
+          ref={resultsRef}
           key={category}
           className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5"
         >
@@ -174,7 +184,10 @@ export function EvaluatorLibraryBrowse({
                 variant="ghost"
                 size="sm"
                 className="mt-1"
-                onClick={() => onFiltersChange({ category, search: "" })}
+                onClick={() => {
+                  setSearch("");
+                  searchRef.current?.focus();
+                }}
               >
                 Clear search
               </Button>

@@ -1836,6 +1836,34 @@ describe("the second pass declares the tool-call scorers the first pass stored",
     expect(result.orphans).toEqual([]);
     expect(result.rowless).toEqual([]);
   });
+
+  test("keeps the first pass's code evaluator rows joinable (EFTW-90)", async () => {
+    const first = buildHostedScoreContract({
+      codeGrading: {
+        evaluators: [
+          { id: "totals", fileName: "check.py", script: "x", role: "required" },
+          { id: "report", fileName: "report.sh", script: "y", role: "advisory" },
+        ],
+        outcomes: {
+          totals: { kind: "scored", score: 1, output: "", durationMs: 1, exitCode: 0 },
+        },
+      },
+    });
+
+    const result = await judge({
+      evaluationConfig: first.evaluationConfig,
+      scores: first.scores,
+    });
+
+    expect(
+      result.config.definitions
+        .filter((d) => d.scorerId.startsWith("code:"))
+        .map((d) => d.scorerId)
+        .sort(),
+    ).toEqual(["code:report", "code:totals"]);
+    expect(result.orphans).toEqual([]);
+    expect(result.rowless).toEqual([]);
+  });
 });
 
 describe("the marker carries what the chain cannot", () => {
