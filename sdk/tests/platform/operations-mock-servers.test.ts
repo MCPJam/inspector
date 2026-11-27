@@ -1,0 +1,133 @@
+import { describe, expect, it, vi } from "vitest";
+import {
+  OPERATION_FEATURES,
+  PlatformApiClient,
+  createMockServerOperation,
+  getMockForwardingPolicyOperation,
+  getMockServerOperation,
+  isOperationAvailable,
+  setMockForwardingPolicyOperation,
+  updateMockServerOperation,
+} from "../../src/platform/index.js";
+
+const PROJECT = {
+  id: "project-1",
+  name: "Acme",
+  description: null,
+  icon: null,
+  organizationId: "org-a",
+  visibility: null,
+  createdAt: 1,
+  updatedAt: 2,
+};
+const REAL = { id: "server-1", name: "markets", projectId: PROJECT.id, transportType: "http", url: "https://x.test/mcp" };
+const MOCK = {
+  id: "mock-1",
+  name: "markets (mock)",
+  projectId: PROJECT.id,
+  transportType: "http",
+  url: "https://mock.mcpjam.invalid/mock-1",
+};
+const SAVED = {
+  id: "mock-1",
+  name: "markets (mock)",
+  projectId: PROJECT.id,
+  baseServerId: "server-1",
+  address: "https://app.test/api/web/mock-mcp/mock-1",
+  version: 1,
+  contentHash: "h",
+  created: true,
+  loosened: [],
+};
+const POLICY = { forwarding: "block", scope: "workspace", updatedAt: 5, projectId: PROJECT.id };
+
+/** A client whose API answers from `routes`, recording each request body. */
+function clientWith(routes: Record<string, unknown>) {
+  const bodies: unknown[] = [];
+  const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+    const url = new URL(String(input));
+    const key = `${init?.method ?? "GET"} ${url.pathname}`;
+    if (key.endsWith("/projects")) return Response.json({ items: [PROJECT] });
+    if (key.endsWith("/servers")) return Response.json({ items: [REAL, MOCK] });
+    if (key in routes) {
+      if (init?.body) bodies.push(JSON.parse(String(init.body)));
+      return Response.json(routes[key]);
+    }
+    throw new Error(`unexpected ${key}`);
+  });
+  const client = new PlatformApiClient({
+    baseUrl: "https://api.test/api/v1",
+    getAuth: () => "t",
+    fetch: fetchMock as unknown as typeof fetch,
+  });
+  const lastUrl = () => new URL(String(fetchMock.mock.calls.at(-1)?.[0]));
+  return { client, bodies, lastUrl };
+}
+const signal = new AbortController().signal;
+const run = <I, O>(op: { execute(i: I, c: never): Promise<O> }, input: I, client: PlatformApiClient) =>
+  op.execute(input, { client, signal } as never);
+
+describe("mock server operations", () => {
+  it("create sends the saved server's id and the definition, and returns the address", async () => {
+    const { client, bodies } = clientWith({ "POST /api/v1/projects/project-1/mock-servers": SAVED });
+    const result = await run(createMockServerOperation, { name: "markets (mock)", server: "markets", definition: { tools: {} } }, client);
+    expect(bodies).toEqual([{ name: "markets (mock)", serverId: "server-1", definition: { tools: {} } }]);
+    expect(result).toMatchObject({ id: "mock-1", version: 1, address: SAVED.address, project: { id: "project-1" } });
+  });
+
+  it("create without a server makes a mock from nothing", async () => {
+    const { client, bodies } = clientWith({ "POST /api/v1/projects/project-1/mock-servers": SAVED });
+    await run(createMockServerOperation, { name: "n", definition: {} }, client);
+    expect(bodies[0]).not.toHaveProperty("serverId");
+  });
+
+  it("update names the head it read and sends a patch", async () => {
+    const { client, bodies } = clientWith({
+      "POST /api/v1/projects/project-1/mock-servers/mock-1/versions": { ...SAVED, version: 4, created: true },
+    });
+    const result = await run(updateMockServerOperation, { mock: "markets (mock)", patch: { tools: { a: { hidden: true } } }, expectedVersion: 3 }, client);
+    expect(bodies).toEqual([{ patch: { tools: { a: { hidden: true } } }, expectedVersion: 3 }]);
+    expect(result.version).toBe(4);
+  });
+
+  it("update takes a whole definition or a patch, never both or neither", () => {
+    const schema = updateMockServerOperation.inputSchema;
+    expect(schema.safeParse({ mock: "m", expectedVersion: 1 }).success).toBe(false);
+    expect(schema.safeParse({ mock: "m", expectedVersion: 1, patch: {}, definition: {} }).success).toBe(false);
+    expect(schema.safeParse({ mock: "m", expectedVersion: 1, definition: {} }).success).toBe(true);
+  });
+
+  it("get reads one version without a definition body", async () => {
+    const read = { ...SAVED, headVersion: 2, policy: { forwarding: "allow", scope: "workspace", updatedAt: null }, counts: { tools: 1, prompts: 0, resources: 0, resourceTemplates: 0 }, changedPaths: { paths: ["tools.a.hidden"], total: 1, truncated: false }, createdAt: 1 };
+    const { client, lastUrl } = clientWith({ "GET /api/v1/projects/project-1/mock-servers/mock-1": read });
+    const result = await run(getMockServerOperation, { mock: "markets (mock)", version: 1 }, client);
+    expect(lastUrl().searchParams.get("version")).toBe("1");
+    expect(result).toMatchObject({ headVersion: 2, changedPaths: { total: 1 } });
+    expect(result).not.toHaveProperty("definition");
+  });
+
+  it("reads the workspace's policy, or a mock's", async () => {
+    const { client, lastUrl } = clientWith({
+      "GET /api/v1/projects/project-1/mock-forwarding-policy": POLICY,
+      "GET /api/v1/projects/project-1/mock-servers/mock-1/forwarding-policy": { ...POLICY, mockId: "mock-1" },
+    });
+    expect(await run(getMockForwardingPolicyOperation, {}, client)).toMatchObject({ forwarding: "block" });
+    expect(lastUrl().pathname).toBe("/api/v1/projects/project-1/mock-forwarding-policy");
+    expect(await run(getMockForwardingPolicyOperation, { mock: "markets (mock)" }, client)).toMatchObject({ mockId: "mock-1" });
+  });
+
+  it("sets the policy with PUT", async () => {
+    const { client, bodies } = clientWith({ "PUT /api/v1/projects/project-1/mock-forwarding-policy": POLICY });
+    await run(setMockForwardingPolicyOperation, { forwarding: "block" }, client);
+    expect(bodies).toEqual([{ forwarding: "block" }]);
+    expect(setMockForwardingPolicyOperation.readOnly).toBe(false);
+    expect(setMockForwardingPolicyOperation.risk).toBe("exposure");
+  });
+
+  it("are not hidden by an organization feature: the backend answers the flag", () => {
+    for (const name of ["create_mock_server", "update_mock_server", "get_mock_server", "get_mock_forwarding_policy", "set_mock_forwarding_policy"]) {
+      expect(OPERATION_FEATURES[name]).toBeNull();
+      expect(isOperationAvailable(name, {} as never)).toBe(true);
+    }
+  });
+});

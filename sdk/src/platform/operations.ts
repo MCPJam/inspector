@@ -138,6 +138,13 @@ import {
   listServerRevisionsOperation,
 } from "./server-revision-operations.js";
 import {
+  createMockServerOperation,
+  getMockForwardingPolicyOperation,
+  getMockServerOperation,
+  setMockForwardingPolicyOperation,
+  updateMockServerOperation,
+} from "./mock-operations.js";
+import {
   deleteServerAccountOperation,
   getServerAccountOperation,
   listServerAccountsOperation,
@@ -19436,6 +19443,13 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listServerRevisionsOperation,
   getServerRevisionOperation,
   diffServerRevisionsOperation,
+  // Mock servers: a saved server (or nothing) with a definition laid over it,
+  // and the policy for whether a mock may call its real server.
+  createMockServerOperation,
+  updateMockServerOperation,
+  getMockServerOperation,
+  getMockForwardingPolicyOperation,
+  setMockForwardingPolicyOperation,
   // Server accounts. Tokens are write-only, and the upload and the update are
   // excluded from the MCP catalog and the agent registry: the upload carries a
   // token in its INPUT, and the default decides which account runs with no

@@ -22,6 +22,7 @@ import { refuseWhileDraining } from "../../services/lifecycle/admission.js";
 import { isGuestAllowedV1Request } from "./guest-allowed-paths.js";
 import servers from "./servers.js";
 import serverGroups from "./server-groups.js";
+import mockServers from "./mock-servers.js";
 import serverConnections from "./server-connections.js";
 import tools from "./tools.js";
 import prompts from "./prompts.js";
@@ -189,6 +190,8 @@ v1.route("/", servers);
 // Convex reads are membership-gated and creating one is a member write, so
 // there is no share-link flow that needs them.
 v1.route("/", serverGroups);
+// Mock servers (guest-DENIED by default).
+v1.route("/", mockServers);
 v1.route("/", serverConnections);
 v1.route("/", tools);
 v1.route("/", prompts);
