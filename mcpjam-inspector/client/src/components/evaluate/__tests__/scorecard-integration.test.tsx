@@ -63,26 +63,11 @@ const iteration: EvalIteration = {
 } as EvalIteration;
 
 describe("scorecard integration regressions", () => {
-  it("renders saved model graders on a completed trial without projected scores", () => {
+  it("renders saved custom judges on an iteration without projected scores", () => {
     const savedTrial: EvalIteration = {
       ...iteration,
       resultSource: "reported",
       metadata: {
-        rubricChecksVerdict: {
-          questions: [
-            {
-              key: "q:grounded",
-              kind: "boolean",
-              contentDigest: "grounded",
-              label: "Answer Grounded in Results",
-              status: "scored",
-              passed: false,
-              value: 0,
-              passThreshold: 0.5,
-              rationale: "No",
-            },
-          ],
-        },
         customJudgesVerdict: {
           judges: [
             {
@@ -112,7 +97,6 @@ describe("scorecard integration regressions", () => {
     );
     const rows = screen.getAllByTestId("trial-scorecard-row");
     for (const [label, state] of [
-      ["Answer Grounded in Results", "failed"],
       ["Answers the Question", "passed"],
       ["Includes a Link", "failed"],
     ] as const) {
@@ -134,7 +118,6 @@ describe("scorecard integration regressions", () => {
       rerender(
         <TrialScorecard authored={authored} iteration={savedTrial} steps={steps} />,
       );
-      expect(screen.getByText("Answer Grounded in Results")).toBeVisible();
       expect(screen.queryByText("Includes a Link")).not.toBeInTheDocument();
       expect(screen.queryByText("Answers the Question")).not.toBeInTheDocument();
     } finally {

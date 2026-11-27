@@ -99,6 +99,36 @@ describe("PromptEditor", () => {
     ).toBeInTheDocument();
   });
 
+  it("lets the picker use a longer maxLength, such as a custom judge's", () => {
+    const onChange = vi.fn();
+    const long = `${"x".repeat(2_300)}{{`;
+    const { rerender } = renderWithProviders(
+      <PromptEditor
+        value=""
+        onChange={onChange}
+        variables={variables}
+        maxLength={4_000}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Judge prompt"), {
+      target: { value: long },
+    });
+    rerender(
+      <PromptEditor
+        value={long}
+        onChange={onChange}
+        variables={variables}
+        maxLength={4_000}
+      />,
+    );
+    fireEvent.click(screen.getByRole("option", { name: /tool_results/ }));
+    expect(onChange).toHaveBeenLastCalledWith(
+      `${"x".repeat(2_300)}{{tool_results}}`,
+    );
+    expect(screen.queryByText(/No room for/)).not.toBeInTheDocument();
+    expect(screen.getByText("2302/4000")).toBeInTheDocument();
+  });
+
   it("puts the caret right after a token inserted mid-sentence", () => {
     function Controlled() {
       const [value, setValue] = useState("Check  please");

@@ -11,9 +11,10 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { useAction, useQuery } from "convex/react";
 import { makeFunctionReference } from "convex/server";
 import { useState } from "react";
+import { customJudgeFailureCopy } from "./custom-judge-failure-copy";
 import { VerdictPill, type VerdictStatus } from "./verdict-pill";
 
-type PreviewTrial = {
+type PreviewIteration = {
   iterationId: string;
   runNumber: number | null;
   title: string;
@@ -36,11 +37,11 @@ type PreviewResult =
       };
     };
 
-const listTrialsRef = makeFunctionReference<
+const listIterationsRef = makeFunctionReference<
   "query",
   { suiteId: string },
-  PreviewTrial[]
->("customJudgePreviewAuth:listCustomJudgePreviewTrials");
+  PreviewIteration[]
+>("customJudgePreviewAuth:listCustomJudgePreviewIterations");
 
 const previewRef = makeFunctionReference<
   "action",
@@ -63,7 +64,7 @@ export function CustomJudgePreview({
   judge: CustomJudge;
   disabledReason?: string;
 }) {
-  const trials = useQuery(listTrialsRef, { suiteId });
+  const iterations = useQuery(listIterationsRef, { suiteId });
   const preview = useAction(previewRef);
   const [iterationId, setIterationId] = useState<string>("");
   const [running, setRunning] = useState(false);
@@ -73,17 +74,17 @@ export function CustomJudgePreview({
     failure?: string;
   } | null>(null);
   const chosen =
-    trials?.find((trial) => trial.iterationId === iterationId)?.iterationId ??
-    trials?.[0]?.iterationId ??
+    iterations?.find((row) => row.iterationId === iterationId)?.iterationId ??
+    iterations?.[0]?.iterationId ??
     "";
   const input = JSON.stringify({ suiteId, iterationId: chosen, judge });
   const outcome = completed?.input === input ? completed.outcome : undefined;
   const failure = completed?.input === input ? completed.failure : undefined;
 
-  if (trials && trials.length === 0) {
+  if (iterations && iterations.length === 0) {
     return (
       <p className="text-xs text-muted-foreground">
-        Run this suite once to test a judge on a past trial.
+        Run this suite once to test a judge on a past iteration.
       </p>
     );
   }
@@ -112,13 +113,13 @@ export function CustomJudgePreview({
     <div className="flex flex-col gap-2 rounded-md border border-border/60 p-2.5">
       <div className="flex flex-wrap items-center gap-2">
         <Select value={chosen} onValueChange={setIterationId}>
-          <SelectTrigger aria-label="Past trial" className="h-8 w-64 text-xs">
-            <SelectValue placeholder="Loading trials…" />
+          <SelectTrigger aria-label="Past iteration" className="h-8 w-64 text-xs">
+            <SelectValue placeholder="Loading iterations…" />
           </SelectTrigger>
           <SelectContent>
-            {(trials ?? []).map((t, index) => (
+            {(iterations ?? []).map((t, index) => (
               <SelectItem key={t.iterationId} value={t.iterationId} title={t.iterationId}>
-                {`Trial ${index + 1} · `}
+                {`Iteration ${index + 1} · `}
                 {t.runNumber !== null ? `Run #${t.runNumber} · ` : ""}
                 {t.title}
                 {t.result ? ` · ${t.result}` : ""}
@@ -135,10 +136,10 @@ export function CustomJudgePreview({
           title={disabledReason}
           onClick={run}
         >
-          {running ? "Testing…" : "Test on a past trial"}
+          {running ? "Testing…" : "Test on a past iteration"}
         </Button>
         <span className="text-xs text-muted-foreground">
-          Uses one judge call. Saves nothing.
+          Uses one charged judge call. Saves nothing.
         </span>
       </div>
       {failure ? (
@@ -148,9 +149,8 @@ export function CustomJudgePreview({
       ) : null}
       {outcome && !outcome.ok ? (
         <p role="status" className="text-xs text-muted-foreground">
-          {outcome.reason === "iteration_not_gradable"
-            ? "This trial cannot be graded. Choose another trial."
-            : "Could not test the judge. Check the suite's judge model and try again."}
+          {customJudgeFailureCopy(outcome.reason) ??
+            "Could not test the judge. Check the suite's judge model and try again."}
         </p>
       ) : null}
       {outcome?.ok ? (
@@ -163,7 +163,11 @@ export function CustomJudgePreview({
               </span>
             ) : null}
           </div>
-          <p className="text-foreground">{outcome.result.reason}</p>
+          <p className="text-foreground">
+            {outcome.result.reason ||
+              customJudgeFailureCopy(outcome.result.error) ||
+              "The judge could not grade this iteration."}
+          </p>
           {outcome.prompt ? (
             <details>
               <summary className="cursor-pointer text-muted-foreground">

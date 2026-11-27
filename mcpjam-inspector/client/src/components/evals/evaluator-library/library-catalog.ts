@@ -38,12 +38,12 @@ export type LibraryEvaluator = {
    * the goal-completion judge. Advisory, like every rubric check.
    */
   questions?: readonly LibraryQuestion[];
-  /** Judge prompts, each its own model call per trial. Advisory. */
+  /** Judge prompts, each its own model call per iteration. Advisory. */
   judges?: readonly LibraryJudge[];
 };
 
 /** A library judge before it is given its id and tag. */
-export type LibraryJudge = {
+type LibraryJudge = {
   slug: string;
   label: string;
   prompt: string;
@@ -393,7 +393,7 @@ export function isInSuite(
  * refusal is shown where the action would be, so nothing is dropped or
  * skipped silently.
  */
-export type QuestionsEdit =
+type QuestionsEdit =
   | { questions: RubricCheckQuestion[]; refused?: undefined }
   | { refused: string };
 
@@ -493,7 +493,7 @@ function replacedFromEvaluator<T extends Tagged>(
 }
 
 /** The suite's judges after an edit, or why the edit cannot be made. */
-export type JudgesEdit =
+type JudgesEdit =
   | { judges: CustomJudge[]; refused?: undefined }
   | { refused: string };
 

@@ -42,7 +42,7 @@ import {
   hasYesNoRubricQuestionsCapability,
   type SuiteCapabilities,
 } from "@/hooks/use-suite-capabilities";
-import { DEFAULT_JUDGE_THRESHOLD, MAX_CUSTOM_JUDGES } from "@/components/shared/session-quality/judge-config";
+import { DEFAULT_JUDGE_THRESHOLD } from "@/components/shared/session-quality/judge-config";
 import { ValidatorsSection } from "./validators-section";
 import { CheckRow, blankPredicate } from "./checks-section";
 import { SuiteScorerLibraryMenu } from "./suite-scorer-library-menu";
@@ -50,6 +50,7 @@ import { EvaluatorLibraryButton } from "./evaluator-library/evaluator-library-di
 import { useEvaluatorLibraryEnabled } from "./evaluator-library/evaluator-library-flag";
 import { EvaluatorStageRows } from "./evaluator-library/evaluator-stage-rows";
 import { CustomJudgesSection } from "./evaluator-library/custom-judges-section";
+import { customJudgeLimits } from "./evaluator-library/custom-judges-model";
 import {
   libraryModelRows,
   librarySuiteEdits,
@@ -262,10 +263,7 @@ export function SuiteScorerTable({
       scope.onDraftChange(removeCaseRule(scope.draft, rule.index));
     }
   };
-  const judgeLimit = Math.min(
-    MAX_CUSTOM_JUDGES,
-    capabilities?.judges?.custom?.maxJudges ?? MAX_CUSTOM_JUDGES,
-  );
+  const judgeLimit = customJudgeLimits(capabilities).maxJudges;
   const library = librarySuiteEdits(
     scope,
     judgeConfig,

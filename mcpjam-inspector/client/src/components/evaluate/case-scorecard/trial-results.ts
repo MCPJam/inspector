@@ -82,6 +82,7 @@ export type TrialRowResultSource =
   | "chainSelection"
   | "chainStage"
   | "judgeCase"
+  | "modelVerdict" // a saved custom judge verdict with no projected row yet
   | "live";
 
 export type TrialRowResult =
@@ -114,7 +115,7 @@ export type TrialRowResult =
     }
   | {
       state: "error";
-      source: "scoreRow" | "judgeCase" | "chainStage" | "predicateResult";
+      source: Exclude<TrialRowResultSource, "stepResult" | "chainSelection" | "live">;
       reason: string;
     }
   | {

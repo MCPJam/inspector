@@ -116,7 +116,7 @@ export const MAX_RUBRIC_CHECK_INSTRUCTIONS_LENGTH = 1000;
 
 /**
  * An author-written judge: a grading prompt using `{{variable}}`s, run as its
- * own model call per trial. Hand-mirrored from the backend's
+ * own model call per iteration. Hand-mirrored from the backend's
  * `convex/lib/customJudges/customJudgeConfig.ts`. Always advisory.
  */
 export type CustomJudge = {
@@ -130,13 +130,10 @@ export type CustomJudge = {
   basedOn?: { id: string; version: number };
 };
 
-export type CustomJudgesSlot = {
+type CustomJudgesSlot = {
   enabled?: boolean;
   judges?: CustomJudge[];
 };
-
-export const MAX_CUSTOM_JUDGES = 5;
-export const MAX_CUSTOM_JUDGE_PROMPT_LENGTH = 4000;
 
 export type GoalJudgeConfig = {
   goalCompletion?: GoalCompletionJudgeSlot;

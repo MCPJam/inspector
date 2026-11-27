@@ -8,6 +8,7 @@ import {
   parseEvaluationConfig,
   parseIterationScores,
 } from "@/components/evals/scores-list";
+import { customJudgeFailureCopy } from "@/components/evals/evaluator-library/custom-judge-failure-copy";
 import { HOSTED_CUSTOM_JUDGE_SCORER_PREFIX } from "@/shared/hosted-criterion-id";
 import {
   indexScores,
@@ -39,6 +40,24 @@ function isUnitValue(value: unknown): value is number {
   return typeof value === "number" && value >= 0 && value <= 1;
 }
 
+const COULD_NOT_RUN = "The judge could not run on this iteration. Rerun the suite to try again.";
+
+/** The backend's own reason first, then copy for its code, never a bare code. */
+function errorReason(code: string | undefined, reason: string | undefined) {
+  return reason || customJudgeFailureCopy(code) || COULD_NOT_RUN;
+}
+
+/**
+ * A projected error row's `error` is the judge's code and reason joined as
+ * `code: reason` (`custom-judge-rows.ts`); shown as the reason alone.
+ */
+function readableError(result: TrialRowResult): TrialRowResult {
+  if (result.state !== "error") return result;
+  const match = /^([a-z0-9_]+)(?:: ([\s\S]*))?$/.exec(result.reason ?? "");
+  if (!match) return result;
+  return { ...result, reason: errorReason(match[1], match[2]) };
+}
+
 function storedResult(
   entry: Record<string, unknown>,
   output: Record<string, unknown> | undefined,
@@ -61,11 +80,10 @@ function storedResult(
   return {
     state: "error",
     source: "modelVerdict",
-    reason:
-      reason ||
-      (typeof entry.error === "string"
-        ? entry.error
-        : "The evaluator could not run. Rerun the suite to try again."),
+    reason: errorReason(
+      typeof entry.error === "string" ? entry.error : undefined,
+      reason,
+    ),
   };
 }
 
@@ -173,7 +191,7 @@ export function customJudgeIterationRows(
     const row = customJudgeRow(
       id,
       label,
-      resultFromScore(score, definition),
+      readableError(resultFromScore(score, definition)),
       saved,
     );
     const evidence = scoreEvidence(score, definition, row);
