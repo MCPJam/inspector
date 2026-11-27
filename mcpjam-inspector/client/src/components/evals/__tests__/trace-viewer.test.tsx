@@ -933,6 +933,70 @@ describe("TraceViewer", () => {
     ).toHaveTextContent("Engine: Claude Code");
   });
 
+  it("labels the prompt row of a turn an event started and opens its Event section", async () => {
+    const event = {
+      name: "comment.created",
+      eventId: "evt_1",
+      timestamp: "2026-11-27T10:00:00.000Z",
+      receivedAt: Date.parse("2026-11-27T10:02:00.000Z"),
+      delivery: "webhook" as const,
+      origin: "simulation" as const,
+      subscriptionId: "esub_1",
+    };
+    render(
+      <TraceViewer
+        trace={{
+          ...waterfallTrace,
+          turnEvents: [
+            {
+              promptIndex: 1,
+              turnStartedAtMs: Date.parse("2026-11-27T10:02:40.000Z"),
+              event,
+            },
+          ],
+        }}
+      />,
+    );
+    openTraceTab();
+
+    const rows = await screen.findAllByTestId("trace-row");
+    const eventRow = rows.find((row) =>
+      row.textContent?.includes("Event: comment.created"),
+    );
+    expect(eventRow).toBeDefined();
+    expect(
+      within(eventRow!).getByTestId("trace-event-test-badge"),
+    ).toHaveTextContent("Test");
+    // The other turn keeps its typed prompt as its label, and has no badge.
+    const typedRow = rows.find((row) =>
+      row.textContent?.includes('User: "Need docs"'),
+    );
+    expect(typedRow).toBeDefined();
+    expect(
+      within(typedRow!).queryByTestId("trace-event-test-badge"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(within(eventRow!).getByTestId("trace-row-label-button"));
+    const section = within(screen.getByTestId("trace-detail-pane")).getByTestId(
+      "trace-event-section",
+    );
+    expect(section).toHaveTextContent("comment.created");
+    expect(within(section).getByTestId("trace-event-wait-received")).toHaveTextContent("+2m");
+    expect(within(section).getByTestId("trace-event-wait-turn-started")).toHaveTextContent("+40.0s");
+    expect(within(section).getByTestId("trace-event-total-wait")).toHaveTextContent("2m 40s");
+    expect(
+      within(section).getByRole("button", { name: "Copy event ID" }),
+    ).toBeInTheDocument();
+    expect(
+      within(section).getByRole("button", { name: "Copy subscription ID" }),
+    ).toBeInTheDocument();
+    expect(section).toHaveTextContent("Webhook");
+
+    // The typed turn's detail pane has no Event section.
+    fireEvent.click(within(typedRow!).getByTestId("trace-row-label-button"));
+    expect(screen.queryByTestId("trace-event-section")).not.toBeInTheDocument();
+  });
+
   it("filters the waterfall to tool rows while preserving step context", async () => {
     const user = userEvent.setup();
     render(<TraceViewer trace={waterfallTrace} />);

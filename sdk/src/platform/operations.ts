@@ -9733,7 +9733,7 @@ export const getChatSessionTraceOperation: PlatformOperation<
   name: "get_chat_session_trace",
   title: "Read a chat session's execution trace",
   description:
-    "Return per-turn execution spans for a session: per-tool-call latency, token usage, and indices into the transcript. INCREMENTAL — returns the LATEST turn by default, not the whole session; use turnId or afterPromptIndex for older turns and includeSpans:false for summaries. A turn whose spans could not be read reports spansUnavailable rather than an empty span list, because 'made no calls' and 'could not fetch' are opposite conclusions.",
+    "Return per-turn execution spans for a session: per-tool-call latency, token usage, and indices into the transcript. INCREMENTAL — returns the LATEST turn by default, not the whole session; use turnId or afterPromptIndex for older turns and includeSpans:false for summaries. A turn whose spans could not be read reports spansUnavailable rather than an empty span list, because 'made no calls' and 'could not fetch' are opposite conclusions. A turn an MCP event started carries `event`: its name, id, delivery mode, origin and when MCPJam received it.",
   readOnly: true,
   permalink: derivePermalinks((result, _input, context) => {
     const projectId =
@@ -14797,6 +14797,7 @@ const traceDestinationSourceTypes = z.enum([
   "study",
   "swarm",
   "direct",
+  "event",
 ]);
 
 const listTraceDestinationsInput = z.object({
@@ -14898,7 +14899,7 @@ const createTraceDestinationInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Which traces to stream. `direct` is Playground, and only sessions SHARED to the workspace are ever sent — a private Playground session is excluded server-side. `swarm` is high volume: one run is many sessions."
+      "Which traces to stream. `direct` is Playground, and only sessions SHARED to the workspace are ever sent — a private Playground session is excluded server-side. `event` selects background trigger runs; until they export under their own source type (a server-side rollout), they still match `direct`, as a Playground event turn always does. `swarm` is high volume: one run is many sessions."
     ),
   includeContent: z
     .boolean()

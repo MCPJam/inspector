@@ -91,6 +91,7 @@ import {
   isProviderOverloadError,
 } from "./provider-error-normalization.js";
 import { type LiveChatTraceUsage } from "@/shared/live-chat-trace";
+import type { EventAtTurn } from "@/shared/event-at-turn";
 import {
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
@@ -157,6 +158,8 @@ export interface OrgModelHandlerOptions {
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
+  /** The MCP event that started this turn, echoed on `turn_start`. */
+  eventAtTurn?: EventAtTurn;
   onLiveTextDelta?: (delta: string) => void;
   /**
    * The end user's Authorization header from the inbound request. Forwarded
@@ -366,6 +369,8 @@ export interface OrgLocalModelHandlerOptions {
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
+  /** The MCP event that started this turn, echoed on `turn_start`. */
+  eventAtTurn?: EventAtTurn;
   onLiveTextDelta?: (delta: string) => void;
   /**
    * Inbound request abort signal. Passed to streamText so a client
@@ -691,6 +696,7 @@ export function handleLocalOrgChatModel(
     abortSignal: options.abortSignal,
     maxSteps: resolvedMaxSteps,
     onLiveTextDelta,
+    ...(options.eventAtTurn ? { eventAtTurn: options.eventAtTurn } : {}),
     onEngineError: () => { streamErrored = true; },
     ...(historyPresentation ? {
       transformStepMessages: (stepMessages) =>
@@ -994,6 +1000,7 @@ export async function handleHostedOrgChatModel(
     onConversationComplete: options.onConversationComplete,
     onStreamComplete: options.onStreamComplete,
     onStreamWriterReady: options.onStreamWriterReady,
+    ...(options.eventAtTurn ? { eventAtTurn: options.eventAtTurn } : {}),
     onLiveTextDelta: options.onLiveTextDelta,
     clientIp: options.clientIp,
     abortSignal: options.abortSignal,
