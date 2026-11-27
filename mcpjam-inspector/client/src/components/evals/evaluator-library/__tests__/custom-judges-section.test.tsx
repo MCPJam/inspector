@@ -157,6 +157,70 @@ describe("CustomJudgesSection", () => {
     expect(screen.getByLabelText("Name")).toHaveValue("Unsaved");
   });
 
+  it("keeps a new judge open when the suite fills up before it is added", () => {
+    const written = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        id: `judge-${i}`,
+        label: `Judge ${i}`,
+        prompt: "Is {{final_answer}} right?",
+        output: { kind: "passfail" as const },
+      }));
+    const config = (n: number): EvalJudgeConfig => ({
+      customJudges: { enabled: true, judges: written(n) },
+    });
+    const onChange = vi.fn();
+    const { rerender } = renderWithProviders(
+      <CustomJudgesSection
+        judgeConfig={config(4)}
+        onJudgeConfigChange={onChange}
+        capabilities={capabilities}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Write a judge" }));
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Cites the order number" },
+    });
+    fireEvent.change(screen.getByLabelText("Judge prompt"), {
+      target: { value: "Does {{final_answer}} cite the order?" },
+    });
+    // A fifth judge arrives from the library while this draft is open.
+    rerender(
+      <CustomJudgesSection
+        judgeConfig={config(5)}
+        onJudgeConfigChange={onChange}
+        capabilities={capabilities}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Add judge" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "A suite can have 5 judges. Remove one to add this judge.",
+    );
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Name")).toHaveValue("Cites the order number");
+  });
+
+  it("says when the suite turned judges you write off, and turns them on", () => {
+    const onChange = vi.fn();
+    renderWithProviders(
+      <CustomJudgesSection
+        judgeConfig={{ customJudges: { enabled: false, judges: [] } }}
+        onJudgeConfigChange={onChange}
+        capabilities={capabilities}
+      />,
+    );
+    expect(
+      screen.getByRole("region", { name: "Judges you write" }),
+    ).toHaveTextContent(
+      "Paused: judges you write are turned off for this suite.",
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Turn on judges you write" }),
+    );
+    expect(onChange).toHaveBeenCalledWith({
+      customJudges: { enabled: true, judges: [] },
+    });
+  });
+
   it("reads the judge limit and prompt length from the backend's capability", () => {
     const custom = capabilities.judges?.custom;
     if (!custom) throw new Error("Expected the custom judge capability");
