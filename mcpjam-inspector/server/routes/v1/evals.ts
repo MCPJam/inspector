@@ -4371,6 +4371,7 @@ async function launchEvalRun(params: {
     matchOptionsOverride?: MatchOptionsInput;
   };
   suiteRerun: boolean;
+  accountSource?: { runId?: string; caseIds?: string[] };
   environmentId: string | undefined;
   environmentLaunch: ResolvedEnvironmentForLaunch | undefined;
   serverIds: string[];
@@ -4442,10 +4443,12 @@ async function launchEvalRun(params: {
     connectionId: accountId,
   }));
   const { convexClient } = createConvexClients(convexAuthToken);
+  const accountCaseIds = params.accountSource?.caseIds ?? body.caseIds;
   const plan = body.suiteId
     ? await loadEvalRunAccountPlan(convexClient, {
         suiteId: body.suiteId,
-        ...(body.caseIds?.length ? { caseIds: body.caseIds } : {}),
+        ...(accountCaseIds?.length ? { caseIds: accountCaseIds } : {}),
+        ...(params.accountSource?.runId ? { sourceRunId: params.accountSource.runId } : {}),
         serverIds,
         ...(runAccounts ? { runAccounts } : {}),
       })
@@ -6170,6 +6173,10 @@ evals.post("/projects/:projectId/eval-runs/:runId/rerun", async (c) => {
         ...(idempotencyKey ? { idempotencyKey } : {}),
       },
       suiteRerun: true,
+      accountSource: {
+        runId: sourceRun!.accountsAtRun?.some((entry: { cases?: unknown[] }) => entry.cases?.length) ? runId : undefined,
+        caseIds: preview.selectedCaseIds.length ? preview.selectedCaseIds : undefined,
+      },
       environmentId: servers.environmentId,
       environmentLaunch: servers.environmentLaunch,
       serverIds: servers.serverIds,
@@ -8183,6 +8190,9 @@ evals.post(
       ...(caseIds ? { caseIds } : {}),
       ...(iterationOverride !== undefined ? { iterationOverride } : {}),
     };
+    const accountSource = sourceRun?.accountsAtRun?.some((entry: { cases?: unknown[] }) => entry.cases?.length)
+      ? { runId: sourceRunId }
+      : undefined;
 
     let original: LaunchedEvalRun | undefined;
     try {
@@ -8198,6 +8208,7 @@ evals.post(
           idempotencyKey: `${experimentId}:original`,
         },
         suiteRerun: true,
+        accountSource,
         environmentId: servers.environmentId,
         environmentLaunch: servers.environmentLaunch,
         serverIds: servers.serverIds,
@@ -8230,6 +8241,7 @@ evals.post(
           toolDescriptionOverride: { experimentId },
         },
         suiteRerun: true,
+        accountSource,
         environmentId: servers.environmentId,
         environmentLaunch: servers.environmentLaunch,
         serverIds: servers.serverIds,

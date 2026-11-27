@@ -42,6 +42,7 @@ import {
   createConvexClient,
   type ReplayConfig,
 } from "./route-helpers.js";
+import type { ExecuteSuiteReplayFromRunParams } from "./replay-suite-run.js";
 import {
   loadEvalRunAccountPlan,
   loadSuiteConnectionIdSets,
@@ -428,21 +429,11 @@ function normalizedUrl(url: string | undefined): string | undefined {
  * `serverBindings` maps each name the source run used to the id the server
  * runs under now. `undefined` when none is the project's.
  */
-export function localReplayServers(c: Context, convexAuthToken: string) {
-  return async (target: {
-    projectId?: string;
-    suiteId: string;
-    replayConfig: ReplayConfig;
-    /** The source run's environment, which lists servers its config left out. */
-    environment?: { servers?: unknown };
-  }): Promise<
-    | {
-        manager: MCPClientManager;
-        serverIds: string[];
-        serverBindings: Array<{ serverName: string; projectServerId: string }>;
-      }
-    | undefined
-  > => {
+export function projectReplayServers(
+  c: Context,
+  convexAuthToken: string,
+): NonNullable<ExecuteSuiteReplayFromRunParams["openReplayServers"]> {
+  return async (target) => {
     const { projectId, replayConfig } = target;
     if (!projectId) return undefined;
     const convex = createConvexClient(convexAuthToken);
@@ -460,11 +451,16 @@ export function localReplayServers(c: Context, convexAuthToken: string) {
       projectServerId: string;
     }> = [];
     const others: ReplayConfig["servers"] = [];
-    for (const ref of new Set([...stored.keys(), ...runRefs])) {
-      const named = projectServersNamed(projectServers, ref);
+    const bindings = new Map(target.environment?.serverBindings?.map(({ serverName, projectServerId }) => [serverName, projectServerId]));
+    const planned = new Set(target.plan?.map(({ serverId }) => serverId));
+    for (const ref of new Set([...stored.keys(), ...runRefs, ...planned])) {
+      const named = projectServersNamed(projectServers, bindings.get(ref) ?? ref);
       const server = named.length === 1 ? named[0] : undefined;
       const config = stored.get(ref);
       if (!server) {
+        if (target.plan && (!config || planned.has(ref) || !!bindings.get(ref))) {
+          throw new WebRouteError(409, ErrorCode.CONFLICT, `The replay cannot reconnect ${ref}. Start a new run with the current MCP servers.`);
+        }
         if (config) others.push(config);
         continue;
       }
@@ -482,34 +478,36 @@ export function localReplayServers(c: Context, convexAuthToken: string) {
       }
     }
     if (!authorized.size) return undefined;
-    const { manager } = await createAuthorizedManager(
-      callerContextFromHono(c),
-      convexAuthToken,
-      projectId,
-      [...authorized.keys()],
-      WEB_CALL_TIMEOUT_MS,
-      undefined,
-      undefined,
-      {
-        pluginComputerRuntime: false,
-        ...(connectionIdSets ? { connectionIdSets } : {}),
-        serverNames: [...authorized.values()],
-        xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
-      },
-    );
-    try {
-      await connectReplayManagerServers(manager, {
-        ...replayConfig,
-        servers: others,
-      });
-    } catch (error) {
-      await manager.disconnectAllServers();
-      throw error;
-    }
+    const open = async (connectionIdSets?: ConnectionIdSets) => {
+      const { manager } = await createAuthorizedManager(
+        callerContextFromHono(c),
+        convexAuthToken,
+        projectId,
+        [...authorized.keys()],
+        WEB_CALL_TIMEOUT_MS,
+        undefined,
+        undefined,
+        {
+          pluginComputerRuntime: false,
+          ...(connectionIdSets ? { connectionIdSets } : {}),
+          serverNames: [...authorized.values()],
+          xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+        },
+      );
+      try {
+        await connectReplayManagerServers(manager, { ...replayConfig, servers: others });
+        return manager;
+      } catch (error) {
+        await manager.disconnectAllServers();
+        throw error;
+      }
+    };
+    const groups = target.plan ? await openEvalAccountGroups(target.plan, open, connectionIdSets) : undefined;
     return {
-      manager,
+      manager: groups?.first ?? await open(connectionIdSets),
       serverIds: [...authorized.keys(), ...others.map((s) => s.serverId)],
       serverBindings,
+      ...(groups ? { managerForCase: groups.forCase, close: groups.close } : {}),
     };
   };
 }

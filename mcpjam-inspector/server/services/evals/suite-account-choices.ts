@@ -77,6 +77,7 @@ export async function loadQuickRunAccounts(
 
 type AccountPlanInput = {
   suiteId: string;
+  sourceRunId?: string;
   caseIds?: string[];
   serverIds: string[];
   runAccounts?: EvalAccountSelection[];
@@ -94,7 +95,7 @@ export async function loadEvalRunAccountPlan(
 ): Promise<EvalAccountPlan | null> {
   try {
     const plan = await convex.query(getEvalRunAccountPlan, input);
-    if (plan !== null || !input.runAccounts?.length) return plan;
+    if (plan !== null || (!input.runAccounts?.length && !input.sourceRunId)) return plan;
     throw new WebRouteError(
       409,
       ErrorCode.VALIDATION_ERROR,
@@ -102,7 +103,7 @@ export async function loadEvalRunAccountPlan(
     );
   } catch (error) {
     if (/Could not find public function.*getEvalRunAccountPlan/i.test(String(error))) {
-      if (!input.runAccounts?.length) return null;
+      if (!input.runAccounts?.length && !input.sourceRunId) return null;
       throw new WebRouteError(
         409,
         ErrorCode.VALIDATION_ERROR,

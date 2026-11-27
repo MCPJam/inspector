@@ -30,6 +30,7 @@ import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
 import { refuseWhileDraining } from "../../services/lifecycle/admission.js";
 import { serverDrain } from "../../services/lifecycle/drain.js";
 import { prepareSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";
+import { projectReplayServers } from "../../services/evals/local-run-manager.js";
 import {
   createAuthorizedManager,
   callerContextFromHono,
@@ -733,6 +734,9 @@ evals.post("/replay-run", async (c) =>
           modelApiKeys: body.modelApiKeys,
           notes: body.notes,
           passCriteria: body.passCriteria,
+          openReplayServers: async (target) => target.plan
+            ? projectReplayServers(c, convexAuthToken)(target)
+            : undefined,
         });
 
         detachPreparedEvalRun({
