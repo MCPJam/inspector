@@ -165,14 +165,19 @@ describe("library dedupe by criterion", () => {
     ).toBe(true);
   });
 
-  it("does not duplicate a hand-written copy on update", () => {
-    const handWritten = { type: "toolCallCountUnder", count: 10 } as const;
+  it("tags a hand-written copy on update instead of duplicating it", () => {
+    const handWritten = {
+      type: "toolCallCountUnder",
+      count: 10,
+      role: "required",
+    } as const;
     const next = withEvaluatorUpdated(
       [handWritten, ...taggedChecks(wasted).slice(1)],
       "no-wasted-calls",
     );
+    // Tagged so the evaluator's card still counts it; its role is kept.
     expect(next.filter((p) => p.type === "toolCallCountUnder")).toEqual([
-      handWritten,
+      { ...handWritten, evaluator: { id: wasted.id, version: wasted.version } },
     ]);
     expect(next.filter((p) => p.type === "noRepeatedIdenticalCall")).toHaveLength(1);
   });

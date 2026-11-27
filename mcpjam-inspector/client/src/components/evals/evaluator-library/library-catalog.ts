@@ -164,7 +164,7 @@ export function withLibraryChecks(
  * Replaces an evaluator's checks with its current library version. Checks
  * the author already removed come back, because the new version defines the
  * set; per-check edits are replaced too. A check the suite already has from
- * elsewhere is not added again.
+ * elsewhere is not added again; a hand-written one is tagged, as on add.
  */
 export function withEvaluatorUpdated(
   predicates: readonly Predicate[],
@@ -172,8 +172,10 @@ export function withEvaluatorUpdated(
 ): Predicate[] {
   const entry = findLibraryEvaluator(evaluatorId);
   if (!entry) return [...predicates];
-  const rest = withoutEvaluator(predicates, evaluatorId);
-  return [...rest, ...missingChecks(entry, rest)];
+  return withLibraryChecks(
+    withoutEvaluator(predicates, evaluatorId),
+    taggedChecks(entry),
+  );
 }
 
 /** "2 assertions", for the card footer. */

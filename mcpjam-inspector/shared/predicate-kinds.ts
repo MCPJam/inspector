@@ -4,6 +4,7 @@
 
 import type { Predicate } from "@/shared/eval-matching";
 import {
+  DECLARED_OUTPUT_SCHEMA,
   describeMatchExpectation,
   isObservationPredicateKind,
   isTurnScopablePredicateKind,
@@ -448,7 +449,7 @@ export function formatCriterion(
         ? `${predicate.toolName} result contains "${predicate.needle ?? ""}"`
         : `A tool result contains "${predicate.needle ?? ""}"`;
     case "toolResultMatchesSchema":
-      if (predicate.schema === "declared") {
+      if (predicate.schema === DECLARED_OUTPUT_SCHEMA) {
         return predicate.toolName
           ? `${predicate.toolName} result matches its declared output schema`
           : "Every tool result matches its declared output schema";

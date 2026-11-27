@@ -166,4 +166,40 @@ describe("PredicatesList — nothing applied", () => {
       screen.getByRole("region", { name: "Assertions" }),
     ).toHaveTextContent("No assertions applied. Each row says why.");
   });
+
+  it("shows no summary badge when every row that ran is advisory", () => {
+    render(
+      <PredicatesList
+        predicates={[
+          {
+            predicate: { type: "noEndingQuestion", role: "advisory" },
+            passed: true,
+            reason: "the final message does not end with a question",
+          },
+        ]}
+      />,
+    );
+    const region = screen.getByRole("region", { name: "Assertions" });
+    expect(region).not.toHaveTextContent("No assertions applied");
+    expect(region).not.toHaveTextContent("assertions passed");
+    expect(within(region).getByText("PASS")).toBeInTheDocument();
+  });
+
+  it("labels a stored evidence error as Error, not FAIL", () => {
+    render(
+      <PredicatesList
+        predicates={[
+          {
+            predicate: { type: "toolResultSizeUnder", maxBytes: 10 },
+            passed: false,
+            status: "error",
+            reason: "the capture is incomplete",
+          },
+        ]}
+      />,
+    );
+    const region = screen.getByRole("region", { name: "Assertions" });
+    expect(within(region).getByText("Error")).toBeInTheDocument();
+    expect(within(region).queryByText("FAIL")).not.toBeInTheDocument();
+  });
 });
