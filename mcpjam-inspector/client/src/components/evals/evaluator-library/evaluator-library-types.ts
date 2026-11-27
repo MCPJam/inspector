@@ -7,19 +7,6 @@
  * should grow fields that duplicate them.
  */
 
-/** The OWASP MCP Top 10 (2025) items a security evaluator can cover. */
-export type OwaspId =
-  | "MCP01"
-  | "MCP02"
-  | "MCP03"
-  | "MCP04"
-  | "MCP05"
-  | "MCP06"
-  | "MCP07"
-  | "MCP08"
-  | "MCP09"
-  | "MCP10";
-
 /** How an evaluator decides. */
 export type EvaluatorMethod = "assertions" | "judge" | "decision";
 

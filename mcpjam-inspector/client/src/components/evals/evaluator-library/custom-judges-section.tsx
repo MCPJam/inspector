@@ -236,7 +236,6 @@ export function JudgeEditor({
         value={draft.prompt}
         onChange={(prompt) => setDraft({ ...draft, prompt })}
         variables={variableMappings}
-        scope="iteration"
         maxLength={MAX_CUSTOM_JUDGE_PROMPT_LENGTH}
       />
       <details className="text-sm text-muted-foreground">

@@ -38,21 +38,17 @@ export function VariableChip({
 }
 
 /**
- * The judge prompt. Variables are paths into the iteration record, so
- * nothing is copied into the prompt by hand. Typing {{ opens the variable
- * list, and unknown variables are flagged before save, not at run time.
+ * Typing {{ opens the list of variables the judge can read for an iteration.
  */
 export function PromptEditor({
   value,
   onChange,
   variables,
-  scope,
   maxLength = MAX_JUDGE_INSTRUCTIONS_LENGTH,
 }: {
   value: string;
   onChange: (next: string) => void;
   variables: readonly PromptVariable[];
-  scope: "iteration" | "conversation";
   /** Defaults to the goal judge's instructions limit. */
   maxLength?: number;
 }) {
@@ -137,7 +133,7 @@ export function PromptEditor({
               className="flex cursor-pointer justify-between gap-3 rounded px-2 py-1 text-xs hover:bg-muted"
             >
               <span className="font-mono">{variable.name}</span>
-              <span className="text-muted-foreground">{variable.path}</span>
+              <span className="text-muted-foreground">{variable.description}</span>
             </li>
           ))}
         </ul>
@@ -146,11 +142,7 @@ export function PromptEditor({
         id={`${id}-help`}
         className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground"
       >
-        <span>
-          {scope === "iteration"
-            ? "Reads one iteration."
-            : "Reads the whole conversation."}
-        </span>
+        <span>Reads one iteration.</span>
         {used.map((name) => (
           <VariableChip key={name} name={name} known={known.has(name)} />
         ))}

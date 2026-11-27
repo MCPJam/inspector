@@ -16,32 +16,16 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 const variables: PromptVariable[] = [
-  {
-    name: "user_request",
-    path: "trace.messages.lastUser",
-    preview: "find me wireless earbuds under $150",
-  },
-  {
-    name: "tool_results",
-    path: "transcript.toolResults",
-    preview: '[{ "title": "Echo Buds", "in_stock": false }]',
-  },
-  { name: "final_answer", path: "transcript.finalText", preview: "I found…" },
-];
-
-const paths = [
-  "trace.messages.lastUser",
-  "transcript.toolResults",
-  "transcript.finalText",
-  "case.expectedOutput",
+  { name: "user_prompt", description: "The user's request" },
+  { name: "tool_results", description: "Each tool step with its result" },
+  { name: "final_answer", description: "The agent's final answer" },
 ];
 
 export const JudgePrompt: Story = {
   render: function Render() {
     const [prompt, setPrompt] = useState(
-      "Read {{user_request}} and {{tool_results}}.\nDid {{final_answer}} only recommend items in stock? Also check {{cart}}.",
+      "Read {{user_prompt}} and {{tool_results}}.\nDid {{final_answer}} only recommend items in stock? Also check {{cart}}.",
     );
-    const [vars, setVars] = useState(variables);
     return (
       <Grid>
         <Specimen
@@ -51,21 +35,11 @@ export const JudgePrompt: Story = {
           <PromptEditor
             value={prompt}
             onChange={setPrompt}
-            variables={vars}
-            scope="iteration"
+            variables={variables}
           />
         </Specimen>
         <Specimen label="variable mapping" width={680}>
-          <VariableMappingTable
-            variables={vars}
-            paths={paths}
-            previewLabel="Iteration #3"
-            onPathChange={(name, path) =>
-              setVars((all) =>
-                all.map((v) => (v.name === name ? { ...v, path } : v)),
-              )
-            }
-          />
+          <VariableMappingTable variables={variables} />
         </Specimen>
       </Grid>
     );

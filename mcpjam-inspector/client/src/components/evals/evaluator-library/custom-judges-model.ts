@@ -18,7 +18,7 @@ const VARIABLE_DESCRIPTIONS = new Map([
 export function judgePromptVariables(names: readonly string[]): PromptVariable[] {
   return names.map((name) => ({
     name,
-    path: VARIABLE_DESCRIPTIONS.get(name) ?? "Trial data",
+    description: VARIABLE_DESCRIPTIONS.get(name) ?? "Trial data",
   }));
 }
 
