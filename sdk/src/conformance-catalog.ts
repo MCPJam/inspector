@@ -81,7 +81,7 @@ export const PROTOCOL_CHECK_CATALOG = {
   "protocol-invalid-method-error": {
     title: "Invalid Method Error",
     description:
-      "Server returns a valid JSON-RPC error for an unrecognized method name.",
+      "Server answers an unrecognized method name with the JSON-RPC Method not found error (-32601), and with HTTP 404 on 2026-07-28.",
   },
   "localhost-host-rebinding-rejected": {
     title: "Reject Evil Host Header",

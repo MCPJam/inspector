@@ -76,7 +76,8 @@ export const PROTOCOL_CHECK_SOURCES = {
   "resources-list": bothEras("/server/resources#listing-resources"),
   "protocol-invalid-method-error": {
     legacy: `${LEGACY_SPEC}/basic/index#error-responses`,
-    modern: `${MODERN_SPEC}/basic/index#error-codes`,
+    // Where 2026-07-28 states both halves of the rule: 404 and -32601.
+    modern: `${MODERN_STREAMABLE_HTTP}#protocol-version-header`,
   },
   "localhost-host-rebinding-rejected": {
     legacy: `${LEGACY_TRANSPORTS}#security-warning`,
