@@ -8,10 +8,7 @@ import {
   DialogTrigger,
 } from "@mcpjam/design-system/dialog";
 import type { Predicate } from "@mcpjam/sdk/predicates";
-import {
-  MAX_RUBRIC_CHECK_QUESTIONS,
-  type RubricCheckQuestion,
-} from "@/components/shared/session-quality/judge-config";
+import type { RubricCheckQuestion } from "@/components/shared/session-quality/judge-config";
 import { ArrowLeft, Library } from "lucide-react";
 import { useState } from "react";
 import { formatCriterion } from "@/shared/predicate-kinds";
@@ -19,29 +16,16 @@ import { EvaluatorCard } from "./evaluator-card";
 import { useEvaluatorLibraryEnabled } from "./evaluator-library-flag";
 import {
   builtFrom,
-  hasQuestionIdConflict,
-  hasRoomForQuestions,
   isAuthorable,
   isInSuite,
   LIBRARY_EVALUATORS,
-  missingChecks,
+  questionsWithAdded,
+  taggedChecks,
   taggedQuestions,
   type LibraryEvaluator,
 } from "./library-catalog";
 
-/**
- * Opens the evaluator library from suite settings. Adding an evaluator hands
- * its checks to `onAdd`, which saves them like "Add assertion" does. Renders
- * nothing unless the evaluator-library flag is on and this deployment can
- * save at least one library evaluator.
- */
-export function EvaluatorLibraryButton({
-  predicates,
-  questions = [],
-  authorableKinds,
-  canAskYesNo = false,
-  onAdd,
-}: {
+type LibraryProps = {
   predicates: readonly Predicate[];
   /** The suite's rubric-check questions, to mark evaluators already added. */
   questions?: readonly RubricCheckQuestion[];
@@ -52,62 +36,36 @@ export function EvaluatorLibraryButton({
     checks: readonly Predicate[],
     questions: readonly RubricCheckQuestion[],
   ) => void;
-}) {
+};
+
+export function EvaluatorLibraryButton(props: LibraryProps) {
   const enabled = useEvaluatorLibraryEnabled();
-  const anyAuthorable = LIBRARY_EVALUATORS.some((e) =>
-    isAuthorable(e, authorableKinds, canAskYesNo),
+  if (!enabled) return null;
+  const available = LIBRARY_EVALUATORS.filter((e) =>
+    isAuthorable(e, props.authorableKinds, props.canAskYesNo),
   );
-  if (!enabled || !anyAuthorable) return null;
-  return (
-    <EvaluatorLibraryDialog
-      predicates={predicates}
-      questions={questions}
-      authorableKinds={authorableKinds}
-      canAskYesNo={canAskYesNo}
-      onAdd={onAdd}
-    />
-  );
+  if (available.length === 0) return null;
+  return <EvaluatorLibraryDialog {...props} available={available} />;
 }
 
-export function EvaluatorLibraryDialog({
+function EvaluatorLibraryDialog({
   predicates,
   questions = [],
-  authorableKinds,
-  canAskYesNo = false,
   onAdd,
-}: {
-  predicates: readonly Predicate[];
-  /** The suite's rubric-check questions, to mark evaluators already added. */
-  questions?: readonly RubricCheckQuestion[];
-  authorableKinds?: readonly Predicate["type"][];
-  /** Whether this deployment accepts yes/no rubric-check questions. */
-  canAskYesNo?: boolean;
-  onAdd: (
-    checks: readonly Predicate[],
-    questions: readonly RubricCheckQuestion[],
-  ) => void;
+  available,
+}: Omit<LibraryProps, "authorableKinds" | "canAskYesNo"> & {
+  available: readonly LibraryEvaluator[];
 }) {
   const [open, setOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const available = LIBRARY_EVALUATORS.filter((e) =>
-    isAuthorable(e, authorableKinds, canAskYesNo),
-  );
   const selected = available.find((e) => e.id === selectedId);
-  const reasonAddDisabled = (evaluator: LibraryEvaluator) => {
-    if (hasQuestionIdConflict(evaluator, questions)) {
-      return "A question already uses this preset's ID. Remove that question to add the preset.";
-    }
-    if (!hasRoomForQuestions(evaluator, questions)) {
-      return `This suite already has ${MAX_RUBRIC_CHECK_QUESTIONS} rubric-check questions. Remove one to add this evaluator.`;
-    }
-  };
+  // The same check the suite edit makes, so Add is never offered for an
+  // edit that would be refused.
+  const reasonAddDisabled = (evaluator: LibraryEvaluator) =>
+    questionsWithAdded(questions, taggedQuestions(evaluator)).refused;
   const add = (evaluator: LibraryEvaluator) => {
     if (reasonAddDisabled(evaluator)) return;
-    const ids = new Set(questions.map((q) => q.id));
-    onAdd(
-      missingChecks(evaluator, predicates),
-      taggedQuestions(evaluator).filter((q) => !ids.has(q.id)),
-    );
+    onAdd(taggedChecks(evaluator), taggedQuestions(evaluator));
   };
   return (
     <Dialog
@@ -216,9 +174,7 @@ function EvaluatorDetail({
         ))}
       </ul>
       {!inSuite && reasonAddDisabled ? (
-        <p className="text-sm text-muted-foreground">
-          {reasonAddDisabled}
-        </p>
+        <p className="text-sm text-muted-foreground">{reasonAddDisabled}</p>
       ) : null}
       <div className="flex justify-between gap-2">
         <Button type="button" variant="ghost" onClick={onBack}>

@@ -488,6 +488,7 @@ export function SuiteScorerTable({
                 ) : (
                   <EvaluatorStageRows
                     rows={group.rows}
+                    stageLabel={group.label}
                     predicateOf={(row) =>
                       row.predicateIndex !== undefined
                         ? rules[row.predicateIndex]?.predicate
@@ -500,6 +501,7 @@ export function SuiteScorerTable({
                     }
                     onRemoveEvaluator={library?.remove}
                     onUpdateEvaluator={library?.update}
+                    updateRefusal={library?.updateRefusal}
                     renderRow={(row) => (
                       <ScorerRow
                         key={row.id}

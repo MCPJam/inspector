@@ -1,54 +1,51 @@
 import type { Predicate } from "@mcpjam/sdk/predicates";
-import {
-  MAX_RUBRIC_CHECK_QUESTIONS,
-  type RubricCheckQuestion,
-} from "@/components/shared/session-quality/judge-config";
+import type { RubricCheckQuestion } from "@/components/shared/session-quality/judge-config";
 import { withRubricChecks } from "../rubric-checks-model";
 import type { ScorerTableScope } from "../suite-scorer-table";
 import type { EvalJudgeConfig } from "../types";
 import {
   findLibraryEvaluator,
-  hasQuestionIdConflict,
-  LIBRARY_EVALUATORS,
-  taggedQuestions,
+  questionsWithAdded,
+  questionsWithEvaluatorUpdated,
   withEvaluatorUpdated,
+  withLibraryChecks,
   withoutEvaluator,
+  type QuestionsEdit,
 } from "./library-catalog";
 
-/** The evaluator a rubric-check row came from, by its `q:<id>` key. */
-export function evaluatorIdForQuestionKey(
-  key: string | undefined,
-): string | undefined {
-  if (!key?.startsWith("q:")) return undefined;
-  const id = key.slice(2);
-  // Exact ids only: a hand-written question named like a library one, such
-  // as `reports-tool-errors-mine`, is not from the library.
-  return LIBRARY_EVALUATORS.find((e) =>
-    taggedQuestions(e).some((q) => q.id === id),
-  )?.id;
-}
-
 /**
- * Only adding switches rubric checks on, because that is the author asking
- * for questions to run; removing or updating an evaluator keeps the author's
- * own on/off choice.
+ * The judge config with these rubric-check questions. Adding turns rubric
+ * checks back on if the author had turned them off, because adding asks for
+ * questions to run; a switch that was never set already means on, so it
+ * stays unset. A slot or config this empties is dropped, so adding an
+ * evaluator and removing it again leaves the config as it was.
  */
 function withQuestions(
   judgeConfig: EvalJudgeConfig | undefined,
-  edit: (current: RubricCheckQuestion[]) => RubricCheckQuestion[],
+  questions: RubricCheckQuestion[],
   turnOn: boolean,
-): EvalJudgeConfig {
-  const current = judgeConfig?.rubricChecks?.questions ?? [];
-  return withRubricChecks(judgeConfig, {
-    ...(turnOn ? { enabled: true } : {}),
-    questions: edit(current).slice(0, MAX_RUBRIC_CHECK_QUESTIONS),
+): EvalJudgeConfig | undefined {
+  const next = withRubricChecks(judgeConfig, {
+    ...(turnOn && judgeConfig?.rubricChecks?.enabled === false
+      ? { enabled: true }
+      : {}),
+    questions,
   });
+  if (next.rubricChecks && Object.keys(next.rubricChecks).length > 0) {
+    return next;
+  }
+  const rest = { ...next };
+  delete rest.rubricChecks;
+  return Object.keys(rest).length > 0 ? rest : undefined;
 }
 
 /**
  * Whole-evaluator edits for suite settings: checks go to the suite's
  * predicates, questions to its rubric checks. Undefined where the rows on
- * screen are inherited and cannot be edited here.
+ * screen are inherited, or the judge config is not editable here. `add` and
+ * `update` return why they could not apply and then change nothing, and
+ * `updateRefusal` gives that reason up front so the group can show it
+ * instead of Update.
  */
 export function librarySuiteEdits(
   scope: ScorerTableScope,
@@ -56,64 +53,67 @@ export function librarySuiteEdits(
   onJudgeConfigChange:
     ((next: EvalJudgeConfig | undefined) => void) | undefined,
 ) {
-  if (scope.kind !== "suite") return undefined;
-  const setQuestions = (
-    edit: (current: RubricCheckQuestion[]) => RubricCheckQuestion[],
-    turnOn = false,
-  ) => onJudgeConfigChange?.(withQuestions(judgeConfig, edit, turnOn));
+  if (scope.kind !== "suite" || !onJudgeConfigChange) return undefined;
+  const questions = judgeConfig?.rubricChecks?.questions ?? [];
+  const tagged = (evaluatorId: string) =>
+    questions.some((q) => q.evaluator?.id === evaluatorId);
+  const updated = (evaluatorId: string): QuestionsEdit => {
+    const entry = findLibraryEvaluator(evaluatorId);
+    if (!entry) {
+      return {
+        refused:
+          "This Inspector's library has no such evaluator. Remove it, or update it from a newer Inspector.",
+      };
+    }
+    return questionsWithEvaluatorUpdated(entry, questions);
+  };
   return {
     add(
       checks: readonly Predicate[],
-      questions: readonly RubricCheckQuestion[],
-    ) {
+      adding: readonly RubricCheckQuestion[],
+    ): string | undefined {
+      const edit = questionsWithAdded(questions, adding);
+      if (edit.refused !== undefined) return edit.refused;
       if (checks.length) {
-        scope.onPredicatesChange((previous) => [...previous, ...checks]);
-      }
-      if (questions.length) {
-        setQuestions(
-          (current) => [
-            ...current,
-            ...questions.filter((q) => !current.some((c) => c.id === q.id)),
-          ],
-          true,
+        scope.onPredicatesChange((previous) =>
+          withLibraryChecks(previous, checks),
         );
       }
+      if (adding.length) {
+        onJudgeConfigChange(withQuestions(judgeConfig, edit.questions, true));
+      }
+      return undefined;
     },
     remove(evaluatorId: string) {
       scope.onPredicatesChange((previous) =>
         withoutEvaluator(previous, evaluatorId),
       );
-      if (
-        judgeConfig?.rubricChecks?.questions?.some(
-          (q) => q.evaluator?.id === evaluatorId,
-        )
-      ) {
-        setQuestions((current) =>
-          current.filter((q) => q.evaluator?.id !== evaluatorId),
+      if (tagged(evaluatorId)) {
+        onJudgeConfigChange(
+          withQuestions(
+            judgeConfig,
+            questions.filter((q) => q.evaluator?.id !== evaluatorId),
+            false,
+          ),
         );
       }
     },
-    update(evaluatorId: string) {
-      const entry = findLibraryEvaluator(evaluatorId);
-      if (
-        !entry ||
-        hasQuestionIdConflict(entry, judgeConfig?.rubricChecks?.questions ?? [])
-      ) return;
+    update(evaluatorId: string): string | undefined {
+      const edit = updated(evaluatorId);
+      if (edit.refused !== undefined) return edit.refused;
       scope.onPredicatesChange((previous) =>
         withEvaluatorUpdated(previous, evaluatorId),
       );
-      const questions = taggedQuestions(entry);
-      // A new version with fewer or no questions still clears the old ones,
-      // or the group would keep offering Update.
-      const hadQuestions = judgeConfig?.rubricChecks?.questions?.some(
-        (q) => q.evaluator?.id === evaluatorId,
-      );
-      if (questions.length || hadQuestions) {
-        setQuestions((current) => [
-          ...current.filter((q) => q.evaluator?.id !== evaluatorId),
-          ...questions,
-        ]);
+      if (
+        findLibraryEvaluator(evaluatorId)?.questions?.length ||
+        tagged(evaluatorId)
+      ) {
+        onJudgeConfigChange(withQuestions(judgeConfig, edit.questions, false));
       }
+      return undefined;
+    },
+    updateRefusal(evaluatorId: string): string | undefined {
+      return updated(evaluatorId).refused;
     },
   };
 }

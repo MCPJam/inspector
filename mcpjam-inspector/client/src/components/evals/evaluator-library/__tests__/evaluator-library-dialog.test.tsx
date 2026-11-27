@@ -78,7 +78,7 @@ describe("EvaluatorLibraryButton", () => {
     expect(screen.getByText("Evaluator library")).toBeInTheDocument();
   });
 
-  it("skips assertions the suite already has and marks a full match", () => {
+  it("offers to include existing untagged assertions in the evaluator", () => {
     const onAdd = vi.fn();
     renderWithProviders(
       <EvaluatorLibraryButton
@@ -94,6 +94,10 @@ describe("EvaluatorLibraryButton", () => {
     );
     expect(onAdd).toHaveBeenCalledWith(
       [
+        {
+          type: "noToolErrors",
+          evaluator: { id: "actionable-tool-errors", version: 1 },
+        },
         {
           type: "toolErrorNamesInput",
           role: "advisory",
@@ -124,7 +128,7 @@ describe("EvaluatorLibraryButton", () => {
         predicates={[]}
         questions={[
           {
-            id: "answer-grounded-in-results-grounded",
+            id: "reports-tool-errors-reports-failures",
             kind: "yesno",
             label: "My question",
             instructions: "Grade my custom criterion.",
@@ -136,9 +140,15 @@ describe("EvaluatorLibraryButton", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "From library" }));
-    fireEvent.click(screen.getByRole("button", { name: "Answer Grounded in Results" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Reports Tool Errors" }),
+    );
     expect(screen.getByRole("button", { name: "Add to suite" })).toBeDisabled();
-    expect(screen.getByText(/already uses this preset/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'A question already uses the ID "reports-tool-errors-reports-failures". Rename or remove it to add this evaluator.',
+      ),
+    ).toBeInTheDocument();
     expect(onAdd).not.toHaveBeenCalled();
   });
 });
@@ -159,14 +169,16 @@ describe("library catalog", () => {
     const wasted = LIBRARY_EVALUATORS.find((e) => e.id === "no-wasted-calls");
     expect(wasted).toBeDefined();
     if (!wasted) return;
-    expect(isInSuite(wasted, [...wasted.checks])).toBe(true);
+    expect(isInSuite(wasted, taggedChecks(wasted))).toBe(true);
+    expect(isInSuite(wasted, [...wasted.checks])).toBe(false);
     expect(isInSuite(wasted, [{ type: "noToolErrors" }])).toBe(false);
   });
 });
 
 describe("library dedupe by criterion", () => {
-  const wasted = findLibraryEvaluator("no-wasted-calls")!;
-  const schema = findLibraryEvaluator("results-match-output-schema")!;
+  const wasted = findLibraryEvaluator("no-wasted-calls");
+  const schema = findLibraryEvaluator("results-match-output-schema");
+  if (!wasted || !schema) throw new Error("Expected library evaluators");
 
   it("adds a check whose arguments differ from the suite's", () => {
     const scoped = [
@@ -187,11 +199,12 @@ describe("library dedupe by criterion", () => {
     expect(isInSuite(schema, [authored])).toBe(false);
   });
 
-  it("ignores role and origin when matching", () => {
+  it("matches tagged checks regardless of role", () => {
+    const evaluator = { id: wasted.id, version: wasted.version };
     expect(
       isInSuite(wasted, [
-        { type: "toolCallCountUnder", count: 10, role: "advisory" },
-        { type: "noRepeatedIdenticalCall" },
+        { type: "toolCallCountUnder", count: 10, role: "advisory", evaluator },
+        { type: "noRepeatedIdenticalCall", evaluator },
       ]),
     ).toBe(true);
   });
@@ -242,7 +255,7 @@ describe("question-only evaluators", () => {
   it("adds a tagged yes/no question and no assertions", () => {
     const onAdd = open();
     fireEvent.click(
-      screen.getByRole("button", { name: "Answer Grounded in Results" }),
+      screen.getByRole("button", { name: "Reports Tool Errors" }),
     );
     expect(
       screen.getByRole("list", { name: "What this evaluator adds" }),
@@ -252,13 +265,32 @@ describe("question-only evaluators", () => {
       [],
       [
         expect.objectContaining({
-          id: "answer-grounded-in-results-grounded",
+          id: "reports-tool-errors-reports-failures",
           kind: "yesno",
           pass: { answer: "yes" },
-          evaluator: { id: "answer-grounded-in-results", version: 1 },
+          evaluator: { id: "reports-tool-errors", version: 1 },
         }),
       ],
     );
+  });
+
+  it("asks nothing the grader cannot see, so an unseen error cannot pass", () => {
+    const entry = findLibraryEvaluator("reports-tool-errors");
+    expect(entry?.questions).toHaveLength(1);
+    const [question] = entry?.questions ?? [];
+    expect(question?.passOn).toBe("yes");
+    expect(question?.instructions).toMatch(/every tool call/);
+    expect(question?.instructions).toMatch(/Answer no in every other case/);
+    expect(findLibraryEvaluator("answer-grounded-in-results")).toBeUndefined();
+  });
+
+  it("keeps every question inside the grader's instruction clip", () => {
+    // The backend clips a question's instructions at 600 characters.
+    for (const evaluator of LIBRARY_EVALUATORS) {
+      for (const q of evaluator.questions ?? []) {
+        expect(q.instructions.length, q.slug).toBeLessThanOrEqual(600);
+      }
+    }
   });
 });
 
@@ -269,9 +301,7 @@ describe("yes/no capability", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "From library" }));
     expect(screen.getByText("No Wasted Calls")).toBeInTheDocument();
-    expect(
-      screen.queryByText("Answer Grounded in Results"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Reports Tool Errors")).not.toBeInTheDocument();
   });
 });
 
@@ -296,18 +326,20 @@ describe("question cap", () => {
     fireEvent.click(screen.getByRole("button", { name: "From library" }));
     expect(
       screen.queryByRole("button", {
-        name: "Add Answer Grounded in Results to suite",
+        name: "Add Reports Tool Errors to suite",
       }),
     ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Add No Wasted Calls to suite" }),
     ).toBeInTheDocument();
     fireEvent.click(
-      screen.getByRole("button", { name: "Answer Grounded in Results" }),
+      screen.getByRole("button", { name: "Reports Tool Errors" }),
     );
     expect(screen.getByRole("button", { name: "Add to suite" })).toBeDisabled();
     expect(
-      screen.getByText(/already has 10 rubric-check questions/),
+      screen.getByText(
+        "Suites can ask up to 10 rubric-check questions, and adding this evaluator would make 11. Remove a question first.",
+      ),
     ).toBeInTheDocument();
     expect(onAdd).not.toHaveBeenCalled();
   });

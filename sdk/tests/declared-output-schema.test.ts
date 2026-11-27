@@ -98,6 +98,21 @@ describe("toolResultMatchesSchema with the declared schema", () => {
     expect(verdict.reason).toContain('"get_order"');
   });
 
+  test.each([
+    { $schema: "https://example.com/unknown-dialect", type: "object" },
+    42,
+  ])("keeps a concrete mismatch when another schema is unvalidated", (outputSchema) => {
+    const otherTool = { ...search, outputSchema };
+    const unvalidated = result("search", { structuredContent: {} });
+    expect(run(transcript([unvalidated], [getOrder, otherTool])).status).toBe("error");
+    const verdict = run(transcript([
+      unvalidated,
+      result("get_order", { structuredContent: { status: "confirmed" } }),
+    ], [getOrder, otherTool]));
+    expect(verdict).toMatchObject({ passed: false, reason: expect.stringContaining('"get_order"') });
+    expect(verdict.status).toBeUndefined();
+  });
+
   test("fails a tool with an output schema that returns no structuredContent", () => {
     const verdict = run(
       transcript([
@@ -185,6 +200,20 @@ describe("toolResultMatchesSchema with the declared schema", () => {
     expect(verdict.status).toBeUndefined();
   });
 
+  test("preserves a confirmed violation when duplicate declarations cannot be compared", () => {
+    const bad = { ...search, outputSchema: { maximum: Infinity } };
+    const results = [
+      result("get_order", { structuredContent: {} }),
+      result("search", { structuredContent: {} }),
+    ];
+    const declarations = [getOrder, { ...bad, outputSchema: true }, bad];
+    expect(run(transcript(results, declarations))).toMatchObject({
+      passed: false,
+      reason: expect.stringContaining("did not match their declared output schema"),
+    });
+    expect(run(transcript(results.slice(1), declarations)).status).toBe("error");
+  });
+
   test("a capped text field does not stop a complete structured result passing", () => {
     const verdict = run(
       transcript([
@@ -233,6 +262,24 @@ describe("toolResultMatchesSchema with the declared schema", () => {
     expect(verdict.status).toBe("not_applicable");
     expect(verdict.passed).toBe(true);
     expect(verdict.reason).toContain("no tool declares an output schema");
+    const incomplete = transcript([result("search", { structuredContent: {} })], [search]);
+    incomplete.capture = { ...incomplete.capture!, toolResults: "partial" };
+    expect(run(incomplete).status).toBe("error");
+  });
+
+  test("uses the responding connection when declarations share a name", () => {
+    const matching = result("get_order", {
+      declaredServerKey: "account-b",
+      structuredContent: { status: "confirmed", total: 42 },
+    });
+    const evidence = transcript([matching]);
+    evidence.toolDeclarations = [
+      { name: "get_order", serverKey: "account-a", outputSchema: false },
+      ...evidence.toolDeclarations!.map((tool) => ({ ...tool, serverKey: "account-b" })),
+    ];
+    expect(run(evidence)).toMatchObject({ passed: true });
+    matching.declaredServerKey = "unknown";
+    expect(run(evidence)).toMatchObject({ status: "error" });
   });
 
   test("cannot pass on a partial or missing result capture", () => {

@@ -95,6 +95,8 @@ const PINNED_HOSTED_CRITERION_IDS: Record<string, string> = {
     "toolResultMatchesSchema-bb67e721141b",
   "toolResultMatchesSchema — each tool's declared output schema":
     "toolResultMatchesSchema-3c92dbee53de",
+  "toolResultMatchesSchema — a boolean schema":
+    "toolResultMatchesSchema-38ab03f7e763",
   // The library tag is policy, stripped like role: the same id as the
   // untagged "noToolErrors — no fields beyond type".
   "noToolErrors — added from a library evaluator": "noToolErrors-037586125822",

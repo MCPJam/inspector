@@ -6,7 +6,14 @@ import {
   waitFor,
   fireEvent,
 } from "@testing-library/react";
+import {
+  buildEvaluationConfigSnapshot,
+  finalizeScoreResult,
+  resolveScoreDefinition,
+  type ScoreDefinition,
+} from "@mcpjam/sdk/contract";
 import type { EvalIteration } from "@/components/evals/types";
+import { hostedRubricCheckScorerId } from "@/shared/hosted-criterion-id";
 import { useSuggestedScorers } from "../case-scorecard/suggested-from-run-section";
 import { TrialScorecard } from "../case-scorecard/trial-scorecard";
 import {
@@ -178,34 +185,89 @@ describe("scorecard integration regressions", () => {
     expect(screen.queryByText("0.93")).not.toBeInTheDocument();
   });
 
+  /** A trial graded on one projected yes/no question, as the server stores it. */
+  function gradedOnQuestion(question: {
+    id: string;
+    label: string;
+    pYes: number;
+    passOn: "yes" | "no";
+    rationale: string;
+  }): EvalIteration {
+    const key = `q:${question.id}`;
+    const value = question.passOn === "no" ? 1 - question.pYes : question.pYes;
+    const definition: ScoreDefinition = {
+      scorerId: hostedRubricCheckScorerId(key),
+      idSource: "platform",
+      scorerVersion: "1",
+      implementationHash: `impl-${key}`,
+      label: `rubric check: ${question.label}`,
+      deterministic: false,
+      passThreshold: 0.5,
+      role: "advisory",
+      model: "typesafe-ai/jev",
+    };
+    return {
+      ...iteration,
+      metadata: {
+        evaluationConfig: buildEvaluationConfigSnapshot([definition]),
+        scores: [
+          finalizeScoreResult(resolveScoreDefinition(definition), {
+            kind: "scored",
+            value,
+            rationale: question.rationale,
+          }),
+        ],
+        rubricChecksVerdict: {
+          questions: [
+            {
+              key,
+              kind: "boolean",
+              label: question.label,
+              contentDigest: "d",
+              passThreshold: 0.5,
+              status: "scored",
+              value,
+              probability: question.pYes,
+              rationale: question.rationale,
+            },
+          ],
+        },
+      },
+    };
+  }
+
   it("withholds a library question's verdict in blind review", () => {
     const judgeCase: Partial<JudgeCase> = {
       score: 0.93,
       passed: true,
       reason: "Judge",
     };
-    const graded = {
-      ...iteration,
-      metadata: {
-        rubricChecksVerdict: {
-          questions: [
-            {
-              key: "q:answer-grounded-in-results-grounded",
-              kind: "boolean",
-              label: "Every claim is backed by a tool result",
-              contentDigest: "d",
-              passThreshold: 0.5,
-              status: "scored",
-              value: 0.02,
-              rationale: "Invented a refund amount",
-            },
-          ],
+    const id = "reports-tool-errors-reports-failures";
+    const props = {
+      authored: {
+        ...authored,
+        suiteJudgeConfig: {
+          rubricChecks: {
+            questions: [
+              {
+                id,
+                kind: "yesno" as const,
+                label: "Answer reports each tool error",
+                instructions: "Check each error.",
+                pass: { answer: "yes" as const },
+                evaluator: { id: "reports-tool-errors", version: 1 },
+              },
+            ],
+          },
         },
       },
-    } as EvalIteration;
-    const props = {
-      authored,
-      iteration: graded,
+      iteration: gradedOnQuestion({
+        id,
+        label: "Answer reports each tool error",
+        pYes: 0.02,
+        passOn: "yes",
+        rationale: "Invented a refund amount",
+      }),
       steps,
       judgeCase: judgeCase as JudgeCase,
     };
@@ -217,6 +279,51 @@ describe("scorecard integration regressions", () => {
     expect(
       screen.getByRole("region", { name: "Library evaluators" }),
     ).toHaveTextContent(/failed/i);
+  });
+
+  it("renders a question that passes on No as Passed on a clear No, Uncertain near even odds", () => {
+    const question = {
+      id: "invented-result",
+      label: "Presents a result no tool returned",
+      passOn: "no" as const,
+    };
+    const rowFor = () =>
+      screen
+        .getAllByTestId("trial-scorecard-row")
+        .find(
+          (row) =>
+            row.getAttribute("data-row-key") ===
+            hostedRubricCheckScorerId(`q:${question.id}`),
+        );
+    const view = render(
+      <TrialScorecard
+        authored={authored}
+        iteration={gradedOnQuestion({
+          ...question,
+          pYes: 0.1,
+          rationale: "No · P(yes) 0.10",
+        })}
+        steps={steps}
+      />,
+    );
+    expect(rowFor()).toHaveTextContent("Presents a result no tool returned");
+    expect(rowFor()).toHaveTextContent("Passed");
+    expect(rowFor()).toHaveTextContent("No · P(yes) 0.10");
+    expect(rowFor()).not.toHaveTextContent(/uncertain/i);
+    view.rerender(
+      <TrialScorecard
+        authored={authored}
+        iteration={gradedOnQuestion({
+          ...question,
+          pYes: 0.45,
+          rationale: "No · P(yes) 0.45",
+        })}
+        steps={steps}
+      />,
+    );
+    expect(rowFor()).toHaveTextContent("Uncertain");
+    expect(rowFor()).not.toHaveTextContent("Passed");
+    expect(rowFor()).toHaveTextContent("No · P(yes) 0.45");
   });
 
   it("uses a historical no-tool route instead of the current tools choice", () => {

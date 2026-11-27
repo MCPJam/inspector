@@ -1,4 +1,4 @@
-import type { Predicate } from "@mcpjam/sdk/predicates";
+import { DECLARED_OUTPUT_SCHEMA, type Predicate } from "@mcpjam/sdk/predicates";
 import {
   MAX_RUBRIC_CHECK_QUESTIONS,
   type RubricCheckQuestion,
@@ -7,7 +7,6 @@ import {
   Braces,
   CircleCheck,
   MessageCircleWarning,
-  Quote,
   FileWarning,
   Route,
   ShieldAlert,
@@ -78,7 +77,7 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
       "Did every tool result in this run match the tool's declared output schema?",
     icon: Braces,
     tone: "tools",
-    checks: [{ type: "toolResultMatchesSchema", schema: "declared" }],
+    checks: [{ type: "toolResultMatchesSchema", schema: DECLARED_OUTPUT_SCHEMA }],
   },
   {
     id: "delivers-final-answer",
@@ -111,35 +110,19 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
     version: 1,
     name: "Reports Tool Errors",
     question:
-      "When a tool failed, did the final answer say so instead of inventing a result?",
+      "When a tool returned an error, did the final answer say so instead of inventing a result? Fails when the run is too long for the grader to see every call.",
     icon: MessageCircleWarning,
     tone: "errors",
     checks: [],
+    // The grader sees only the last steps of a long run, clipped. A pass
+    // therefore needs every call in view: an error it cannot see must fail
+    // the question, never pass it.
     questions: [
       {
         slug: "reports-failures",
-        label: "Answer reports each tool failure",
+        label: "Answer reports each tool error",
         instructions:
-          "Find every tool call that failed or returned an error. Answer yes if no tool failed, or if the final answer tells the user about each failure instead of presenting a result that tool did not return. Answer no if any failure is left out or covered by an invented result.",
-        passOn: "yes",
-      },
-    ],
-  },
-  {
-    id: "answer-grounded-in-results",
-    version: 1,
-    name: "Answer Grounded in Results",
-    question:
-      "Is every factual claim in the answer backed by a tool result from this run?",
-    icon: Quote,
-    tone: "answer",
-    checks: [],
-    questions: [
-      {
-        slug: "grounded",
-        label: "Every claim is backed by a tool result",
-        instructions:
-          "List the factual claims in the final answer and check each against the tool results in the recording. Answer yes only if every claim is supported.",
+          "Answer yes only if the tool trajectory shows every tool call the run made (its tool step count matches the steps it lists, and none are omitted or cut off) and the final answer tells the user about each step marked as an error instead of presenting a result that step did not return. If the run made no tool calls, answer yes. Answer no in every other case, including when the trajectory or the final answer is cut off.",
         passOn: "yes",
       },
     ],
@@ -208,6 +191,29 @@ export function missingChecks(
   );
 }
 
+/** Reuse matching assertions and preserve their existing role and settings. */
+export function withLibraryChecks(
+  predicates: readonly Predicate[],
+  checks: readonly Predicate[],
+): Predicate[] {
+  const byCriterion = new Map(
+    checks.map((check) => [hostedCriterionId(check), check]),
+  );
+  const present = new Set<string>();
+  const attached = predicates.map((predicate) => {
+    const id = hostedCriterionId(predicate);
+    present.add(id);
+    const check = byCriterion.get(id);
+    return check?.evaluator && !predicate.evaluator
+      ? { ...predicate, evaluator: check.evaluator }
+      : predicate;
+  });
+  return [
+    ...attached,
+    ...checks.filter((check) => !present.has(hostedCriterionId(check))),
+  ];
+}
+
 /**
  * Replaces an evaluator's checks with its current library version. Checks
  * the author already removed come back, because the new version defines the
@@ -250,8 +256,9 @@ export function isInSuite(
   predicates: readonly Predicate[],
   questions: readonly RubricCheckQuestion[] = [],
 ): boolean {
+  const tagged = predicates.filter((p) => p.evaluator?.id === evaluator.id);
   return (
-    missingChecks(evaluator, predicates).length === 0 &&
+    missingChecks(evaluator, tagged).length === 0 &&
     taggedQuestions(evaluator).every((expected) =>
       questions.some(
         (q) => q.id === expected.id && q.evaluator?.id === evaluator.id,
@@ -260,28 +267,94 @@ export function isInSuite(
   );
 }
 
-export function hasQuestionIdConflict(
-  evaluator: LibraryEvaluator,
+/**
+ * The suite's questions after an edit, or why the edit cannot be made. A
+ * refusal is shown where the action would be, so nothing is dropped or
+ * skipped silently.
+ */
+export type QuestionsEdit =
+  | { questions: RubricCheckQuestion[]; refused?: undefined }
+  | { refused: string };
+
+/** An id these questions need that a question from elsewhere already holds. */
+function takenId(
+  incoming: readonly RubricCheckQuestion[],
   questions: readonly RubricCheckQuestion[],
-): boolean {
-  return taggedQuestions(evaluator).some((expected) =>
+): string | undefined {
+  return incoming.find((wanted) =>
     questions.some(
-      (q) => q.id === expected.id && q.evaluator?.id !== evaluator.id,
+      (q) => q.id === wanted.id && q.evaluator?.id !== wanted.evaluator?.id,
     ),
+  )?.id;
+}
+
+/** Refuses an edit that grows the list past the cap; a shrinking one is fine. */
+function overCap(
+  questions: RubricCheckQuestion[],
+  before: number,
+  action: string,
+): QuestionsEdit {
+  const over = questions.length - MAX_RUBRIC_CHECK_QUESTIONS;
+  if (over <= 0 || questions.length <= before) return { questions };
+  return {
+    refused: `Suites can ask up to ${MAX_RUBRIC_CHECK_QUESTIONS} rubric-check questions, and ${action} would make ${questions.length}. Remove ${over === 1 ? "a question" : `${over} questions`} first.`,
+  };
+}
+
+/**
+ * The suite's questions with an evaluator's tagged questions appended. One
+ * the suite already has from the same evaluator is not added twice.
+ */
+export function questionsWithAdded(
+  questions: readonly RubricCheckQuestion[],
+  adding: readonly RubricCheckQuestion[],
+): QuestionsEdit {
+  const taken = takenId(adding, questions);
+  if (taken) {
+    return {
+      refused: `A question already uses the ID "${taken}". Rename or remove it to add this evaluator.`,
+    };
+  }
+  const ids = new Set(questions.map((q) => q.id));
+  return overCap(
+    [...questions, ...adding.filter((q) => !ids.has(q.id))],
+    questions.length,
+    "adding this evaluator",
   );
 }
 
 /**
- * True when the suite has room for the questions this evaluator would add.
- * Adding past the cap would drop them, so the library offers no Add then.
+ * The suite's questions with this evaluator's replaced by its current
+ * version. Each keeps its place, so an update that changes nothing but the
+ * version leaves the list, and the suite's config revision, as it was. A
+ * question the new version drops goes; one it adds goes last.
  */
-export function hasRoomForQuestions(
+export function questionsWithEvaluatorUpdated(
   evaluator: LibraryEvaluator,
   questions: readonly RubricCheckQuestion[],
-): boolean {
-  const ids = new Set(questions.map((q) => q.id));
-  const adding = taggedQuestions(evaluator).filter((q) => !ids.has(q.id));
-  return questions.length + adding.length <= MAX_RUBRIC_CHECK_QUESTIONS;
+): QuestionsEdit {
+  const fresh = taggedQuestions(evaluator);
+  const taken = takenId(fresh, questions);
+  if (taken) {
+    return {
+      refused: `A question already uses the ID "${taken}". Rename or remove it to update this evaluator.`,
+    };
+  }
+  const current = new Map(fresh.map((q) => [q.id, q]));
+  const next: RubricCheckQuestion[] = [];
+  for (const q of questions) {
+    if (q.evaluator?.id !== evaluator.id) next.push(q);
+    else {
+      const replacement = current.get(q.id);
+      if (replacement) next.push(replacement);
+      current.delete(q.id);
+    }
+  }
+  return overCap(
+    [...next, ...current.values()],
+    questions.length,
+    "updating this evaluator",
+  );
 }
 
 /** True when this deployment accepts every check kind the evaluator adds. */
