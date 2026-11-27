@@ -26,7 +26,7 @@ export function libraryPauseMessages(
     ...(judgeConfig?.rubricChecks?.enabled === false
       ? {
           questions:
-            "Rubric checks are off for this suite, so decision questions will not run. Turn rubric checks on in the evaluators table.",
+            "Decision questions are off for this suite, so they will not run. Turn them on in the evaluators table.",
         }
       : {}),
     ...(judgeConfig?.customJudges?.enabled === false

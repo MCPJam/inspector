@@ -366,7 +366,9 @@ describe("starting an evaluator from scratch", () => {
     });
     click("Decision questions");
     expect(
-      screen.getByText(/Rubric checks are off for this suite, so decision questions will not run/),
+      screen.getByText(
+        "Decision questions are off for this suite, so they will not run. Turn them on in the evaluators table.",
+      ),
     ).toBeVisible();
     click("Back to library");
     click("Judge prompt");
