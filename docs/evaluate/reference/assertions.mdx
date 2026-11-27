@@ -138,8 +138,8 @@ Two cases against a notes server with `search_notes`, `read_note` and `delete_no
             assertion:
               type: toolCalledWith
               toolName: search_notes
-              args:
-                args:
+              args:            # the assertion's options
+                args:          # the tool arguments to match
                   query: "string"   # any string
                 argumentMatching: partial
           - id: a2
@@ -280,8 +280,8 @@ In partial mode, these strings match any value of that type instead of the liter
   assertion:
     type: toolCalledWith
     toolName: search_notes
-    args:
-      args:
+    args:              # the assertion's options
+      args:            # the tool arguments to match
         query: "string"   # any string
         limit: 5          # exactly 5
       argumentMatching: partial

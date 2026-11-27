@@ -29,10 +29,10 @@ A suite saved without clients, such as one created by the SDK, shows a **Servers
   <Tab title="Inspector">
     <Steps>
       <Step title="Open the suite">
-        In the Evaluate tab, open **Suites** and pick a suite, then click **Run**. You can also click **Run** on **Overview** and choose the suite from the list. The Set up run sheet opens with the suite name in its title.
+        In the Evaluate tab, switch the view from **Overview** to **Suites** and pick a suite, then click **Run**. You can also click **Run** on **Overview** and choose the suite from the list. The Set up run sheet opens with the suite name in its title.
       </Step>
       <Step title="Set the iteration count">
-        **Iterations per case** takes 1 to 10. It starts at the count you last used for this suite, or the suite's default, and never below the suite's minimum.
+        In this sheet, **Iterations per case** takes 1 to 10; the suite's default in **Suite settings** can go up to 100. It starts at the count you last used for this suite, or the suite's default, and never below the suite's minimum.
       </Step>
       <Step title="Check the clients and models">
         **Where it runs** lists each client with its models. Adding or removing one here changes this run only.
@@ -61,7 +61,7 @@ A suite saved without clients, such as one created by the SDK, shows a **Servers
       --out eval-report.json
     ```
 
-    See [`cloud eval run`](/cli/reference#cloud-eval-run) for target selection and exit codes.
+    If the suite has more than one client, the CLI doesn't pick one for you: add `--client "Claude"` to name one, or `--all-targets` to run every one. See [`cloud eval run`](/cli/reference#cloud-eval-run) for target selection and exit codes.
 
     `--file` runs a suite file from your repository instead. It uploads the file as a suite in your project and runs it there, judge included; the file's servers must be saved in the project.
 

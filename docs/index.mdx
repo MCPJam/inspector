@@ -34,15 +34,15 @@ There are four ways to use MCPJam: your **coding agent** runs MCPJam's tools for
         Pick by where your MCP server runs:
 
         - **Public HTTPS URL**: open the web app at [app.mcpjam.com](https://app.mcpjam.com). No install.
-        - **`localhost` or STDIO**: run `npx @mcpjam/inspector@latest` (needs Node.js), or download the desktop app for [Mac](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam.Inspector.dmg) or [Windows](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam-Inspector-Setup.exe). The web app can't reach these servers.
+        - **`localhost` or STDIO**: run `npx @mcpjam/inspector@latest` (needs Node.js 22 or later), or download the desktop app for [Mac](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam.Inspector.dmg) or [Windows](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam-Inspector-Setup.exe). The web app can't reach these servers.
         - **Isolated in a container**: use [Docker](/installation#docker). Reach servers on your machine at `http://host.docker.internal:PORT`; STDIO commands run inside the container.
 
         See [Installation](/installation#which-one-do-i-need) for the full comparison.
       </Step>
       <Step title="Connect a server">
-        On first launch, a **Welcome** overlay offers to connect your own server or try the hosted Excalidraw demo. Later, open **Connect** in the sidebar, choose **Servers**, and click **Add Server**. Signed out, the sidebar item is **Servers**.
+        On first launch, a **Welcome** overlay offers to connect your own server or select **Try the Excalidraw demo server**. Later, open **Connect** in the sidebar, choose **Servers**, and click **Add Server**. Signed out, the sidebar item is **Servers**.
 
-        - **HTTP**: paste a URL ending in `/mcp`. The web app accepts HTTPS only; the other options also accept HTTP. Add a bearer token, or use the [OAuth Debugger](/inspector/guided-oauth) if the server needs sign-in.
+        - **HTTP**: paste a URL ending in `/mcp`. The web app accepts HTTPS only; the other options also accept HTTP. Leave **Authentication** on **Auto**: MCPJam connects without credentials first and opens the server's sign-in only if it asks for OAuth. Choose **Bearer Token** if you already have a token. To step through a failing sign-in, use the [OAuth Debugger](/inspector/guided-oauth).
         - **STDIO** (not in the web app): paste a command such as `npx -y @modelcontextprotocol/server-everything`.
 
         <Check>
@@ -50,7 +50,11 @@ There are four ways to use MCPJam: your **coding agent** runs MCPJam's tools for
         </Check>
       </Step>
       <Step title="Send your first prompt">
-        Click **Open Playground**. MCPJam fills in the prompt `What can this server do?`; press **Send** to watch the model call your tools. No API key or ChatGPT or Claude subscription needed.
+        After the server connects, select **Open Playground**. MCPJam fills in the prompt `What can this server do?`; press **Send** to watch the model call your tools. No API key or ChatGPT or Claude subscription needed.
+
+        <Check>
+          The reply includes a tool call card with the name of one of your server's tools.
+        </Check>
 
         Open the debug icons on any result to see tool input and output, widget state, CSP activity and the JSON-RPC messages. See [Playground](/inspector/playground).
       </Step>
@@ -72,7 +76,7 @@ There are four ways to use MCPJam: your **coding agent** runs MCPJam's tools for
     npm install @mcpjam/sdk
     ```
 
-    See [SDK](/sdk).
+    Needs Node.js 22 or later. Start with the [SDK quickstart](/sdk/quickstart).
   </Tab>
 </Tabs>
 
