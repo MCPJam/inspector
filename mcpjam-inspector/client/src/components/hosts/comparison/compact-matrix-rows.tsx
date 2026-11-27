@@ -76,6 +76,7 @@ function CompactFieldRow({
   showDescriptions,
   mobileOptimized,
 }: CompactRowProps & { field: HostConfigFieldDef }) {
+  const slices = summaryColumn.renderSlices?.(field);
   return (
     <tr className="border-b border-border last:border-b-0">
       <th scope="row" className="sticky left-0 z-10 bg-card font-normal px-3 py-2.5 text-left after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border after:content-[''] sm:px-5">
@@ -97,7 +98,7 @@ function CompactFieldRow({
       >
         <div className="flex flex-col gap-1 tabular-nums">
           {summaryColumn.render(field)}
-          {summaryColumn.renderSlices?.(field)}
+          {slices && <div role="group" aria-label="Adoption by mode" className="mt-1 grid grid-cols-3 gap-x-1.5 gap-y-2 border-t border-border pt-2">{slices}</div>}
         </div>
       </td>
       {subjects.map((s) => (

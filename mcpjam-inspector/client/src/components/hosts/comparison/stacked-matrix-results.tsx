@@ -91,7 +91,7 @@ export function StackedMatrixResults({
                       ))}
                     </ul>
                     {slices && (
-                      <div className="border-t border-border px-3 py-2.5 tabular-nums">
+                      <div role="group" aria-label="Adoption by mode" className="grid grid-cols-3 gap-x-1.5 gap-y-2 border-t border-border px-3 py-2.5 tabular-nums">
                         {slices}
                       </div>
                     )}
