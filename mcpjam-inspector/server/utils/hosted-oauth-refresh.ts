@@ -36,6 +36,7 @@ import {
   type UploadedAccountRecovery,
   withUploadedAccountRecovery,
 } from "./uploaded-account-recovery.js";
+import { bearerNow, type RunBearer } from "./run-bearer.js";
 
 /**
  * The backend cannot refresh this credential — its authorization server is on
@@ -681,7 +682,8 @@ export async function refreshHostedOAuthAccessTokenWithLocalFallback(
 
 export type HostedOAuthUnauthorizedHandlerArgs = {
   connectionId?: string;
-  bearerToken: string;
+  /** Read when a 401 arrives, which can be long after the handler is built. */
+  bearerToken: RunBearer;
   projectId: string;
   serverId: string;
   serverName: string;
@@ -736,7 +738,7 @@ export function buildHostedOAuthUnauthorizedHandler(
     };
     try {
       const accessToken = await refresh(
-        args.bearerToken,
+        bearerNow(args.bearerToken),
         args.projectId,
         args.serverId,
         {

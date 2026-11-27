@@ -45,6 +45,7 @@ import type { IncomingMessage } from "node:http";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 
 import { OAuthProxyError } from "../oauth-proxy-error.js";
+import { getDefaultUserAgent } from "../user-agent.js";
 import { isLoopbackOAuthUrl, isPrivateHost } from "./ssrf-guard.js";
 import {
   createPinnedLookup,
@@ -617,6 +618,7 @@ export function createPinnedStreamingFetch(
     ) {
       currentHeaders["accept-encoding"] = "identity";
     }
+    currentHeaders["user-agent"] ??= getDefaultUserAgent(); // http.request sends none
 
     try {
       for (let hop = 0; ; hop += 1) {

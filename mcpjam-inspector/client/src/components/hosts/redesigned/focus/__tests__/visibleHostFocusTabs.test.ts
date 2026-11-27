@@ -8,10 +8,47 @@ const ids = (opts: Parameters<typeof visibleHostFocusTabs>[0]) =>
   visibleHostFocusTabs(opts).map((t) => t.id);
 
 describe("visibleHostFocusTabs", () => {
+  it("shows Events after Apps, behind the Events flag only", () => {
+    const base = {
+      hasBuiltInTools: false,
+      computersEnabled: false,
+      computerAttached: false,
+    };
+    expect(ids(base)).not.toContain("events");
+    expect(ids({ ...base, eventsEnabled: false })).not.toContain("events");
+    const shown = ids({ ...base, eventsEnabled: true });
+    expect(shown.indexOf("events")).toBe(shown.indexOf("apps") + 1);
+  });
+
+  it("clamps away from Events when the flag turns off", () => {
+    const base = {
+      hasBuiltInTools: false,
+      computersEnabled: false,
+      computerAttached: false,
+    };
+    expect(
+      activeHostFocusTab("events", visibleHostFocusTabs({ ...base, eventsEnabled: true })),
+    ).toBe("events");
+    expect(activeHostFocusTab("events", visibleHostFocusTabs(base))).toBe(
+      "behavior",
+    );
+  });
+
   it("shows Tools only when the deployment exposes built-in tools", () => {
     const base = { computersEnabled: false, computerAttached: false };
     expect(ids({ ...base, hasBuiltInTools: false })).not.toContain("tools");
     expect(ids({ ...base, hasBuiltInTools: true })).toContain("tools");
+  });
+
+  it("shows Browser for a web client, whose accounts live there", () => {
+    const base = {
+      hasBuiltInTools: false,
+      computersEnabled: false,
+      computerAttached: false,
+      browsersEnabled: false,
+    };
+    expect(ids(base)).not.toContain("browser");
+    expect(ids({ ...base, webClient: true })).toContain("browser");
   });
 
   it("gates Computer behind the flag", () => {

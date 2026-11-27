@@ -17,6 +17,7 @@ export const EVENTS_CHECK_FEATURES = {
   "events-private-callback-rejected": ["events.endpoint-verification"],
   "events-delivery-signature": ["events.webhook-subscribe"],
   "events-webhook-id-equals-event-id": ["events.webhook-subscribe"],
+  "events-webhook-message-id": ["events.webhook-subscribe"],
   "events-subscription-id-header": ["events.webhook-subscribe"],
   "events-delivery-content-type": ["events.webhook-subscribe"],
   "events-delivery-body-size": ["events.webhook-subscribe"],

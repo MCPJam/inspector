@@ -14,9 +14,9 @@ const DAY = { month: "short", day: "numeric", year: "numeric" } as const;
 function signIn(attempt: ReviewerAttempt | null): string {
   switch (attempt?.state) {
     case "running":
-      return "rehearsing the reviewer sign-in";
+      return attempt.humanSignInCompletedAt ? "checking the connected reviewer account" : "rehearsing the reviewer sign-in";
     case "waiting-for-person":
-      return "reviewer sign-in waiting for a person";
+      return attempt.humanSignInCompletedAt ? "reviewer signed in; verification needs attention" : "reviewer sign-in waiting for a person";
   }
   const tested =
     attempt?.testedAt ??
@@ -45,6 +45,8 @@ export function reviewerDetail(attempt: ReviewerAttempt | null) {
       const since = attempt.resumedAt ?? attempt.createdAt;
       return `Started ${formatDistanceToNow(since, { addSuffix: true })}.`;
     }
+    case "passed":
+      return attempt.humanSignInCompletedAt ? attempt.detail : undefined;
     case "failed":
       return (
         attempt.detail ??

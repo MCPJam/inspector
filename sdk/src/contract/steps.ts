@@ -66,7 +66,11 @@
  */
 
 import { z } from "zod";
-import { predicateSchema, type Predicate } from "../predicates/types.js";
+import {
+  predicateSchema,
+  storedPredicateSchema,
+  type Predicate,
+} from "../predicates/types.js";
 
 // ── caps (relocated with the schemas that enforce them) ──────────────────────
 /** Max chars for a step's free text (`type` text, assertion text/value). */
@@ -340,10 +344,13 @@ export const assertStepSchema = z
 export type AssertStep = z.infer<typeof assertStepSchema>;
 
 // ── the union ────────────────────────────────────────────────────────────────
-export const testStepSchema = z.discriminatedUnion("kind", [
+const actionStepSchemas = [
   promptStepSchema,
   toolCallStepSchema,
   interactStepSchema,
+] as const;
+export const testStepSchema = z.discriminatedUnion("kind", [
+  ...actionStepSchemas,
   assertStepSchema,
 ]);
 export type TestStep = z.infer<typeof testStepSchema>;
@@ -351,6 +358,16 @@ export type TestStep = z.infer<typeof testStepSchema>;
 /** Max steps per case — keeps snapshotted rows bounded. */
 export const MAX_TEST_STEPS = 200;
 export const stepsSchema = z.array(testStepSchema).max(MAX_TEST_STEPS);
+/** Suite-file reads allow legacy schema roots so those assertions stay repairable. */
+export const storedStepsSchema = z.array(z.discriminatedUnion("kind", [
+  ...actionStepSchemas,
+  assertStepSchema.extend({
+    assertion: z.union([
+      widgetAssertionSchema,
+      z.intersection(storedPredicateSchema, notAWidgetAssertion),
+    ]),
+  }),
+])).max(MAX_TEST_STEPS);
 
 // ── narrowing helpers ────────────────────────────────────────────────────────
 export const isPromptStep = (s: TestStep): s is PromptStep =>

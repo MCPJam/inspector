@@ -47,6 +47,10 @@ async function startEvalListFixture(): Promise<{
       res.end(JSON.stringify({ items: [] }));
       return;
     }
+    if (url.pathname === "/api/v1/organizations") {
+      res.end(JSON.stringify({ items: [] }));
+      return;
+    }
     if (url.pathname.endsWith("/me")) {
       res.end(
         JSON.stringify({

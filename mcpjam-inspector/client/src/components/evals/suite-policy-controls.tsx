@@ -231,9 +231,9 @@ export function PerCasePassThresholdControl({
  *
  * Labelled "Iterations per case", one word away from the suite-wide floor's
  * "Minimum iterations per case", and both words come from the shared
- * vocabulary. The difference is the whole point: this REPLACES a case's count
- * and the floor RAISES it, so a case at 7 resolves to 7 under a floor of 3 and
- * to 3 under a default of 3.
+ * vocabulary. The difference is the whole point: a case's own count overrides
+ * this default, and the floor RAISES a case's count, so a case at 2 resolves to
+ * 3 under a floor of 3 and to 2 under a default of 3.
  */
 export function PerCaseIterationsControl({
   defaults,

@@ -29,6 +29,7 @@ import { toast } from "@/lib/toast";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
+import { AccountCreatedToast } from "./components/sidebar/sidebar-guest-signup-prompt";
 import { TrialDecisionDialog } from "./components/billing/TrialDecisionDialog";
 import { AnnouncementQueueProvider } from "./components/announcement-slot";
 import { StdioCommandApprovalDialog } from "./components/connection/StdioCommandApprovalDialog";
@@ -53,7 +54,6 @@ import { SkillsTab } from "./components/SkillsTab";
 import { LearningTab } from "./components/LearningTab";
 import { TaskAccountsTab } from "./components/TaskAccountsTab";
 import { EventsTab } from "./components/EventsTab";
-import { EventTriggersTab } from "./components/EventTriggersTab";
 import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capabilities-context";
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvaluateTab } from "./components/EvaluateTab";
@@ -234,6 +234,7 @@ import {
   updateThemePreset,
 } from "./lib/theme-utils";
 import LoadingScreen from "./components/LoadingScreen";
+import { StartupScreen } from "./components/startup/StartupScreen";
 import { OccupationGate } from "./components/signup/OccupationGate";
 import { Header } from "./components/Header";
 import { ThemePreset } from "./types/preferences/theme";
@@ -301,6 +302,7 @@ import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-co
 import { type ProjectSignInReturnRecoveryIntent } from "./lib/project-route-recovery";
 import {
   captureAppSignInReturnPath,
+  isAccessRequestPathname,
   writeAppSignInReturnPath,
 } from "./lib/app-signin-return-path";
 import { isHostedTabBlocked } from "./lib/hosted-tab-policy";
@@ -386,6 +388,7 @@ import { useCodexHostEnabledState } from "./hooks/useCodexHostEnabled";
 import { useCopilotCliEnabled } from "@/hooks/useCopilotCliEnabled";
 import { useCursorHostEnabledState } from "./hooks/useCursorHostEnabled";
 import { useOpenCodeHostEnabledState } from "./hooks/useOpenCodeHostEnabled";
+import { useWebClientsEnabledState } from "./hooks/useWebClientsEnabled";
 import { hostFeatureFlagState } from "@/lib/host-compat/feature-visibility";
 import {
   HOST_VERIFY_TAB_PARAM,
@@ -1211,6 +1214,7 @@ function useTemplateVerifyDeepLink({
   const copilotCliEnabled = useCopilotCliEnabled();
   const cursorCliEnabled = useCursorHostEnabledState();
   const openCodeEnabled = useOpenCodeHostEnabledState();
+  const webClientsEnabled = useWebClientsEnabledState();
   const requestedTemplateId = useMemo<HostTemplateId | null>(() => {
     if (typeof window === "undefined") return null;
     const raw = new URLSearchParams(window.location.search).get(
@@ -1283,6 +1287,7 @@ function useTemplateVerifyDeepLink({
       copilotCli: copilotCliEnabled,
       cursorCli: cursorCliEnabled,
       openCode: openCodeEnabled,
+      webClients: webClientsEnabled,
     });
     // Gated templates remain visible on caniuse.dev as reference profiles, but
     // they are not available for new-host creation until their rollout flags
@@ -1362,6 +1367,7 @@ function useTemplateVerifyDeepLink({
     cursorCliEnabled,
     copilotCliEnabled,
     openCodeEnabled,
+    webClientsEnabled,
     flagWaitExpired,
     roleLoading,
     canCreateHost,
@@ -2510,16 +2516,25 @@ export function TasksRoute() {
 }
 
 export function EventsRoute() {
+  const fallback = useCurrentSearchParam("fallback");
   const {
     selectedMCPConfig,
     appState,
+    activeProjectId,
     convexProjectId,
     activeHost,
     activeHostId,
   } = useAppRouteContext();
   const eventsEnabled = useEventsEnabledState();
   if (eventsEnabled === false) {
-    return <ScopedNavigate to={routePaths.servers} replace />;
+    return (
+      <ScopedNavigate
+        to={
+          fallback === "playground" ? routePaths.playground : routePaths.servers
+        }
+        replace
+      />
+    );
   }
   if (eventsEnabled === undefined) return null;
   return (
@@ -2532,6 +2547,7 @@ export function EventsRoute() {
           appState.servers[appState.selectedServer]?.connectionStatus
         }
         projectId={convexProjectId ?? null}
+        localProjectId={activeProjectId ?? null}
         activeHostId={activeHostId ?? null}
         activeHost={activeHost ?? null}
       />
@@ -2546,21 +2562,13 @@ export function EventsRoute() {
  * so a local user can see what the feature is.
  */
 export function EventTriggersRoute() {
-  const { convexProjectId, isAuthenticated, isGuestProjectActor } =
-    useAppRouteContext();
+  const triggerId = useCurrentSearchParam("triggerId");
   const eventsEnabled = useEventsEnabledState();
-  if (eventsEnabled === false) {
-    return <ScopedNavigate to={routePaths.servers} replace />;
-  }
+  if (eventsEnabled === false) return <ScopedNavigate to={routePaths.servers} replace />;
   if (eventsEnabled === undefined) return null;
-  return (
-    <div className="h-full overflow-hidden">
-      <EventTriggersTab
-        projectId={convexProjectId ?? null}
-        isSignedInMember={isAuthenticated === true && !isGuestProjectActor}
-      />
-    </div>
-  );
+  const query = new URLSearchParams({ panel: "events", background: "1" });
+  if (triggerId) query.set("triggerId", triggerId);
+  return <ScopedNavigate to={`${routePaths.playground}?${query}`} replace />;
 }
 
 export function OAuthFlowRoute() {
@@ -2702,6 +2710,7 @@ export function WebmcpInspectorRoute() {
 export function PlaygroundRoute() {
   const {
     activeHost,
+    activeHostId,
     activeProject,
     activeProjectId,
     appState,
@@ -2756,6 +2765,7 @@ export function PlaygroundRoute() {
       }}
       suspendAutoConnect={suspendRouteAutoConnect}
       activeHost={activeHost}
+      activeHostId={activeHostId}
       evalChatHandoff={evalChatHandoff}
       onEvalChatHandoffConsumed={(id) =>
         setEvalChatHandoff((current: EvalChatHandoff | null) =>
@@ -3162,7 +3172,12 @@ export default function App() {
   const isConformanceSharedRoute =
     barePathname === routePaths.conformanceShared ||
     barePathname.startsWith(`${routePaths.conformanceShared}/`);
+  const isCaniuseSite =
+    barePathname === routePaths.caniuseCompare ||
+    barePathname === routePaths.capabilities ||
+    barePathname.startsWith(`${routePaths.capabilities}/`);
   const isBareCaniuseRoute =
+    isCaniuseSite ||
     barePathname === routePaths.embedHostCompare ||
     barePathname === routePaths.embedScore ||
     barePathname === routePaths.embedBench ||
@@ -3173,8 +3188,7 @@ export default function App() {
     barePathname.startsWith(`${routePaths.benchResults}/`) ||
     barePathname.startsWith(`${routePaths.scoreResults}/`) ||
     isConformanceSharedRoute ||
-    barePathname.startsWith(`${routePaths.evalsShared}/`) ||
-    barePathname.startsWith(`${routePaths.capabilities}/`);
+    barePathname.startsWith(`${routePaths.evalsShared}/`);
   // The WorkOS Initiate Login URL, where an IdP-initiated login (the Okta app
   // tile) is parked for the instant it takes `LoginInitiationRoute` to start a
   // fresh sign-in. `/login` is not a known tab segment, so it resolves to the
@@ -3184,6 +3198,9 @@ export default function App() {
   // visitor to Playground mid-sign-in, stranding exactly the enterprise entry
   // point this route exists to fix.
   const isLoginInitiationRoute = barePathname === routePaths.login;
+  // An owner opening a request email, often signed out in a fresh browser,
+  // has to stay on the request instead of being sent to Home's welcome.
+  const isAccessRequestRoute = isAccessRequestPathname(barePathname);
 
   const defaultHubRoute = useMemo((): "home" | "connect" | "servers" => {
     return "home";
@@ -6004,6 +6021,7 @@ export default function App() {
     pendingCheckoutIntent === null &&
     !isBareCaniuseRoute &&
     !isLoginInitiationRoute &&
+    !isAccessRequestRoute &&
     !hasHostTemplateVerifyParam &&
     isProjectScopedFirstRunDestinationReady &&
     !isWorkOsLoading &&
@@ -6042,6 +6060,7 @@ export default function App() {
     !isHostedChatRoute &&
     !isBareCaniuseRoute &&
     !isLoginInitiationRoute &&
+    !isAccessRequestRoute &&
     !hasHostTemplateVerifyParam;
   const shouldShowFirstRunOverlay =
     shouldKeepFirstRunOverlayOpen ||
@@ -6335,7 +6354,7 @@ export default function App() {
   }
 
   if (isLoading && !isHostedChatRoute && !isFirstRunOAuthReturnActive) {
-    return <LoadingScreen />;
+    return <StartupScreen />;
   }
 
   const shouldShowBillingHandoffOverlay =
@@ -6348,7 +6367,8 @@ export default function App() {
     (shouldHoldHostedDefaultRouteForAuth ||
       shouldHoldHostedHomeRouteForAppReady)
   ) {
-    return <LoadingScreen />;
+    // Home also waits here for projects, which wait for the user record.
+    return <StartupScreen />;
   }
 
   if (
@@ -6363,7 +6383,7 @@ export default function App() {
           isSignOutInProgress() ||
           shouldReloadForMissingGuest)))
   ) {
-    return <LoadingScreen />;
+    return <StartupScreen />;
   }
 
   if (!isHostedChatRoute && isAuthenticated && currentUser === null) {
@@ -6541,6 +6561,7 @@ export default function App() {
     activeHostId,
     checkoutIntentForBilling,
     connectedOrConnectingServerConfigs,
+    currentUser,
     consumeCheckoutIntent,
     displayServerConfigs,
     convexProjectId,
@@ -6626,6 +6647,7 @@ export default function App() {
     "billing",
   ].includes(activeTab);
   const announcementsEnabled =
+    !isBareCaniuseRoute &&
     !isWorkOsLoading &&
     !isAuthLoading &&
     effectiveHostedShellGateState === "ready" &&
@@ -6645,9 +6667,9 @@ export default function App() {
   const appContent = (
     <SettingsDraftProvider enabled={settingsShellActive}>
       <SidebarProvider defaultOpen={true}>
-        {/* Wide working surfaces (Playground, Evaluate, OAuth Debugger, Swarms)
-          collapse the sidebar to its icon rail; navigating back out of them
-          expands it again. */}
+        {/* With the opt-in Appearance setting on, wide working surfaces
+          (Playground, Evaluate, OAuth Debugger, Swarms) collapse the sidebar
+          to its icon rail; navigating back out of them expands it again. */}
         <SidebarAutoCollapse activeTab={activeTab} />
         <AppChromeSidebar
           hidden={playgroundOnboarding || settingsShellActive}
@@ -6663,7 +6685,6 @@ export default function App() {
           activeOrganizationId={activeOrganizationId}
           activeOrganizationName={activeOrganizationName}
           onSwitchOrganization={handleSidebarSwitchOrganization}
-          onProjectShared={handleProjectShared}
           billingGateDenied={sidebarGateDenied}
           billingGateEnforcementActive={billingGateEnforcementActive}
           isCreateProjectDisabled={isCreateProjectDisabled}
@@ -6889,6 +6910,7 @@ export default function App() {
             <DarkDefaultNudge enabled={announcementsEnabled} />
             <MCPJamLimitDialog />
             <PlanLimitDialog />
+            <AccountCreatedToast />
             <StdioCommandApprovalDialog />
             <LauncherProjectChoiceDialog />
             <UnavailableOrganizationDialog
@@ -6996,7 +7018,7 @@ export default function App() {
   );
 
   return (
-    <AnnouncementQueueProvider enabled={announcementsEnabled}>
+    <AnnouncementQueueProvider enabled={isCaniuseSite || announcementsEnabled}>
       {shell}
     </AnnouncementQueueProvider>
   );

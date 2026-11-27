@@ -18,7 +18,10 @@
  */
 import { Hono } from "hono";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
-import { captureServerEvent } from "../../utils/analytics.js";
+import {
+  captureServerEvent,
+  fillAnalyticsActorFromBearer,
+} from "../../utils/analytics.js";
 import {
   fetchConvexV1Read,
   forwardQueryParams,
@@ -141,20 +144,9 @@ catalog.get("/projects/:projectId/sessions", async (c) => {
         scope?: string;
       };
       const sourceType = c.req.query("sourceType");
-      // API-key callers never pass the Convex authorize exchange that fills
-      // `userExternalId`, so without this the event has no distinct_id and
-      // `captureServerEvent` drops it — leaving the metric describing guests
-      // only, which is the opposite of the population it exists to measure.
-      // Same fill-in the v1 agent surface does (`agent.ts::captureTurnEvent`).
-      const logContext = c.var.requestLogContext as
-        { userExternalId?: string | null } | undefined;
-      const workosUserId = c.get("workosUserId");
-      if (logContext && !logContext.userExternalId && workosUserId) {
-        c.set("requestLogContext", {
-          ...logContext,
-          userExternalId: workosUserId,
-        });
-      }
+      // Without this an API-key caller's event has no distinct_id and is
+      // dropped, leaving the metric describing guests only.
+      fillAnalyticsActorFromBearer(c);
       captureServerEvent(c, "api_sessions_search", {
         // The honored scope, not the requested one — the upstream is the
         // authority on which search actually ran.

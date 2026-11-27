@@ -81,7 +81,7 @@ export function resolveTurnCheckResultsFromStepExecution(
  *
  * Status per kind:
  *   - any step in `skippedSteps`            → "skipped" (fail-fast halted before it ran)
- *   - `assert`                              → from `assertionResults[stepId].passed`
+ *   - `assert`                              → from the recorded predicate verdict or DOM result
  *   - `interact`                            → "fail" if in `interactionFailures`, else "ok"
  *   - `prompt` / `toolCall`                 → "ok" (executed; cycle errors are iteration-level)
  */
@@ -106,7 +106,9 @@ export function buildStepResultRecords(
       if (r) {
         return {
           ...base,
-          status: r.passed ? "ok" : "fail",
+          status: r.predicateResult?.status === "not_applicable"
+            ? "not_applicable"
+            : r.passed ? "ok" : "fail",
           ...(r.reason ? { reason: r.reason } : {}),
         };
       }

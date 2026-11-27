@@ -1,3 +1,4 @@
+import { isWebClientRuntimeId } from "../../shared/web-clients.js";
 import type { TurnAuthorization } from "../services/turn-authorization.js";
 import type { TurnTiming } from "./turn-timing.js";
 import { takeEarly, type EarlyStart } from "./early-start.js";
@@ -22,6 +23,7 @@ import {
 import { modelWorkloadFor } from "./model-workload.js";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
+import type { EventAtTurn } from "@/shared/event-at-turn";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import { withoutLegacyWebmcpVerbs } from "./built-in-tools/browser.js";
 import { withoutServerVerifiedApprovalTools } from "./built-in-tools/mcpjam.js";
@@ -85,6 +87,7 @@ import {
   type OrgProviderRuntime,
 } from "./org-model-config.js";
 import { type ModelDefinition } from "@/shared/types";
+import type { EventToolsSnapshot } from "@/shared/event-agent-tools";
 import { decideTurnRail, harnessTurnRail, forwardableSelection } from "./selection-rail.js";
 import { backendModelSelection } from "./model-resolution-local.js";
 import {
@@ -157,7 +160,7 @@ import {
   type ScopeStepUpCancelRequest,
   type ScopeStepUpResumeRequest,
 } from "@/shared/scope-step-up";
-import type { ChatRewind } from "@/shared/chat-v2";
+import type { ChatMultiModelColumn, ChatRewind } from "@/shared/chat-v2";
 import { buildServerNamesById } from "./../routes/web/auth.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getSpendClientIp } from "./client-ip.js";
@@ -276,6 +279,8 @@ export interface WebChatTurnPersistContext {
   directVisibility?: "private" | "project";
   /** Direct-chat lineage when this session was created by message edit. */
   rewind?: ChatRewind;
+  /** Direct-chat only: this chat is a column of a multi-model session. */
+  multiModel?: ChatMultiModelColumn;
   /**
    * Optimistic-concurrency baseline for a resumed thread: the session version
    * the client believes it is continuing from. The client has always sent it;
@@ -426,6 +431,12 @@ export interface WebChatTurnPersistContext {
    * last steps used.
    */
   pageToolsAtTurn?: () => MintedPageToolRecord[] | undefined;
+  /**
+   * The MCP event that started this turn, already checked at the route
+   * boundary (`eventAtTurnFromBody`). Written on the turn trace and echoed on
+   * the live `turn_start`; like `turnProvenance`, it never reaches the model.
+   */
+  eventAtTurn?: EventAtTurn;
 }
 
 /**
@@ -468,6 +479,7 @@ export interface WebChatTurnPrepareInputs {
   explicitTemperature?: number;
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   /**
    * MCP tool names this surface declines to advertise, whichever selected
    * server offers them. See `PrepareChatV2Options.excludeMcpToolNames`.
@@ -510,6 +522,8 @@ export interface WebChatTurnPrepareInputs {
    * can exist: the model would call it and the turn would strand.
    */
   pageTools?: PageToolEntry[];
+  /** MCP Events agent tools; the caller validates `body.eventTools`. */
+  eventTools?: EventToolsSnapshot;
   /** Server-side built-in tools (e.g. web_search) to merge into the tool set. */
   builtInTools?: ToolSet;
   /**
@@ -875,6 +889,7 @@ export async function streamChatTurn(
         : {}),
       requireToolApproval: prepare.requireToolApproval,
       respectToolVisibility: prepare.respectToolVisibility,
+      runUnloadedToolCalls: prepare.runUnloadedToolCalls,
       ...(prepare.excludeMcpToolNames
         ? { excludeMcpToolNames: prepare.excludeMcpToolNames }
         : {}),
@@ -894,6 +909,7 @@ export async function streamChatTurn(
       appTools: prepare.appTools,
       uiTools: prepare.uiTools,
       pageTools: prepare.pageTools,
+      eventTools: prepare.eventTools,
       builtInTools: prepare.builtInTools,
       // The prompt section that explains `webmcp_*` tools has to be there
       // BEFORE a navigation adds them; the refresher's presence is the fact.
@@ -1197,6 +1213,12 @@ export async function streamChatTurn(
   ]
     .filter((section) => section.trim().length > 0)
     .join("\n\n");
+  // The prompt the turn runs on, and so the one it records. A web client's
+  // vendor receives only the user message; its settings check needs the
+  // project prompt, before MCPJam adds instructions for its own model.
+  const executionSystemPrompt = isWebClientRuntimeId(persist.harness)
+    ? (persist.systemPrompt ?? "")
+    : effectiveEnhancedSystemPrompt;
 
   const hostedChatSessionId = persist.chatSessionId;
   if (runtime.executionBinding) await takeEarly(runtime.executionBinding);
@@ -1361,7 +1383,7 @@ export async function streamChatTurn(
       maxSteps,
       secretsUnavailable,
       modelVenue,
-      systemPrompt: effectiveEnhancedSystemPrompt,
+      systemPrompt: executionSystemPrompt,
       serverIds: prepare.selectedServerIds.filter(
         (id) =>
           (typeof manager.hasServer !== "function" || manager.hasServer(id)) &&
@@ -1429,7 +1451,7 @@ export async function streamChatTurn(
         });
         authorizationFailure = { status };
       }
-      return await persistChatSessionToConvex({
+      const persistOptions: Parameters<typeof persistChatSessionToConvex>[0] = {
         chatSessionId: hostedChatSessionId,
         authorizationFailure,
         retryOwner: persist.retryOwner,
@@ -1472,7 +1494,7 @@ export async function streamChatTurn(
         // reset" long after the fact is the confabulation `resumeConfig`'s raw
         // prompt exists to prevent. Hence two fields, both already on the
         // ingest contract — the local route has always filled this one.
-        systemPrompt: effectiveEnhancedSystemPrompt,
+        systemPrompt: executionSystemPrompt,
         sessionMessages: preservePluginMessageTitles(
           stampSenderUserIdsOnSessionMessages(
             stripUiContextModelParts(
@@ -1507,6 +1529,9 @@ export async function streamChatTurn(
           ? {
               directVisibility: persist.directVisibility,
               ...(persist.rewind ? { rewind: persist.rewind } : {}),
+              ...(persist.multiModel
+                ? { multiModel: persist.multiModel }
+                : {}),
               resumeConfig: {
                 ...(persist.executionTarget
                   ? { executionTarget: persist.executionTarget }
@@ -1521,6 +1546,7 @@ export async function streamChatTurn(
                 requireToolApproval: persist.requireToolApproval,
                 requireNativeToolDiscovery: persist.requireNativeToolDiscovery,
                 respectToolVisibility: persist.respectToolVisibility,
+                runUnloadedToolCalls: prepare.runUnloadedToolCalls,
                 modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
                 mcpToolResultImageRendering:
                   persist.mcpToolResultImageRendering,
@@ -1579,6 +1605,7 @@ export async function streamChatTurn(
             // no page tools" is a different fact from "we do not know", and the
             // pane says something different about each.
             ...(pageToolsAtTurn ? { pageToolsAtTurn } : {}),
+            ...(persist.eventAtTurn ? { eventAtTurn: persist.eventAtTurn } : {}),
           };
         })(),
         ...(persist.expectedVersion !== undefined
@@ -1588,7 +1615,8 @@ export async function streamChatTurn(
         // the transcript inside the ingest mutation.
         ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
         forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
-      });
+      };
+      return await persistChatSessionToConvex(persistOptions, c);
     };
   };
 
@@ -1664,6 +1692,7 @@ export async function streamChatTurn(
       shouldPauseAfterStep: () => suspendedScopeStepUpToolCallIds.size > 0,
       suspendedToolCallIds: () => suspendedScopeStepUpToolCallIds,
       onStreamComplete: cleanupStream,
+      ...(persist.eventAtTurn ? { eventAtTurn: persist.eventAtTurn } : {}),
       onStreamWriterReady: (writer) => {
         scopeChallengeWriter = writer;
         emitTurnNotices(writer);
@@ -1808,6 +1837,7 @@ export async function streamChatTurn(
         requireToolApproval: persist.requireToolApproval,
         onConversationComplete,
         onStreamComplete: cleanupStream,
+        ...(persist.eventAtTurn ? { eventAtTurn: persist.eventAtTurn } : {}),
         onStreamWriterReady: (writer) => {
           scopeChallengeWriter = writer;
           emitSandboxNotices(
@@ -1874,6 +1904,7 @@ export async function streamChatTurn(
       ...(refreshTools ? { refreshTools } : {}),
       onConversationComplete,
       onStreamComplete: cleanupStream,
+      ...(persist.eventAtTurn ? { eventAtTurn: persist.eventAtTurn } : {}),
       onStreamWriterReady: (writer) => {
         scopeChallengeWriter = writer;
         emitSandboxNotices(
@@ -1960,7 +1991,7 @@ export async function streamChatTurn(
     chatSessionId: hostedChatSessionId,
     ...(persist.hostId ? { hostId: persist.hostId } : {}),
     sourceType: persist.sourceType,
-    systemPrompt: effectiveEnhancedSystemPrompt,
+    systemPrompt: executionSystemPrompt,
     temperature: resolvedTemperature,
     // Hosted `/stream`: the top-level body field. Harness: the typed field its
     // adapter's declared efforts gate (refused, never dropped).
@@ -2092,6 +2123,7 @@ export async function streamChatTurn(
       stopCrossInstanceRpcLogPoll = undefined;
       await cleanupStream();
     },
+    ...(persist.eventAtTurn ? { eventAtTurn: persist.eventAtTurn } : {}),
     onStreamWriterReady: (writer) => {
       scopeChallengeWriter = writer;
       emitSandboxNotices(

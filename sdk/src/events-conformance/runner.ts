@@ -22,6 +22,8 @@ import { generateWebhookSecret } from "../mcp-client-manager/events-ext.js";
 import type { MCPClientManager } from "../mcp-client-manager/MCPClientManager.js";
 import { EVENT_DELIVERY_MODES } from "../mcp-client-manager/events-ext-schemas.js";
 import {
+  BETA_PROFILE_ID,
+  hasEventsProfileCapability,
   getEventsProfile,
   isChatgptProfileId,
   type EventsProfileId,
@@ -59,7 +61,7 @@ export interface EventsConformanceConfig {
 }
 
 const TITLES: Record<EventsCheckId, string> = {
-  "events-capability-declared": "Server declares top-level capabilities.events",
+  "events-capability-declared": "Server declares the selected Events capability",
   "events-list-shape": "events/list returns valid descriptors",
   "events-poll-null-cursor": "A null-cursor poll starts from now",
   "events-subscribe-rejects-http-callback": "Non-https callback URLs are rejected",
@@ -74,10 +76,11 @@ const TITLES: Record<EventsCheckId, string> = {
   "events-private-callback-rejected": "Private callback destinations are rejected by default",
   "events-delivery-signature": "Deliveries are signed per Standard Webhooks",
   "events-webhook-id-equals-event-id": "webhook-id equals eventId for events",
+  "events-webhook-message-id": "webhook-id is a separate, header-safe delivery identifier",
   "events-subscription-id-header": "X-MCP-Subscription-Id matches the subscription id",
   "events-delivery-content-type": "Deliveries are application/json",
   "events-delivery-body-size": "Delivery bodies are at most 256 KiB",
-  "events-unsubscribe-twice": "A second unsubscribe is {} or NotFound",
+  "events-unsubscribe-twice": "A second unsubscribe returns an empty result or NotFound",
   "events-push-heartbeat": "Push streams send heartbeats (30 s cadence)",
   "chatgpt-readiness-webhook-listed": "At least one event lists webhook delivery",
   "chatgpt-readiness-protocol-version": "ChatGPT accepts the negotiated protocol version",
@@ -121,6 +124,13 @@ export async function runEventsConformance(
     void captureConformanceRun("sdk", { suite: "events", mode: "single" });
   const started = Date.now();
   const selected = new Set(config.checkIds ?? DEFAULT_CHECKS);
+  const beta = config.profile === BETA_PROFILE_ID;
+  const deliveryIdCheck = beta ? "events-webhook-message-id" : "events-webhook-id-equals-event-id";
+  const otherDeliveryCheck = beta ? "events-webhook-id-equals-event-id" : "events-webhook-message-id";
+  if (config.checkIds?.includes(otherDeliveryCheck)) {
+    throw new Error(`Check ${otherDeliveryCheck} does not apply to ${config.profile}. Use ${deliveryIdCheck}.`);
+  }
+  selected.delete(otherDeliveryCheck);
   const results = new Map<EventsCheckId, EventsCheckResult>();
   const { manager, serverId, profile, receiver } = config;
   const overrides: EventsConformanceResult["overrides"] =
@@ -163,14 +173,14 @@ export async function runEventsConformance(
   // ---- capability + discovery -------------------------------------------------
   const support = await manager.ensureEventsSupport(serverId);
   const protocolVersion = manager.getNegotiatedProtocolVersion(serverId);
+  const declared = hasEventsProfileCapability(support, profile);
+  const placement = getEventsProfile(profile).capabilityPlacement.value;
   record(
     "events-capability-declared",
-    support.declared ? "passed" : "violation",
-    support.declared
-      ? `capabilities.events declared (${support.source})`
-      : support.handshakeObserved
-        ? "the handshake carried no top-level capabilities.events"
-        : "the handshake was not observed"
+    declared ? "passed" : "violation",
+    declared ? `${placement} declared (${support.source})`
+      : support.handshakeObserved ? `the handshake carried no ${placement}` : "the handshake was not observed",
+    { title: `Server declares ${placement}` },
   );
 
   if (isChatgptProfileId(profile)) {
@@ -218,7 +228,7 @@ export async function runEventsConformance(
     );
   }
 
-  if (!support.declared) {
+  if (!declared) {
     skipAll([...selected], "the server does not declare events", "not-applicable");
     return finish();
   }
@@ -232,7 +242,7 @@ export async function runEventsConformance(
     );
     record(
       "events-list-shape",
-      "passed",
+      beta && unknownModes.length > 0 ? "violation" : "passed",
       `${descriptors.length} event type(s)` +
         (unknownModes.length ? `; unrecognized delivery modes: ${unknownModes.join(", ")}` : ""),
       { startedAt: listStarted }
@@ -412,7 +422,7 @@ export async function runEventsConformance(
         startedAt: subscribedAt,
       });
     } catch (error) {
-      const classified = classifyEventsRpcError("events/subscribe", error);
+      const classified = classifyEventsRpcError("events/subscribe", error, beta ? "beta" : "legacy");
       record("events-subscribe-result-shape", "violation", `subscribe failed: ${(error as Error).message}`, {
         startedAt: subscribedAt,
         ...(classified ? { details: { kind: classified.kind, data: classified.data } } : {}),
@@ -470,7 +480,7 @@ export async function runEventsConformance(
     // Deliveries.
     const deliveryChecks: EventsCheckId[] = [
       "events-delivery-signature",
-      "events-webhook-id-equals-event-id",
+      deliveryIdCheck,
       "events-subscription-id-header",
       "events-delivery-content-type",
       "events-delivery-body-size",
@@ -498,8 +508,9 @@ export async function runEventsConformance(
           delivery.status === 200 ? "signature verified over the raw body" : `receiver answered ${delivery.status}`
         );
         record(
-          "events-webhook-id-equals-event-id",
-          delivery.webhookId === delivery.eventId ? "passed" : "violation",
+          deliveryIdCheck,
+          (beta ? /^[A-Za-z0-9_-]+$/.test(delivery.webhookId ?? "") && delivery.webhookId !== delivery.eventId
+            : delivery.webhookId === delivery.eventId) ? "passed" : "violation",
           `webhook-id ${delivery.webhookId ?? "(missing)"}, eventId ${delivery.eventId ?? "(missing)"}`
         );
         record(
@@ -554,13 +565,13 @@ export async function runEventsConformance(
         );
         await quietUnsubscribe(descriptor, args, refuse.callbackUrl);
       } catch (error) {
-        const classified = classifyEventsRpcError("events/subscribe", error);
+        const classified = classifyEventsRpcError("events/subscribe", error, beta ? "beta" : "legacy");
         record(
           "events-consent-failure-blocks-delivery",
           classified?.kind === "CallbackEndpointError" ? "passed" : "violation",
           classified?.kind === "CallbackEndpointError"
-            ? `refused with -32015 (${String((classified.data as { reason?: unknown } | undefined)?.reason)})`
-            : `refused, but with ${errorCode(error) ?? "no code"} instead of -32015`
+            ? `refused with ${classified.code} (${String((classified.data as { reason?: unknown } | undefined)?.reason)})`
+            : `refused, but with ${errorCode(error) ?? "no code"} instead of CallbackEndpointError`
         );
       }
     }
