@@ -97,9 +97,11 @@ export function CustomJudgesSection({
         <ul className="divide-y divide-border">
           {written.map((judge) =>
             editing?.id === judge.id && !isNew ? null : (
+              // Switching rows while a new judge is open would drop it unsaved.
               <JudgeRow
                 key={judge.id}
                 judge={judge}
+                editDisabled={Boolean(editing) && isNew}
                 onEdit={() => {
                   setIsNew(false);
                   setEditing(judge);
@@ -135,10 +137,12 @@ function outputSummary(judge: CustomJudge): string {
 
 function JudgeRow({
   judge,
+  editDisabled,
   onEdit,
   onRemove,
 }: {
   judge: CustomJudge;
+  editDisabled: boolean;
   onEdit: () => void;
   onRemove: () => void;
 }) {
@@ -160,6 +164,7 @@ function JudgeRow({
           size="sm"
           variant="ghost"
           aria-label={`Edit ${judge.label}`}
+          disabled={editDisabled}
           onClick={onEdit}
         >
           <Pencil aria-hidden />

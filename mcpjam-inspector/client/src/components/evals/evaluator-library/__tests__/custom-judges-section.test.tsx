@@ -100,6 +100,63 @@ describe("CustomJudgesSection", () => {
     expect(section.querySelectorAll("li")).toHaveLength(1);
   });
 
+  it("saves the second judge's draft after Edit on one judge, then another", () => {
+    const onChange = vi.fn();
+    const judgeA = {
+      id: "a",
+      label: "Judge A",
+      prompt: "A {{final_answer}}",
+      output: { kind: "passfail" as const },
+    };
+    const judgeB = {
+      ...judgeA,
+      id: "b",
+      label: "Judge B",
+      prompt: "B {{final_answer}}",
+    };
+    renderWithProviders(
+      <CustomJudgesSection
+        judgeConfig={{ customJudges: { judges: [judgeA, judgeB] } }}
+        onJudgeConfigChange={onChange}
+        capabilities={capabilities}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Edit Judge A" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit Judge B" }));
+    expect(screen.getByLabelText("Name")).toHaveValue("Judge B");
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Judge B renamed" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save judge" }));
+    const next = onChange.mock.calls[0][0] as EvalJudgeConfig;
+    expect(next.customJudges?.judges).toEqual([
+      judgeA,
+      { ...judgeB, label: "Judge B renamed" },
+    ]);
+  });
+
+  it("locks the other judges' Edit while a new judge is open", () => {
+    const judge = {
+      id: "a",
+      label: "Judge A",
+      prompt: "A {{final_answer}}",
+      output: { kind: "passfail" as const },
+    };
+    renderWithProviders(
+      <CustomJudgesSection
+        judgeConfig={{ customJudges: { judges: [judge] } }}
+        onJudgeConfigChange={() => {}}
+        capabilities={capabilities}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Write a judge" }));
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Unsaved" },
+    });
+    expect(screen.getByRole("button", { name: "Edit Judge A" })).toBeDisabled();
+    expect(screen.getByLabelText("Name")).toHaveValue("Unsaved");
+  });
+
   it("reads the judge limit and prompt length from the backend's capability", () => {
     const custom = capabilities.judges?.custom;
     if (!custom) throw new Error("Expected the custom judge capability");
