@@ -99,7 +99,7 @@ export function EvaluatorLibraryDialog({
       type="button"
       size="sm"
       variant="ghost"
-      className="-ml-2 w-fit"
+      className="col-span-full -ml-2 w-fit"
       onClick={goBack}
     >
       <ArrowLeft aria-hidden />
@@ -166,36 +166,31 @@ export function EvaluatorLibraryDialog({
           method ? "sm:max-w-2xl" : "h-[48rem] sm:max-w-[58rem]",
         )}
       >
-        <DialogHeader className="gap-1 border-b border-border px-4 py-4 pr-12 text-left sm:px-5 sm:pr-12">
+        <DialogHeader
+          className={cn(
+            "gap-1 border-b border-border px-4 py-4 pr-12 text-left sm:px-5 sm:pr-12",
+            method && "grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3",
+          )}
+        >
           {method ? backButton : null}
-          <div
-            className={cn("flex min-w-0 items-center gap-3", method && "mt-2")}
-          >
-            {method ? (
-              <span
-                className={cn(
-                  "grid size-9 shrink-0 place-items-center rounded-md",
-                  method.tone,
-                )}
-              >
-                <method.icon aria-hidden className="size-4" />
-              </span>
-            ) : null}
-            <div className="min-w-0">
-              <DialogTitle
-                ref={headingRef}
-                tabIndex={-1}
-                className="outline-none"
-              >
-                {selected?.name ?? method?.title ?? "Evaluator library"}
-              </DialogTitle>
-              <DialogDescription>
-                {selected?.question ??
-                  method?.description ??
-                  "Choose what to check on each iteration."}
-              </DialogDescription>
-            </div>
-          </div>
+          {method ? (
+            <span
+              className={cn(
+                "row-span-2 grid size-9 place-items-center rounded-md",
+                method.tone,
+              )}
+            >
+              <method.icon aria-hidden className="size-4" />
+            </span>
+          ) : null}
+          <DialogTitle ref={headingRef} tabIndex={-1} className="outline-none">
+            {selected?.name ?? method?.title ?? "Evaluator library"}
+          </DialogTitle>
+          <DialogDescription>
+            {selected?.question ??
+              method?.description ??
+              "Choose what to check on each iteration."}
+          </DialogDescription>
         </DialogHeader>
         <div className={browsing ? "grid min-h-0" : "hidden"}>
           <EvaluatorLibraryBrowse

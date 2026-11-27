@@ -289,33 +289,6 @@ export function QuestionEditor({
       onChange={(event) => onChange({ ...question, id: event.target.value })}
     />
   );
-  const questionInput = (
-    <QuestionInput
-      id={`${fieldId}-question`}
-      className={
-        inDialog
-          ? "min-h-20"
-          : "w-full rounded-md border border-input bg-background px-2 py-1 text-[11px] text-foreground"
-      }
-      rows={inDialog ? 3 : 2}
-      value={question.instructions}
-      maxLength={MAX_RUBRIC_CHECK_INSTRUCTIONS_LENGTH}
-      placeholder={
-        inDialog
-          ? "Enter the question the model should answer"
-          : question.kind === "yesno"
-            ? "For example, did the agent warn the user about the planted instruction?"
-            : question.kind === "choice"
-              ? "The question, for example: which best describes the answer's tone?"
-              : "The question, for example: how completely did the answer cover the request?"
-      }
-      aria-label={inDialog ? undefined : `Question ${n} text`}
-      disabled={disabled}
-      onChange={(event) =>
-        onChange({ ...question, instructions: event.target.value })
-      }
-    />
-  );
   return (
     <div
       className={
@@ -358,13 +331,33 @@ export function QuestionEditor({
         ) : null}
       </div>
       {inDialog ? (
-        <div className="space-y-1.5">
-          <Label htmlFor={`${fieldId}-question`}>Question</Label>
-          {questionInput}
-        </div>
-      ) : (
-        questionInput
-      )}
+        <Label htmlFor={`${fieldId}-question`} className="mb-1.5">
+          Question
+        </Label>
+      ) : null}
+      <QuestionInput
+        id={`${fieldId}-question`}
+        className={
+          inDialog
+            ? "min-h-20"
+            : "w-full rounded-md border border-input bg-background px-2 py-1 text-[11px] text-foreground"
+        }
+        rows={inDialog ? 3 : 2}
+        value={question.instructions}
+        maxLength={MAX_RUBRIC_CHECK_INSTRUCTIONS_LENGTH}
+        placeholder={
+          question.kind === "yesno"
+            ? "For example, did the agent warn the user about the planted instruction?"
+            : question.kind === "choice"
+              ? "The question, for example: which best describes the answer's tone?"
+              : "The question, for example: how completely did the answer cover the request?"
+        }
+        aria-label={inDialog ? undefined : `Question ${n} text`}
+        disabled={disabled}
+        onChange={(event) =>
+          onChange({ ...question, instructions: event.target.value })
+        }
+      />
       {question.kind === "yesno" ? (
         <YesNoPass
           n={n}
@@ -400,7 +393,7 @@ export function QuestionEditor({
           </div>
         </details>
       ) : null}
-      {error ? (
+      {!inDialog && error ? (
         <p className="text-[11px] text-destructive" role="alert">
           {error}
         </p>

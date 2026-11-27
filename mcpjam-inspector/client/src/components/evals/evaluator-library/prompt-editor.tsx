@@ -146,12 +146,11 @@ export function PromptEditor({
         id={`${id}-help`}
         className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground"
       >
-        {scope === "conversation" ? <span>Reads the whole conversation.</span> : null}
-        {variables.length > 0 ? (
-          <span>
-            Type <code>{"{{"}</code> to insert a variable.
-          </span>
-        ) : null}
+        <span>
+          {scope === "iteration"
+            ? "Reads one iteration."
+            : "Reads the whole conversation."}
+        </span>
         {used.map((name) => (
           <VariableChip key={name} name={name} known={known.has(name)} />
         ))}

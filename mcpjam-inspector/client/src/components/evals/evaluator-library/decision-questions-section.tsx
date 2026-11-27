@@ -194,7 +194,7 @@ export function DecisionEditor({
         inDialog={inDialog}
         index={0}
         question={question}
-        error={!inDialog && tried ? error : undefined}
+        error={tried ? error : undefined}
         disabled={false}
         onChange={setQuestion}
         onLabelChange={(label) =>
