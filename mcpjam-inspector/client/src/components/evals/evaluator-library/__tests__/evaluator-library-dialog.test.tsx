@@ -211,6 +211,25 @@ describe("EvaluatorLibraryButton", () => {
     expect(
       screen.getByRole("button", { name: "Answers the Question" }),
     ).toBeVisible();
+    // The focused button is gone, so focus goes where the next query is typed.
+    expect(search).toHaveFocus();
+  });
+
+  it("shows a new search from the top and keeps the place after details", () => {
+    open();
+    const pane = screen.getByRole("region", {
+      name: "Calling tools",
+    }).parentElement;
+    if (!pane) throw new Error("The results pane is missing.");
+    Object.defineProperty(pane, "scrollTop", { value: 300, writable: true });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Valid Tool Arguments" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Back to library" }));
+    expect(pane.scrollTop).toBe(300);
+    const search = screen.getByRole("searchbox", { name: "Search presets" });
+    fireEvent.change(search, { target: { value: "tool" } });
+    expect(pane.scrollTop).toBe(0);
   });
 
   it("steps back from preset details on Escape before closing", () => {
