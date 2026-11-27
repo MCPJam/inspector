@@ -100,7 +100,7 @@ export function CustomJudgePreview({
         input,
         failure: getBillingErrorMessage(
           caught,
-          "Could not test the judge. Try again.",
+          "Couldn't test the judge. Check the suite's judge model and try again.",
           false,
         ),
       });
@@ -166,7 +166,7 @@ export function CustomJudgePreview({
           <p className="text-foreground">
             {outcome.result.reason ||
               customJudgeFailureCopy(outcome.result.error) ||
-              "The judge could not grade this iteration."}
+              "The judge couldn't grade this iteration. Choose another iteration and try again."}
           </p>
           {outcome.prompt ? (
             <details>
