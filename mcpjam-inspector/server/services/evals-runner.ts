@@ -5704,10 +5704,7 @@ const runLocalIteration = async ({
       buildSinks: makeSinks,
     });
     const toolDeclarations = collectToolDeclarations(mcpClientManager, selectedServers);
-    const stepState = createStepExecutionState({
-      ...toolDeclarations,
-      accountRouting,
-    });
+    const stepState = createStepExecutionState({ ...toolDeclarations, accountRouting });
     const stepOutcome = await executeSteps({
       steps,
       state: stepState,
@@ -7587,10 +7584,7 @@ const runHostedIterationWithBrowser = async (
       : {}),
   });
   const toolDeclarations = collectToolDeclarations(mcpClientManager, selectedServers);
-  const stepState = createStepExecutionState({
-    ...toolDeclarations,
-    accountRouting,
-  });
+  const stepState = createStepExecutionState({ ...toolDeclarations, accountRouting });
   let result: Awaited<ReturnType<typeof executeSteps>>;
   try {
     result = await executeSteps({

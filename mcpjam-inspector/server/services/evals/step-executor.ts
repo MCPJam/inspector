@@ -164,11 +164,9 @@ export interface SkippedStep {
   reason: string;
 }
 
+type DeclarationField = "toolDeclarations" | "declarationsCaptured" | "accountRouting" | "connectionKeys";
 export function createStepExecutionState(
-  declarations: Pick<
-    StepExecutionState,
-    "toolDeclarations" | "declarationsCaptured" | "accountRouting" | "connectionKeys"
-  > = {},
+  declarations: Pick<StepExecutionState, DeclarationField> = {},
 ): StepExecutionState {
   return {
     ...declarations,
