@@ -240,9 +240,7 @@ export function JudgeEditor({
         maxLength={MAX_CUSTOM_JUDGE_PROMPT_LENGTH}
       />
       <details className="text-sm text-muted-foreground">
-        <summary className="w-fit cursor-pointer">
-          Variable reference
-        </summary>
+        <summary className="w-fit cursor-pointer">Variable reference</summary>
         <div className="mt-2">
           <VariableMappingTable variables={variableMappings} />
         </div>

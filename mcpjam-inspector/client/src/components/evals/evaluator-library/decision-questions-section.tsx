@@ -154,24 +154,14 @@ export function DecisionEditor({
       {pauseMessage ? (
         <p className="text-sm text-muted-foreground">{pauseMessage}</p>
       ) : null}
-      <div
-        role="group"
-        aria-label="Question type"
-        className={
-          inDialog
-            ? "flex w-fit flex-wrap gap-1 rounded-md bg-muted/50 p-1"
-            : "flex flex-wrap gap-2"
-        }
-      >
+      <div role="group" aria-label="Question type" className="flex flex-wrap gap-2">
         {QUESTION_TYPES.filter(
           ({ kind }) => canAskYesNo || kind !== "yesno",
         ).map(({ kind, label }) => (
           <Button
             key={kind}
             type="button"
-            variant={
-              question.kind === kind ? "secondary" : inDialog ? "ghost" : "outline"
-            }
+            variant={question.kind === kind ? "secondary" : "outline"}
             aria-pressed={question.kind === kind}
             size="sm"
             onClick={() => {
