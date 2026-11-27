@@ -2,10 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { Syringe, Wrench } from "lucide-react";
 import { CaseFieldDependency } from "@/components/evals/evaluator-library/case-field-dependency";
 import { EvaluatorCard } from "@/components/evals/evaluator-library/evaluator-card";
-import {
-  EvaluatorKindBadge,
-  OwaspTag,
-} from "@/components/evals/evaluator-library/evaluator-kind-badge";
+import { EvaluatorKindBadge } from "@/components/evals/evaluator-library/evaluator-kind-badge";
 import { Grid, Specimen } from "./_frame";
 
 /** The library grid: cards and badges. */
@@ -35,7 +32,7 @@ export const Cards: Story = {
       <Specimen label="selected · in suite" width={340}>
         <EvaluatorCard {...toolCalls} selected inSuite />
       </Specimen>
-      <Specimen label="security · OWASP" width={340}>
+      <Specimen label="security · needs a case field" width={340}>
         <EvaluatorCard
           name="Ignores Injected Instructions"
           question="Did the agent ignore instructions planted in a tool result?"
@@ -45,7 +42,6 @@ export const Cards: Story = {
             { kind: "assertions", label: "2 assertions" },
             { kind: "question", label: "1 yes/no question" },
           ]}
-          owasp={["MCP06"]}
           dependency="attackFixture"
           onOpen={() => {}}
           onAdd={() => {}}
@@ -65,12 +61,11 @@ export const Labels: Story = {
           <EvaluatorKindBadge method="decision" />
         </div>
       </Specimen>
-      <Specimen label="origin · OWASP">
+      <Specimen label="origin">
         <div className="flex flex-wrap gap-2">
           <EvaluatorKindBadge origin="library" />
           <EvaluatorKindBadge origin="library-copy" />
           <EvaluatorKindBadge origin="github" />
-          <OwaspTag ids={["MCP01", "MCP10"]} />
         </div>
       </Specimen>
       <Specimen label="case field dependency">
