@@ -738,18 +738,24 @@ export const predicateUnion = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("toolResultMatchesSchema"),
-    // Author content, capped rather than inspected: a schema is a document,
-    // and the cap is what keeps an unbounded one out of every persisted
-    // predicate row. Shape is the validator engine's problem at evaluate time.
-    // Any JSON value except a string, or the one string a schema may be:
-    // "declared", meaning each tool's own output schema. Spelled as a union
-    // so the published suite schemas reject other strings too.
+    // Keep the structural authoring contract aligned with the deployed
+    // backend mirror. Enforce the supported root types during parsing.
     schema: z
       .union([
         z.literal("declared"),
         z.record(z.string(), z.unknown()),
+        z.array(z.unknown()),
+        z.number(),
         z.boolean(),
+        z.null(),
       ])
+      .refine(
+        (value): value is AuthoredResultSchema | "declared" =>
+          value === "declared" ||
+          typeof value === "boolean" ||
+          (value !== null && typeof value === "object" && !Array.isArray(value)),
+        'schema must be an object, a boolean or "declared"',
+      )
       .refine(
         (value) => canonicalSize(value) <= MAX_SCHEMA_BYTES,
         `schema must canonicalize to at most ${MAX_SCHEMA_BYTES} bytes`
