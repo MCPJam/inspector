@@ -267,11 +267,13 @@ describe("pinned read grading — hosted handlers + executeSteps", () => {
     const domainError = await runHosted(steps, ordersServer(() => ({
       ...order(true), isError: true,
     })), evidence);
-    expect(resultOf(domainError.state, "declared-schema").status).toBe("not_applicable");
+    expect(resultOf(domainError.state, "declared-schema").predicateResult?.status)
+      .toBe("not_applicable");
     const protocolError = await runHosted(steps, ordersServer(() => {
       throw new Error("Connection closed");
     }), evidence);
-    expect(resultOf(protocolError.state, "declared-schema").status).toBe("error");
+    expect(resultOf(protocolError.state, "declared-schema").predicateResult?.status)
+      .toBe("error");
   });
 
   it("passes the required assert when the pinned read returns the expected value", async () => {
