@@ -86,7 +86,7 @@ function outputText(output: unknown): string | undefined {
   }
 }
 
-function toolCallFailure(
+export function toolCallFailure(
   output: unknown,
   toolName: string,
 ): TranscriptToolResult["callFailure"] {
@@ -260,6 +260,7 @@ export function callToolResultRow(
   toolName: string,
   result: unknown,
   toolCallId?: string,
+  declaredServerKey?: string,
 ): TranscriptToolResult | undefined {
   if (!isRecord(result)) return undefined;
   const texts = Array.isArray(result.content)
@@ -273,6 +274,7 @@ export function callToolResultRow(
   return {
     ...(toolCallId !== undefined ? { toolCallId } : {}),
     toolName,
+    ...(declaredServerKey !== undefined ? { declaredServerKey } : {}),
     ...(texts.length > 0 ? { text: texts.join("\n") } : {}),
     ...(result.structuredContent !== undefined
       ? { structuredContent: result.structuredContent }

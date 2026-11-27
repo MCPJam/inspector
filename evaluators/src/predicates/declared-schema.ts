@@ -15,18 +15,13 @@ export type DeclaredSchemaVerdict =
   | { kind: "pass"; reason: string }
   | { kind: "fail"; reason: string }
   | { kind: "error"; reason: string }
-  | { kind: "empty_scope"; reason: string }
-  | { kind: "not_applicable"; reason: string };
+  | { kind: "empty_scope"; reason: string };
 
 /**
  * Checks each result against the output schema its tool declared.
  *
- * MCP requires a tool with an `outputSchema` to return `structuredContent`
- * that conforms to it, so only `structuredContent` is read; text that happens
- * to parse as JSON is not a structured result. A result stored without its
- * raw CallToolResult is unmeasured unless the client rejected the output for
- * failing its schema. The spec exempts results with isError and tools without
- * a declared output schema.
+ * Only raw structured content or a confirmed client schema rejection can
+ * prove a violation. Tool errors and tools without a schema are exempt.
  */
 export function checkDeclaredSchemas(
   results: readonly TranscriptToolResult[],
@@ -39,9 +34,7 @@ export function checkDeclaredSchemas(
     byName.set(tool.name, sameName);
   }
   const failures: string[] = [];
-  const unresolved = new Set<string>();
   const unvalidated = new Set<string>();
-  let uncaptured = 0;
   let checked = 0;
   for (const result of results) {
     if (result.isError === true) continue;
@@ -61,17 +54,24 @@ export function checkDeclaredSchemas(
     const candidates = (byName.get(name) ?? []).filter(
       (tool) => !result.declaredServerKey || result.declaredServerKey === tool.serverKey,
     );
-    const schema = candidates[0]?.outputSchema;
-    if (candidates.some((tool) =>
-      tool.outputSchema !== schema &&
-      (tool.outputSchema === undefined || schema === undefined ||
-        canonicalJson(tool.outputSchema) !== canonicalJson(schema)),
-    )) {
-      unresolved.add(name);
+    if (candidates.length === 0) {
+      unvalidated.add(`"${name}" could not be matched to a captured tool declaration`);
       continue;
     }
-    if (candidates.length === 0 && (result.declaredToolName || result.declaredServerKey)) {
-      unvalidated.add(`"${name}" could not be matched to a captured tool declaration`);
+    const schema = candidates[0]?.outputSchema;
+    try {
+      if (candidates.some(({ outputSchema }) =>
+        outputSchema !== schema &&
+        (outputSchema === undefined || schema === undefined ||
+          canonicalJson(outputSchema) !== canonicalJson(schema)),
+      )) {
+        unvalidated.add(
+          `"${name}" is declared by more than one server with different output schemas, and the result does not record which server answered`,
+        );
+        continue;
+      }
+    } catch {
+      unvalidated.add(`"${name}" has an unreadable output schema declaration`);
       continue;
     }
     if (schema === undefined) continue;
@@ -85,7 +85,7 @@ export function checkDeclaredSchemas(
       // Only a stored raw CallToolResult can show the field was absent. A
       // result kept as model-visible output alone was not measured.
       if (result.rawBytes === undefined) {
-        uncaptured += 1;
+        unvalidated.add(`"${name}" was stored without the raw CallToolResult`);
         continue;
       }
       checked += 1;
@@ -126,24 +126,12 @@ export function checkDeclaredSchemas(
         )}${failures.length > 3 ? ` (+${failures.length - 3} more)` : ""}`,
     };
   }
-  if (unresolved.size > 0) {
-    return {
-      kind: "error",
-      reason: `${[...unresolved].map((n) => `"${n}"`).join(", ")} is declared by more than one server with different output schemas, and the result does not record which server answered`,
-    };
-  }
-  if (uncaptured > 0) {
-    return {
-      kind: "error",
-      reason: `${uncaptured} result(s) were stored without the raw CallToolResult, so their structuredContent could not be checked`,
-    };
-  }
   if (unvalidated.size > 0) {
     return { kind: "error", reason: [...unvalidated].slice(0, 3).join("; ") };
   }
   if (!declarations.some((tool) => tool.outputSchema !== undefined)) {
     return {
-      kind: "not_applicable",
+      kind: "empty_scope",
       reason: "no tool declares an output schema",
     };
   }

@@ -22,49 +22,29 @@ import {
   type LibraryEvaluator,
 } from "./library-catalog";
 
-/**
- * Opens the evaluator library from suite settings. Adding an evaluator hands
- * its checks to `onAdd`, which saves them like "Add assertion" does. Renders
- * nothing unless the evaluator-library flag is on and this deployment can
- * save at least one library evaluator.
- */
-export function EvaluatorLibraryButton({
-  predicates,
-  authorableKinds,
-  onAdd,
-}: {
+type LibraryProps = {
   predicates: readonly Predicate[];
   authorableKinds?: readonly Predicate["type"][];
   onAdd: (checks: readonly Predicate[]) => void;
-}) {
+};
+
+export function EvaluatorLibraryButton(props: LibraryProps) {
   const enabled = useEvaluatorLibraryEnabled();
-  const anyAuthorable = LIBRARY_EVALUATORS.some((e) =>
-    isAuthorable(e, authorableKinds),
+  if (!enabled) return null;
+  const available = LIBRARY_EVALUATORS.filter((e) =>
+    isAuthorable(e, props.authorableKinds),
   );
-  if (!enabled || !anyAuthorable) return null;
-  return (
-    <EvaluatorLibraryDialog
-      predicates={predicates}
-      authorableKinds={authorableKinds}
-      onAdd={onAdd}
-    />
-  );
+  if (available.length === 0) return null;
+  return <EvaluatorLibraryDialog {...props} available={available} />;
 }
 
-export function EvaluatorLibraryDialog({
+function EvaluatorLibraryDialog({
   predicates,
-  authorableKinds,
   onAdd,
-}: {
-  predicates: readonly Predicate[];
-  authorableKinds?: readonly Predicate["type"][];
-  onAdd: (checks: readonly Predicate[]) => void;
-}) {
+  available,
+}: Omit<LibraryProps, "authorableKinds"> & { available: readonly LibraryEvaluator[] }) {
   const [open, setOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const available = LIBRARY_EVALUATORS.filter((e) =>
-    isAuthorable(e, authorableKinds),
-  );
   const selected = available.find((e) => e.id === selectedId);
   const add = (evaluator: LibraryEvaluator) => {
     onAdd(taggedChecks(evaluator));

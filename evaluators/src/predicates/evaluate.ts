@@ -338,11 +338,7 @@ function evidenceError(predicate: Predicate, reason: string): PredicateResult {
   };
 }
 
-/**
- * NOTHING TO JUDGE. `passed: true` so a reader that predates `status` does
- * not fail a case over a check that does not apply; status readers key on
- * `not_applicable` and write a not-applicable score row.
- */
+/** `passed: true` preserves behavior for readers without status support. */
 function notApplicable(predicate: Predicate, reason: string): PredicateResult {
   return {
     predicate: sanitizePredicate(predicate),
@@ -1494,39 +1490,15 @@ export function evaluatePredicate(
         }
         const verdict = checkDeclaredSchemas(scope, transcript.toolDeclarations);
         if (verdict.kind === "error") return evidenceError(predicate, verdict.reason);
-        if (verdict.kind === "not_applicable") {
-          return notApplicable(predicate, verdict.reason);
-        }
         if (verdict.kind === "fail") return fail(predicate, verdict.reason);
-        // A pass or empty scope requires complete evidence.
-        if (scope.length === 0) {
-          const empty = emptyScopeIsScored(
-            transcript,
-            "toolResults",
-            predicate.toolName
-          );
-          if (!empty.scored) {
-            return evidenceError(
-              predicate,
-              `${empty.reason}; cannot validate against the declared schemas`
-            );
-          }
-          return notApplicable(predicate, verdict.reason);
-        }
-        // Declared mode reads `structuredContent`, which is stored whole; a
-        // capped `text` field does not touch what was validated.
-        const gap = incompleteScopeReason(
-          transcript,
-          "toolResults",
-          scope.length,
-          0
-        );
-        if (gap) {
-          return evidenceError(
-            predicate,
-            `${verdict.reason}; ${gap}`
-          );
-        }
+        // Declared mode reads whole structuredContent even if text was capped.
+        const empty = scope.length === 0
+          ? emptyScopeIsScored(transcript, "toolResults", predicate.toolName)
+          : undefined;
+        const gap = empty
+          ? (empty.scored ? undefined : empty.reason)
+          : incompleteScopeReason(transcript, "toolResults", scope.length, 0);
+        if (gap) return evidenceError(predicate, gap);
         return verdict.kind === "empty_scope"
           ? notApplicable(predicate, verdict.reason)
           : pass(predicate, verdict.reason);

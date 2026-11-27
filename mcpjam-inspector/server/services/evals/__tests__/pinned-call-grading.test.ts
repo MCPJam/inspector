@@ -146,6 +146,7 @@ function makeBrowser() {
 async function runHosted(
   steps: TestStep[],
   server: ReturnType<typeof ordersServer>,
+  evidence?: Parameters<typeof createStepExecutionState>[0],
 ) {
   const acc = {
     messageHistory: [] as ModelMessage[],
@@ -172,7 +173,7 @@ async function runHosted(
     isAborted: () => false,
     extractToolCalls: () => [],
   } as never);
-  const state = createStepExecutionState();
+  const state = createStepExecutionState(evidence);
   const result = await executeSteps({
     steps,
     state,
@@ -241,6 +242,38 @@ beforeEach(() => {
 });
 
 describe("pinned read grading — hosted handlers + executeSteps", () => {
+  it("uses the pinned server's declaration and reports its schema rejections", async () => {
+    const evidence = {
+      declarationsCaptured: "complete" as const,
+      toolDeclarations: [
+        { name: "get_order", serverKey: "srv-2", outputSchema: false },
+        { name: "get_order", serverKey: "srv-1", outputSchema: true },
+      ],
+    };
+    const steps = [read(), check("declared-schema", {
+      type: "toolResultMatchesSchema",
+      schema: "declared",
+      toolName: "get_order",
+    })];
+    const valid = await runHosted(steps, ordersServer(() => order(true)), evidence);
+    expect(resultOf(valid.state, "declared-schema").passed).toBe(true);
+    const invalid = await runHosted(steps, ordersServer(() => {
+      throw new Error('Tool "get_order" has an output schema but did not return structured content.');
+    }), evidence);
+    expect(resultOf(invalid.state, "declared-schema")).toMatchObject({
+      passed: false,
+      reason: expect.stringContaining("returned no structuredContent"),
+    });
+    const domainError = await runHosted(steps, ordersServer(() => ({
+      ...order(true), isError: true,
+    })), evidence);
+    expect(resultOf(domainError.state, "declared-schema").status).toBe("not_applicable");
+    const protocolError = await runHosted(steps, ordersServer(() => {
+      throw new Error("Connection closed");
+    }), evidence);
+    expect(resultOf(protocolError.state, "declared-schema").status).toBe("error");
+  });
+
   it("passes the required assert when the pinned read returns the expected value", async () => {
     agentCalls([{ toolName: "refund_order", args: { order_id: "ord_1" } }]);
     const server = ordersServer(() => order(true));

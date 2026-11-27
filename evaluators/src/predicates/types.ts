@@ -64,19 +64,10 @@ export type ArgMatcher = {
   argumentMatching?: ArgMatchMode;
 };
 
-/**
- * The deterministic predicate library.
- *
- * Discriminated on `type`. Each variant is evaluated by a pure function over
- * the {@link IterationTranscript}. Intersected with {@link CheckPolicy} so
- * any kind can be marked advisory (`role: "advisory"`, `severity: "warn"`)
- * without a parallel field.
- */
-/**
- * The author-provided JSON Schema document for a result check.
- */
+/** The author-provided JSON Schema document for a result check. */
 export type AuthoredResultSchema = Record<string, unknown> | boolean;
 
+/** Deterministic checks on an iteration transcript, with shared check policy. */
 export type Predicate = (
   | { type: "toolDescriptionsPresent"; minLength?: number }
   | {
@@ -196,8 +187,8 @@ export type Predicate = (
    */
   | {
       type: "toolResultMatchesSchema";
-      /** A JSON Schema document, or "declared" for each tool's own schema. */
-      schema: AuthoredResultSchema | "declared";
+      /** Unsupported legacy roots are readable so the check can be repaired. */
+      schema: AuthoredResultSchema | "declared" | unknown[] | number | null;
       toolName?: string;
     }
   /**
@@ -744,8 +735,7 @@ export const predicateUnion = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("toolResultMatchesSchema"),
-    // Keep the structural authoring contract aligned with the deployed
-    // backend mirror. Enforce the supported root types during parsing.
+    // The storage shape includes invalid roots written by older clients.
     schema: z
       .union([
         authoredResultSchemaRoot.options[0],
@@ -755,11 +745,6 @@ export const predicateUnion = z.discriminatedUnion("type", [
         authoredResultSchemaRoot.options[2],
         z.null(),
       ])
-      .refine(
-        (value): value is AuthoredResultSchema | "declared" =>
-          authoredResultSchemaRoot.safeParse(value).success,
-        'Replace this schema with a JSON Schema object, true, false, or "declared".',
-      )
       .refine(
         (value) => canonicalSize(value) <= MAX_SCHEMA_BYTES,
         `schema must canonicalize to at most ${MAX_SCHEMA_BYTES} bytes`
@@ -833,12 +818,8 @@ export const predicateUnion = z.discriminatedUnion("type", [
   }),
 ]);
 
-/**
- * Zod schema for {@link Predicate}. The discriminated union is refined so
- * `severity` requires `role: "advisory"`. Kind lists must read
- * {@link predicateUnion}.options, not this wrapper.
- */
-export const predicateSchema = predicateUnion.superRefine((value, ctx) => {
+/** Reads persisted predicates, including legacy result schema roots. */
+export const storedPredicateSchema = predicateUnion.superRefine((value, ctx) => {
   if (
     value.type === "responseCloseTo" &&
     normalizeCloseToText(value.reference, value).length === 0
@@ -869,6 +850,17 @@ export const predicateSchema = predicateUnion.superRefine((value, ctx) => {
     });
   }
 });
+
+/** Validates predicates at the authoring boundary. */
+export const predicateSchema = storedPredicateSchema.refine(
+  (value) =>
+    value.type !== "toolResultMatchesSchema" ||
+    authoredResultSchemaRoot.safeParse(value.schema).success,
+  {
+    path: ["schema"],
+    message: 'Replace this schema with a JSON Schema object, true, false, or "declared".',
+  }
+);
 
 /** Array of predicates — used for both suite defaults and case overrides. */
 export const predicateArraySchema = z.array(predicateSchema);

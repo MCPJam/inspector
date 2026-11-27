@@ -38,12 +38,7 @@ export function clusterByEvaluator<Row>(
   return { loose, clusters };
 }
 
-/**
- * A stage's rows in the suite table. With the evaluator library on, checks
- * added from the library sit together under their evaluator, with its pinned
- * version, a newer version to accept, and one-click removal. Each check keeps
- * the table's own row, so editing it works exactly as it does today.
- */
+/** Reuses the suite table's check rows so editing stays available in a group. */
 export function EvaluatorStageRows<Row extends { id: string }>({
   rows,
   stageLabel,

@@ -23,7 +23,7 @@ import type { BuildTranscriptInput, Predicate } from "@mcpjam/sdk/predicates";
 import type { ToolCallStep } from "@/shared/steps";
 import type { PinnedCallEvidence } from "./pinned-turn";
 import type { StepEngineOutcome, StepExecutionState } from "./step-executor";
-import { callToolResultRow } from "./transcript-evidence";
+import { callToolResultRow, toolCallFailure } from "./transcript-evidence";
 
 /** One `toolCall` step that ran, with what its call returned. */
 export interface PinnedCallRecord extends PinnedCallEvidence {
@@ -91,13 +91,17 @@ export function assertionScope(
   }
   const graded = latestPinnedCall(state.pinnedCalls, assertion.toolName);
   if (!graded) return {};
-  const row = graded.isError
+  const declared = assertion.type === "toolResultMatchesSchema" && assertion.schema === "declared";
+  const failure = declared && graded.failureMessage !== undefined
+    ? toolCallFailure({ type: "error-text", value: graded.failureMessage }, graded.toolName)
+    : undefined;
+  const row = graded.isError && !declared
     ? undefined
-    : callToolResultRow(graded.toolName, graded.result, graded.toolCallId);
+    : callToolResultRow(graded.toolName, graded.result, graded.toolCallId, graded.declaredServerKey);
   // Nothing to grade reads as an uncaptured result: the check reports missing
   // evidence instead of scoring an empty one, which `max: 0` would pass.
   return row
-    ? { toolResults: [row], resultsCaptured: true }
+    ? { toolResults: [{ ...row, callFailure: failure }], resultsCaptured: true }
     : { toolResults: undefined, resultsCaptured: false };
 }
 

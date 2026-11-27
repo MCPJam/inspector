@@ -27,20 +27,11 @@ const STATUS: Record<TrialRowResult["state"], VerdictStatus> = {
   notMeasured: "skipped",
 };
 
-/**
- * One evaluator's verdict from its checks: an error outranks a failure,
- * because a crashed check says nothing about the agent; a failed Required
- * check fails the evaluator, and an Advisory miss fails it only when no
- * Required check applied; Not applicable is never a pass.
- */
+/** Required checks decide when applicable. Advisory checks are the fallback. */
 export function evaluatorStatus(
   checks: readonly { role: ScorerUiRole; status: VerdictStatus }[],
 ): VerdictStatus {
   const statuses = checks.map((c) => c.status);
-  // Only checks that measured something can decide. Required ones decide
-  // when any applied; otherwise the evaluator is judged by the checks it has
-  // left, so a Not applicable Required check never lends its pass to an
-  // Advisory miss.
   const applicable = checks.filter(
     (c) => c.status !== "not_applicable" && c.status !== "skipped",
   );
