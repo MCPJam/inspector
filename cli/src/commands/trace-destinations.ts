@@ -25,8 +25,8 @@ import { getGlobalOptions } from "../lib/server-config.js";
  *
  * A destination is a generic OTLP/HTTP target: an endpoint, the auth headers
  * the vendor expects, and any extra resource attributes it routes on. Every
- * eligible eval, scenario, swarm and shared-Playground turn is pushed to it
- * within about a minute, continuously, with no export step.
+ * eligible eval, scenario, swarm, background-trigger and shared-Playground turn
+ * is pushed to it within about a minute, continuously, with no export step.
  *
  * ## Header values never come back
  *
