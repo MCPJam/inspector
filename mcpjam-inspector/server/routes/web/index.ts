@@ -41,6 +41,8 @@ import { harnessForwardingApprovals } from "./harness-forwarding.js";
 import { harnessWidgets } from "./harness-widget.js";
 import { harnessMcp } from "./harness-mcp.js";
 import mockMcp, { mockDoorMiddleware } from "./mock-mcp.js";
+import { registerMockInProcessHandler } from "../../services/mock/registry.js";
+import { inProcessMockHandler } from "../../services/mock/route.js";
 import apps from "./apps.js";
 import evals from "./evals.js";
 import environments from "./environments.js";
@@ -342,6 +344,9 @@ web.route("/harness-forwarding", harnessWidgets);
 web.route("/harness-forwarding", harnessForwardingApprovals);
 web.route("/harness-mcp", harnessMcp);
 web.route("/mock-mcp", mockMcp);
+// MCPJam's own dialers call a mock in process through this handler (hosted,
+// `npx` and the desktop app all mount this router).
+registerMockInProcessHandler(inProcessMockHandler());
 web.route("/mcpjam-agent", mcpjamAgent);
 web.route("/plugin-forms", pluginFormAnswers);
 web.route("/apps/plugin-instances", pluginInstances);

@@ -68,6 +68,14 @@ export type MockForwardDecision =
       message: string;
     };
 
+/** The list families a version's pinned discovery contract holds. Skills are resources with `skill://` URIs. */
+export type MockListingFamily = "tools" | "prompts" | "resources" | "resourceTemplates";
+
+/** One saved entry of a family, as an MCP list returns it. */
+export type MockPinnedEntry<F extends MockListingFamily> = F extends "tools"
+  ? Tool
+  : Record<string, unknown>;
+
 /**
  * The real server, reached as a client. The Inspector's route implements this
  * on a connection from `createAuthorizedManager`; tests implement it on a
@@ -85,6 +93,15 @@ export interface MockRealServer {
   describe(options?: { signal?: AbortSignal }): Promise<MockRealServerInfo>;
   /** Every tool, all pages walked. */
   listTools(options?: { signal?: AbortSignal }): Promise<Tool[]>;
+  /**
+   * The entries of one family saved in the version's pinned discovery
+   * contract, with no network read. The mock lists from this while forwarding
+   * is blocked, for every family (tools included), so a blocked mock never
+   * contacts the base. The host returns only what the caller may read (the
+   * shareable or caller-private rule) and `[]` when nothing was captured.
+   * Optional: a mock with no base has nothing pinned.
+   */
+  pinnedListing?<F extends MockListingFamily>(family: F): Promise<MockPinnedEntry<F>[]>;
   /**
    * Whether the forward may happen now. The host checks the current policy,
    * the caller's access and the caller's credentials here, on every call. If

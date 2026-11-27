@@ -25,6 +25,7 @@ vi.mock("../../../middleware/bearer-auth.js", () => {
     },
   };
 });
+vi.mock("../../../services/xaa-mint.js", () => ({ resolveXaaIssuer: () => "https://issuer.test" }));
 vi.mock("../auth.js", () => ({
   buildConvexAuthHeaders: (_c: unknown, bearer: string) => ({ Authorization: `Bearer ${bearer}` }),
   callerContextFromHono: (c: any) => ({
@@ -149,6 +150,15 @@ describe("a client outside MCPJam", () => {
     expect((await rpc("sk_ann")).status).toBe(200);
     revoked.add("sk_ann");
     expect((await rpc("sk_ann")).status).toBe(403);
+  });
+
+  it("opens nothing with a grant as the bearer, and does not ask the backend", async () => {
+    const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+    const grant = `${b64({ alg: "HS256" })}.${b64({ purpose: "mock-grant", mockId: "mock1" })}.sig`;
+    const response = await rpc(grant);
+    expect(response.status).toBe(401);
+    expect((await refusal(response)).data.mockCode).toBe("mock_grant_not_accepted");
+    expect(resolveCalls).toHaveLength(0);
   });
 
   it("is refused as a guest, by name", async () => {

@@ -9,7 +9,12 @@
  * hash), and the backend's answer is small enough that the route does not.
  */
 import { createHash } from "node:crypto";
-import { validateMockDefinition, type MockDefinition } from "@mcpjam/sdk/mocks";
+import {
+  validateMockDefinition,
+  type MockDefinition,
+  type MockRealServer,
+  type MockRealServerInfo,
+} from "@mcpjam/sdk/mocks";
 import { buildConvexAuthHeaders, type ManagerCallerContext } from "../../routes/web/auth.js";
 import { logger } from "../../utils/logger.js";
 import { MockRefusal, type MockRefusalKind } from "./refusal.js";
@@ -26,6 +31,37 @@ export interface ResolvedMock {
   definition: MockDefinition;
   /** Null for a mock made from nothing. */
   baseServerId: string | null;
+  /**
+   * The base's listing pinned when this version was saved, as far as this
+   * caller may read it. It serves discovery while forwarding is blocked.
+   * Absent when none was captured or it is another member's private capture.
+   */
+  discovery?: PinnedDiscovery;
+}
+
+/** What B1 stores of the base's listing (`discoveryJson`); MCP list entries. */
+export interface PinnedDiscovery {
+  serverInfo?: MockRealServerInfo["serverInfo"];
+  instructions?: string;
+  capabilities?: MockRealServerInfo["capabilities"];
+  tools?: Awaited<ReturnType<MockRealServer["listTools"]>>;
+  prompts?: Array<Record<string, unknown>>;
+  resources?: Array<Record<string, unknown>>;
+  resourceTemplates?: Array<Record<string, unknown>>;
+}
+
+/** The pinned listing in a resolve answer (`discovery.listingJson`, as B1's `getMock` returns it). */
+function readPinnedDiscovery(raw: unknown): PinnedDiscovery | undefined {
+  const listingJson = (raw as { listingJson?: unknown } | null | undefined)?.listingJson;
+  if (typeof listingJson !== "string") return undefined;
+  try {
+    const parsed: unknown = JSON.parse(listingJson);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as PinnedDiscovery)
+      : undefined;
+  } catch {
+    return undefined; // an unreadable pin serves nothing rather than half a listing
+  }
 }
 
 export function digestOf(...parts: Array<string | number | undefined>): string {
@@ -42,6 +78,9 @@ export function actorDigest(caller: ManagerCallerContext, bearerToken: string): 
 const KIND_BY_BACKEND_CODE: Record<string, MockRefusalKind> = {
   MOCK_SERVERS_FLAG_OFF: "flag_off",
   MOCK_UNAUTHORIZED: "unauthorized",
+  MOCK_GRANT_INVALID: "unauthorized",
+  MOCK_GRANT_EXPIRED: "grant_expired",
+  MOCK_GRANT_CALLER_MISMATCH: "forbidden",
   MOCK_GUEST_REFUSED: "guest",
   MOCK_FORBIDDEN: "forbidden",
   MOCK_NOT_FOUND: "not_found",
@@ -77,6 +116,7 @@ function asResolved(body: unknown): ResolvedMock {
     contentHash: b.contentHash,
     definition: validated.definition,
     baseServerId: typeof b.baseServerId === "string" ? b.baseServerId : null,
+    discovery: readPinnedDiscovery(b.discovery),
   };
 }
 
@@ -84,6 +124,8 @@ export interface ResolveInput {
   mockId: string;
   caller: ManagerCallerContext;
   bearerToken: string;
+  /** In process only: the grant the dialer holds. Absent over HTTP. */
+  grant?: string;
 }
 
 export async function resolveMock(
@@ -100,7 +142,7 @@ export async function resolveMock(
     response = await (deps.fetch ?? fetch)(`${convexUrl}/web/mock/resolve`, {
       method: "POST",
       headers: buildConvexAuthHeaders(input.caller, input.bearerToken),
-      body: JSON.stringify({ mockId: input.mockId }),
+      body: JSON.stringify(input.grant ? { grant: input.grant } : { mockId: input.mockId }),
       signal: AbortSignal.timeout(RESOLVE_TIMEOUT_MS),
     });
   } catch (error) {

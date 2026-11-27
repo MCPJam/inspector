@@ -158,7 +158,8 @@ import {
 import { getConfidentialCimdProviderForOrg } from "../../services/xaa-confidential-cimd.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { isOrgBoundCredential } from "../../utils/org-bound-credential.js";
-import { pointAtMockRoute } from "../../utils/mock-servers.js";
+import { dialMockOr, type MockAuthorizeEntry, type MockDial } from "../../utils/mock-servers.js";
+import { observeMockAnswered } from "../../services/mock/answer-marks.js";
 import {
   deliveryContractHeaders,
   hostedCredentialDeliveryHeaders,
@@ -574,6 +575,8 @@ export type ConvexAuthorizeResponse = {
     authMethod?: "auto" | "oauth" | "xaa" | "bearer" | "none";
     registrationMode?: "auto" | "preregistered" | "cimd" | "dcr";
     xaaClientAuth?: "none" | "private_key_jwt";
+    /** Present for a mock server's id: dial it in process, whatever its address says. */
+    mock?: MockAuthorizeEntry;
   };
   internalLogContext?: InternalLogContext;
 };
@@ -585,6 +588,8 @@ export type ClientSafeAuthorizeResponse = Omit<
 
 type AuthorizedServerConfigHolder = {
   serverConfig: ConvexAuthorizeResponse["serverConfig"];
+  /** For a mock's id, the grant. */
+  oauthAccessToken?: string | null;
 };
 
 export type ConvexBatchAuthorizeFailure = {
@@ -1268,8 +1273,8 @@ export function toHttpConfig(
    * function — is the reachability gate.
    */
   pluginRuntime?: PluginStdioHttpTarget,
-  /** The caller's own bearer, presented to the mock route when this is a mock's address. */
-  mockBearer?: string,
+  /** The dialer's own auth context, for a mock's id; see `utils/mock-servers.ts`. */
+  mockDial?: MockDial,
 ): HttpServerConfig {
   if (authResponse.serverConfig.transportType !== "http") {
     if (pluginRuntime) {
@@ -1418,7 +1423,7 @@ export function toHttpConfig(
       : {}),
   };
   // A mock's saved address is a placeholder: dial the mock route instead.
-  return pointAtMockRoute(config, mockBearer);
+  return dialMockOr(config, authResponse, { timeoutMs, clientCapabilities, initializePins }, mockDial);
 }
 
 export interface AuthorizedManagerResult {
@@ -1850,6 +1855,19 @@ export async function createAuthorizedManager(
       accessVersion: options?.accessVersion,
     },
   );
+  // A mock's dialer authorizes it again for a fresh grant.
+  const mockDialFor = (serverId: string): MockDial => ({
+    caller,
+    bearerToken: bearerNow(bearerToken),
+    projectId,
+    xaaIssuer: options?.xaaIssuer,
+    reauthorize: async () =>
+      (await authorizeBatch(caller, bearerNow(bearerToken), projectId, [serverId], {
+        accessScope: options?.accessScope,
+        scenarioId: options?.scenarioId,
+        accessVersion: options?.accessVersion,
+      })).results[serverId],
+  });
   // An uploaded account's token is read again when a refresh can't renew it
   // (`uploaded-account-recovery.ts`).
   const uploadedRecoveries = uploadedAccountRecoveries((id, connectionId) => {
@@ -2806,7 +2824,7 @@ export async function createAuthorizedManager(
             connectOnUnauthorized,
             effectiveInitializePins,
             pluginRuntime,
-            bearerNow(bearerToken),
+            mockDialFor(serverId),
           ),
         ] as const;
       } catch (error) {
@@ -2968,7 +2986,10 @@ export async function createAuthorizedManager(
           id,
           {
             ...connectionConfig,
-            baseFetch: observeConnectionFetch(withServerCheckSignal(fetchFn)),
+            // A mock dialed at its address marks its calls on a response header.
+            baseFetch: observeConnectionFetch(
+              observeMockAnswered(withServerCheckSignal(fetchFn)),
+            ),
           },
         ],
       ];

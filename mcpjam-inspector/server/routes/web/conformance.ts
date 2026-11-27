@@ -1,3 +1,4 @@
+import { mockDialForRequest } from "./mock-dial.js";
 import { conformanceDeadlineFields } from "../shared/conformance-deadline.js";
 import { Hono } from "hono";
 import { withTasksDeadline } from "./tasks-deadline.js";
@@ -196,7 +197,11 @@ async function resolveHostedServerConfig(
     auth,
     WEB_CALL_TIMEOUT_MS,
     auth.oauthAccessToken ?? undefined,
-    wsBody.clientCapabilities as Record<string, unknown> | undefined
+    wsBody.clientCapabilities as Record<string, unknown> | undefined,
+    undefined,
+    undefined,
+    undefined,
+    mockDialForRequest(c, bearerToken, wsBody.projectId, wsBody.serverId, wsBody)
   );
 
   // Apps/Tasks accept any transport, so there may be no URL to judge (a stdio

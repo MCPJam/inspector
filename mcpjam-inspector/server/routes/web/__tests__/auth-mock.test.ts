@@ -23,14 +23,14 @@ describe("toHttpConfig for a saved mock", () => {
       undefined,
       undefined,
       undefined,
-      "sk_ann",
+      { caller: {}, bearerToken: "sk_ann", projectId: "p", reauthorize: async () => ({}) },
     );
     expect(config.url).toBe("https://inspector.example/api/web/mock-mcp/mock1");
     expect(config.requestInit?.headers).toMatchObject({ authorization: "Bearer sk_ann", "x-saved": "1" });
   });
 
   it("leaves an ordinary saved server's address alone", () => {
-    const config = toHttpConfig(authorized("https://real.example/mcp"), 5_000, "tok", undefined, undefined, undefined, undefined, "sk_ann");
+    const config = toHttpConfig(authorized("https://real.example/mcp"), 5_000, "tok", undefined, undefined, undefined, undefined, { caller: {}, bearerToken: "sk_ann", projectId: "p", reauthorize: async () => ({}) });
     expect(config.url).toBe("https://real.example/mcp");
     expect(config.requestInit?.headers).toMatchObject({ Authorization: "Bearer tok" });
   });

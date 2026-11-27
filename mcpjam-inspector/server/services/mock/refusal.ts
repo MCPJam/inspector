@@ -9,6 +9,7 @@ import { MOCK_SERVERS_FLAG } from "../../../shared/mock-address.js";
 const REFUSALS = {
   unauthorized: [401, -32013, "mock_unauthorized", "MCPJam did not accept this credential. Send your own MCPJam API key as the bearer token."],
   grant_over_http: [401, -32013, "mock_grant_not_accepted", "A mock's grant opens nothing over HTTP. Send your own MCPJam API key as the bearer token."],
+  grant_expired: [401, -32013, "mock_grant_expired", "This mock's grant has expired. Connect again to get a new one."],
   guest: [403, -32014, "mock_guest_refused", "Mock servers are not available to guest sessions. Sign in and send your own MCPJam API key as the bearer token."],
   forbidden: [403, -32014, "mock_forbidden", "This credential cannot open this mock server. Check that it belongs to the project that holds the mock, or ask the project's owner for access."],
   not_found: [404, -32015, "mock_not_found", "This mock server was not found. Check its id, and that it was not deleted."],
