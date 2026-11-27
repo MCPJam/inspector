@@ -62,9 +62,10 @@ export async function openContext({ baseUrl, token, theme, fresh, headed }) {
     },
     { origin, force, ifAbsent },
   );
-  await replayGuestSession(context, origin);
+  const guestMinted = await replayGuestSession(context, origin);
   return {
     context,
+    guestMinted,
     close: () => browser.close(),
   };
 }
@@ -79,6 +80,7 @@ const GUEST_SESSION_PATH = "/api/web/guest-session";
  * other origin, or a mint that redirected anywhere, is never served it.
  */
 export async function replayGuestSession(context, origin) {
+  // Read by the allowlist: some noise is expected only of a guest.
   let guestSession;
   await context.route(
     (url) => url.origin === origin && url.pathname === GUEST_SESSION_PATH,
@@ -97,6 +99,19 @@ export async function replayGuestSession(context, origin) {
       return route.fulfill({ response });
     },
   );
+  return () => guestSession !== undefined;
+}
+
+/** The "METHOD url" of every request the page got a non-error answer for. */
+export function recordSucceeded(page) {
+  const succeeded = new Set();
+  page.on("response", (response) => {
+    if (response.status() >= 400) return;
+    succeeded.add(
+      `${response.request().method()} ${redactUrl(response.url())}`,
+    );
+  });
+  return succeeded;
 }
 
 /** Everything a page emits that a reviewer would call broken or noisy. */
@@ -115,9 +130,11 @@ export function recordEvents(page) {
     events.push({ kind: "page-error", text: error.stack ?? error.message });
   });
   page.on("requestfailed", (request) => {
+    const call = `${request.method()} ${redactUrl(request.url())}`;
     events.push({
       kind: "request-failed",
-      text: `${request.method()} ${redactUrl(request.url())} ${request.failure()?.errorText ?? ""}`,
+      text: `${call} ${request.failure()?.errorText ?? ""}`,
+      request: call,
     });
   });
   page.on("response", (response) => {

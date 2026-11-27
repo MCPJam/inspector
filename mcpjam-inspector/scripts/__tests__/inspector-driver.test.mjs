@@ -216,7 +216,9 @@ test("the shipped allowlist parses and every rule says why", () => {
     "..",
     "inspector-driver.allowlist.json",
   );
-  const rules = parseAllowlist(JSON.parse(readFileSync(path, "utf8")), path);
+  const rules = parseAllowlist(JSON.parse(readFileSync(path, "utf8")), path, {
+    origin: BASE,
+  });
   for (const rule of rules) assert.ok(rule.reason.length > 10);
   const evals = {
     id: "evals",
@@ -236,6 +238,75 @@ test("the shipped allowlist parses and every rule says why", () => {
     findAllowRule(rules, redirect("http://127.0.0.1:6275/p/abc/evaluate")),
     undefined,
   );
+});
+
+test("the shipped rules hold only on the app's origin, for a guest, after a retry", () => {
+  const path = join(
+    import.meta.dirname,
+    "..",
+    "inspector-driver.allowlist.json",
+  );
+  const rules = parseAllowlist(JSON.parse(readFileSync(path, "utf8")), path, {
+    origin: BASE,
+  });
+  const allowed = (issue, context) =>
+    findAllowRule(rules, issue, context) !== undefined;
+  const refresh = (origin) => ({
+    kind: "http-400",
+    text: `POST ${origin}/user_management/authenticate`,
+  });
+  const guest = { guest: true, succeeded: new Set() };
+  assert.equal(allowed(refresh(BASE), guest), true);
+  // A member's refused refresh is a real failure, and so is another host's.
+  assert.equal(allowed(refresh(BASE), { guest: false }), false);
+  assert.equal(allowed(refresh("http://evil.test"), guest), false);
+
+  const discovery = `GET ${BASE}/api/web/xaa/.well-known/openid-configuration`;
+  const aborted = {
+    kind: "request-failed",
+    text: `${discovery} net::ERR_ABORTED`,
+    request: discovery,
+  };
+  assert.equal(
+    allowed(aborted, { guest: true, succeeded: new Set([discovery]) }),
+    true,
+  );
+  // Aborted with nothing fetched in its place: the screen never got it.
+  assert.equal(allowed(aborted, guest), false);
+  const elsewhere = "GET http://evil.test/api/web/xaa/.well-known/openid-configuration";
+  assert.equal(
+    allowed(
+      {
+        kind: "request-failed",
+        text: `${elsewhere} net::ERR_ABORTED`,
+        request: elsewhere,
+      },
+      { guest: true, succeeded: new Set([elsewhere]) },
+    ),
+    false,
+  );
+});
+
+test("allowlist context fields are checked and {origin} needs an origin", () => {
+  assert.throws(
+    () => parseAllowlist({ rules: [{ match: "x", reason: "r", actor: "member" }] }),
+    /"actor" must be one of guest/,
+  );
+  assert.throws(
+    () => parseAllowlist({ rules: [{ match: "x", reason: "r", replaced: false }] }),
+    /"replaced" can only be true/,
+  );
+  assert.throws(
+    () => parseAllowlist({ rules: [{ match: "^GET {origin}/x$", reason: "r" }] }),
+    /no app origin is known/,
+  );
+  const [rule] = parseAllowlist(
+    { rules: [{ match: "^GET {origin}/x$", reason: "r" }] },
+    "allowlist",
+    { origin: "http://localhost:5173" },
+  );
+  assert.equal(rule.pattern.test("GET http://localhost:5173/x"), true);
+  assert.equal(rule.pattern.test("GET http://localhostX5173/x"), false);
 });
 
 test("failing kinds are errors, failed requests and 4xx/5xx, never warnings", () => {
