@@ -187,7 +187,9 @@ describe("hosted input check", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Copy npx command" }));
     fireEvent.click(
-      await screen.findByRole("button", { name: "Copy failed. Try again" }),
+      await screen.findByRole("button", {
+        name: "Couldn't copy the npx command. Try again.",
+      }),
     );
     expect(await screen.findByRole("button", { name: "Copied" })).toBeVisible();
     expect(clipboard.copy).toHaveBeenCalledTimes(2);
@@ -198,7 +200,7 @@ describe("hosted input check", () => {
     const { submit, onConnectOwnServer } = renderOverlay();
     submit("http://192.168.1.20:8080/mcp");
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "MCPJAM_PRIVATE_EGRESS_ALLOWLIST",
+      "works only on a self-hosted MCPJam",
     );
     expect(onConnectOwnServer).not.toHaveBeenCalled();
 

@@ -104,8 +104,8 @@ export function HostedInputNotice({ check }: { check: HostedInputCheck }) {
           aria-hidden
         />
         <p className="text-[11.5px] leading-[1.5] text-card-foreground">
-          This private address connects only on a self-hosted MCPJam that lists
-          it in MCPJAM_PRIVATE_EGRESS_ALLOWLIST. Connect again to try anyway.
+          This private address works only on a self-hosted MCPJam set up to
+          allow it. Connect again to try anyway.
         </p>
       </div>
     );
@@ -169,7 +169,7 @@ function CopyCommandButton({ command }: { command: string }) {
       {state === "copied"
         ? "Copied"
         : state === "failed"
-          ? "Copy failed. Try again"
+          ? "Couldn't copy the npx command. Try again."
           : "Copy npx command"}
     </Button>
   );
