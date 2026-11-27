@@ -182,6 +182,15 @@ describe("custom judge rows on an iteration", () => {
     });
   });
 
+  it("applies the pass line to a saved score that does not say whether it passed", () => {
+    const rows = customJudgeIterationRows(
+      iteration({
+        customJudgesVerdict: savedVerdict({ status: "scored", value: 0.8 }),
+      }),
+    );
+    expect(rows[0]?.result).toMatchObject({ state: "passed", value: 0.8 });
+  });
+
   it("reads a pass-or-fail judge as Pass, not as a score line", () => {
     const rows = customJudgeIterationRows(
       iteration({

@@ -66,13 +66,20 @@ function storedResult(
 ): TrialRowResult {
   const reason = typeof entry.reason === "string" ? entry.reason : undefined;
   const threshold = output?.kind === "passfail" ? 0.5 : output?.threshold;
+  // The verdict's own `passed`, or the projection's rule when it has none.
+  const passed =
+    typeof entry.passed === "boolean"
+      ? entry.passed
+      : isUnitValue(entry.value) && isUnitValue(threshold)
+        ? entry.value >= threshold
+        : undefined;
   if (
     entry.status === "scored" &&
     isUnitValue(entry.value) &&
-    typeof entry.passed === "boolean"
+    passed !== undefined
   ) {
     return {
-      state: entry.passed ? "passed" : "failed",
+      state: passed ? "passed" : "failed",
       source: "modelVerdict",
       value: entry.value,
       reason,
