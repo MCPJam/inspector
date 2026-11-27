@@ -1,14 +1,11 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { Syringe, Wrench } from "lucide-react";
-import { useState } from "react";
 import { CheckRow } from "@/components/evals/evaluator-library/check-row";
-import { EvaluatorGroup } from "@/components/evals/evaluator-library/evaluator-group";
-import { OutcomeTag } from "@/components/evals/evaluator-library/outcome-tag";
 import { ScorecardEvaluatorCard } from "@/components/evals/evaluator-library/scorecard-evaluator-card";
 import { VerdictPill } from "@/components/evals/evaluator-library/verdict-pill";
 import { Grid, Specimen } from "./_frame";
 
-/** Suite settings and scorecard: verdicts, check rows, groups, cards. */
+/** Suite settings and scorecard: verdicts, check rows and cards. */
 const meta = {
   title: "Evaluator Library/3 Results",
   parameters: { layout: "padded" },
@@ -36,97 +33,47 @@ export const Verdicts: Story = {
           ))}
         </div>
       </Specimen>
-      <Specimen label="sm · score label · outcome tag" width={760}>
+      <Specimen label="sm · score label" width={760}>
         <div className="flex flex-wrap gap-2">
           <VerdictPill size="sm" status="passed" label="0.91" />
           <VerdictPill size="sm" status="failed" label="0.42" />
-          <OutcomeTag outcome="passed" />
-          <OutcomeTag outcome="failed" />
-          <OutcomeTag outcome="not_applicable" />
         </div>
       </Specimen>
     </Grid>
   ),
 };
 
-export const SuiteGroup: Story = {
-  render: function Render() {
-    const [enabled, setEnabled] = useState(true);
-    const [role, setRole] = useState<"required" | "advisory">("required");
-    return (
-      <Grid>
-        <Specimen
-          label="evaluator group · library update available"
-          width={640}
-        >
-          <EvaluatorGroup
-            name="Expected Tool Calls"
-            version="v2"
-            origin="library"
-            method="assertions"
-            updateAvailable="v3"
-            onAcceptUpdate={() => {}}
-            onRemove={() => {}}
-            checks={[
-              {
-                id: "a",
-                mode: "config",
-                label: "Every expected call was made",
-                detail: "From each test case · Partial match",
-                role,
-                enabled,
-                onEnabledChange: setEnabled,
-                onRoleChange: setRole,
-              },
-              {
-                id: "b",
-                mode: "config",
-                label: "Arguments match the tool's schema",
-                role: "required",
-                locked: true,
-              },
-              {
-                id: "c",
-                mode: "config",
-                label: "Did the agent explain why it skipped a call?",
-                role: "advisory",
-                variant: "model",
-                enabled: true,
-                onEnabledChange: () => {},
-                onRoleChange: () => {},
-              },
-            ]}
+export const ResultRows: Story = {
+  render: () => (
+    <Grid>
+      <Specimen label="check row · result mode" width={640}>
+        <ul className="divide-y divide-border rounded-lg border border-border bg-popover">
+          <CheckRow
+            mode="result"
+            label="Called the expected tools"
+            role="required"
+            status="failed"
+            evidence="Called search_catalog first"
           />
-        </Specimen>
-        <Specimen label="check row · result mode" width={640}>
-          <ul className="divide-y divide-border rounded-lg border border-border bg-popover">
-            <CheckRow
-              mode="result"
-              label="Called the expected tools"
-              role="required"
-              status="failed"
-              evidence="Called search_catalog first"
-            />
-            <CheckRow
-              mode="result"
-              label="Stayed under the call budget"
-              role="required"
-              status="passed"
-              evidence="4 of 6 calls"
-            />
-            <CheckRow
-              mode="result"
-              label="Answer quality"
-              role="advisory"
-              status="passed"
-              scoreLabel="0.82"
-              variant="model"
-            />
-          </ul>
-        </Specimen>
-      </Grid>
-    );
-  },
+          <CheckRow
+            mode="result"
+            label="Stayed under the call budget"
+            role="required"
+            status="passed"
+            evidence="4 of 6 calls"
+          />
+          <CheckRow
+            mode="result"
+            label="Answer quality"
+            role="advisory"
+            status="passed"
+            scoreLabel="0.82"
+            variant="model"
+          />
+        </ul>
+      </Specimen>
+    </Grid>
+  ),
 };
 
 const injection = {
