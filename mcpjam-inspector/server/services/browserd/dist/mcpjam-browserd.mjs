@@ -11773,6 +11773,9 @@ function adaptContext(context, options = {}) {
   };
 }
 
+// server/services/browserd/profile-export-errors.ts
+var PROFILE_EXPORT_BROWSER_CLOSED = "profile_export_browser_closed";
+
 // server/services/browserd/daemon/public-network.ts
 import { lookup } from "node:dns/promises";
 import { BlockList, isIP } from "node:net";
@@ -12759,9 +12762,13 @@ async function main() {
           }
           await context.clearOriginData(excludeOrigins);
         }
-        await context.close();
-        await driver.close();
-        return exportBrowserProfileArchive(config.userDataDir);
+        try {
+          await context.close();
+          await driver.close();
+          return await exportBrowserProfileArchive(config.userDataDir);
+        } catch (error) {
+          throw new Error(`${PROFILE_EXPORT_BROWSER_CLOSED}: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
     } : {},
     // THE DISPLAY AS IT IS NOW, not as it booted.

@@ -11,6 +11,7 @@
  * Claude conversation or organization list fails as "didn't come through
  * whole", a typed failure the turn reports instead of a wrong answer.
  */
+import { logger } from "../../logger.js";
 import { PageDriverError, type PageDriver } from "./page-driver.js";
 
 /** The site's own API answered with an error status, so nothing it saved was read. */
@@ -18,6 +19,14 @@ export class VendorStatusError extends PageDriverError {
   constructor(readonly status: number) {
     super("failed", `The site answered ${status} for its own saved data.`);
     this.name = "VendorStatusError";
+  }
+}
+
+/** The site's answer came back cut off: the hosted browser's text read is capped. */
+export class VendorTextCutOffError extends PageDriverError {
+  constructor() {
+    super("failed", "The site's saved data didn't come through whole in this browser.");
+    this.name = "VendorTextCutOffError";
   }
 }
 
@@ -77,6 +86,9 @@ export function leadingJsonString(shown: string, key: string): string | undefine
   try {
     return text(JSON.parse(`"${match[1]}"`));
   } catch {
+    // A value cut mid-escape reads as no value: the caller treats a missing
+    // email as signed out, which asks for another save, never a wrong account.
+    logger.debug("[real-ui] a vendor field didn't parse", { key });
     return undefined;
   }
 }
@@ -95,7 +107,7 @@ function shownJson(shown: string): unknown {
     return JSON.parse(shown.slice(start, end + 1));
   } catch {
     // A page too long for the browser's text read ends cut off, and reads here too.
-    throw new PageDriverError("failed", "The site's saved data didn't come through whole in this browser.");
+    throw new VendorTextCutOffError();
   }
 }
 

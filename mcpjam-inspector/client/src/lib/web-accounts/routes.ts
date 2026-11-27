@@ -86,7 +86,8 @@ export function webAccountFailureMessage(
       failure.status < 500 &&
       failure.status !== 429 &&
       failure.code !== null) ||
-      (failure.status === 503 && failure.code === "WEB_ACCOUNT_PROFILE_RETRY"))
+      (failure.status === 503 &&
+        (failure.code === "WEB_ACCOUNT_PROFILE_RETRY" || failure.code === "WEB_ACCOUNT_SIGN_IN_ENDED")))
   )
     return failure.message;
   const described = describeConvexFailure(failure, fallback);

@@ -4,6 +4,9 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createWebAccountRoutes, type WebAccountRouteDeps } from "../account-routes";
+import { reportRouteFailure } from "../../../utils/route-error-report";
+
+vi.mock("../../../utils/route-error-report", () => ({ reportRouteFailure: vi.fn() }));
 import { PageDriverError, pollUntil, type PageDriver } from "../../../utils/harness/real-ui/page-driver";
 import { BrowserdClientError } from "../../browserd/browserd-codec";
 
@@ -166,7 +169,6 @@ describe("POST /accounts/:id/save-profile", () => {
     expect(signedOut.deps.browser.release).not.toHaveBeenCalled();
     expect(other.deps.browser.release).not.toHaveBeenCalled();
     expect(raced.deps.browser.release).toHaveBeenCalledOnce();
-    expect(raced.deps.browser.release).toHaveBeenCalledTimes(1);
   });
 
   it("closes the browser when the storage outcome is unknown", async () => {
@@ -235,6 +237,25 @@ describe("POST /accounts/:id/save-profile", () => {
     expect(await first.json()).toMatchObject({ error: expect.stringContaining("You have control of the browser") });
     expect(deps.browser.release).not.toHaveBeenCalled();
     expect(deps.saveProfile).not.toHaveBeenCalled();
+  });
+
+  it("asks for a new sign-in, and lets the browser go, when the export failed after closing it", async () => {
+    const captureProfile = vi.fn(async () => {
+      throw new BrowserdClientError(
+        'browser profile export failed with status 500: {"error":"profile_export_browser_closed: seat@example.com tar failed"}',
+        500,
+      );
+    });
+    const { app, deps } = routes({ browser: { ...routes().deps.browser, captureProfile } });
+    const answer = await post(app, "/accounts/acct-1/save-profile", body);
+    expect(answer.status).toBe(503);
+    expect(await answer.json()).toMatchObject({ code: "WEB_ACCOUNT_SIGN_IN_ENDED", message: expect.stringContaining("Start signing in again") });
+    expect(deps.browser.release).toHaveBeenCalledOnce();
+    expect(deps.saveProfile).not.toHaveBeenCalled();
+    // The report keeps the class, status and daemon token, and none of the page's text.
+    const reported = vi.mocked(reportRouteFailure).mock.calls.at(-1)?.[1] as Error;
+    expect(reported.message).toBe("capture: BrowserdClientError: 500: profile_export_browser_closed");
+    expect(reported.cause).toBeInstanceOf(BrowserdClientError);
   });
 
   it("keeps the browser open while the person finishes signing in or switches accounts", async () => {

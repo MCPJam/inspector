@@ -1323,6 +1323,13 @@ export function HostedBrowserBody({
           setTakeoverNotice(TAKEOVER_RETRY_NOTICE);
           return;
         }
+        // A save that started while the acquire was in flight gets the
+        // browser back, and this input is dropped.
+        if (agentHoldsBrowser(projectId, sessionId)) {
+          await releaseBrowserForChat(projectId, sessionId);
+          setTakeoverNotice(AGENT_HOLDS_NOTICE);
+          return;
+        }
         await sendHostedBrowserInput(originalTokens, { events, anchor });
         setTakeoverNotice(null);
       } catch {

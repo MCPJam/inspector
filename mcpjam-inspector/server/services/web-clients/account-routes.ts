@@ -36,6 +36,7 @@ import { chatgptWebPageModule } from "../../utils/harness/real-ui/chatgpt-web.js
 import { claudeWebPageModule } from "../../utils/harness/real-ui/claude-web.js";
 import { PageDriverError, type PageDriver } from "../../utils/harness/real-ui/page-driver.js";
 import { BrowserdClientError } from "../browserd/browserd-codec.js";
+import { PROFILE_EXPORT_BROWSER_CLOSED } from "../browserd/profile-export-errors.js";
 import {
   RealUiError,
   type RealUiPageModule,
@@ -155,8 +156,37 @@ async function jsonBody(c: Context): Promise<unknown> {
   }
 }
 
+const SIGN_IN_ENDED =
+  "The browser closed while saving, so the account wasn't saved. Start signing in again, then save.";
+
 const PERSON_HAS_BROWSER =
   "You have control of the browser, so the account couldn't be checked. Leave the browser alone for a moment, then save again.";
+
+/**
+ * What a failure can say without page text: its class, a driver code, the
+ * daemon's status and its snake_case reason. Browser messages can quote the
+ * vendor page, so they stay out; the original rides along as `cause`.
+ */
+function safeFailure(stage: string, error: unknown): Error {
+  const parts: string[] = [stage, error instanceof Error ? error.name : typeof error];
+  if (error instanceof RealUiError) parts.push(error.failure.kind);
+  if (error instanceof PageDriverError) parts.push(error.code);
+  if (error instanceof BrowserdClientError) {
+    parts.push(String(error.httpStatus));
+    const token = /"error":"([a-z][a-z0-9_]*)/.exec(error.message)?.[1];
+    if (token) parts.push(token);
+  }
+  const safe = new Error(parts.join(": "), { cause: error });
+  if (error instanceof Error && error.stack) {
+    safe.stack = [safe.message, ...error.stack.split("\n").slice(1)].join("\n");
+  }
+  return safe;
+}
+
+/** The export closed the browser before it failed: nothing is left to retry on. */
+function browserClosedByExport(error: unknown): boolean {
+  return error instanceof BrowserdClientError && error.message.includes(PROFILE_EXPORT_BROWSER_CLOSED);
+}
 
 function personHasBrowser(error: unknown): boolean {
   return (
@@ -243,9 +273,7 @@ export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
       // The person still holds the browser (the save's check, or the daemon's
       // export lease): their sign-in stays open for another save.
       if (personHasBrowser(error)) return c.json({ error: PERSON_HAS_BROWSER }, 409);
-      // Browser errors may quote the vendor page. Report only the phase and kind.
-      const kind = error instanceof RealUiError ? error.failure.kind : "unavailable";
-      reportRouteFailure("Web account profile save interrupted", new Error(`${stage}: ${kind}`), {
+      reportRouteFailure("Web account profile save interrupted", safeFailure(stage, error), {
         source: `web-clients.save-profile.${stage}`, hop: "mcpjam_internal",
       });
       const message = stage === "identity"
@@ -270,6 +298,13 @@ export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
     try {
       profile = await deps.browser.captureProfile(browser);
     } catch (error) {
+      if (browserClosedByExport(error)) {
+        reportRouteFailure("Web account profile save interrupted", safeFailure("capture", error), {
+          source: "web-clients.save-profile.capture", hop: "mcpjam_internal",
+        });
+        await release();
+        return c.json({ code: "WEB_ACCOUNT_SIGN_IN_ENDED", message: SIGN_IN_ENDED }, 503);
+      }
       return retryBeforeStorage("capture", error);
     }
     try {

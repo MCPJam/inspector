@@ -16,7 +16,8 @@ import {
   WEB_CLIENT_SITES,
   WEB_CONNECTOR_PATH_PREFIX,
 } from "@/shared/web-clients";
-import { PageDriverError, type PageDriver } from "./page-driver.js";
+import { logger } from "../../logger.js";
+import type { PageDriver } from "./page-driver.js";
 import {
   RealUiError,
   answerRunApproval,
@@ -33,6 +34,7 @@ import {
 } from "./page-module.js";
 import {
   VendorStatusError,
+  VendorTextCutOffError,
   createdSince,
   leadingJsonString,
   list,
@@ -86,8 +88,9 @@ async function chatOrganizationName(driver: PageDriver): Promise<string | undefi
   try {
     return text((await chatOrganization(driver)).name);
   } catch (error) {
-    if (!driver.canEvaluate && error instanceof PageDriverError && error.code === "failed") return undefined;
-    throw error;
+    if (!(error instanceof VendorTextCutOffError)) throw error;
+    logger.debug("[real-ui] claude.ai's organization list was too long to read; saving without a workspace");
+    return undefined;
   }
 }
 

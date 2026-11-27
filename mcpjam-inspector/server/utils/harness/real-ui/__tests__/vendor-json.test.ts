@@ -108,3 +108,24 @@ describe("a vendor answer past the hosted browser's text cap", () => {
     });
   });
 });
+
+it("keeps a hosted failure other than a cut-off answer, rather than save without a workspace", async () => {
+  let at = "https://claude.ai/new";
+  const driver: PageDriver = {
+    ...pageAnswering("", false),
+    async navigate(next) {
+      if (next.endsWith("/api/organizations")) throw new PageDriverError("failed", "The page didn't open.");
+      at = next;
+    },
+    async url() {
+      return at;
+    },
+    async readText(selector) {
+      return selector === '[data-testid="chat-input"]' ? "" : undefined;
+    },
+    async pageText() {
+      return '{"email_address":"seat@example.com"}';
+    },
+  };
+  await expect(claudeWebPageModule.signedIn(driver, { timeoutMs: 1_000 })).rejects.toThrow("didn't open");
+});
