@@ -51,7 +51,9 @@ export function clusterByEvaluator<Row>(
  * A stage's rows in the suite table. With the evaluator library on, checks
  * added from the library sit together under their evaluator, with its pinned
  * version, a newer version to accept, and one-click removal. Each check keeps
- * the table's own row, so editing it works exactly as it does today.
+ * the table's own row, so editing it works exactly as it does today. Every
+ * other check gets a card of its own, so the stage reads as a list of
+ * evaluators whichever way each one was added.
  */
 export function EvaluatorStageRows<Row extends { id: string }>({
   rows,
@@ -63,7 +65,8 @@ export function EvaluatorStageRows<Row extends { id: string }>({
 }: {
   rows: readonly Row[];
   predicateOf: (row: Row) => Predicate | undefined;
-  renderRow: (row: Row) => ReactNode;
+  /** `isDefault`: the row did not come from the library and gets its own card. */
+  renderRow: (row: Row, isDefault: boolean) => ReactNode;
   /** Library questions and judges to show under their evaluator here. */
   modelRows?: readonly LibraryModelRow[];
   /** Omitted where the rows are inherited and cannot be edited here. */
@@ -71,7 +74,11 @@ export function EvaluatorStageRows<Row extends { id: string }>({
   onUpdateEvaluator?: (evaluatorId: string) => void;
 }) {
   const enabled = useEvaluatorLibraryEnabled();
-  if (!enabled) return <ul className="space-y-3">{rows.map(renderRow)}</ul>;
+  if (!enabled) {
+    return (
+      <ul className="space-y-3">{rows.map((row) => renderRow(row, false))}</ul>
+    );
+  }
   const { loose, clusters } = clusterByEvaluator(rows, predicateOf);
   for (const m of modelRows) {
     if (!clusters.some((c) => c.evaluatorId === m.evaluator.id)) {
@@ -85,7 +92,10 @@ export function EvaluatorStageRows<Row extends { id: string }>({
   return (
     <div className="space-y-3">
       {loose.length ? (
-        <ul className="space-y-3">{loose.map(renderRow)}</ul>
+        // One card per default check, shaped like a library evaluator's card.
+        <ul className="space-y-3 [&>li]:rounded-lg [&>li]:border [&>li]:border-border [&>li]:bg-muted/20 [&>li]:p-3">
+          {loose.map((row) => renderRow(row, true))}
+        </ul>
       ) : null}
       {clusters.map((cluster) => {
         const entry = findLibraryEvaluator(cluster.evaluatorId);
@@ -132,7 +142,7 @@ export function EvaluatorStageRows<Row extends { id: string }>({
               </span>
             </div>
             <ul className="space-y-3">
-              {cluster.rows.map(renderRow)}
+              {cluster.rows.map((row) => renderRow(row, false))}
               {modelRows
                 .filter((m) => m.evaluator.id === cluster.evaluatorId)
                 .map((m) => (

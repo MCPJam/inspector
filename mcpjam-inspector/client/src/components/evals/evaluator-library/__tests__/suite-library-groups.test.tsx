@@ -63,6 +63,28 @@ describe("library groups in the suite table", () => {
     expect(next()).toEqual([{ type: "noToolErrors" }]);
   });
 
+  it("puts each default check in its own card with a Default badge", () => {
+    renderTable(tagged);
+    const rows = Array.from(
+      document.querySelectorAll<HTMLElement>("li[data-scorer-row]"),
+    );
+    const grouped = rows.filter((li) => li.closest("[data-evaluator-group]"));
+    const defaults = rows.filter((li) => !li.closest("[data-evaluator-group]"));
+    expect(grouped.length).toBe(2);
+    expect(defaults.length).toBeGreaterThan(0);
+    for (const li of defaults) {
+      expect(within(li).getByText("Default")).toBeInTheDocument();
+    }
+    for (const li of grouped) {
+      expect(within(li).queryByText("Default")).not.toBeInTheDocument();
+    }
+    // The authored check keeps its on/off box in the card's header.
+    const authored = defaults.find(
+      (li) => li.dataset.scorerRow === "predicate",
+    );
+    expect(authored && within(authored).getByRole("checkbox")).toBeChecked();
+  });
+
   it("hides the library on a deployment that cannot save any of it", () => {
     // No capabilities means a deployment that predates the kind list, which
     // accepts only the legacy kinds. Every library evaluator needs a newer
@@ -82,6 +104,7 @@ describe("library groups in the suite table", () => {
     expect(
       screen.queryByRole("button", { name: "From library" }),
     ).not.toBeInTheDocument();
+    expect(screen.queryByText("Default")).not.toBeInTheDocument();
     flag.on = true;
   });
 });
