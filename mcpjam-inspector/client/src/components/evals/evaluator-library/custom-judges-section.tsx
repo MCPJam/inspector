@@ -26,17 +26,13 @@ import { CustomJudgePreview } from "./custom-judge-preview";
 import { PromptEditor } from "./prompt-editor";
 import { VariableMappingTable } from "./variable-mapping-table";
 
-/**
- * Judges the suite writes itself, and customized copies of library judges.
- * Library judges added unchanged show in their evaluator's group instead.
- */
+/** Unmodified library judges appear in their evaluator's group. */
 export function CustomJudgesSection({
   judgeConfig,
   onJudgeConfigChange,
   capabilities,
 }: {
   judgeConfig: EvalJudgeConfig | undefined;
-  /** Absent where the judge config cannot be edited here. */
   onJudgeConfigChange?: (next: EvalJudgeConfig | undefined) => void;
   capabilities: SuiteCapabilities | null | undefined;
 }) {

@@ -75,6 +75,7 @@ import {
   judgeDecidedStage,
 } from "../stage-trial-model";
 import { EvaluatorScorecardSummary } from "@/components/evals/evaluator-library/evaluator-scorecard-summary";
+import { useEvaluatorLibraryEnabled } from "@/components/evals/evaluator-library/evaluator-library-flag";
 import { isJudgeOutput, TrialScorecardRow } from "./trial-scorecard-row";
 import type { TrialChainDisplay } from "./trial-chain-state";
 import { stageFloor, type StageFloorTrace } from "./stage-floor";
@@ -246,6 +247,7 @@ export function TrialScorecard({
   syncedStepId?: string | null;
   onSyncStep?: (stepId: string | null) => void;
 }) {
+  const evaluatorLibraryEnabled = useEvaluatorLibraryEnabled();
   const groups = useMemo(() => {
     const card = buildCaseScorecard(authored);
     // Every stage the verified chain measured gets its runner check, including
@@ -273,7 +275,7 @@ export function TrialScorecard({
       ),
       [
         ...rubricCheckTrialRows(iteration),
-        ...customJudgeTrialRows(iteration),
+        ...(evaluatorLibraryEnabled ? customJudgeTrialRows(iteration) : []),
       ],
     );
     // Keyed on the FIELDS, not the input object: callers build that object in
@@ -295,6 +297,7 @@ export function TrialScorecard({
     authored.judgeConfigOverride,
     authored.suiteJudgeConfig,
     authored.suiteJudgeRubric,
+    evaluatorLibraryEnabled,
     iteration,
     steps,
     chain,

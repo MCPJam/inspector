@@ -14,11 +14,9 @@ import {
   TableRow,
 } from "@mcpjam/design-system/table";
 
-/** A judge prompt variable and the iteration field that fills it. */
 export type PromptVariable = {
   /** Name used in the prompt, without braces: `tool_results`. */
   name: string;
-  /** Description or path of the source field. */
   path: string;
   /** The value in the iteration picked for preview, already truncated. */
   preview?: string;
@@ -33,11 +31,6 @@ export type VariableMappingTableProps = {
   onPathChange?: (name: string, path: string) => void;
 };
 
-/**
- * Shows where each prompt variable comes from and what it holds in a real
- * iteration, so the author sees exactly what the judge will read before
- * saving instead of after a run.
- */
 export function VariableMappingTable({
   variables,
   paths,

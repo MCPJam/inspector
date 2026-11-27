@@ -20,8 +20,10 @@ import { buildCaseScorecard } from "../case-scorecard/case-scorecard-model";
 
 vi.mock("convex/react", () => ({ useAction: () => vi.fn() }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
+const libraryFlag = vi.hoisted(() => ({ enabled: true }));
 vi.mock("posthog-js/react", () => ({
-  useFeatureFlagEnabled: (name: string) => name === "evaluator-library",
+  useFeatureFlagEnabled: (name: string) =>
+    name === "evaluator-library" && libraryFlag.enabled,
 }));
 
 const steps = [{ id: "p", kind: "prompt" as const, prompt: "Find my account" }];
@@ -98,7 +100,7 @@ describe("scorecard integration regressions", () => {
       },
     };
 
-    render(
+    const { rerender } = render(
       <TrialScorecard authored={authored} iteration={savedTrial} steps={steps} />,
     );
     const rows = screen.getAllByTestId("trial-scorecard-row");
@@ -119,6 +121,18 @@ describe("scorecard integration regressions", () => {
       }
     }
     expect(computeIterationResult(savedTrial)).toBe("passed");
+
+    libraryFlag.enabled = false;
+    try {
+      rerender(
+        <TrialScorecard authored={authored} iteration={savedTrial} steps={steps} />,
+      );
+      expect(screen.getByText("Answer Grounded in Results")).toBeVisible();
+      expect(screen.queryByText("Includes a Link")).not.toBeInTheDocument();
+      expect(screen.queryByText("Answers the Question")).not.toBeInTheDocument();
+    } finally {
+      libraryFlag.enabled = true;
+    }
   });
 
   it("does not offer requirements from an unjudged case with zero checks", async () => {

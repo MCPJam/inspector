@@ -3,6 +3,8 @@ import { ErrorCard } from "@/components/ui/error-card";
 import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
 import { useAction, useQuery } from "convex/react";
 import { useActorCanQuery } from "@/hooks/use-actor-can-query";
+import { HOSTED_CUSTOM_JUDGE_SCORER_PREFIX } from "@/shared/hosted-criterion-id";
+import { useEvaluatorLibraryEnabled } from "./evaluator-library/evaluator-library-flag";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { EvalIteration, EvalCase } from "./types";
 import {
@@ -342,6 +344,7 @@ export function IterationDetails({
   // Own the flag here so hiding starts on first paint (before the panel's
   // read lands) and so a trial switch cannot leave the previous trial's
   // reveal open on this one.
+  const evaluatorLibraryEnabled = useEvaluatorLibraryEnabled();
   const reviewActive = Boolean(enableJudgeReview && iteration.suiteRunId);
   const [judgeHidden, setJudgeHidden] = useState(reviewActive);
   useEffect(() => {
@@ -1087,7 +1090,10 @@ export function IterationDetails({
   // render evidence the score rows do not, and an SDK run that predates
   // scoring has predicates and no scores at all.
   const scoresSection = (() => {
-    const scores = parseIterationScores(iteration.metadata);
+    const scores = parseIterationScores(iteration.metadata)?.filter(
+      ({ scorerId }) =>
+        evaluatorLibraryEnabled || !scorerId.startsWith(HOSTED_CUSTOM_JUDGE_SCORER_PREFIX),
+    );
     const integrity = parseScoreIntegrity(iteration.metadata);
     // Rendered when there are scores OR when the backend flagged a downgrade.
     // An integrity-invalid iteration whose rows were ALL quarantined has

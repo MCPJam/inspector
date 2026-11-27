@@ -53,11 +53,7 @@ function statusOf(result: Extract<PreviewResult, { ok: true }>["result"]) {
   return (result.passed ? "passed" : "failed") satisfies VerdictStatus;
 }
 
-/**
- * "Test on a past trial": grades one stored trial with the judge as it is in
- * the editor, before saving. It spends a judge call and writes nothing, so it
- * runs only on the button, never on mount or on edit.
- */
+/** Preview costs a judge call, so run it only on request. */
 export function CustomJudgePreview({
   suiteId,
   judge,
