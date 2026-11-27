@@ -166,7 +166,7 @@ export function CustomJudgePreview({
       {outcome && !outcome.ok ? (
         <p role="status" className="text-xs text-muted-foreground">
           {customJudgeFailureCopy(outcome.reason) ??
-            "Could not test the judge. Check the suite's judge model and try again."}
+            "Couldn't test the judge. Check the suite's judge model and try again."}
         </p>
       ) : null}
       {outcome?.ok ? (
