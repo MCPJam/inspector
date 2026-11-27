@@ -9,8 +9,13 @@ import { attachRunningSandbox } from "../../../utils/computers/attach-sandbox.js
 import type { CodeGradingResult } from "./code-score-family.js";
 import { hasIterationPhases, type FrozenCodeGrading } from "./frozen-config.js";
 import {
+  collectGradingFiles,
+  type CollectedGradingFiles,
+} from "./grading-files.js";
+import {
   describeSetupFailure,
   gradeIteration,
+  PHASE_LIMITS_MS,
   runIterationCleanup,
   runIterationSetup,
   type IterationPhaseContext,
@@ -84,6 +89,38 @@ export async function runIterationCleanupInto(
 }
 
 /**
+ * Bring the files the suite declared for grading off the agent's box, just
+ * before it is released (E7). `undefined` when there is nothing to bring:
+ * no declared files, no evaluators to read them, no box, or no time left.
+ */
+export async function collectDeclaredGradingFiles(
+  ctx: IterationPhaseContext | undefined,
+  agentSandboxId: string | undefined,
+): Promise<CollectedGradingFiles | undefined> {
+  const declared = ctx?.config.grading.files;
+  if (!ctx || !declared?.length || !ctx.config.codeEvaluators.length) {
+    return undefined;
+  }
+  const timeoutMs = Math.min(
+    PHASE_LIMITS_MS.collect,
+    ctx.deadlineAt - Date.now(),
+  );
+  if (!agentSandboxId || timeoutMs <= 0) return undefined;
+  try {
+    const agentBox = await attachRunningSandbox(agentSandboxId);
+    return await collectGradingFiles(agentBox, declared, {
+      timeoutMs,
+      ...(ctx.signal ? { signal: ctx.signal } : {}),
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      problem: `The declared files couldn't be copied from the agent's box: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+/**
  * After the agent's box is gone: grade when the agent finished, then clean
  * up. The result declares every frozen evaluator, graded or not, so each
  * iteration of a case carries the same score definitions.
@@ -94,6 +131,8 @@ export async function finishIterationPhases(
     /** Why grading doesn't run (the agent failed, the server never came up). */
     notRun?: string;
     input: () => EvaluatorContextV1;
+    /** What {@link collectDeclaredGradingFiles} brought off the agent's box. */
+    files?: CollectedGradingFiles;
   },
   metadata: Record<string, unknown>,
 ): Promise<CodeGradingResult | undefined> {
@@ -104,7 +143,7 @@ export async function finishIterationPhases(
       ? undefined
       : args.notRun
         ? { evaluators, outcomes: {}, notRun: args.notRun }
-        : await gradeIteration(ctx, args.input());
+        : await gradeIteration(ctx, args.input(), args.files);
   await runIterationCleanupInto(ctx, metadata);
   return result;
 }

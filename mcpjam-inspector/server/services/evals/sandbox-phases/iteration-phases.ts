@@ -31,6 +31,10 @@ import type {
   FrozenCodeGrading,
 } from "./frozen-config.js";
 import { withPhaseBox, type PhaseBoxDeps } from "./phase-box.js";
+import {
+  restoreGradingFiles,
+  type CollectedGradingFiles,
+} from "./grading-files.js";
 import type {
   CodeEvaluatorOutcome,
   CodeGradingResult,
@@ -42,6 +46,8 @@ export const PHASE_LIMITS_MS = {
   evaluator: 60_000,
   /** How long a phase box may wait for capacity. */
   capacity: 2 * 60_000,
+  /** Packing and reading the declared files in the agent's box. */
+  collect: 60_000,
 };
 
 const GRADING_ROOT = "/mcpjam";
@@ -319,9 +325,12 @@ async function prepareGradingBox(
 export async function gradeIteration(
   ctx: IterationPhaseContext,
   input: EvaluatorContextV1,
+  files?: CollectedGradingFiles,
 ): Promise<CodeGradingResult> {
   const evaluators = ctx.config.codeEvaluators;
   if (evaluators.length === 0) return { evaluators, outcomes: {} };
+  // Grading without the files would score a workspace the agent didn't leave.
+  if (files && !files.ok) return erroredGrading(evaluators, files.problem);
   let lastError = "";
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const boxed = await withPhaseBox(
@@ -335,6 +344,8 @@ export async function gradeIteration(
         ...(ctx.signal ? { signal: ctx.signal } : {}),
       },
       async (sandbox) => {
+        // Restored before `/mcpjam` exists, as the agent's files are inputs.
+        if (files?.ok) await restoreGradingFiles(sandbox, files.entries);
         await prepareGradingBox(sandbox, input);
         const outcomes = await Promise.all(
           evaluators.map((evaluator) => runEvaluator(ctx, sandbox, evaluator)),
@@ -351,16 +362,20 @@ export async function gradeIteration(
     // no side effects. A box the control plane refused will be refused again.
     if (boxed.reason !== "lost") break;
   }
+  return erroredGrading(evaluators, `The grading box failed: ${lastError}`);
+}
+
+/** Every evaluator errored for the same reason. */
+function erroredGrading(
+  evaluators: readonly FrozenCodeEvaluator[],
+  error: string,
+): CodeGradingResult {
   return {
     evaluators,
     outcomes: Object.fromEntries(
       evaluators.map((evaluator) => [
         evaluator.id,
-        {
-          kind: "error" as const,
-          error: `The grading box failed: ${lastError}`,
-          output: "",
-        },
+        { kind: "error" as const, error, output: "" },
       ]),
     ),
   };
