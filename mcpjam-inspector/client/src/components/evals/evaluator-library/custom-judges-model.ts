@@ -53,7 +53,8 @@ export function judgeProblem(
   ) {
     return "Set a passing score above 0 and at most 1.";
   }
-  if (others.some((o) => o.id === judge.id)) return "Another judge has this id.";
+  if (others.some((o) => o.id === judge.id))
+    return "Judge ID already used. Close and reopen the editor.";
   return undefined;
 }
 
