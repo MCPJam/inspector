@@ -56,10 +56,22 @@ export type PhaseBoxDeps = {
   release: (sandboxRowId: string) => Promise<void>;
 };
 
+/**
+ * How long a release may take. Nothing waits on its answer and the reaper
+ * takes a box it misses, so a stalled control plane must not hold the phase
+ * (or the run's box budget) open.
+ */
+export const PHASE_BOX_RELEASE_TIMEOUT_MS = 15_000;
+
 const defaultDeps: PhaseBoxDeps = {
   provision: provisionEvalSandbox,
   attach: (sandboxId) => attachRunningSandbox(sandboxId),
-  release: (sandboxRowId) => releaseEvalSandbox({ sandboxRowId }),
+  release: (sandboxRowId) =>
+    releaseEvalSandbox({
+      sandboxRowId,
+      // Its own clock, not the request's: it must run after an abort too.
+      signal: AbortSignal.timeout(PHASE_BOX_RELEASE_TIMEOUT_MS),
+    }),
 };
 
 /**
