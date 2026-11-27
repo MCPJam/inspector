@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import type { RemoteServer } from "@/hooks/useProjects";
 import { parseDraftTestCaseId } from "@/components/evals/draft-test-case";
+import { CaseServerAccounts } from "@/components/evals/suite-accounts-row";
 import { getStepsBlockReason } from "@/components/evals/test-template-editor";
 import type {
   CaseRunLaunchOptions,
@@ -280,12 +281,19 @@ export function CaseStepsPage({
         onOpenEvaluators={locked ? undefined : () => void openEvaluators()}
         onRun={onRunCase ? () => setRunOpen(true) : undefined}
       />
+      <CaseServerAccounts
+        suite={suite}
+        projectId={projectId}
+        selections={draft.accounts ?? testCase.accounts}
+        disabled={locked || data.saving}
+        onChange={(accounts) => data.setDraft((current) => ({ ...current, accounts }))}
+      />
       {editor}
       {runOpen && onRunCase ? (
         <SuiteRunReview
           {...launchReview}
           disabledReason={runDisabledReason}
-          cases={[testCase]}
+          cases={[draft.accounts === undefined ? testCase : { ...testCase, accounts: draft.accounts }]}
           caseTitle={draft.title || testCase.title}
           initialIterations={draft.runs}
           onClose={() => setRunOpen(false)}

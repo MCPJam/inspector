@@ -796,6 +796,31 @@ export interface PlatformChatSessionTraceTurn {
   spansUnavailable?: true;
   /** Fewer spans came back than the turn recorded. */
   spansTruncated?: true;
+  /** The MCP event that started this turn; absent on every other turn. */
+  event?: PlatformChatSessionTraceEvent;
+}
+
+/**
+ * The MCP event that started a turn: a background trigger run, or a
+ * Playground event turn. Identity only: the event's data stays in the
+ * transcript.
+ */
+export interface PlatformChatSessionTraceEvent {
+  name: string;
+  /** The server's id for the event. */
+  eventId?: string;
+  /** When the server says the event occurred, exactly as it sent it. */
+  timestamp?: string;
+  /** When MCPJam received the event, in epoch ms like the turn's `startedAt`. */
+  receivedAt: number;
+  /** The subscription's delivery mode; absent when it is not known. */
+  delivery?: "poll" | "push" | "webhook";
+  /** `server` when the MCP server sent it, `simulation` for a test event. `replay` is reserved. */
+  origin: "server" | "simulation" | "replay";
+  /** MCPJam's id for the event subscription. */
+  subscriptionId?: string;
+  /** The background trigger that ran the turn; background trigger runs only. */
+  triggerId?: string;
 }
 
 export interface PlatformChatSessionTrace {
@@ -4777,9 +4802,14 @@ export interface PlatformTraceDestination {
   /**
    * Which traces this destination subscribes to. `direct` is Playground, and
    * only sessions SHARED to the workspace are ever sent — a private Playground
-   * session is excluded server-side and cannot be opted in.
+   * session is excluded server-side and cannot be opted in. `event` selects
+   * background trigger runs; until they export under their own source type (a
+   * server-side rollout), they still match `direct`, as a Playground event
+   * turn always does.
    */
-  sourceTypes: Array<"eval" | "scenario" | "study" | "swarm" | "direct">;
+  sourceTypes: Array<
+    "eval" | "scenario" | "study" | "swarm" | "direct" | "event"
+  >;
   /**
    * False (the default) redacts prompts, outputs, tool arguments and
    * screenshots. The message envelopes still ship, so a vendor's GenAI views

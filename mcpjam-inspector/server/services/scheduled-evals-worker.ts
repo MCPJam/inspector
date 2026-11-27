@@ -19,7 +19,12 @@
  * write surface have their own `SCHEDULED_EVALS_ENABLED` gate).
  */
 
-import { loadSuiteConnectionIdSets } from "./evals/suite-account-choices.js";
+import {
+  loadEvalRunAccountPlan,
+  loadSuiteConnectionIdSets,
+  openEvalAccountGroups,
+} from "./evals/suite-account-choices.js";
+import type { ConnectionIdSets } from "../utils/oauth-account-sets.js";
 import { WEB_CALL_TIMEOUT_MS } from "../config.js";
 import { logger } from "../utils/logger";
 import { abortableSleep } from "../utils/run-supervisor/backoff.js";
@@ -212,7 +217,8 @@ export async function executeClaimedRun(
     suiteId: claimed.suiteId,
     suiteName: claimed.suiteName,
   };
-  if (!claimed.projectId) {
+  const { projectId, environmentId } = claimed;
+  if (!projectId) {
     await reportComplete({
       triggerId: claimed.triggerId,
       ok: false,
@@ -221,6 +227,7 @@ export async function executeClaimedRun(
     return;
   }
 
+  let closeAccounts: (() => Promise<void>) | undefined;
   let manager:
     Awaited<ReturnType<typeof createAuthorizedManager>>["manager"] | null =
     null;
@@ -253,14 +260,14 @@ export async function executeClaimedRun(
       serverIds: string[];
       serverNames: string[];
       resolvedEnvironment?: ResolvedEnvironmentForLaunch;
-    } = claimed.environmentId
+    } = environmentId
       ? await (async () => {
           const resolved = await resolveEnvironmentForLaunch(
             convex,
             {
               serverSource: EVAL_LAUNCH_SERVER_SOURCE,
-              projectId: claimed.projectId!,
-              environmentId: claimed.environmentId!,
+              projectId,
+              environmentId,
             },
           );
           return {
@@ -291,18 +298,18 @@ export async function executeClaimedRun(
       { failClosed: true },
     );
 
-    // The schedule runs as its owner, so it uses the owner's saved accounts.
-    const connectionIdSets = await loadSuiteConnectionIdSets(convex, {
+    const accountPlan = await loadEvalRunAccountPlan(convex, {
       suiteId: claimed.suiteId,
+      serverIds: selection.serverIds,
     });
     // Empty caller context = plain-JWT caller (locked by caller-context
     // contract test); the delegated JWT is the principal. There is no request
     // to read the XAA issuer from, so it comes from the deployment's public
     // origin; without one, a `useXaa` server fails closed in the builder.
-    const authorized = await createAuthorizedManager(
+    const open = (connectionIdSets?: ConnectionIdSets) => createAuthorizedManager(
       {},
       bearer,
-      claimed.projectId,
+      projectId,
       selection.serverIds,
       WEB_CALL_TIMEOUT_MS,
       undefined,
@@ -315,7 +322,15 @@ export async function executeClaimedRun(
         xaaPolicy: xaaPolicyFromMcpProfile(hostConfig.mcpProfile),
       },
     );
-    manager = authorized.manager;
+    const connectionIdSets = await loadSuiteConnectionIdSets(convex, {
+      suiteId: claimed.suiteId,
+      serverIds: selection.serverIds,
+    });
+    const groups = accountPlan
+      ? await openEvalAccountGroups(accountPlan, async (sets) => (await open(sets)).manager, connectionIdSets)
+      : undefined;
+    closeAccounts = groups?.close;
+    manager = groups?.first ?? (await open(connectionIdSets)).manager;
 
     let prepared: PreparedEvalRun;
     try {
@@ -329,6 +344,9 @@ export async function executeClaimedRun(
         convexAuthToken: bearer,
         suiteRerun: true,
         source: "schedule",
+        ...(groups && accountPlan ? {
+          evalAccounts: { plan: accountPlan, managerForCase: groups.forCase },
+        } : {}),
         ...(claimed.environmentId
           ? { environmentId: claimed.environmentId }
           : {}),
@@ -402,7 +420,9 @@ export async function executeClaimedRun(
     });
   } finally {
     jobBearer?.stop();
-    if (manager) {
+    if (closeAccounts) {
+      await closeAccounts();
+    } else if (manager) {
       await manager.disconnectAllServers().catch(() => {});
     }
   }

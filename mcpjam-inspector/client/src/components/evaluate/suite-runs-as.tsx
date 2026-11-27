@@ -1,7 +1,6 @@
 import { Fragment } from "react";
 import { UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useEvalAccountSelectionEnabled } from "@/hooks/useEvalAccountSelectionEnabled";
 import { useSuiteAccounts } from "@/hooks/use-suite-accounts";
 import { runsAsEntries, type RunsAsEntry } from "@/lib/evals/eval-accounts";
 import { NeedsReconnectTag } from "../evals/suite-accounts-row";
@@ -51,7 +50,7 @@ export function RunsAsLine({
   );
 }
 
-/** {@link RunsAsLine} for a suite, read while the rollout flag is on. */
+/** {@link RunsAsLine} for a suite. */
 export function SuiteRunsAsLine({
   suite,
   projectId,
@@ -61,8 +60,6 @@ export function SuiteRunsAsLine({
   projectId?: string | null;
   className?: string;
 }) {
-  const enabled = useEvalAccountSelectionEnabled();
-  if (!enabled) return null;
   return (
     <LoadedRunsAsLine
       suite={suite}

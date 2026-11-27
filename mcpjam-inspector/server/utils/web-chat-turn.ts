@@ -23,6 +23,7 @@ import {
 import { modelWorkloadFor } from "./model-workload.js";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
+import type { EventAtTurn } from "@/shared/event-at-turn";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import { withoutLegacyWebmcpVerbs } from "./built-in-tools/browser.js";
 import { withoutServerVerifiedApprovalTools } from "./built-in-tools/mcpjam.js";
@@ -430,6 +431,12 @@ export interface WebChatTurnPersistContext {
    * last steps used.
    */
   pageToolsAtTurn?: () => MintedPageToolRecord[] | undefined;
+  /**
+   * The MCP event that started this turn, already checked at the route
+   * boundary (`eventAtTurnFromBody`). Written on the turn trace and echoed on
+   * the live `turn_start`; like `turnProvenance`, it never reaches the model.
+   */
+  eventAtTurn?: EventAtTurn;
 }
 
 /**
@@ -1598,6 +1605,7 @@ export async function streamChatTurn(
             // no page tools" is a different fact from "we do not know", and the
             // pane says something different about each.
             ...(pageToolsAtTurn ? { pageToolsAtTurn } : {}),
+            ...(persist.eventAtTurn ? { eventAtTurn: persist.eventAtTurn } : {}),
           };
         })(),
         ...(persist.expectedVersion !== undefined
@@ -1684,6 +1692,7 @@ export async function streamChatTurn(
       shouldPauseAfterStep: () => suspendedScopeStepUpToolCallIds.size > 0,
       suspendedToolCallIds: () => suspendedScopeStepUpToolCallIds,
       onStreamComplete: cleanupStream,
+      ...(persist.eventAtTurn ? { eventAtTurn: persist.eventAtTurn } : {}),
       onStreamWriterReady: (writer) => {
         scopeChallengeWriter = writer;
         emitTurnNotices(writer);
@@ -1828,6 +1837,7 @@ export async function streamChatTurn(
         requireToolApproval: persist.requireToolApproval,
         onConversationComplete,
         onStreamComplete: cleanupStream,
+        ...(persist.eventAtTurn ? { eventAtTurn: persist.eventAtTurn } : {}),
         onStreamWriterReady: (writer) => {
           scopeChallengeWriter = writer;
           emitSandboxNotices(
@@ -1894,6 +1904,7 @@ export async function streamChatTurn(
       ...(refreshTools ? { refreshTools } : {}),
       onConversationComplete,
       onStreamComplete: cleanupStream,
+      ...(persist.eventAtTurn ? { eventAtTurn: persist.eventAtTurn } : {}),
       onStreamWriterReady: (writer) => {
         scopeChallengeWriter = writer;
         emitSandboxNotices(
@@ -2112,6 +2123,7 @@ export async function streamChatTurn(
       stopCrossInstanceRpcLogPoll = undefined;
       await cleanupStream();
     },
+    ...(persist.eventAtTurn ? { eventAtTurn: persist.eventAtTurn } : {}),
     onStreamWriterReady: (writer) => {
       scopeChallengeWriter = writer;
       emitSandboxNotices(

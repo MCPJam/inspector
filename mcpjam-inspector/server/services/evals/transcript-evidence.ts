@@ -86,6 +86,7 @@ function outputText(output: unknown): string | undefined {
   }
 }
 
+/** Matched by wording, the only signal a transcript keeps; tests read it from the installed client and SDK. */
 export function toolCallFailure(
   output: unknown,
   toolName: string,

@@ -151,9 +151,8 @@ export type HostedScoreRowInputs = {
   toolMatchAuthored?: boolean;
   /** @see assessAgentActivity */
   agentActivity?: AgentActivityAssessment;
-  /** Absent on the first pass; present on the judge second pass. */
+  /** Both absent on the first pass; present on the judge second pass. */
   rubricChecksVerdict?: HostedRubricChecksVerdictLike;
-  /** Absent on the first pass; present on the judge second pass. */
   customJudgesVerdict?: HostedCustomJudgesVerdictLike;
   /** First pass only: what the platform rows are graded from. */
   platformGates?: PlatformGateEvidence;

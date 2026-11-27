@@ -209,6 +209,7 @@ export type {
   PlatformTurnTrace,
   PlatformTurnUsage,
   PlatformChatSessionTraceTurn,
+  PlatformChatSessionTraceEvent,
   PlatformSessionSummary,
   PlatformSessionSourceType,
   PlatformSessionParentRef,

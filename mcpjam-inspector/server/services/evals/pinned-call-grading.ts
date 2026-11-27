@@ -18,8 +18,10 @@
  * Every other assertion reads the transcript exactly as before, pinned calls
  * included. `toolResultSizeUnder` stays there too: it budgets what a model
  * was handed, and a pinned call hands a model nothing.
+ * A declared output-schema check reads every pinned result, after the run too.
  */
-import type { BuildTranscriptInput, Predicate } from "@mcpjam/sdk/predicates";
+import { DECLARED_OUTPUT_SCHEMA, evaluatePredicates } from "@mcpjam/sdk/predicates";
+import type { BuildTranscriptInput, IterationTranscript, Predicate } from "@mcpjam/sdk/predicates";
 import type { ToolCallStep } from "@/shared/steps";
 import type { PinnedCallEvidence } from "./pinned-turn";
 import type { StepEngineOutcome, StepExecutionState } from "./step-executor";
@@ -85,24 +87,39 @@ export function assertionScope(
   if (
     assertion.type !== "toolResultContains" &&
     assertion.type !== "toolResultMatches" &&
-    assertion.type !== "toolResultMatchesSchema"
+    (assertion.type !== "toolResultMatchesSchema" || gradesPinnedResults(assertion))
   ) {
     return {};
   }
   const graded = latestPinnedCall(state.pinnedCalls, assertion.toolName);
   if (!graded) return {};
-  const declared = assertion.type === "toolResultMatchesSchema" && assertion.schema === "declared";
-  const failure = declared && graded.failureMessage !== undefined
-    ? toolCallFailure({ type: "error-text", value: graded.failureMessage }, graded.toolName)
-    : undefined;
-  const row = graded.isError && !declared
+  const row = graded.isError
     ? undefined
-    : callToolResultRow(graded.toolName, graded.result, graded.toolCallId, graded.declaredServerKey);
+    : callToolResultRow(graded.toolName, graded.result, graded.toolCallId);
   // Nothing to grade reads as an uncaptured result: the check reports missing
   // evidence instead of scoring an empty one, which `max: 0` would pass.
   return row
-    ? { toolResults: [{ ...row, callFailure: failure }], resultsCaptured: true }
+    ? { toolResults: [row], resultsCaptured: true }
     : { toolResults: undefined, resultsCaptured: false };
+}
+
+/** Stored predicates are loosely typed; `evaluatePredicates` reports a malformed one. */
+const gradesPinnedResults = (p: Predicate) => typeof p === "object" && p !== null &&
+  p.type === "toolResultMatchesSchema" && p.schema === DECLARED_OUTPUT_SCHEMA;
+
+/** Without these rows the declared check counts each pinned call as one that returned nothing. */
+export function evaluateWithPinnedResults(
+  transcript: IterationTranscript,
+  predicates: readonly Predicate[],
+  calls: readonly PinnedCallRecord[] = [],
+) {
+  const rows = calls.flatMap((call) => {
+    const row = callToolResultRow(call.toolName, call.result, call.toolCallId, call.declaredServerKey);
+    const failure = call.failureMessage && toolCallFailure({ type: "error-text", value: call.failureMessage }, call.toolName);
+    return row ? [{ ...row, ...(failure ? { callFailure: failure } : {}) }] : [];
+  });
+  const withPinned = { ...transcript, toolResults: [...(transcript.toolResults ?? []), ...rows] };
+  return predicates.flatMap((p) => evaluatePredicates(gradesPinnedResults(p) ? withPinned : transcript, [p]));
 }
 
 /** The most recent pinned call of `toolName`; none when no tool is named. */
