@@ -28,10 +28,7 @@ import {
 import type { Predicate, PredicateScope } from "@mcpjam/sdk/predicates";
 import { evaluateToolCalls } from "@mcpjam/sdk/matchers";
 import { resolveExtrasCap } from "@/shared/eval-matching";
-import {
-  rubricCheckVerdictQuestions,
-  type RubricCheckVerdictQuestion,
-} from "@/shared/rubric-check-verdict";
+import { rubricCheckVerdictQuestions } from "@/shared/rubric-check-verdict";
 import type { AgentActivityAssessment } from "./agent-activity.js";
 import {
   customJudgeDefinitionInputs,
@@ -162,17 +159,6 @@ export type HostedScoreRowInputs = {
   platformGates?: PlatformGateEvidence;
 };
 
-/**
- * The questions a stored verdict can be projected from. The trial scorecard
- * reads unprojected verdicts with the same parser, so both agree on which
- * questions exist.
- */
-export function rubricCheckQuestionsFrom(
-  verdict: HostedRubricChecksVerdictLike | undefined,
-): RubricCheckVerdictQuestion[] {
-  return rubricCheckVerdictQuestions(verdict);
-}
-
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
@@ -259,7 +245,7 @@ export function hostedScoreDefinitionInputs(
   inputs: HostedScoreRowInputs
 ): HostedScoreDefinitionInputs {
   const judge = inputs.judgeVerdict;
-  const rubricChecks = rubricCheckQuestionsFrom(inputs.rubricChecksVerdict);
+  const rubricChecks = rubricCheckVerdictQuestions(inputs.rubricChecksVerdict);
   const customJudges = customJudgeDefinitionInputs(inputs.customJudgesVerdict);
   return {
     ...(customJudges.length > 0 ? { customJudges } : {}),
@@ -537,7 +523,7 @@ export function buildHostedScoreRows(
     typeof rubricVerdict?.model === "string" && rubricVerdict.model.length > 0
       ? rubricVerdict.model
       : undefined;
-  for (const question of rubricCheckQuestionsFrom(rubricVerdict)) {
+  for (const question of rubricCheckVerdictQuestions(rubricVerdict)) {
     const definition = byId.get(hostedRubricCheckScorerId(question.key));
     if (!definition) continue;
     if (question.status === "skipped") {

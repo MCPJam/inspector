@@ -262,7 +262,16 @@ export function SuiteScorerTable({
       scope.onDraftChange(removeCaseRule(scope.draft, rule.index));
     }
   };
-  const library = librarySuiteEdits(scope, judgeConfig, onJudgeConfigChange);
+  const judgeLimit = Math.min(
+    MAX_CUSTOM_JUDGES,
+    capabilities?.judges?.custom?.maxJudges ?? MAX_CUSTOM_JUDGES,
+  );
+  const library = librarySuiteEdits(
+    scope,
+    judgeConfig,
+    onJudgeConfigChange,
+    judgeLimit,
+  );
   const addPredicate = (predicate: Predicate) => {
     if (scope.kind === "suite") {
       scope.onPredicatesChange((previous) => [...previous, predicate]);
@@ -434,10 +443,7 @@ export function SuiteScorerTable({
                   canJudge: hasCustomJudgesCapability(capabilities),
                 }}
                 onAdd={library.add}
-                judgeLimit={Math.min(
-                  MAX_CUSTOM_JUDGES,
-                  capabilities?.judges?.custom?.maxJudges ?? MAX_CUSTOM_JUDGES,
-                )}
+                judgeLimit={judgeLimit}
               />
             ) : null}
             <SuiteScorerLibraryMenu
@@ -503,6 +509,7 @@ export function SuiteScorerTable({
                 ) : (
                   <EvaluatorStageRows
                     rows={group.rows}
+                    stageLabel={group.label}
                     predicateOf={(row) =>
                       row.predicateIndex !== undefined
                         ? rules[row.predicateIndex]?.predicate
@@ -518,6 +525,7 @@ export function SuiteScorerTable({
                     }
                     onRemoveEvaluator={library?.remove}
                     onUpdateEvaluator={library?.update}
+                    updateRefusal={library?.updateRefusal}
                     renderRow={(row) => (
                       <ScorerRow
                         key={row.id}

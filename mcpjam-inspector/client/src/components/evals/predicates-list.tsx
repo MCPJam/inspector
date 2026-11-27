@@ -137,6 +137,7 @@ export function PredicatesList({
   const failed = gating.filter((r) => !r.passed).length;
   const passed = gating.length - failed;
   const allPassed = failed === 0;
+  const allNotApplicable = predicates.every((r) => r.status === "not_applicable");
   const caseLevel = predicates.filter((r) => !r.scope);
   const stepScoped = predicates.filter((r) => r.scope?.kind === "turn");
 
@@ -174,22 +175,24 @@ export function PredicatesList({
         <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
           Assertions
         </div>
-        <div
-          className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-            allPassed ? EVAL_PASSED_BADGE_STRONG_CLASS : EVAL_FAILED_BADGE_STRONG_CLASS
-          }`}
-        >
-          {allPassed ? (
-            <CheckCircle2 className="h-3 w-3 shrink-0" aria-hidden />
-          ) : (
-            <XCircle className="h-3 w-3 shrink-0" aria-hidden />
-          )}
-          {gating.length === 0
-            ? "No assertions applied. Each row says why."
-            : allPassed
-              ? `${gating.length} / ${gating.length} assertions passed`
-              : `${passed} / ${gating.length} assertions passed`}
-        </div>
+        {allNotApplicable ? (
+          <div className="rounded border border-border px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+            No assertions applied. Each row says why.
+          </div>
+        ) : gating.length > 0 ? (
+          <div
+            className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+              allPassed ? EVAL_PASSED_BADGE_STRONG_CLASS : EVAL_FAILED_BADGE_STRONG_CLASS
+            }`}
+          >
+            {allPassed ? (
+              <CheckCircle2 className="h-3 w-3 shrink-0" aria-hidden />
+            ) : (
+              <XCircle className="h-3 w-3 shrink-0" aria-hidden />
+            )}
+            {`${passed} / ${gating.length} assertions passed`}
+          </div>
+        ) : null}
       </div>
 
       {renderGroup("Whole-run assertions", caseLevel, "case")}
@@ -218,7 +221,8 @@ function PredicateRow({
 }) {
   const evidence = evidenceObservations(row.predicate, observations);
   const notApplicable = row.status === "not_applicable";
-  const failed = !row.passed && !notApplicable;
+  const errored = row.status === "error";
+  const failed = !row.passed && !notApplicable && !errored;
   return (
     <li
       className={`rounded border ${
@@ -227,25 +231,27 @@ function PredicateRow({
           : "border-border/40 bg-background/40"
       }`}
     >
-      <details className="group" open={failed}>
+      <details className="group" open={failed || errored}>
         <summary className="flex cursor-pointer list-none items-start gap-2 p-2 [&::-webkit-details-marker]:hidden">
           <span
             className={`mt-0.5 flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
               notApplicable
                 ? "border border-border text-muted-foreground"
-                : row.passed
+                : errored
+                  ? EVAL_WARN_BADGE_STRONG_CLASS
+                  : row.passed
                   ? EVAL_PASSED_BADGE_STRONG_CLASS
                   : EVAL_FAILED_BADGE_STRONG_CLASS
             }`}
           >
             {notApplicable ? (
               <MinusCircle className="h-3 w-3" aria-hidden />
-            ) : row.passed ? (
+            ) : row.passed && !errored ? (
               <CheckCircle2 className="h-3 w-3" aria-hidden />
             ) : (
               <XCircle className="h-3 w-3" aria-hidden />
             )}
-            {notApplicable ? "N/A" : row.passed ? "PASS" : "FAIL"}
+            {notApplicable ? "N/A" : errored ? "Error" : row.passed ? "PASS" : "FAIL"}
           </span>
           <span className="min-w-0 flex-1">
             <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">

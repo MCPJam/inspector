@@ -1,7 +1,8 @@
-import type { Predicate } from "@mcpjam/sdk/predicates";
-import type {
-  CustomJudge,
-  RubricCheckQuestion,
+import { DECLARED_OUTPUT_SCHEMA, type Predicate } from "@mcpjam/sdk/predicates";
+import {
+  MAX_RUBRIC_CHECK_QUESTIONS,
+  type CustomJudge,
+  type RubricCheckQuestion,
 } from "@/components/shared/session-quality/judge-config";
 import {
   AlignLeft,
@@ -10,7 +11,6 @@ import {
   Target,
   CircleCheck,
   MessageCircleWarning,
-  Quote,
   FileWarning,
   Route,
   ShieldAlert,
@@ -112,7 +112,7 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
       "Did every tool result in this run match the tool's declared output schema?",
     icon: Braces,
     tone: "tools",
-    checks: [{ type: "toolResultMatchesSchema", schema: "declared" }],
+    checks: [{ type: "toolResultMatchesSchema", schema: DECLARED_OUTPUT_SCHEMA }],
   },
   {
     id: "delivers-final-answer",
@@ -145,35 +145,19 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
     version: 1,
     name: "Reports Tool Errors",
     question:
-      "When a tool failed, did the final answer say so instead of inventing a result?",
+      "When a tool returned an error, did the final answer say so instead of inventing a result? Fails when the run is too long for the grader to see every call.",
     icon: MessageCircleWarning,
     tone: "errors",
     checks: [],
+    // The grader sees only the last steps of a long run, clipped. A pass
+    // therefore needs every call in view: an error it cannot see must fail
+    // the question, never pass it.
     questions: [
       {
         slug: "reports-failures",
-        label: "Answer reports each tool failure",
+        label: "Answer reports each tool error",
         instructions:
-          "Find every tool call that failed or returned an error. Answer yes if no tool failed, or if the final answer tells the user about each failure instead of presenting a result that tool did not return. Answer no if any failure is left out or covered by an invented result.",
-        passOn: "yes",
-      },
-    ],
-  },
-  {
-    id: "answer-grounded-in-results",
-    version: 1,
-    name: "Answer Grounded in Results",
-    question:
-      "Is every factual claim in the answer backed by a tool result from this run?",
-    icon: Quote,
-    tone: "answer",
-    checks: [],
-    questions: [
-      {
-        slug: "grounded",
-        label: "Every claim is backed by a tool result",
-        instructions:
-          "List the factual claims in the final answer and check each against the tool results in the recording. Answer yes only if every claim is supported.",
+          "Answer yes only if the tool trajectory shows every tool call the run made (its tool step count matches the steps it lists, and none are omitted or cut off) and the final answer tells the user about each step marked as an error instead of presenting a result that step did not return. If the run made no tool calls, answer yes. Answer no in every other case, including when the trajectory or the final answer is cut off.",
         passOn: "yes",
       },
     ],
@@ -304,24 +288,13 @@ export function missingParts(
     suite.judges?.filter((j) => j.evaluator?.id === evaluator.id).map((j) => j.id),
   );
   return {
-    checks: missingChecks(evaluator, suite.predicates),
+    checks: missingChecks(
+      evaluator,
+      suite.predicates.filter((p) => p.evaluator?.id === evaluator.id),
+    ),
     questions: taggedQuestions(evaluator).filter((q) => !questionIds.has(q.id)),
     judges: taggedJudges(evaluator).filter((j) => !judgeIds.has(j.id)),
   };
-}
-
-export function hasLibraryIdConflict(
-  evaluator: LibraryEvaluator,
-  suite: Pick<LibrarySuiteParts, "questions" | "judges">,
-): boolean {
-  return (
-    taggedQuestions(evaluator).some((expected) =>
-      suite.questions?.some((q) => q.id === expected.id && q.evaluator?.id !== evaluator.id),
-    ) ||
-    taggedJudges(evaluator).some((expected) =>
-      suite.judges?.some((j) => j.id === expected.id && j.evaluator?.id !== evaluator.id),
-    )
-  );
 }
 
 /**
@@ -337,6 +310,29 @@ export function missingChecks(
   return taggedChecks(evaluator).filter(
     (check) => !present.has(hostedCriterionId(check)),
   );
+}
+
+/** Reuse matching assertions and preserve their existing role and settings. */
+export function withLibraryChecks(
+  predicates: readonly Predicate[],
+  checks: readonly Predicate[],
+): Predicate[] {
+  const byCriterion = new Map(
+    checks.map((check) => [hostedCriterionId(check), check]),
+  );
+  const present = new Set<string>();
+  const attached = predicates.map((predicate) => {
+    const id = hostedCriterionId(predicate);
+    present.add(id);
+    const check = byCriterion.get(id);
+    return check?.evaluator && !predicate.evaluator
+      ? { ...predicate, evaluator: check.evaluator }
+      : predicate;
+  });
+  return [
+    ...attached,
+    ...checks.filter((check) => !present.has(hostedCriterionId(check))),
+  ];
 }
 
 /**
@@ -389,6 +385,171 @@ export function isInSuite(
     missing.checks.length === 0 &&
     missing.questions.length === 0 &&
     missing.judges.length === 0
+  );
+}
+
+/**
+ * The suite's questions after an edit, or why the edit cannot be made. A
+ * refusal is shown where the action would be, so nothing is dropped or
+ * skipped silently.
+ */
+export type QuestionsEdit =
+  | { questions: RubricCheckQuestion[]; refused?: undefined }
+  | { refused: string };
+
+type Tagged = { id: string; evaluator?: { id: string } };
+
+/** An id these items need that an item from elsewhere already holds. */
+function takenId(
+  incoming: readonly Tagged[],
+  current: readonly Tagged[],
+): string | undefined {
+  return incoming.find((wanted) =>
+    current.some(
+      (q) => q.id === wanted.id && q.evaluator?.id !== wanted.evaluator?.id,
+    ),
+  )?.id;
+}
+
+/** Refuses an edit that grows the list past the cap; a shrinking one is fine. */
+function overCap(
+  questions: RubricCheckQuestion[],
+  before: number,
+  action: string,
+): QuestionsEdit {
+  const over = questions.length - MAX_RUBRIC_CHECK_QUESTIONS;
+  if (over <= 0 || questions.length <= before) return { questions };
+  return {
+    refused: `Suites can ask up to ${MAX_RUBRIC_CHECK_QUESTIONS} rubric-check questions, and ${action} would make ${questions.length}. Remove ${over === 1 ? "a question" : `${over} questions`} first.`,
+  };
+}
+
+/**
+ * The suite's questions with an evaluator's tagged questions appended. One
+ * the suite already has from the same evaluator is not added twice.
+ */
+export function questionsWithAdded(
+  questions: readonly RubricCheckQuestion[],
+  adding: readonly RubricCheckQuestion[],
+): QuestionsEdit {
+  const taken = takenId(adding, questions);
+  if (taken) {
+    return {
+      refused: `A question already uses the ID "${taken}". Rename or remove it to add this evaluator.`,
+    };
+  }
+  const ids = new Set(questions.map((q) => q.id));
+  return overCap(
+    [...questions, ...adding.filter((q) => !ids.has(q.id))],
+    questions.length,
+    "adding this evaluator",
+  );
+}
+
+/**
+ * The suite's questions with this evaluator's replaced by its current
+ * version. Each keeps its place, so an update that changes nothing but the
+ * version leaves the list, and the suite's config revision, as it was. A
+ * question the new version drops goes; one it adds goes last.
+ */
+export function questionsWithEvaluatorUpdated(
+  evaluator: LibraryEvaluator,
+  questions: readonly RubricCheckQuestion[],
+): QuestionsEdit {
+  const fresh = taggedQuestions(evaluator);
+  const taken = takenId(fresh, questions);
+  if (taken) {
+    return {
+      refused: `A question already uses the ID "${taken}". Rename or remove it to update this evaluator.`,
+    };
+  }
+  return overCap(
+    replacedFromEvaluator(questions, evaluator.id, fresh),
+    questions.length,
+    "updating this evaluator",
+  );
+}
+
+/**
+ * `items` with the evaluator's replaced by `fresh`. Each keeps its place; one
+ * `fresh` drops goes, and one it adds goes last.
+ */
+function replacedFromEvaluator<T extends Tagged>(
+  items: readonly T[],
+  evaluatorId: string,
+  fresh: readonly T[],
+): T[] {
+  const current = new Map(fresh.map((item) => [item.id, item]));
+  const next: T[] = [];
+  for (const item of items) {
+    if (item.evaluator?.id !== evaluatorId) next.push(item);
+    else {
+      const replacement = current.get(item.id);
+      if (replacement) next.push(replacement);
+      current.delete(item.id);
+    }
+  }
+  return [...next, ...current.values()];
+}
+
+/** The suite's judges after an edit, or why the edit cannot be made. */
+export type JudgesEdit =
+  | { judges: CustomJudge[]; refused?: undefined }
+  | { refused: string };
+
+/** Refuses an edit that grows the list past the backend's judge limit. */
+function overJudgeLimit(
+  judges: CustomJudge[],
+  before: number,
+  limit: number,
+  action: string,
+): JudgesEdit {
+  const over = judges.length - limit;
+  if (over <= 0 || judges.length <= before) return { judges };
+  return {
+    refused: `Suites can have up to ${limit} ${limit === 1 ? "judge" : "judges"}, and ${action} would make ${judges.length}. Remove ${over === 1 ? "a judge" : `${over} judges`} first.`,
+  };
+}
+
+/** The suite's judges with an evaluator's judges appended, as for questions. */
+export function judgesWithAdded(
+  judges: readonly CustomJudge[],
+  adding: readonly CustomJudge[],
+  limit: number,
+): JudgesEdit {
+  const taken = takenId(adding, judges);
+  if (taken) {
+    return {
+      refused: `A judge already uses the ID "${taken}". Rename or remove it to add this evaluator.`,
+    };
+  }
+  const ids = new Set(judges.map((j) => j.id));
+  return overJudgeLimit(
+    [...judges, ...adding.filter((j) => !ids.has(j.id))],
+    judges.length,
+    limit,
+    "adding this evaluator",
+  );
+}
+
+/** The suite's judges with this evaluator's at its current version. */
+export function judgesWithEvaluatorUpdated(
+  evaluator: LibraryEvaluator,
+  judges: readonly CustomJudge[],
+  limit: number,
+): JudgesEdit {
+  const fresh = taggedJudges(evaluator);
+  const taken = takenId(fresh, judges);
+  if (taken) {
+    return {
+      refused: `A judge already uses the ID "${taken}". Rename or remove it to update this evaluator.`,
+    };
+  }
+  return overJudgeLimit(
+    replacedFromEvaluator(judges, evaluator.id, fresh),
+    judges.length,
+    limit,
+    "updating this evaluator",
   );
 }
 

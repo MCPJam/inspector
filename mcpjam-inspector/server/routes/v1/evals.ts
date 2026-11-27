@@ -2157,7 +2157,7 @@ function toStepResultDto(step: EvalStepReplay) {
     stepId: step.stepId,
     stepIndex: step.stepIndex,
     kind: step.kind,
-    status: step.status,
+    status: step.status === "not_applicable" ? "skipped" : step.status,
     reason: step.reason ?? null,
     ...(evidence && Object.keys(evidence).length > 0 ? { evidence } : {}),
   };

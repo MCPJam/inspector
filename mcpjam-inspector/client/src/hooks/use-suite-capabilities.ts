@@ -140,6 +140,7 @@ export type SuiteCapabilities = {
     rubricChecks?: {
       role: "advisory";
       template: { version: number; hash: string };
+      questionKinds?: readonly string[];
       execution: "wired";
       calibration: "unavailable";
     };
@@ -317,13 +318,12 @@ export function hasRubricChecksCapability(
 }
 
 /**
- * True when this deployment asks authored yes/no rubric-check questions:
- * template version 2 added them, so an older version would refuse the kind.
+ * True when this deployment accepts authored yes/no rubric-check questions.
  */
 export function hasYesNoRubricQuestionsCapability(
   capabilities: Pick<SuiteCapabilities, "judges"> | null | undefined,
 ): boolean {
-  return (capabilities?.judges?.rubricChecks?.template.version ?? 0) >= 2;
+  return capabilities?.judges?.rubricChecks?.questionKinds?.includes("yesno") === true;
 }
 
 export function hasJudgeSeverityCapability(

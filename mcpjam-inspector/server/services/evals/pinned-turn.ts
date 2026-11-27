@@ -70,6 +70,7 @@ export interface PinnedTurnResult {
   /** The pinned call, recorded only when an MCP call actually happened
    *  (success or error). `null` for a not-connected server — no phantom call. */
   toolCall: ToolCall | null;
+  declaredServerKey?: string;
   /** Synthetic id shared by the live SSE tool events and widget render. */
   toolCallId?: string;
   /** Raw MCP result for live streaming; synthetic error text when the call threw. */
@@ -92,6 +93,8 @@ export interface PinnedTurnResult {
  */
 export interface PinnedCallEvidence {
   toolCallId?: string;
+  declaredServerKey?: string;
+  failureMessage?: string;
   /** The call's result as `runPinnedTurn` reports it, a thrown call's error
    *  included. Absent when no call was made (blocked by policy, no tool
    *  selected, server not connected) or the server returned nothing. */
@@ -146,6 +149,10 @@ export function buildPinnedTurnAccounting(
     ...(result.iterationError ? { iterationError: result.iterationError } : {}),
     setupFailure: result.iterationError !== undefined,
     evidence: {
+      declaredServerKey: result.declaredServerKey,
+      failureMessage: result.toolError?.kind === "protocol-error"
+        ? result.toolError.message
+        : undefined,
       ...(result.toolCallId ? { toolCallId: result.toolCallId } : {}),
       ...(result.toolCall && result.toolResult !== undefined
         ? { result: result.toolResult }
@@ -303,6 +310,7 @@ export async function runPinnedTurn(
 
   return {
     toolCall,
+    declaredServerKey: resolvedServerKey,
     toolCallId,
     toolResult:
       rawResult ??

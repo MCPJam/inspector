@@ -77,11 +77,11 @@ import { suppressedSuiteStandardCheckIdsSchema } from "./standard-checks.js";
  */
 
 import { z } from "zod";
-import { predicateSchema } from "../predicates/types.js";
+import { storedPredicateSchema } from "../predicates/types.js";
 import { importMappingStatusSchema } from "./chain.js";
 import { opaqueIdSchema } from "./identity.js";
 import { caseIntentUpdateSchema } from "./stage-intent.js";
-import { stepsSchema } from "./steps.js";
+import { storedStepsSchema } from "./steps.js";
 
 /**
  * The original dialect's `schemaVersion`.
@@ -541,7 +541,7 @@ const caseHeadShape = {
    * here too: they carry per-step history and make the round-trip exact.
    * Agents and exporters mint them.
    */
-  steps: stepsSchema.min(1),
+  steps: storedStepsSchema.min(1),
 };
 const caseMiddleShape = {
   judge: caseJudgeSettingsSchema.optional(),
@@ -577,11 +577,11 @@ export const evalSuiteFileCaseSchema = z
      * renamed: its type is `WidgetAssertion | Predicate`, genuinely broader
      * than a check.
      */
-    checks: z.array(predicateSchema).max(MAX_CASE_ASSERTIONS).optional(),
+    checks: z.array(storedPredicateSchema).max(MAX_CASE_ASSERTIONS).optional(),
     suppressedSuiteStandardCheckIds:
       suppressedSuiteStandardCheckIdsSchema.optional(),
     /** @deprecated Use {@link EvalSuiteFileCase.checks}, which means exactly this. */
-    assertions: z.array(predicateSchema).max(MAX_CASE_ASSERTIONS).optional(),
+    assertions: z.array(storedPredicateSchema).max(MAX_CASE_ASSERTIONS).optional(),
     ...caseMiddleShape,
     repetitions: iterationsSchema.optional(),
     ...caseTailShape,
@@ -599,7 +599,7 @@ export const evalSuiteFileCaseV2Schema = z
      * it is an unknown key, and the loader's finding says which dialect spells
      * it that way.
      */
-    assertions: z.array(predicateSchema).max(MAX_CASE_ASSERTIONS).optional(),
+    assertions: z.array(storedPredicateSchema).max(MAX_CASE_ASSERTIONS).optional(),
     suppressedSuiteStandardCheckIds:
       suppressedSuiteStandardCheckIdsSchema.optional(),
     ...caseMiddleShape,

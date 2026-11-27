@@ -35,7 +35,7 @@ const verdict = {
       output: { kind: "passfail" },
       status: "error",
       error: "variable_missing",
-      reason: "No data for {{tool_results}} on this trial.",
+      reason: "No data for {{tool_results}} on this iteration.",
     },
     { id: "Bad Id", contentDigest: "x", output: { kind: "passfail" } },
   ],

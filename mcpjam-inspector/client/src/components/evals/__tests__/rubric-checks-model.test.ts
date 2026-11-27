@@ -189,3 +189,36 @@ describe("yes/no questions", () => {
     );
   });
 });
+
+describe("question kinds this build does not know", () => {
+  // As the wire delivers it: a newer backend's kind this build's types lack.
+  const fromNewerBackend: RubricCheckQuestion = JSON.parse(
+    JSON.stringify({
+      id: "rank",
+      kind: "ranking",
+      label: "Ranks the options",
+      instructions: "Rank the answers.",
+      pass: { top: 1 },
+    }),
+  );
+
+  it("passes client validation, since the backend validates it on save", () => {
+    expect(
+      rubricCheckQuestionError(fromNewerBackend, 0, [fromNewerBackend]),
+    ).toBeUndefined();
+    expect(areRubricChecksValid({ questions: [score, fromNewerBackend] })).toBe(
+      true,
+    );
+  });
+
+  it("still checks the fields every kind shares, and scores on their own branch", () => {
+    const unlabeled = { ...fromNewerBackend, label: "" };
+    expect(rubricCheckQuestionError(unlabeled, 0, [unlabeled])).toBe(
+      "A label is required.",
+    );
+    const flat: RubricCheckQuestion = { ...score, levels: ["Only"] };
+    expect(rubricCheckQuestionError(flat, 0, [flat])).toMatch(
+      /A score needs 2 to/,
+    );
+  });
+});

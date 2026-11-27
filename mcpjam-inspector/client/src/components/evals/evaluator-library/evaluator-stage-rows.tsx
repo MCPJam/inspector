@@ -21,7 +21,7 @@ export type LibraryModelRow = {
 
 /**
  * Splits a stage's rows into hand-written ones and one cluster per library
- * evaluator, in first-appearance order.
+ * evaluator version, in first-appearance order.
  */
 export function clusterByEvaluator<Row>(
   rows: readonly Row[],
@@ -35,7 +35,9 @@ export function clusterByEvaluator<Row>(
       loose.push(row);
       continue;
     }
-    const cluster = clusters.find((c) => c.evaluatorId === origin.id);
+    const cluster = clusters.find(
+      (c) => c.evaluatorId === origin.id && c.version === origin.version,
+    );
     if (cluster) cluster.rows.push(row);
     else
       clusters.push({
@@ -47,21 +49,19 @@ export function clusterByEvaluator<Row>(
   return { loose, clusters };
 }
 
-/**
- * A stage's rows in the suite table. With the evaluator library on, checks
- * added from the library sit together under their evaluator, with its pinned
- * version, a newer version to accept, and one-click removal. Each check keeps
- * the table's own row, so editing it works exactly as it does today.
- */
+/** Reuses the suite table's check rows so editing stays available in a group. */
 export function EvaluatorStageRows<Row extends { id: string }>({
   rows,
+  stageLabel,
   predicateOf,
   renderRow,
   modelRows = [],
   onRemoveEvaluator,
   onUpdateEvaluator,
+  updateRefusal,
 }: {
   rows: readonly Row[];
+  stageLabel: string;
   predicateOf: (row: Row) => Predicate | undefined;
   renderRow: (row: Row) => ReactNode;
   /** Library questions and judges to show under their evaluator here. */
@@ -69,12 +69,16 @@ export function EvaluatorStageRows<Row extends { id: string }>({
   /** Omitted where the rows are inherited and cannot be edited here. */
   onRemoveEvaluator?: (evaluatorId: string) => void;
   onUpdateEvaluator?: (evaluatorId: string) => void;
+  /** Why Update cannot apply; shown in its place, so it is never a no-op. */
+  updateRefusal?: (evaluatorId: string) => string | undefined;
 }) {
   const enabled = useEvaluatorLibraryEnabled();
   if (!enabled) return <ul className="space-y-3">{rows.map(renderRow)}</ul>;
   const { loose, clusters } = clusterByEvaluator(rows, predicateOf);
+  const inCluster = (m: LibraryModelRow, c: Cluster<Row>) =>
+    m.evaluator.id === c.evaluatorId && m.evaluator.version === c.version;
   for (const m of modelRows) {
-    if (!clusters.some((c) => c.evaluatorId === m.evaluator.id)) {
+    if (!clusters.some((c) => inCluster(m, c))) {
       clusters.push({
         evaluatorId: m.evaluator.id,
         version: m.evaluator.version,
@@ -92,10 +96,14 @@ export function EvaluatorStageRows<Row extends { id: string }>({
         const name = entry?.name ?? cluster.evaluatorId;
         const newer =
           entry && entry.version > cluster.version ? entry.version : undefined;
+        const refusal =
+          newer && onUpdateEvaluator
+            ? updateRefusal?.(cluster.evaluatorId)
+            : undefined;
         return (
           <section
-            key={cluster.evaluatorId}
-            aria-label={name}
+            key={`${cluster.evaluatorId}:${cluster.version}`}
+            aria-label={`${name} in ${stageLabel}, version ${cluster.version}`}
             data-evaluator-group={cluster.evaluatorId}
             className="rounded-lg border border-border bg-muted/20 p-3"
           >
@@ -108,11 +116,17 @@ export function EvaluatorStageRows<Row extends { id: string }>({
               </span>
               <EvaluatorKindBadge origin="library" />
               <span className="ml-auto flex items-center gap-1">
-                {newer && onUpdateEvaluator ? (
+                {refusal ? (
+                  <span className="text-xs text-muted-foreground">
+                    v{newer} available. {refusal}
+                  </span>
+                ) : newer && onUpdateEvaluator ? (
                   <Button
                     type="button"
                     size="sm"
                     variant="outline"
+                    aria-label={`Update ${name} to v${newer} across all stages`}
+                    title="Update across all stages"
                     onClick={() => onUpdateEvaluator(cluster.evaluatorId)}
                   >
                     Update to v{newer}
@@ -123,7 +137,8 @@ export function EvaluatorStageRows<Row extends { id: string }>({
                     type="button"
                     size="sm"
                     variant="ghost"
-                    aria-label={`Remove ${name}`}
+                    aria-label={`Remove ${name} from all stages`}
+                    title="Remove from all stages"
                     onClick={() => onRemoveEvaluator(cluster.evaluatorId)}
                   >
                     <Trash2 aria-hidden />
@@ -134,7 +149,7 @@ export function EvaluatorStageRows<Row extends { id: string }>({
             <ul className="space-y-3">
               {cluster.rows.map(renderRow)}
               {modelRows
-                .filter((m) => m.evaluator.id === cluster.evaluatorId)
+                .filter((m) => inCluster(m, cluster))
                 .map((m) => (
                   <li
                     key={m.key}
