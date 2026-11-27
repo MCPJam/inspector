@@ -167,7 +167,11 @@ describe("check maps for the Apps, Tasks and Events suites", () => {
   );
 
   it("excludes checks that grade the client or a host, not the server", () => {
-    expect(TASKS_CHECK_FEATURES["tasks-declaration-hygiene"]).toBe("excluded");
+    // tasks-declaration-hygiene graded the client too; it was removed from the
+    // suite rather than excluded, and its rule is a client test in CI.
+    expect(Object.hasOwn(TASKS_CHECK_FEATURES, "tasks-declaration-hygiene")).toBe(
+      false
+    );
     expect(EVENTS_CHECK_FEATURES["chatgpt-readiness-webhook-listed"]).toBe(
       "excluded"
     );
@@ -200,9 +204,10 @@ describe("authorization extensions", () => {
         "urn:ietf:params:oauth:grant-profile:id-jag",
       ],
     });
+    // The metadata lists the grant; listing it is a declaration.
     expect(probed("auth-ext.client-credentials.grant", probes)).toMatchObject({
       kind: "present",
-      via: "probed",
+      via: "advertised",
     });
     expect(
       probed("auth-ext.client-credentials.token-auth-methods", probes)
@@ -491,12 +496,14 @@ describe("MCP Apps", () => {
     });
     expect(declared("apps.csp", surface)).toBeNull();
     expect(probed("apps.csp", probes)).toEqual({ kind: "absent", basis: [] });
+    // The read content declares permissions; the HTML check is a real read.
     expect(probed("apps.permissions", probes)).toMatchObject({
       kind: "present",
-      via: "probed",
+      via: "detected",
     });
     expect(probed("apps.html-content", probes)).toMatchObject({
       kind: "present",
+      via: "probed",
     });
     for (const id of [
       "apps.app-tools-call",

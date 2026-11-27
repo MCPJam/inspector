@@ -1,0 +1,167 @@
+---
+title: "Suite settings"
+description: "Every row on a suite's settings page, the API field that sets it, and its default."
+icon: "settings-2"
+---
+
+Open **Suite settings** on a suite page. Edits are drafts until you click **Save settings**, and a saved change applies to future runs only. Every field marked with an API path can also be set with `PATCH /v1/projects/{projectId}/eval-suites/{suiteId}`; a field you leave out keeps its stored value.
+
+<Note>
+  API fields use the default eval vocabulary. With the `x-mcpjam-eval-vocabulary: 2` header, `settings.repetitions` is spelled `settings.iterations` and `settings.checks` is spelled `settings.defaultAssertions`. See [Public API](/reference/public-api).
+</Note>
+
+{/* Screenshot: Suite settings page showing the Pass criteria, Iterations and Quality gate rows */}
+
+## Pass criteria
+
+A suite is decided by exactly one criterion, and the row shows only that one. The page shows both as percentages; the API takes them in different units.
+
+| On screen | API field | API value | Default | Notes |
+| --- | --- | --- | --- | --- |
+| Suite accuracy | `settings.minimumAccuracy` | Percentage, 0–100 | 70% | One pass rate across the whole run must reach it. Cases have no threshold of their own. |
+| Per-case pass rate | `settings.passThreshold` | Fraction, 0–1 | Set when the suite becomes per-case | Each case must pass at least this share of its own iterations. |
+
+The two criteria can decide the same run differently; see the example in [Configure grading](/evaluate/configure-grading#pass-criteria). The API refuses `settings.minimumAccuracy` on a per-case suite.
+
+The app does not change which criterion a suite uses. To move a suite from suite accuracy to per-case pass rate, send `settings.repetitions` and `settings.passThreshold` together in one `PATCH`. This re-decides every case in the suite, and there is no change back.
+
+## Evidence requirements
+
+Shown under **Pass criteria** on a per-case suite. A run that measured too little is inconclusive rather than passed or failed. A suite decided by suite accuracy shows "No evidence requirements": its runs are never inconclusive.
+
+| On screen | API field | API value | Default | Notes |
+| --- | --- | --- | --- | --- |
+| Minimum completion rate | `settings.validity.minCompletionRate` | Fraction, 0–1 | 80% | Share of attempted iterations that must finish. |
+| Maximum evaluator error rate | `settings.validity.maxEvaluatorErrorRate` | Fraction, 0–1 | 10% | Share of iterations an evaluator may fail on. |
+| Minimum gradeable iterations | `settings.validity.minEligibleTrials` | Count | Every iteration | Empty is the stricter rule: every configured iteration attempted and at least one gradeable. A number relaxes it to a count. |
+
+An empty field selects the default, never "no minimum". Fields you send are merged over the stored values.
+
+## Iterations
+
+How many times each case runs. A suite has one rule, and the row shows only that one.
+
+| On screen | API field | Default | Notes |
+| --- | --- | --- | --- |
+| Minimum iterations per case | `settings.minimumIterations` | Off | 1–10. Raises a case's own count to the floor; a case set higher keeps its count. Off means no floor. `null` clears it. Suite accuracy suites. |
+| Iterations per case | `settings.repetitions` | Set when the suite becomes per-case | 1–100. The suite default, which a case's own count replaces. Per-case suites. |
+
+A case set to 2 iterations runs 3 times under a floor of 3, and 2 times under a default of 3. A case set to 7 runs 7 times under either.
+
+## Quality gate
+
+Whether a run should block a merge, separate from whether it met the pass criteria. Every change needs a reason, recorded in the suite's revision history.
+
+| On screen | API field | Default | Notes |
+| --- | --- | --- | --- |
+| Any required evaluator errored | `settings.qualityGate.noGatingScoreErrors` | Off | Fails the run when a required evaluator errors. Needs no baseline. |
+| Baseline | `settings.qualityGate.baseline` | None | API and CLI only. |
+| Allowed drop | `settings.qualityGate.maximumPassRateDrop` | None | API and CLI only. Needs a baseline. |
+| Deterministic regressions | `settings.qualityGate.noDeterministicRegressions` | Off | API and CLI only. Needs a baseline. |
+| p95 latency increase | `settings.qualityGate.maximumP95LatencyIncreaseMs` | None | API and CLI only. Needs a baseline. |
+
+A condition set outside the page is listed read-only under "Also enforced, set outside this page:". Over the API, a `settings.qualityGate` change also needs `expectedRevisionNumber` and a non-empty `revisionNote`. See [`cloud eval gate`](/cli/reference#cloud-eval-gate) for the CLI flags.
+
+## Evaluators
+
+A table of what grades each iteration, ordered by the stage of the user value chain it measures. **Edit evaluators** opens every row; **Add assertion** adds a suite default assertion.
+
+| On screen | API field | Default | Notes |
+| --- | --- | --- | --- |
+| Assertion rows | `settings.checks` | None | The suite's default assertions, applied to every case. See [Assertions](/evaluate/reference/assertions). |
+| **Edit tool-call matching** | `settings.matchOptions` | Tool call order: Any order. Extra tool calls: Unlimited. Arguments: Partial. | How expected tool calls are matched. Under Selection. |
+| Goal completion judge | `settings.judge` | On, automatic, threshold 0.7, Advisory | Scores each iteration 0–1. Set it to Required to let it fail a run. |
+| Judge model | `settings.judge.model` | `openai/gpt-5.4-mini` | The model that grades. |
+| Grading instructions | `settings.judge.rubric` | None | API and CLI only; not shown on the page. A stored value still applies to runs. |
+| Groundedness judge | — | Advisory | Shows run evidence. Not editable; the API refuses `settings.judge.groundedness`. |
+| Rubric checks | — | Advisory | Edited in the app only; the API refuses `settings.judge.rubricChecks`. It asks the criteria in `settings.judge.rubric`. Never fails an iteration. |
+
+## Time and retry limits
+
+An empty field shows the platform default and reads "inheriting the platform default". A value above the platform ceiling, or above a lower ceiling your organization sets, is refused at save, naming the field and the bound. Send `null` for `settings.executionBudgets` to reset every limit to the platform defaults. API values are in milliseconds, except retries.
+
+| On screen | API field | Default | Notes |
+| --- | --- | --- | --- |
+| Per-turn timeout | `settings.executionBudgets.turnTimeoutMs` | 6 minutes | One assistant turn, including the tool steps it drives. 10 seconds to 30 minutes. |
+| Per-tool-call timeout | `settings.executionBudgets.toolCallTimeoutMs` | 30 seconds | One MCP request. 1 second to 10 minutes. Saved with the suite, but runs do not apply it yet. |
+| Per-iteration timeout | `settings.executionBudgets.iterationTimeoutMs` | 10 minutes | One iteration. An iteration that runs out of time fails alone; the rest keep going. 30 seconds to 2 hours. |
+| Whole-run timeout | `settings.executionBudgets.runTimeoutMs` | 30 minutes | A backstop for the whole run. 1 minute to 12 hours. |
+| Model call retries | `settings.executionBudgets.turnRetries` | 2 | Retries of one model call. Never applied to a live stream. 0 to 5. |
+
+## Read and change settings
+
+<Note>
+  A suite created from a suite file or by the MCPJam SDK is managed by CI: the page, CLI and API refuse to edit it (`CI_OWNED_SUITE_READ_ONLY`). Edit the suite file or test file, or duplicate the suite to edit a copy. See [Troubleshooting](/evaluate/troubleshooting).
+</Note>
+
+<Tabs>
+  <Tab title="Inspector">
+    Open **Suite settings** on the suite page, change a row, and click **Save settings**. Rows marked "API and CLI only" in the tables above are not on the page.
+  </Tab>
+  <Tab title="CLI">
+    Read the suite's settings. `settings.policy` in the output says which flags the suite takes: `legacy` for suite accuracy, `v2` for per-case pass rate.
+
+    ```bash Read settings
+    mcpjam cloud eval get --suite "Notes server" --format json
+    ```
+
+    `cloud eval update` changes only the flags you pass. On a suite decided by suite accuracy (`legacy`):
+
+    ```bash Suite accuracy suite
+    mcpjam cloud eval update --suite "Notes server" \
+      --min-accuracy 80 \
+      --min-iterations 3 \
+      --judge on \
+      --judge-model openai/gpt-5.4-mini \
+      --judge-threshold 0.7
+    ```
+
+    On a per-case suite (`v2`), the threshold is a fraction and the iteration count is the suite default:
+
+    ```bash Per-case suite
+    mcpjam cloud eval update --suite "Notes server" \
+      --pass-threshold 0.9 \
+      --iterations 5
+    ```
+
+    The **Edit tool-call matching** settings, then the suite's settings history:
+
+    ```bash Matching and history
+    mcpjam cloud eval update --suite "Notes server" \
+      --tool-call-order in-order \
+      --extra-tool-calls 2 \
+      --arguments exact
+    mcpjam cloud eval revisions --suite "Notes server" --format json
+    ```
+
+    Every flag is in [`cloud eval update`](/cli/reference#cloud-eval-update).
+  </Tab>
+</Tabs>
+
+Over the API, send only the fields you change. A run page's URL carries both IDs: `/evals/suite/<suiteId>/runs/<runId>?project=<projectId>`.
+
+```bash Suite accuracy suite, over the API
+curl -fsS -X PATCH \
+  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-suites/$SUITE_ID" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "settings": {
+      "minimumAccuracy": 80,
+      "minimumIterations": 3,
+      "judge": { "enabled": true, "autoRun": true, "model": "openai/gpt-5.4-mini", "threshold": 0.7 }
+    }
+  }'
+```
+
+<CardGroup cols={3}>
+  <Card title="Configure grading" icon="sliders-horizontal" href="/evaluate/configure-grading">
+    Change these settings step by step.
+  </Card>
+  <Card title="Assertions" icon="list-checks" href="/evaluate/reference/assertions">
+    Every assertion a suite or case can carry.
+  </Card>
+  <Card title="Runs and results" icon="history" href="/evaluate/reference/runs-and-results">
+    Run statuses, comparison labels and cost.
+  </Card>
+</CardGroup>

@@ -17,7 +17,7 @@ import type {
   EvalWidgetSnapshotInput,
   EvalTraceSpanInput,
 } from "./eval-reporting-types.js";
-import { finalizePassedForEval } from "./eval-tool-execution.js";
+import { gradeCallerVerdict } from "./platform-gate-scores.js";
 
 /**
  * Represents the result of a HostRunner prompt.
@@ -25,6 +25,7 @@ import { finalizePassedForEval } from "./eval-tool-execution.js";
  */
 export class PromptResult {
   readonly recordedContext?: PromptResultData["recordedContext"];
+  readonly #malformedToolCalls: NonNullable<PromptResultData["malformedToolCalls"]>;
   /** The original prompt/query that was sent */
   readonly prompt: string;
 
@@ -64,6 +65,7 @@ export class PromptResult {
    */
   constructor(data: PromptResultData) {
     this.recordedContext = data.recordedContext;
+    this.#malformedToolCalls = data.malformedToolCalls ?? [];
     this.prompt = data.prompt;
     this._messages = data.messages;
     this.text = data.text;
@@ -196,6 +198,11 @@ export class PromptResult {
    */
   getToolCalls(): ToolCall[] {
     return [...this._toolCalls];
+  }
+
+  /** Malformed attempts retained for evidence, outside the executed call list. */
+  getMalformedToolCalls() {
+    return [...this.#malformedToolCalls];
   }
 
   /**
@@ -378,17 +385,18 @@ export class PromptResult {
     const matchPassed =
       typeof options?.passed === "boolean" ? options.passed : !this.hasError();
 
-    const passed = finalizePassedForEval({
-      matchPassed,
+    const graded = gradeCallerVerdict({
+      passed: matchPassed,
       trace,
       iterationError: options?.error ?? this.getError(),
       failOnToolError: options?.failOnToolError,
+      metadata: options?.metadata,
     });
 
     return {
       caseTitle,
       query: options?.query ?? this.prompt,
-      passed,
+      passed: graded.passed,
       durationMs: options?.durationMs ?? this.e2eLatencyMs(),
       provider: options?.provider ?? this._provider,
       model: options?.model ?? this._model,
@@ -409,7 +417,7 @@ export class PromptResult {
       caseId: options?.caseId,
       externalCaseId: options?.externalCaseId,
       intent: options?.intent,
-      metadata: options?.metadata,
+      metadata: graded.metadata,
       isNegativeTest: options?.isNegativeTest,
       advancedConfig: options?.advancedConfig,
       widgetSnapshots: options?.widgetSnapshots ?? this.getWidgetSnapshots(),

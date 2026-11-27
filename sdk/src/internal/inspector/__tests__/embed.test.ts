@@ -71,7 +71,10 @@ const server = createServer((req, res) => {
   });
 });
 // Losing a race for the port ends the process, as the real server does.
-server.on("error", () => process.exit(1));
+server.on("error", (error) => {
+  console.error(error.message);
+  process.exit(1);
+});
 server.listen(port, "127.0.0.1", () => {
   const dir = path.join(os.homedir(), ".mcpjam", "inspector");
   mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -432,18 +435,25 @@ describe("a shared MCPJam's log and lifecycle", () => {
     child.kill("SIGKILL");
   });
 
+  // Let child readiness and the losing launch's reuse polling finish before
+  // Vitest times out, so a failed launch reports its own startup error.
   it("two dev commands that start together end up on one MCPJam", async () => {
     const port = await freePort();
-    const [a, b] = await Promise.all([
+    const launches = [
       launch({ port, reuse: true, startRaceWaitMs: 3_000 }),
       launch({ port, reuse: true, startRaceWaitMs: 3_000 }),
-    ]);
+    ];
 
-    expect(a.port).toBe(port);
-    expect(b.port).toBe(port);
-    expect([a.started, b.started].sort()).toEqual([false, true]);
-    for (const inspector of [a, b]) inspector.process?.kill("SIGKILL");
-  });
+    try {
+      const [a, b] = await Promise.all(launches);
+      expect(a.port).toBe(port);
+      expect(b.port).toBe(port);
+      expect([a.started, b.started].sort()).toEqual([false, true]);
+    } finally {
+      await Promise.allSettled(launches);
+      for (const inspector of launched) inspector.process?.kill("SIGKILL");
+    }
+  }, 20_000);
 
   it("starts a new MCPJam when the one it last saw is gone, instead of trusting a cached token", async () => {
     const port = await freePort();

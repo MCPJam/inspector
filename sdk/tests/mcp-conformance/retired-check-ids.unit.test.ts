@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import {
+  MCP_CHECK_IDS,
+  REMOVED_MCP_CHECK_IDS,
+} from "../../src/mcp-conformance/types.js";
 import { normalizeMCPConformanceConfig } from "../../src/mcp-conformance/validation.js";
 import { normalizeMCPTasksConformanceConfig } from "../../src/tasks-conformance/validation.js";
 
@@ -39,6 +43,47 @@ describe("check ids an older SDK accepted", () => {
         checkIds: ["bogus" as never],
       })
     ).toThrow("Unknown MCP conformance check id: bogus");
+  });
+
+  it("drops a removed check and runs the others that were picked", () => {
+    // Multiple POST Streams graded a client rule, so nothing runs in its place.
+    const config = normalizeMCPConformanceConfig({
+      serverUrl,
+      checkIds: ["ping", "server-accepts-multiple-post-streams"],
+    });
+    expect(config.checkIds).toEqual(["ping"]);
+  });
+
+  it("refuses a run of only the removed check, and says why it went away", () => {
+    // An emptied list would run every check, which is not what was asked for.
+    expect(() =>
+      normalizeMCPConformanceConfig({
+        serverUrl,
+        checkIds: ["server-accepts-multiple-post-streams"],
+      })
+    ).toThrow(
+      /server-accepts-multiple-post-streams was removed and nothing runs in its place. It graded a rule that binds the client, not the server/
+    );
+  });
+
+  it("drops a removed check next to a retired one", () => {
+    const config = normalizeMCPConformanceConfig({
+      serverUrl,
+      checkIds: [
+        "server-accepts-multiple-post-streams",
+        "modern-log-level-filtering",
+      ],
+      readinessIds: [],
+    });
+    expect(config.checkIds).toEqual(["modern-logs-require-log-level"]);
+    expect(config.readinessIds).toEqual(["readiness-log-level-filtering"]);
+  });
+
+  it("keeps the removed id out of the checks that can run", () => {
+    expect(MCP_CHECK_IDS).not.toContain("server-accepts-multiple-post-streams");
+    expect(Object.keys(REMOVED_MCP_CHECK_IDS)).toEqual([
+      "server-accepts-multiple-post-streams",
+    ]);
   });
 
   it("runs a renamed Tasks check under its current name", () => {

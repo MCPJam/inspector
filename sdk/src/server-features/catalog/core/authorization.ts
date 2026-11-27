@@ -174,7 +174,7 @@ export const AUTHORIZATION_FEATURES: readonly FeatureDefinition[] = [
         const servers =
           probeStrings(summary.values.prmAuthorizationServers) ?? [];
         if (servers.length > 1) {
-          return present("probed", { count: servers.length });
+          return present("advertised", { count: servers.length });
         }
         return servers.length === 1
           ? notApplicable("The server names one authorization server.")
@@ -287,7 +287,7 @@ export const AUTHORIZATION_FEATURES: readonly FeatureDefinition[] = [
         (probeStrings(summary.values.codeChallengeMethods) ?? []).includes(
           "S256"
         )
-          ? present("probed")
+          ? present("advertised")
           : probeAbsent(summary)
       ),
     },
@@ -311,7 +311,7 @@ export const AUTHORIZATION_FEATURES: readonly FeatureDefinition[] = [
       declared: authStdio,
       probed: asMetadataProbe((summary) =>
         probeBoolean(summary.values.cimdSupported) === true
-          ? present("probed")
+          ? present("advertised")
           : probeAbsent(summary)
       ),
     },
@@ -338,7 +338,7 @@ export const AUTHORIZATION_FEATURES: readonly FeatureDefinition[] = [
       declared: authStdio,
       probed: asMetadataProbe((summary) =>
         probeBoolean(summary.values.registrationEndpoint) === true
-          ? present("probed")
+          ? present("advertised")
           : probeAbsent(summary)
       ),
     },

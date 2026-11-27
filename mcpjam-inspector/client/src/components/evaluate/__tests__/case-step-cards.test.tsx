@@ -633,6 +633,12 @@ describe("RemoveStepDialog from a real case", () => {
       "p1",
       "Its 1 assertion would be graded before the first step.",
     ],
+    [
+      "the first prompt with an interact after it",
+      [p("p1"), i("i"), a("a"), p("p2")],
+      "p1",
+      "1 later assertion in its turn would be graded before the first prompt.",
+    ],
   ])("removing %s", (_name, steps, id, text) => {
     renderWithProviders(
       <RemoveStepDialog

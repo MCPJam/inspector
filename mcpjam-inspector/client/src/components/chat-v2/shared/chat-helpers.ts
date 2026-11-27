@@ -1,5 +1,5 @@
 import { messagePartPlainText } from "@/shared/plugin-message";
-import { looksLikeErrorPage } from "@/shared/error-page";
+import { errorPageTitle, looksLikeErrorPage } from "@/shared/error-page";
 import { PROVIDER_NOT_ALLOWLISTED_CODE } from "@/lib/provider-not-allowlisted";
 import {
   AUTO_TOPUP_DECLINED_CODE,
@@ -704,7 +704,7 @@ function summarizeProtocolVersionPin(raw: string): FormattedError | null {
  */
 function extractErrorPageStatus(html: string): number | undefined {
   const headings = [
-    html.match(/<title[^>]*>([\s\S]{0,200}?)<\/title>/i)?.[1],
+    errorPageTitle(html),
     html.match(/<h1[^>]*>([\s\S]{0,200}?)<\/h1>/i)?.[1],
   ];
   for (const heading of headings) {

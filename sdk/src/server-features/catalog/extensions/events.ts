@@ -71,7 +71,8 @@ function deliveryModeOutcome(mode: DeliveryMode) {
     if (modes.includes(mode)) {
       return {
         kind: "present",
-        via: "probed",
+        // Naming a mode in the listing declares it; nothing was delivered.
+        via: "advertised",
         detail: `events/list offers ${modes.join(", ")}`,
       };
     }
