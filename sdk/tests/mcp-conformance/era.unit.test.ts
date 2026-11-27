@@ -25,14 +25,18 @@ import { runTransportChecks } from "../../src/mcp-conformance/checks/transport.j
 
 const SERVER_URL = "http://127.0.0.1:9/mcp";
 
-function jsonRpcErrorResponse(): Response {
+/**
+ * `-32601` for the unknown method. 200 is what a 2025 server sends; a
+ * 2026-07-28 server MUST send it on 404.
+ */
+function jsonRpcErrorResponse(status = 200): Response {
   return new Response(
     JSON.stringify({
       jsonrpc: "2.0",
       id: 99,
       error: { code: -32601, message: "Method not found" },
     }),
-    { status: 200, headers: { "content-type": "application/json" } }
+    { status, headers: { "content-type": "application/json" } }
   );
 }
 
@@ -103,7 +107,6 @@ describe("CHECK_ERAS map", () => {
       "ping",
       "logging-set-level",
       "server-sse-polling-session",
-      "server-accepts-multiple-post-streams",
       "server-sse-streams-functional",
       "notification-post-accepted",
       "get-stream-or-405",
@@ -260,13 +263,20 @@ describe("runProtocolChecks — era-aware invalid-method probe", () => {
 
     expect(results).toHaveLength(1);
     expect(results[0]?.status).toBe("passed");
-    expect(calls).toHaveLength(2);
-    // Prelude is an initialize at the pinned (default) version.
+    expect(calls).toHaveLength(3);
+    // Prelude is an initialize at the pinned (default) version...
     const initBody = JSON.parse(String(calls[0]?.init?.body));
     expect(initBody.method).toBe("initialize");
     expect(initBody.params.protocolVersion).toBe("2025-11-25");
+    // ...closed by the initialized notification, on the session it opened.
+    const readyBody = JSON.parse(String(calls[1]?.init?.body));
+    expect(readyBody.method).toBe("notifications/initialized");
+    const readyHeaders = new Headers(calls[1]?.init?.headers as HeadersInit);
+    expect(readyHeaders.get("mcp-session-id")).toBe("sess-1");
     // The bad-method POST carries the session obtained from the prelude.
-    const badHeaders = new Headers(calls[1]?.init?.headers as HeadersInit);
+    const badBody = JSON.parse(String(calls[2]?.init?.body));
+    expect(badBody.method).not.toBe("notifications/initialized");
+    const badHeaders = new Headers(calls[2]?.init?.headers as HeadersInit);
     expect(badHeaders.get("mcp-session-id")).toBe("sess-1");
   });
 
@@ -291,7 +301,7 @@ describe("runProtocolChecks — era-aware invalid-method probe", () => {
     const calls: Array<RequestInit | undefined> = [];
     const fetchFn = (async (_url: unknown, init?: RequestInit) => {
       calls.push(init);
-      return jsonRpcErrorResponse();
+      return jsonRpcErrorResponse(404);
     }) as unknown as typeof fetch;
 
     const config = normalize({ fetchFn, protocolVersion: "2026-07-28" });
@@ -370,7 +380,6 @@ describe("raw legacy-only checks are era-skipped on a modern run", () => {
     const config = normalize({ fetchFn, protocolVersion: "2026-07-28" });
     const selected = new Set<MCPCheckId>([
       "server-sse-polling-session",
-      "server-accepts-multiple-post-streams",
       "server-sse-streams-functional",
     ]);
     const results = await runTransportChecks(
@@ -379,7 +388,7 @@ describe("raw legacy-only checks are era-skipped on a modern run", () => {
     );
 
     expect(fetchCalled).toBe(false);
-    expect(results).toHaveLength(3);
+    expect(results).toHaveLength(2);
     for (const result of results) {
       expect(result.status).toBe("skipped");
       expect(result.error?.message).toMatch(/Not applicable to the modern era/);

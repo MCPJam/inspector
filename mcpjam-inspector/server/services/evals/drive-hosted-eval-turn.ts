@@ -57,7 +57,10 @@ import {
 } from "./harness-evidence-merge.js";
 import type { FrictionResultEntry } from "@mcpjam/sdk/contract";
 import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
-import type { RunAssistantTurnOptions } from "../../utils/assistant-turn.js";
+import type {
+  RunAssistantTurnAuthContext,
+  RunAssistantTurnOptions,
+} from "../../utils/assistant-turn.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import { EVAL_WIDGET_MODEL_CONTEXT } from "../../config.js";
 import { HOSTED_STEP_MAX_OUTPUT_TOKENS } from "../hosted-step-limits.js";
@@ -332,7 +335,7 @@ export interface DriveHostedEvalTurnParams {
    *  re-derived per turn. */
   tasks?: RunAssistantTurnOptions["tasks"];
   mcpClientManager: MCPClientManager;
-  evalAuthContext: { kind: "user_bearer"; token: string };
+  evalAuthContext: RunAssistantTurnAuthContext;
   endpointPath: string;
   extraBodyFields: Record<string, unknown> | undefined;
   /**
@@ -529,6 +532,14 @@ export function failedTurnNeedsCapture(
   return (
     event?.reportedOrigin === undefined || event.reportedOrigin === "ambiguous"
   );
+}
+
+/** A renewing bearer is read on each evidence request, as the engine reads it on each step. */
+function evidenceReadAuthorization(
+  auth: RunAssistantTurnAuthContext,
+): string | (() => Promise<string>) {
+  const renewing = auth.turnAuthorization;
+  return renewing ? () => renewing.getAuthorization() : auth.token;
 }
 
 export async function driveHostedEvalTurn(
@@ -1037,7 +1048,7 @@ export async function driveHostedEvalTurn(
   // disagree if the engine ever mutated the array between them.
   const { newMessages } = turnResult;
   const evidence = await reconcileTurnEvidence({
-    ...(params.harnessExecutionTarget ? { transport: createConvexEvidenceReadTransport(params.evalAuthContext.token) } : {}),
+    ...(params.harnessExecutionTarget ? { transport: createConvexEvidenceReadTransport(evidenceReadAuthorization(params.evalAuthContext)) } : {}),
     ...(params.evalIterationId ? { iterationId: params.evalIterationId } : {}),
     ...(harnessEvidence?.turnId ? { turnId: harnessEvidence.turnId } : {}),
     captureEnabled: harnessEvidence?.captureEnabled === true,

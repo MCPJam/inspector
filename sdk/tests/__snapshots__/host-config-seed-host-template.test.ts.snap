@@ -228,6 +228,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
         },
       },
+      "extensions": {
+        "com.mcpjam/events": {},
+      },
       "initialize": {
         "clientInfo": {
           "name": "openai-mcp",
@@ -395,6 +398,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "version": "26.1103.60933",
           },
         },
+      },
+      "extensions": {
+        "com.mcpjam/events": {},
       },
       "initialize": {
         "clientInfo": {
@@ -573,6 +579,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
         },
       },
+      "extensions": {
+        "com.mcpjam/events": {
+          "webhook": true,
+        },
+      },
       "initialize": {
         "clientInfo": {
           "name": "openai-mcp (Codex)",
@@ -748,6 +759,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "name": "chatgpt",
             "version": "26.1106.51428",
           },
+        },
+      },
+      "extensions": {
+        "com.mcpjam/events": {
+          "webhook": true,
         },
       },
       "initialize": {
@@ -934,6 +950,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
         },
       },
+      "extensions": {
+        "com.mcpjam/events": {
+          "webhook": true,
+        },
+      },
       "initialize": {
         "clientInfo": {
           "name": "openai-mcp (Codex)",
@@ -1118,6 +1139,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
         },
       },
+      "extensions": {
+        "com.mcpjam/events": {
+          "webhook": true,
+        },
+      },
       "initialize": {
         "clientInfo": {
           "name": "openai-mcp (Codex)",
@@ -1292,6 +1318,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "version": "unknown",
           },
         },
+      },
+      "extensions": {
+        "com.mcpjam/events": {},
       },
       "initialize": {
         "clientInfo": {
@@ -1471,6 +1500,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "version": "unknown",
           },
         },
+      },
+      "extensions": {
+        "com.mcpjam/events": {},
       },
       "initialize": {
         "clientInfo": {
@@ -6748,6 +6780,13 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
         },
       },
+      "extensions": {
+        "com.mcpjam/events": {
+          "poll": true,
+          "push": true,
+          "webhook": true,
+        },
+      },
       "initialize": {
         "clientInfo": {
           "name": "mcpjam-inspector",
@@ -6939,6 +6978,13 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "name": "MCPJam",
             "version": "0.0.0-test",
           },
+        },
+      },
+      "extensions": {
+        "com.mcpjam/events": {
+          "poll": true,
+          "push": true,
+          "webhook": true,
         },
       },
       "initialize": {

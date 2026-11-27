@@ -528,9 +528,9 @@ if (isInIframe) {
       // can't be imported in a test. Expected host-denial 403s render guidance
       // and are NOT reported (the Sentry noise this feature removed); genuine
       // failures render the generic screen AND report.
-      const { report, element } = resolveBootstrapErrorScreen(error);
+      const { report, element, extra } = resolveBootstrapErrorScreen(error);
       if (report) {
-        reportCaught(error, { source: "session_token_bootstrap" });
+        reportCaught(error, { source: "session_token_bootstrap", extra });
       }
       root.render(<StrictMode>{element}</StrictMode>);
       return;

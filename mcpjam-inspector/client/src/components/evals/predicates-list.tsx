@@ -1,4 +1,4 @@
-import { CheckCircle2, ChevronDown, ChevronRight, XCircle } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronRight, MinusCircle, XCircle } from "lucide-react";
 import { checkRole } from "@mcpjam/sdk/predicates";
 import type { Predicate, PredicateResult } from "@/shared/eval-matching";
 import {
@@ -71,9 +71,14 @@ export function parseIterationPredicates(
     // Preserve a per-turn scope when present so the UI can group a turn's
     // checks under that turn (and the case-level list can exclude them).
     const scope = parseTurnScope(row.scope);
+    const status =
+      row.status === "error" || row.status === "not_applicable"
+        ? row.status
+        : undefined;
     out.push({
       predicate: predicate as unknown as Predicate,
       passed: row.passed,
+      ...(status ? { status } : {}),
       reason: row.reason,
       ...(scope ? { scope } : {}),
     });
@@ -117,12 +122,16 @@ export function PredicatesList({
   // Advisory (Warn/Report) rows are reported, never decisive: the runner's
   // own verdict skips them, so counting their failures here would paint a
   // red "2 / 3 assertions passed" badge on an iteration the runner passed.
+  // Not applicable rows keep `passed: true` for older readers, but they
+  // measured nothing, so they are not counted as passes.
   const gating = predicates.filter(
-    (r) => checkRole(r.predicate) !== "advisory"
+    (r) =>
+      checkRole(r.predicate) !== "advisory" && r.status !== "not_applicable"
   );
   const failed = gating.filter((r) => !r.passed).length;
   const passed = gating.length - failed;
   const allPassed = failed === 0;
+  const allNotApplicable = predicates.every((r) => r.status === "not_applicable");
   const caseLevel = predicates.filter((r) => !r.scope);
   const stepScoped = predicates.filter((r) => r.scope?.kind === "turn");
 
@@ -160,20 +169,24 @@ export function PredicatesList({
         <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
           Assertions
         </div>
-        <div
-          className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-            allPassed ? EVAL_PASSED_BADGE_STRONG_CLASS : EVAL_FAILED_BADGE_STRONG_CLASS
-          }`}
-        >
-          {allPassed ? (
-            <CheckCircle2 className="h-3 w-3 shrink-0" aria-hidden />
-          ) : (
-            <XCircle className="h-3 w-3 shrink-0" aria-hidden />
-          )}
-          {allPassed
-            ? `${gating.length} / ${gating.length} assertions passed`
-            : `${passed} / ${gating.length} assertions passed`}
-        </div>
+        {allNotApplicable ? (
+          <div className="rounded border border-border px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+            No assertions applied. Each row says why.
+          </div>
+        ) : gating.length > 0 ? (
+          <div
+            className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+              allPassed ? EVAL_PASSED_BADGE_STRONG_CLASS : EVAL_FAILED_BADGE_STRONG_CLASS
+            }`}
+          >
+            {allPassed ? (
+              <CheckCircle2 className="h-3 w-3 shrink-0" aria-hidden />
+            ) : (
+              <XCircle className="h-3 w-3 shrink-0" aria-hidden />
+            )}
+            {`${passed} / ${gating.length} assertions passed`}
+          </div>
+        ) : null}
       </div>
 
       {renderGroup("Whole-run assertions", caseLevel, "case")}
@@ -201,29 +214,38 @@ function PredicateRow({
   observations: EvalTraceWidgetRenderObservationView[];
 }) {
   const evidence = evidenceObservations(row.predicate, observations);
+  const notApplicable = row.status === "not_applicable";
+  const errored = row.status === "error";
+  const failed = !row.passed && !notApplicable && !errored;
   return (
     <li
       className={`rounded border ${
-        row.passed
-          ? "border-border/40 bg-background/40"
-          : "border-destructive/40 bg-destructive/5"
+        failed
+          ? "border-destructive/40 bg-destructive/5"
+          : "border-border/40 bg-background/40"
       }`}
     >
-      <details className="group" open={!row.passed}>
+      <details className="group" open={failed || errored}>
         <summary className="flex cursor-pointer list-none items-start gap-2 p-2 [&::-webkit-details-marker]:hidden">
           <span
             className={`mt-0.5 flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-              row.passed
-                ? EVAL_PASSED_BADGE_STRONG_CLASS
-                : EVAL_FAILED_BADGE_STRONG_CLASS
+              notApplicable
+                ? "border border-border text-muted-foreground"
+                : errored
+                  ? EVAL_WARN_BADGE_STRONG_CLASS
+                  : row.passed
+                  ? EVAL_PASSED_BADGE_STRONG_CLASS
+                  : EVAL_FAILED_BADGE_STRONG_CLASS
             }`}
           >
-            {row.passed ? (
+            {notApplicable ? (
+              <MinusCircle className="h-3 w-3" aria-hidden />
+            ) : row.passed && !errored ? (
               <CheckCircle2 className="h-3 w-3" aria-hidden />
             ) : (
               <XCircle className="h-3 w-3" aria-hidden />
             )}
-            {row.passed ? "PASS" : "FAIL"}
+            {notApplicable ? "N/A" : errored ? "Error" : row.passed ? "PASS" : "FAIL"}
           </span>
           <span className="min-w-0 flex-1">
             <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
@@ -248,7 +270,7 @@ function PredicateRow({
         <div className="space-y-1.5 px-2 pb-2 pl-[26px]">
           <div
             className={`whitespace-pre-wrap break-words text-[11px] leading-tight ${
-              row.passed ? "text-muted-foreground" : "text-destructive"
+              failed ? "text-destructive" : "text-muted-foreground"
             }`}
           >
             {row.reason}

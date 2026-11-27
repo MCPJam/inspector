@@ -8,11 +8,15 @@
  */
 
 import { evaluatePredicates } from "../predicates/evaluate.js";
+import { DECLARED_OUTPUT_SCHEMA } from "../predicates/declared-schema.js";
 import {
   requiresRenderObservations,
   type Predicate,
 } from "../predicates/types.js";
-import { predicateScoreDefinition } from "../contract/adapters.js";
+import {
+  predicateScoreDefinition,
+  predicateScoreOutcome,
+} from "../contract/adapters.js";
 import { canonicalDigest } from "../contract/canonical.js";
 import { canonicalizeCheckRole } from "../predicates/policy.js";
 import type { ScorerRole } from "../contract/types.js";
@@ -89,8 +93,12 @@ export function predicateScorer(
   // same rule than one who spelled it `"gating"`, and the two would stop
   // joining to each other's score history.
   if (options?.id === undefined && options?.ordinal === undefined) {
+    // Library provenance is not part of the rule: the same check tagged v1,
+    // v2 or untagged is one scorer, as it is for `assertion()`. Dropping the
+    // key leaves an untagged rule's digest unchanged.
+    const { evaluator: _origin, ...rule } = predicate;
     definition.scorerId = `predicate:${predicate.type}#${canonicalDigest(
-      canonicalizeCheckRole(predicate),
+      canonicalizeCheckRole(rule),
     )}`;
   }
 
@@ -111,16 +119,13 @@ export function predicateScorer(
       if (
         (predicate.type === "responseCloseTo" ||
           predicate.type === "toolInputMatches" ||
-          predicate.type === "toolResultMatches") &&
+          predicate.type === "toolResultMatches" ||
+          (predicate.type === "toolResultMatchesSchema" &&
+            predicate.schema === DECLARED_OUTPUT_SCHEMA)) &&
         result.status === "error"
       )
         throw new Error(result.reason);
-      return {
-        kind: "scored",
-        value: result.passed ? 1 : 0,
-        rationale: result.reason,
-        ...(result.scope ? { scope: result.scope } : {}),
-      };
+      return predicateScoreOutcome(result);
     },
   };
 }

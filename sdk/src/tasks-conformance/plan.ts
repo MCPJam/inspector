@@ -136,17 +136,5 @@ export function planTasksConformance(
     if (answers && taskCheckUsesInput(id)) group.inputResponses = answers;
     groups.set(key, group);
   }
-  const discovery = groups.get(canonical(["discovery", null, {}, null]));
-  if (
-    groups.size > 1 &&
-    discovery?.checkIds.every((id) => id === "tasks-declaration-hygiene")
-  )
-    groups.delete(canonical(["discovery", null, {}, null]));
-  // Hygiene observes every group's traffic, but is reported once by the merger.
-  if (selected.has("tasks-declaration-hygiene")) {
-    for (const group of groups.values())
-      if (!group.checkIds.includes("tasks-declaration-hygiene"))
-        group.checkIds.push("tasks-declaration-hygiene");
-  }
   return [...groups.values()];
 }

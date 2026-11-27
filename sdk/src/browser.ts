@@ -1301,14 +1301,11 @@ export type {
 export {
   MCPJAM_EVENTS_EXTENSION_ID,
   EVENT_DELIVERY_MODES,
-  HOST_STYLE_EVENT_DELIVERY_MODES,
   RUNTIME_EVENT_DELIVERY_MODES,
   isEventDeliveryMode,
   readEventsHostSetting,
-  hostStyleEventDeliveryModes,
   resolveHostEventDeliveryModes,
   setEventsHostSetting,
-  clearEventsHostSetting,
   subscribableModes,
   describeModeRefusal,
   describeNoSubscribableMode,
@@ -1386,6 +1383,8 @@ export { aiRequestHeaders } from "./ai-request-headers.js";
 /** Use the same validation before rendering embedded Task or MRTR input. */
 export { validateEmbeddedClientRequest } from "./mcp-client-manager/task-input-driver.js";
 export {
+  REMOVED_MCP_TASKS_CHECK_CATEGORIES,
+  REMOVED_MCP_TASKS_CHECK_IDS,
   RENAMED_MCP_TASKS_CHECK_IDS,
   taskCheckUsesInput,
   MCP_TASKS_TOOL_CHECK_IDS,
