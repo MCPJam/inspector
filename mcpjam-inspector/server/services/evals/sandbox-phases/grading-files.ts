@@ -41,6 +41,13 @@ export type CollectedGradingFiles =
   | { ok: false; problem: string };
 
 const OVER_CAP = `The files declared for grading are over ${MAX_GRADING_FILES_BYTES / (1024 * 1024)} MB together.`;
+const COMPRESSED =
+  "The declared files couldn't be read: the agent's box returned a compressed archive, and only a plain tar is accepted.";
+/** gzip and zstd: the formats the parser would recognize and inflate. */
+const COMPRESSED_MAGIC: ReadonlyArray<readonly number[]> = [
+  [0x1f, 0x8b],
+  [0x28, 0xb5, 0x2f, 0xfd],
+];
 
 /** `/home/user/app/` → `home/user/app`: the archive's own spelling. */
 function relative(declared: string): string {
@@ -103,10 +110,30 @@ export async function parseGradingArchive(
   if (!archive.subarray(0, 512).some((byte) => byte !== 0)) {
     return { ok: true, entries: [], bytes: 0 };
   }
+  // The pack command writes a plain tar, so a compressed one came from a
+  // replaced `tar`. The parser would inflate it unasked, a few MB into
+  // gigabytes, so it is refused unread.
+  if (
+    COMPRESSED_MAGIC.some((magic) => magic.every((b, i) => archive[i] === b))
+  ) {
+    return { ok: false, problem: COMPRESSED };
+  }
   const entries: GradingFileEntry[] = [];
   let bytes = 0;
   let problem: string | undefined;
-  const parser = new Parser({ strict: true });
+  // `zstd: false` and a ratio of 1 back the check above up: nothing is
+  // sniffed as zstd, and a decompressor that did start would be stopped as
+  // soon as it wrote more than it read.
+  const parser = new Parser({
+    strict: true,
+    zstd: false,
+    maxDecompressionRatio: 1,
+  });
+  // Stop at the first cap rather than read the rest of the archive.
+  const stop = (message: string) => {
+    problem = message;
+    parser.abort(new Error(message));
+  };
   const done = new Promise<void>((resolve, reject) => {
     parser.on("end", () => resolve());
     parser.on("error", (error: Error) => reject(error));
@@ -119,8 +146,9 @@ export async function parseGradingArchive(
       return;
     }
     if (entries.length >= MAX_GRADING_FILE_ENTRIES) {
-      problem = `More than ${MAX_GRADING_FILE_ENTRIES.toLocaleString("en-US")} files and folders were declared for grading.`;
-      entry.resume();
+      stop(
+        `More than ${MAX_GRADING_FILE_ENTRIES.toLocaleString("en-US")} files and folders were declared for grading.`,
+      );
       return;
     }
     if (type === "Directory") {
@@ -130,8 +158,9 @@ export async function parseGradingArchive(
     }
     const chunks: Buffer[] = [];
     entry.on("data", (chunk: Buffer) => {
+      if (problem) return;
       bytes += chunk.byteLength;
-      if (bytes > MAX_GRADING_FILES_BYTES) problem = OVER_CAP;
+      if (bytes > MAX_GRADING_FILES_BYTES) stop(OVER_CAP);
       else chunks.push(chunk);
     });
     entry.on("end", () => {
@@ -148,6 +177,8 @@ export async function parseGradingArchive(
     parser.end(Buffer.from(archive));
     await done;
   } catch (error) {
+    // A cap stops the parser with an error of its own; report the cap.
+    if (problem) return { ok: false, problem };
     return {
       ok: false,
       problem: `The declared files couldn't be read: ${error instanceof Error ? error.message : String(error)}`,
