@@ -1,8 +1,8 @@
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 const admission = vi.hoisted(() => ({ execution: vi.fn(() => ({ ok: true })), harness: vi.fn(() => ({ ok: true, harness: undefined })), policy: vi.fn(() => null), failed: vi.fn(async () => {}), explain: vi.fn(async ({ admission }: { admission: { reason: string } }) => admission.reason) }));
 vi.mock("../explain-harness-refusal.js", () => ({ explainEvalHarnessRefusal: admission.explain }));
 vi.mock("../harness-admission.js", async (original) => ({ ...await original<typeof import("../harness-admission.js")>(), checkEvalExecutionAdmission: admission.execution, checkEvalHarnessAdmission: admission.harness, casesAssertingWidgetRender: () => [], failRunBeforeExecution: admission.failed }));
 vi.mock("../../../utils/harness/harness-proxy-policy-enforcement.js", () => ({ harnessToolPolicyLaunchRefusal: admission.policy }));
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { ConvexError } from "convex/values";
 
 // Replays use the frozen client and environment; old backends fail closed
