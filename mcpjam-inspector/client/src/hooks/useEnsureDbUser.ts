@@ -1,4 +1,4 @@
-import { readSignupCampaign, acknowledgeSignupCampaign, type SignupCampaign } from "@/lib/signup-campaign";
+import { withSignupCampaignClaim, readSignupCampaign, acknowledgeSignupCampaign, type SignupCampaign } from "@/lib/signup-campaign";
 import { guestTabRecovery } from "@/lib/auth/guest-tab-recovery";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
@@ -147,10 +147,20 @@ async function ensureUserWithRetry(
         await ensureUser(args);
         return;
       }
-      const outcome = await ensureCampaign({ ...args, signupCampaign: signupCampaign.label });
-      if (outcome?.campaignApplied) {
-        acknowledgeSignupCampaign(signupCampaign);
-      }
+      const acquired = await withSignupCampaignClaim(signupCampaign.expiresAt, async () => {
+        if (!shouldContinue()) return;
+        // The previous claimant may have written a receipt, or consent may
+        // have changed while this account waited.
+        const eligible = await getCampaign();
+        if (!shouldContinue()) return;
+        if (eligible?.expiresAt !== signupCampaign.expiresAt || eligible.label !== signupCampaign.label) {
+          await ensureUser(args);
+          return;
+        }
+        const outcome = await ensureCampaign({ ...args, signupCampaign: eligible.label });
+        if (outcome?.campaignApplied) acknowledgeSignupCampaign(eligible);
+      });
+      if (!acquired && shouldContinue()) await ensureUser(args);
       return;
     } catch (err) {
       if (

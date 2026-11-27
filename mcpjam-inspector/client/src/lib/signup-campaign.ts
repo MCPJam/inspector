@@ -64,6 +64,38 @@ export async function readSignupCampaign(
   }
 }
 
+// Web Locks coordinate tabs. Older browsers still serialize claims across hook
+// instances within this page. A rejected mutation must release the next waiter.
+const localClaims = new Map<number, Promise<void>>();
+
+export async function withSignupCampaignClaim(
+  expiresAt: number,
+  claim: () => Promise<void>,
+): Promise<boolean> {
+  if (navigator.locks) {
+    let acquired = false;
+    try {
+      await navigator.locks.request("mcpjam-signup-campaign-" + expiresAt, async () => {
+        acquired = true;
+        await claim();
+      });
+      return true;
+    } catch (error) {
+      if (acquired) throw error;
+      return false;
+    }
+  }
+  const previous = localClaims.get(expiresAt) ?? Promise.resolve();
+  const current = previous.then(claim, claim);
+  localClaims.set(expiresAt, current);
+  try {
+    await current;
+    return true;
+  } finally {
+    if (localClaims.get(expiresAt) === current) localClaims.delete(expiresAt);
+  }
+}
+
 export function acknowledgeSignupCampaign({ expiresAt }: SignupCampaign) {
   try {
     // The website has already checked expiry against its own clock. Keep the

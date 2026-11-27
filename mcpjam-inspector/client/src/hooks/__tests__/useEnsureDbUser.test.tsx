@@ -762,7 +762,7 @@ describe("useEnsureDbUser", () => {
     }
   });
 
-  it("keeps a confirmed receipt when the first account unmounts before the mutation returns", async () => {
+  it.each([true, false])("serializes overlapping account claims (first applied: %s)", async (campaignApplied) => {
     mockState.auth.user = { id: "first-account" };
     mockState.actorKey = "first-account";
     mockState.posthog = { is_capturing: () => true };
@@ -771,19 +771,22 @@ describe("useEnsureDbUser", () => {
     const cookies = campaignCookieJar();
     let confirm!: () => void;
     mockState.ensureCampaign.mockImplementationOnce(
-      () => new Promise((resolve) => { confirm = () => resolve({ campaignApplied: true }); }),
+      () => new Promise((resolve) => { confirm = () => resolve({ campaignApplied }); }),
     );
     try {
       const first = renderHook(() => useEnsureDbUser());
       await waitFor(() => expect(mockState.ensureCampaign).toHaveBeenCalledTimes(1));
       first.unmount();
-      await act(async () => confirm());
       mockState.auth.user = { id: "second-account" };
       mockState.actorKey = "second-account";
       const second = renderHook(() => useEnsureDbUser());
-      await waitFor(() => expect(second.result.current.isUserReady).toBe(true));
+      await act(async () => {});
       expect(mockState.ensureCampaign).toHaveBeenCalledTimes(1);
-      expect(mockState.ensureUser).toHaveBeenCalledWith({});
+      expect(mockState.ensureUser).not.toHaveBeenCalled();
+      await act(async () => confirm());
+      await waitFor(() => expect(second.result.current.isUserReady).toBe(true));
+      expect(mockState.ensureCampaign).toHaveBeenCalledTimes(campaignApplied ? 1 : 2);
+      expect(mockState.ensureUser).toHaveBeenCalledTimes(campaignApplied ? 1 : 0);
     } finally {
       cookies.restore();
       vi.unstubAllGlobals();
