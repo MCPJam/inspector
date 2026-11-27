@@ -18254,7 +18254,7 @@
           },
           "refreshSnapshot": {
             "type": "boolean",
-            "description": "**PERSISTS A SUITE MUTATION.** Re-derives and stores the suite's host-config snapshot from this request's server list, so future runs of the suite use it too. It does nothing on a project-environment launch, whose servers come from the environment. Without it a rerun leaves the snapshot frozen, which is what stops newly connected servers from silently contaminating an existing suite. Single-target launches only: it is not accepted on `POST /eval-run-groups`, where last-writer-wins on a frozen snapshot is never what a fan-out means."
+            "description": "**Saves a change to the suite.** Updates the suite's stored server configuration from this request's server list, so later runs of the suite use it too. It does nothing on a project-environment launch, whose servers come from the environment. Without it, a rerun keeps the stored configuration, so servers you connect later don't change an existing suite. Single-suite launches only: `POST /eval-run-groups` doesn't accept it, because several runs would overwrite the same stored configuration."
           },
           "runGroupId": {
             "type": "string",
