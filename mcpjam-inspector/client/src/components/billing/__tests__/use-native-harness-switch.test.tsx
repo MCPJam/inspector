@@ -2,6 +2,10 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ConvexError } from "convex/values";
 import {
+  withoutPrivateScenarioBackingHosts,
+  type HostOwnerScope,
+} from "@/lib/host-owner-scope";
+import {
   switchedClientsMessage,
   useNativeHarnessSwitch,
 } from "../use-native-harness-switch";
@@ -13,11 +17,23 @@ vi.mock("convex/react", () => ({
 }));
 
 const hostListArgs = vi.hoisted(() => vi.fn());
-const hosts = vi.hoisted(() => ({ value: [] as Array<Record<string, unknown>> }));
+const hosts = vi.hoisted(() => ({
+  value: [] as Array<{
+    hostId: string;
+    harness?: string;
+    agentLoop?: string | null;
+    ownerScope?: HostOwnerScope;
+  }>,
+}));
 vi.mock("@/hooks/useClients", () => ({
-  useHostList: (args: unknown) => {
+  useHostList: (args: { includePrivateBacking?: boolean }) => {
     hostListArgs(args);
-    return { hosts: hosts.value, isLoading: false };
+    return {
+      hosts: args.includePrivateBacking
+        ? hosts.value
+        : withoutPrivateScenarioBackingHosts(hosts.value),
+      isLoading: false,
+    };
   },
 }));
 
@@ -56,7 +72,17 @@ describe("useNativeHarnessSwitch", () => {
     expect(hostListArgs).toHaveBeenCalledWith({
       isAuthenticated: true,
       projectId: "proj_1",
+      includePrivateBacking: true,
     });
+  });
+
+  it("offers the switch when the only native client backs a private study", () => {
+    hosts.value = [
+      { hostId: "study", agentLoop: "codex", ownerScope: { type: "user_testing" } },
+      { hostId: "emulated" },
+    ];
+    const { result } = renderHook(() => useNativeHarnessSwitch("proj_1"));
+    expect(result.current.switchCount).toBe(1);
   });
 
   it("offers nothing to anyone else, or without a project", () => {
@@ -72,15 +98,18 @@ describe("useNativeHarnessSwitch", () => {
   });
 
   it("switches the project and says what changed", async () => {
-    switchMock.mockResolvedValue({ switched: 3, skipped: 0 });
+    const switched = {
+      switched: 3,
+      skipped: 0,
+      switchedHostIds: ["chatgpt", "claude-code", "cursor"],
+    };
+    switchMock.mockResolvedValue(switched);
     const { result } = renderHook(() => useNativeHarnessSwitch("proj_1"));
 
-    let switched = false;
     await act(async () => {
-      switched = await result.current.switchClients();
+      expect(await result.current.switchClients()).toEqual(switched);
     });
 
-    expect(switched).toBe(true);
     expect(switchMock).toHaveBeenCalledWith({ projectId: "proj_1" });
     expect(toastMock.success).toHaveBeenCalledWith(
       "3 clients now run on MCPJam Harness.",
@@ -97,12 +126,10 @@ describe("useNativeHarnessSwitch", () => {
     });
     const { result } = renderHook(() => useNativeHarnessSwitch("proj_1"));
 
-    let switched = true;
     await act(async () => {
-      switched = await result.current.switchClients();
+      expect(await result.current.switchClients()).toBeNull();
     });
 
-    expect(switched).toBe(false);
     expect(toastMock.info).toHaveBeenCalledWith(
       "2 clients in another member's study kept their native harness.",
     );
@@ -118,12 +145,10 @@ describe("useNativeHarnessSwitch", () => {
     );
     const { result } = renderHook(() => useNativeHarnessSwitch("proj_1"));
 
-    let switched = true;
     await act(async () => {
-      switched = await result.current.switchClients();
+      expect(await result.current.switchClients()).toBeNull();
     });
 
-    expect(switched).toBe(false);
     expect(toastMock.error).toHaveBeenCalledWith(
       "This project has more than 100 clients. Switch them one at a time.",
     );

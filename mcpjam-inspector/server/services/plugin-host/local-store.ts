@@ -52,6 +52,15 @@ const isSettingsActivation = (snapshotJson: string | undefined) => {
   }
 };
 
+const isModelForm = (snapshotJson: string) => {
+  try {
+    return JSON.parse(snapshotJson)?.kind === "model-form";
+  } catch {
+    // A snapshot that is not JSON is no model form.
+    return false;
+  }
+};
+
 type ControlRow = {
   controlHash: string;
   identityHash: string;
@@ -83,7 +92,13 @@ export class LocalPluginControlStore {
   private readonly controls = new Map<string, ControlRow>();
   private readonly anchors = new Map<string, string>();
 
-  constructor(private readonly now: () => number = () => Date.now()) {}
+  constructor(
+    private readonly now: () => number = () => Date.now(),
+    /** The largest suspended model form this store keeps. The backend's
+     * ceiling by default; a single-user install keeps any form the invoker
+     * accepts, since nothing leaves its process. */
+    private readonly modelFormBytes = PLUGIN_INSTANCE_CONTROL_BYTES,
+  ) {}
 
   /** A `createPluginServiceStore`-compatible request handler for `path`. */
   handler(path: string, unavailable: string) {
@@ -453,7 +468,10 @@ export class LocalPluginControlStore {
       c.expiresAt <= now ||
       c.expiresAt > now + INVOCATION_RECEIPT_TTL_MS ||
       typeof c.snapshotJson !== "string" ||
-      bytes(c.snapshotJson) > PLUGIN_INSTANCE_CONTROL_BYTES
+      bytes(c.snapshotJson) >
+        (isModelForm(c.snapshotJson)
+          ? this.modelFormBytes
+          : PLUGIN_INSTANCE_CONTROL_BYTES)
     )
       fail("INVALID_INSTANCE_CONTROL");
     if (c.contextToken !== undefined && !/^[A-Za-z0-9_-]{43}$/.test(c.contextToken))
@@ -583,4 +601,9 @@ export class LocalPluginControlStore {
   }
 }
 
-export const localPluginControls = new LocalPluginControlStore();
+/** A local install keeps model forms up to the invoker's own params limit
+ * (512 KiB) with room for the record around them. */
+export const localPluginControls = new LocalPluginControlStore(
+  undefined,
+  576 * 1024,
+);

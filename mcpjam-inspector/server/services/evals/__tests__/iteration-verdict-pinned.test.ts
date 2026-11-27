@@ -74,13 +74,26 @@ const ALLOWED_IMPORTS = [
   // score rows decide nothing and this boolean still does — a guard that only
   // produced a row would let a vacuous pass stand in the modes most runs use.
   "./agent-activity",
+  // ADDED DELIBERATELY, per the note above, and for a TYPE only.
+  //
+  // `account-routing.ts` imports nothing. The verdict passes its
+  // `AccountRouting` through to `extractTranscriptEvidence`, so a declared
+  // output schema check can resolve a multi-account tool key back to the
+  // server's tool name. It is evidence input, like `transcript-evidence`.
+  "./account-routing",
+  // ADDED DELIBERATELY, per the note above.
+  //
+  // `pinned-call-grading.ts` turns the pinned calls' kept results into
+  // transcript rows for the declared output-schema check, whose results the
+  // trace never carries. It reads evidence and the SDK's predicate evaluator,
+  // the same class of input as `transcript-evidence`, and is held to the same
+  // seal below.
+  "./pinned-call-grading",
 ];
 
-/** The extractor is held to the same seal, so widening it is not a back door. */
-const EVIDENCE_MODULE = join(
-  dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "transcript-evidence.ts"
+/** The evidence modules are held to the same seal, so widening them is not a back door. */
+const EVIDENCE_MODULES = ["transcript-evidence.ts", "pinned-call-grading.ts"].map(
+  (file) => join(dirname(fileURLToPath(import.meta.url)), "..", file)
 );
 
 describe("iteration-verdict is sealed against the score engine", () => {
@@ -93,17 +106,15 @@ describe("iteration-verdict is sealed against the score engine", () => {
     expect([...new Set(specifiers)].sort()).toEqual([...ALLOWED_IMPORTS].sort());
   });
 
-  test("the evidence extractor is sealed the same way", () => {
-    const source = readFileSync(EVIDENCE_MODULE, "utf8");
+  test.each(EVIDENCE_MODULES)("the evidence module %s is sealed the same way", (path) => {
+    const source = readFileSync(path, "utf8");
     for (const forbidden of [
       "score-rows",
       "grading-mode",
       "judge",
       "@mcpjam/sdk/contract",
     ]) {
-      expect(source, `transcript-evidence.ts mentions "${forbidden}"`).not.toContain(
-        forbidden
-      );
+      expect(source, `${path} mentions "${forbidden}"`).not.toContain(forbidden);
     }
   });
 
@@ -139,12 +150,36 @@ describe("buildEvalIterationVerdict output is unchanged", () => {
     scriptedCheckFailures: [],
   } as unknown as Parameters<typeof buildEvalIterationVerdict>[0];
 
+  // The verdict as it was before `platformGates` joined the output. That field
+  // only hands the gate inputs on to the score rows; it decides nothing, so the
+  // pinned verdict stays byte for byte and the hand-off is pinned below.
+  const verdictOnly = ({
+    evaluation,
+    passed,
+    predicateResults,
+  }: ReturnType<typeof buildEvalIterationVerdict>) => ({
+    evaluation,
+    passed,
+    predicateResults,
+  });
+
   test("a passing tool-match iteration still passes, byte for byte", () => {
     const first = buildEvalIterationVerdict(input);
     const second = buildEvalIterationVerdict(input);
     expect(first.passed).toBe(true);
     expect(JSON.stringify(first)).toBe(JSON.stringify(second));
-    expect(JSON.stringify(first)).toMatchSnapshot();
+    expect(JSON.stringify(verdictOnly(first))).toMatchSnapshot();
+  });
+
+  test("hands the gate inputs on to the platform rows unchanged", () => {
+    const { platformGates } = buildEvalIterationVerdict(input);
+    expect(platformGates).toEqual({
+      failOnToolError: false,
+      trace: undefined,
+      pinnedToolErrors: undefined,
+      iterationError: undefined,
+      scriptedCheckFailures: [],
+    });
   });
 
   test("a missing expected tool still fails, byte for byte", () => {
@@ -153,7 +188,7 @@ describe("buildEvalIterationVerdict output is unchanged", () => {
       toolsCalledByPrompt: [[]],
     } as unknown as Parameters<typeof buildEvalIterationVerdict>[0]);
     expect(failing.passed).toBe(false);
-    expect(JSON.stringify(failing)).toMatchSnapshot();
+    expect(JSON.stringify(verdictOnly(failing))).toMatchSnapshot();
   });
 });
 

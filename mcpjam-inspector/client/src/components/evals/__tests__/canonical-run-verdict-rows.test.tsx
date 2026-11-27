@@ -63,6 +63,8 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
 
 import { ProjectRunsTable, type ProjectRunRow } from "../project-runs-table";
 import { SuiteDetailOverview } from "../../evaluate/suite-detail-overview";
+
+vi.mock("../../evaluate/suite-runs-as", () => ({ SuiteRunsAsLine: () => null }));
 import { metricsByRunFromIterations } from "../run-metrics";
 import { evalDecisionSummaryStore } from "@/lib/evals/eval-decision-summary-store";
 import { EvalRunDecisionSummaryError } from "@/lib/apis/eval-run-decision-summary-api";

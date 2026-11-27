@@ -90,8 +90,12 @@ const PAIRS: Readonly<Record<string, string>> = {
   ChatTurn: "PlatformChatTurn",
   ChatSessionDetail: "PlatformChatSessionDetail",
   ChatSessionTrace: "PlatformChatSessionTrace",
+  ChatSessionTraceTurn: "PlatformChatSessionTraceTurn",
+  ChatSessionTraceEvent: "PlatformChatSessionTraceEvent",
   EvalRun: "PlatformEvalRun",
   EvalRunEnvironment: "PlatformEvalRunEnvironment",
+  EvalRunAccount: "PlatformEvalRunAccount",
+  EvalRunAccountIdentity: "PlatformEvalRunAccountIdentity",
   EvalRunCreated: "PlatformEvalRunCreated",
   EvalRunGroupCreated: "PlatformEvalRunGroupCreated",
   EvalSuiteCreated: "PlatformEvalSuiteCreated",
@@ -313,7 +317,8 @@ function parseSdkInterfaces(): Map<string, SdkInterface> {
   const source = ts.createSourceFile(
     TYPES_PATH,
     [TYPES_PATH, resolve(dirname(TYPES_PATH), "readiness-start-types.ts"),
-      resolve(dirname(TYPES_PATH), "widget-session-types.ts")]
+      resolve(dirname(TYPES_PATH), "widget-session-types.ts"),
+      resolve(dirname(TYPES_PATH), "eval-run-account-types.ts")]
       .map(path => readFileSync(path, "utf8"))
       .join("\n"),
     ts.ScriptTarget.Latest,

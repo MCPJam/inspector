@@ -6,12 +6,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import {
-  ToggleGroup,
-  ToggleGroupItem,
-} from "@mcpjam/design-system/toggle-group";
 import { PRESET_DEVICE_CONFIGS } from "@/components/shared/client-context-constants";
-import type { PaneTheme } from "@/stores/compare-pane-display-store";
+import type { PaneThemePreference } from "@/stores/compare-pane-display-store";
 import type { DeviceType } from "@/stores/ui-playground-store";
 import { ComparePaneSettingsSection } from "./compare-pane-settings";
 
@@ -36,14 +32,16 @@ export function ComparePaneDisplay({
   label,
   device,
   theme,
+  hasClientTheme,
   onDeviceChange,
   onThemeChange,
 }: {
   label: string;
   device: DeviceType;
-  theme: PaneTheme;
+  theme: PaneThemePreference;
+  hasClientTheme: boolean;
   onDeviceChange: (device: DeviceType) => void;
-  onThemeChange: (theme: PaneTheme) => void;
+  onThemeChange: (theme: PaneThemePreference) => void;
 }) {
   return (
     <ComparePaneSettingsSection title="Display">
@@ -86,23 +84,41 @@ export function ComparePaneDisplay({
             ) : null}
           </SelectContent>
         </Select>
-        <ToggleGroup
-          type="single"
-          variant="outline"
-          size="sm"
+        <Select
           value={theme}
           onValueChange={(value) => {
-            if (value) onThemeChange(value as PaneTheme);
+            if (
+              value === "app" ||
+              value === "client" ||
+              value === "light" ||
+              value === "dark"
+            ) {
+              onThemeChange(value);
+            }
           }}
-          aria-label={`Theme for ${label}`}
         >
-          <ToggleGroupItem value="light" aria-label="Light">
-            <Sun className="size-3.5" />
-          </ToggleGroupItem>
-          <ToggleGroupItem value="dark" aria-label="Dark">
-            <Moon className="size-3.5" />
-          </ToggleGroupItem>
-        </ToggleGroup>
+          <SelectTrigger
+            size="sm"
+            className="flex-1"
+            aria-label={`Theme for ${label}`}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="app">Match MCPJam</SelectItem>
+            {hasClientTheme ? (
+              <SelectItem value="client">Saved client theme</SelectItem>
+            ) : null}
+            <SelectItem value="light">
+              <Sun className="size-3.5" />
+              Light
+            </SelectItem>
+            <SelectItem value="dark">
+              <Moon className="size-3.5" />
+              Dark
+            </SelectItem>
+          </SelectContent>
+        </Select>
       </div>
     </ComparePaneSettingsSection>
   );

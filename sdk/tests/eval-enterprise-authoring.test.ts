@@ -54,7 +54,8 @@ describe("enterprise canonical authoring", () => {
     );
     const result = await canonical.run(executor().host, { iterations: 1 });
     expect(result.successes).toBe(1);
-    expect(result.iterationDetails[0].evaluatorResults).toHaveLength(4);
+    // test(), tool-match, two authored rules, and the two platform checks.
+    expect(result.iterationDetails[0].evaluatorResults).toHaveLength(6);
   });
 
   it("inherits, extends, and explicitly replaces suite defaults", () => {
@@ -81,7 +82,8 @@ describe("enterprise canonical authoring", () => {
       { ...base, execute: () => {}, evaluators: { mode: "replace", list: [] } },
       { evaluators: defaults }
     );
-    expect(replaced.getEvaluationConfigSnapshot().definitions).toHaveLength(2);
+    // test(), tool-match and the two platform checks; no inherited rules.
+    expect(replaced.getEvaluationConfigSnapshot().definitions).toHaveLength(4);
     const extended = new EvalTest(
       {
         ...base,
@@ -98,6 +100,8 @@ describe("enterprise canonical authoring", () => {
     ).toEqual([
       "legacy:test",
       "tool-match",
+      "platform:toolExecution",
+      "platform:iterationError",
       "predicate:noToolErrors#0",
       "predicate:toolNeverCalled#1",
     ]);

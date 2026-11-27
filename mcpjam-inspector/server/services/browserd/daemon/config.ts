@@ -10,6 +10,7 @@ import {
   parseViewportPolicy,
   type SessionViewportPolicy,
 } from "../../../../shared/browser-viewport";
+import { BROWSERD_PUBLIC_NETWORK_FEATURE } from "../protocol";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 
@@ -105,6 +106,18 @@ export interface BrowserdConfig {
   startedBy: "prelaunch" | "inspector";
   /** One-shot profile archive to unpack before launching Chromium. */
   profileArchivePath?: string;
+  /**
+   * Empty `userDataDir` before launch (an archive, if any, then fills it), so
+   * nothing an earlier boot on this box left behind reaches this browser.
+   */
+  freshProfile: boolean;
+  /**
+   * `public`: the browser reaches public internet addresses only, through the
+   * egress proxy (`public-network.ts`), and the daemon announces it. Only the
+   * exact string opts in; a caller that needs it checks the announcement, so
+   * a misspelled value fails there rather than here.
+   */
+  networkPolicy: "public" | "open";
 }
 
 /**
@@ -126,9 +139,9 @@ const DEFAULT_ON_FEATURES = [
   "scrollableMarkers",
 ] as const satisfies ReadonlyArray<keyof BrowserdFeatures>;
 
-const OPT_IN_FEATURES = [
-  "keystrokeTyping",
-] as const satisfies ReadonlyArray<keyof BrowserdFeatures>;
+const OPT_IN_FEATURES = ["keystrokeTyping"] as const satisfies ReadonlyArray<
+  keyof BrowserdFeatures
+>;
 
 function namedIn(raw: string | undefined): Set<string> {
   return new Set(
@@ -222,6 +235,7 @@ export function readBrowserdConfig(
     // silently wiping state because a typo read as "ephemeral".
     contextMode:
       env.MCPJAM_BROWSERD_EPHEMERAL === "true" ? "ephemeral" : "persistent",
+    networkPolicy: env.MCPJAM_BROWSERD_NETWORK === "public" ? "public" : "open",
     // NEVER WITH HEADLESS. Kiosk is what makes "the display IS the page" true
     // for the video encoder, and a headless Chromium draws on no display at
     // all — so the daemon would advertise `h264`, spawn a grab of an empty X
@@ -247,6 +261,7 @@ export function readBrowserdConfig(
     ...(env.MCPJAM_BROWSERD_PROFILE_ARCHIVE?.trim()
       ? { profileArchivePath: env.MCPJAM_BROWSERD_PROFILE_ARCHIVE.trim() }
       : {}),
+    freshProfile: env.MCPJAM_BROWSERD_FRESH_PROFILE === "1",
     // Only a daemon that had to mint its own token was started by the box.
     startedBy: supplied.length === 0 && tokenFile ? "prelaunch" : "inspector",
   };
@@ -345,7 +360,8 @@ function defaultMintToken(path: string): string {
  * answers `record_unavailable`.
  */
 export function announcedFeatures(
-  config: Pick<BrowserdConfig, "kiosk" | "recordingEnabled">,
+  config: Pick<BrowserdConfig, "kiosk" | "recordingEnabled"> &
+    Partial<Pick<BrowserdConfig, "networkPolicy">>,
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
   const features: string[] = [];
@@ -353,6 +369,9 @@ export function announcedFeatures(
     features.push("h264");
   }
   if (config.recordingEnabled) features.push("record");
+  if (config.networkPolicy === "public") {
+    features.push(BROWSERD_PUBLIC_NETWORK_FEATURE);
+  }
   return features;
 }
 

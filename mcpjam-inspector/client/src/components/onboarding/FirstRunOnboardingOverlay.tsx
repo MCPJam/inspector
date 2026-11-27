@@ -1441,7 +1441,7 @@ function GuestSessionRefusalNotice({
   );
 }
 
-function deriveServerName(urlOrCommand: string): string {
+export function deriveServerName(urlOrCommand: string): string {
   const withoutProtocol = urlOrCommand.replace(/^[a-z]+:\/\//i, "");
   const firstToken = withoutProtocol.split(/\s+/)[0] || "server";
   const hostname = firstToken.split("/")[0].replace(/^mcp\./i, "");

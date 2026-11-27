@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { EvalModelChoices } from "../eval-target-matrix";
+import { EvalModelChoices } from "../eval-model-choices";
 import type { ModelDefinition } from "@/shared/types";
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
@@ -45,6 +45,7 @@ describe("EvalModelChoices — reasoning effort", () => {
     const onChange = vi.fn();
     render(
       <EvalModelChoices
+        harnessTargets={[]}
         value={{
           includeClientDefaults: false,
           explicitTargets: [{ modelId: "openai/gpt-5", selection }],
@@ -70,6 +71,7 @@ describe("EvalModelChoices — reasoning effort", () => {
     const onChange = vi.fn();
     render(
       <EvalModelChoices
+        harnessTargets={[]}
         value={{
           includeClientDefaults: false,
           explicitTargets: [
@@ -98,6 +100,7 @@ describe("EvalModelChoices — reasoning effort", () => {
     const onChange = vi.fn();
     render(
       <EvalModelChoices
+        harnessTargets={[]}
         value={{
           includeClientDefaults: false,
           explicitTargets: [
@@ -136,6 +139,7 @@ describe("EvalModelChoices — reasoning effort", () => {
     const onChange = vi.fn();
     render(
       <EvalModelChoices
+        harnessTargets={[]}
         value={{ includeClientDefaults: true, explicitTargets: [] }}
         onChange={onChange}
         disabled={false}
@@ -159,6 +163,7 @@ describe("EvalModelChoices — reasoning effort", () => {
     const onChange = vi.fn();
     render(
       <EvalModelChoices
+        harnessTargets={[]}
         effortEditable={false}
         value={{ includeClientDefaults: false, explicitTargets: [] }}
         onChange={onChange}

@@ -132,6 +132,54 @@ describe("startHarnessModelBroker", () => {
     }
   });
 
+  it("asks for the lane's session grant and reads only an https origin back", async () => {
+    let seenBody: any = {};
+    let grantOrigin: unknown = "https://inspector.example/";
+    mockFetch((_url, init) => {
+      seenBody = JSON.parse(String(init.body));
+      return Response.json({
+        ok: true,
+        runId: "run_1",
+        expiresAt: 123,
+        protocol: "anthropic",
+        proxyBaseUrl: "https://proxy/anthropic",
+        delivery: "e2b-network-transform",
+        grantOrigin,
+      });
+    });
+    const start = (sessionGrant?: { laneId: string; leaseId: string }) =>
+      startHarnessModelBroker({
+        box: { kind: "computer", computerId: "c1", projectId: "p1" },
+        harnessId: "claude-code",
+        modelId: "anthropic/claude-haiku-4.5",
+        ...(sessionGrant ? { sessionGrant } : {}),
+        bearer: "raw-token",
+      });
+
+    const asked = await start({ laneId: "lane-1", leaseId: "lease-1" });
+    expect(seenBody.sessionGrant).toEqual({
+      harnessSessionId: "lane-1",
+      leaseId: "lease-1",
+    });
+    expect(asked).toMatchObject({
+      ok: true,
+      sessionGrantOrigin: "https://inspector.example",
+    });
+
+    // Not asked: nothing sent, nothing read.
+    const unasked = await start();
+    expect(seenBody.sessionGrant).toBeUndefined();
+    expect(unasked).not.toHaveProperty("sessionGrantOrigin");
+
+    // An older backend names no origin; a non-https one is not trusted.
+    for (const value of [undefined, "http://inspector.example", "not a url"]) {
+      grantOrigin = value;
+      expect(
+        await start({ laneId: "lane-1", leaseId: "lease-1" }),
+      ).not.toHaveProperty("sessionGrantOrigin");
+    }
+  });
+
   it("carries the reasoning effort when the turn has one, and omits it otherwise", async () => {
     const bodies: any[] = [];
     mockFetch((_url, init) => {

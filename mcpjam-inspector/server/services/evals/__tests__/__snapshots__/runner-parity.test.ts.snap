@@ -47,6 +47,10 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 0,
         "prompts": [
           {
@@ -95,6 +99,10 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 1,
         "prompts": [
           {
@@ -215,6 +223,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "engineVersion": "<inspector-version>",
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 1,
@@ -233,6 +242,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 2,
+        "runUnloadedToolCalls": true,
         "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
@@ -397,6 +407,10 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 0,
         "prompts": [
           {
@@ -437,6 +451,10 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 1,
         "prompts": [
           {
@@ -497,6 +515,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "engineVersion": "<inspector-version>",
         "evalErrors": [
           {
             "message": "pinned_server_not_connected: "Asana" is not connected in this run's environment",
@@ -527,6 +546,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 0,
+        "runUnloadedToolCalls": true,
         "skippedSteps": [
           {
             "kind": "prompt",
@@ -691,6 +711,10 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 0,
         "prompts": [
           {
@@ -777,6 +801,10 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 1,
         "prompts": [
           {
@@ -895,6 +923,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "engineVersion": "<inspector-version>",
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -914,6 +943,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 4,
+        "runUnloadedToolCalls": true,
         "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
@@ -1069,6 +1099,10 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch p
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 0,
         "prompts": [
           {
@@ -1174,6 +1208,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch p
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "engineVersion": "<inspector-version>",
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -1192,6 +1227,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch p
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
+        "runUnloadedToolCalls": true,
         "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
@@ -1350,6 +1386,10 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 0,
         "prompts": [
           {
@@ -1398,6 +1438,10 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 1,
         "prompts": [
           {
@@ -1500,6 +1544,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "engineVersion": "<inspector-version>",
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 1,
@@ -1518,6 +1563,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 2,
+        "runUnloadedToolCalls": true,
         "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
@@ -1709,6 +1755,10 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 0,
         "prompts": [
           {
@@ -1796,6 +1846,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "engineVersion": "<inspector-version>",
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -1814,6 +1865,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
+        "runUnloadedToolCalls": true,
         "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
@@ -1984,6 +2036,10 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ca
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 0,
         "prompts": [
           {
@@ -2058,6 +2114,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ca
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "engineVersion": "<inspector-version>",
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -2097,6 +2154,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ca
             },
           },
         ],
+        "runUnloadedToolCalls": true,
         "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
@@ -2296,6 +2354,10 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch in
             ],
           },
         ],
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 0,
         "prompts": [
           {
@@ -2406,6 +2468,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch in
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "engineVersion": "<inspector-version>",
         "failedTurnCount": 0,
         "failureCategory": "userValue",
         "firstFailedStage": "userValue",
@@ -2444,6 +2507,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch in
             },
           },
         ],
+        "runUnloadedToolCalls": true,
         "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
@@ -2611,6 +2675,10 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 0,
         "prompts": [
           {
@@ -2671,6 +2739,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "engineVersion": "<inspector-version>",
         "evalErrors": [
           {
             "message": "pinned_server_not_connected: "Asana" is not connected in this run's environment",
@@ -2709,6 +2778,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
             "reason": "no widget render observations recorded",
           },
         ],
+        "runUnloadedToolCalls": true,
         "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
@@ -2860,6 +2930,10 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mu
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 0,
         "prompts": [
           {
@@ -2900,6 +2974,10 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mu
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 1,
         "prompts": [
           {
@@ -2968,6 +3046,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mu
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "engineVersion": "<inspector-version>",
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -2987,6 +3066,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mu
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 4,
+        "runUnloadedToolCalls": true,
         "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
@@ -3144,6 +3224,10 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ne
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 0,
         "prompts": [
           {
@@ -3204,6 +3288,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ne
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "engineVersion": "<inspector-version>",
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -3222,6 +3307,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ne
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
+        "runUnloadedToolCalls": true,
         "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
@@ -3378,6 +3464,10 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch pr
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 0,
         "prompts": [
           {
@@ -3438,6 +3528,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch pr
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "engineVersion": "<inspector-version>",
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -3456,6 +3547,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch pr
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
+        "runUnloadedToolCalls": true,
         "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
@@ -3627,6 +3719,10 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 0,
         "prompts": [
           {
@@ -3727,6 +3823,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "engineVersion": "<inspector-version>",
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 1,
@@ -3763,6 +3860,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
             },
           },
         ],
+        "runUnloadedToolCalls": true,
         "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
@@ -3923,6 +4021,10 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 0,
         "prompts": [
           {
@@ -3998,6 +4100,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "engineVersion": "<inspector-version>",
         "evalErrors": [
           {
             "message": "boom",
@@ -4022,6 +4125,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
+        "runUnloadedToolCalls": true,
         "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
@@ -4175,6 +4279,10 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 0,
         "prompts": [
           {
@@ -4250,6 +4358,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "engineVersion": "<inspector-version>",
         "evalErrors": [
           {
             "message": "boom",
@@ -4274,6 +4383,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
+        "runUnloadedToolCalls": true,
         "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
@@ -4425,6 +4535,10 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch un
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 0,
         "prompts": [
           {
@@ -4485,6 +4599,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch un
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "engineVersion": "<inspector-version>",
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -4503,6 +4618,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch un
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
+        "runUnloadedToolCalls": true,
         "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
@@ -4654,6 +4770,10 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch wi
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 0,
         "prompts": [
           {
@@ -4724,6 +4844,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch wi
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "engineVersion": "<inspector-version>",
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -4751,6 +4872,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch wi
             "reason": "widget rendered (1/1 observation(s))",
           },
         ],
+        "runUnloadedToolCalls": true,
         "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
@@ -4911,6 +5033,10 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream h
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 0,
         "prompts": [
           {
@@ -4958,6 +5084,10 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream h
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 1,
         "prompts": [
           {
@@ -5014,6 +5144,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream h
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "engineVersion": "<inspector-version>",
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 1,
@@ -5032,6 +5163,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream h
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 2,
+        "runUnloadedToolCalls": true,
         "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
@@ -5232,6 +5364,10 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream m
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 0,
         "prompts": [
           {
@@ -5272,6 +5408,10 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream m
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 1,
         "prompts": [
           {
@@ -5321,6 +5461,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream m
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "engineVersion": "<inspector-version>",
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -5340,6 +5481,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream m
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 4,
+        "runUnloadedToolCalls": true,
         "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
@@ -5533,6 +5675,10 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 0,
         "prompts": [
           {
@@ -5580,6 +5726,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "engineVersion": "<inspector-version>",
         "evalErrors": [
           {
             "message": "provider stream exploded",
@@ -5608,6 +5755,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 0,
+        "runUnloadedToolCalls": true,
         "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
@@ -5749,6 +5897,10 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
+        "discoveryAtTurn": {
+          "engineVersion": "<inspector-version>",
+          "runUnloadedToolCalls": true,
+        },
         "promptIndex": 0,
         "prompts": [
           {
@@ -5790,6 +5942,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "engineVersion": "<inspector-version>",
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -5808,6 +5961,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
+        "runUnloadedToolCalls": true,
         "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [

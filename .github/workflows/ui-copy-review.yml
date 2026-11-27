@@ -15,10 +15,6 @@ name: UI Copy Review
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
-  # Judges the PR's diff and labels, which the queue's merge commit lacks. The
-  # verdict on the PR stands; in the queue the job is skipped, which satisfies
-  # the required check.
-  merge_group:
 
 permissions:
   contents: read
@@ -75,6 +71,9 @@ jobs:
           sparse-checkout: |
             scripts/slop
             .agents/skills/ui-copy
+            scripts/check-error-rules.mjs
+            DESIGN.md
+          sparse-checkout-cone-mode: false
           fetch-depth: 1
           persist-credentials: false
 

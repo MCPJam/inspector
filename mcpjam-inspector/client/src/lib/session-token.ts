@@ -32,14 +32,14 @@ import {
   rememberAccessToken,
   isAccessToken,
 } from "./access-link";
+import { readAccessAnswer } from "./access-answer";
 
 let cachedToken: string | null = null;
 let initPromise: Promise<string> | null = null;
 
 /**
- * Error thrown when `/api/session-token` responds non-OK, carrying the HTTP
- * status so the bootstrap can tell the EXPECTED host-denial (403) apart from a
- * genuine failure.
+ * Error thrown when `/api/session-token` does not confirm the access link (a
+ * non-OK status, or a 2xx without `{ ok: true }`), with its status and code.
  *
  * A 403 here is not a bug: the server withholds the token from any host that
  * isn't localhost or in `MCPJAM_ALLOWED_HOSTS` (see server/utils/localhost-check.ts).
@@ -51,22 +51,45 @@ export class SessionTokenError extends Error {
   readonly status: number;
   readonly code?: string;
   readonly restarted: boolean;
-  constructor(status: number, code?: string, restarted = false) {
+  readonly contentType?: string;
+  constructor(
+    status: number,
+    {
+      code,
+      restarted = false,
+      contentType,
+    }: { code?: string; restarted?: boolean; contentType?: string } = {},
+  ) {
     super(`Failed to get session token: ${status}`);
     this.name = "SessionTokenError";
     this.status = status;
     this.code = code;
     this.restarted = restarted;
+    this.contentType = contentType;
   }
 }
 
 /**
- * Whether `error` is the expected "host not allowed" session-token denial (403).
- * These are self-inflicted-by-config, not defects: the caller renders guidance
- * instead of a generic error and skips error reporting.
+ * The Inspector's own host denial (403 `HOST_NOT_ALLOWED`): a config issue the
+ * caller explains instead of reporting. A 403 from anything else is reported.
  */
 export function isSessionTokenHostDenied(error: unknown): boolean {
-  return error instanceof SessionTokenError && error.status === 403;
+  return (
+    error instanceof SessionTokenError &&
+    error.status === 403 &&
+    error.code === "HOST_NOT_ALLOWED"
+  );
+}
+
+/** The Inspector asking for its access link (401 `ACCESS_LINK_REQUIRED`). */
+export function isAccessLinkRequired(
+  error: unknown,
+): error is SessionTokenError {
+  return (
+    error instanceof SessionTokenError &&
+    error.status === 401 &&
+    error.code === "ACCESS_LINK_REQUIRED"
+  );
 }
 
 type AuthFetchSurface = "scenario";
@@ -174,12 +197,13 @@ export async function confirmAccessToken(
     headers: token ? { "X-MCP-Session-Auth": `Bearer ${token}` } : {},
     cache: "no-store",
   });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new SessionTokenError(response.status, body.code, !!token);
-  }
-  if (!isAccessToken(token) || (await response.json()).ok !== true) {
-    throw new Error("Invalid Inspector access response");
+  const answer = await readAccessAnswer(response);
+  if (!response.ok || !answer.ok || !isAccessToken(token)) {
+    throw new SessionTokenError(response.status, {
+      code: answer.code,
+      restarted: !!token,
+      contentType: answer.contentType,
+    });
   }
   cachedToken = token;
   rememberAccessToken(token);
@@ -203,10 +227,7 @@ export async function refreshSessionToken(): Promise<string | null> {
   try {
     return await confirmAccessToken(readAccessToken(true));
   } catch (error) {
-    if (
-      error instanceof SessionTokenError &&
-      error.code === "ACCESS_LINK_REQUIRED"
-    ) {
+    if (isAccessLinkRequired(error)) {
       window.dispatchEvent(
         new CustomEvent(ACCESS_REQUIRED_EVENT, {
           detail: { restarted: error.restarted },
@@ -351,6 +372,13 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // symptom is a Browser section that silently never appears rather than an
   // error anyone can see.
   "/api/v1/built-in-tools/",
+  // Signing a project's Claude web or ChatGPT web account in, saving it and
+  // handing it back. The routes verify this bearer themselves; without it
+  // every sign-in answers 401 and no browser opens. The local Inspector's
+  // `/api/web-clients/local-connectors` is not listed: it takes the session
+  // token.
+  "/api/web-clients/accounts/",
+  "/api/web-clients/reconnect/",
   // The org-settings Capabilities page reading the agent's op registry, so its
   // toggles cannot drift from the tools the server actually offers.
   "/api/v1/agent-ops",
@@ -365,6 +393,13 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // Approving a stdio server's command re-reads its row the same way, with
   // the caller's bearer. Without this entry Allow answers 401.
   "/api/mcp/servers/approve-command",
+  // Apps bridge observations for the server canvas: the route authorizes the
+  // server and checks the rollout with the caller's bearer.
+  "/api/mcp/server-features/observations",
+  // Server canvas Refresh: the route checks the rollout, authorizes the
+  // server and writes the new capture and probe results with the caller's
+  // bearer, so without this entry it answers 401.
+  "/api/mcp/servers/canvas/refresh",
   // Local chat re-calls Convex for host/scenario runtime config and
   // persistence, so resolve its bearer at request time as well.
   "/api/mcp/chat-v2",
@@ -457,10 +492,12 @@ const HOSTED_AUTH_PATH_PATTERNS = [
   // The /conformance page starting, polling, cancelling, resuming and reading
   // a directory-readiness run.
   /^\/api\/v1\/projects\/[^/]+\/readiness-runs(\/[^/]+(\/(cancel|report|resume))?)?$/,
+  /^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/revisions(\/\d+\/diff)?$/,
   /^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/readiness-runs\/(claude|openai)$/,
   // The /readiness page's reviewer sign-in: a submission's attempts, one
-  // attempt, and resuming or cancelling it.
-  /^\/api\/v1\/projects\/[^/]+\/directory-submissions\/[^/]+\/reviewer-attempts(\/[^/]+(\/(resume|cancel))?)?$/,
+  // attempt, resuming or cancelling it, and the handoff link a person
+  // finishes the sign-in with.
+  /^\/api\/v1\/projects\/[^/]+\/directory-submissions\/[^/]+\/reviewer-attempts(\/[^/]+(\/(resume|cancel|handoff))?)?$/,
   // The /readiness page: the flows it copies, and a project's directory
   // submissions with their runs, results, handoff summary, findings (one
   // check's under its id), export, events and snapshots.

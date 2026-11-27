@@ -54,7 +54,8 @@ Per harness (each row is a definition in `runtimes/`; the runner reads everythin
 | claude-code | Eligible (darwin, linux, win32) | `@ai-sdk/harness-claude-code@1.0.162` declares `supportsBuiltinToolApprovals: true` and maps `allow-reads`/`allow-edits` onto real approval callbacks                                                                                      |
 | codex       | Eligible (darwin-arm64, linux-x64), dark until conformance is recorded | Only on MCPJam's app-server adapter (`codex-appserver/`), never `@ai-sdk/harness-codex` (which refuses every mode but `allow-all`). Attended: `allow-reads`/`allow-edits` → Codex `untrusted`, real approval requests. Unattended: `allow-all` only inside Codex's own command sandbox with the explicit D2 policy, and only on targets in `unattendedSandboxTargets` (none yet). |
 | copilot-cli | Eligible (darwin, linux, win32), dark until conformance is recorded | MCPJam's bridge over `@github/copilot-sdk@1.0.11` and the pinned `@github/copilot@1.0.92`. The bridge turns off every built-in tool (`excludedTools: ["builtin:*"]`), so the CLI only calls the host tools and MCP servers a turn hands it, each under Tool Approval. Its model calls go through the local gateway with a session capability, never a key. Conformance: `run-gateway-turn.ts copilot-cli` |
-| cursor      | Not supported            | No AI SDK adapter to pin or audit                                                                                                                                                                                                                 |
+| cursor      | Eligible (darwin, linux, win32), dark until conformance is recorded | Cursor's own package (the pinned build) from the pack, and the AI SDK's ACP bridge as hosted Cursor patches it (`cursor-local-bridge.ts`). Every tool call goes through the bridge's permission request under Tool Approval. It runs on a per-session login the backend exchanges from the organization's Cursor key, held in the CLI's memory, with `NO_OPEN_BROWSER` so a refused login never opens a sign-in page. Conformance: `run-login-lifecycle.ts cursor` (no real turn without a Cursor account) |
+| opencode    | Eligible (darwin, linux, win32), dark until conformance is recorded | The pinned OpenCode build (`opencode-<os>-<arch>@1.18.34`), its SDK and ripgrep from the pack, every platform file checked against `opencode-vendor-checksums.json`, and `@ai-sdk/harness-opencode`'s bridge with the local launch changes (`opencode-local-bridge.ts`): the CLI from the pack on PATH, and the host-tool MCP entrypoint from the layer on the pack's Node. Built-ins ask through the bridge's permission requests under Tool Approval; MCPJam's tools reach it through the bridge's relay, gated by MCPJam. Its model calls go through the local gateway on Anthropic Messages with a session capability, never a key. Conformance: `run-gateway-turn.ts opencode` |
 
 `isolatedBackends` is empty for every harness: no backend has passed escape
 probes yet, so isolated mode cannot be selected. **Isolated never falls back to
@@ -408,8 +409,8 @@ enforced in code, not by convention.
    --evidence`), recorded at the release commit or at one with the same
    conformance inputs digest (`scripts/conformance-inputs-digest.mjs`), and
    attested as `runtime-contract.json`. A pack becomes desired
-   only through the version PR that pins it: `prepare-release.yml` runs
-   `local-harness-pack-pipeline.yml` per harness and writes the pin once this
+   only through the reviewed pin PR that pins it: `local-harness-pack-prebuild.yml`
+   runs `local-harness-pack-pipeline.yml` per harness and writes the pin once this
    layer passed conformance on the pack; the pack being replaced
    stays permitted only if it passed too and its provenance verifies. On the
    machine, selection is per build with no shared pointer (`runtime-selection.ts`),

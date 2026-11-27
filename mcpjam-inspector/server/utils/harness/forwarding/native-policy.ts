@@ -53,6 +53,28 @@ export function stampNativeForwardingPolicy(
   };
 }
 
+/** Record that the paused agent's servers carry the lane's session envelopes,
+ *  which a later turn's grant keeps valid. A state without a data record stays
+ *  unmarked, so its continuation keeps refusing. */
+export function stampSessionEnvelopes<T>(state: T): T {
+  const parsed = z
+    .object({ data: z.record(z.string(), z.unknown()) })
+    .passthrough()
+    .safeParse(state);
+  if (!parsed.success) return state;
+  return {
+    ...parsed.data,
+    data: { ...parsed.data.data, mcpjamSessionEnvelopes: true },
+  } as T;
+}
+
+/** Whether a paused agent started on its lane's session envelopes. */
+export function startedOnSessionEnvelopes(state: unknown): boolean {
+  return z
+    .object({ data: z.object({ mcpjamSessionEnvelopes: z.literal(true) }) })
+    .safeParse(state).success;
+}
+
 /** Check the host-owned snapshot before the adapter can attach to a paused agent. */
 export function assertPendingPolicy(state: unknown, digest: string): void {
   const stamp = z.object({ data: z.object({ mcpjamForwardingPolicy: z.literal(digest) }) });

@@ -7,8 +7,7 @@ import { registerEvalSuite } from "@/lib/mcpjam-agent/eval-workspace";
 import { EvalAgentWorkspace } from "./evaluate/eval-agent-workspace";
 import type { GenerationOptions } from "@/lib/apis/evals-api";
 /**
- * Public Evaluate experience. Reuses the shared eval data and mutation layer;
- * legacy Evaluate remains available separately behind evaluate-enabled.
+ * Public Evaluate experience. Reuses the shared eval data and mutation layer.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -53,6 +52,7 @@ import { useEvaluateRouteFromUrl } from "@/lib/eval-route-url";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
+import { useTestCaseStepsEditorEnabled } from "@/hooks/use-test-case-steps-editor-enabled";
 import {
   environmentTargetLabel,
   formatRunId,
@@ -79,6 +79,7 @@ import { createSuiteFromPayload } from "./evals/create-suite-from-payload";
 import { useEnvironmentCapabilities } from "@/hooks/use-environment-capabilities";
 import { ConnectedSuitesOverview as SuitesOverview } from "./evaluate/suites-overview";
 import { SuiteListRunReview } from "./evaluate/suite-list-run-review";
+import { useRunSuiteOnArrival } from "./evals/use-run-suite-on-arrival";
 import { ProjectRunsTable } from "./evals/project-runs-table";
 import { stripTimestampSuffix } from "./evals/suite-overview-presentation";
 import { draftTestCaseId, isDraftTestCaseId } from "./evals/draft-test-case";
@@ -107,6 +108,12 @@ import {
   isCiOwnedSuite,
 } from "@/lib/evals/is-ci-owned-suite";
 import { agentRunIterations } from "./evaluate/suite-run-iterations";
+import { EvaluateTour } from "./evaluate/tour/evaluate-tour";
+import { useEvaluateTour } from "./evaluate/tour/use-evaluate-tour";
+import {
+  markSuiteCreatedFromTour,
+  projectHasNoRuns,
+} from "./evaluate/tour/tour-attribution";
 
 /** Cap the agent snapshot's suite list — state overview, not a data dump. */
 const AGENT_SNAPSHOT_MAX_SUITES = 30;
@@ -415,7 +422,7 @@ function EvaluateTabContent({
       return;
     }
     // Missing from the overview is not yet proof the suite is gone — not
-    // until the suite's OWN query has answered. "Promote to test case" into a
+    // until the suite's OWN query has answered. "Save as test case" into a
     // NEW suite creates it in an action, whose result can reach this client
     // before the overview subscription's update does; and the promote dialog
     // holds that same subscription (same args), so this page can mount on a
@@ -490,11 +497,18 @@ function EvaluateTabContent({
     [projectServers],
   );
 
+  // Set when the tour's handoff opened the create form, for `after_tour`.
+  const createFromTourRef = useRef(false);
   const handleOpenCreateSuite = useCallback(() => {
+    createFromTourRef.current = false;
     setCreateSuitePrefillName(null);
     setCreateSuitePrefillServerId(null);
     navigatePlaygroundEvalsRoute({ type: "create" });
   }, []);
+  const handleTourComplete = useCallback(() => {
+    handleOpenCreateSuite();
+    createFromTourRef.current = true;
+  }, [handleOpenCreateSuite]);
 
   const handleEvalServer = useCallback(
     (server: { id: string; name: string }) => {
@@ -561,6 +575,7 @@ function EvaluateTabContent({
   const showQuickstart = Boolean(handleConnect);
 
   const handleCancelCreateSuite = useCallback(() => {
+    createFromTourRef.current = false;
     setCreateSuitePrefillName(null);
     setCreateSuitePrefillServerId(null);
     navigatePlaygroundEvalsRoute({ type: "list" }, { replace: true });
@@ -582,6 +597,13 @@ function EvaluateTabContent({
             environmentCapabilities?.createSuiteWithEnvironments === true,
         });
 
+        track("eval_suite_created", {
+          location: "evaluate_tab",
+          after_tour: createFromTourRef.current,
+        });
+        if (createFromTourRef.current)
+          markSuiteCreatedFromTour(createdSuite._id);
+        createFromTourRef.current = false;
         toast.success("Suite created");
         navigatePlaygroundEvalsRoute({
           type: "suite-overview",
@@ -602,10 +624,24 @@ function EvaluateTabContent({
 
   const [suiteAction, setSuiteAction] = useState<"run" | "case" | null>(null);
   // A case and a run both start from a suite. With none there is nothing to
-  // pick, so Add case and Setup Run go straight to creating one instead of
+  // pick, so Add case and Set up run go straight to creating one instead of
   // opening the picker on an empty list. A tap while suites load waits.
   const hasNoSuites =
     !overviewQueries.isOverviewLoading && visibleSuites.length === 0;
+  const hasNoRuns = projectHasNoRuns(
+    overviewQueries.isOverviewLoading,
+    visibleSuites,
+  );
+  // Auto-opens once on an empty landing, and only past the sign-in and
+  // project gates, where the overlay can actually render.
+  const evaluateTour = useEvaluateTour({
+    autoOpenEligible:
+      !isLoading &&
+      (isDirectGuest || (isAuthenticated && Boolean(projectId))) &&
+      route.type === "list" &&
+      hasNoSuites,
+    onComplete: handleTourComplete,
+  });
   useEffect(() => {
     // The picker lives on the list. Leaving it (Back while suites load)
     // drops the pending action, or Create suite would open over another
@@ -622,6 +658,10 @@ function EvaluateTabContent({
   useEffect(() => {
     if (route.type === "run-detail") setRunReviewSuiteId(null);
   }, [route.type]);
+  useRunSuiteOnArrival(
+    route.type === "list" && visibleSuites.length > 0,
+    setRunReviewSuiteId,
+  );
   const handleSelectSuite = useCallback((suiteId: string) => {
     navigatePlaygroundEvalsRoute({ type: "suite-overview", suiteId });
   }, []);
@@ -1298,6 +1338,10 @@ function EvaluateTabContent({
       : null;
   const runBreadcrumbLabel =
     runBreadcrumbNumber != null ? `Run #${runBreadcrumbNumber}` : "Run";
+  // Behind the steps editor's flag, a case's suite crumb lands on its list.
+  const caseCrumbOpensTestCases =
+    useTestCaseStepsEditorEnabled() === true &&
+    (route.type === "test-edit" || route.type === "test-detail");
   const isNestedDetail =
     route.type === "test-edit" ||
     route.type === "test-detail" ||
@@ -1618,6 +1662,7 @@ function EvaluateTabContent({
           suiteDetailOverview
           evaluateDecisionSummary={decisionSummaryEnabled}
           evaluateCaseEditor
+          evaluateSettingsDelete
           onGeneratingChange={setGeneratingCases}
           onResultCrumbsChange={setResultCrumbs}
           evalRunsDisabledReason={evalRunsDisabledReason}
@@ -1667,6 +1712,7 @@ function EvaluateTabContent({
       user={user}
       projectId={projectId}
       isDirectGuest={isDirectGuest}
+      overlay={<EvaluateTour tour={evaluateTour} />}
       header={
         route.type === "create" ? undefined : (
           <EvalsHeader
@@ -1711,6 +1757,11 @@ function EvaluateTabContent({
             landingView={landingView}
             onLandingViewChange={setLandingView}
             onEvaluateClick={handleNavigateToEvalList}
+            onStartTour={
+              route.type === "list" && hasNoRuns
+                ? () => evaluateTour.open("replay")
+                : undefined
+            }
             isDetail={Boolean(hasDetailRoute) || route.type === "eval-server"}
             parentCrumb={
               route.type === "test-edit" && route.fromEvalServer
@@ -1728,7 +1779,14 @@ function EvaluateTabContent({
                     ? {
                         label: suiteBreadcrumbLabel,
                         onClick: () =>
-                          playgroundNavigation.toSuiteOverview(selectedSuiteId),
+                          caseCrumbOpensTestCases
+                            ? playgroundNavigation.toSuiteOverview(
+                                selectedSuiteId,
+                                "test-cases",
+                              )
+                            : playgroundNavigation.toSuiteOverview(
+                                selectedSuiteId,
+                              ),
                       }
                     : undefined
             }
@@ -1783,7 +1841,7 @@ function EvaluateTabContent({
           >
             <SheetHeader>
               <SheetTitle>
-                {suiteAction === "run" ? "Setup Run" : "Add case"}
+                {suiteAction === "run" ? "Set up run" : "Add case"}
               </SheetTitle>
               <SheetDescription>
                 {suiteAction === "run"
@@ -1851,6 +1909,7 @@ function EvaluateTabContent({
 
         <ConfirmationDialogs
           suiteToDelete={handlers.suiteToDelete}
+          suiteToDeleteHasUnsavedEdits={handlers.suiteToDeleteHasUnsavedEdits}
           setSuiteToDelete={handlers.setSuiteToDelete}
           deletingSuiteId={handlers.deletingSuiteId}
           onConfirmDeleteSuite={handlers.confirmDelete}

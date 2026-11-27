@@ -9,10 +9,12 @@
  *   them for the new address, so the server's configuration opens.
  * - `exportDenied`: the organization's credential export policy keeps saved
  *   credentials inside MCPJam-hosted connections, and this connect would have
- *   delivered them to this machine. Only an organization admin can change it.
+ *   delivered them to this machine. Only an organization admin can change it,
+ *   with Allow credential export under Organization settings > Security.
  *   With `policy: "hostedOnlyAccount"` the refusal is the account's own rule
- *   (an API-uploaded or project account), which no admin can change, so the
- *   backend's sentence is kept.
+ *   (an API-uploaded or project account), and the backend's sentence is kept.
+ *   Its `cause` says which part refused: `not_acknowledged` is the one a
+ *   project admin fixes, by allowing local runs for the shared server.
  *
  * The decision is always the backend's. This module only recognises the
  * refusal on a connect result and turns it into something a person can act on.
@@ -23,6 +25,7 @@ import {
   isNormalizedError,
   type NormalizedError,
 } from "@mcpjam/sdk/browser";
+import { CREDENTIAL_EXPORT_SETTING_HINT } from "@/shared/credential-export-setting";
 
 export type CredentialRefusal =
   | {
@@ -31,7 +34,7 @@ export type CredentialRefusal =
       targetOrigin: string | null;
     }
   | { kind: "export_denied" }
-  | { kind: "hosted_only" };
+  | { kind: "hosted_only"; cause?: string };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object"
@@ -56,7 +59,7 @@ export function readCredentialRefusal(
         ? {
             exportDenied: true,
             ...(nested.kind === "hosted_only"
-              ? { policy: "hostedOnlyAccount" }
+              ? { policy: "hostedOnlyAccount", cause: nested.cause }
               : {}),
           }
         : {
@@ -76,9 +79,10 @@ export function readCredentialRefusal(
     };
   }
   if (record.exportDenied === true) {
+    if (record.policy !== "hostedOnlyAccount") return { kind: "export_denied" };
     return {
-      kind:
-        record.policy === "hostedOnlyAccount" ? "hosted_only" : "export_denied",
+      kind: "hosted_only",
+      ...(typeof record.cause === "string" ? { cause: record.cause } : {}),
     };
   }
   return null;
@@ -92,21 +96,29 @@ export function credentialRefusalMessage(
   if (refusal.kind === "export_denied") {
     return (
       `${server} uses saved credentials that your organization keeps inside ` +
-      "MCPJam-hosted connections. Connect it from MCPJam in the browser, or " +
-      "ask an organization admin to change the credential export policy."
+      "MCPJam-hosted connections. Connect it from MCPJam in the browser. " +
+      CREDENTIAL_EXPORT_SETTING_HINT
     );
   }
   if (refusal.kind === "hosted_only") {
-    return (
-      `${server} signs in with an account for hosted runs only, so its token ` +
-      "is not sent here. Use it in hosted runs, or connect a separate " +
-      "account for local use."
-    );
+    if (refusal.cause === "not_acknowledged") {
+      return (
+        `${server} uses the project's shared sign-in, and local runs aren't ` +
+        "allowed for it yet. Ask a project admin to turn on Allow local " +
+        "runs in its sharing settings."
+      );
+    }
+    if (refusal.cause === "client_upgrade_required") {
+      return `${server} signs in with a shared or uploaded account. Update MCPJam to use it locally.`;
+    }
+    return `${server} signs in with a shared or uploaded account this app can't use. Run it from MCPJam instead.`;
   }
   const moved =
     refusal.boundOrigin && refusal.targetOrigin
       ? ` Its saved credentials were entered for ${refusal.boundOrigin}, and it now points at ${refusal.targetOrigin}.`
-      : " Its address changed after its credentials were saved.";
+      : refusal.targetOrigin
+        ? ` It now points at ${refusal.targetOrigin}.`
+        : " Its address changed after its credentials were saved.";
   return `${server} was not connected.${moved} Re-enter the credentials for the new address to connect.`;
 }
 
@@ -154,7 +166,11 @@ function credentialRefusalNormalized(
       refusal.kind === "export_denied"
         ? "Blocked by organization policy"
         : refusal.kind === "hosted_only"
-          ? "Account for hosted runs only"
+          ? refusal.cause === "not_acknowledged"
+            ? "Local runs not allowed yet"
+            : refusal.cause === "client_upgrade_required"
+              ? "Update MCPJam to use this account"
+              : "Account can't run locally"
           : "Saved credentials not sent",
     oneLine: message,
     likelyCauses: [],
@@ -177,8 +193,8 @@ export function withCredentialRefusal<T>(result: T, serverName?: string): T {
   if (serverName && refusal.kind === "origin_mismatch") {
     requestCredentialReentry(serverName, refusal);
   }
-  // A hosted-only refusal already carries the backend's sentence for a rule
-  // no admin can change; the other two are rewritten into the fix.
+  // A hosted-only refusal already carries the backend's sentence, which names
+  // the fix; the other two are rewritten into the fix.
   const message =
     refusal.kind === "hosted_only" &&
     typeof record.error === "string" &&
@@ -195,4 +211,13 @@ export function withCredentialRefusal<T>(result: T, serverName?: string): T {
     ),
     credentialRefusal: refusal,
   } as T;
+}
+
+/** Only messages tagged by credential handling may replace a run setup error. */
+export function credentialFailureMessage(source: unknown): string | undefined {
+  const record = asRecord(source);
+  if (!record || typeof record.error !== "string") return undefined;
+  return readCredentialRefusal(record) || record.uploadedAccount === true ||
+    record.credentialRefusal === "insecure_transport"
+    ? record.error : undefined;
 }

@@ -34,6 +34,14 @@ const INSPECTOR = { owner: "MCPJam", repo: "inspector" };
 const RELEASE_WORKFLOW = "release.yml";
 
 /**
+ * Release's first step calls test.yml as `tests`, which reports about ten
+ * jobs ("tests / Run Tests", "tests / Inspector Tests 3/6", …). They render
+ * as this one row so the stepper reads as the release's steps, not CI shards.
+ */
+const TESTS_ROW = "Full test suite";
+const TESTS_PREFIX = "tests / ";
+
+/**
  * release.yml's job order. Kept in sync manually with the workflow file.
  *
  * These MUST be the names the jobs API reports, not the keys in release.yml.
@@ -42,12 +50,16 @@ const RELEASE_WORKFLOW = "release.yml";
  * anything and renders a permanently-pending phantom row while the real job
  * lands in the unknown-append list below.
  *
- * Order reflects the pipeline after the parallelization work: the backend
- * promote and the npm package build both run alongside the desktop builds
- * rather than behind them, and finalize no longer waits on the webapp deploy.
+ * Order follows release.yml: the tests, preflight and every build start
+ * together; `verified` passes once the tests and preflight have, and only
+ * then do the backend deploy, npm publish and webapp deploy start.
  */
 const JOB_ORDER = [
+  TESTS_ROW,
+  "build-and-test / Build and Test",
   "preflight",
+  "harness-consistency",
+  "verified",
   "build-mac / build-mac",
   "build-windows / make-windows",
   "build-packages",
@@ -56,7 +68,8 @@ const JOB_ORDER = [
   "deploy-webapp / deploy",
   "deploy-webapp / smoke / smoke",
   "deploy-slack-app / Deploy to Railway",
-  "finalize"
+  "finalize",
+  "shipped"
 ];
 
 export function ReleaseProgressSkeleton() {
@@ -235,10 +248,18 @@ function CompletedRunTile({ run }: { run: WorkflowRun }) {
   );
 }
 
-function JobStepper({ jobs }: { jobs: WorkflowJob[] }) {
+function JobStepper({ jobs: allJobs }: { jobs: WorkflowJob[] }) {
   // Order jobs by release.yml's declared order. Jobs we don't recognize (new
   // reusable workflows added later) are appended after the known ones rather
   // than dropped — so a stale JOB_ORDER never hides progress.
+  const testsRow = combineJobs(
+    TESTS_ROW,
+    allJobs.filter((j) => j.name.startsWith(TESTS_PREFIX))
+  );
+  const jobs = [
+    ...(testsRow ? [testsRow] : []),
+    ...allJobs.filter((j) => !j.name.startsWith(TESTS_PREFIX))
+  ];
   const byName = new Map(jobs.map((j) => [j.name, j]));
   const known = JOB_ORDER.map((n) => ({ name: n, job: byName.get(n) ?? null }));
   const unknown = jobs.filter((j) => !JOB_ORDER.includes(j.name));
@@ -261,6 +282,37 @@ function JobStepper({ jobs }: { jobs: WorkflowJob[] }) {
       </ol>
     </div>
   );
+}
+
+/**
+ * One row standing for several jobs: still running until every job finishes,
+ * failed if any failed, and linked to the first failing job so its failing
+ * step shows. Null when there are no jobs, so the row renders as pending.
+ */
+function combineJobs(name: string, group: WorkflowJob[]): WorkflowJob | null {
+  if (group.length === 0) return null;
+  const failed = group.find((j) => jobTone(j) === "failure");
+  const running = group.find((j) => j.status !== "completed");
+  const starts = group.flatMap((j) => (j.startedAt ? [j.startedAt] : [])).sort();
+  const ends = group.flatMap((j) => (j.completedAt ? [j.completedAt] : [])).sort();
+  const lead = failed ?? running ?? group[0];
+  const allSkipped = group.every((j) => j.conclusion === "skipped");
+  return {
+    ...lead,
+    name,
+    status: failed || !running ? "completed" : running.status,
+    conclusion: failed
+      ? failed.conclusion
+      : running
+        ? null
+        : allSkipped
+          ? "skipped"
+          : group.some((j) => j.conclusion === "cancelled")
+            ? "cancelled"
+            : "success",
+    startedAt: starts[0] ?? null,
+    completedAt: running && !failed ? null : (ends[ends.length - 1] ?? null)
+  };
 }
 
 function JobRow({ name, job }: { name: string; job: WorkflowJob | null }) {

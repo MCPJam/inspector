@@ -42,6 +42,7 @@ import {
   collectStepSpanIdsWithChildren,
   type TraceRevealSelection,
 } from "./trace-timeline";
+import { traceTurnEventsByPromptIndex } from "./trace-turn-event";
 import {
   RecordedTraceToolbar,
   type TimelineFilter,
@@ -60,6 +61,8 @@ import { buildAppToolInvocationsFromBrowserSteps } from "./widget-tool-calls-to-
 import type { TestStep } from "@/shared/steps";
 import type { EvalStepStatus } from "@/shared/eval-stream-events";
 import { ToolCallsDiffView } from "./tool-calls-diff-view";
+import { RefusedToolCalls } from "./refused-tool-calls";
+import { extractRefusedToolCalls } from "@/shared/eval-tool-call-projection";
 import { TraceToolCallAccounts } from "./run-accounts-context";
 import {
   TraceRawView,
@@ -67,6 +70,7 @@ import {
 } from "./trace-raw-view";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 import type { TraceDetailPlacement } from "./use-trace-detail-direction";
+import type { IterationCostContext } from "./trace-cost/iteration-model-calls";
 import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
 import type {
   HostConfigDtoV2,
@@ -185,6 +189,8 @@ interface TraceViewerProps {
   fillContent?: boolean;
   /** Where the trace timeline puts its span detail; see `TraceTimeline`. */
   traceDetailPlacement?: TraceDetailPlacement;
+  /** An eval iteration's cost context for the timeline's cost summary. */
+  iterationCost?: IterationCostContext;
   /** Hide transcript reveal controls when the parent shell owns chat mode separately. */
   hideTranscriptRevealControls?: boolean;
   /**
@@ -441,6 +447,7 @@ export function TraceViewer({
   hostSnapshot,
   mcpToolResultImageRendering,
   traceDetailPlacement = "below",
+  iterationCost,
 }: TraceViewerProps) {
   const persistedRequestPayloads = useMemo(
     () => readTraceRequestPayloads(trace),
@@ -496,8 +503,17 @@ export function TraceViewer({
       ),
     [actualToolCalls, trace]
   );
+  // Listed beside the comparison, never in it: these never ran.
+  const refusedToolCalls = useMemo(
+    () => extractRefusedToolCalls(getTraceMessages(trace)),
+    [trace]
+  );
   const turnRuntimeByPromptIndex = useMemo(
     () => getTraceTurnRuntimeByPromptIndex(trace),
+    [trace]
+  );
+  const turnEventByPromptIndex = useMemo(
+    () => traceTurnEventsByPromptIndex(trace),
     [trace]
   );
   // PR 7: browser-rendered MCP App eval artifacts (render observations +
@@ -1089,8 +1105,10 @@ export function TraceViewer({
                   hasRecordedSpans ? timelineViewportMaxMs : undefined
                 }
                 turnRuntimeByPromptIndex={turnRuntimeByPromptIndex}
+                turnEventByPromptIndex={turnEventByPromptIndex}
                 fillContent={fillContent}
                 detailPlacement={traceDetailPlacement}
+                iterationCost={iterationCost}
               />
             </div>
           </Suspense>
@@ -1204,6 +1222,7 @@ export function TraceViewer({
                 actual={gradedActualToolCalls}
                 isLoading={isLoading}
                 headerTrailing={toolsCompareLayoutToggle}
+                refused={refusedToolCalls}
               />
             ) : (
               <>
@@ -1268,6 +1287,10 @@ export function TraceViewer({
                     )}
                   </div>
                 </div>
+                <RefusedToolCalls
+                  calls={refusedToolCalls}
+                  className="max-h-[40%] shrink-0 overflow-auto"
+                />
               </>
             )}
           </div>

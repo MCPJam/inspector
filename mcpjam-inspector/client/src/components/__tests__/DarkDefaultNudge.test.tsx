@@ -51,6 +51,24 @@ describe("dark default", () => {
 });
 
 describe("DarkDefaultNudge", () => {
+  it("defers without marking seen until announcements are enabled", () => {
+    const { rerender } = render(<DarkDefaultNudge enabled={false} />);
+    expect(mocks.custom).not.toHaveBeenCalled();
+    expect(localStorage.getItem(DARK_DEFAULT_NUDGE_KEY)).toBeNull();
+
+    rerender(<DarkDefaultNudge enabled />);
+    expect(mocks.custom).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem(DARK_DEFAULT_NUDGE_KEY)).toBe("1");
+  });
+
+  it("dismisses an existing toast when announcements become disabled", () => {
+    const { rerender } = render(<DarkDefaultNudge />);
+    expect(mocks.custom).toHaveBeenCalledTimes(1);
+
+    rerender(<DarkDefaultNudge enabled={false} />);
+    expect(mocks.dismiss).toHaveBeenCalledWith("dark-default-nudge");
+  });
+
   it("shows once to someone who never picked a theme", () => {
     const { unmount } = render(<DarkDefaultNudge />);
     expect(mocks.custom).toHaveBeenCalledTimes(1);
@@ -86,6 +104,21 @@ describe("DarkDefaultNudge", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open Settings" }));
     expect(mocks.navigate).toHaveBeenCalledWith("/settings/appearance");
     expect(mocks.dismiss).toHaveBeenCalledWith("toast-1");
+  });
+
+  it("stays quiet when the seen marker cannot be saved", () => {
+    // The test setup resets this override after each test.
+    vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
+      throw new Error("quota exceeded");
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      render(<DarkDefaultNudge />);
+      expect(mocks.custom).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("stays quiet for someone who already picked a theme", () => {
