@@ -88,6 +88,20 @@ describe("launchJourneyRun and the shutdown drain", () => {
     expect(startRunMock).not.toHaveBeenCalled();
   });
 
+  it("lets a launch its caller already admitted through a drain that began since", async () => {
+    // A swarm launch was admitted once, as a launch, and holds the drain for
+    // its own goals; refusing them here would refuse work the drain waits for.
+    drain.current?.begin();
+    startRunMock.mockResolvedValue(undefined);
+
+    await expect(
+      launchJourneyRun({ ...DEPS, admitted: true }, INPUT),
+    ).resolves.toMatchObject({ runId: "run_1" });
+    expect(createRunMock).toHaveBeenCalledTimes(1);
+    // Its runner starts after the launch returns; let it, inside this test.
+    await vi.waitFor(() => expect(startRunMock).toHaveBeenCalledTimes(1));
+  });
+
   it("holds the drain from acceptance until the runner settles", async () => {
     let finish!: () => void;
     startRunMock.mockReturnValue(new Promise<void>((r) => (finish = r)));

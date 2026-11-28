@@ -1,6 +1,7 @@
-import { ensureLocalHarnessTarget } from "../../utils/harness/local/readiness.js";
-import { resolveLocalHarnessActor } from "../../utils/harness/local/acting-user.js";
-import { eligibleUnattendedLocalHarnesses } from "../../utils/harness/local/run-resources.js";
+import {
+  localHarnessForLaunch,
+  type LaunchLocalHarness,
+} from "./launch-local-harness.js";
 /**
  * Launching a journey run, with no HTTP in it.
  *
@@ -116,6 +117,17 @@ export interface LaunchJourneyRunDeps {
   xaaIssuer: string;
   /** Threaded into every authorize batch the run's sessions drive. */
   callerContext: ManagerCallerContext;
+  /**
+   * Local-harness inputs resolved while a request was live, for a launch that
+   * creates runs after its reply: resolving them verifies a session token,
+   * which a background bearer is not.
+   */
+  localHarness?: LaunchLocalHarness;
+  /**
+   * The caller admitted this launch and holds the drain for it (a swarm
+   * launch's own goals), so a drain that began since must not refuse it.
+   */
+  admitted?: boolean;
 }
 
 export interface LaunchJourneyRunInput {
@@ -302,7 +314,7 @@ function launchFailureDetails(
   }
 }
 
-function requireConvexHttpUrl(): string {
+export function requireConvexHttpUrl(): string {
   const url = process.env.CONVEX_HTTP_URL;
   if (!url) {
     throw new WebRouteError(
@@ -329,7 +341,7 @@ export async function launchJourneyRun(
   // Before the run is created: a draining server could not finish it. Once
   // admitted, the launch holds the drain through every setup step, so a
   // shutdown that begins while the run is being created still waits for it.
-  assertAdmitting();
+  if (!deps.admitted) assertAdmitting();
   return serverDrain.track("swarm_run", createAndStartJourneyRun(deps, input));
 }
 
@@ -362,18 +374,14 @@ async function createAndStartJourneyRun(
     ));
     waveHarnesses = hosts.map(host => host?.config?.harness);
   }
-  // Per harness, unattended (a swarm runs with nobody to approve anything):
-  // machine, sandbox evidence, rollout and authorization. Declared to the
-  // backend below so it stamps exactly these targets local — and the runner
-  // executes exactly these locally.
-  const localHarnessIds = await eligibleUnattendedLocalHarnesses(deps.bearerToken, input.projectId, waveHarnesses);
+  const { localHarnessIds, actor: localHarnessActor } =
+    await localHarnessForLaunch({
+      bearer: deps.bearerToken,
+      projectId: input.projectId,
+      harnesses: waveHarnesses,
+      preResolved: deps.localHarness,
+    });
   const localEnabled = localHarnessIds.length > 0;
-  for (const harnessId of localHarnessIds) {
-    await ensureLocalHarnessTarget({ bearer: deps.bearerToken, projectId: input.projectId, scope: "attended", waitForInstall: false, harnessId });
-  }
-  const localActorResult = localEnabled
-    ? await resolveLocalHarnessActor({ authorizationHeader: `Bearer ${deps.bearerToken.replace(/^Bearer\s+/i, "")}`, contextCredential: null })
-    : undefined;
 
   // Create the run over the journey's full pinned host set (no maxHosts
   // cap). A backend rejection (a hard host-count ceiling, a journey with no
@@ -526,7 +534,6 @@ async function createAndStartJourneyRun(
     );
   }
   const hosts = snapshot.hosts;
-  const localHarnessActor = localActorResult?.ok ? localActorResult.actor : undefined;
 
   // The run's clocks, frozen by the backend at launch and captured here once:
   // claims and heartbeats never carry them, so no later edit reaches a running
