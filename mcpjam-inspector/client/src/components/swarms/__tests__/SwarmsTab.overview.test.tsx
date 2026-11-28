@@ -328,11 +328,13 @@ vi.mock("convex/react", () => ({
 }));
 
 const launchJourneyRunMock = vi.fn();
+const launchSwarmRunMock = vi.fn();
 vi.mock("@/lib/swarm-api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/swarm-api")>();
   return {
     ...actual,
     launchJourneyRun: (...args: unknown[]) => launchJourneyRunMock(...args),
+    launchSwarmRun: (...args: unknown[]) => launchSwarmRunMock(...args),
     streamJourneyRun: vi.fn(async () => undefined),
   };
 });
@@ -359,6 +361,11 @@ vi.mock("@/lib/toast", () => ({
 
 import { SwarmsTab } from "../SwarmsTab";
 import { toast } from "@/lib/toast";
+import {
+  LaunchJourneyRunError,
+  LaunchSwarmRunError,
+  type LaunchRecordView,
+} from "@/lib/swarm-api";
 import { activeViewLabel } from "./swarms-tab-test-helpers";
 
 function withGroup(
@@ -389,6 +396,7 @@ beforeEach(() => {
   waveSignalsData = undefined;
   usageBreakdown = undefined;
   launchJourneyRunMock.mockReset();
+  launchSwarmRunMock.mockReset();
   mutationCalls.length = 0;
   mutationResult = () => ({});
   window.history.replaceState({}, "", "/swarms");
@@ -396,6 +404,167 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.clearAllMocks();
+});
+
+/** A launch record as the server answers Run again with it. */
+function launchRecord(
+  state: LaunchRecordView["state"] = "launching",
+  goals: LaunchRecordView["goals"] = [
+    { goalId: "journey-2", launchKey: "k-2", status: "started", runId: "r-2" },
+    { goalId: "journey-1", launchKey: "k-1", status: "pending" },
+  ],
+): LaunchRecordView {
+  return {
+    swarmRunId: "sr_next",
+    swarmId: null,
+    sourceSwarmRunId: "sr_wave",
+    state,
+    createdAt: NOW,
+    goals,
+  };
+}
+
+/** run-2 and run-2b as one swarm run, `sr_wave`, as runs launched since carry. */
+function groupedOverview(): SwarmOverview {
+  return {
+    ...overview,
+    runs: overview.runs.map((run) =>
+      run.runId === "run-2" || run.runId === "run-2b"
+        ? withGroup(run, "sr_wave")
+        : run,
+    ),
+  };
+}
+
+/** Clicks Run again and waits for the button to come back from busy. */
+async function runAgain() {
+  fireEvent.click(await screen.findByTestId("swarm-run-detail-run-again"));
+  await waitFor(() =>
+    expect(
+      screen.getByTestId("swarm-run-detail-run-again").hasAttribute("disabled"),
+    ).toBe(false),
+  );
+}
+
+const lastToast = (kind: "success" | "error") =>
+  (toast[kind] as unknown as { mock: { calls: unknown[][] } }).mock.calls.at(
+    -1,
+  );
+
+const keyOfCall = (index: number) =>
+  (launchSwarmRunMock.mock.calls[index]?.[0] as { idempotencyKey: string })
+    .idempotencyKey;
+
+describe("Run again — one launch on the server", () => {
+  it("launches the whole swarm run with one call, and offers the new run", async () => {
+    overviewData = groupedOverview();
+    launchSwarmRunMock.mockResolvedValue({
+      swarmRunId: "sr_next",
+      launch: launchRecord(),
+    });
+    renderTab("sr_wave");
+    await runAgain();
+
+    expect(launchSwarmRunMock).toHaveBeenCalledTimes(1);
+    expect(launchSwarmRunMock).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      swarmRun: "sr_wave",
+      idempotencyKey: expect.any(String),
+    });
+    expect(launchJourneyRunMock).not.toHaveBeenCalled();
+    const [message, options] = lastToast("success") ?? [];
+    // "Started 15 goals" reported a count and stranded the viewer on the run
+    // they had relaunched FROM.
+    expect(message).toBe("New swarm run started — 2 goals");
+    const action = (options as { action?: { label: string; onClick: () => void } })
+      ?.action;
+    expect(action?.label).toBe("View run");
+    action?.onClick();
+    expect(window.location.pathname).toBe("/swarms/sr_next");
+  });
+
+  it("sends the goals of a swarm run from before swarm run ids, which has none to name", async () => {
+    launchSwarmRunMock.mockResolvedValue({
+      swarmRunId: "sr_next",
+      launch: launchRecord(),
+    });
+    renderTab("run-2b");
+    await runAgain();
+
+    expect(launchSwarmRunMock).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      goals: [{ goalId: "journey-2" }, { goalId: "journey-1" }],
+      idempotencyKey: expect.any(String),
+    });
+  });
+
+  it("keeps the key after a failure, so the retry replays the launch, and drops it once it lands", async () => {
+    overviewData = groupedOverview();
+    launchSwarmRunMock
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValue({ swarmRunId: "sr_next", launch: launchRecord() });
+    renderTab("sr_wave");
+
+    await runAgain();
+    expect(lastToast("error")?.[0]).toBe("network down");
+    await runAgain();
+    await runAgain();
+
+    expect(keyOfCall(1)).toBe(keyOfCall(0));
+    expect(keyOfCall(2)).not.toBe(keyOfCall(1));
+  });
+
+  it("starts afresh after a launch that ended with nothing started", async () => {
+    overviewData = groupedOverview();
+    launchSwarmRunMock
+      .mockRejectedValueOnce(
+        new LaunchSwarmRunError(
+          new LaunchJourneyRunError(400, "This journey has no pinned hosts to run"),
+          launchRecord("failed"),
+        ),
+      )
+      .mockResolvedValue({ swarmRunId: "sr_next", launch: launchRecord() });
+    renderTab("sr_wave");
+
+    await runAgain();
+    expect(lastToast("error")?.[0]).toBe(
+      "This journey has no pinned hosts to run",
+    );
+    await runAgain();
+    expect(keyOfCall(1)).not.toBe(keyOfCall(0));
+  });
+
+  it("leaves a limit refusal to its dialog, with no toast of its own", async () => {
+    overviewData = groupedOverview();
+    launchSwarmRunMock.mockRejectedValue(
+      new LaunchJourneyRunError(429, "Daily MCPJam model limit reached.", true),
+    );
+    renderTab("sr_wave");
+    await runAgain();
+
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("says why when the launch it replayed had started nothing", async () => {
+    overviewData = groupedOverview();
+    launchSwarmRunMock.mockResolvedValue({
+      swarmRunId: "sr_next",
+      launch: launchRecord("failed", [
+        {
+          goalId: "journey-2",
+          launchKey: "k-2",
+          status: "failed",
+          error: { status: 404, message: "This goal was not found." },
+        },
+      ]),
+    });
+    renderTab("sr_wave");
+    await runAgain();
+
+    expect(lastToast("error")?.[0]).toBe("This goal was not found.");
+    expect(toast.success).not.toHaveBeenCalled();
+  });
 });
 
 describe("Overview — wire contract", () => {
@@ -1527,61 +1696,6 @@ describe("Swarm run state and navigation", () => {
 
     const state = await screen.findByTestId("swarm-run-detail-state");
     expect(state.getAttribute("data-run-state")).not.toBe("stopped");
-  });
-
-  it("offers no link when the retry lands under the wave it already had", async () => {
-    // A failed launch keeps its wave id cached, so the NEXT attempt reuses it
-    // and ignores the freshly minted one. Offering "View run" into the new id
-    // was a link to "Swarm run not found."
-    // EVERY goal has to fail, or a goal that succeeded would have dropped its
-    // cached key and the retry would mint a fresh wave for it after all.
-    launchJourneyRunMock.mockRejectedValue(new Error("network down"));
-    renderTab("run-2b");
-
-    await screen.findByTestId("swarm-run-detail");
-    fireEvent.click(screen.getByTestId("swarm-run-detail-run-again"));
-    await waitFor(() => expect(toast.error).toHaveBeenCalled());
-
-    launchJourneyRunMock.mockReset();
-    launchJourneyRunMock.mockResolvedValue({
-      status: "launched",
-      runId: "run-new",
-    });
-    fireEvent.click(screen.getByTestId("swarm-run-detail-run-again"));
-    await waitFor(() => expect(toast.success).toHaveBeenCalled());
-
-    const call = (toast.success as unknown as { mock: { calls: unknown[][] } })
-      .mock.calls.at(-1)!;
-    const action = (
-      call[1] as { action?: { label: string } } | undefined
-    )?.action;
-    expect(action).toBeUndefined();
-  });
-
-  it("confirms a new run in the viewer's terms and offers the run itself", async () => {
-    launchJourneyRunMock.mockResolvedValue({ status: "launched" });
-    renderTab("run-2b");
-
-    await screen.findByTestId("swarm-run-detail");
-    fireEvent.click(screen.getByTestId("swarm-run-detail-run-again"));
-
-    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalled());
-    const call = (toast.success as unknown as { mock: { calls: unknown[][] } })
-      .mock.calls.at(-1)!;
-    // "Started 15 goals" reported a count and stranded the viewer on the run
-    // they had relaunched FROM.
-    expect(call[0]).toBe("New swarm run started — 2 goals");
-    const action = (
-      call[1] as { action?: { label: string; onClick: () => void } } | undefined
-    )?.action;
-    expect(action?.label).toBe("View run");
-
-    const groupId = (
-      launchJourneyRunMock.mock.calls[0]![0] as { swarmRunGroupId: string }
-    ).swarmRunGroupId;
-    expect(groupId).toBeTruthy();
-    action!.onClick();
-    expect(window.location.pathname).toBe(`/swarms/${groupId}`);
   });
 
   it("labels live runs in history and only shows the completed count for settled runs", async () => {

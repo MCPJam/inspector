@@ -13,6 +13,8 @@ import {
   fundingChangeOf,
   launchJourneyRun,
   LaunchJourneyRunError,
+  launchSwarmRun,
+  LaunchSwarmRunError,
   generateSwarmPersonaBatch,
   SwarmGenerateError,
 } from "@/lib/swarm-api";
@@ -849,5 +851,80 @@ describe("fetchSwarmFundingPreview", () => {
   it("throws on a failed request so callers can launch as before", async () => {
     authFetchMock.mockResolvedValue(jsonResponse(500, {}));
     await expect(fetchSwarmFundingPreview("p", [])).rejects.toThrow(/500/);
+  });
+});
+
+describe("launchSwarmRun", () => {
+  const launch = {
+    swarmRunId: "sr_next",
+    swarmId: null,
+    sourceSwarmRunId: "sr_wave",
+    state: "launching",
+    createdAt: 1,
+    goals: [{ goalId: "g1", launchKey: "k1", status: "started", runId: "r1" }],
+  };
+
+  it("POSTs the launch to the swarm-runs route and returns the launch it started", async () => {
+    authFetchMock.mockResolvedValue(
+      jsonResponse(202, { swarmRunId: "sr_next", launch }),
+    );
+
+    const reply = await launchSwarmRun({
+      projectId: "proj-1",
+      swarmRun: "sr_wave",
+      idempotencyKey: "key-1",
+    });
+
+    expect(reply).toEqual({ swarmRunId: "sr_next", launch });
+    const [url, init] = authFetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/web/swarm/swarm-runs");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({
+      projectId: "proj-1",
+      swarmRun: "sr_wave",
+      idempotencyKey: "key-1",
+    });
+  });
+
+  it("throws a refusal with its backend code and the launch record it carries", async () => {
+    authFetchMock.mockResolvedValue(
+      jsonResponse(409, {
+        code: "CONFLICT",
+        message:
+          "Sponsored conversations changed while you were reviewing this launch.",
+        details: {
+          code: "swarm_funding_changed",
+          expectedSponsored: 2,
+          actualSponsored: 1,
+          totalConversations: 4,
+        },
+        launch: { ...launch, state: "stopped" },
+      }),
+    );
+
+    const error = await launchSwarmRun({
+      projectId: "proj-1",
+      swarmRun: "sr_wave",
+      idempotencyKey: "key-1",
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(LaunchSwarmRunError);
+    // A launch refusal like any other, so the funding reader takes it too.
+    expect(error).toBeInstanceOf(LaunchJourneyRunError);
+    expect(fundingChangeOf(error)).toEqual({
+      expectedSponsored: 2,
+      actualSponsored: 1,
+      totalConversations: 4,
+    });
+    expect((error as LaunchSwarmRunError).launch?.state).toBe("stopped");
+  });
+
+  it("refuses a 2xx that names no swarm run", async () => {
+    authFetchMock.mockResolvedValue(jsonResponse(202, { launch }));
+    await expect(
+      launchSwarmRun({ projectId: "p", swarmRun: "s", idempotencyKey: "k" }),
+    ).rejects.toThrow(
+      "The swarm run launched, but MCPJam couldn't open it. Find it in this swarm's runs.",
+    );
   });
 });

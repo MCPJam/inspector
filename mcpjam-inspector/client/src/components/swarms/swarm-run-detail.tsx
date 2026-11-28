@@ -68,6 +68,15 @@ import {
 } from "@/components/swarms/swarm-run-detail-model";
 import { describeSwarmIdentity, SwarmRunMetadata } from "./swarm-run-header";
 
+/** What Run again relaunches: the swarm run, and its goals and runs. */
+export interface SwarmRerunRequest {
+  /** Null for a swarm run from before swarm run ids. */
+  swarmRunId: string | null;
+  journeyRefIds: string[];
+  /** The runs the repair dialog checks before anything launches. */
+  runIds: string[];
+}
+
 export interface SwarmRunDetailProps {
   organizationId?: string;
   swarmId: string;
@@ -87,18 +96,19 @@ export interface SwarmRunDetailProps {
     hostStyle?: string | null;
   }>;
   /**
-   * Relaunch each non-archived journey in the wave. Parent owns the launch
-   * coordinator (idempotency / quota). Returns after all launches settle.
+   * Relaunch the wave's non-archived goals. The parent owns the launch and its
+   * idempotency key, and resolves once the new swarm run has started.
    *
-   * Resolves to the NEW wave's route id when the parent minted one, so the
-   * confirmation can offer a way into the run it just started. `void` is still
-   * accepted: a parent that cannot name the new wave simply gets a
-   * confirmation with no link, never a dead one.
+   * Resolves to the NEW swarm run's id, and how many goals it launches, so the
+   * confirmation can offer a way into it. `cancelled` asks for no toast: the
+   * viewer backed out, or a dialog already answered. `void` is accepted: a
+   * parent that cannot name the new run gets a confirmation with no link.
    */
   onRunAgain: (
-    journeyRefIds: string[],
-    runIds?: string[],
-  ) => Promise<{ swarmRunGroupId?: string; cancelled?: boolean } | void>;
+    rerun: SwarmRerunRequest,
+  ) => Promise<
+    { swarmRunGroupId?: string; goals?: number; cancelled?: boolean } | void
+  >;
 }
 
 export function SwarmRunDetail({
@@ -296,9 +306,15 @@ export function SwarmRunDetail({
     if (launchableJourneyIds.length === 0) return;
     setRunAgainBusy(true);
     try {
-      const started = await onRunAgain(launchableJourneyIds, wave?.runs.filter(run => !run.journeyArchived).map(run => run.runId));
+      const started = await onRunAgain({
+        swarmRunId: waveGroupId ?? null,
+        journeyRefIds: launchableJourneyIds,
+        runIds: (wave?.runs ?? [])
+          .filter((run) => !run.journeyArchived)
+          .map((run) => run.runId),
+      });
       if (started?.cancelled) return;
-      const goals = launchableJourneyIds.length;
+      const goals = started?.goals ?? launchableJourneyIds.length;
       // "Started 15 goals" reported an internal count and left the viewer on
       // the run they had just relaunched FROM, with no way to the new one. Say
       // what happened, then offer the run itself.
@@ -323,7 +339,7 @@ export function SwarmRunDetail({
     } finally {
       setRunAgainBusy(false);
     }
-  }, [launchableJourneyIds, navigate, onRunAgain, wave]);
+  }, [launchableJourneyIds, navigate, onRunAgain, wave, waveGroupId]);
 
   const runningRunIds = useMemo(() => {
     if (!wave) return [];

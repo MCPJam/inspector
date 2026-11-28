@@ -60,12 +60,15 @@ import { SwarmsEmptyHero } from "@/components/swarms/swarms-empty-hero";
 import {
   launchJourneyRun,
   LaunchJourneyRunError,
+  launchSwarmRun,
+  LaunchSwarmRunError,
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
   type JourneyRun,
   type GoalScoreRollup,
   type JourneySessionRow,
   type PersonaTrackRecord,
+  type SwarmLaunchReply,
 } from "@/lib/swarm-api";
 import {
   useCreateProjectEnvironment,
@@ -95,6 +98,7 @@ import { getShareableAppOrigin } from "@/lib/scenario-session";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
 import { SwarmOverviewPanel } from "@/components/swarms/swarm-overview-workspace";
 import { RepairableSwarmRunDetail } from "./swarm-rerun-repair";
+import type { SwarmRerunRequest } from "./swarm-run-detail";
 import { SwarmLiveStreamPane } from "@/components/swarms/journey-run-results";
 import { findAttemptForSelection } from "@/components/swarms/swarm-targets";
 import {
@@ -339,7 +343,7 @@ export function SwarmsTab({
   // still restore their persona filter.
   const [sessionsPersonaFilter, setSessionsPersonaFilter] = useState<
     string | null
-  >(() => (deepLink.threadId ? deepLink.personaRefId ?? null : null));
+  >(() => (deepLink.threadId ? (deepLink.personaRefId ?? null) : null));
   const handleOpenSwarm = useCallback(
     (id: string) => {
       navigate(buildSwarmPath(id));
@@ -539,7 +543,7 @@ export function SwarmsTab({
     }
   }, [journeys, runDetail]);
   const detailJourney = runDetail
-    ? journeys?.find((j) => j._id === runDetail.journeyId) ?? null
+    ? (journeys?.find((j) => j._id === runDetail.journeyId) ?? null)
     : null;
 
   // ── Agent bridge ──────────────────────────────────────────────────────────
@@ -586,7 +590,7 @@ export function SwarmsTab({
       /**
        * `swarmRunGroupId` groups this launch with its siblings. The create
        * flow mints ONE per wave and passes it for every journey; solo callers
-       * (Run, Run again, `ui_launch_swarm_run`) pass nothing and get a fresh
+       * (Run, `ui_launch_swarm_run`) pass nothing and get a fresh
        * id — each of those launches exactly one journey, so a wave of one is
        * the correct grouping, and it retires the time heuristic for them too.
        */
@@ -661,53 +665,60 @@ export function SwarmsTab({
     [projectId],
   );
 
+  // One key per Run again request, kept after any failure and reused on the
+  // next click, so a retry replays the launch the server recorded rather than
+  // starting a second one. Keyed by what is relaunched, so another swarm run's
+  // Run again never inherits it.
+  const runAgainKeysRef = useRef<Map<string, string>>(new Map());
+
+  // Run again is one call: the server launches every goal of the swarm run,
+  // replies once the first has started and launches the rest itself.
   const handleRunAgainFromDetail = useCallback(
-    async (journeyRefIds: string[]) => {
-      const swarmRunGroupId = crypto.randomUUID();
-      const errors: string[] = [];
-      let landedUnderNewWave = false;
-      for (const journeyId of journeyRefIds) {
-        try {
-          const result = await launchJourney(journeyId, { swarmRunGroupId });
-          if (result.status === "already_launching") continue;
-          if (result.swarmRunGroupId === swarmRunGroupId) {
-            landedUnderNewWave = true;
-          }
-        } catch (err) {
-          // The limit dialog owns this failure and carries its own copy. Skip
-          // it HERE: the throw below re-wraps into a plain `Error`, so the
-          // flag is gone by the time the detail page toasts the message.
-          if (err instanceof LaunchJourneyRunError && err.limitDialogRaised) {
-            continue;
-          }
-          errors.push(
-            err instanceof LaunchJourneyRunError
-              ? err.message
-              : err instanceof Error
-              ? err.message
-              : "Launch failed",
-          );
+    async ({ swarmRunId, journeyRefIds }: SwarmRerunRequest) => {
+      if (!projectId) throw new Error("Choose a project before running again.");
+      const keyId = swarmRunId ?? journeyRefIds.join(" ");
+      const idempotencyKey =
+        runAgainKeysRef.current.get(keyId) ?? crypto.randomUUID();
+      runAgainKeysRef.current.set(keyId, idempotencyKey);
+      let reply: SwarmLaunchReply;
+      try {
+        reply = await launchSwarmRun({
+          projectId,
+          idempotencyKey,
+          // A swarm run from before swarm run ids has none to name, so its
+          // goals are sent instead.
+          ...(swarmRunId
+            ? { swarmRun: swarmRunId }
+            : { goals: journeyRefIds.map((goalId) => ({ goalId })) }),
+        });
+      } catch (err) {
+        // A launch that ended with nothing started has nothing to replay.
+        if (
+          err instanceof LaunchSwarmRunError &&
+          err.launch?.state === "failed"
+        ) {
+          runAgainKeysRef.current.delete(keyId);
         }
+        // The limit dialog owns this failure and carries its own copy.
+        if (err instanceof LaunchJourneyRunError && err.limitDialogRaised) {
+          return { cancelled: true };
+        }
+        throw err;
       }
-      if (errors.length > 0) {
-        throw new Error(errors[0]!);
+      runAgainKeysRef.current.delete(keyId);
+      // A replay of a launch that started nothing answers with that launch.
+      if (reply.launch.state === "failed") {
+        throw new Error(
+          reply.launch.goals.find((goal) => goal.error)?.error?.message ??
+            "None of this swarm run's goals could start. Check the goals, then run again.",
+        );
       }
-      // The group id minted above IS the new wave's route id
-      // (`swarmWaveRouteId`), so the detail page can offer a way into the run
-      // it just started instead of leaving the viewer on the one they
-      // relaunched from.
-      //
-      // Only when a run actually landed under it, though. Two paths mint it and
-      // don't use it: a retry after a failed launch reuses the cached wave from
-      // `launchKeysRef`, and an `already_launching` goal is skipped without an
-      // error. Returning the id regardless offered "View run" into a wave no
-      // run carries — a link to "Swarm run not found." A confirmation with no
-      // link is the honest answer, and the caller already treats the field as
-      // optional.
-      if (!landedUnderNewWave) return {};
-      return { swarmRunGroupId };
+      return {
+        swarmRunGroupId: reply.swarmRunId,
+        goals: reply.launch.goals.length,
+      };
     },
-    [launchJourney],
+    [projectId],
   );
   // Exact (case-insensitive) resolution against the loaded lists — unknown or
   // ambiguous → invalid_request, never a fuzzy guess.
