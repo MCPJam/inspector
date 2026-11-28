@@ -75,3 +75,18 @@ export function realRunsToolTasks(capabilities: unknown): boolean {
   const tools = isObject(requests) ? requests.tools : undefined;
   return isObject(tools) && isObject(tools.call);
 }
+
+/**
+ * The test run a mock URL names (`?run=<runId>&epoch=<n>`), `"incomplete"` when
+ * it names one but not the other (or an epoch that is not a whole number), and
+ * undefined for an ordinary mock URL. The URL is only a locator: the backend
+ * decides on every request whether the run may be used.
+ */
+export function runOfUrl(url: string): { runId: string; epoch: number } | "incomplete" | undefined {
+  const params = new URL(url).searchParams;
+  const runId = params.get("run");
+  const epoch = params.get("epoch");
+  if (runId === null && epoch === null) return undefined;
+  if (!runId || epoch === null || !/^[1-9][0-9]{0,9}$/.test(epoch)) return "incomplete";
+  return { runId, epoch: Number(epoch) };
+}

@@ -43,6 +43,7 @@ import {
   runUiRender,
   trimOptional,
 } from "../lib/inspector-render.js";
+import { operationKeyMetadata } from "../lib/operation-key.js";
 import { parseReporterFormat, writeReporterResult } from "../lib/reporting.js";
 import {
   attachCliDurationMs,
@@ -128,6 +129,8 @@ interface ToolsCallOptions extends SharedServerTargetOptions {
   paramHeaders?: boolean;
   /** `--mcp-header Name=Value`, repeatable. Raw request headers, caller-wins. */
   mcpHeader?: string[];
+  /** `--operation-key`. Makes a retried write to a mock's records apply once. */
+  operationKey?: string;
   /** `--first-page-only`. Read only page one of paginated lists. */
   firstPageOnly?: boolean;
   /**
@@ -702,6 +705,10 @@ export function registerToolsCommands(program: Command): void {
         [],
       )
       .option(
+        "--operation-key <key>",
+        "Make a write to a mock server's records safe to retry: the same key with the same call returns the first outcome and writes once (sent as _meta mcpjam.com/operationKey)",
+      )
+      .option(
         "--validate-response",
         "Validate the MCP tool-call envelope returned by the server",
       )
@@ -794,6 +801,7 @@ export function registerToolsCommands(program: Command): void {
       timeout: globalOptions.timeout,
     });
     const mcpHeaders = parseMcpHeaderOption(options.mcpHeader);
+    const operationKey = operationKeyMetadata(options.operationKey);
     // A `Mcp-Param-*` override has to SUPPRESS the mirroring to take effect.
     // Upstream `callTool` merges `{ ...options.headers, ...paramHeaders }` —
     // the mirrored value wins — so a caller-supplied `Mcp-Param-Region=wrong`
@@ -1004,16 +1012,17 @@ export function registerToolsCommands(program: Command): void {
           if (host) await assertToolVisibleToHost(manager, serverId, toolName, host);
           const toolStartedAt = Date.now();
           try {
-            return await manager.executeTool(
-              serverId,
-              toolName,
-              params,
-              // Caller-supplied headers WIN over the mirrored ones (the seam in
-              // `MCPClientManager`), which is the whole point of `--mcp-header`:
-              // sending a deliberately wrong value is how you exercise a
-              // server's -32020.
-              mcpHeaders ? { headers: mcpHeaders } : undefined,
-            );
+            // Caller-supplied headers WIN over the mirrored ones (the seam in
+            // `MCPClientManager`), which is the whole point of `--mcp-header`:
+            // sending a deliberately wrong value is how you exercise a
+            // server's -32020.
+            const requestOptions = mcpHeaders ? { headers: mcpHeaders } : undefined;
+            return operationKey
+              ? await manager.executeTool(serverId, toolName, params, {
+                  metadata: operationKey,
+                  request: requestOptions,
+                })
+              : await manager.executeTool(serverId, toolName, params, requestOptions);
           } finally {
             toolCallDurationMs = Math.max(0, Date.now() - toolStartedAt);
           }

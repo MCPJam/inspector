@@ -17,6 +17,13 @@ const REFUSALS = {
   unavailable: [503, -32017, "mock_unavailable", "MCPJam could not check this mock server just now. Try again in a moment."],
   invalid_definition: [500, -32018, "mock_definition_unreadable", "This mock server's saved definition could not be read. Save the mock again from MCPJam."],
   flag_off: [403, -32020, "mock_servers_disabled", `Mock servers are turned off for this account (the ${MOCK_SERVERS_FLAG} flag is off). Ask an MCPJam admin to turn it on, then try again.`],
+  // A test run's URL is only good while the run is open and at its current epoch.
+  run_closed: [410, -32023, "mock_run_closed", "This test run was closed. Open a new run and connect to its URL."],
+  run_expired: [410, -32023, "mock_run_expired", "This test run expired (a run lasts 24 hours). Open a new run and connect to its URL."],
+  run_not_found: [404, -32023, "mock_run_not_found", "This test run was not found. Check the run URL, or open a new run and connect to its URL."],
+  run_forbidden: [403, -32023, "mock_run_forbidden", "This test run was opened by someone else, and only they can use it. Open your own run and connect to its URL."],
+  run_stale_epoch: [409, -32023, "mock_run_reset", "This test run was reset after this URL was issued. Connect to the run's current URL, which the reset call returned."],
+  run_url_invalid: [400, -32023, "mock_run_url_invalid", "This run URL is incomplete: it needs both a run and an epoch. Use the URL that opening or resetting the run returned."],
 } as const;
 
 export type MockRefusalKind = keyof typeof REFUSALS;

@@ -56,6 +56,9 @@ function stubFetch(): Captured[] {
     if (key === `GET ${ROOT}/${mock}`) return Response.json(url.searchParams.has("path") ? fixture.value : fixture.summary);
     if (key === `PATCH ${ROOT}/${mock}`) return Response.json(fixture.patched, { status: 201 });
     if (key === `POST ${ROOT}/${mock}/refresh`) return Response.json({ view: "refresh", applied: false });
+    if (key === `POST ${ROOT}/${mock}/runs`) return Response.json(fixture.run, { status: 201 });
+    if (key === `POST ${ROOT}/${mock}/runs/run-1/reset`) return Response.json(fixture.reset);
+    if (key === `POST ${ROOT}/${mock}/runs/run-1/close`) return Response.json(fixture.closed);
     if (url.pathname.endsWith("/mock-forwarding-policy")) return Response.json(POLICY);
     throw new Error(`unexpected ${key}`);
   }) as typeof fetch;
@@ -145,4 +148,37 @@ test("policy reads and sets the workspace's setting", async () => {
   await run(["policy", "set"], ["--forwarding", "allow"]);
   assert.deepEqual(requests.map((r) => [r.method, r.body]), [["GET", undefined], ["PUT", { forwarding: "allow" }]]);
   await assert.rejects(run(["policy", "set"], ["--forwarding", "maybe"]), (error: unknown) => error instanceof CliError && error.code === "USAGE_ERROR");
+});
+
+test("run open, reset and close send the run's route and print what REST answers", async () => {
+  const requests = stubFetch();
+  assert.deepEqual(withoutProject(await run(["run", "open"], ["--mock", "markets (mock)", "--version", "2", "--platform-run-id", "eval-9"])), fixture.run);
+  assert.deepEqual(withoutProject(await run(["run", "reset"], ["--mock", "markets (mock)", "--run-id", "run-1", "--expected-epoch", "1"])), fixture.reset);
+  assert.deepEqual(withoutProject(await run(["run", "close"], ["--mock", "markets (mock)", "--run-id", "run-1"])), fixture.closed);
+  assert.deepEqual(requests.map((r) => [r.method, r.path.replace(ROOT, ""), r.body]), [
+    ["POST", `/${mock}/runs`, { version: 2, platformRunId: "eval-9" }],
+    ["POST", `/${mock}/runs/run-1/reset`, { expectedEpoch: 1 }],
+    ["POST", `/${mock}/runs/run-1/close`, {}],
+  ]);
+  await assert.rejects(
+    run(["run", "reset"], ["--mock", "markets (mock)", "--run-id", "run-1", "--expected-epoch", "0"]),
+    (error: unknown) => error instanceof CliError && error.code === "USAGE_ERROR",
+  );
+});
+
+test("run open says what to do when the account holds too many open runs", async () => {
+  stubFetch();
+  const stubbed = globalThis.fetch;
+  const message = "You have 100 open test runs. Close one, or wait for one to expire; a run lasts 24 hours.";
+  globalThis.fetch = (async (target: unknown, init?: RequestInit) => {
+    if (init?.method === "POST" && new URL(String(target)).pathname === `${ROOT}/${mock}/runs`) {
+      return Response.json({ code: "CONFLICT", message, details: { code: "MOCK_RUN_LIMIT", limit: 100 } }, { status: 409 });
+    }
+    return stubbed(target as never, init);
+  }) as typeof fetch;
+  await assert.rejects(run(["run", "open"], ["--mock", "markets (mock)"]), (error: unknown) => {
+    assert.ok(error instanceof CliError);
+    assert.match(error.message, /You have 100 open test runs\. Close one, or wait for one to expire/);
+    return true;
+  });
 });

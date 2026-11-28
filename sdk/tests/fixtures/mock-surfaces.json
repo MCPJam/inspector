@@ -84,5 +84,28 @@
     "created": true,
     "loosened": [],
     "path": ["tools", "tool_001", "description"]
+  },
+  "run": {
+    "runId": "run-1",
+    "mockId": "mockxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "projectId": "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "version": 2,
+    "epoch": 1,
+    "expiresAt": 1790000000000,
+    "runUrl": "https://inspector.test/api/web/mock-mcp/mockxxxxxxxxxxxxxxxxxxxxxxxxxxxxx?run=run-1&epoch=1"
+  },
+  "reset": {
+    "runId": "run-1",
+    "mockId": "mockxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "projectId": "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "version": 2,
+    "epoch": 2,
+    "expiresAt": 1790000000000,
+    "runUrl": "https://inspector.test/api/web/mock-mcp/mockxxxxxxxxxxxxxxxxxxxxxxxxxxxxx?run=run-1&epoch=2"
+  },
+  "closed": {
+    "runId": "run-1",
+    "projectId": "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "closed": true
   }
 }

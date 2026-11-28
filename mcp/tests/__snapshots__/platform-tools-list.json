@@ -251,6 +251,39 @@
     "spendNotice": false
   },
   {
+    "name": "open_mock_run",
+    "annotations": {
+      "title": "Open a test run of a mock server",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "reset_mock_run",
+    "annotations": {
+      "title": "Reset a test run of a mock server",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "close_mock_run",
+    "annotations": {
+      "title": "Close a test run of a mock server",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
     "name": "get_mock_forwarding_policy",
     "annotations": {
       "title": "Get the mock forwarding policy",

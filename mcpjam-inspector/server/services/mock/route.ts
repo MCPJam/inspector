@@ -35,7 +35,7 @@ import { forwardingRealServer, type ForwardingReal } from "./forwarding.js";
 import { IN_APP_REFUSAL_MESSAGES, MockRefusal, mockRefusalResponse } from "./refusal.js";
 import type { MockDialProfile, MockDoorContext } from "./registry.js";
 import { backendRecordStore } from "./record-store.js";
-import { readRequestFacts } from "./request-facts.js";
+import { readRequestFacts, runOfUrl } from "./request-facts.js";
 import { backendTaskStore } from "./task-store.js";
 
 export const MOCK_VERSION_HEADER = "x-mcpjam-mock-version";
@@ -141,7 +141,11 @@ export async function serveMock(
   const grant = door.kind === "in-process" ? door.grant : undefined;
   let resolved: ResolvedMock;
   try {
-    resolved = await (deps.resolve ?? resolveMock)({ mockId, caller, bearerToken, grant });
+    // A test run's URL (external clients only) names the run to serve; the
+    // backend checks it, and its owner and epoch, on this and every request.
+    const run = door.kind === "http" ? runOfUrl(request.url) : undefined;
+    if (run === "incomplete") throw new MockRefusal("run_url_invalid");
+    resolved = await (deps.resolve ?? resolveMock)({ mockId, caller, bearerToken, grant, ...(run && { run }) });
     // A grant minted for one project opens nothing in another, whatever the
     // dialer's own context says.
     if (door.kind === "in-process" && door.projectId !== resolved.projectId) {
@@ -168,8 +172,10 @@ export async function serveMock(
           signal,
         });
   const facts = await readRequestFacts(request);
-  // An ordinary connection works on the version's shared records.
-  const context: MockStateContext = { scope: "version" };
+  // An ordinary connection works on the version's shared records; a run's URL on the run's own copy.
+  const context: MockStateContext = resolved.run
+    ? { scope: "run", runId: resolved.run.runId, epoch: resolved.run.epoch }
+    : { scope: "version" };
   let forwarding: ForwardingReal | undefined;
   let real: MockRealServer = NO_REAL_SERVER;
   if (resolved.baseServerId) {
@@ -197,7 +203,7 @@ export async function serveMock(
       error: error instanceof Error ? error.name : typeof error,
     });
   const sharedBus = acquireSharedBus(
-    `${actorDigest(caller, bearerToken)}|${mockId}|${resolved.version}`,
+    `${actorDigest(caller, bearerToken)}|${mockId}|${resolved.version}|${resolved.run?.runId ?? ""}`,
     onBusError,
   );
   const feedBus = facts.listen && forwarding ? createEventBus(onBusError) : undefined;

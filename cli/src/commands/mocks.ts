@@ -14,15 +14,25 @@
  *   mcpjam cloud mocks patch --mock "docs (mock)" --expected-version 1 \
  *     --family tools --name search --path description --value-text "Search the docs."
  *   mcpjam cloud mocks refresh --mock "docs (mock)" --expected-version 2 --apply
+ *
+ * A test run gives a client its own copy of a version's records at a URL of
+ * its own:
+ *
+ *   mcpjam cloud mocks run open --mock "docs (mock)"
+ *   mcpjam cloud mocks run reset --mock "docs (mock)" --run-id <id> --expected-epoch 1
+ *   mcpjam cloud mocks run close --mock "docs (mock)" --run-id <id>
  */
 import { readFileSync } from "node:fs";
 import type { Command } from "commander";
 import {
+  closeMockRunOperation,
   createMockServerOperation,
   getMockForwardingPolicyOperation,
   getMockServerOperation,
+  openMockRunOperation,
   patchMockServerOperation,
   refreshMockServerOperation,
+  resetMockRunOperation,
   setMockForwardingPolicyOperation,
   updateMockServerOperation,
 } from "@mcpjam/sdk/platform";
@@ -270,6 +280,62 @@ export function registerMocksCommands(cloud: Command): void {
       mock: options.mock,
       expectedVersion: parseRequiredIntegerOption(options.expectedVersion, "--expected-version", { min: 1 }),
       apply: options.apply,
+    }),
+  );
+
+  const run = mocks
+    .command("run")
+    .description("Open, reset or close a test run: a version pinned, with its own copy of its records, at a URL of its own.");
+
+  bindOperation(
+    addProjectOption(
+      run
+        .command("open")
+        .description("Open a test run of a mock and print its URL, epoch and expiry. A run lasts 24 hours")
+        .requiredOption("--mock <id-or-name>", "Mock server ID or name")
+        .option("--version <n>", "The version to pin (default: the head)")
+        .option("--platform-run-id <id>", "The test or evaluation run this belongs to"),
+    ),
+    openMockRunOperation,
+    (options: MockOptions & { version?: string; platformRunId?: string }) => ({
+      project: options.project,
+      mock: options.mock,
+      version: parseIntegerOption(options.version, "--version", { min: 1 }),
+      platformRunId: options.platformRunId,
+    }),
+  );
+
+  bindOperation(
+    addProjectOption(
+      run
+        .command("reset")
+        .description("Restore a run's records to the version's seed. The old URL is refused; the new one is printed")
+        .requiredOption("--mock <id-or-name>", "Mock server ID or name")
+        .requiredOption("--run-id <id>", "The run's ID")
+        .requiredOption("--expected-epoch <n>", "The epoch of the URL you hold"),
+    ),
+    resetMockRunOperation,
+    (options: MockOptions & { runId: string; expectedEpoch: string }) => ({
+      project: options.project,
+      mock: options.mock,
+      runId: options.runId,
+      expectedEpoch: parseRequiredIntegerOption(options.expectedEpoch, "--expected-epoch", { min: 1 }),
+    }),
+  );
+
+  bindOperation(
+    addProjectOption(
+      run
+        .command("close")
+        .description("End a run at once: its URL is refused. Safe to repeat")
+        .requiredOption("--mock <id-or-name>", "Mock server ID or name")
+        .requiredOption("--run-id <id>", "The run's ID"),
+    ),
+    closeMockRunOperation,
+    (options: MockOptions & { runId: string }) => ({
+      project: options.project,
+      mock: options.mock,
+      runId: options.runId,
     }),
   );
 

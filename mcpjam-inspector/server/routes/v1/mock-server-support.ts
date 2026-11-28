@@ -135,6 +135,9 @@ export function countsOf(definition: MockDefinition): PlatformMockCounts {
   };
 }
 
+/** Open runs one person may hold, when the backend's refusal does not say. */
+const MOCK_RUN_LIMIT = 100;
+
 /** The backend's own mock codes, answered with the status each deserves. */
 function mockRefusal(error: unknown): WebRouteError | undefined {
   const data = convexErrorData(error);
@@ -159,6 +162,31 @@ function mockRefusal(error: unknown): WebRouteError | undefined {
       code,
       ...(typeof headVersion === "number" ? { headVersion } : {}),
     });
+  }
+  // A test run the caller cannot use. Closed and expired runs are a state the run is in, not a missing one.
+  if (code === "MOCK_RUN_NOT_FOUND") return new WebRouteError(404, ErrorCode.NOT_FOUND, message, { code });
+  if (code === "MOCK_RUN_FORBIDDEN") return new WebRouteError(403, ErrorCode.FORBIDDEN, message, { code });
+  if (code === "MOCK_RUN_CLOSED" || code === "MOCK_RUN_EXPIRED" || code === "MOCK_RUN_STALE_EPOCH") {
+    const currentEpoch = (data as { currentEpoch?: unknown } | null)?.currentEpoch;
+    return new WebRouteError(409, ErrorCode.CONFLICT, message, {
+      code,
+      ...(typeof currentEpoch === "number" ? { currentEpoch } : {}),
+    });
+  }
+  // The backend's backstop for a seed the SDK check would have refused: the same 400 the SDK's issue gives.
+  if (code === "MOCK_SEED_TOO_MANY_RECORDS") {
+    return invalidDefinition([{ code: "too_large", path: "seed", message }]);
+  }
+  // A limit on open runs, not a bad request: 409 with the code kept, as `ACTIVE_REQUEST_LIMIT` does for connections.
+  if (code === "MOCK_RUN_LIMIT") {
+    const limit = (data as { limit?: unknown } | null)?.limit;
+    const cap = typeof limit === "number" && Number.isInteger(limit) && limit > 0 ? limit : MOCK_RUN_LIMIT;
+    return new WebRouteError(
+      409,
+      ErrorCode.CONFLICT,
+      `You have ${cap} open test runs. Close one, or wait for one to expire; a run lasts 24 hours.`,
+      { code, limit: cap },
+    );
   }
   // A refusal of the caller's role, not of their input: 403, with the backend's code kept in `details`.
   if (code === "MOCK_POLICY_ADMIN_ONLY") {

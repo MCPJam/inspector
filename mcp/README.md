@@ -52,6 +52,9 @@ beta; they are listed [after the table](#held-tools).
 | `get_mock_server` | Read a mock in bounded pages: a summary with a page of its changes, a page of names by kind (`search` narrows), one entry, or one field or path, with a long string in ordered chunks. Each page fits this server's response budget. | — |
 | `patch_mock_server` | Set or remove exactly one path of a mock against the head version you read, without sending the entry: for example one late tool's description. | — |
 | `refresh_mock_server` | Read a mock's real server again as the caller and preview what changed since the saved listing and which overrides no longer fit; `apply` saves the new listing as the next version. | — |
+| `open_mock_run` | Open a test run of a mock: a version pinned, with its own copy of the version's records, at an MCP URL of its own for 24 hours. Returns the run ID, version, URL, epoch and expiry. | — |
+| `reset_mock_run` | Restore a run's records to the version's seed. Returns a new URL at the next epoch; the old one is refused. | — |
+| `close_mock_run` | End a test run at once. Safe to repeat. | — |
 | `get_mock_forwarding_policy` | Read whether mock servers may call their real servers, for one mock or the project's workspace. | — |
 | `set_mock_forwarding_policy` | Allow or block mock servers calling their real servers for the workspace. Workspace admins only; an agent's request is held for a person to approve. | — |
 | `list_server_accounts` | List the accounts a saved MCP server signs in with: id, name, default, needs reconnecting, hosted-only. Never a token. | — |
