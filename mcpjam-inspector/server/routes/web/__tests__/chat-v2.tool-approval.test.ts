@@ -70,6 +70,7 @@ vi.mock("@mcpjam/sdk", async () => {
       return {
         disconnectAllServers: vi.fn(),
         hasServer: (id: string) => id === "server-1",
+        getInitializationInfo: vi.fn(() => undefined),
         listTools: vi.fn().mockResolvedValue({ tools: [] }),
         readResource: vi.fn().mockResolvedValue({ contents: [] }),
         getAllToolsMetadata: vi.fn().mockReturnValue({}),

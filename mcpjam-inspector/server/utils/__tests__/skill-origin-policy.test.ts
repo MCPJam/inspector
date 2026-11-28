@@ -55,6 +55,7 @@ function liveSkillsManager() {
     getToolsForAiSdk: vi.fn(async () => ({})),
     listTools: vi.fn(async () => ({ tools: [] })),
     hasServer: vi.fn(() => true),
+    getInitializationInfo: vi.fn(() => undefined),
     getSkillsSupport: vi.fn(() => ({
       declared: true,
       advertised: true,
