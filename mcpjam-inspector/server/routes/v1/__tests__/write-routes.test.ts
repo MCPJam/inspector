@@ -17,6 +17,9 @@ const {
   validateApiKeyMock,
   resolveUserByExternalIdMock,
   lookupWorkosKeyBindingMock,
+  localVenueMock,
+  localMachineMock,
+  explainMock,
 } = vi.hoisted(() => {
   // The evals route resolves its concurrency limit at import time; pin the
   // env BEFORE the hoisted imports run so a V1_MAX_CONCURRENT_EVAL_RUNS in
@@ -33,8 +36,22 @@ const {
     validateApiKeyMock: vi.fn(),
     resolveUserByExternalIdMock: vi.fn(),
     lookupWorkosKeyBindingMock: vi.fn(),
+    localVenueMock: vi.fn(),
+    localMachineMock: vi.fn(),
+    explainMock: vi.fn(),
   };
 });
+
+// Whether a harness runs on this machine, stubbed so no test reads this
+// machine's harness state; and the refusal text, passed through by default.
+vi.mock("../../../utils/harness/local/run-resources.js", async (original) => ({
+  ...(await original<typeof import("../../../utils/harness/local/run-resources.js")>()),
+  shouldUseLocalHarness: localVenueMock,
+  isLocalHarnessVenue: localMachineMock,
+}));
+vi.mock("../../../services/evals/explain-harness-refusal.js", () => ({
+  explainEvalHarnessRefusal: explainMock,
+}));
 
 vi.mock("../../../services/guest-token.js", () => ({
   validateGuestTokenDetailedAsync: validateGuestTokenMock,
@@ -179,6 +196,9 @@ describe("v1 write routes", () => {
     process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
     validateGuestTokenMock.mockResolvedValue({ valid: false });
     mockConvexQueries();
+    localVenueMock.mockResolvedValue(false);
+    localMachineMock.mockReturnValue(false);
+    explainMock.mockImplementation(async ({ admission }) => admission.reason);
   });
 
   afterEach(() => {
@@ -2728,6 +2748,75 @@ describe("v1 write routes", () => {
       const body = (await res.json()) as any;
       expect(body.details.reason).toBe("HARNESS_UNAVAILABLE");
       expect(body.message).toContain("Claude");
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
+    it("admits harness targets this machine runs, asking once per harness with the member's sign-in", async () => {
+      // No cloud computer here: judged as cloud runs, these would be refused.
+      localVenueMock.mockResolvedValue(true);
+      localMachineMock.mockReturnValue(true);
+      hostSuiteQueries({
+        "hosts:getHost": () => ({ config: { harness: "claude-code" } }),
+      });
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          targets: [
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+            { namedHostId: "hostchatgptxxxxxxxxxxxxxxxxxxxxx" },
+          ],
+        }
+      );
+      expect(res.status).toBe(202);
+      expect(localVenueMock).toHaveBeenCalledTimes(1);
+      expect(localVenueMock).toHaveBeenCalledWith(
+        "claude-code",
+        "tok",
+        "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        { scope: "unattended" }
+      );
+      expect(prepareEvalRunMock).toHaveBeenCalledTimes(2);
+      await drain(releaseGates, disconnectAllServers, 2);
+    });
+
+    it("says why this machine can't run a harness target, before any target starts", async () => {
+      const explained =
+        "Couldn't run Claude Code on this machine because it isn't set up for this project. Set it up in the Playground, then run the eval again.";
+      explainMock.mockResolvedValue(explained);
+      hostSuiteQueries({
+        "hosts:getHost": () => ({ config: { harness: "claude-code" } }),
+      });
+      mockPendingLaunches();
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          targets: [
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+            { namedHostId: "hostchatgptxxxxxxxxxxxxxxxxxxxxx" },
+          ],
+        }
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as any;
+      expect(body.details).toMatchObject({
+        reason: "HARNESS_UNAVAILABLE",
+        harness: "claude-code",
+      });
+      expect(body.message).toBe(
+        `Host "Claude" (hostclaudexxxxxxxxxxxxxxxxxxxxxx): ${explained}`
+      );
+      expect(explainMock).toHaveBeenCalledWith({
+        admission: expect.objectContaining({ ok: false, harness: "claude-code" }),
+        bearer: "tok",
+        projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      });
       expect(prepareEvalRunMock).not.toHaveBeenCalled();
     });
 
