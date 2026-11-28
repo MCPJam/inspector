@@ -390,8 +390,6 @@ describe("v1 write routes", () => {
         ]);
         expect(createAuthorizedManagerMock.mock.calls[0][7]).toEqual({
           pluginComputerRuntime: false,
-          // The case replies a server's questions get, read before connect.
-          inputAnswers: expect.objectContaining({ answers: [] }),
           serverNames: ["alpha", "beta"],
           // Threaded so per-server XAA servers mint instead of 500ing —
           // the v1 eval API has no host-persona input, so no xaaPolicy.

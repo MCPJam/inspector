@@ -3198,7 +3198,7 @@
           ]
         }
       ],
-      "__structural": true
+      "__structural": false
     },
     {
       "__kind": "suiteFile",
