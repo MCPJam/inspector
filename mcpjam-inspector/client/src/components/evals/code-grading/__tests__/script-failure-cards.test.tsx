@@ -19,6 +19,11 @@ const setupFailed = {
   },
 };
 
+const SETUP_TITLE =
+  "Couldn't set up this iteration. Fix the script under Setup and cleanup in suite settings.";
+const CLEANUP_TITLE =
+  "Couldn't clean up after this iteration. Fix the script under Setup and cleanup in suite settings.";
+
 describe("Setup failed, on the iteration page", () => {
   it("shows the design's card open, with Edit scripts and the script output", async () => {
     const onEditScripts = vi.fn();
@@ -29,7 +34,7 @@ describe("Setup failed, on the iteration page", () => {
       />,
     );
     const card = within(screen.getByTestId("script-failure-iterationSetup"));
-    expect(card.getByText("Setup failed")).toBeInTheDocument();
+    expect(card.getByText(SETUP_TITLE)).toBeInTheDocument();
     expect(
       card.getByText(
         "The Before each iteration script exited 1, so the agent didn't run. This iteration is left out of the pass rate.",
@@ -39,9 +44,7 @@ describe("Setup failed, on the iteration page", () => {
       card.getByRole("button", { name: "Hide details" }),
     ).toBeInTheDocument();
     expect(
-      card.getByText(
-        "Fix the script under Setup and cleanup in suite settings, then run the suite again.",
-      ),
+      card.getByText("After you fix the script, run the suite again."),
     ).toBeInTheDocument();
     // Its own heading, not "Raw error", and `!=` drawn as typed.
     expect(card.getByText("Script output")).toBeInTheDocument();
@@ -79,7 +82,7 @@ describe("IterationErrorCards", () => {
       />,
     );
     expect(screen.getAllByRole("alert")).toHaveLength(1);
-    expect(screen.getByText("Setup failed")).toBeInTheDocument();
+    expect(screen.getByText(SETUP_TITLE)).toBeInTheDocument();
   });
 
   it("adds the cleanup warning beside any other error, in its own box", () => {
@@ -118,7 +121,7 @@ describe("IterationErrorCards", () => {
       />,
     );
     expect(screen.getAllByRole("alert")).toHaveLength(1);
-    expect(screen.getByText("Cleanup failed")).toBeInTheDocument();
+    expect(screen.getByText(CLEANUP_TITLE)).toBeInTheDocument();
   });
 
   it("keeps the usual card when no script failed", () => {
@@ -126,7 +129,7 @@ describe("IterationErrorCards", () => {
       <IterationErrorCards iteration={{}} fallback={environmentFailure} />,
     );
     expect(screen.getAllByRole("alert")).toHaveLength(1);
-    expect(screen.queryByText("Setup failed")).toBeNull();
+    expect(screen.queryByText(SETUP_TITLE)).toBeNull();
   });
 });
 

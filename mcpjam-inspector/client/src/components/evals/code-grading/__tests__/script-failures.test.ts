@@ -35,12 +35,11 @@ describe("Setup failed", () => {
     const [failure] = iterationScriptFailures(iteration);
     expect(failure.slot).toBe("iterationSetup");
     expect(failure.error).toMatchObject({
-      title: "Setup failed",
+      title:
+        "Couldn't set up this iteration. Fix the script under Setup and cleanup in suite settings.",
       oneLine:
         "The Before each iteration script exited 1, so the agent didn't run. This iteration is left out of the pass rate.",
-      nextSteps: [
-        "Fix the script under Setup and cleanup in suite settings, then run the suite again.",
-      ],
+      nextSteps: ["After you fix the script, run the suite again."],
       severity: "error",
       origin: "user_config",
       rawMessage: failed.output,
@@ -122,7 +121,8 @@ describe("the cleanup warning", () => {
     });
     expect(failure.slot).toBe("iterationCleanup");
     expect(failure.error).toMatchObject({
-      title: "Cleanup failed",
+      title:
+        "Couldn't clean up after this iteration. Fix the script under Setup and cleanup in suite settings.",
       oneLine:
         "The After each iteration script exited 1. This iteration's results are unchanged.",
       severity: "warning",
