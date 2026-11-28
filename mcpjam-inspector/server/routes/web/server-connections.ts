@@ -265,6 +265,9 @@ serverConnections.post("/claim", async (c) => {
       // single-use token is the capability — which is exactly why the chat
       // adapters never put that URL in a shared channel.
       actorUserId: c.get("mcpjamUserId") ?? undefined,
+      // The verified session itself, which the backend takes the actor from;
+      // the id above is for a backend that predates that.
+      actorBearer: c.get("verifiedSessionBearer") ?? undefined,
       // For the backend's own per-IP claim budget. This process is the
       // service-token-authenticated caller, so unlike the public create path
       // the backend can trust the attribution.

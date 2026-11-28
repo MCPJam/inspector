@@ -588,11 +588,20 @@ export async function mintBrowserTokenForSession(args: {
   );
 }
 
-/** Wake a sleeping Playground box owned by the current bearer. */
+/**
+ * Wake a sleeping Playground box owned by the current bearer: a user's own
+ * bearer, or the browser panel's short-lived browser token, which names the
+ * user, the box and the project.
+ */
 export async function wakePlaygroundSandbox(args: {
   bearer: string;
   sandboxRowId: string;
-  /** Identity already verified from a short-lived browser token by the panel. */
+  /**
+   * The panel's user, as it verified them from the browser token in `bearer`.
+   * A backend that takes the user from that token ignores this; one that
+   * doesn't reads only this, beside the service credential, so the panel
+   * sends both.
+   */
   verifiedUserId?: string;
   signal?: AbortSignal;
 }): Promise<ControlPlaneResult<{ ok: boolean; woke?: boolean }>> {
