@@ -2,13 +2,16 @@ import { isInputRequiredResult } from "@modelcontextprotocol/server";
 import type {
   CallToolResult,
   InputRequiredResult,
-  Server,
   ServerContext,
 } from "@modelcontextprotocol/server";
 import { findBindingIssues } from "./bindings.js";
 import { forRevision } from "./legacy-result.js";
-import { stepHostFor } from "./case-call.js";
-import { answersItself, type MockDefinition } from "./definition-types.js";
+import { stepHostFor, taskStarter } from "./case-call.js";
+import { answersItself, toolRunsTasks } from "./definition-types.js";
+import type { MockDefinition } from "./definition-types.js";
+import type { MockServer } from "./mock-server.js";
+import { isTaskCreated } from "./mock-server.js";
+import type { MockTasks } from "./mock-tasks.js";
 import type { MockNotifier } from "./notifier.js";
 import {
   bindingError,
@@ -36,6 +39,8 @@ export interface ToolHandlerContext {
   revision: string;
   /** Where change notifications go, for the call's steps and the real server's list changes. */
   notifierFor: (ctx: ServerContext | undefined) => MockNotifier;
+  /** Where the tasks of `task` cases live; without it such a case answers in place. */
+  tasks?: MockTasks;
 }
 
 /** The host's answer, or a refusal when the host could not give one. */
@@ -124,7 +129,7 @@ async function forwardCall(
 
 /** `tools/list` and `tools/call`: the definition laid over the real server's tools. */
 export function registerToolHandlers(
-  server: Server,
+  server: MockServer,
   c: ToolHandlerContext
 ): void {
   const { definition, real, observer } = c;
@@ -134,7 +139,16 @@ export function registerToolHandlers(
     const issues = findBindingIssues(definition, realTools);
     if (issues.length > 0) throw bindingError(issues);
     const { tools } = resolveMockTools(definition, realTools);
-    const page = pageOf(tools, request.params?.cursor, definition.pageSize);
+    // 2025-11-25 lets a client run a tool as a task only when the tool says so.
+    const listed =
+      c.revision === "2025-11-25" && c.tasks
+        ? tools.map((tool) =>
+            toolRunsTasks(definition.tools?.[tool.name]) && !tool.execution
+              ? { ...tool, execution: { taskSupport: "optional" as const } }
+              : tool
+          )
+        : tools;
+    const page = pageOf(listed, request.params?.cursor, definition.pageSize);
     return {
       tools: page.items,
       ...(page.nextCursor && { nextCursor: page.nextCursor }),
@@ -176,8 +190,19 @@ export function registerToolHandlers(
           ),
           responses: ctx.mcpReq.inputResponses,
           requestState: ctx.mcpReq.requestState(),
+          startTask: taskStarter(
+            c.tasks,
+            c.revision,
+            ctx,
+            (request.params as { task?: unknown }).task,
+            c.notifierFor(undefined)
+          ),
         },
       });
+      if (isTaskCreated(answered)) {
+        server.holdTask(ctx.mcpReq.id, answered.taskCreated);
+        return { content: [] };
+      }
       if (answered) return answered;
     }
     return forwardCall(c, name, plan, ctx, request.params._meta?.progressToken);

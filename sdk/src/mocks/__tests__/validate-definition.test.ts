@@ -162,7 +162,7 @@ describe("validateMockDefinition shape", () => {
     ).toEqual([]);
   });
 
-  it("takes steps on a saved case, refuses a malformed one, and refuses a task until it is served", () => {
+  it("takes steps and tasks on a saved case, and refuses a malformed one", () => {
     const saved = (entry: object) => ({
       tools: {
         t: {
@@ -174,10 +174,10 @@ describe("validateMockDefinition shape", () => {
       },
     });
     expect(
-      codes(saved({ steps: [{ kind: "progress", progress: 1 }] }))
+      codes(saved({ steps: [{ kind: "progress", progress: 1 }], task: true }))
     ).toEqual([]);
     expect(codes(saved({ steps: [] }))).toEqual(["invalid_type"]);
-    expect(codes(saved({ task: true }))).toEqual(["unsupported"]);
+    expect(codes(saved({ task: false }))).toEqual(["invalid_value"]);
   });
 
   it("accepts answer.from real, saved or omitted and refuses anything else", () => {

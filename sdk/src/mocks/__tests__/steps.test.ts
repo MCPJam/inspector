@@ -439,6 +439,7 @@ describe("validation of steps", () => {
           { kind: "askUrl", id: "b", message: "m", url: "https://example.com" },
           { kind: "sample", id: "c", prompt: "p", maxTokens: 10 },
         ],
+        task: true,
         result: text("x"),
       })
     ).toMatchObject({ ok: true });
@@ -473,7 +474,7 @@ describe("validation of steps", () => {
         result: text("x"),
       })
     ).toContain("tools.work.answer.cases.0.steps");
-    expect(issues({ task: true, result: text("x") })).toContain(
+    expect(issues({ task: false, result: text("x") })).toContain(
       "tools.work.answer.cases.0.task"
     );
   });

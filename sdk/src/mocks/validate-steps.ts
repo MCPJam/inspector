@@ -1,14 +1,16 @@
 import {
   MAX_CASE_DELAY_MS,
   MAX_CASE_STEPS,
+  MAX_COMPLETION_VALUES,
   MAX_SAMPLE_TOKENS,
   MAX_STEP_DELAY_MS,
 } from "./definition-types.js";
 import type { MockIssueCode } from "./validate-definition.js";
 
 /**
- * The shape checks for a saved case's `steps`, called by the definition
- * validator. Each message says what to change.
+ * The shape checks for a saved case's `steps` and `task`, and for the
+ * definition's `completions`, called by the definition validator. Each message
+ * says what to change.
  */
 
 type Obj = Record<string, unknown>;
@@ -41,11 +43,11 @@ const LISTS = ["tools", "prompts", "resources"];
 const ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 
 export function checkCaseSteps(savedCase: Obj, path: string, add: Add): void {
-  if ("task" in savedCase) {
+  if ("task" in savedCase && savedCase.task !== true) {
     add(
-      "unsupported",
+      "invalid_value",
       at(path, "task"),
-      `${at(path, "task")} is not supported yet: a saved case answers in place. Remove task.`
+      `${at(path, "task")} must be true. Remove it to answer in place.`
     );
   }
   if (!("steps" in savedCase)) return;
@@ -217,4 +219,58 @@ function checkStep(step: Obj, p: string, ids: Set<string>, add: Add): number {
     }
   }
   return delay;
+}
+
+/** `completions`: prompt names and template URIs mapped to argument names and their suggestions. */
+export function checkCompletions(definition: Obj, add: Add): void {
+  if (!("completions" in definition)) return;
+  const completions = definition.completions;
+  if (!isObj(completions)) {
+    add("invalid_type", "completions", "completions must be an object.");
+    return;
+  }
+  for (const key of Object.keys(completions)) {
+    if (key !== "prompts" && key !== "resourceTemplates") {
+      add(
+        "unknown_field",
+        at("completions", key),
+        `Unknown field "${key}" at completions. Allowed fields: prompts, resourceTemplates.`
+      );
+    }
+  }
+  for (const family of ["prompts", "resourceTemplates"]) {
+    const entries = completions[family];
+    if (entries === undefined) continue;
+    const familyPath = at("completions", family);
+    if (!isObj(entries)) {
+      add("invalid_type", familyPath, `${familyPath} must be an object.`);
+      continue;
+    }
+    for (const [name, args] of Object.entries(entries)) {
+      const p = at(familyPath, name);
+      if (!isObj(args)) {
+        add(
+          "invalid_type",
+          p,
+          `${p} must map each argument name to its list of suggestions.`
+        );
+        continue;
+      }
+      for (const [arg, values] of Object.entries(args)) {
+        const vp = at(p, arg);
+        if (
+          !Array.isArray(values) ||
+          !values.every((v) => typeof v === "string")
+        ) {
+          add("invalid_type", vp, `${vp} must be a list of strings.`);
+        } else if (values.length > MAX_COMPLETION_VALUES) {
+          add(
+            "invalid_value",
+            vp,
+            `An argument may list ${MAX_COMPLETION_VALUES} suggestions at most. Keep the likeliest ones.`
+          );
+        }
+      }
+    }
+  }
 }

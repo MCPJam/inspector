@@ -108,6 +108,8 @@ export const MAX_CASE_STEPS = 20;
 export const MAX_STEP_DELAY_MS = 5000;
 export const MAX_CASE_DELAY_MS = 20000;
 export const MAX_SAMPLE_TOKENS = 4096;
+/** The most suggestions one completion argument may list. */
+export const MAX_COMPLETION_VALUES = 1000;
 
 /** Whether the step waits for the client (a question or a model request). */
 export function isInputStep(
@@ -130,6 +132,18 @@ export function definitionHasStep(
   test: (step: MockStep) => boolean
 ): boolean {
   return savedCasesOf(definition).some((c) => c.steps?.some(test));
+}
+
+/** Whether any saved case of the definition runs as a task. */
+export function definitionRunsTasks(definition: MockDefinition): boolean {
+  return savedCasesOf(definition).some((c) => c.task === true);
+}
+
+/** Whether a tool has a saved case that runs as a task. */
+export function toolRunsTasks(entry: MockTool | undefined): boolean {
+  return (
+    entry?.answer?.from === "saved" && entry.answer.cases.some((c) => c.task)
+  );
 }
 
 /** Cases are tried in order and the first that matches answers. There is no memory of earlier calls. */
@@ -301,4 +315,17 @@ export interface MockDefinition {
   resources?: Record<string, MockResource>;
   /** Keyed by the RFC 6570 URI template a client sees. */
   resourceTemplates?: Record<string, MockResourceTemplate>;
+  /** The suggestions `completion/complete` gives for prompt and template arguments. */
+  completions?: MockCompletions;
+}
+
+/**
+ * Suggestions by argument. `prompts` is keyed by prompt name and
+ * `resourceTemplates` by URI template; each maps an argument (or template
+ * variable) name to the values the mock suggests. An argument with no list here
+ * is completed by the real server, when it has completions.
+ */
+export interface MockCompletions {
+  prompts?: Record<string, Record<string, string[]>>;
+  resourceTemplates?: Record<string, Record<string, string[]>>;
 }

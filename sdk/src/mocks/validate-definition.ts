@@ -3,7 +3,7 @@ import type { MockCapIssueCode } from "./definition-caps.js";
 import { MAX_SAVED_CASES, MOCK_CAPABILITY_KEYS } from "./definition-types.js";
 import type { MockDefinition } from "./definition-types.js";
 import { checkItems } from "./validate-items.js";
-import { checkCaseSteps } from "./validate-steps.js";
+import { checkCaseSteps, checkCompletions } from "./validate-steps.js";
 
 export type MockIssueCode =
   | MockCapIssueCode
@@ -34,6 +34,7 @@ const TOP_FIELDS = [
   "prompts",
   "resources",
   "resourceTemplates",
+  "completions",
 ];
 const MAX_PAGE_SIZE = 1000;
 const TOOL_FIELDS = [
@@ -542,6 +543,9 @@ export function validateMockDefinition(raw: unknown): MockValidationResult {
         c.tool(name, tool, at("tools", name));
     }
     checkItems(input, (issue) => c.add(issue.code, issue.path, issue.message));
+    checkCompletions(input, (code, path, message) =>
+      c.add(code, path, message)
+    );
   }
   if (c.issues.length > 0) return { ok: false, issues: c.issues };
   // The checks above establish every field's type, so this is the one place the
