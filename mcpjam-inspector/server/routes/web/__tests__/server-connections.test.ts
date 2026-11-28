@@ -212,6 +212,40 @@ describe("claim", () => {
     );
   });
 
+  it("forwards the verified session itself, so the backend can take the actor from it", async () => {
+    authkit.verifyAuthKitToken.mockResolvedValue({ sub: "workos_user_1" });
+    identity.resolveUserByExternalId.mockResolvedValue({ _id: "users_1" });
+
+    await post(
+      "/claim",
+      { handoffToken: "handoff-1" },
+      { authorization: "Bearer real-authkit-jwt" },
+    );
+
+    expect(backendCalls.claimHandoff).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorBearer: "real-authkit-jwt",
+        actorUserId: "users_1",
+      }),
+    );
+  });
+
+  it("forwards no session for a signed-out visitor or an unverified bearer", async () => {
+    await post("/claim", { handoffToken: "handoff-1" });
+    authkit.verifyAuthKitToken.mockRejectedValue(
+      new AuthKitVerificationError("bad signature"),
+    );
+    await post(
+      "/claim",
+      { handoffToken: "handoff-1" },
+      { authorization: "Bearer forged" },
+    );
+
+    for (const [sent] of backendCalls.claimHandoff.mock.calls) {
+      expect(sent.actorBearer).toBeUndefined();
+    }
+  });
+
   it("forwards no actor when the bearer does not verify", async () => {
     // The identity is ASSERTED to the backend over the service channel, so an
     // unverified bearer must never become an actor — otherwise `Authorization:
@@ -262,7 +296,10 @@ describe("claim", () => {
 
       expect(res.status).toBe(200);
       expect(backendCalls.claimHandoff).toHaveBeenCalledWith(
-        expect.objectContaining({ actorUserId: undefined }),
+        expect.objectContaining({
+          actorUserId: undefined,
+          actorBearer: undefined,
+        }),
       );
       expect(identity.resolveUserByExternalId).not.toHaveBeenCalled();
     } finally {
@@ -309,12 +346,16 @@ describe("claim", () => {
       { authorization: "Bearer real-authkit-jwt" }
     );
 
-    // The degradation is deliberate: a signed-in user is treated as a guest,
-    // and the backend answers 403 for an account-owned link rather than
-    // admitting anyone. Failing open here is what would be the bug.
+    // The degradation is deliberate: no id is asserted, and the backend
+    // answers 403 for an account-owned link rather than admitting anyone.
+    // Failing open here is what would be the bug. The verified session still
+    // goes along, for a backend that takes the actor from it.
     expect(res.status).toBe(200);
     expect(backendCalls.claimHandoff).toHaveBeenCalledWith(
-      expect.objectContaining({ actorUserId: undefined })
+      expect.objectContaining({
+        actorUserId: undefined,
+        actorBearer: "real-authkit-jwt",
+      }),
     );
   });
 

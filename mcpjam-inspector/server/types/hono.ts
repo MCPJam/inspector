@@ -151,6 +151,13 @@ declare module "hono" {
     /** Resolved MCPJam user `_id` (Convex). Set with `authMethod`. */
     mcpjamUserId?: string;
     /**
+     * The AuthKit access token `resolveOptionalActor` verified, set only when
+     * the revoked-session list vouches for its session. A route that asks the
+     * backend to act for that person forwards it, so the backend takes the
+     * user from the token instead of an id the Inspector asserts.
+     */
+    verifiedSessionBearer?: string;
+    /**
      * MCPJam organization id (Convex `Id<'organizations'>`) the WorkOS API
      * key is bound to. Set with `authMethod` by `bearerAuthMiddleware` after
      * looking up the key's org binding. Forwarded to Convex as

@@ -18,12 +18,13 @@
  * WHY VERIFICATION, NOT THE PASSTHROUGH LABEL. `bearerAuthMiddleware` lets an
  * unrecognized bearer through unverified (`authMethod: "unverified_passthrough"`)
  * because its routes forward the token to Convex, which checks it. This route
- * does NOT forward it: the Inspector ASSERTS the actor to the backend over the
- * service channel, and the backend believes it. An asserted identity would
- * therefore be an identity anyone could claim — send `Authorization: Bearer
- * <anything>` alongside a stolen handoff link and the ownership check would
- * approve it. So the token is verified here, against AuthKit, before its subject
- * becomes an actor.
+ * also ASSERTS the actor's id to the backend over the service channel, and a
+ * backend that doesn't yet take the actor from the token believes it. An
+ * asserted identity would therefore be an identity anyone could claim — send
+ * `Authorization: Bearer <anything>` alongside a stolen handoff link and the
+ * ownership check would approve it. So the token is verified here, against
+ * AuthKit, before its subject becomes an actor, and only a verified token is
+ * forwarded (`verifiedSessionBearer`) for the backend to take the actor from.
  *
  * FAILING TO RESOLVE IS SAFE, AND DELIBERATELY QUIET. A malformed, expired, or
  * unknown token yields NO actor rather than a 401. The backend fails closed on
@@ -85,6 +86,9 @@ export function resolveOptionalActor(deps: OptionalActorDeps = defaultDeps) {
       });
       if (servable.ok) {
         c.set("workosUserId", session.sub);
+        // Set before the lookup: the backend can take the actor from the token
+        // itself, so a failed lookup here needn't leave the visitor signed out.
+        c.set("verifiedSessionBearer", token);
         const user = await deps.resolveUser(session.sub);
         if (user) {
           c.set("mcpjamUserId", user._id);

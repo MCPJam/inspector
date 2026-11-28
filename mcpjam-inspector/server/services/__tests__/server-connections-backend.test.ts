@@ -31,6 +31,7 @@ vi.mock("../internal-backend.js", async () => {
 
 const {
   acquireLease,
+  claimHandoff,
   fetchValidationContext,
   reportValidation,
   ServerConnectionBackendError,
@@ -284,5 +285,68 @@ describe("credentialRetryable on a validation context", () => {
     await expect(fetchValidationContext("scr_1", "lease_1")).rejects.toBe(
       transportError
     );
+  });
+});
+
+describe("the handoff claim", () => {
+  const sentHeaders = () =>
+    fetchMock.mock.calls[0][1].headers as Record<string, string>;
+  const sentBody = () => JSON.parse(fetchMock.mock.calls[0][1].body as string);
+
+  it("forwards the visitor's session as the bearer, beside the service token", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, {
+        ok: true,
+        requestId: "scr_1",
+        status: "discovering",
+      }),
+    );
+
+    await claimHandoff({
+      handoffToken: "handoff-1",
+      continuationToken: "continuation-1",
+      actorUserId: "users_1",
+      actorBearer: "authkit-jwt",
+    });
+
+    expect(sentHeaders()).toMatchObject({
+      authorization: "Bearer authkit-jwt",
+      "x-inspector-service-token": "service-token",
+    });
+    // The backend takes the actor from the bearer. The id still goes for a
+    // backend that predates that, which reads only the body.
+    expect(sentBody()).toEqual({
+      handoffToken: "handoff-1",
+      continuationToken: "continuation-1",
+      actorUserId: "users_1",
+    });
+  });
+
+  it("sends no bearer for a signed-out visitor", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, {
+        ok: true,
+        requestId: "scr_1",
+        status: "discovering",
+      }),
+    );
+
+    await claimHandoff({
+      handoffToken: "handoff-1",
+      continuationToken: "continuation-1",
+    });
+
+    expect(sentHeaders()).not.toHaveProperty("authorization");
+    expect(sentBody()).not.toHaveProperty("actorBearer");
+  });
+
+  it("keeps every other call on the service token alone", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, { ok: true, leased: true, status: "discovering" }),
+    );
+
+    await acquireLease("scr_1", "lease_1");
+
+    expect(sentHeaders()).not.toHaveProperty("authorization");
   });
 });

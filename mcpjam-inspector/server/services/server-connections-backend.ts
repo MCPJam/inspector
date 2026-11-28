@@ -6,7 +6,9 @@
  * `organizations.ts` already use. That token is the ONLY authorization: the
  * request id in each body names which row is being worked on and proves
  * nothing, because `scr_…` ids are printed in tool output and carried in
- * Discord button payloads by design.
+ * Discord button payloads by design. The handoff claim also sends the
+ * visitor's own verified session as the bearer, because that names who is
+ * claiming; the service token never does.
  *
  * NOTHING FROM `fetchValidationContext` MAY BE LOGGED. Its response carries a
  * decrypted access token for a third-party server, which is the one piece of
@@ -67,7 +69,9 @@ export class ServerConnectionBackendError extends Error {
 
 async function callBackend<T>(
   path: string,
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  /** A browser step's own session, for the backend to take the user from. */
+  sessionBearer?: string,
 ): Promise<T> {
   const { convexUrl, serviceToken } = getInternalBackendConfig();
   const url = `${convexUrl}${BASE_PATH}${path}`;
@@ -80,6 +84,7 @@ async function callBackend<T>(
       headers: {
         "content-type": "application/json",
         "x-inspector-service-token": serviceToken,
+        ...(sessionBearer ? { authorization: `Bearer ${sessionBearer}` } : {}),
       },
       body: JSON.stringify(body),
       signal: controller.signal,
@@ -254,13 +259,19 @@ export async function fetchValidationContext(
 export async function claimHandoff(input: {
   handoffToken: string;
   continuationToken: string;
+  /** The verified visitor's id, for a backend that reads the actor only from
+   * the body. One that takes it from `actorBearer` ignores this. */
   actorUserId?: string;
+  /** The visitor's verified AuthKit session, sent as the bearer: the backend
+   * takes the actor from it. A secret, so it never goes in the body. */
+  actorBearer?: string;
   /** Client IP for the backend's per-IP claim budget. Trustworthy because this
    * process authenticates with the service token; optional because a missing
    * forwarding header must not fail a legitimate claim. */
   clientIpKey?: string;
 }): Promise<{ requestId: string; status: string }> {
-  return await callBackend("/claim", { ...input });
+  const { actorBearer, ...body } = input;
+  return await callBackend("/claim", body, actorBearer);
 }
 
 export interface HandoffState {
