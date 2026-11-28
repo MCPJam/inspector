@@ -1,9 +1,16 @@
+import { useTrafficLogStore } from "@/stores/traffic-log-store";
+import { makeAppInstance } from "@/test/factories";
+import { useAppToolsRegistry, useAppToolInvocationLog } from "@mcpjam/widget-react";
+import { useAppToolRun } from "@/components/playground/use-app-tool-run";
+import { AppToolsSection } from "@/components/playground/AppToolsSection";
+import { createDeterministicToolMessages } from "../playground-helpers";
 import { useEffect } from "react";
 import { useMrtrElicitationStore } from "@/stores/mrtr-elicitation-store";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   render,
+  renderHook,
   screen,
   fireEvent,
   waitFor,
@@ -17,6 +24,7 @@ import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/availab
 import { useHostContextStore } from "@/stores/client-context-store";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 import { useEventAgentBridge } from "@/components/playground/events/event-agent-bridge";
+import * as extensionOwners from "@/components/host-workspace/extension-owners";
 import { saveSelectedModelId } from "@/lib/selected-model-storage";
 import { invalidateChatHistoryPrefetch } from "@/components/chat-v2/history/chat-history-prefetch";
 import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
@@ -25,6 +33,8 @@ import {
   showPluginNotice,
 } from "@/lib/plugins/plugin-notice-display";
 import { ExtensionWorkspaceProvider } from "@/components/host-workspace/ExtensionWorkspaceProvider";
+import * as extensionWorkspace from "@/components/host-workspace/ExtensionWorkspaceProvider";
+import { useThreadAppWorkspace } from "@/components/host-workspace/ThreadAppPanel";
 import { useChatAppDisplayBehavior } from "@/contexts/chat-app-display-behavior-context";
 import { useScenarioHostTheme } from "@/contexts/scenario-client-style-context";
 import { saveComparePanes } from "@/lib/compare-panes";
@@ -41,6 +51,13 @@ vi.mock("framer-motion", async (importOriginal) => {
 const mockThread = vi.fn();
 const mockChatInputProps = vi.fn();
 const mockFullscreenChatOverlay = vi.fn();
+const fullscreenRenderer = vi.hoisted(
+  (): {
+    component:
+      | typeof import("@/components/chat-v2/fullscreen-chat-overlay").FullscreenChatOverlay
+      | null;
+  } => ({ component: null }),
+);
 const mockMultiModelPlaygroundCard = vi.fn();
 const compareSetup = { ready: true, error: undefined as string | undefined };
 const mockTraceViewer = vi.fn();
@@ -392,6 +409,7 @@ const mockUseChatSession = {
   syncResumedVersion: vi.fn(),
   resumedVersion: null,
   restoredToolRenderOverrides: {},
+  appSessionScopeId: "live-app-scope",
   chatSessionId: "chat-session-1",
   liveTraceEnvelope: null,
   requestPayloadHistory: [],
@@ -457,7 +475,9 @@ vi.mock("@/components/chat-v2/thread", () => ({
     onFullscreenChange,
     interactive,
     onToolApprovalResponse,
+    toolRenderOverrides,
   }: {
+    toolRenderOverrides?: Record<string, import("@/components/chat-v2/thread/tool-render-overrides").ToolRenderOverride>;
     interactive?: boolean;
     onToolApprovalResponse?: (response: any) => unknown;
     messages: any[];
@@ -468,10 +488,9 @@ vi.mock("@/components/chat-v2/thread", () => ({
     // Widget-driven follow-ups bypass the composer, so tests need the handler
     // itself — a rendered button could never stand in for that path.
     sendFollowUpMessage?: (text: string) => void;
-    onModelContextUpdate?: (
-      toolCallId: string,
-      context: { structuredContent?: Record<string, unknown> },
-    ) => void;
+    onModelContextUpdate?: React.ComponentProps<
+      typeof import("@/components/chat-v2/thread").Thread
+    >["onModelContextUpdate"];
     // A widget going fullscreen is what swaps the docked composer for the
     // pinned overlay; only the widget can report it, so tests drive it here.
     onFullscreenChange?: (fullscreen: boolean) => void;
@@ -488,6 +507,7 @@ vi.mock("@/components/chat-v2/thread", () => ({
         onFullscreenChange,
         interactive,
         onToolApprovalResponse,
+        toolRenderOverrides,
         // The display rules the chat gives the Apps in this thread.
         displayBehavior: useChatAppDisplayBehavior(),
       });
@@ -739,17 +759,16 @@ vi.mock(
 // Mock FullscreenChatOverlay. It renders the `notice` slot and a
 // canSend-driven Send button because the overlay REPLACES the docked
 // composer — a stub that dropped either would hide exactly the dead end
-// these tests exist to catch.
+// these tests exist to catch. The App attribution regression uses the real overlay.
 vi.mock("@/components/chat-v2/fullscreen-chat-overlay", () => ({
-  FullscreenChatOverlay: (props: {
-    loadingIndicatorVariant?: string;
-    notice?: React.ReactNode;
-    input?: string;
-    onInputChange?: (value: string) => void;
-    canSend?: boolean;
-    onSend?: () => void;
-  }) => {
+  FullscreenChatOverlay: (
+    props: React.ComponentProps<
+      typeof import("@/components/chat-v2/fullscreen-chat-overlay").FullscreenChatOverlay
+    >,
+  ) => {
     mockFullscreenChatOverlay(props);
+    const RealOverlay = fullscreenRenderer.component;
+    if (RealOverlay) return <RealOverlay {...props} />;
     return (
       <div data-testid="fullscreen-overlay">
         {props.notice}
@@ -841,14 +860,6 @@ vi.mock("@/components/shared/ClientContextHeader", () => ({
     mobile: { width: 375, height: 667, label: "Phone", icon: () => null },
     tablet: { width: 768, height: 1024, label: "Tablet", icon: () => null },
     desktop: { width: 1280, height: 800, label: "Desktop", icon: () => null },
-  },
-}));
-
-// Mock traffic log store
-vi.mock("@/stores/traffic-log-store", () => ({
-  useTrafficLogStore: (selector: any) => {
-    const state = { clear: vi.fn() };
-    return selector ? selector(state) : state;
   },
 }));
 
@@ -967,6 +978,7 @@ describe("PlaygroundMain", () => {
       submitBlocked: false,
       isStreaming: false,
       chatSessionId: "chat-session-1",
+      appSessionScopeId: "live-app-scope",
       resumedVersion: null,
       availableModels: [],
       selectedModelIds: [],
@@ -1007,7 +1019,289 @@ describe("PlaygroundMain", () => {
     }
   });
 
+  describe("live App tools through the product publisher and rail", () => {
+    beforeEach(() => {
+      mockUseChatSession.appSessionScopeId = "live-app-scope";
+      useAppToolsRegistry.getState().setEnabled(true);
+      useAppToolsRegistry.setState({ aliases: new Map(), instancesByBridgeId: new Map(), activeBridgeByParent: new Map(), pendingControllers: new Map() });
+      useAppToolInvocationLog.getState().clear();
+    });
+
+    it("keeps manual selection and pending calls across conflict continuation, then isolates a source reopen", async () => {
+      const counter = makeAppInstance({
+        bridgeId: "counter", chatSessionId: "live-app-scope", appName: "Live counter",
+        tools: [{ name: "read_count", inputSchema: { type: "object" } }],
+      });
+      const answer = { content: [{ type: "text" as const, text: "3" }] };
+      const call = vi.spyOn(counter.bridge, "callTool").mockResolvedValue(answer);
+      await useAppToolsRegistry.getState().registerInstance(counter);
+      await useAppToolsRegistry.getState().registerInstance(makeAppInstance({
+        bridgeId: "other-tab", chatSessionId: "other-lifetime", appName: "Other counter",
+      }));
+      const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+      const rail = renderHook(() => useAppToolRun());
+      const section = render(<AppToolsSection searchQuery="" onSelect={rail.result.current.select} />);
+      expect(screen.getByText("Live counter")).toBeInTheDocument();
+      expect(screen.queryByText("Other counter")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByText("read_count"));
+      await act(async () => rail.result.current.run());
+      expect(rail.result.current.result).toEqual({ ok: true, text: "3" });
+      expect(call).toHaveBeenCalledOnce();
+      const key = rail.result.current.selectedKey;
+      const pendingAnswer = Promise.withResolvers<typeof answer>();
+      call.mockReturnValueOnce(pendingAnswer.promise);
+      let pending: Promise<void> = Promise.resolve();
+      act(() => { pending = rail.result.current.run(); });
+      const controller = [...useAppToolsRegistry.getState().pendingControllers.get("counter")!][0];
+      // Mirror the hook's confirmed conflict commit: row changes, lifetime does not.
+      mockUseChatSession.chatSessionId = "fork-row";
+      rerender(<PlaygroundMain {...defaultProps} />);
+      expect(useActiveChatSessionStore.getState().sessionId).toBe("fork-row");
+      expect(controller.signal.aborted).toBe(false);
+      expect(rail.result.current.selectedKey).toBe(key);
+      await act(async () => { pendingAnswer.resolve(answer); await pending; });
+      expect(rail.result.current.result).toEqual({ ok: true, text: "3" });
+      expect(useAppToolInvocationLog.getState().records.at(-1)?.chatSessionId).toBe("chat-session-1");
+      await act(async () => rail.result.current.run());
+      expect(useAppToolInvocationLog.getState().records.at(-1)).toMatchObject({
+        chatSessionId: "fork-row", appSessionScopeId: "live-app-scope", initiatedBy: "user",
+      });
+      expect(useTrafficLogStore.getState().items[0]?.message).toMatchObject({
+        chatSessionId: "fork-row", appSessionScopeId: "live-app-scope", initiatedBy: "user",
+      });
+      const lateAnswer = Promise.withResolvers<typeof answer>();
+      call.mockReturnValueOnce(lateAnswer.promise);
+      act(() => { pending = rail.result.current.run(); });
+      const staleController = [...useAppToolsRegistry.getState().pendingControllers.get("counter")!][0];
+      mockUseChatSession.chatSessionId = "chat-session-1";
+      mockUseChatSession.appSessionScopeId = "reopened-lifetime";
+      rerender(<PlaygroundMain {...defaultProps} />);
+      expect(staleController.signal.aborted).toBe(true);
+      expect(rail.result.current.groups).toEqual([]);
+      expect(rail.result.current.selectedKey).toBeNull();
+      expect(screen.queryByText("Live counter")).not.toBeInTheDocument();
+      await act(async () => { lateAnswer.resolve(answer); await pending; });
+      expect(rail.result.current.result).toBeNull();
+      section.unmount();
+    });
+  });
+
+  it("preserves the reopened source's forms when the fork's archive finishes later", async () => {
+    mockUseChatSession.chatSessionId = "fork";
+    mockUseChatSession.appSessionScopeId = "source";
+    const scope = vi.spyOn(extensionOwners, "archivedChatAppScope");
+    try {
+      const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+      const finishArchive =
+        usePlaygroundChatHistoryBridgeStore.getState().bridge?.onSessionAction;
+      expect(finishArchive).toBeDefined();
+      mockUseChatSession.chatSessionId = "source";
+      rerender(<PlaygroundMain {...defaultProps} />);
+      await act(async () => {
+        await finishArchive!({
+          action: "archive",
+          session: {
+            _id: "history-fork",
+            chatSessionId: "fork",
+            firstMessagePreview: "App",
+            status: "active",
+            directVisibility: "private",
+            version: 1,
+            messageCount: 1,
+            startedAt: 1,
+            lastActivityAt: 1,
+            isPinned: false,
+            manualUnread: false,
+            isUnread: false,
+          },
+        });
+      });
+      expect(scope).toHaveBeenCalledWith("fork", "source", "source");
+      expect(scope).toHaveReturnedWith("fork");
+    } finally {
+      scope.mockRestore();
+    }
+  });
+
+  it.each([false, true])("retains only unsnapshotted injected Apps through the real reactive same-row history refresh (saved raw result: %s)", async (savedRawResult) => {
+    mockConvexAuthState.isAuthenticated = true;
+    invalidateChatHistoryPrefetch();
+    const session = {
+      _id: "refresh-row", chatSessionId: "chat-session-1", version: 4,
+      firstMessagePreview: "Apps", status: "active" as const,
+      directVisibility: "private" as const, messageCount: 2,
+      startedAt: 1, lastActivityAt: 1, isPinned: false, manualUnread: false,
+      isUnread: false, messagesBlobUrl: "https://storage.test/refresh-v4",
+      resumeConfig: { selectedServers: ["test-server"] },
+    };
+    const message = (ids: string[]) => ({ id: "apps", role: "assistant", parts: ids.map((toolCallId) => ({
+      type: "dynamic-tool", toolName: "counter", toolCallId, state: "output-available", input: {}, output: {},
+    })) });
+    mockUseChatSession.messages = [message(["live", "removed", "snapshotted"])];
+    const originalLoad = mockUseChatSession.loadChatSession.getMockImplementation();
+    mockUseChatSession.loadChatSession.mockImplementation(async (incoming) => {
+      mockUseChatSession.resumedVersion = incoming.version;
+      if (incoming.version === 5) {
+        mockUseChatSession.messages = [message(["live", "snapshotted"])];
+        mockUseChatSession.restoredToolRenderOverrides = {
+          snapshotted: { cachedWidgetHtmlUrl: "https://storage.test/saved.html" },
+          ...(savedRawResult ? { live: { toolOutput: { content: [{ type: "text", text: "latest raw result" }] } } } : {}),
+        };
+      }
+      capturedChatSessionOptions.onReset("hydrate", {
+        appSessionScopeId: mockUseChatSession.appSessionScopeId,
+        messages: mockUseChatSession.messages,
+        toolRenderOverrides: mockUseChatSession.restoredToolRenderOverrides,
+        persistedSnapshotToolCallIds: incoming.version === 5 ? ["snapshotted"] : [],
+      });
+    });
+    try {
+      mockReadHistory.mockResolvedValue({ ok: true, session, widgetSnapshots: [] });
+      const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+      await waitFor(() => expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBeNull());
+      await act(async () => { await usePlaygroundChatHistoryBridgeStore.getState().bridge?.onSelectThread(session); });
+      for (const toolCallId of ["live", "removed", "snapshotted"]) {
+        vi.mocked(createDeterministicToolMessages).mockReturnValueOnce({ messages: [], toolCallId });
+        rerender(<PlaygroundMain {...defaultProps} pendingExecution={{ toolName: "counter", toolCallId, params: {}, result: {}, renderOverride: {
+          cachedWidgetHtmlUrl: "https://storage.test/injected.html", resourceUri: "ui://counter", serverId: "counter-server",
+        } }} />);
+      }
+      rerender(<PlaygroundMain {...defaultProps} />);
+      expect(mockThread.mock.lastCall?.[0].toolRenderOverrides.live).toBeDefined();
+      mockUseChatSession.resumedVersion = 4;
+      mockReactiveHistoryState.session = { ...session, version: 5, messagesBlobUrl: "https://storage.test/refresh-v5" };
+      mockReactiveHistoryState.widgetSnapshots = [];
+      rerender(<PlaygroundMain {...defaultProps} />);
+      await waitFor(() => expect(mockUseChatSession.loadChatSession).toHaveBeenCalledWith(
+        expect.objectContaining({ version: 5 }), expect.anything(),
+      ));
+      const overrides = mockThread.mock.lastCall?.[0].toolRenderOverrides;
+      expect(overrides.live?.cachedWidgetHtmlUrl).toBe("https://storage.test/injected.html");
+      expect(overrides.live?.resourceUri).toBe("ui://counter");
+      expect(overrides.live?.serverId).toBe("counter-server");
+      if (savedRawResult) {
+        expect(overrides.live?.toolOutput).toEqual({ content: [{ type: "text", text: "latest raw result" }] });
+      }
+      expect(overrides).not.toHaveProperty("removed");
+      expect(overrides.snapshotted?.cachedWidgetHtmlUrl).toBe("https://storage.test/saved.html");
+      // An explicit different-row selection with identical tool ids cannot inherit metadata.
+      mockUseChatSession.appSessionScopeId = "other-lifetime";
+      mockUseChatSession.restoredToolRenderOverrides = {};
+      mockReactiveHistoryState.session = undefined;
+      mockReactiveHistoryState.widgetSnapshots = undefined;
+      mockReadHistory.mockResolvedValue({ ok: true, session: { ...session, _id: "other-row", chatSessionId: "other-row" }, widgetSnapshots: [] });
+      await act(async () => { await usePlaygroundChatHistoryBridgeStore.getState().bridge?.onSelectThread({ ...session, _id: "other-row", chatSessionId: "other-row" }); });
+      rerender(<PlaygroundMain {...defaultProps} />);
+      expect(mockThread.mock.lastCall?.[0].toolRenderOverrides).not.toHaveProperty("live");
+    } finally {
+      mockUseChatSession.loadChatSession.mockImplementation(originalLoad ?? (async () => undefined));
+      mockUseChatSession.restoredToolRenderOverrides = {};
+      invalidateChatHistoryPrefetch();
+    }
+  });
+
   describe("display rules for the chat's Apps", () => {
+    it("keeps the empty thread layout while an inline entry App follows a conflict fork", () => {
+      const owner = renderHook(() => useThreadAppWorkspace(null, []));
+      const state: ReturnType<extensionWorkspace.ExtensionStore["getState"]> = {
+        enabled: true,
+        global: null,
+        chats: {
+          source: {
+            ...owner.result.current,
+            apps: [{
+              key: "entry",
+              server: { serverId: "server", name: "Server" },
+              declaration: { kind: "thread", toolName: "entry", title: "Entry" },
+              status: "loading",
+              abort: new AbortController(),
+              inline: true,
+            }],
+          },
+        },
+        currentChatId: "source",
+        includedPluginTools: null,
+        railSlot: null,
+        takeoverSlot: null,
+        inlineSlot: null,
+        railRevealSeq: 0,
+        railDismissSeq: 0,
+        modelFullscreen: null,
+      };
+      const read = vi
+        .spyOn(extensionWorkspace, "useExtensionWorkspaceState")
+        .mockImplementation((select) => select(state));
+      try {
+        mockUseChatSession.chatSessionId = "source";
+        mockUseChatSession.appSessionScopeId = "source";
+        const view = render(<PlaygroundMain {...defaultProps} />);
+        expect(screen.getByTestId("thread")).toBeInTheDocument();
+        expect(screen.getByTestId("message-count")).toHaveTextContent("0");
+        mockUseChatSession.chatSessionId = "fork-row";
+        view.rerender(<PlaygroundMain {...defaultProps} />);
+        expect(screen.queryByTestId("playground-empty-state-shell")).not.toBeInTheDocument();
+        expect(screen.getByTestId("thread")).toBeInTheDocument();
+      } finally {
+        read.mockRestore();
+        owner.unmount();
+      }
+    });
+
+    it("keeps pending App tool labels in the real fullscreen overlay after a conflict fork", async () => {
+      const registryState = useAppToolsRegistry.getState();
+      const previousDeviceType = mockUIPlaygroundStore.deviceType;
+      try {
+        const actual = await vi.importActual<
+          typeof import("@/components/chat-v2/fullscreen-chat-overlay")
+        >("@/components/chat-v2/fullscreen-chat-overlay");
+        fullscreenRenderer.component = actual.FullscreenChatOverlay;
+        useAppToolsRegistry.getState().setEnabled(true);
+        useAppToolsRegistry.setState({
+          aliases: new Map(),
+          instancesByBridgeId: new Map(),
+          activeBridgeByParent: new Map(),
+          pendingControllers: new Map(),
+        });
+        await act(async () =>
+          useAppToolsRegistry.getState().registerInstance(
+            makeAppInstance({ chatSessionId: "source", appName: "Chess" }),
+          ),
+        );
+        const alias = [...useAppToolsRegistry.getState().aliases.keys()][0];
+        expect(alias).toBeTruthy();
+        mockUseChatSession.chatSessionId = "source";
+        mockUseChatSession.appSessionScopeId = "source";
+        mockUseChatSession.messages = [{
+          id: "pending-app-call",
+          role: "assistant",
+          parts: [{
+            type: "dynamic-tool",
+            toolCallId: "pending",
+            toolName: alias,
+            state: "input-available",
+            input: {},
+          }],
+        }];
+        mockUIPlaygroundStore.deviceType = "fill";
+        useHostContextStore.setState({
+          draftHostContext: { displayMode: "fullscreen" },
+        });
+        const view = render(<PlaygroundMain {...defaultProps} />);
+        act(() => mockThread.mock.lastCall?.[0].onFullscreenChange(true));
+        fireEvent.click(screen.getByRole("button", { name: "Expand chat" }));
+        expect(screen.getByText("make_move")).toBeInTheDocument();
+        mockUseChatSession.chatSessionId = "fork-row";
+        view.rerender(<PlaygroundMain {...defaultProps} />);
+        expect(screen.getByText("make_move")).toBeInTheDocument();
+        expect(screen.getByText("from Chess")).toBeInTheDocument();
+        expect(screen.queryByText(alias)).not.toBeInTheDocument();
+      } finally {
+        fullscreenRenderer.component = null;
+        mockUIPlaygroundStore.deviceType = previousDeviceType;
+        useAppToolsRegistry.setState(registryState);
+      }
+    });
+
     it("gives a Claude chat's Apps none while plugin extensions are off, though the provider is mounted", () => {
       // PlaygroundTab mounts the provider whatever the flag says; the flag is
       // off in this suite.
@@ -3909,6 +4203,53 @@ describe("PlaygroundMain", () => {
       );
     });
 
+    it.each([false, true])(
+      "retains the trace pane on conflict and resets on reopening the source (prelude: %s)",
+      (prelude) => {
+        mockUseChatSession.messages = [
+          { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+        ];
+        mockUseChatSession.appSessionScopeId = "chat-session-1";
+        mockUseChatSession.traceViewsSupported = true;
+        mockUseChatSession.hasTraceSnapshot = !prelude;
+        mockUseChatSession.hasLiveTimelineContent = !prelude;
+        mockUseChatSession.liveTraceEnvelope = prelude
+          ? null
+          : sampleLiveTraceEnvelope;
+        const props = { ...defaultProps, enableTraceViews: true };
+        const { rerender } = render(
+          <PlaygroundMain
+            {...props}
+            pendingExecution={
+              prelude
+                ? {
+                    toolName: "counter",
+                    toolCallId: "counter-call",
+                    params: {},
+                    result: { count: 1 },
+                  }
+                : undefined
+            }
+          />,
+        );
+        rerender(<PlaygroundMain {...props} />);
+        fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+        const tracePane = screen.getByTestId("trace-viewer");
+        const trace = tracePane.getAttribute("data-trace");
+
+        act(() => capturedChatSessionOptions.onReset("conflict-fork"));
+        mockUseChatSession.chatSessionId = "forked-session";
+        rerender(<PlaygroundMain {...props} />);
+        expect(screen.getByTestId("trace-viewer")).toBe(tracePane);
+        expect(tracePane).toHaveAttribute("data-trace", trace);
+
+        mockUseChatSession.chatSessionId = "chat-session-1";
+        rerender(<PlaygroundMain {...props} />);
+        expect(screen.queryByTestId("trace-viewer")).not.toBeInTheDocument();
+        expect(screen.getByTestId("thread")).toBeInTheDocument();
+      },
+    );
+
     it("prefers the streamed live trace over the prelude trace once a snapshot exists", async () => {
       const pendingExecution = {
         toolName: "create_view",
@@ -5189,6 +5530,172 @@ describe("PlaygroundMain", () => {
   });
 
   describe("pending execution", () => {
+    it.each([false, true])("keeps the App pane through a conflict until comparison is explicitly requested (comparison configured: %s)", async (compare) => {
+      invalidateChatHistoryPrefetch();
+      const session = {
+        _id: "conflict-history", chatSessionId: "chat-session-1", version: 4,
+        firstMessagePreview: "App", status: "active" as const,
+        directVisibility: "private" as const, messageCount: 2,
+        startedAt: 1, lastActivityAt: 1, isPinned: false, manualUnread: false,
+        isUnread: false, messagesBlobUrl: "https://storage.test/conflict",
+        resumeConfig: { selectedServers: ["test-server"] },
+      };
+      const override = { serverId: "injected-server", resourceUri: "ui://counter" };
+      mockUseChatSession.messages = [
+        { id: "app", role: "assistant", parts: [{ type: "text", text: "App" }] },
+      ];
+      mockUseChatSession.availableModels = [
+        { id: "openai/gpt-5-mini", name: "GPT-5 Mini", provider: "openai" },
+        {
+          id: "anthropic/claude-sonnet-4-5",
+          name: "Claude Sonnet 4.5",
+          provider: "anthropic",
+        },
+      ];
+      mockUseChatSession.multiModelEnabled = compare;
+      const props = { ...defaultProps, enableMultiModelChat: true };
+      mockReadHistory.mockResolvedValue({ ok: true, session, widgetSnapshots: [] });
+      const { rerender } = render(<PlaygroundMain {...props} />);
+      await waitFor(() => expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBeNull());
+      await act(async () => {
+        await usePlaygroundChatHistoryBridgeStore.getState().bridge?.onSelectThread(session);
+      });
+      const appPane = screen.getByTestId("thread");
+      vi.mocked(createDeterministicToolMessages).mockReturnValueOnce({ messages: [], toolCallId: "counter-call" });
+      rerender(<PlaygroundMain {...props}
+        pendingExecution={{ toolName: "counter", toolCallId: "counter-call", params: {}, result: {}, renderOverride: override }}
+      />);
+      rerender(<PlaygroundMain {...props} />);
+      mockUseChatSession.resumedVersion = 4;
+      mockUseChatSession.status = "streaming";
+      rerender(<PlaygroundMain {...props} />);
+      mockUseChatSession.consumePersistReceipt.mockReturnValueOnce({
+        outcome: "conflict", chatSessionId: session.chatSessionId,
+        currentVersion: 5, turnId: "losing-turn",
+      });
+      mockUseChatSession.status = "ready";
+      rerender(<PlaygroundMain {...props} />);
+      await waitFor(() => expect(mockUseChatSession.detachToLocalFork).toHaveBeenCalledWith(
+        mockUseChatSession.messages,
+        { preserveAppSession: true, toolRenderOverrides: { "counter-call": override } },
+      ));
+      expect(mockUseChatSession.detachToLocalFork).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("thread")).toBe(appPane);
+      expect(appPane.isConnected).toBe(true);
+      expect(mockChatInputProps.mock.calls.at(-1)![0].multiModelEnabled).toBe(false);
+
+      mockUseChatSession.setMultiModelEnabled.mockImplementationOnce((enabled: boolean) => {
+        mockUseChatSession.multiModelEnabled = enabled;
+      });
+      act(() => mockChatInputProps.mock.calls.at(-1)![0].onMultiModelEnabledChange(true));
+      rerender(<PlaygroundMain {...props} />);
+      expect(mockUseChatSession.setMultiModelEnabled).toHaveBeenCalledWith(true);
+      expect(mockChatInputProps.mock.calls.at(-1)![0].multiModelEnabled).toBe(true);
+      expect(mockMultiModelPlaygroundCard).toHaveBeenCalled();
+      invalidateChatHistoryPrefetch();
+    });
+
+    it.each(["conflict-fork", "reset", "fork", "hydrate"])(
+      "keeps injected App render overrides only across %s when appropriate",
+      async (reason) => {
+        vi.mocked(createDeterministicToolMessages).mockReturnValueOnce({ messages: [], toolCallId: "counter-call" });
+        const override = { serverId: "injected-server", resourceUri: "ui://counter" };
+        mockUseChatSession.messages = [
+          { id: "app", role: "assistant", parts: [{ type: "text", text: "App" }] },
+        ];
+        const onExecutionInjected = vi.fn();
+        const { rerender } = render(
+          <PlaygroundMain
+            {...defaultProps}
+            pendingExecution={{ toolName: "counter", toolCallId: "counter-call", params: {}, result: {}, renderOverride: override }}
+            onExecutionInjected={onExecutionInjected}
+          />
+        );
+        await waitFor(() => expect(onExecutionInjected).toHaveBeenCalled());
+        // Remove the pending injection so a reset cannot re-inject it.
+        rerender(<PlaygroundMain {...defaultProps} />);
+        expect(mockThread.mock.lastCall?.[0].toolRenderOverrides).toMatchObject({ "counter-call": override });
+        act(() => capturedChatSessionOptions.onReset(reason));
+        const overrides = mockThread.mock.lastCall?.[0].toolRenderOverrides;
+        if (reason === "conflict-fork") {
+          expect(overrides).toMatchObject({ "counter-call": override });
+        } else {
+          expect(overrides).not.toHaveProperty("counter-call");
+        }
+      }
+    );
+
+    it.each([
+      ["conflict-fork", false, true],
+      ["hydrate", true, true],
+      ["hydrate", true, false],
+      ["hydrate", false, false],
+      ["reset", false, false],
+      ["fork", false, false],
+    ] as const)(
+      "scopes pending widget context after %s (same-row refresh: %s, surviving call: %s)",
+      async (reason, sameRow, survives) => {
+        mockUseChatSession.messages = [
+          {
+            id: "counter",
+            role: "assistant",
+            parts: [
+              {
+                type: "dynamic-tool",
+                toolName: "counter",
+                toolCallId: "counter-call",
+                state: "output-available",
+                input: {},
+                output: {},
+              },
+            ],
+          },
+        ];
+        render(<PlaygroundMain {...defaultProps} />);
+        const context = { structuredContent: { count: 7 } };
+        act(() =>
+          mockThread.mock.lastCall![0].onModelContextUpdate(
+            "counter-call",
+            context,
+          ),
+        );
+        act(() =>
+          mockThread.mock.lastCall![0].onModelContextUpdate("removed", context),
+        );
+        act(() =>
+          capturedChatSessionOptions.onReset(
+            reason,
+            sameRow
+              ? {
+                  appSessionScopeId: mockUseChatSession.appSessionScopeId,
+                  messages: survives ? mockUseChatSession.messages : [],
+                  toolRenderOverrides: {},
+                }
+              : undefined,
+          ),
+        );
+        await act(async () => {
+          mockThread.mock.lastCall![0].sendFollowUpMessage("Read the counter");
+        });
+        await waitFor(() =>
+          expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+              text: "Read the counter",
+              widgetModelContext:
+                reason === "conflict-fork"
+                  ? [
+                      { toolCallId: "counter-call", context },
+                      { toolCallId: "removed", context },
+                    ]
+                  : sameRow && survives
+                    ? [{ toolCallId: "counter-call", context }]
+                    : [],
+            }),
+          ),
+        );
+      },
+    );
+
     it("injects messages when pendingExecution is set", async () => {
       const onExecutionInjected = vi.fn();
       const pendingExecution = {

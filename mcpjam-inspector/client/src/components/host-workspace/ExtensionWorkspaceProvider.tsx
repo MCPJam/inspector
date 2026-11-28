@@ -1,3 +1,4 @@
+import { useRetainedChatOwners } from "./use-retained-chat-owners";
 import {
   createContext,
   memo,
@@ -8,11 +9,13 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentProps,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { useStore } from "zustand";
+import { useAppSessionReopenKey } from "@/components/chat-v2/thread/app-session-scope";
 import type { PluginMessageIntent } from "@/shared/plugin-message";
 import { X } from "lucide-react";
 import {
@@ -61,6 +64,8 @@ export interface ExtensionRegistration {
   /** `null` turns every extension off (master switch, flag, access, client). */
   identity: ExtensionOwnerIdentity | null;
   chatId: string;
+  /** The current history row when its App owner survives a conflict. */
+  sessionId?: string;
   servers: WorkspaceServer[];
   /** Exact plugin contribution already resolved for this chat. Display only. */
   includedPluginTools?: { environmentId: string; serverIds: string[]; includeAppOnly?: boolean };
@@ -178,12 +183,11 @@ interface ExtensionWorkspaceContextValue {
 const ExtensionWorkspaceContext =
   createContext<ExtensionWorkspaceContextValue | null>(null);
 
-const MAX_RETAINED_CHATS = 8;
-
 function registrationKey(registration: ExtensionRegistration): string {
   return JSON.stringify([
     ownerIdentityKey(registration.identity),
     registration.chatId,
+    registration.sessionId ?? registration.chatId,
     registration.servers.map((server) => [
       server.serverId,
       server.name,
@@ -310,45 +314,14 @@ export function ExtensionWorkspaceProvider({
     [capsKey],
   );
   const chatId = identity ? (registration?.chatId ?? null) : null;
+  const sessionId = registration?.sessionId ?? chatId;
   const profile = registration?.profile ?? "chatgpt";
   const displayBehavior = identity ? registration?.displayBehavior : undefined;
   const hostRevision = identity ? registration?.hostRevision : undefined;
 
-  // Retained chats for the current identity, most recent last.
-  const [retained, setRetained] = useState<{
-    identity: string | null;
-    ids: string[];
-  }>({ identity: null, ids: [] });
-  const retainedIds = (
-    retained.identity === identityKey ? retained.ids : ([] as string[])
-  ).filter((id) => id === chatId || !released.has(id));
-  const chatIds =
-    chatId && !retainedIds.includes(chatId)
-      ? [...retainedIds, chatId]
-      : retainedIds;
-  useEffect(() => {
-    setRetained((old) => {
-      const base = old.identity === identityKey ? old.ids : [];
-      if (!chatId) return { identity: identityKey, ids: base };
-      const ids = [...base.filter((id) => id !== chatId), chatId];
-      // Release deleted chats and hidden chats with nothing open, then cap
-      // the rest.
-      const chats = store.getState().chats;
-      const kept = ids.filter(
-        (id) =>
-          id === chatId ||
-          (!released.has(id) &&
-            ((chats[id]?.apps.length ?? 0) > 0 ||
-              (chats[id]?.settings.sessions.length ?? 0) > 0)),
-      );
-      const capped = kept.slice(-MAX_RETAINED_CHATS);
-      return old.identity === identityKey &&
-        capped.length === old.ids.length &&
-        capped.every((id, index) => old.ids[index] === id)
-        ? old
-        : { identity: identityKey, ids: capped };
-    });
-  }, [identityKey, chatId, store, released]);
+  const chatIds = useRetainedChatOwners(
+    identityKey, chatId, sessionId, store, released,
+  );
   useLayoutEffect(() => {
     store.setState({
       currentChatId: chatId,
@@ -359,13 +332,18 @@ export function ExtensionWorkspaceProvider({
     });
   }, [store, chatId, identity, identityKey, registration?.includedPluginTools]);
   // Choosing another chat (Sessions, New chat) returns from a global App's
-  // takeover to that chat; the App stays retained.
-  const shownChat = useRef(chatId);
+  // takeover to that chat; the App stays retained. A conflict only changes
+  // the durable session; reopening a conversation restores matching IDs.
+  const shownChat = useRef({ chatId, sessionId });
   useEffect(() => {
-    if (shownChat.current !== null && chatId !== shownChat.current)
+    if (
+      shownChat.current.chatId !== null &&
+      (chatId !== shownChat.current.chatId ||
+        (sessionId !== shownChat.current.sessionId && sessionId === chatId))
+    )
       store.getState().global?.select(null);
-    shownChat.current = chatId;
-  }, [store, chatId]);
+    shownChat.current = { chatId, sessionId };
+  }, [store, chatId, sessionId]);
 
   const globalScope = useMemo(
     () => (identity ? globalOwnerScope(identity) : null),
@@ -423,7 +401,8 @@ export function ExtensionWorkspaceProvider({
         ) : null}
         {identity
           ? chatIds.map((id) => (
-              <ChatOwner
+              <ChatOwnerLifetime
+                sessionId={id === chatId ? sessionId : id}
                 key={`${identityKey}:${id}`}
                 identity={identity}
                 chatId={id}
@@ -613,6 +592,14 @@ const GlobalOwner = memo(function GlobalOwner({
     </>
   );
 });
+
+function ChatOwnerLifetime({
+  sessionId,
+  ...props
+}: ComponentProps<typeof ChatOwner> & { sessionId: string | null }) {
+  const key = useAppSessionReopenKey(sessionId, props.chatId);
+  return <ChatOwner key={key} {...props} />;
+}
 
 const ChatOwner = memo(function ChatOwner({
   identity,

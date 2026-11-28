@@ -18,7 +18,41 @@ export function usePluginMessage(
 ) {
   const current = useRef(options);
   current.current = options;
-  const action = useOwnedChatAction({ ...options, accepts: () => true });
+  const action = useOwnedChatAction({
+    ...options,
+    accepts: () => true,
+    send: async (intent, isCurrent) => {
+      const destination = options.newChat?.threadId;
+      if (
+        destination &&
+        destination !== intent.sourceThreadId &&
+        pluginMessageSendMode(intent.params).target === "active"
+      ) {
+        // The live App still belongs to the source row. Admit the transfer
+        // there before sending into the already-open conflict continuation.
+        const meta = intent.params._meta;
+        const prepared = await options.prepareNew?.(
+          {
+            ...intent,
+            params: {
+              ...intent.params,
+              _meta: {
+                ...meta,
+                "openai/message": {
+                  ...meta?.["openai/message"],
+                  target: "new",
+                },
+              },
+            },
+          },
+          isCurrent,
+        );
+        if (!prepared?.preparationToken || !isCurrent()) return false;
+        return options.send(prepared, isCurrent);
+      }
+      return options.send(intent, isCurrent);
+    },
+  });
   const send = useCallback(
     async (value: PluginMessageIntent, requireLive: () => boolean) => {
       const mode = pluginMessageSendMode(parsePluginMessage(value.params));

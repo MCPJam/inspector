@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from "react";
+import type { UIMessage } from "ai";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import {
   upsertWidgetModelContextEntry,
@@ -13,6 +14,7 @@ import {
 export function useWidgetModelContextQueue() {
   const [queue, setQueueState] = useState<WidgetModelContextEntry[]>([]);
   const current = useRef(queue);
+  const restorableToolCallIds = useRef<Set<string> | null>(null);
   const setQueue = useCallback(
     (
       next:
@@ -30,10 +32,12 @@ export function useWidgetModelContextQueue() {
     [],
   );
   const update = useCallback(
-    (toolCallId: string, context: WidgetModelContextUpdate["context"]) =>
+    (toolCallId: string, context: WidgetModelContextUpdate["context"]) => {
       setQueue(
         upsertWidgetModelContextEntry(current.current, toolCallId, context),
-      ),
+      );
+      restorableToolCallIds.current?.add(toolCallId);
+    },
     [setQueue],
   );
   // Puts back context a send never delivered. An App that updated since then
@@ -42,11 +46,34 @@ export function useWidgetModelContextQueue() {
     (unsent: readonly WidgetModelContextEntry[]) => {
       const queued = current.current;
       const missing = unsent.filter(
-        (entry) => !queued.some((next) => next.toolCallId === entry.toolCallId),
+        (entry) =>
+          (restorableToolCallIds.current === null ||
+            restorableToolCallIds.current.has(entry.toolCallId)) &&
+          !queued.some((next) => next.toolCallId === entry.toolCallId),
       );
       if (missing.length > 0) setQueue([...missing, ...queued]);
     },
     [setQueue],
   );
-  return [queue, setQueue, update, restore] as const;
+  const retainForMessages = useCallback(
+    (messages: UIMessage[]) => {
+      const toolCallIds = new Set(
+        messages.flatMap((message) =>
+          message.parts.flatMap((part) =>
+            "toolCallId" in part && typeof part.toolCallId === "string"
+              ? [part.toolCallId]
+              : [],
+          ),
+        ),
+      );
+      // A send can be refused after hydration has removed its App, even
+      // when that send already cleared the visible queue.
+      restorableToolCallIds.current = toolCallIds;
+      setQueue(
+        current.current.filter((entry) => toolCallIds.has(entry.toolCallId)),
+      );
+    },
+    [setQueue],
+  );
+  return [queue, setQueue, update, restore, retainForMessages] as const;
 }

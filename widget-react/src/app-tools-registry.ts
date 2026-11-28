@@ -640,6 +640,8 @@ export const useAppToolsRegistry = Object.assign(
  * context.
  */
 export interface AppToolInvocationRecord {
+  chatSessionId?: string; // Dispatch conversation, independent of App ownership.
+  appSessionScopeId?: string;
   initiatedBy?: "user";
   alias: string;
   rawName: string;
@@ -729,6 +731,8 @@ export function recordAppToolInvocation(
       protocol: "mcp-apps",
       method: "tools/call",
       message: {
+        ...(args.chatSessionId ? { chatSessionId: args.chatSessionId } : {}),
+        ...(args.appSessionScopeId ? { appSessionScopeId: args.appSessionScopeId } : {}),
         alias: args.alias,
         toolName: args.rawName,
         appName: args.appName,

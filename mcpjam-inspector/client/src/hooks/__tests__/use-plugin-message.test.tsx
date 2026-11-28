@@ -46,6 +46,53 @@ describe("owned app message dispatch", () => {
     expect(f.send.mock.calls[0][1]()).toBe(true);
     expect(f.onSent).toHaveBeenCalledOnce();
   });
+  it("prepares an active send from a retained App without opening another chat", async () => {
+    const f = fixture();
+    const input = intent();
+    const begin = vi.fn();
+    const view = renderHook(() =>
+      usePluginMessage({
+        ...f,
+        newChat: { ownerScope: "owner", threadId: "fork", begin },
+      }),
+    );
+    await act(async () => {
+      expect(await view.result.current.send(input, () => true)).toBe(true);
+    });
+    const transfer = {
+      ...input,
+      params: {
+        ...input.params,
+        _meta: { "openai/message": { target: "new" } },
+      },
+    };
+    expect(f.prepareNew.mock.calls[0][0]).toEqual(transfer);
+    expect(f.send.mock.calls[0][0]).toEqual({
+      ...transfer,
+      preparationToken: "p".repeat(43),
+    });
+    expect(begin).not.toHaveBeenCalled();
+  });
+
+  it("drops a continuation send if its App closes while preparing the transfer", async () => {
+    const f = fixture();
+    let live = true;
+    f.prepareNew.mockImplementation(async (value) => {
+      live = false;
+      return { ...value, preparationToken: "p".repeat(43) };
+    });
+    const view = renderHook(() =>
+      usePluginMessage({
+        ...f,
+        newChat: { ownerScope: "owner", threadId: "fork", begin: vi.fn() },
+      }),
+    );
+    await act(async () => {
+      expect(await view.result.current.send(intent(), () => live)).toBe(false);
+    });
+    expect(f.send).not.toHaveBeenCalled();
+  });
+
   it.each(["disabled", "foreign-thread", "source-closed"])(
     "refuses %s before a gate",
     async (state) => {

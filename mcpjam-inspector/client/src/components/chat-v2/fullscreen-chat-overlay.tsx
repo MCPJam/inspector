@@ -36,6 +36,10 @@ import {
   isToolPart,
 } from "@/components/chat-v2/thread/thread-helpers";
 import { ToolPart } from "@/components/chat-v2/thread/parts/tool-part";
+import {
+  AppSessionScopeContext,
+  useAppSessionScope,
+} from "./thread/app-session-scope";
 import { describeUserContext } from "@/components/chat-v2/thread/user-context-card";
 import { getUserContextBlocks } from "@/shared/user-context-message";
 import { TextPart } from "@/components/chat-v2/thread/parts/text-part";
@@ -630,6 +634,7 @@ type FullscreenChatOverlayProps = {
   contextAttachments?: ContextAttachment[];
   startupPhase?: HarnessStartupPhase | null;
   chatSessionId?: string;
+  appSessionScopeId?: string;
   messages: UIMessage[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -667,6 +672,7 @@ export function FullscreenChatOverlay({
   contextAttachments = [],
   startupPhase,
   chatSessionId,
+  appSessionScopeId,
   messages,
   open,
   onOpenChange,
@@ -683,6 +689,7 @@ export function FullscreenChatOverlay({
   modelProvider,
   contained = false,
 }: FullscreenChatOverlayProps) {
+  const inheritedAppSessionScopeId = useAppSessionScope(chatSessionId);
   const scenarioHostStyle = useScenarioHostStyle();
   const scenarioHostTheme = useScenarioHostTheme();
   const resolvedThemeMode = scenarioHostTheme ?? "light";
@@ -710,14 +717,18 @@ export function FullscreenChatOverlay({
       >
         <div className="relative">
           <ToggleButton open={open} onToggle={() => onOpenChange(!open)} />
-          <MessageList
-            startupPhase={startupPhase}
-            messages={messages}
-            isThinking={isThinking}
-            open={open}
-            modelProvider={modelProvider}
-            chatSessionId={chatSessionId}
-          />
+          <AppSessionScopeContext.Provider
+            value={appSessionScopeId ?? inheritedAppSessionScopeId}
+          >
+            <MessageList
+              startupPhase={startupPhase}
+              messages={messages}
+              isThinking={isThinking}
+              open={open}
+              modelProvider={modelProvider}
+              chatSessionId={chatSessionId}
+            />
+          </AppSessionScopeContext.Provider>
           {/* Above the composer and OUTSIDE the collapsible message list, so
               it stays visible when the thread is collapsed — the state in
               which the composer is all there is. */}

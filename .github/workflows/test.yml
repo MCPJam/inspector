@@ -707,6 +707,14 @@ jobs:
       - name: Run telemetry egress e2e (shard ${{ matrix.shard }}/3)
         run: npm run test:e2e:telemetry -w @mcpjam/inspector -- --shard=${{ matrix.shard }}/3
 
+      - name: Build hosted App lifecycle fixture
+        if: matrix.shard == 1
+        run: npm run build:client:app-lifecycle -w @mcpjam/inspector
+
+      - name: Check App lifecycle across chat conflicts
+        if: matrix.shard == 1
+        run: npm run test:e2e:app-lifecycle -w @mcpjam/inspector
+
       - name: Upload telemetry egress report
         if: failure()
         uses: actions/upload-artifact@v7
@@ -715,6 +723,8 @@ jobs:
           path: |
             mcpjam-inspector/playwright-report/telemetry/
             mcpjam-inspector/test-results/telemetry/
+            mcpjam-inspector/playwright-report/app-lifecycle/
+            mcpjam-inspector/test-results/app-lifecycle/
           retention-days: 7
           if-no-files-found: ignore
 

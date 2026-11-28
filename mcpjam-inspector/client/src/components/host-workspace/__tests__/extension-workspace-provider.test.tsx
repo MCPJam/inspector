@@ -16,6 +16,7 @@ import {
 } from "../ExtensionWorkspaceProvider";
 import { useServerIconSources } from "../plugin-icon-directory";
 import {
+  archivedChatAppScope,
   chatOwnerWorkspace,
   globalOwnerWorkspace,
   resolveExtensionCapabilities,
@@ -155,6 +156,13 @@ const workspaceOf = (call: unknown[]) =>
   (call[0] as ThreadAppScope).pluginWorkspace.workspaceId;
 
 describe("Playground extension owners", () => {
+  it("cancels archived forms only for their current owner", () => {
+    expect(archivedChatAppScope("a", "a", "a")).toBe("a");
+    expect(archivedChatAppScope("a", "b", "a")).toBeNull();
+    expect(archivedChatAppScope("b", "b", "a")).toBe("a");
+    expect(archivedChatAppScope("c", "b", "a")).toBe("c");
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     f.scopes = [];
@@ -355,6 +363,76 @@ describe("Playground extension owners", () => {
     expect(f.close).not.toHaveBeenCalled();
     view.update(registration("chat-b"));
     await waitFor(() => expect(f.close).toHaveBeenCalledTimes(1));
+  });
+
+  it.each(["chat-a", "unrelated"])(
+    "retains the App across a conflict but releases it when navigating to %s",
+    async (nextId) => {
+      const view = renderCenter(registration("chat-a"));
+      await waitFor(() => expect(owners.global?.entries.saved).toBeDefined());
+      await act(async () => {
+        await owners.chat!.launch(server, thread);
+      });
+      const handle = owners.chat!.apps[0].handle;
+      view.update(registration("chat-a", { sessionId: "fork-b" }));
+      act(() => releaseChat("chat-a"));
+      expect(owners.chat!.apps[0].handle).toBe(handle);
+      expect(f.close).not.toHaveBeenCalled();
+      view.update(registration(nextId));
+      await waitFor(() => expect(f.close).toHaveBeenCalledTimes(1));
+      expect(owners.chat?.apps).toEqual([]);
+    },
+  );
+
+  it("keeps the global takeover during automatic conflict forks", async () => {
+    const view = renderCenter(registration("chat-a"));
+    await waitFor(() => expect(owners.global?.entries.saved).toBeDefined());
+    await act(async () => {
+      await owners.global!.launch(server, global);
+    });
+    const app = owners.global!.apps[0];
+
+    for (const sessionId of ["fork-b", "fork-c"]) {
+      view.update(registration("chat-a", { sessionId }));
+      await waitFor(() => expect(owners.global!.active).toBe(app.key));
+      expect(owners.global!.apps[0].handle).toBe(app.handle);
+    }
+    expect(f.open).toHaveBeenCalledOnce();
+    expect(f.close).not.toHaveBeenCalled();
+  });
+
+  it.each(["chat-a", "unrelated"])(
+    "dismisses the global takeover without closing its App when the fork navigates to %s",
+    async (nextId) => {
+      const view = renderCenter(registration("chat-a"));
+      await waitFor(() => expect(owners.global?.entries.saved).toBeDefined());
+      view.update(registration("chat-a", { sessionId: "fork-b" }));
+      await act(async () => { await owners.global!.launch(server, global); });
+      const app = owners.global!.apps[0];
+      expect(owners.global!.active).toBe(app.key);
+
+      view.update(registration(nextId));
+      await waitFor(() => expect(owners.global!.active).toBeNull());
+      expect(owners.global!.apps[0].handle).toBe(app.handle);
+      expect(owners.global!.apps[0].status).toBe("live");
+      expect(f.open).toHaveBeenCalledOnce();
+      expect(f.close).not.toHaveBeenCalled();
+    },
+  );
+
+  it("releases the fork owner's App after archiving the continuation", async () => {
+    const view = renderCenter(registration("chat-a"));
+    await waitFor(() => expect(owners.global?.entries.saved).toBeDefined());
+    await act(async () => {
+      await owners.chat!.launch(server, thread);
+    });
+    view.update(registration("chat-a", { sessionId: "fork-b" }));
+    act(() => releaseChat("fork-b"));
+    expect(f.close).not.toHaveBeenCalled();
+    view.update(registration("other"));
+    await waitFor(() => expect(f.close).toHaveBeenCalledTimes(1));
+    view.update(registration("chat-a"));
+    expect(owners.chat?.apps).toEqual([]);
   });
 
   it("closes everything from the old scope when the project or client changes", async () => {

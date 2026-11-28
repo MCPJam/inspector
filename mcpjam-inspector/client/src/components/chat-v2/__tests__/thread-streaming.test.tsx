@@ -65,6 +65,34 @@ const parentMessage: UIMessage = {
 // Keep the real Thread and its cleanup effect; stub presentation/host services.
 // The external-store driver matches AI SDK 6, used by the affected 3.13 release.
 describe("Thread streaming", () => {
+  it("keeps hidden markers until Thread unmount (upstream baseline control)", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const props = { messages: [parentMessage], model, sendFollowUpMessage() {}, isLoading: false, toolsMetadata: {}, toolServerMap: {} };
+    try {
+      await act(async () => root.render(<Thread {...props} chatSessionId="source" appSessionScopeId="live" />));
+      const current = () => messageView.mock.lastCall![0] as {
+        onRequestTeardown: (id: string) => void;
+        tornDownWidgetIds: ReadonlySet<string>;
+      };
+      act(() => current().onRequestTeardown("parent-tool"));
+      expect(current().tornDownWidgetIds.has("parent-tool")).toBe(true);
+      await act(async () => root.render(<Thread {...props} chatSessionId="conflict-fork" appSessionScopeId="live" />));
+      expect(current().tornDownWidgetIds.has("parent-tool")).toBe(true);
+      // The real hook's manual branch emits an empty SDK store before hydration.
+      await act(async () => root.render(<Thread {...props} messages={[]} chatSessionId="manual-branch" appSessionScopeId="new" />));
+      await act(async () => root.render(<Thread {...props} chatSessionId="manual-branch" appSessionScopeId="new" />));
+      // Raw Thread retains this set even across an empty transcript upstream.
+      expect(current().tornDownWidgetIds.has("parent-tool")).toBe(true);
+      await act(async () => root.render(<Thread key="remounted" {...props} chatSessionId="manual-branch" appSessionScopeId="new" />));
+      expect(current().tornDownWidgetIds.has("parent-tool")).toBe(false);
+    } finally {
+      await act(async () => root.unmount());
+      host.remove();
+    }
+  });
+
   it.each(["empty", "retained", "removed"] as const)(
     "handles a buffered burst (app invocation: %s) and prunes removed tools",
     async (mode) => {

@@ -1,6 +1,6 @@
 import type { HarnessStartupPhase } from "@/shared/harness-startup";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactElement } from "react";
 import type { UIMessage } from "@ai-sdk/react";
 
@@ -14,6 +14,8 @@ import {
 } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 import { FullscreenChatOverlay } from "../fullscreen-chat-overlay";
+import { makeAppInstance } from "@/test/factories";
+import { AppSessionScopeContext } from "../thread/app-session-scope";
 
 // Mock loading-indicator-content so the test can assert which brand path
 // LoadingIndicatorContent took without depending on the registry's actual
@@ -421,6 +423,34 @@ describe("FullscreenChatOverlay", () => {
     expect(screen.getByText("from Chess")).toBeInTheDocument();
     expect(screen.queryByText(/app_951c1f5d/)).not.toBeInTheDocument();
   });
+
+  it.each(["explicit", "inherited"])(
+    "keeps pending App tool labels on a conflict continuation with %s scope",
+    async (scopeSource) => {
+      useAppToolsRegistry.getState().setEnabled(true);
+      await act(async () => useAppToolsRegistry.getState().registerInstance(
+        makeAppInstance({ chatSessionId: "source", appName: "Chess" }),
+      ));
+      const alias = [...useAppToolsRegistry.getState().aliases.keys()][0];
+      expect(alias).toBeTruthy();
+      renderWithProviders(
+        <AppSessionScopeContext.Provider value={scopeSource === "inherited" ? "source" : undefined}>
+          <FullscreenChatOverlay
+            {...defaultProps}
+            chatSessionId="fork-row"
+            appSessionScopeId={scopeSource === "explicit" ? "source" : undefined}
+            messages={[createMessage({
+              role: "assistant",
+              parts: [{ type: "dynamic-tool", toolCallId: "pending", toolName: alias, state: "input-available", input: {} }],
+            })]}
+          />
+        </AppSessionScopeContext.Provider>,
+      );
+      expect(screen.getByText("make_move")).toBeInTheDocument();
+      expect(screen.getByText("from Chess")).toBeInTheDocument();
+      expect(screen.queryByText(alias)).not.toBeInTheDocument();
+    },
+  );
 
   it("keeps the GPT pulse hidden after the response finishes", () => {
     renderWithProviders(

@@ -199,6 +199,7 @@ interface TraceViewerProps {
    */
   onRevealNavigateToChat?: () => void;
   chatSessionId?: string;
+  appSessionScopeId?: string;
   sendFollowUpMessage?: (text: string) => void;
   onWidgetStateChange?: (toolCallId: string, state: any) => void;
   onModelContextUpdate?: (
@@ -425,6 +426,7 @@ export function TraceViewer({
   hideTranscriptRevealControls = false,
   onRevealNavigateToChat,
   chatSessionId,
+  appSessionScopeId,
   sendFollowUpMessage = NOOP,
   onWidgetStateChange,
   onModelContextUpdate,
@@ -1133,6 +1135,7 @@ export function TraceViewer({
                 const threadEl = (
                   <Thread
                     chatSessionId={chatSessionId}
+                    appSessionScopeId={appSessionScopeId}
                     messages={adaptedTrace.messages}
                     sendFollowUpMessage={sendFollowUpMessage}
                     model={resolvedModel}
