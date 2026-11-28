@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { blockingFindings, blockingSeverity } from "./major-findings.mjs";
+import { blockingFindings, blockingSeverity, errorAnnotation } from "./major-findings.mjs";
 
 const thread = (body, { login = "coderabbitai", isResolved = false } = {}) => ({
   isResolved,
@@ -57,6 +57,13 @@ test("ignores resolved threads, other authors and empty threads", () => {
     { isResolved: false, comments: { nodes: [] } },
   ]);
   assert.deepEqual(findings, []);
+});
+
+test("escapes annotation fields the runner would split", () => {
+  assert.equal(
+    errorAnnotation({ severity: "Major", path: "src/a,b:c.ts", url: "https://x/1", title: "100%\nsure" }),
+    "::error file=src/a%2Cb%3Ac.ts::Major: 100%25%0Asure https://x/1",
+  );
 });
 
 test("accepts the REST-style bot login", () => {

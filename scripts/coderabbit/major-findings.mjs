@@ -49,6 +49,17 @@ export function blockingFindings(threads) {
   });
 }
 
+// The runner splits command properties on "," and ":", so a path holding
+// either would point the annotation at the wrong file. Same rules as
+// @actions/core.
+const escapeData = (text) => text.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
+const escapeProperty = (text) => escapeData(text).replaceAll(":", "%3A").replaceAll(",", "%2C");
+
+/** Formats a finding as an Actions error annotation. */
+export function errorAnnotation({ severity, path, url, title }) {
+  return `::error file=${escapeProperty(path)}::${escapeData(`${severity}: ${title} ${url}`)}`;
+}
+
 const THREADS_QUERY = `
   query($owner: String!, $repo: String!, $number: Int!, $after: String) {
     repository(owner: $owner, name: $repo) {
@@ -98,7 +109,7 @@ async function main() {
   }
   process.stdout.write(`${findings.length} unresolved Major or Critical CodeRabbit finding(s):\n`);
   for (const f of findings) {
-    process.stdout.write(`::error file=${f.path}::${f.severity}: ${f.title} ${f.url}\n`);
+    process.stdout.write(`${errorAnnotation(f)}\n`);
   }
   process.stdout.write("Fix each finding, or resolve its thread if it does not apply.\n");
   process.exitCode = 1;
