@@ -15,6 +15,7 @@ import {
   within,
 } from "@testing-library/react";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
+import { MemoryRouter, Route, Routes } from "react-router";
 import type {
   EventsListResponse,
   EventsSubscriptionView,
@@ -262,6 +263,26 @@ describe("EventsTab (local)", () => {
     mockListLocal.mockResolvedValue([]);
   });
 
+  it("opens the project's Servers page from the empty Events landing", () => {
+    render(
+      <MemoryRouter
+        initialEntries={["/p/j18a08twz7b9e36c4z2em8rnns8k2yj3/events"]}
+      >
+        <Routes>
+          <Route path="/p/:projectId/events" element={<EventsTab />} />
+          <Route path="/p/:projectId/servers" element={<h1>Servers</h1>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(
+      screen.getByText("Choose an MCP server to get started."),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Open Servers" }));
+    expect(screen.getByRole("heading", { name: "Servers" })).toBeVisible();
+    expect(mockLoadEventsCatalog).not.toHaveBeenCalled();
+  });
+
   it("explains an undeclared server instead of listing events", async () => {
     mockLoadEventsCatalog.mockResolvedValue(
       catalog([], {
@@ -276,8 +297,13 @@ describe("EventsTab (local)", () => {
     renderTab();
 
     expect(
-      await screen.findByText("This server does not declare events"),
+      await screen.findByRole("heading", { name: "Inspect your server’s events" }),
     ).toBeInTheDocument();
+    expect(screen.getByText(/doesn’t advertise Events\./)).toBeVisible();
+    const details = screen.getByText("Capability details");
+    expect(details.closest("details")).not.toHaveAttribute("open");
+    fireEvent.click(details);
+    expect(details.closest("details")).toHaveAttribute("open");
     expect(
       screen.getByText("MCP Events capability missing"),
     ).toBeInTheDocument();
