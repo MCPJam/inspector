@@ -10,7 +10,6 @@ import {
   getSandboxEgressStatus,
   prepareSandboxConnection,
 } from "./control-plane-client.js";
-import { attachInParallel } from "../harness/harness-flags.js";
 
 /** The control plane owns all wakes; attachment must not create a late wake. */
 export class SandboxAttachmentError extends Error {
@@ -89,72 +88,45 @@ async function readRunningSandboxConnection(
       );
   }
   const config = new ConnectionConfig(options);
-  // After the broker's acknowledgement the two reads are independent: start
-  // the policy barrier with the box read. Both must pass before anything runs.
-  // Settled into a value now and thrown after the box read's own checks, so a
-  // gone or paused box is still reported as that, as in the sequential order.
-  // Stopped when the attachment finishes, so a box read that fails first does
-  // not leave the barrier polling the policy service until its deadline.
-  const barrierStop = new AbortController();
-  const policyBarrier =
-    preparedByBroker && attachInParallel()
-      ? requireReadyPolicy(
-          sandboxId,
-          AbortSignal.any([signal, barrierStop.signal]),
-          deadline,
-        ).then(
-          () => ({ passed: true as const }),
-          (error: unknown) => ({ passed: false as const, error }),
-        )
-      : undefined;
-  try {
-    const response = await new ApiClient(config).api.GET(
-      "/sandboxes/{sandboxID}",
-      {
-        params: { path: { sandboxID: sandboxId } },
-        signal: config.getSignal(options.requestTimeoutMs, signal),
-      },
+  const response = await new ApiClient(config).api.GET(
+    "/sandboxes/{sandboxID}",
+    {
+      params: { path: { sandboxID: sandboxId } },
+      signal: config.getSignal(options.requestTimeoutMs, signal),
+    },
+  );
+  if (response.response.status === 404)
+    throw new SandboxNotFoundError("This sandbox no longer exists.");
+  const data = response.data;
+  if (
+    !response.response.ok ||
+    !data ||
+    data.sandboxID !== sandboxId ||
+    !data.envdAccessToken
+  )
+    throw new SandboxAttachmentError(
+      "sandbox_attach_failed",
+      "Could not attach to this sandbox. Try again.",
     );
-    if (response.response.status === 404)
-      throw new SandboxNotFoundError("This sandbox no longer exists.");
-    const data = response.data;
-    if (
-      !response.response.ok ||
-      !data ||
-      data.sandboxID !== sandboxId ||
-      !data.envdAccessToken
-    )
-      throw new SandboxAttachmentError(
-        "sandbox_attach_failed",
-        "Could not attach to this sandbox. Try again.",
-      );
-    if (data.state !== "running")
-      throw new SandboxAttachmentError(
-        "sandbox_asleep",
-        "This sandbox is paused. Wake it through MCPJam and try again.",
-      );
-    if (data.lifecycle?.autoResume !== false)
-      throw new SandboxAttachmentError(
-        "sandbox_policy_unavailable",
-        "This sandbox cannot run safely. Start a new sandbox.",
-      );
-    if (policyBarrier) {
-      const barrier = await policyBarrier;
-      if (!barrier.passed) throw barrier.error;
-    } else {
-      await requireReadyPolicy(sandboxId, signal, deadline);
-    }
-    return {
-      ...options,
-      sandboxId,
-      sandboxDomain: data.domain ?? undefined,
-      envdVersion: data.envdVersion,
-      envdAccessToken: data.envdAccessToken,
-      privateAppPorts: data.network?.allowPublicTraffic === false,
-    };
-  } finally {
-    barrierStop.abort();
-  }
+  if (data.state !== "running")
+    throw new SandboxAttachmentError(
+      "sandbox_asleep",
+      "This sandbox is paused. Wake it through MCPJam and try again.",
+    );
+  if (data.lifecycle?.autoResume !== false)
+    throw new SandboxAttachmentError(
+      "sandbox_policy_unavailable",
+      "This sandbox cannot run safely. Start a new sandbox.",
+    );
+  await requireReadyPolicy(sandboxId, signal, deadline);
+  return {
+    ...options,
+    sandboxId,
+    sandboxDomain: data.domain ?? undefined,
+    envdVersion: data.envdVersion,
+    envdAccessToken: data.envdAccessToken,
+    privateAppPorts: data.network?.allowPublicTraffic === false,
+  };
 }
 
 export function attachRunningSandbox(

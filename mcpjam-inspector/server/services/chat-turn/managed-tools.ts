@@ -143,10 +143,9 @@ export async function prepareManagedTools(args: {
   // secrets only to check a member's own credential, so otherwise it is booked
   // while the secrets read is in flight. Booked early only when none of the
   // refusals checked before the booking below could apply.
-  // The route may have booked it already, right after setup
-  // (`MCPJAM_HARNESS_BOX_FIRST`), under the same plan. That booking comes
-  // before the turn's authorization and connections, so a turn they refuse
-  // has woken its box for nothing; the turn's resources release it.
+  // The managed turn books it right after setup, under the same plan. That
+  // booking comes before the turn's authorization and connections, so a turn
+  // they refuse has woken its box for nothing; the turn's resources release it.
   const { reason: playgroundBoxReason, args: playgroundBoxArgs } =
     playgroundBoxPlan({ c, bearerToken, timing, setup: args.setup });
   const earlyPlaygroundBox =

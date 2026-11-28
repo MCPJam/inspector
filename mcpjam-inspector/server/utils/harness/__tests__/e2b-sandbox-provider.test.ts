@@ -89,23 +89,13 @@ const provider = () => createE2BHarnessSandboxProvider({ sandboxId: "sbx_1" });
 describe("optional runtime read-ahead", () => {
   it("does not add a read-ahead call to a resumed session", async () => {
     vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("MCPJAM_HARNESS_READ_AHEAD", undefined);
     await createE2BHarnessSandboxProvider({ sandboxId: "sbx_1", harnessId: "codex" }).resumeSession!({ sessionId: "existing" });
     expect(mocks.run).toHaveBeenCalledTimes(1);
     expect(mocks.run).toHaveBeenCalledWith(harnessPnpmGuardCommand(), expect.any(Object));
   });
 
-  it("keeps normal commands unchanged with the flag off", async () => {
+  it("starts the immutable hint beside the guard, without waiting for it or delivering session credentials", async () => {
     vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("MCPJAM_HARNESS_READ_AHEAD", "0");
-    await createE2BHarnessSandboxProvider({ sandboxId: "sbx_1", harnessId: "codex" }).createSession();
-    expect(mocks.run).toHaveBeenCalledTimes(1);
-    expect(mocks.run).toHaveBeenCalledWith(harnessPnpmGuardCommand(), expect.any(Object));
-  });
-
-  it("overlaps the immutable hint with the guard without delivering session credentials", async () => {
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("MCPJAM_HARNESS_READ_AHEAD", undefined);
     let finishHint!: () => void;
     const hint = new Promise<void>((resolve) => { finishHint = resolve; });
     mocks.run.mockImplementation(async (command: string) => {
@@ -119,13 +109,12 @@ describe("optional runtime read-ahead", () => {
       onSessionEnvUsed: delivered,
     }).createSession().then(() => { ready = true; });
     await vi.waitFor(() => expect(mocks.run).toHaveBeenCalledTimes(2));
-    expect(ready).toBe(false);
-    expect(delivered).not.toHaveBeenCalled();
     expect(mocks.run).toHaveBeenCalledWith(runtimeReadAheadCommand("codex"), { timeoutMs: 5000 });
-    finishHint();
+    // The session is ready while the hint is still reading.
     await connecting;
     expect(ready).toBe(true);
     expect(delivered).not.toHaveBeenCalled();
+    finishHint();
   });
 });
 

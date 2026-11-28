@@ -42,9 +42,8 @@ def main():
         result('skipped','scope'); return
     files=[binary]
     if sys.argv[2] in ('claude-code','codex'):
-        files.append(pathlib.Path(shutil.which('node') or '/usr/local/bin/node').resolve(strict=True))
-        # The bridge starts on node at once; the agent's binary runs only at dispatch.
-        if len(sys.argv)>3 and sys.argv[3]=='node-first': files.reverse()
+        # Node first: the bridge starts on node at once; the agent's binary runs only at dispatch.
+        files.insert(0,pathlib.Path(shutil.which('node') or '/usr/local/bin/node').resolve(strict=True))
     fds=[]; jobs=[]; total=0; chunk=4*1024*1024
     libc=ctypes.CDLL(None,use_errno=True)
     libc.mincore.argtypes=[ctypes.c_void_p,ctypes.c_size_t,ctypes.c_void_p]
@@ -81,24 +80,12 @@ except (OSError,ValueError):
     result('skipped','io')
 `;
 
-/**
- * `MCPJAM_HARNESS_READ_AHEAD_ORDER=node-first` (read per call): read node
- * before the agent's binary, since the bridge starts on node while the binary
- * waits for dispatch.
- */
-export function readAheadNodeFirst(
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return env.MCPJAM_HARNESS_READ_AHEAD_ORDER?.trim().toLowerCase() === "node-first";
-}
-
 export function runtimeReadAheadCommand(
   harnessId: string,
-  nodeFirst: boolean = readAheadNodeFirst(),
 ): string | undefined {
   if (!["claude-code", "codex", "copilot-cli", "opencode"].includes(harnessId)) return undefined;
   const root = `${HARNESS_BAKE_HOME}/${HARNESS_STATE_DIRECTORY_NAME}/.harness-bootstrap`;
-  return `python3 -c ${shellQuote(SCRIPT)} ${shellQuote(root)} ${shellQuote(harnessId)}${nodeFirst ? " node-first" : ""}`;
+  return `python3 -c ${shellQuote(SCRIPT)} ${shellQuote(root)} ${shellQuote(harnessId)}`;
 }
 
 type RunReadAhead = (
@@ -110,14 +97,11 @@ export async function readAheadRuntime(
   run: RunReadAhead,
   { harnessId, resuming }: { harnessId?: string; resuming?: boolean },
   signal?: AbortSignal,
-  env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
   // Even a cache-residency check costs a remote command. Resume already has
   // a loaded runtime; keep that path free of this cold-start-only hint.
   if (resuming || !harnessId) return;
-  const setting = env.MCPJAM_HARNESS_READ_AHEAD?.trim().toLowerCase();
-  if (setting === "0" || setting === "false") return;
-  const command = runtimeReadAheadCommand(harnessId, readAheadNodeFirst(env));
+  const command = runtimeReadAheadCommand(harnessId);
   if (!command) return;
   signal?.throwIfAborted();
   const start = performance.now();

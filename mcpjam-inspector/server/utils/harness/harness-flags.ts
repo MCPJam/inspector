@@ -76,26 +76,3 @@ export function localKeepAgentEnabled(): boolean {
 export function harnessKeepAgentThroughPause(): boolean {
   return process.env.MCPJAM_HARNESS_KEEP_THROUGH_PAUSE === "true";
 }
-
-/**
- * Hosted Claude Code starts without its non-essential traffic (telemetry,
- * error reports, auto-update, feature flags, availability checks). A hosted
- * box needs none of it, since its CLI version is pinned at install, and
- * those calls can delay its first model request. Off by default until staging
- * measures the saving; read per call. A warm turn that flips it restarts the
- * CLI from disk: the warm query treats any environment change as a new shape.
- */
-export function harnessQuietClaudeStartup(): boolean {
-  return process.env.MCPJAM_HARNESS_QUIET_CLAUDE_STARTUP === "true";
-}
-
-/**
- * A broker-prepared attach reads the box and its egress policy together
- * instead of one after the other. Both checks still pass before anything runs
- * in the box. Off unless `MCPJAM_HARNESS_PARALLEL_ATTACH=1`; read per call.
- */
-export function attachInParallel(
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return env.MCPJAM_HARNESS_PARALLEL_ATTACH === "1";
-}

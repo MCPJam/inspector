@@ -408,15 +408,10 @@ describe("runHarnessTurn local continuity", () => {
   });
 
   it("never asks a local runtime for a quiet start: the person's CLI settings stand", async () => {
-    vi.stubEnv("MCPJAM_HARNESS_QUIET_CLAUDE_STARTUP", "true");
-    try {
-      await runHarnessTurn(baseOptions() as any, "none");
-      expect(harnessState.createRuntime).toHaveBeenCalled();
-      for (const [args] of harnessState.createRuntime.mock.calls as unknown as [Record<string, unknown>][]) {
-        expect(args).not.toHaveProperty("quietStartup");
-      }
-    } finally {
-      vi.unstubAllEnvs();
+    await runHarnessTurn(baseOptions() as any, "none");
+    expect(harnessState.createRuntime).toHaveBeenCalled();
+    for (const [args] of harnessState.createRuntime.mock.calls as unknown as [Record<string, unknown>][]) {
+      expect(args).not.toHaveProperty("quietStartup");
     }
   });
 

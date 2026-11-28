@@ -62,14 +62,12 @@ import {
 import { logger } from "../../utils/logger";
 import {
   cancelRelayedListen,
-  harnessListenRelayEnabled,
   isJsonRpcId,
   LISTEN_METHOD,
   relayListenStream,
 } from "./harness-mcp-listen-relay.js";
 import {
   discardTurnManager,
-  harnessMcpTurnCacheEnabled,
   withTurnManager,
   type TurnConnection,
 } from "./harness-mcp-turn-cache.js";
@@ -347,7 +345,6 @@ async function handle(c: any) {
     return c.json(validation.response, validation.status as 400);
   }
   const body = validation.body;
-  const relayListen = harnessListenRelayEnabled();
   // The harness's own relayed listens, by its request id, for this caller: the
   // token it presents, so two runs' clients (each naming its first listen
   // `listen:0`) never share a key unless they share a token.
@@ -359,7 +356,7 @@ async function handle(c: any) {
       .digest("base64url"),
   ].join("|");
   const listenKey = (id: unknown) => `${listenCaller}|${JSON.stringify(id)}`;
-  if (relayListen && body.method === "notifications/cancelled") {
+  if (body.method === "notifications/cancelled") {
     const requestId = (body as { params?: { requestId?: unknown } }).params
       ?.requestId;
     if (isJsonRpcId(requestId) && cancelRelayedListen(listenKey(requestId))) {
@@ -477,11 +474,10 @@ async function handle(c: any) {
           },
         },
       );
-    // With per-turn reuse on, a turn's requests share one authorized
-    // connection, keyed so nothing crosses a turn. Every request is still
-    // checked against its live turn.
+    // A turn's requests share one authorized connection, keyed so nothing
+    // crosses a turn. Every request is still checked against its live turn.
     const turnKey =
-      harnessMcpTurnCacheEnabled() && (turn || session)
+      turn || session
         ? [
             claims.userId,
             claims.projectId,
@@ -490,7 +486,7 @@ async function handle(c: any) {
             JSON.stringify(sealed?.profile ?? null),
           ].join("|")
         : undefined;
-    if (relayListen && body.method === LISTEN_METHOD && isJsonRpcId(body.id)) {
+    if (body.method === LISTEN_METHOD && isJsonRpcId(body.id)) {
       // A manager of the stream's own, for as long as the stream lasts.
       const created = await createAuthorized();
       const manager = "manager" in created ? created.manager : created;
@@ -614,10 +610,9 @@ async function handle(c: any) {
           ...(call ? { signal: call.signal } : {}),
           downstreamProtocolVersion: downstreamProtocolVersionOf(body),
           // This request's manager is still connecting: answer the handshake
-          // from the server's real connection, not a stand-in. Only with the
-          // listen relay, since a 2026-07-28 handshake without it leads to the
-          // listen stall.
-          awaitConnect: relayListen,
+          // from the server's real connection, not a stand-in. The listen
+          // relay above is what keeps a 2026-07-28 handshake from stalling.
+          awaitConnect: true,
           // Inert unless this token carries an authorized eval scope AND the
           // harness named a turn — so playground traffic and capture-off runs
           // pay nothing and behave identically.

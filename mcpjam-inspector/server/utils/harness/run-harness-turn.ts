@@ -1,7 +1,6 @@
 import { inspectorDiscoveryRunMetadata } from "../discovery-run-metadata";
 import { createHostToolCancellation } from "./host-tool-cancellation";
 import { startEarly, takeEarly, type EarlyStart } from "../early-start.js";
-import { overlapMcpConfigWithBroker } from "./startup-overlap.js";
 import { retainedAppResourcesEligible } from "./forwarding/retained-app-eligibility";
 import { cursorRuntimeLogin } from "./runtime-login.js";
 import { startLeaseHeartbeat } from "./lease-heartbeat.js";
@@ -144,7 +143,6 @@ import { warmBridgeWindowMs, warmRetentionFor } from "./warm-retention.js";
 import { OrgLeaseTurn } from "./org-lease-turn.js";
 import {
   harnessBrokerDeliveryEnabled,
-  harnessQuietClaudeStartup,
   nativeForwardingEnabled,
 } from "./harness-flags.js";
 import {
@@ -2321,13 +2319,13 @@ export async function runHarnessTurn(
       if (useNativeForwarding && !harnessExecutionTarget && !evalIterationId && continuity?.laneId && publicBaseUrl &&
         !harnessAdapter.fingerprintsMcpConfig)
         sessionGrantOrigin = new URL(publicBaseUrl).origin;
-      // With `MCPJAM_HARNESS_OVERLAP_MCP_CONFIG`, a brokered turn mints its MCP
-      // configuration while its broker starts: nothing reads it before the
-      // broker returns, where it is taken (`settleMcpConfig`) and a failed
-      // mint throws. The session grant is asked for whenever servers are
-      // selected, the one input the broker needs from the configuration.
+      // A brokered turn mints its MCP configuration while its broker starts:
+      // nothing reads it before the broker returns, where it is taken
+      // (`settleMcpConfig`) and a failed mint throws. The session grant is
+      // asked for whenever servers are selected, the one input the broker
+      // needs from the configuration. External-account turns mint first.
       let earlyMcpConfig: EarlyStart<Awaited<ReturnType<typeof perTurnProxyConfig>>> | undefined;
-      if (deferSessionConfig && overlapMcpConfigWithBroker() && !externalAccountAuth) {
+      if (deferSessionConfig && !externalAccountAuth) {
         const lane = continuity?.laneId && publicBaseUrl ? continuity : undefined;
         if (lane && publicBaseUrl && (selectedServers?.length ?? 0) > 0) sessionGrantOrigin = new URL(publicBaseUrl).origin;
         earlyMcpConfig = startEarly(() => lane
@@ -2945,8 +2943,9 @@ export async function runHarnessTurn(
             })
           : [],
       );
-      // Hosted boxes only: a local run keeps the person's own CLI settings.
-      const quietStartup = localPrepared === null && harnessQuietClaudeStartup();
+      // Hosted boxes start the CLI without its non-essential traffic; a local
+      // run keeps the person's own CLI settings.
+      const quietStartup = localPrepared === null;
       const buildRuntime = (startupTimeoutMs?: number, sandboxHomeDir?: string) =>
         harnessAdapter.mcpDelivery === "harness" &&
         harnessAdapter.mcpNativeDelivery === "session-config"

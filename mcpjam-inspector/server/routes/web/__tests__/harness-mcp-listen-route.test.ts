@@ -1,8 +1,8 @@
 /**
- * `subscriptions/listen` through the hosted harness MCP proxy, with the relay
- * switched on: the harness gets the upstream's acknowledgment as an event
- * stream, and its `notifications/cancelled` closes the upstream listen. The
- * same switch has the handshake answered from the server's real connection.
+ * `subscriptions/listen` through the hosted harness MCP proxy: the harness
+ * gets the upstream's acknowledgment as an event stream, and its
+ * `notifications/cancelled` closes the upstream listen. The handshake is
+ * answered from the server's real connection.
  */
 import http from "node:http";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -98,9 +98,8 @@ function ownUpstream() {
   };
 }
 
-describe("subscriptions/listen with the relay on", () => {
+describe("subscriptions/listen", () => {
   it("streams the upstream acknowledgment, and the harness's cancel closes the upstream listen", async () => {
-    vi.stubEnv("MCPJAM_HARNESS_LISTEN_RELAY", "1");
     const res = await post({
       jsonrpc: "2.0",
       id: 41,
@@ -143,7 +142,6 @@ describe("subscriptions/listen with the relay on", () => {
 
 describe("two runs' listens", () => {
   it("stay apart when both clients name theirs alike", async () => {
-    vi.stubEnv("MCPJAM_HARNESS_LISTEN_RELAY", "1");
     const now = Math.floor(Date.now() / 1000);
     const claims = {
       serverId: "srv-a",
@@ -241,15 +239,9 @@ describe("server/discover through the proxy", () => {
     }
   }
 
-  it("answers from the server's real connection with the relay on", async () => {
-    vi.stubEnv("MCPJAM_HARNESS_LISTEN_RELAY", "1");
+  it("answers from the server's real connection", async () => {
     const reply = await discoverThroughProxy();
     expect(reply.error).toBeUndefined();
     expect(reply.result.supportedVersions).toContain("2026-07-28");
-  });
-
-  it("keeps the old answer with the relay off", async () => {
-    const reply = await discoverThroughProxy();
-    expect(reply.error).toMatchObject({ code: -32601 });
   });
 });

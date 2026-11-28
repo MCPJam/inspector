@@ -393,47 +393,37 @@ describe("a box that runs more than one runtime", () => {
     expect(others()).toEqual(before);
   });
 
-  it("with the seed switch on, gives a box with no manifest the adapter's empty one", async () => {
-    vi.stubEnv("MCPJAM_HARNESS_SEED_SKILLS_MANIFEST", "1");
-    try {
-      const box = fakeSkillBox();
-      const claude = HARNESS_SKILLS["claude-code"];
-      await writeBoxSkills({
-        session: box.session,
-        descriptor: claude,
-        home: BOX_HOME,
-        plan: planBoxSkills(claude, []),
-        readFiles: async () => NO_FILES,
-        hostedBox: true,
-      });
-      expect([...box.files.keys()]).toEqual([
-        `${CLAUDE}/.ai-sdk-harness-skills.json`,
-      ]);
-      box.commands.length = 0;
-      const result = await adapterWrite("claude-code", box, []);
-      expect(result.changed).toBe(false);
-      expect(box.commands).toEqual([]);
-    } finally {
-      vi.unstubAllEnvs();
-    }
+  it("gives a hosted box with no manifest the adapter's empty one", async () => {
+    const box = fakeSkillBox();
+    const claude = HARNESS_SKILLS["claude-code"];
+    await writeBoxSkills({
+      session: box.session,
+      descriptor: claude,
+      home: BOX_HOME,
+      plan: planBoxSkills(claude, []),
+      readFiles: async () => NO_FILES,
+      hostedBox: true,
+    });
+    expect([...box.files.keys()]).toEqual([
+      `${CLAUDE}/.ai-sdk-harness-skills.json`,
+    ]);
+    box.commands.length = 0;
+    const result = await adapterWrite("claude-code", box, []);
+    expect(result.changed).toBe(false);
+    expect(box.commands).toEqual([]);
   });
 
-  it("with the seed switch on, leaves a local session's missing manifest alone", async () => {
-    vi.stubEnv("MCPJAM_HARNESS_SEED_SKILLS_MANIFEST", "1");
-    try {
-      const box = fakeSkillBox();
-      const claude = HARNESS_SKILLS["claude-code"];
-      await writeBoxSkills({
-        session: box.session,
-        descriptor: claude,
-        home: BOX_HOME,
-        plan: planBoxSkills(claude, []),
-        readFiles: async () => NO_FILES,
-      });
-      expect([...box.files.keys()]).toEqual([]);
-    } finally {
-      vi.unstubAllEnvs();
-    }
+  it("leaves a local session's missing manifest alone", async () => {
+    const box = fakeSkillBox();
+    const claude = HARNESS_SKILLS["claude-code"];
+    await writeBoxSkills({
+      session: box.session,
+      descriptor: claude,
+      home: BOX_HOME,
+      plan: planBoxSkills(claude, []),
+      readFiles: async () => NO_FILES,
+    });
+    expect([...box.files.keys()]).toEqual([]);
   });
 
   it("writes nothing to a folder the turn neither delivers to nor finds MCPJam's skills in", async () => {

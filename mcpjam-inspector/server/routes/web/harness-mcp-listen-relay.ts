@@ -22,23 +22,16 @@
  * An upstream on a 2025-era connection has no listen: its acknowledgment
  * honors nothing.
  *
- * On only with `MCPJAM_HARNESS_LISTEN_RELAY=1`, read per call. The same
- * switch has the proxy answer the handshake from the server's real
- * connection (the bridge's `awaitConnect`). Without that, a request's new
- * manager is still connecting when the handshake arrives, so the harness
- * gets method-not-found for `server/discover`, falls back to the 2025
- * handshake and never listens. The two go together: the real handshake
- * without the relay would take every turn into the stall.
+ * The proxy also answers the handshake from the server's real connection
+ * (the bridge's `awaitConnect`). Otherwise a request's new manager is still
+ * connecting when the handshake arrives, so the harness gets method-not-found
+ * for `server/discover`, falls back to the 2025 handshake and never listens.
+ * The two go together: the real handshake without the relay would take every
+ * turn into the stall.
  */
 import type { MCPClientManager } from "@mcpjam/sdk";
 import { logger } from "../../utils/logger.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
-
-export function harnessListenRelayEnabled(
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return env.MCPJAM_HARNESS_LISTEN_RELAY === "1";
-}
 
 export const LISTEN_METHOD = "subscriptions/listen";
 

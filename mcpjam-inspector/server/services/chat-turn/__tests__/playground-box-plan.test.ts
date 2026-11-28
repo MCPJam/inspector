@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Context } from "hono";
-import {
-  harnessBoxFirstEnabled,
-  playgroundBoxPlan,
-} from "../playground-box-plan.js";
+import { playgroundBoxPlan } from "../playground-box-plan.js";
 import { TurnTiming } from "../../../utils/turn-timing.js";
 
 type Setup = Parameters<typeof playgroundBoxPlan>[0]["setup"];
@@ -69,12 +66,5 @@ describe("playgroundBoxPlan", () => {
       });
       expect(plan.reason).toBeNull();
     }
-  });
-});
-
-describe("harnessBoxFirstEnabled", () => {
-  it("is off unless switched on", () => {
-    expect(harnessBoxFirstEnabled({})).toBe(false);
-    expect(harnessBoxFirstEnabled({ MCPJAM_HARNESS_BOX_FIRST: "1" })).toBe(true);
   });
 });
