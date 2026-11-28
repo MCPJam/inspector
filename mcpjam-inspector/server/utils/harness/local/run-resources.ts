@@ -227,7 +227,7 @@ async function assertUnattendedGit(harnessId: SupportedLocalHarnessId): Promise<
     ({ stdout } = await promisify(execFile)(gitPath, ["--version"], { timeout: 5_000, env: { ...process.env, PATH: process.platform === "win32" ? process.env.PATH : "/usr/bin:/bin" } }));
   } catch { throw new Error(`Local ${name} requires Git 2.31 or newer. Install Git (Command Line Tools on macOS), then retry.`); }
   const version = /git version (\d+)\.(\d+)/.exec(stdout);
-  if (!version || Number(version[1]) < 2 || (Number(version[1]) === 2 && Number(version[2]) < 31)) throw new Error(`Unattended local ${name} requires Git 2.31 or newer`);
+  if (!version || Number(version[1]) < 2 || (Number(version[1]) === 2 && Number(version[2]) < 31)) throw new Error(`Local ${name} requires Git 2.31 or newer. Update Git, then retry.`);
 }
 
 export async function prepareLocalHarnessRun(args: { bearer: string; projectId: string; trustedActor?: LocalHarnessActor; harnessId?: SupportedLocalHarnessId }) {

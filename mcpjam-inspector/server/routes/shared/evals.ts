@@ -9,6 +9,7 @@ import { freezeEvalRunWebAccounts } from "../../services/web-clients/web-client-
 import { localHarnessCapabilities } from "../../services/evals/runner-capabilities.js";
 import { casesAssertingWidgetRender, failRunBeforeExecution } from "../../services/evals/harness-admission.js";
 import { explainEvalHarnessRefusal } from "../../services/evals/explain-harness-refusal.js";
+import { CODE_EVALUATORS_UNAVAILABLE } from "@/shared/local-eval-venue";
 import { singleCaseHarnessBoxRefusal } from "../../services/evals/needs-ephemeral-sandbox.js";
 import { hostedBrowserAdvertisable } from "../../utils/computers/runtime-config.js";
 import { listBaseServers, managerAccountsAtRun } from "../../utils/mcp-connections.js";
@@ -3708,23 +3709,6 @@ export async function prepareSingleCaseExecution(
     : (hostConfigOverride as Record<string, unknown> | undefined);
   const effectiveHostConfig = legacyHostConfigOverride ?? liveHostConfig;
   const harnessRuntimeVenue = await shouldUseLocalHarness(harnessOfHostConfig(effectiveHostConfig), convexAuthToken, testCase.projectId ?? projectId ?? undefined, { scope: "unattended" }) ? "local" : "hosted";
-  // Enforced at the MCP proxy for NATIVE-delivery harness runs (see the suite
-  // path); refused only where this deployment cannot seal the policy into the
-  // proxy token. Host-executed delivery enforces in-process and mints no token.
-  const harnessPolicyRefusal = harnessToolPolicyLaunchRefusal({
-    localExecution: harnessRuntimeVenue === "local",
-    hasToolPolicy: Boolean(toolPolicy),
-    harness: harnessOfHostConfig(effectiveHostConfig),
-  });
-  if (harnessPolicyRefusal) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      harnessPolicyRefusal,
-      { reason: "TOOL_POLICY_UNSUPPORTED" },
-    );
-  }
-
   // The same honesty gate the suite path applies, with the surface named: a
   // single-case run passes `runId: null` and boots a box only for a HARNESS
   // (keyed to the iteration). A non-harness host granting a computer-backed
@@ -3756,7 +3740,7 @@ export async function prepareSingleCaseExecution(
       400,
       ErrorCode.VALIDATION_ERROR,
       codeGradingRefusal,
-      { reason: "EVAL_CODE_EVALUATORS_UNAVAILABLE" },
+      { reason: CODE_EVALUATORS_UNAVAILABLE },
     );
   }
 
@@ -3837,6 +3821,25 @@ export async function prepareSingleCaseExecution(
         reason: "EVAL_EXECUTION_UNAVAILABLE",
       });
     }
+  }
+
+  // Enforced at the MCP proxy for NATIVE-delivery harness runs (see the suite
+  // path); refused only where this deployment cannot seal the policy into the
+  // proxy token. Host-executed delivery enforces in-process and mints no token.
+  // After harness admission, as on the suite path: a harness that can't run
+  // here says why, rather than which secret this deployment lacks.
+  const harnessPolicyRefusal = harnessToolPolicyLaunchRefusal({
+    localExecution: harnessRuntimeVenue === "local",
+    hasToolPolicy: Boolean(toolPolicy),
+    harness: harnessOfHostConfig(effectiveHostConfig),
+  });
+  if (harnessPolicyRefusal) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      harnessPolicyRefusal,
+      { reason: "TOOL_POLICY_UNSUPPORTED" },
+    );
   }
 
   const orgModelConfigTarget =
