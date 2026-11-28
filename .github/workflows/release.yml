@@ -631,6 +631,22 @@ jobs:
       suite: ${{ vars.EVALS_SMOKE_SUITE }}
     secrets: inherit
 
+  # CLI releases change what floating Action users execute even if its folder
+  # did not change. Test the registry-resolved version after npm publication.
+  evals-cli-release-smoke:
+    needs: [preflight, verified, publish-packages]
+    if: >-
+      !cancelled() &&
+      needs.verified.result == 'success' &&
+      needs.publish-packages.result == 'success' &&
+      needs.preflight.outputs.publish_cli == 'true'
+    uses: ./.github/workflows/evals-action-smoke.yml
+    with:
+      project: ${{ vars.EVALS_SMOKE_PROJECT }}
+      suite: ${{ vars.EVALS_SMOKE_SUITE }}
+      verify-published-cli: true
+    secrets: inherit
+
   publish-evals-action:
     needs: [preflight, verified, evals-action-smoke]
     # The tag moves only on a smoke that actually PASSED. It used to move on
@@ -1469,7 +1485,7 @@ jobs:
   # tags, the hosted template roll-out and the evals action can each still be
   # running, or fail, after `finalize` succeeds.
   announce-finish:
-    needs: [preflight, announce-start, finalize, docker-publish, roll-out-hosted-template, publish-evals-action, byoc-candidate, catalog-parity]
+    needs: [preflight, announce-start, finalize, docker-publish, roll-out-hosted-template, publish-evals-action, evals-cli-release-smoke, byoc-candidate, catalog-parity]
     if: always() && needs.announce-start.result == 'success'
     runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     permissions:

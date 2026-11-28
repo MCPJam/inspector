@@ -1,3 +1,4 @@
+import { RunCliVersionNotice } from "./run-cli-version-notice";
 import type { EvalSuiteRunListItem } from "./types";
 import { RunMetadataDisplay } from "./run-metadata-display";
 import {
@@ -1102,6 +1103,7 @@ export function RunDetailView({
 
   const runMetadataBlock = (
     <>
+      <RunCliVersionNotice run={selectedRunDetails} />
       <RunMetadataDisplay run={selectedRunDetails} />
       {/* FROZEN import evidence, from the run's own snapshot.
           Fetched canonically rather than derived from the suite's current

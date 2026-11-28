@@ -1,3 +1,4 @@
+import { cliResolutionDiagnostic, resolveCliVersion } from "./cli-version.mjs";
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -37,7 +38,7 @@ export function parseInputs(env) {
     baselineRun: get("BASELINE_RUN"),
     baselineSha: get("BASELINE_SHA"),
     waitTimeout: get("WAIT_TIMEOUT"),
-    cliVersion: get("CLI_VERSION") || "5.7.1",
+    cliVersion: get("CLI_VERSION") || "6",
     idempotencyKey: get("IDEMPOTENCY_KEY"),
     command: get("COMMAND"),
     comment: get("COMMENT") || "true",
@@ -94,9 +95,11 @@ export function parseInputs(env) {
   ) {
     throw new Error("wait-timeout-ms must be a positive safe integer.");
   }
-  // No npm tags, URLs, paths or shell fragments in the package selector.
-  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(inputs.cliVersion))
-    throw new Error("cli-version must be an exact version, such as 5.7.1.");
+  // Accept a major release line or an exact pin; never URLs or shell fragments.
+  if (!/^(?:[1-9]\d*|\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/.test(inputs.cliVersion))
+    throw new Error(
+      "cli-version must be a major version such as 6, or an exact version such as 6.4.1.",
+    );
   if (inputs.idempotencyKey.length > 256)
     throw new Error("idempotency-key must be at most 256 characters.");
   if (!inputs.idempotencyKey && !inputs.command)
@@ -365,6 +368,7 @@ export async function runAction(
   log = (message) => process.stdout.write(`${message}\n`),
   execute = invokeCommand,
   fetchImpl = fetch,
+  resolveVersion = resolveCliVersion,
 ) {
   const state = {
     result: "failed",
@@ -463,9 +467,18 @@ export async function runAction(
       state.result = outcome.result;
       state.message = outcome.message;
     } else {
+      let cliVersion;
+      try {
+        cliVersion = await resolveVersion(inputs.cliVersion);
+      } catch (error) {
+        state.message =
+          `Couldn't resolve the CLI version. ${cliResolutionDiagnostic(error)} Check registry access or set cli-version to an exact published version.`;
+        throw new Error(state.message);
+      }
+      log(`MCPJam CLI ${cliVersion} (requested ${inputs.cliVersion}).`);
       const prefix = [
         "--yes",
-        `@mcpjam/cli@${inputs.cliVersion}`,
+        `@mcpjam/cli@${cliVersion}`,
         "cloud",
         "eval",
       ];

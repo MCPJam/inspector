@@ -175,7 +175,9 @@ export function isUpdateCacheFresh(
   cache: UpdateCheckCache,
   now = Date.now(),
 ): boolean {
-  return now - cache.checkedAt < UPDATE_CHECK_INTERVAL_MS;
+  return (
+    cache.checkedAt <= now && now - cache.checkedAt < UPDATE_CHECK_INTERVAL_MS
+  );
 }
 
 export function shouldSkipUpdateCheck(
@@ -254,7 +256,7 @@ export function printUpdateNotification(
 ): void {
   stderr.write(
     `Update available: ${packageName} ${currentVersion} -> ${latestVersion}\n` +
-      `Run npm install -g ${packageName} to update\n`,
+      `Run npm install -g ${packageName}@latest to update\n`,
   );
 }
 
@@ -287,13 +289,15 @@ export function checkForUpdates(
         currentVersion,
       );
 
-      if (hasNewerCachedVersion) {
-        printUpdateNotification(
-          currentVersion,
-          cache.latestVersion,
-          packageName,
-          options.stderr,
-        );
+      if (hasNewerCachedVersion && cache.checkedAt <= now) {
+        if (isUpdateCacheFresh(cache, now)) {
+          printUpdateNotification(currentVersion, cache.latestVersion, packageName, options.stderr);
+        } else {
+          (options.stderr ?? process.stderr).write(
+            `A newer ${packageName} release is available.\n` +
+            `Run npm install -g ${packageName}@latest to update.\n`,
+          );
+        }
       }
 
       if (isUpdateCacheFresh(cache, now)) {
