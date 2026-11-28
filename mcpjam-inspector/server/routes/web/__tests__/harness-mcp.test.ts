@@ -111,7 +111,12 @@ describe("/api/web/harness-mcp", () => {
       orgId: "org_1", runId: "run-77", iterationId: "iter-1",
     });
     expect((await post("srv-a", { "X-MCPJam-Proxy-Token": scoped })).status).toBe(200);
-    expect(loadPinned).toHaveBeenCalledWith({ runId: "run-77", iterationId: "iter-1" });
+    expect(loadPinned).toHaveBeenCalledWith({
+      runId: "run-77",
+      iterationId: "iter-1",
+      proxyToken: scoped,
+      serverId: "srv-a",
+    });
     expect(vi.mocked(createAuthorizedManager).mock.lastCall?.[7]).toHaveProperty("inputAnswers");
   });
   it("401s without a token (token IS the auth here)", async () => {
