@@ -16,11 +16,7 @@ import {
   buildHostedEventDescriptor,
   createLocalEventSubscription,
   hostedSubscriptionRowToView,
-  loadEventsCatalog,
   resolveHostedEventsServerId,
-  fetchLocalEventsFeed,
-  fetchEventsViewerToken,
-  fetchHostedEventsFeed,
 } from "@/lib/apis/mcp-events-api";
 import { logEventsFeedEntries } from "@/lib/events-traffic";
 import type {
@@ -39,6 +35,9 @@ import {
   type EventAgentToolExecutor,
 } from "./event-agent-tools";
 import { withArrival, withOutcome, type RecentEvent } from "./recent-events";
+import { useWatchStore } from "./use-watch-store";
+import { feedWatermark, loadServerCatalog } from "./events-catalog-io";
+import { useWatchRecovery } from "./use-watch-recovery";
 
 export interface PlaygroundEventBinding extends EventBinding {
   event: EventDescriptorView;
@@ -52,6 +51,10 @@ export interface PlaygroundEventBinding extends EventBinding {
   title?: string;
   /** Who connected it: the agent from the conversation, or the user. */
   createdBy?: "agent" | "user";
+  /** Saved with its conversation (signed in), so it comes back after a reload. */
+  saved?: boolean;
+  /** A saved watch's subscription arguments, until the subscription loads. */
+  savedArguments?: Record<string, unknown>;
 }
 /** How `add` was reached. The agent subscribes from inside its own turn. */
 export interface AddEventOptions {
@@ -75,6 +78,7 @@ function useRuntime(
   activeHostId: string | null,
   activeHost: EventsSupportHost | null,
   enabled: boolean,
+  savedProjectId: string | null,
 ) {
   const state = usePlaygroundStateContext();
   const hosted = isHostedMode();
@@ -88,10 +92,9 @@ function useRuntime(
     subscribeAsActiveClient: true,
   }).choice;
   const scope = `${projectId}:${activeHostId}:${enabled}`;
+  // Page-memory connections: a guest's, and test-only ones. Saved ones come
+  // from `useWatchStore`.
   const [storedBindings, setBindings] = useState<PlaygroundEventBinding[]>([]);
-  const bindings = storedBindings.filter(
-    (binding) => binding.ownerScope === scope && enabled,
-  );
   const agent = useEventAgentBridge((state) => state.agent);
   const agentScope = agent?.scope;
   useEffect(() => {
@@ -114,6 +117,29 @@ function useRuntime(
     );
   }, [agentScope]);
   const [catalogs, setCatalogs] = useState<ServerEventCatalog[]>([]);
+  const store = useWatchStore({
+    projectId: enabled ? savedProjectId : null,
+    conversationId: agent?.conversationId,
+    hostId: host?.id ?? null,
+    locality: hosted ? "hosted" : "local",
+    agentScope,
+    ownerScope: scope,
+    describe: (serverName, eventName) =>
+      catalogs
+        .find((entry) => entry.serverName === serverName)
+        ?.catalog?.events.find((event) => event.name === eventName),
+  });
+  const storeRef = useRef(store);
+  storeRef.current = store;
+  const bindings = [
+    ...store.bindings,
+    ...storedBindings.filter(
+      (binding) => binding.ownerScope === scope && enabled,
+    ),
+  ];
+  const [localSubscriptions, setLocalSubscriptions] =
+    useState<ReadonlySet<string> | null>(null);
+  const [, setQueueVersion] = useState(0);
   const [loading, setLoading] = useState(false);
   const rows = useQuery(
     EVENT_SUBSCRIPTIONS_API.list,
@@ -129,6 +155,21 @@ function useRuntime(
   const dispatcher = useRef<ReturnType<typeof createEventDispatcher> | null>(
     null,
   );
+  /** Updates what the page shows for a connection, saved or in memory. */
+  const patchLive = (
+    id: string,
+    patch: (
+      fields: Pick<PlaygroundEventBinding, "recentEvents" | "notice">,
+    ) => Pick<PlaygroundEventBinding, "recentEvents" | "notice">,
+  ) => {
+    if (storeRef.current.isSaved(id)) storeRef.current.patchLive(id, patch);
+    else
+      setBindings((previous) =>
+        previous.map((binding) =>
+          binding.id === id ? { ...binding, ...patch(binding) } : binding,
+        ),
+      );
+  };
   if (!dispatcher.current)
     dispatcher.current = createEventDispatcher({
       binding: (id) =>
@@ -138,32 +179,22 @@ function useRuntime(
         current.current.servers[binding.serverName]?.connectionStatus ===
         "connected",
       received: (id, entry) =>
-        setBindings((previous) =>
-          previous.map((binding) =>
-            binding.id === id
-              ? {
-                  ...binding,
-                  recentEvents: withArrival(binding.recentEvents, entry),
-                  notice: undefined,
-                }
-              : binding,
-          ),
-        ),
+        patchLive(id, (fields) => ({
+          recentEvents: withArrival(fields.recentEvents, entry),
+          notice: undefined,
+        })),
       result: (id, entry, outcome) =>
-        setBindings((previous) =>
-          previous.map((binding) =>
-            binding.id === id
-              ? {
-                  ...binding,
-                  recentEvents: withOutcome(
-                    binding.recentEvents,
-                    entry,
-                    outcome,
-                  ),
-                }
-              : binding,
-          ),
-        ),
+        patchLive(id, (fields) => ({
+          recentEvents: withOutcome(fields.recentEvents, entry, outcome),
+        })),
+      claim: (binding, entry) => storeRef.current.claim(binding.id, entry.seq),
+      loadedAt: (binding) => {
+        const live = current.current.bindings.find(
+          (candidate) => candidate.id === binding.id,
+        );
+        return live ? storeRef.current.loadedAt(live) : undefined;
+      },
+      changed: () => setQueueVersion((version) => version + 1),
     });
   const updateSubscriptions = (subscriptions: EventsSubscriptionView[]) => {
     const update = (previous: PlaygroundEventBinding[]) =>
@@ -178,22 +209,41 @@ function useRuntime(
     // A following feed frame can arrive before React renders this snapshot.
     current.current.bindings = update(current.current.bindings);
     setBindings(update);
+    storeRef.current.recordViews(subscriptions);
   };
   useEffect(() => {
     if (rows)
       updateSubscriptions(rows.map((row) => hostedSubscriptionRowToView(row)));
   }, [rows]);
 
+  // Hosted, a reload replays the inbox from the lowest saved position; the
+  // local journal is in memory and small, so it replays from its start.
+  const savedOn = store.bindings.filter((binding) => binding.enabled);
   const feed = useEventsFeed({
     hosted,
     projectId,
-    enabled: bindings.some((binding) => !!binding.subscription),
-    onSubscriptionsSnapshot: updateSubscriptions,
+    enabled: bindings.some((binding) => binding.saved || !!binding.subscription),
+    ...(hosted && savedOn.length > 0
+      ? { startAfter: Math.min(...savedOn.map((binding) => binding.afterSeq)) }
+      : {}),
+    ...(store.saving
+      ? {
+          resetKey: `${agent?.conversationId}:${host?.id ?? ""}:${store.loaded}:${savedOn.length > 0}`,
+        }
+      : {}),
+    onSubscriptionsSnapshot: (subscriptions) => {
+      updateSubscriptions(subscriptions);
+      if (!hosted)
+        setLocalSubscriptions(new Set(subscriptions.map((row) => row.id)));
+    },
     onSubscription: (subscription) => updateSubscriptions([subscription]),
     onNewEntries: (entries) => {
+      // A replayed backlog isn't new traffic for a watch that handled it.
       const own = entries.filter((entry) =>
         current.current.bindings.some(
-          (binding) => binding.logicalId === entry.logicalSubscriptionId,
+          (binding) =>
+            binding.logicalId === entry.logicalSubscriptionId &&
+            (!binding.saved || entry.seq > binding.afterSeq),
         ),
       );
       logEventsFeedEntries(own, {
@@ -222,16 +272,11 @@ function useRuntime(
       lifecycle.current += 1;
       dispatcher.current?.dispose();
     };
+    // The feed picks up from its last entry, so nothing that arrived while
+    // the page was frozen is lost: resume the queue as it was.
     const restore = () => {
       alive.current = true;
       dispatcher.current?.activate();
-      setBindings((previous) =>
-        previous.map((binding) => ({
-          ...binding,
-          enabled: false,
-          notice: "Page restored. Resume to listen for new events.",
-        })),
-      );
     };
     window.addEventListener("pagehide", stop);
     window.addEventListener("pageshow", restore);
@@ -242,31 +287,7 @@ function useRuntime(
     };
   }, []);
 
-  /** One server's whole catalog, every page. Errors become `error`. */
-  const loadCatalog = async (
-    serverName: string,
-  ): Promise<ServerEventCatalog> => {
-    try {
-      const catalog = await loadEventsCatalog(serverName);
-      let cursor = catalog.nextCursor;
-      const seen = new Set<string>();
-      while (cursor && !seen.has(cursor)) {
-        seen.add(cursor);
-        const page = await loadEventsCatalog(serverName, cursor);
-        catalog.events.push(...page.events);
-        cursor = page.nextCursor;
-      }
-      return { serverName, catalog };
-    } catch (error) {
-      return {
-        serverName,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Could not load events. Reconnect this server and retry.",
-      };
-    }
-  };
+  const loadCatalog = loadServerCatalog;
 
   const refresh = async () => {
     const revision = ++catalogRevision.current;
@@ -300,20 +321,7 @@ function useRuntime(
     if (enabled) void refreshCatalogs.current();
   }, [connectedServers, scope, enabled]);
 
-  const watermark = async () => {
-    const token =
-      hosted && projectId ? await fetchEventsViewerToken(projectId) : null;
-    let after = 0;
-    for (let page = 0; page < 100; page += 1) {
-      const result = token
-        ? await fetchHostedEventsFeed({ ...token, after })
-        : await fetchLocalEventsFeed(after, projectId);
-      if (result.nextAfter <= after) return after;
-      after = result.nextAfter;
-      if (result.entries.length === 0) return after;
-    }
-    throw new Error("The event feed is busy. Wait a moment and try again.");
-  };
+  const watermark = () => feedWatermark(hosted, projectId);
 
   /**
    * The one create path. Connect event, the agent's subscribe and the agent's
@@ -348,6 +356,12 @@ function useRuntime(
     // makes it "busy"; each event turn still checks the agent when it lands.
     if (targetAgent.blockedReason && !options.fromAgent)
       throw new Error(targetAgent.blockedReason);
+    // An empty conversation gets a new id on reload, so its watch couldn't
+    // come back. The agent always subscribes from inside a turn.
+    if (storeRef.current.saving && !options.fromAgent && !targetAgent.hasMessages)
+      throw new Error(
+        "Send a message first, then connect the event. A conversation is saved after its first message.",
+      );
     const isCurrent = () =>
       alive.current &&
       generation === lifecycle.current &&
@@ -446,6 +460,20 @@ function useRuntime(
       throw new Error(
         "This event is already connected. Use Edit instructions to change what the agent should do.",
       );
+    if (storeRef.current.saving) {
+      const saved = await storeRef.current.save(
+        { subscription, serverName: server.serverName, event, value },
+        {
+          instructions,
+          afterSeq,
+          createdBy: options.fromAgent ? "agent" : "user",
+          ...(options.title ? { title: options.title } : {}),
+        },
+      );
+      // Readable by the next agent tool call before the query catches up.
+      current.current.bindings = [...current.current.bindings, saved];
+      return saved;
+    }
     const binding: PlaygroundEventBinding = {
       id: crypto.randomUUID(),
       subscriptionId: subscription.id,
@@ -495,6 +523,17 @@ function useRuntime(
         "Another subscription already watches this event with these arguments.",
       );
     dispatcher.current?.invalidate(id);
+    if (storeRef.current.isSaved(id)) {
+      const moved = await storeRef.current.save(
+        { subscription, serverName: server.serverName, event, value },
+        { afterSeq },
+        id,
+      );
+      current.current.bindings = current.current.bindings.map((binding) =>
+        binding.id === id ? moved : binding,
+      );
+      return moved;
+    }
     const move = (binding: PlaygroundEventBinding): PlaygroundEventBinding =>
       binding.id === id
         ? {
@@ -572,14 +611,15 @@ function useRuntime(
     const generation = lifecycle.current;
     const revision = (editRevisions.current.get(id) ?? 0) + 1;
     editRevisions.current.set(id, revision);
+    // Only turning a paused connection back on skips to new events; an edit
+    // of one that's on keeps whatever is queued.
+    const before = current.current.bindings.find((binding) => binding.id === id);
     const afterSeq =
-      fields.enabled === true &&
-      current.current.bindings.find((binding) => binding.id === id)
-        ?.subscription
-        ? await watermark()
-        : fields.enabled === true
-          ? 0
-          : undefined;
+      fields.enabled !== true || before?.enabled !== false
+        ? undefined
+        : before.subscription || before.saved
+          ? await watermark()
+          : 0;
     if (
       !alive.current ||
       generation !== lifecycle.current ||
@@ -588,6 +628,18 @@ function useRuntime(
       editRevisions.current.get(id) !== revision
     )
       return false;
+    if (storeRef.current.isSaved(id)) {
+      const updated = await storeRef.current.update(id, {
+        ...fields,
+        ...(afterSeq !== undefined ? { afterSeq } : {}),
+      });
+      if (afterSeq !== undefined)
+        storeRef.current.patchLive(id, () => ({ notice: undefined }));
+      current.current.bindings = current.current.bindings.map((binding) =>
+        binding.id === id ? { ...binding, ...updated, event: binding.event } : binding,
+      );
+      return true;
+    }
     const apply = (previous: PlaygroundEventBinding[]) =>
       previous.map((binding) =>
         binding.id === id
@@ -612,12 +664,13 @@ function useRuntime(
     setBindings(apply);
     return true;
   };
-  const remove = (id: string) => {
+  const remove = async (id: string) => {
     dispatcher.current?.invalidate(id);
     const drop = (previous: PlaygroundEventBinding[]) =>
       previous.filter((binding) => binding.id !== id);
     current.current.bindings = drop(current.current.bindings);
-    setBindings(drop);
+    if (storeRef.current.isSaved(id)) await storeRef.current.remove(id);
+    else setBindings(drop);
   };
   const trigger = async (
     binding: PlaygroundEventBinding,
@@ -638,10 +691,38 @@ function useRuntime(
     // A local test never enters a shared inbox or fires a saved background rule.
     return dispatcher.current?.dispatch(binding.id, entry, true) ?? false;
   };
+  // Run what can run whenever the agent, a server or a connection changes.
+  useEffect(
+    () => useEventAgentBridge.subscribe(() => dispatcher.current?.pump()),
+    [],
+  );
+  const runKey = bindings
+    .map((binding) => `${binding.id}:${binding.enabled}:${binding.afterSeq}`)
+    .join("\n");
+  useEffect(() => {
+    dispatcher.current?.pump();
+  }, [connectedServers, runKey]);
+  useWatchRecovery({
+    hosted,
+    conversationId: agent?.conversationId,
+    bindings,
+    servers: state.servers,
+    localSubscriptions,
+    gaps: feed.gaps ?? [],
+    head: feed.entries?.at(-1)?.seq,
+    queued: (id) => dispatcher.current?.queued(id) ?? 0,
+    notice: (id, notice) => patchLive(id, () => ({ notice })),
+    advance: (id, seq) => storeRef.current.claim(id, seq),
+  });
   return {
     projectId,
     host,
     hosted,
+    /** Signed in with a saved conversation: connections come back after a reload. */
+    saving: store.saving,
+    queued: (id: string) => dispatcher.current?.queued(id) ?? 0,
+    queueAction: (id: string) => dispatcher.current?.action(id) ?? null,
+    runQueued: (id: string) => dispatcher.current?.runQueued(id),
     bindings,
     catalogs,
     loading,
@@ -675,14 +756,21 @@ export function PlaygroundEventsProvider({
   projectId,
   hostId,
   host,
+  savedProjectId = null,
 }: {
   children: ReactNode;
   projectId: string | null;
   hostId: string | null;
   host: EventsSupportHost | null;
+  /**
+   * The Convex project to save connections in, for a signed-in user: the
+   * hosted project, or a local project shared to the cloud. Without one,
+   * connections live in page memory.
+   */
+  savedProjectId?: string | null;
 }) {
   const enabled = useEventsEnabledState() === true;
-  const runtime = useRuntime(projectId, hostId, host, enabled);
+  const runtime = useRuntime(projectId, hostId, host, enabled, savedProjectId);
   const latest = useRef<ReturnType<typeof useRuntime> | null>(null);
   latest.current = enabled ? runtime : null;
   const [agentTools] = useState(() =>

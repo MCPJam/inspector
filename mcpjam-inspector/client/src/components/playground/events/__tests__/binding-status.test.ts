@@ -30,6 +30,15 @@ describe("bindingStatus", () => {
     );
   });
 
+  it("says Connecting for a saved connection until its subscription loads", () => {
+    expect(
+      bindingStatus({ enabled: true, saved: true }, connected("live")),
+    ).toBe("Connecting");
+    expect(bindingStatus({ enabled: true }, connected("live"))).toBe(
+      "Test only",
+    );
+  });
+
   it("says Listening once the feed is live or polling", () => {
     expect(bindingStatus(watch("active"), connected("live"))).toBe("Listening");
     expect(bindingStatus(watch("active"), connected("polling"))).toBe(

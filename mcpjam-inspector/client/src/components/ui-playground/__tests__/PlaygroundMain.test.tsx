@@ -989,19 +989,22 @@ describe("PlaygroundMain", () => {
     compareSetup.error = undefined;
   });
 
-  it("changes the event agent scope when the same model uses another provider connection", () => {
+  it("keeps the event agent scope when the model or its provider connection changes", () => {
+    // An event connection belongs to its conversation and client (AE-14), so
+    // switching models must not pause it.
     const original = mockUseChatSession.selectedModel;
     try {
       const model = { ...original, hosted: false, orgProvider: { id: "provider-a" } };
       mockUseChatSession.selectedModel = model;
       const { rerender } = render(<PlaygroundMain {...defaultProps} />);
       const firstScope = useEventAgentBridge.getState().agent?.scope;
-      expect(firstScope).toContain("provider-a");
+      expect(firstScope).not.toContain("provider-a");
       mockUseChatSession.selectedModel = { ...model, orgProvider: { id: "provider-b" } };
       rerender(<PlaygroundMain {...defaultProps} />);
-      const nextScope = useEventAgentBridge.getState().agent?.scope;
-      expect(nextScope).toContain("provider-b");
-      expect(nextScope).not.toBe(firstScope);
+      expect(useEventAgentBridge.getState().agent?.scope).toBe(firstScope);
+      expect(useEventAgentBridge.getState().agent?.conversationId).toEqual(
+        expect.any(String),
+      );
     } finally {
       mockUseChatSession.selectedModel = original;
     }

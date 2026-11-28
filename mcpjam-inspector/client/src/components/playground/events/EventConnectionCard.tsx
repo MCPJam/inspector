@@ -10,6 +10,7 @@ import {
 import { ReachabilityHeader } from "@/components/events/ReachabilityHeader";
 import { hasInsecureLocalReceiver } from "@/components/events/event-utils";
 import { eventTime, outcomeLabel } from "./recent-events";
+import type { EventQueueAction } from "./event-dispatch";
 import type { PlaygroundEventBinding } from "./PlaygroundEventsProvider";
 
 /**
@@ -25,6 +26,9 @@ export function EventConnectionCard({
   onTrigger,
   onEdit,
   onTogglePause,
+  queued = 0,
+  action = null,
+  onRunQueued,
 }: {
   binding: PlaygroundEventBinding;
   status: string;
@@ -33,6 +37,11 @@ export function EventConnectionCard({
   onTrigger: () => void;
   onEdit: () => void;
   onTogglePause: () => void;
+  /** Events waiting to run, in this conversation. */
+  queued?: number;
+  /** What the user can do for them: run a held backlog, or try again. */
+  action?: EventQueueAction | null;
+  onRunQueued?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const events = binding.recentEvents ?? [];
@@ -72,6 +81,7 @@ export function EventConnectionCard({
         </CollapsibleTrigger>
         <p className="text-xs text-muted-foreground">
           {binding.serverName} · {status}
+          {queued ? ` · ${queued} queued` : null}
           {latest
             ? ` · Last event ${eventTime(latest.receivedAt, { seconds: false })}`
             : null}
@@ -84,6 +94,13 @@ export function EventConnectionCard({
           <p role="status" className="text-xs text-muted-foreground">
             {problem}
           </p>
+        ) : null}
+        {action && onRunQueued ? (
+          <Button size="sm" variant="outline" onClick={onRunQueued}>
+            {action.kind === "catch-up"
+              ? `Run ${action.count} events`
+              : "Try again"}
+          </Button>
         ) : null}
         <CollapsibleContent className="space-y-2 border-t border-border pt-2">
           {events.length ? (

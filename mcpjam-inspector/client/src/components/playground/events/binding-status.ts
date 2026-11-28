@@ -9,14 +9,15 @@ import type { PlaygroundEventBinding } from "./PlaygroundEventsProvider";
  * the server hasn't confirmed a new subscription (`pending`), or the live feed
  * hasn't opened (`idle` before the first subscription, then `connecting`).
  * The agent relays this word, so it must not sound like something is wrong.
+ * A saved watch reads "Connecting" until its subscription loads.
  */
 export function bindingStatus(
-  binding: Pick<PlaygroundEventBinding, "enabled" | "subscription">,
+  binding: Pick<PlaygroundEventBinding, "enabled" | "subscription" | "saved">,
   options: { connected: boolean; feedStatus: string },
 ): string {
   if (!binding.enabled) return "Paused";
   if (!options.connected) return "Disconnected";
-  if (!binding.subscription) return "Test only";
+  if (!binding.subscription) return binding.saved ? "Connecting" : "Test only";
   const { observedState } = binding.subscription;
   if (observedState === "pending") return "Connecting";
   if (observedState !== "active") return observedState;

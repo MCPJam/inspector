@@ -91,6 +91,7 @@ beforeEach(() => {
   ];
   runtime = {
     hosted: false,
+    saving: false,
     projectId: "project",
     host: {
       id: null,
@@ -246,7 +247,7 @@ describe("mcpjam_subscribe_to_events", () => {
     expect(result.isError).toBeUndefined();
     expect(payload(result).subscription.status).toBe("connecting");
     expect(payload(result).message).toBe(
-      "Subscribed to flight.status_changed. It's connecting and switches to listening on its own. Once it's listening, new events start a turn here while this conversation is open in the Playground; an event that arrives during another turn is skipped.",
+      "Subscribed to flight.status_changed. It's connecting and switches to listening on its own. New events start a turn here while this conversation is open in the Playground. Events that arrive during another turn wait and run in order.",
     );
   });
 
@@ -269,8 +270,40 @@ describe("mcpjam_subscribe_to_events", () => {
     );
     expect(payload(result).subscription.status).toBe("listening");
     expect(payload(result).message).toBe(
-      "Subscribed to flight.status_changed. New events start a turn here while this conversation is open in the Playground; an event that arrives during another turn is skipped.",
+      "Subscribed to flight.status_changed. New events start a turn here while this conversation is open in the Playground. Events that arrive during another turn wait and run in order.",
     );
+  });
+
+  it("tells a signed-in agent its events also wait while the conversation is closed", async () => {
+    runtime.saving = true;
+    const result = await runEventAgentTool(
+      runtime,
+      EVENT_AGENT_TOOL_NAMES.subscribe,
+      subscribeInput,
+    );
+    expect(payload(result).message).toContain("also after a reload");
+    expect(payload(result).message).toContain(
+      "or while the conversation is closed, wait and run in order",
+    );
+  });
+
+  it("matches a saved watch by its saved arguments before its subscription loads", async () => {
+    runtime.bindings = [
+      binding({
+        subscription: undefined,
+        saved: true,
+        savedArguments: { tripId: "t1", flightId: "MJ204" },
+      }),
+    ];
+    const listed = await runEventAgentTool(
+      runtime,
+      EVENT_AGENT_TOOL_NAMES.listSubscriptions,
+      {},
+    );
+    expect(payload(listed).subscriptions[0].triggers[0].params).toEqual({
+      tripId: "t1",
+      flightId: "MJ204",
+    });
   });
 
   it("refuses params that miss the inputSchema before contacting the server", async () => {
@@ -708,7 +741,7 @@ describe("one conversation's reach", () => {
     expect(runtime.edit).not.toHaveBeenCalled();
   });
 
-  it("tells the agent when a watch can miss an event", async () => {
+  it("tells the agent events wait instead of being skipped", async () => {
     const result = await runEventAgentTool(
       runtime,
       EVENT_AGENT_TOOL_NAMES.subscribe,
@@ -717,7 +750,8 @@ describe("one conversation's reach", () => {
     expect(payload(result).message).toContain(
       "while this conversation is open",
     );
-    expect(payload(result).message).toContain("skipped");
+    expect(payload(result).message).toContain("wait and run in order");
+    expect(payload(result).message).not.toContain("skipped");
   });
 });
 

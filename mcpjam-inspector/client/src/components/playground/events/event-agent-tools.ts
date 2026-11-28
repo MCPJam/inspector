@@ -46,6 +46,7 @@ type Runtime = NonNullable<ReturnType<typeof usePlaygroundEvents>>;
 export type EventAgentRuntime = Pick<
   Runtime,
   | "hosted"
+  | "saving"
   | "host"
   | "projectId"
   | "servers"
@@ -163,7 +164,12 @@ function canonical(value: unknown): string {
 }
 
 /** A subscription in the tools' own field names (`subscription_id`, `prompt`, …). */
+/** The subscription's arguments, or a saved watch's until its subscription loads. */
+const paramsOf = (binding: PlaygroundEventBinding) =>
+  binding.subscription?.arguments ?? binding.savedArguments;
+
 function describe(runtime: EventAgentRuntime, binding: PlaygroundEventBinding) {
+  const params = paramsOf(binding);
   return {
     subscription_id: binding.id,
     ...(binding.title ? { title: binding.title } : {}),
@@ -171,9 +177,7 @@ function describe(runtime: EventAgentRuntime, binding: PlaygroundEventBinding) {
     triggers: [
       {
         event: binding.eventName,
-        ...(binding.subscription
-          ? { params: binding.subscription.arguments }
-          : {}),
+        ...(params ? { params } : {}),
       },
     ],
     prompt: binding.instructions,
@@ -339,8 +343,8 @@ const sameTrigger = (
 ) =>
   binding.serverName === serverName &&
   binding.eventName === trigger.event &&
-  !!binding.subscription &&
-  canonical(binding.subscription.arguments) === canonical(trigger.params);
+  paramsOf(binding) !== undefined &&
+  canonical(paramsOf(binding)) === canonical(trigger.params);
 
 /** An edit the provider dropped, such as a newer change to the same watch. */
 const notApplied = () =>
@@ -392,10 +396,13 @@ async function subscribe(
   const subscription = describe(runtime, binding);
   // The server confirms a new watch after this returns, so say it is on its way
   // rather than leave the model to read "not listening yet" as a problem.
+  const when = runtime.saving
+    ? "New events start a turn here whenever this conversation is open in the Playground, also after a reload. Events that arrive during another turn, or while the conversation is closed, wait and run in order."
+    : "New events start a turn here while this conversation is open in the Playground. Events that arrive during another turn wait and run in order.";
   const message =
     subscription.status === "connecting"
-      ? `Subscribed to ${resolved.event.name}. It's connecting and switches to listening on its own. Once it's listening, new events start a turn here while this conversation is open in the Playground; an event that arrives during another turn is skipped.`
-      : `Subscribed to ${resolved.event.name}. New events start a turn here while this conversation is open in the Playground; an event that arrives during another turn is skipped.`;
+      ? `Subscribed to ${resolved.event.name}. It's connecting and switches to listening on its own. ${when}`
+      : `Subscribed to ${resolved.event.name}. ${when}`;
   return success({ subscription, message });
 }
 
@@ -461,7 +468,7 @@ async function remove(
 ) {
   const binding = findBinding(runtime, call.subscriptionId);
   if (!binding) return unknownId(call.subscriptionId);
-  runtime.remove(binding.id);
+  await runtime.remove(binding.id);
   return success({
     deleted: binding.id,
     message:

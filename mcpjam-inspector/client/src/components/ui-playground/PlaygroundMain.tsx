@@ -4951,7 +4951,9 @@ export function PlaygroundMain({
     [onWidgetStateChange],
   );
 
-  const ensureSelectedServerReadyForChat = useCallback(async () => {
+  // `quiet`: an event turn waits and retries in its queue, so a failed connect
+  // there shows on its event connection, not as a toast.
+  const ensureSelectedServerReadyForChat = useCallback(async (options?: { quiet?: boolean }) => {
     // Environment turns resolve their saved IDs through the environment adapter.
     // The unrelated standalone server selection must not block that target.
     if (
@@ -4998,7 +5000,7 @@ export function PlaygroundMain({
         : result.reauthServerNames.includes(serverName)
           ? `Reauthenticate ${serverName} before sending.`
           : `Couldn't connect to ${serverName}.`;
-      toast.error(errorMessage);
+      if (!options?.quiet) toast.error(errorMessage);
       return false;
     } finally {
       setIsPreparingServerForSend(false);
@@ -5177,7 +5179,7 @@ export function PlaygroundMain({
         if (!isCurrent() || conversationSendBlockedRef.current) {
           return false;
         }
-        if (!(await ensureSelectedServerReadyForChat())) {
+        if (!(await ensureSelectedServerReadyForChat({ quiet: !!eventAtTurn }))) {
           return false;
         }
         // Every send entry point takes the same thread preflight, not just the
@@ -5199,8 +5201,8 @@ export function PlaygroundMain({
           // draft sitting behind it. Dropping it left the cold-install notice
           // saying "press Send to continue" over an empty composer, with the
           // prompt it was talking about gone. Putting it there is what makes
-          // that instruction true.
-          composer.setInput(text);
+          // that instruction true. An event turn waits in its queue instead.
+          if (!eventAtTurn) composer.setInput(text);
           return false;
         }
         // The first check is stale once the gates above have yielded. A study
@@ -5220,8 +5222,9 @@ export function PlaygroundMain({
           isCurrent: () => isCurrent() && !conversationSendBlockedRef.current,
         });
         // A refused send runs no turn: keep the text, and the queue as it is.
+        // An event turn's text stays in its event queue, never the composer.
         if (!sent) {
-          composer.setInput(text);
+          if (!eventAtTurn) composer.setInput(text);
           return false;
         }
         // A success drops only the objects this request carried: a widget can
@@ -5251,17 +5254,23 @@ export function PlaygroundMain({
     ],
   );
 
+  // An event connection belongs to its conversation and client, not a model:
+  // switching models keeps it running. Its events wait while this is set.
   usePublishEventAgent({
-    scope: `${chatSessionId}:${selectedModel ? modelRowKey(selectedModel) : ""}:${previewedHostId ?? ""}`,
+    scope: `${chatSessionId}:${previewedHostId ?? ""}`,
+    conversationId: chatSessionId,
+    hasMessages: !isThreadEmpty,
     blockedReason: !isSessionBootstrapComplete ||
       !isSelectedModelResolved || previewedHostLoading || restoringAdhoc
-      ? "Wait for the agent conversation to finish loading."
+      ? "Waiting for the conversation to finish loading."
       : isCompareMode
-      ? "Choose one agent to run events."
+      ? "Waiting for you to pick one model. Events don't run while you compare models."
+      : sendInColumn
+        ? "Waiting for you to open the whole multi-model session. Events don't run in a saved column."
       : isStreamingActive || isPreparingServerForSend
-        ? "Event skipped while the agent is busy. Trigger it again when the turn finishes."
+        ? "Waiting for the current turn to finish."
         : composerDisabled || sendBlocked || conversationSendBlockedRef.current
-          ? "The conversation is not ready. Check the agent settings, then trigger the event again."
+          ? "Waiting for the conversation to be ready. Check the agent settings."
           : null,
     send: handleSendFollowUp,
   });

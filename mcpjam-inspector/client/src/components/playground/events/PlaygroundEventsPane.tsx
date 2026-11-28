@@ -72,6 +72,9 @@ export function PlaygroundEventsPane() {
                 status={status}
                 connected={connected}
                 hosted={runtime.hosted}
+                queued={runtime.queued(binding.id)}
+                action={runtime.queueAction(binding.id)}
+                onRunQueued={() => runtime.runQueued(binding.id)}
                 onTrigger={() => setSelected({ binding, mode: "test" })}
                 onEdit={() => setSelected({ binding, mode: "edit" })}
                 onTogglePause={() =>
@@ -98,8 +101,9 @@ export function PlaygroundEventsPane() {
       </div>
       {runtime.bindings.length > 0 ? (
         <p className="border-t p-3 text-[11px] text-muted-foreground">
-          New event turns stop when you leave Playground. Events received while
-          the agent is busy are skipped.
+          {runtime.saving
+            ? "Events that arrive while the agent is busy, or while this conversation is closed, wait and run in order when it's open."
+            : "Events that arrive while the agent is busy wait and run in order. Event connections end when you reload or leave Playground."}
         </p>
       ) : null}
       {adding ? (
@@ -167,7 +171,7 @@ function BindingDialog({
     if (sent) onClose();
     else
       setError(
-        "Event was not sent. Check the connection and wait for the agent to finish, then try again.",
+        "Couldn't queue the test event. Resume this event connection and check its subscription, then try again.",
       );
   };
   return (
@@ -227,7 +231,15 @@ function BindingDialog({
             <Button
               variant="ghost"
               onClick={() => {
-                runtime?.remove(binding.id);
+                void runtime
+                  ?.remove(binding.id)
+                  .catch((error: unknown) =>
+                    toast.error(
+                      error instanceof Error
+                        ? error.message
+                        : "Couldn't disconnect this event. Try again.",
+                    ),
+                  );
                 onClose();
               }}
             >

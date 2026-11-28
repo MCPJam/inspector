@@ -56,10 +56,12 @@ export function eventTime(
 export function outcomeLabel(event: RecentEvent): string {
   const outcome = !event.outcome
     ? "Sending to agent"
-    : event.outcome.status === "sent"
-      ? "Sent to agent"
-      : event.outcome.status === "skipped"
-        ? "Skipped"
-        : "Not sent";
+    : event.outcome.status === "queued"
+      ? "Queued"
+      : event.outcome.status === "sent"
+        ? "Sent to agent"
+        : event.outcome.status === "skipped"
+          ? "Skipped"
+          : "Not sent";
   return event.origin === "simulation" ? `Test · ${outcome}` : outcome;
 }

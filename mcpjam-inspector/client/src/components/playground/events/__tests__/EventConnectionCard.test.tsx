@@ -121,4 +121,43 @@ describe("EventConnectionCard", () => {
     });
     expect(screen.getByRole("status")).toHaveTextContent("Page restored.");
   });
+
+  it("counts queued events and offers the action they wait for", () => {
+    const onRunQueued = vi.fn();
+    render(
+      <EventConnectionCard
+        binding={binding()}
+        status="Listening"
+        connected
+        hosted={false}
+        onTrigger={vi.fn()}
+        onEdit={vi.fn()}
+        onTogglePause={vi.fn()}
+        queued={4}
+        action={{ kind: "catch-up", count: 4 }}
+        onRunQueued={onRunQueued}
+      />,
+    );
+    expect(screen.getByText(/4 queued/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Run 4 events" }));
+    expect(onRunQueued).toHaveBeenCalledOnce();
+  });
+
+  it("offers Try again for an event that couldn't start", () => {
+    render(
+      <EventConnectionCard
+        binding={binding()}
+        status="Listening"
+        connected
+        hosted={false}
+        onTrigger={vi.fn()}
+        onEdit={vi.fn()}
+        onTogglePause={vi.fn()}
+        queued={1}
+        action={{ kind: "retry", count: 1 }}
+        onRunQueued={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+  });
 });
