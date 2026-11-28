@@ -1,5 +1,6 @@
 import {
   createStrictElicitationContentValidator,
+  redactSensitiveValue,
   type ElicitationCallback,
   type MrtrInputCollector,
   type TaskInputHandlers,
@@ -9,7 +10,6 @@ import {
   inputAnswerSchema,
   type ClientActionReceipt,
 } from "@mcpjam/sdk/contract";
-import { redactSensitiveValue } from "@mcpjam/sdk/worker";
 import { z } from "zod";
 import type { ToolSet } from "ai";
 import { SYNTHETIC_SESSION_APPROVAL_DENIAL } from "@/shared/tool-approval";
