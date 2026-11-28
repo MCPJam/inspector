@@ -43,6 +43,10 @@ const ISSUER_ROUTE_ALLOWED = new Map([
     "utils/mcp-app-widget-capture.ts",
     "asks the backend where to store a replay video on the user's behalf, uploads it, and keeps only the storage id",
   ],
+  [
+    "utils/computers/grading-files-client.ts",
+    "asks the backend where to store a graded iteration's grading archive on the run's behalf; the runner uploads it and keeps only the confirmed storage id",
+  ],
 ]);
 
 function sourceFiles(dir: string): string[] {
