@@ -14,9 +14,14 @@
  * nothing there to authorize.
  */
 import type { Context } from "hono";
-import type { MCPClientManager } from "@mcpjam/sdk";
+import { MCPClientManager } from "@mcpjam/sdk";
 import type { ConvexHttpClient } from "convex/browser";
-import { inputAnswerResolverFor } from "./input-answers.js";
+import {
+  inputAnswerResolverFor,
+  registerInputAnswerConnection,
+  registerInputAnswerResolver,
+  type InputAnswerResolver,
+} from "./input-answers.js";
 import { makeFunctionReference } from "convex/server";
 import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
@@ -229,6 +234,19 @@ function appConnections(
   c: Context,
   resolved: ResolvedEnvironmentForLaunch | undefined,
 ): LocalEvalRun {
+  const app = c.mcpClientManager;
+  registerInputAnswerConnection(app, async (answers, names) => {
+    const manager = new MCPClientManager();
+    manager.setElicitationCallback(answers.elicitationCallback);
+    registerInputAnswerResolver(manager, answers);
+    try {
+      await connectLocalServers(app, manager, names, answers);
+      return manager;
+    } catch (error) {
+      await manager.disconnectAllServers();
+      throw error;
+    }
+  });
   return {
     manager: c.mcpClientManager,
     request: resolved ? { resolvedEnvironment: resolved } : {},
@@ -242,12 +260,14 @@ async function connectLocalServers(
   app: MCPClientManager,
   run: MCPClientManager,
   names: readonly string[],
+  answers?: InputAnswerResolver,
 ) {
   await Promise.all(
     names.map(async (name) => {
       // A name this app lacks fails where the run resolves its servers.
       const config = app.getServerConfig(name);
       if (!config) return;
+      if (answers) run.setMrtrInputCollector(name, answers.collectorFor(name));
       await run.connectToServer(name, config).catch((error: unknown) => {
         // Reported where the run lists its tools, like any server that's down.
         logger.debug(
@@ -338,7 +358,10 @@ export async function openLocalEvalRun(
         options: {},
       };
   const inputAnswers = await inputAnswerResolverFor(convex, target);
-  const openHosted = (connectionIdSets?: ConnectionIdSets) => createAuthorizedManager(
+  const openHosted = (
+    connectionIdSets: ConnectionIdSets | undefined,
+    answers: InputAnswerResolver | undefined,
+  ) => createAuthorizedManager(
     callerContextFromHono(c),
     target.convexAuthToken,
     projectId,
@@ -351,17 +374,18 @@ export async function openLocalEvalRun(
       pluginComputerRuntime: false,
       ...(connectionIdSets ? { connectionIdSets } : {}),
       // Loaded before connect: the capability to be asked is declared there.
-      ...(inputAnswers ? { inputAnswers } : {}),
+      ...(answers ? { inputAnswers: answers } : {}),
       serverNames: servers.serverNames,
       xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
       ...(host ? { xaaPolicy: xaaPolicyFromMcpProfile(host.mcpProfile) } : {}),
       ...connection.options,
     },
   );
-  const open = async (sets?: ConnectionIdSets) => {
-    const { manager } = await openHosted(sets);
+  const open = async (sets?: ConnectionIdSets, answers = inputAnswers): Promise<MCPClientManager> => {
+    const { manager } = await openHosted(sets, answers);
     try {
-      await connectLocalServers(c.mcpClientManager, manager, servers.localNames);
+      await connectLocalServers(c.mcpClientManager, manager, servers.localNames, answers);
+      registerInputAnswerConnection(manager, (replies) => open(sets, replies));
     } catch (error) {
       await manager.disconnectAllServers();
       throw error;
