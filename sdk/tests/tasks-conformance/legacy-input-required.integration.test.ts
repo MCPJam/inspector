@@ -110,6 +110,8 @@ async function serveParkedTask(options: {
   failGetAfterResult?: boolean;
   /** `ttl` on every task read. Absent ⇒ 60 s. `null` is "unlimited". */
   ttl?: unknown;
+  /** Leave `ttl` out of every task read. */
+  omitTtl?: boolean;
 }): Promise<Fixture> {
   const methods: string[] = [];
   const answers: ClientAnswer[] = [];
@@ -132,7 +134,7 @@ async function serveParkedTask(options: {
     status,
     createdAt: "2026-07-27T00:00:00Z",
     lastUpdatedAt: "2026-07-27T00:00:00Z",
-    ttl: "ttl" in options ? options.ttl : 60_000,
+    ...(options.omitTtl ? {} : { ttl: "ttl" in options ? options.ttl : 60_000 }),
     pollInterval:
       status === "input_required" && "parkedPollInterval" in options
         ? options.parkedPollInterval
@@ -950,6 +952,27 @@ describe("tasks-ttl-shape on the 2025-11-25 wire", () => {
     expect(check(result, "tasks-ttl-shape")).toMatchObject({
       status: "failed",
       details: { violations: ["legacy task ttl must be a number or null"] },
+    });
+  });
+});
+
+describe("tasks-ttl-shape when the 2025-11-25 task has no ttl", () => {
+  // schema/2025-11-25/schema.json lists `ttl` in Task's `required`.
+  it("fails a task with no ttl", async () => {
+    const fixture = await serveParkedTask({
+      onResult: "hold",
+      neverParks: true,
+      omitTtl: true,
+    });
+    const result = await run(fixture, { checkIds: ["tasks-ttl-shape"] });
+
+    expect(check(result, "tasks-ttl-shape")).toMatchObject({
+      status: "failed",
+      details: {
+        violations: [
+          "legacy task ttl is required (a number, or null for unlimited)",
+        ],
+      },
     });
   });
 });
