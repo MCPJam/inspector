@@ -1,5 +1,6 @@
 import { assertNativeDiscovery } from "../../utils/harness/native-discovery.js";
 import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch.js";
+import { buildServerNamesById } from "../../routes/web/auth.js";
 import type { LocalHarnessExecutionTarget } from "../../utils/harness/local/local-turn.js";
 import {
   AdmissionWaitBudget,
@@ -1039,9 +1040,14 @@ export async function runSyntheticHostSession(
       modelContextTokens: modelDefinition.contextLength,
     });
 
+    const serverNames = buildServerNamesById(
+      selectedServerIds,
+      selectedServerNames,
+    );
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
       selectedServers: selectedServerIds,
+      ...(serverNames ? { serverNames } : {}),
       modelDefinition,
       systemPrompt,
       temperature,

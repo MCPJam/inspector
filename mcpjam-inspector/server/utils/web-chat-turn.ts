@@ -874,12 +874,18 @@ export async function streamChatTurn(
     prepare.pluginContext,
   );
 
+  // Hosted servers are keyed by document ids; the model reads the names.
+  const serverNames = buildServerNamesById(
+    persist.selectedServerIds,
+    persist.selectedServerNames,
+  );
   let prepared;
   try {
     prepared = await prepareChatV2({
       mcpClientManager: manager,
       modelToolExecutor: prepare.modelToolExecutor,
       selectedServers: prepare.selectedServerIds,
+      ...(serverNames ? { serverNames } : {}),
       isolatedServers: prepare.isolatedServers?.serverIds,
       modelDefinition: prepare.modelDefinition,
       systemPrompt: prepare.systemPrompt,

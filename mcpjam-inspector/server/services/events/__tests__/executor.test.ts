@@ -43,7 +43,12 @@ vi.mock("../../../utils/resolve-turn-runtime.js", () => ({
   resolveTurnRuntime: resolveTurnRuntimeMock,
 }));
 const authorizeMock = vi.hoisted(() => ({ createAuthorizedManager: vi.fn() }));
-vi.mock("../../../routes/web/auth.js", () => authorizeMock);
+vi.mock("../../../routes/web/auth.js", async (importOriginal) => ({
+  buildServerNamesById: (
+    await importOriginal<typeof import("../../../routes/web/auth.js")>()
+  ).buildServerNamesById,
+  ...authorizeMock,
+}));
 
 const SERVER_ID = "srv_events";
 

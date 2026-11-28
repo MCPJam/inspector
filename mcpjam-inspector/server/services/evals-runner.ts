@@ -1245,6 +1245,16 @@ function getServerLabelForEvalError(
   return binding?.serverName || serverId;
 }
 
+/** Each selected server's name from the run's bindings, for prompt headings. */
+function serverNamesForEval(
+  serverIds: readonly string[],
+  environment: RunEvalSuiteOptions["config"]["environment"] | undefined,
+): Record<string, string> {
+  return Object.fromEntries(
+    serverIds.map((id) => [id, getServerLabelForEvalError(id, environment)]),
+  );
+}
+
 function isMissingRuntimeServerError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return (
@@ -5379,6 +5389,7 @@ const runLocalIteration = async ({
       prepared = await prepareChatV2({
         mcpClientManager,
         selectedServers,
+        serverNames: serverNamesForEval(selectedServers, environment),
         modelDefinition,
         systemPrompt: system,
         temperature,
@@ -7189,6 +7200,7 @@ const runHostedIterationWithBrowser = async (
     prepared = await prepareChatV2({
       mcpClientManager,
       selectedServers,
+      serverNames: serverNamesForEval(selectedServers, environment),
       modelDefinition,
       systemPrompt,
       temperature,

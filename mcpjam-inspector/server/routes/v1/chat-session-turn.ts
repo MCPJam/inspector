@@ -124,6 +124,7 @@ import { ErrorCode, WebRouteError, parseWithSchema } from "../web/errors.js";
 import { createManualHostedConnection } from "../web/auth.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
+import { HarnessToolNameCollisionError } from "../../utils/harness/harness-tool-names.js";
 import { resolveTurnRuntime } from "../../utils/resolve-turn-runtime.js";
 import { withSelectionRouting } from "../../utils/selection-rail.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
@@ -1675,6 +1676,10 @@ async function handleTurn(c: Context): Promise<Response> {
     const activeServerIds = selectedServerIds.filter((id) => !Object.hasOwn(unavailable, id));
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
+      // The engine, so the prompt holds only what that engine is handed: a
+      // harness gets the servers' instructions from its own MCP client or,
+      // on MCPJam's, from the harness turn.
+      ...(engine.kind === "harness" ? { harness: engine.harness } : {}),
       requireToolApproval,
       ...(builtInTools ? { builtInTools } : {}),
       selectedServers: activeServerIds,
@@ -1702,7 +1707,15 @@ async function handleTurn(c: Context): Promise<Response> {
       // No progressive discovery: the caller chose this target deliberately
       // and wants to see what it advertises, not a search/load indirection.
       progressiveToolDiscovery: { enabled: false },
+    }).catch((error: unknown) => {
+      if (error instanceof HarnessToolNameCollisionError) return error;
+      throw error;
     });
+    // A harness would merge two of a server's tool names, so its calls could
+    // not be attributed. Web chat refuses the same turn the same way.
+    if (prepared instanceof HarnessToolNameCollisionError) {
+      return v1Error(c, "VALIDATION_ERROR", prepared.message);
+    }
     toolListing.end();
 
     // STEPS ARE NOT CALLS, which is why `maxToolCalls` is enforced here rather

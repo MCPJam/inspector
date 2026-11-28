@@ -17,6 +17,7 @@ function mockManager(tools: Record<string, unknown>) {
     getAllToolsMetadata: vi.fn().mockReturnValue({}),
     listServers: vi.fn().mockReturnValue([]),
     hasServer: vi.fn().mockReturnValue(true),
+    getInitializationInfo: vi.fn().mockReturnValue(undefined),
   } as any;
 }
 

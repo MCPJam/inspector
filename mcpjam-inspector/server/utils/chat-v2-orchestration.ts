@@ -5,7 +5,8 @@ import {
   type ConnectionsByServerId,
   type McpToolConnection,
 } from "@mcpjam/sdk";
-import { getManagerConnections } from "./mcp-connections.js";
+import { getManagerConnections, listBaseServers } from "./mcp-connections.js";
+import { buildServerInstructions } from "../services/environments/turn-instructions.js";
 /**
  * Shared chat-v2 tool preparation and message scrubbing.
  *
@@ -704,6 +705,12 @@ export interface PrepareChatV2Options {
    */
   serverLabels?: Record<string, string>;
   /**
+   * serverId → the display name the route holds, for the headings of the
+   * servers' instructions. Unlike `serverLabels`, it leaves server-skill refs
+   * alone, so a route can name its servers without renaming their skills.
+   */
+  serverNames?: Record<string, string>;
+  /**
    * The host's tool-cancellation setting for this turn, resolved server-side
    * from the host config. Passed per turn because the connection's own copy
    * is captured at connect time and goes stale the moment the user saves.
@@ -1204,6 +1211,12 @@ export interface PrepareChatV2Result {
   toolConnections?: Map<string, McpToolConnection>;
   allTools: ToolSet;
   enhancedSystemPrompt: string;
+  /**
+   * The selected servers' instructions as one section, or `""`. Part of
+   * `enhancedSystemPrompt` on MCPJam's harness; a harness turn adds it to its
+   * instructions only when MCPJam's MCP client serves its tools.
+   */
+  serverInstructions: string;
   resolvedTemperature: number | undefined;
   scrubMessages: (msgs: ModelMessage[]) => ModelMessage[];
   /**
@@ -1304,6 +1317,7 @@ export async function prepareChatV2(
     harness,
     tasks,
     serverLabels,
+    serverNames,
     toolCallCancellation,
     toolDescriptionOverrides,
     toolListingTimeoutMs,
@@ -1823,6 +1837,17 @@ export async function prepareChatV2(
     }
   }
 
+  // The servers' own instructions, read now that the listing above has
+  // connected them. Built for every turn, because a harness turn takes them
+  // from the result when MCPJam's MCP client serves its tools.
+  const serverInstructions = buildServerInstructions({
+    manager: mcpClientManager,
+    serverIds: selectedServers ?? listBaseServers(mcpClientManager),
+    groups: selectedGroups,
+    labels: { ...serverLabels, ...serverNames },
+    unavailable: lister.unavailable().keys(),
+  });
+
   // 3. System prompt concatenation
   //
   // The skills stanza lists every skill the turn can load, the connected
@@ -1832,6 +1857,7 @@ export async function prepareChatV2(
     snapshot.size > 1
       ? "When the account is ambiguous, ask which connected account to use before creating or modifying data."
       : "",
+    harness ? "" : serverInstructions,
     skillsPromptSection,
     buildUiToolsSystemPrompt(effectiveUiTools, { requireToolApproval }),
     buildDeclaredToolsSystemPrompt(
@@ -1897,6 +1923,7 @@ export async function prepareChatV2(
       : {}),
     allTools,
     enhancedSystemPrompt,
+    serverInstructions,
     resolvedTemperature,
     scrubMessages,
     progressivePlan,

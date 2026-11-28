@@ -52,6 +52,7 @@ import {
 } from "@/shared/http-tool-calls";
 import { appliedToolApproval, engineApprovalMode } from "@/shared/tool-approval";
 import { logger } from "../../utils/logger.js";
+import { buildServerNamesById } from "../../routes/web/auth.js";
 import { resolveProcessRole } from "../lifecycle/process-role.js";
 import {
   EventsBackendClient,
@@ -239,9 +240,11 @@ export async function executeClaimedEventRun(
     const prepareChat = deps.prepareChat ?? defaultPrepareChat;
     // The environment's servers, and only them: no built-ins, no skills, no
     // platform operations (C6).
+    const serverNames = buildServerNamesById(servers.serverIds, servers.serverNames);
     const prepared = await prepareChat({
       mcpClientManager: manager,
       selectedServers: servers.serverIds,
+      ...(serverNames ? { serverNames } : {}),
       modelDefinition,
       systemPrompt: built.systemPrompt,
       requireToolApproval: appliedToolApproval(
