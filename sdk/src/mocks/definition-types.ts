@@ -4,10 +4,11 @@
  * changes and the rest follow the real server. The added words are `hidden`,
  * `params` and `answer`.
  *
- * The prompt, resource, template and step types are here so later stages add
- * their validation and runtime without changing the stored shape; the
- * validator refuses them until then. Answers from a model are out of scope:
- * `answer.from` is `"real"` or `"saved"`.
+ * Prompts, resources (skills and MCP Apps among them) and templates are
+ * validated and served. The step types are here so a later stage adds their
+ * runtime without changing the stored shape; the validator refuses them until
+ * then. Answers from a model are out of scope: `answer.from` is `"real"` or
+ * `"saved"`.
  */
 
 export type JsonValue =

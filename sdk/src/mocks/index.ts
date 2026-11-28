@@ -72,3 +72,10 @@ export {
   type MockReadSelector,
   type MockReadSource,
 } from "./read.js";
+export { matchTemplate, templateVariables } from "./uri-template.js";
+export { listMockSkills } from "./mock-skills.js";
+export {
+  resolveMockPrompts,
+  resolveMockResources,
+  resolveMockTemplates,
+} from "./resolve-items.js";

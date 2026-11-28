@@ -23,6 +23,8 @@ export interface RealCalls {
   decide?: () => MockForwardDecision | Promise<MockForwardDecision>;
   /** Serve resources only, as a server with no tools does. */
   resourcesOnly?: boolean;
+  /** Also serve one prompt, `greet`, so the mock has a real prompt to pass through or edit. */
+  withPrompts?: boolean;
 }
 
 function registerTools(server: McpServer, state: RealCalls): void {
@@ -102,13 +104,33 @@ export function buildRealHandler(state: RealCalls): McpHttpHandler {
       const server = new McpServer(
         { name: "real-fixture", version: "9.9.9" },
         {
-          capabilities: state.resourcesOnly
-            ? { resources: {} }
-            : { tools: {}, resources: {}, logging: {} },
+          capabilities: {
+            ...(state.resourcesOnly
+              ? { resources: {} }
+              : { tools: {}, resources: {}, logging: {} }),
+            ...(state.withPrompts && { prompts: {} }),
+          },
           instructions: "Real instructions.",
         }
       );
       if (!state.resourcesOnly) registerTools(server, state);
+      if (state.withPrompts) {
+        server.registerPrompt(
+          "greet",
+          {
+            description: "Greets someone.",
+            argsSchema: { who: z.string() },
+          },
+          ({ who }) => ({
+            messages: [
+              {
+                role: "user" as const,
+                content: { type: "text" as const, text: `Greet ${who}.` },
+              },
+            ],
+          })
+        );
+      }
       server.registerResource(
         "greeting",
         "test://greeting",
