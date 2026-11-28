@@ -51,4 +51,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SECURITY_TRIAGE_OWNER: ${{ vars.SECURITY_TRIAGE_OWNER }}
-        run: node .github/scripts/security-flag.mjs
+        # The script runs from the default branch, so a review on the PR that
+        # adds it finds nothing there yet. Skip instead of failing.
+        run: |
+          if [ ! -f .github/scripts/security-flag.mjs ]; then
+            echo "::notice::security-flag.mjs is not on the default branch yet; skipping."
+            exit 0
+          fi
+          node .github/scripts/security-flag.mjs
