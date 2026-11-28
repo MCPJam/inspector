@@ -28741,6 +28741,26 @@
           }
         }
       },
+      "TruncatedField": {
+        "type": "object",
+        "description": "One place a bounded payload holds less than the original.",
+        "required": ["path", "reason"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "JSONPath-like, starting at a field of the object that carries the list: `content[0].text`, `output.structuredContent.items`, `input[\"a b\"]`."
+          },
+          "reason": {
+            "type": "string",
+            "enum": ["length", "items", "depth"],
+            "description": "`length`: a string was shortened, and ends in `…[+N chars]`. `items`: an array kept its first items and ends in an `…[+N items]` item (or, for a payload whose keys alone are over the limit, an object kept its first entries). `depth`: nesting, or a circular reference, became a marker string."
+          },
+          "originalLength": {
+            "type": "integer",
+            "description": "The string's length, or the item count, before the cut. Absent for `depth`."
+          }
+        }
+      },
       "ChatTurnToolCall": {
         "type": "object",
         "required": ["toolCallId", "toolName", "input", "status"],
@@ -28766,7 +28786,14 @@
           },
           "truncated": {
             "type": "boolean",
-            "description": "The payload was clipped. Always announced: a silently shortened result an agent believes is complete sends it debugging the wrong thing."
+            "description": "Part of `input` or `output` was shortened. Shortened values keep their JSON type, so `output.isError` still parses: a long string ends in `…[+N chars]` and a long array ends in an `…[+N items]` item. Always announced: a silently shortened result an agent believes is complete sends it debugging the wrong thing."
+          },
+          "truncatedFields": {
+            "type": "array",
+            "description": "Each cut, with its path under `input` or `output`. Present when `truncated` is.",
+            "items": {
+              "$ref": "#/components/schemas/TruncatedField"
+            }
           }
         }
       },
@@ -29074,7 +29101,15 @@
             "description": "Scrubbed and bounded message content."
           },
           "truncated": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Part of `content` was shortened. Shortened content keeps its JSON type: a long string ends in `…[+N chars]` and a long array ends in an `…[+N items]` item."
+          },
+          "truncatedFields": {
+            "type": "array",
+            "description": "Each cut, with its path under `content`. Present when `truncated` is.",
+            "items": {
+              "$ref": "#/components/schemas/TruncatedField"
+            }
           }
         }
       },

@@ -433,9 +433,9 @@ export function createSecretScrubber(
     // named/valued `chatSessionId`, `projectId`, or another control key; a raw
     // global replacement would delete that metadata and make the persisted
     // ingest body unusable. Parse valid JSON and scrub its values (and nested
-    // keys) while preserving only the top-level envelope keys. Bounded prefixes
-    // are intentionally not valid JSON, so retain the escaped-needle fallback
-    // for those fragments.
+    // keys) while preserving only the top-level envelope keys. Input that does
+    // not parse, such as a fragment of a document, keeps the escaped-needle
+    // fallback.
     let parsed: unknown;
     try {
       parsed = JSON.parse(input);
@@ -460,18 +460,17 @@ export function createSecretScrubber(
   /**
    * Depth cap and cycle guard, so this is safe on a RAW payload.
    *
-   * It did not need them while it only ever ran on a value that
-   * `boundPayload` had already depth-capped — that pass turned a cycle into a
+   * It did not need them while it only ever ran on a value that the payload
+   * bounding had already depth-capped — that pass turned a cycle into a
    * marker before the scrubber saw it. Once scrubbing moved BEFORE bounding
    * (so a credential cannot straddle the truncation cut), that protection was
    * gone and a cyclic or pathologically deep payload from a third-party MCP
    * server would recurse until the stack blew, turning a turn that used to
    * succeed into a 500.
    *
-   * The cap matches `chat-session-payloads`'s `MAX_DEPTH` deliberately: the two
-   * passes now run back to back on the same value, and a scrubber that gave up
-   * shallower would leave string leaves unscrubbed that bounding would happily
-   * keep.
+   * The cap matches `payload-bounds.ts`'s `MAX_DEPTH` deliberately: a scrubber
+   * that gave up shallower would leave string leaves unscrubbed that bounding
+   * would happily keep.
    */
   const MAX_SCRUB_DEPTH = 8;
   /**

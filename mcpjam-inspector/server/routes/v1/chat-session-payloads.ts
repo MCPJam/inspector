@@ -10,111 +10,33 @@
  * That makes bounding a first-class concern rather than an afterthought. A
  * tool result can be a megabyte of base64, and this surface is consumed by
  * models that pay per token for every byte they are handed. So every payload
- * that leaves here is:
+ * that leaves here goes through `boundJson` (`payload-bounds.ts`): scrubbed of
+ * protocol annotations and secrets, depth-capped, and, when its JSON is over a
+ * ceiling, shortened INSIDE the value. It keeps its JSON type, so a field such
+ * as `isError` stays a field.
  *
- *   1. SCRUBBED — `$`-prefixed keys and `_meta` are dropped, the same producer
- *      rule the tool-snapshot writer applies. These are transport/protocol
- *      annotations, never the caller's data, and `$`-keys in particular are
- *      what Convex refuses to store.
- *   2. DEPTH-CAPPED — beyond {@link MAX_DEPTH} a value becomes the marker
- *      string rather than recursing, so a cyclic or pathologically nested
- *      structure cannot stall the response.
- *   3. SIZE-CAPPED — measured on the SERIALIZED result, not on a field count,
- *      because size is what the caller pays for.
- *
- * Truncation is always ANNOUNCED (`truncated: true`). A silently shortened
- * tool result is worse than an omitted one: an agent reading it would
- * conclude the server returned the short value and debug the wrong thing.
+ * Truncation is always ANNOUNCED: `truncated: true`, with `truncatedFields`
+ * naming each cut. A silently shortened tool result is worse than an omitted
+ * one: an agent reading it would conclude the server returned the short value
+ * and debug the wrong thing.
  */
 
 import type { SecretScrubber } from "../../utils/secrets/secret-scrubber";
+import { boundJson, underField, type TruncatedField } from "./payload-bounds";
 
-/** Nesting beyond this is replaced by a marker rather than recursed into. */
-const MAX_DEPTH = 8;
 /** Serialized ceiling for ONE tool call's input or output. */
 export const MAX_TOOL_PAYLOAD_CHARS = 16_000;
-/** Serialized ceiling for ONE projected message. */
+/** Serialized ceiling for ONE projected message's content. */
 export const MAX_MESSAGE_PAYLOAD_CHARS = 24_000;
-/** Replacement for a value that sat below {@link MAX_DEPTH}. */
-const DEPTH_MARKER = "[truncated: max depth]";
+/** Serialized ceiling for one page of projected messages. */
+export const MAX_MESSAGE_PAGE_CHARS = 96_000;
 
-/**
- * Protocol annotations the public surface never republishes.
- *
- * `_meta` is the MCP extension bag (progress tokens, `ui.*` hints, vendor
- * keys); `$`-prefixed keys are the reserved-name space. Neither is the
- * caller's own data, and both are exactly what the tool-snapshot producer
- * strips before persistence — the rule is the same one, applied at a second
- * boundary rather than restated as a new policy.
- */
-function isDroppedKey(key: string): boolean {
-  return key.startsWith("$") || key === "_meta";
-}
-
-/**
- * Deep-copy a JSON-ish value, dropping protocol keys and capping depth.
- *
- * Non-JSON values (functions, symbols, bigint) are dropped rather than
- * stringified: they cannot have come from an MCP wire payload, so their
- * presence means something upstream handed us a live object, and echoing a
- * stringified `[object Object]` into a public response would be noise.
- */
-function scrubValue(value: unknown, depth: number): unknown {
-  if (value === null || typeof value !== "object") {
-    // `bigint` is JSON-hostile (`JSON.stringify` THROWS on it, which would
-    // turn one odd tool result into a 500 for the whole turn). Render it as
-    // its decimal string so the caller still sees the number.
-    if (typeof value === "bigint") return value.toString();
-    if (typeof value === "function" || typeof value === "symbol") {
-      return undefined;
-    }
-    return value;
-  }
-  if (depth >= MAX_DEPTH) return DEPTH_MARKER;
-  if (Array.isArray(value)) {
-    return value.map((entry) => scrubValue(entry, depth + 1));
-  }
-  const out: Record<string, unknown> = {};
-  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-    if (isDroppedKey(key)) continue;
-    const scrubbed = scrubValue(entry, depth + 1);
-    if (scrubbed !== undefined) out[key] = scrubbed;
-  }
-  return out;
-}
-
-export interface BoundedPayload {
-  /** The scrubbed value, or the serialized prefix when over the ceiling. */
-  value: unknown;
-  /** Present ONLY when the caller is seeing less than the whole payload. */
+/** A public record's truncation fields: both, or neither. */
+function announceCuts(fields: TruncatedField[]): {
   truncated?: true;
-}
-
-/**
- * Scrub a payload and bound its serialized size.
- *
- * Over the ceiling the value is replaced by a STRING prefix rather than a
- * structurally-pruned object. A half-pruned object is a lie with the same
- * shape as the truth — a caller cannot tell which keys were dropped — whereas
- * a visibly-clipped string plus `truncated: true` is unmistakable.
- */
-export function boundPayload(
-  value: unknown,
-  maxChars = MAX_TOOL_PAYLOAD_CHARS,
-): BoundedPayload {
-  if (value === undefined) return { value: undefined };
-  const scrubbed = scrubValue(value, 0);
-  let serialized: string;
-  try {
-    serialized = JSON.stringify(scrubbed) ?? "null";
-  } catch {
-    // A cycle survives the depth cap when it is shallower than MAX_DEPTH and
-    // wide. Report it rather than throwing: one unserializable tool result
-    // must not fail a turn that already ran and already spent.
-    return { value: "[unserializable]", truncated: true };
-  }
-  if (serialized.length <= maxChars) return { value: scrubbed };
-  return { value: `${serialized.slice(0, maxChars)}…`, truncated: true };
+  truncatedFields?: TruncatedField[];
+} {
+  return fields.length > 0 ? { truncated: true, truncatedFields: fields } : {};
 }
 
 // ── Tool-call joining ───────────────────────────────────────────────────────
@@ -128,6 +50,8 @@ export interface PublicToolCall {
   output?: unknown;
   errorMessage?: string;
   truncated?: true;
+  /** Each cut, with its path under `input` or `output`. */
+  truncatedFields?: TruncatedField[];
 }
 
 type EngineToolCall = { toolCallId: string; toolName: string; input: unknown };
@@ -171,81 +95,45 @@ export function joinToolCalls(
       resultsById.set(result.toolCallId, result);
     }
   }
-  const scrub = <T>(value: T): T =>
-    scrubber ? scrubber.scrubDeep(value) : value;
-  /**
-   * The scrub that runs AFTER bounding, dispatched on what bounding produced.
-   *
-   * `boundPayload` returns either structured data or, when it truncated, a
-   * SERIALIZED JSON PREFIX. Those need different needles, and using the wrong
-   * one is not merely ineffective: inside serialized JSON a value's real
-   * occurrences are escaped, so searching the raw form can only match by
-   * coincidence — including against the document's own punctuation — and
-   * replacing that rewrites structure in a payload which never held the
-   * secret. `scrubSerializedJson` exists for exactly this and the scrubber's
-   * own contract says so; the first version of this call site ignored it.
-   */
-  const scrubBounded = <T>(value: T): T => {
-    if (!scrubber) return value;
-    return typeof value === "string"
-      ? (scrubber.scrubSerializedJson(value) as unknown as T)
-      : scrubber.scrubDeep(value);
-  };
   return toolCalls.map((call) => {
     const result = resultsById.get(call.toolCallId);
-    // Scrubbed BEFORE bounding. This was the other way round, and the reason
-    // given — deterministic truncation points, since `[secret:NAME]` is
-    // usually shorter than the credential it replaces — was a real property
-    // but the wrong trade.
-    //
-    // Bounding first cuts the serialized payload at a fixed offset, and a
-    // credential STRADDLING that cut survives: the retained prefix holds only
-    // part of the value, so no needle matches it and those bytes go out in a
-    // response that crosses the trust boundary. Partial is not safe — it is a
-    // shorter secret. Scrubbing first means the cut can only ever land inside
-    // `[secret:NAME]`.
-    //
-    // What that costs is the consistency the old ordering bought: two runs of
-    // one tool now truncate at different offsets depending on whether a secret
-    // appeared. That is cosmetic, and arguably more honest — the redacted
-    // payload really is shorter.
-    //
-    // AND AGAIN AFTER, because neither pass alone is sufficient and they catch
-    // different things. `scrubDeep` returns a non-plain object (a Date, a class
-    // instance, a BigInt holder) by identity — rebuilding it as a plain object
-    // would corrupt the payload worse than a missed scrub — but `boundPayload`
-    // NORMALIZES exactly those into plain data. A credential reachable only
-    // through such an object therefore first becomes a scrubbable string
-    // during bounding, i.e. after the pre-pass has already run. The second pass
-    // is idempotent on everything the first one already replaced: the needles
-    // are the raw values, and those are gone.
-    const input = boundPayload(scrub(call.input));
+    // `boundJson` scrubs the structured value BEFORE it cuts anything. Cutting
+    // first could keep part of a credential that straddled the cut, and no
+    // needle matches a fragment: partial is not safe, it is a shorter secret.
+    const input = boundJson(call.input, MAX_TOOL_PAYLOAD_CHARS, scrubber);
+    const inputCuts = underField("input", input.truncatedFields);
     if (!result) {
       return {
         toolCallId: call.toolCallId,
         toolName: call.toolName,
-        input: scrubBounded(input.value),
+        input: input.value,
         status: "error" as const,
         // Not "the tool failed" — "no result reached us". The distinction
         // matters: an aborted turn and a tool that returned an error payload
         // lead an agent to different next moves.
         errorMessage:
           "No tool result was recorded for this call (the turn ended first).",
-        ...(input.truncated ? { truncated: true as const } : {}),
+        ...announceCuts(inputCuts),
       };
     }
-    const output = boundPayload(scrub(readToolOutput(result.output)));
+    const output = boundJson(
+      readToolOutput(result.output),
+      MAX_TOOL_PAYLOAD_CHARS,
+      scrubber,
+    );
     return {
       toolCallId: call.toolCallId,
       toolName: call.toolName ?? result.toolName ?? "unknown",
-      input: scrubBounded(input.value),
+      input: input.value,
+      // Read off the whole result, before bounding, so no cut can hide it.
       status: isErrorOutput(result.output)
         ? ("error" as const)
         : ("ok" as const),
-      output: scrubBounded(output.value),
-      ...(input.truncated || output.truncated
-        ? { truncated: true as const }
-        : {}),
+      output: output.value,
+      ...announceCuts([
+        ...inputCuts,
+        ...underField("output", output.truncatedFields),
+      ]),
     };
   });
 }
@@ -292,6 +180,8 @@ export interface PublicMessage {
   role: string;
   content: unknown;
   truncated?: true;
+  /** Each cut, with its path under `content`. */
+  truncatedFields?: TruncatedField[];
 }
 
 /**
@@ -301,25 +191,42 @@ export interface PublicMessage {
  * `index` is the absolute position in the stored transcript — never the
  * position within the returned page. Renumbering per page would break the
  * one join this read exists to enable.
+ *
+ * The page stops before the message that would take its JSON past
+ * MAX_MESSAGE_PAGE_CHARS, but always holds at least one, so paging moves on.
+ * It can therefore hold fewer messages than it was given, and the caller
+ * pages on from the number it returns.
  */
 export function projectMessages(
   messages: readonly unknown[],
   offset: number,
 ): PublicMessage[] {
-  return messages.map((message, position) => {
-    const record =
-      message && typeof message === "object"
-        ? (message as Record<string, unknown>)
-        : {};
-    const bounded = boundPayload(
-      record.content ?? record.parts ?? message,
-      MAX_MESSAGE_PAYLOAD_CHARS,
-    );
-    return {
-      index: offset + position,
-      role: typeof record.role === "string" ? record.role : "unknown",
-      content: bounded.value,
-      ...(bounded.truncated ? { truncated: true as const } : {}),
-    };
-  });
+  const page: PublicMessage[] = [];
+  // The page's JSON: its brackets, each message, and the commas between.
+  let pageChars = 2;
+  for (const [position, message] of messages.entries()) {
+    const projected = projectMessage(message, offset + position);
+    const added = JSON.stringify(projected).length + (page.length > 0 ? 1 : 0);
+    if (page.length > 0 && pageChars + added > MAX_MESSAGE_PAGE_CHARS) break;
+    page.push(projected);
+    pageChars += added;
+  }
+  return page;
+}
+
+function projectMessage(message: unknown, index: number): PublicMessage {
+  const record =
+    message && typeof message === "object"
+      ? (message as Record<string, unknown>)
+      : {};
+  const bounded = boundJson(
+    record.content ?? record.parts ?? message,
+    MAX_MESSAGE_PAYLOAD_CHARS,
+  );
+  return {
+    index,
+    role: typeof record.role === "string" ? record.role : "unknown",
+    content: bounded.value,
+    ...announceCuts(underField("content", bounded.truncatedFields)),
+  };
 }
