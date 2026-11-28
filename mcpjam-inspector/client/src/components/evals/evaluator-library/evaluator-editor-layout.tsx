@@ -8,6 +8,30 @@ export function draftChanged(draft: unknown, start: unknown): boolean {
   return stableStringifyJson(draft) !== stableStringifyJson(start);
 }
 
+export function EvaluatorDialogLayout({
+  children,
+  footer,
+  notice,
+}: {
+  children: ReactNode;
+  footer: ReactNode;
+  notice?: ReactNode;
+}) {
+  return (
+    <div className="grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto]">
+      <div className="min-w-0 space-y-4 overflow-y-auto overscroll-contain p-4 sm:px-5">
+        {children}
+      </div>
+      <div className="space-y-2 border-t border-border px-4 py-3 sm:px-5">
+        {notice}
+        <DialogFooter className="flex-row flex-wrap items-center justify-between">
+          {footer}
+        </DialogFooter>
+      </div>
+    </div>
+  );
+}
+
 export function EvaluatorEditorLayout({
   inDialog = false,
   inlineClassName,
@@ -54,19 +78,18 @@ export function EvaluatorEditorLayout({
   }
 
   return (
-    <div className="grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto]">
-      <div className="min-w-0 space-y-4 overflow-y-auto overscroll-contain p-4 sm:px-5">
-        {children}
-      </div>
-      <div className="space-y-2 border-t border-border px-4 py-3 sm:px-5">
-        {problem}
-        <DialogFooter className="flex-row flex-wrap items-center justify-between">
+    <EvaluatorDialogLayout
+      notice={problem}
+      footer={
+        <>
           <span className="text-xs text-muted-foreground">
             Adds to your unsaved suite changes.
           </span>
           <div className="ml-auto flex gap-2">{buttons}</div>
-        </DialogFooter>
-      </div>
-    </div>
+        </>
+      }
+    >
+      {children}
+    </EvaluatorDialogLayout>
   );
 }

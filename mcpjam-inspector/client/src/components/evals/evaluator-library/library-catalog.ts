@@ -36,6 +36,8 @@ export type LibraryEvaluator = {
   name: string;
   /** About this run, never about the server in general. */
   question: string;
+  /** The situation in which this preset is worth adding. */
+  useCase: string;
   icon: LucideIcon;
   tone: EvaluatorTone;
   checks: readonly Predicate[];
@@ -93,6 +95,8 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
     name: "No Wasted Calls",
     question:
       "Did the agent stay under 10 tool calls without repeating an identical call?",
+    useCase:
+      "Catch agents that take too many tool calls on cases with a short, predictable path.",
     icon: Route,
     tone: "tools",
     checks: [
@@ -108,6 +112,8 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
     version: 1,
     name: "Valid Tool Arguments",
     question: "Did every call send arguments that match the tool's schema?",
+    useCase:
+      "Find calls with missing required fields or values of the wrong type.",
     icon: Wrench,
     tone: "tools",
     checks: [{ type: "argumentsMatchToolSchema" }],
@@ -119,6 +125,8 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
     name: "Results Match Output Schema",
     question:
       "Did every tool result in this run match the tool's declared output schema?",
+    useCase:
+      "Catch changes to structured results that could break clients that rely on the declared output schema.",
     icon: Braces,
     tone: "tools",
     checks: [{ type: "toolResultMatchesSchema", schema: DECLARED_OUTPUT_SCHEMA }],
@@ -130,6 +138,8 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
     name: "Delivers a Final Answer",
     question:
       "Did the agent end with an answer instead of an empty message or a question?",
+    useCase:
+      "Use this for cases where the agent has enough information to give a final answer without a follow-up.",
     icon: CircleCheck,
     tone: "answer",
     checks: [
@@ -144,6 +154,8 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
     name: "Actionable Tool Errors",
     question:
       "Did every tool call succeed, and did any error name the bad input?",
+    useCase:
+      "Catch tool failures on cases expected to succeed and see whether error messages point to the input to fix.",
     icon: FileWarning,
     tone: "errors",
     checks: [
@@ -158,6 +170,8 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
     name: "Reports Tool Errors",
     question:
       "When a tool returned an error, did the final answer say so instead of inventing a result? Fails when the run is too long for the grader to see every call.",
+    useCase:
+      "Use this for cases that intentionally trigger tool errors so you can check what the agent tells the user.",
     icon: MessageCircleWarning,
     tone: "errors",
     checks: [],
@@ -180,6 +194,8 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
     version: 1,
     name: "Answers the Question",
     question: "Did the final answer address what the user asked?",
+    useCase:
+      "Catch answers that leave the user asking again, even when the tool calls succeeded.",
     icon: MessageSquareText,
     tone: "answer",
     checks: [],
@@ -199,6 +215,8 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
     version: 1,
     name: "Meets the Expected Outcome",
     question: "Did the run reach the outcome this case expects?",
+    useCase:
+      "Use this on cases with an expected output to check whether the agent actually completed the task.",
     icon: Target,
     tone: "answer",
     checks: [],
@@ -218,6 +236,8 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
     version: 1,
     name: "Clear, Concise Answer",
     question: "How clear and to the point was the final answer?",
+    useCase:
+      "Spot replies that bury the answer in extra detail or drift away from the request.",
     icon: AlignLeft,
     tone: "answer",
     checks: [],
@@ -238,6 +258,8 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
     name: "Avoids Risky Tools",
     question:
       "Did the agent stay away from tools marked destructive or deprecated?",
+    useCase:
+      "Use this when a case should avoid changing data or relying on tools scheduled for removal.",
     icon: ShieldAlert,
     tone: "security",
     checks: [

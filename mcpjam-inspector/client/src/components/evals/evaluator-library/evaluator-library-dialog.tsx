@@ -18,11 +18,9 @@ import {
   DialogTrigger,
 } from "@mcpjam/design-system/dialog";
 import { ArrowLeft, Library } from "lucide-react";
-import { useId, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
-import { formatCriterion } from "@/shared/predicate-kinds";
-import { CUSTOM_JUDGE_COST_COPY } from "./custom-judges-model";
 import {
   EvaluatorLibraryBrowse,
   type LibraryFilters,
@@ -31,6 +29,8 @@ import {
 import type { EvaluatorMethod } from "./evaluator-library-types";
 import { useEvaluatorLibraryEnabled } from "./evaluator-library-flag";
 import { EVALUATOR_METHODS } from "./evaluator-methods";
+import { EvaluatorPresetDetails } from "./evaluator-preset-details";
+import { EvaluatorPresetIcon } from "./evaluator-preset-icon";
 import {
   isAuthorable,
   isInSuite,
@@ -38,8 +38,6 @@ import {
   LIBRARY_EVALUATORS,
   missingParts,
   questionsWithAdded,
-  taggedJudges,
-  taggedQuestions,
   type LibraryAddition,
   type LibraryEvaluator,
   type LibrarySuiteParts,
@@ -175,7 +173,8 @@ function EvaluatorLibraryDialog({
     );
   };
   const add = (evaluator: LibraryEvaluator) => {
-    if (!getAddDisabledReason(evaluator)) onAdd(missingParts(evaluator, suite));
+    const reason = getAddDisabledReason(evaluator);
+    return reason ?? onAdd(missingParts(evaluator, suite));
   };
   return (
     <Dialog
@@ -202,7 +201,7 @@ function EvaluatorLibraryDialog({
       <DialogContent
         className={cn(
           "max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden p-0",
-          method ? "sm:max-w-2xl" : "h-[48rem] sm:max-w-[58rem]",
+          browsing ? "h-[48rem] sm:max-w-[58rem]" : "sm:max-w-2xl",
         )}
         onEscapeKeyDown={(event) => {
           // Escape steps back to the library before it closes the dialog.
@@ -214,11 +213,18 @@ function EvaluatorLibraryDialog({
         <DialogHeader
           className={cn(
             "gap-1 border-b border-border px-4 py-4 pr-12 text-left sm:px-5 sm:pr-12",
-            method &&
+            !browsing &&
               "grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3",
           )}
         >
-          {method ? backButton : null}
+          {browsing ? null : backButton}
+          {selected ? (
+            <EvaluatorPresetIcon
+              icon={selected.icon}
+              tone={selected.tone}
+              className="row-span-2 size-9"
+            />
+          ) : null}
           {method ? (
             <span
               className={cn(
@@ -260,19 +266,18 @@ function EvaluatorLibraryDialog({
           />
         </div>
         {selected ? (
-          <div
+          <EvaluatorPresetDetails
             key={selected.id}
-            className="min-h-0 min-w-0 space-y-4 overflow-y-auto overscroll-contain p-4 sm:p-5"
-          >
-            {backButton}
-            <EvaluatorDetail
-              evaluator={selected}
-              inSuite={isInSuite(selected, suite)}
-              pause={pause}
-              onAdd={() => add(selected)}
-              addDisabledReason={getAddDisabledReason(selected)}
-            />
-          </div>
+            evaluator={selected}
+            inSuite={isInSuite(selected, suite)}
+            pause={pause}
+            onAdd={() => {
+              if (!add(selected)) {
+                headingRef.current?.focus({ preventScroll: true });
+              }
+            }}
+            addDisabledReason={getAddDisabledReason(selected)}
+          />
         ) : method ? (
           authoring.methods[method.value] ? (
             <p
@@ -319,99 +324,5 @@ function EvaluatorLibraryDialog({
         </AlertDialogContent>
       </AlertDialog>
     </Dialog>
-  );
-}
-
-function EvaluatorDetail({
-  evaluator,
-  inSuite,
-  pause,
-  onAdd,
-  addDisabledReason,
-}: {
-  evaluator: LibraryEvaluator;
-  inSuite: boolean;
-  pause: LibraryProps["pause"];
-  onAdd: () => void;
-  addDisabledReason?: string;
-}) {
-  const reasonId = useId();
-  const showReason = addDisabledReason && !inSuite;
-  const notes = [
-    evaluator.questions?.length ? pause.questions : undefined,
-    evaluator.judges?.length ? pause.judges : undefined,
-  ].filter((note): note is string => Boolean(note));
-  return (
-    <div className="flex flex-col gap-4">
-      <ul
-        aria-label="What this evaluator adds"
-        className="divide-y divide-border rounded-lg border border-border"
-      >
-        {taggedQuestions(evaluator).map((q) => (
-          <li
-            key={q.id}
-            className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm"
-          >
-            <span>
-              {q.label}
-              <span className="block text-xs text-muted-foreground">
-                Yes/no question, passes on{" "}
-                {q.pass.answer === "yes" ? "Yes" : "No"}. Asked with the
-                goal-completion judge.
-              </span>
-            </span>
-            <span className="text-xs text-muted-foreground">Advisory</span>
-          </li>
-        ))}
-        {taggedJudges(evaluator).map((j) => (
-          <li
-            key={j.id}
-            className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm"
-          >
-            <span>
-              {j.label}
-              <span className="block text-xs text-muted-foreground">
-                {j.output.kind === "score"
-                  ? `Judge prompt, passes at a score of ${j.output.threshold} or more.`
-                  : "Judge prompt, pass or fail."}{" "}
-                {CUSTOM_JUDGE_COST_COPY}
-              </span>
-            </span>
-            <span className="text-xs text-muted-foreground">Advisory</span>
-          </li>
-        ))}
-        {evaluator.checks.map((check) => (
-          <li
-            key={check.type}
-            className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm"
-          >
-            {formatCriterion({ predicate: check })}
-            <span className="text-xs text-muted-foreground">
-              {check.role === "advisory" ? "Advisory" : "Required"}
-            </span>
-          </li>
-        ))}
-      </ul>
-      {notes.map((note) => (
-        <p key={note} role="status" className="text-sm text-muted-foreground">
-          {note}
-        </p>
-      ))}
-      <div className="flex flex-wrap items-center justify-end gap-3">
-        {showReason ? (
-          <p id={reasonId} className="text-sm text-muted-foreground">
-            {addDisabledReason}
-          </p>
-        ) : null}
-        <Button
-          type="button"
-          onClick={onAdd}
-          aria-describedby={showReason ? reasonId : undefined}
-          disabled={inSuite || Boolean(addDisabledReason)}
-        >
-          {inSuite ? "In this suite" : "Add to suite"}
-        </Button>
-      </div>
-    </div>
   );
 }

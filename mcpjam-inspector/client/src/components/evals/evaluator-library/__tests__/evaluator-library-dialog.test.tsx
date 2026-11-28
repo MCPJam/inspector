@@ -374,6 +374,9 @@ describe("Results Match Output Schema", () => {
     expect(
       screen.getByRole("list", { name: "What this evaluator adds" }),
     ).toHaveTextContent("Every tool result matches its declared output schema");
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Catch changes to structured results that could break clients that rely on the declared output schema.",
+    );
     fireEvent.click(screen.getByRole("button", { name: "Add to suite" }));
     expect(onAdd).toHaveBeenCalledWith({
       checks: [
@@ -397,7 +400,10 @@ describe("question-only evaluators", () => {
     );
     expect(
       screen.getByRole("list", { name: "What this evaluator adds" }),
-    ).toHaveTextContent("Yes/no question, passes on Yes");
+    ).toHaveTextContent("Yes/no question. Passes on Yes.");
+    expect(
+      screen.getByText(/Answer yes only if the tool trajectory/),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Add to suite" }));
     expect(onAdd).toHaveBeenCalledWith({
       checks: [],
@@ -465,11 +471,14 @@ describe("judge evaluators", () => {
     ).not.toHaveTextContent("charged model call");
     fireEvent.click(screen.getByRole("button", { name: "Answers the Question" }));
     const adds = screen.getByRole("list", { name: "What this evaluator adds" });
-    expect(adds).toHaveTextContent("Judge prompt, pass or fail.");
+    expect(adds).toHaveTextContent("Returns pass or fail.");
     expect(adds).toHaveTextContent(
       "Each judge adds a charged model call per graded iteration.",
     );
     expect(adds).not.toHaveTextContent("Runs with the goal-completion judge");
+    expect(adds).toHaveTextContent("Judge only the content of the final answer");
+    expect(screen.getByRole("table")).toHaveTextContent("The user's request");
+    expect(screen.getByRole("table")).toHaveTextContent("{{final_answer}}");
     fireEvent.click(screen.getByRole("button", { name: "Add to suite" }));
     expect(onAdd).toHaveBeenCalledWith({
       checks: [],
@@ -521,9 +530,23 @@ describe("judge evaluators", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Answers the Question" }),
     );
+    expect(screen.getByText("In this suite")).toHaveAttribute("role", "status");
     expect(
-      screen.getByRole("button", { name: "In this suite" }),
-    ).toBeDisabled();
+      screen.queryByRole("button", { name: "Add to suite" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the configured passing score and keeps the preset read-only", () => {
+    open();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Clear, Concise Answer" }),
+    );
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent(
+      "Scores from 0 to 1. Passes at 0.7 or higher.",
+    );
+    expect(within(dialog).queryByRole("textbox")).not.toBeInTheDocument();
   });
 
   it("hides judge evaluators where the backend cannot run them", () => {
