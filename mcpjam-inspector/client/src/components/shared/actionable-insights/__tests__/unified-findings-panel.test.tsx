@@ -274,6 +274,8 @@ describe("walkthrough findings layout", () => {
       ),
     });
     const list = screen.getByRole("list", { name: "Findings" });
+    expect(list).not.toHaveAttribute("tabindex");
+    expect(list.className).not.toMatch(/overflow-y-auto|max-h-/);
     expect(list.children).toHaveLength(5);
     expect(screen.queryByText("Observed issue 6")).toBeNull();
     const expand = screen.getByRole("button", { name: "Show all 7 findings" });

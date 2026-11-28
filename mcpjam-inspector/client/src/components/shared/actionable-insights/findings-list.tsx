@@ -14,7 +14,7 @@ import type { FindingView } from "./finding-provenance";
 
 const INITIAL_FINDINGS = 5;
 
-function ScrollableFindings({ children }: { children: ReactElement[] }) {
+function ExpandableFindings({ children }: { children: ReactElement[] }) {
   const [expanded, setExpanded] = useState(false);
   const listId = useId();
   return (
@@ -22,8 +22,7 @@ function ScrollableFindings({ children }: { children: ReactElement[] }) {
       <ul
         id={listId}
         aria-label="Findings"
-        tabIndex={0}
-        className="max-h-[32rem] space-y-5 overflow-y-auto overscroll-y-contain pr-3 select-text focus-visible:outline-2 focus-visible:outline-ring [&>li+li]:border-t [&>li+li]:border-border [&>li+li]:pt-5"
+        className="space-y-5 select-text [&>li+li]:border-t [&>li+li]:border-border [&>li+li]:pt-5"
       >
         {expanded ? children : children.slice(0, INITIAL_FINDINGS)}
       </ul>
@@ -62,7 +61,7 @@ export function FindingsList({
   findingsById?: ReadonlyMap<string, ActionableFinding>;
 }) {
   return (
-    <ScrollableFindings>
+    <ExpandableFindings>
       {findings.map((finding, index) => (
         <li key={finding.id}>
           <FindingSummary
@@ -77,7 +76,7 @@ export function FindingsList({
           />
         </li>
       ))}
-    </ScrollableFindings>
+    </ExpandableFindings>
   );
 }
 
@@ -97,7 +96,7 @@ export function ProblemsList({
   iterationRows?: Record<string, AffectedIterationRow>;
 }) {
   return (
-    <ScrollableFindings>
+    <ExpandableFindings>
       {problems.map((problem, index) => (
         <li key={problem.id}>
           <ProblemSummary
@@ -110,6 +109,6 @@ export function ProblemsList({
           />
         </li>
       ))}
-    </ScrollableFindings>
+    </ExpandableFindings>
   );
 }
