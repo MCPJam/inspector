@@ -52,6 +52,18 @@ export interface LegacyTasksFixtureOptions {
    * the original single-task tests keep working without registering an id.
    */
   rejectUnknownTaskIds?: boolean;
+  /**
+   * With {@link rejectUnknownTaskIds}: answer an unknown `taskId` on these
+   * methods some other way than `-32602`. `code` rejects with that code,
+   * `answer` returns a made-up task as if the id were known, and `httpStatus`
+   * sends the rejection on that HTTP status (a rate limiter's 429).
+   */
+  unknownTaskReplies?: Partial<
+    Record<
+      "tasks/get" | "tasks/result" | "tasks/cancel",
+      { code?: number; answer?: true; httpStatus?: number }
+    >
+  >;
   /** Report created tasks from `tasks/list`. Default false (always empty). */
   trackForList?: boolean;
   /**
@@ -111,7 +123,11 @@ export interface ServedLegacyTasksFixture {
 }
 
 class JsonRpcFailure extends Error {
-  constructor(readonly code: number, message: string) {
+  constructor(
+    readonly code: number,
+    message: string,
+    readonly httpStatus = 200
+  ) {
     super(message);
   }
 }
@@ -192,17 +208,21 @@ export async function serveLegacyTasksFixture(
     }
   };
 
+  /** `true` when the id is unknown and the method answers it anyway. */
   const requireKnownTask = (
-    params: Record<string, unknown> | undefined
-  ): void => {
-    if (!options.rejectUnknownTaskIds) return;
+    params: Record<string, unknown> | undefined,
+    method: "tasks/get" | "tasks/result" | "tasks/cancel"
+  ): boolean => {
+    if (!options.rejectUnknownTaskIds) return false;
     const taskId = params?.taskId;
-    if (taskId !== LEGACY_TASK_ID || !state.created) {
-      throw new JsonRpcFailure(
-        LEGACY_UNKNOWN_TASK_CODE,
-        `Failed to retrieve task: Task not found (${String(taskId)})`
-      );
-    }
+    if (taskId === LEGACY_TASK_ID && state.created) return false;
+    const reply = options.unknownTaskReplies?.[method];
+    if (reply?.answer) return true;
+    throw new JsonRpcFailure(
+      reply?.code ?? LEGACY_UNKNOWN_TASK_CODE,
+      `Failed to retrieve task: Task not found (${String(taskId)})`,
+      reply?.httpStatus
+    );
   };
 
   const taskFields = (status: string): Record<string, unknown> => ({
@@ -242,17 +262,19 @@ export async function serveLegacyTasksFixture(
         }
         return { content: [{ type: "text", text: "plain call" }] };
       case "tasks/get": {
-        requireKnownTask(params);
+        if (requireKnownTask(params, "tasks/get")) return taskFields("working");
         if (state.cancelled) return taskFields("cancelled");
         advanceIfDue();
         state.pollsOnPhase += 1;
         return taskFields(currentPhase().status);
       }
       case "tasks/result":
-        requireKnownTask(params);
+        if (requireKnownTask(params, "tasks/result")) return DEFAULT_RESULT;
         return currentPhase().result ?? DEFAULT_RESULT;
       case "tasks/cancel":
-        requireKnownTask(params);
+        if (requireKnownTask(params, "tasks/cancel")) {
+          return taskFields("cancelled");
+        }
         state.cancelled = true;
         return taskFields("cancelled");
       case "tasks/list":
@@ -303,6 +325,7 @@ export async function serveLegacyTasksFixture(
       }
 
       let payload: Record<string, unknown>;
+      let status = 200;
       try {
         payload = {
           jsonrpc: "2.0",
@@ -318,9 +341,10 @@ export async function serveLegacyTasksFixture(
               ? { code: error.code, message: error.message }
               : { code: -32603, message: String(error) },
         };
+        if (error instanceof JsonRpcFailure) status = error.httpStatus;
       }
 
-      res.writeHead(200, {
+      res.writeHead(status, {
         "content-type": "application/json",
         "mcp-protocol-version": "2025-11-25",
       });

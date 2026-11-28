@@ -38,11 +38,15 @@ export async function runMutationChecks(context: TaskCheckContext) {
   } = context;
   if (selected.has("tasks-invalid-task-id-rejected")) {
     const stepStartedAt = Date.now();
-    if (wire !== "extension") {
+    if (wire === "legacy") {
+      checks.push(
+        await legacyUnknownTaskIdResult(context, stepStartedAt)
+      );
+    } else if (wire !== "extension") {
       checks.push(
         notApplicable(
           "tasks-invalid-task-id-rejected",
-          "check applies to the extension wire only"
+          "the server negotiated no tasks wire"
         )
       );
     } else {
@@ -433,4 +437,63 @@ export async function runMutationChecks(context: TaskCheckContext) {
       );
     }
   }
+}
+
+/**
+ * 2025-11-25: "Receivers MUST return standard JSON-RPC errors for ...
+ * Invalid or nonexistent `taskId` in `tasks/get`, `tasks/result`, or
+ * `tasks/cancel`: `-32602` (Invalid params)" (tasks.mdx:766-768). Unlike the
+ * extension, all three are a MUST here, so any wrong answer fails. A call that
+ * got no JSON-RPC answer (a timeout, a rate limiter's 429) judged nothing.
+ */
+async function legacyUnknownTaskIdResult(
+  context: TaskCheckContext,
+  stepStartedAt: number
+) {
+  const { operations, manager, serverId } = context;
+  const tasksCapability = manager.getServerCapabilities(serverId)?.tasks;
+  const declaresCancel =
+    isRecord(tasksCapability) && tasksCapability.cancel !== undefined;
+  const probe = await operations.probeUnknownTaskIdLegacy(
+    manager,
+    serverId,
+    declaresCancel
+  );
+  const detail = { probedTaskId: probe.taskId, ...probe.detail };
+  const sent = probe.calls.filter((call) => call.outcome !== "not-declared");
+  const wrong = sent.filter(
+    (call) => call.outcome !== "local-failure" && call.code !== INVALID_PARAMS
+  );
+  if (wrong.length > 0) {
+    return failed(
+      "tasks-invalid-task-id-rejected",
+      Date.now() - stepStartedAt,
+      `${wrong
+        .map(
+          (call) =>
+            `${call.method} answered with ${
+              call.outcome === "answered" ? "a normal result" : String(call.code)
+            }`
+        )
+        .join("; ")} for the unknown task id ${JSON.stringify(
+        probe.taskId
+      )}; 2025-11-25 requires -32602 (Invalid params) on tasks/get, tasks/result and tasks/cancel`,
+      detail
+    );
+  }
+  const unanswered = sent.find((call) => call.outcome === "local-failure");
+  if (unanswered) {
+    return couldNotRun(
+      "tasks-invalid-task-id-rejected",
+      `${unanswered.method} for an unknown task id produced no JSON-RPC response (${
+        unanswered.message ?? "no message"
+      }), so the rejection requirement was not put to the server`,
+      detail
+    );
+  }
+  return passed(
+    "tasks-invalid-task-id-rejected",
+    Date.now() - stepStartedAt,
+    detail
+  );
 }

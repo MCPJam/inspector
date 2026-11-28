@@ -371,6 +371,57 @@ export class TaskOperations {
   }
 
   /**
+   * The 2025-11-25 form of {@link probeUnknownTaskId}: `tasks/get`,
+   * `tasks/result` and `tasks/cancel` for a made-up id. On this wire all
+   * three must answer `-32602` (tasks.mdx:766-768). `tasks/cancel` goes only
+   * to a server that declares `tasks.cancel`; otherwise it is reported as
+   * `not-declared` and not sent.
+   */
+  async probeUnknownTaskIdLegacy(
+    manager: MCPClientManager,
+    serverId: string,
+    declaresCancel: boolean
+  ): Promise<{
+    taskId: string;
+    calls: Array<{
+      method: "tasks/get" | "tasks/result" | "tasks/cancel";
+      outcome: "answered" | "rejected" | "local-failure" | "not-declared";
+      code?: number;
+      message?: string;
+    }>;
+    detail: Record<string, unknown>;
+  }> {
+    const taskId = `mcpjam-conformance-unknown-task-${Date.now()}`;
+    const observe = async (call: () => Promise<unknown>) => {
+      this.config.signal?.throwIfAborted();
+      try {
+        await call();
+        return { outcome: "answered" as const };
+      } catch (error) {
+        this.config.signal?.throwIfAborted();
+        const code = errorCode(error);
+        return code === undefined
+          ? { outcome: "local-failure" as const, message: errorMessage(error) }
+          : { outcome: "rejected" as const, code, message: errorMessage(error) };
+      }
+    };
+    const get = await observe(() => manager.getTask(serverId, taskId));
+    const result = await observe(() => manager.getTaskResult(serverId, taskId));
+    const cancel = declaresCancel
+      ? await observe(() => manager.cancelTask(serverId, taskId))
+      : { outcome: "not-declared" as const };
+    return {
+      taskId,
+      calls: [
+        { method: "tasks/get", ...get },
+        { method: "tasks/result", ...result },
+        { method: "tasks/cancel", ...cancel },
+      ],
+      detail: { get, result, cancel },
+    };
+  }
+
+  /**
    * `tasks/cancel` on a real task.
    *
    * Asserts ONLY what the extension states: "On success, the server MUST
