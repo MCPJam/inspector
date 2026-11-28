@@ -22,6 +22,7 @@ import {
 import { useSubscribeForm } from "@/components/events/use-subscribe-form";
 import { EventDataView } from "@/components/events/EventsFeedPanel";
 import type { EventDescriptorView } from "@/shared/events-api";
+import { serverHasSignIn } from "@/components/connection/server-auth";
 import {
   usePlaygroundEvents,
   type ServerEventCatalog,
@@ -187,6 +188,7 @@ function ConfigureEvent({
     modes: availability?.modes ?? [],
     blockedReason: blocked,
     hosted: runtime.hosted,
+    serverSignedIn: serverHasSignIn(runtime.servers[server.serverName]),
     projectId: runtime.projectId,
     serverId: server.serverName,
     busy,

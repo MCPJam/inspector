@@ -9,14 +9,16 @@
  * registry through the same create code as `add`.
  *
  * The host, not the model, picks the delivery mode, exactly as Connect event
- * defaults it (the first mode the runtime, the event type and the client all
- * accept). The one difference: a LOCAL webhook needs the user's consent for its
- * plain-HTTP receiver, which a model cannot give, so the agent never picks it.
+ * defaults it: the first allowed mode in `preferredDeliveryModes`' order. The
+ * one difference: a LOCAL webhook needs the user's consent for its plain-HTTP
+ * receiver, which a model cannot give, so the agent picks it only when an
+ * `https` receiver is saved for the server, and then subscribes with it.
  */
 import {
   describeNoSubscribableMode,
   subscribableModes,
 } from "@mcpjam/sdk/browser";
+import { preferredDeliveryModes } from "@/shared/client-events";
 import {
   EVENT_TOOLS_MAX_EVENTS_PER_SERVER,
   EVENT_TOOLS_MAX_NAME_CHARS,
@@ -27,10 +29,10 @@ import {
   type EventAgentTrigger,
   type EventToolsSnapshot,
 } from "@/shared/event-agent-tools";
-import type {
-  EventDescriptorView,
-  EventsDeliveryModeView,
-} from "@/shared/events-api";
+import type { EventDescriptorView } from "@/shared/events-api";
+import { serverHasSignIn } from "@/components/connection/server-auth";
+import { savedHttpsReceiver } from "@/components/events/use-callback-preference";
+import type { SubscribeFormValue } from "@/components/events/use-subscribe-form";
 import { bindingStatus } from "./binding-status";
 import { useEventAgentBridge } from "./event-agent-bridge";
 import { checkEventArguments } from "./event-arguments";
@@ -45,6 +47,7 @@ export type EventAgentRuntime = Pick<
   Runtime,
   | "hosted"
   | "host"
+  | "projectId"
   | "servers"
   | "bindings"
   | "catalogs"
@@ -196,8 +199,11 @@ function eventServers(runtime: EventAgentRuntime): string[] {
 
 function pickMode(
   runtime: EventAgentRuntime,
+  serverName: string,
   event: EventDescriptorView,
-): { mode: EventsDeliveryModeView } | { error: string } {
+):
+  | { delivery: Pick<SubscribeFormValue, "mode" | "receiver"> }
+  | { error: string } {
   const host = runtime.host;
   if (!host)
     return {
@@ -214,10 +220,22 @@ function pickMode(
     eventModes: event.delivery,
     runtime: runtime.hosted ? "hosted" : "local",
   });
-  const mode = availability.modes.find(
-    (candidate) => runtime.hosted || candidate !== "webhook",
+  const receiver = runtime.hosted
+    ? undefined
+    : savedHttpsReceiver(runtime.projectId, serverName);
+  const mode = preferredDeliveryModes(availability.modes, {
+    runtime: runtime.hosted ? "hosted" : "local",
+    serverSignedIn: serverHasSignIn(runtime.servers[serverName]),
+    httpsReceiver: receiver !== undefined,
+  }).find(
+    (candidate) =>
+      runtime.hosted || candidate !== "webhook" || receiver !== undefined,
   );
-  if (mode) return { mode };
+  if (mode === "webhook" && receiver)
+    return {
+      delivery: { mode, receiver: { kind: "custom", baseUrl: receiver } },
+    };
+  if (mode) return { delivery: { mode } };
   return {
     error:
       describeNoSubscribableMode(availability, host.name, host.harnessName) ??
@@ -361,12 +379,12 @@ async function subscribe(
         "This event already had a subscription, so its title and prompt were updated. No second subscription was added.",
     });
   }
-  const picked = pickMode(runtime, resolved.event);
+  const picked = pickMode(runtime, resolved.server.serverName, resolved.event);
   if ("error" in picked) return failure(picked.error);
   const binding = await runtime.add(
     resolved.server,
     resolved.event,
-    { arguments: call.trigger.params, mode: picked.mode },
+    { arguments: call.trigger.params, ...picked.delivery },
     call.prompt,
     // The watch belongs to the conversation that made the call, or it fails.
     { title: call.title, fromAgent: true, agentScope: scope },
@@ -405,7 +423,11 @@ async function update(
       "mcpjam_update_event_subscription",
     );
     if ("error" in resolved) return resolved.error;
-    const picked = pickMode(runtime, resolved.event);
+    const picked = pickMode(
+      runtime,
+      resolved.server.serverName,
+      resolved.event,
+    );
     if ("error" in picked) return failure(picked.error);
     binding = await runtime.retarget(
       binding.id,
@@ -413,7 +435,7 @@ async function update(
       resolved.event,
       {
         arguments: call.trigger.params,
-        mode: picked.mode,
+        ...picked.delivery,
       },
       { agentScope: scope },
     );

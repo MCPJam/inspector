@@ -32,7 +32,12 @@ function runtimeWith(host: Runtime["host"]): Runtime {
     add: vi.fn(async () => undefined),
     addTest: vi.fn(),
     agentBlockedReason: null,
-    servers: { Flights: { connectionStatus: "connected" } } as Runtime["servers"],
+    servers: {
+      Flights: {
+        connectionStatus: "connected",
+        config: { url: new URL("https://flights.example.com/mcp") },
+      },
+    } as Runtime["servers"],
     catalogs: [
       {
         serverName: "Flights",
@@ -73,7 +78,7 @@ describe("AddPlaygroundEvent", () => {
       expect(frame).not.toContain("No parameters required");
       expect(frame).not.toContain("Delivery · Unavailable");
       expect(frame).toContain("tripId");
-      expect(frame).toContain("Delivery · poll");
+      expect(frame).toContain("Delivery · push");
     }
   });
 

@@ -10,6 +10,7 @@ import { EVENTS_SUBSCRIPTION_ID_META_KEY } from "../../mcp-client-manager/events
 import {
   EventsActiveNotificationMethod,
   EventsEventNotificationMethod,
+  EventsHeartbeatNotificationMethod,
 } from "../../mcp-client-manager/events-ext.js";
 import {
   InboxBackpressureError,
@@ -232,4 +233,88 @@ describe("EventsPushRuntime cursor safety on append failure", () => {
       expect(t.cursors).toEqual(["c9"]);
     });
   }
+});
+
+describe("EventsPushRuntime liveness", () => {
+  it("waits three times the heartbeat the server grants on active", async () => {
+    const t = setup("c0");
+    t.send(1, EventsActiveNotificationMethod, {
+      cursor: "c0",
+      truncated: false,
+      heartbeatMs: 45_000,
+    });
+    await settle();
+
+    // Past the old fixed window (2 × 30 s) and just short of 3 × 45 s.
+    await vi.advanceTimersByTimeAsync(134_000);
+    expect(t.reasons).toEqual(["start"]);
+
+    // The reopen runs just after the timer, so look a moment past 135 s.
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(t.reasons).toEqual(["start", "liveness_timeout"]);
+    expect(t.opens[1]!.cursor).toBe("c0");
+  });
+
+  it("restarts the window on every frame", async () => {
+    const t = setup("c0");
+    t.send(1, EventsActiveNotificationMethod, {
+      cursor: "c0",
+      heartbeatMs: 45_000,
+    });
+    await settle();
+    await vi.advanceTimersByTimeAsync(100_000);
+    t.send(1, EventsHeartbeatNotificationMethod, { cursor: "c1" });
+    await settle();
+    await vi.advanceTimersByTimeAsync(100_000);
+    expect(t.reasons).toEqual(["start"]);
+    expect(t.cursors.at(-1)).toBe("c1");
+  });
+
+  for (const heartbeatMs of [undefined, 0, -5, "45000", Number.NaN]) {
+    it(`keeps the 30 s default when the grant is ${String(heartbeatMs)}`, async () => {
+      const t = setup("c0");
+      t.send(1, EventsActiveNotificationMethod, {
+        cursor: "c0",
+        ...(heartbeatMs === undefined ? {} : { heartbeatMs }),
+      });
+      await settle();
+      await vi.advanceTimersByTimeAsync(89_000);
+      expect(t.reasons).toEqual(["start"]);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(t.reasons).toEqual(["start", "liveness_timeout"]);
+    });
+  }
+
+  it("treats a grant under a second as one second", async () => {
+    const t = setup("c0");
+    // Seconds sent where the draft means milliseconds.
+    t.send(1, EventsActiveNotificationMethod, {
+      cursor: "c0",
+      heartbeatMs: 30,
+    });
+    await settle();
+    await vi.advanceTimersByTimeAsync(2_900);
+    expect(t.reasons).toEqual(["start"]);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(t.reasons).toEqual(["start", "liveness_timeout"]);
+  });
+
+  it("forgets the grant when the stream reopens", async () => {
+    const t = setup("c0");
+    t.send(1, EventsActiveNotificationMethod, {
+      cursor: "c0",
+      heartbeatMs: 120_000,
+    });
+    await settle();
+    await vi.advanceTimersByTimeAsync(361_000);
+    expect(t.reasons).toEqual(["start", "liveness_timeout"]);
+
+    // The reopened request has no grant yet: the default window applies.
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(t.reasons).toEqual([
+      "start",
+      "liveness_timeout",
+      "liveness_timeout",
+    ]);
+  });
 });
