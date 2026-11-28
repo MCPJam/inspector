@@ -15,6 +15,7 @@
 
 import type { ModelMessage } from "ai";
 import type { MCPClientManager } from "@mcpjam/sdk";
+import { withToolCallScope } from "./input-answers.js";
 import { decideToolPolicy } from "@mcpjam/sdk/contract";
 import type { ToolCall, ToolErrorRecord } from "@/shared/eval-matching";
 import type { PinnedToolCall } from "@/shared/steps";
@@ -82,6 +83,7 @@ export interface PinnedTurnResult {
   toolError?: ToolErrorRecord;
   /** Fatal, iteration-level error (server not connected). */
   iterationError?: string;
+  setupFailure?: boolean;
   /** Human-readable one-line outcome for the synthesized assistant message. */
   summary: string;
 }
@@ -185,6 +187,7 @@ export async function runPinnedTurn(
     return {
       toolCall: null,
       iterationError: `${PINNED_SERVER_NOT_CONNECTED}: "${pinned.serverName}" is not connected in this run's environment`,
+      setupFailure: true,
       summary: `Pinned tool call skipped: server "${pinned.serverName}" not connected`,
     };
   }
@@ -242,10 +245,12 @@ export async function runPinnedTurn(
     }
   }
   try {
-    rawResult = await mcpClientManager.executeTool(
-      resolvedServerKey,
-      pinned.toolName,
-      args
+    rawResult = await withToolCallScope(
+      {
+        tool: pinned.toolName,
+        serverId: resolvedServerKey,
+      },
+      () => mcpClientManager.executeTool(resolvedServerKey, pinned.toolName, args),
     );
     const isError =
       !!rawResult &&

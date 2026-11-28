@@ -47,6 +47,17 @@ vi.mock("../../../services/evals/suite-account-choices.js", () => ({
   loadQuickRunAccounts: async () => ({}),
   loadSuiteConnectionIdSets: async () => undefined,
 }));
+// Replies are read from Convex before connect; there is none in this suite.
+vi.mock("../../../services/evals/input-answers.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../services/evals/input-answers.js")
+  >("../../../services/evals/input-answers.js");
+  return {
+    ...actual,
+    inputAnswerResolverFor: async () =>
+      actual.createInputAnswerResolver({ answers: [] }),
+  };
+});
 vi.mock("../../../services/evals/route-helpers.js", async () => ({
   ...(await vi.importActual<object>("../../../services/evals/route-helpers.js")),
   createConvexClient: () => ({}),

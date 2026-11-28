@@ -811,6 +811,58 @@
           ]
         }
       ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "case with replies to a server's questions",
+      "__why": "A case may carry inputAnswers: the replies a run gives when a server asks a question, matched on server, tool and message. The first entry that fits answers, and an entry that lists none is a default.",
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ],
+          "inputAnswers": [
+            {
+              "server": "files",
+              "tool": "delete",
+              "message": "Delete",
+              "action": "accept",
+              "content": {
+                "sure": true
+              }
+            },
+            {
+              "action": "decline"
+            }
+          ]
+        }
+      ]
     }
   ],
   "reject": [
@@ -3100,6 +3152,97 @@
           ]
         }
       ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "reply with content that is not accepted",
+      "__why": "Content is the form a person filled in, so it rides only with accept. A decline that carries content is a mistake the file should say so about, not run with.",
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ],
+          "inputAnswers": [
+            {
+              "action": "decline",
+              "content": {
+                "sure": true
+              }
+            }
+          ]
+        }
+      ],
+      "__structural": false
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "reply with an action that is not one of the three",
+      "__why": "The action is accept, decline or cancel, as MCP names them. Anything else is not a reply the client could send.",
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ],
+          "inputAnswers": [
+            {
+              "action": "maybe"
+            }
+          ]
+        }
+      ],
+      "__structural": true
     }
   ],
   "roundTrip": [

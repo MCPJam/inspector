@@ -1,3 +1,4 @@
+import { inputAnswerResolverFor } from "../../services/evals/input-answers.js";
 import { anyUnattendedLocalHarness } from "../../utils/harness/local/run-resources.js";
 import {
   assertEvalAccountConnections,
@@ -467,6 +468,11 @@ evals.post("/run-test-case", async (c) => {
         rawBody.oauthTokens = plannedQuickRunTokens(body.oauthTokens, accounts.accountContext);
       },
       connectionIdSetsForBody: async () => accounts?.connectionIdSets,
+      inputAnswersForBody: async (rawBody) =>
+        inputAnswerResolverFor(
+          createConvexClient(await getConvexBearerForRequest(c)),
+          { suiteId: rawBody.suiteId, testCaseId: rawBody.testCaseId },
+        ),
       // Connect as the host this case runs under, not as whichever one the
       // browser had active — same rule as the suite-run and streaming routes.
       // An environment runs as its own client. The wrapper owns the body, so
@@ -590,6 +596,10 @@ evals.post("/stream-test-case", async (c) => {
     createConvexClient(await getConvexBearerForRequest(c)),
     { testCaseId: body.testCaseId, serverIds, runAccounts: body.runAccounts },
   );
+  const caseInputAnswers = await inputAnswerResolverFor(
+    createConvexClient(await getConvexBearerForRequest(c)),
+    { suiteId: rawBody.suiteId, testCaseId: rawBody.testCaseId },
+  );
   const { manager } = await createAuthorizedManager(
     callerContextFromHono(c),
     bearerToken,
@@ -603,6 +613,7 @@ evals.post("/stream-test-case", async (c) => {
       // A host attachment does not authorize durable Computer placement for an eval.
       pluginComputerRuntime: false,
       ...(accounts.connectionIdSets ? { connectionIdSets: accounts.connectionIdSets } : {}),
+      inputAnswers: caseInputAnswers,
       accessScope: body.accessScope as "project_member" | "chat_v2" | undefined,
       scenarioId: evalScenarioId,
       accessVersion: body.accessVersion as number | undefined,

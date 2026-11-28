@@ -3697,6 +3697,44 @@
           },
           "expectedOutput": { "type": "string" },
           "isNegativeTest": { "type": "boolean" },
+          "inputAnswers": {
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "server": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "tool": { "type": "string", "minLength": 1, "maxLength": 256 },
+                "message": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "action": {
+                  "type": "string",
+                  "enum": ["accept", "decline", "cancel"]
+                },
+                "content": {
+                  "type": "object",
+                  "propertyNames": { "type": "string" },
+                  "additionalProperties": {
+                    "anyOf": [
+                      { "type": "string" },
+                      { "type": "number" },
+                      { "type": "boolean" },
+                      { "type": "array", "items": { "type": "string" } }
+                    ]
+                  }
+                }
+              },
+              "required": ["action"],
+              "additionalProperties": false
+            }
+          },
           "model": { "type": "string", "minLength": 1 },
           "iterations": { "type": "integer", "minimum": 1, "maximum": 100 },
           "passThreshold": { "type": "number", "minimum": 0, "maximum": 1 },

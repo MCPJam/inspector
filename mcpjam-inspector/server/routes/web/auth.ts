@@ -1,3 +1,8 @@
+import {
+  registerInputAnswerResolver,
+  registerInputAnswerConnection,
+  type InputAnswerResolver,
+} from "../../services/evals/input-answers.js";
 import type { chatPreparationRequest } from "../../services/chat-turn/resolve-chat-turn.js";
 import { bindWarmApprovalConnection } from "../../utils/harness/warm-approval-binding";
 import { hostedWarmAgentEnabled } from "../../utils/harness/harness-flags";
@@ -1772,6 +1777,12 @@ export async function createAuthorizedManager(
       serverId: string,
     ) => Parameters<MCPClientManager["setMrtrInputCollector"]>[2];
     /**
+     * An eval's answers to a server's questions (`services/evals/input-answers`):
+     * registered as the elicitation callback and each server's collector, with
+     * the same pre-connect timing, so the capability is declared at connect.
+     */
+    inputAnswers?: InputAnswerResolver;
+    /**
      * The turn's execution scope, forwarded to the computer reservation that
      * hosts a plugin's stdio component (`resolvePluginStdioHttpTarget`). Only
      * meaningful on hosted deployments that can colocate; absent falls back to
@@ -3092,6 +3103,24 @@ export async function createAuthorizedManager(
   // wins that race; registering after an await never does.
   if (options?.elicitationCallback) {
     manager.setElicitationCallback(options.elicitationCallback);
+  } else if (options?.inputAnswers) {
+    manager.setElicitationCallback(options.inputAnswers.elicitationCallback);
+    registerInputAnswerResolver(manager, options.inputAnswers);
+  }
+  if (options?.inputAnswers && !options.mrtrInputCollectorForServer) {
+    const names: Record<string, string> = {};
+    for (const [serverId] of connectionEntries) {
+      manager.setMrtrInputCollector(
+        serverId,
+        options.inputAnswers.collectorFor(serverId),
+      );
+      const baseServerId =
+        Object.entries(connectionsByServerId).find(([, group]) =>
+          group.some((connection) => connection.key === serverId),
+        )?.[0] ?? serverId;
+      names[serverId] = serverNamesById[baseServerId] ?? baseServerId;
+    }
+    options.inputAnswers.useServerNames(names);
   }
   // ALSO synchronous, same microtask-race discipline: register each server's
   // MRTR collector before the constructor's connects run, so `buildCapabilities`
@@ -3146,6 +3175,13 @@ export async function createAuthorizedManager(
   }
   setManagerResourceSnapshots(manager, resourceSnapshots);
   setManagerOrganization(manager, batch.organizationId);
+  registerInputAnswerConnection(manager, async (inputAnswers) => {
+    const connection = await createAuthorizedManager(
+      caller, bearerToken, projectId, serverIds, timeoutMs, oauthTokens, clientCapabilities,
+      { ...options, inputAnswers },
+    );
+    return connection.manager;
+  });
   const ownerScope = taskOwnerScope(projectId, authorizedUserId);
   if (ownerScope)
     setManagerTaskOwnerScope(manager, Object.keys(observedConfigs), ownerScope);
@@ -3404,6 +3440,10 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
     connectionIdSetsForBody?: (
       rawBody: Record<string, unknown>,
     ) => Promise<ConnectionIdSets | undefined>;
+    /** See `createManualHostedConnection`'s option of the same name. */
+    inputAnswersForBody?: (
+      rawBody: Record<string, unknown>,
+    ) => Promise<InputAnswerResolver | undefined>;
     /** See `createAuthorizedManager`'s option of the same name. */
     observeFeatures?: boolean;
   },
@@ -3498,6 +3538,10 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     connectionIdSetsForBody?: (
       rawBody: Record<string, unknown>,
     ) => Promise<ConnectionIdSets | undefined>;
+    /** An eval's replies to a server's questions, loaded before any server is connected. */
+    inputAnswersForBody?: (
+      rawBody: Record<string, unknown>,
+    ) => Promise<InputAnswerResolver | undefined>;
     /** See `createAuthorizedManager`'s option of the same name. */
     tolerateServerRefusals?: boolean;
     /** See `createAuthorizedManager`'s option of the same name. */
@@ -3551,6 +3595,7 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
   const chosenSets = pinnedSets
     ? undefined
     : await options?.connectionIdSetsForBody?.(rawBody);
+  const inputAnswers = await options?.inputAnswersForBody?.(rawBody);
   const timeoutMs = options?.timeoutMs ?? WEB_CALL_TIMEOUT_MS;
   const accessScope =
     raw.accessScope === "project_member" || raw.accessScope === "chat_v2"
@@ -3698,6 +3743,7 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       // the same microtask discipline as `elicitationCallback` so `elicitation`
       // is advertised before the constructor's connects run.
       extensionRequestHandlers: options?.extensionRequestHandlers,
+      ...(inputAnswers ? { inputAnswers } : {}),
       ...(options?.mrtrInputCollectorForServer
         ? { mrtrInputCollectorForServer: options.mrtrInputCollectorForServer }
         : {}),
@@ -3852,6 +3898,10 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     connectionIdSetsForBody?: (
       rawBody: Record<string, unknown>,
     ) => Promise<ConnectionIdSets | undefined>;
+    /** See `createManualHostedConnection`'s option of the same name. */
+    inputAnswersForBody?: (
+      rawBody: Record<string, unknown>,
+    ) => Promise<InputAnswerResolver | undefined>;
     /**
      * Runs on the raw body after it is read and BEFORE it is parsed or any
      * server is connected. The hook an environment launch uses to resolve its
@@ -3915,6 +3965,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
         httpLogger: rpcCollector?.httpLogger,
         hostConfigForBody: options?.hostConfigForBody,
         connectionIdSetsForBody: options?.connectionIdSetsForBody,
+        inputAnswersForBody: options?.inputAnswersForBody,
       },
     );
 

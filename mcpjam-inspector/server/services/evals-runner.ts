@@ -131,6 +131,12 @@ import {
   type ToolTaskSeamOptions,
 } from "@mcpjam/sdk";
 import { resolveToolTaskSeam } from "../utils/task-seam.js";
+import {
+  inputAnswerResolverOf,
+  openInputAnswerConnection,
+  withInputAnswerResolverScope,
+} from "./evals/input-answers.js";
+import type { InputAnswer } from "@mcpjam/sdk/contract";
 import { mcpToolOptionsFor } from "../utils/mcp-tool-options.js";
 import {
   createLlmModel,
@@ -509,6 +515,7 @@ export type EvalTestCase = {
    * the runner converts via `resolveSteps` until the backend emits `steps`.
    */
   steps?: TestStep[];
+  inputAnswers?: InputAnswer[];
   advancedConfig?: {
     system?: string;
     temperature?: number;
@@ -2069,6 +2076,8 @@ export function describeModelRefusalForIteration(
   return `Model selection refused — ${refusal.message}`;
 }
 
+class SavedReplyConnectionError extends Error {}
+
 /**
  * Record a case's refusal on its pre-created rows: a refused model selection,
  * an unreadable client profile, or a job token the backend stopped renewing.
@@ -3360,7 +3369,10 @@ const executeTestCase = async (params: {
       signal: AbortSignal,
       deadline: number,
     ) => {
-      const outcome = await runner(signal, deadline, noteIterationStarted);
+      const outcome = await withInputAnswerResolverScope(
+        inputAnswerResolverOf(mcpClientManager),
+        () => runner(signal, deadline, noteIterationStarted),
+      );
       if (outcome.creditsExhausted && !creditStop.exhausted) {
         creditStop.exhausted = true;
         logger.info("[evals] credits exhausted; remaining iterations skipped", {
@@ -4204,15 +4216,30 @@ export const runEvalSuiteWithAiSdk = async ({
     }
   };
 
-  const evalTasksSeam = resolveToolTaskSeam({
+  const resolveEvalTasks = (manager: MCPClientManager) => {
+    const evalInputAnswers = inputAnswerResolverOf(manager);
+    return resolveToolTaskSeam({
     tasksPolicy: readTasksPolicy(
       (suiteHostConfig ?? undefined) as Parameters<typeof readTasksPolicy>[0],
     ),
     surface: "eval",
     // Driver `timeoutMs` stays at its default — the task drive nests under
     // the run timeout, which aborts through this same signal.
-    await: { signal: abortController.signal },
-  });
+    await: {
+      signal: abortController.signal,
+      // A task that asks gets the case's replies, through the same resolver
+      // the connection's callback and collector use.
+      ...(evalInputAnswers
+        ? {
+            input: {
+              declaredCapabilities: { elicitation: { form: {} } },
+              handlers: evalInputAnswers.taskHandlers,
+            },
+          }
+        : {}),
+    },
+    });
+  };
 
   const runSetupStartedAt = Date.now();
   // EFTW-90: run setup and cleanup; set once the cases are about to start.
@@ -4247,6 +4274,7 @@ export const runEvalSuiteWithAiSdk = async ({
       manager: MCPClientManager,
       observer: RunSetupObserver,
     ) => {
+      const evalTasksSeam = resolveEvalTasks(manager);
       let resolvedToolPolicyWarnings: string[] | undefined;
       // When a host policy is present we need the full tool set (including
       // app-only) so `applyVisibilityPolicyAndCountSignals` can:
@@ -4351,6 +4379,7 @@ export const runEvalSuiteWithAiSdk = async ({
 
       return {
         tools,
+        evalTasksSeam,
         toolAnnotations,
         resolvedToolPolicyWarnings,
         resolvedToolSignals,
@@ -4359,20 +4388,26 @@ export const runEvalSuiteWithAiSdk = async ({
         resolvedSetupAudit,
       };
     };
-    const managers = new Map(tests.map((test) => [
-      test,
-      accountManagerForCase ? accountManagerForCase(test.testCaseId ?? testCaseId) : mcpClientManager,
-    ]));
-    const managerSetups = new Map<MCPClientManager, Awaited<ReturnType<typeof prepareManager>>>();
-    for (const manager of new Set(managers.values())) {
-      const observer = manager === mcpClientManager ? setupObserver : createRunSetupObserver({
+    const baseManager = (test: EvalTestCase) =>
+      accountManagerForCase?.(test.testCaseId ?? testCaseId) ?? mcpClientManager;
+    const needsReplyConnection = (test: EvalTestCase, base: MCPClientManager) =>
+      serverIds.length > 0 && Boolean(test.inputAnswers?.length) && !inputAnswerResolverOf(base);
+    const setupFor = (manager: MCPClientManager) => prepareManager(
+      manager,
+      manager === mcpClientManager ? setupObserver : createRunSetupObserver({
         expectedServerIds: serverIds,
         convexHttpUrl,
         context: (serverId) => ({
           serverLabel: getServerLabelForEvalError(serverId, config.environment),
         }),
-      });
-      managerSetups.set(manager, await prepareManager(manager, observer));
+      }),
+    );
+    const managerSetups = new Map<MCPClientManager, Awaited<ReturnType<typeof prepareManager>>>();
+    for (const test of tests) {
+      const base = baseManager(test);
+      if (!needsReplyConnection(test, base) && !managerSetups.has(base)) {
+        managerSetups.set(base, await setupFor(base));
+      }
     }
 
     // Note: Iterations are now pre-created in startSuiteRunWithRecorder
@@ -4447,12 +4482,15 @@ export const runEvalSuiteWithAiSdk = async ({
       });
     }
     const creditStop: RunStop = { exhausted: false };
-    const runOne = (test: (typeof tests)[number]) => {
-      const manager = managers.get(test);
-      const setup = manager && managerSetups.get(manager);
-      if (!manager || !setup) throw new Error("The eval case has no prepared connection.");
+    const replyConnectionLimit = createConcurrencyLimiter(MAX_CONCURRENT_RENDER_CHECKS);
+    const runWithManager = (
+      test: EvalTestCase,
+      manager: MCPClientManager,
+      setup: Awaited<ReturnType<typeof prepareManager>>,
+    ) => {
       const {
         tools,
+        evalTasksSeam,
         toolAnnotations,
         resolvedToolPolicyWarnings,
         resolvedToolSignals,
@@ -4518,6 +4556,34 @@ export const runEvalSuiteWithAiSdk = async ({
         // run's abort signal.
         ...(evalTasksSeam ? { tasks: evalTasksSeam } : {}),
         ...(extraHeaders ? { extraHeaders } : {}),
+      });
+    };
+    const runOne = async (test: EvalTestCase) => {
+      const base = baseManager(test);
+      const setup = managerSetups.get(base);
+      if (!needsReplyConnection(test, base) && setup) return runWithManager(test, base, setup);
+      return replyConnectionLimit(async () => {
+        abortController.signal.throwIfAborted();
+        let manager: MCPClientManager | undefined;
+        try {
+          let replySetup: Awaited<ReturnType<typeof prepareManager>>;
+          try {
+            manager = await openInputAnswerConnection(base, test.inputAnswers ?? [], serverIds);
+            abortController.signal.throwIfAborted();
+            replySetup = await setupFor(manager);
+          } catch (cause) {
+            abortController.signal.throwIfAborted();
+            throw new SavedReplyConnectionError(
+              "MCPJam couldn't connect with this case's saved replies. Check the case's servers and try again.",
+              { cause },
+            );
+          }
+          return await runWithManager(test, manager, replySetup);
+        } finally {
+          await manager?.disconnectAllServers().catch(() => {
+            logger.warn("[evals] Could not close a saved-reply connection", { runId });
+          });
+        }
       });
     };
     // A web client's account runs one turn per server at a time (a second
@@ -4755,7 +4821,8 @@ export const runEvalSuiteWithAiSdk = async ({
       } else {
         if (
           runId === null &&
-          result.reason instanceof HarnessIterationRecordError
+          (result.reason instanceof HarnessIterationRecordError ||
+            result.reason instanceof SavedReplyConnectionError)
         ) {
           throw result.reason;
         }
@@ -4791,6 +4858,7 @@ export const runEvalSuiteWithAiSdk = async ({
           refusedTest &&
           (result.reason instanceof ModelResolutionRefusalError ||
             result.reason instanceof InvalidClientProfileError ||
+            result.reason instanceof SavedReplyConnectionError ||
             isBearerRefusal(result.reason))
         ) {
           try {

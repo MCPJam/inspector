@@ -150,6 +150,7 @@ import {
   evalSuiteFileCaseImportSchema,
   evalExecutionBudgetsSchema,
   IMPORT_MAPPING_STATUSES,
+  inputAnswersSchema,
   isEvalVerdictPolicyV2,
   opaqueIdSchema,
   parseSuiteGatePolicyForAuthoring,
@@ -805,6 +806,7 @@ const createEvalSuiteSchema = z.strictObject({
           // query; `toolCalledWith` asserts are the expected tool calls; a
           // single model-free `toolCall` step is a render-check.
           steps: stepsSchema.min(1),
+          inputAnswers: inputAnswersSchema.optional(),
           runs: z.number().int().min(1).max(10).optional(),
           model: z.string().optional(),
           provider: z.string().optional(),
@@ -980,6 +982,7 @@ function normalizeCreateTestsToRunTests(
       runs,
       model,
       provider,
+      ...(test.inputAnswers !== undefined ? { inputAnswers: test.inputAnswers } : {}),
       expectedToolCalls: derived.expectedToolCalls ?? [],
       ...(test.expectedOutput !== undefined
         ? { expectedOutput: test.expectedOutput }
@@ -2419,6 +2422,9 @@ function toCaseDto(testCase: CaseDoc, vocabulary: EvalVocabulary = 1) {
       : {}),
     ...(testCase.source ? { source: testCase.source } : {}),
     ...(importClaim ? { import: importClaim } : {}),
+    ...(Array.isArray(testCase.inputAnswers)
+      ? { inputAnswers: testCase.inputAnswers }
+      : {}),
     createdAt: testCase.createdAt ?? null,
     updatedAt: testCase.updatedAt ?? null,
   };
@@ -3090,6 +3096,12 @@ const publicCaseBodyShape = {
     })
     .nullable()
     .optional(),
+  /**
+   * What the run answers when a server asks a question mid-run. The SDK's own
+   * schema, so a suite file and this route accept the same replies. `null`
+   * clears them on PATCH; omitted leaves them; create ignores `null`.
+   */
+  inputAnswers: inputAnswersSchema.nullable().optional(),
 } as const;
 
 /**
@@ -3932,6 +3944,12 @@ function buildCaseMutationArgs(
           : mergeMatchOptions(opts.existingMatchOptions, body.matchOptions);
   if (body.suppressedSuiteStandardCheckIds !== undefined)
     args.suppressedSuiteStandardCheckIds = body.suppressedSuiteStandardCheckIds;
+  // The backend's create item takes the list or nothing; only update clears.
+  if (
+    body.inputAnswers !== undefined &&
+    !(opts.forCreate && body.inputAnswers === null)
+  )
+    args.inputAnswers = body.inputAnswers;
   if (body.checks !== undefined && !(opts.forCreate && body.checks === null))
     args.predicates =
       body.checks === null

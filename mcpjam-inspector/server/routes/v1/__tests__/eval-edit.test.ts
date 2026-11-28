@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isOpaqueId } from "@mcpjam/sdk/contract";
+import { loadEvalSuiteFile, platformCaseFromSuiteFileCase } from "@mcpjam/sdk";
+import {
+  inputAnswerResolverFor,
+  withToolCallScope,
+} from "../../../services/evals/input-answers.js";
 import { MAX_CASES_PER_BATCH } from "../../shared/eval-case-batch.js";
 import { upstreamRefusalFromResponse } from "../../../services/upstream-refusal.js";
 import { Hono } from "hono";
@@ -1792,6 +1797,159 @@ describe("v1 eval-edit routes", () => {
       toolCallOrder: "ignore",
       maxExtraToolCalls: null,
       argumentMatching: "exact",
+    });
+  });
+
+  describe("a case's replies to a server's question", () => {
+    const CASES = "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases";
+    const CASE_URL = `${CASES}/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx`;
+    const REPLIES = [
+      { message: "name", action: "accept", content: { name: "Ada" } },
+      { action: "decline" },
+    ];
+    const PROMPT = [{ id: "s1", kind: "prompt", prompt: "hi" }];
+
+    it("POST stores the replies with the case, and GET reads them back", async () => {
+      const res = await request("POST", CASES, {
+        title: "asks",
+        steps: PROMPT,
+        inputAnswers: REPLIES,
+      });
+      expect(res.status).toBe(201);
+      expect(authoredCaseArgs().inputAnswers).toEqual(REPLIES);
+
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestCase"
+          ? Promise.resolve({ ...CASE_DOC, inputAnswers: REPLIES })
+          : defaultQueryImpl(name),
+      );
+      const read = (await (await request("GET", CASE_URL)).json()) as any;
+      expect(read.inputAnswers).toEqual(REPLIES);
+    });
+
+    it("POST /cases/batch carries each case's replies", async () => {
+      const res = await request("POST", `${CASES}/batch`, {
+        cases: [{ title: "asks", steps: PROMPT, inputAnswers: REPLIES }],
+      });
+      expect(res.status).toBe(201);
+      const batch = convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:createTestCases",
+      )![1];
+      expect(batch.cases[0].inputAnswers).toEqual(REPLIES);
+    });
+
+    it("a suite file's replies are stored by the route and answer the question the runner meets", async () => {
+      const loaded = loadEvalSuiteFile(`schemaVersion: "1"
+mode: agentWorkflow
+reportingMode: standard
+suite:
+  id: s_files
+  name: Files
+target:
+  servers:
+    - name: files
+defaults:
+  model: anthropic/claude-sonnet-4-6
+  repetitions: 1
+  passThreshold: 1
+  validity: {}
+cases:
+  - id: c_cleanup
+    title: Cleans up
+    steps:
+      - id: s1
+        kind: prompt
+        prompt: Clean up /tmp.
+    inputAnswers:
+      - server: files
+        tool: cleanup
+        message: Delete
+        action: accept
+        content:
+          sure: true
+`);
+      expect(loaded.ok).toBe(true);
+      if (!loaded.ok) return;
+      const fromFile = platformCaseFromSuiteFileCase(
+        loaded.resolved.enabledCases[0]!,
+      );
+      expect(fromFile.inputAnswers).toHaveLength(1);
+
+      // What the sync sends for the case.
+      const res = await request("POST", CASES, {
+        id: fromFile.id,
+        title: fromFile.title,
+        steps: fromFile.steps,
+        inputAnswers: fromFile.inputAnswers,
+      });
+      expect(res.status).toBe(201);
+      const stored = authoredCaseArgs().inputAnswers;
+
+      // The runner reads the stored row's replies before it connects.
+      const resolver = await inputAnswerResolverFor(
+        {
+          query: async () => ({ _id: CASE_DOC._id, inputAnswers: stored }),
+        } as never,
+        { testCaseId: CASE_DOC._id },
+      );
+      expect(resolver).toBeDefined();
+      if (!resolver) throw new Error("Saved input resolver was not created.");
+      resolver.useServerNames({ srv1: "files" });
+      const reply = await withToolCallScope({ tool: "cleanup" }, () =>
+        resolver.elicitationCallback({
+          requestId: "r",
+          message: "Delete /tmp?",
+          schema: {},
+          serverId: "srv1",
+        }),
+      );
+      expect(reply).toEqual({ action: "accept", content: { sure: true } });
+    });
+
+    it("PATCH replaces them, and null clears them", async () => {
+      expect(
+        (await request("PATCH", CASE_URL, { inputAnswers: REPLIES })).status,
+      ).toBe(200);
+      expect(updateArgs().inputAnswers).toEqual(REPLIES);
+      convexMutationMock.mockClear();
+      expect(
+        (await request("PATCH", CASE_URL, { inputAnswers: null })).status,
+      ).toBe(200);
+      expect(updateArgs().inputAnswers).toBeNull();
+    });
+
+    it("PATCH without them leaves the stored replies alone", async () => {
+      await request("PATCH", CASE_URL, { title: "renamed" });
+      expect(updateArgs()).not.toHaveProperty("inputAnswers");
+    });
+
+    it("POST ignores null, which has nothing to clear, rather than sending it to the create", async () => {
+      const res = await request("POST", CASES, {
+        title: "asks",
+        steps: PROMPT,
+        inputAnswers: null,
+      });
+      expect(res.status).toBe(201);
+      expect(authoredCaseArgs()).not.toHaveProperty("inputAnswers");
+    });
+
+    it.each([
+      ["a content with a decline", [{ action: "decline", content: { a: "b" } }]],
+      ["an action that is none", [{ action: "maybe" }]],
+      ["a field the contract does not have", [{ action: "accept", note: "x" }]],
+    ])("POST refuses %s", async (_label, inputAnswers) => {
+      const res = await request("POST", CASES, {
+        title: "asks",
+        steps: PROMPT,
+        inputAnswers,
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it("takes them under the canonical vocabulary as well", async () => {
+      const res = await requestV2("PATCH", CASE_URL, { inputAnswers: REPLIES });
+      expect(res.status).toBe(200);
+      expect(updateArgs().inputAnswers).toEqual(REPLIES);
     });
   });
 

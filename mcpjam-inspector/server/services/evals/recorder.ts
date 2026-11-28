@@ -8,7 +8,7 @@ import { asCapacityRouteError } from "../../utils/capacity-route-error.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
 import type { ModelMessage } from "ai";
-import type { ResolvedExecutionBudgets } from "@mcpjam/sdk/contract";
+import { inputAnswersSchema, type ResolvedExecutionBudgets } from "@mcpjam/sdk/contract";
 import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
 import type { ConvexHttpClient } from "convex/browser";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
@@ -1102,6 +1102,9 @@ export const startSuiteRunWithRecorder = async ({
   // Build config from test cases for backward compatibility
   const config = {
     tests: testCases.flatMap((tc: any) => {
+      const inputAnswers = tc.inputAnswers === undefined
+        ? {}
+        : { inputAnswers: inputAnswersSchema.parse(tc.inputAnswers) };
       const successPredicates = resolvePredicatesForCase(tc);
       // Model-free step cases have no persisted models. Emit one sentinel row so
       // the runner executes and pairs the pre-created iteration by testCaseId.
@@ -1117,6 +1120,7 @@ export const startSuiteRunWithRecorder = async ({
             isNegativeTest: tc.isNegativeTest,
             expectedOutput: tc.expectedOutput,
             steps: tc.steps,
+            ...inputAnswers,
             advancedConfig: tc.advancedConfig,
             matchOptions: tc.matchOptions,
             successPredicates,
@@ -1148,6 +1152,7 @@ export const startSuiteRunWithRecorder = async ({
             isNegativeTest: tc.isNegativeTest,
             expectedOutput: tc.expectedOutput,
             steps: tc.steps,
+            ...inputAnswers,
             advancedConfig: tc.advancedConfig,
             matchOptions: tc.matchOptions,
             successPredicates,
@@ -1169,6 +1174,7 @@ export const startSuiteRunWithRecorder = async ({
             isNegativeTest: tc.isNegativeTest,
             expectedOutput: tc.expectedOutput,
             steps: tc.steps,
+            ...inputAnswers,
             advancedConfig: tc.advancedConfig,
             matchOptions: tc.matchOptions,
             successPredicates,

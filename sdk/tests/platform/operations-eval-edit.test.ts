@@ -257,6 +257,43 @@ describe("eval-edit operation execution", () => {
     expect(patch?.body).toEqual({ import: null });
   });
 
+  it("carries a case's replies to a server's question on create and update, null clearing them", async () => {
+    const { client, calls } = makeClient();
+    const inputAnswers = [
+      { message: "name", action: "accept" as const, content: { name: "Ada" } },
+      { action: "decline" as const },
+    ];
+    await createEvalCaseOperation.execute(
+      { suite: "s1", title: "Asks", inputAnswers },
+      { client }
+    );
+    expect(calls.find((c) => c.method === "POST")?.body?.inputAnswers).toEqual(
+      inputAnswers
+    );
+    await updateEvalCaseOperation.execute(
+      { suite: "s1", case: "c2", inputAnswers: null },
+      { client }
+    );
+    expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({
+      inputAnswers: null,
+    });
+  });
+
+  it("refuses a reply the suite file would refuse", () => {
+    const parse = (inputAnswers: unknown) =>
+      createEvalCaseOperation.inputSchema.safeParse({
+        suite: "s1",
+        title: "t",
+        inputAnswers,
+      }).success;
+    expect(parse([{ action: "accept", content: { a: "b" } }])).toBe(true);
+    expect(parse([{ action: "decline", content: { a: "b" } }])).toBe(false);
+    expect(parse([{ action: "maybe" }])).toBe(false);
+    expect(parse(Array.from({ length: 21 }, () => ({ action: "cancel" })))).toBe(
+      false
+    );
+  });
+
   it("update_eval_case forwards null to clear a scenario binding", async () => {
     const { client, calls } = makeClient();
     await updateEvalCaseOperation.execute(
