@@ -572,4 +572,35 @@ describe("daily bucket reset", () => {
     const { result } = renderHook(() => useOutOfCredits("daily-org"));
     expect(result.current).toBe(false);
   });
+
+  it("shows the next boundary after now for a reset days past", () => {
+    vi.useFakeTimers();
+    const day = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const staleReset = now - 2 * day + 1000;
+    mocks.convexAuth.isAuthenticated = true;
+    mocks.convexAuth.isLoading = false;
+    mocks.workosAuth.user = { id: "daily-owner" };
+    mocks.workosAuth.isLoading = false;
+    mocks.queryResult = {
+      billingModel: "daily",
+      freeDailyCreditsRemaining: 4,
+      freeDailyCreditsTotal: 300,
+      freeDailyResetAt: staleReset,
+      paidCreditsRemaining: 0,
+      perCallMinimumCredits: 25,
+    };
+    mocks.useQuery.mockImplementation(() => mocks.queryResult);
+    const { result, unmount } = renderHook(() =>
+      useCreditBalance({ organizationId: "daily-org" }),
+    );
+    expect(result.current.balance?.freeDailyCreditsRemaining).toBe(300);
+    expect(result.current.balance?.freeDailyResetAt).toBe(staleReset + 2 * day);
+    act(() => {
+      vi.advanceTimersByTime(1001);
+    });
+    expect(result.current.balance?.freeDailyResetAt).toBe(staleReset + 3 * day);
+    unmount();
+    vi.useRealTimers();
+  });
 });

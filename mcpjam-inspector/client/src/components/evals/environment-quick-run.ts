@@ -257,6 +257,32 @@ export function planQuickRunTargets(args: {
   });
 }
 
+/**
+ * The saved selection each planned target runs with: the reused
+ * environment's, or the one a derivation carries. Only that selection says
+ * whether the run spends MCPJam credits, since an organization model and the
+ * hosted one can share an id. A target missing from the map has no known
+ * selection (blocked, or the environment inherits its client's model).
+ */
+export function plannedTargetSelections(
+  plans: readonly QuickRunTargetPlan[],
+  attached: readonly ProjectEnvironmentView[],
+): Map<string, ModelSelection> {
+  const selections = new Map<string, ModelSelection>();
+  for (const plan of plans) {
+    const selection =
+      plan.kind === "reuse"
+        ? attached.find(
+            (environment) => environment.environmentId === plan.environmentId,
+          )?.modelSelection
+        : plan.kind === "derive"
+          ? plan.overrides.modelSelection
+          : undefined;
+    if (selection) selections.set(plan.key, selection);
+  }
+  return selections;
+}
+
 type ConvexLike = {
   query: (name: any, args: any) => Promise<unknown>;
   mutation: (name: any, args: any) => Promise<unknown>;

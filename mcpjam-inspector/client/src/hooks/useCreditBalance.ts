@@ -135,13 +135,21 @@ export const normalizeBalance = (
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
+/** The first daily boundary after `now`, counting whole days from `resetAt`. */
+const nextDailyReset = (resetAt: number, now: number): number =>
+  resetAt > now
+    ? resetAt
+    : resetAt + (Math.floor((now - resetAt) / MS_PER_DAY) + 1) * MS_PER_DAY;
+
 /**
  * The daily bucket is a fixed window that the backend refills at
  * `freeDailyResetAt`, computing the balance from the clock when queried.
  * Nothing is written at the reset, so the subscription does not re-run and an
  * open tab would keep the old window's balance and its model lock. Wake at the
  * reset and read the bucket as refilled. A view that mounts after the reset
- * reads the same cached snapshot, so a reset already past counts as crossed.
+ * reads the same cached snapshot, so a reset already past counts as crossed,
+ * and the shown reset moves to the next boundary after now, waking again at
+ * each one while the snapshot stays.
  */
 function useDailyReset(
   value: CreditBalanceState | undefined,
@@ -150,14 +158,15 @@ function useDailyReset(
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     if (!resetAt) return;
-    const wait = resetAt - Date.now();
-    if (wait <= 0) {
-      setNow(Date.now());
+    const current = Date.now();
+    if (resetAt <= current && now < resetAt) {
+      setNow(current);
       return;
     }
+    const wait = nextDailyReset(resetAt, current) - current;
     const timer = setTimeout(() => setNow(Date.now()), wait + 1);
     return () => clearTimeout(timer);
-  }, [resetAt]);
+  }, [resetAt, now]);
   return useMemo(
     () =>
       value && resetAt > 0 && resetAt <= now
@@ -165,7 +174,7 @@ function useDailyReset(
             ...value,
             freeDailyCreditsRemaining: value.freeDailyCreditsTotal,
             freeDailyPercentUsed: 0,
-            freeDailyResetAt: resetAt + MS_PER_DAY,
+            freeDailyResetAt: nextDailyReset(resetAt, now),
           }
         : value,
     [value, resetAt, now],
