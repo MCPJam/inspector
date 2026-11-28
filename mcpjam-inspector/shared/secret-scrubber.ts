@@ -468,9 +468,9 @@ export function createSecretScrubber(
    * server would recurse until the stack blew, turning a turn that used to
    * succeed into a 500.
    *
-   * The cap matches `payload-bounds.ts`'s `MAX_DEPTH` deliberately: a scrubber
-   * that gave up shallower would leave string leaves unscrubbed that bounding
-   * would happily keep.
+   * The cap matches `payload-prepare.ts`'s `MAX_DEPTH` deliberately: a
+   * scrubber that gave up shallower would leave string leaves unscrubbed that
+   * bounding would happily keep.
    */
   const MAX_SCRUB_DEPTH = 8;
   /**

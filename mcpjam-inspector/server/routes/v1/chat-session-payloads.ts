@@ -22,11 +22,11 @@
  */
 
 import type { SecretScrubber } from "../../utils/secrets/secret-scrubber";
-import { boundJson, underField, type TruncatedField } from "./payload-bounds";
+import { boundJson, type TruncatedField } from "./payload-bounds";
 
-/** Serialized ceiling for ONE tool call's input or output. */
+/** Serialized ceiling for ONE tool call's input or output, with its cuts. */
 export const MAX_TOOL_PAYLOAD_CHARS = 16_000;
-/** Serialized ceiling for ONE projected message's content. */
+/** Serialized ceiling for ONE projected message's content, with its cuts. */
 export const MAX_MESSAGE_PAYLOAD_CHARS = 24_000;
 /** Serialized ceiling for one page of projected messages. */
 export const MAX_MESSAGE_PAGE_CHARS = 96_000;
@@ -100,8 +100,10 @@ export function joinToolCalls(
     // `boundJson` scrubs the structured value BEFORE it cuts anything. Cutting
     // first could keep part of a credential that straddled the cut, and no
     // needle matches a fragment: partial is not safe, it is a shorter secret.
-    const input = boundJson(call.input, MAX_TOOL_PAYLOAD_CHARS, scrubber);
-    const inputCuts = underField("input", input.truncatedFields);
+    const input = boundJson(call.input, MAX_TOOL_PAYLOAD_CHARS, {
+      scrubber,
+      field: "input",
+    });
     if (!result) {
       return {
         toolCallId: call.toolCallId,
@@ -113,13 +115,13 @@ export function joinToolCalls(
         // lead an agent to different next moves.
         errorMessage:
           "No tool result was recorded for this call (the turn ended first).",
-        ...announceCuts(inputCuts),
+        ...announceCuts(input.truncatedFields),
       };
     }
     const output = boundJson(
       readToolOutput(result.output),
       MAX_TOOL_PAYLOAD_CHARS,
-      scrubber,
+      { scrubber, field: "output" },
     );
     return {
       toolCallId: call.toolCallId,
@@ -130,10 +132,7 @@ export function joinToolCalls(
         ? ("error" as const)
         : ("ok" as const),
       output: output.value,
-      ...announceCuts([
-        ...inputCuts,
-        ...underField("output", output.truncatedFields),
-      ]),
+      ...announceCuts([...input.truncatedFields, ...output.truncatedFields]),
     };
   });
 }
@@ -194,8 +193,9 @@ export interface PublicMessage {
  *
  * The page stops before the message that would take its JSON past
  * MAX_MESSAGE_PAGE_CHARS, but always holds at least one, so paging moves on.
- * It can therefore hold fewer messages than it was given, and the caller
- * pages on from the number it returns.
+ * That one is bounded too: its content and cut list fit
+ * MAX_MESSAGE_PAYLOAD_CHARS. A page can hold fewer messages than it was
+ * given, and the caller pages on from the number it returns.
  */
 export function projectMessages(
   messages: readonly unknown[],
@@ -222,11 +222,12 @@ function projectMessage(message: unknown, index: number): PublicMessage {
   const bounded = boundJson(
     record.content ?? record.parts ?? message,
     MAX_MESSAGE_PAYLOAD_CHARS,
+    { field: "content" },
   );
   return {
     index,
     role: typeof record.role === "string" ? record.role : "unknown",
     content: bounded.value,
-    ...announceCuts(underField("content", bounded.truncatedFields)),
+    ...announceCuts(bounded.truncatedFields),
   };
 }

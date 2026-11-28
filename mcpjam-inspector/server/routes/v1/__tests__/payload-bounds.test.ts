@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createSecretScrubber } from "../../../utils/secrets/secret-scrubber.js";
-import { boundJson, underField } from "../payload-bounds.js";
+import { boundJson } from "../payload-bounds.js";
 
 /**
  * `boundJson` shortens a payload INSIDE the value, so the result is still the
@@ -12,6 +12,13 @@ const LENGTH_MARKER = /…\[\+(\d+) chars\]$/;
 const ITEMS_MARKER = /^…\[\+(\d+) items\]$/;
 
 const jsonLength = (value: unknown) => JSON.stringify(value).length;
+
+/** `count` objects at the depth cap, beneath `key` and six levels of `n`. */
+function deepRows(key: string, count: number): Record<string, unknown> {
+  let rows: unknown = Array.from({ length: count }, (_, i) => ({ i }));
+  for (let level = 0; level < 6; level++) rows = { n: rows };
+  return { [key]: rows };
+}
 
 /** The characters a shortened string kept, and the count its marker claims. */
 function splitShortened(text: unknown): { kept: string; removed: number } {
@@ -70,9 +77,28 @@ describe("boundJson", () => {
     expect(result.truncatedFields).toEqual([
       { path: "text", reason: "length", originalLength: 10_000 },
     ]);
-    expect(jsonLength(result.value)).toBeLessThanOrEqual(2_000);
-    // The cap is the LARGEST that fits, not merely one that does.
-    expect(jsonLength(result.value)).toBeGreaterThan(1_990);
+    // The value and its list fit, and the cap is the LARGEST that does, not
+    // merely one that does.
+    const total = jsonLength(result.value) + jsonLength(result.truncatedFields);
+    expect(total).toBeLessThanOrEqual(2_000);
+    expect(total).toBeGreaterThan(1_990);
+  });
+
+  it("keeps a string whole when cutting it would not pay for its entry", () => {
+    // Cut to the cap, `b` would save less than its marker and its entry in
+    // the list cost, so it stays whole and only `a` is listed.
+    const result = boundJson({ a: "x".repeat(5_000), b: "y".repeat(150) }, 350);
+
+    expect(result.value).toEqual({
+      a: expect.stringMatching(LENGTH_MARKER),
+      b: "y".repeat(150),
+    });
+    expect(result.truncatedFields).toEqual([
+      { path: "a", reason: "length", originalLength: 5_000 },
+    ]);
+    expect(
+      jsonLength(result.value) + jsonLength(result.truncatedFields),
+    ).toBeLessThanOrEqual(350);
   });
 
   it("shortens many strings to one cap and lists every one", () => {
@@ -80,7 +106,8 @@ describe("boundJson", () => {
       id: `n${index}`,
       body: "b".repeat(500),
     }));
-    const result = boundJson({ items }, 8_000);
+    // Room for the 40 paths listed beside the value, about 2,600 characters.
+    const result = boundJson({ items }, 10_000);
 
     const bounded = (result.value as { items: typeof items }).items;
     expect(bounded).toHaveLength(40);
@@ -95,7 +122,9 @@ describe("boundJson", () => {
         originalLength: 500,
       })),
     );
-    expect(jsonLength(result.value)).toBeLessThanOrEqual(8_000);
+    expect(
+      jsonLength(result.value) + jsonLength(result.truncatedFields),
+    ).toBeLessThanOrEqual(10_000);
   });
 
   it("keeps the first items of a long array, ending in …[+N items]", () => {
@@ -208,15 +237,17 @@ describe("boundJson", () => {
   });
 
   it("quotes keys that are not identifiers and indexes arrays in paths", () => {
-    const result = boundJson({ "a b": ["short", "y".repeat(5_000)] }, 1_000);
-    expect(result.truncatedFields).toEqual([
+    const value = { "a b": ["short", "y".repeat(5_000)] };
+    expect(boundJson(value, 1_000).truncatedFields).toEqual([
       { path: '["a b"][1]', reason: "length", originalLength: 5_000 },
     ]);
-    expect(underField("output", result.truncatedFields)).toEqual([
+    // With `field`, each path starts at the field the record holds it in.
+    const output = boundJson(value, 1_000, { field: "output" });
+    expect(output.truncatedFields).toEqual([
       { path: 'output["a b"][1]', reason: "length", originalLength: 5_000 },
     ]);
-    const root = boundJson("x".repeat(5_000), 1_000).truncatedFields;
-    expect(underField("content", root)).toEqual([
+    const root = boundJson("x".repeat(5_000), 1_000, { field: "content" });
+    expect(root.truncatedFields).toEqual([
       { path: "content", reason: "length", originalLength: 5_000 },
     ]);
   });
@@ -242,7 +273,7 @@ describe("boundJson", () => {
       // path is listed too.
       [value]: "z".repeat(1_000),
     };
-    const result = boundJson(payload, 1_500, scrubber);
+    const result = boundJson(payload, 1_500, { scrubber });
 
     const cut = splitShortened(
       (result.value as { filler: string[] }).filler[0],
@@ -258,5 +289,89 @@ describe("boundJson", () => {
       originalLength: 1_000,
     });
     expect(jsonLength(result.value)).toBeLessThanOrEqual(1_500);
+  });
+
+  it("keeps both fields when a scrubbed key lands on a key already there", () => {
+    const value = `sk_live_${"c".repeat(32)}`;
+    const scrubber = createSecretScrubber([{ name: "KEY", value }])!;
+    const result = boundJson(
+      { [value]: "redacted", "[secret:KEY]": "literal" },
+      1_000,
+      { scrubber },
+    );
+    // The key scrubbing left alone keeps its name; the redacted one moves.
+    expect(Object.entries(result.value as object)).toEqual([
+      ["[secret:KEY]#2", "redacted"],
+      ["[secret:KEY]", "literal"],
+    ]);
+    expect(JSON.stringify(result)).not.toContain(value);
+
+    // Two keys holding different escaped forms of one value collide too.
+    const quoted = createSecretScrubber([
+      { name: "Q", value: 'quote"secret' },
+    ])!;
+    const forms = boundJson({ 'quote"secret': 1, 'quote\\"secret': 2 }, 1_000, {
+      scrubber: quoted,
+    });
+    expect(forms.value).toEqual({ "[secret:Q]": 1, "[secret:Q]#2": 2 });
+  });
+
+  it("counts the cut list against the ceiling, even beneath a long key", () => {
+    // Each depth marker fits the value, but each path repeats the
+    // 12,000-character key: listing all 480 took about 5.8 million
+    // characters. No cut beneath the key fits beside its path, so the root
+    // reports the omission.
+    const result = boundJson(deepRows("k".repeat(12_000), 480), 24_000);
+
+    expect(
+      jsonLength(result.value) + jsonLength(result.truncatedFields),
+    ).toBeLessThanOrEqual(24_000);
+    expect(result).toEqual({
+      value: {},
+      truncated: true,
+      truncatedFields: [{ path: "", reason: "items", originalLength: 1 }],
+    });
+  });
+
+  it("keeps each cut's path when the value and its list fit together", () => {
+    // 400 depth markers fit 16,000 characters, but not with a path apiece.
+    // The array keeps the rows whose markers and paths fit, and reports the
+    // rest with one cut of its own.
+    const result = boundJson(deepRows("rows", 400), 16_000);
+
+    const path = "rows.n.n.n.n.n.n";
+    const kept = result.truncatedFields.length - 1;
+    expect(kept).toBeGreaterThan(150);
+    expect(result.truncatedFields).toEqual([
+      { path, reason: "items", originalLength: 400 },
+      ...Array.from({ length: kept }, (_, i) => ({
+        path: `${path}[${i}]`,
+        reason: "depth",
+      })),
+    ]);
+    expect(
+      jsonLength(result.value) + jsonLength(result.truncatedFields),
+    ).toBeLessThanOrEqual(16_000);
+  });
+
+  it("tries the item caps where arrays become whole", () => {
+    // At cap 1 each [0, 0] prints as [0,"…[+1 items]"], longer than the pair,
+    // so cap 1 does not fit where cap 2 does. A search that gave up at cap 1
+    // fell back to cutting the object, and `last` went missing.
+    const pairs = Object.fromEntries(
+      [..."abcdefghijklmnopqrstuvwxyz"].map((key) => [key, [0, 0]]),
+    );
+    const result = boundJson(
+      { ...pairs, last: [0, 0, "x".repeat(1_000)] },
+      350,
+    );
+
+    expect(result.value).toEqual({ ...pairs, last: [0, 0, "…[+1 items]"] });
+    expect(result.truncatedFields).toEqual([
+      { path: "last", reason: "items", originalLength: 3 },
+    ]);
+    expect(
+      jsonLength(result.value) + jsonLength(result.truncatedFields),
+    ).toBeLessThanOrEqual(350);
   });
 });
