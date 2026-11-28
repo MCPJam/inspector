@@ -7,6 +7,7 @@ import {
   type MCPCheckId,
   type MCPCheckResult,
 } from "../../src/mcp-conformance/index.js";
+import { parseSseEvents } from "../../src/mcp-conformance/raw-capture.js";
 import {
   createFixtureHandler,
   type BuildFixtureServerOptions,
@@ -383,6 +384,88 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
     for (const id of MODERN_PASSING) {
       expect(byId(pinned.checks, id).status).toBe("passed");
     }
+  });
+});
+
+describe("Tool Input Schemas Valid", () => {
+  const checkId = "tools-input-schemas-valid";
+  const invalid = { type: "object", properties: { name: { type: 42 } } };
+  const draft07 = {
+    $schema: "http://json-schema.org/draft-07/schema#",
+    type: "object",
+    properties: { pair: { type: "array", items: [{ type: "string" }] } },
+  };
+  const externalRef = {
+    type: "object",
+    properties: { name: { $ref: "https://example.com/schemas/name.json" } },
+  };
+  const embeddedRef = {
+    ...externalRef,
+    $defs: {
+      name: { $id: "https://example.com/schemas/name.json", type: "string" },
+    },
+  };
+  const brokenLocalRef = { type: "object", $ref: "#/$defs/missing" };
+  const externalDynamicRef = {
+    type: "object",
+    $dynamicRef: "https://example.com/schemas/name.json#name",
+  };
+  const mixed = [invalid, externalRef];
+
+  it.each([
+    ["2025-03-26", invalid, "passed"],
+    ["2025-06-18", invalid, "passed"],
+    ["2025-11-25", invalid, "failed"],
+    ["2026-07-28", invalid, "failed"],
+    [undefined, invalid, "failed"],
+    ["2025-11-25", undefined, "passed"],
+    ["2026-07-28", undefined, "passed"],
+    ["2026-07-28", draft07, "passed"],
+    ["2026-07-28", { ...draft07, $schema: "https://json-schema.org/draft/2019-09/schema" }, "skipped"],
+    ["2025-06-18", externalRef, "passed"],
+    ["2025-11-25", externalRef, "skipped"],
+    ["2026-07-28", externalRef, "skipped"],
+    ["2026-07-28", embeddedRef, "passed"],
+    ["2026-07-28", brokenLocalRef, "failed"],
+    ["2026-07-28", externalDynamicRef, "skipped"],
+    ["2026-07-28", mixed, "failed"],
+  ] as const)("on %s with schema %j returns %s", async (protocolVersion, inputSchema, status) => {
+    const handler = createFixtureHandler();
+    const result = await new MCPConformanceTest({
+      serverUrl: "http://localhost/mcp",
+      protocolVersion,
+      checkIds: [checkId],
+      readinessIds: [],
+      fetchFn: async (input, init) => {
+        const request = new Request(input, init);
+        const method = request.method === "POST" ? (await request.clone().json()).method : undefined;
+        const response = await handler.fetch(request);
+        if (method !== "tools/list" || !inputSchema) return response;
+
+        const isSse = response.headers.get("content-type")?.includes("text/event-stream");
+        const body = isSse
+          ? JSON.parse(parseSseEvents(await response.text()).find(({ data }) => data)?.data ?? "")
+          : await response.json();
+        if (inputSchema === mixed) {
+          body.result.tools[0].inputSchema = invalid;
+          body.result.tools.push({ name: "unsupported", inputSchema: externalRef });
+        } else {
+          body.result.tools[0].inputSchema = inputSchema;
+        }
+        if (isSse) {
+          return new Response(`event: message\ndata: ${JSON.stringify(body)}\n\n`, response);
+        }
+        return Response.json(body, { headers: response.headers });
+      },
+    }).run();
+    const check = byId(result.checks, checkId);
+    expect(check.status, check.error?.message).toBe(status);
+    if (status === "failed" && (inputSchema === invalid || inputSchema === mixed)) {
+      expect(check.error?.message).toContain("inputSchema/properties/name/type");
+    }
+    if (inputSchema === brokenLocalRef) expect(check.error?.message).toContain("no target schema in the local document");
+    if (inputSchema === mixed) expect(check.details?.unsupported).toMatchObject([{ tool: "unsupported" }]);
+    if (status === "skipped") expect(check.skipReason).toBe("could-not-run");
   });
 });
 

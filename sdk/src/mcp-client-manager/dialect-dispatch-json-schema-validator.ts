@@ -38,6 +38,13 @@ const DRAFT_07_URIS = new Set([
   "http://json-schema.org/draft-07/schema",
 ]);
 
+export function supportedJsonSchemaDialect(declared: string | undefined) {
+  const uri = declared?.replace(/#$/, "");
+  if (uri === undefined || DRAFT_2020_12_URIS.has(uri)) return "draft2020";
+  if (DRAFT_07_URIS.has(uri)) return "draft07";
+  return undefined;
+}
+
 export interface DialectAwareJsonSchemaValidatorOptions {
   /**
    * Called when a schema declares a dialect that is neither 2020-12 nor
@@ -89,15 +96,14 @@ export class DialectDispatchingJsonSchemaValidator
 
   getValidator<T>(schema: JsonSchemaType): JsonSchemaValidator<T> {
     const declared =
-      typeof schema.$schema === "string"
-        ? schema.$schema.replace(/#$/, "")
-        : undefined;
+      typeof schema.$schema === "string" ? schema.$schema : undefined;
+    const supportedDialect = supportedJsonSchemaDialect(declared);
 
-    if (declared === undefined || DRAFT_2020_12_URIS.has(declared)) {
+    if (supportedDialect === "draft2020") {
       this.draft2020Validator ??= this.engines.draft2020();
       return this.draft2020Validator.getValidator(schema);
     }
-    if (DRAFT_07_URIS.has(declared)) {
+    if (supportedDialect === "draft07") {
       this.draft07Validator ??= this.engines.draft07();
       return this.draft07Validator.getValidator(schema);
     }

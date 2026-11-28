@@ -1,5 +1,11 @@
 import type { MCPClientCheckDefinition } from "../types.js";
-import { caughtErrorResult, failedResult, passedResult } from "./helpers.js";
+import {
+  caughtErrorResult,
+  couldNotRunResult,
+  failedResult,
+  passedResult,
+} from "./helpers.js";
+import { checkToolInputSchema } from "./tool-input-schema.js";
 
 export const TOOL_CHECKS: MCPClientCheckDefinition[] = [
   {
@@ -49,9 +55,12 @@ export const TOOL_CHECKS: MCPClientCheckDefinition[] = [
     category: "tools",
     title: "Tool Input Schemas Valid",
     description:
-      "Every tool's inputSchema has type \"object\" and valid properties/required fields.",
+      "Checks tool input schema shape and, from MCP 2025-11-25, validity in its JSON Schema dialect.",
     async run(ctx) {
       const startedAt = Date.now();
+      const { protocolVersion } = ctx.config;
+      const checkDialect =
+        protocolVersion !== undefined && protocolVersion >= "2025-11-25";
       try {
         const result = await ctx.manager.listTools(ctx.serverId, undefined, {
           cacheMode: "bypass",
@@ -66,6 +75,7 @@ export const TOOL_CHECKS: MCPClientCheckDefinition[] = [
         }
 
         const violations: Array<{ tool: string; reason: string }> = [];
+        const unsupported: typeof violations = [];
 
         for (const tool of tools) {
           const schema = tool.inputSchema as Record<string, unknown> | undefined;
@@ -74,6 +84,7 @@ export const TOOL_CHECKS: MCPClientCheckDefinition[] = [
             continue;
           }
 
+          const violationCount = violations.length;
           if (
             schema.type !== undefined &&
             schema.type !== "object"
@@ -105,6 +116,15 @@ export const TOOL_CHECKS: MCPClientCheckDefinition[] = [
               reason: "inputSchema.required is not an array",
             });
           }
+
+          if (checkDialect && violations.length === violationCount) {
+            const issue = checkToolInputSchema(schema);
+            if (issue) {
+              const findings =
+                issue.status === "invalid" ? violations : unsupported;
+              findings.push({ tool: tool.name, reason: issue.reason });
+            }
+          }
         }
 
         if (violations.length > 0) {
@@ -112,7 +132,15 @@ export const TOOL_CHECKS: MCPClientCheckDefinition[] = [
             this,
             Date.now() - startedAt,
             `${violations.length} tool(s) have invalid inputSchema: ${violations.map((v) => `${v.tool} (${v.reason})`).join(", ")}`,
-            { violations },
+            { violations, ...(unsupported.length > 0 ? { unsupported } : {}) },
+          );
+        }
+
+        if (unsupported.length > 0) {
+          return couldNotRunResult(
+            this,
+            `Could not validate inputSchema for ${unsupported.map(({ tool, reason }) => `${tool} (${reason})`).join(", ")}`,
+            { unsupported },
           );
         }
 

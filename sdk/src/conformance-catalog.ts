@@ -63,7 +63,7 @@ export const PROTOCOL_CHECK_CATALOG = {
   "tools-input-schemas-valid": {
     title: "Tool Input Schemas Valid",
     description:
-      'Every tool\'s inputSchema has type "object" and valid properties/required fields.',
+      "Checks tool input schema shape and, from MCP 2025-11-25, validity in its JSON Schema dialect.",
   },
   "tools-x-mcp-header-declarations-valid": {
     title: "x-mcp-header Declarations Valid",
