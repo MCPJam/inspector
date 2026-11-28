@@ -19,7 +19,7 @@ import { AlertCircle, BellPlus, Loader2, Radio, RefreshCw } from "lucide-react";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
 import { EmptyState } from "./ui/empty-state";
 import { track } from "@/lib/analytics";
-import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
+import { buildHostsPath, routePaths, useAppNavigate } from "@/lib/app-navigation";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import {
   getApiContextRevision,
@@ -44,7 +44,7 @@ import type {
   EventsSlotStateResponse,
   EventsSubscriptionView,
 } from "@/shared/events-api";
-import { CapabilityPanel } from "./events/CapabilityPanel";
+import { EventsEmptyHero } from "./events/EventsEmptyHero";
 import type { SubscriptionAction } from "./events/SubscriptionsPanel";
 import { EventsHeader } from "./events/EventsTabSections";
 import { EventsSidebar, type EventsBrowseTab } from "./events/EventsSidebar";
@@ -569,13 +569,20 @@ export function EventsTab({
   );
 
   // ── render ──────────────────────────────────────────────────────────────
-  if (!hasServer) {
+  const unsupportedCatalog =
+    connected && catalogState === "ready" && catalog && !catalog.support.declared
+      ? catalog
+      : undefined;
+  if (!hasServer || unsupportedCatalog) {
     return (
-      <EmptyState
-        icon={Radio}
-        title="No Server Selected"
-        description="Connect to an MCP server to inspect the events it declares."
-      />
+      <div className="flex h-full min-h-0 flex-col">
+        <EventsHeader />
+        <EventsEmptyHero
+          serverName={serverName}
+          catalog={unsupportedCatalog}
+          onOpenServers={() => navigate(routePaths.servers)}
+        />
+      </div>
     );
   }
 
@@ -611,23 +618,6 @@ export function EventsTab({
       <div className="flex h-full items-center justify-center gap-2 text-xs text-muted-foreground">
         <Loader2 className="h-4 w-4 animate-spin" />
         Reading events support…
-      </div>
-    );
-  }
-
-  if (!catalog.support.declared) {
-    return (
-      <div className="flex h-full flex-col overflow-auto">
-        <EventsHeader />
-        <EmptyState
-          icon={Radio}
-          className="py-12"
-          title="This server does not declare events"
-          description="Ask the server's maintainer to turn events on."
-        />
-        <div className="mx-auto w-full max-w-2xl px-5 pb-8">
-          <CapabilityPanel catalog={catalog} />
-        </div>
       </div>
     );
   }
