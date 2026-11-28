@@ -1,6 +1,6 @@
 import type { MockIssue, MockIssueCode } from "./validate-definition.js";
 import { MCP_APP_MIME_TYPE } from "./definition-types.js";
-import { templateVariables } from "./uri-template.js";
+import { templateVariables } from "../server/uri-template.js";
 
 /**
  * The shape checks for `prompts`, `resources` and `resourceTemplates`, called

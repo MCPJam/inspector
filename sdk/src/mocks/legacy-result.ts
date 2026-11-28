@@ -1,4 +1,4 @@
-import { MODERN_REVISION } from "./revision.js";
+import { MODERN_REVISION } from "../server/revision.js";
 
 /** The `_meta` key 2026-07-28 uses for the responding server's name and version. */
 const SERVER_INFO_META_KEY = "io.modelcontextprotocol/serverInfo";
