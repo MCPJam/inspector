@@ -51,6 +51,7 @@ import {
   streamEvalTestCaseWithManager,
 } from "../evals";
 import { WebRouteError } from "../../web/errors";
+import { QUICK_RUN_GRADING_MODE } from "../../../services/evals/grading-mode";
 
 const RESOLVED = {
   environmentRef: { environmentId: "env-1", name: "Prod", revision: 3 },
@@ -253,6 +254,22 @@ describe("environment quick runs", () => {
       "testSuites:listTestIterations",
       expect.anything(),
     );
+  });
+
+  it("grades a quick run at the quick-run mode, since no suite run froze one", async () => {
+    await runEvalTestCaseWithManager(clientManager as never, baseRequest());
+    const params = runEvalSuiteMock.mock.calls[0]![0] as Record<string, any>;
+    expect(params.gradingMode).toBe(QUICK_RUN_GRADING_MODE);
+  });
+
+  it("grades a streamed quick run at the quick-run mode too", async () => {
+    const stream = await streamEvalTestCaseWithManager(
+      clientManager as never,
+      baseRequest(),
+    );
+    await drain(stream);
+    const params = streamTestCaseMock.mock.calls[0]![0] as Record<string, any>;
+    expect(params.gradingMode).toBe(QUICK_RUN_GRADING_MODE);
   });
 
   it("refuses a client configuration override before touching the backend", async () => {

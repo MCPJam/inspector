@@ -59,7 +59,6 @@ import {
 import {
   isDualWrite,
   isEnforcing,
-  resolveGradingEngineMode,
   type GradingEngineMode,
 } from "./grading-mode.js";
 import {
@@ -754,9 +753,8 @@ export function buildIterationFinishParams(args: {
   setupAudit?: Record<string, unknown>;
   injectOpenAiCompat?: boolean;
   /**
-   * The run's resolved grading-engine mode. ABSENT ⇒ resolve from the env kill
-   * switch alone, which is `off` unless an operator set it, so a caller that
-   * knows nothing about the score engine keeps today's payload byte for byte.
+   * The run's resolved grading-engine mode. ABSENT ⇒ `off`, so a caller that
+   * knows nothing about the score engine keeps its payload byte for byte.
    *
    *   `off`        → no score keys at all.
    *   `shadow`     → `scoresShadow` / `evaluationConfigShadow` ONLY.
@@ -843,7 +841,7 @@ export function buildIterationFinishParams(args: {
     isNegativeTest,
     selectionTools,
   } = args;
-  const gradingMode = args.gradingMode ?? resolveGradingEngineMode();
+  const gradingMode = args.gradingMode ?? "off";
   const persistedSpans = [...(setupSpans ?? []), ...(spans ?? [])];
   const stageMetadata = buildStageMetadata({
     ...(stageCase ? { stageCase } : {}),

@@ -210,7 +210,6 @@ import {
   createComputerBrowserFramesWsHandler,
   shutdownBrowserFrameSockets,
 } from "./routes/web/computer-browser-frames.js";
-import { logGradingEngineModeOnce } from "./services/evals/grading-mode.js";
 import { logGuestAuthorityOnce } from "./utils/guest-authority.js";
 import v1Routes from "./routes/v1/index";
 import slackLinkRoutes from "./routes/slack-link/index";
@@ -351,9 +350,6 @@ try {
 const loadedEnv = loadInspectorEnv(__dirname);
 warnOnConvexDevMisconfiguration(loadedEnv);
 void startPluginFormFileJanitor(!HOSTED_MODE);
-// One line, after the env is loaded: which grading-engine mode this process
-// could reach. Mirror of the call in server/app.ts.
-logGradingEngineModeOnce();
 logGuestAuthorityOnce(appLogger);
 
 // Immediately after the env load and before anything that can throw: the init

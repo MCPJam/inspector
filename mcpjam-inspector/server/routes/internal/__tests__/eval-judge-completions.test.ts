@@ -1,12 +1,11 @@
 /**
- * The judge doorbell, and the three gates in front of the second pass.
+ * The judge doorbell, and what stands in front of the second pass.
  *
- * THE MODE GATE IS THE POINT. W2's `saveGoalCompletion` rings this doorbell on
- * every judge save without consulting the grading-engine mode, so the moment
- * the route exists in production it is called on every judged run whatever the
- * flag says. "Ships at off" is therefore a property of THIS ROUTE, not of the
- * flag, and the assertion that proves it is that at `off` the second pass is
- * never even invoked.
+ * THE MODE CHECK LIVES IN THE PASS, NOT THE ROUTE. `saveGoalCompletion` rings
+ * this doorbell on every judge save without consulting the grading-engine
+ * mode, and the route cannot see the run's snapshot. It therefore starts the
+ * pass for every run, whatever this process's environment says, and the pass
+ * settles a no-op fanout when the run it reads is `off` or `shadow`.
  *
  * The auth assertions mirror `server-connections.test.ts` and the real mount
  * order (session auth on `*` first), because the carve-out that lets a
@@ -43,7 +42,6 @@ const { default: internalEvalJudgeCompletions } = await import(
 
 const SERVICE_TOKEN = "test-inspector-service-token";
 const authed = { "x-inspector-service-token": SERVICE_TOKEN };
-const ENV_KEY = "MCPJAM_GRADING_ENGINE_MODE";
 
 /** The entrypoint wiring, in the order `app.ts` and `index.ts` apply it. */
 function createApp(): Hono {
@@ -68,7 +66,6 @@ function ring(
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("INSPECTOR_SERVICE_TOKEN", SERVICE_TOKEN);
-  vi.stubEnv(ENV_KEY, "dual_write");
   worker.runJudgeSecondPass.mockResolvedValue({ graded: 0 });
 });
 
@@ -124,39 +121,25 @@ describe("authorization", () => {
   });
 });
 
-describe("the mode gate", () => {
-  it("at off, starts the pass so it can settle no-op fanouts", async () => {
-    vi.stubEnv(ENV_KEY, "off");
+describe("the mode check", () => {
+  it.each(["off", "shadow", "enforce", ""])(
+    "starts the pass with the retired MCPJAM_GRADING_ENGINE_MODE at %j, so a no-op fanout can settle",
+    async (value) => {
+      // The route cannot see the run's snapshot, so the mode check lives in the
+      // pass, which reads the run's own stamp. Entering it is correct whatever
+      // this process's environment holds; writing is not the route's call.
+      vi.stubEnv("MCPJAM_GRADING_ENGINE_MODE", value);
 
-    const res = await ring(createApp(), { runId: "run1" }, authed);
+      const res = await ring(createApp(), { runId: "run1" }, authed);
 
-    expect(res.status).toBe(202);
-    await expect(res.json()).resolves.toEqual({
-      ok: true,
-      accepted: true,
-    });
-    expect(worker.runJudgeSecondPass).toHaveBeenCalledWith("run1");
-  });
-
-  it("an unset env var still dispatches the no-op settlement", async () => {
-    vi.stubEnv(ENV_KEY, "");
-
-    const res = await ring(createApp(), { runId: "run1" }, authed);
-
-    expect(res.status).toBe(202);
-    expect(worker.runJudgeSecondPass).toHaveBeenCalledWith("run1");
-  });
-
-  it("at shadow the pass is entered — and no-ops there, where the run is known", async () => {
-    // The route cannot see the run's snapshot, so the second (authoritative)
-    // mode check lives in the pass. Entering it is correct; writing is not.
-    vi.stubEnv(ENV_KEY, "shadow");
-
-    const res = await ring(createApp(), { runId: "run1" }, authed);
-
-    expect(res.status).toBe(202);
-    expect(worker.runJudgeSecondPass).toHaveBeenCalledWith("run1");
-  });
+      expect(res.status).toBe(202);
+      await expect(res.json()).resolves.toEqual({
+        ok: true,
+        accepted: true,
+      });
+      expect(worker.runJudgeSecondPass).toHaveBeenCalledWith("run1");
+    }
+  );
 });
 
 describe("body handling", () => {

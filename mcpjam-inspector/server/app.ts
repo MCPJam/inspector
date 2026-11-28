@@ -32,7 +32,6 @@ import {
   killBrowserFrameSockets,
   shutdownBrowserFrameSockets,
 } from "./routes/web/computer-browser-frames.js";
-import { logGradingEngineModeOnce } from "./services/evals/grading-mode.js";
 import { logGuestAuthorityOnce } from "./utils/guest-authority.js";
 import v1Routes from "./routes/v1/index.js";
 import cliAuthRoutes from "./routes/cli-auth/index.js";
@@ -154,10 +153,6 @@ export async function createHonoApp() {
   const loadedEnv = loadInspectorEnv(__dirname);
   warnOnConvexDevMisconfiguration(loadedEnv);
   void startPluginFormFileJanitor(!HOSTED_MODE);
-  // One line, after the env is loaded: which grading-engine mode this process
-  // could reach. An operator debugging "why are there no score rows" should
-  // find the answer in the log, not in a flag dashboard.
-  logGradingEngineModeOnce();
   logGuestAuthorityOnce(appLogger);
 
   // Under Electron this process IS the main process, and it is the one that

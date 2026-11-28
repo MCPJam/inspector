@@ -24,8 +24,6 @@ vi.mock("../shadow-mismatch.js", async () => {
 
 const { buildIterationFinishParams } = await import("../finalize-iteration.js");
 
-const ENV_KEY = "MCPJAM_GRADING_ENGINE_MODE";
-
 const stageCase: StageAuthoredCase = {
   mode: "model_driven",
   expectsToolCall: true,
@@ -170,7 +168,6 @@ const SCORE_KEYS = [
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.stubEnv(ENV_KEY, "off");
 });
 
 afterEach(() => {
@@ -188,8 +185,8 @@ describe("off is byte-identical to before this wave", () => {
     }
   );
 
-  test("an unrecognized env value is off, not a mode", () => {
-    vi.stubEnv(ENV_KEY, "DUAL-WRITE-PLEASE");
+  test("an absent mode is off, whatever the process environment says", () => {
+    vi.stubEnv("MCPJAM_GRADING_ENGINE_MODE", "enforce");
     const metadata = build(fixtures[0]!).metadata as Record<string, unknown>;
     for (const key of SCORE_KEYS) expect(metadata).not.toHaveProperty(key);
   });
