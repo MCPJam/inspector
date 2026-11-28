@@ -129,11 +129,6 @@
       "count": 2
     }
   },
-  "client/src/components/chat-v2/thread/checkout-dialog.tsx": {
-    "react-hooks/exhaustive-deps": {
-      "count": 1
-    }
-  },
   "client/src/components/chat-v2/thread/mcp-apps/__tests__/mcp-apps-renderer.test.tsx": {
     "react-hooks/exhaustive-deps": {
       "count": 1

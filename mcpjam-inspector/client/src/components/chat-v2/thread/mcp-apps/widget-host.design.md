@@ -160,7 +160,7 @@ reads for a single `useWidgetHost()`.
 | **3a** | Finish the in-place DI: invert the **modal** — the last app-state island (it builds its own AppBridge and read `useActiveMcpProfile`/`useWebManagedServers`/`resolveHostInfo`). Resolved `hostInfo`/`webManagedServers` now flow down as props. | med |
 | **3b** ✅ | Invert the remaining app-state islands + lock the guard. `widget-replay` host-support gate → injected `resolveHostSupportsWidget` prop (PartSwitch, which already owns the identical gate, binds it — preserves WidgetReplay's `serverId` semantics without `@/contexts` / `@/lib/host-capabilities`, and matches the 3d seam: inspector owns host policy, package component applies it). `app-tools-registry` traffic logging → injected `addTrafficLog` callback supplied by the chat/playground dispatch hooks (registry drops `@/stores`). `useToolInputStreaming` / `widget-replay` type-only imports → contract module. Tier-B guard extended to 7 cluster files. | low–med |
 | **3c** | Scaffold `@mcpjam/widget-react` and prove the **full** integration contract: source alias, build order, package guard, CSS/runtime imports, and a tiny inspector consumer through the same provider/adapter path the bulk move will use. | low |
-| **3d** | Relocate the renderer + cluster into the package; the package owns the `WidgetHost` React context + `useWidgetHost()` *contract* while the inspector supplies the concrete host via a **provider/adapter**; inject the modal chrome + `checkout-dialog` via `components.Modal` (drops `@mcpjam/design-system` from the modal); move the deferred service/config couplings onto `services`/`surface` — `widget-file-messages` `authFetch`, the `SANDBOX_ORIGIN`/`HOSTED_MODE` consts, and `sandboxed-iframe`'s `@/lib/client-config` — so the modal + sandboxed-iframe can join the guard; fold `environment`+`resolvers` into a real `resolveEnvironment`; inspector files become shims. | med |
+| **3d** | Relocate the renderer + cluster into the package; the package owns the `WidgetHost` React context + `useWidgetHost()` *contract* while the inspector supplies the concrete host via a **provider/adapter**; inject the modal chrome + `checkout-dialog-v2` via `components.Modal` (drops `@mcpjam/design-system` from the modal); move the deferred service/config couplings onto `services`/`surface` — `widget-file-messages` `authFetch`, the `SANDBOX_ORIGIN`/`HOSTED_MODE` consts, and `sandboxed-iframe`'s `@/lib/client-config` — so the modal + sandboxed-iframe can join the guard; fold `environment`+`resolvers` into a real `resolveEnvironment`; inspector files become shims. | med |
 
 ## Package shape (decided)
 
@@ -186,7 +186,7 @@ Decisions locked for Phase 3:
   prefer package-local/structural types otherwise.
 - **Modal seam:** the package owns widget lifecycle + bridge; `components.Modal`
   receives children/state/callbacks only — the inspector keeps the portal/chrome
-  (`design-system` dialog), billing, and `checkout-dialog`.
+  (`design-system` dialog), billing, and `checkout-dialog-v2`.
 - **detectUIType:** verify the inspector's `MCP_UI` inline-resource branch
   matches chat-ui's pure detector, then share chat-ui's `UIType` vocabulary;
   defer collapsing the inspector's parallel `PartSwitch` to Phase 4.
