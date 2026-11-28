@@ -223,13 +223,32 @@ describe("explicit saved local target", () => {
     expect(
       resolveLocalFilePath(contract, "saved", "/etc/hosts"),
     ).toBeUndefined();
+    expect(
+      resolveLocalFilePath(contract, "saved", target.relativePath),
+    ).toBeUndefined();
+    if (process.platform === "win32") {
+      // Servers on Windows send either separator for the same file.
+      const forward = path
+        .join(root, target.relativePath)
+        .replaceAll("\\", "/");
+      expect(resolveLocalFilePath(contract, "saved", forward)).toEqual(target);
+      expect(
+        resolveLocalFilePath(contract, "saved", `${forward}/../other.cad`),
+      ).toBeUndefined();
+    }
   });
-  it("refuses symlinks and keys outside the saved target", async () => {
+  it("refuses symlinks and keys outside the saved target", async (ctx) => {
     const { root, adapter } = await fixture();
     const signal = new AbortController().signal;
     await expect(adapter.read("cad://other", signal)).rejects.toThrow();
     await rm(path.join(root, "part.cad"));
-    await symlink("/etc/hosts", path.join(root, "part.cad"));
+    try {
+      await symlink("/etc/hosts", path.join(root, "part.cad"));
+    } catch (error) {
+      // A file symlink on Windows needs Developer Mode or an elevated shell.
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return ctx.skip();
+      throw error;
+    }
     await expect(adapter.read("cad://part", signal)).rejects.toThrow();
   });
   it("delivers actual file notifications and stops watching on close", async () => {

@@ -139,5 +139,10 @@ export function createComputerFormFileStore(
       await fs.write(path, data);
     },
     join: (...parts) => posix.join(...parts),
+    // A VM path, whatever this machine's own path flavour. Built by hand
+    // because pathToFileURL's { windows: false } needs Node 22.1 and the
+    // Inspector allows 22.0.
+    fileUrl: (path) =>
+      `file://${path.split("/").map(encodeURIComponent).join("/")}`,
   };
 }

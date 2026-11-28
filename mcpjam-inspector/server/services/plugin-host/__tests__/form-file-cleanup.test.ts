@@ -64,7 +64,7 @@ async function fixture(localJournal = true) {
       "clearInterval",
     ],
   });
-  const registry = new PluginFormFileGrants(root);
+  const registry = new PluginFormFileGrants(root, root);
   await registry.start(localJournal);
   const fs = fakeComputerFiles();
   const authorize = vi.fn().mockResolvedValue(undefined);
@@ -135,10 +135,12 @@ it("retains failed closed grants across ticks and only releases their exact owne
   const firstPath = fileURLToPath(
     registry.deliver(owner, first.token, { file: first.uris[0] })
       .file as string,
+    { windows: false },
   );
   const secondPath = fileURLToPath(
     registry.deliver(other, second.token, { file: second.uris[0] })
       .file as string,
+    { windows: false },
   );
   const firstRoot = firstPath.slice(0, firstPath.indexOf("/files/"));
   const originalRemove = fs.remove;

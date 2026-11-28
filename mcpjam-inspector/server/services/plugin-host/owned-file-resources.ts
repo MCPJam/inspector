@@ -4,6 +4,7 @@ import {
   type LocalFileTarget,
 } from "./local-file-target.js";
 import {
+  computerFilePath,
   createComputerFileTargetAdapter,
   PluginComputerUnavailableError,
   type ComputerFileSystem,
@@ -12,6 +13,7 @@ import type { PluginFileTargetPlacement } from "./file-targets.js";
 import { HOSTED_MODE } from "../../config.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
+import path from "node:path";
 import type { PluginPreviewInstance } from "./instances.js";
 import { createPluginFileResourceSession } from "./file-resource-session.js";
 import { ResourceGrantError, type ResourceVersion } from "./resource-grants.js";
@@ -104,8 +106,15 @@ export class OwnedFileResources {
         maxBytes: PLUGIN_FILE_MAX_BYTES,
         ...(descriptor.localTarget
           ? {
-              // On the Computer this is the VM path the server's own tools use.
-              privatePath: `${descriptor.localTarget.root}/${descriptor.localTarget.relativePath}`,
+              // The path the server's own tools use: a VM path on the
+              // Computer, otherwise this machine's own spelling of it.
+              privatePath:
+                this.placement() === "computer"
+                  ? computerFilePath(descriptor.localTarget)
+                  : path.join(
+                      descriptor.localTarget.root,
+                      descriptor.localTarget.relativePath,
+                    ),
               authorizeWrite: (active: AbortSignal) =>
                 this.current(instance).authorize(active),
             }

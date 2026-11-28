@@ -46,6 +46,8 @@ export interface PluginFormFileStore {
   /** Exclusive create: fails when the path already exists. */
   writeNew(path: string, bytes: Uint8Array): Promise<void>;
   join(...parts: string[]): string;
+  /** The file: URL the original MCP wire discloses for a placed path. */
+  fileUrl(path: string): string;
   /** Called before the first placement (the local journal's sweep). */
   start?(): Promise<unknown>;
 }
@@ -57,7 +59,7 @@ type Grant = {
   fingerprint: string;
   bytes: number;
   uris: string[];
-  paths: string[];
+  fileUrls: string[];
   root?: string;
   release?: () => Promise<void>;
   promoted: boolean;
@@ -132,8 +134,9 @@ export class PluginFormFileGrants {
   private sweeping?: ReturnType<PluginFormFileJournal["sweep"]>;
   private janitor?: ReturnType<typeof setInterval>;
   private readonly local: PluginFormFileStore;
-  constructor(base = FORM_FILE_DIRECTORY) {
-    this.journal = new PluginFormFileJournal(base);
+  /** `profile` is the directory a Windows upload root must resolve inside. */
+  constructor(base = FORM_FILE_DIRECTORY, profile?: string) {
+    this.journal = new PluginFormFileJournal(base, undefined, profile);
     this.local = {
       start: () => this.start(),
       reserve: async (key, bytes) => {
@@ -150,6 +153,7 @@ export class PluginFormFileGrants {
       writeNew: (path, bytes) =>
         writeFile(path, bytes, { flag: "wx", mode: 0o600 }),
       join: (...parts) => join(...parts),
+      fileUrl: (path) => pathToFileURL(path).href,
     };
   }
   private sweepLocal = false;
@@ -301,7 +305,7 @@ export class PluginFormFileGrants {
         uris: (directory ? [files[0]!] : files).map(
           () => `mcpjam-form-file://${randomUUID()}`,
         ),
-        paths: [],
+        fileUrls: [],
         promoted: false,
         closed: false,
         retainUntil: Date.now() + FORM_FILE_RETENTION_MS,
@@ -335,7 +339,9 @@ export class PluginFormFileGrants {
               files[index]!.bytes,
             );
           }
-          record.paths.push(store.join(directoryRoot, hierarchy[0]![0]!));
+          record.fileUrls.push(
+            store.fileUrl(store.join(directoryRoot, hierarchy[0]![0]!)),
+          );
           return;
         }
         for (const file of files) {
@@ -344,7 +350,7 @@ export class PluginFormFileGrants {
           await store.makeDir(fileDirectory);
           const path = store.join(fileDirectory, file.name);
           await store.writeNew(path, file.bytes);
-          record.paths.push(path);
+          record.fileUrls.push(store.fileUrl(path));
         }
       })();
     }
@@ -395,11 +401,14 @@ export class PluginFormFileGrants {
             same(record.source, source) &&
             record.uris.includes(uri as string),
         );
-        if (!grant || !grant.root || grant.paths.length !== grant.uris.length)
+        if (
+          !grant ||
+          !grant.root ||
+          grant.fileUrls.length !== grant.uris.length
+        )
           return refuse();
         selected.add(grant);
-        return pathToFileURL(grant.paths[grant.uris.indexOf(uri as string)]!)
-          .href;
+        return grant.fileUrls[grant.uris.indexOf(uri as string)]!;
       });
       result[name] = field.type === "array" ? translated : translated[0];
     }

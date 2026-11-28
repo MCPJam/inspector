@@ -198,7 +198,7 @@ export function resolveComputerFilePath(
   requestedPath: string,
 ): LocalFileTarget | undefined {
   if (confineToHome(requestedPath) !== requestedPath) return undefined;
-  return resolveLocalFilePath(contract, serverId, requestedPath);
+  return resolveLocalFilePath(contract, serverId, requestedPath, posix);
 }
 
 const digest = (bytes: Uint8Array) =>

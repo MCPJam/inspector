@@ -84,7 +84,7 @@ describe("form uploads on the project's Computer", () => {
     expect(uris).toHaveLength(1);
     expect(uris[0]).toMatch(/^mcpjam-form-file:\/\//);
     const delivered = registry.deliver(source(), "opaque", { file: uris[0] });
-    const path = fileURLToPath(delivered.file as string);
+    const path = fileURLToPath(delivered.file as string, { windows: false });
     expect(path.startsWith(`${COMPUTER_FORM_UPLOAD_ROOT}/mcpjam-form-`)).toBe(
       true,
     );
@@ -109,7 +109,7 @@ describe("form uploads on the project's Computer", () => {
     const sourceAbort = new AbortController();
     const result = await upload(registry, fs, () => Date.now(), sourceAbort.signal);
     const delivered = registry.deliver(source(), "opaque", { file: result.uris[0] });
-    const path = fileURLToPath(delivered.file as string);
+    const path = fileURLToPath(delivered.file as string, { windows: false });
     sourceAbort.abort();
     await registry.drain();
     expect(fs.files.has(path)).toBe(true);

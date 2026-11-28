@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import {
   parsePluginFileInput,
   parsePluginFileRead,
@@ -74,7 +75,7 @@ export function createPluginFileResourceSession(options: {
   if (
     !key ||
     (privatePath !== undefined &&
-      (!privatePath.startsWith("/") || privatePath.includes("\0")))
+      (!isAbsolute(privatePath) || privatePath.includes("\0")))
   )
     throw new Error("PLUGIN_FILE_BINDING_INVALID");
   const authorizeOperation = async (

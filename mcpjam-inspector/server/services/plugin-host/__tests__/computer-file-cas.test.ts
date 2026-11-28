@@ -8,6 +8,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createComputerFileCas, qualifiedComputerFileCas, type ComputerCasTransport, type ComputerCompareAndReplaceInput } from "../computer-file-cas.js";
 import { COMPUTER_FILE_CAS_COMMAND, COMPUTER_FILE_CAS_PYTHON } from "../computer-file-cas-helper.js";
 
+// The helper runs on the Linux Computer VM (fcntl locks, getuid, dir_fd opens);
+// these tests execute it on this machine, which Windows Python cannot do.
+const helperIt = it.skipIf(process.platform === "win32");
 const encode = (value: string) => new TextEncoder().encode(value);
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 let home: string;
@@ -69,7 +72,7 @@ async function stages(root = join(home, "parts")) {
 }
 
 describe("Computer VM atomic file helper", () => {
-  it("allows exactly one of two independent writer processes with the same ETag", async () => {
+  helperIt("allows exactly one of two independent writer processes with the same ETag", async () => {
     const path = await target();
     const holder = await holdLock(path);
     const left = transport(), right = transport();
@@ -91,7 +94,7 @@ describe("Computer VM atomic file helper", () => {
     expect(await stages()).toEqual([]);
   });
 
-  it("does not let a cancelled waiter poison another caller's shared qualification", async () => {
+  helperIt("does not let a cancelled waiter poison another caller's shared qualification", async () => {
     const t = transport();
     const original = t.value.run;
     let resume!: () => void;
@@ -117,7 +120,7 @@ describe("Computer VM atomic file helper", () => {
     expect(t.operations.filter((op) => op === "probe")).toHaveLength(1);
   });
 
-  it("does not share locks or results across independent Computer filesystems", async () => {
+  helperIt("does not share locks or results across independent Computer filesystems", async () => {
     const other = join(home, "other-vm"); await mkdir(join(other, "parts"), { recursive: true });
     const a = await target(); const b = join(other, "parts", "part.stl"); await writeFile(b, "original");
     const results = await Promise.all([
@@ -128,7 +131,7 @@ describe("Computer VM atomic file helper", () => {
     expect(await readFile(a, "utf8")).toBe("left"); expect(await readFile(b, "utf8")).toBe("right");
   });
 
-  it("returns conflict without replacing a newer file and keeps a persistent lock inode", async () => {
+  helperIt("returns conflict without replacing a newer file and keeps a persistent lock inode", async () => {
     const path = await target(); const cas = createComputerFileCas(transport().value);
     await expect(cas.compareAndReplace(input(path, "first"))).resolves.toMatchObject({ outcome: "saved" });
     await mkdir(join(home, ".cas-locks"), { mode: 0o700, recursive: true });
@@ -138,7 +141,7 @@ describe("Computer VM atomic file helper", () => {
     expect(await stages()).toEqual([]);
   });
 
-  it("refuses oversize data before staging and validates uploaded bytes", async () => {
+  helperIt("refuses oversize data before staging and validates uploaded bytes", async () => {
     const path = await target(); const t = transport(); const cas = createComputerFileCas(t.value);
     await expect(cas.compareAndReplace({ ...input(path), maxBytes: 2 })).rejects.toMatchObject({ code: "RESOURCE_TOO_LARGE" });
     const original = t.value.write;
@@ -147,7 +150,7 @@ describe("Computer VM atomic file helper", () => {
     expect(await readFile(path, "utf8")).toBe("original"); expect(await stages()).toEqual([]);
   });
 
-  it("rejects target and ancestor symlinks without touching their destinations", async () => {
+  helperIt("rejects target and ancestor symlinks without touching their destinations", async () => {
     const outside = join(home, "outside"); await writeFile(outside, "protected");
     const path = join(home, "parts", "part.stl"); await symlink(outside, path);
     const cas = createComputerFileCas(transport().value);
@@ -157,14 +160,14 @@ describe("Computer VM atomic file helper", () => {
     expect(await readFile(outside, "utf8")).toBe("protected");
   });
 
-  it("treats shell syntax in an admitted filename as literal metadata", async () => {
+  helperIt("treats shell syntax in an admitted filename as literal metadata", async () => {
     const path = await target("part'$(touch injected);.stl");
     await expect(createComputerFileCas(transport().value).compareAndReplace(input(path))).resolves.toMatchObject({ outcome: "saved" });
     expect(await readFile(path, "utf8")).toBe("changed");
     expect(await readdir(home)).not.toContain("injected");
   });
 
-  it("does not remove a substituted staged file during cleanup", async () => {
+  helperIt("does not remove a substituted staged file during cleanup", async () => {
     const path = await target(); const t = transport(); const write = t.value.write;
     t.value.write = async (path, data, options) => {
       await write(path, data, options);
@@ -183,7 +186,7 @@ describe("Computer VM atomic file helper", () => {
     await expect(cas.compareAndReplace(input(await target()))).rejects.toMatchObject({ code: "RESOURCE_WRITE_UNAVAILABLE" });
   });
 
-  it("withdraws runtime write support after the helper becomes unavailable", async () => {
+  helperIt("withdraws runtime write support after the helper becomes unavailable", async () => {
     const t = transport(); const cas = createComputerFileCas(t.value);
     expect(await cas.supports()).toBe(true);
     t.value.run = async () => { throw new Error("helper unavailable"); };
@@ -191,7 +194,7 @@ describe("Computer VM atomic file helper", () => {
     expect(await cas.supports()).toBe(false);
   });
 
-  it("releases the target lock when a separate holder process exits", async () => {
+  helperIt("releases the target lock when a separate holder process exits", async () => {
     const path = await target(); const holder = await holdLock(path);
     const t = transport(); const run = t.value.run;
     let started!: () => void; const commitStarted = new Promise<void>(resolve => { started = resolve; });
@@ -208,7 +211,7 @@ describe("Computer VM atomic file helper", () => {
     expect(await stages()).toEqual([]);
   });
 
-  it("never repeats a replacement after losing the helper acknowledgement", async () => {
+  helperIt("never repeats a replacement after losing the helper acknowledgement", async () => {
     const path = await target(); const t = transport(); const run = t.value.run;
     t.value.run = async (command, options) => {
       const result = await run(command, options);
@@ -221,7 +224,7 @@ describe("Computer VM atomic file helper", () => {
     expect(await stages()).toEqual([]);
   });
 
-  it("retains cleanup identity when cancelled during staging allocation", async () => {
+  helperIt("retains cleanup identity when cancelled during staging allocation", async () => {
     const path = await target(); const t = transport(); const cas = createComputerFileCas(t.value);
     expect(await cas.supports()).toBe(true);
     const controller = new AbortController(); const run = t.value.run;
@@ -237,7 +240,7 @@ describe("Computer VM atomic file helper", () => {
     expect(t.operations.filter(op => op === "commit")).toHaveLength(0);
   });
 
-  it("cleans a cancelled upload and reports cancellation after replacement as unknown", async () => {
+  helperIt("cleans a cancelled upload and reports cancellation after replacement as unknown", async () => {
     const path = await target(); const before = new AbortController(); const t = transport(); const write = t.value.write;
     t.value.write = async (path, bytes, options) => { await write(path, bytes, options); if (bytes.byteLength > 1) before.abort(); };
     await expect(createComputerFileCas(t.value).compareAndReplace(input(path), { signal: before.signal })).rejects.toThrow();
@@ -254,7 +257,7 @@ describe("Computer VM atomic file helper", () => {
   });
 });
 
-it("shares successful qualification across requests to one VM and retries transient failures", async () => {
+helperIt("shares successful qualification across requests to one VM and retries transient failures", async () => {
   const id = randomUUID();
   const first = transport(); const second = transport();
   const cas = qualifiedComputerFileCas(id, first.value);

@@ -109,13 +109,19 @@ export function resolveLocalFileTarget(
     throw new ResourceGrantError("RESOURCE_DENIED");
   return result;
 }
+/** `paths` is the target's own path flavour: the Computer's is POSIX
+ * whatever this machine runs. */
 export function resolveLocalFilePath(
   contract: unknown,
   serverId: string,
   requestedPath: string,
+  paths: typeof path = path,
 ): LocalFileTarget | undefined {
-  if (!path.isAbsolute(requestedPath) || contract === undefined)
+  if (!paths.isAbsolute(requestedPath) || contract === undefined)
     return undefined;
+  // Windows accepts either separator, and servers send both spellings.
+  const spelled =
+    paths.sep === "\\" ? requestedPath.replaceAll("/", "\\") : requestedPath;
   const parsed = contractSchema.safeParse(contract);
   if (!parsed.success) throw new ResourceGrantError("RESOURCE_DENIED");
   const candidates = parsed.data.targets.flatMap((target) =>
@@ -123,7 +129,7 @@ export function resolveLocalFilePath(
       ? target.resources
           .filter(
             (resource) =>
-              path.join(target.root, resource.relativePath) === requestedPath,
+              paths.join(target.root, resource.relativePath) === spelled,
           )
           .map(
             (resource) =>
