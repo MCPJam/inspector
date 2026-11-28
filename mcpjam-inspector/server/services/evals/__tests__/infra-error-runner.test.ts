@@ -59,6 +59,39 @@ vi.mock("../../../utils/assistant-turn.js", () => ({
   runAssistantTurn: (...args: unknown[]) => assistantTurnMock(...args),
 }));
 
+// A local-harness iteration's run resources (a scratch workspace and the
+// local runtime's target) are this machine's, and its attachment check asks
+// the backend, so both are stood in for.
+vi.mock(
+  "../../../utils/harness/local/run-resources",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("../../../utils/harness/local/run-resources")
+    >()),
+    prepareLocalHarnessRun: vi.fn(async () => ({
+      target: {
+        machineId: "machine-1",
+        runtimeId: "runtime-1",
+        targetId: "target-1",
+        localSessionId: "local-run-1",
+      },
+      cleanup: async () => {},
+    })),
+  }),
+);
+vi.mock(
+  "../../../utils/computers/control-plane-client",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("../../../utils/computers/control-plane-client")
+    >()),
+    resolveEvalRunAttachments: vi.fn(async () => ({
+      ok: true,
+      value: { cases: [] },
+    })),
+  }),
+);
+
 import {
   defaultEvalExecutionBudgets,
   runEvalSuiteWithAiSdk,
@@ -646,6 +679,44 @@ describe("a scheduled run whose job token the backend stops renewing", () => {
     }
     expect(recorder.finalize).toHaveBeenCalledWith(
       expect.objectContaining({ status: "completed" }),
+    );
+  });
+
+  it("refused after an iteration completed: the completed one still counts in the run summary", async () => {
+    const { bearer, refuse } = refusableBearer();
+    // The first iteration answers and passes. The local-harness venue then
+    // reads the refused token before the second iteration claims its row.
+    assistantTurnMock.mockImplementationOnce(async (opts: any) => {
+      const answered = await answeringTurn(opts);
+      refuse();
+      return answered;
+    });
+    const { rows, recorder, setupError } = await runSuite(
+      2,
+      "gpt-5-mini",
+      undefined,
+      undefined,
+      bearer,
+      true,
+      {
+        harnessRuntimeVenue: "local",
+        orgModelConfigTarget: { projectId: "project-1" },
+      },
+    );
+    expect(setupError).toBeUndefined();
+    expect(rows[0]).toMatchObject({ status: "completed", passed: true });
+    expect(rows[1]).toMatchObject({
+      status: "setup_failed",
+      passed: false,
+      error: REFUSAL,
+    });
+    // The completed pass, then one failure for the rows the refusal left
+    // unstarted, as for a case refused before any iteration ran.
+    expect(recorder.finalize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "completed",
+        summary: expect.objectContaining({ total: 2, passed: 1, failed: 1 }),
+      }),
     );
   });
 });

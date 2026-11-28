@@ -340,6 +340,11 @@ import {
   isBearerRefusal,
   type RunBearer,
 } from "../utils/run-bearer.js";
+import {
+  completedBeforeRefusal,
+  countIterationOutcomes,
+  keepCompletedOnRefusal,
+} from "./evals/case-refusal-outcomes.js";
 import type { RunAssistantTurnAuthContext } from "../utils/assistant-turn.js";
 
 /**
@@ -3207,6 +3212,12 @@ const executeTestCase = async (params: {
    * finalizes its own row; the rest are settled by the wrapper.
    */
   onCommittedAttemptEntered?: (runIndex: number) => void;
+  /**
+   * Where the case keeps each completed iteration's outcome, so its caller
+   * still has them when a later iteration's refused job token rejects the
+   * case (`keepCompletedOnRefusal`).
+   */
+  completedOutcomes?: EvalIterationOutcome[];
   /** Rewrite-arm marker — see {@link RunEvalSuiteOptions.toolDescriptionOverride}. */
   toolDescriptionOverride?: ToolDescriptionOverrideMarker;
   /** Present ⇒ streaming mode: SSE events flow here and iterations run on the
@@ -3466,7 +3477,7 @@ const executeTestCase = async (params: {
       promptTurns: resolveEvalTestCase(normalizedTest).promptTurns,
     })
   ) {
-    const outcomes: EvalIterationOutcome[] = [];
+    const outcomes: EvalIterationOutcome[] = params.completedOutcomes ?? [];
     const pinnedRuns = Math.max(1, Math.floor(normalizedTest.runs || 1));
     assertCommittedAttempts(pinnedRuns);
     for (let runIndex = 0; runIndex < pinnedRuns; runIndex++) {
@@ -3732,7 +3743,7 @@ const executeTestCase = async (params: {
     ? resolveOrgTargetForEval(test, orgModelConfigTarget)
     : undefined;
 
-  const outcomes: EvalIterationOutcome[] = [];
+  const outcomes: EvalIterationOutcome[] = params.completedOutcomes ?? [];
 
   // Mirrors `streamTestCase`: pre-create all N pending iteration rows for
   // quick-run paths with runs > 1 so the iteration history shows every row
@@ -4093,9 +4104,16 @@ async function executeCommittedTestCase(
 // `runEvalSuiteWithAiSdk` and tests with zero churn.
 const runTestCase = (
   params: Omit<Parameters<typeof executeTestCase>[0], "emit">,
-) => params.harnessRuntimeVenue === "local"
-  ? withLocalHarnessSlot(() => executeCommittedTestCase(params), params.abortSignal)
-  : executeCommittedTestCase(params);
+) =>
+  keepCompletedOnRefusal<EvalIterationOutcome>((completedOutcomes) => {
+    const caseParams = { ...params, completedOutcomes };
+    return params.harnessRuntimeVenue === "local"
+      ? withLocalHarnessSlot(
+          () => executeCommittedTestCase(caseParams),
+          params.abortSignal,
+        )
+      : executeCommittedTestCase(caseParams);
+  });
 
 export const runEvalSuiteWithAiSdk = async ({
   gradingMode,
@@ -4735,20 +4753,7 @@ export const runEvalSuiteWithAiSdk = async ({
     for (const [resultIndex, result] of results.entries()) {
       if (result.status === "fulfilled") {
         const outcomes = result.value;
-        for (const { evaluation, infraError } of outcomes) {
-          // An infra trial measured nothing about the server: in no count,
-          // matching the backend's legacy header.
-          if (infraError) continue;
-          summary.total += 1;
-          if (evaluation.passed) {
-            summary.passed += 1;
-          } else {
-            summary.failed += 1;
-          }
-        }
-        summary.policyBlockedIterations += outcomes.filter(
-          (outcome) => (outcome.policyBlockCount ?? 0) > 0,
-        ).length;
+        countIterationOutcomes(summary, outcomes);
         if (runId === null) {
           quickRunOutcomes.push(...outcomes);
         }
@@ -4777,7 +4782,10 @@ export const runEvalSuiteWithAiSdk = async ({
         } else {
           logger.error("[evals] Test case failed:", result.reason);
         }
-        // Count as one failed test
+        // Iterations that completed before a refused job token ended the
+        // case count as they would have; the case's unstarted rows then count
+        // as one failure, as for any case that couldn't run.
+        countIterationOutcomes(summary, completedBeforeRefusal(result.reason));
         summary.total += 1;
         summary.failed += 1;
         // A refused model selection or an unreadable client profile never
