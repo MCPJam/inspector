@@ -68,6 +68,21 @@ describe("describeError — stdio spawn failures", () => {
     );
   });
 
+  it("rejects a long run of spaces with no errno in linear time", () => {
+    const message = `spawn x${" ".repeat(100_000)}y`;
+    const started = performance.now();
+    expect(describeError(new Error(message)).slug).not.toBe(
+      "transport/spawn_failed",
+    );
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
+  it("does not read the errno as the command", () => {
+    expect(describeError(new Error("spawn ENOENT")).slug).not.toBe(
+      "transport/spawn_failed",
+    );
+  });
+
   it("leaves an ENOENT from another syscall alone", () => {
     const error = Object.assign(
       new Error("ENOENT: no such file or directory, open 'config.json'"),

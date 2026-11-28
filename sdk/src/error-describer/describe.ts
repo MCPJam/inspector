@@ -727,7 +727,12 @@ function resolveSlug(error: unknown): {
   return { slug: "internal/unknown" };
 }
 
-const SPAWN_ERRNO = /\bspawn\s+\S.*?\s+(?:ENOENT|EACCES|EPERM)\b/;
+// Node's message is "spawn <command> <errno>", and the command may contain
+// spaces (C:\Program Files\...). Two linear checks replace a single
+// `spawn\s+\S.*?\s+ERRNO` pattern, whose overlapping `.*?` and `\s+`
+// backtrack quadratically on a long run of spaces.
+const SPAWN_COMMAND = /\bspawn\s+\S/;
+const SPAWN_ERRNO = /\s(?:ENOENT|EACCES|EPERM)\b/;
 
 function isSpawnFailure(error: unknown, message: string): boolean {
   const syscall =
@@ -735,7 +740,9 @@ function isSpawnFailure(error: unknown, message: string): boolean {
       ? (error as { syscall?: unknown }).syscall
       : undefined;
   if (typeof syscall === "string" && syscall.startsWith("spawn")) return true;
-  return SPAWN_ERRNO.test(message);
+  const command = SPAWN_COMMAND.exec(message);
+  if (!command) return false;
+  return SPAWN_ERRNO.test(message.slice(command.index + command[0].length));
 }
 
 /**
