@@ -601,8 +601,14 @@ export function FirstRunOnboardingOverlay({
       }
 
       setServerUrlError(null);
-      setServerUrlOrCommand(trimmedUrlOrCommand);
-      if (!hostedInputGate.allow(trimmedUrlOrCommand, serverTransport)) {
+      // Same default scheme as the first screen, so a bare host typed here
+      // is not rejected as an incomplete URL.
+      const urlOrCommand =
+        serverTransport === "http"
+          ? withDefaultUrlScheme(trimmedUrlOrCommand)
+          : trimmedUrlOrCommand;
+      setServerUrlOrCommand(urlOrCommand);
+      if (!hostedInputGate.allow(urlOrCommand, serverTransport)) {
         trackFirstRunConnectionFailed(
           {
             serverKind: "personal",
@@ -616,7 +622,7 @@ export function FirstRunOnboardingOverlay({
       if (!validateSelectedAuthentication(authentication)) return;
       const draft = buildServerDraft(
         serverName.trim() || deriveServerName(trimmedUrlOrCommand),
-        trimmedUrlOrCommand,
+        urlOrCommand,
       );
       onConnectOwnServer(
         authenticationOverride

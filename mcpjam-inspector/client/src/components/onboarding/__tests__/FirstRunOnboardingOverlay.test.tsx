@@ -479,6 +479,34 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(onSkip).toHaveBeenCalledOnce();
   });
 
+  it("adds https:// to a bare host retried from server details", () => {
+    const { onConnectOwnServer, rerenderWithConnectionState } = renderOverlay(
+      { status: "idle" },
+      true,
+    );
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "https://mcp.example.com/mcp" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    rerenderWithConnectionState({
+      status: "failed",
+      serverName: "Example",
+      serverKind: "personal",
+      error: "Connection refused",
+    });
+
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "mcp.example.com/mcp" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    expect(onConnectOwnServer).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        transport: "http",
+        urlOrCommand: "https://mcp.example.com/mcp",
+      }),
+    );
+  });
+
   it("dismisses the server-choice modal from its close control", () => {
     const { onSkip } = renderOverlay();
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
