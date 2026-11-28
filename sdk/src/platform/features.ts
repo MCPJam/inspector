@@ -379,6 +379,10 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   revoke_eval_gate_waiver: null,
   backtest_eval_run: null,
   backtest_eval_run_judge: null,
+  // Behind the `eval-code-evaluators` flag, which the platform does not
+  // report here; the backend refuses an organization without it, as it does
+  // for setting code evaluators on a suite.
+  test_eval_code_evaluator: null,
   request_eval_run_judge: null,
   request_eval_run_insights: null,
   cancel_eval_run_insights: null,

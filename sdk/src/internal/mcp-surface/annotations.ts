@@ -88,6 +88,8 @@ const ADDITIVE_WRITE_NAMES: ReadonlySet<string> = new Set([
   "import_eval_cases",
   "backtest_eval_run",
   "backtest_eval_run_judge",
+  // A fresh box per test, released after; the suite and run are untouched.
+  "test_eval_code_evaluator",
   "ensure_adhoc_environment",
   "create_persona",
   "generate_personas",

@@ -55,7 +55,10 @@ import {
   toSuspectedConditionProjection,
 } from "./eval-friction-projection.js";
 import { toExecutionProjection } from "./eval-execution-projection.js";
-import { toCodeGradingProjection } from "./eval-code-grading-projection.js";
+import {
+  toCodeGradingProjection,
+  toRunScriptResultsProjection,
+} from "./eval-code-grading-projection.js";
 import {
   accountSelectionsForRead,
   accountSelectionsForStorage,
@@ -5641,6 +5644,8 @@ evals.get("/projects/:projectId/eval-runs/:runId", async (c) => {
     // present, so a caller can read `judges.goalCompletion.status` without
     // first proving the field exists; `null` there means never requested.
     judges: toRunJudgesDto(run!),
+    // DETAIL only too: each script's output tail is up to 8 KB.
+    ...toRunScriptResultsProjection(run!.scriptResults),
   });
 });
 

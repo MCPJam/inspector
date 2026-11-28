@@ -97,6 +97,30 @@ function reportResolvedScope(
   }
 }
 
+/**
+ * One iteration of an eval run, addressed through the run and the run's suite.
+ * Few results can compose it: the trace and iteration-list responses name the
+ * run but not the suite, and a ref needs both. `test_eval_code_evaluator`
+ * knows all three.
+ */
+export function evalIterationRef(
+  iterationId: string,
+  runId: string,
+  suiteId: string,
+  projectId?: string
+): PlatformResourceRef {
+  return {
+    type: "eval_iteration",
+    id: iterationId,
+    parent: {
+      type: "eval_run",
+      id: runId,
+      parent: { type: "eval_suite", id: suiteId },
+    },
+    ...(projectId ? { projectId } : {}),
+  };
+}
+
 export function toSelectedProjectInfo(
   project: PlatformProject
 ): SelectedProjectInfo {

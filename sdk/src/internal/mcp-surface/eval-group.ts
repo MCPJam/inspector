@@ -46,6 +46,7 @@ export const EVAL_TOOL_NAMES = [
   "cancel_eval_run",
   "backtest_eval_run",
   "backtest_eval_run_judge",
+  "test_eval_code_evaluator",
   "request_eval_run_judge",
   "build_eval_run_findings",
   "request_eval_run_insights",

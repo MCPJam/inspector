@@ -146,6 +146,7 @@ beta; they are listed [after the table](#held-tools).
 | `cancel_eval_run` | Cancel an in-flight eval run. | — |
 | `backtest_eval_run` | Preview draft assertions against stored evidence; reports missing capture and never changes saved results. | — |
 | `backtest_eval_run_judge` | Preview a draft judge rubric against recorded evidence. Spends model budget without changing saved verdicts; supports continuation. | — |
+| `test_eval_code_evaluator` | Run an unsaved draft code evaluator once against one iteration of a suite's finished run, in a fresh sandbox, and get its score, pass or fail, reason and output. Writes nothing; each test boots a paid sandbox. | — |
 | `request_eval_run_judge` | Run LLM-as-judge grading over a finished eval run: each case's final answer is scored against its expected output. SPENDS the organization's model budget; read the results from `get_eval_run`'s `judges.goalCompletion`. | — |
 | `build_eval_run_findings` | Build a settled eval run's findings from its recorded evidence: no model call, no quota. On a run never analyzed, a finished build starts the analysis. | — |
 | `request_eval_run_insights` | Start the findings analysis the app's run page runs. Included with MCPJam (no credits); counts against the daily insight quota. Read the result from `get_eval_run`'s `insights.findings`. | — |

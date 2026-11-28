@@ -285,6 +285,7 @@ const PLAIN_TOOLS = [
   "cancel_eval_run",
   "backtest_eval_run",
   "backtest_eval_run_judge",
+  "test_eval_code_evaluator",
   "request_eval_run_judge",
   // The run page's Analyze button as three tools: receipts, no widget view.
   "build_eval_run_findings",
@@ -613,6 +614,7 @@ describe("platform tool registration", () => {
       "cancel_eval_run",
       "backtest_eval_run",
       "backtest_eval_run_judge",
+      "test_eval_code_evaluator",
       "request_eval_run_judge",
       "build_eval_run_findings",
       "request_eval_run_insights",
@@ -755,6 +757,7 @@ describe("platform tool registration", () => {
       "import_eval_cases",
       "backtest_eval_run",
       "backtest_eval_run_judge",
+      "test_eval_code_evaluator",
       "ensure_adhoc_environment",
       "create_persona",
       "generate_personas",

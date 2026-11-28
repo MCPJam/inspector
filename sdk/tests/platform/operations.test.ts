@@ -2559,6 +2559,11 @@ describe("operation catalog consistency", () => {
       runId: "r",
       draft: { assertions: { mode: "replace", list: [] } },
     },
+    test_eval_code_evaluator: {
+      suite: "s",
+      iterationId: "i",
+      evaluator: { fileName: "check.py", script: "print(1)" },
+    },
     request_eval_run_judge: { project: "p", runId: "r" },
     request_eval_run_insights: { project: "p", runId: "r" },
     cancel_eval_run_insights: { project: "p", runId: "r" },
@@ -2868,6 +2873,8 @@ describe("operation catalog consistency", () => {
       "cancel_project_server_connection",
       "backtest_eval_run",
       "backtest_eval_run_judge",
+      // Boots a paid box for one test of a draft; writes nothing.
+      "test_eval_code_evaluator",
       "request_eval_run_judge",
       // The run page's Analyze button: build findings, request the analysis,
       // cancel it. Each changes the run's analysis state.
