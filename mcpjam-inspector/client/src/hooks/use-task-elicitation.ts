@@ -107,8 +107,13 @@ function useLocalElicitationStream(
     [elicitation],
   );
 
-  const clear = useCallback(() => {
-    setQueue((current) => current.slice(1));
+  /** Drop `requestId`'s question, or the current one when none is named. */
+  const clear = useCallback((requestId?: string) => {
+    setQueue((current) =>
+      requestId
+        ? current.filter((r) => r.requestId !== requestId)
+        : current.slice(1),
+    );
     setError(null);
   }, []);
 

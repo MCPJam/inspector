@@ -46,7 +46,9 @@ export function LocalChatElicitationHost() {
           // The question is usually gone server-side (answered, timed out, or
           // its server disconnected), so keeping the dialog would only take
           // more answers that go nowhere.
-          clear();
+          // By id: a completion that landed while this answer was in flight
+          // may already have moved another question to the head.
+          clear(elicitation.requestId);
           toast.error(
             `Couldn't send your answer${elicitation.serverId ? ` to ${elicitation.serverId}` : ""}. Send your message again to retry.`,
           );

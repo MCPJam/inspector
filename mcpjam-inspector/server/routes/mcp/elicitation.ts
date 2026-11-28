@@ -24,6 +24,17 @@ function broadcastElicitation(event: unknown) {
   }
 }
 
+/**
+ * Questions still waiting for an answer, by requestId, as broadcast.
+ *
+ * The stream only pushes live events, and a listener comes and goes with its
+ * screen (the Playground unmounts when the user switches tabs). A new
+ * subscriber gets these first, so a question asked while nobody was listening,
+ * or before the user came back, can still be answered. Each one is dropped
+ * once it is settled.
+ */
+const openRequests = new Map<string, unknown>();
+
 // Track which manager instances have had their callback registered
 const registeredManagers = new WeakSet<MCPClientManager>();
 
@@ -152,7 +163,16 @@ export function initElicitationCallback(manager: MCPClientManager): void {
       }
       return new Promise<ElicitResult>((resolve, reject) => {
         try {
-          manager.getPendingElicitations().set(requestId, { resolve, reject });
+          manager.getPendingElicitations().set(requestId, {
+            resolve: (result: ElicitResult) => {
+              openRequests.delete(requestId);
+              resolve(result);
+            },
+            reject: (error: unknown) => {
+              openRequests.delete(requestId);
+              reject(error);
+            },
+          });
         } catch (err) {
           // Was calling an undefined `logger` (never imported in this module),
           // so this catch turned a store failure into a ReferenceError thrown
@@ -176,7 +196,7 @@ export function initElicitationCallback(manager: MCPClientManager): void {
           reject(err);
           return;
         }
-        broadcastElicitation({
+        const event = {
           type: "elicitation_request",
           requestId,
           // Spec: the client MUST make it clear which server is asking. This
@@ -190,7 +210,9 @@ export function initElicitationCallback(manager: MCPClientManager): void {
           timestamp: new Date().toISOString(),
           // Include related task ID if this elicitation is associated with a task
           relatedTaskId,
-        });
+        };
+        openRequests.set(requestId, event);
+        broadcastElicitation(event);
       });
     },
   );
@@ -231,6 +253,7 @@ elicitation.get("/stream", async (c) => {
 
       const subscriber = { send, close };
       elicitationSubscribers.add(subscriber);
+      for (const event of openRequests.values()) send(event);
 
       // On client disconnect
       (c.req.raw as any).signal?.addEventListener?.("abort", () => {

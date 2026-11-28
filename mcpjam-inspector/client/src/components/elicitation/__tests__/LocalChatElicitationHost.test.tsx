@@ -9,6 +9,7 @@ vi.mock("@/lib/apis/mcp-tasks-api", () => ({
     respondToTaskElicitation(...args),
 }));
 vi.mock("@/lib/session-token", () => ({ addTokenToUrl: (url: string) => url }));
+vi.mock("sonner", () => ({ toast: { error: vi.fn() } }));
 
 /** jsdom has no EventSource. */
 class FakeEventSource {
@@ -77,6 +78,25 @@ describe("LocalChatElicitationHost", () => {
     render(<LocalChatElicitationHost />);
     emit({ ...question, relatedTaskId: "task-1" });
     expect(screen.queryByText("Which city?")).toBeNull();
+  });
+
+  it("drops only the failed question when its answer can't be sent", async () => {
+    let fail!: (error: Error) => void;
+    respondToTaskElicitation.mockImplementationOnce(
+      () => new Promise((_, reject) => (fail = reject)),
+    );
+    render(<LocalChatElicitationHost />);
+    emit(question);
+    emit({ ...question, requestId: "req-2", message: "Which day?" });
+    expect(await screen.findByText("Which city?")).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: /decline/i }));
+    // req-1 is completed elsewhere while its answer is in flight, so req-2
+    // becomes the current question before the answer fails.
+    emit({ type: "elicitation_complete", requestId: "req-1" });
+    await act(async () => fail(new Error("Unknown or expired requestId")));
+
+    expect(await screen.findByText("Which day?")).toBeTruthy();
   });
 
   it("closes the dialog when the question is answered elsewhere", async () => {
