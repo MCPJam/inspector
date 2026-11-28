@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import {
   ErrorCode,
@@ -26,10 +26,23 @@ import {
   SwarmAgentError,
 } from "../../services/swarm-agent.js";
 import { upstreamRefusalRouteError } from "../../services/upstream-refusal.js";
+import { refuseWhileDraining } from "../../services/lifecycle/admission.js";
+import {
+  refineLaunchSource,
+  swarmLaunchRequestFields,
+} from "../../services/swarm-launch/request.js";
+import {
+  isSwarmLaunchRefusal,
+  launchSwarmRun,
+  resumeSwarmRun,
+  type SwarmLaunchDeps,
+  type SwarmLaunchResult,
+} from "../../services/swarm-launch/launch-swarm-run.js";
 import type { SwarmStreamEvent } from "../../../shared/swarm-stream-events.js";
 import { isJourneyRunTerminalStatus } from "../../../shared/journey-run-status.js";
 import { logger } from "../../utils/logger.js";
-import { assertBearerToken } from "./errors.js";
+import { assertBearerToken, webError, webErrorFromRoute } from "./errors.js";
+import { mapWebBoundaryError } from "./boundary-error.js";
 
 const swarmRuns = new Hono();
 
@@ -275,6 +288,101 @@ function previewRejectionReason(err: SwarmAgentError): string {
     return fallback;
   }
 }
+
+/**
+ * A launch from the app: the launch request and its project. The key is
+ * required here, so a click retried after a failure replays its own launch.
+ */
+const webSwarmLaunchSchema = z
+  .strictObject({
+    ...swarmLaunchRequestFields,
+    projectId: z.string().min(1),
+    idempotencyKey: swarmLaunchRequestFields.idempotencyKey.unwrap(),
+  })
+  .superRefine(refineLaunchSource);
+
+const resumeSchema = z.strictObject({ projectId: z.string().min(1) });
+
+// A launch this process starts while draining could not finish.
+swarmRuns.on(
+  "POST",
+  ["/swarm-runs", "/swarm-runs/:swarmRunId/resume"],
+  refuseWhileDraining("run_group_launch"),
+);
+
+/**
+ * What a swarm launch needs from the request, resolved before the reply while
+ * the request is live: the launch goes on creating runs after it.
+ */
+async function swarmLaunchDeps(
+  c: Context,
+  projectId: string,
+): Promise<SwarmLaunchDeps> {
+  return {
+    bearerToken: await getConvexBearerForRequest(c),
+    getRunBearer: await getBackgroundRunBearerForRequest(c, projectId),
+    xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+    callerContext: callerContextFromHono(c),
+  };
+}
+
+function respondWithLaunch(c: Context, result: SwarmLaunchResult) {
+  if (!isSwarmLaunchRefusal(result)) return c.json(result.body, result.status);
+  const { error, launch } = result.body;
+  return webError(c, result.status, error.code, error.message, error.details, {
+    ...(launch ? { launch } : {}),
+    ...(result.headers ? { responseHeaders: result.headers } : {}),
+  });
+}
+
+/**
+ * Launch a swarm run: every goal of a swarm run (Run again), of a swarm, or a
+ * list of goals. Answers 202 with the launch record once the first goal's run
+ * started, and launches the rest in the background.
+ */
+swarmRuns.post("/swarm-runs", async (c) => {
+  try {
+    const { projectId, ...request } = parseWithSchema(
+      webSwarmLaunchSchema,
+      await readJsonBody<unknown>(c),
+    );
+    const deps = await swarmLaunchDeps(c, projectId);
+    return respondWithLaunch(
+      c,
+      await launchSwarmRun({ projectId, request }, deps),
+    );
+  } catch (error) {
+    return webErrorFromRoute(c, mapWebBoundaryError(error));
+  }
+});
+
+/**
+ * Finish the caller's own stopped or interrupted launch: its goals that did
+ * not start launch now, with the keys they were given, so none starts twice.
+ */
+swarmRuns.post("/swarm-runs/:swarmRunId/resume", async (c) => {
+  try {
+    const swarmRunId = c.req.param("swarmRunId");
+    if (!swarmRunId || swarmRunId.length > 64) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "swarmRunId must be 1 to 64 characters.",
+      );
+    }
+    const { projectId } = parseWithSchema(
+      resumeSchema,
+      await readJsonBody<unknown>(c),
+    );
+    const deps = await swarmLaunchDeps(c, projectId);
+    return respondWithLaunch(
+      c,
+      await resumeSwarmRun({ projectId, swarmRunId }, deps),
+    );
+  } catch (error) {
+    return webErrorFromRoute(c, mapWebBoundaryError(error));
+  }
+});
 
 /**
  * Launch a multi-host swarm (journey-execution) run (PR 3d).
