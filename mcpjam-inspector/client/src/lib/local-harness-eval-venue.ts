@@ -6,24 +6,24 @@
  */
 import { authFetch } from "@/lib/session-token";
 import type { LocalHarnessClientId } from "@/lib/local-harness-consent";
+import {
+  LOCAL_EVAL_VENUE_FIXES,
+  type LocalEvalVenue,
+} from "@/shared/local-eval-venue";
 
-/** What the run sheet offers beside a client that can't run here. */
-export type LocalEvalVenueFix = "set-up" | "retry" | "choose-another";
-
-export type LocalEvalVenue =
-  | { venue: "local" }
-  | { venue: "cloud" }
-  | { venue: "refused"; refusal: string; message: string; fix: LocalEvalVenueFix };
+/** A check that hangs keeps Start off, so it gives up and offers Retry. */
+const CHECK_TIMEOUT_MS = 10_000;
 
 export type LocalEvalVenueResult =
   | { ok: true; venue: LocalEvalVenue }
   /**
    * `turnedOff`: this Inspector serves no local-harness routes (its operator
    * switched local clients off), so it can't answer; the launch still decides.
+   * `status`: the response's, when there was one.
    */
-  | { ok: false; turnedOff: boolean };
+  | { ok: false; turnedOff: boolean; status?: number };
 
-const FIXES: readonly string[] = ["set-up", "retry", "choose-another"];
+const FIXES: readonly string[] = LOCAL_EVAL_VENUE_FIXES;
 
 function isLocalEvalVenue(body: unknown): body is LocalEvalVenue {
   if (!body || typeof body !== "object") return false;
@@ -44,21 +44,28 @@ export async function fetchLocalHarnessEvalVenue(
   signal?: AbortSignal,
 ): Promise<LocalEvalVenueResult> {
   const query = `projectId=${encodeURIComponent(projectId)}&harnessId=${encodeURIComponent(harnessId)}`;
+  const request = new AbortController();
+  const timer = setTimeout(() => request.abort(), CHECK_TIMEOUT_MS);
+  const forward = () => request.abort();
+  signal?.addEventListener("abort", forward, { once: true });
   let response: Response;
   try {
-    response = await authFetch(`/api/mcp/local-harness/eval-venue?${query}`, { signal });
+    response = await authFetch(`/api/mcp/local-harness/eval-venue?${query}`, { signal: request.signal });
   } catch (error) {
     if (signal?.aborted) throw error;
     return { ok: false, turnedOff: false };
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", forward);
   }
-  if (response.status === 404) return { ok: false, turnedOff: true };
-  if (!response.ok) return { ok: false, turnedOff: false };
+  if (response.status === 404) return { ok: false, turnedOff: true, status: 404 };
+  if (!response.ok) return { ok: false, turnedOff: false, status: response.status };
   let body: unknown;
   try {
     body = await response.json();
   } catch {
     // Not JSON: the check failed, and the sheet offers Retry.
-    return { ok: false, turnedOff: false };
+    return { ok: false, turnedOff: false, status: response.status };
   }
-  return isLocalEvalVenue(body) ? { ok: true, venue: body } : { ok: false, turnedOff: false };
+  return isLocalEvalVenue(body) ? { ok: true, venue: body } : { ok: false, turnedOff: false, status: response.status };
 }

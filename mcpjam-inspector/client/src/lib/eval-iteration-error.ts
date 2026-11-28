@@ -20,7 +20,9 @@ export function neverStartedReason(
   if (iteration.status !== "failed" || iteration.error !== NEVER_STARTED_ERROR)
     return null;
   const details = iteration.errorDetails?.trim() ?? "";
-  if (details.length > 400 || /[\n{}[\]]|\[Request ID|\bCONVEX\b|\w+Error:/.test(details))
+  // Not a sentence for a member: JSON, a stack, a request id, an error class,
+  // or a leading machine code such as "TOOL_POLICY_UNSUPPORTED: …".
+  if (details.length > 400 || /[\n{}[\]]|\[Request ID|\bCONVEX\b|\w+Error:|^[A-Z][A-Z0-9_]{2,}:/.test(details))
     return null;
   return /^[A-Z][^]*[.!?]$/.test(details) ? details : null;
 }

@@ -93,6 +93,33 @@ describe("where each harness client in a run would run", () => {
     expect(result.current.startBlockedReason).toBeNull();
   });
 
+  it("asks for a new sign-in when the check is refused for it", async () => {
+    mocks.fetchVenue.mockResolvedValue({ ok: false, turnedOff: false, status: 401 });
+    const { result } = renderHook(() => useLocalHarnessEvalVenues("project-1", ["claude-code"]));
+    await waitFor(() =>
+      expect(result.current.rows[0]?.state).toMatchObject({
+        message: "Couldn't check whether Claude Code can run on this machine. Sign in again, then retry.",
+      }),
+    );
+  });
+
+  it("drops a setup started for another project when the project changes", async () => {
+    let finishSetup: () => void = () => {};
+    mocks.fetchVenue.mockResolvedValueOnce(NOT_SET_UP).mockResolvedValue({ ok: true, venue: { venue: "local" } });
+    mocks.ensure.mockImplementation(() => new Promise<void>((resolve) => (finishSetup = resolve)));
+    const { result, rerender } = renderHook(({ project }) => useLocalHarnessEvalVenues(project, ["claude-code"]), {
+      initialProps: { project: "project-1" },
+    });
+    await waitFor(() => expect(result.current.rows[0]?.state.kind).toBe("refused"));
+    act(() => result.current.setUp("claude-code"));
+    mocks.fetchVenue.mockReset().mockResolvedValue(NOT_SET_UP);
+    rerender({ project: "project-2" });
+    await waitFor(() => expect(mocks.fetchVenue).toHaveBeenCalledWith("claude-code", "project-2", expect.any(AbortSignal)));
+    await act(async () => finishSetup());
+    expect(mocks.fetchVenue).not.toHaveBeenCalledWith("claude-code", "project-1", expect.anything());
+    expect(result.current.rows[0]?.state).toMatchObject({ kind: "refused", fix: "set-up" });
+  });
+
   it("asks nothing on the hosted app", () => {
     mocks.hosted = true;
     const { result } = renderHook(() => useLocalHarnessEvalVenues("project-1", ["claude-code"]));

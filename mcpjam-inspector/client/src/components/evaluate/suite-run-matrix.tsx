@@ -531,9 +531,11 @@ export function ConfiguredSuiteRunReview(
         capabilities.ephemeralEnvironmentLaunch !== true) ||
       suite.projectId !== projectId);
   // Where each local harness client in this run would run, before Start.
+  // Not asked where the sheet shows no matrix (an older deployment, or the
+  // suite's own launch).
   const venues = useLocalHarnessEvalVenues(
     projectId,
-    (runInSaved ? [savedEnvironment?.hostId] : plan.map(({ stack }) => stack.hostId))
+    ((!capable && !pending) || ownLaunch ? [] : runInSaved ? [savedEnvironment?.hostId] : plan.map(({ stack }) => stack.hostId))
       .map((hostId) => asLocalHarnessClientId(effectiveHarnessId(hosts.find((host) => host.hostId === hostId))))
       .filter((id): id is LocalHarnessClientId => id !== null),
   );
@@ -599,7 +601,7 @@ export function ConfiguredSuiteRunReview(
       ? "Loading clients and models…"
       : runInSaved
         ? savedEnvironment
-          ? null
+          ? venues.startBlockedReason
           : "Pick the environment to run this suite in."
         : plan.length > MAX_SUITE_ENVIRONMENTS
           ? `Choose up to ${MAX_SUITE_ENVIRONMENTS} client/model combinations.`

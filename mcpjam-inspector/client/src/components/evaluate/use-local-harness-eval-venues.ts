@@ -14,9 +14,9 @@ import {
 } from "@/lib/local-harness-consent";
 import {
   fetchLocalHarnessEvalVenue,
-  type LocalEvalVenueFix,
   type LocalEvalVenueResult,
 } from "@/lib/local-harness-eval-venue";
+import type { LocalEvalVenueFix } from "@/shared/local-eval-venue";
 
 export type LocalEvalVenueState =
   | { kind: "checking" }
@@ -42,16 +42,19 @@ export type LocalEvalVenues = {
   startBlockedReason: string | null;
 };
 
-function checkFailed(name: string): LocalEvalVenueState {
+function checkFailed(name: string, status?: number): LocalEvalVenueState {
   return {
     kind: "refused",
-    message: `Couldn't check whether ${name} can run on this machine. Check your connection, then retry.`,
+    message:
+      status === 401
+        ? `Couldn't check whether ${name} can run on this machine. Sign in again, then retry.`
+        : `Couldn't check whether ${name} can run on this machine. Check your connection, then retry.`,
     fix: "retry",
   };
 }
 
 function stateOf(result: LocalEvalVenueResult, name: string): LocalEvalVenueState {
-  if (!result.ok) return result.turnedOff ? { kind: "unknown" } : checkFailed(name);
+  if (!result.ok) return result.turnedOff ? { kind: "unknown" } : checkFailed(name, result.status);
   const { venue } = result;
   return venue.venue === "refused"
     ? { kind: "refused", message: venue.message, fix: venue.fix }
@@ -143,6 +146,22 @@ export function useLocalHarnessEvalVenues(
     [projectId, put, check],
   );
 
+  // A project's answers belong to it: switching projects (or closing the
+  // sheet) stops its checks and setups, so a late answer can't land on another
+  // project's row. An install already started on the server carries on.
+  useEffect(() => {
+    const running = [checks.current, setups.current];
+    const answered = asked.current;
+    setStates({});
+    return () => {
+      for (const controllers of running) {
+        for (const controller of controllers.values()) controller.abort();
+        controllers.clear();
+      }
+      answered.clear();
+    };
+  }, [projectId]);
+
   // Each harness is asked once per project; a client added later is asked
   // when it appears, and one removed keeps its answer for if it comes back.
   useEffect(() => {
@@ -152,20 +171,6 @@ export function useLocalHarnessEvalVenues(
       check(id);
     }
   }, [key, projectId, check]);
-
-  // Closing the sheet stops its requests; an install already started on the
-  // server carries on, and the next sheet asks again.
-  useEffect(() => {
-    const running = [checks.current, setups.current];
-    const answered = asked.current;
-    return () => {
-      for (const controllers of running) {
-        for (const controller of controllers.values()) controller.abort();
-        controllers.clear();
-      }
-      answered.clear();
-    };
-  }, []);
 
   const rows = ids.map((id) => ({
     harnessId: id,

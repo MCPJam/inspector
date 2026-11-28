@@ -47,6 +47,7 @@ describe("a run that never started", () => {
     ["a request id", "[Request ID: 1234] Server Error"],
     ["a stack trace", "TypeError: boom\n    at run (evals-runner.ts:1)"],
     ["a raw lower-case cause", "fetch failed"],
+    ["a machine code", "TOOL_POLICY_UNSUPPORTED: COMPUTERS_TERMINAL_TOKEN_SECRET is absent on this deployment."],
     ["nothing", undefined],
   ])("keeps the generic card when the stored cause is %s", (_label, errorDetails) => {
     expect(neverStartedReason(iteration("a", { errorDetails }))).toBeNull();

@@ -1,10 +1,6 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { convexErrMessage } from "@/lib/convex-error";
-import {
-  CODE_EVALUATORS_UNAVAILABLE,
-  launchReasonOf,
-  suiteOnMcpjamUrl,
-} from "@/lib/eval-launch-reason";
+import { runsOnMcpjamInstead, suiteOnMcpjamUrl } from "@/lib/eval-launch-reason";
 import {
   aiLaunchRefusalOf,
   type AiLaunchProblem,
@@ -335,8 +331,8 @@ export function SuiteRunReviewContent({
       // "[CONVEX M(…)] Server Error".
       const refusal = aiLaunchRefusalOf(failure);
       setLaunchProblems(refusal?.problems ?? []);
-      // A suite that needs cloud sandboxes runs on MCPJam: link to it there.
-      setCloudOnly(launchReasonOf(failure) === CODE_EVALUATORS_UNAVAILABLE);
+      // A suite only MCPJam's runners can run: link to it there.
+      setCloudOnly(runsOnMcpjamInstead(failure));
       setError(
         refusal?.message ??
           convexErrMessage(failure, "Could not start this run. Try again."),

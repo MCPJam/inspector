@@ -41,6 +41,7 @@ import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
 import { useEphemeralCloudAvailable } from "@/hooks/useProjectComputer";
 import { suiteOnMcpjamUrl } from "@/lib/eval-launch-reason";
+import { HOSTED_MODE } from "@/lib/config";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useActorCanQuery } from "@/hooks/use-actor-can-query";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
@@ -3257,10 +3258,12 @@ export function SuiteIterationsView({
                         data-testid="suite-eval-cloud-unreachable"
                         message={EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE}
                         detail="Runs started here would fail their computer setup, so Run all stays off. Open the suite on MCPJam to run it."
-                        action={{
-                          label: "Open on MCPJam",
-                          onClick: () => window.open(suiteOnMcpjamUrl(suite._id), "_blank", "noopener,noreferrer"),
-                        }}
+                        {...(HOSTED_MODE ? {} : {
+                          action: {
+                            label: "Open on MCPJam",
+                            onClick: () => window.open(suiteOnMcpjamUrl(suite._id), "_blank", "noopener,noreferrer"),
+                          },
+                        })}
                       />
                     </div>
                   ) : null}
