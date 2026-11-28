@@ -40,6 +40,7 @@ import {
   resolveApiKeyReadiness,
   ApiKeyReadinessError,
 } from "../../services/organizations.js";
+import { forwardOwnApiKeyRequest } from "./api-keys-backend.js";
 
 /**
  * `/api/web/api-keys/*` — WorkOS API Key management.
@@ -478,6 +479,15 @@ apiKeys.post("/", async (c) =>
       raw,
     );
     const session = await resolveSessionContext(c);
+    const viaBackend = await forwardOwnApiKeyRequest(c, {
+      method: "POST",
+      body: {
+        name,
+        organizationId,
+        ...(expiresInDays !== undefined ? { expiresInDays } : {}),
+      },
+    });
+    if (viaBackend.kind === "answered") return viaBackend.body;
 
     // Resolve the MCPJam (Convex) user id for the binding. The session bearer
     // carries the WorkOS user id (`sub`); the binding records the Convex user
@@ -1185,6 +1195,10 @@ apiKeys.get("/", async (c) => {
   }
   return handleRoute(c, async () => {
     const session = await resolveSessionContext(c);
+    const viaBackend = await forwardOwnApiKeyRequest(c, {
+      method: "GET",
+    });
+    if (viaBackend.kind === "answered") return viaBackend.body;
     // Deliberately NOT filtered by `session.organizationId`: a key is now
     // minted into whichever MCPJam org the caller selected in the dialog
     // (see POST above), which can differ from the WorkOS org the session
@@ -1286,6 +1300,16 @@ apiKeys.delete("/:id", async (c) =>
       );
     }
     const session = await resolveSessionContext(c);
+    const viaBackend = await forwardOwnApiKeyRequest(c, {
+      method: "DELETE",
+      keyId: id,
+    });
+    if (viaBackend.kind === "answered") return viaBackend.body;
+    // Not one of the caller's own keys: an owner or admin of the organization
+    // it is bound to may still revoke it here, until the backend does that too.
+    if (viaBackend.kind === "not_own_key") {
+      return revokeBoundKeyForAdmin(c, session.userId, id);
+    }
 
     // Cross-user defense in depth: WorkOS does not enforce per-user
     // ownership for the org-level admin key, and it exposes no single-key
