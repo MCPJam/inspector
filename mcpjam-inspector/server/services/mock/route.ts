@@ -29,6 +29,7 @@ import { MOCK_CALLS_HEADER, formatMockCalls } from "./answer-marks.js";
 import { actorDigest, resolveMock, type ResolvedMock } from "./backend.js";
 import { openAuthorizedReal, type OpenReal } from "./connection.js";
 import { acquireSharedBus, createEventBus, withFeed } from "./event-bus.js";
+import { reportMockOutcome } from "./call-outcomes.js";
 import { checkForwardWithBackend, type ForwardVerdict } from "./forward-policy.js";
 import { takeMockForward } from "./forward-fan-out.js";
 import { forwardingRealServer, type ForwardingReal } from "./forwarding.js";
@@ -236,6 +237,8 @@ export async function serveMock(
       ...(event.refusal ? { refusal: event.refusal } : {}),
     };
     marks.push(mark);
+    // Both doors report; the HTTP door's answer may have streamed before this ran.
+    reportMockOutcome(actorDigest(caller, bearerToken), { caller, bearerToken }, mark);
     // In process the mark goes straight to the running call, so an answer that
     // streams is marked too; its headers were sent before the call settled.
     if (door.kind === "in-process") door.onCall?.(mark);
