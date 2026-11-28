@@ -99,6 +99,33 @@ const TITLE: Record<ScriptSlot, string> = {
     "Couldn't clean up after this run. Fix the script under Setup and cleanup in suite settings.",
 };
 
+/**
+ * The title when the script never started. The runner reports that only when
+ * its sandbox, the write or the connection failed (`runPhaseScript`), so there
+ * is nothing in the script to fix.
+ */
+const COULDNT_START_TITLE: Record<ScriptSlot, string> = {
+  runSetup:
+    "Couldn't set up this run: MCPJam couldn't start the script. Run the suite again.",
+  iterationSetup:
+    "Couldn't set up this iteration: MCPJam couldn't start the script. Run the suite again.",
+  iterationCleanup:
+    "Couldn't clean up after this iteration: MCPJam couldn't start the script. The next run cleans up as usual.",
+  runCleanup:
+    "Couldn't clean up after this run: MCPJam couldn't start the script. The next run cleans up as usual.",
+};
+
+function nextStep(setup: boolean, couldntStart: boolean): string {
+  if (couldntStart) {
+    return setup
+      ? "Run the suite again. If the script still can't start, contact support."
+      : "Nothing to change. The next run cleans up as usual.";
+  }
+  return setup
+    ? "After you fix the script, run the suite again."
+    : "After you fix the script, the next run cleans up as usual.";
+}
+
 /** The card for one script that didn't pass; `null` when it passed. */
 export function scriptFailure(
   slot: ScriptSlot,
@@ -106,23 +133,21 @@ export function scriptFailure(
 ): ScriptFailure | null {
   if (!result || result.status === "passed") return null;
   const setup = slot === "runSetup" || slot === "iterationSetup";
+  const couldntStart = result.status === "error";
   const output = redacted(result.output).trim();
   return {
     slot,
     error: {
       slug: setup ? "eval/script_setup_failed" : "eval/script_cleanup_failed",
-      title: TITLE[slot],
+      title: couldntStart ? COULDNT_START_TITLE[slot] : TITLE[slot],
       oneLine: `The ${scriptSlotTitle(slot)} script ${whatHappened(result)}${CONSEQUENCE[slot]}`,
       likelyCauses: [],
-      nextSteps: [
-        setup
-          ? "After you fix the script, run the suite again."
-          : "After you fix the script, the next run cleans up as usual.",
-      ],
+      nextSteps: [nextStep(setup, couldntStart)],
       docsAnchor: "/evaluate/troubleshooting",
       severity: setup ? "error" : "warning",
-      // The suite's own script failed, not MCPJam: no "MCPJam issue" badge.
-      origin: "user_config",
+      // A script that ran and failed is the suite's own; one that couldn't
+      // start is MCPJam's, so only that one carries the "MCPJam issue" badge.
+      origin: couldntStart ? "mcpjam" : "user_config",
       rawMessage: [output, redacted(result.error ?? "").trim()]
         .filter(Boolean)
         .join("\n\n"),
