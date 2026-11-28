@@ -1,4 +1,4 @@
-import type { MCPClientManager } from "@mcpjam/sdk";
+import { UNANSWERED_CLIENT_CAPABILITIES, type MCPClientManager } from "@mcpjam/sdk";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config";
 import { isNativeElicitationProfile } from "./native-elicitation-profile.js";
 import { isEnhancedModelPolicy } from "../harness-connection-profile.js";
@@ -34,6 +34,20 @@ const PROTOCOL_SETTINGS = [
   "supportedProtocolVersions",
   "versionNegotiation",
 ] as const;
+
+/**
+ * The runtime's declaration as MCPJam's own connection can make it. The
+ * manager withholds the capabilities it never answers (`roots`, `sampling`),
+ * so a connection pinned to the runtime's handshake lands without them. On
+ * pass-through the runtime's client declares and answers them itself.
+ */
+function answerableNativeCapabilities(
+  capabilities: Record<string, unknown>,
+): Record<string, unknown> {
+  const answerable = { ...capabilities };
+  for (const key of UNANSWERED_CLIENT_CAPABILITIES) delete answerable[key];
+  return answerable;
+}
 
 /** A pin the runtime's own client shares adds nothing to its handshake. */
 function differsFromNative(value: unknown, native: unknown): boolean {
@@ -97,7 +111,10 @@ export function nativeForwardingGaps(candidate: Candidate): string[] {
       (!!native &&
         !!capabilities &&
         !("elicitation" in native.capabilities) &&
-        !differsFromNative(capabilities, native.capabilities));
+        !differsFromNative(
+          capabilities,
+          answerableNativeCapabilities(native.capabilities),
+        ));
     if (
       (!capabilities || Object.keys(capabilities).length > 0) && !nativeProfile
     )

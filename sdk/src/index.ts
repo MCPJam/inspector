@@ -144,6 +144,7 @@ export {
   getDefaultClientCapabilities,
   normalizeClientCapabilities,
   mergeClientCapabilities,
+  UNANSWERED_CLIENT_CAPABILITIES,
   withSkillsExtensionCapability,
 } from "./mcp-client-manager/index.js";
 

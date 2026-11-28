@@ -156,6 +156,7 @@ export {
   getDefaultClientCapabilities,
   normalizeClientCapabilities,
   mergeClientCapabilities,
+  UNANSWERED_CLIENT_CAPABILITIES,
   withSkillsExtensionCapability,
 } from "./capabilities.js";
 

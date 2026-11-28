@@ -731,21 +731,19 @@ describe("2025-11-25, answers configured: the client answers over tasks/result",
     expect(check(result, "tasks-ttl-shape").status).toBe("passed");
   });
 
-  it("makes no call when the run advertises roots and has nothing to answer with", async () => {
-    // `roots` is advertised as written. A server may ask `roots/list` over
-    // the call, be refused, and end the task, so a run without answers does
-    // not make the call.
-    const fixture = await serveParkedTask({ onResult: "ask" });
+  it("makes the call when a declared roots is not sent, because nothing answers it", async () => {
+    // Several seed host templates declare roots. Nothing in the manager
+    // answers `roots/list`, so it leaves roots out of initialize, a server
+    // cannot ask, and the call is safe.
+    const fixture = await serveParkedTask({ onResult: "hold" });
     const result = await run(fixture, {
       pollTimeoutMs: 1_000,
       clientCapabilities: { roots: {} },
     });
 
-    expect(fixture.clientCapabilities()).toHaveProperty("roots");
-    expect(resultCalls(fixture)).toBe(0);
-    expect(fixture.answers).toEqual([]);
+    expect(fixture.clientCapabilities()).not.toHaveProperty("roots");
+    expect(resultCalls(fixture)).toBe(1);
     expect(check(result, "tasks-ttl-shape").status).toBe("passed");
-    expect(verdict(result, "tasks-inline-result")).toEqual(COULD_NOT_RUN);
   });
 
   it("still answers over the call when the host also advertises roots", async () => {

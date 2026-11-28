@@ -259,6 +259,30 @@ describe("MCPClientManager", () => {
       await manager.disconnectServer("elicitation-url-mode-stripped-test");
     }, 30000);
 
+    it("should strip sampling and roots from exact clientCapabilities, since nothing answers them", async () => {
+      // The shape a Goose or VS Code preset records.
+      await manager.connectToServer(
+        "exact-caps-sampling-roots-test",
+        everythingServerConfig({
+          clientCapabilities: {
+            roots: { listChanged: true },
+            sampling: {},
+            experimental: { exactPath: {} },
+          } as any,
+        })
+      );
+
+      const info = manager.getInitializationInfo(
+        "exact-caps-sampling-roots-test"
+      );
+      expect(info).toBeDefined();
+      expect(info!.clientCapabilities).toEqual({
+        experimental: { exactPath: {} },
+      });
+
+      await manager.disconnectServer("exact-caps-sampling-roots-test");
+    }, 30000);
+
     it("should keep exact clientCapabilities free of elicitation when not explicitly configured", async () => {
       manager.setElicitationCallback(() => ({ action: "cancel" } as any));
 

@@ -251,6 +251,7 @@ import {
   getDefaultClientCapabilities,
   mergeClientCapabilities,
   normalizeClientCapabilities,
+  UNANSWERED_CLIENT_CAPABILITIES,
 } from "./capabilities.js";
 import {
   assertCallToolResult,
@@ -4580,6 +4581,16 @@ export class MCPClientManager {
 
       if (!hasElicitationHandler) {
         delete exactCapabilities.elicitation;
+      }
+      // Same advertise=enforce rule for the other two server-to-client
+      // requests. A client preset records the real client's set, and Goose,
+      // VS Code, Copilot CLI, Claude Code and Cursor claim `sampling` or
+      // `roots`; this manager registers no `sampling/createMessage` or
+      // `roots/list` handler (an extension binding must be a vendor method),
+      // so a server that took the claim at its word would get `-32601` where
+      // the real client answers.
+      for (const key of UNANSWERED_CLIENT_CAPABILITIES) {
+        delete exactCapabilities[key];
       }
 
       return this.withoutUnansweredClaims(

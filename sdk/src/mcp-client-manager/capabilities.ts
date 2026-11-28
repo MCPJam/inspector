@@ -98,6 +98,13 @@ export function withSkillsExtensionCapability<
   };
 }
 
+/**
+ * Client capabilities whose server-to-client requests the manager never
+ * answers: it registers no `sampling/createMessage` or `roots/list` handler.
+ * An exact set drops them, as it drops `elicitation` without a handler.
+ */
+export const UNANSWERED_CLIENT_CAPABILITIES = ["sampling", "roots"] as const;
+
 export function normalizeClientCapabilities(
   capabilities?: ClientCapabilityOptions
 ): ClientCapabilityOptions {

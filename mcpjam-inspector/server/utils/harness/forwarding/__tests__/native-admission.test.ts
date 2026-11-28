@@ -144,26 +144,40 @@ describe("native profile admission", () => {
     };
     // As `toHttpConfig` builds a pinned connection: the exact declaration,
     // repeated as the overlay the SDK then ignores.
-    const pinned = (overrides: Record<string, unknown> = {}) =>
-      candidate(
-        Object.assign(
-          {
-            url: "https://mcp.example/mcp",
-            clientInfo: { version: "1.2.3", name: "fixture-cli", title: "Fixture" },
-            clientCapabilities: { roots: { listChanged: true }, sampling: {} },
-            capabilities: { roots: { listChanged: true }, sampling: {} },
-            supportedProtocolVersions: ["2025-06-18"],
-            mcpProtocolVersion: "2025-06-18",
-          },
-          overrides,
-        ),
+    const pinned = (overrides: Record<string, unknown> = {}) => {
+      const config = Object.assign(
+        {
+          url: "https://mcp.example/mcp",
+          clientInfo: { version: "1.2.3", name: "fixture-cli", title: "Fixture" },
+          clientCapabilities: { roots: { listChanged: true }, sampling: {} },
+          capabilities: { roots: { listChanged: true }, sampling: {} },
+          supportedProtocolVersions: ["2025-06-18"],
+          mcpProtocolVersion: "2025-06-18",
+        },
+        overrides,
+      );
+      // What the manager sends: the exact set less the `roots` and
+      // `sampling` it never answers.
+      const { roots: _roots, sampling: _sampling, ...sent } =
+        config.clientCapabilities as Record<string, unknown>;
+      return candidate(
+        config,
         // A connection pinned to the runtime's versions lands on one of them.
         "2025-06-18",
+        {
+          transport: "streamable-http",
+          protocolVersion: "2025-06-18",
+          serverCapabilities: {},
+          serverVersion: { name: "fixture", version: "1" },
+          instructions: "",
+          clientCapabilities: sent,
+        },
       );
+    };
 
     it("add no gap, in any key order", () => {
       expect(nativeForwardingGaps(pinned())).toEqual(
-        expect.arrayContaining(["client-capabilities", "client-identity", "protocol-pins"]),
+        expect.arrayContaining(["client-identity", "protocol-pins"]),
       );
       expect(nativeForwardingGaps({ ...pinned(), nativeClient })).toEqual([]);
     });
@@ -171,7 +185,7 @@ describe("native profile admission", () => {
     it.each([
       ["client-identity", { clientInfo: { name: "fixture-cli", version: "1.2.4" } }],
       ["client-identity", { version: "1.2.3" }],
-      ["client-capabilities", { clientCapabilities: { sampling: {} } }],
+      ["client-capabilities", { clientCapabilities: { experimental: { fixture: {} } } }],
       ["protocol-pins", { supportedProtocolVersions: ["2025-06-18", "2025-11-25"] }],
       ["protocol-pins", { mcpProtocolVersion: "2025-11-25" }],
       ["protocol-pins", { versionNegotiation: "legacy-first" }],
