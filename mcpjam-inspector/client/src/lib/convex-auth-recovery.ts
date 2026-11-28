@@ -22,6 +22,7 @@ type Episode = {
   mode: "guest" | "workos" | "unknown";
   attempts: number;
   stages: { stage: Stage; at: number }[];
+  localServerUnreachable?: true;
 };
 const installed = new WeakSet<ConvexReactClient>();
 
@@ -83,9 +84,23 @@ export function installConvexAuthRecovery(client: ConvexReactClient): void {
     try {
       const extra = { ...completed, outcome, finishedAt: Date.now(), backend };
       if (outcome === "failed") {
+        // The token provider already filed the dead local server as routine;
+        // the recovery it caused is the same event and must not page either.
         reportCaught(new Error("Convex authentication recovery failed"), {
           source: "convex_auth_recovery",
           level: "warning",
+          ...(completed.localServerUnreachable
+            ? {
+                tags: {
+                  page_class: "routine",
+                  auth_recovery_failure: "local_server_unreachable",
+                },
+                fingerprint: [
+                  "convex_auth_recovery",
+                  "local_server_unreachable",
+                ],
+              }
+            : {}),
           extra,
         });
       } else {
@@ -175,6 +190,9 @@ export function installConvexAuthRecovery(client: ConvexReactClient): void {
                 episode.mode = provider;
                 episode.attempts++;
               }
+            },
+            onLocalServerUnreachable: () => {
+              if (isCurrent() && episode) episode.localServerUnreachable = true;
             },
           });
         } catch {

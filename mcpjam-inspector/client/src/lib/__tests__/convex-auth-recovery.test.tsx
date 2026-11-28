@@ -513,6 +513,46 @@ it.each(["logout", "account", "retry"])(
   },
 );
 
+// A self-hosted tab whose inspector process is gone: Convex still rejects the
+// expired token over its direct socket, and every refresh goes to the dead
+// loopback server. Same outcome for the user, filed apart from real failures.
+it("files a failed recovery as routine when the local inspector stopped answering", async () => {
+  let rejected = false;
+  auth.getAccessToken.mockImplementation(async () => {
+    if (!rejected) return jwt(1);
+    throw new TypeError("Failed to fetch");
+  });
+  const { peer, close } = setup();
+  try {
+    await waitFor(() => expect(peer.active.size).toBe(9));
+    await act(async () => {
+      rejected = true;
+      peer.rejectIdentity();
+    });
+    await waitFor(
+      () => expect(useSessionRefreshStore.getState().status).toBe("failed"),
+      { timeout: 10000 },
+    );
+    const episodes = vi
+      .mocked(reportCaught)
+      .mock.calls.filter(
+        ([, options]) => options.source === "convex_auth_recovery",
+      );
+    expect(episodes).toHaveLength(1);
+    expect(episodes[0][1]).toMatchObject({
+      level: "warning",
+      tags: {
+        page_class: "routine",
+        auth_recovery_failure: "local_server_unreachable",
+      },
+      fingerprint: ["convex_auth_recovery", "local_server_unreachable"],
+      extra: expect.objectContaining({ outcome: "failed", mode: "workos" }),
+    });
+  } finally {
+    await close();
+  }
+}, 15000);
+
 it("repeated rejection of fresh tokens stays blocked after the SDK gives up", async () => {
   auth.getAccessToken.mockResolvedValue(jwt(1));
   const { peer, view, close } = setup();
@@ -544,6 +584,9 @@ it("repeated rejection of fresh tokens stays blocked after the SDK gives up", as
       outcome: "failed",
       mode: "workos",
     });
+    // The server answered every refresh, so this is a real recovery failure.
+    expect(episodes[0][1].tags).toBeUndefined();
+    expect(episodes[0][1].fingerprint).toBeUndefined();
     const logs = JSON.stringify([
       episodes,
       vi.mocked(Sentry.captureMessage).mock.calls,
