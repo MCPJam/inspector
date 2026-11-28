@@ -351,13 +351,13 @@ describe("session-stable forwarding", () => {
     expect(mocks.bind).not.toHaveBeenCalled();
   });
 
-  it("reads the owner back from the envelope's handle, never from the request", () => {
+  it("reads the owner back from the envelope's handle, never from the request", async () => {
     const sealed = {
       token: "not-a-handle",
       serverId: "server",
       policy: { mode: "default" as const, denied: {}, known: [], unknownTool: "allow" as const },
       session: true as const,
     };
-    expect(sessionForwardingContext(sealed, "server")).toBeUndefined();
+    expect(await sessionForwardingContext(sealed, "server")).toBeUndefined();
   });
 });

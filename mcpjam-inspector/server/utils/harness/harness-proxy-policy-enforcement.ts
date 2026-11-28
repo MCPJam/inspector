@@ -140,7 +140,7 @@ export function evaluateHarnessProxyToolPolicy(args: {
 }
 
 export const HARNESS_TOOL_POLICY_SEAL_UNAVAILABLE_REASON =
-  "TOOL_POLICY_UNSUPPORTED: toolPolicy cannot be enforced for harness evals on this deployment because COMPUTERS_TERMINAL_TOKEN_SECRET is absent or too weak to seal the policy into the harness MCP proxy token. Refused rather than run unenforced.";
+  "TOOL_POLICY_UNSUPPORTED: toolPolicy cannot be enforced for harness evals on this deployment because HARNESS_PROXY_SEAL_SECRET is absent or too weak to seal the policy into the harness MCP proxy token. Refused rather than run unenforced.";
 
 /**
  * Launch-time refusal for a policied harness run, on DERIVED facts only.
@@ -157,7 +157,7 @@ export const HARNESS_TOOL_POLICY_SEAL_UNAVAILABLE_REASON =
  * `mcpDelivery: "harness"`. A `host-executed` adapter's MCP calls never leave
  * this process — `projectSelectedMcpServersAsHostTools` gates them in-process
  * with the same `decideToolPolicyFromSnapshot` and the same block envelope — so
- * a deployment with a weak or absent `COMPUTERS_TERMINAL_TOKEN_SECRET` was
+ * a deployment with a weak or absent seal secret was
  * refusing every policied Codex eval over a token it would never mint.
  *
  * The harness is taken as an ID rather than a boolean precisely so no caller

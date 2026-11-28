@@ -100,6 +100,18 @@ describe("initComputersRuntimeConfigBootstrap", () => {
     expect(isComputersDataPlaneConfigured()).toBe(true);
   });
 
+  it("configures computers without the harness HMAC secret, once the backend withholds it", async () => {
+    // HARNESS_RUNTIME_SECRET=off on the backend: terminal, browser and RS256
+    // harness credentials all verify through JWKS.
+    fetchImpl = () =>
+      jsonResponse(200, { ...ENABLED_PAYLOAD, terminalTokenSecret: null });
+    expect(
+      await initComputersRuntimeConfigBootstrap({ sleep: instantSleep }),
+    ).toBe("applied");
+    expect(process.env.COMPUTERS_TERMINAL_TOKEN_SECRET).toBeUndefined();
+    expect(isComputersDataPlaneConfigured()).toBe(true);
+  });
+
   it("never overwrites env vars that are already set", async () => {
     process.env.E2B_API_KEY = "operator-key";
     await initComputersRuntimeConfigBootstrap({ sleep: instantSleep });

@@ -59,8 +59,8 @@ const atSeconds = (seconds: number) => ({ nowMs: seconds * 1000 });
 
 describe("shared parity vectors", () => {
   for (const vector of fixtures.vectors) {
-    test(`verifies ${vector.name} exactly as the fixture describes`, () => {
-      const claims = verifyHarnessProxyToken(
+    test(`verifies ${vector.name} exactly as the fixture describes`, async () => {
+      const claims = await verifyHarnessProxyToken(
         vector.token,
         fixtures.serverId,
         atSeconds(fixtures.nowSeconds),
@@ -80,9 +80,9 @@ describe("shared parity vectors", () => {
       }
     });
 
-    test(`rejects ${vector.name} minted for a different server`, () => {
+    test(`rejects ${vector.name} minted for a different server`, async () => {
       expect(
-        verifyHarnessProxyToken(
+        await verifyHarnessProxyToken(
           vector.token,
           fixtures.wrongServerId,
           atSeconds(fixtures.nowSeconds),
@@ -92,8 +92,8 @@ describe("shared parity vectors", () => {
 
     for (const [label, boundary] of Object.entries(fixtures.expiryBoundary)) {
       if (label.startsWith("__")) continue;
-      test(`${vector.name}: ${label} is ${boundary.valid ? "accepted" : "rejected"}`, () => {
-        const claims = verifyHarnessProxyToken(
+      test(`${vector.name}: ${label} is ${boundary.valid ? "accepted" : "rejected"}`, async () => {
+        const claims = await verifyHarnessProxyToken(
           vector.token,
           fixtures.serverId,
           atSeconds(boundary.nowSeconds),
@@ -105,26 +105,34 @@ describe("shared parity vectors", () => {
 });
 
 describe("a token that is not this one", () => {
-  test("is refused when tampered, truncated, or signed with another secret", () => {
+  test("is refused when tampered, truncated, or signed with another secret", async () => {
     const [header, payload, signature] = fixtures.vectors[1].token.split(".");
     const now = atSeconds(fixtures.nowSeconds);
 
     // Payload swapped for the claimless one, signature kept: the whole point
     // of signing is that an attacker cannot move an eval claim onto a token.
     const forged = `${header}.${fixtures.vectors[0].token.split(".")[1]}.${signature}`;
-    expect(verifyHarnessProxyToken(forged, fixtures.serverId, now)).toBeNull();
+    expect(
+      await verifyHarnessProxyToken(forged, fixtures.serverId, now),
+    ).toBeNull();
 
     expect(
-      verifyHarnessProxyToken(`${header}.${payload}`, fixtures.serverId, now),
+      await verifyHarnessProxyToken(
+        `${header}.${payload}`,
+        fixtures.serverId,
+        now,
+      ),
     ).toBeNull();
-    expect(verifyHarnessProxyToken("", fixtures.serverId, now)).toBeNull();
     expect(
-      verifyHarnessProxyToken(undefined, fixtures.serverId, now),
+      await verifyHarnessProxyToken("", fixtures.serverId, now),
+    ).toBeNull();
+    expect(
+      await verifyHarnessProxyToken(undefined, fixtures.serverId, now),
     ).toBeNull();
 
     process.env.COMPUTERS_TERMINAL_TOKEN_SECRET = "a-different-secret-entirely";
     expect(
-      verifyHarnessProxyToken(
+      await verifyHarnessProxyToken(
         fixtures.vectors[1].token,
         fixtures.serverId,
         now,
@@ -132,11 +140,11 @@ describe("a token that is not this one", () => {
     ).toBeNull();
   });
 
-  test("is refused when the deployment has no usable secret", () => {
+  test("is refused when the deployment has no usable secret", async () => {
     const now = atSeconds(fixtures.nowSeconds);
     delete process.env.COMPUTERS_TERMINAL_TOKEN_SECRET;
     expect(
-      verifyHarnessProxyToken(
+      await verifyHarnessProxyToken(
         fixtures.vectors[1].token,
         fixtures.serverId,
         now,
@@ -146,7 +154,7 @@ describe("a token that is not this one", () => {
     // Too short to be a secret. Fail closed rather than verify against it.
     process.env.COMPUTERS_TERMINAL_TOKEN_SECRET = "short";
     expect(
-      verifyHarnessProxyToken(
+      await verifyHarnessProxyToken(
         fixtures.vectors[1].token,
         fixtures.serverId,
         now,

@@ -6,6 +6,7 @@ import {
 } from "../routes/web/errors.js";
 import { boundOriginsFromReveal } from "./credential-header-binding.js";
 import { logger } from "./logger.js";
+import { SESSION_GRANT_HEADER } from "./harness/session-grant.js";
 import { backendFailureText } from "./backend-failure-text.js";
 import {
   getServiceCredential,
@@ -256,6 +257,8 @@ export async function fetchRuntimeServerSecrets(args: {
     workosUserId: string;
     mcpjamOrganizationId: string;
   };
+  /** With a harness session handle as the bearer: the box's session grant. */
+  harnessSessionGrant?: string;
 }): Promise<ServerSecretsResult> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
@@ -298,6 +301,8 @@ export async function fetchRuntimeServerSecrets(args: {
         args.workosApiKeyActingAs.mcpjamOrganizationId;
     } else {
       headers["Authorization"] = `Bearer ${args.bearerToken}`;
+      if (args.harnessSessionGrant)
+        headers[SESSION_GRANT_HEADER] = args.harnessSessionGrant;
     }
 
     response = await fetch(`${convexUrl}/web/server/reveal-secrets`, {

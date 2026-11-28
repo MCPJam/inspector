@@ -212,7 +212,7 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
     // serverId (covers GET/POST/HEAD before any stream opens or RPC runs).
     // Absent ⇒ external client ⇒ unaffected.
     const proxyTok = readProxyToken(c);
-    if (proxyTok && !verifyHarnessProxyToken(proxyTok, serverId)) {
+    if (proxyTok && !(await verifyHarnessProxyToken(proxyTok, serverId))) {
       return c.json({ error: "Unauthorized" }, 401);
     }
     const refused = refusedTunnelCaller(c, serverId);
@@ -451,7 +451,7 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
     }
 
     const proxyTok = readProxyToken(c);
-    if (proxyTok && !verifyHarnessProxyToken(proxyTok, serverId)) {
+    if (proxyTok && !(await verifyHarnessProxyToken(proxyTok, serverId))) {
       return c.json({ error: "Unauthorized" }, 401);
     }
     const refused = refusedTunnelCaller(c, serverId);

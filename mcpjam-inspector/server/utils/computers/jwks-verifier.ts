@@ -60,9 +60,72 @@ export interface ComputerJwksVerifier {
   resetCacheForTests(): void;
 }
 
+/** The key-handling half, for a population with its own claim contract. */
+export interface JwksPayloadVerifier {
+  /**
+   * The payload of an RS256 token signed by a key in the JWKS, issued by
+   * `issuer`, with every claim in `requiredClaims` present. `null` for
+   * anything else; never throws. A population whose tokens carry no `exp` on
+   * purpose (harness session handles) passes no `exp` here.
+   */
+  verifyPayload(
+    token: string,
+    opts: { issuer: string; requiredClaims: string[] },
+  ): Promise<Record<string, unknown> | null>;
+  resetCacheForTests(): void;
+}
+
 export function createComputerJwksVerifier(
   spec: JwksVerifierSpec,
 ): ComputerJwksVerifier {
+  const keys = createJwksPayloadVerifier(spec);
+  /** Shape-checks the shared claim contract and narrows to the claims type. */
+  function toClaims(
+    payload: Record<string, unknown>,
+  ): ComputerTokenClaims | null {
+    if (payload.purpose !== spec.purpose) return null;
+    if (typeof payload.sub !== "string" || payload.sub.length === 0)
+      return null;
+    const hasComputer =
+      typeof payload.computerId === "string" && payload.computerId.length > 0;
+    const hasSandbox =
+      typeof payload.sandboxRowId === "string" &&
+      payload.sandboxRowId.length > 0;
+    if (hasComputer === hasSandbox) return null;
+    if (
+      typeof payload.projectId !== "string" ||
+      payload.projectId.length === 0
+    ) {
+      return null;
+    }
+    return {
+      userId: payload.sub,
+      ...(hasComputer ? { computerId: payload.computerId as string } : {}),
+      ...(hasSandbox ? { sandboxRowId: payload.sandboxRowId as string } : {}),
+      projectId: payload.projectId,
+      ...(typeof payload.sessionId === "string" && payload.sessionId.length > 0
+        ? { sessionId: payload.sessionId }
+        : {}),
+    };
+  }
+  return {
+    async verify(token: string): Promise<ComputerTokenClaims | null> {
+      // `exp` is required because jose rejects an EXPIRED exp but does not
+      // require exp to be PRESENT — a token minted without one would
+      // otherwise verify as never-expiring.
+      const payload = await keys.verifyPayload(token, {
+        issuer: spec.issuer,
+        requiredClaims: ["exp"],
+      });
+      return payload ? toClaims(payload) : null;
+    },
+    resetCacheForTests: keys.resetCacheForTests,
+  };
+}
+
+export function createJwksPayloadVerifier(
+  spec: Pick<JwksVerifierSpec, "jwksPath" | "label">,
+): JwksPayloadVerifier {
   let cached: {
     url: string;
     fetchedAt: number;
@@ -126,38 +189,8 @@ export function createComputerJwksVerifier(
     }
   }
 
-  /** Shape-checks the shared claim contract and narrows to the claims type. */
-  function toClaims(
-    payload: Record<string, unknown>,
-  ): ComputerTokenClaims | null {
-    if (payload.purpose !== spec.purpose) return null;
-    if (typeof payload.sub !== "string" || payload.sub.length === 0)
-      return null;
-    const hasComputer =
-      typeof payload.computerId === "string" && payload.computerId.length > 0;
-    const hasSandbox =
-      typeof payload.sandboxRowId === "string" &&
-      payload.sandboxRowId.length > 0;
-    if (hasComputer === hasSandbox) return null;
-    if (
-      typeof payload.projectId !== "string" ||
-      payload.projectId.length === 0
-    ) {
-      return null;
-    }
-    return {
-      userId: payload.sub,
-      ...(hasComputer ? { computerId: payload.computerId as string } : {}),
-      ...(hasSandbox ? { sandboxRowId: payload.sandboxRowId as string } : {}),
-      projectId: payload.projectId,
-      ...(typeof payload.sessionId === "string" && payload.sessionId.length > 0
-        ? { sessionId: payload.sessionId }
-        : {}),
-    };
-  }
-
   return {
-    async verify(token: string): Promise<ComputerTokenClaims | null> {
+    async verifyPayload(token, opts) {
       // Reject a non-RS256 header before touching the network: `none` and
       // `HS256` must never reach a verifier that holds public key material.
       let alg: unknown;
@@ -171,15 +204,12 @@ export function createComputerJwksVerifier(
       const jwks = await getJwks();
       if (!jwks) return null;
       try {
-        // `requiredClaims: ["exp"]` because jose rejects an EXPIRED exp but
-        // does not require exp to be PRESENT — a token minted without one
-        // would otherwise verify as never-expiring.
         const { payload } = await jwtVerify(token, jwks, {
-          issuer: spec.issuer,
+          issuer: opts.issuer,
           algorithms: ["RS256"],
-          requiredClaims: ["exp"],
+          requiredClaims: opts.requiredClaims,
         });
-        return toClaims(payload as Record<string, unknown>);
+        return payload as Record<string, unknown>;
       } catch {
         return null;
       }

@@ -82,18 +82,19 @@ export async function sessionForwardingHeaders(args: {
 
 /** The owner a session envelope names, the digest its turn must have bound,
  *  and whether MCPJam's client carries the server with the sealed profile. */
-export function sessionForwardingContext(
+export async function sessionForwardingContext(
   sealed: SealedHarnessProxyPolicy,
   serverId: string,
-):
+): Promise<
   | {
       owner: ForwardingOwner;
       policyDigest: string;
       delivery?: "bridge";
       correlationKey?: string;
     }
-  | undefined {
-  const handle = verifyHarnessSessionHandle(sealed.token, serverId);
+  | undefined
+> {
+  const handle = await verifyHarnessSessionHandle(sealed.token, serverId);
   if (!handle) return undefined;
   // A profile rides only with bridge delivery. `sessionPolicyDigest` ignores
   // the envelope version, so a version 4 envelope carrying a profile would

@@ -191,10 +191,11 @@ function getServiceToken(): string | null {
 
 /**
  * True when everything the computers data plane needs is present: a Convex to
- * talk to, the inspector service token, the vendor key, and the terminal-token
- * secret. The secret is still required because it signs/verifies harness proxy
- * tokens (`harness-proxy-token.ts`) even though terminal tokens are now
- * RS256/JWKS.
+ * talk to, the inspector service token and the vendor key. Terminal, browser
+ * and RS256 harness credentials verify through the backend's JWKS, so the
+ * shared HMAC secret is no longer one of them; without it, only HS256 harness
+ * credentials go unverified, and policied harness evals are refused at launch
+ * unless `HARNESS_PROXY_SEAL_SECRET` is set (`harness-proxy-policy-seal.ts`).
  *
  * Values may arrive from the environment OR from the boot bootstrap
  * (`runtime-config.ts`, which fills env in place) — callers that can run
@@ -203,10 +204,7 @@ function getServiceToken(): string | null {
  */
 export function isComputersDataPlaneConfigured(): boolean {
   return Boolean(
-    getConvexHttpUrl() &&
-    getServiceToken() &&
-    process.env.E2B_API_KEY &&
-    process.env.COMPUTERS_TERMINAL_TOKEN_SECRET?.trim(),
+    getConvexHttpUrl() && getServiceToken() && process.env.E2B_API_KEY,
   );
 }
 

@@ -261,9 +261,9 @@ async function handle(c: any) {
     ? await authorizeSessionRequest(sessionEnvelope, serverId, boxGrant)
     : undefined;
   if (session instanceof Response) return session;
+  const credential = sealed?.token ?? presentedToken;
   const claims =
-    session?.claims ??
-    verifyHarnessProxyToken(sealed?.token ?? presentedToken, serverId);
+    session?.claims ?? (await verifyHarnessProxyToken(credential, serverId));
   if (!claims || !claims.externalId || !claims.orgId) {
     return c.json({ error: "Unauthorized" }, 401);
   }
@@ -271,7 +271,7 @@ async function handle(c: any) {
 
   const turn = sealed?.turn;
   const checkTurn = turn
-    ? () => authorizeProxyTurn(turn, claims)
+    ? () => authorizeProxyTurn(turn, claims, credential)
     : sessionEnvelope && session
       ? () =>
           sameSessionTurn(sessionEnvelope, serverId, boxGrant, session.turnId)
@@ -377,21 +377,26 @@ async function handle(c: any) {
       ? trackSessionCall(session.laneId, serverId, body.id)
       : undefined;
 
-  // Rebuild the user's authorized connection server-side via the acting-as
-  // service-token exchange (no browser bearer in the sandbox). Convex baked the
-  // verified identity into the token; Convex also access-checked the server at
-  // mint time, so membership authorization here is the project-ownership path.
-  const caller: ManagerCallerContext = {
-    authMethod: "workos_api_key",
-    workosUserId: claims.externalId,
-    mcpjamOrganizationId: claims.orgId,
-  };
+  // Rebuild the user's authorized connection server-side (no browser bearer
+  // in the sandbox) with the credential itself, which the backend holds to
+  // its own project and server (and, for a handle, to the lane's live turn and
+  // this box's grant). Only an RS256 credential goes that way: an HS256 one
+  // comes from a backend that may not take it as a bearer, so it keeps the
+  // synthesized acting-as caller until HS256 is turned off.
+  const bearer = claims.alg === "RS256" && credential ? credential : "";
+  const caller: ManagerCallerContext = bearer
+    ? { ...(session && boxGrant ? { harnessSessionGrant: boxGrant } : {}) }
+    : {
+        authMethod: "workos_api_key",
+        workosUserId: claims.externalId,
+        mcpjamOrganizationId: claims.orgId,
+      };
 
   try {
     const createAuthorized = () =>
       createAuthorizedManager(
         caller,
-        "", // bearer ignored on the workos_api_key path
+        bearer, // ignored on the workos_api_key path
         claims.projectId,
         [serverId],
         sealed?.profile?.timeout ?? HARNESS_MCP_TIMEOUT_MS,

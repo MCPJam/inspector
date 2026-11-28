@@ -74,7 +74,7 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
     );
     if (!sealed) return c.json({ error: "Unauthorized" }, 401);
     const session = sealed.session
-      ? sessionForwardingContext(sealed, serverId)
+      ? await sessionForwardingContext(sealed, serverId)
       : undefined;
     const context: ForwardingContext | undefined = sealed.session
       ? session && { ...session, session: true }

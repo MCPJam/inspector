@@ -23,10 +23,13 @@
  * holds, so Convex signing it would add a mirrored claim contract and no
  * authority).
  *
- * AES-256-GCM with an HKDF-derived key over the SAME
- * `COMPUTERS_TERMINAL_TOKEN_SECRET` the token verifier already requires — no new
- * deployment secret, purpose-isolated by the HKDF `info` string exactly as the
- * token's `purpose` claim isolates it from terminal tokens.
+ * AES-256-GCM with an HKDF-derived key, purpose-isolated by the HKDF `info`
+ * string. The secret it is derived from follows the enclosed credential's
+ * algorithm, so a lane's sealed handle keeps its bytes for the lane's life:
+ * an HS256 credential is sealed under `COMPUTERS_TERMINAL_TOKEN_SECRET`, as
+ * every envelope was before, and an RS256 one under `HARNESS_PROXY_SEAL_SECRET`,
+ * which the web and worker services must share. The old secret seals and opens
+ * nothing once `HARNESS_PROXY_ACCEPT_HS256=false`.
  */
 import { MAX_SEALED_PLAINTEXT_BYTES } from "./harness-proxy-limits.js";
 import {
@@ -44,6 +47,10 @@ import {
   harnessConnectionProfileSchema,
   type HarnessConnectionProfile,
 } from "./harness-connection-profile.js";
+import {
+  acceptsHs256HarnessCredentials,
+  harnessCredentialAlg,
+} from "./harness-proxy-token.js";
 
 /** Versioned prefix: an envelope shape change must be a new prefix, never a
  *  reinterpretation of these bytes. */
@@ -53,6 +60,7 @@ const HKDF_SALT = "mcpjam-harness-mcp-proxy-policy-seal";
 const KEY_LENGTH = 32;
 const IV_LENGTH = 12;
 const MIN_SECRET_LENGTH = 16;
+const MIN_SEAL_SECRET_LENGTH = 32;
 /** Bound the sealed plaintext. Over cap the RUN is refused at launch — never
  *  truncated: truncating a deny list silently permits the calls it dropped. */
 export { MAX_SEALED_PLAINTEXT_BYTES } from "./harness-proxy-limits.js";
@@ -120,16 +128,53 @@ function deriveIvKey(secret: string): Buffer {
   );
 }
 
-function readSecret(): string {
+/** `HARNESS_PROXY_SEAL_SECRET`, or null when unset or too short. */
+function sealSecret(): string | null {
+  const secret = process.env.HARNESS_PROXY_SEAL_SECRET?.trim();
+  return secret && secret.length >= MIN_SEAL_SECRET_LENGTH ? secret : null;
+}
+
+/**
+ * `COMPUTERS_TERMINAL_TOKEN_SECRET`, while HS256 credentials are accepted:
+ * what every envelope was sealed under before the seal secret existed.
+ */
+function legacySecret(): string | null {
   const secret = process.env.COMPUTERS_TERMINAL_TOKEN_SECRET?.trim();
+  return secret &&
+    secret.length >= MIN_SECRET_LENGTH &&
+    acceptsHs256HarnessCredentials()
+    ? secret
+    : null;
+}
+
+/**
+ * The secret an envelope enclosing `token` is sealed under, or null when it
+ * is missing. An HS256 credential keeps the old derivation and an RS256 one
+ * takes the seal secret, so a lane's envelope never changes under it.
+ * Anything else (a forwarding context) takes whichever is present.
+ */
+function expectedSecret(token: string): string | null {
+  const alg = harnessCredentialAlg(token);
+  if (alg === "HS256") return legacySecret();
+  if (alg === "RS256") return sealSecret();
+  return sealSecret() ?? legacySecret();
+}
+
+/** {@link expectedSecret}, THROWING when it is missing: sealing fails closed. */
+function secretFor(token: string): string {
+  const alg = harnessCredentialAlg(token);
+  const secret = expectedSecret(token);
   if (!secret) {
+    const seal = `HARNESS_PROXY_SEAL_SECRET must be set, at least ${MIN_SEAL_SECRET_LENGTH} characters`;
+    const legacy = `COMPUTERS_TERMINAL_TOKEN_SECRET must be set, at least ${MIN_SECRET_LENGTH} characters, while HS256 harness credentials are accepted`;
     throw new Error(
-      "harness-proxy-policy-seal: COMPUTERS_TERMINAL_TOKEN_SECRET is not set on this deployment"
-    );
-  }
-  if (secret.length < MIN_SECRET_LENGTH) {
-    throw new Error(
-      `harness-proxy-policy-seal: COMPUTERS_TERMINAL_TOKEN_SECRET must be at least ${MIN_SECRET_LENGTH} characters`
+      `harness-proxy-policy-seal: ${
+        alg === "HS256"
+          ? legacy
+          : alg === "RS256"
+            ? seal
+            : `${seal}, or ${legacy}`
+      }`,
     );
   }
   return secret;
@@ -137,15 +182,11 @@ function readSecret(): string {
 
 /**
  * Can this deployment seal at all? Callers use this to REFUSE a policied
- * harness run at launch rather than start one that would run unpoliced.
+ * harness run at launch rather than start one that would run unpoliced. The
+ * old secret still counts while the backend mints HS256 credentials.
  */
 export function isHarnessProxyPolicySealAvailable(): boolean {
-  try {
-    readSecret();
-    return true;
-  } catch {
-    return false;
-  }
+  return Boolean(sealSecret() ?? legacySecret());
 }
 
 /** Does this value look like a sealed envelope (as opposed to a bare token)? */
@@ -173,7 +214,7 @@ export function sealHarnessProxyToken(args: {
   expiresAtMs: number;
   profile?: HarnessConnectionProfile;
 }): string {
-  const secret = readSecret();
+  const secret = secretFor(args.token);
   const deniedCount = Object.keys(args.policy.denied).length;
   if (deniedCount > MAX_SEALED_DENIED_TOOL_NAMES) {
     throw new HarnessProxyPolicySealTooLargeError(
@@ -243,7 +284,7 @@ export function sealHarnessSessionEnvelope(args: {
   /** The runtime's correlation key, for a runtime that stamps one. */
   correlationKey?: string;
 }): string {
-  const secret = readSecret();
+  const secret = secretFor(args.handle);
   const deniedCount = Object.keys(args.policy.denied).length;
   if (deniedCount > MAX_SEALED_DENIED_TOOL_NAMES) {
     throw new HarnessProxyPolicySealTooLargeError(
@@ -273,6 +314,27 @@ export function sealHarnessSessionEnvelope(args: {
   );
 }
 
+/** The envelope's plaintext under `secret`, or null when the tag refuses it. */
+function decryptEnvelope(
+  secret: string,
+  ivPart: string,
+  sealedPart: string,
+): Buffer | null {
+  try {
+    const iv = Buffer.from(ivPart, "base64url");
+    const sealed = Buffer.from(sealedPart, "base64url");
+    if (iv.byteLength !== IV_LENGTH || sealed.byteLength <= 16) return null;
+    const ciphertext = sealed.subarray(0, sealed.byteLength - 16);
+    const tag = sealed.subarray(sealed.byteLength - 16);
+    const decipher = createDecipheriv("aes-256-gcm", deriveKey(secret), iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  } catch {
+    // A tampered byte, or another secret, fails the GCM tag here.
+    return null;
+  }
+}
+
 /**
  * Open a sealed envelope. Returns `null` for ANY verification-side failure
  * (missing/weak secret, wrong prefix, malformed parts, tampered bytes, wrong
@@ -285,39 +347,34 @@ export function unsealHarnessProxyToken(
   opts: { nowMs?: number } = {}
 ): SealedHarnessProxyPolicy | null {
   if (!value || !isSealedHarnessProxyToken(value)) return null;
-  let secret: string;
-  try {
-    secret = readSecret();
-  } catch {
-    return null;
-  }
   const parts = value.split(".");
   if (parts.length !== 3) return null;
   const [, ivPart, sealedPart] = parts;
   if (!ivPart || !sealedPart) return null;
 
-  let plaintext: Buffer;
-  try {
-    const iv = Buffer.from(ivPart, "base64url");
-    const sealed = Buffer.from(sealedPart, "base64url");
-    if (iv.byteLength !== IV_LENGTH || sealed.byteLength <= 16) return null;
-    const ciphertext = sealed.subarray(0, sealed.byteLength - 16);
-    const tag = sealed.subarray(sealed.byteLength - 16);
-    const decipher = createDecipheriv("aes-256-gcm", deriveKey(secret), iv);
-    decipher.setAuthTag(tag);
-    plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-  } catch {
-    // A tampered byte fails the GCM tag here. Fail closed, silently.
-    return null;
+  // Whichever secret the GCM tag accepts, provided it is the one the
+  // enclosed credential would have been sealed under.
+  let envelope: SealedPolicyEnvelope | undefined;
+  for (const secret of [sealSecret(), legacySecret()]) {
+    if (!secret) continue;
+    const plaintext = decryptEnvelope(secret, ivPart, sealedPart);
+    if (!plaintext) continue;
+    if (plaintext.byteLength > MAX_SEALED_PLAINTEXT_BYTES) return null;
+    try {
+      envelope = JSON.parse(plaintext.toString("utf8"));
+    } catch {
+      return null;
+    }
+    const alg =
+      typeof envelope?.t === "string" ? harnessCredentialAlg(envelope.t) : null;
+    if (
+      (alg === "HS256" || alg === "RS256") &&
+      expectedSecret(envelope!.t) !== secret
+    )
+      return null;
+    break;
   }
-  if (plaintext.byteLength > MAX_SEALED_PLAINTEXT_BYTES) return null;
-
-  let envelope: SealedPolicyEnvelope;
-  try {
-    envelope = JSON.parse(plaintext.toString("utf8"));
-  } catch {
-    return null;
-  }
+  if (!envelope) return null;
   if (!envelope || ![1, 2, 3, 4, 5, 6].includes(envelope.v) || parts[0] !== `mcpjps${envelope.v}`) return null;
   const bridged =
     envelope.v === 5 || (envelope.v === 6 && envelope.d === "bridge");

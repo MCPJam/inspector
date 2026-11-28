@@ -158,6 +158,7 @@ import {
 import { getConfidentialCimdProviderForOrg } from "../../services/xaa-confidential-cimd.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { isOrgBoundCredential } from "../../utils/org-bound-credential.js";
+import { SESSION_GRANT_HEADER } from "../../utils/harness/session-grant.js";
 import { carryMockTransport, dialMockOr, type MockAuthorizeEntry, type MockDial } from "../../utils/mock-servers.js";
 import { observeMockAnswered } from "../../services/mock/answer-marks.js";
 import {
@@ -749,6 +750,8 @@ export interface ManagerCallerContext {
   workosUserId?: string;
   /** Convex organization id scope for the delegated exchange. */
   mcpjamOrganizationId?: string;
+  /** With a harness session handle as the bearer: the box's session grant. */
+  harnessSessionGrant?: string;
   /** Sink for backend-attributed request log context; absent ⇒ no-op. */
   setLogContext?: (partial: Partial<RequestLogContext>) => void;
   /** Read-back of the same log context (authenticatedUserId); absent ⇒ null. */
@@ -808,6 +811,8 @@ export function buildConvexAuthHeaders(
     return headers;
   }
   headers["Authorization"] = `Bearer ${originalBearer}`;
+  if (caller.harnessSessionGrant)
+    headers[SESSION_GRANT_HEADER] = caller.harnessSessionGrant;
   return headers;
 }
 
@@ -2770,6 +2775,7 @@ export async function createAuthorizedManager(
                         mcpjamOrganizationId: caller.mcpjamOrganizationId,
                       }
                     : undefined,
+                harnessSessionGrant: caller.harnessSessionGrant,
               })
             : null;
         if (revealed?.headers && auth.serverConfig.transportType === "http") {

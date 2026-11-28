@@ -559,6 +559,15 @@ export type SystemEventMap = {
   "server.shutdown.drain": import("./log-events/shutdown-drain.js").ShutdownDrainEvent;
   /** One per start: `web` runs no claim loops; `worker` and `all` do. */
   "server.process_role": { role: "all" | "web" | "worker" };
+  /**
+   * A harness proxy token or lane session handle verified with the shared
+   * HMAC secret (`utils/harness/harness-proxy-token.ts`). Counted before
+   * `HARNESS_PROXY_ACCEPT_HS256` turns it off; `laneId` names a handle's lane.
+   */
+  "harness.hs256_credential_accepted": {
+    credential: "proxy_token" | "session_handle";
+    laneId?: string;
+  };
   llm_spend_unattested_ip_pooled: Record<string, never>;
   "model_catalog.refresh.failed": {
     reason: "fetch_failed" | "invalid_catalog";

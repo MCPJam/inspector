@@ -155,7 +155,7 @@ describe("harness proxy policy seal", () => {
     ).toThrow(HarnessProxyPolicySealTooLargeError);
   });
 
-  it("leaves a BARE Convex token untouched (swarm / UT / playground regression)", () => {
+  it("leaves a BARE Convex token untouched (swarm / UT / playground regression)", async () => {
     const bare = signTestProxyToken({
       serverId: "srv-a",
       userId: "u_convex",
@@ -166,13 +166,13 @@ describe("harness proxy policy seal", () => {
     expect(isSealedHarnessProxyToken(bare)).toBe(false);
     expect(unsealHarnessProxyToken(bare, "srv-a")).toBeNull();
     // …and the identity path the route falls back to still accepts it.
-    expect(verifyHarnessProxyToken(bare, "srv-a")).toMatchObject({
+    expect(await verifyHarnessProxyToken(bare, "srv-a")).toMatchObject({
       externalId: "u_ext",
       orgId: "o1",
     });
   });
 
-  it("verifies the sealed inner token through the unchanged identity verifier", () => {
+  it("verifies the sealed inner token through the unchanged identity verifier", async () => {
     const inner = signTestProxyToken({
       serverId: "srv-a",
       userId: "u_convex",
@@ -183,9 +183,8 @@ describe("harness proxy policy seal", () => {
     const sealed = seal({ token: inner });
     const opened = unsealHarnessProxyToken(sealed, "srv-a");
     expect(opened).not.toBeNull();
-    expect(verifyHarnessProxyToken(opened!.token, "srv-a")).toMatchObject({
-      externalId: "u_ext",
-    });
+    const claims = await verifyHarnessProxyToken(opened!.token, "srv-a");
+    expect(claims).toMatchObject({ externalId: "u_ext" });
   });
 });
 

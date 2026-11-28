@@ -48,8 +48,10 @@ needs no public domain; point its healthcheck at `/health`.
 - The same `CONVEX_URL`, `CONVEX_HTTP_URL`, `INSPECTOR_SERVICE_TOKEN` and
   `E2B_API_KEY` as the web service, against the same Convex deployment. The
   worker seals harness proxy policies that the web tier unseals, so both must
-  resolve the same `COMPUTERS_TERMINAL_TOKEN_SECRET`, which they do when it
-  bootstraps from the same deployment.
+  have the same `HARNESS_PROXY_SEAL_SECRET` (RS256 harness credentials) and,
+  while HS256 ones are accepted, resolve the same
+  `COMPUTERS_TERMINAL_TOKEN_SECRET`, which they do when it bootstraps from the
+  same deployment.
 - `MCPJAM_INSPECTOR_PUBLIC_URL` set to the web tier's public origin. It also
   names the XAA issuer a claimed job mints under; see below.
 - The same `XAA_IDP_PRIVATE_KEY` as the web service, if any project connects
