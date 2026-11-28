@@ -148,7 +148,7 @@ describe("accountSetGroup", () => {
       unavailablePolicy: "hostedOnlyAccount",
       unavailableCause: "not_acknowledged",
       unavailableMessage:
-        "Local runs aren't allowed yet for this server's shared sign-in. Ask a project admin to turn on Allow local runs in the server's sharing settings.",
+        "Local runs are off for this server's shared sign-in. Ask a project admin to turn on Allow local runs on the server's Auth tab.",
     };
     const run = () =>
       group([DUMMY], authorized({ oauthConnections: [withheld] }));

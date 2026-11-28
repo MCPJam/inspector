@@ -103,9 +103,9 @@ export function credentialRefusalMessage(
   if (refusal.kind === "hosted_only") {
     if (refusal.cause === "not_acknowledged") {
       return (
-        `${server} uses the project's shared sign-in, and local runs aren't ` +
-        "allowed for it yet. Ask a project admin to turn on Allow local " +
-        "runs in its sharing settings."
+        `${server} uses the project's shared sign-in, and local runs are ` +
+        "off for it. Ask a project admin to turn on Allow local runs on the " +
+        "server's Auth tab."
       );
     }
     if (refusal.cause === "client_upgrade_required") {
@@ -167,7 +167,7 @@ function credentialRefusalNormalized(
         ? "Blocked by organization policy"
         : refusal.kind === "hosted_only"
           ? refusal.cause === "not_acknowledged"
-            ? "Local runs not allowed yet"
+            ? "Local runs are off for this server"
             : refusal.cause === "client_upgrade_required"
               ? "Update MCPJam to use this account"
               : "Account can't run locally"

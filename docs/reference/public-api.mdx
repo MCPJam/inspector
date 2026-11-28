@@ -620,8 +620,9 @@ unique on the server, ignoring case.
   replacing a token replaces it whoever the token belongs to. Keep each name
   for one test user.
 - **Uploaded accounts support hosted and local runs.** Local Inspector 3.22.0
-  or later can receive the access token. Sharing a server in the current Inspector enables **Allow local runs**. For servers shared before
-  Inspector 3.22.0, a project admin must enable it in the sharing settings. A personal server's uploaded account
+  or later can receive the access token. Sharing a server in the current Inspector enables **Allow local runs**, and a project
+  admin can turn it off on the server's **Auth** tab. For servers shared before Inspector 3.22.0, a project admin must
+  enable it there. A personal server's uploaded account
   is available locally only to its owner. Organization export policy can
   block delivery. Browsers and sandbox runtimes do not receive these tokens.
   Refresh tokens and client secrets stay in the backend. Disabling delivery

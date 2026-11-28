@@ -1199,7 +1199,7 @@ Uploads to this server are budgeted per person: 60, refilling at 120 an hour. No
 MCPJam withheld the shared or uploaded account’s access token from this client.
 
 **Next steps**
-- If the cause is `not_acknowledged`, ask a project admin to enable **Allow local runs** in the server’s sharing settings. Sharing enables it automatically for new shares; servers shared before Inspector 3.22.0 need this acknowledgement.
+- If the cause is `not_acknowledged`, local runs are off for this shared server. Ask a project admin to turn on **Allow local runs** on the server’s **Auth** tab. Sharing turns it on for new shares, but an admin can turn it off, and servers shared before Inspector 3.22.0 start with it off.
 - If the cause is `client_upgrade_required`, update your local MCPJam installation.
 - Use the local Inspector for local runs. Shared tokens are not delivered to browser clients or sandbox runtimes.
 - If your organization has turned off **Allow credential export**, ask an organization owner or admin to turn it on under **Organization settings → Security**.

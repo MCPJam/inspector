@@ -1061,7 +1061,7 @@ Show one account.
 
 Upload an access token to an account. A name no account has creates the account; otherwise its token is replaced and its ID stays.
 
-Uploaded accounts can be used in hosted runs and in local Inspector 3.22.0 or later. Sharing a server in the current Inspector enables **Allow local runs**. For servers shared before Inspector 3.22.0, a project admin must enable it in the server’s sharing settings. A personal server’s uploaded account is available locally only to its owner. Nothing checks who a token belongs to: the name is your own label.
+Uploaded accounts can be used in hosted runs and in local Inspector 3.22.0 or later. Sharing a server in the current Inspector enables **Allow local runs**, and a project admin can turn it off on the server’s **Auth** tab. For servers shared before Inspector 3.22.0, a project admin must enable it there. A personal server’s uploaded account is available locally only to its owner. Nothing checks who a token belongs to: the name is your own label.
 
 Only the access token is delivered to the local process. Refresh tokens and client secrets stay in the backend. The organization’s credential export policy can block local delivery. Every project member can use every shared account on that server. Use dedicated test accounts for sharing. Whoever holds a delivered token can use it outside MCPJam. The audit log records token delivery and its recipient. Actions performed with a copied token may occur outside MCPJam’s audit trail.
 

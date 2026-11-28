@@ -508,7 +508,7 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
             oauthUnavailablePolicy: "hostedOnlyAccount",
             oauthUnavailableCause: "not_acknowledged",
             oauthUnavailableMessage:
-              "Local runs aren't allowed yet for this server's shared sign-in.",
+              "Local runs are off for this server's shared sign-in.",
           },
         });
       }
@@ -526,7 +526,7 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
       )
     ).rejects.toMatchObject({
       status: 403,
-      message: "Local runs aren't allowed yet for this server's shared sign-in.",
+      message: "Local runs are off for this server's shared sign-in.",
       details: expect.objectContaining({
         exportDenied: true,
         policy: "hostedOnlyAccount",
