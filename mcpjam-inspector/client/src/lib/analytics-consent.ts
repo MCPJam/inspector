@@ -31,6 +31,10 @@ const listeners = new Set<() => void>();
 let pageChoice: AnalyticsConsent | null = null;
 // The PostHog instance a choice made in another tab is applied to.
 let followedClient: AnalyticsConsentClient | null = null;
+// When optional analytics last became allowed on this page, and whether they
+// were allowed after the last change. 0 means from the start of the page.
+let consentedSince = 0;
+let consentedAfterLastChange: boolean | null = null;
 
 /**
  * Whether this visitor must opt in before optional analytics and session
@@ -122,7 +126,16 @@ function applyToClient(
   if (consent === null || client.is_capturing() === refused) {
     client.clear_opt_in_out_capturing();
   }
-  if (!refused) return;
+  if (!refused) {
+    // posthog-js pauses batched delivery while capture is off and resumes it
+    // only from `opt_in_capturing` while capturing. Capture that resumes
+    // through the default above, or through a grant it could not store, needs
+    // this call to send what it queues.
+    client.opt_in_capturing({ captureEventName: false });
+    // That stores a grant; a location's default is not the visitor's choice.
+    if (consent === null) client.clear_opt_in_out_capturing();
+    return;
+  }
   forgetTabWindowId();
   // Outside cookieless mode, opting out leaves a running recorder and a
   // loaded Conversations widget in place. Re-checking stops the recorder
@@ -142,7 +155,37 @@ function forgetTabWindowId(): void {
 }
 
 function notify(): void {
+  const consented = hasAnalyticsConsent();
+  if (consented && consentedAfterLastChange !== true) consentedSince = Date.now();
+  consentedAfterLastChange = consented;
   for (const listener of listeners) listener();
+}
+
+/**
+ * Whether something observed at `timestamp` (ms) happened before optional
+ * analytics were last allowed on this page. posthog-js reports a dead click
+ * seconds after the click, so one clicked before Allow, or before a
+ * withdrawal and a new grant, would otherwise go out under the later grant.
+ */
+export function predatesAnalyticsConsent(timestamp: number): boolean {
+  return timestamp < consentedSince;
+}
+
+/**
+ * Call before posthog-js initializes. A grant posthog-js stored for an
+ * earlier document turns its persistence on before `loaded` runs, and it
+ * reads back this tab's window id from an earlier visit, while this visitor
+ * has not yet allowed analytics.
+ */
+export function prepareAnalyticsConsentStorage(token: string): void {
+  if (getAnalyticsConsent() === null) {
+    try {
+      window.localStorage.removeItem(`__ph_opt_in_out_${token}`);
+    } catch (error) {
+      console.debug("[analytics-consent] could not remove the SDK's stored choice", error);
+    }
+  }
+  if (!hasAnalyticsConsent()) forgetTabWindowId();
 }
 
 /**

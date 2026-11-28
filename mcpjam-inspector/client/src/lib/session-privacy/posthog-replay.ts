@@ -110,7 +110,9 @@ export function posthogPrivacyConfig(
         session_recording: SESSION_RECORDING_OPTIONS,
         disable_session_recording: true,
         autocapture: true,
-        capture_dead_clicks: true,
+        // Dead clicks are reported after a delay, so the observer runs only
+        // with consent.
+        capture_dead_clicks: hasAnalyticsConsent(),
         rageclick: true,
         capture_exceptions: isErrorCaptureSurface(),
         disable_surveys: false,
@@ -137,11 +139,15 @@ let posthogRecording = false;
 /** The client `syncSessionRecording` last drove, for the navigation guard. */
 let lastPostHogClient: PostHogRecorder | null = null;
 
-// A consent change moves heatmaps with it on the full profile. Turning them
-// off drops the clicks they hold.
+// A consent change moves heatmaps and dead clicks with it on the full
+// profile. Turning heatmaps off drops the clicks they hold.
 subscribeAnalyticsConsent(() => {
   if (posthogProfile !== "full") return;
-  lastPostHogClient?.set_config?.({ enable_heatmaps: hasAnalyticsConsent() });
+  const consented = hasAnalyticsConsent();
+  lastPostHogClient?.set_config?.({
+    enable_heatmaps: consented,
+    capture_dead_clicks: consented,
+  });
 });
 
 /** The PostHog client the recorders were last synced with, if any. */

@@ -15,6 +15,7 @@ import { stampPostHogEvent } from "./telemetry-context";
 import {
   followAnalyticsConsentAcrossTabs,
   hasAnalyticsConsent,
+  predatesAnalyticsConsent,
 } from "./analytics-consent";
 import {
   isErrorCaptureSurface,
@@ -234,6 +235,16 @@ export function getPageviewCaptureOptions(
   };
 }
 
+// A dead click or swipe posthog-js reports after a delay carries the time of
+// the gesture; one made before the current grant is dropped.
+function deadClickBeforeConsent(event: CaptureResult | null): boolean {
+  if (event?.event !== "$dead_click" && event?.event !== "$dead_swipe") {
+    return false;
+  }
+  const at: unknown = event.properties?.[`${event.event}_event_timestamp`];
+  return typeof at === "number" && predatesAnalyticsConsent(at);
+}
+
 export const options = {
   api_host: getPostHogApiHost(),
   // Toolbar/app links must point at PostHog itself once api_host is proxied.
@@ -264,7 +275,8 @@ export const options = {
     (event: CaptureResult | null) => { scrubPostHogPersistence(); return event; },
     // A withdrawal the browser would not store leaves posthog-js reading the
     // earlier stored grant, so it keeps capturing; the page's choice wins here.
-    (event: CaptureResult | null) => (hasAnalyticsConsent() ? event : null),
+    (event: CaptureResult | null) =>
+      hasAnalyticsConsent() && !deadClickBeforeConsent(event) ? event : null,
   ],
   // Fragments carry access tokens (`#token=`) and OAuth implicit responses;
   // no event, replay URL or heatmap needs one.
@@ -272,9 +284,10 @@ export const options = {
 
   // Rageclick's quieter sibling: a click on something that looks
   // interactive and does nothing. Cheap (no extra network calls) and safe
-  // on every platform, so it is not gated like replay/exceptions.
+  // on every platform, so it is not gated like replay/exceptions. It reports
+  // seconds after the click, so it observes only with consent.
   get capture_dead_clicks() {
-    return !shouldMaskAnalytics();
+    return !shouldMaskAnalytics() && hasAnalyticsConsent();
   },
   get autocapture() {
     return !shouldMaskAnalytics();

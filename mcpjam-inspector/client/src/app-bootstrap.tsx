@@ -15,7 +15,12 @@ import {
 import { SignOutBoundary } from "./components/SignOutBoundary";
 import { AppRouterProvider } from "./router";
 import "./index.css";
-import { getPostHogKey, getPostHogOptions } from "./lib/PosthogUtils.js";
+import {
+  getPostHogKey,
+  getPostHogOptions,
+  isPostHogDisabled,
+} from "./lib/PosthogUtils.js";
+import { prepareAnalyticsConsentStorage } from "./lib/analytics-consent";
 import { preloadPosthogBundledExtensions } from "./lib/posthog-bundled-extensions";
 import { loadBootstrapFeatureFlags } from "./lib/server-feature-flags";
 import { PostHogProvider } from "posthog-js/react";
@@ -548,6 +553,7 @@ if (isInIframe) {
       loadBootstrapFeatureFlags(),
     ]);
 
+    if (!isPostHogDisabled) prepareAnalyticsConsentStorage(getPostHogKey());
     root.render(
       <StrictMode>
         {/* OUTSIDE PostHogProvider on purpose: a crash while the provider

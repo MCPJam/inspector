@@ -3,6 +3,7 @@ import {
   followAnalyticsConsentAcrossTabs,
   getAnalyticsConsent,
   hasAnalyticsConsent,
+  prepareAnalyticsConsentStorage,
   reapplyAnalyticsConsent,
   setAnalyticsConsent,
 } from "../analytics-consent";
@@ -388,5 +389,41 @@ describe("analytics consent", () => {
     expect(posthog.sessionRecording.startIfEnabledOrStop).toHaveBeenCalledTimes(
       1,
     );
+  });
+  it("stores nothing at SDK boot from a stale SDK grant before the visitor answers", async () => {
+    window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = true;
+    const token = "phc_consent_boot_test";
+    window.localStorage.setItem(`__ph_opt_in_out_${token}`, "1");
+
+    prepareAnalyticsConsentStorage(token);
+    const posthog = await initPostHog(token, {
+      ...sdkConfig,
+      persistence: options.persistence,
+    });
+
+    expect(posthog.is_capturing()).toBe(false);
+    expect(window.sessionStorage.length).toBe(0);
+    expect(window.localStorage.length).toBe(0);
+  });
+
+  it("removes an earlier visit's tab window id while the visitor has not answered", () => {
+    window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = true;
+    const windowIdKey = `${POSTHOG_TAB_STORAGE_KEY}_window_id`;
+    window.sessionStorage.setItem(windowIdKey, "earlier-window");
+
+    prepareAnalyticsConsentStorage("phc_consent_window_boot_test");
+
+    expect(window.sessionStorage.getItem(windowIdKey)).toBeNull();
+  });
+
+  it("keeps the tab window id once the visitor allowed analytics", () => {
+    window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = true;
+    window.localStorage.setItem("mcpjam-analytics-consent", "granted");
+    const windowIdKey = `${POSTHOG_TAB_STORAGE_KEY}_window_id`;
+    window.sessionStorage.setItem(windowIdKey, "this-window");
+
+    prepareAnalyticsConsentStorage("phc_consent_window_keep_test");
+
+    expect(window.sessionStorage.getItem(windowIdKey)).toBe("this-window");
   });
 });
