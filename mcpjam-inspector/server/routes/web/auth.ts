@@ -157,7 +157,11 @@ import {
 } from "../../services/xaa-connect-error.js";
 import { getConfidentialCimdProviderForOrg } from "../../services/xaa-confidential-cimd.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
-import { isOrgBoundCredential } from "../../utils/org-bound-credential.js";
+import { getRequestLocal } from "../../middleware/request-local.js";
+import {
+  isOrgBoundCredential,
+  orgBoundActingAs,
+} from "../../utils/org-bound-credential.js";
 import { carryMockTransport, dialMockOr, type MockAuthorizeEntry, type MockDial } from "../../utils/mock-servers.js";
 import { observeMockAnswered } from "../../services/mock/answer-marks.js";
 import {
@@ -749,6 +753,12 @@ export interface ManagerCallerContext {
   workosUserId?: string;
   /** Convex organization id scope for the delegated exchange. */
   mcpjamOrganizationId?: string;
+  /**
+   * The backend's token for an exchanged `sk_` key (`MCPJAM_TOKEN_EXCHANGE`).
+   * Sent instead of acting-as when present. Callers synthesized for harness
+   * routes have none and keep acting-as.
+   */
+  exchangedBearer?: string;
   /** Sink for backend-attributed request log context; absent ⇒ no-op. */
   setLogContext?: (partial: Partial<RequestLogContext>) => void;
   /** Read-back of the same log context (authenticatedUserId); absent ⇒ null. */
@@ -761,6 +771,7 @@ export function callerContextFromHono(c: Context): ManagerCallerContext {
     authMethod: c.get("authMethod") as string | undefined,
     workosUserId: c.get("workosUserId") as string | undefined,
     mcpjamOrganizationId: c.get("mcpjamOrganizationId") as string | undefined,
+    exchangedBearer: getRequestLocal(c, "exchangedConvexBearer")?.token,
     setLogContext: (partial) => setRequestLogContext(c, partial),
     getLogContext: () => c.var.requestLogContext,
   };
@@ -781,6 +792,10 @@ export function buildConvexAuthHeaders(
     ...hostedCredentialDeliveryHeaders(HOSTED_MODE),
     ...deliveryContractHeaders(HOSTED_MODE),
   };
+  if (isOrgBoundCredential(caller.authMethod) && caller.exchangedBearer) {
+    headers["Authorization"] = `Bearer ${caller.exchangedBearer}`;
+    return headers;
+  }
   if (isOrgBoundCredential(caller.authMethod)) {
     const serviceToken = requireServiceCredential(WORKOS_API_KEY_FEATURE);
     // `acting-as` is the WorkOS user id (the user's Convex `externalId`),
@@ -2460,15 +2475,7 @@ export async function createAuthorizedManager(
               accessScope: options?.accessScope,
               scenarioId: options?.scenarioId,
               accessVersion: options?.accessVersion,
-              workosApiKeyActingAs:
-                isOrgBoundCredential(caller.authMethod) &&
-                caller.workosUserId &&
-                caller.mcpjamOrganizationId
-                  ? {
-                      workosUserId: caller.workosUserId,
-                      mcpjamOrganizationId: caller.mcpjamOrganizationId,
-                    }
-                  : undefined,
+              workosApiKeyActingAs: orgBoundActingAs(caller),
               onPluginLease: (release) => pluginLeaseReleases.push(release),
             },
           );
@@ -2761,15 +2768,7 @@ export async function createAuthorizedManager(
                 // reveal must use the same delegated-identity exchange
                 // as `authorizeBatch` — otherwise Convex would see the
                 // service token without an acting-as user.
-                workosApiKeyActingAs:
-                  isOrgBoundCredential(caller.authMethod) &&
-                  caller.workosUserId &&
-                  caller.mcpjamOrganizationId
-                    ? {
-                        workosUserId: caller.workosUserId,
-                        mcpjamOrganizationId: caller.mcpjamOrganizationId,
-                      }
-                    : undefined,
+                workosApiKeyActingAs: orgBoundActingAs(caller),
               })
             : null;
         if (revealed?.headers && auth.serverConfig.transportType === "http") {

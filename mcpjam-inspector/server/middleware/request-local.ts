@@ -29,6 +29,12 @@ export interface RequestLocalMap {
   turnAuthorizationBearer: () => Promise<string>;
   workosApiKeyValidation: unknown;
   /**
+   * The backend-issued token an `sk_` key was exchanged for
+   * (`MCPJAM_TOKEN_EXCHANGE`). Present, it is this request's Convex bearer and
+   * replaces acting-as; absent, the old path runs.
+   */
+  exchangedConvexBearer: { token: string; expiresAt: number };
+  /**
    * Memoized result of the org-binding lookup for an `sk_…` key. Like the
    * validation cache, this keeps a single user-visible request to one backend
    * round-trip even when `bearerAuthMiddleware` runs on both a parent router

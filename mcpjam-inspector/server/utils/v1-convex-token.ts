@@ -248,6 +248,10 @@ export async function getConvexBearerForRequest(c: Context): Promise<string> {
   if (!usesDelegatedToken(c)) {
     return assertBearerToken(c);
   }
+  // An `sk_` key the backend exchanged (`MCPJAM_TOKEN_EXCHANGE`): its token,
+  // not one minted with acting-as.
+  const exchanged = getRequestLocal(c, "exchangedConvexBearer");
+  if (exchanged) return exchanged.token;
   const { workosUserId, organizationId } = delegationContext(c);
   return getConvexBearerForDelegation(
     workosUserId,

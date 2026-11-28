@@ -30,6 +30,11 @@ import {
 } from "./surface-service-auth.js";
 import { refuseUnservableSession } from "./session-revocation.js";
 import { hasServiceCredential, isServiceCredentialUnavailableError, WORKOS_API_KEY_FEATURE } from "../services/service-credential.js";
+import {
+  exchangeApiKey,
+  isTokenExchangeEnabled,
+  type ApiKeyExchange,
+} from "../services/token-exchange.js";
 
 /**
  * The sign-out route (`routes/web/auth-session.ts`). It records the revocation
@@ -128,6 +133,29 @@ function consumeWorkOSToken(keyId: string): number | null {
   return null;
 }
 
+const API_KEY_RATE_LIMITED =
+  "API key rate limit exceeded. Slow down and retry.";
+
+/**
+ * Debit the credential's bucket once per request (a middleware mounted on a
+ * parent and a child router must not count twice), or answer 429.
+ */
+function refuseOverRateLimit(
+  c: Context,
+  bucketKey: string,
+  message: string,
+): Response | null {
+  if (getRequestLocal(c, "workosRateLimitConsumed")) return null;
+  const waitMs = consumeWorkOSToken(bucketKey);
+  if (waitMs !== null) {
+    return c.json({ code: ErrorCode.RATE_LIMITED, message }, 429, {
+      "Retry-After": String(Math.ceil(waitMs / 1000)),
+    });
+  }
+  setRequestLocal(c, "workosRateLimitConsumed", true);
+  return null;
+}
+
 /** Test-only: clear all token buckets. */
 export function resetWorkOSRateLimitForTests(): void {
   workosKeyBuckets.clear();
@@ -202,6 +230,10 @@ export async function bearerAuthMiddleware(
   // WorkOS API key branch. Real WorkOS JWTs begin with `eyJ`, so an
   // `sk_` prefix is unambiguous; this branch never falls through.
   if (token.startsWith("sk_")) {
+    if (isTokenExchangeEnabled()) {
+      const handled = await authenticateApiKeyByExchange(c, next, token);
+      if (handled !== FALL_BACK_TO_LOCAL_VALIDATION) return handled;
+    }
     // Request-local memoization: a single `/api/v1/...` call hits this
     // middleware AND `authorizeBatch`, both of which would otherwise
     // pay the ~200ms WorkOS validate cost. Cached per request only —
@@ -252,20 +284,8 @@ export async function bearerAuthMiddleware(
     // flood can't tie up the database either. Debit once per request (memoized
     // like the validation/binding lookups above) so the limit isn't double
     // counted if the middleware ever runs on both a parent and child router.
-    if (!getRequestLocal(c, "workosRateLimitConsumed")) {
-      const waitMs = consumeWorkOSToken(workosKeyId);
-      if (waitMs !== null) {
-        return c.json(
-          {
-            code: ErrorCode.RATE_LIMITED,
-            message: "API key rate limit exceeded. Slow down and retry.",
-          },
-          429,
-          { "Retry-After": String(Math.ceil(waitMs / 1000)) }
-        );
-      }
-      setRequestLocal(c, "workosRateLimitConsumed", true);
-    }
+    const limited = refuseOverRateLimit(c, workosKeyId, API_KEY_RATE_LIMITED);
+    if (limited) return limited;
 
     let mcpjamUser;
     try {
@@ -324,15 +344,7 @@ export async function bearerAuthMiddleware(
       // `details` bag (see routes/v1/contract.ts — `ORPHANED_KEY` is NOT a
       // first-class v1 code). Clients that care can branch on
       // `details.reason === "ORPHANED_KEY"`; everyone else sees a 401.
-      return c.json(
-        {
-          code: ErrorCode.UNAUTHORIZED,
-          message:
-            "This API key is not bound to an organization. Re-create it from Settings → API keys.",
-          details: { reason: "ORPHANED_KEY" },
-        },
-        401
-      );
+      return c.json(ORPHANED_KEY_BODY, 401);
     }
 
     // Expiry, from MCPJam's own record. WorkOS is given the same `expires_at`
@@ -349,15 +361,7 @@ export async function bearerAuthMiddleware(
       });
       // Same v1 contract as ORPHANED_KEY above: canonical 401, specific
       // reason in `details`.
-      return c.json(
-        {
-          code: ErrorCode.UNAUTHORIZED,
-          message:
-            "This API key has expired. Create a new one from Settings → API keys.",
-          details: { reason: "EXPIRED_KEY" },
-        },
-        401
-      );
+      return c.json(EXPIRED_KEY_BODY, 401);
     }
 
     c.set("authMethod", "workos_api_key");
@@ -481,6 +485,103 @@ export async function bearerAuthMiddleware(
   return next();
 }
 
+const ORPHANED_KEY_BODY = {
+  code: ErrorCode.UNAUTHORIZED,
+  message:
+    "This API key is not bound to an organization. Re-create it from Settings → API keys.",
+  details: { reason: "ORPHANED_KEY" },
+};
+
+const EXPIRED_KEY_BODY = {
+  code: ErrorCode.UNAUTHORIZED,
+  message:
+    "This API key has expired. Create a new one from Settings → API keys.",
+  details: { reason: "EXPIRED_KEY" },
+};
+
+const FALL_BACK_TO_LOCAL_VALIDATION = Symbol("fall back to local validation");
+
+/**
+ * An `sk_` key through the backend's token exchange (`MCPJAM_TOKEN_EXCHANGE`,
+ * `services/token-exchange.ts`). The backend validates the key and answers
+ * with a token for the key's user in the key's organization, which routes
+ * then send instead of acting-as (`getConvexBearerForRequest`, the caller
+ * context). Same identity variables, rate limit and refusals as local
+ * validation, so routes can't tell the two apart. A backend without the
+ * exchange falls back to local validation.
+ */
+async function authenticateApiKeyByExchange(
+  c: Context,
+  next: Next,
+  token: string,
+): Promise<Response | void | typeof FALL_BACK_TO_LOCAL_VALIDATION> {
+  let result: ApiKeyExchange;
+  try {
+    result = await exchangeApiKey(token, "rest");
+  } catch (error) {
+    if (isServiceCredentialUnavailableError(error)) {
+      return hostedOnlyResponse(c, WORKOS_API_KEY_FEATURE);
+    }
+    logger.error("API key token exchange failed", error);
+    return c.json(
+      { code: ErrorCode.INTERNAL_ERROR, message: "API key exchange failed" },
+      500,
+    );
+  }
+  if (result.kind === "unsupported") return FALL_BACK_TO_LOCAL_VALIDATION;
+  if (result.kind === "refused") return refuseExchangedApiKey(c, result);
+
+  const exchanged = result.value;
+  c.set("analyticsUserId", exchanged.externalId);
+  const limited = refuseOverRateLimit(
+    c,
+    exchanged.apiKeyId,
+    API_KEY_RATE_LIMITED,
+  );
+  if (limited) return limited;
+
+  setRequestLocal(c, "exchangedConvexBearer", {
+    token: exchanged.token,
+    expiresAt: exchanged.expiresAt,
+  });
+  c.set("authMethod", "workos_api_key");
+  c.set("workosApiKeyId", exchanged.apiKeyId);
+  c.set("workosUserId", exchanged.externalId);
+  c.set("mcpjamUserId", exchanged.userId);
+  c.set("mcpjamOrganizationId", exchanged.organizationId);
+  setRequestLogContext(c, { orgId: logConvexId(exchanged.organizationId) });
+  logger.info("WorkOS API key request", {
+    event: "auth.workos_api_key",
+    auth_method: "workos_api_key",
+    token_exchange: true,
+    workos_key_id: exchanged.apiKeyId,
+    mcpjam_user_id: exchanged.userId,
+    mcpjam_organization_id: exchanged.organizationId,
+  });
+  return next();
+}
+
+/** The backend's refusal, in the answers local validation gives. */
+function refuseExchangedApiKey(
+  c: Context,
+  refusal: Extract<ApiKeyExchange, { kind: "refused" }>,
+): Response {
+  if (refusal.status === 403) {
+    return c.json(
+      {
+        code: ErrorCode.FORBIDDEN,
+        message: refusal.message ?? "This API key can't be used right now.",
+      },
+      403,
+    );
+  }
+  if (refusal.reason === "key_orphaned") return c.json(ORPHANED_KEY_BODY, 401);
+  if (refusal.reason === "key_expired") return c.json(EXPIRED_KEY_BODY, 401);
+  const message =
+    refusal.reason === "user_unknown" ? "Unknown user" : "Invalid API key";
+  return c.json({ code: ErrorCode.UNAUTHORIZED, message }, 401);
+}
+
 /**
  * A verified WorkOS agent-registration token (auth.md). The agent acts as the
  * user who approved it, inside the organization they chose, the way an
@@ -494,20 +595,12 @@ async function authenticateAgentRegistration(
   next: Next,
   claims: AgentRegistrationClaims,
 ): Promise<Response | void> {
-  if (!getRequestLocal(c, "workosRateLimitConsumed")) {
-    const waitMs = consumeWorkOSToken(`agent:${claims.registrationId}`);
-    if (waitMs !== null) {
-      return c.json(
-        {
-          code: ErrorCode.RATE_LIMITED,
-          message: "Agent rate limit exceeded. Slow down and retry.",
-        },
-        429,
-        { "Retry-After": String(Math.ceil(waitMs / 1000)) }
-      );
-    }
-    setRequestLocal(c, "workosRateLimitConsumed", true);
-  }
+  const limited = refuseOverRateLimit(
+    c,
+    `agent:${claims.registrationId}`,
+    "Agent rate limit exceeded. Slow down and retry.",
+  );
+  if (limited) return limited;
 
   let caller = getRequestLocal(c, "workosAgentCaller");
   if (!caller) {

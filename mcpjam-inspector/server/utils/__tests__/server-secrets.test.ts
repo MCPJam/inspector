@@ -136,6 +136,31 @@ describe("fetchRuntimeServerSecrets", () => {
     });
   });
 
+  it("sends an exchanged API key's token instead of acting-as, needing no credential", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({ success: true, env: null, headers: null }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    delete process.env.INSPECTOR_SERVICE_TOKEN;
+    await fetchRuntimeServerSecrets({
+      expectedTargetUrl: "https://example.com/mcp",
+      bearerToken: "",
+      projectId: "project-1",
+      serverId: "server-1",
+      workosApiKeyActingAs: {
+        workosUserId: "user_1",
+        mcpjamOrganizationId: "org_1",
+        exchangedBearer: "exchanged-jwt",
+      },
+    });
+    const headers = (fetchMock.mock.calls[0] as unknown[])[1] as {
+      headers: Record<string, string>;
+    };
+    expect(headers.headers.Authorization).toBe("Bearer exchanged-jwt");
+    expect(headers.headers).not.toHaveProperty("x-mcpjam-acting-as");
+    expect(headers.headers).not.toHaveProperty("x-mcpjam-acting-in-org");
+  });
+
   it("answers hosted-only, not a 502, for an API-key reveal without the credential", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
