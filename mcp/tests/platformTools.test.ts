@@ -10,8 +10,8 @@ import {
   runEvalSuiteOperation,
   showServersOperation,
 } from "@mcpjam/sdk/platform";
+import { compactModelCatalogForModel } from "@mcpjam/sdk/internal/mcp-surface";
 import {
-  compactModelCatalogForModel,
   EXCLUDED_FROM_CATALOG,
   PLATFORM_CATALOG_OPERATIONS,
   PLATFORM_TOOL_WIDGET_VIEWS,

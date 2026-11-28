@@ -29,3 +29,13 @@ export {
   toolError,
   toolSuccess,
 } from "./mcp-surface/results.js";
+export {
+  EVAL_TOOL_NAMES,
+  localEvalToolNames,
+  NOT_EVAL_TOOL_NAMES,
+  type EvalToolName,
+} from "./mcp-surface/eval-group.js";
+export {
+  compactModelCatalogForModel,
+  MCP_RESULT_PROJECTIONS,
+} from "./mcp-surface/projections.js";

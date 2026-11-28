@@ -24,11 +24,14 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 /**
- * The CLI's catalog: the two skills that teach THIS surface.
+ * The CLI's catalog: the skills that teach THIS surface.
  *
  * `mcp-inspector` interprets `mcpjam` probe / doctor / OAuth / conformance
  * output — the tools this stdio server actually exposes. `mcpjam-eval-import`
  * ends in `mcpjam cloud eval validate`, which is a CLI command.
+ *
+ * `run-mcpjam-evals` teaches the eval tools `mcpjam mcp --evals` adds, and is
+ * served only with them.
  *
  * The SDK eval-authoring skills are absent: they describe writing
  * `@mcpjam/sdk` tests, which is not what a `mcpjam mcp` client is doing. They
@@ -37,6 +40,7 @@ const __dirname = dirname(__filename);
 export const CLI_SKILL_ROOTS = [
   "skills/mcp-inspector",
   "skills/mcpjam-eval-import",
+  "skills/run-mcpjam-evals",
 ];
 
 const OUTPUT_TS_PATH = join(
