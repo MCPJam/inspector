@@ -184,7 +184,7 @@ export function resetServiceTokenRejectedForTests(): void {
   serviceTokenRejected = false;
 }
 
-function getServiceToken(): string | null {
+export function getServiceToken(): string | null {
   if (serviceTokenRejected) return null;
   return getServiceCredential();
 }
@@ -210,7 +210,7 @@ export function isComputersDataPlaneConfigured(): boolean {
   );
 }
 
-async function postJson<T>(
+export async function postJson<T>(
   path: string,
   headers: Record<string, string>,
   body: Record<string, unknown>,
@@ -300,6 +300,16 @@ function bearerHeader(raw: string): Record<string, string> {
   return {
     authorization: /^bearer\s/i.test(value) ? value : `Bearer ${value}`,
   };
+}
+
+/**
+ * The member's bearer, plus the service token when this server holds a valid
+ * one: the backend then trusts the request as coming from this server.
+ */
+export function memberAndServiceHeaders(
+  bearer: string,
+): Record<string, string> {
+  return { ...bearerHeader(bearer), ...(authHeaders() ?? {}) };
 }
 
 export interface EvalSandbox {
@@ -533,12 +543,7 @@ export async function resolveEvalRunAttachments(args: {
 }): Promise<ControlPlaneResult<{ cases: ResolvedEvalAttachmentsCase[] }>> {
   return postJson<{ cases: ResolvedEvalAttachmentsCase[] }>(
     "/evals/sandbox/attachments",
-    {
-      ...bearerHeader(args.bearer),
-      ...(getServiceToken()
-        ? { "x-inspector-service-token": getServiceToken()! }
-        : {}),
-    },
+    memberAndServiceHeaders(args.bearer),
     { runId: args.runId },
     args.signal,
   );

@@ -204,6 +204,7 @@ import {
   cancelEvalRunInsightsOperation,
   requestEvalRunInsightsOperation,
 } from "./eval-run-insights-operations.js";
+import { testEvalCodeEvaluatorOperation } from "./code-evaluator-test-operations.js";
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
@@ -973,31 +974,7 @@ function evalRunRef(
   };
 }
 
-/**
- * One iteration of an eval run, addressed through the run and the run's suite.
- *
- * Exported, unlike its siblings, because no catalog operation can compose it
- * yet: the trace and iteration-list responses name the run but not the suite,
- * and a ref needs both. The follow-up that stamps `suiteId` onto those DTOs
- * is where this gets its first caller.
- */
-export function evalIterationRef(
-  iterationId: string,
-  runId: string,
-  suiteId: string,
-  projectId?: string
-): PlatformResourceRef {
-  return {
-    type: "eval_iteration",
-    id: iterationId,
-    parent: {
-      type: "eval_run",
-      id: runId,
-      parent: { type: "eval_suite", id: suiteId },
-    },
-    ...(projectId ? { projectId } : {}),
-  };
-}
+export { evalIterationRef } from "./operation-support.js";
 
 /**
  * An eval case, addressed through its suite.
@@ -2553,6 +2530,7 @@ export * from "./directory-submission-handoff-operations.js";
 export * from "./directory-test-plan-operations.js";
 export * from "./directory-submission-eval-operations.js";
 export * from "./eval-run-insights-operations.js";
+export * from "./code-evaluator-test-operations.js";
 
 // ── Eval operations ──────────────────────────────────────────────────
 
@@ -19579,6 +19557,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   revokeEvalGateWaiverOperation,
   backtestEvalRunOperation,
   backtestEvalRunJudgeOperation,
+  testEvalCodeEvaluatorOperation,
   requestEvalRunJudgeOperation,
   requestEvalRunInsightsOperation,
   cancelEvalRunInsightsOperation,

@@ -1,10 +1,11 @@
 /**
  * The public projection of an iteration's code evaluator logs and setup and
- * cleanup script results (EFTW-90), so an agent reading an iteration through
- * the API sees what the app shows (amendment P8).
+ * cleanup script results, and of a run's own setup and cleanup script results
+ * (EFTW-90), so an agent reading them through the API sees what the app shows
+ * (amendment P8).
  *
  * A WHITELIST like every other projection here: known keys only, each
- * type-checked. OMITTED for an iteration without them.
+ * type-checked. OMITTED for an iteration or a run without them.
  */
 export type ScriptResultDto = {
   status: string;
@@ -74,4 +75,21 @@ export function toCodeGradingProjection(metadata: unknown): {
         }
       : {}),
   };
+}
+
+/** A run's `scriptResults`: its run setup and run cleanup script outcomes. */
+export function toRunScriptResultsProjection(scriptResults: unknown): {
+  scriptResults?: { runSetup?: ScriptResultDto; runCleanup?: ScriptResultDto };
+} {
+  const scripts = record(scriptResults);
+  const runSetup = scriptResult(scripts?.runSetup);
+  const runCleanup = scriptResult(scripts?.runCleanup);
+  return runSetup || runCleanup
+    ? {
+        scriptResults: {
+          ...(runSetup ? { runSetup } : {}),
+          ...(runCleanup ? { runCleanup } : {}),
+        },
+      }
+    : {};
 }

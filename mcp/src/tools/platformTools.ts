@@ -72,6 +72,7 @@ import {
   cancelEvalRunOperation,
   backtestEvalRunOperation,
   backtestEvalRunJudgeOperation,
+  testEvalCodeEvaluatorOperation,
   requestEvalRunJudgeOperation,
   proposeEvalDescriptionRewriteOperation,
   startEvalDescriptionExperimentOperation,
@@ -426,6 +427,9 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   cancelEvalRunOperation,
   backtestEvalRunOperation,
   backtestEvalRunJudgeOperation,
+  // Advertised beside the previews it resembles, though the backend admits
+  // only organizations with code evaluators; the rest get FEATURE_UNAVAILABLE.
+  testEvalCodeEvaluatorOperation,
   requestEvalRunJudgeOperation,
   // The run page's Analyze button as three steps: build findings, request the
   // analysis, cancel it. Results are read from get_eval_run's `insights`.

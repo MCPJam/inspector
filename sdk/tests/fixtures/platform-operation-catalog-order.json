@@ -125,6 +125,7 @@
   "revoke_eval_gate_waiver",
   "backtest_eval_run",
   "backtest_eval_run_judge",
+  "test_eval_code_evaluator",
   "request_eval_run_judge",
   "request_eval_run_insights",
   "cancel_eval_run_insights",

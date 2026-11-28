@@ -168,3 +168,65 @@ export const suiteGradingSchema = z.strictObject({
 export type CodeEvaluatorInput = z.infer<typeof codeEvaluatorSchema>;
 export type SuiteScriptsInput = z.infer<typeof suiteScriptsSchema>;
 export type SuiteGradingInput = z.infer<typeof suiteGradingSchema>;
+
+/**
+ * "Test on a past iteration": an unsaved evaluator, run once against one
+ * stored iteration of a finished run, in a fresh box, saving nothing. It
+ * carries what running it reads, with a saved evaluator's limits.
+ */
+export const codeEvaluatorDraftSchema = codeEvaluatorSchema
+  .pick({ fileName: true, script: true, threshold: true })
+  .extend({
+    id: codeEvaluatorSchema.shape.id
+      .optional()
+      .describe("Names the draft's result file. Default draft."),
+  });
+
+/**
+ * How long one test may take: a box boot, the 60-second evaluator limit and
+ * the release, with room for a capacity answer. Well past a client's usual
+ * 30-second deadline, so every client of the route asks for this instead.
+ */
+export const CODE_EVALUATOR_TEST_TIMEOUT_MS = 5 * 60_000;
+
+export const codeEvaluatorTestRequestSchema = z.strictObject({
+  iterationId: z
+    .string()
+    .trim()
+    .min(1)
+    .max(128)
+    .describe("An iteration of one of the suite's finished runs."),
+  evaluator: codeEvaluatorDraftSchema,
+  network: suiteGradingSchema.shape.network.describe(
+    "The grading box's network for this test. Omit it to use the suite's saved setting."
+  ),
+});
+
+export type CodeEvaluatorDraft = z.infer<typeof codeEvaluatorDraftSchema>;
+export type CodeEvaluatorTestRequest = z.infer<
+  typeof codeEvaluatorTestRequestSchema
+>;
+
+/** What one test did. The suite, the run and its scores stay as they were. */
+export type CodeEvaluatorTestResult = {
+  runId: string;
+  iterationId: string;
+  /**
+   * `stored`: the run's exact iteration.json and declared files.
+   * `transcript`: rebuilt from the stored iteration, without declared files.
+   */
+  input: "stored" | "transcript";
+  network: "none" | "web";
+  /** A run's error strings for the same failures. */
+  result:
+    | {
+        status: "scored";
+        score: number;
+        threshold: number;
+        passed: boolean;
+        reason?: string;
+      }
+    | { status: "error"; error: string };
+  /** The output tail, at most 8 KB. */
+  logs: { output: string; exitCode?: number; durationMs: number };
+};
