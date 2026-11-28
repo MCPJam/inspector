@@ -28,7 +28,7 @@ import type { MockCallMark } from "../../../shared/mock-answer-span.js";
 import { MOCK_CALLS_HEADER, formatMockCalls } from "./answer-marks.js";
 import { actorDigest, resolveMock, type ResolvedMock } from "./backend.js";
 import { openAuthorizedReal, type OpenReal } from "./connection.js";
-import { acquireSharedBus, createEventBus, withFeed } from "./event-bus.js";
+import { acquireSharedBus, createEventBus, sharedBusKey, withFeed } from "./event-bus.js";
 import { reportMockOutcome } from "./call-outcomes.js";
 import { checkForwardWithBackend, type ForwardVerdict } from "./forward-policy.js";
 import { takeMockForward } from "./forward-fan-out.js";
@@ -204,7 +204,7 @@ export async function serveMock(
       error: error instanceof Error ? error.name : typeof error,
     });
   const sharedBus = acquireSharedBus(
-    `${actorDigest(caller, bearerToken)}|${mockId}|${resolved.version}|${resolved.run?.runId ?? ""}`,
+    sharedBusKey({ caller, bearerToken, mockId, version: resolved.version, run: resolved.run }),
     onBusError,
   );
   const feedBus = facts.listen && forwarding ? createEventBus(onBusError) : undefined;

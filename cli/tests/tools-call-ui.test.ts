@@ -559,6 +559,35 @@ test("tools call --operation-key sends the key as the call's _meta, and no key s
   }
 });
 
+test("tools call refuses --operation-key with --task before it connects", async () => {
+  const server = await startMockServer({});
+  try {
+    const result = await runCli([
+      "--format", "json", "tools", "call",
+      "--url", `http://127.0.0.1:${server.port}/mcp`,
+      "--tool-name", "create_view", "--tool-args", "{}",
+      "--task", "--operation-key", "retry-1",
+    ]);
+    assert.equal(result.exitCode, 2);
+    assert.match(result.stderr, /--operation-key cannot be used together with --task/);
+    assert.equal(server.requests.some((entry) => entry.url === "/mcp"), false);
+    // Before the parameters too: stdin that is not JSON is never read.
+    const fromStdin = await runCli(
+      [
+        "--format", "json", "tools", "call",
+        "--url", `http://127.0.0.1:${server.port}/mcp`,
+        "--tool-name", "create_view", "--tool-args", "-",
+        "--task", "--operation-key", "retry-1",
+      ],
+      "not json",
+    );
+    assert.equal(fromStdin.exitCode, 2);
+    assert.match(fromStdin.stderr, /--operation-key cannot be used together with --task/);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("tools call --ui --no-open in JSON mode skips render without an active Inspector client", async () => {
   const toolResult = { content: [{ type: "text", text: "view created" }] };
   const server = await startMockServer({ hasActiveClient: false, toolResult });

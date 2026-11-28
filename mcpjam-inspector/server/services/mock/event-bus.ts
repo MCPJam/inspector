@@ -13,6 +13,8 @@
  * and an entry is dropped when its last request ends.
  */
 import type { BuildMockOptions } from "@mcpjam/sdk/mocks";
+import type { ManagerCallerContext } from "../../routes/web/auth.js";
+import { actorDigest } from "./backend.js";
 
 export type MockEventBus = NonNullable<BuildMockOptions["bus"]>;
 export type MockChangeEvent = Parameters<MockEventBus["publish"]>[0];
@@ -37,6 +39,27 @@ export function createEventBus(onError: (error: unknown) => void): MockEventBus 
   };
 }
 
+/**
+ * The key one caller's requests share a bus under: the caller, the mock, its
+ * version and, for a test run, the run and its epoch, so a stream opened before
+ * a reset hears nothing raised after it. A signed-in person is known by who
+ * they are, so a renewed token keeps their streams on the same bus; a caller
+ * with no user is known by the digest that includes its credential.
+ */
+export function sharedBusKey(parts: {
+  caller: ManagerCallerContext;
+  bearerToken: string;
+  mockId: string;
+  version: number;
+  run?: { runId: string; epoch: number };
+}): string {
+  const { caller } = parts;
+  const who = caller.workosUserId
+    ? `${caller.workosUserId}|${caller.mcpjamOrganizationId ?? ""}`
+    : actorDigest(caller, parts.bearerToken);
+  return `${who}|${parts.mockId}|${parts.version}|${parts.run?.runId ?? ""}|${parts.run?.epoch ?? ""}`;
+}
+
 const shared = new Map<string, { bus: MockEventBus; users: number }>();
 
 /**
@@ -56,7 +79,14 @@ export function acquireSharedBus(
   const held = entry;
   let released = false;
   return {
-    bus: held.bus,
+    // A task that runs on after its request ended still publishes through the
+    // bus its request held. By then the entry may be gone and a later stream
+    // may hold a new bus for the same key, so each publish goes to the bus that
+    // is current for the key; listening stays on the bus this request held.
+    bus: {
+      publish: (event) => (shared.get(key) ?? held).bus.publish(event),
+      subscribe: (listener) => held.bus.subscribe(listener),
+    },
     release: () => {
       if (released) return;
       released = true;

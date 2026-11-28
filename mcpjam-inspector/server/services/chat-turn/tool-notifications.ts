@@ -52,15 +52,16 @@ const forwarded = new WeakMap<object, Map<string, true>>();
  * Has the manager hand this server's `notifications/message` records to the
  * running call, and asks the server for them on the modern era (the legacy
  * era's level is set when it connects). Safe to call every turn: it acts once
- * per manager and server.
+ * per manager and server. A turn with no selection offers every server's
+ * tools, so every server forwards; an empty selection forwards none.
  */
 export function forwardToolLogs(
-  manager: Pick<MCPClientManager, "onLogMessage" | "setPerRequestLogLevel">,
-  serverIds: readonly string[],
+  manager: Pick<MCPClientManager, "onLogMessage" | "setPerRequestLogLevel" | "listServers">,
+  serverIds: readonly string[] | undefined,
 ): void {
   const seen = forwarded.get(manager) ?? new Map<string, true>();
   forwarded.set(manager, seen);
-  for (const serverId of serverIds) {
+  for (const serverId of serverIds ?? manager.listServers()) {
     if (seen.has(serverId)) continue;
     seen.set(serverId, true);
     manager.setPerRequestLogLevel(serverId, "debug");

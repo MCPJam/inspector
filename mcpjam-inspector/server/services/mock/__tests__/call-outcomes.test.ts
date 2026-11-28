@@ -114,6 +114,74 @@ describe("the reporter", () => {
     expect(refused.sent).toHaveLength(1);
   });
 
+  it("holds at most 500 of a caller's outcomes while its reports hang, and takes more once they settle", async () => {
+    const hung: Array<() => void> = [];
+    const sizes: number[] = [];
+    const fetchStub = ((_url: string, init: RequestInit) => {
+      sizes.push(JSON.parse(init.body as string).outcomes.length);
+      return new Promise<Response>((resolve) => hung.push(() => resolve(new Response("{}"))));
+    }) as unknown as typeof fetch;
+    const reporter = new MockOutcomeReporter({ fetch: fetchStub });
+    const releaseAll = () => hung.forEach((release) => release());
+    for (let i = 0; i < 550; i++) reporter.record("ann", who, outcomeOf(mark()));
+    // Ten full batches are out; the last 50 outcomes were dropped, not sent as an eleventh.
+    expect(sizes).toEqual(Array(10).fill(MAX_OUTCOMES_PER_BATCH));
+    // Another caller is not held back by ann's.
+    reporter.record("bob", { ...who, bearerToken: "bob-token" }, outcomeOf(mark()));
+    let flushed = reporter.flush();
+    releaseAll();
+    await flushed;
+    expect(sizes).toEqual([...Array(10).fill(MAX_OUTCOMES_PER_BATCH), 1]);
+    // Ann's sends have settled, so ann's outcomes are taken again.
+    reporter.record("ann", who, outcomeOf(mark()));
+    flushed = reporter.flush();
+    releaseAll();
+    await flushed;
+    expect(sizes).toEqual([...Array(10).fill(MAX_OUTCOMES_PER_BATCH), 1, 1]);
+  });
+
+  it("keeps a caller to ten sends at once, partial batches included, and sends the rest as one settles", async () => {
+    vi.useFakeTimers();
+    const hung: Array<() => void> = [];
+    const senders: Array<string | null> = [];
+    const fetchStub = ((_url: string, init: RequestInit) => {
+      senders.push(new Headers(init.headers).get("authorization"));
+      return new Promise<Response>((resolve) => hung.push(() => resolve(new Response("{}"))));
+    }) as unknown as typeof fetch;
+    const sendsBy = (bearer: string) => senders.filter((auth) => auth === `Bearer ${bearer}`).length;
+    const reporter = new MockOutcomeReporter({ fetch: fetchStub, flushAfterMs: 1_000 });
+    // One outcome at a time, each sent alone when the short timer runs out, while every send hangs.
+    for (let i = 0; i < 11; i++) {
+      reporter.record("ann", who, outcomeOf(mark()));
+      await vi.advanceTimersByTimeAsync(1_000);
+    }
+    expect(sendsBy("ann-token")).toBe(10);
+    // Another caller's full batch goes out without carrying ann's waiting outcome.
+    const bob = { ...who, bearerToken: "bob-token" };
+    for (let i = 0; i < MAX_OUTCOMES_PER_BATCH; i++) reporter.record("bob", bob, outcomeOf(mark()));
+    expect(sendsBy("bob-token")).toBe(1);
+    expect(sendsBy("ann-token")).toBe(10);
+    // One of ann's sends settles, and the outcome that waited takes its place.
+    hung[0]();
+    await vi.waitFor(() => expect(sendsBy("ann-token")).toBe(11));
+    const flushed = reporter.flush();
+    for (const release of hung) release();
+    await flushed;
+  });
+
+  it.each([200, 500])("releases the body of a report answered %i", async (status) => {
+    let released = false;
+    const body = new ReadableStream({
+      cancel: () => {
+        released = true;
+      },
+    });
+    const reporter = new MockOutcomeReporter({ fetch: (async () => new Response(body, { status })) as typeof fetch });
+    reporter.record("ann", who, outcomeOf(mark()));
+    await reporter.flush();
+    expect(released).toBe(true);
+  });
+
   it("puts only ids and closed words in an entry", () => {
     const entry = outcomeOf({
       ...mark({ source: "forwarded", realTool: "real_echo", realServerId: "real1" }),
