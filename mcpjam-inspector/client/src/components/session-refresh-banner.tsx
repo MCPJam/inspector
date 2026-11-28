@@ -1,5 +1,6 @@
 import { useInspectorAuth } from "@/hooks/use-inspector-auth";
-import { CircleAlert, Loader2, X } from "lucide-react";
+import { Loader2 } from "lucide-react";
+import { AppBanner } from "@mcpjam/design-system/app-banner";
 import { Button } from "@mcpjam/design-system/button";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
@@ -40,56 +41,42 @@ export function SessionRefreshBanner({
   };
 
   return (
-    <div
-      role="alert"
+    <AppBanner
       data-testid="session-refresh-banner"
-      className="fixed inset-x-0 top-0 z-50 flex items-center justify-center gap-3 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm backdrop-blur"
-    >
-      <CircleAlert className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-500" />
-      <span className="text-foreground">
-        {isSignedOut
-          ? "Your session has expired."
-          : "Couldn't refresh your session."}
-      </span>
-
-      {isSignedOut ? (
-        <Button size="sm" variant="outline" onClick={handleSignIn}>
-          Sign in
-        </Button>
-      ) : (
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={isRetrying}
-          onClick={() => useSessionRefreshStore.getState().retry()}
-        >
-          {isRetrying ? (
-            <>
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Retrying…
-            </>
-          ) : (
-            "Retry"
+      className="fixed inset-x-0 top-0 z-50 backdrop-blur"
+      onDismiss={
+        dismissible
+          ? () => useSessionRefreshStore.getState().clear()
+          : undefined
+      }
+      actions={
+        <>
+          {isSignedOut ? null : (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={isRetrying}
+              onClick={() => useSessionRefreshStore.getState().retry()}
+            >
+              {isRetrying ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Retrying…
+                </>
+              ) : (
+                "Retry"
+              )}
+            </Button>
           )}
-        </Button>
-      )}
-
-      {!isSignedOut && (
-        <Button size="sm" variant="outline" onClick={handleSignIn}>
-          Sign in
-        </Button>
-      )}
-
-      {dismissible && (
-        <button
-          type="button"
-          aria-label="Dismiss"
-          className="text-muted-foreground hover:text-foreground transition-colors"
-          onClick={() => useSessionRefreshStore.getState().clear()}
-        >
-          <X className="h-4 w-4" />
-        </button>
-      )}
-    </div>
+          <Button size="sm" variant="outline" onClick={handleSignIn}>
+            Sign in
+          </Button>
+        </>
+      }
+    >
+      {isSignedOut
+        ? "Your session has expired."
+        : "Couldn't refresh your session."}
+    </AppBanner>
   );
 }
