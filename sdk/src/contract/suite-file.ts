@@ -83,6 +83,7 @@ import { suppressedSuiteStandardCheckIdsSchema } from "./standard-checks.js";
 
 import { z } from "zod";
 import { storedPredicateSchema } from "../predicates/types.js";
+import { inputAnswersSchema } from "./input-answers.js";
 import { importMappingStatusSchema } from "./chain.js";
 import { opaqueIdSchema } from "./identity.js";
 import { caseIntentUpdateSchema } from "./stage-intent.js";
@@ -560,6 +561,8 @@ const caseMiddleShape = {
   expectedOutput: z.string().optional(),
   /** The case passes only when NO tool was called. */
   isNegativeTest: z.boolean().optional(),
+  /** What the run answers when a server asks a question: the first entry that fits answers. */
+  inputAnswers: inputAnswersSchema.optional(),
   /** Per-case overrides of the suite defaults. */
   model: z.string().min(1).optional(),
 };
