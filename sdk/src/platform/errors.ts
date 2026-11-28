@@ -64,6 +64,13 @@ export type PlatformApiErrorOptions = SdkErrorOptions & {
   requestId?: string;
 };
 
+/**
+ * Each SDK entry bundles its own copy of this class, so `instanceof` misses an
+ * error thrown by another entry's client. The brand is registered globally, so
+ * every copy recognizes every other copy's errors.
+ */
+const PLATFORM_API_ERROR_BRAND = Symbol.for("@mcpjam/sdk/PlatformApiError");
+
 export class PlatformApiError extends SdkError {
   public readonly status: number;
   public readonly details?: Record<string, unknown>;
@@ -101,6 +108,7 @@ export class PlatformApiError extends SdkError {
   constructor(message: string, code: string, options: PlatformApiErrorOptions) {
     super(message, code, options);
     this.name = "PlatformApiError";
+    Object.defineProperty(this, PLATFORM_API_ERROR_BRAND, { value: true });
     this.status = options.status;
     this.details = options.details;
     this.retryAfter = options.retryAfter;
@@ -111,7 +119,12 @@ export class PlatformApiError extends SdkError {
 }
 
 export function isPlatformApiError(error: unknown): error is PlatformApiError {
-  return error instanceof PlatformApiError;
+  return (
+    error instanceof PlatformApiError ||
+    (typeof error === "object" &&
+      error !== null &&
+      Reflect.get(error, PLATFORM_API_ERROR_BRAND) === true)
+  );
 }
 
 /**
