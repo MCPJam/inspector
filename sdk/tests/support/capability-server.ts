@@ -21,6 +21,16 @@ export interface CapabilityServerOptions {
   listings?: "json" | "sse" | "broken-sse";
   /** How `ping` is answered. JSON by default. */
   ping?: "json" | "sse";
+  /**
+   * Listings this server serves, with one item, although `initialize` does
+   * not declare them: the server that breaks "servers that support tools MUST
+   * declare the tools capability".
+   */
+  serveUndeclared?: string[];
+  /** Listings answered with this JSON-RPC error code (HTTP 200). */
+  listErrors?: Record<string, number>;
+  /** HTTP status of the `-32601` for an undeclared listing. 404 by default. */
+  undeclaredStatus?: number;
 }
 
 /** One line per request, in arrival order, e.g. `POST tools/list`, `DELETE`. */
@@ -30,6 +40,18 @@ const LISTINGS: Record<string, { capability: string; key: string }> = {
   "tools/list": { capability: "tools", key: "tools" },
   "prompts/list": { capability: "prompts", key: "prompts" },
   "resources/list": { capability: "resources", key: "resources" },
+  "resources/templates/list": {
+    capability: "resources",
+    key: "resourceTemplates",
+  },
+};
+
+/** One item of each listing, for a server that serves it. */
+const ITEMS: Record<string, unknown> = {
+  tools: { name: "hello", inputSchema: { type: "object" } },
+  prompts: { name: "greet" },
+  resources: { uri: "test://greeting", name: "greeting" },
+  resourceTemplates: { uriTemplate: "test://{id}", name: "by id" },
 };
 
 function json(status: number, body: unknown, headers = {}): Response {
@@ -96,14 +118,25 @@ export function createCapabilityServer(
       listing !== undefined &&
       options.capabilities[listing.capability] !== undefined &&
       options.capabilities[listing.capability] !== null;
-    if (!listing || !declared) {
-      return json(404, {
+    const servedAnyway = options.serveUndeclared?.includes(method) ?? false;
+    if (!listing || (!declared && !servedAnyway)) {
+      return json(options.undeclaredStatus ?? 404, {
         jsonrpc: "2.0",
         id: body.id,
         error: { code: -32601, message: `Method not found: ${method}` },
       });
     }
-    const answer = result({ [listing.key]: [] });
+    const errorCode = options.listErrors?.[method];
+    if (errorCode !== undefined) {
+      return json(200, {
+        jsonrpc: "2.0",
+        id: body.id,
+        error: { code: errorCode, message: `${method} failed` },
+      });
+    }
+    const answer = result({
+      [listing.key]: servedAnyway ? [ITEMS[listing.key]] : [],
+    });
     if (options.listings === "sse") {
       return stream(`data: ${JSON.stringify(answer)}\n\n`);
     }

@@ -2,7 +2,17 @@ import type {
   MCPClientCheckContext,
   MCPClientCheckDefinition,
 } from "../types.js";
-import { caughtErrorResult, failedResult, passedResult } from "./helpers.js";
+import {
+  askEmptyDeclaredListings,
+  askUndeclaredListings,
+  firstUnanswered,
+} from "./capability-listings.js";
+import {
+  caughtErrorResult,
+  couldNotRunResult,
+  failedResult,
+  passedResult,
+} from "./helpers.js";
 
 function selectCompletionReference(ctx: Parameters<
   MCPClientCheckDefinition["run"]
@@ -295,7 +305,7 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
     category: "core",
     title: "Capabilities Consistent",
     description:
-      "Advertised server capabilities match the features actually exposed.",
+      "Advertised server capabilities match the features actually exposed: a tools, prompts or resources listing the server did not declare is asked for and returns nothing, and on 2026-07-28 a declared listing answers.",
     async run(ctx) {
       const startedAt = Date.now();
       const caps = ctx.initializationInfo?.serverCapabilities;
@@ -309,19 +319,45 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
 
       const mismatches: string[] = [];
       checkCapabilityConsistency(caps, ctx, mismatches);
+      const undeclared = await askUndeclaredListings(ctx, caps);
+      mismatches.push(...undeclared.mismatches);
+      const declared =
+        ctx.config.era === "modern"
+          ? await askEmptyDeclaredListings(ctx, caps)
+          : { answers: {}, mismatches: [] };
+      mismatches.push(...declared.mismatches);
+      const details = {
+        advertisedCapabilities: Object.keys(caps),
+        undeclaredListings: undeclared.answers,
+        ...(Object.keys(declared.answers).length > 0
+          ? { declaredListings: declared.answers }
+          : {}),
+      };
 
       if (mismatches.length > 0) {
         return failedResult(
           this,
           Date.now() - startedAt,
           `Capability mismatches: ${mismatches.join("; ")}`,
-          { mismatches },
+          { mismatches, ...details },
         );
       }
 
-      return passedResult(this, Date.now() - startedAt, {
-        advertisedCapabilities: Object.keys(caps),
+      // A listing that got no answer (a timeout, a gateway, a login wall) was
+      // never compared with the declaration, so there is no pass to give.
+      const unanswered = firstUnanswered({
+        ...undeclared.answers,
+        ...declared.answers,
       });
+      if (unanswered) {
+        return couldNotRunResult(
+          this,
+          `${unanswered.method} got no answer to compare with the declaration (${unanswered.message}), so this check could not run`,
+          details,
+        );
+      }
+
+      return passedResult(this, Date.now() - startedAt, details);
     },
   },
 ];
