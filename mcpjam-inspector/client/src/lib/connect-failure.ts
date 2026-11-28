@@ -33,7 +33,9 @@ export type ConnectFailureActionKind = "start_oauth" | "edit_input" | "reconnect
 /**
  * Failures a fresh OAuth sign-in fixes. Listed one by one: other auth slugs
  * (the MCPJam session, a proxy, an unreachable authorization server or
- * discovery endpoint, a redirect mismatch) fail the same way again.
+ * discovery endpoint, a redirect mismatch) fail the same way again. A 401
+ * without a Bearer challenge is also left out: its catalog steps point to
+ * discovery or an API key header, which a sign-in does not fix.
  */
 export const START_OAUTH_SLUGS: readonly string[] = [
   "auth/http_401",
@@ -43,7 +45,6 @@ export const START_OAUTH_SLUGS: readonly string[] = [
   "auth/consent_required",
   "oauth/invalid_grant",
   "oauth/invalid_client",
-  "oauth/no_bearer_challenge",
   "oauth/non_compliant_challenge",
 ];
 

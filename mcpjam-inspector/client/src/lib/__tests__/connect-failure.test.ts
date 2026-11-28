@@ -63,6 +63,7 @@ describe("connect failure action", () => {
     ["auth/authorization_server_unreachable", "http", "reconnect", "Reconnect"],
     ["oauth/well_known_unreachable", "http", "reconnect", "Reconnect"],
     ["oauth/redirect_mismatch", "http", "reconnect", "Reconnect"],
+    ["oauth/no_bearer_challenge", "http", "reconnect", "Reconnect"],
     ["connect/unclassified", "http", "reconnect", "Reconnect"],
   ] as const)("%s over %s offers %s", (slug, transport, kind, label) => {
     expect(connectFailureActionKind(slug, transport)).toBe(kind);
