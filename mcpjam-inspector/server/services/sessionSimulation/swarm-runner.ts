@@ -1676,7 +1676,8 @@ async function runJourneyFanOut(
             // spend-cap short-circuit cancels this host's in-flight turns.
             abortSignal: attemptSignal,
             budgets,
-            nextPersonaTurn: (transcriptSoFar) =>
+            enablePersonaAppClicks: true,
+            nextPersonaTurn: (transcriptSoFar, appControls) =>
               swarmPersonaNextTurn(convexHttpUrl, sessionBearer, {
                 projectId,
                 runId,
@@ -1684,6 +1685,7 @@ async function runJourneyFanOut(
                 ...(targetId ? { targetId } : {}),
                 sessionIdx: attemptSessionIdx,
                 transcriptSoFar,
+                ...(appControls?.length ? { appControls } : {}),
                 // Forward the run-level stop (composed shutdown/cancel + spend-cap
                 // runStop) so a short-circuit aborts a parked persona fetch
                 // immediately and the session unwinds (instead of lingering up to

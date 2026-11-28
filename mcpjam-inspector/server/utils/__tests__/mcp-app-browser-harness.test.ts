@@ -1,3 +1,5 @@
+import { compileRecordedAppCase } from "@mcpjam/sdk/contract";
+import { interactActionToScriptedStep, widgetAssertionToStepAssertion } from "../../services/browser-session-context";
 import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 import { build } from "esbuild";
 import {
@@ -942,6 +944,48 @@ describe.skipIf(!CHROMIUM_AVAILABLE)(
       });
       expect(calledOk.ok).toBe(true);
     }, 30_000);
+
+    it("replays a compiled persona click after a layout shift and catches a changed result", async () => {
+      const fixtureCase = compileRecordedAppCase({
+        id: "case_test",
+        title: "Save form",
+        openingCall: { toolCallId: "recorded-call", serverName: "Forms", toolName: "show_form", arguments: {} },
+        actions: [{
+          toolCallId: "recorded-call",
+          stepIndex: 0,
+          action: "left_click",
+          actor: "persona",
+          ok: true,
+          target: { role: "button", name: "Save" },
+        }],
+        assertions: [{ kind: "textVisible", toolName: "show_form", text: "Saved!" }],
+      });
+      const [opening, click, check] = fixtureCase.steps;
+      if (opening?.kind !== "toolCall" || click?.kind !== "interact" ||
+          check?.kind !== "assert" || !("kind" in check.assertion)) {
+        throw new Error("Expected an opening call, click, and widget assertion");
+      }
+
+      const layouts = [
+        scriptedHtml,
+        scriptedHtml.replace("padding:10px;margin:20px", "padding:10px;margin:120px"),
+        scriptedHtml.replace("Saved!", "Failed to save"),
+      ];
+      const h = makeHarness();
+      for (const [index, html] of layouts.entries()) {
+        const toolCallId = `replay-${index}`;
+        const render = await h.renderWidget({
+          toolCallId, toolName: opening.toolName, serverId: "forms", html, keepMounted: true,
+        });
+        expect(render.status).toBe("rendered");
+        expect(await h.runScriptedStep({
+          toolCallId, step: interactActionToScriptedStep(click.action),
+        })).toMatchObject({ ok: true });
+        expect(await h.runScriptedStep({
+          toolCallId, step: { kind: "assert", assertion: widgetAssertionToStepAssertion(check.assertion) },
+        })).toMatchObject({ ok: index < 2 });
+      }
+    }, 45_000);
 
     it("fails an assertion on a missing element with a reason", async () => {
       const h = makeHarness();

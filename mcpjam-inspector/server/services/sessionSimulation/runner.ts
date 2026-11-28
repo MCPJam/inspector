@@ -511,10 +511,12 @@ export interface SyntheticHostSessionAdapter {
   authHeader: string;
   managerFactory: SimulationManagerFactory;
   abortSignal?: AbortSignal;
-  /** Surface persona driver: produce the next simulated user message. */
+  enablePersonaAppClicks?: boolean;
+  /** Surface persona driver: choose a simulated user message and optional app control. */
   nextPersonaTurn(
     transcriptSoFar: Array<{ role: "user" | "assistant"; content: string }>,
-  ): Promise<{ message: string; endSession: boolean }>;
+    appControls?: string[],
+  ): Promise<{ message: string; endSession: boolean; clickIndex?: number }>;
   /** Persistence attribution tags (scenario vs swarm). */
   persist: SyntheticPersistAttribution;
   /**
@@ -564,6 +566,7 @@ export async function runSyntheticHostSession(
     managerFactory,
     abortSignal,
     nextPersonaTurn,
+    enablePersonaAppClicks,
     persist,
     onTurnPersisted,
     browserArtifacts,
@@ -1146,10 +1149,25 @@ export async function runSyntheticHostSession(
       turnDeadline?.dispose();
       turnDeadline = withDeadline(sessionSignal, budgets.turnTimeoutMs, "turn");
 
+      const controls =
+        enablePersonaAppClicks && turn > 0 ? await browser.listPersonaAppControls() : [];
+      const controlLabels = controls.map(({ role, name }) => `${role}: ${name}`.slice(0, 200));
       const next = await withAdmissionRetry(
-        () => nextPersonaTurn(lastTranscript),
+        () => controlLabels.length
+          ? nextPersonaTurn(lastTranscript, controlLabels)
+          : nextPersonaTurn(lastTranscript),
         admissionOptions,
       );
+
+      if (next.clickIndex !== undefined) {
+        turnDeadline.signal.throwIfAborted();
+        const control = controls[next.clickIndex];
+        if (!control) throw new Error("The persona selected an unavailable app control.");
+        const outcome = await browser.clickPersonaAppControl(control);
+        if (!outcome.ok) {
+          throw new Error(outcome.reason ?? "The persona could not click the app control.");
+        }
+      }
 
       if (next.endSession) {
         if (turn === 0) {
@@ -1367,10 +1385,12 @@ export async function runSyntheticHostSession(
         return error.turn;
       });
 
+      // Keep a successfully rendered app available for the next persona decision.
+      // The start of the next assistant turn still dismisses the carried app.
       // Capture the execution deadline before persistence can consume more time.
       drainedTurnTimedOut = turnDeadline.firedClock() === "turn";
       if (!drainedTurnTimedOut) {
-        await browser.dismissCarriedWidget();
+        if (!enablePersonaAppClicks) await browser.dismissCarriedWidget();
         emit?.({ type: "turn_finish", turnIndex: turn });
       }
       // Track the first turn's modelSource for the per-session persist

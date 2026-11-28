@@ -362,6 +362,31 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     }
   );
 
+  it("lets a persona click the previous assistant turn's app before ending", async () => {
+    const context = buildFakeBrowserContext({ computerUse: true });
+    const control = { toolCallId: "app-call", role: "button", name: "Save" };
+    const clickPersonaAppControl = vi.fn().mockResolvedValue({ ok: true });
+    createBrowserSessionContextMock.mockReturnValue({
+      ...context,
+      listPersonaAppControls: vi.fn().mockResolvedValue([control]),
+      clickPersonaAppControl,
+    });
+    const args = baseAdapter();
+    args.nextPersonaTurn.mockReset()
+      .mockResolvedValueOnce({ message: "open the form", endSession: false })
+      .mockResolvedValueOnce({ message: "", endSession: true, clickIndex: 0 });
+    const result = await runSyntheticHostSession({
+      ...args,
+      enablePersonaAppClicks: true,
+    });
+    expect(result.outcome).toBe("succeeded");
+    expect(args.nextPersonaTurn).toHaveBeenLastCalledWith(
+      expect.any(Array), ["button: Save"],
+    );
+    expect(clickPersonaAppControl).toHaveBeenCalledExactlyOnceWith(control);
+    expect(context.dismissCarriedWidget).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects an empty persona message without calling the assistant", async () => {
     createBrowserSessionContextMock.mockReturnValue(
       buildFakeBrowserContext({ computerUse: true })
