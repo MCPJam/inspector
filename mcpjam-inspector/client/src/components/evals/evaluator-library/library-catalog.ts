@@ -18,6 +18,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { hostedCriterionId } from "@/shared/hosted-criterion-id";
+import type { CodeEvaluator } from "./code-evaluator-model";
 import type { BuiltFromPart, EvaluatorTone } from "./evaluator-library-types";
 
 /**
@@ -68,6 +69,8 @@ export type LibraryAddition = {
   checks: Predicate[];
   questions: RubricCheckQuestion[];
   judges: CustomJudge[];
+  /** Written with the Code card; no preset adds one. */
+  codeEvaluators?: CodeEvaluator[];
 };
 
 /** What this deployment can save. */

@@ -48,7 +48,14 @@ const CATEGORIES: Record<
 
 type Category = CategoryId | "all";
 export type LibraryFilters = { category: Category; search: string };
-export type MethodAvailability = Record<EvaluatorMethod, string | null>;
+/**
+ * Per method card: a reason it is off, `null` to offer it, or `undefined` to
+ * leave it out, for a method still behind a flag the viewer doesn't have.
+ */
+export type MethodAvailability = Record<
+  EvaluatorMethod,
+  string | null | undefined
+>;
 
 export function EvaluatorLibraryBrowse({
   evaluators,
@@ -260,6 +267,7 @@ function MethodCards({
         {EVALUATOR_METHODS.map(
           ({ value, title, icon: Icon, description, tone }) => {
             const reason = methods[value];
+            if (reason === undefined) return null;
             const titleId = `${id}-${value}`;
             const descriptionId = `${titleId}-description`;
             return (

@@ -47,6 +47,8 @@ import { SuiteEvaluatorLibrary } from "./evaluator-library/suite-evaluator-libra
 import { useEvaluatorLibraryEnabled } from "./evaluator-library/evaluator-library-flag";
 import { EvaluatorStageRows } from "./evaluator-library/evaluator-stage-rows";
 import { CustomJudgesSection } from "./evaluator-library/custom-judges-section";
+import { CodeEvaluatorsSection } from "./evaluator-library/code-evaluators-section";
+import type { SuiteCodeEvaluators } from "./evaluator-library/suite-code-evaluators";
 import { DecisionQuestionsSection } from "./evaluator-library/decision-questions-section";
 import { customJudgeLimits } from "./evaluator-library/custom-judges-model";
 import {
@@ -122,6 +124,7 @@ export function SuiteScorerTable({
   headerContent,
   headerDescription,
   headerActions,
+  codeEvaluators,
 }: {
   scope: ScorerTableScope;
   matchOptions?: EvalMatchOptions;
@@ -155,6 +158,8 @@ export function SuiteScorerTable({
   headerContent?: React.ReactNode;
   headerDescription?: React.ReactNode;
   headerActions?: React.ReactNode;
+  /** Suite scope: the suite settings draft's code evaluators. */
+  codeEvaluators?: SuiteCodeEvaluators;
 }) {
   const suitePredicates =
     scope.kind === "suite" ? scope.predicates : scope.suitePredicates;
@@ -267,6 +272,7 @@ export function SuiteScorerTable({
     judgeConfig,
     onJudgeConfigChange,
     judgeLimit,
+    codeEvaluators,
   );
   const stackedStages = evaluatorLibraryEnabled && scope.kind === "suite";
   const addPredicate = (predicate: Predicate) => {
@@ -433,6 +439,7 @@ export function SuiteScorerTable({
                 authorableKinds={authorableKinds}
                 judgeConfig={judgeConfig}
                 capabilities={capabilities}
+                codeEvaluators={codeEvaluators}
                 onAdd={library.add}
               />
             ) : null}
@@ -596,6 +603,9 @@ export function SuiteScorerTable({
                     onJudgeConfigChange={onJudgeConfigChange}
                     capabilities={capabilities}
                   />
+                ) : null}
+                {codeEvaluators && group.stage === "userValue" ? (
+                  <CodeEvaluatorsSection codeEvaluators={codeEvaluators} />
                 ) : null}
                 {evaluatorLibraryEnabled &&
                 rubricChecks &&

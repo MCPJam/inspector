@@ -20,6 +20,8 @@ import {
 } from "./library-catalog";
 import type { LibraryModelRow } from "./evaluator-stage-rows";
 import { customizedCopy, withJudges } from "./custom-judges-model";
+import { codeEvaluatorsWithAdded } from "./code-evaluator-model";
+import type { SuiteCodeEvaluators } from "./suite-code-evaluators";
 
 /**
  * The judge config with these rubric-check questions. The author's on/off
@@ -80,7 +82,7 @@ function withLibraryLists(
  * not editable here. `add` and `update` return why they could not apply and
  * then change nothing, and `updateRefusal` gives that reason up front so the
  * group can show it instead of Update. `judgeLimit` is the backend's
- * `judges.custom.maxJudges`.
+ * `judges.custom.maxJudges`. Code evaluators from the Code card go to `code`.
  */
 export function librarySuiteEdits(
   scope: ScorerTableScope,
@@ -88,6 +90,7 @@ export function librarySuiteEdits(
   onJudgeConfigChange:
     ((next: EvalJudgeConfig | undefined) => void) | undefined,
   judgeLimit: number,
+  code?: Pick<SuiteCodeEvaluators, "evaluators" | "onChange">,
 ) {
   if (scope.kind !== "suite" || !onJudgeConfigChange) return undefined;
   const questions = judgeConfig?.rubricChecks?.questions ?? [];
@@ -119,6 +122,13 @@ export function librarySuiteEdits(
       if (questionEdit.refused !== undefined) return questionEdit.refused;
       const judgeEdit = judgesWithAdded(judges, addition.judges, judgeLimit);
       if (judgeEdit.refused !== undefined) return judgeEdit.refused;
+      const adding = addition.codeEvaluators ?? [];
+      if (adding.length && !code) {
+        return "Add code evaluators in suite settings.";
+      }
+      const codeEdit = codeEvaluatorsWithAdded(code?.evaluators ?? [], adding);
+      if (codeEdit.refused !== undefined) return codeEdit.refused;
+      if (adding.length) code?.onChange(codeEdit.evaluators);
       if (addition.checks.length) {
         // A preset's checks reuse a matching assertion; ones written from
         // scratch are appended as "Add assertion" would, role and all.

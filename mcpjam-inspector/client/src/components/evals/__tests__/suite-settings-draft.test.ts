@@ -964,3 +964,55 @@ describe("setup and cleanup scripts and grading settings", () => {
     });
   });
 });
+
+describe("code evaluators", () => {
+  const totals = {
+    id: "check_totals",
+    name: "Invoice totals add up",
+    fileName: "check_totals.py",
+    script: "print(1)",
+    role: "required" as const,
+  };
+  const report = { ...totals, id: "report", name: "Report written" };
+
+  test("an edit sends the whole list; removing the last sends null", () => {
+    let draft = draftOf({ codeEvaluators: [totals] });
+    draft = edit(draft, "codeEvaluators", [totals, report]);
+    expect(toUpdateArgs(draft, SUITE_ID)).toEqual({
+      suiteId: SUITE_ID,
+      codeEvaluators: [totals, report],
+    });
+    draft = edit(draft, "codeEvaluators", []);
+    expect(toUpdateArgs(draft, SUITE_ID)).toEqual({
+      suiteId: SUITE_ID,
+      codeEvaluators: null,
+    });
+  });
+
+  test("reads them off a suite, with an empty list as none", () => {
+    expect(
+      readSuiteSettingsValues({ codeEvaluators: [totals] }).codeEvaluators,
+    ).toEqual([totals]);
+    expect(
+      readSuiteSettingsValues({ codeEvaluators: [] }).codeEvaluators,
+    ).toBeUndefined();
+  });
+
+  test("the review dialog names them, marking the edited one", () => {
+    expect(
+      describeChange(
+        "codeEvaluators",
+        { ...BASE, codeEvaluators: [totals] },
+        {
+          ...BASE,
+          codeEvaluators: [{ ...totals, role: "advisory" }, report],
+        },
+      ),
+    ).toEqual({
+      key: "codeEvaluators",
+      label: "Code evaluators",
+      before: "Invoice totals add up",
+      after: "Invoice totals add up (edited), Report written",
+    });
+  });
+});
