@@ -151,6 +151,7 @@ import {
   evalSuiteFileCaseImportSchema,
   evalExecutionBudgetsSchema,
   IMPORT_MAPPING_STATUSES,
+  inputAnswersSchema,
   isEvalVerdictPolicyV2,
   opaqueIdSchema,
   parseSuiteGatePolicyForAuthoring,
@@ -2420,6 +2421,9 @@ function toCaseDto(testCase: CaseDoc, vocabulary: EvalVocabulary = 1) {
       : {}),
     ...(testCase.source ? { source: testCase.source } : {}),
     ...(importClaim ? { import: importClaim } : {}),
+    ...(Array.isArray(testCase.inputAnswers)
+      ? { inputAnswers: testCase.inputAnswers }
+      : {}),
     createdAt: testCase.createdAt ?? null,
     updatedAt: testCase.updatedAt ?? null,
   };
@@ -3091,6 +3095,12 @@ const publicCaseBodyShape = {
     })
     .nullable()
     .optional(),
+  /**
+   * What the run answers when a server asks a question mid-run. The SDK's own
+   * schema, so a suite file and this route accept the same replies. `null`
+   * clears them on PATCH; omitted leaves them; create ignores `null`.
+   */
+  inputAnswers: inputAnswersSchema.nullable().optional(),
 } as const;
 
 /**
@@ -3933,6 +3943,12 @@ function buildCaseMutationArgs(
           : mergeMatchOptions(opts.existingMatchOptions, body.matchOptions);
   if (body.suppressedSuiteStandardCheckIds !== undefined)
     args.suppressedSuiteStandardCheckIds = body.suppressedSuiteStandardCheckIds;
+  // The backend's create item takes the list or nothing; only update clears.
+  if (
+    body.inputAnswers !== undefined &&
+    !(opts.forCreate && body.inputAnswers === null)
+  )
+    args.inputAnswers = body.inputAnswers;
   if (body.checks !== undefined && !(opts.forCreate && body.checks === null))
     args.predicates =
       body.checks === null

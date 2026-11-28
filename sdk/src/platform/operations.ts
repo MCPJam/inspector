@@ -49,6 +49,7 @@ import { z } from "zod";
 import { stableStringifyJson } from "../widget-runtime/json-utils.js";
 import { comparisonKey } from "../host-config/reasoning-effort.js";
 import { opaqueIdSchema } from "../contract/identity.js";
+import { inputAnswersSchema } from "../contract/input-answers.js";
 import {
   GATE_WAIVER_MAX_REASON_LENGTH,
   GATE_WAIVER_REASON_NOTICE,
@@ -5496,6 +5497,15 @@ const caseFieldsShape = {
     .optional()
     .describe(
       "Import provenance for a converted case: {status, sourceCaseKey?, note?}. `exact` is a CONVERTER CLAIM, not a verification, and requires a note citing the mapping rule."
+    ),
+  // The same schema the suite file validates, so a reply authored here and one
+  // authored in a file cannot disagree about what is legal. Nullable so an
+  // update can clear the replies; create treats `null` as none.
+  inputAnswers: inputAnswersSchema
+    .nullable()
+    .optional()
+    .describe(
+      "What the run answers when a server asks a question mid-run: a list of replies, the first whose listed fields (server, tool, message) all fit answers. Each is {action: accept|decline|cancel, content?, server?, tool?, message?}. On an update, replaces the list; pass null to clear it."
     ),
 } as const;
 

@@ -14319,6 +14319,14 @@
               }
             }
           },
+          "inputAnswers": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "$ref": "#/components/schemas/EvalInputAnswer"
+            },
+            "description": "What the run answers when a server asks a question mid-run. The first reply whose listed fields all fit the question answers; a reply that lists none answers anything. A question no reply fits is declined."
+          },
           "import": {
             "$ref": "#/components/schemas/EvalCaseImportClaim"
           },
@@ -14508,6 +14516,14 @@
               }
             },
             "deprecated": true
+          },
+          "inputAnswers": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "$ref": "#/components/schemas/EvalInputAnswer"
+            },
+            "description": "What the run answers when a server asks a question mid-run. The first reply whose listed fields all fit the question answers; a reply that lists none answers anything. A question no reply fits is declined."
           },
           "import": {
             "$ref": "#/components/schemas/EvalCaseImportClaim"
@@ -14717,6 +14733,14 @@
               }
             },
             "deprecated": true
+          },
+          "inputAnswers": {
+            "type": ["array", "null"],
+            "maxItems": 20,
+            "items": {
+              "$ref": "#/components/schemas/EvalInputAnswer"
+            },
+            "description": "Replaces the case's replies. Omitted leaves them unchanged; `null` clears them."
           },
           "import": {
             "oneOf": [
@@ -15356,6 +15380,14 @@
               }
             }
           },
+          "inputAnswers": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "$ref": "#/components/schemas/EvalInputAnswer"
+            },
+            "description": "What the run answers when a server asks a question mid-run. The first reply whose listed fields all fit the question answers; a reply that lists none answers anything. A question no reply fits is declined."
+          },
           "import": {
             "$ref": "#/components/schemas/EvalCaseImportClaim"
           },
@@ -15422,6 +15454,65 @@
           },
           "extractorVersion": { "type": "string", "minLength": 1, "maxLength": 100 }
         }
+      },
+      "EvalInputAnswer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "server": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "The server's name, as the suite names it. Exact."
+          },
+          "tool": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "description": "The tool whose call asked. Exact. A question on a revision before 2026-07-28 carries no tool, so it fits only a reply that does not list one."
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "Text the question's message contains, case-sensitive."
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "accept",
+              "decline",
+              "cancel"
+            ]
+          },
+          "content": {
+            "type": "object",
+            "description": "The form's values, only with `accept`. At most 4000 characters as JSON.",
+            "additionalProperties": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "description": "One reply to a question a server asks mid-run (a mock's step, or a real server that elicits). A field left out matches anything; a reply that lists none answers anything."
       },
       "EvalCaseImportClaim": {
         "type": "object",
@@ -15683,6 +15774,14 @@
                 }
               }
             }
+          },
+          "inputAnswers": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "$ref": "#/components/schemas/EvalInputAnswer"
+            },
+            "description": "What the run answers when a server asks a question mid-run. The first reply whose listed fields all fit the question answers; a reply that lists none answers anything. A question no reply fits is declined."
           },
           "import": {
             "$ref": "#/components/schemas/EvalCaseImportClaim"
@@ -16310,6 +16409,14 @@
                 }
               }
             }
+          },
+          "inputAnswers": {
+            "type": ["array", "null"],
+            "maxItems": 20,
+            "items": {
+              "$ref": "#/components/schemas/EvalInputAnswer"
+            },
+            "description": "Replaces the case's replies. Omitted leaves them unchanged; `null` clears them."
           },
           "import": {
             "oneOf": [

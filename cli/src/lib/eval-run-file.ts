@@ -173,6 +173,10 @@ export function fileCaseToCreateBody(
     // here" and "imported, claim unknown" are different facts, and once a case
     // is persisted nothing downstream can tell them apart again.
     ...(testCase.import ? { import: testCase.import } : {}),
+    // The replies the run gives a server's question; omitted when none.
+    ...(testCase.inputAnswers?.length
+      ? { inputAnswers: testCase.inputAnswers }
+      : {}),
   };
 }
 
@@ -184,7 +188,8 @@ export function fileCaseToCreateBody(
 export function fileCaseToUpdateBody(
   testCase: ResolvedEvalSuiteFileCase,
   previousSuppression?: readonly string[],
-  vocabulary: EvalVocabulary = 1
+  vocabulary: EvalVocabulary = 1,
+  previousInputAnswers?: readonly unknown[]
 ): Record<string, unknown> {
   return {
     judge: testCase.judge ?? null,
@@ -212,6 +217,14 @@ export function fileCaseToUpdateBody(
     // block would otherwise leave a stale claim describing a conversion that
     // is no longer being asserted.
     import: testCase.import ?? null,
+    // A file that dropped its replies must clear them, but `null` is sent
+    // only when the hosted case has some: an Inspector that predates the field
+    // refuses an unknown key, and that would fail every sync of every file.
+    ...(testCase.inputAnswers?.length
+      ? { inputAnswers: testCase.inputAnswers }
+      : previousInputAnswers?.length
+        ? { inputAnswers: null }
+        : {}),
     // A file sync clears a removed scenario; ordinary PATCH callers can omit
     // the field to preserve the existing value.
     scenario: testCase.scenario ?? null,
@@ -650,7 +663,8 @@ export async function syncFileOwnedCases(
             ...fileCaseToUpdateBody(
               file,
               row.suppressedSuiteStandardCheckIds,
-              vocabulary
+              vocabulary,
+              row.inputAnswers
             ),
             declaredSuiteId: params.declaredSuiteId,
           },

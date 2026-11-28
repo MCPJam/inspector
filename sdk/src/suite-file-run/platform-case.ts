@@ -66,6 +66,9 @@ export function platformCaseFromSuiteFileCase(
         }
       : {}),
     ...(testCase.import !== undefined ? { import: testCase.import } : {}),
+    ...(testCase.inputAnswers !== undefined
+      ? { inputAnswers: [...testCase.inputAnswers] }
+      : {}),
     iterations: testCase.iterations,
     ...(checks ? { checks } : {}),
     createdAt: null,

@@ -163,6 +163,7 @@ export type PlatformSessionBrowserOperationResult =
   | { url: string; mediaType?: string }
   | { ok: boolean };
 import type { CaseSource } from "../contract/case-source.js";
+import type { InputAnswer } from "../contract/input-answers.js";
 /**
  * Wire DTOs for the MCPJam Platform API (`/api/v1`).
  *
@@ -2453,6 +2454,8 @@ export interface PlatformEvalCaseBase {
   import?: PlatformEvalCaseImportClaim;
   /** Source of an AI-assisted Markdown case. */
   source?: CaseSource;
+  /** What the run answers when a server asks a question mid-run. */
+  inputAnswers?: InputAnswer[];
   createdAt: number | null;
   updatedAt: number | null;
 }

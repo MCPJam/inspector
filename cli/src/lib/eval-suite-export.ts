@@ -922,6 +922,11 @@ export function buildSuiteFileFromPlatform(
               evalCase.suppressedSuiteStandardCheckIds,
           }
         : {}),
+      // Exporting without them would hand back a file whose re-sync clears
+      // the hosted replies.
+      ...(evalCase.inputAnswers?.length
+        ? { inputAnswers: evalCase.inputAnswers }
+        : {}),
     })),
   };
 

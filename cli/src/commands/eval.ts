@@ -1303,7 +1303,35 @@ function buildCaseInput(
   input.suite = options.suite;
   if (opts.requireCase) input.case = options.case;
   if (options.title !== undefined) input.title = options.title;
+  if (options.inputAnswers !== undefined) {
+    input.inputAnswers = parseInputAnswersOption(options.inputAnswers);
+  }
   return input;
+}
+
+/**
+ * `--input-answers '[{"action":"accept","content":{"name":"Ada"}}]'`. A JSON
+ * array of replies, or `null` to clear them on an update. Malformed JSON is a
+ * usage error naming the flag, as for `--match-options`; the op's own schema
+ * then checks each reply.
+ */
+function parseInputAnswersOption(raw: string): unknown[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw usageError(
+      `--input-answers must be valid JSON: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+  if (parsed !== null && !Array.isArray(parsed)) {
+    throw usageError(
+      "--input-answers must be a JSON array of replies, or null to clear them."
+    );
+  }
+  return parsed;
 }
 
 /** A screenshot entry as emitted in JSON output (and after an optional save). */
@@ -6456,6 +6484,10 @@ export function registerEvalCommands(program: Command): void {
     .option("--file <path>", "Case JSON body (or - for stdin)")
     .option("--json <json>", "Inline case JSON (or @file, or -)")
     .option("--title <title>", "Case title (overrides the body)")
+    .option(
+      "--input-answers <json>",
+      'What the run answers when a server asks a question: a JSON array of replies, e.g. \'[{"action":"accept","content":{"name":"Ada"}}]\''
+    )
     .action(async (options: PlatformOptions & Record<string, any>, command) => {
       const input = validateOpInput(
         createEvalCaseOperation,
@@ -6473,6 +6505,10 @@ export function registerEvalCommands(program: Command): void {
     .option("--file <path>", "Case JSON body (or - for stdin)")
     .option("--json <json>", "Inline case JSON (or @file, or -)")
     .option("--title <title>", "Rename the case")
+    .option(
+      "--input-answers <json>",
+      "Replace the replies the run gives a server's question: a JSON array of replies, or null to clear them"
+    )
     .action(async (options: PlatformOptions & Record<string, any>, command) => {
       const input = validateOpInput(
         updateEvalCaseOperation,
