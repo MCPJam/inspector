@@ -3367,7 +3367,11 @@ function writeExportRefusal(
 export function registerEvalCommands(program: Command): void {
   const evals = program
     .command("eval")
-    .description("Author and run eval suites in your hosted MCPJam projects");
+    .description("Author and run eval suites in your hosted MCPJam projects")
+    .addHelpText(
+      "after",
+      "\nAgents: install the mcpjam-cloud skill for the run, poll, triage and credit rules:\n  npx skills add mcpjam/inspector --skill mcpjam-cloud\n"
+    );
 
   evals
     .command("create")

@@ -70,6 +70,43 @@ export interface CliEntrypointDependencies extends CliMainDependencies {
   checkForUpdates?: (currentVersion: string) => void;
 }
 
+/**
+ * Every command the `mcpjam` binary exposes, in help order. Split from `main`
+ * so tests can walk the real command tree without parsing argv.
+ */
+export function registerCliCommands(
+  program: Command,
+  dependencies: CliMainDependencies = {},
+): void {
+  program.commandsGroup("Local MCP testing:");
+  registerTestCommand(program, dependencies.localTest);
+  registerServerCommands(program);
+  registerToolsCommands(program);
+  registerResourcesCommands(program);
+  registerServerSkillsCommands(program);
+  registerSubscriptionsCommands(program);
+  registerCompatCommands(program);
+  registerPromptCommands(program);
+  registerAppsCommands(program);
+  registerTasksCommands(program);
+  registerEventsCommands(program);
+  registerOAuthCommands(program);
+  registerXaaCommands(program);
+  registerProtocolCommands(program);
+  registerConformanceRunCommand(program);
+  registerReadinessCommands(program);
+
+  program.commandsGroup("MCPJam Cloud:");
+  registerCloudCommands(program);
+  registerRegistryCommands(program);
+
+  program.commandsGroup("CLI:");
+  registerInspectorCommands(program);
+  registerBrowserCommands(program);
+  registerMcpCommands(program);
+  registerTelemetryCommands(program, dependencies.telemetry);
+}
+
 export async function main(
   argv: readonly string[] = process.argv,
   dependencies: CliMainDependencies = {},
@@ -104,33 +141,7 @@ export async function main(
   const telemetry = initTelemetry(program, pkgVersion, dependencies.telemetry);
   installDeploymentPreflight(program);
 
-  program.commandsGroup("Local MCP testing:");
-  registerTestCommand(program, dependencies.localTest);
-  registerServerCommands(program);
-  registerToolsCommands(program);
-  registerResourcesCommands(program);
-  registerServerSkillsCommands(program);
-  registerSubscriptionsCommands(program);
-  registerCompatCommands(program);
-  registerPromptCommands(program);
-  registerAppsCommands(program);
-  registerTasksCommands(program);
-  registerEventsCommands(program);
-  registerOAuthCommands(program);
-  registerXaaCommands(program);
-  registerProtocolCommands(program);
-  registerConformanceRunCommand(program);
-  registerReadinessCommands(program);
-
-  program.commandsGroup("MCPJam Cloud:");
-  registerCloudCommands(program);
-  registerRegistryCommands(program);
-
-  program.commandsGroup("CLI:");
-  registerInspectorCommands(program);
-  registerBrowserCommands(program);
-  registerMcpCommands(program);
-  registerTelemetryCommands(program, dependencies.telemetry);
+  registerCliCommands(program, dependencies);
 
   if (argv.length <= 2) {
     program.outputHelp();
