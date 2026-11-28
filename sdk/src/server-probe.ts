@@ -1,4 +1,14 @@
 import {
+  CLIENT_CAPABILITIES_META_KEY,
+  CLIENT_INFO_META_KEY,
+  PROTOCOL_VERSION_META_KEY,
+  SERVER_INFO_META_KEY,
+  ProtocolErrorCode,
+  isJSONRPCErrorResponse,
+  isJSONRPCResultResponse,
+  specTypeSchemas,
+} from "@modelcontextprotocol/client";
+import {
   type RetryPolicy,
   isRetryableTransientError,
   retryWithPolicy,
@@ -17,13 +27,15 @@ import {
   type ProbeHttpAttempt,
 } from "./probe-http.js";
 import type { OAuthProtocolVersion } from "./oauth/state-machines/types.js";
+import { isStatelessProtocolVersion } from "./mcp-client-manager/mcp-protocol-version.js";
 
 export type { ProbeHttpAttempt } from "./probe-http.js";
 export type { ProbeOAuthDetails } from "./oauth/metadata-discovery.js";
 
 export interface ProbeMcpServerConfig {
   url: string;
-  protocolVersion?: OAuthProtocolVersion;
+  /** Auto tries server/discover first. Omit to use the legacy 2025-11-25 probe. */
+  protocolVersion?: OAuthProtocolVersion | "auto";
   headers?: Record<string, string>;
   accessToken?: string;
   clientCapabilities?: Record<string, unknown>;
@@ -53,33 +65,31 @@ export interface ProbeTransportResult {
   attempts: ProbeHttpAttempt[];
 }
 
+export interface ProbeDiscoverInfo {
+  supportedVersions: string[];
+  serverInfo?: unknown;
+  capabilities: unknown;
+  contentType?: string;
+}
+
 export interface ProbeMcpServerResult {
   url: string;
   protocolVersion: OAuthProtocolVersion;
   status: "ready" | "oauth_required" | "reachable" | "error";
   transport: ProbeTransportResult;
   initialize?: ProbeInitializeInfo;
+  discover?: ProbeDiscoverInfo;
   oauth: ProbeOAuthDetails;
   error?: string;
 }
 
-function initializeProtocolVersion(
-  protocolVersion: OAuthProtocolVersion
-): string {
-  switch (protocolVersion) {
-    case "2025-03-26":
-    case "2025-06-18":
-      return "2024-11-05";
-    case "2025-11-25":
-      return "2025-11-25";
-    case "2026-07-28":
-      return "2026-07-28";
-    default: {
-      const exhaustive: never = protocolVersion;
-      return exhaustive;
-    }
-  }
-}
+const STATELESS_PROBE_VERSION = "2026-07-28";
+// The upstream ProtocolErrorCode enum does not include HeaderMismatch.
+const HEADER_MISMATCH = -32020;
+
+type ResolvedProbeConfig = Omit<ProbeMcpServerConfig, "protocolVersion"> & {
+  protocolVersion: OAuthProtocolVersion;
+};
 
 /**
  * MCP requires 401 + `WWW-Authenticate` to signal that OAuth is needed, but a
@@ -154,11 +164,17 @@ function extractInitializeInfo(
   return undefined;
 }
 
-function buildInitializeRequest(
-  config: ProbeMcpServerConfig
+function buildStreamableProbeRequest(
+  config: ResolvedProbeConfig,
+  method: "server/discover" | "initialize"
 ): ProbeHttpAttempt {
-  const protocolVersion = normalizeProtocolVersion(config.protocolVersion);
   const accessToken = config.accessToken?.trim();
+  const { protocolVersion } = config;
+  const clientInfo = {
+    name: config.clientName ?? "mcpjam-probe",
+    version: config.clientVersion ?? "1.0.0",
+  };
+  const capabilities = config.clientCapabilities ?? {};
   const headers: Record<string, string> = {
     ...normalizeHeaders(config.headers),
     "Content-Type": "application/json",
@@ -169,8 +185,28 @@ function buildInitializeRequest(
     headers.Authorization = `Bearer ${accessToken}`;
   }
 
+  const modern = method === "server/discover";
+  if (modern) {
+    headers["mcp-protocol-version"] = protocolVersion;
+    headers["mcp-method"] = method;
+  }
+  const params = modern
+    ? {
+        _meta: {
+          [PROTOCOL_VERSION_META_KEY]: protocolVersion,
+          [CLIENT_CAPABILITIES_META_KEY]: capabilities,
+          [CLIENT_INFO_META_KEY]: clientInfo,
+        },
+      }
+    : {
+        protocolVersion:
+          protocolVersion === "2025-11-25" ? protocolVersion : "2024-11-05",
+        capabilities,
+        clientInfo,
+      };
+
   return {
-    name: "streamable_initialize",
+    name: modern ? "stateless_server_discover" : "streamable_initialize",
     request: {
       method: "POST",
       url: config.url,
@@ -178,19 +214,70 @@ function buildInitializeRequest(
       body: {
         jsonrpc: "2.0",
         id: 1,
-        method: "initialize",
-        params: {
-          protocolVersion: initializeProtocolVersion(protocolVersion),
-          capabilities: config.clientCapabilities ?? {},
-          clientInfo: {
-            name: config.clientName ?? "mcpjam-probe",
-            version: config.clientVersion ?? "1.0.0",
-          },
-        },
+        method,
+        params,
       },
     },
     durationMs: 0,
   };
+}
+
+function extractDiscoverInfo(
+  response: ParsedHttpResponse
+): ProbeDiscoverInfo | undefined {
+  const { body, contentType } = response;
+  if (
+    response.status < 200 ||
+    response.status >= 300 ||
+    !isJSONRPCResultResponse(body) ||
+    body.id !== 1
+  ) {
+    return undefined;
+  }
+
+  const parsed = specTypeSchemas.DiscoverResult["~standard"].validate(
+    body.result
+  );
+  if (parsed.issues !== undefined) return undefined;
+  return {
+    supportedVersions: parsed.value.supportedVersions,
+    serverInfo: parsed.value._meta?.[SERVER_INFO_META_KEY],
+    capabilities: parsed.value.capabilities,
+    contentType,
+  };
+}
+
+function shouldTryLegacyProbe(
+  response: ParsedHttpResponse,
+  discover: ProbeDiscoverInfo | undefined
+): boolean {
+  // Treat access denial and transient failures as such, without downgrading.
+  if (response.status === 403 || isRetryableProbeStatus(response.status)) {
+    return false;
+  }
+
+  const error = isJSONRPCErrorResponse(response.body)
+    ? response.body.error
+    : undefined;
+  const versionRefused = error?.code === ProtocolErrorCode.UnsupportedProtocolVersion;
+  const data = error?.data;
+  const supported = discover?.supportedVersions ??
+    (versionRefused && data && typeof data === "object" && "supported" in data
+      ? data.supported
+      : undefined);
+  if (Array.isArray(supported)) {
+    return (
+      !supported.includes(STATELESS_PROBE_VERSION) &&
+      supported.some(
+        (version) => typeof version === "string" && !isStatelessProtocolVersion(version)
+      )
+    );
+  }
+  return (
+    !versionRefused &&
+    error?.code !== ProtocolErrorCode.MissingRequiredClientCapability &&
+    error?.code !== HEADER_MISMATCH
+  );
 }
 
 function buildSseProbeRequest(config: ProbeMcpServerConfig): ProbeHttpAttempt {
@@ -251,30 +338,28 @@ function createProbeErrorResult(
 }
 
 async function probeMcpServerOnce(
-  config: ProbeMcpServerConfig,
-  attempts: ProbeHttpAttempt[]
+  config: ResolvedProbeConfig,
+  attempts: ProbeHttpAttempt[],
+  auto = false
 ): Promise<ProbeMcpServerAttemptResult> {
-  const protocolVersion = normalizeProtocolVersion(config.protocolVersion);
-  const initializeAttempt = buildInitializeRequest(config);
-  attempts.push(initializeAttempt);
+  const { protocolVersion } = config;
+  const modern = protocolVersion === STATELESS_PROBE_VERSION;
+  const method = modern ? "server/discover" : "initialize";
+  const attempt = buildStreamableProbeRequest(config, method);
+  attempts.push(attempt);
 
   try {
-    // A Streamable HTTP server may answer initialize as an event stream; its
-    // first message is the result `extractInitializeInfo` reads.
-    const initializeResponse = await performRequest(
+    // Streamable HTTP can send the result in an event stream.
+    const response = await performRequest(
       config.fetchFn ?? fetch,
-      initializeAttempt,
+      attempt,
       config.timeoutMs,
       undefined,
       { firstEventStreamMessage: true }
     );
-    const initializeInfo = extractInitializeInfo(
-      initializeResponse.body,
-      initializeResponse.contentType
-    );
-    const wwwAuthenticate = initializeResponse.headers["www-authenticate"];
+    const wwwAuthenticate = response.headers["www-authenticate"];
 
-    if (isOAuthChallenge(initializeResponse)) {
+    if (isOAuthChallenge(response)) {
       return {
         result: {
           url: config.url,
@@ -289,21 +374,32 @@ async function probeMcpServerOnce(
               optional: false,
               wwwAuthenticate,
             }),
-            initializeResponse.status
+            response.status
           ),
         },
         retryable: false,
       };
     }
 
-    if (initializeResponse.status >= 200 && initializeResponse.status < 300) {
+    const discover = modern ? extractDiscoverInfo(response) : undefined;
+    if (modern && auto && shouldTryLegacyProbe(response, discover)) {
+      return probeMcpServerOnce(
+        { ...config, protocolVersion: normalizeProtocolVersion(undefined) },
+        attempts
+      );
+    }
+
+    if (response.status >= 200 && response.status < 300) {
       const oauth = config.accessToken
         ? baseOAuthResult()
         : await discoverAuthorizationMetadata(config, {
             attempts,
             optional: true,
           }).catch(() => baseOAuthResult());
-      if (initializeInfo) {
+      const initialize = modern
+        ? undefined
+        : extractInitializeInfo(response.body, response.contentType);
+      if (initialize || discover?.supportedVersions.includes(protocolVersion)) {
         return {
           result: {
             url: config.url,
@@ -313,7 +409,7 @@ async function probeMcpServerOnce(
               selected: "streamable-http",
               attempts,
             },
-            initialize: initializeInfo,
+            ...(initialize ? { initialize } : { discover }),
             oauth,
           },
           retryable: false,
@@ -328,27 +424,25 @@ async function probeMcpServerOnce(
           transport: {
             attempts,
           },
+          ...(discover && { discover }),
           oauth,
-          error:
-            "Server responded to initialize but did not return a recognizable MCP initialize result.",
+          error: discover
+            ? `Server did not advertise support for ${protocolVersion} in server/discover.`
+            : `Server responded to ${method} but did not return a recognizable MCP ${method} result.`,
         },
         retryable: false,
       };
     }
 
     const shouldTrySse =
-      initializeResponse.status === 404 ||
-      initializeResponse.status === 405 ||
-      initializeResponse.status === 406 ||
-      initializeResponse.status === 415 ||
-      initializeResponse.status === 501;
+      !modern && [404, 405, 406, 415, 501].includes(response.status);
 
-    if (!shouldTrySse && isRetryableProbeStatus(initializeResponse.status)) {
+    if (!shouldTrySse && isRetryableProbeStatus(response.status)) {
       return createProbeErrorResult(
         config,
         protocolVersion,
         attempts,
-        `Server responded with HTTP ${initializeResponse.status} ${initializeResponse.statusText} to the initialize probe.`,
+        `Server responded with HTTP ${response.status} ${response.statusText} to the ${method} probe.`,
         true
       );
     }
@@ -434,7 +528,7 @@ async function probeMcpServerOnce(
           attempts,
         },
         oauth: baseOAuthResult(),
-        error: `Server responded with HTTP ${initializeResponse.status} ${initializeResponse.statusText} to the initialize probe.`,
+        error: `Server responded with HTTP ${response.status} ${response.statusText} to the ${method} probe.`,
       },
       retryable: false,
     };
@@ -453,9 +547,15 @@ export async function probeMcpServer(
   config: ProbeMcpServerConfig
 ): Promise<ProbeMcpServerResult> {
   const attempts: ProbeHttpAttempt[] = [];
+  const auto = config.protocolVersion === "auto";
+  const protocolVersion =
+    config.protocolVersion === "auto"
+      ? STATELESS_PROBE_VERSION
+      : normalizeProtocolVersion(config.protocolVersion);
   const outcome = await retryWithPolicy({
     policy: config.retryPolicy,
-    operation: () => probeMcpServerOnce(config, attempts),
+    operation: () =>
+      probeMcpServerOnce({ ...config, protocolVersion }, attempts, auto),
     shouldRetryResult: (result) => result.retryable,
   });
   // An attempt refused before the dial never reaches `performRequest`'s

@@ -389,6 +389,7 @@ export type {
   AuthorizationServerMetadataKind,
 } from "./oauth/metadata-candidates.js";
 export type {
+  ProbeDiscoverInfo,
   ProbeHttpAttempt,
   ProbeInitializeInfo,
   ProbeMcpServerConfig,

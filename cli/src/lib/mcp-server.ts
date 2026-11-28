@@ -770,7 +770,7 @@ export function createMcpJamMcpServer(
     {
       title: "Run a diagnostic sweep",
       description:
-        "Run a stateless diagnostic sweep against an MCP server (HTTP url or stdio command) without keeping a connection open: reachability, initialize, capability checks, and tool/resource/prompt counts. Equivalent to `mcpjam server doctor`.",
+        "Run a diagnostic sweep against an MCP server (HTTP URL or stdio command) without keeping a connection open: reachability, protocol detection, capability checks, and tool/resource/prompt counts. Equivalent to `mcpjam server doctor`.",
       inputSchema: z.object(targetConfigFields),
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
@@ -779,6 +779,7 @@ export function createMcpJamMcpServer(
         const { config, target } = buildTargetConfig(input, defaultTimeoutMs);
         const result = await runServerDoctor({
           __suppressTelemetry: true,
+          probeProtocolVersion: "auto",
           config,
           target: summarizeServerDoctorTarget(target, config),
           timeout: input.timeoutMs ?? defaultTimeoutMs,
@@ -817,6 +818,7 @@ export function createMcpJamMcpServer(
         assertHttpUrl(url);
         const result = await probeMcpServer({
           url,
+          protocolVersion: "auto",
           accessToken,
           headers,
           // See the `server probe` command: this runs on the user's machine.

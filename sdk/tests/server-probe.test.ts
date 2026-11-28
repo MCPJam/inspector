@@ -15,6 +15,112 @@ function jsonResponse(
 }
 
 describe("probeMcpServer", () => {
+  it.each(["auto", "2026-07-28"] as const)(
+    "reports a stateless server in %s mode without initializing",
+    async (protocolVersion) => {
+      const serverInfo = { name: "modern-server", version: "1.0.0" };
+      const fetchFn: typeof fetch = async (_, init) => {
+        const headers = new Headers(init?.headers);
+        expect(headers.get("mcp-method")).toBe("server/discover");
+        expect(headers.get("mcp-protocol-version")).toBe("2026-07-28");
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          method: "server/discover",
+          params: {
+            _meta: {
+              "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+              "io.modelcontextprotocol/clientCapabilities": { roots: {} },
+              "io.modelcontextprotocol/clientInfo": { name: "mcpjam-probe" },
+            },
+          },
+        });
+        return jsonResponse({
+          jsonrpc: "2.0",
+          id: 1,
+          result: {
+            resultType: "complete",
+            supportedVersions: ["2026-07-28"],
+            capabilities: { tools: {} },
+            _meta: { "io.modelcontextprotocol/serverInfo": serverInfo },
+          },
+        });
+      };
+
+      const result = await probeMcpServer({
+        url: "https://mcp.example.com/mcp",
+        accessToken: "test-token",
+        clientCapabilities: { roots: {} },
+        protocolVersion,
+        fetchFn,
+      });
+
+      expect(result.status).toBe("ready");
+      expect(result.protocolVersion).toBe("2026-07-28");
+      expect(result.transport.attempts.map(({ name }) => name)).toEqual([
+        "stateless_server_discover",
+      ]);
+      expect(result.discover).toMatchObject({
+        supportedVersions: ["2026-07-28"],
+        serverInfo,
+        capabilities: { tools: {} },
+      });
+      expect(result.initialize).toBeUndefined();
+    }
+  );
+
+  it("falls back to initialize when a legacy server rejects server/discover", async () => {
+    const fetchFn: typeof fetch = async (_, init) => {
+      const { method } = JSON.parse(String(init?.body));
+      if (method === "server/discover") {
+        return jsonResponse({
+          jsonrpc: "2.0",
+          id: 1,
+          error: { code: -32601, message: "Method not found" },
+        }, 400);
+      }
+      expect(method).toBe("initialize");
+      return jsonResponse({
+        jsonrpc: "2.0",
+        id: 1,
+        result: { protocolVersion: "2025-11-25" },
+      });
+    };
+
+    const result = await probeMcpServer({
+      url: "https://mcp.example.com/mcp",
+      accessToken: "test-token",
+      protocolVersion: "auto",
+      fetchFn,
+    });
+
+    expect(result.status).toBe("ready");
+    expect(result.protocolVersion).toBe("2025-11-25");
+    expect(result.transport.attempts.map(({ name }) => name)).toEqual([
+      "stateless_server_discover",
+      "streamable_initialize",
+    ]);
+  });
+
+  it("keeps a modern protocol refusal instead of trying initialize", async () => {
+    const result = await probeMcpServer({
+      url: "https://mcp.example.com/mcp",
+      protocolVersion: "auto",
+      fetchFn: async () => jsonResponse({
+        jsonrpc: "2.0",
+        id: 1,
+        error: {
+          code: -32022,
+          message: "Unsupported protocol version",
+          data: { supported: ["2027-01-01"] },
+        },
+      }, 400),
+    });
+
+    expect(result.status).toBe("reachable");
+    expect(result.transport.attempts.map(({ name }) => name)).toEqual([
+      "stateless_server_discover",
+    ]);
+  });
+
   it("reports a ready streamable HTTP server from a raw initialize request", async () => {
     const serverUrl = "https://mcp.example.com/mcp";
     const resourceMetadataUrl =
@@ -198,7 +304,7 @@ describe("probeMcpServer", () => {
     expect(result.oauth.registrationStrategies).toContain("dcr");
   });
 
-  it("detects OAuth metadata and supported registration methods", async () => {
+  it("detects OAuth metadata and registration methods without falling back", async () => {
     const serverUrl = "https://mcp.example.com/mcp";
     const resourceMetadataUrl =
       "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
@@ -242,11 +348,15 @@ describe("probeMcpServer", () => {
 
     const result = await probeMcpServer({
       url: serverUrl,
-      protocolVersion: "2025-11-25",
+      protocolVersion: "auto",
       fetchFn,
     });
 
     expect(result.status).toBe("oauth_required");
+    expect(result.transport.attempts[0]?.name).toBe("stateless_server_discover");
+    expect(result.transport.attempts.map(({ name }) => name)).not.toContain(
+      "streamable_initialize"
+    );
     expect(result.oauth.required).toBe(true);
     expect(result.oauth.resourceMetadataUrl).toBe(resourceMetadataUrl);
     expect(result.oauth.authorizationServerMetadataUrl).toBe(

@@ -210,7 +210,9 @@ export function applyConnectedServerDoctorState<TTarget>(
 ): void {
   result.connection = {
     status: "connected",
-    detail: "Connected and initialized successfully.",
+    detail: hasStatelessDiscoveryInfo(collected.initInfo)
+      ? "Connected successfully."
+      : "Connected and initialized successfully.",
   };
   result.checks.connection = okCheck(result.connection.detail);
   result.initInfo = collected.initInfo;
@@ -234,6 +236,15 @@ export function applyConnectedServerDoctorState<TTarget>(
   }
 }
 
+function hasStatelessDiscoveryInfo(info: unknown): boolean {
+  return (
+    info !== null &&
+    typeof info === "object" &&
+    "protocolVersion" in info &&
+    info.protocolVersion === "2026-07-28"
+  );
+}
+
 export function buildConnectedServerDoctorState(
   input: BuildConnectedServerDoctorStateInput
 ): ConnectedServerDoctorState {
@@ -245,6 +256,9 @@ export function buildConnectedServerDoctorState(
     input.skillsResult.error,
   ].filter((error): error is ServerDoctorError => Boolean(error));
 
+  const capturedInfo = hasStatelessDiscoveryInfo(input.initInfo)
+    ? "Server discovery info captured."
+    : "Initialization info captured.";
   return {
     initInfo: input.initInfo,
     capabilities: input.capabilities,
@@ -256,7 +270,7 @@ export function buildConnectedServerDoctorState(
     skills: input.skillsResult.skills,
     checks: {
       initialization: input.initInfo
-        ? okCheck("Initialization info captured.")
+        ? okCheck(capturedInfo)
         : errorCheck(
             "Server connected but did not return initialization info."
           ),
@@ -276,6 +290,7 @@ export function buildConnectedServerDoctorState(
 export function buildDoctorProbeConfig(
   config: DoctorProbeCapableConfig,
   options: {
+    protocolVersion?: ProbeMcpServerConfig["protocolVersion"];
     timeout: number;
     retryPolicy?: RetryPolicy;
     /**
@@ -292,6 +307,7 @@ export function buildDoctorProbeConfig(
 
   return {
     url: config.url,
+    ...(options.protocolVersion && { protocolVersion: options.protocolVersion }),
     headers: normalizeHeaders(config.requestInit?.headers),
     ...(accessToken ? { accessToken } : {}),
     ...(clientCapabilities ? { clientCapabilities } : {}),
@@ -371,9 +387,11 @@ export function summarizeProbeCheck(
   probe: ProbeMcpServerResult,
   hasCredentials: boolean
 ): ServerDoctorCheck {
+  const method =
+    probe.protocolVersion === "2026-07-28" ? "server/discover" : "initialize";
   switch (probe.status) {
     case "ready": {
-      const succeeded = `HTTP initialize probe succeeded via ${
+      const succeeded = `HTTP ${method} probe succeeded via ${
         probe.transport.selected ?? "unknown transport"
       }.`;
       // READY IS NOT AUTHLESS when the server also publishes Protected
@@ -412,7 +430,7 @@ export function summarizeProbeCheck(
     }
     case "reachable":
       return errorCheck(
-        "HTTP endpoint was reachable, but the initialize probe did not complete successfully."
+        `HTTP endpoint was reachable, but the ${method} probe did not complete successfully.`
       );
     case "error":
       return errorCheck(probe.error ?? "HTTP probe failed.");
