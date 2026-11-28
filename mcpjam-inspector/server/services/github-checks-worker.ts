@@ -72,6 +72,10 @@ import {
   githubChecksServiceEnv,
   postServiceRoute,
 } from "./github-checks/service-route.js";
+import {
+  createTemporaryServer,
+  deleteTemporaryServer,
+} from "./github-checks/temporary-server.js";
 import { executePersistedConformanceRun } from "./conformance-run-executor.js";
 import { createConformanceFetch } from "../routes/shared/conformance.js";
 import { serverDrain } from "./lifecycle/drain.js";
@@ -143,6 +147,11 @@ export type ClaimedGithubCheck = {
   repoConfigId?: string;
   /** Explicit project-shared OAuth source selected for this repository. */
   prServerOAuthSourceServerId?: string;
+  /**
+   * Proves the claim to the backend's temporary-server routes. Absent from a
+   * backend that predates them; the worker then makes the server itself.
+   */
+  leaseToken?: string;
 };
 
 export type CheckSummary = {
@@ -711,6 +720,8 @@ export type CheckExecutionDeps = {
     serverId: string;
   }) => Promise<void>;
   recordServer: (triggerId: string, serverId: string) => Promise<void>;
+  createTemporaryServer: typeof createTemporaryServer;
+  deleteTemporaryServer: typeof deleteTemporaryServer;
   runEvalSuite: (args: {
     claimed: ClaimedGithubCheck;
     bearer: string;
@@ -1598,6 +1609,8 @@ function defaultDeps(): CheckExecutionDeps {
     createEphemeralServer: defaultCreateEphemeralServer,
     deleteEphemeralServer: defaultDeleteEphemeralServer,
     recordServer: recordEphemeralServer,
+    createTemporaryServer,
+    deleteTemporaryServer,
     runEvalSuite: defaultRunEvalSuite,
     runConformance: defaultRunConformance,
     report: reportPlanlessOutcome,
@@ -1660,6 +1673,13 @@ export async function executeClaimedCheck(
 
   let sandbox: CheckSandbox | null = null;
   let serverId: string | null = null;
+  const lease = claimed.leaseToken
+    ? {
+        triggerId: claimed.triggerId,
+        claimedBy,
+        leaseToken: claimed.leaseToken,
+      }
+    : null;
   let bearer: string | null = null;
   let cleanupBearer: string | null = null;
   let oauthAccessToken: string | undefined;
@@ -1898,23 +1918,34 @@ export async function executeClaimedCheck(
       rung: resolved.provenance.recipeRung,
     });
 
-    bearer = await deps.getBearer(
-      claimed.createdByExternalId,
-      claimed.organizationId,
-    );
-
-    cleanupBearer = bearer;
-    const serverName = `gh-check-${claimed.triggerId}`;
-    serverId = await deps.createEphemeralServer({
-      bearer,
-      projectId: claimed.projectId,
-      name: serverName,
-      url: started.url,
-      useOAuth: started.authorizationRequired === true,
-    });
-    // Tell the backend before running anything: if this worker dies mid-eval,
-    // recovery needs the pointer to soft-delete the row.
-    await deps.recordServer(claimed.triggerId, serverId);
+    let serverName = `gh-check-${claimed.triggerId}`;
+    if (lease) {
+      // The backend makes the server from the trigger and records it in the
+      // same write, so this worker needs no user token for it.
+      const created = await deps.createTemporaryServer({
+        ...lease,
+        url: started.url,
+        authorizationRequired: started.authorizationRequired === true,
+      });
+      serverId = created.serverId;
+      serverName = created.serverName;
+    } else {
+      bearer = await deps.getBearer(
+        claimed.createdByExternalId,
+        claimed.organizationId,
+      );
+      cleanupBearer = bearer;
+      serverId = await deps.createEphemeralServer({
+        bearer,
+        projectId: claimed.projectId,
+        name: serverName,
+        url: started.url,
+        useOAuth: started.authorizationRequired === true,
+      });
+      // Tell the backend before running anything: if this worker dies
+      // mid-eval, recovery needs the pointer to soft-delete the row.
+      await deps.recordServer(claimed.triggerId, serverId);
+    }
     if (started.authorizationRequired) {
       oauthAccessToken = await deps.resolvePrServerOAuthToken({
         claimed,
@@ -2192,14 +2223,17 @@ export async function executeClaimedCheck(
     // must not skip killing the box (which costs money), and vice versa. The
     // backend's recovery sweep and E2B's TTL are the backstops for both.
     const cleanupSteps: Promise<void>[] = [];
-    if (serverId && cleanupBearer) {
+    if (serverId && (lease || cleanupBearer)) {
       cleanupSteps.push(
         runCleanupStep(
-          () =>
-            deps.deleteEphemeralServer({
-              bearer: cleanupBearer,
-              serverId,
-            }),
+          async () => {
+            if (lease) await deps.deleteTemporaryServer(lease);
+            else if (cleanupBearer)
+              await deps.deleteEphemeralServer({
+                bearer: cleanupBearer,
+                serverId,
+              });
+          },
           deps.cleanupTimeoutMs,
           (error) =>
             logger.warn("[github-checks] ephemeral server cleanup failed", {

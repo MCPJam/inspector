@@ -29,6 +29,7 @@ import {
   type ClaimedGithubCheck,
 } from "../github-checks-worker";
 import { CheckStepError, type CheckSandbox } from "../github-checks/sandbox";
+import { TemporaryServerRefusedError } from "../github-checks/temporary-server";
 import { platformFeeRefusalError } from "../evals/platform-fee-refusal";
 import {
   CheckStoppedByPlan,
@@ -254,6 +255,16 @@ function harness(
     },
     recordServer: async (triggerId, serverId) => {
       events.push(`recordServer:${triggerId}:${serverId}`);
+    },
+    createTemporaryServer: async (args) => {
+      events.push(`createTemporaryServer:${args.url}`);
+      liveServers.add("server-1");
+      return { serverId: "server-1", serverName: "gh-check-trig-1" };
+    },
+    deleteTemporaryServer: async (lease) => {
+      events.push(`deleteTemporaryServer:${lease.triggerId}`);
+      const deleted = liveServers.delete("server-1");
+      return { deleted };
     },
     runEvalSuite: async (args) => {
       events.push("runEvalSuite");
@@ -486,6 +497,143 @@ describe("executeClaimedCheck — happy path", () => {
       serverId: "server-1",
       serverName: "gh-check-trig-1",
     });
+  });
+});
+
+describe("executeClaimedCheck — the backend's temporary server", () => {
+  const LEASED: ClaimedGithubCheck = { ...CLAIM, leaseToken: "lease-1" };
+  const LEASE = {
+    triggerId: "trig-1",
+    claimedBy: "worker-1",
+    leaseToken: "lease-1",
+  };
+
+  it("asks the backend for the server with the claim's lease, and mints no user token", async () => {
+    const createTemporaryServer = vi.fn(async () => ({
+      serverId: "server-9",
+      serverName: "gh-check-trig-1",
+    }));
+    const prepared: Array<Record<string, unknown>> = [];
+    const h = harness({
+      createTemporaryServer,
+      runEvalSuite: async (args) => {
+        prepared.push({ ...args });
+        await args.onRunStarted?.("run-1");
+        return { runId: "run-1", result: "passed" };
+      },
+    });
+    await executeClaimedCheck(LEASED, "worker-1", h.deps);
+
+    expect(createTemporaryServer).toHaveBeenCalledWith({
+      ...LEASE,
+      url: "https://3001-sb_1.e2b.app/mcp",
+      authorizationRequired: false,
+    });
+    expect(h.events).not.toContain("getBearer");
+    expect(h.events.some((event) => event.startsWith("createServer:"))).toBe(
+      false,
+    );
+    expect(h.events.some((event) => event.startsWith("recordServer:"))).toBe(
+      false,
+    );
+    expect(prepared[0]).toMatchObject({
+      serverId: "server-9",
+      serverName: "gh-check-trig-1",
+      bearer: "bearer",
+    });
+  });
+
+  it("deletes the server through the backend after the check is complete", async () => {
+    const h = harness();
+    await executeClaimedCheck(LEASED, "worker-1", h.deps);
+
+    expect(h.events).toEqual([
+      "beginPlan",
+      "resolveAndStart",
+      "createTemporaryServer:https://3001-sb_1.e2b.app/mcp",
+      "runEvalSuite",
+      "attempt:eval:ok",
+      "complete",
+      "deleteTemporaryServer:trig-1",
+      "killSandbox",
+    ]);
+    expectOnlyCheckResourcesRemoved(h);
+  });
+
+  it("deletes the server with the lease even when the run throws", async () => {
+    const deleteTemporaryServer = vi.fn(async () => ({ deleted: true }));
+    const h = harness({
+      deleteTemporaryServer,
+      runEvalSuite: async () => {
+        throw new Error("runner exploded");
+      },
+    });
+    await executeClaimedCheck(LEASED, "worker-1", h.deps);
+
+    expect(h.completions).toHaveLength(1);
+    expect(deleteTemporaryServer).toHaveBeenCalledWith(LEASE);
+    expect(h.events).toContain("killSandbox");
+  });
+
+  it("tells the backend the server asked for authorization, and uses its id for the OAuth token", async () => {
+    const createTemporaryServer = vi.fn(async () => ({
+      serverId: "server-9",
+      serverName: "gh-check-trig-1",
+    }));
+    const resolvePrServerOAuthToken = vi.fn(async () => "oauth-marker-token");
+    const h = harness(
+      { createTemporaryServer, resolvePrServerOAuthToken },
+      undefined,
+      { authorizationRequired: true },
+    );
+    await executeClaimedCheck(
+      { ...LEASED, prServerOAuthSourceServerId: "source-server" },
+      "worker-1",
+      h.deps,
+    );
+
+    expect(createTemporaryServer).toHaveBeenCalledWith(
+      expect.objectContaining({ authorizationRequired: true }),
+    );
+    expect(resolvePrServerOAuthToken).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceServerId: "source-server",
+        targetServerId: "server-9",
+      }),
+    );
+  });
+
+  it("completes the check, with nothing to delete, when the backend refuses the server", async () => {
+    const h = harness({
+      createTemporaryServer: async () => {
+        throw new TemporaryServerRefusedError(403, "owner_not_member");
+      },
+    });
+    await executeClaimedCheck(LEASED, "worker-1", h.deps);
+
+    expect(h.completions).toHaveLength(1);
+    expect(h.completions[0].runId).toBeUndefined();
+    expect(h.events).not.toContain("runEvalSuite");
+    expect(h.events).not.toContain("getBearer");
+    expect(
+      h.events.some((event) => event.startsWith("deleteTemporaryServer:")),
+    ).toBe(false);
+    expect(h.events).toContain("killSandbox");
+  });
+
+  it("makes the server itself when the claim has no lease token (an older backend)", async () => {
+    const h = harness();
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+
+    expect(h.events).toContain("getBearer");
+    expect(h.events).toContain("deleteServer:server-1");
+    expect(
+      h.events.some((event) => event.startsWith("createTemporaryServer:")),
+    ).toBe(false);
+    expect(
+      h.events.some((event) => event.startsWith("deleteTemporaryServer:")),
+    ).toBe(false);
+    expectOnlyCheckResourcesRemoved(h);
   });
 });
 
