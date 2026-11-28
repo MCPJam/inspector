@@ -178,7 +178,10 @@ import {
   useHiddenHeaderServers,
   type HeaderSurface,
 } from "./hooks/useHiddenHeaderServers";
-import { hasDebuggerHeaderServers } from "./lib/debugger-header-servers";
+import {
+  hasDebuggerHeaderServers,
+  isOAuthDebuggerHeaderServer,
+} from "./lib/debugger-header-servers";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import { useSessionRecordingPathGuard } from "./hooks/useSessionRecordingPathGuard";
@@ -239,6 +242,7 @@ import { StartupScreen } from "./components/startup/StartupScreen";
 import { OccupationGate } from "./components/signup/OccupationGate";
 import { Header } from "./components/Header";
 import { ActiveServerSelector } from "./components/ActiveServerSelector";
+import { InspectorScopeBreadcrumb } from "./components/InspectorScopeBreadcrumb";
 import { ThemePreset } from "./types/preferences/theme";
 import type {
   ActiveServerSelectorProps,
@@ -2593,6 +2597,7 @@ export function OAuthFlowRoute() {
     oauthServerModalNonce,
     oauthDebuggerHasHeaderServers,
     workflowServerPicker,
+    breadcrumbOAuthTarget,
   } = useAppRouteContext();
 
   return (
@@ -2642,11 +2647,14 @@ export function OAuthFlowRoute() {
       }}
     >
       <OAuthFlowTab
+        key={breadcrumbOAuthTarget?.projectId}
         serverConfigs={displayServerConfigs}
-        selectedServerName={appState.selectedServer}
+        selectedServerName={
+          breadcrumbOAuthTarget?.name ?? appState.selectedServer
+        }
         hasHeaderServers={oauthDebuggerHasHeaderServers}
         areServersHydrated={areServersHydrated}
-        onSelectServer={setSelectedServer}
+        onSelectServer={breadcrumbOAuthTarget?.onSelect ?? setSelectedServer}
         onSaveServerConfig={saveServerConfigWithoutConnecting}
         onConnectWithTokens={handleConnectWithTokensFromOAuthFlow}
         onRefreshTokens={handleRefreshTokensFromOAuthFlow}
@@ -2985,8 +2993,17 @@ export default function App() {
   const [pickerPlacement, setPickerPlacement] = useState(
     () => sessionStorage.getItem("server-picker-preview") ?? "header",
   );
+  const [oauthTargetsByProject, setOAuthTargetsByProject] = useState<
+    Record<string, string>
+  >({});
   useEffect(() => {
-    if (requestedPicker !== "header" && requestedPicker !== "workflow") return;
+    if (
+      requestedPicker !== "header" &&
+      requestedPicker !== "workflow" &&
+      requestedPicker !== "breadcrumb"
+    ) {
+      return;
+    }
     sessionStorage.setItem("server-picker-preview", requestedPicker);
     setPickerPlacement(requestedPicker);
   }, [requestedPicker]);
@@ -3777,6 +3794,16 @@ export default function App() {
     },
   });
   const activeProject = projects[activeProjectId];
+  const selectBreadcrumbOAuthTarget = useCallback(
+    (name: string) => {
+      setOAuthTargetsByProject((targets) =>
+        targets[activeProjectId] === name
+          ? targets
+          : { ...targets, [activeProjectId]: name },
+      );
+    },
+    [activeProjectId],
+  );
   const convexProjectId = activeProject?.sharedProjectId ?? null;
   const { serversById } = useProjectServers({
     isAuthenticated,
@@ -6442,8 +6469,26 @@ export default function App() {
     activeTab === "oauth-flow" ||
     activeTab === "xaa-flow" ||
     activeTab === "chat";
-  const reviewingPicker = activeTab === "events" || activeTab === "oauth-flow";
+  const reviewPage =
+    activeTab === "events" || activeTab === "oauth-flow" ? activeTab : null;
+  const reviewingPicker = reviewPage !== null;
   const workflowPicker = reviewingPicker && pickerPlacement === "workflow";
+  const breadcrumbPicker = reviewingPicker && pickerPlacement === "breadcrumb";
+  const savedOAuthTarget = oauthTargetsByProject[activeProjectId];
+  const savedOAuthServer = savedOAuthTarget && projectServers[savedOAuthTarget];
+  const breadcrumbOAuthTarget =
+    breadcrumbPicker && activeTab === "oauth-flow"
+      ? {
+          projectId: activeProjectId,
+          name:
+            savedOAuthServer &&
+            !hiddenHeaderServers.has(savedOAuthTarget) &&
+            isOAuthDebuggerHeaderServer(savedOAuthServer)
+              ? savedOAuthTarget
+              : "none",
+          onSelect: selectBreadcrumbOAuthTarget,
+        }
+      : undefined;
 
   const oauthDebuggerHasHeaderServers = hasDebuggerHeaderServers({
     serverConfigs: projectServers,
@@ -6464,12 +6509,13 @@ export default function App() {
           // (cross-project / cross-org leak prevention).
           serverConfigs: projectServers,
           pickerLabel: reviewingPicker
-            ? workflowPicker && activeTab === "oauth-flow"
+            ? (workflowPicker || breadcrumbPicker) && activeTab === "oauth-flow"
               ? "Target server"
               : "Server"
             : undefined,
-          selectedServer: appState.selectedServer,
-          onServerChange: setSelectedServer,
+          pickerInBreadcrumb: breadcrumbPicker,
+          selectedServer: breadcrumbOAuthTarget?.name ?? appState.selectedServer,
+          onServerChange: breadcrumbOAuthTarget?.onSelect ?? setSelectedServer,
           // XAA targets are saved server configs, never live connections.
           // Adding one from the header picker must NOT launch a browser OAuth
           // flow (handleConnect does a full-page redirect to the auth server,
@@ -6512,9 +6558,11 @@ export default function App() {
           // target and it must not change without an explicit click. Other
           // tabs keep full auto-select (stale selections get replaced).
           autoSelectFilteredServer:
-            activeTab === "oauth-flow" || activeTab === "xaa-flow"
-              ? "when-empty"
-              : true,
+            breadcrumbOAuthTarget
+              ? false
+              : activeTab === "oauth-flow" || activeTab === "xaa-flow"
+                ? "when-empty"
+                : true,
           showOnlyServersWithViews: false,
           hasMessages: false,
         }
@@ -6651,6 +6699,7 @@ export default function App() {
     upgradePlanForActiveTab,
     workOsUser,
     oauthDebuggerHasHeaderServers,
+    breadcrumbOAuthTarget,
     workflowServerPicker:
       workflowPicker && activeServerSelectorProps ? (
         <ActiveServerSelector {...activeServerSelectorProps} />
@@ -6759,7 +6808,40 @@ export default function App() {
               settings={settingsShellActive}
               hidden={appChromeHeaderHidden || settingsShellActive}
               activeServerSelectorProps={
-                workflowPicker ? undefined : activeServerSelectorProps
+                workflowPicker || breadcrumbPicker
+                  ? undefined
+                  : activeServerSelectorProps
+              }
+              breadcrumb={
+                breadcrumbPicker && reviewPage && activeServerSelectorProps ? (
+                  <InspectorScopeBreadcrumb
+                    page={reviewPage}
+                    activeProjectId={activeProjectId}
+                    projects={Object.values(projects).filter(
+                      (project) =>
+                        project.id === activeProjectId ||
+                        (project.organizationId || undefined) ===
+                          (activeOrganizationId || undefined),
+                    )}
+                    onSwitchProject={(projectId) => {
+                      if (isProjectIdShape(projectId)) {
+                        navigateToTarget(
+                          buildProjectPath(
+                            projectId,
+                            reviewPage === "events"
+                              ? routePaths.events
+                              : routePaths.oauthFlow,
+                          ),
+                        );
+                      } else {
+                        void handleSwitchProject(projectId);
+                      }
+                    }}
+                    serverPicker={
+                      <ActiveServerSelector {...activeServerSelectorProps} />
+                    }
+                  />
+                ) : undefined
               }
               clientBootstrapProps={clientBootstrapProps}
             />

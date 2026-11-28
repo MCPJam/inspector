@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { useConvexAuth } from "convex/react";
@@ -13,25 +14,35 @@ import { ProjectClientBootstrap } from "@/components/hosts/ProjectClientBootstra
 import { track } from "@/lib/analytics";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import type { ClientBootstrapProps } from "@/components/Header";
+import { cn } from "@/lib/utils";
 
 interface AuthUpperAreaProps {
   activeServerSelectorProps?: ActiveServerSelectorProps;
   clientBootstrapProps?: ClientBootstrapProps;
+  breadcrumb?: ReactNode;
 }
 
 export function AuthUpperArea({
   activeServerSelectorProps,
   clientBootstrapProps,
+  breadcrumb,
 }: AuthUpperAreaProps) {
   const { user, signIn, signUp } = useInspectorAuth();
   const { isLoading } = useConvexAuth();
 
   return (
-    <div className="ml-auto flex h-full flex-1 items-center gap-2 no-drag min-w-0">
+    <div className={cn(
+      "ml-auto flex h-full flex-1 items-center gap-2 no-drag min-w-0",
+      breadcrumb && "max-md:flex-wrap",
+    )}>
       {clientBootstrapProps ? (
         <ProjectClientBootstrap {...clientBootstrapProps} />
       ) : null}
-      {activeServerSelectorProps ? (
+      {breadcrumb ? (
+        <div className="min-w-0 flex-1 max-md:order-last max-md:basis-full">
+          {breadcrumb}
+        </div>
+      ) : activeServerSelectorProps ? (
         <div className="flex-1 min-w-0 h-full pr-2">
           <ActiveServerSelector
             {...activeServerSelectorProps}

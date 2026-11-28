@@ -82,6 +82,7 @@ export interface ActiveServerSelectorProps {
   serversWithViews?: Set<string>; // Set of server names that have saved views
   hasMessages?: boolean; // Reserved for callers that still compute this
   pickerLabel?: string;
+  pickerInBreadcrumb?: boolean;
   className?: string;
 }
 
@@ -109,6 +110,7 @@ export function ActiveServerSelector({
   autoSelectFilteredServer = true,
   serversWithViews,
   pickerLabel,
+  pickerInBreadcrumb,
   className,
 }: ActiveServerSelectorProps) {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -262,6 +264,7 @@ export function ActiveServerSelector({
       <div className={cn("flex min-w-0 items-center", className)}>
         <ActiveServerPicker
           label={pickerLabel}
+          inBreadcrumb={pickerInBreadcrumb}
           servers={servers}
           selectedServer={selectedServer}
           onSelect={handleServerClick}

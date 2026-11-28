@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 
 interface ActiveServerPickerProps {
   label: string;
+  inBreadcrumb?: boolean;
   servers: [string, ServerWithName][];
   selectedServer: string;
   onSelect: (name: string) => void;
@@ -29,6 +30,7 @@ interface ActiveServerPickerProps {
 
 export function ActiveServerPicker({
   label,
+  inBreadcrumb,
   servers,
   selectedServer,
   onSelect,
@@ -48,13 +50,16 @@ export function ActiveServerPicker({
       <PopoverTrigger asChild>
         <Button
           type="button"
-          variant="outline"
+          variant={inBreadcrumb ? "chrome" : "outline"}
           size="sm"
           aria-label={`${label}: ${currentName}`}
-          className="max-w-full gap-1.5"
+          className="max-w-full min-w-0 gap-1.5"
         >
-          <Server className="size-3.5 text-muted-foreground" />
-          <span className="shrink-0 text-xs text-muted-foreground">
+          <Server className={cn("size-3.5 text-muted-foreground", inBreadcrumb && "max-sm:hidden")} aria-hidden />
+          <span className={cn(
+            "shrink-0 text-xs text-muted-foreground",
+            inBreadcrumb && (label === "Server" ? "sr-only" : "max-lg:sr-only"),
+          )}>
             {label}
           </span>
           <span className="min-w-0 max-w-52 truncate">{currentName}</span>
