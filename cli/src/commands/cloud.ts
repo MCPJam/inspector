@@ -2,7 +2,6 @@ import type { Command } from "commander";
 import { addPlatformOptions } from "../lib/platform-command.js";
 import { registerAuthCommands } from "./auth.js";
 import { registerCloudLinkCommands } from "./cloud-link.js";
-import { registerEnvironmentsCommands } from "./environments.js";
 import { registerEvalCommands } from "./eval.js";
 import { registerFeedbackCommand } from "./feedback.js";
 import { registerClientsCommands } from "./clients.js";
@@ -45,12 +44,9 @@ export function registerCloudCommands(program: Command): Command {
   registerSessionsCommands(cloud);
   registerTunnelCommands(cloud);
 
-  cloud.commandsGroup("Eval and environments:");
+  cloud.commandsGroup("Eval and setup:");
   registerEvalCommands(cloud);
   registerClientsCommands(cloud);
-  registerEnvironmentsCommands(cloud);
-  // Project secrets sit with environments because an environment is what grants
-  // one to a run — you create a secret here and then select it there.
   registerSecretsCommands(cloud);
   // Server accounts sit beside secrets: each stores a credential runs use, and
   // no command prints one.

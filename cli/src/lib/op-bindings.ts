@@ -22,6 +22,11 @@
 /** A command path (`"eval runs"`), or a documented reason for having none. */
 export type CliBinding = { command: string } | { excluded: string };
 
+const gatedEnvironmentManagement = {
+  excluded:
+    "Project environment management is gated by organization and has no standalone public CLI commands.",
+};
+
 export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   // ── Organizations ───────────────────────────────────────────────────────
   // Read-only, and the only organization command there is. Member, role,
@@ -76,7 +81,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   // Flag-gated beta. Bound normally rather than excluded: the server returns a
   // clean "not currently available for your organization" when the flag is off,
   // which is a better answer than a command that does not exist. Same shape as
-  // `environments` and `images` for an org that lacks those.
+  // `images` for an org that lacks access.
   list_goals: { command: "cloud goals list" },
   list_goal_runs: { command: "cloud goals runs" },
   get_goal_run: { command: "cloud goals status" },
@@ -290,19 +295,16 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   delete_client: { command: "cloud clients delete" },
   set_client_servers: { command: "cloud clients servers" },
   duplicate_client: { command: "cloud clients duplicate" },
-  list_project_environments: { command: "cloud environments list" },
-  get_project_environment_capabilities: {
-    excluded:
-      "Not a user-facing command: it answers 'does this deployment accept a model override?', which `environments create --model` / `environments update --model|--clear-model` already ask on the caller's behalf before writing. A standalone command would only invite people to check by hand what the write already checks.",
-  },
-  get_project_environment: { command: "cloud environments get" },
-  resolve_project_environment: { command: "cloud environments resolve" },
-  create_project_environment: { command: "cloud environments create" },
-  ensure_adhoc_environment: { command: "cloud environments ensure-adhoc" },
-  name_environment: { command: "cloud environments name" },
-  update_project_environment: { command: "cloud environments update" },
-  archive_project_environment: { command: "cloud environments archive" },
-  restore_project_environment: { command: "cloud environments restore" },
+  list_project_environments: gatedEnvironmentManagement,
+  get_project_environment_capabilities: gatedEnvironmentManagement,
+  get_project_environment: gatedEnvironmentManagement,
+  resolve_project_environment: gatedEnvironmentManagement,
+  create_project_environment: gatedEnvironmentManagement,
+  ensure_adhoc_environment: gatedEnvironmentManagement,
+  name_environment: gatedEnvironmentManagement,
+  update_project_environment: gatedEnvironmentManagement,
+  archive_project_environment: gatedEnvironmentManagement,
+  restore_project_environment: gatedEnvironmentManagement,
   list_project_plugins: {
     excluded:
       "No `plugins` command group yet — the read surface shipped for the MCP catalog and API first. Bind both plugin reads together when the CLI grows one.",
