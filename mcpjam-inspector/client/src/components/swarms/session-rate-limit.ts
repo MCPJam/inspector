@@ -29,6 +29,7 @@ import {
   type CreditRecovery,
 } from "@mcpjam/sdk/contract";
 import { classifyModelIdProvider } from "@/shared/model-provider";
+import { isSpendLimitCode, runStopRefusal } from "@/shared/credit-exhaustion";
 import { isXaaConnectFailureReason } from "@/shared/xaa-connect-failure";
 import {
   describeProviderNotAllowlisted,
@@ -308,8 +309,14 @@ export function describeSwarmAttemptFailure(
     };
   }
   // Classified by its structured recovery: the stored sentence is that
-  // recovery's step, which names no limit the checks below recognize.
-  const spendLimit = describeSpendLimit(info.recovery);
+  // recovery's step, which names no limit the checks below recognize. A stored
+  // row keeps only the message and code, so its code stands in for the reason.
+  const spendLimit = describeSpendLimit(
+    info.recovery ??
+      (code && isSpendLimitCode(code)
+        ? runStopRefusal(code)?.recovery
+        : undefined),
+  );
   if (spendLimit) {
     return {
       ...spendLimit,

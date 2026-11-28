@@ -293,6 +293,50 @@ describe("describeSwarmAttemptFailure stored rows from a refusal with a recovery
         .title,
     ).toBe(title);
   });
+
+  it.each([
+    [
+      "spend budget",
+      "spend_budget_reached",
+      {
+        refusalReason: "budget_reached",
+        error: "This organization's spend budget is reached.",
+        recovery: {
+          version: 1,
+          reason: "budget_reached",
+          action: "raise_budget",
+          actor: "owner_or_admin",
+          url: "https://app.mcpjam.com/organizations/org_paid/budget",
+        },
+      },
+      "Spend budget reached",
+      "Only an organization owner or admin can raise the spend budget. Ask one of them.",
+    ],
+    [
+      "locked wallet",
+      "wallet_locked",
+      {
+        refusalReason: "wallet_locked",
+        error: "This organization's MCPJam wallet is locked.",
+        recovery: {
+          version: 1,
+          reason: "wallet_locked",
+          action: "contact_support",
+          actor: "support",
+        },
+      },
+      "MCPJam wallet locked",
+      "Contact MCPJam support to arrange more credits.",
+    ],
+  ])("cards a stored %s row by its code", (_label, code, body, title, step) => {
+    const result = describeSwarmAttemptFailure(
+      stored({ ...body, code }),
+      code,
+      "Anthropic",
+    );
+    expect(result.title).toBe(title);
+    expect(result.nextSteps).toEqual([step]);
+  });
 });
 
 describe("describeSwarmAttemptFailure held credits", () => {
