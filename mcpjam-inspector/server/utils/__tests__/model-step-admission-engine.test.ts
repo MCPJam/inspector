@@ -87,6 +87,39 @@ const busy = () =>
     { status: 503, headers: { "content-type": "application/json" } },
   );
 
+// The body `buildSpendRefusalBody` sends when in-flight calls hold the credits.
+const held = () =>
+  new Response(
+    JSON.stringify({
+      ok: false,
+      code: "user_rate_limit",
+      refusalReason: "holds_committed",
+      isRetryable: true,
+      retryAfter: 15_000,
+      outstandingHolds: 5,
+      heldCredits: 195,
+      error:
+        "MCPJam model limit reached for the moment: 5 in-flight request(s) hold the remaining credits and release them as they finish.",
+    }),
+    { status: 429, headers: { "content-type": "application/json" } },
+  );
+
+const toolCall = () =>
+  new Response(
+    [
+      {
+        type: "tool-input-available",
+        toolCallId: "call-1",
+        toolName: "look_up",
+        input: { q: "x" },
+      },
+      { type: "finish", finishReason: "tool-calls" },
+    ]
+      .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+      .join("") + "data: [DONE]\n\n",
+    { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8" } },
+  );
+
 const answer = () =>
   new Response(
     [
@@ -174,6 +207,80 @@ describe("engine resend of a model step refused as busy", () => {
     };
     expect(duration("step")).toBeGreaterThan(1_000);
     expect(duration("llm")).toBeLessThan(1_000);
+  });
+
+  it("delivers the answer an eval step refused for held credits gets on resend", async () => {
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValueOnce(held())
+      .mockResolvedValueOnce(held())
+      .mockResolvedValue(answer());
+    global.fetch = fetchSpy;
+    const onConversationComplete = vi.fn();
+
+    const events = await runTurn({
+      sourceType: "eval",
+      onConversationComplete,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(events).toEqual([]);
+    expect(onConversationComplete).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(onConversationComplete.mock.calls[0]![0])).toContain(
+      "Hello world.",
+    );
+  });
+
+  it("resends only the refused step after a tool ran, never the tool", async () => {
+    vi.mocked(hasUnresolvedToolCalls).mockReturnValueOnce(true);
+    vi.mocked(executeToolCallsFromMessages).mockResolvedValueOnce([
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "look_up",
+            output: { type: "json", value: { found: true } },
+          },
+        ],
+      },
+    ] as never);
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValueOnce(toolCall())
+      .mockResolvedValueOnce(held())
+      .mockResolvedValue(answer());
+    global.fetch = fetchSpy;
+    const onConversationComplete = vi.fn();
+
+    const events = await runTurn({
+      sourceType: "eval",
+      onConversationComplete,
+    });
+
+    expect(executeToolCallsFromMessages).toHaveBeenCalledTimes(1);
+    expect(events).toEqual([]);
+    // Step 0 once, then step 1 twice: refused, then resent.
+    const steps = fetchSpy.mock.calls.map(
+      ([, init]) => JSON.parse(init.body as string).stepIndex,
+    );
+    expect(steps).toEqual([0, 1, 1]);
+    expect(JSON.stringify(onConversationComplete.mock.calls[0]![0])).toContain(
+      "Hello world.",
+    );
+  });
+
+  it("reports the held-credits refusal when the wait budget runs out", async () => {
+    const fetchSpy = vi.fn().mockImplementation(async () => held());
+    global.fetch = fetchSpy;
+
+    const events = await runTurn({ sourceType: "eval" });
+
+    // Eight tries, then the last refusal goes to normal error reporting.
+    expect(fetchSpy.mock.calls.length).toBeGreaterThan(1);
+    expect(fetchSpy.mock.calls.length).toBeLessThanOrEqual(8);
+    expect(events).toEqual([expect.objectContaining({ httpStatus: 429 })]);
   });
 
   it("surfaces the busy refusal at once on an interactive chat step", async () => {
