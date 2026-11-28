@@ -33,10 +33,7 @@ import {
   type SwarmFundingChangedDetails,
   type SwarmFundingSummary,
 } from "@/shared/swarm-sponsorship";
-import type {
-  LaunchRecordView,
-  SwarmLaunchReply,
-} from "@/shared/swarm-launch";
+import type { LaunchRecordView, SwarmLaunchReply } from "@/shared/swarm-launch";
 
 // ── Convex query names (string-keyed reads) ─────────────────────────────────
 export const SWARM_QUERIES = {
@@ -1200,14 +1197,15 @@ export async function launchSwarmRun(
   const body = await launchResponseBody(response);
   const status = response.status;
   if (!response.ok) {
-    const fallback = `Failed to launch swarm run (${status})`;
+    const fallback = "Couldn't launch the swarm run. Try again.";
     const refusal = launchRefusal(status, body, fallback);
     throw new LaunchSwarmRunError(refusal, launchRecordOf(body));
   }
   const reply = body as Partial<SwarmLaunchReply> | undefined;
   const launch = launchRecordOf(body);
   if (typeof reply?.swarmRunId !== "string" || !launch) {
-    const message = "Launch accepted but the server returned no swarm run";
+    const message =
+      "The swarm run launched, but MCPJam couldn't open it. Find it in this swarm's runs.";
     throw new LaunchSwarmRunError(new LaunchJourneyRunError(status, message));
   }
   invalidateSwarmSponsorshipAllowance();

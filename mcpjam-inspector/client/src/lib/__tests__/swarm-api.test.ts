@@ -923,6 +923,8 @@ describe("launchSwarmRun", () => {
     authFetchMock.mockResolvedValue(jsonResponse(202, { launch }));
     await expect(
       launchSwarmRun({ projectId: "p", swarmRun: "s", idempotencyKey: "k" }),
-    ).rejects.toThrow("Launch accepted but the server returned no swarm run");
+    ).rejects.toThrow(
+      "The swarm run launched, but MCPJam couldn't open it. Find it in this swarm's runs.",
+    );
   });
 });
