@@ -350,7 +350,7 @@ describe("PlaygroundTab loading branch", () => {
     render(
       <PlaygroundTab
         {...baseProps}
-        firstRunPrompt="What can this server do?"
+        firstRunPrompt
         onFirstRunPromptConsumed={onFirstRunPromptConsumed}
       />,
     );

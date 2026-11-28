@@ -502,7 +502,7 @@ vi.mock("../components/playground/PlaygroundTab", () => ({
     isWorkOsAuthLoading?: boolean;
     isConvexAuthenticated?: boolean;
     hasSeenFirstRunOnboarding?: boolean;
-    firstRunPrompt?: string | null;
+    firstRunPrompt?: boolean;
     onFirstRunPromptConsumed?: () => void;
     onReady?: () => void;
   }) => {
@@ -3944,8 +3944,7 @@ describe("App hosted OAuth callback handling", () => {
     });
     expect(mockPlaygroundTabProps).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        firstRunPrompt:
-          "Call each of your tools once and summarize what they returned.",
+        firstRunPrompt: true,
       }),
     );
 
@@ -4003,7 +4002,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(appState.ensureServersReady).not.toHaveBeenCalled();
     expect(appState.setSelectedServer).not.toHaveBeenCalled();
     expect(mockPlaygroundTabProps).toHaveBeenLastCalledWith(
-      expect.objectContaining({ firstRunPrompt: null }),
+      expect.objectContaining({ firstRunPrompt: false }),
     );
   });
 
@@ -4757,8 +4756,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.pathname).toBe("/playground");
     expect(mockPlaygroundTabProps).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        firstRunPrompt:
-          "Call each of your tools once and summarize what they returned.",
+        firstRunPrompt: true,
       }),
     );
     expect(
