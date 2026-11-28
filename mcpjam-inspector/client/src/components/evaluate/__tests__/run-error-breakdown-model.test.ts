@@ -350,6 +350,88 @@ describe("organization AI provider refusals", () => {
   });
 });
 
+// The backend refused the model because none of its providers keeps no data
+// and doesn't train on it. Its sentence names no code; the stored body does.
+const noPrivateProvider =
+  "No provider for this model keeps no data and doesn't train on it.";
+const noPrivateProviderRefusal = (code: string) => ({
+  status: "failed" as const,
+  error: noPrivateProvider,
+  errorDetails: JSON.stringify({ ok: false, code, error: noPrivateProvider }),
+});
+
+describe("a refusal for a model with no private provider", () => {
+  it("groups as a setting the user can change, with or without a chain", () => {
+    for (const chain of [providerErrorChain, undefined]) {
+      const breakdown = buildRunErrorBreakdown({
+        iterations: [
+          iteration("a", noPrivateProviderRefusal("policy_no_zdr_endpoint")),
+        ],
+        chains: new Map(chain ? [["a", chain]] : []),
+      });
+      expect(breakdown!.groups).toEqual([
+        expect.objectContaining({ cause: "settings", count: 1 }),
+      ]);
+    }
+  });
+
+  // Mid-stream and harness refusals store the sentence in `errorDetails` and
+  // the code as the execution failure's reason.
+  it.each([
+    [
+      "mid-stream, with a provider-error chain",
+      providerErrorChain,
+      "execution",
+    ],
+    ["harness, with a setup-aborted chain", setupAbortedChain, "setup"],
+  ])("groups the %s refusal as a setting", (_label, chain, phase) => {
+    const breakdown = buildRunErrorBreakdown({
+      iterations: [
+        iteration("a", {
+          status: "failed",
+          error: noPrivateProvider,
+          errorDetails: noPrivateProvider,
+          metadata: {
+            evalExecutionFailure: { phase, reason: "policy_no_zdr_endpoint" },
+          },
+        }),
+      ],
+      chains: new Map([["a", chain]]),
+    });
+    expect(breakdown!.groups).toEqual([
+      expect.objectContaining({ cause: "settings", count: 1 }),
+    ]);
+  });
+
+  it("keeps a server failure the chain pins on the MCP server", () => {
+    expect(
+      classifyIterationError(
+        iteration("a", {
+          status: "failed",
+          error: noPrivateProvider,
+          metadata: {
+            evalExecutionFailure: {
+              phase: "execution",
+              reason: "policy_no_zdr_endpoint",
+            },
+          },
+        }),
+        toolErrorChain,
+      ),
+    ).toBe("serverError");
+  });
+
+  it("leaves other stored codes classified from the text", () => {
+    const breakdown = buildRunErrorBreakdown({
+      iterations: [iteration("a", noPrivateProviderRefusal("internal_error"))],
+      chains: new Map([["a", providerErrorChain]]),
+    });
+    expect(breakdown!.groups).toEqual([
+      expect.objectContaining({ cause: "platform", count: 1 }),
+    ]);
+  });
+});
+
 describe("buildRunErrorBreakdown", () => {
   it("explains a run where every result hit a server tool error", () => {
     const iterations = ["a", "b", "c"].map((id) => iteration(id));

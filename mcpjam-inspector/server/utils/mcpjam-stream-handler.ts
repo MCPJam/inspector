@@ -726,6 +726,14 @@ const FALLBACK_PROHIBITED_CODE = "fallback_prohibited";
 const MODEL_RETIRED_CODE = "model_retired";
 
 /**
+ * Backend refusal code (convex `lib/modelResolution.ts`, `stream/routes.ts`
+ * `categorizeError`): the request needs a zero-retention, no-training endpoint
+ * and the model has none, or its provider refused those flags. Arrives as
+ * HTTP 422.
+ */
+const NO_ZDR_ENDPOINT_CODE = "policy_no_zdr_endpoint";
+
+/**
  * Backend refusal code (convex `stream/orgRoutes.ts`): the organization's own
  * provider connection does not serve this model (OpenRouter's selected models,
  * Azure's deployments). Arrives as HTTP 400.
@@ -801,6 +809,10 @@ export function describeBackendStreamFailure(
   // only exempts a 200, so the 413 reached `internal/unknown` and paged.
   if (code === GUEST_INPUT_TOO_LARGE_CODE)
     return describeAsSlug("account/guest_input_too_large", detail);
+  // And at 422: the model has no provider that meets the privacy rule, so
+  // choosing another model is the fix.
+  if (code === NO_ZDR_ENDPOINT_CODE)
+    return describeAsSlug("provider/no_zdr_endpoint", detail);
 
   if (status !== undefined && status >= 500) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
@@ -855,6 +867,10 @@ export function describeStreamErrorChunkFailure(
     return describeAsSlug("provider/not_allowlisted", detail);
   if (code === FALLBACK_PROHIBITED_CODE)
     return describeAsSlug("provider/fallback_prohibited", detail);
+  // The provider refused the privacy flags after the 200. Read by status alone
+  // the 422 is `internal/unknown`; the fix is the same as on the HTTP path.
+  if (code === NO_ZDR_ENDPOINT_CODE)
+    return describeAsSlug("provider/no_zdr_endpoint", detail);
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }

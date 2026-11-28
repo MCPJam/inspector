@@ -946,6 +946,20 @@ describe("MCPJam containment refusals", () => {
   });
 });
 
+it("reads a policy_no_zdr_endpoint code as the model choice, not an unknown error", () => {
+  const message =
+    "openai/gpt-5 has no endpoint that satisfies the required zero-retention / no-training policy.";
+  for (const error of [
+    { code: "policy_no_zdr_endpoint", message },
+    { data: { code: "policy_no_zdr_endpoint" }, message },
+  ]) {
+    expect(describeError(error)).toMatchObject({
+      slug: "provider/no_zdr_endpoint",
+      origin: "user_config",
+    });
+  }
+});
+
 it.each([
   ["Daily MCPJam model limit reached.", "provider/mcpjam_limit_daily"],
   ["Monthly MCPJam model limit reached.", "provider/mcpjam_limit_monthly"],

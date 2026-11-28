@@ -75,7 +75,7 @@ export function isRetryableOrgKeysRefusal(code: unknown): boolean {
 }
 
 /** A JSON envelope's `code`, when `text` is one. */
-function envelopeCode(text: string | null | undefined): unknown {
+export function envelopeCode(text: string | null | undefined): unknown {
   const trimmed = text?.trim();
   if (!trimmed?.startsWith("{")) return undefined;
   try {

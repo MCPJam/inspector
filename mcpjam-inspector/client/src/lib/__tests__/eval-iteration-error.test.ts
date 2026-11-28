@@ -195,3 +195,64 @@ describe("describeEvalIterationError — organization AI-key refusals", () => {
     ).toBe("eval/setup_failed");
   });
 });
+
+// A model with no private provider. The sentence names no code; MCPJam keeps
+// it in the backend's JSON body (initial HTTP refusal) or as the stored
+// execution failure's reason (mid-stream and harness refusals).
+describe("a recorded no-private-provider refusal", () => {
+  const sentence =
+    "No provider for this model keeps no data and doesn't train on it.";
+
+  it.each([
+    [
+      "the backend's JSON body",
+      {
+        errorDetails: JSON.stringify({
+          ok: false,
+          code: "policy_no_zdr_endpoint",
+          error: sentence,
+        }),
+      },
+    ],
+    [
+      "the stored execution failure",
+      {
+        errorDetails: sentence,
+        metadata: {
+          evalExecutionFailure: {
+            phase: "setup",
+            reason: "policy_no_zdr_endpoint",
+          },
+        },
+      },
+    ],
+  ])("describes it from %s", (_label, stored) => {
+    expect(
+      describeEvalIterationError({
+        status: "failed",
+        result: "failed",
+        error: sentence,
+        ...stored,
+      }),
+    ).toMatchObject({
+      slug: "provider/no_zdr_endpoint",
+      origin: "user_config",
+    });
+  });
+
+  it("leaves another stored reason described from the text", () => {
+    expect(
+      describeEvalIterationError({
+        status: "failed",
+        result: "failed",
+        error: sentence,
+        metadata: {
+          evalExecutionFailure: {
+            phase: "execution",
+            reason: "provider_error",
+          },
+        },
+      })?.slug,
+    ).toBe(describeError(sentence).slug);
+  });
+});

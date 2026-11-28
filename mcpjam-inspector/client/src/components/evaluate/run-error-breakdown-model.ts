@@ -17,6 +17,7 @@ import {
 } from "@/shared/steps";
 import type { EvalIteration } from "../evals/types";
 import { describeOrgKeysRefusal, runRefusal } from "@/lib/org-keys-refusal";
+import { recordedNoPrivateProviderError } from "@/lib/eval-iteration-error";
 import { chainForQuickRunIteration } from "./simple-case/quick-run-chain";
 import { neverStartedReason } from "@/lib/eval-iteration-error";
 
@@ -130,11 +131,17 @@ function stoppingReason(chain: EvalRunDecisionChain): StageReason | null {
   return withReason?.reason ?? null;
 }
 
-function causeFromText(error: string | undefined): RunErrorCause | null {
+function causeFromText(
+  error: string | undefined,
+  ownIteration: EvalIteration | undefined,
+): RunErrorCause | null {
   const text = error?.trim();
   if (!text) return null;
   if (NOT_CONNECTED_PATTERN.test(text)) return "serverUnreachable";
-  return ORIGIN_CAUSE[originOf(describeError(new Error(text)))];
+  const described =
+    (ownIteration && recordedNoPrivateProviderError(text, ownIteration)) ??
+    new Error(text);
+  return ORIGIN_CAUSE[originOf(describeError(described))];
 }
 
 /**
@@ -205,7 +212,7 @@ function classifyReason(
     return reasonCause;
   }
   return (
-    causeFromText(error) ??
+    causeFromText(error, ownFailure ? iteration : undefined) ??
     (reasonCause === "platform" ? "platform" : "unknown")
   );
 }

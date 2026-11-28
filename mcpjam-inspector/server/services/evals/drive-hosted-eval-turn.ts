@@ -515,6 +515,9 @@ export function failedLayerForEngineError(
  * - an empty step: the emitter decided ownership itself
  *   (`isMcpjamOwnedEmptyStep`) and reports the provider-owned ones as
  *   `ambiguous` on purpose.
+ * - a model with no private provider (`policy_no_zdr_endpoint`): the user's
+ *   to fix. A harness turn carries that code only in `infra` and reports no
+ *   origin, so it is matched by code.
  * Anything else — `ambiguous`, no verdict, no engine error — has no other
  * Sentry record. The harness reports `reportedCaptured` only: it classifies
  * from the message alone, so a decline there is not a verdict.
@@ -523,12 +526,15 @@ export function failedTurnNeedsCapture(
   event:
     | Pick<
         MCPJamEngineErrorEvent,
-        "code" | "reportedCaptured" | "reportedOrigin"
+        "code" | "infra" | "reportedCaptured" | "reportedOrigin"
       >
     | undefined,
 ): boolean {
   if (event?.reportedCaptured) return false;
   if (event?.code === "provider_empty_response") return false;
+  if ((event?.code ?? event?.infra?.code) === "policy_no_zdr_endpoint") {
+    return false;
+  }
   return (
     event?.reportedOrigin === undefined || event.reportedOrigin === "ambiguous"
   );
@@ -1140,6 +1146,8 @@ export async function driveHostedEvalTurn(
   // PR 5b-followup-2: prefer the engine's captured structured error when
   // present (429 daily-cap text, hosted-model setup errors, …) over the
   // generic fallbacks.
+  // A harness turn carries the backend's code only in `infra`.
+  const engineCode = lastEngineError?.code ?? lastEngineError?.infra?.code;
   const failTurn = (
     fallbackError: string,
     logLine: string,
@@ -1178,7 +1186,7 @@ export async function driveHostedEvalTurn(
       kind: "failed" as const,
       ...failure,
       errorSource: failedLayer,
-      ...(lastEngineError?.code ? { errorCode: lastEngineError.code } : {}),
+      ...(engineCode ? { errorCode: engineCode } : {}),
       ...(typeof lastEngineError?.httpStatus === "number"
         ? { errorHttpStatus: lastEngineError.httpStatus }
         : {}),
@@ -1196,7 +1204,7 @@ export async function driveHostedEvalTurn(
     return failTurn(
       turnFailure,
       `[evals] runAssistantTurn${logSuffix} failed: ${turnFailure} (engineError=${
-        lastEngineError ? lastEngineError.code ?? "uncoded" : "none"
+        lastEngineError ? (engineCode ?? "uncoded") : "none"
       })`,
     );
   }

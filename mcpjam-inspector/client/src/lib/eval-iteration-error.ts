@@ -2,9 +2,34 @@ import { describeError, type NormalizedError } from "@mcpjam/sdk/browser";
 import type { EvalIteration } from "@/components/evals/types";
 import {
   describeOrgKeysRefusal,
+  envelopeCode,
   runRefusal,
   orgKeysRefusalNextStep,
 } from "@/lib/org-keys-refusal";
+
+const NO_PRIVATE_PROVIDER = "policy_no_zdr_endpoint";
+
+/**
+ * The iteration's own failure as an error carrying `policy_no_zdr_endpoint`,
+ * when MCPJam recorded that code: in the backend's JSON body (`errorDetails`)
+ * or as the step code the runner stores in `evalExecutionFailure.reason`. The
+ * refusal's sentence never names it, so read alone it describes as unknown.
+ * `undefined` for every other failure, which keeps classifying from its text.
+ */
+export function recordedNoPrivateProviderError(
+  text: string,
+  iteration: Pick<EvalIteration, "errorDetails" | "metadata">,
+): Error | undefined {
+  const failure = iteration.metadata?.evalExecutionFailure;
+  const reason =
+    failure && typeof failure === "object"
+      ? (failure as { reason?: unknown }).reason
+      : undefined;
+  return envelopeCode(iteration.errorDetails) === NO_PRIVATE_PROVIDER ||
+    reason === NO_PRIVATE_PROVIDER
+    ? Object.assign(new Error(text), { code: NO_PRIVATE_PROVIDER })
+    : undefined;
+}
 
 /** What the backend stores on every iteration a launch never started. */
 const NEVER_STARTED_ERROR = "Failed to prepare eval test attempts.";
@@ -31,7 +56,7 @@ export function neverStartedReason(
 export function describeEvalIterationError(
   iteration: Pick<
     EvalIteration,
-    "status" | "result" | "error" | "errorDetails" | "infraError"
+    "status" | "result" | "error" | "errorDetails" | "infraError" | "metadata"
   >,
 ): NormalizedError | null {
   const timeout =
@@ -60,7 +85,11 @@ export function describeEvalIterationError(
   if (!timeout && !setup && !cancelled && !iteration.error && !refusal)
     return null;
 
-  const base = describeError(iteration.error ?? "");
+  const base = describeError(
+    recordedNoPrivateProviderError(iteration.error ?? "", iteration) ??
+      iteration.error ??
+      "",
+  );
   let details = iteration.errorDetails;
   if (details) {
     try {
