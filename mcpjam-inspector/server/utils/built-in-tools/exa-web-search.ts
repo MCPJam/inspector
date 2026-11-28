@@ -189,6 +189,25 @@ async function readCreditRefusalMessage(res: Response): Promise<string> {
   return "Out of MCPJam credits for web search. Add credits or upgrade your plan in MCPJam to keep using it.";
 }
 
+/**
+ * What the model reads when admission refuses a search with HTTP 429 and a
+ * structured `recovery`: a Free or paid wallet, a spend budget, a hold, or a
+ * locked wallet, each with its own step. `undefined` for any other 429, which
+ * keeps the generic failure.
+ */
+async function readSpendRefusalMessage(
+  res: Response,
+): Promise<string | undefined> {
+  try {
+    const recovery = creditRecoveryOfRefusal(await res.clone().json());
+    return recovery
+      ? `MCPJam refused this web search. ${formatCreditRecovery(recovery)}`
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The refusal fields a non-OK Convex search response names, if any. */
 async function readSearchRefusal(
   res: Response,
@@ -391,6 +410,11 @@ export function buildExaWebSearchTool(
           if (!res.ok) {
             const refusal = await readPolicyRefusal(res);
             if (refusal) return refusal;
+            const spendRefusal =
+              res.status === 429
+                ? await readSpendRefusalMessage(res)
+                : undefined;
+            if (spendRefusal) return { error: spendRefusal };
             return { error: `Web search failed (${res.status}).` };
           }
           // A claimed search must come back CONFIRMED platform-paid.
