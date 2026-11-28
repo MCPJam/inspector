@@ -245,12 +245,15 @@ export function MCPJamLimitDialog() {
     inlineErrors: true,
   });
   const [checkoutFailed, setCheckoutFailed] = useState(false);
-  // Bumped on every open and close, so a checkout started from an earlier
-  // opening can neither redirect nor leave its failure on the next one.
+  // Bumped on every open, close and organization change, so a checkout started
+  // from an earlier opening or organization can neither redirect nor leave its
+  // failure on the current wall. A failure already shown belongs to the old
+  // organization, so it goes too.
   const checkoutAttemptRef = useRef(0);
   useEffect(() => {
     checkoutAttemptRef.current += 1;
-  }, [showTopupDialog]);
+    setCheckoutFailed(false);
+  }, [showTopupDialog, openBillingOrgId]);
   const {
     recipients: requestRecipients,
     isLoading: isLoadingRequestRecipients,

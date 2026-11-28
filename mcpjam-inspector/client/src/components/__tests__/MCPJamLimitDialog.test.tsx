@@ -757,6 +757,48 @@ describe("MCPJamLimitDialog", () => {
     );
   });
 
+  it("drops a checkout that settles after the wall moved to another organization", async () => {
+    const user = userEvent.setup();
+    authState.user = { id: "user-1" };
+    sortedOrganizationsState.push(
+      { _id: "org-a", myRole: "owner" },
+      { _id: "org-b", myRole: "owner" },
+    );
+    let settle: (result: unknown) => void = () => {};
+    upgradeState.start.mockReturnValue(
+      new Promise((resolve) => {
+        settle = resolve;
+      }),
+    );
+    useMCPJamLimitDialogStore.setState({
+      isOpen: true,
+      intent: "topup",
+      organizationId: "org-a",
+    });
+    render(<MCPJamLimitDialog />);
+
+    await user.click(screen.getByTestId("upgrade-plan-cta"));
+    act(() => {
+      useMCPJamLimitDialogStore.setState({ organizationId: "org-b" });
+    });
+    const [{ stillWanted }] = upgradeState.start.mock.calls[0];
+    expect(stillWanted()).toBe(false);
+    await act(async () => {
+      settle({
+        redirected: false,
+        shouldDismiss: false,
+        failure: "start_failed",
+      });
+    });
+
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(trackMock).not.toHaveBeenCalledWith(
+      "plan_limit_checkout_failed",
+      expect.anything(),
+    );
+  });
+
   it("does not pitch Team when a Team trial runs out of credits", () => {
     authState.user = { id: "user-1" };
     sortedOrganizationsState.push({ _id: "org-1", myRole: "owner" });
