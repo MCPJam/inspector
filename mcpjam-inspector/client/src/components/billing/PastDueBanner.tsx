@@ -83,8 +83,7 @@ export function PastDueBanner({
           className="size-1.5 shrink-0 rounded-full bg-warning"
         />
         <span className="text-pretty">
-          Payment failed for {organizationName}. An owner has been asked to
-          update the card.
+          {`Payment failed for ${organizationName}. An owner has been asked to update the card.`}
         </span>
         <Button
           size="icon"
@@ -132,12 +131,9 @@ export function PastDueBanner({
     >
       <CircleAlert className="size-4 shrink-0 text-warning" />
       <span className="text-pretty text-foreground">
-        <span className="font-medium">
-          Payment failed for {organizationName}.
-        </span>{" "}
         {graceEndsAt != null
-          ? `Update your card by ${formatBillingDate(graceEndsAt)} to keep ${planName}.`
-          : `Update your card to keep ${planName}.`}
+          ? `Payment failed for ${organizationName}. Update your card by ${formatBillingDate(graceEndsAt)} to keep ${planName}.`
+          : `Payment failed for ${organizationName}. Update your card to keep ${planName}.`}
       </span>
       <Button
         size="sm"
