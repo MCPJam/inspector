@@ -136,4 +136,25 @@ describe("returning guest prompts", () => {
       ],
     ]);
   });
+
+  it("starts a new visit on input after the guest left the tab open", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const start = Date.now();
+      seedPreviousVisit(start - DAY);
+      render(<ReturningGuestDialog enabled />);
+      fireEvent.click(screen.getByRole("button", { name: "Not now" }));
+      expect(screen.queryByText("Welcome back")).toBeNull();
+
+      vi.setSystemTime(start + 2 * 60 * 60 * 1000);
+      expect(screen.queryByText("Welcome back")).toBeNull();
+
+      act(() => {
+        fireEvent.pointerDown(document);
+      });
+      expect(screen.getByText("Welcome back")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

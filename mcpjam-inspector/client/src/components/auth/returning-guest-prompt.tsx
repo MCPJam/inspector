@@ -27,7 +27,8 @@ import {
 import { cn } from "@/lib/utils";
 
 const COPY_VARIANT = "not_backed_up_v1";
-const ACTIVITY_INTERVAL_MS = 60 * 1000;
+const ACTIVITY_THROTTLE_MS = 60 * 1000;
+const ACTIVITY_EVENTS = ["pointerdown", "keydown", "visibilitychange"] as const;
 
 type Prompt = "dialog" | "notice";
 
@@ -51,17 +52,26 @@ function useReturningGuestVisit(): GuestVisit | null {
   const isGuest = HOSTED_MODE && !user && !isWorkOsLoading && !isConvexLoading;
   const visit = useSyncExternalStore(subscribeGuestVisit, getGuestVisit);
 
+  // Only real input counts as activity: a tab left open and visible while the
+  // guest is away must still start a new visit when they come back.
   useEffect(() => {
     if (!isGuest) return;
+    let lastTouchAt = 0;
     const touch = () => {
-      if (document.visibilityState === "visible") touchGuestVisit();
+      if (document.visibilityState !== "visible") return;
+      const now = Date.now();
+      if (now - lastTouchAt < ACTIVITY_THROTTLE_MS) return;
+      lastTouchAt = now;
+      touchGuestVisit(now);
     };
     touch();
-    const interval = window.setInterval(touch, ACTIVITY_INTERVAL_MS);
-    document.addEventListener("visibilitychange", touch);
+    for (const event of ACTIVITY_EVENTS) {
+      document.addEventListener(event, touch, { passive: true });
+    }
     return () => {
-      window.clearInterval(interval);
-      document.removeEventListener("visibilitychange", touch);
+      for (const event of ACTIVITY_EVENTS) {
+        document.removeEventListener(event, touch);
+      }
     };
   }, [isGuest]);
 
