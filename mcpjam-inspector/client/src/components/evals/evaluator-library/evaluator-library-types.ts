@@ -7,6 +7,9 @@
  * should grow fields that duplicate them.
  */
 
+/** How an evaluator decides: the library's Method cards. */
+export type EvaluatorMethod = "assertions" | "judge" | "decision";
+
 /** Where an evaluator in a suite came from. */
 export type EvaluatorOrigin = "library";
 

@@ -92,6 +92,29 @@ describe("CustomJudgePreview", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps the dialog test and grader input collapsed until opened", async () => {
+    convex.preview.mockReset().mockResolvedValue({
+      ok: true,
+      prompt: "Grader's question: ...",
+      result: { status: "scored", value: 1, passed: true, reason: "Says 42." },
+    });
+    renderWithProviders(
+      <CustomJudgePreview inDialog suiteId="s1" judge={judge} />,
+    );
+    const preview = screen.getByText("Test on a past iteration");
+    expect(preview.parentElement).not.toHaveAttribute("open");
+    fireEvent.click(preview);
+    expect(preview.parentElement).toHaveAttribute("open");
+    expect(convex.preview).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Run test" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Says 42.");
+    const evidence = screen.getByText("What the judge read");
+    expect(evidence.parentElement).not.toHaveAttribute("open");
+    fireEvent.click(evidence);
+    expect(evidence.parentElement).toHaveAttribute("open");
+  });
+
   it("shows a failed judge call as a failed test, with its reason", async () => {
     convex.preview.mockResolvedValue({
       ok: true,

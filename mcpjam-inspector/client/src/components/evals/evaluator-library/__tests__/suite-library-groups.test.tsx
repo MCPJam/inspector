@@ -299,13 +299,15 @@ describe("library question edits", () => {
     ).toEqual(stored);
   });
 
-  it("turns rubric checks back on only when adding to a suite that turned them off", () => {
+  it("keeps rubric checks off when adding to a suite that turned them off", () => {
     const { state, edits } = draft({ rubricChecks: { enabled: false } });
     edits().add(questionsOf(reports));
-    expect(state.judgeConfig?.rubricChecks?.enabled).toBe(true);
+    expect(state.judgeConfig?.rubricChecks).toEqual({
+      enabled: false,
+      questions: [reportsQuestion],
+    });
     edits().remove("reports-tool-errors");
-    // Removing keeps the author's switch where adding left it.
-    expect(state.judgeConfig).toEqual({ rubricChecks: { enabled: true } });
+    expect(state.judgeConfig).toEqual({ rubricChecks: { enabled: false } });
   });
 
   it("keeps rubric checks off when an evaluator is updated or removed", () => {
@@ -441,6 +443,27 @@ describe("library question edits", () => {
     expect(group).toHaveTextContent(
       'v1 available. A question already uses the ID "reports-tool-errors-reports-failures".',
     );
+  });
+});
+
+describe("assertions written from scratch", () => {
+  it("adds a required assertion beside an advisory one with the same criterion", () => {
+    const advisory: Predicate = {
+      type: "finalAssistantMessageNonEmpty",
+      role: "advisory",
+    };
+    const { state, edits } = draft(undefined, [advisory]);
+    expect(
+      edits().add({
+        checks: [{ type: "finalAssistantMessageNonEmpty" }],
+        questions: [],
+        judges: [],
+      }),
+    ).toBeUndefined();
+    expect(state.predicates).toEqual([
+      advisory,
+      { type: "finalAssistantMessageNonEmpty" },
+    ]);
   });
 });
 
