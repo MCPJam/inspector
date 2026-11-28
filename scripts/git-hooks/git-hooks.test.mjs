@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { cpSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -9,6 +10,12 @@ import { FILE_BUDGET } from "../slop/hook.mjs";
 import { HOOKS_PATH, decide, isCI, main } from "./install.mjs";
 
 const SCRIPTS = dirname(dirname(fileURLToPath(import.meta.url)));
+
+// Scripts copied into a temp repo resolve `typescript` from there, and it
+// has no node_modules. Child processes find the package these tests load.
+process.env.NODE_PATH = dirname(
+  dirname(createRequire(import.meta.url).resolve("typescript/package.json")),
+);
 
 /** A repo with the real slop scripts and hooks, and an origin/main ref. */
 function makeRepo() {
