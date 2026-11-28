@@ -122,3 +122,84 @@ describe("PredicatesList — render-observation evidence", () => {
     expect(screen.getByText("__proto__")).toBeInTheDocument();
   });
 });
+
+describe("PredicatesList — Not applicable", () => {
+  it("shows N/A and leaves the row out of the pass count", () => {
+    render(
+      <PredicatesList
+        predicates={[
+          {
+            predicate: { type: "toolResultMatchesSchema", schema: "declared" },
+            passed: true,
+            status: "not_applicable",
+            reason: "no tool declares an output schema",
+          },
+          {
+            predicate: { type: "noToolErrors" },
+            passed: true,
+            reason: "no tool errors",
+          },
+        ]}
+      />,
+    );
+    const region = screen.getByRole("region", { name: "Assertions" });
+    expect(within(region).getByText("N/A")).toBeInTheDocument();
+    expect(region).toHaveTextContent("1 / 1 assertions passed");
+  });
+});
+
+describe("PredicatesList — nothing applied", () => {
+  it("says no assertions applied instead of a green 0 / 0", () => {
+    render(
+      <PredicatesList
+        predicates={[
+          {
+            predicate: { type: "toolResultMatchesSchema", schema: "declared" },
+            passed: true,
+            status: "not_applicable",
+            reason: "no tool declares an output schema",
+          },
+        ]}
+      />,
+    );
+    expect(
+      screen.getByRole("region", { name: "Assertions" }),
+    ).toHaveTextContent("No assertions applied. Each row says why.");
+  });
+
+  it("shows no summary badge when every row that ran is advisory", () => {
+    render(
+      <PredicatesList
+        predicates={[
+          {
+            predicate: { type: "noEndingQuestion", role: "advisory" },
+            passed: true,
+            reason: "the final message does not end with a question",
+          },
+        ]}
+      />,
+    );
+    const region = screen.getByRole("region", { name: "Assertions" });
+    expect(region).not.toHaveTextContent("No assertions applied");
+    expect(region).not.toHaveTextContent("assertions passed");
+    expect(within(region).getByText("PASS")).toBeInTheDocument();
+  });
+
+  it("labels a stored evidence error as Error, not FAIL", () => {
+    render(
+      <PredicatesList
+        predicates={[
+          {
+            predicate: { type: "toolResultSizeUnder", maxBytes: 10 },
+            passed: false,
+            status: "error",
+            reason: "the capture is incomplete",
+          },
+        ]}
+      />,
+    );
+    const region = screen.getByRole("region", { name: "Assertions" });
+    expect(within(region).getByText("Error")).toBeInTheDocument();
+    expect(within(region).queryByText("FAIL")).not.toBeInTheDocument();
+  });
+});

@@ -1,5 +1,8 @@
 import { useMemo, useState } from "react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { useQuery } from "convex/react";
+import { Button } from "@mcpjam/design-system/button";
+import { cn } from "@mcpjam/design-system/cn";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { ChevronRight } from "lucide-react";
 import {
@@ -9,6 +12,11 @@ import {
   type RevisionSide,
   type SnapshotDiff,
 } from "./ServerHistoryDiff";
+import {
+  ServerUrlChangeDetails,
+  useServerUrlChangeEvents,
+  type ServerUrlChangeEvent,
+} from "./ServerUrlChangeHistory";
 import type { SnapshotDiscovery, SnapshotTool } from "./server-history-diff";
 
 /**
@@ -47,18 +55,45 @@ interface RevisionSnapshot {
   redaction?: { droppedFields?: string[] };
 }
 
-function compactAgo(ms: number): string {
-  const seconds = Math.max(0, Math.floor((Date.now() - ms) / 1000));
-  if (seconds < 60) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  const months = Math.floor(days / 30);
-  if (months < 12) return `${months}mo ago`;
-  return `${Math.floor(months / 12)}y ago`;
+type HistoryEvent = {
+  key: string;
+  timestamp: number;
+} & (
+  | { kind: "urlChange"; change: ServerUrlChangeEvent }
+  | { kind: "revision"; revision: RevisionSummary; previous?: RevisionSummary }
+);
+
+const dayFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
+const timeFormat = new Intl.DateTimeFormat(undefined, { timeStyle: "short" });
+const REVISION_HISTORY_LIMIT = 50;
+
+function groupHistoryByDay(
+  changes: ServerUrlChangeEvent[],
+  revisions: RevisionSummary[]
+) {
+  const events: HistoryEvent[] = [
+    ...changes.map((change) => ({
+      kind: "urlChange" as const,
+      key: `url-${change.id}`,
+      timestamp: change.timestamp,
+      change,
+    })),
+    ...revisions.slice(0, REVISION_HISTORY_LIMIT).map((revision, index) => ({
+      kind: "revision" as const,
+      key: `revision-${revision.revisionNumber}`,
+      timestamp: revision.capturedAt,
+      revision,
+      previous: revisions[index + 1],
+    })),
+  ];
+  const days = new Map<string, HistoryEvent[]>();
+  for (const event of events.sort((a, b) => b.timestamp - a.timestamp)) {
+    const day = dayFormat.format(event.timestamp);
+    const entries = days.get(day);
+    if (entries) entries.push(event);
+    else days.set(day, [event]);
+  }
+  return days;
 }
 
 export function ServerHistoryContent({
@@ -73,13 +108,16 @@ export function ServerHistoryContent({
     {
       projectId,
       serverId,
-      limit: 50,
+      // Keep one extra revision to detect truncation and diff the last row.
+      limit: REVISION_HISTORY_LIMIT + 1,
     } as never
   ) as RevisionSummary[] | undefined;
+  const { changes, isLoading, hasError } = useServerUrlChangeEvents(serverId);
+  const { user } = useAuth();
 
   const [expanded, setExpanded] = useState<number | null>(null);
 
-  if (revisions === undefined) {
+  if (revisions === undefined || isLoading) {
     return (
       <div className="space-y-2 py-2">
         {[0, 1, 2].map((i) => (
@@ -89,62 +127,116 @@ export function ServerHistoryContent({
     );
   }
 
-  if (revisions.length === 0) {
+  const days = groupHistoryByDay(changes, revisions);
+  if (days.size === 0 && !hasError) {
     return (
       <div className="py-8 text-center text-sm text-muted-foreground">
-        No snapshots captured yet
+        No server activity yet
       </div>
     );
   }
 
   return (
-    <div className="space-y-0.5 py-1">
-      {revisions.map((rev, i) => {
-        const prev = revisions[i + 1];
-        const isLatest = i === 0;
-        const isOpen = expanded === rev.revisionNumber;
-        return (
-          <div key={rev.revisionNumber}>
-            <button
-              type="button"
-              onClick={() =>
-                setExpanded(isOpen ? null : rev.revisionNumber)
-              }
-              className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left hover:bg-muted/50"
-            >
-              <span
-                className={`h-2 w-2 shrink-0 rounded-full ${
-                  isLatest ? "bg-primary" : "bg-muted-foreground/40"
-                }`}
-              />
-              <span className="shrink-0 text-[13px] font-medium">
-                Revision {rev.revisionNumber}
-              </span>
-              <span className="min-w-0 flex-1 truncate text-[11.5px] text-muted-foreground">
-                <DeltaLabel rev={rev} prev={prev} />
-              </span>
-              <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                {compactAgo(rev.capturedAt)}
-              </span>
-              <ChevronRight
-                className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${
-                  isOpen ? "rotate-90" : ""
-                }`}
-              />
-            </button>
-            {isOpen && (
-              <div className="mb-1 ml-[18px]">
-                <RevisionDetail
-                  projectId={projectId}
-                  serverId={serverId}
-                  revisionNumber={rev.revisionNumber}
-                  hasPrev={rev.revisionNumber > 1}
-                />
-              </div>
-            )}
-          </div>
-        );
-      })}
+    <div className="space-y-4 py-1">
+      {hasError && (
+        <p role="status" className="text-sm text-muted-foreground">
+          Server URL and command changes unavailable
+        </p>
+      )}
+      {revisions.length > REVISION_HISTORY_LIMIT && (
+        <p className="text-xs text-muted-foreground">
+          Only the latest {REVISION_HISTORY_LIMIT} inspection revisions are shown.
+        </p>
+      )}
+      {[...days].map(([day, events]) => (
+        <section key={day}>
+          <h3 className="mb-1 text-xs font-medium text-muted-foreground">
+            {day}
+          </h3>
+          <ol
+            role="list"
+            className="ms-1.5 divide-y divide-border border-s border-border ps-3"
+          >
+            {events.map((event) => {
+              const isOpen =
+                event.kind === "revision" &&
+                expanded === event.revision.revisionNumber;
+              const date = new Date(event.timestamp);
+              const time = (
+                <time
+                  dateTime={date.toISOString()}
+                  title={date.toLocaleString()}
+                  className="shrink-0 text-xs font-normal tabular-nums text-muted-foreground"
+                >
+                  {timeFormat.format(event.timestamp)}
+                </time>
+              );
+              return (
+                <li
+                  key={event.key}
+                  className={cn(
+                    "relative min-w-0 before:absolute before:-start-[17px] before:top-3.5 before:size-2 before:rounded-full before:ring-2 before:ring-background",
+                    event.kind === "urlChange"
+                      ? "before:bg-primary"
+                      : "before:bg-muted-foreground/60"
+                  )}
+                >
+                  {event.kind === "urlChange" ? (
+                    <ServerUrlChangeDetails
+                      event={event.change}
+                      viewerEmail={user?.email}
+                    >
+                      {time}
+                    </ServerUrlChangeDetails>
+                  ) : (
+                    <div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        aria-expanded={isOpen}
+                        onClick={() =>
+                          setExpanded(
+                            isOpen ? null : event.revision.revisionNumber
+                          )
+                        }
+                        className="h-auto w-full justify-start px-2 py-2 text-left has-[>svg]:px-2"
+                      >
+                        <span className="shrink-0">
+                          Revision {event.revision.revisionNumber}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-xs font-normal text-muted-foreground">
+                          <DeltaLabel
+                            rev={event.revision}
+                            prev={event.previous}
+                          />
+                        </span>
+                        {time}
+                        <ChevronRight
+                          aria-hidden="true"
+                          className={cn(
+                            "size-3.5 text-muted-foreground motion-safe:transition-transform",
+                            isOpen && "rotate-90"
+                          )}
+                        />
+                      </Button>
+                      {isOpen && (
+                        <div className="mb-2 px-2">
+                          <RevisionDetail
+                            projectId={projectId}
+                            serverId={serverId}
+                            revisionNumber={event.revision.revisionNumber}
+                            hasPrev={event.revision.revisionNumber > 1}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+        </section>
+      ))}
     </div>
   );
 }
@@ -224,6 +316,7 @@ function ViewToggle({
           <button
             key={option}
             type="button"
+            aria-pressed={active}
             onClick={() => onChange(option)}
             className={`rounded px-2 py-0.5 capitalize ${
               active
@@ -347,4 +440,3 @@ function useRevisionSide(
     [revision]
   );
 }
-

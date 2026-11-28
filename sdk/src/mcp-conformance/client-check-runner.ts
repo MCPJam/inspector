@@ -53,6 +53,16 @@ const CONNECTION_DATA_CHECK_IDS = new Set<MCPCheckId>([
   "capabilities-consistent",
 ]);
 
+/**
+ * The check whose timeout means the connection is lost. Every 2025 revision
+ * says of a ping: "Timeouts SHOULD be treated as connection failures"
+ * (basic/utilities/ping.mdx, Error Handling).
+ */
+const PING_CHECK_ID: MCPCheckId = "ping";
+
+const SKIPPED_AFTER_PING_NOTE =
+  "A ping with no answer means the connection may be lost, so the checks after this one were skipped.";
+
 export async function runSelectedClientChecks(
   selectedClientChecks: readonly MCPClientCheckDefinition[],
   ctx: MCPClientCheckContext
@@ -67,6 +77,28 @@ export async function runSelectedClientChecks(
   let timeoutStreak = 0;
   /** The checks in the current streak, named in the skips that follow. */
   let timedOut: MCPClientCheckDefinition[] = [];
+
+  /**
+   * Count a timed-out check. A timed-out ping is the exception to "the session
+   * stays usable": the connection counts as lost, so the remaining checks skip.
+   */
+  const recordTimeout = (
+    check: MCPClientCheckDefinition,
+    result: MCPCheckResult
+  ): MCPCheckResult => {
+    timeoutStreak += 1;
+    timedOut.push(check);
+    if (check.id !== PING_CHECK_ID) return result;
+    timeoutStreak = MAX_TIMEOUTS_IN_A_ROW;
+    return {
+      ...result,
+      error: {
+        ...result.error,
+        message: `${result.error?.message} ${SKIPPED_AFTER_PING_NOTE}`,
+      },
+      details: { ...result.details, connectionLost: true },
+    };
+  };
 
   for (const check of selectedClientChecks) {
     config.signal?.throwIfAborted();
@@ -105,9 +137,10 @@ export async function runSelectedClientChecks(
       config.signal?.throwIfAborted();
       // Only an answer ends the streak; a skip asked the server nothing.
       if (isTimedOutCheck(result)) {
-        timeoutStreak += 1;
-        timedOut.push(check);
-      } else if (
+        results.push(recordTimeout(check, result));
+        continue;
+      }
+      if (
         result.status !== "skipped" &&
         !CONNECTION_DATA_CHECK_IDS.has(check.id)
       ) {
@@ -118,9 +151,9 @@ export async function runSelectedClientChecks(
     } catch (error) {
       config.signal?.throwIfAborted();
       if (isRequestTimeoutError(error)) {
-        timeoutStreak += 1;
-        timedOut.push(check);
-        results.push(timedOutResult(check, config.checkTimeout));
+        results.push(
+          recordTimeout(check, timedOutResult(check, config.checkTimeout))
+        );
         continue;
       }
       results.push(

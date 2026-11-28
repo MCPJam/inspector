@@ -5,7 +5,9 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { track } from "@/lib/analytics";
 import type { ServerFormData } from "@/shared/types";
@@ -45,11 +47,13 @@ vi.mock("../panes/EnvironmentToolsPane", () => ({
 vi.mock("../panes/MultiServerToolsPane", () => ({
   MultiServerToolsPaneInner: ({
     activeServerNames,
+    serverConnectionControl,
   }: {
     activeServerNames: string[];
+    serverConnectionControl?: ReactNode;
   }) => {
     playgroundState.paneServers(activeServerNames);
-    return <div data-testid="multi-server-pane" />;
+    return <div data-testid="multi-server-pane">{serverConnectionControl}</div>;
   },
 }));
 
@@ -371,6 +375,58 @@ describe("PlaygroundLeftRail — zero-server Tools body", () => {
     ).toBeEnabled();
   });
 
+  it("shows details for each comparison pane without expanding the trigger", async () => {
+    const user = userEvent.setup();
+    useComparePaneStore.getState().publishPanes([
+      {
+        paneId: "a",
+        label: "Claude",
+        logoSrc: "/claude_logo.png",
+        modelName: "Sonnet",
+        serverSummary: "No servers",
+        hostId: "claude",
+        environmentId: null,
+        serverNames: [],
+      },
+      {
+        paneId: "b",
+        label: "Claude",
+        logoSrc: "/claude_logo.png",
+        modelName: "Haiku",
+        serverSummary: "1 server",
+        hostId: "claude",
+        environmentId: null,
+        serverNames: ["stateless-mcp"],
+      },
+    ]);
+    render(<PlaygroundLeftRail />);
+
+    const trigger = screen.getByRole("combobox", { name: "Pane" });
+    expect(trigger).toHaveTextContent("Claude (1)");
+    expect(trigger.querySelector("img")).toHaveAttribute(
+      "src",
+      "/claude_logo.png",
+    );
+    expect(trigger).not.toHaveTextContent("Sonnet");
+
+    await user.click(trigger);
+    const first = screen.getByRole("option", { name: /Claude \(1\)/ });
+    const second = screen.getByRole("option", { name: /Claude \(2\)/ });
+    expect(within(first).getByText("Sonnet")).toBeVisible();
+    expect(within(first).getByText("No servers")).toBeVisible();
+    expect(within(second).getByText("Haiku")).toBeVisible();
+    expect(within(second).getByText("1 server")).toBeVisible();
+    expect(second.querySelector("img")).toHaveAttribute(
+      "src",
+      "/claude_logo.png",
+    );
+
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(trigger).toHaveTextContent("Claude (2)");
+    expect(trigger).not.toHaveTextContent("Haiku");
+    expect(useComparePaneStore.getState().selectedPaneId).toBe("b");
+  });
+
   it("adds the reconnected server only to the selected comparison pane", async () => {
     withSavedServer();
     const first = vi.fn();
@@ -578,5 +634,91 @@ describe("PlaygroundLeftRail — Compare panes", () => {
     expect(screen.getByLabelText("Pane")).toHaveTextContent("Codex");
     expect(playgroundState.builtinHostId).toHaveBeenLastCalledWith("codex");
     expect(playgroundState.paneServers).toHaveBeenLastCalledWith(["Docs"]);
+  });
+
+  it("offers reconnect after an assigned server disconnects, preserving the pane selection", async () => {
+    const onServerChosen = vi.fn();
+    playgroundState.ensureServersReady.mockReset();
+    playgroundState.ensureServersReady.mockResolvedValue({
+      readyServerNames: ["GitHub"],
+      missingServerNames: [],
+      reauthServerNames: [],
+      failedServerNames: [],
+    });
+    playgroundState.servers = {
+      ...playgroundState.servers,
+      GitHub: createServer({ name: "GitHub", connectionStatus: "connecting" }),
+    };
+    useComparePaneStore.getState().publishPanes([
+      {
+        paneId: "a",
+        label: "Claude",
+        hostId: "claude",
+        environmentId: null,
+        serverNames: ["GitHub", "Docs"],
+        onServerChosen,
+      },
+    ]);
+
+    const { rerender } = render(<PlaygroundLeftRail />);
+    expect(screen.getByText(/GitHub.*Finishing setup/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Reconnect a server" }),
+    ).toBeNull();
+
+    playgroundState.servers.GitHub = createServer({
+      name: "GitHub",
+      connectionStatus: "disconnected",
+    });
+    rerender(<PlaygroundLeftRail />);
+    expect(playgroundState.paneServers).toHaveBeenLastCalledWith(["Docs"]);
+    expect(screen.getByText(/GitHub.*Disconnected/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect a server" }));
+    expect(screen.queryByRole("button", { name: /Connect Docs/ })).toBeNull();
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "Connect GitHub" })),
+    );
+    expect(playgroundState.ensureServersReady).toHaveBeenCalledWith(["GitHub"], {
+      allowInteractiveOAuthFlow: true,
+    });
+    expect(onServerChosen).not.toHaveBeenCalled();
+
+    playgroundState.servers.GitHub = createServer({
+      name: "GitHub",
+      connectionStatus: "connected",
+    });
+    rerender(<PlaygroundLeftRail />);
+    expect(playgroundState.paneServers).toHaveBeenLastCalledWith([
+      "GitHub",
+      "Docs",
+    ]);
+    expect(
+      screen.queryByRole("button", { name: "Reconnect a server" }),
+    ).toBeNull();
+  });
+
+  it("offers no reconnect while an assigned server is authorizing in the browser", () => {
+    playgroundState.servers = {
+      ...playgroundState.servers,
+      GitHub: createServer({ name: "GitHub", connectionStatus: "oauth-flow" }),
+    };
+    useComparePaneStore.getState().publishPanes([
+      {
+        paneId: "a",
+        label: "Claude",
+        hostId: "claude",
+        environmentId: null,
+        serverNames: ["GitHub", "Docs"],
+        onServerChosen: vi.fn(),
+      },
+    ]);
+
+    render(<PlaygroundLeftRail />);
+    expect(
+      screen.getByText(/GitHub.*Authorizing in browser/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Reconnect a server" }),
+    ).toBeNull();
   });
 });

@@ -35,6 +35,7 @@ import {
 import { MCP_APPS_NO_CLAIMS } from "../../host-compat/capabilities.js";
 import { SLACK_FONT_CSS, getSlackStyleVariables } from "./slack-style.js";
 import { CHATGPT_MODEL_CONTEXT_POLICY } from "./chatgpt-model-context-policy.js";
+import { MCPJAM_EVENTS_EXTENSION_ID } from "../events-support.js";
 import { OPENCODE_TEMPLATE } from "./opencode-template.js";
 
 type HostThemeMode = "light" | "dark";
@@ -490,6 +491,15 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // inspector's MCP-side and Apps-side identities stay in lockstep.
       base.mcpProfile = {
         profileVersion: 1,
+        // The MCP Events delivery modes this client receives (MCPJam policy,
+        // never sent to a server). MCPJam's own client receives every mode.
+        extensions: {
+          [MCPJAM_EVENTS_EXTENSION_ID]: {
+            poll: true,
+            push: true,
+            webhook: true,
+          },
+        },
         initialize: {
           clientInfo: {
             name: "mcpjam-inspector",
@@ -1434,6 +1444,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "openai/gpt-6-luna",
         temperature: 0.7,
         requireToolApproval: false,
+        progressiveToolDiscovery: true,
       });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // Real ChatGPT advertises an `experimental.openai/visibility` flag on top
@@ -1486,6 +1497,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // an MCP app can never reach a domain ChatGPT itself wouldn't allow.
       base.mcpProfile = {
         profileVersion: 1,
+        // MCPJam policy, never sent to a server: personal ChatGPT receives no
+        // MCP Events (OpenAI: Events work only in Work chats). Saved as `{}`,
+        // not left out, so caniuse.dev shows "none" rather than "Not yet
+        // tested".
+        extensions: {
+          [MCPJAM_EVENTS_EXTENSION_ID]: {},
+        },
         mcpProtocolVersion: "auto",
         // The 2026-08-24 prober capture (2026-07-28 lane) walked `nextCursor`
         // and fetched page two of tools/list.
@@ -1663,6 +1681,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "openai/gpt-6-luna",
         temperature: 0.7,
         requireToolApproval: false,
+        progressiveToolDiscovery: true,
       });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // Same client as ChatGPT on the web.
@@ -1694,6 +1713,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       };
       base.mcpProfile = {
         profileVersion: 1,
+        // MCPJam policy: no MCP Events, as on the `chatgpt` template.
+        extensions: {
+          [MCPJAM_EVENTS_EXTENSION_ID]: {},
+        },
         mcpProtocolVersion: "auto",
         // From OpenAI's published Apps SDK auth docs, as on the chatgpt
         // template.
@@ -1790,6 +1813,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "openai/gpt-6-luna",
         temperature: 0.7,
         requireToolApproval: false,
+        progressiveToolDiscovery: true,
       });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // The Codex connector's handshake: form elicitation, the OpenAI form
@@ -1828,6 +1852,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       };
       base.mcpProfile = {
         profileVersion: 1,
+        // MCPJam policy, never sent to a server: ChatGPT Work receives MCP
+        // Events by webhook only (CHATGPT_PROFILE in the SDK).
+        extensions: {
+          [MCPJAM_EVENTS_EXTENSION_ID]: { webhook: true },
+        },
         mcpProtocolVersion: "auto",
         // From OpenAI's published Apps SDK auth docs, as on the chatgpt
         // template.
@@ -1929,6 +1958,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "openai/gpt-6-luna",
         temperature: 0.7,
         requireToolApproval: false,
+        progressiveToolDiscovery: true,
       });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // The Codex connector's handshake, as on the chatgpt-work template.
@@ -1966,6 +1996,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       };
       base.mcpProfile = {
         profileVersion: 1,
+        // MCPJam policy: webhook-only MCP Events, as on the `chatgpt-work`
+        // template.
+        extensions: {
+          [MCPJAM_EVENTS_EXTENSION_ID]: { webhook: true },
+        },
         mcpProtocolVersion: "auto",
         // From OpenAI's published Apps SDK auth docs, as on the chatgpt
         // template.
@@ -2932,6 +2967,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // `_meta.ui.visibility: ["app"]` tools to its model and calls them.
         // Filtering them here would hide tools the CLI exposes.
         respectToolVisibility: false,
+        // MCPJam's emulated loop uses its own search tools to mirror Cursor's
+        // MCP search. The native Cursor CLI performs its own discovery.
+        progressiveToolDiscovery: true,
         // Run the REAL Cursor CLI (the @ai-sdk/harness-cursor adapter) instead
         // of MCPJam's emulated engine. It executes inside an attached personal
         // computer, so seed one too — the backend enforces `harness ⇒ computer`
@@ -2951,10 +2989,6 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // the SDK default's UI extension stays out. Kept in lockstep with the
       // backend template.
       base.clientCapabilities = { elicitation: { form: {} } };
-      // The real Cursor CLI owns native tool discovery from the MCP servers
-      // MCPJam feeds its ACP session, so MCPJam's progressive meta-tools stay
-      // off — `search_mcp_tools` must never look like a Cursor built-in.
-      base.progressiveToolDiscovery = false;
       // CLI client: no widget rendering, so `hostContext` stays empty and the
       // host-side app advertise is explicitly zeroed. `{}` is "advertise
       // nothing" (resolveEffectiveHostCapabilities treats it distinctly from
@@ -3623,6 +3657,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "anthropic/claude-haiku-5.5",
         temperature: 1.0,
         requireToolApproval: false,
+        progressiveToolDiscovery: true,
       });
       // Bare client: advertises an empty capabilities object and negotiates no
       // MCP Apps/UI extension (no `mimeTypes`). Replace the SDK default
@@ -3683,6 +3718,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "anthropic/claude-haiku-5.5",
         temperature: 1.0,
         requireToolApproval: false,
+        progressiveToolDiscovery: true,
       });
       // Its connector sends Cursor CLI's handshake: `Cursor` 1.0.0 with form
       // elicitation and the MCP UI extension. It renders widgets.
@@ -3718,7 +3754,7 @@ export function seedFromHostTemplate(
   opts?: SeedHostTemplateOptions
 ): SeededHostConfigInput {
   const template = HOST_TEMPLATES.find((t) => t.id === id) ?? HOST_TEMPLATES[0];
-  return template.seed(opts);
+  return { ...template.seed(opts), runUnloadedToolCalls: template.id !== "vscode" };
 }
 
 export const seedHostTemplate = seedFromHostTemplate;

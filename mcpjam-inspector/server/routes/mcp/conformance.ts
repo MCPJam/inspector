@@ -420,6 +420,7 @@ const oauthAuthorizeSchema = z.object({
   sessionId: z.string().min(1),
   code: z.string().min(1),
   state: z.string().optional(),
+  iss: z.string().optional(),
 });
 
 conformance.post("/oauth/authorize", async (c) => {

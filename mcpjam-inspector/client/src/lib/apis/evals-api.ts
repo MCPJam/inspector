@@ -58,6 +58,7 @@ type ToolListResponse = {
 type RunEvalsRequest = EvalRequestWithServers & {
   idempotencyKey?: string;
   suiteId?: string;
+  runAccounts?: import("@/lib/evals/eval-accounts").SharedEvalAccountSelection[];
   suiteName?: string;
   suiteDescription?: string;
   tests: Array<Record<string, unknown>>;
@@ -133,6 +134,7 @@ type RunEvalsRequest = EvalRequestWithServers & {
 
 type RunTestCaseRequest = EvalRequestWithServers & {
   testCaseId: string;
+  runAccounts?: import("@/lib/evals/eval-accounts").SharedEvalAccountSelection[];
   /**
    * Environment quick run: the server runs this environment's model, client
    * and servers, so the request carries no `model`/`provider`, host or
@@ -402,6 +404,15 @@ async function postEvalRequest<TResponse>(
     const problems = aiLaunchProblemsOf(body);
     if (problems.length > 0) {
       (error as Error & { problems?: AiLaunchProblem[] }).problems = problems;
+    }
+    // Why the route refused, and by which rule, so the run sheet can offer
+    // that reason's fix.
+    const details = (errorBody as { details?: { reason?: unknown; rule?: unknown } } | null | undefined)?.details;
+    if (typeof details?.reason === "string") {
+      (error as Error & { reason?: string }).reason = details.reason;
+    }
+    if (typeof details?.rule === "string") {
+      (error as Error & { rule?: string }).rule = details.rule;
     }
     throw error;
   }

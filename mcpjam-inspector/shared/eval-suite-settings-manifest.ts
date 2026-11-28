@@ -94,7 +94,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "environments",
-    label: "Where it runs",
+    label: "Clients and models",
     api: "environmentIds",
   },
   {

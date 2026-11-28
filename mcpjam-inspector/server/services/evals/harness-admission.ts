@@ -66,7 +66,7 @@ import type { ModelDefinition } from "@/shared/types";
  */
 export type EvalHarnessAdmission =
   | { ok: true; harness?: Harness }
-  | { ok: false; harness: Harness; reason: string };
+  | { ok: false; harness: Harness; reason: string; kind?: HarnessUnavailableKind };
 
 /** The one case-shaped input the gate reads. Matches the recorder's
  *  `config.tests` rows, so callers pass those straight through. */
@@ -138,7 +138,7 @@ export function harnessOfHostConfig(
  * been booted and charged. Refusing at admission makes it a pre-flight failure
  * that spends nothing and says what to change.
  */
-function harnessNeedsProjectReason(harness: Harness): string {
+export function harnessNeedsProjectReason(harness: Harness): string {
   const name = getHarnessAdapter(harness).displayName;
   return (
     `the ${name} harness runs each eval iteration on a computer provisioned ` +
@@ -254,9 +254,10 @@ export function resolveEvalCaseModelDefinition(args: {
   const caseModel = { modelDefinition: args.caseModel, externalAccount: false };
   const harness = harnessOfHostConfig(args.hostConfig);
   if (!harness) return caseModel;
-  if (getHarnessAdapter(harness).modelAccess !== "external-account") {
-    return caseModel;
-  }
+  const adapter = getHarnessAdapter(harness);
+  if (adapter.modelAccess !== "external-account") return caseModel;
+  // A web client's case runs on the project's web account, not MCPJam's key.
+  if (adapter.webAccount) return { ...caseModel, externalAccount: true };
   const hostConfig = args.hostConfig as Record<string, unknown>;
   const hostModelId =
     typeof hostConfig.modelId === "string" ? hostConfig.modelId.trim() : "";
@@ -341,6 +342,7 @@ export function checkEvalHarnessStaticAdmission(args: {
     ...(hostSavedReasoningEffort(hostConfig) !== undefined
       ? { reasoningEffort: hostSavedReasoningEffort(hostConfig) }
       : {}),
+    systemPrompt: typeof hostConfig.systemPrompt === "string" ? hostConfig.systemPrompt : undefined,
   });
   if (!availability.ok) {
     // With no host-pinned model, a model-eligibility refusal is about the
@@ -349,7 +351,7 @@ export function checkEvalHarnessStaticAdmission(args: {
     if (!hostModelId && isModelKind(availability.kind)) {
       return { ok: true, harness };
     }
-    return { ok: false, harness, reason: availability.reason };
+    return { ok: false, harness, reason: availability.reason, kind: availability.kind };
   }
   return { ok: true, harness };
 }
@@ -450,6 +452,7 @@ export function checkEvalHarnessAdmission(args: {
         xaaEnterprisePolicyOn,
         purpose: "eval",
         ...(effort !== undefined ? { reasoningEffort: effort } : {}),
+        systemPrompt: typeof hostConfig.systemPrompt === "string" ? hostConfig.systemPrompt : undefined,
       });
       verdict = availability.ok
         ? undefined
@@ -470,7 +473,7 @@ export function checkEvalHarnessAdmission(args: {
     // them plainly rather than repeating it per case.
     const hostLevel = ineligible.find((entry) => !isModelKind(entry.kind));
     if (hostLevel) {
-      return { ok: false, harness, reason: hostLevel.reason };
+      return { ok: false, harness, reason: hostLevel.reason, kind: hostLevel.kind };
     }
     const names = [...new Set(ineligible.map((entry) => entry.title))];
     return {

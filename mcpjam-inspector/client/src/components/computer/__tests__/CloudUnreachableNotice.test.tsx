@@ -72,6 +72,23 @@ describe("CloudUnreachableNotice action", () => {
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 
+  // A CI-owned suite disables its settings fieldset; the way out must still work.
+  it("opens a link in a new tab, which a disabled fieldset leaves usable", () => {
+    render(
+      <fieldset disabled>
+        <CloudUnreachableNotice
+          message="m"
+          detail="d"
+          action={{ label: "Open on MCPJam", href: "https://app.mcpjam.com/evaluate?run=suite" }}
+        />
+      </fieldset>
+    );
+    const link = screen.getByRole("link", { name: "Open on MCPJam" });
+    expect(link).toHaveAttribute("href", "https://app.mcpjam.com/evaluate?run=suite");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
   // Review finding 5. Two of these bands already share one screen; a fixed id
   // makes them indistinguishable the moment the second one gains an action.
   it("scopes the action testid to the notice it belongs to", () => {

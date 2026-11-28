@@ -842,6 +842,11 @@ describe("mcp conformance unit checks", () => {
         );
       }
 
+      // The handshake ends with this notification, before the three probes.
+      if (body.method === "notifications/initialized") {
+        return new Response(null, { status: 202 });
+      }
+
       postCount += 1;
       if (postCount === 1) {
         throw new Error("request boom");
@@ -855,22 +860,14 @@ describe("mcp conformance unit checks", () => {
 
     const results = await runTransportChecks(
       createTransportContext(fetchFn) as any,
-      new Set([
-        "server-accepts-multiple-post-streams",
-        "server-sse-streams-functional",
-      ]),
+      new Set(["server-sse-streams-functional"]),
     );
     const byId = Object.fromEntries(results.map((result) => [result.id, result]));
 
-    expect(byId["server-accepts-multiple-post-streams"]).toMatchObject({
-      status: "failed",
-      details: expect.objectContaining({
-        requestErrors: ["request boom", undefined, undefined],
-      }),
-    });
     expect(byId["server-sse-streams-functional"]).toMatchObject({
       status: "failed",
       details: expect.objectContaining({
+        requestErrors: ["request boom", undefined, undefined],
         eventCounts: [1, 0],
         readErrors: [undefined, "stream boom"],
       }),

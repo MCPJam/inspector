@@ -12,10 +12,12 @@ import {
   useEvalToolMetadata,
 } from "@/lib/mcpjam-agent/eval-tool-metadata";
 import { DEFAULTS, EVAL_DESTRUCTIVE_BUTTON_CLASS } from "./constants";
+import { CaseAccountPicker } from "./shared-account-pickers";
 import {
   advancedConfigForUpdate,
   buildCaseSavePayload,
   buildDraftTestCase,
+  caseAccountsChanged,
   normalizeAdvancedConfig,
   useCaseSaveMutations,
   type CaseSaveForm,
@@ -2018,6 +2020,7 @@ export function TestTemplateEditor({
   const simpleToolsBlock =
     workspaceToolsQuestion === "unset" ? UNSET_TOOLS_BLOCK_REASON : null;
 
+  const accountOverridesChanged = caseAccountsChanged(editForm, currentTestCase);
   const hasUnsavedChanges = useMemo(() => {
     if (!editForm || !currentTestCase) return false;
 
@@ -2078,6 +2081,7 @@ export function TestTemplateEditor({
 
     return (
       editForm.title !== currentTestCase.title ||
+      accountOverridesChanged ||
       editForm.runs !== currentTestCase.runs ||
       normalizedScenario !== normalizedCurrentScenario ||
       normalizedSteps !== normalizedCurrentSteps ||
@@ -2094,6 +2098,7 @@ export function TestTemplateEditor({
     currentAdvancedConfig,
     currentSteps,
     currentTestCase,
+    accountOverridesChanged,
     useWorkspace,
     workspaceIsNegative,
   ]);
@@ -2767,6 +2772,7 @@ export function TestTemplateEditor({
       await updateTestCaseMutation({
         testCaseId: currentTestCase._id,
         ...savePayload,
+        ...(accountOverridesChanged ? { accounts: editForm.accounts } : {}),
         // Pass `null` (not undefined) so the mutation knows to clear a
         // previously-persisted case-level override when the user resets it.
         matchOptions: savePayload.matchOptions ?? null,
@@ -4497,6 +4503,16 @@ export function TestTemplateEditor({
                     </h2>
                   </button>
                 )}
+                {suite && editForm && !isDraft && !checksPage ? (
+                  <CaseAccountPicker
+                    suite={suite}
+                    projectId={projectId}
+                    selections={editForm.accounts ?? currentTestCase?.accounts}
+                    disabled={readOnly}
+                    onChange={(accounts) => setEditForm((current) => current ? { ...current, accounts } : current)}
+                    className="-ml-1.5 mt-1 space-y-1"
+                  />
+                ) : null}
                 {(currentTestCase as { lastSdkWriteAt?: number })
                   ?.lastSdkWriteAt != null ? (
                   <p className="mt-0.5 text-[11px] text-muted-foreground">
@@ -4653,7 +4669,7 @@ export function TestTemplateEditor({
                         environments: projectEnvironmentViews,
                         hostNamesById,
                       })}
-                      cases={[currentTestCase]}
+                      cases={[editForm?.accounts === undefined ? currentTestCase : { ...currentTestCase, accounts: editForm.accounts }]}
                       caseTitle={editForm?.title || currentTestCase.title}
                       initialIterations={
                         editForm?.runs ?? DEFAULTS.RUNS_PER_TEST

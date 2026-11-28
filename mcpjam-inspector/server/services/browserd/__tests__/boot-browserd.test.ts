@@ -128,6 +128,16 @@ describe("bootBrowserd", () => {
     expect(fake.state.envs.MCPJAM_BROWSERD_WINDOW_SIZE).toBeUndefined();
     expect(fake.state.envs.MCPJAM_BROWSERD_HEADLESS).toBeUndefined();
     expect(fake.state.envs.MCPJAM_BROWSERD_NETWORK).toBeUndefined();
+    expect(fake.state.envs.MCPJAM_BROWSERD_FRESH_PROFILE).toBeUndefined();
+  });
+
+  it("asks for an empty profile when the boot needs a fresh one", async () => {
+    const fake = fakeSandbox();
+    const p = bootBrowserd(fake.sandbox, { ...OPTS, freshProfile: true });
+    await tick();
+    fake.emit(READY());
+    await p;
+    expect(fake.state.envs.MCPJAM_BROWSERD_FRESH_PROFILE).toBe("1");
   });
 
   it("asks for the public-only network when the session needs it", async () => {

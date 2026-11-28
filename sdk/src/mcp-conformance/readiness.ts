@@ -28,11 +28,18 @@ import {
   type RawHttpCheckContext,
 } from "./types.js";
 import {
+  legacyInitialize,
+} from "./legacy-handshake.js";
+import {
+  SERVER_INFO_META_KEY,
+  isWellFormedIdentity,
+  readServerIdentityStamp,
+} from "./server-identity.js";
+import {
   DEFAULT_LEGACY_PROTOCOL_VERSION,
   jsonRpcError,
   jsonRpcResult,
   legacyHeaders,
-  legacyInitialize,
   logRecords,
   rawHeadersProbe,
   mirroredToolCall,
@@ -427,7 +434,7 @@ async function sessionTerminationAdvice(
     );
   }
 
-  const { result, sessionId, negotiatedVersion, versionStop } =
+  const { result, sessionId, negotiatedVersion, versionStop, stop } =
     await legacyInitialize(ctx);
   if (result.status < 200 || result.status >= 300 || !sessionId) {
     // No session to terminate — nothing to advise on.
@@ -448,11 +455,12 @@ async function sessionTerminationAdvice(
     }),
     timeoutMs: Math.min(ctx.config.checkTimeout, 3_000),
   });
-  if (versionStop !== undefined) {
-    // The server did not answer with the run's version, so the run grades
-    // nothing on this session. The DELETE still goes out, because ending the
-    // session is how a Streamable HTTP client disconnects, but its answer is
-    // not advice about this run's version.
+  if (stop !== undefined) {
+    // The handshake did not end in a session on the run's version (another
+    // version, a refused `initialize`, or an `initialized` notification that
+    // never arrived), so the run grades nothing on this session. The DELETE
+    // still goes out, because ending the session is how a Streamable HTTP
+    // client disconnects, but its answer is not advice about this server.
     try {
       await deleteRequest;
     } catch {
@@ -547,6 +555,66 @@ async function protocolVersionHeaderAdvice(
     `The server answered a POST carrying no MCP-Protocol-Version header with HTTP ${result.status} and no error. SEP-2243 makes the header REQUIRED on every POST; tolerating its absence is permitted only for servers that still support pre-2025-06-18 clients, and it denies intermediaries the routing signal the header exists to provide`,
     { status: result.status }
   );
+}
+
+/**
+ * What the Server Identity advice says about one `server/discover` result.
+ *
+ * `undefined` when it has nothing to say: an identity that is there but
+ * malformed is a defect Server Discover fails, so advising on it as well
+ * would report one thing twice.
+ */
+export function serverIdentityOutcome(
+  payload: Record<string, unknown>
+): MCPReadinessOutcome | undefined {
+  const identity = readServerIdentityStamp(payload);
+  if (identity === undefined) {
+    return warning(
+      "readiness-server-identity",
+      "SHOULD",
+      `The server did not say who it is: its server/discover result has no ${SERVER_INFO_META_KEY} in _meta. The spec says servers SHOULD include it in every result's _meta, unless configured not to, so a client can show and log which server answered`,
+      { metaKey: SERVER_INFO_META_KEY }
+    );
+  }
+  return isWellFormedIdentity(identity)
+    ? passed("readiness-server-identity", "SHOULD")
+    : undefined;
+}
+
+/**
+ * "Servers SHOULD include [`io.modelcontextprotocol/serverInfo`] in every
+ * result's `_meta`, unless specifically configured not to do so"
+ * (2026-07-28 basic/index.mdx:397-403). One result is read, the
+ * `server/discover` one: it is read-only, and it is the first thing a client
+ * sees of the server.
+ */
+async function serverIdentityAdvice(
+  ctx: RawHttpCheckContext
+): Promise<MCPReadinessOutcome | undefined> {
+  if (ctx.config.era !== "modern") {
+    // The 2025 revisions name the server in `InitializeResult.serverInfo`,
+    // which is required there. Nothing to advise.
+    return undefined;
+  }
+  const version = ctx.config.protocolVersion ?? "2026-07-28";
+  // The runner already asked on a raw-only pin; otherwise ask once here.
+  const result =
+    ctx.discover ??
+    (await rawRequest(ctx, {
+      headers: modernHeaders({
+        protocolVersion: version,
+        method: "server/discover",
+      }),
+      body: modernRequestBody({
+        id: 9402,
+        method: "server/discover",
+        protocolVersion: version,
+      }),
+      timeoutMs: Math.min(ctx.config.checkTimeout, 5_000),
+    }));
+  const payload = jsonRpcResult(result);
+  // No result to read (auth, an error, a refused pin) says nothing either way.
+  return payload === undefined ? undefined : serverIdentityOutcome(payload);
 }
 
 /** The `inputSchema` `toolName` declares in a `tools/list` read right now. */
@@ -684,6 +752,7 @@ export async function collectRawAdvice(
       "readiness-protocol-version-header-required",
       () => protocolVersionHeaderAdvice(ctx),
     ],
+    ["readiness-server-identity", () => serverIdentityAdvice(ctx)],
     ["readiness-log-level-filtering", () => logLevelFilteringAdvice(ctx)],
   ];
   // An advice left out never sends its probe, not just its result.

@@ -19,9 +19,11 @@ import type { EvalIteration } from "../evals/types";
 import { describeOrgKeysRefusal, runRefusal } from "@/lib/org-keys-refusal";
 import { recordedNoPrivateProviderError } from "@/lib/eval-iteration-error";
 import { chainForQuickRunIteration } from "./simple-case/quick-run-chain";
+import { neverStartedReason } from "@/lib/eval-iteration-error";
 
 /** Recorded error categories. */
 export type RunErrorCause =
+  | "notStarted"
   | "serverUnreachable"
   | "serverError"
   | "testInput"
@@ -46,6 +48,7 @@ export type RunErrorBreakdown = {
 };
 
 const CAUSE_COPY: Record<RunErrorCause, string> = {
+  notStarted: "The run didn't start",
   serverUnreachable: "Couldn't connect to your MCP server",
   serverError: "Your MCP server returned an error",
   testInput: "Your server rejected the tool inputs saved in the test",
@@ -216,6 +219,7 @@ function classifyReason(
 
 /** Keep cause categories in a stable order. */
 const CAUSE_ORDER: RunErrorCause[] = [
+  "notStarted",
   "serverUnreachable",
   "serverError",
   "testInput",
@@ -281,7 +285,11 @@ export function buildRunErrorBreakdown(input: {
       diagnostic?.chain ??
       input.chains?.get(iteration._id) ??
       chainForQuickRunIteration(iteration);
-    const primary = classifyIterationError(iteration, chain);
+    // A launch refused before anything ran stored its reason; say that.
+    const notStarted = neverStartedReason(iteration);
+    const primary = notStarted
+      ? "notStarted"
+      : classifyIterationError(iteration, chain);
     const entries = new Map<RunErrorCause, Set<string>>();
     const add = (cause: RunErrorCause, message: string) => {
       const messages = entries.get(cause) ?? new Set<string>();
@@ -298,7 +306,8 @@ export function buildRunErrorBreakdown(input: {
     }
     if (primary) {
       const message =
-        iteration.error?.trim() || diagnostic?.observed?.failure?.trim();
+        notStarted ??
+        (iteration.error?.trim() || diagnostic?.observed?.failure?.trim());
       if (message) add(primary, message);
       else if (!entries.has(primary)) add(primary, "");
     }

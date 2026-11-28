@@ -23,6 +23,8 @@ export type {
 
 export {
   CHECK_ERAS,
+  CHECK_FIRST_PROTOCOL_VERSION,
+  checkRunsOnVersion,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
   MCP_LOG_LEVELS,
@@ -30,6 +32,7 @@ export {
   MCP_READINESS_IDS,
   PROTOCOL_VERSION_ERAS,
   READINESS_ERAS,
+  REMOVED_MCP_CHECK_IDS,
   RETIRED_MCP_CHECK_IDS,
 } from "./types.js";
 

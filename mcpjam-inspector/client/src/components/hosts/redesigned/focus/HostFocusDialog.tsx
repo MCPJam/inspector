@@ -23,6 +23,8 @@ import { BrowserTab } from "./BrowserTab";
 import { ComputerTab } from "./ComputerTab";
 import { ProtocolTab } from "./ProtocolTab";
 import { AppsExtensionTab } from "./AppsExtensionTab";
+import { HOSTED_MODE } from "@/lib/config";
+import { ClientEventsTab } from "./ClientEventsTab";
 import { HostFocusTabBar } from "./HostFocusTabBar";
 import {
   activeHostFocusTab,
@@ -276,6 +278,7 @@ export function HostFocusDialog({
             {activeTab === "browser" ? (
               <BrowserTab
                 projectId={projectId}
+                hostId={hostId}
                 draft={draft}
                 onDraftChange={onDraftChange}
               />
@@ -293,6 +296,14 @@ export function HostFocusDialog({
                 draft={draft}
                 onDraftChange={onDraftChange}
                 attention={attention}
+              />
+            ) : null}
+            {activeTab === "events" ? (
+              <ClientEventsTab
+                key={hostId}
+                draft={draft}
+                onDraftChange={onDraftChange}
+                hosted={HOSTED_MODE}
               />
             ) : null}
             {activeTab === "apps" ? (

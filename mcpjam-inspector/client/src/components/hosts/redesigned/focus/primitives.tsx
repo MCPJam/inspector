@@ -155,6 +155,10 @@ export function CapabilityToggleRow({
   );
 }
 
+/** The selected item of the Behavior tab's outline toggle groups. */
+export const TRI_SELECTOR_ACTIVE_CLASSES =
+  "data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:hover:bg-primary data-[state=on]:hover:text-primary-foreground";
+
 /**
  * Thin wrapper around ToggleGroup so callers don't reimplement the
  * single-selection wiring. Use for SEP-1865 sandbox mode etc.

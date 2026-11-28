@@ -1,7 +1,7 @@
 import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 import { useProjectEnvironmentsVisible } from "@/hooks/useProjectEnvironmentsEnabled";
 import * as React from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Hammer,
   House,
@@ -27,7 +27,6 @@ import {
   MessagesSquare,
   Globe,
   Radio,
-  Zap,
   ClipboardCheck,
 } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
@@ -58,11 +57,10 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
-import { InviteTeamSignUpDialog } from "@/components/auth/InviteTeamSignUpDialog";
-import { consumePendingInviteDialog } from "@/lib/pending-invite-dialog";
 import { SidebarContextSwitcher } from "@/components/sidebar/sidebar-context-switcher";
 import { SidebarTrialCountdown } from "@/components/sidebar/sidebar-trial-countdown";
 import { SidebarCredits } from "@/components/sidebar/sidebar-credits";
+import { SidebarUpgradePrompt } from "@/components/sidebar/sidebar-upgrade-prompt";
 import { InviteTeamMembersDialog } from "@/components/organization/InviteTeamMembersDialog";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
 import { Button } from "@mcpjam/design-system/button";
@@ -250,16 +248,6 @@ export const navigationSections: NavSection[] = [
         icon: MessageCircle,
       },
       {
-        // Agent runs fired by MCP Events on MCPJam's hosted runner. Sits next
-        // to Playground because it is the unattended version of the same
-        // thing: a model with the project's servers, reacting to an event
-        // instead of a message.
-        title: "Triggers",
-        url: "/triggers",
-        icon: Zap,
-        featureFlag: EVENTS_FEATURE_FLAG,
-      },
-      {
         title: "Environments",
         url: "/environments",
         icon: Layers,
@@ -373,6 +361,7 @@ export const navigationSections: NavSection[] = [
         title: "Events",
         url: "/events",
         icon: Radio,
+        badge: "New",
         featureFlag: EVENTS_FEATURE_FLAG,
       },
       {
@@ -382,7 +371,6 @@ export const navigationSections: NavSection[] = [
         title: "WebMCP",
         url: "/webmcp",
         icon: Globe,
-        badge: "New",
         featureFlag: WEBMCP_INSPECTOR_FEATURE_FLAG,
       },
     ],
@@ -588,7 +576,6 @@ export function MCPSidebar({
     } else restartAndInstall();
   };
   const [showInviteDialog, setShowInviteDialog] = useState(false);
-  const [showInviteSignUpNudge, setShowInviteSignUpNudge] = useState(false);
   const learnMore = useLearnMore();
   const appNavigate = useAppNavigate();
   const { state, isMobile } = useSidebar();
@@ -596,21 +583,10 @@ export function MCPSidebar({
   const activeProject = projects[activeProjectId];
   const canOpenInviteDialog =
     isAuthenticated && !!user && !!activeOrganizationId;
-  // Guests get the CTA too (hosted only — a local/self-hosted install has no
-  // WorkOS to sign up through). The click opens a sign-up nudge instead of the
-  // share dialog, and the nudge's marker reopens it after the round trip.
-  // Hidden while auth resolves so signed-in users never see a guest control.
-  const showGuestInviteCta = HOSTED_MODE && !user && !authResolving;
-  const shouldShowInviteCta = canOpenInviteDialog || showGuestInviteCta;
-  // Reopen the invite dialog for a guest who left through the sign-up nudge:
-  // the marker outlives the WorkOS page reload in sessionStorage, and this
-  // effect holds off consuming it until everything the dialog needs (authed
-  // user + active project) has actually resolved.
-  useEffect(() => {
-    if (!canOpenInviteDialog) return;
-    if (!consumePendingInviteDialog()) return;
-    setShowInviteDialog(true);
-  }, [canOpenInviteDialog]);
+  // Hosted guests get the create-account card instead (a local install has no
+  // WorkOS to sign up through). Hidden while auth resolves so signed-in users
+  // never see a guest control.
+  const showGuestSignUpPrompt = HOSTED_MODE && !user && !authResolving;
   const trialBilling = useOrganizationBillingStatus(
     activeProject?.organizationId ?? null,
   );
@@ -914,18 +890,19 @@ export function MCPSidebar({
                   buildOrganizationPath(activeOrganizationId, "plans"),
                 )
               }
+              onBuyCredits={() =>
+                appNavigate(
+                  `${buildOrganizationPath(activeOrganizationId, "billing")}?topup=open`,
+                )
+              }
             />
           ) : null}
-          {shouldShowInviteCta ? (
+          {canOpenInviteDialog ? (
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton
                   tooltip="Invite team members"
-                  onClick={() =>
-                    showGuestInviteCta
-                      ? setShowInviteSignUpNudge(true)
-                      : setShowInviteDialog(true)
-                  }
+                  onClick={() => setShowInviteDialog(true)}
                 >
                   <UserPlus className="h-4 w-4" />
                   <span className="group-data-[collapsible=icon]:hidden">
@@ -943,6 +920,12 @@ export function MCPSidebar({
               className="mt-1"
             />
           ) : null}
+          {showGuestSignUpPrompt || canOpenInviteDialog ? (
+            <SidebarUpgradePrompt
+              isGuest={showGuestSignUpPrompt}
+              organizationId={activeOrganizationId ?? null}
+            />
+          ) : null}
           <SidebarUser />
         </SidebarFooter>
       </Sidebar>
@@ -952,12 +935,6 @@ export function MCPSidebar({
           organizationId={activeOrganizationId}
           organizationName={activeOrganizationName}
           onClose={() => setShowInviteDialog(false)}
-        />
-      ) : null}
-      {showGuestInviteCta ? (
-        <InviteTeamSignUpDialog
-          isOpen={showInviteSignUpNudge}
-          onClose={() => setShowInviteSignUpNudge(false)}
         />
       ) : null}
       {learnMoreEnabled && (
