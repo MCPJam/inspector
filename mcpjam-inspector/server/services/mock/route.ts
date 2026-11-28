@@ -22,7 +22,7 @@ import { actorDigest, resolveMock, type ResolvedMock } from "./backend.js";
 import { openAuthorizedReal, type OpenReal } from "./connection.js";
 import { checkForwardWithBackend, type ForwardVerdict } from "./forward-policy.js";
 import { forwardingRealServer, type ForwardingReal } from "./forwarding.js";
-import { MockRefusal, mockRefusalResponse } from "./refusal.js";
+import { IN_APP_REFUSAL_MESSAGES, MockRefusal, mockRefusalResponse } from "./refusal.js";
 import type { MockDialProfile, MockDoorContext } from "./registry.js";
 
 export const MOCK_VERSION_HEADER = "x-mcpjam-mock-version";
@@ -114,7 +114,10 @@ export async function serveMock(
       throw new MockRefusal("forbidden");
     }
   } catch (error) {
-    if (error instanceof MockRefusal) return mockRefusalResponse(error.kind, { authMethod: caller.authMethod });
+    if (error instanceof MockRefusal) {
+      const message = door.kind === "in-process" ? IN_APP_REFUSAL_MESSAGES[error.kind] : undefined;
+      return mockRefusalResponse(error.kind, { authMethod: caller.authMethod, ...(message ? { message } : {}) });
+    }
     logger.error("[mock-route] resolving a mock failed", error, { mockId });
     return mockRefusalResponse("unavailable");
   }

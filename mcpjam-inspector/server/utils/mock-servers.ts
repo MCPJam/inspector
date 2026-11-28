@@ -22,7 +22,7 @@ import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 import type { ManagerCallerContext } from "../routes/web/auth.js";
 import { currentMockAnswerSink } from "../services/mock/answer-marks.js";
 import { mockServerAddress } from "../services/mock/address.js";
-import { mockRefusalResponse, type MockRefusalKind } from "../services/mock/refusal.js";
+import { IN_APP_REFUSAL_MESSAGES, mockRefusalResponse, type MockRefusalKind } from "../services/mock/refusal.js";
 import { getMockInProcessHandler, type MockDialProfile } from "../services/mock/registry.js";
 import { logger } from "./logger.js";
 
@@ -65,7 +65,9 @@ const REFUSAL_BY_STATUS: Record<number, MockRefusalKind> = {
 
 function refusalFor(error: unknown, authMethod?: string): Response {
   const status = error instanceof WebRouteError ? error.status : 0;
-  return mockRefusalResponse(REFUSAL_BY_STATUS[status] ?? "unavailable", { authMethod });
+  const kind = REFUSAL_BY_STATUS[status] ?? "unavailable";
+  const message = IN_APP_REFUSAL_MESSAGES[kind];
+  return mockRefusalResponse(kind, { authMethod, ...(message ? { message } : {}) });
 }
 
 function entryOf(authorized: MockAuthorized): { token: string; mock: MockAuthorizeEntry } {
