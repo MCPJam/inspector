@@ -25,7 +25,7 @@ import {
   capabilitiesForRevision,
   MODERN_REVISION,
   revisionOf,
-} from "./revision.js";
+} from "../server/revision.js";
 import type { MockRecords } from "./record-store.js";
 import type { MockObserver } from "./mock-observer.js";
 import {
@@ -42,7 +42,8 @@ import type {
   MockRealServerInfo,
 } from "./real-server.js";
 import { answerSkillsMethod, registerItemHandlers } from "./item-handlers.js";
-import { definitionServesSkills, skillsCapability } from "./mock-skills.js";
+import { definitionServesSkills } from "./mock-skills.js";
+import { skillsCapability } from "../server/skills.js";
 import { ownsItems } from "./resolve-items.js";
 import { assertRequestForward, registerToolHandlers } from "./tool-handlers.js";
 

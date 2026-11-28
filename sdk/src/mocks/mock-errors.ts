@@ -89,6 +89,15 @@ export function methodUnavailableError(
 }
 
 /** A method no side of the mock serves: JSON-RPC method not found, not an internal error. */
+/** A page cursor the mock did not issue, or one from before the list changed. */
+export function invalidMockCursorError(): ProtocolError {
+  return new ProtocolError(
+    ProtocolErrorCode.InvalidParams,
+    "That page cursor is not valid for this mock. List again without a cursor.",
+    { mockCode: "mock_invalid_cursor" }
+  );
+}
+
 export function unknownMethodError(method: string): ProtocolError {
   return new ProtocolError(
     MOCK_ERROR_CODES.methodUnavailable,

@@ -51,16 +51,20 @@
  * PIN: modelcontextprotocol/ext-skills @ c1aa87e (`specification/stable/skills.mdx`).
  */
 
-import { z } from "zod";
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import type { McpServer } from "@modelcontextprotocol/server";
+import {
+  SKILLS_EXTENSION_ID,
+  registerSkillsMethods,
+  skillsCapability,
+} from "@mcpjam/sdk/server";
 import {
   SKILLS_BUNDLE_CONTENTS,
   SKILLS_BUNDLE_ENTRIES,
-  type SkillsBundleEntry,
 } from "../generated/SkillsBundle.generated.js";
 
 /** The extension id, and the capability value the server declares. */
-export const SKILLS_EXTENSION_ID = "io.modelcontextprotocol/skills";
+export { SKILLS_EXTENSION_ID };
 
 /**
  * Declared capabilities for the extension.
@@ -72,9 +76,7 @@ export const SKILLS_EXTENSION_ID = "io.modelcontextprotocol/skills";
  * manifest already enumerates every file, and advertising an opt-in we cannot
  * answer is exactly the undeclared-surface problem in reverse.
  */
-export const SKILLS_EXTENSION_CAPABILITY = {
-  [SKILLS_EXTENSION_ID]: {},
-} as const;
+export const SKILLS_EXTENSION_CAPABILITY = skillsCapability();
 
 /**
  * How long a client may cache a `skills/list` or `skills/get` result
@@ -87,31 +89,7 @@ export const SKILLS_EXTENSION_CAPABILITY = {
  * so its SEP-2549 cache scope is `public`.
  */
 export const SKILLS_LIST_TTL_MS = 60 * 60 * 1000;
-export const SKILLS_LIST_CACHE_SCOPE = "public";
-
-/** JSON-RPC Invalid params — what the draft mandates for an unknown skill URI. */
-const INVALID_PARAMS = -32602;
-
-class InvalidSkillParamsError extends Error {
-  readonly code = INVALID_PARAMS;
-  constructor(message: string) {
-    super(message);
-    this.name = "InvalidSkillParamsError";
-  }
-}
-
-const listParamsSchema = z.object({ cursor: z.string().optional() }).loose();
-const getParamsSchema = z.object({ uri: z.string().min(1) }).loose();
-
-/**
- * The wire result schemas.
- *
- * Loose on purpose. These validate what WE emit, and the bundle is generated
- * from a gate that has already checked far more than a shape — a strict mirror
- * here would be a second, weaker copy of the generator's rules that could
- * disagree with it.
- */
-const looseResult = z.looseObject({});
+export const SKILLS_LIST_CACHE_SCOPE = "public" as const;
 
 /**
  * The media type for a skill file.
@@ -123,14 +101,6 @@ function mimeTypeFor(uri: string): string {
   if (uri.endsWith(".md")) return "text/markdown";
   if (uri.endsWith(".yaml") || uri.endsWith(".yml")) return "application/yaml";
   return "text/plain";
-}
-
-function entryFor(uri: string): SkillsBundleEntry {
-  const entry = SKILLS_BUNDLE_ENTRIES.find((skill) => skill.uri === uri);
-  if (!entry) {
-    throw new InvalidSkillParamsError(`Unknown skill URI: ${uri}`);
-  }
-  return entry;
 }
 
 /**
@@ -172,39 +142,24 @@ export function resourceMetadataFor(uri: string): {
  * announce itself.
  */
 export function registerSkillsSurface(server: McpServer): void {
-  server.server.setRequestHandler(
-    "skills/list",
-    { params: listParamsSchema, result: looseResult },
-    async (params) => {
-      // The whole catalog fits one page, so no cursor is ever issued and none
-      // is valid. Rejecting an unrecognised cursor beats ignoring it: a client
-      // that believes it is paginating would otherwise loop on page one
-      // forever, having been told nothing was wrong.
-      const cursor = params.cursor;
+  registerSkillsMethods(server, {
+    ttlMs: SKILLS_LIST_TTL_MS,
+    cacheScope: SKILLS_LIST_CACHE_SCOPE,
+    // The whole catalog fits one page, so no cursor is ever issued and none
+    // is valid. Rejecting an unrecognised cursor beats ignoring it: a client
+    // that believes it is paginating would otherwise loop on page one
+    // forever, having been told nothing was wrong.
+    list: (cursor) => {
       if (cursor !== undefined) {
-        throw new InvalidSkillParamsError(
+        throw new ProtocolError(
+          ProtocolErrorCode.InvalidParams,
           `Unknown cursor: ${cursor}. This server returns its whole skill catalog in one page and issues no cursor.`
         );
       }
-      return {
-        skills: SKILLS_BUNDLE_ENTRIES,
-        ttlMs: SKILLS_LIST_TTL_MS,
-        cacheScope: SKILLS_LIST_CACHE_SCOPE,
-      };
-    }
-  );
-
-  server.server.setRequestHandler(
-    "skills/get",
-    { params: getParamsSchema, result: looseResult },
-    // The SDK fills `ttlMs` / `cacheScope` only on the base protocol's
-    // cacheable methods, so an extension method has to carry its own.
-    async (params) => ({
-      skill: entryFor(params.uri),
-      ttlMs: SKILLS_LIST_TTL_MS,
-      cacheScope: SKILLS_LIST_CACHE_SCOPE,
-    })
-  );
+      return { skills: SKILLS_BUNDLE_ENTRIES };
+    },
+    get: (uri) => SKILLS_BUNDLE_ENTRIES.find((skill) => skill.uri === uri),
+  });
 
   for (const [uri, text] of Object.entries(SKILLS_BUNDLE_CONTENTS)) {
     const mimeType = mimeTypeFor(uri);

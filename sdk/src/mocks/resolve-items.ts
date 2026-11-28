@@ -8,7 +8,7 @@ import type {
 import { MCP_APP_MIME_TYPE } from "./definition-types.js";
 import type { MockDefinition } from "./definition-types.js";
 import { fillInputs } from "./saved-answers.js";
-import { matchTemplate } from "./uri-template.js";
+import { matchTemplate } from "../server/uri-template.js";
 
 /**
  * Prompts, resources and resource templates as a client sees them: the real

@@ -19,6 +19,8 @@ export default defineConfig({
     "src/mocks/index.ts",
     // The definition's types and validator alone: browser-safe, for a check before a save.
     "src/mocks/definition.ts",
+    // Building blocks shared by the mock servers and the hosted MCP server: Node and Workers safe.
+    "src/server/index.ts",
     "src/skill-reference.ts",
     "src/model-factory.ts",
     "src/model-native-ids.ts",
