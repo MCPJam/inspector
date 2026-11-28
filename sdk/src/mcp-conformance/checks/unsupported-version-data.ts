@@ -44,9 +44,14 @@ export interface UnsupportedVersionData {
   problems: string[];
 }
 
-/** Read `error.data` of a `-32022` answer and say what the schema finds missing. */
+/**
+ * Read `error.data` of a `-32022` answer and say what the schema finds
+ * missing. With `askedFor`, `requested` must also be that version: it is
+ * "the protocol version that was requested by the client".
+ */
 export function readUnsupportedVersionData(
-  data: unknown
+  data: unknown,
+  askedFor?: string
 ): UnsupportedVersionData {
   if (!isRecord(data)) {
     return {
@@ -69,6 +74,10 @@ export function readUnsupportedVersionData(
   if (typeof requested !== "string") {
     problems.push(
       "error.data.requested must be the protocol version the client asked for, as a string"
+    );
+  } else if (askedFor !== undefined && requested !== askedFor) {
+    problems.push(
+      `error.data.requested must be the version the client asked for (${JSON.stringify(askedFor)}); this error has ${JSON.stringify(requested)}`
     );
   }
 

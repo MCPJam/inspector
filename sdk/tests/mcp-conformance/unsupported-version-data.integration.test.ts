@@ -34,6 +34,12 @@ interface Fixture {
  */
 async function serve(
   refusalData: (requested: string) => unknown,
+  options: {
+    /** What sits in front of the server answers the probe with this page. */
+    gatewayPage?: number;
+    /** Answer the probe with HeaderMismatch instead of -32022. */
+    headerMismatch?: boolean;
+  } = {},
 ): Promise<Fixture> {
   const versions: Array<string | undefined> = [];
   const refusals: unknown[] = [];
@@ -57,6 +63,20 @@ async function serve(
         res.writeHead(status, { "content-type": "application/json" });
         res.end(JSON.stringify({ jsonrpc: "2.0", id: message.id ?? null, ...payload }));
       };
+      if (version !== SUPPORTED_VERSION && options.gatewayPage) {
+        res.writeHead(options.gatewayPage, {
+          "content-type": "text/html; charset=utf-8",
+          via: "1.1 test-gateway",
+        });
+        res.end("<html><body>Bad gateway</body></html>");
+        return;
+      }
+      if (version !== SUPPORTED_VERSION && options.headerMismatch) {
+        send(400, {
+          error: { code: -32020, message: "Header mismatch: MCP-Protocol-Version" },
+        });
+        return;
+      }
       if (version !== SUPPORTED_VERSION) {
         const data = refusalData(String(version));
         refusals.push(data);
@@ -172,5 +192,42 @@ describe("2026-07-28: the answer to a version the server does not speak", () => 
 
     expect(check.status).toBe("failed");
     expect(check.error?.message).toContain("error.data must be an object");
+  });
+
+  it("fails when data.requested names another version than the one asked for", async () => {
+    const fixture = await serve(() => ({
+      supported: [SUPPORTED_VERSION],
+      requested: "2025-11-25",
+    }));
+    const { result, check } = await run(fixture);
+
+    expect(check.status).toBe("failed");
+    expect(check.error?.message).toContain(
+      'error.data.requested must be the version the client asked for ("1999-01-01"); this error has "2025-11-25"',
+    );
+    expect(result.passed).toBe(false);
+  });
+});
+
+describe("2026-07-28: answers check 31 cannot judge", () => {
+  it.each([502, 429])(
+    "could not run when a gateway answers the probe with %i",
+    async (status) => {
+      const fixture = await serve(() => undefined, { gatewayPage: status });
+      const { result, check } = await run(fixture);
+
+      expect([check.status, check.skipReason]).toEqual(["skipped", "could-not-run"]);
+      expect(check.error?.message).toContain("no MCP-layer response was observed");
+      // Yellow, not red: the run is incomplete, not failed.
+      expect(result.outcome).toBe("incomplete");
+    },
+  );
+
+  it("could not run when the server answers HeaderMismatch to a probe whose versions agree", async () => {
+    const fixture = await serve(() => undefined, { headerMismatch: true });
+    const { check } = await run(fixture);
+
+    expect([check.status, check.skipReason]).toEqual(["skipped", "could-not-run"]);
+    expect(check.error?.message).toContain("HeaderMismatch (-32020)");
   });
 });
