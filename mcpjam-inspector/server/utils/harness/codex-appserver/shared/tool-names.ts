@@ -126,8 +126,8 @@ export const CODEX_APPSERVER_TOOL_NAMES = {
  *
  * MEASURED against the pinned CLI, not copied from the exec transport: codex
  * 0.149.1's app-server declares `exec_command` (a PTY-backed unified exec
- * taking `{cmd: string}`), NOT the `shell` tool `codex exec` reports. See
- * `.spike-codex-appserver/RESULTS.md`. `apply_patch` has no function-tool
+ * taking `{cmd: string}`), NOT the `shell` tool `codex exec` reports.
+ * `apply_patch` has no function-tool
  * declaration at all — file mutation runs through the shell and is REPORTED as
  * a `fileChange` item — but it remains the honest native name for the action.
  */

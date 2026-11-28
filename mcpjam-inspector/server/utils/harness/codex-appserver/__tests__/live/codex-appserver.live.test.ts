@@ -16,7 +16,7 @@
  *   MCPJAM_CODEX_BIN=/path/to/codex \
  *   npx vitest run --project server server/utils/harness/codex-appserver/__tests__/live
  *
- * The MODEL is scripted (`.spike-codex-appserver/probe/fake-responses-server.mjs`),
+ * The MODEL is scripted (`fake-responses-server.mjs` beside this file),
  * so these assertions are deterministic and cost nothing. What is real is
  * everything between the bridge and the model: the JSON-RPC protocol, the
  * approval round trip, the sandboxed execution and the stream parts.
@@ -88,10 +88,7 @@ spawn(${JSON.stringify(codexBin)}, process.argv.slice(2), { stdio: "inherit" })
 
 async function startFakeModel(script: unknown[]): Promise<FakeServer> {
   const { createFakeResponsesServer } = (await import(
-    /* @vite-ignore */ join(
-      __dirname,
-      "../../../../../../../.spike-codex-appserver/probe/fake-responses-server.mjs",
-    )
+    /* @vite-ignore */ join(__dirname, "fake-responses-server.mjs")
   )) as {
     createFakeResponsesServer(options: {
       script: unknown[];

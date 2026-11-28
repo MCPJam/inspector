@@ -1,9 +1,9 @@
-// A scripted stand-in for the OpenAI Responses API, so the app-server probes
-// and the adapter's live tests are deterministic and cost nothing.
+// A scripted stand-in for the OpenAI Responses API, so the adapter's live
+// tests are deterministic and cost nothing.
 //
 // WHY THIS EXISTS. Every interesting app-server behaviour (approval requests,
 // tool calls, interrupts) is downstream of what the MODEL decides to do. Driving
-// that with a real model makes the gates nondeterministic and spends gateway
+// that with a real model makes the run nondeterministic and spends gateway
 // budget per run. This server decides instead: a script says "turn 1 calls
 // shell, turn 2 answers with text", and the same bytes come back every time.
 //

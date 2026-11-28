@@ -7,8 +7,8 @@
  * and the translator are two views of one decision, which is why both read the
  * names from `shared/tool-names.ts`.
  *
- * The native names were MEASURED against the pinned CLI rather than assumed
- * (`.spike-codex-appserver/RESULTS.md`): app-server declares `exec_command`,
+ * The native names were MEASURED against the pinned CLI rather than assumed:
+ * app-server declares `exec_command`,
  * taking a shell STRING, where `codex exec` reports `shell`. Copying the old
  * transport's catalog would have put a name on the trace that never runs.
  *

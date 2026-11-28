@@ -3,8 +3,8 @@
  * `codex app-server` protocol instead of `codex exec`.
  *
  * See `codex-appserver-harness.ts` for why this exists rather than wrapping
- * `@ai-sdk/harness-codex`, and `.spike-codex-appserver/RESULTS.md` for the
- * protocol measurements it is built on.
+ * `@ai-sdk/harness-codex`, and `PROBES.md` for the protocol measurements it
+ * is built on.
  */
 export {
   createCodexAppServer,
