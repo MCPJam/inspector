@@ -1,33 +1,47 @@
 /**
- * The mock route's handler.
+ * The mock route's handler, for both doors.
  *
- * The bearer is the caller's own MCPJam API key or OAuth token. It proves who
- * they are to the backend and is never a credential for anything else. The
- * backend decides on every request whether this caller may open this mock, and
- * the version served is the backend's answer; nothing about the answer is
- * kept for the next request.
+ * Over HTTP the bearer is the caller's own MCPJam API key or OAuth token. It
+ * proves who they are to the backend and opens the real server, and it is
+ * never a grant. In process, a dialer passes the grant it holds together with
+ * the auth context it just authorized with, and the grant is honored only with
+ * that context (`registry.ts`). Either way the backend decides on every
+ * request whether this caller may open this mock, and the version served is
+ * the backend's answer; nothing about the answer is kept for the next request.
  *
- * A mock is built for one caller and one request, with the SDK runtime, so
- * nothing of one caller's access reaches another.
+ * A mock is built for one caller and one request, with the SDK runtime and
+ * that caller's own connection to the real server (`forwarding.ts`), so
+ * nothing of one caller's credentials reaches another.
  */
-import { buildMock, NO_REAL_SERVER, type MockRealServer } from "@mcpjam/sdk/mocks";
+import { buildMock, NO_REAL_SERVER, type MockCallEvent, type MockRealServer } from "@mcpjam/sdk/mocks";
 import type { ManagerCallerContext } from "../../routes/web/auth.js";
 import { logger } from "../../utils/logger.js";
+import type { MockCallMark } from "../../../shared/mock-answer-span.js";
+import { MOCK_CALLS_HEADER, formatMockCalls } from "./answer-marks.js";
 import { actorDigest, resolveMock, type ResolvedMock } from "./backend.js";
+import { openAuthorizedReal, type OpenReal } from "./connection.js";
+import { checkForwardWithBackend, type ForwardVerdict } from "./forward-policy.js";
+import { forwardingRealServer, type ForwardingReal } from "./forwarding.js";
 import { MockRefusal, mockRefusalResponse } from "./refusal.js";
+import type { MockDialProfile, MockDoorContext } from "./registry.js";
 
 export const MOCK_VERSION_HEADER = "x-mcpjam-mock-version";
+export const DEFAULT_MOCK_PROFILE: MockDialProfile = { timeoutMs: 30_000 };
 
-/** Who is calling and how they proved it. */
-export interface MockDoor {
-  bearerToken: string;
-  caller: ManagerCallerContext;
-}
+/** Who is calling and how they proved it, whichever door they came through. */
+export type MockDoor =
+  | { kind: "http"; bearerToken: string; caller: ManagerCallerContext; profile: MockDialProfile }
+  | ({ kind: "in-process" } & MockDoorContext);
 
 export interface MockRouteDeps {
   resolve?: typeof resolveMock;
-  /** The caller's connection to the mock's real server (default: none, so only saved answers serve). */
-  realFor?: (resolved: ResolvedMock, door: MockDoor, signal: AbortSignal) => Promise<MockRealServer>;
+  open?: OpenReal;
+  /** The forwarding policy and access check (default: the backend's). */
+  check?: (input: {
+    resolved: ResolvedMock;
+    door: MockDoor;
+    signal?: AbortSignal;
+  }) => Promise<ForwardVerdict>;
 }
 
 /**
@@ -42,42 +56,147 @@ function identityOf({ authMethod, workosUserId, mcpjamOrganizationId }: ManagerC
   };
 }
 
+/** The response with these headers added, holding the connection until its body is read or dropped. */
+function finish(response: Response, added: Record<string, string>, release: () => Promise<void>) {
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(added)) headers.set(name, value);
+  const init = { status: response.status, statusText: response.statusText, headers };
+  // `release` never rejects: it logs its own failure.
+  const settle = () => void release();
+  if (!response.body) {
+    settle();
+    return new Response(null, init);
+  }
+  const reader = response.body.getReader();
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        try {
+          const { done, value } = await reader.read();
+          if (done) {
+            controller.close();
+            settle();
+          } else {
+            controller.enqueue(value);
+          }
+        } catch (error) {
+          settle();
+          controller.error(error);
+        }
+      },
+      async cancel(reason) {
+        try {
+          await reader.cancel(reason);
+        } finally {
+          settle();
+        }
+      },
+    }),
+    init,
+  );
+}
+
 export async function serveMock(
   request: Request,
   mockId: string,
   door: MockDoor,
   deps: MockRouteDeps = {},
 ): Promise<Response> {
+  const { bearerToken } = door;
   const caller = identityOf(door.caller);
+  const grant = door.kind === "in-process" ? door.grant : undefined;
   let resolved: ResolvedMock;
   try {
-    resolved = await (deps.resolve ?? resolveMock)({ mockId, caller, bearerToken: door.bearerToken });
+    resolved = await (deps.resolve ?? resolveMock)({ mockId, caller, bearerToken, grant });
+    // A grant minted for one project opens nothing in another, whatever the
+    // dialer's own context says.
+    if (door.kind === "in-process" && door.projectId !== resolved.projectId) {
+      throw new MockRefusal("forbidden");
+    }
   } catch (error) {
     if (error instanceof MockRefusal) return mockRefusalResponse(error.kind, { authMethod: caller.authMethod });
     logger.error("[mock-route] resolving a mock failed", error, { mockId });
     return mockRefusalResponse("unavailable");
   }
+
+  const check = (signal?: AbortSignal) =>
+    deps.check
+      ? deps.check({ resolved, door, signal })
+      : checkForwardWithBackend({
+          mockId,
+          version: resolved.version,
+          caller,
+          bearerToken,
+          grant,
+          signal,
+        });
+  let forwarding: ForwardingReal | undefined;
+  let real: MockRealServer = NO_REAL_SERVER;
+  if (resolved.baseServerId) {
+    forwarding = forwardingRealServer({
+      resolved: { ...resolved, baseServerId: resolved.baseServerId },
+      caller,
+      bearerToken,
+      profile: door.profile,
+      signal: request.signal,
+      open: deps.open ?? openAuthorizedReal,
+      check,
+    });
+    real = forwarding.real;
+  }
+  const marks: MockCallMark[] = [];
+  const observer = (event: MockCallEvent) => {
+    if (event.cause !== undefined) {
+      logger.warn("[mock-route] a forward was refused: the policy could not be read", {
+        mockId,
+        error: event.cause instanceof Error ? event.cause.name : typeof event.cause,
+      });
+    }
+    const mark: MockCallMark = {
+      mockId,
+      version: resolved.version,
+      tool: event.tool,
+      source: event.source,
+      ...(event.realTool && resolved.baseServerId
+        ? { realServerId: resolved.baseServerId, realTool: event.realTool }
+        : {}),
+      ...(event.caseIndex !== undefined ? { caseIndex: event.caseIndex } : {}),
+      ...(event.catchAll ? { catchAll: true } : {}),
+      ...(event.refusal ? { refusal: event.refusal } : {}),
+    };
+    marks.push(mark);
+    // In process the mark goes straight to the running call, so an answer that
+    // streams is marked too; its headers were sent before the call settled.
+    if (door.kind === "in-process") door.onCall?.(mark);
+  };
   try {
-    const real = (await deps.realFor?.(resolved, door, request.signal)) ?? NO_REAL_SERVER;
-    const response = await buildMock(resolved.definition, real).fetch(request, {
+    const response = await buildMock(resolved.definition, real, { observer }).fetch(request, {
       // Names the caller by a digest; carries no credential.
       authInfo: {
         token: "",
-        clientId: actorDigest(caller, door.bearerToken).slice(0, 16),
+        clientId: actorDigest(caller, bearerToken).slice(0, 16),
         scopes: [],
         extra: { mockId, version: resolved.version },
       },
     });
-    const headers = new Headers(response.headers);
-    headers.set(MOCK_VERSION_HEADER, String(resolved.version));
-    return new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers,
-    });
+    return finish(
+      response,
+      {
+        [MOCK_VERSION_HEADER]: String(resolved.version),
+        ...(door.kind === "http" && marks.length > 0 && { [MOCK_CALLS_HEADER]: formatMockCalls(marks) }),
+      },
+      async () => void (await forwarding?.close()),
+    );
   } catch (error) {
+    await forwarding?.close();
     if (request.signal.aborted) throw error;
     logger.error("[mock-route] a mock failed while serving", error, { mockId });
     return mockRefusalResponse("unavailable");
   }
+}
+
+/** The handler the registry holds for MCPJam's own dialers. */
+export function inProcessMockHandler(deps: MockRouteDeps = {}) {
+  return (mockId: string, request: Request, door: MockDoorContext) =>
+    serveMock(request, mockId, { kind: "in-process", ...door }, deps);
 }

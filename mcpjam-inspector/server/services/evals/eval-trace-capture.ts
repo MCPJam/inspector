@@ -1,3 +1,8 @@
+import {
+  mockAnswerSpan,
+  withMockAnswerSink,
+} from "../mock/answer-marks.js";
+import type { MockCallMark } from "../../../shared/mock-answer-span.js";
 import { toolOrigin } from "@/shared/tool-origin";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
@@ -287,8 +292,13 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
         let policyBlocked = false;
         let mcpErrorCode: number | undefined;
         let authChallenge: ToolAuthChallengeFinding | undefined;
+        // What a mock did with this call, read off the connection's responses.
+        const mockMarks: MockCallMark[] = [];
         try {
-          const result = await origExecute(input, options);
+          const result = await withMockAnswerSink(
+            (marks) => mockMarks.push(...marks),
+            () => origExecute(input, options),
+          );
           policyBlocked = isToolPolicyBlockResult(result);
           if (policyBlocked) return result;
           if (isCallToolResultError(result)) {
@@ -348,6 +358,19 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
               });
             }
             ctx.recordedSpans.push(toolSpan);
+            if (mockMarks.length > 0) {
+              ctx.recordedSpans.push(
+                mockAnswerSpan(mockMarks, {
+                  id: `mock-${toolCallId}`,
+                  parentId: toolSpan.id,
+                  promptIndex: resolvedPromptIndex,
+                  stepIndex: stepNumber,
+                  serverId,
+                  startMs: toolSpan.startMs,
+                  endMs: toolSpan.endMs,
+                }),
+              );
+            }
             if (!success) {
               ctx.recordedSpans.push({
                 id: `tool-err-${toolCallId}`,

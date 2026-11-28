@@ -11,6 +11,8 @@ import { MockRefusal } from "../refusal.js";
 import { dialMock, resolvedMock } from "./helpers.js";
 
 const door = (who: string): MockDoor => ({
+  kind: "http",
+  profile: { timeoutMs: 5_000 },
   bearerToken: `bearer-${who}`,
   caller: { authMethod: "workos_api_key", workosUserId: who },
 });

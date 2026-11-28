@@ -1,3 +1,4 @@
+import { mockDialForRequest } from "./mock-dial.js";
 import { Hono } from "hono";
 import {
   runServerDoctor,
@@ -399,7 +400,11 @@ export async function runHostedDoctor(
         resolveEffectiveAuthMethod(auth.serverConfig),
         body.oauthAccessToken
       ),
-    body.clientCapabilities
+    body.clientCapabilities,
+    undefined,
+    undefined,
+    undefined,
+    mockDialForRequest(c, bearerToken, body.projectId, body.serverId, body)
   );
 
   // Judge the target once, before either leg runs — the same check the

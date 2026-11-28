@@ -5,14 +5,19 @@
  * this with its MCPJam API key or OAuth token as the bearer. The chain, in
  * order: bearer auth, the refusal of anything that is not a signed-in person,
  * then the handler, which asks the backend about this caller on every request.
+ * A grant opens nothing here (`services/mock/registry.ts` is the only door
+ * for one).
  *
  * `/api/web/*`'s body cap and the app-wide Host and Origin checks run in front
  * of all of it; this file adds neither.
  */
 import { Hono, type Context, type Next } from "hono";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
+import { looksLikeMockGrant } from "../../services/mock/grant-claims.js";
 import { mockRefusalResponse, type MockRefusalKind } from "../../services/mock/refusal.js";
-import { serveMock } from "../../services/mock/route.js";
+import { DEFAULT_MOCK_PROFILE, serveMock } from "../../services/mock/route.js";
+import { resolveXaaIssuer } from "../../services/xaa-mint.js";
+import { HOSTED_MODE } from "../../config.js";
 import { callerContextFromHono } from "./auth.js";
 
 /** The credential kinds that are a signed-in person acting. */
@@ -34,7 +39,10 @@ function bearerOf(c: Context): string | undefined {
  * JSON-RPC: a refusal in any other shape is rewritten, keeping its status.
  */
 export async function mockBearerGate(c: Context, next: Next) {
-  if (!bearerOf(c)) return mockRefusalResponse("unauthorized");
+  const token = bearerOf(c);
+  if (!token) return mockRefusalResponse("unauthorized");
+  // A grant copied from a log or a trace opens nothing here.
+  if (looksLikeMockGrant(token)) return mockRefusalResponse("grant_over_http");
   await next();
   const response = c.res;
   if (response.status < 400) return;
@@ -78,8 +86,10 @@ const mockMcp = new Hono();
 
 mockMcp.all("/:mockId", (c) =>
   serveMock(c.req.raw, c.req.param("mockId"), {
+    kind: "http",
     bearerToken: bearerOf(c) as string,
     caller: callerContextFromHono(c),
+    profile: { ...DEFAULT_MOCK_PROFILE, xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE) },
   }),
 );
 
