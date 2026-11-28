@@ -100,6 +100,8 @@ const UNLISTED_FIELD_LABELS: Record<string, string> = {
   verdictPolicyDefaults: "Pass criteria and iterations",
   verdictPolicyRolloutMode: "Policy rollout",
   gradingEngine: "Grading engine",
+  // Written from the evaluator library, inside the Evaluators row.
+  codeEvaluators: "Code evaluators",
   environmentFingerprints: "Environment fingerprints",
   hostConfigId: "Execution config",
   serverAttachmentId: "Server attachment",

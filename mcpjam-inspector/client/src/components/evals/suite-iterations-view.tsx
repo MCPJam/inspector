@@ -66,6 +66,7 @@ import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { useCodeGradingGates } from "./code-grading/code-grading-flags";
 import { SetupCleanupRow } from "./code-grading/setup-cleanup-row";
 import { GradingRow } from "./code-grading/grading-row";
+import { suiteCodeEvaluators } from "./evaluator-library/suite-code-evaluators";
 import {
   buildHostNamesById,
   compareRunsBySequence,
@@ -274,6 +275,7 @@ const ROW_DRAFT_KEYS: Partial<Record<EvalSuiteSettingKey, SuiteSettingsKey[]>> =
       "defaultPredicates",
       "judgeConfig",
       "judgeRubric",
+      "codeEvaluators",
     ],
     computerEnvironment: ["computerEnvironmentId"],
     // One clock per row, so each badge names exactly the clock it belongs to.
@@ -3504,6 +3506,12 @@ export function SuiteIterationsView({
                     />
                   }
                   judgeRubric={draft.current.judgeRubric}
+                  codeEvaluators={suiteCodeEvaluators({
+                    suite,
+                    draft,
+                    dispatch: dispatchDraft,
+                    gate: codeGradingGates.grading,
+                  })}
                   groundednessEvidence={{
                     result: groundedness.result ?? null,
                     pending: groundedness.pending,

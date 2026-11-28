@@ -12,6 +12,7 @@ import {
   MAX_CODE_SCRIPTS_TOTAL_BYTES,
   MAX_GRADING_FILES,
   gradingFilePathProblem,
+  type CodeEvaluatorInput,
   type SuiteGradingInput,
   type SuiteScriptsInput,
 } from "@mcpjam/sdk/contract";
@@ -19,6 +20,40 @@ import {
 export type SuiteScripts = SuiteScriptsInput;
 export type SuiteGrading = SuiteGradingInput;
 export type ScriptSlot = keyof SuiteScripts;
+
+/** Code evaluators as the platform keeps them: an empty list is none. */
+export function normalizeCodeEvaluators(
+  evaluators: readonly CodeEvaluatorInput[] | null | undefined,
+): CodeEvaluatorInput[] | undefined {
+  return evaluators?.length ? [...evaluators] : undefined;
+}
+
+/** The review dialog's row: names, with the ones this draft edited marked. */
+export function describeCodeEvaluatorsChange(
+  before: readonly CodeEvaluatorInput[] | undefined,
+  after: readonly CodeEvaluatorInput[] | undefined,
+): { label: string; before: string; after: string } {
+  const describe = (
+    list: readonly CodeEvaluatorInput[] | undefined,
+    previous?: readonly CodeEvaluatorInput[],
+  ) => {
+    if (!list?.length) return "None";
+    return list
+      .map((evaluator) => {
+        const name = evaluator.name ?? evaluator.id;
+        const old = previous?.find((item) => item.id === evaluator.id);
+        return old && JSON.stringify(old) !== JSON.stringify(evaluator)
+          ? `${name} (edited)`
+          : name;
+      })
+      .join(", ");
+  };
+  return {
+    label: "Code evaluators",
+    before: describe(before),
+    after: describe(after, before),
+  };
+}
 
 /** The fields a suite, or a run that froze them, carries. */
 export type CodeGradingConfig = {

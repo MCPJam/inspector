@@ -10,6 +10,7 @@ import {
 import { areAllChecksValid, ChecksSection } from "../checks-section";
 import type { EvalJudgeConfig } from "../types";
 import { blankJudge, customJudgeLimits } from "./custom-judges-model";
+import { CodeEvaluatorEditor } from "./code-evaluator-editor";
 import { JudgeEditor } from "./custom-judges-section";
 import { DecisionEditor } from "./decision-questions-section";
 import type { MethodAvailability } from "./evaluator-library-browse";
@@ -17,6 +18,11 @@ import { EvaluatorLibraryButton } from "./evaluator-library-dialog";
 import { draftChanged, EvaluatorEditorLayout } from "./evaluator-editor-layout";
 import type { LibraryAddition, LibrarySuiteParts } from "./library-catalog";
 import { CUSTOM_JUDGES_OFF_COPY, libraryPauseMessages } from "./library-pause";
+import {
+  codeMethodAvailability,
+  requiredRoleRefusal,
+  type SuiteCodeEvaluators,
+} from "./suite-code-evaluators";
 
 /** The library entry point in suite settings, with its Method cards. */
 export function SuiteEvaluatorLibrary({
@@ -24,12 +30,15 @@ export function SuiteEvaluatorLibrary({
   authorableKinds,
   judgeConfig,
   capabilities,
+  codeEvaluators,
   onAdd,
 }: {
   predicates: LibrarySuiteParts["predicates"];
   authorableKinds: readonly Predicate["type"][];
   judgeConfig: EvalJudgeConfig | undefined;
   capabilities?: SuiteCapabilities | null;
+  /** Suite settings only: the Code card is left out without it. */
+  codeEvaluators?: SuiteCodeEvaluators;
   /** Saves the addition, or says why it could not. */
   onAdd: (addition: LibraryAddition) => string | undefined;
 }) {
@@ -57,6 +66,7 @@ export function SuiteEvaluatorLibrary({
         : judges.length >= maxJudges
           ? `Remove a judge to add another. Each suite can have ${maxJudges} judges.`
           : null,
+    code: codeEvaluators ? codeMethodAvailability(codeEvaluators) : undefined,
   };
   // Until capabilities load, every method would read as unsupported.
   if (!capabilities) return null;
@@ -120,6 +130,20 @@ export function SuiteEvaluatorLibrary({
                   onDirtyChange={onDirtyChange}
                 />
               );
+            case "code":
+              return codeEvaluators ? (
+                <CodeEvaluatorEditor
+                  inDialog
+                  others={codeEvaluators.evaluators}
+                  scripts={codeEvaluators.scripts}
+                  requiredRefusal={requiredRoleRefusal(
+                    codeEvaluators.gradingMode,
+                  )}
+                  onCancel={cancel}
+                  onSave={(evaluator) => add({ codeEvaluators: [evaluator] })}
+                  onDirtyChange={onDirtyChange}
+                />
+              ) : null;
           }
         },
       }}

@@ -31,13 +31,16 @@ import {
   EVAL_PASS_CRITERION_SCOPE_LABELS,
   describeEvalPassCriterion,
   normalizeSuiteGatePolicy,
+  type CodeEvaluatorInput,
   type SuiteGatePolicyV1,
   evalExecutionBudgetsSchema,
 } from "@mcpjam/sdk/contract";
 import { ORDER_OPTIONS, ARGS_OPTIONS } from "./validators-section";
 import type { EvalJudgeConfig, EvalJudgeRubric } from "./types";
 import {
+  describeCodeEvaluatorsChange,
   describeCodeGradingChange,
+  normalizeCodeEvaluators,
   readCodeGradingValues,
   type SuiteGrading,
   type SuiteScripts,
@@ -122,6 +125,7 @@ export type SuiteSettingsValues = {
   /** EFTW-90, each saved whole; `undefined` is none, and a clear sends `null`. */
   scripts?: SuiteScripts;
   grading?: SuiteGrading;
+  codeEvaluators?: CodeEvaluatorInput[];
 };
 
 /** The v2 defaults a case inherits. Fractions in [0,1], never percents. */
@@ -157,6 +161,7 @@ export const SUITE_SETTINGS_KEYS: readonly SuiteSettingsKey[] = [
   "turnRetries",
   "scripts",
   "grading",
+  "codeEvaluators",
 ];
 
 export type SuiteSettingsDraft = {
@@ -275,6 +280,7 @@ export function readSuiteSettingsValues(suite: {
   };
   scripts?: SuiteScripts | null;
   grading?: SuiteGrading | null;
+  codeEvaluators?: CodeEvaluatorInput[] | null;
 }): SuiteSettingsValues {
   return {
     name: suite.name ?? "",
@@ -304,6 +310,7 @@ export function readSuiteSettingsValues(suite: {
     runTimeoutMs: suite.executionBudgets?.runTimeoutMs,
     turnRetries: suite.executionBudgets?.turnRetries,
     ...readCodeGradingValues(suite),
+    codeEvaluators: normalizeCodeEvaluators(suite.codeEvaluators),
   };
 }
 
@@ -555,6 +562,7 @@ export function normalizeSuiteSettingsValues(
     name: values.name.trim(),
     // Blank scripts and paths drop away, as the platform drops them.
     ...readCodeGradingValues(values),
+    codeEvaluators: normalizeCodeEvaluators(values.codeEvaluators),
   };
 }
 
@@ -692,7 +700,8 @@ export function toUpdateArgs(
         break;
       case "scripts":
       case "grading":
-        // The whole object, which replaces the stored one; `null` clears it.
+      case "codeEvaluators":
+        // The whole value, which replaces the stored one; `null` clears it.
         args[key] = normalized[key] ?? null;
         break;
     }
@@ -913,6 +922,14 @@ export function describeChange(
     case "scripts":
     case "grading":
       return { key, ...describeCodeGradingChange(key, before, after) };
+    case "codeEvaluators":
+      return {
+        key,
+        ...describeCodeEvaluatorsChange(
+          before.codeEvaluators,
+          after.codeEvaluators,
+        ),
+      };
   }
 }
 

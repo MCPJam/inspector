@@ -45,7 +45,7 @@ export function SetupCleanupRow({
   runRefusal,
   accessory,
 }: {
-  suite: Pick<EvalSuite, "_id" | "codeEvaluators">;
+  suite: Pick<EvalSuite, "_id">;
   draft: SuiteSettingsDraft;
   dispatch: Dispatch<SuiteSettingsAction>;
   gate: CodeGradingGate;
@@ -77,7 +77,8 @@ export function SetupCleanupRow({
     });
   };
   const note = readOnlyNote(gate, stored ? "scripts" : null);
-  const totalHint = totalSizeHint(scripts, suite.codeEvaluators);
+  // Code evaluators share the cap, as drafted beside these scripts.
+  const totalHint = totalSizeHint(scripts, draft.current.codeEvaluators);
 
   return (
     <SuiteSettingsRow

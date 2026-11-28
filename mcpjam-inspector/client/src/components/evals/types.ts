@@ -387,6 +387,12 @@ export type EvalSuite = {
   scripts?: import("./code-grading/code-grading-values").SuiteScripts;
   grading?: import("./code-grading/code-grading-values").SuiteGrading;
   codeEvaluators?: import("@mcpjam/sdk/contract").CodeEvaluatorInput[];
+  /**
+   * The grading mode runs start from: `off`, `shadow`, `dual_write` or
+   * `enforce`, read as `off` when absent. Code evaluators need `dual_write`,
+   * and a Required one `enforce`.
+   */
+  gradingEngine?: { mode?: string };
   _creationTime?: number; // Convex auto field
   tags?: string[];
   defaultConfig?: {

@@ -27,6 +27,7 @@ import type { Predicate } from "@mcpjam/sdk/predicates";
 import type { ModelDefinition } from "@/shared/types";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import { SuiteScorerTable } from "./suite-scorer-table";
+import type { SuiteCodeEvaluators } from "./evaluator-library/suite-code-evaluators";
 import type { GroundednessRunEvidence } from "./suite-judge-card";
 import type { EvalJudgeConfig, EvalJudgeRubric } from "./types";
 
@@ -57,6 +58,7 @@ export function SuitePassOrFailSection({
   capabilities,
   groundednessEvidence,
   judgeRubric,
+  codeEvaluators,
 }: {
   matchOptions: EvalMatchOptions | undefined;
   onMatchOptionsChange: (next: EvalMatchOptions | undefined) => void;
@@ -94,6 +96,7 @@ export function SuitePassOrFailSection({
   groundednessEvidence?: GroundednessRunEvidence;
   /** The suite's rubric; the rubric-checks card lists its criteria. */
   judgeRubric?: EvalJudgeRubric;
+  codeEvaluators?: SuiteCodeEvaluators;
 }) {
   return (
     <SuiteScorerTable
@@ -114,6 +117,7 @@ export function SuitePassOrFailSection({
       judgeHint={JUDGE_HINT}
       groundednessEvidence={groundednessEvidence}
       judgeRubric={judgeRubric}
+      codeEvaluators={codeEvaluators}
     />
   );
 }

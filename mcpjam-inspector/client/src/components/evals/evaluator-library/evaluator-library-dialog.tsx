@@ -88,7 +88,7 @@ export function EvaluatorLibraryButton(props: LibraryProps) {
   const enabled = useEvaluatorLibraryEnabled();
   const anyAuthorable =
     LIBRARY_EVALUATORS.some((e) => isAuthorable(e, props.support)) ||
-    Object.values(props.authoring.methods).some((reason) => !reason);
+    Object.values(props.authoring.methods).some((reason) => reason === null);
   if (!enabled || !anyAuthorable) return null;
   return <EvaluatorLibraryDialog {...props} />;
 }
@@ -274,7 +274,7 @@ function EvaluatorLibraryDialog({
             />
           </div>
         ) : method ? (
-          authoring.methods[method.value] ? (
+          authoring.methods[method.value] !== null ? (
             <p
               role="status"
               className="p-4 text-sm text-muted-foreground sm:p-5"

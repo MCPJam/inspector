@@ -8,7 +8,7 @@
  */
 
 /** How an evaluator decides: the library's Method cards. */
-export type EvaluatorMethod = "assertions" | "judge" | "decision";
+export type EvaluatorMethod = "assertions" | "judge" | "decision" | "code";
 
 /** Where an evaluator in a suite came from. */
 export type EvaluatorOrigin = "library";
