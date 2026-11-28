@@ -104,7 +104,7 @@ describe("returning guest dialog", () => {
     expect(mocks.signUp).toHaveBeenCalledWith({ state: "return" });
   });
 
-  it("starts a new visit on input after the guest left the tab open", () => {
+  it("starts the next day's visit on input with the tab left open", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
       const start = Date.now();
@@ -113,7 +113,7 @@ describe("returning guest dialog", () => {
       fireEvent.click(screen.getByRole("button", { name: "Not now" }));
       expect(screen.queryByText("Welcome back")).toBeNull();
 
-      vi.setSystemTime(start + 2 * 60 * 60 * 1000);
+      vi.setSystemTime(start + DAY);
       expect(screen.queryByText("Welcome back")).toBeNull();
 
       act(() => {

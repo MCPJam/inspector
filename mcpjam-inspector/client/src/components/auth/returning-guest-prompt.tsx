@@ -52,8 +52,8 @@ function useReturningGuestVisit(): GuestVisit | null {
   const isGuest = HOSTED_MODE && !user && !isWorkOsLoading && !isConvexLoading;
   const visit = useSyncExternalStore(subscribeGuestVisit, getGuestVisit);
 
-  // Only real input counts as activity: a tab left open and visible while the
-  // guest is away must still start a new visit when they come back.
+  // Real input, not a timer: a tab left open overnight starts the new day's
+  // visit when the guest comes back to it.
   useEffect(() => {
     if (!isGuest) return;
     let lastTouchAt = 0;

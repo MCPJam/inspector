@@ -2,16 +2,29 @@
  * Recognizes a hosted guest coming back after time away, so the app can ask
  * them to create an account once per visit.
  *
- * A visit starts when the guest has been inactive for more than
- * `GUEST_VISIT_GAP_MS` in this browser (the same 30 minutes PostHog uses to
- * split sessions). The guest cookie lasts a year, so the record lives in
- * localStorage beside it rather than in the tab's sessionStorage.
+ * A visit is a local calendar day with activity in this browser, so the
+ * prompt shows at most once a day. The guest cookie lasts a year, so the
+ * record lives in localStorage beside it rather than in the tab's
+ * sessionStorage.
  */
 import { track } from "@/lib/analytics";
 
 const STORAGE_KEY = "mcpjam:returning-guest-v1";
-export const GUEST_VISIT_GAP_MS = 30 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+function startOfLocalDay(time: number): number {
+  const date = new Date(time);
+  return new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+  ).getTime();
+}
+
+/** Whole calendar days between two times; rounding absorbs DST shifts. */
+function calendarDaysBetween(from: number, to: number): number {
+  return Math.round((startOfLocalDay(to) - startOfLocalDay(from)) / DAY_MS);
+}
 
 interface GuestVisitRecord {
   lastActiveAt: number;
@@ -76,11 +89,11 @@ function publish(record: GuestVisitRecord): void {
   listeners.forEach((listener) => listener());
 }
 
-/** Records guest activity now, starting a new visit after a long enough gap. */
+/** Records guest activity now, starting a new visit on a new calendar day. */
 export function touchGuestVisit(now: number = Date.now()): void {
   const previous = readRecord();
   const isNewVisit =
-    !previous || now - previous.lastActiveAt > GUEST_VISIT_GAP_MS;
+    !previous || calendarDaysBetween(previous.lastActiveAt, now) > 0;
   const record: GuestVisitRecord = isNewVisit
     ? {
         lastActiveAt: now,
@@ -92,7 +105,7 @@ export function touchGuestVisit(now: number = Date.now()): void {
   if (isNewVisit && previous) {
     track("returning_guest_detected", {
       visit_number: record.visitCount,
-      days_since_last_visit: Math.floor((now - previous.lastActiveAt) / DAY_MS),
+      days_since_last_visit: calendarDaysBetween(previous.lastActiveAt, now),
     });
   }
   publish(record);

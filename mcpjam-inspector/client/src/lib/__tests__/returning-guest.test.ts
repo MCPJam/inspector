@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  GUEST_VISIT_GAP_MS,
   getGuestVisit,
   markGuestDialogClosed,
   resetGuestVisitForTests,
@@ -10,7 +9,8 @@ import {
 const track = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/analytics", () => ({ track }));
 
-const DAY = 24 * 60 * 60 * 1000;
+const at = (day: number, hour: number, minute = 0) =>
+  new Date(2026, 0, day, hour, minute).getTime();
 
 describe("returning guest visits", () => {
   beforeEach(() => {
@@ -20,7 +20,7 @@ describe("returning guest visits", () => {
   });
 
   it("treats the first visit as not returning", () => {
-    touchGuestVisit(1_000);
+    touchGuestVisit(at(15, 9));
     expect(getGuestVisit()).toMatchObject({
       visitNumber: 1,
       isReturning: false,
@@ -28,38 +28,44 @@ describe("returning guest visits", () => {
     expect(track).not.toHaveBeenCalled();
   });
 
-  it("keeps activity within the gap in the same visit", () => {
-    touchGuestVisit(1_000);
-    touchGuestVisit(1_000 + GUEST_VISIT_GAP_MS);
+  it("keeps the rest of the calendar day in the same visit", () => {
+    touchGuestVisit(at(15, 0, 5));
+    touchGuestVisit(at(15, 23, 59));
     expect(getGuestVisit()).toMatchObject({ visitNumber: 1 });
   });
 
-  it("starts a returning visit after the gap and reports it", () => {
-    touchGuestVisit(1_000);
-    touchGuestVisit(1_000 + 2 * DAY);
+  it("starts a returning visit on the next calendar day", () => {
+    touchGuestVisit(at(15, 23, 50));
+    touchGuestVisit(at(16, 0, 10));
     expect(getGuestVisit()).toMatchObject({
       visitNumber: 2,
       isReturning: true,
-      dialogClosed: false,
     });
+    expect(track).toHaveBeenCalledWith("returning_guest_detected", {
+      visit_number: 2,
+      days_since_last_visit: 1,
+    });
+  });
+
+  it("reports how many days the guest was away", () => {
+    touchGuestVisit(at(15, 9));
+    touchGuestVisit(at(17, 8));
     expect(track).toHaveBeenCalledWith("returning_guest_detected", {
       visit_number: 2,
       days_since_last_visit: 2,
     });
   });
 
-  it("remembers a closed dialog only for the current visit", () => {
-    touchGuestVisit(1_000);
-    touchGuestVisit(1_000 + DAY);
+  it("remembers a closed dialog only for the current day", () => {
+    touchGuestVisit(at(15, 9));
+    touchGuestVisit(at(16, 9));
     markGuestDialogClosed();
-    expect(getGuestVisit()).toMatchObject({
-      dialogClosed: true,
-    });
-
-    touchGuestVisit(1_000 + DAY + 60_000);
     expect(getGuestVisit()).toMatchObject({ dialogClosed: true });
 
-    touchGuestVisit(1_000 + 2 * DAY);
+    touchGuestVisit(at(16, 18));
+    expect(getGuestVisit()).toMatchObject({ dialogClosed: true });
+
+    touchGuestVisit(at(17, 9));
     expect(getGuestVisit()).toMatchObject({
       visitNumber: 3,
       dialogClosed: false,
@@ -68,7 +74,7 @@ describe("returning guest visits", () => {
 
   it("starts over when the stored record is corrupt", () => {
     localStorage.setItem("mcpjam:returning-guest-v1", "{not json");
-    touchGuestVisit(1_000);
+    touchGuestVisit(at(15, 9));
     expect(getGuestVisit()).toMatchObject({ visitNumber: 1 });
   });
 });
