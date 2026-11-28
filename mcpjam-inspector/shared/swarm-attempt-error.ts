@@ -613,19 +613,24 @@ export function humanizeSwarmAttemptError(
   // MCPJam's credit refusal carries its next step as a structured `recovery`.
   // Its sentence is the one action to show — link and all — and the scrubber
   // takes the link out of the stored message, so the structured field below is
-  // where the link survives. A refusal without one keeps the backend's prose.
+  // where the link survives. A refusal without one keeps the backend's prose,
+  // and so do a hold and a declined card: a stored row keeps only the message
+  // and code, and their sentences are how the card recognizes them.
   const recovery = parseCreditRecovery(parsed.recovery);
+  const prose = scrub(compose(headline, details));
+  const refusalReason = str(parsed.refusalReason);
+  const keepsProse =
+    isHeldCreditsRefusal(code, refusalReason, prose) ||
+    isDeclinedCardRefusal(refusalReason, prose);
 
   return {
-    message: (recovery
+    message: (recovery && !keepsProse
       ? scrub(formatCreditRecovery(recovery))
-      : scrub(compose(headline, details))
+      : prose
     ).slice(0, MAX_ATTEMPT_ERROR_CHARS),
     ...(recovery ? { recovery } : {}),
     ...(code ? { code } : {}),
-    ...(str(parsed.refusalReason)
-      ? { refusalReason: str(parsed.refusalReason) }
-      : {}),
+    ...(refusalReason ? { refusalReason } : {}),
     ...(typeof parsed.isRetryable === "boolean"
       ? { isRetryable: parsed.isRetryable }
       : {}),

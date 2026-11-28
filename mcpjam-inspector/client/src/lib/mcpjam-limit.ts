@@ -9,6 +9,7 @@ import {
   STEP_LIMIT_REFUSAL_MESSAGE,
 } from "@/shared/turn-step-budget";
 import { describeAsSlug, describeError } from "@mcpjam/sdk/browser";
+import { creditRecoveryOfRefusal } from "@mcpjam/sdk/contract";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import type { MCPJamLimitSurface } from "@/stores/mcpjam-limit-dialog-store";
 import { useNativeHarnessLimitDialogStore } from "@/stores/native-harness-limit-dialog-store";
@@ -355,6 +356,9 @@ export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
     return false;
   const period = findMCPJamLimitPeriod(args.message);
   const shortfall = findMCPJamCreditShortfall(args);
+  const recovery =
+    creditRecoveryOfRefusal(args.details) ??
+    creditRecoveryOfRefusal(args.message);
   useMCPJamLimitDialogStore.getState().notifyLimitHit({
     ...(args.runId ? { runId: args.runId } : {}),
     ...(args.swarmRunGroupId ? { swarmRunGroupId: args.swarmRunGroupId } : {}),
@@ -363,6 +367,7 @@ export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
     ...(args.surface ? { surface: args.surface } : {}),
     ...(period ? { period } : {}),
     ...(shortfall ? { shortfall } : {}),
+    ...(recovery ? { recovery } : {}),
     ...(args.userInitiated ? { userInitiated: true } : {}),
   });
   return true;
