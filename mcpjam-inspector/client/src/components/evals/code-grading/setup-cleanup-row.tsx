@@ -150,6 +150,8 @@ function ScriptSlotEditor({
   onRemove: () => void;
 }) {
   const fieldId = useId();
+  // Add script opens the field; it takes focus as it mounts.
+  const [focusWhenOpened, setFocusWhenOpened] = useState(false);
   const sizeHint = scriptSizeHint(text);
   return (
     <div className="space-y-2" data-script-slot={slot.key}>
@@ -177,10 +179,8 @@ function ScriptSlotEditor({
             className="shrink-0"
             aria-label={`Add script: ${slot.title}`}
             onClick={() => {
+              setFocusWhenOpened(true);
               onOpen();
-              requestAnimationFrame(() =>
-                document.getElementById(fieldId)?.focus(),
-              );
             }}
           >
             <Plus aria-hidden="true" />
@@ -192,6 +192,7 @@ function ScriptSlotEditor({
         <>
           <Textarea
             id={fieldId}
+            autoFocus={focusWhenOpened}
             value={text ?? ""}
             readOnly={!editable}
             spellCheck={false}

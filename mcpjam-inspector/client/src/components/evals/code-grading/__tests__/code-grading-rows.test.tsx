@@ -84,6 +84,10 @@ describe("Setup and cleanup, with its flag on", () => {
     await user.click(
       screen.getByRole("button", { name: "Add script: Before the run" }),
     );
+    // The field Add script opens takes focus, ready to type into.
+    expect(
+      screen.getByRole("textbox", { name: "Before the run script" }),
+    ).toHaveFocus();
     await user.type(
       screen.getByRole("textbox", { name: "Before the run script" }),
       "curl -fsS https://invoices.example.com/test/seed",
